@@ -192,7 +192,69 @@ inline void ResetDockTestLayoutLeaves(DockLayout& layout) {
 struct DockBandReserve {
     float top = 0.0f;
     float bottom = 0.0f;
+    bool floatTop = false;
+    bool floatBottom = false;
 };
+
+// Use every real module's saved height, not just the legacy Filter/Info pair.
+template <typename HeightForModule>
+inline DockBandReserve ResolveDockBandReserve(
+    const DockLayout& layout, HeightForModule heightForModule,
+    float fallbackHeight, float scale,
+    float availableHeight = std::numeric_limits<float>::infinity(),
+    float centerWidth = std::numeric_limits<float>::infinity(),
+    float centerMinimumHeight = 200.0f) {
+    auto height = [&](DockSide side) {
+        const DockNode* root = layout.RegionRoot(side);
+        if (!root) return 0.0f;
+        float saved = 0.0f;
+        auto visit = [&](auto&& self, const DockNode* node) -> void {
+            if (!node) return;
+            if (node->Kind() == NodeKind::Module) {
+                saved = std::max(saved, heightForModule(static_cast<const ModuleNode*>(node)->id));
+            } else {
+                const auto* split = static_cast<const SplitNode*>(node);
+                self(self, split->first.get());
+                self(self, split->second.get());
+            }
+        };
+        visit(visit, root);
+        const float preferred = std::clamp(saved > 0.0f ? saved : fallbackHeight,
+            kDockBandMinHeight, kDockBandMaxHeight);
+        return std::max(preferred, DockSubtreeMinimum(root, scale).height);
+    };
+    DockBandReserve result{height(DockSide::Top), height(DockSide::Bottom)};
+    auto topMinimum = DockSubtreeMinimum(layout.RegionRoot(DockSide::Top), scale);
+    auto bottomMinimum = DockSubtreeMinimum(layout.RegionRoot(DockSide::Bottom), scale);
+    auto floatBand = [](float& extent, DockMinimumSize& minimum, bool& floating) {
+        floating = floating || extent > 0.0f;
+        extent = 0.0f;
+        minimum = {0.0f, 0.0f};
+    };
+    if (topMinimum.width > centerWidth + .5f)
+        floatBand(result.top, topMinimum, result.floatTop);
+    if (bottomMinimum.width > centerWidth + .5f)
+        floatBand(result.bottom, bottomMinimum, result.floatBottom);
+    const float budget = std::max(0.0f, availableHeight - centerMinimumHeight);
+    auto gaps = [&]() {
+        return kDockBandSplitterHeight * ((result.top > 0.0f ? 1 : 0) +
+                                         (result.bottom > 0.0f ? 1 : 0));
+    };
+    // Reduce remembered heights first. If even readable floors cannot fit,
+    // release bottom then top rather than moving the list/waveform offscreen.
+    if (topMinimum.height + bottomMinimum.height + gaps() > budget + .5f)
+        floatBand(result.bottom, bottomMinimum, result.floatBottom);
+    if (topMinimum.height + gaps() > budget + .5f)
+        floatBand(result.top, topMinimum, result.floatTop);
+    const float extra = result.top + result.bottom - topMinimum.height - bottomMinimum.height;
+    const float room = std::max(0.0f, budget - gaps() - topMinimum.height - bottomMinimum.height);
+    if (extra > room && extra > 0.0f) {
+        const float ratio = room / extra;
+        result.top = topMinimum.height + (result.top - topMinimum.height) * ratio;
+        result.bottom = bottomMinimum.height + (result.bottom - bottomMinimum.height) * ratio;
+    }
+    return result;
+}
 
 inline DockBandReserve ResolveDockBandReserve(
     const DockLayout& layout,

@@ -6,8 +6,8 @@
 
 
 1 VERSIONINFO
- FILEVERSION 1,0,40,0
- PRODUCTVERSION 1,0,40,0
+ FILEVERSION 1,0,41,0
+ PRODUCTVERSION 1,0,41,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -19,11 +19,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "Harken Search"
-            VALUE "FileVersion", "1.0.40"
+            VALUE "FileVersion", "1.0.41"
             VALUE "InternalName", "HarkenSearch"
             VALUE "OriginalFilename", "HarkenSearch.exe"
             VALUE "ProductName", "Harken Search"
-            VALUE "ProductVersion", "1.0.40"
+            VALUE "ProductVersion", "1.0.41"
         END
     END
     BLOCK "VarFileInfo"

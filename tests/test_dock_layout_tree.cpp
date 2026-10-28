@@ -682,6 +682,36 @@ int main() {
     }
 
     // Diagnostic/regression: Info top + SimilarSounds bottom in the Right
+    // Saved layouts must fit again after the viewport shrinks.
+    {
+        DockLayout bands;
+        bands.InsertModule("mod-workflow",DockSide::Top,.5f);
+        bands.InsertModule("mod-transfer",DockSide::Bottom,.5f);
+        auto saved=[](std::string_view) { return 320.0f; };
+        const auto shortWindow=ResolveDockBandReserve(bands,saved,220,1,500,800);
+        if (!shortWindow.floatTop || !shortWindow.floatBottom ||
+            shortWindow.top != 0 || shortWindow.bottom != 0) return fail(701);
+        const auto oneFits=ResolveDockBandReserve(bands,saved,220,1,800,800);
+        if (oneFits.floatTop || !oneFits.floatBottom || oneFits.top != 360 ||
+            oneFits.bottom != 0 || oneFits.top+6+200>800) return fail(702);
+        const auto narrow=ResolveDockBandReserve(bands,saved,220,1,1200,500);
+        if (!narrow.floatTop || narrow.floatBottom || narrow.bottom != 360) return fail(703);
+        DockLayout compact;
+        compact.InsertModule("info",DockSide::Top,.5f);
+        compact.InsertModule("similar-sounds",DockSide::Bottom,.5f);
+        const auto fitted=ResolveDockBandReserve(compact,saved,220,1,650,700);
+        if (fitted.floatTop || fitted.floatBottom || fitted.top<180 || fitted.bottom<220 ||
+            fitted.top+fitted.bottom+12+200>650.01f) return fail(704);
+        const auto restored=ResolveDockBandReserve(compact,saved,220,1,1200,700);
+        if (restored.top!=320 || restored.bottom!=320) return fail(705);
+        DockLayout mixed;
+        mixed.InsertModule("info",DockSide::Top,.5f);
+        mixed.InsertModule("mod-workflow",DockSide::Bottom,.5f);
+        const auto tiny=ResolveDockBandReserve(mixed,saved,220,1,300,400);
+        if (!tiny.floatTop || !tiny.floatBottom || tiny.top!=0 || tiny.bottom!=0) return fail(706);
+    }
+
+    // Diagnostic/regression: Info top + SimilarSounds bottom in the Right
     // region must produce only the horizontal height divider, never a vertical
     // grip on SimilarSounds left outer edge.
     {

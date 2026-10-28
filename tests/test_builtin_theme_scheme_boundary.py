@@ -15,9 +15,8 @@ RULES = (
 STAGE7 = (ROOT / "tools" / "stage7_api_contract_audit.py").read_text(
     encoding="utf-8"
 )
-DEPENDENCY_MAP = (
-    ROOT / "docs" / "architecture" / "dependency-map.md"
-).read_text(encoding="utf-8")
+# The public checkout carries the executable dependency rules above, not the
+# historical architecture narrative from the private repository.
 
 
 def test_builtin_theme_scheme_files_own_preset_table():
@@ -56,7 +55,6 @@ def test_builtin_theme_scheme_is_built_tested_and_governed():
     assert BEHAVIOR.count("tests/test_builtin_theme_scheme_boundary.py") == 1
     assert RULES.count("src/BuiltinThemeScheme.cpp") >= 2
     assert RULES.count("src/BuiltinThemeScheme.h") >= 2
-    assert "BuiltinThemeScheme.*" in DEPENDENCY_MAP
     assert (
         '"src/BuiltinThemeScheme.h": '
         '"tests/test_builtin_theme_scheme_boundary.py"'

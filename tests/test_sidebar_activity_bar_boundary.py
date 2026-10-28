@@ -15,9 +15,8 @@ RULES = (
 STAGE7 = (ROOT / "tools" / "stage7_api_contract_audit.py").read_text(
     encoding="utf-8"
 )
-DEPENDENCY_MAP = (
-    ROOT / "docs" / "architecture" / "dependency-map.md"
-).read_text(encoding="utf-8")
+# The public checkout carries the executable dependency rules above, not the
+# historical architecture narrative from the private repository.
 
 
 def test_sidebar_activity_bar_files_own_drawing_entry():
@@ -58,7 +57,6 @@ def test_sidebar_activity_bar_is_built_tested_and_governed():
     assert BEHAVIOR.count("tests/test_sidebar_activity_bar_boundary.py") == 1
     assert RULES.count("src/SidebarActivityBar.cpp") >= 2
     assert RULES.count("src/SidebarActivityBar.h") >= 2
-    assert "SidebarActivityBar.*" in DEPENDENCY_MAP
     assert (
         '"src/SidebarActivityBar.h": '
         '"tests/test_sidebar_activity_bar_boundary.py"'

@@ -1507,7 +1507,7 @@ int testLargeCoverBrowseHotPathsUseBoundedRegistryHeuristic() {
 
     const std::string pagedWallBody = extractFunctionBody(
         source,
-        "Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(const std::string& afterCursor, int limit)");
+        "Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(");
     const bool pagedWallUsesBoundedHelper =
         !pagedWallBody.empty() &&
         pagedWallBody.find("AssessGlobalCoverAggregationReadiness") != std::string::npos &&

@@ -185,10 +185,16 @@ class NetworkPathContract(unittest.TestCase):
         )[0]
         self.assertIn("IsNetworkPath", set_tags)
         self.assertIn("Write_BlockedNetworkLibrary", set_tags)
-        inline = MAIN.split("s_inlineMetaSaveFailed > 0", 1)[1].split(
-            "state.metadataEditMode = false", 1
+        inline = MAIN.split("static bool SaveInfoMetadataDraft(", 1)[1].split(
+            "void RenderInfoMetadataLeavePrompt(", 1
         )[0]
         self.assertIn("Write_BlockedNetworkLibrary", inline)
+        self.assertLess(inline.index("IsNetworkPath(original.filePath)"),
+                        inline.index("Platform::FileSystem::Exists(original.filePath)"))
+        prompt = MAIN.split("void RenderInfoMetadataLeavePrompt(", 1)[1].split(
+            "void RenderFileInfoPanelTabContents(", 1
+        )[0]
+        self.assertIn("else if (state.infoEditError.empty())", prompt)
 
     def test_scan_directory_checks_cancel_around_network_root_probe(self) -> None:
         scan = DATABASE.split("ScanStats Database::scanDirectoryEx(", 1)[1].split(

@@ -29,3 +29,18 @@ def test_missing_overflow_menu_is_a_failure():
     missing = report()
     del missing['cases'][0]['state']['zones']['info.pageVisibility']
     assert audit.violations(missing) == ['fixture: info.pageVisibility present']
+
+
+def test_vertical_info_requires_the_same_bounded_content():
+    vertical = report()
+    for window in vertical['cases'][0]['state']['layout_windows']:
+        window['name'] = window['name'].replace('Main/RightDockColumn_fixture', 'Info##DockedFileInfo')
+    assert audit.violations(vertical) == []
+    vertical['cases'][0]['state']['layout_windows'][1]['w'] += 8
+    assert audit.violations(vertical) == ['fixture: right inset']
+
+
+def test_missing_bounded_content_fails_instead_of_skipping_the_dock_route():
+    missing = report()
+    del missing['cases'][0]['state']['layout_windows'][1]
+    assert audit.violations(missing) == ['fixture: bounded content present']

@@ -8,9 +8,15 @@ def violations(report):
     failures = []
     for case in report['cases']:
         windows = case['state']['layout_windows']
-        outer = next(w for w in windows if w['name'].split('/')[-1].startswith('RightDockColumn_'))
-        content = next(w for w in windows if '/FileInfoContent_' in w['name'] and '/##ArtworkScroll_' not in w['name'])
-        artwork = next(w for w in windows if '/##ArtworkScroll_' in w['name'])
+        outer = next((w for w in windows if w['name'].split('/')[-1].startswith('RightDockColumn_')
+                      or w['name'].endswith('##DockedFileInfo')), None)
+        content = next((w for w in windows if '/FileInfoContent_' in w['name'] and '/##ArtworkScroll_' not in w['name']), None)
+        artwork = next((w for w in windows if '/##ArtworkScroll_' in w['name']), None)
+        missing = [label for value, label in ((outer, 'outer present'), (content, 'bounded content present'),
+                                             (artwork, 'artwork present')) if value is None]
+        if missing:
+            failures.extend(f"{case['name']}: {label}" for label in missing)
+            continue
         checks = {
             'left inset': content['x'] >= outer['x'] + 8,
             'right inset': content['x'] + content['w'] <= outer['x'] + outer['w'] - 8,

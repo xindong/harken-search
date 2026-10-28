@@ -1903,8 +1903,8 @@ void TestFilteredCoverWallRetirementNarrowsLegacySearchFallbackContract() {
           databaseSource.find("SELECT DISTINCT file_id FROM cover_tile_membership") != std::string::npos &&
           tileMembershipBody.find("ResolveEquivalentCoverKeys(this, lookupKey)") != std::string::npos &&
           tileMembershipBody.find("EnsureCoverTileMembershipForKeys(m_db, equivalentKeys, &out)") != std::string::npos &&
-          databaseSource.find("SyncCoverTileMembershipForKeys(db, tileKeys)") != std::string::npos &&
-          databaseSource.find("if (sqlite3_db_readonly(db, \"main\") == 1) return false;") != std::string::npos &&
+          databaseSource.find("SyncCoverTileMembershipForKeys(db, missingKeys)") != std::string::npos &&
+          databaseSource.find("if (sqlite3_db_readonly(db, \"main\") == 1) return !target->empty();") != std::string::npos &&
           tileMembershipBody.find("Tile membership unresolved after canonical lookup/self-heal; legacy field fallback fully retired.") != std::string::npos &&
           tileMembershipBody.find("embedded_cover_key IN (") == std::string::npos &&
           tileMembershipBody.find("folder_cover_key IN (") == std::string::npos,

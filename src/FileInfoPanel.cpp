@@ -236,10 +236,12 @@ void RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         if (compact) {
             for (int i=0; i<4; ++i) {
                 if (!pages.IsVisible(static_cast<InfoPage>(i),kDiagnostics)) continue;
+                ImGui::PushID(i);
                 if (ImGui::MenuItem(PageLabel(i), nullptr, pages.selected==i)) {
                     if (pages.Select(static_cast<InfoPage>(i),kDiagnostics)) state.settingsDirty = true;
                 }
                 ThemeInspector::RegisterLastItem((std::string("info.select.")+std::to_string(i)).c_str(),PageLabel(i),"src/FileInfoPanel.cpp");
+                ImGui::PopID();
             }
             ImGui::Separator();
         }

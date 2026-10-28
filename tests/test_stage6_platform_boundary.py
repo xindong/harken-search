@@ -1010,6 +1010,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("Platform::WindowShow(g_hwnd, SW_SHOW)", source)
         self.assertIn("Platform::WindowShow(g_hwnd, restoreCmd)", source)
         self.assertIn("Platform::WindowShow(hwnd, SW_SHOWMAXIMIZED)", source)
+        # The isolated QA tray-exit route also uses the platform adapter.
         self.assertNotIn("ShowWindow(", source)
 
     def test_taskbar_activation_leaves_minimized_window_restoration_to_windows(self) -> None:
@@ -6387,11 +6388,10 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('#include "platform/filesystem.h"', source)
-        self.assertEqual(1, source.count("Platform::FileSystem::Exists(rec->filePath)"))
-        self.assertIn("Platform::FileSystem::Exists(record.filePath)", source)
-        metadata = source.split("if (state.metadataBatchMode)", 1)[1].split(
-            "static void", 1
+        metadata = source.split("static bool SaveInfoMetadataDraft(", 1)[1].split(
+            "void RenderInfoMetadataLeavePrompt(", 1
         )[0]
+        self.assertIn("Platform::FileSystem::Exists(original.filePath)", metadata)
         self.assertNotIn("fs::exists(Utf8ToPathMain(rec->filePath)", metadata)
         self.assertNotIn("fs::exists(Utf8ToPathMain(record.filePath)", metadata)
         self.assertIn("aura::ui::EvaluateRelinkForRecord(state, record)", source)
@@ -6400,11 +6400,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "Platform::FileSystem::Exists(record.filePath)", relink_source
         )
         self.assertNotIn("fs::exists", relink_source)
-        batch = source.split('undoOp->operationName = "Batch edit metadata"', 1)[1].split(
-            "return", 1
-        )[0]
-        self.assertIn("Platform::FileSystem::Exists(record.filePath)", batch)
-        self.assertNotIn("fs::exists(Utf8ToPathMain(record.filePath)", batch)
+        self.assertIn('state.metadataBatchMode?"Batch edit metadata":"Edit metadata"', metadata)
+        self.assertIn("for(const auto& original:state.infoEditRecords)", metadata)
         rescan_adapter = source.split(
             "class AppSelectedRecordRescanOperationPort", 1
         )[1].split("#ifdef _WIN32", 1)[0]
@@ -9280,7 +9277,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
         self.assertIn("bool RemoveAll(", header)
         self.assertNotIn("RemoveAll", body)
-        self.assertIn("newDbCacheMode, confirmOverwrite)", body)
+        self.assertIn("newDbCacheMode, confirmOverwrite, deferredStart)", body)
+        self.assertIn("state.infoEditSession.awaitingChoice", body)
         self.assertIn("files::Rename(root_, backup, &error_)", replacement)
         self.assertIn("files::RemoveAll(backup_, &error_)", replacement)
         self.assertIn("files::Rename(backup_, root_, &cleanupError)", replacement)

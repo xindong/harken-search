@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.40 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.41 LANGUAGES C CXX)
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter QUIET)

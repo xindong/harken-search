@@ -17,6 +17,7 @@ struct DockRect {
 };
 
 enum class DockHitKind { None, Main, Parent, Module };
+inline constexpr float kDockBandSplitterHeight = 6.0f;
 
 struct DockHit {
     DockHitKind kind = DockHitKind::None;
@@ -33,13 +34,14 @@ struct DockHit {
 
 // The center file-results surface is rendered by the workspace shell while
 // side panels are represented by DockLayout. When no side root is visible,
-// the shell can still provide this explicit bridge back into the same Dock
-// tree. It is a hit target only; it does not own another layout.
+// the shell can still provide an edge-only route back into the same Dock
+// tree. rect is the actual surface, never a large magnetic center region.
 struct DockCenterDropTarget {
     DockRect rect{};
     DockSide side = DockSide::Left;
     bool enabled = false;
     float preferredRootExtent = 0.0f;
+    float preferredVerticalExtent = 0.0f;
 };
 
 struct DockModuleTarget {
@@ -755,6 +757,8 @@ inline DockHit HitDockTarget(
         hit.side = side;
         hit.rootRegion = side;
         hit.hitRect = strip;
+        if (centerDrop && centerDrop->enabled && centerDrop->side == side)
+            hit.preferredRootExtent = centerDrop->preferredRootExtent;
         const DockRect slot = side == DockSide::Left ? leftSlot :
             side == DockSide::Right ? rightSlot : side == DockSide::Top ? topSlot : bottomSlot;
         // An empty root receives the entire slot; only an occupied leaf splits.
@@ -766,23 +770,27 @@ inline DockHit HitDockTarget(
     if (RectsOverlap(panel, topHit)) return hitMain(DockSide::Top, top);
     if (RectsOverlap(panel, bottom)) return hitMain(DockSide::Bottom, bottom);
     if (centerDrop && centerDrop->enabled &&
-        centerDrop->rect.width > 1.0f && centerDrop->rect.height > 1.0f &&
-        RectsOverlap(panel, centerDrop->rect)) {
-        DockHit hit;
-        hit.kind = DockHitKind::Main;
-        hit.side = centerDrop->side;
-        hit.rootRegion = centerDrop->side;
-        hit.hitRect = centerDrop->rect;
-        hit.preferredRootExtent = centerDrop->preferredRootExtent;
-        const DockRect slot = centerDrop->side == DockSide::Left ? leftSlot :
-            centerDrop->side == DockSide::Right ? rightSlot :
-            centerDrop->side == DockSide::Top ? topSlot : bottomSlot;
-        // The release path performs the authoritative tree simulation. This
-        // initial rectangle only keeps the live preview useful before that
-        // simulation replaces it with the committed leaf rectangle.
-        hit.resultRect = slots ? SlotOrWork(slot, work)
-                               : SplitIncomingRect(work, centerDrop->side, kDockIncomingShare);
-        return hit;
+        centerDrop->rect.width > 1.0f && centerDrop->rect.height > 1.0f) {
+        const DockRect& surface = centerDrop->rect;
+        const float edge = std::min(strip, std::min(surface.width, surface.height) * 0.5f);
+        for (DockSide side : {DockSide::Top, DockSide::Bottom, centerDrop->side}) {
+            if (occupiedByLeaf(side)) continue;
+            const DockRect edgeBand = InnerStripRect(surface, side, edge);
+            if (!RectsOverlap(panel, edgeBand)) continue;
+            DockHit hit;
+            hit.kind = DockHitKind::Main;
+            hit.side = hit.rootRegion = side;
+            hit.hitRect = edgeBand;
+            hit.preferredRootExtent = side == centerDrop->side
+                ? centerDrop->preferredRootExtent : centerDrop->preferredVerticalExtent;
+            const DockRect slot = !slots ? work : side == DockSide::Left ? slots->left :
+                side == DockSide::Right ? slots->right :
+                side == DockSide::Top ? slots->top : slots->bottom;
+            // The release simulation replaces this with the actual leaf.
+            hit.resultRect = slots ? SlotOrWork(slot, work)
+                                   : SplitIncomingRect(work, side, kDockIncomingShare);
+            return hit;
+        }
     }
     return miss;
 }
@@ -1166,7 +1174,6 @@ inline DockDropPlan PlanReadableDockDrop(
             if (root == DockSide::Right) slot.x = work.x + work.width - extent;
         } else {
             slot.height = extent;
-            if (root == DockSide::Bottom) slot.y = work.y + work.height - extent;
         }
     }
     // A leaf can be split in any direction. Grow the containing root on both
@@ -1174,12 +1181,37 @@ inline DockDropPlan PlanReadableDockDrop(
     // still need more width when its target leaf already sits beside another
     // leaf; growing only the requested axis would reject that recursive drop.
     auto& targetSlot = DockSlotForSide(plan.slots, root);
+    if ((root == DockSide::Top || root == DockSide::Bottom) &&
+        targetSlot.width + .5f < rootMinimum.width) {
+        // The renderer gives bands exactly the central column's width.
+        // It cannot honor a preview that silently expands into a sidebar.
+        plan.tooSmall = true;
+        return plan;
+    }
     targetSlot.width = std::max(targetSlot.width, rootMinimum.width);
     targetSlot.height = std::max(targetSlot.height, rootMinimum.height);
     if (root == DockSide::Right)
         targetSlot.x = work.x + work.width - targetSlot.width;
-    if (root == DockSide::Bottom)
-        targetSlot.y = work.y + work.height - targetSlot.height;
+    if (root == DockSide::Top || root == DockSide::Bottom) {
+        // Horizontal bands belong to the results column, above the waveform.
+        // Never anchor a bottom drop to the bottom of the whole application.
+        const float contentTop = requested.top.height > 1.0f
+            ? requested.top.y : work.y + menuBarAndToolbar;
+        const float contentBottom = requested.bottom.height > 1.0f
+            ? requested.bottom.y + requested.bottom.height : work.y + work.height - statusBar;
+        const DockSide opposite = root == DockSide::Top ? DockSide::Bottom : DockSide::Top;
+        const float oppositeHeight = candidate.RegionRoot(opposite)
+            ? DockSlotForSide(plan.slots, opposite).height : 0.0f;
+        const float centerHeight = candidate.Find("search-results") ? 0.0f : 200.0f * scale;
+        const float splitterSpace = kDockBandSplitterHeight * (oppositeHeight > 0.0f ? 2.0f : 1.0f);
+        const float maxHeight = contentBottom - contentTop - oppositeHeight - centerHeight - splitterSpace;
+        if (maxHeight + .5f < rootMinimum.height) {
+            plan.tooSmall = true;
+            return plan;
+        }
+        targetSlot.height = std::min(targetSlot.height, maxHeight);
+        targetSlot.y = root == DockSide::Top ? contentTop : contentBottom - targetSlot.height;
+    }
     // A real workspace can have both side roots occupied while the central
     // file list is not part of this Dock tree. When the new split needs more
     // width, first reclaim unused width from the opposite root down to that

@@ -4420,7 +4420,7 @@ static void PollQaCommandFile(AppState& state) {
             if (cmd == "info_edit_input") {
                 if (getStr(raw,"action")=="exit") { state.settings.closeButtonAction=2; PostMessageW(g_hwnd,WM_CLOSE,0,0); }
                 else if (getStr(raw,"action")=="tray_exit") {
-                    ShowWindow(g_hwnd,SW_MINIMIZE);
+                    Platform::WindowShow(g_hwnd,SW_MINIMIZE);
                     RequestHarkenSearchExit(g_hwnd,L"qa-tray-exit");
                 }
                 else if (getStr(raw,"action")=="update_exit")
@@ -4499,6 +4499,7 @@ static void PollQaCommandFile(AppState& state) {
                 for (const auto* window : ImGui::GetCurrentContext()->Windows) {
                     const std::string name = window->Name;
                     if (!window->WasActive || (name.find("RightDockColumn") == std::string::npos &&
+                        name.find("DockedFileInfo") == std::string::npos &&
                         name.find("FloatingFileInfo") == std::string::npos)) continue;
                     if (!firstWindow) result+=",";
                     firstWindow = false;
