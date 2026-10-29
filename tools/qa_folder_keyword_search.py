@@ -20,7 +20,7 @@ def wav(path):
         sound.writeframes(bytes(8000 * 2))
 
 
-def run(exe, root, output):
+def run(exe, root, output, mode):
     import win32con
     import win32gui
     from PIL import ImageGrab
@@ -35,6 +35,7 @@ def run(exe, root, output):
     database.parent.mkdir(parents=True, exist_ok=True)
     sqlite3.connect(database).close()
     settings.write_text("viewMode=1\nshowWelcomeOnStartup=0\ncloseButtonAction=2\n"
+                        + "searchRealtime=" + ("1" if mode == "live" else "0") + "\n"
                         + "currentDbPath=" + str(database) + "\n", encoding="utf-8")
     runtime = root / "profile/runtime"
     runtime.mkdir(parents=True, exist_ok=True)
@@ -43,7 +44,7 @@ def run(exe, root, output):
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = win32con.SW_SHOWNOACTIVATE
     process = subprocess.Popen([str(exe)], cwd=exe.parent, startupinfo=startup, env=dict(
-        os.environ, AURA_HARNESS_MULTI_INSTANCE="1", AURA_HARNESS_LANE_KIND="functional",
+        os.environ, AURA_HARNESS_MULTI_INSTANCE="1", AURA_HARNESS_LANE_KIND="folder-search",
         AURA_DISABLE_SINGLE_INSTANCE="1"))
     hwnd = None
     cases = []
@@ -57,12 +58,19 @@ def run(exe, root, output):
         raise TimeoutError("search did not settle")
 
     def check(name, folder, query, expected):
-        state = settled()
-        rows = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})["items"]
-        names = sorted(row["name"] for row in rows)
+        deadline = time.monotonic() + 25
+        while True:
+            state = settled()
+            rows = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})["items"]
+            names = sorted(row["name"] for row in rows)
+            if (state["folder_filter"]["active"] == bool(folder) and
+                    state["search_text"] == query and names == sorted(expected)):
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError((name, state["folder_filter"], state["search_text"], names, expected))
+            time.sleep(.1)
         assert state["folder_filter"]["active"] == bool(folder), (name, state)
         assert state["search_text"] == query, (name, state)
-        assert names == sorted(expected), (name, names)
         win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
         image = ImageGrab.grab(window=hwnd)
         assert len(image.getcolors(image.width * image.height) or []) > 16
@@ -70,6 +78,18 @@ def run(exe, root, output):
         image.save(shot)
         cases.append(dict(name=name, folder=folder, query=query, names=names,
                           state=state, screenshot=str(shot)))
+
+    def search(query):
+        driver.command({"cmd": "search", "query": query})
+        if mode == "enter":
+            driver.command({"cmd": "search_enter_key", "phase": "down"})
+            time.sleep(.08)
+            driver.command({"cmd": "search_enter_key", "phase": "up"})
+        time.sleep(.3)
+
+    def folder(path):
+        driver.command({"cmd": "queue_folder_tree_selection", "path": path})
+        time.sleep(.25)
 
     try:
         identity = driver.command({"cmd": "magic_eq_identity"}, timeout=60)
@@ -95,20 +115,20 @@ def run(exe, root, output):
             (root / "library-ready.txt").write_text("Scan completed in isolated profile", encoding="utf-8")
         driver.command({"cmd": "set_view_mode", "mode": "database"})
         a, b = str(root / "library/A"), str(root / "library/B")
-        driver.command({"cmd": "set_folder_filter", "path": a})
-        driver.command({"cmd": "search", "query": "Bird"})
-        check("folder-then-keyword", a, "Bird", ["Bird_A.wav"])
+        folder(a)
+        search("Bird")
+        check(mode + "-folder-then-keyword", a, "Bird", ["Bird_A.wav"])
         driver.command({"cmd": "clear_folder_filter"})
-        driver.command({"cmd": "search", "query": ""})
-        driver.command({"cmd": "search", "query": "Bird"})
-        driver.command({"cmd": "set_folder_filter", "path": a})
-        check("keyword-then-folder", a, "Bird", ["Bird_A.wav"])
-        driver.command({"cmd": "set_folder_filter", "path": b})
-        check("switch-folder", b, "Bird", ["Bird_B.wav"])
-        driver.command({"cmd": "search", "query": "Bell"})
-        check("switch-keyword", b, "Bell", [])
+        search("")
+        search("Bird")
+        folder(a)
+        check(mode + "-keyword-then-folder", a, "Bird", ["Bird_A.wav"])
+        folder(b)
+        check(mode + "-switch-folder", b, "Bird", ["Bird_B.wav"])
+        search("Bell")
+        check(mode + "-switch-keyword", b, "Bell", [])
         driver.command({"cmd": "clear_folder_filter"})
-        check("clear-folder-only", "", "Bell", ["Bell_A.wav"])
+        check(mode + "-clear-folder-only", "", "Bell", ["Bell_A.wav"])
     finally:
         if hwnd and win32gui.IsWindow(hwnd):
             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
@@ -118,7 +138,8 @@ def run(exe, root, output):
             process.terminate()
             process.wait(timeout=10)
     report = dict(exe=str(exe), sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),
-                  source="native QA command path and read-only window screenshots",
+                  source="RenderUI keyword commit and deferred folder-tree selection; native ImGui Enter event",
+                  mode=mode,
                   cases=cases)
     (output / "result.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PASS: folder and keyword order, switching, and separate clear")
@@ -129,5 +150,6 @@ if __name__ == "__main__":
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--isolation-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--mode", choices=("live", "enter"), required=True)
     args = parser.parse_args()
-    run(args.exe, args.isolation_root, args.output)
+    run(args.exe, args.isolation_root, args.output, args.mode)

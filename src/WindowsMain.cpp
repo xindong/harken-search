@@ -3830,8 +3830,9 @@ static bool MagicEqQaIsolationReady() {
     // environment work on every UI frame.
     static const bool ready = [] {
     const std::string fixedRoot = Platform::HarkenUserData::PreviewIsolationRootUtf8();
+    const std::string laneKind = GetHarkenSearchHarnessLaneKindUtf8();
     if (!Platform::HarkenUserData::PreviewIsolationActive() || fixedRoot.empty() ||
-        GetHarkenSearchHarnessLaneKindUtf8() != "functional") return false;
+        (laneKind != "functional" && laneKind != "folder-search")) return false;
     const auto normalized = [](std::string path) {
         std::replace(path.begin(), path.end(), '/', '\\');
         std::transform(path.begin(), path.end(), path.begin(), [](unsigned char c) {
@@ -5341,7 +5342,11 @@ static void PollQaCommandFile(AppState& state) {
         std::string query = getStr(raw, "query");
         if (query.size() < sizeof(state.searchBuffer) - 1) {
             strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), query.c_str(), _TRUNCATE);
-            state.focusSearchBar = !ShouldUseHarnessImmediateFilterRefresh();
+            const bool renderUiSearchLane =
+                Platform::HarkenUserData::PreviewIsolationActive() &&
+                GetHarkenSearchHarnessLaneKindUtf8() == "folder-search";
+            if (renderUiSearchLane) ImGui::ClearActiveID();
+            state.focusSearchBar = !ShouldUseHarnessImmediateFilterRefresh() && !renderUiSearchLane;
             state.filterQueryGeneration++;
             if (ShouldUseHarnessImmediateFilterRefresh()) {
                 state.viewMode = ViewMode::Database;
@@ -5540,6 +5545,39 @@ static void PollQaCommandFile(AppState& state) {
             state.qaOpenSidebarPlaylistContextId = playlistId;
             result = "{\"ok\":true,\"cmd\":\"open_playlist_context_menu\",\"playlist_id\":" + std::to_string((long long)playlistId) + "}";
         }
+
+    } else if (cmd == "search_enter_key") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string phase = getStr(raw, "phase");
+        if (!MagicEqQaIsolationReady()) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (phase == "down" || phase == "up") {
+            ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, phase == "down");
+            result = "{\"ok\":true,\"cmd\":\"search_enter_key\"}";
+        } else {
+            result = "{\"ok\":false,\"error\":\"invalid phase\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "queue_folder_tree_selection") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (!path.empty()) {
+            // The next RenderUI frame applies the same deferred folder-tree path.
+            state.uiState.pendingFolderPath = path;
+            state.uiState.pendingFolderTime = ImGui::GetTime() - 0.2;
+            result = "{\"ok\":true,\"cmd\":\"queue_folder_tree_selection\"}";
+        } else {
+            result = "{\"ok\":false,\"error\":\"path missing\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "remove_folder_subtree") {
         const std::string path = getStr(raw, "path");

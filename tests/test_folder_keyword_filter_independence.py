@@ -5,6 +5,8 @@ from pathlib import Path
 
 source = (Path(__file__).resolve().parents[1] / "src/main.cpp").read_text(encoding="utf-8")
 builder = (Path(__file__).resolve().parents[1] / "src/DatabaseSearchFilterBuilder.cpp").read_text(encoding="utf-8")
+qa_source = (Path(__file__).resolve().parents[1] / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+qa_test = (Path(__file__).resolve().parents[1] / "tools/qa_folder_keyword_search.py").read_text(encoding="utf-8")
 
 
 def section(start: str, end: str) -> str:
@@ -28,3 +30,14 @@ def test_folder_switch_keeps_keyword_and_query_combines_both():
     assert "state.selectedFolderPath =" in folder_switch
     assert "filter.keyword = CompileSearchBufferKeywordForFilter(state.searchBuffer)" in builder
     assert "filter.folderPath = state.folderFilterActive" in builder
+
+
+def test_native_regression_uses_render_ui_transitions():
+    assert 'laneKind == "functional"' in qa_source
+    assert 'laneKind != "folder-search"' in qa_source
+    assert 'cmd == "search_enter_key"' in qa_source
+    assert 'cmd == "queue_folder_tree_selection"' in qa_source
+    assert 'AURA_HARNESS_LANE_KIND="folder-search"' in qa_test
+    assert '"cmd": "queue_folder_tree_selection"' in qa_test
+    assert '"cmd": "search_enter_key"' in qa_test
+    assert '"cmd": "set_folder_filter"' not in qa_test
