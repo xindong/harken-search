@@ -1600,7 +1600,9 @@ void SearchWorker::workerThread() {
         }
         // Only Database-list rows need the original tag. Keep source-file I/O
         // on this search worker, outside the shared Database query path.
-        if (result.success && req.viewMode == 1 && !result.results.empty()) {
+        if (result.success && req.viewMode == 1 &&
+            req.allowDatabaseListSourceDescription &&
+            !result.results.empty()) {
             try {
                 for (auto& record : result.results) {
                     if (!m_running.load(std::memory_order_acquire)) break;

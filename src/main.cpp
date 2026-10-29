@@ -9180,6 +9180,8 @@ static uint64_t SubmitAsyncSearch(AppState& state, const SearchFilter& filter, A
     AsyncSearchRequest req;
     req.filter = filter;
     req.viewMode = (int)state.viewMode;
+    req.allowDatabaseListSourceDescription =
+        state.viewMode == ViewMode::Database && state.lastAppliedSearchText.empty();
     req.playlistId = state.selectedPlaylistId;
     req.limit = limit;
     req.offset = offset;

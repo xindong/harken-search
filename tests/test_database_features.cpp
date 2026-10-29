@@ -5365,6 +5365,7 @@ int testLegacyDescriptionDisplay() {
     };
     AsyncSearchRequest databaseRequest;
     databaseRequest.viewMode = 1;
+    databaseRequest.allowDatabaseListSourceDescription = true;
     databaseRequest.limit = 20;
     AsyncSearchResult databaseResult;
     const bool databaseSearched = waitForSearch(databaseRequest, databaseResult);
@@ -5377,6 +5378,17 @@ int testLegacyDescriptionDisplay() {
     const AudioRecord* workerChinese = findRow(databaseResult, chinese.filePath);
     const AudioRecord* workerConverted = findRow(databaseResult, converted.filePath);
     const AudioRecord* workerUnreadable = findRow(databaseResult, legacy.filePath);
+    AsyncSearchRequest keywordRequest = databaseRequest;
+    keywordRequest.filter.keyword = "real";
+    keywordRequest.allowDatabaseListSourceDescription = false;
+    AsyncSearchResult keywordResult;
+    const bool keywordSearched = waitForSearch(keywordRequest, keywordResult);
+    const AudioRecord* keywordChinese = findRow(keywordResult, chinese.filePath);
+    AsyncSearchRequest collectionRequest = databaseRequest;
+    collectionRequest.filter.keyword = "real";
+    AsyncSearchResult collectionResult;
+    const bool collectionSearched = waitForSearch(collectionRequest, collectionResult);
+    const AudioRecord* collectionChinese = findRow(collectionResult, chinese.filePath);
     AsyncSearchRequest playlistRequest;
     playlistRequest.viewMode = 3;
     playlistRequest.playlistId = scopePlaylist;
@@ -5386,11 +5398,15 @@ int testLegacyDescriptionDisplay() {
         waitForSearch(playlistRequest, playlistResult);
     const AudioRecord* playlistChinese = findRow(playlistResult, chinese.filePath);
     const bool workerScoped = databaseSearched && workerChinese && workerConverted &&
-        workerUnreadable && playlistSearched && playlistChinese &&
+        workerUnreadable && keywordSearched && keywordChinese &&
+        collectionSearched && collectionChinese &&
+        playlistSearched && playlistChinese &&
         workerChinese->databaseListDescriptionOverride == sourceChinese.comment &&
         workerConverted->databaseListDescriptionOverride == sourceChinese.comment &&
         workerUnreadable->databaseListDescriptionOverride ==
             decoded.databaseListDescriptionOverride &&
+        keywordChinese->databaseListDescriptionOverride != sourceChinese.comment &&
+        collectionChinese->databaseListDescriptionOverride == sourceChinese.comment &&
         playlistChinese->databaseListDescriptionOverride != sourceChinese.comment;
     searchWorker.stop();
     const bool ok = updated && decoded.id > 0 &&
@@ -5422,7 +5438,13 @@ int testLegacyDescriptionDisplay() {
                        << " convertedAdded=" << convertedAdded
                        << " convertedUpdated=" << convertedUpdated
                        << " convertedNeedsSource=" << convertedRead.databaseListDescriptionNeedsSource
-                       << " workerScoped=" << workerScoped;
+                       << " workerScoped=" << workerScoped
+                       << " keywordSearched=" << keywordSearched
+                       << " keywordRow=" << (keywordChinese != nullptr)
+                       << " keywordOverride=" << (keywordChinese
+                           ? keywordChinese->databaseListDescriptionOverride : std::string())
+                       << " collectionOverride=" << (collectionChinese
+                           ? collectionChinese->databaseListDescriptionOverride : std::string());
     return ok ? 0 : 1;
 }
 

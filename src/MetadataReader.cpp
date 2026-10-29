@@ -215,7 +215,7 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
 
     // Parse frames
     size_t pos = 0;
-    while (pos + (majorVersion >= 3 ? 10u : 6u) <= tagSize) {
+    while (pos + 10 < tagSize) {
         // Frame header
         char frameId[5] = {0};
         if (majorVersion >= 3) {
@@ -240,22 +240,17 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
             // ID3v2.2: 3-byte size
             frameSize = (tagData[pos] << 16) | (tagData[pos + 1] << 8) | tagData[pos + 2];
             pos += 3;
-            if (frameSize == 0 || frameSize > tagSize - pos) break;
-            // Keep the previous v2.2 behavior for unrelated frames. Only COM
-            // is part of this description repair.
-            if (std::strcmp(frameId, "COM") != 0) {
-                pos += frameSize;
-                continue;
-            }
+            pos += frameSize;
+            continue;
         }
+        pos += 4;
 
         // Skip flags (2 bytes for v2.3/2.4)
         if (majorVersion >= 3) {
-            pos += 4;
             pos += 2;
         }
 
-        if (frameSize == 0 || frameSize > tagSize - pos) break;
+        if (frameSize == 0 || pos + frameSize > tagSize) break;
 
         // Read frame content
         std::string content;
@@ -263,7 +258,7 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
         size_t textStart = pos + 1;
         size_t textLen = frameSize - 1;
         std::string id(frameId);
-        if (id == "COMM" || id == "COM") {
+        if (id == "COMM") {
             metadata.comment = trimString(Id3CommentText::Decode(
                 encoding, std::string_view(
                     reinterpret_cast<const char*>(tagData.data() + textStart), textLen)));

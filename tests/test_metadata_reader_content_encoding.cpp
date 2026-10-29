@@ -249,11 +249,26 @@ int main() {
         'C', 'O', 'M', 0, 0, 9, 0, 'e', 'n', 'g', 0, '2', '.', '2', '!'
     };
     Check(WriteId3v22(id3v22CommentPath, id3v22CommentTag),
-          "write ID3v2.2 COM comment fixture");
+          "write mixed ID3v2.2 and ID3v1 fixture");
+    std::vector<uint8_t> id3v1Trailer(128, 0);
+    id3v1Trailer[0] = 'T';
+    id3v1Trailer[1] = 'A';
+    id3v1Trailer[2] = 'G';
+    std::memcpy(id3v1Trailer.data() + 3, "Old Title", 9);
+    std::memcpy(id3v1Trailer.data() + 33, "Old Artist", 10);
+    std::memcpy(id3v1Trailer.data() + 63, "Old Album", 9);
+    {
+        std::ofstream append(id3v22CommentPath, std::ios::binary | std::ios::app);
+        append.write(reinterpret_cast<const char*>(id3v1Trailer.data()),
+                     static_cast<std::streamsize>(id3v1Trailer.size()));
+        Check(append.good(), "append ID3v1 fallback fields");
+    }
     AudioMetadata id3v22CommentMetadata;
     Check(MetadataReader::readMetadata(id3v22CommentPath.u8string(), id3v22CommentMetadata) &&
-              id3v22CommentMetadata.comment == "2.2!",
-          "ID3v2.2 COM comment reaches the comment decoder");
+              id3v22CommentMetadata.title == "Old Title" &&
+              id3v22CommentMetadata.artist == "Old Artist" &&
+              id3v22CommentMetadata.album == "Old Album",
+          "mixed ID3v2.2 and ID3v1 retains existing fallback fields");
     std::string truncatedStoredComment = storedComment;
     truncatedStoredComment.pop_back();
     truncatedStoredComment.back() = '6';
