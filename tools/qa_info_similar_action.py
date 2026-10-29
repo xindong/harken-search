@@ -4,6 +4,8 @@ Uses a disposable compile-time isolated package and the local QA framebuffer
 supplement. Never moves the shared desktop pointer.
 """
 import argparse, hashlib, json, os, re, subprocess, time, uuid
+import ctypes
+import ctypes.wintypes as w
 from pathlib import Path
 from PIL import Image, ImageGrab
 from qa_transport_themes import Driver, THEMES, window_api
@@ -61,8 +63,6 @@ def run(args):
         if native_key:
             # Menus and floating panels may have their own native viewport.
             # Capture only this process's smallest window containing the item.
-            import ctypes
-            from ctypes import wintypes as w
             zone=state['zones'][native_key]
             x,y=zone['x']+zone['w']/2,zone['y']+zone['h']/2
             candidates=[]
@@ -85,15 +85,16 @@ def run(args):
             assert len(shot.getcolors(shot.width*shot.height) or [])>20
             case.update(capture_method='read-only native viewport capture',hwnd=window)
         else:
-            import ctypes
-            from ctypes import wintypes as w
             point=w.POINT(0,0)
             assert windows.ClientToScreen(identity['hwnd'],ctypes.byref(point))
             case['client_origin']=[point.x,point.y]
             key=uuid.uuid4().hex;command(cmd='qa_capture',capture_key=key);raw=runtime/(key+'.ppm');end=time.monotonic()+10
             while True:
                 try:shot=Image.open(raw).convert('RGB');shot.load();break
-                except OSError:pass
+                except OSError:
+                    # Capture output can be missing or incomplete until the
+                    # application finishes writing; keep the bounded retry.
+                    pass
                 assert time.monotonic()<end;time.sleep(.05)
             case['capture_method']='main-window OpenGL framebuffer'
         path=out/(name+'.png');shot.save(path)

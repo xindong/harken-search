@@ -61,7 +61,10 @@ def run(args):
                 try:
                     shot=Image.open(raw).convert('RGB')
                     if len(shot.getcolors(shot.width*shot.height) or [])>20: break
-                except OSError: pass
+                except OSError:
+                    # The application may still be writing this framebuffer.
+                    # Retry after the shared deadline check and short sleep.
+                    pass
                 assert time.monotonic()<deadline,'No complete framebuffer'
                 time.sleep(.08)
         else: shot=ImageGrab.grab(window=hwnd).convert('RGB')
@@ -118,7 +121,7 @@ def run(args):
         launch(); command(cmd='set_theme',theme=2)
         column_width('filter',250)
         for side,label in ((2,'top'),(3,'bottom')):
-            state=dock(side); artwork(); wall=covers(56)
+            dock(side); artwork(); wall=covers(56)
             assert wall['grid_columns']>8 and 56<=wall['rendered_thumb_size']<63,wall
             resize(220); capture('portrait-'+label+'-compact',wall)
             state=resize(680)

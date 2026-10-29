@@ -6,6 +6,7 @@ No shared desktop input is used. A prepared 48-cover fixture is required.
 """
 from __future__ import annotations
 import argparse, ctypes, hashlib, json, os, re, subprocess, time, uuid
+import ctypes.wintypes as wintypes
 from pathlib import Path
 from PIL import Image
 from qa_transport_themes import Driver, THEMES, window_api
@@ -107,7 +108,6 @@ def run(args):
         case = dict(name=name,frames=len(rows),changes=len(changes),passed=not changes,
                     first=rows[0],last=rows[-1],state=state,trace_key=key)
         if images:
-            from ctypes import wintypes
             point = wintypes.POINT(0,0); windows.ClientToScreen(hwnd,ctypes.byref(point))
             panel = state['panels']['info']
             box = (int(panel['x']-point.x),int(panel['y']-point.y),
