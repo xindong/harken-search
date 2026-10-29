@@ -273,6 +273,45 @@ void test_checksum_cleanup_and_successful_rename_intents() {
           "invalid staging request cannot emit forged cleanup or rename intents");
 }
 
+void test_version_retention_keeps_current_previous_and_pending() {
+    using aris::update::UpdateDownloadManager;
+
+    const std::vector<std::string> directories{
+        "1.0.21", "1.0.22", "1.0.23", "staging", "transaction-7",
+        "quarantine", "logs"};
+    const auto plan = UpdateDownloadManager::PlanVersionRetention(
+        directories, "1.0.23");
+    check(plan.ok, "numeric semver current version authorizes a plan");
+    check(plan.pruneVersions == std::vector<std::string>({"1.0.21"}),
+          "only versions older than the newest previous package are pruned");
+
+    const auto pending = UpdateDownloadManager::PlanVersionRetention(
+        {"1.0.23", "1.0.24"}, "1.0.23");
+    check(pending.ok && pending.pruneVersions.empty(),
+          "a downloaded newer candidate is never pruned");
+
+    const auto onlyCurrent = UpdateDownloadManager::PlanVersionRetention(
+        {"1.0.23"}, "1.0.23");
+    check(onlyCurrent.ok && onlyCurrent.pruneVersions.empty(),
+          "the running version alone keeps its own package");
+
+    const auto numericOrder = UpdateDownloadManager::PlanVersionRetention(
+        {"1.0.9", "1.0.10", "1.0.2"}, "1.0.10");
+    check(numericOrder.pruneVersions == std::vector<std::string>({"1.0.2"}),
+          "retention compares numeric components, not text order");
+
+    const auto unparsable = UpdateDownloadManager::PlanVersionRetention(
+        directories, "not-a-version");
+    check(!unparsable.ok && unparsable.pruneVersions.empty(),
+          "an invalid running version forbids any pruning");
+
+    check(UpdateDownloadManager::IsVersionDirectoryName("1.0.23") &&
+              !UpdateDownloadManager::IsVersionDirectoryName("../1.0") &&
+              !UpdateDownloadManager::IsVersionDirectoryName("01.0.23") &&
+              !UpdateDownloadManager::IsVersionDirectoryName("staging"),
+          "directory admission accepts only strict numeric semver names");
+}
+
 }  // namespace
 
 int main() {
@@ -282,5 +321,6 @@ int main() {
     test_retry_is_deterministic_capped_and_classified();
     test_single_flight_rejects_duplicate_and_releases_owner();
     test_checksum_cleanup_and_successful_rename_intents();
+    test_version_retention_keeps_current_previous_and_pending();
     return failures == 0 ? 0 : 1;
 }

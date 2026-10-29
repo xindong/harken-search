@@ -1675,6 +1675,7 @@ struct AppState {
 #ifdef ARIS_PREVIEW_ISOLATION
     bool qaCreateNewDbNow = false;
     std::string qaNewDbName;
+    std::string qaOpenExistingDbPath;
 #endif
     bool showShortcutsDialog = false;
 
@@ -2484,6 +2485,10 @@ struct AppState {
     float minBpmFilter = 0.0f;
     float maxBpmFilter = 0.0f;
     char keyFilterBuffer[64] = "";
+#if ARIS_PREVIEW_ISOLATION
+    // Client-space rectangles from the last RenderUI frame for native QA clicks.
+    std::map<std::string, ImVec4> qaFilterUiRects;
+#endif
 
     // Naming convention filter
     int namingFilter = 0;

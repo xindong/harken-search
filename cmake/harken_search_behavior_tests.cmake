@@ -6104,6 +6104,17 @@ aura_set_test_labels(TestDatabaseNavNonblockingContract core)
 
 
 add_executable(TestTransportContrast EXCLUDE_FROM_ALL tests/test_transport_contrast.cpp)
+add_executable(TestActionButtonStyle EXCLUDE_FROM_ALL tests/test_action_button_style.cpp
+    src/BuiltinThemeScheme.cpp
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+add_dependencies(TestActionButtonStyle ArisLocalizationGenerated)
+target_include_directories(TestActionButtonStyle PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
+if(MSVC)
+    target_compile_options(TestActionButtonStyle PRIVATE /utf-8)
+endif()
+add_test(NAME TestActionButtonStyle COMMAND TestActionButtonStyle)
+aura_set_test_labels(TestActionButtonStyle ui)
 add_executable(TestEmptyStateContrast EXCLUDE_FROM_ALL tests/test_empty_state_contrast.cpp src/BuiltinThemeScheme.cpp)
 add_dependencies(TestEmptyStateContrast ArisLocalizationGenerated)
 target_include_directories(TestEmptyStateContrast PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
@@ -7775,6 +7786,7 @@ add_executable(TestBootstrapExitExplanation
     tests/test_bootstrap_exit_explanation.cpp
     src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
     src/platform/update_bootstrap_authority_base.cpp
+    src/update/UpdateDownloadManager.cpp
     src/platform/update_persistence_port.cpp
     src/platform/text_encoding_win32.cpp
 )

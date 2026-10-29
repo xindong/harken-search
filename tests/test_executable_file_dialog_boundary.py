@@ -61,13 +61,13 @@ assert MAIN.count(qualified_call) == 1
 assert "static std::string OpenExecutableFileDialogUtf8(HWND owner" not in MAIN
 assert MAIN.count("OpenExecutableFileDialogUtf8(") == 1
 
-browse = MAIN.index('ImGui::Button(L(Main_DawBrowseBtn)')
+browse = MAIN.index('aura::ui::ActionButton(L(Main_DawBrowseBtn)')
 title = MAIN.index('std::wstring title = L"Select "', browse)
 call = MAIN.index(qualified_call, title)
 empty_check = MAIN.index("if (!picked.empty())", call)
 assign = MAIN.index("selected.exePath = picked;", empty_check)
 buffer_copy = MAIN.index("strncpy_s(s_dawExePathBuf", assign)
-clear = MAIN.index('ImGui::Button(L(Main_DawClearBtn)', buffer_copy)
+clear = MAIN.index('aura::ui::ActionButton(L(Main_DawClearBtn)', buffer_copy)
 assert browse < title < call < empty_check < assign < buffer_copy < clear
 assert "Utf8ToWide(selected.exePath)" in MAIN[title:empty_check]
 assert "L(Daw_PickExeHint)" in MAIN

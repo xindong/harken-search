@@ -15,6 +15,7 @@
 #include "platform/filesystem.h"
 #include "platform/theme_json_dialogs.h"
 #include "imgui.h"
+#include "HarkenSearchWidgets.h"
 
 #include <vector>
 #include <string>
@@ -413,9 +414,6 @@ void RenderThemeEditor(AppState& state) {
     const ImVec4 editorConsoleBg = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, scheme.metadataPanelLabel, 0.10f), 0.99f);
     const ImVec4 editorConsoleBgAlt = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, scheme.filterBrowserBG, 0.06f), 0.99f);
     const ImVec4 editorConsoleEdge = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelLabel, scheme.filterBrowserOutline, 0.26f), 0.46f);
-    const ImVec4 editorPositive = ThemeEditorWithAlpha(ThemeEditorMix(scheme.volumeColor, scheme.metadataPanelText, 0.12f), 1.0f);
-    const ImVec4 editorPositiveHover = ThemeEditorWithAlpha(ThemeEditorMix(editorPositive, scheme.controlAccent, 0.16f), 1.0f);
-    const ImVec4 editorPositiveActive = ThemeEditorWithAlpha(ThemeEditorMix(editorPositive, scheme.volumeClipColor, 0.10f), 1.0f);
     const ImVec4 editorStatusOk = ThemeEditorWithAlpha(ThemeEditorMix(scheme.volumeColor, scheme.metadataPanelText, 0.10f), 1.0f);
     const ImVec4 editorStatusInfo = ThemeEditorWithAlpha(ThemeEditorMix(scheme.controlAccent, scheme.metadataPanelText, 0.18f), 1.0f);
     const float editorWindowLuma = scheme.mainWindowBG.x * 0.299f + scheme.mainWindowBG.y * 0.587f + scheme.mainWindowBG.z * 0.114f;
@@ -496,7 +494,7 @@ void RenderThemeEditor(AppState& state) {
     }
 
     ImGui::SameLine();
-    if (ImGui::Button(L(ThemeEditor_RestoreOnOpen))) {
+    if (aura::ui::ActionButton(L(ThemeEditor_RestoreOnOpen))) {
         PushUndo();
         RestoreSnapshot(state);
     }
@@ -505,7 +503,7 @@ void RenderThemeEditor(AppState& state) {
     {
         bool canUndo = !g_ed.undoStack.empty();
         if (!canUndo) ImGui::BeginDisabled();
-        if (ImGui::Button(L(ThemeEditor_UndoBtn))) {
+        if (aura::ui::ActionButton(L(ThemeEditor_UndoBtn))) {
             g_ed.draft = g_ed.undoStack.back();
             g_ed.undoStack.pop_back();
             if (g_ed.livePreview) ApplyDraftToLive(state);
@@ -578,18 +576,14 @@ void RenderThemeEditor(AppState& state) {
     {
         bool nameEmpty = (g_ed.themeName[0] == '\0');
         if (nameEmpty) ImGui::BeginDisabled();
-        ImGui::PushStyleColor(ImGuiCol_Button,        editorPositive);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, editorPositiveHover);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  editorPositiveActive);
-        if (ImGui::Button(L(ThemeEditor_SaveAsNew), ImVec2(130, 0))) {
+        if (aura::ui::ActionButton(L(ThemeEditor_SaveAsNew), ImVec2(130, 0), aura::ui::ButtonVariant::PrimaryTransfer)) {
             SaveDraftAsCustomTheme(state, g_ed.exportMsg);
         }
-        ImGui::PopStyleColor(3);
         if (nameEmpty) ImGui::EndDisabled();
     }
 
     ImGui::SameLine();
-    if (ImGui::Button(L(ThemeEditor_Discard))) {
+    if (aura::ui::ActionButton(L(ThemeEditor_Discard))) {
         PushUndo();
         RestoreSnapshot(state);
     }
@@ -599,7 +593,7 @@ void RenderThemeEditor(AppState& state) {
     ImGui::SameLine();
 
     // Import
-    if (ImGui::Button(L(ThemeEditor_ImportJson), ImVec2(100, 0))) {
+    if (aura::ui::ActionButton(L(ThemeEditor_ImportJson), ImVec2(100, 0))) {
 #ifdef _WIN32
         const std::string suggestedPath = g_ed.lastImportPath.empty()
             ? (GetExeDirUtf8() + "\\theme_export.json")
@@ -634,7 +628,7 @@ void RenderThemeEditor(AppState& state) {
 
     ImGui::SameLine();
 
-    if (ImGui::Button(L(ThemeEditor_ImportCreateTheme), ImVec2(148, 0))) {
+    if (aura::ui::ActionButton(L(ThemeEditor_ImportCreateTheme), ImVec2(148, 0), aura::ui::ButtonVariant::PrimarySearch)) {
 #ifdef _WIN32
         const std::string suggestedPath = g_ed.lastImportPath.empty()
             ? (GetExeDirUtf8() + "\\theme_export.json")
@@ -671,7 +665,7 @@ void RenderThemeEditor(AppState& state) {
     ImGui::SameLine();
 
     // Export
-    if (ImGui::Button(L(ThemeEditor_ExportJson), ImVec2(100, 0))) {
+    if (aura::ui::ActionButton(L(ThemeEditor_ExportJson), ImVec2(100, 0))) {
         std::string json = ThemeColors::exportToJSON(g_ed.draft);
         ImGui::SetClipboardText(json.c_str());
 
@@ -738,7 +732,7 @@ void RenderThemeEditor(AppState& state) {
         s_funcNameSyncedFromThemeName = false;
     ImGui::SameLine();
     static std::string s_presetSaveMsg;
-    if (ImGui::Button(L(ThemeEditor_GenerateCpp))) {
+    if (aura::ui::ActionButton(L(ThemeEditor_GenerateCpp))) {
         size_t fieldCount = 0;
         const ThemeEditorItem* fields = GetThemeEditorItems(fieldCount);
 

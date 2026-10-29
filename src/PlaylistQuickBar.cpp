@@ -9,6 +9,7 @@
 #include "Theme.h"
 
 #include "imgui.h"
+#include "HarkenSearchWidgets.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -839,7 +840,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
 
             bool canSubmit = (state.pendingNewSubName[0] != '\0');
             if (!canSubmit) ImGui::BeginDisabled();
-            if (ImGui::Button(L(PLQ_NewSubConfirmBtn))) {
+            if (aura::ui::ActionButton(L(PLQ_NewSubConfirmBtn), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                 if (parent->is_folder) {
                     state.database.createSubPlaylist(pid, state.pendingNewSubName, "");
                 } else {
@@ -864,7 +865,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             }
             if (!canSubmit) ImGui::EndDisabled();
             ImGui::SameLine();
-            if (ImGui::Button(L(PLQ_NewSubCancelBtn))) ImGui::CloseCurrentPopup();
+            if (aura::ui::ActionButton(L(PLQ_NewSubCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         }
         }
         ImGui::EndPopup();
@@ -883,7 +884,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::InputText(L(PLQ_PromoteOrigNameField),
                          state.pendingPromoteDefaultChildName,
                          sizeof(state.pendingPromoteDefaultChildName));
-        if (ImGui::Button(L(PLQ_PromoteConfirmBtn))) {
+        if (aura::ui::ActionButton(L(PLQ_PromoteConfirmBtn), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             int64_t defaultChild = state.database.promoteOrphanToFolderWithDefaultChild(
                 state.pendingPromoteOrphanId, state.pendingPromoteDefaultChildName);
             if (defaultChild > 0) {
@@ -894,7 +895,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(PLQ_PromoteCancelBtn))) ImGui::CloseCurrentPopup();
+        if (aura::ui::ActionButton(L(PLQ_PromoteCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -929,7 +930,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             ImGui::PopID();
         }
         ImGui::Separator();
-        if (ImGui::Button(L(PLQ_MoveSubCancelBtn))) ImGui::CloseCurrentPopup();
+        if (aura::ui::ActionButton(L(PLQ_MoveSubCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -999,14 +1000,14 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
                 const float gap = 8.0f;
                 const float rowW = btnW * 2 + gap;
                 ImGui::SetCursorPosX(ImGui::GetWindowWidth() - rowW - 16.0f);
-                if (ImGui::Button(L(PLQ_DelFolderCancelBtn), ImVec2(btnW, 0))) {
+                if (aura::ui::ActionButton(L(PLQ_DelFolderCancelBtn), ImVec2(btnW, 0), aura::ui::ButtonVariant::Quiet)) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine(0.0f, gap);
                 ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.62f, 0.18f, 0.14f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.24f, 0.18f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.50f, 0.13f, 0.11f, 1.0f));
-                if (ImGui::Button(L(PLQ_DelFolderConfirmBtn), ImVec2(btnW, 0))) {
+                if (aura::ui::ActionButton(L(PLQ_DelFolderConfirmBtn), ImVec2(btnW, 0), aura::ui::ButtonVariant::Danger)) {
                     state.pendingDeleteFolderSecondConfirm = true;
                     ImGui::CloseCurrentPopup();
                 }
@@ -1040,14 +1041,14 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             ImGui::Spacing();
             ImGui::Text("%s", target->name.c_str());
             ImGui::Separator();
-            if (ImGui::Button(L(PLQ_Del2ndCancelBtn), ImVec2(110, 0))) {
+            if (aura::ui::ActionButton(L(PLQ_Del2ndCancelBtn), ImVec2(110, 0), aura::ui::ButtonVariant::Quiet)) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.62f, 0.18f, 0.14f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.24f, 0.18f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.50f, 0.13f, 0.11f, 1.0f));
-            if (ImGui::Button(L(PLQ_Del2ndConfirmBtn), ImVec2(150, 0))) {
+            if (aura::ui::ActionButton(L(PLQ_Del2ndConfirmBtn), ImVec2(150, 0), aura::ui::ButtonVariant::Danger)) {
                 state.database.deletePlaylist(fid);
                 state.playlists = state.database.getAllPlaylists();
                 if (state.selectedPlaylistId == fid) {
@@ -1077,7 +1078,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::TextWrapped(L(PLQ_BulkAddConfirmFmt),
                            state.pendingBulkAddFileIds.size(),
                            state.pendingBulkAddTargetName.c_str());
-        if (ImGui::Button(L(PLQ_BulkConfirmBtn))) {
+        if (aura::ui::ActionButton(L(PLQ_BulkConfirmBtn), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             const auto bulk = state.database.addManyToPlaylist(
                 state.pendingBulkAddTargetId,
                 state.pendingBulkAddFileIds);
@@ -1098,7 +1099,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(PLQ_BulkCancelBtn))) {
+        if (aura::ui::ActionButton(L(PLQ_BulkCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
             state.pendingBulkAddFileIds.clear();
             state.pendingBulkAddTargetName.clear();
             state.pendingBulkAddTargetId = -1;
