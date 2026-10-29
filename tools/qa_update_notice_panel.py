@@ -119,6 +119,25 @@ def run(args):
         png = output / 'update-notice-local-version.png'
         digest = capture_window(user32, hwnd, process.pid, png)
         results['screenshot'] = {'path': str(png), 'sha256': digest}
+        # Scroll the body to the bottom so the contributors line is visible,
+        # then capture a second frame. Wheel events are injected into ImGui
+        # only; the desktop pointer is never moved.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            state = driver.command({'cmd': 'update_notice', 'action': 'state'})
+            if state.get('scroll_y', 0) + 1 >= state.get('scroll_max', 0):
+                break
+            driver.command({'cmd': 'update_notice_pointer', 'control': 'body',
+                            'phase': 'wheel', 'amount': -8})
+            time.sleep(0.15)
+        state = driver.command({'cmd': 'update_notice', 'action': 'state'})
+        results['scrolled'] = state
+        if state.get('scroll_y', 0) + 1 < state.get('scroll_max', 0):
+            raise RuntimeError(f'body did not reach the bottom: {state}')
+        time.sleep(0.6)
+        bottom = output / 'update-notice-contributors.png'
+        bottom_digest = capture_window(user32, hwnd, process.pid, bottom)
+        results['contributors_screenshot'] = {'path': str(bottom), 'sha256': bottom_digest}
         results['identity'] = {
             'exe': str(exe),
             'exe_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
