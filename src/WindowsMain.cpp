@@ -72,6 +72,10 @@ static constexpr const char* kLegacyAuroAudioFileAssociation = "Auro.AudioFile";
 #include <fstream>
 #include <iomanip>
 
+#if ARIS_PREVIEW_ISOLATION
+static std::string s_previewFrameCapturePath;
+#endif
+
 #if AURA_BUILD_DIAGNOSTICS
 // Forward-declare the diagnostic widget smoke window.
 // Its implementation stays in DevToolsHarkenSearchSmoke.cpp.
@@ -127,6 +131,8 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WwiseTransferConfig.h"
 #include "WwiseTransferExecute.h"
 #include "WwiseTransferPanel.h"
+#include "ui/ActionButtonStyle.h"
+#include "nlohmann_json.hpp"
 #include "WwiseTransferPersist.h"
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
@@ -3830,8 +3836,9 @@ static bool MagicEqQaIsolationReady() {
     // environment work on every UI frame.
     static const bool ready = [] {
     const std::string fixedRoot = Platform::HarkenUserData::PreviewIsolationRootUtf8();
+    const std::string laneKind = GetHarkenSearchHarnessLaneKindUtf8();
     if (!Platform::HarkenUserData::PreviewIsolationActive() || fixedRoot.empty() ||
-        GetHarkenSearchHarnessLaneKindUtf8() != "functional") return false;
+        (laneKind != "functional" && laneKind != "folder-search")) return false;
     const auto normalized = [](std::string path) {
         std::replace(path.begin(), path.end(), '/', '\\');
         std::transform(path.begin(), path.end(), path.begin(), [](unsigned char c) {
@@ -4428,6 +4435,9 @@ static void PollQaCommandFile(AppState& state) {
                 else if (getStr(raw,"action")=="new_db_dialog") state.showNewDbDialog=true;
                 else if (getStr(raw,"action")=="new_db_name") state.qaNewDbName=getStr(raw,"text");
                 else if (getStr(raw,"action")=="new_db_create") state.qaCreateNewDbNow=true;
+                else if (getStr(raw,"action")=="open_existing_db" &&
+                    Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(getStr(raw,"text")))
+                    state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
@@ -4728,6 +4738,51 @@ static void PollQaCommandFile(AppState& state) {
                 }
             }
         }
+    } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
+            (!state.currentDbPathUtf8.empty() &&
+             !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(state.currentDbPathUtf8))) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (cmd == "ordinary_button_audit") {
+            namespace paint = aura::ui::ActionButtonStyle;
+            paint::RequestAudit();
+            auto checks = nlohmann::json::array();
+            auto rgba = [](ImU32 c) { return std::array<int, 4>{
+                int((c >> IM_COL32_R_SHIFT) & 255), int((c >> IM_COL32_G_SHIFT) & 255),
+                int((c >> IM_COL32_B_SHIFT) & 255), int((c >> IM_COL32_A_SHIFT) & 255)}; };
+            for (const auto& item : paint::observations) {
+                checks.push_back({{"label", item.label}, {"window", item.window},
+                    {"bounds", {item.min.x, item.min.y, item.max.x, item.max.y}},
+                    {"clip", {item.clip.x, item.clip.y, item.clip.z, item.clip.w}},
+                    {"fg", rgba(item.text)}, {"fill", rgba(item.fill)}, {"disabled", item.disabled}});
+            }
+            result = nlohmann::json({{"ok", true}, {"frame", paint::auditFrame},
+                {"current_frame", ImGui::GetFrameCount()}, {"theme", int(state.settings.theme)},
+                {"checks", checks}}).dump();
+        } else {
+            // Only open existing UI on the isolated profile. No connection,
+            // file operation, update install or button activation is exposed.
+            const std::string module = getStr(raw, "module");
+            const std::string action = getStr(raw, "action");
+            bool handled = action == "open";
+            if (action == "close" && module == "theme-editor") {
+                state.showThemeEditor = false;
+                handled = true;
+            } else if (action == "open") {
+                if (module == "settings") state.showSettingsDialog = true;
+                else if (module == "library") state.showDbManagerDialog = true;
+                else if (module == "batch-rename") state.showBatchRenameDialog = true;
+                else if (module == "naming") state.showNamingDialog = true;
+                else if (module == "theme-editor") state.showThemeEditor = true;
+                else if (module == "wwise") aura::wwise::OpenWwiseTransferPanel({}, {});
+                else handled = false;
+            }
+            result = handled ? R"({"ok":true})" : R"({"ok":false,"error":"unknown_button_window_action"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "function_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
@@ -4862,10 +4917,44 @@ static void PollQaCommandFile(AppState& state) {
                    height < 180 || height > 1200) {
             result = "{\"ok\":false,\"error\":\"invalid_preview_layout\"}";
         } else if (action != "open" && action != "close" && action != "start" &&
-                   action != "cancel" && action != "find" && action != "state") {
+                   action != "cancel" && action != "find" && action != "state" &&
+                   action != "pointer") {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
+        } else if (action == "pointer") {
+#if AURA_BUILD_DIAGNOSTICS
+            // App-owned input only over freshly observed Similar Sounds controls.
+            // This remains inside the compile-time pinned QA build.
+            const float x = static_cast<float>(getDouble(raw, "x", -10000));
+            const float y = static_cast<float>(getDouble(raw, "y", -10000));
+            const std::string phase = getStr(raw, "phase");
+            bool hit = false;
+            for (const auto& item : aura::ui::ActionButtonStyle::observations) {
+                const auto* window = ImGui::FindWindowByName(item.window.c_str());
+                const bool ownPopup = window && (window->Flags & ImGuiWindowFlags_Popup) &&
+                    window->ParentWindow && std::strstr(window->ParentWindow->Name, "SimilarActionRow");
+                if ((item.window.find("SimilarActionRow") != std::string::npos || ownPopup) &&
+                    x >= item.min.x && x < item.max.x && y >= item.min.y && y < item.max.y) hit = true;
+            }
+            const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();
+            if (!hit || !fresh || s_magicEqQaPointer.pending ||
+                (phase != "hover" && phase != "down" && phase != "up") ||
+                ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
+                (phase == "up" && !s_magicEqQaPointer.held)) {
+                result = R"({"ok":false,"error":"invalid_similar_control_pointer"})";
+            } else {
+                s_magicEqQaPointer.active = true;
+                s_magicEqQaPointer.pending = phase != "hover";
+                s_magicEqQaPointer.held = phase == "down";
+                s_magicEqQaPointer.x = x;
+                s_magicEqQaPointer.y = y;
+                s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                result = R"({"ok":true})";
+            }
+#else
+            result = R"({"ok":false,"error":"diagnostics_required"})";
+#endif
         } else {
             if (action == "open") {
                 g_currentLanguage = static_cast<AppLanguage>(language);
@@ -4904,12 +4993,28 @@ static void PollQaCommandFile(AppState& state) {
                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
+                ",\"preset\":" + std::to_string(static_cast<int>(state.similarSoundsPreset)) +
+                ",\"open_popups\":" + std::to_string(ImGui::GetCurrentContext()->OpenPopupStack.Size) +
                 ",\"database\":\"" + jsonEscape(state.currentDbPathUtf8) + "\"}";
         }
 #else
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
 #endif
 
+    } else if (cmd == "capture_preview_frame") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
+            !s_previewFrameCapturePath.empty() || path.empty() || PathExistsUtf8(path) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) {
+            result = R"({"ok":false,"error":"isolated_capture_path_required"})";
+        } else {
+            s_previewFrameCapturePath = path;
+            result = R"({"ok":true,"pending":true})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "get_state") {
         // Return current app state snapshot
         int resultCount = (int)state.searchResults.size();
@@ -5006,6 +5111,27 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_view\":\"" + std::string(viewModeToString(state.viewMode)) + "\",";
         result += "\"active_library\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
         result += "\"db_path\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
+#if ARIS_PREVIEW_ISOLATION
+        // Observe the real setup modal without sending desktop input.
+        const auto* newDbWindow = ImGui::FindWindowByName(L(Dlg_NewDB));
+        const bool newDbVisible = newDbWindow && newDbWindow->WasActive &&
+            std::any_of(ImGui::GetCurrentContext()->OpenPopupStack.begin(),
+                        ImGui::GetCurrentContext()->OpenPopupStack.end(),
+                        [newDbWindow](const ImGuiPopupData& popup) { return popup.Window == newDbWindow; });
+        result += "\"new_db_dialog_open\":" + std::string(newDbVisible ? "true" : "false") + ",";
+        result += "\"new_db_modal_blocks_background\":" +
+            std::string(newDbVisible && ImGui::GetTopMostPopupModal() == newDbWindow ? "true" : "false") + ",";
+        if (newDbVisible) {
+            result += "\"new_db_dialog_bounds\":[" + std::to_string(newDbWindow->Pos.x) + "," +
+                std::to_string(newDbWindow->Pos.y) + "," +
+                std::to_string(newDbWindow->Pos.x + newDbWindow->Size.x) + "," +
+                std::to_string(newDbWindow->Pos.y + newDbWindow->Size.y) + "],";
+        }
+        result += "\"startup_needs_database_setup\":" + std::string(state.startupNeedsDatabaseSetup ? "true" : "false") + ",";
+        result += "\"default_db_directory\":\"" + jsonEscape(GetDefaultDbDirUtf8()) + "\",";
+        result += "\"db_switch_error\":\"" + jsonEscape(state.dbSwitchError) + "\",";
+        result += "\"db_switch_notice\":\"" + jsonEscape(state.dbSwitchNotice) + "\",";
+#endif
         result += "\"file_player_fast_path\":" + std::string(state.filePlayerFastPathActive ? "true" : "false") + ",";
         result += "\"pending_db_path\":\"" + jsonEscape(state.pendingDbPath) + "\",";
         result += "\"recent_db_paths\":" + recentDbPathsJson + ",";
@@ -5061,11 +5187,32 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active\":" + std::string(state.coverFilterActive ? "true" : "false") + ",";
         result += "\"path\":\"" + jsonEscape(state.coverFilterPath) + "\",";
         result += "\"mode\":\"" + jsonEscape(coverFilterValue(state.coverFilterIndex)) + "\"},";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"qa_filter_ui_rects\":{";
+        bool firstQaFilterRect = true;
+        for (const auto& [key, rect] : state.qaFilterUiRects) {
+            if (!firstQaFilterRect) result += ",";
+            firstQaFilterRect = false;
+            result += "\"" + jsonEscape(key) + "\":[" + std::to_string(rect.x) + "," +
+                std::to_string(rect.y) + "," + std::to_string(rect.z) + "," +
+                std::to_string(rect.w) + "]";
+        }
+        result += "},";
+#endif
         result += "\"metadata_filters\":{";
         result += "\"artist\":\"" + jsonEscape(state.artistFilterBuffer) + "\",";
         result += "\"album\":\"" + jsonEscape(state.albumFilterBuffer) + "\",";
         result += "\"category\":\"" + jsonEscape(state.categoryFilterBuffer) + "\",";
         result += "\"format\":\"" + jsonEscape(formatFilterValue(state.formatFilterIndex)) + "\"},";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"qa_filter_extras\":{";
+        result += "\"key\":\"" + jsonEscape(state.keyFilterBuffer) + "\",";
+        result += "\"genre_count\":" + std::to_string(state.genrePillState.size()) + ",";
+        result += "\"instrument_count\":" + std::to_string(state.instrumentPillState.size()) + ",";
+        result += "\"all_file_types\":" + std::string(
+            state.showWAV && state.showMP3 && state.showFLAC && state.showOGG &&
+            state.showAIFF && state.showM4A && state.showWMA && state.showOther ? "true" : "false") + "},";
+#endif
         result += "\"history_panel_visible\":" + std::string(state.showHistoryPanel ? "true" : "false") + ",";
         result += "\"metadata_dialog_visible\":" + std::string((state.showMetadataEditDialog || state.metadataEditMode) ? "true" : "false") + ",";
         result += "\"metadata_batch_mode\":" + std::string(state.metadataBatchMode ? "true" : "false") + ",";
@@ -5341,7 +5488,11 @@ static void PollQaCommandFile(AppState& state) {
         std::string query = getStr(raw, "query");
         if (query.size() < sizeof(state.searchBuffer) - 1) {
             strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), query.c_str(), _TRUNCATE);
-            state.focusSearchBar = !ShouldUseHarnessImmediateFilterRefresh();
+            const bool renderUiSearchLane =
+                Platform::HarkenUserData::PreviewIsolationActive() &&
+                GetHarkenSearchHarnessLaneKindUtf8() == "folder-search";
+            if (renderUiSearchLane) ImGui::ClearActiveID();
+            state.focusSearchBar = !ShouldUseHarnessImmediateFilterRefresh() && !renderUiSearchLane;
             state.filterQueryGeneration++;
             if (ShouldUseHarnessImmediateFilterRefresh()) {
                 state.viewMode = ViewMode::Database;
@@ -5540,6 +5691,122 @@ static void PollQaCommandFile(AppState& state) {
             state.qaOpenSidebarPlaylistContextId = playlistId;
             result = "{\"ok\":true,\"cmd\":\"open_playlist_context_menu\",\"playlist_id\":" + std::to_string((long long)playlistId) + "}";
         }
+
+    } else if (cmd == "folder_search_seed_extra_filters") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search") {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else {
+            const bool enabled = getBool(raw, "enabled", true);
+            strncpy_s(state.keyFilterBuffer, sizeof(state.keyFilterBuffer), enabled ? "C" : "", _TRUNCATE);
+            state.genrePillState.clear();
+            state.instrumentPillState.clear();
+            if (enabled) {
+                state.genrePillState["__qa_genre__"] = 1;
+                state.instrumentPillState["__qa_instrument__"] = 1;
+            }
+            state.showWAV = !enabled;
+            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
+                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            cancelPendingSearchForQaMutation();
+            RefreshSearchResults(state, true);
+            state.syncToTab();
+            result = "{\"ok\":true,\"cmd\":\"folder_search_seed_extra_filters\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "folder_search_sidebar") {
+#if ARIS_PREVIEW_ISOLATION
+        const int section = getInt(raw, "section", -1);
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            (section != 1 && section != 2 && section != 4)) {
+            result = "{\"ok\":false,\"error\":\"invalid_folder_search_sidebar\"}";
+        } else {
+            state.settings.activeSidebarSection = section;
+            result = "{\"ok\":true,\"cmd\":\"folder_search_sidebar\",\"section\":" +
+                std::to_string(section) + "}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "folder_search_pointer") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string phase = getStr(raw, "phase");
+        const float x = static_cast<float>(getDouble(raw, "x", -1.0));
+        const float y = static_cast<float>(getDouble(raw, "y", -1.0));
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const ImVec2 viewportPos = ImGui::GetMainViewport()->Pos;
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            !s_mainUiReady.load(std::memory_order_acquire) ||
+            !Platform::WindowIsVisible(g_hwnd) || IsIconic(g_hwnd) ||
+            !std::isfinite(x) || !std::isfinite(y) ||
+            x < 0.0f || y < 0.0f || x >= display.x || y >= display.y ||
+            s_magicEqQaPointer.pending ||
+            (phase == "down" && s_magicEqQaPointer.active) ||
+            (phase == "up" && !s_magicEqQaPointer.active) ||
+            (phase != "down" && phase != "up")) {
+            result = "{\"ok\":false,\"error\":\"invalid_folder_search_pointer\",\"display\":[" +
+                std::to_string(display.x) + "," + std::to_string(display.y) +
+                "],\"point\":[" + std::to_string(x) + "," + std::to_string(y) +
+                "],\"ui_ready\":" + std::string(s_mainUiReady.load(std::memory_order_acquire) ? "true" : "false") +
+                ",\"visible\":" + std::string(Platform::WindowIsVisible(g_hwnd) ? "true" : "false") +
+                ",\"iconic\":" + std::string(IsIconic(g_hwnd) ? "true" : "false") +
+                ",\"pending\":" + std::string(s_magicEqQaPointer.pending ? "true" : "false") +
+                ",\"active\":" + std::string(s_magicEqQaPointer.active ? "true" : "false") + "}";
+        } else {
+            s_magicEqQaPointer.active = true;
+            s_magicEqQaPointer.x = viewportPos.x + x;
+            s_magicEqQaPointer.y = viewportPos.y + y;
+            s_magicEqQaPointer.held = phase == "down";
+            s_magicEqQaPointer.pending = true;
+            s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+            result = "{\"ok\":true,\"cmd\":\"folder_search_pointer\",\"phase\":\"" + phase +
+                "\",\"display\":[" + std::to_string(display.x) + "," + std::to_string(display.y) +
+                "],\"viewport\":[" + std::to_string(ImGui::GetMainViewport()->Pos.x) + "," +
+                std::to_string(ImGui::GetMainViewport()->Pos.y) + "]}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "search_enter_key") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string phase = getStr(raw, "phase");
+        if (!MagicEqQaIsolationReady()) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (phase == "down" || phase == "up") {
+            ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, phase == "down");
+            result = "{\"ok\":true,\"cmd\":\"search_enter_key\"}";
+        } else {
+            result = "{\"ok\":false,\"error\":\"invalid phase\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "queue_folder_tree_selection") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (!path.empty()) {
+            // The next RenderUI frame applies the same deferred folder-tree path.
+            state.uiState.pendingFolderPath = path;
+            state.uiState.pendingFolderTime = ImGui::GetTime() - 0.2;
+            result = "{\"ok\":true,\"cmd\":\"queue_folder_tree_selection\"}";
+        } else {
+            result = "{\"ok\":false,\"error\":\"path missing\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "remove_folder_subtree") {
         const std::string path = getStr(raw, "path");
@@ -6245,8 +6512,6 @@ static void PollQaCommandFile(AppState& state) {
             state.folderFilterActive = true;
             // External folder commands store a canonical filter path.
             state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(path);
-            state.coverFilterActive = false;
-            state.coverFilterPath.clear();
             cancelPendingSearchForQaMutation();
             state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
             RefreshSearchResults(state, true);
@@ -6339,10 +6604,6 @@ static void PollQaCommandFile(AppState& state) {
         if (result.empty()) {
             state.viewMode = ViewMode::Database;
             state.coverFilterIndex = coverIndex;
-            state.coverFilterActive = false;
-            state.coverFilterPath.clear();
-            state.coverFilterMatchSig = 0;
-            state.coverFilterMatchPaths.clear();
             cancelPendingSearchForQaMutation();
             state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
             RefreshSearchResults(state, true);
@@ -6376,13 +6637,10 @@ static void PollQaCommandFile(AppState& state) {
             const std::string folderPath = getStr(raw, "folder_path");
             const std::string label = getStr(raw, "label");
             state.viewMode = ViewMode::Database;
-            state.coverFilterIndex = 0;
             state.coverFilterActive = true;
             state.coverFilterPath = key;
             state.coverFilterMatchSig = 0;
             state.coverFilterMatchPaths.clear();
-            state.folderFilterActive = false;
-            state.selectedFolderPath.clear();
             state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
             state.coverWall.pinnedCoverFilterItem.key = key;
             state.coverWall.pinnedCoverFilterItem.label = label;
@@ -13863,6 +14121,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             glClearColor(clearBg.x, clearBg.y, clearBg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#if ARIS_PREVIEW_ISOLATION
+            // Capture the actual rendered client frame on an inactive desktop,
+            // where Windows PrintWindow cannot capture this OpenGL surface.
+            if (!s_previewFrameCapturePath.empty()) {
+                const int width = rect.right - rect.left, height = rect.bottom - rect.top;
+                if (width > 0 && height > 0 && width <= 8192 && height <= 8192) {
+                    std::vector<unsigned char> rgb(static_cast<size_t>(width) * height * 3);
+                    GLint alignment = 4, readBuffer = GL_BACK;
+                    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+                    glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                    glReadBuffer(GL_BACK);
+                    glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
+                    glReadBuffer(readBuffer);
+                    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+                    std::ofstream file(Utf8ToPath(s_previewFrameCapturePath), std::ios::binary);
+                    file << "P6\n" << width << " " << height << "\n255\n";
+                    for (int y = height - 1; y >= 0; --y)
+                        file.write(reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3);
+                }
+                s_previewFrameCapturePath.clear();
+            }
+#endif
         }
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
         if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
