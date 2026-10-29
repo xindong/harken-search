@@ -7775,6 +7775,7 @@ add_executable(TestBootstrapExitExplanation
     tests/test_bootstrap_exit_explanation.cpp
     src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
     src/platform/update_bootstrap_authority_base.cpp
+    src/update/UpdateDownloadManager.cpp
     src/platform/update_persistence_port.cpp
     src/platform/text_encoding_win32.cpp
 )
