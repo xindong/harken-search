@@ -14334,6 +14334,7 @@ static void ShuffleCurrentResultsAndPlayFirst(AppState& state) {
     // Random ordering must stay on the search worker, not the UI thread.
     // 我们仅发起一个异步请求，UI 线程立即返回，保持 120FPS 丝滑。
     SearchFilter filter = BuildCurrentDbFilter(state);
+    state.lastAppliedSearchText = state.searchBuffer;
 
     // 设置 UI 加载状态，给用户视觉反馈
     state.loadingMore = true;
@@ -39633,8 +39634,6 @@ void RenderUI(AppState& state) {
                 state.searchSuggestRequestFocus = true; // 下一帧重新夺回光标焦点
             }
 
-            state.lastAppliedSearchText = textToSearch;
-
             state.clearPendingWaveforms();
 
             // 文件浏览器模式：输入的是有效路径则导航过去，否则留在浏览器不切模式
@@ -39653,6 +39652,7 @@ void RenderUI(AppState& state) {
                 // 非路径输入：不做搜索也不切模式，保持浏览器
             } else {
                 if (!rejectInvalidSlashSearch(textToSearch)) {
+                    state.lastAppliedSearchText = textToSearch;
                     KeepPlaylistSearchScopeOrEnterDatabase(state);
                     RefreshSearchResults(state, true);
                 }
@@ -39681,9 +39681,9 @@ void RenderUI(AppState& state) {
             // Track the applied text from searchBuffer, the filter's actual source.
             // 而不是 lastSearchSubmitted（可能因用户继续打字而过时），消除去重逻辑失配
             std::string debouncedSearch(state.searchBuffer);
-            state.lastAppliedSearchText = debouncedSearch;
             state.clearPendingWaveforms();
             if (!rejectInvalidSlashSearch(debouncedSearch)) {
+                state.lastAppliedSearchText = debouncedSearch;
                 DIAG_ACTION("Search", "KeywordSearch");
 
                 // 百万库场景下，实时搜索只刷新结果，不自动加载/播放第一条。
