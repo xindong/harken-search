@@ -1999,6 +1999,19 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestInstallerLifecycleContract core)
 
+    if(WIN32)
+        add_test(
+            NAME TestInstallerExistingInstall
+            COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_installer_existing_install.py"
+        )
+        set_tests_properties(TestInstallerExistingInstall PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            TIMEOUT 180
+        )
+        aura_set_test_labels(TestInstallerExistingInstall core)
+    endif()
+
     add_test(
         NAME TestQaExePackagingContract
         COMMAND ${Python3_EXECUTABLE}
