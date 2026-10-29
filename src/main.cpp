@@ -5368,6 +5368,7 @@ void LoadAppSettings(AppState& state) {
 
     state.settings.infoPages.visibleMask = ParseInt(kv["infoPageVisibleMask"], 15);
     state.settings.infoPages.selected = ParseInt(kv["infoSelectedPage"], 1);
+    state.settings.infoPages.similarSoundsVisible = ParseBool(kv["infoShowSimilarSounds"], true);
     state.settings.infoPages.Normalize(AURA_BUILD_DIAGNOSTICS != 0);
 
     // UI sizing. Reading font is the single user-facing size; chrome is pinned.
@@ -6301,6 +6302,7 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"infoPanelLayoutVersion", "1"});
     items.push_back({"infoPageVisibleMask", std::to_string(state.settings.infoPages.visibleMask)});
     items.push_back({"infoSelectedPage", std::to_string(state.settings.infoPages.selected)});
+    items.push_back({"infoShowSimilarSounds", state.settings.infoPages.similarSoundsVisible ? "1" : "0"});
 
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
@@ -40234,57 +40236,18 @@ void RenderUI(AppState& state) {
 
     // The Info title actions belong to the module shell, so they must be
     // rendered by both the legacy right column and every Dock tree leaf.
-    // Keep a fixed reserve so the drag hit area cannot cover either button.
+    // Reserve the actual row width so title dragging cannot cover its buttons.
     auto drawFileInfoTitleActions = [&](AppState& infoState,
                                         const DockModuleShellLayout& shell,
-                                        ImDrawList* infoDl,
                                         float pageOffsetY) {
         const float pageAvailableWidth = shell.shellWidth - 28.0f;
         const float pageWidth = FileInfoPageActionsWidth(infoState, pageAvailableWidth);
-        RenderFileInfoPageActions(infoState,
-            ImVec2(shell.insetL + shell.shellWidth - 28.0f - pageWidth, pageOffsetY),
-            shell.titleHeight, pageAvailableWidth);
-        const float iconBtnSize = 18.0f;
-        const float iconPad = 4.0f;
-        const float similarIconX = shell.insetL + shell.shellWidth - iconBtnSize - iconPad - 2.0f;
-        const float iconY = (shell.titleHeight - iconBtnSize) * 0.5f;
-
-        const auto& panelTheme = ThemeColors::current();
-        const ImVec4 panelBg = ThemeColors::infoPanelDockBG(panelTheme);
-        const ImVec4 iconBase = uiMix(panelTheme.metadataPanelText, panelBg, 0.30f);
-        const ImVec4 iconHover = uiMix(panelTheme.metadataPanelText, COLOR_ACCENT, 0.34f);
-        const ImU32 iconHoverColor = ImGui::GetColorU32(uiWithAlpha(iconHover, 0.98f));
-
-        ImGui::SetCursorPos(ImVec2(similarIconX, iconY));
-        ImGui::PushID("##InfoSimilarSoundsIcon");
-        ImGui::PushStyleColor(ImGuiCol_Button, uiWithAlpha(panelBg, 0.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.18f), 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.28f), 0.82f));
-        const bool similarClicked = ImGui::Button("##similarSoundsBtn", ImVec2(iconBtnSize, iconBtnSize));
-        const bool similarHovered = ImGui::IsItemHovered();
-        ImGui::PopStyleColor(3);
-        {
-            const ImVec2 btnMin = ImGui::GetItemRectMin();
-            const float s = iconBtnSize;
-            const float cx = btnMin.x + s * 0.5f;
-            const float cy = btnMin.y + s * 0.5f;
-            const ImU32 col = similarHovered ? iconHoverColor : ImGui::GetColorU32(uiWithAlpha(iconBase, 0.72f));
-            const ImVec2 points[] = {
-                ImVec2(cx - s * 0.32f, cy),
-                ImVec2(cx - s * 0.18f, cy - s * 0.22f),
-                ImVec2(cx - s * 0.03f, cy + s * 0.28f),
-                ImVec2(cx + s * 0.12f, cy - s * 0.32f),
-                ImVec2(cx + s * 0.28f, cy + s * 0.08f)
-            };
-            infoDl->AddPolyline(points, IM_ARRAYSIZE(points), col, ImDrawFlags_None, 1.4f);
+        if (RenderFileInfoPageActions(infoState,
+                ImVec2(shell.insetL + shell.shellWidth - 6.0f - pageWidth, pageOffsetY),
+                shell.titleHeight, pageAvailableWidth)) {
+            aura::ui::OpenSimilarSoundsWindow(infoState);
         }
-        if (similarClicked) aura::ui::OpenSimilarSoundsWindow(infoState);
-        if (similarHovered) aura::ui::Tooltip(L(Similar_OpenTooltip));
-        ImGui::PopID();
-
-        return 28.0f + pageWidth;
+        return 6.0f + pageWidth;
     };
 
     auto drawFloatingInfoTitleActions = [&]() {
@@ -40298,7 +40261,7 @@ void RenderUI(AppState& state) {
         shell.shellWidth = title.GetWidth() - title.GetHeight() - 4.0f;
         shell.titleHeight = title.GetHeight();
         ImGui::PushClipRect(title.Min, title.Max, false);
-        drawFileInfoTitleActions(state, shell, ImGui::GetWindowDrawList(), 0.0f);
+        drawFileInfoTitleActions(state, shell, 0.0f);
         ImGui::PopClipRect();
         ImGui::SetCursorPos(saved);
     };
@@ -46106,7 +46069,7 @@ void RenderUI(AppState& state) {
             kTitleText);
 
 // 标题栏右上角：编辑元数据图标按钮
-        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, dl, 2.0f);
+        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, 2.0f);
 
         // Right-click menu on title bar (remaining area)
         ImGui::SetCursorPos(ImVec2(rightShell.insetL, rightShell.insetT));
@@ -51224,7 +51187,7 @@ void RenderUI(AppState& state) {
         const ImRect label(title.Min, ImVec2(
             (std::min)(title.Min.x + labelWidth, title.Max.x - title.GetHeight() - 4.0f), title.Max.y));
         const float infoActionsWidth = std::strcmp(moduleId, "info") == 0
-            ? 28.0f + FileInfoPageActionsWidth(state, title.GetWidth()-title.GetHeight()-4.0f-28.0f) : 0.0f;
+            ? 6.0f + FileInfoPageActionsWidth(state, title.GetWidth()-title.GetHeight()-4.0f-28.0f) : 0.0f;
         const ImRect dockDragLabel(title.Min, ImVec2(
             (std::max)(title.Min.x, title.Max.x - title.GetHeight() - 4.0f - infoActionsWidth), title.Max.y));
         drawDockTitleFeedback(moduleId, title, label, true, ImGui::IsWindowHovered() && dockDragLabel.Contains(ImGui::GetMousePos()));
@@ -51716,7 +51679,7 @@ void RenderUI(AppState& state) {
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
                     L(View_InfoPanel), bodyBg, kTitleText);
-                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, ImGui::GetWindowDrawList(), 2.0f);
+                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, 2.0f);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
                     ImVec2((std::max)(1.0f, shell.shellWidth - kInfoTitleActionsWidth), shell.titleHeight));
