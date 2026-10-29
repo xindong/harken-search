@@ -61,6 +61,26 @@ def capture(user32, hwnd, pid, destination):
             "hwnd": hwnd, "rect": [rect.left, rect.top, rect.right, rect.bottom]}
 
 
+def update_close_glyph(capture_info, control):
+    """Measure the visible X in the real screenshot, not only its click area."""
+    image = Image.open(capture_info["path"]).convert("RGB")
+    origin_x, origin_y = capture_info["rect"][:2]
+    left, top = round(control[0] - origin_x), round(control[1] - origin_y)
+    right, bottom = round(control[2] - origin_x), round(control[3] - origin_y)
+    points = []
+    for y in range(top, bottom):
+        for x in range(left, right):
+            rgb = image.getpixel((x, y))
+            if max(rgb) > 70 and max(rgb) - min(rgb) < 45:
+                points.append((x + origin_x, y + origin_y))
+    if not points:
+        raise AssertionError("update X glyph is invisible")
+    x0, x1 = min(x for x, _ in points), max(x for x, _ in points)
+    y0, y1 = min(y for _, y in points), max(y for _, y in points)
+    return {"width": x1 - x0 + 1, "height": y1 - y0 + 1,
+            "center_y": (y0 + y1) / 2.0}
+
+
 def run(args):
     exe = args.exe.resolve()
     isolation = args.isolation_root.resolve()
@@ -126,6 +146,14 @@ def run(args):
         report["update_close_area"] = state["controls"].get("close")
         if not report["update_close_area"]:
             raise AssertionError("update close control missing")
+        glyph = update_close_glyph(report["captures"]["update"], report["update_close_area"])
+        report["update_close_glyph"] = glyph
+        if glyph["width"] < 11 or glyph["height"] < 11:
+            raise AssertionError(f"update X is smaller than the About X: {glyph}")
+        history = state["controls"]["history"]
+        history_center_y = (history[1] + history[3]) / 2.0
+        if abs(glyph["center_y"] - history_center_y) > 3.0:
+            raise AssertionError(f"update X is not aligned with its header row: {glyph}")
         driver.command({"cmd": "update_notice_pointer", "control": "close", "phase": "down"})
         time.sleep(0.15)
         driver.command({"cmd": "update_notice_pointer", "control": "close", "phase": "up"})
