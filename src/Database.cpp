@@ -5061,8 +5061,18 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
                 const auto recovered = Id3CommentText::RecoverStoredLegacy(
                     std::string_view(reinterpret_cast<const char*>(bytes),
                                      static_cast<size_t>(byteCount)));
-                if (recovered) r.databaseListDescriptionOverride = *recovered;
+                if (recovered) {
+                    r.databaseListDescriptionOverride = *recovered;
+                    r.databaseListDescriptionNeedsSource = true;
+                }
             }
+            const auto* utf8 = sqlite3_column_text(stmt, i);
+            const int utf8Count = sqlite3_column_bytes(stmt, i);
+            if (utf8 && utf8Count > 0 &&
+                Id3CommentText::LooksLikeConvertedLegacy(
+                    std::string_view(reinterpret_cast<const char*>(utf8),
+                                     static_cast<size_t>(utf8Count))))
+                r.databaseListDescriptionNeedsSource = true;
             r.description = safeGetText(stmt, i);
             break;
         }
@@ -5149,16 +5159,6 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
         }
         case ColId::Unknown: break;
         }
-    }
-    // A few old COMM values lost bytes in the middle of the UTF-16 text, so
-    // decoding the stored bytes alone cannot recover their original Chinese.
-    // Only for the exact legacy signature, use the source tag as a read-only
-    // list override. Keep the database value and all other views unchanged.
-    if (!r.databaseListDescriptionOverride.empty() && !r.filePath.empty() &&
-        Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(r.filePath)) {
-        AudioMetadata source;
-        if (MetadataReader::readMetadata(r.filePath, source) && !source.comment.empty())
-            r.databaseListDescriptionOverride = source.comment;
     }
     return r;
 }

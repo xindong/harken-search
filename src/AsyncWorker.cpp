@@ -3,6 +3,7 @@
 
 #include "AsyncWorker.h"
 #include "Database.h"
+#include "MetadataReader.h"
 #include "PlaylistCoverScope.h"
 // sqlite3 progress handler accessed via Database::setQueryProgressHandler()
 #include "SearchQuery.h"
@@ -14,6 +15,7 @@
 #include "AudioEngine.h"
 #include "WaveformCachePolicy.h"
 #include "platform/filesystem.h"
+#include "platform/harken_user_data_layout.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1288,6 +1290,13 @@ bool SearchWorker::pollResult(AsyncSearchResult& outResult, uint64_t expectedReq
 }
 
 void SearchWorker::workerThread() {
+    struct LegacyCommentCacheEntry {
+        int64_t fileMtime = 0;
+        uint64_t fileSize = 0;
+        std::string comment;
+        std::chrono::steady_clock::time_point checkedAt;
+    };
+    std::unordered_map<std::string, LegacyCommentCacheEntry> legacyCommentCache;
     while (m_running.load()) {
         AsyncSearchRequest req;
         
@@ -1587,6 +1596,40 @@ void SearchWorker::workerThread() {
                 result.success = true;
             } catch (...) {
                 result.success = false;
+            }
+        }
+        // Only Database-list rows need the original tag. Keep source-file I/O
+        // on this search worker, outside the shared Database query path.
+        if (result.success && req.viewMode == 1 && !result.results.empty()) {
+            try {
+                for (auto& record : result.results) {
+                    if (req.requestId < m_latestRequestId.load(std::memory_order_acquire)) break;
+                    if (!record.databaseListDescriptionNeedsSource || record.filePath.empty() ||
+                        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(record.filePath) ||
+                        Platform::FileSystem::IsNetworkPath(record.filePath))
+                        continue;
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto cached = legacyCommentCache.find(record.filePath);
+                    if (cached != legacyCommentCache.end() &&
+                        cached->second.fileMtime == record.fileMtime &&
+                        cached->second.fileSize == record.fileSize &&
+                        now - cached->second.checkedAt < std::chrono::seconds(30)) {
+                        if (!cached->second.comment.empty())
+                            record.databaseListDescriptionOverride = cached->second.comment;
+                        continue;
+                    }
+                    AudioMetadata source;
+                    const bool readable = MetadataReader::readMetadata(record.filePath, source);
+                    if (readable && !source.comment.empty())
+                        record.databaseListDescriptionOverride = source.comment;
+                    if (legacyCommentCache.size() >= 512) legacyCommentCache.clear();
+                    legacyCommentCache[record.filePath] = {
+                        record.fileMtime, record.fileSize,
+                        readable ? source.comment : std::string(), now
+                    };
+                }
+            } catch (...) {
+                // A failed source probe must not discard the database rows.
             }
         }
         totalCountLocal = result.totalCount;

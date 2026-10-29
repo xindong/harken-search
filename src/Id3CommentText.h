@@ -68,4 +68,19 @@ inline std::optional<std::string> RecoverStoredLegacy(std::string_view stored) {
     return decoded;
 }
 
+// sqlite3_open16 stores a text-bound invalid legacy frame in UTF-16. Its
+// invalid BOM bytes become two replacement characters when read as UTF-8.
+// The language, replacement pair and empty descriptor are a narrow marker;
+// the lost characters themselves must come from the original audio tag.
+inline bool LooksLikeConvertedLegacy(std::string_view storedUtf8) {
+    if (storedUtf8.size() < 11) return false;
+    for (size_t i = 0; i < 3; ++i) {
+        if (storedUtf8[i] < 'a' || storedUtf8[i] > 'z') return false;
+    }
+    constexpr std::string_view replacement("\xEF\xBF\xBD", 3);
+    return storedUtf8.substr(3, 3) == replacement &&
+           storedUtf8.substr(6, 3) == replacement &&
+           storedUtf8[9] == '\0' && storedUtf8[10] == '\0';
+}
+
 } // namespace Id3CommentText

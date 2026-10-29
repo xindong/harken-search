@@ -5239,13 +5239,6 @@ int testLegacyDescriptionDisplay() {
     if (!fs::create_directories(root)) return 1;
     Database db;
     const std::string dbPath = PathToUtf8(root / "main.db");
-    sqlite3* utf8Seed = nullptr;
-    if (sqlite3_open_v2(dbPath.c_str(), &utf8Seed,
-            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) return 1;
-    const bool utf8Created = sqlite3_exec(utf8Seed,
-        "CREATE TABLE encoding_anchor(value TEXT)", nullptr, nullptr, nullptr) == SQLITE_OK;
-    sqlite3_close(utf8Seed);
-    if (!utf8Created) return 1;
     if (!db.open(dbPath, true)) return 1;
 
     AudioRecord legacy;
@@ -5330,12 +5323,44 @@ int testLegacyDescriptionDisplay() {
     }
     sqlite3_finalize(chineseUpdate);
     const AudioRecord restoredChinese = db.getFileByPath(chinese.filePath);
+    const fs::path convertedPath = root / "converted-chinese-comment.mp3";
+    {
+        std::ofstream audio(convertedPath, std::ios::binary);
+        audio.write(reinterpret_cast<const char*>(mp3.data()),
+                    static_cast<std::streamsize>(mp3.size()));
+    }
+    AudioRecord converted = legacy;
+    converted.filePath = PathToUtf8(convertedPath);
+    converted.fileName = "converted-chinese-comment.mp3";
+    const bool convertedAdded = db.addFile(converted);
+    sqlite3_stmt* convertedUpdate = nullptr;
+    bool convertedUpdated = false;
+    const auto damagedBytes = fromHex(damagedDbHex);
+    if (sqlite3_prepare_v2(db.db(),
+            "UPDATE audio_files SET description=? WHERE file_path=?", -1,
+            &convertedUpdate, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(convertedUpdate, 1,
+                          reinterpret_cast<const char*>(damagedBytes.data()),
+                          static_cast<int>(damagedBytes.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_text(convertedUpdate, 2, converted.filePath.c_str(), -1,
+                          SQLITE_TRANSIENT);
+        convertedUpdated = sqlite3_step(convertedUpdate) == SQLITE_DONE;
+    }
+    sqlite3_finalize(convertedUpdate);
+    const AudioRecord convertedRead = db.getFileByPath(converted.filePath);
     const bool ok = updated && decoded.id > 0 &&
-        decoded.databaseListDescriptionOverride == "A音6" &&
+        decoded.databaseListDescriptionNeedsSource &&
+        decoded.databaseListDescriptionOverride.empty() &&
         normalAdded && untouched.description == normal.description &&
         untouched.databaseListDescriptionOverride.empty() &&
+        !untouched.databaseListDescriptionNeedsSource &&
         sourceChineseReadable && chineseAdded && chineseUpdated &&
-        restoredChinese.databaseListDescriptionOverride == sourceChinese.comment;
+        restoredChinese.databaseListDescriptionNeedsSource &&
+        !restoredChinese.databaseListDescriptionOverride.empty() &&
+        restoredChinese.databaseListDescriptionOverride != sourceChinese.comment &&
+        convertedAdded && convertedUpdated &&
+        convertedRead.databaseListDescriptionNeedsSource &&
+        convertedRead.databaseListDescriptionOverride.empty();
     db.close();
     if (!keepQaFixture) fs::remove_all(root);
     if (!ok) std::cerr << "FAIL: legacy description list display was not recovered"
@@ -5348,7 +5373,10 @@ int testLegacyDescriptionDisplay() {
                        << " sourceChineseReadable=" << sourceChineseReadable
                        << " chineseAdded=" << chineseAdded
                        << " chineseUpdated=" << chineseUpdated
-                       << " restoredChinese=" << restoredChinese.databaseListDescriptionOverride;
+                       << " restoredChinese=" << restoredChinese.databaseListDescriptionOverride
+                       << " convertedAdded=" << convertedAdded
+                       << " convertedUpdated=" << convertedUpdated
+                       << " convertedNeedsSource=" << convertedRead.databaseListDescriptionNeedsSource;
     return ok ? 0 : 1;
 }
 

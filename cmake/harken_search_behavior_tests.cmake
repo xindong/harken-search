@@ -5482,6 +5482,10 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
+set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
+    ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")
+aura_set_test_labels(TestLegacyDescriptionDisplay db)
 add_test(NAME TestFavoritesMigrationError COMMAND TestDatabaseFeatures)
 set_tests_properties(TestFavoritesMigrationError PROPERTIES
     ENVIRONMENT "HARKEN_FAVORITES_MIGRATION_ONLY=1")
