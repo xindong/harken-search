@@ -19208,7 +19208,10 @@ void RenderFileInfoPanelTabContents(
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().coverWallBG);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            BeginTransientScrollbarChild("##ArtworkScroll", ImVec2(0, scrollH), true);
+            // Reserve a stable gutter: auto scrollbar visibility otherwise changes
+            // fitted cover sizes, which can alternate the content height every frame.
+            BeginTransientScrollbarChild("##ArtworkScroll", ImVec2(0, scrollH), true,
+                ImGuiWindowFlags_AlwaysVerticalScrollbar);
             int coverWallReadyCount = 0;  // 供底部统计显示
             int coverWallLiveTextureCount = 0;
             int coverWallMirrorCount = 0;
