@@ -5224,7 +5224,93 @@ int testFavoriteColumnMigrationReportsFailure() {
     return ok ? 0 : 1;
 }
 
+int testLegacyDescriptionDisplay() {
+    char* qaRootRaw = nullptr;
+    size_t qaRootLength = 0;
+    _dupenv_s(&qaRootRaw, &qaRootLength, "HARKEN_DESCRIPTION_QA_ROOT");
+    const bool keepQaFixture = qaRootRaw && *qaRootRaw;
+    const fs::path root = keepQaFixture
+        ? fs::u8path(qaRootRaw) / "Library"
+        : fs::temp_directory_path() /
+              ("harken-description-display-" +
+               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::free(qaRootRaw);
+    if (!fs::create_directories(root)) return 1;
+    Database db;
+    const std::string dbPath = PathToUtf8(root / "main.db");
+    sqlite3* utf8Seed = nullptr;
+    if (sqlite3_open_v2(dbPath.c_str(), &utf8Seed,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) return 1;
+    const bool utf8Created = sqlite3_exec(utf8Seed,
+        "CREATE TABLE encoding_anchor(value TEXT)", nullptr, nullptr, nullptr) == SQLITE_OK;
+    sqlite3_close(utf8Seed);
+    if (!utf8Created) return 1;
+    if (!db.open(dbPath, true)) return 1;
+
+    AudioRecord legacy;
+    legacy.filePath = "C:/fixture/legacy.mp3";
+    legacy.fileName = "legacy.mp3";
+    legacy.extension = ".mp3";
+    legacy.description = "old";
+    if (!db.addFile(legacy)) return 1;
+    const uint8_t oldBytes[] = {'e', 'n', 'g', 0xFF, 0xFE, 0, 0,
+                                0xFF, 0xFE, 'A', 0, 0xF3, 0x97, '6'};
+    sqlite3_stmt* update = nullptr;
+    const bool prepared = sqlite3_prepare_v2(
+        db.db(), "UPDATE audio_files SET description=? WHERE file_path=?",
+        -1, &update, nullptr) == SQLITE_OK;
+    bool updated = false;
+    if (prepared) {
+        sqlite3_bind_text(update, 1, reinterpret_cast<const char*>(oldBytes),
+                          sizeof(oldBytes), SQLITE_TRANSIENT);
+        sqlite3_bind_text(update, 2, legacy.filePath.c_str(), -1, SQLITE_TRANSIENT);
+        updated = sqlite3_step(update) == SQLITE_DONE;
+    }
+    sqlite3_finalize(update);
+    sqlite3_stmt* hexStmt = nullptr;
+    std::string storedHex;
+    if (sqlite3_prepare_v2(db.db(),
+            "SELECT hex(CAST(description AS BLOB)) FROM audio_files WHERE file_path=?",
+            -1, &hexStmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(hexStmt, 1, legacy.filePath.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(hexStmt) == SQLITE_ROW) {
+            storedHex = reinterpret_cast<const char*>(sqlite3_column_text(hexStmt, 0));
+        }
+    }
+    sqlite3_finalize(hexStmt);
+    const AudioRecord decoded = db.getFileByPath(legacy.filePath);
+
+    AudioRecord normal = legacy;
+    normal.filePath = "C:/fixture/normal.mp3";
+    normal.fileName = "normal.mp3";
+    normal.description = "普通中文描述";
+    const bool normalAdded = db.addFile(normal);
+    const AudioRecord untouched = db.getFileByPath(normal.filePath);
+    const bool ok = updated && decoded.id > 0 &&
+        decoded.databaseListDescriptionOverride == "A音6" &&
+        normalAdded && untouched.description == normal.description &&
+        untouched.databaseListDescriptionOverride.empty();
+    db.close();
+    if (!keepQaFixture) fs::remove_all(root);
+    if (!ok) std::cerr << "FAIL: legacy description list display was not recovered"
+                       << " updated=" << updated << " id=" << decoded.id
+                       << " override=" << decoded.databaseListDescriptionOverride
+                       << " descriptionLength=" << decoded.description.size()
+                       << " storedHex=" << storedHex
+                       << " normalAdded=" << normalAdded
+                       << " normal=" << untouched.description;
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char* argv[]) {
+    char* descriptionOnlyRaw = nullptr;
+    size_t descriptionOnlyLen = 0;
+    const bool descriptionOnly =
+        _dupenv_s(&descriptionOnlyRaw, &descriptionOnlyLen,
+                   "HARKEN_DESCRIPTION_DISPLAY_ONLY") == 0 &&
+        descriptionOnlyRaw && std::string(descriptionOnlyRaw) == "1";
+    std::free(descriptionOnlyRaw);
+    if (descriptionOnly) return testLegacyDescriptionDisplay();
     char* favoritesOnlyRaw = nullptr;
     size_t favoritesOnlyLen = 0;
     const bool favoritesOnly =

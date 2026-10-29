@@ -1,4 +1,5 @@
 #include "MetadataReader.h"
+#include "Id3CommentText.h"
 
 #include <chrono>
 #include <cstdint>
@@ -197,8 +198,8 @@ int main() {
           "ID3v2 encoding 0 uses Windows-1252 euro and smart quotes");
     Check(metadata.artist == Bytes({'L', 'E', ' ', 0xF0, 0x9F, 0x98, 0x80, '!'}),
           "UTF-16LE combines a surrogate-pair emoji and trims at NUL");
-    Check(metadata.comment == Bytes({0xEF, 0xBF, 0xBD}),
-          "invalid UTF-16 surrogate uses the Windows replacement character");
+    Check(metadata.comment.empty(),
+          "COMM without a language and descriptor terminator has no comment text");
 #else
     Check(metadata.title == Bytes({'C', 'P', ' ', 0xC2, 0x80, ' ', 0xC2,
                                    0x93, 'Q', 0xC2, 0x94}),
@@ -206,8 +207,8 @@ int main() {
     Check(metadata.artist == Bytes({'L', 'E', ' ', 0xED, 0xA0, 0xBD,
                                     0xED, 0xB8, 0x80, '!'}),
           "non-Windows UTF-16 fallback preserves separate surrogate units");
-    Check(metadata.comment == Bytes({0xED, 0xA0, 0xBD}),
-          "non-Windows invalid surrogate uses the naive unit mapping");
+    Check(metadata.comment.empty(),
+          "COMM without a language and descriptor terminator has no comment text");
 #endif
     Check(metadata.album == Bytes({'B', 'E', ' ', 0xCE, 0xA9}),
           "UTF-16BE BOM selects big-endian decoding and trims at NUL");
@@ -216,6 +217,64 @@ int main() {
     Check(metadata.albumArtist.size() == 3 && metadata.albumArtist[0] == 'P' &&
               metadata.albumArtist[1] == '\0' && metadata.albumArtist[2] == 'H',
           "encoding 0 preserves an embedded NUL and its suffix");
+
+    const fs::path commentPath = temp.path / "comment_frame.mp3";
+    std::vector<uint8_t> commentTag;
+    std::vector<uint8_t> commentBody = {'e', 'n', 'g', 0xFF, 0xFE, 0, 0,
+                                        0xFF, 0xFE, 'A', 0, 0xF3, 0x97, 0, 0};
+    AppendFrame(commentTag, "COMM", 1, commentBody);
+    Check(WriteId3v23(commentPath, commentTag), "write UTF-16 comment fixture");
+    AudioMetadata commentMetadata;
+    Check(MetadataReader::readMetadata(commentPath.u8string(), commentMetadata) &&
+              commentMetadata.comment == "A\xE9\x9F\xB3",
+          "COMM skips language and short description before decoding comment text");
+    const std::string storedComment(
+        reinterpret_cast<const char*>(commentBody.data()), commentBody.size());
+    Check(Id3CommentText::RecoverStoredLegacy(storedComment) ==
+              std::optional<std::string>("A\xE9\x9F\xB3"),
+          "legacy database bytes recover the original comment for list display");
+    std::string truncatedStoredComment = storedComment;
+    truncatedStoredComment.pop_back();
+    truncatedStoredComment.back() = '6';
+    Check(Id3CommentText::RecoverStoredLegacy(truncatedStoredComment) ==
+              std::optional<std::string>("A\xE9\x9F\xB3" "6"),
+          "legacy comment recovers a final ASCII digit whose UTF-16 high byte was lost");
+    Check(!Id3CommentText::RecoverStoredLegacy("Normal UTF-8 description"),
+          "normal database descriptions are not rewritten by legacy recovery");
+    const fs::path englishCommentPath = temp.path / "english_comment.mp3";
+    std::vector<uint8_t> englishTag;
+    std::vector<uint8_t> englishBody = {'e', 'n', 'g'};
+    const auto englishDescriptor = Utf16Bytes(false, {'n', 'o', 't', 'e', 0});
+    const auto englishValue = Utf16Bytes(false, {'H', 'e', 'l', 'l', 'o', 0});
+    englishBody.insert(englishBody.end(), englishDescriptor.begin(), englishDescriptor.end());
+    englishBody.insert(englishBody.end(), englishValue.begin(), englishValue.end());
+    AppendFrame(englishTag, "COMM", 1, englishBody);
+    Check(WriteId3v23(englishCommentPath, englishTag), "write English comment fixture");
+    AudioMetadata englishComment;
+    Check(MetadataReader::readMetadata(englishCommentPath.u8string(), englishComment) &&
+              englishComment.comment == "Hello",
+          "COMM skips a nonempty short descriptor");
+
+    const fs::path utf8CommentPath = temp.path / "utf8_comment.mp3";
+    std::vector<uint8_t> utf8CommentTag;
+    const std::string longComment = std::string(180, 'A') + "中文";
+    std::vector<uint8_t> utf8CommentBody = {'z', 'h', 'o', 'n', 'o', 't', 'e', 0};
+    utf8CommentBody.insert(utf8CommentBody.end(), longComment.begin(), longComment.end());
+    AppendFrame(utf8CommentTag, "COMM", 3, utf8CommentBody);
+    Check(WriteId3v23(utf8CommentPath, utf8CommentTag), "write long UTF-8 comment fixture");
+    AudioMetadata utf8Comment;
+    Check(MetadataReader::readMetadata(utf8CommentPath.u8string(), utf8Comment) &&
+              utf8Comment.comment == longComment,
+          "COMM preserves a long UTF-8 comment after its descriptor");
+
+    const fs::path emptyCommentPath = temp.path / "empty_comment.mp3";
+    std::vector<uint8_t> emptyCommentTag;
+    AppendFrame(emptyCommentTag, "COMM", 1, {'e', 'n', 'g', 0xFF, 0xFE, 0, 0});
+    Check(WriteId3v23(emptyCommentPath, emptyCommentTag), "write empty comment fixture");
+    AudioMetadata emptyComment;
+    Check(!MetadataReader::readMetadata(emptyCommentPath.u8string(), emptyComment) &&
+              emptyComment.comment.empty(),
+          "COMM keeps an empty comment empty");
 
     const fs::path utf8Path = temp.path / "encoding3_direct.mp3"; std::vector<uint8_t> utf8Tag;
     AppendFrame(utf8Tag, "TIT2", 3, {'U', 'T', 'F', '8'});

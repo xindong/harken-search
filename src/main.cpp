@@ -45294,8 +45294,11 @@ void RenderUI(AppState& state) {
                     // Description column should always reflect real description,
                     // not search snippet (snippet may come from path/other fields).
                     ImGui::TableNextColumn();
-                    ImGui::PushStyleColor(ImGuiCol_Text, record.description.empty() ? kL3 : kL2);
-                    ImGui::TextUnformatted(record.description.empty() ? "-" : record.description.c_str());
+                    const std::string& listDescription =
+                        record.databaseListDescriptionOverride.empty()
+                            ? record.description : record.databaseListDescriptionOverride;
+                    ImGui::PushStyleColor(ImGuiCol_Text, listDescription.empty() ? kL3 : kL2);
+                    ImGui::TextUnformatted(listDescription.empty() ? "-" : listDescription.c_str());
                     ImGui::PopStyleColor();
                     const ImVec2 descriptionHoverRectMin = ImGui::GetItemRectMin();
                     const ImVec2 descriptionHoverRectMax = ImGui::GetItemRectMax();
@@ -45308,7 +45311,7 @@ void RenderUI(AppState& state) {
                         ImGui::PushStyleColor(ImGuiCol_TextDisabled, ThemeColors::current().resultsSecondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 56.0f);
                         ImGui::TextDisabled("%s", L(Info_Description));
-                        ImGui::TextUnformatted(record.description.empty() ? L(Info_NoDescription) : record.description.c_str());
+                        ImGui::TextUnformatted(listDescription.empty() ? L(Info_NoDescription) : listDescription.c_str());
                     if (HasSearchExplainability(record, state.lastAppliedSearchText)) {
                             ImGui::Separator();
                             RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
