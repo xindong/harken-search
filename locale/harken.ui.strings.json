@@ -9908,9 +9908,9 @@
     {
       "id": "Update_BootstrapHandoff",
       "type": "ui",
-      "zh": "正在交接 Bootstrap",
-      "en": "Handing off to Bootstrap",
-      "ja": "Bootstrap に引き継ぎ中"
+      "zh": "正在准备更新，请稍候…",
+      "en": "Preparing the update. Please wait…",
+      "ja": "更新を準備しています。しばらくお待ちください…"
     },
     {
       "id": "Main_PitchInputHint",

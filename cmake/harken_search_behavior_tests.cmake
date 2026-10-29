@@ -7686,6 +7686,29 @@ endif()
 add_test(NAME TestUpdateCheckService COMMAND TestUpdateCheckService)
 aura_set_test_labels(TestUpdateCheckService core stage4)
 
+if(WIN32 AND MSVC)
+    add_executable(TestUpdateRestartConfirmation tests/test_update_restart_confirmation.cpp)
+    target_include_directories(TestUpdateRestartConfirmation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
+    target_compile_features(TestUpdateRestartConfirmation PRIVATE cxx_std_17)
+    # Inert fixture key; the test never starts the worker or calls an authority port.
+    target_compile_definitions(TestUpdateRestartConfirmation PRIVATE
+        ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX="0000000000000000000000000000000000000000000000000000000000000000")
+    target_compile_options(TestUpdateRestartConfirmation PRIVATE /W3 /utf-8)
+    target_sources(TestUpdateRestartConfirmation PRIVATE
+        src/update/UpdateApplicationService.cpp
+        src/update/UpdateCheckService.cpp
+        src/update/UpdateManifest.cpp
+        src/update/UpdateRuntime.cpp
+        src/update/UpdateCoordinator.cpp
+        src/update/UpdateDownloadManager.cpp
+        src/update/UpdateHttpTransport.cpp
+        src/update/UpdateStateStore.cpp
+        src/ed25519/tweetnacl.c)
+    add_test(NAME TestUpdateRestartConfirmation COMMAND TestUpdateRestartConfirmation)
+    aura_set_test_labels(TestUpdateRestartConfirmation core stage4)
+endif()
+
 add_executable(TestUpdateApplicationService EXCLUDE_FROM_ALL
     tests/test_update_application_service.cpp
     src/update/UpdateApplicationService.cpp

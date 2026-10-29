@@ -342,6 +342,8 @@ bool ConfirmHarkenSearchUpdateRestart() {
     std::lock_guard<std::mutex> lock(g_updateUiMutex);
     if (g_updateUiState.phase != HarkenSearchUpdateUiPhase::Ready) return false;
     g_restartConfirmed = true;
+    // Show preparation immediately while the worker checks and hands off the update.
+    g_updateUiState.phase = HarkenSearchUpdateUiPhase::Restarting;
     return true;
 #else
     return false;
