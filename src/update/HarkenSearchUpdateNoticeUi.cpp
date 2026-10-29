@@ -679,7 +679,9 @@ void RenderHarkenSearchUpdateNoticeUi(
                       : updateState.currentVersion)
             : std::string_view(updateState.candidateVersion);
         const bool candidate = state != HarkenSearchUpdateNoticeVisibleState::Latest;
-        const ReleaseNotesEntry* release = SelectHarkenSearchReleaseNotes(notes, releaseVersion, candidate);
+        const ReleaseNotesEntry* release = candidate
+            ? SelectHarkenSearchReleaseNotes(notes, releaseVersion, true)
+            : SelectHarkenSearchLocalDisplayReleaseNotes(notes, releaseVersion);
         const float actionY = panelHeight - 54.0f;
 
         switch (state) {
