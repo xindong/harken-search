@@ -672,6 +672,15 @@ static void LoadReleaseNotesFromExeDir(bool forceReload) {
 }
 
 #if AURA_BUILD_DIAGNOSTICS
+std::string ControlAboutWindowForQa(AppState& state, const std::string& action) {
+    if (action == "open") {
+        state.showAboutWindow = true;
+    } else if (action != "state") {
+        return R"({"ok":false,"error":"invalid_about_action"})";
+    }
+    return nlohmann::json({{"ok", true}, {"pending_open", state.showAboutWindow}}).dump();
+}
+
 std::string ControlUpdateNoticeForQa(AppState& state, const std::string& action) {
     if (action == "open" || action == "history" || action == "reload") {
         LoadReleaseNotesFromExeDir(action == "reload");
@@ -30583,14 +30592,52 @@ void RenderUI(AppState& state) {
     if (BeginTransientScrollbarPopupModal("##AboutAuro", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
-        ImGui::Text(L(Main_AppNameBrand));        ImGui::SameLine();
+        // Brand artwork: icon + official wordmark, picked for the dialog
+        // background; text brand line stays as the fallback when artwork is
+        // unavailable (LoadPackagedAsset caches the miss silently).
+        const ImVec4 aboutBG = ThemeColors::current().dialogBG;
+        const float aboutLuma = aboutBG.x * 0.299f + aboutBG.y * 0.587f + aboutBG.z * 0.114f;
+        const char* const wordmarkAsset = aboutLuma >= 0.5f
+            ? "assets/logos/brand/harken-search-wordmark-black.png"
+            : "assets/logos/brand/harken-search-wordmark-white.png";
+        const auto brandIcon = aura::ui::LoadPackagedAsset("assets/icons/brand/harken.png");
+        const auto wordmark = aura::ui::LoadPackagedAsset(wordmarkAsset);
+        const float brandLineH = 28.0f;
+        if (brandIcon.glId != 0) {
+            ImGui::Image((ImTextureID)(intptr_t)brandIcon.glId, ImVec2(brandLineH, brandLineH));
+            ImGui::SameLine();
+        }
+        if (wordmark.glId != 0 && wordmark.w > 0) {
+            const float wmW = brandLineH * ((float)wordmark.w / (float)wordmark.h);
+            ImGui::Image((ImTextureID)(intptr_t)wordmark.glId, ImVec2(wmW, brandLineH));
+        } else {
+            ImGui::Text(L(Main_AppNameBrand));
+        }
+        ImGui::SameLine();
         ImGui::TextDisabled(L(Main_VersionFmt), SOUNDMANAGER_VERSION_STRING);
         ImGui::Separator();
-        ImGui::TextWrapped(L(Main_UpdateCenterMovedNote));
-        if (ImGui::Button(L(Main_OpenUpdateCenterBtn), ImVec2(160.0f, 0.0f))) {
-            state.showUpdateCenter = true;
-            ImGui::CloseCurrentPopup();
+        ImGui::TextWrapped(L(Main_AboutLicenseNote));
+        ImGui::TextWrapped(L(Main_AboutLegalDocsNote));
+        // Cindy credit line with the contributor logo; text-only fallback.
+        const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/contributors/cindy.png");
+        if (cindyLogo.glId != 0 && cindyLogo.w > 0) {
+            const float logoH = ImGui::GetTextLineHeight() + 6.0f;
+            const float logoW = logoH * ((float)cindyLogo.w / (float)cindyLogo.h);
+            ImGui::Image((ImTextureID)(intptr_t)cindyLogo.glId, ImVec2(logoW, logoH));
+            ImGui::SameLine();
         }
+        ImGui::TextWrapped(L(Main_AboutCindyCredit));
+        const auto urlLine = [](const char* label, const char* url) {
+            // Single unwrapped line: the auto-resizing dialog widens to keep
+            // the full address readable instead of breaking it mid-URL.
+            const std::string line = std::string(label) + url;
+            ImGui::TextUnformatted(line.c_str());
+            if (ImGui::IsItemClicked()) Platform::OpenUrl(url);
+        };
+        urlLine(L(Main_AboutRepoLine), "https://github.com/xindong/harken-search");
+        urlLine(L(Main_AboutDownloadLine), "https://harkensearch.xd.com");
+        urlLine(L(Main_AboutCindyRepoLine), "https://github.com/makecindy/cindy");
+        urlLine(L(Main_AboutCindyDownloadLine), "https://cindy.app");
         ImGui::Separator();
         if (ImGui::Button(L(OK), ImVec2(120, 0))) {
             ImGui::CloseCurrentPopup();
