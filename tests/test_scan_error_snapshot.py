@@ -136,7 +136,7 @@ def test_failure_summary_has_its_own_window_after_progress_closes():
     assert 'Main_ScanFailureSummaryTitle' in result_window
     assert 'state.getScanFailureCounts()' in result_window
     assert 'state.clearScanErrors();' in result_window
-    assert 'ImGui::Button(L(Done)' in result_window
+    assert 'aura::ui::ActionButton(L(Done)' in result_window
     assert 'Main_StopBtn' not in result_window
     assert 'ImGui::ProgressBar' not in result_window
     assert 'ThemeInspector::RegisterLastItem("info.qaScanResultDone"' in result_window
