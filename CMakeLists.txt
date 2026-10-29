@@ -891,6 +891,26 @@ if(MSVC)
 endif()
 add_test(NAME UpdateNoticePresentation COMMAND TestUpdateNoticePresentation)
 
+add_executable(TestThemeScheduleClock EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_clock.cpp)
+target_include_directories(TestThemeScheduleClock PRIVATE src)
+target_compile_features(TestThemeScheduleClock PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeScheduleClock PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeScheduleClock COMMAND TestThemeScheduleClock)
+
+add_executable(TestThemeSchedulePaletteFiles EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_palette_files.cpp
+    src/ThemeSchedulePaletteFiles.cpp)
+target_include_directories(TestThemeSchedulePaletteFiles PRIVATE src)
+target_compile_features(TestThemeSchedulePaletteFiles PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeSchedulePaletteFiles PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
+
 add_executable(TestUpdateNoticeContent EXCLUDE_FROM_ALL
     tests/test_update_notice_content.cpp
     src/update/HarkenSearchUpdateNoticeModel.cpp
