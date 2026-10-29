@@ -15748,10 +15748,6 @@
       "zh": "松手放到下方 · Esc 取消", "en": "Release to dock below · Esc cancels", "ja": "離すと下に配置 · Esc でキャンセル"
     },
     {
-      "id": "ThemeSchedule_Title", "type": "ui",
-      "zh": "日夜配色", "en": "Day and night palettes", "ja": "昼夜の配色"
-    },
-    {
       "id": "ThemeSchedule_Hint", "type": "ui",
       "zh": "08:00 使用白天 · 16:00 使用黑夜",
       "en": "Day at 08:00 · Night at 16:00",
@@ -15759,8 +15755,6 @@
     },
     {"id": "ThemeSchedule_Automatic", "type": "ui", "zh": "自动日夜切换", "en": "Switch automatically", "ja": "昼夜を自動切り替え"},
     {"id": "ThemeSchedule_ManualHint", "type": "ui", "zh": "点击下方配色，固定使用白天或黑夜。", "en": "Choose a palette below to keep using day or night.", "ja": "下の配色を選んで、昼または夜に固定します。"},
-    {"id": "ThemeSchedule_UseDay", "type": "ui", "zh": "固定白天", "en": "Keep day", "ja": "昼に固定"},
-    {"id": "ThemeSchedule_UseNight", "type": "ui", "zh": "固定夜间", "en": "Keep night", "ja": "夜に固定"},
     {"id": "ThemeSchedule_Day", "type": "ui", "zh": "白天", "en": "Day", "ja": "昼"},
     {"id": "ThemeSchedule_Night", "type": "ui", "zh": "黑夜", "en": "Night", "ja": "夜"},
     {"id": "ThemeSchedule_EditPalette", "type": "ui", "zh": "编辑配色", "en": "Edit palette", "ja": "配色を編集"},
@@ -15795,13 +15789,13 @@
     {
       "id": "ThemeSchedule_RequireLight", "type": "ui",
       "zh": "白天请保持主窗口、列表、对话框和波形背景为浅色，且不透明度至少为 90%。",
-      "en": "Keep day window, list, dialog and waveform backgrounds light, with at least 90% opacity.",
+      "en": "Keep day window, list, dialog and waveform backgrounds light, with an opacity of at least 90 percent.",
       "ja": "昼のウィンドウ・一覧・ダイアログ・波形背景は明るく、不透明度 90% 以上にしてください。"
     },
     {
       "id": "ThemeSchedule_RequireDark", "type": "ui",
       "zh": "夜间请保持主窗口、列表、对话框和波形背景为暗色，且不透明度至少为 90%。",
-      "en": "Keep night window, list, dialog and waveform backgrounds dark, with at least 90% opacity.",
+      "en": "Keep night window, list, dialog and waveform backgrounds dark, with an opacity of at least 90 percent.",
       "ja": "夜のウィンドウ・一覧・ダイアログ・波形背景は暗く、不透明度 90% 以上にしてください。"
     },
     {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"}
