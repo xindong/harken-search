@@ -114,6 +114,23 @@ def run(exe, root, output, mode):
             assert scan["errors"] == 0, scan
             (root / "library-ready.txt").write_text("Scan completed in isolated profile", encoding="utf-8")
         driver.command({"cmd": "set_view_mode", "mode": "database"})
+        # This profile can retain the previous real-library filter state. Start
+        # from a settled three-file sample before comparing operation order.
+        driver.command({"cmd": "clear_cover_filter"})
+        driver.command({"cmd": "clear_metadata_filter"})
+        driver.command({"cmd": "clear_folder_filter"})
+        search("")
+        baseline_deadline = time.monotonic() + 45
+        while True:
+            baseline = settled()
+            baseline_rows = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})["items"]
+            if (baseline["total_count"] == 3 and
+                    sorted(row["name"] for row in baseline_rows) ==
+                    ["Bell_A.wav", "Bird_A.wav", "Bird_B.wav"]):
+                break
+            assert time.monotonic() < baseline_deadline, (
+                "sample baseline did not settle", baseline["total_count"], baseline_rows)
+            time.sleep(.1)
         a, b = str(root / "library/A"), str(root / "library/B")
         folder(a)
         search("Bird")
