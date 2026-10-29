@@ -2,13 +2,6 @@
   "schema_version": 1,
   "entries": [
     {
-      "id": "NewDB_RequiredSetup",
-      "type": "ui",
-      "zh": "请先建立音效库。新建或打开已有音效库后，即可开始使用。",
-      "en": "Set up your sound library first. Create a library or open an existing one to get started.",
-      "ja": "まず音源ライブラリを準備してください。新しく作成するか、既存のライブラリを開くと利用を開始できます。"
-    },
-    {
       "id": "NewDB_SetupPending",
       "type": "ui",
       "zh": "正在准备音效库…",
