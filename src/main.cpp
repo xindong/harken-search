@@ -1575,7 +1575,6 @@ static void ProcessKeybindings(AppState& state) {
             if (IsShortcutPressedSnapshot(ShortcutAction::Refresh, ks)) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database) {
-                    ClearAllFiltersForShowAll(state);
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
                     RefreshSearchResults(state, true);
@@ -8240,7 +8239,8 @@ static void DrawSidebarFilterPopupBody(
     OnPickFn&& onPick,
     bool synthAllRow = true,
     int searchThreshold = kSidebarFilterSearchThreshold,
-    float listHeight = kSidebarFilterListHeight)
+    float listHeight = kSidebarFilterListHeight,
+    AppState* qaState = nullptr)
 {
     const bool showSearch = (int)items.size() > searchThreshold;
     if (showSearch) {
@@ -8271,7 +8271,17 @@ static void DrawSidebarFilterPopupBody(
             if (n.find(needle) == std::string::npos) continue;
         }
         ImGui::PushID(i);
-        if (ImGui::Selectable(it.c_str(), false)) {
+        const bool picked = ImGui::Selectable(it.c_str(), false);
+#if ARIS_PREVIEW_ISOLATION
+        if (qaState) {
+            const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+            const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+            qaState->qaFilterUiRects["cover_mode_option_" + std::to_string(i)] = ImVec4(
+                min.x - origin.x, min.y - origin.y,
+                max.x - origin.x, max.y - origin.y);
+        }
+#endif
+        if (picked) {
             onPick(i, it);
             ImGui::CloseCurrentPopup();
             ImGui::PopID();
@@ -8341,7 +8351,8 @@ static void DrawSidebarEnumFilter(
     const char* idSuffix,
     int* selectedIndex,
     const char* const* items, int itemCount,
-    OnChangeFn&& onChange)
+    OnChangeFn&& onChange,
+    AppState* qaState = nullptr)
 {
     if (!selectedIndex || !items || itemCount <= 0) return;
     if (*selectedIndex < 0 || *selectedIndex >= itemCount) *selectedIndex = 0;
@@ -8355,7 +8366,16 @@ static void DrawSidebarEnumFilter(
     const float comboWidth = ImGui::CalcItemWidth();
     const ImVec2 comboMax(comboMin.x + comboWidth, comboMin.y + ImGui::GetFrameHeight());
     SetupSidebarPickerPopup(comboMin, comboMax);
-    if (BeginTransientScrollbarCombo(comboId, preview)) {
+    const bool comboOpen = BeginTransientScrollbarCombo(comboId, preview);
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+        qaState->qaFilterUiRects["cover_mode_selector"] = ImVec4(
+            comboMin.x - origin.x, comboMin.y - origin.y,
+            comboMax.x - origin.x, comboMax.y - origin.y);
+    }
+#endif
+    if (comboOpen) {
         std::vector<std::string> strItems;
         strItems.reserve((size_t)itemCount);
         for (int i = 0; i < itemCount; ++i) strItems.emplace_back(items[i] ? items[i] : "");
@@ -8373,7 +8393,8 @@ static void DrawSidebarEnumFilter(
             },
             /*synthAllRow*/ false,
             kSidebarFilterSearchThreshold,
-            kSidebarWideFilterListHeight);
+            kSidebarWideFilterListHeight,
+            qaState);
         ImGui::EndCombo();
     }
 }
@@ -13762,8 +13783,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
         });
 }
 
-// Path filter click should only clear specific cover-key filter from previous
-// cover-click selection, without disabling cover display system.
+// Clear the database cover selection when navigating into playlist views.
 static void ClearSpecificCoverKeyFilter(AppState& state) {
     if (!state.coverFilterActive) return;
     state.coverFilterActive = false;
@@ -13794,16 +13814,6 @@ static void ResetPlaylistCoverWallScope(AppState& state) {
     cw.filteredLastSelSize = 0;
     cw.filteredLastId0 = 0;
     aura::cover_wall::RequestDisplayRefresh(state);
-}
-
-// A new keyword keeps the selected folder, but still clears a cover click-filter.
-// Do not clear the search buffer here (that would loop with the change handler).
-static void ClearCoverFilterForNewSearch(AppState& state) {
-    if (state.coverFilterActive) {
-        ClearSpecificCoverKeyFilter(state);
-        state.coverFilterIndex = 0;
-        DIAG_ACTION("Filter", "AutoClearOnSearchChange");
-    }
 }
 
 static void RequestRemoveFolderFromDatabase(AppState& state, const std::string& folderPath) {
@@ -14394,6 +14404,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.coverFilterPath.clear();
     state.coverFilterMatchSig = 0;
     state.coverFilterMatchPaths.clear();
+    state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
     state.coverFilterIndex = 0;
     state.categoryFilterBuffer[0] = '\0';
     state.artistFilterBuffer[0] = '\0';
@@ -14406,6 +14417,12 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.maxDurationFilter = 0.0f;
     state.minBpmFilter = 0.0f;
     state.maxBpmFilter = 0.0f;
+    state.keyFilterBuffer[0] = '\0';
+    state.genrePillState.clear();
+    state.instrumentPillState.clear();
+    state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
+    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+    state.suppressNextRealtimeSearchCommit = true;
 
     // Clear both same-folder and same-name search modes.
     state.findSameFilenameActive = false;
@@ -15775,7 +15792,6 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                             if (!(state.folderFilterActive && state.selectedFolderPath == canonPathFacet)) {
                                 state.folderFilterActive = true;
                                 state.selectedFolderPath = canonPathFacet;
-                                ClearSpecificCoverKeyFilter(state);
                                 state.suppressFacetsForNextRefresh = true;
                                 state.preservePathFacetsForNextRefresh = true;
                                 RefreshSearchResults(state, true);
@@ -16498,16 +16514,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         {
             const char* coverItems[] = { L(Filter_All), L(Filter_HasCover), L(Filter_NoCover) };
             DrawSidebarEnumFilter("Cover", &state.coverFilterIndex, coverItems, IM_ARRAYSIZE(coverItems),
-                [&]() {
-                    // 切换封面时同步清除 CoverKey 过滤（避免残留 specificCoverKey 导致列表不刷新）
-                    if (state.coverFilterActive) {
-                        state.coverFilterActive = false;
-                        state.coverFilterPath.clear();
-                        state.coverFilterMatchSig = 0;
-                        state.coverFilterMatchPaths.clear();
-                    }
-                    applyMetaFilters();
-                });
+                [&]() { applyMetaFilters(); }, &state);
         }
 
         drawSidebarFilterLabel(L(Filter_DurationSec));
@@ -19713,6 +19720,19 @@ void RenderFileInfoPanelTabContents(
                                 }
 
                                 ImGui::SetCursorScreenPos(cellScreenPos);
+#if ARIS_PREVIEW_ISOLATION
+                                if (idx == 0 && ImGui::GetWindowViewport() == ImGui::GetMainViewport()) {
+                                    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                                    const float localX = cellScreenPos.x - origin.x;
+                                    const float localY = cellScreenPos.y - origin.y;
+                                    if (localX >= 0.0f && localY >= 0.0f &&
+                                        localX + thumb <= display.x && localY + thumb <= display.y) {
+                                        state.qaFilterUiRects["cover_tile_0"] = ImVec4(
+                                            localX, localY, localX + thumb, localY + thumb);
+                                    }
+                                }
+#endif
                                 if (ImGui::InvisibleButton("##ArtHit", ImVec2(thumb, thumb))) {
                                     auto t0 = std::chrono::steady_clock::now();
                                     const std::string selectionKey = !item.wallSelectionKey.empty()
@@ -19722,15 +19742,7 @@ void RenderFileInfoPanelTabContents(
                                         : (state.folderFilterActive
                                             ? aura::cover_wall::EncodeExactCoverWallKey(item.key)
                                             : item.key);
-                                    if (item.key.rfind("?|", 0) == 0 && item.wallMemberKeys.size() <= 1) {
-                                        state.folderFilterActive = true;
-                                        // T2.6: cover wall art click 入口 canonical
-                                        state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(item.folderPathUtf8);
-                                        state.coverFilterActive = false;
-                                        state.coverFilterPath.clear();
-                                        state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
-                                    } else {
-                                        // Query without a folder boundary for this identity.
+                                    {
                                         if (state.coverFilterActive && state.coverFilterPath == selectionKey) {
                                             state.coverFilterActive = false;
                                             state.coverFilterPath.clear();
@@ -19754,9 +19766,6 @@ void RenderFileInfoPanelTabContents(
                                             } else {
                                                 state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
                                             }
-                                            // Allow the database to match this cover across subfolders.
-                                            state.folderFilterActive = false;
-                                            state.selectedFolderPath.clear();
                                         }
                                     }
                                     state.coverFilterMatchPaths.clear();
@@ -29268,6 +29277,9 @@ void DrawSimilarityIndexPanel(AppState& state) {
 }
 
 void RenderUI(AppState& state) {
+#if ARIS_PREVIEW_ISOLATION
+    state.qaFilterUiRects.clear();
+#endif
     if (HarkenSearch::ShouldConsumePendingPostScanSimilarityIndex(
             state.pendingPostScanSimilarityIndex.load(std::memory_order_acquire),
             state.dbSwitchInProgress,
@@ -37350,7 +37362,6 @@ void RenderUI(AppState& state) {
             state.folderFilterActive = true;
             // T2.6: pending folder 入口 canonical
             state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
-            ClearSpecificCoverKeyFilter(state);
             state.viewMode = ViewMode::Database;
             state.preferDeferredCountForNextRefresh = true;
 
@@ -37735,8 +37746,6 @@ void RenderUI(AppState& state) {
             if (ImGui::MenuItem(L(Refresh), GetShortcutString(ShortcutAction::Refresh).c_str())) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database) {
-                    // Show All：清除所有筛选条件并重新加载全部
-                    ClearAllFiltersForShowAll(state);
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
                     RefreshSearchResults(state, true);
@@ -39085,6 +39094,14 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorScreenPos(itemMin);
                 char btnId[32]; snprintf(btnId, sizeof(btnId), "##NavItem%d", i);
                 ImGui::InvisibleButton(btnId, ImVec2(itemWidths[i], innerH));
+#if ARIS_PREVIEW_ISOLATION
+                if (i == 4) {
+                    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                    state.qaFilterUiRects["refresh"] = ImVec4(
+                        itemMin.x - origin.x, itemMin.y - origin.y,
+                        itemMax.x - origin.x, itemMax.y - origin.y);
+                }
+#endif
                 ThemeInspector::RegisterLastItem(navZoneKeys[i], navItems[i].label, "src/main.cpp:42813");
                 navHovered[i] = ImGui::IsItemHovered();
                 navClicked[i] = ImGui::IsItemClicked(ImGuiMouseButton_Left);
@@ -39294,7 +39311,6 @@ void RenderUI(AppState& state) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database ||
                     IsPlaylistSystemView(state.viewMode)) {
-                    if (state.viewMode == ViewMode::Database) ClearAllFiltersForShowAll(state);
                     if (state.viewMode == ViewMode::Database) {
                         aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                         state.suppressFacetsForNextRefresh = true;
@@ -39698,7 +39714,6 @@ void RenderUI(AppState& state) {
                 // 非路径输入：不做搜索也不切模式，保持浏览器
             } else {
                 if (!rejectInvalidSlashSearch(textToSearch)) {
-                    ClearCoverFilterForNewSearch(state);
                     KeepPlaylistSearchScopeOrEnterDatabase(state);
                     RefreshSearchResults(state, true);
                 }
@@ -39730,7 +39745,6 @@ void RenderUI(AppState& state) {
             state.lastAppliedSearchText = debouncedSearch;
             state.clearPendingWaveforms();
             if (!rejectInvalidSlashSearch(debouncedSearch)) {
-                ClearCoverFilterForNewSearch(state);
                 DIAG_ACTION("Search", "KeywordSearch");
 
                 // 百万库场景下，实时搜索只刷新结果，不自动加载/播放第一条。
@@ -42407,6 +42421,19 @@ void RenderUI(AppState& state) {
                     ImGui::PushID((int)i);
                     std::string chipLabel = activeFilters[i].label + u8" ×";
                     bool chipClicked = ImGui::SmallButton(chipLabel.c_str());
+#if ARIS_PREVIEW_ISOLATION
+                    const char* qaChipKey = activeFilters[i].type == FilterChipType::CoverKey ? "chip_cover_key" :
+                        activeFilters[i].type == FilterChipType::CoverMode ? "chip_cover_mode" :
+                        activeFilters[i].type == FilterChipType::Folder ? "chip_folder" :
+                        activeFilters[i].type == FilterChipType::Keyword ? "chip_keyword" : nullptr;
+                    if (qaChipKey) {
+                        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                        const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                        state.qaFilterUiRects[qaChipKey] = ImVec4(
+                            min.x - origin.x, min.y - origin.y,
+                            max.x - origin.x, max.y - origin.y);
+                    }
+#endif
                     ImGui::PopID();
                     ImGui::PopStyleColor(3);
                     if (activeFilters[i].type == FilterChipType::ExcludeKeyword
@@ -42490,14 +42517,10 @@ void RenderUI(AppState& state) {
                                 state.coverFilterPath.clear();
                                 state.coverFilterMatchSig = 0;
                                 state.coverFilterMatchPaths.clear();
-                                state.coverFilterIndex = 0; // 同步清除封面模式过滤
+                                state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
                                 break;
                             case FilterChipType::CoverMode:
                                 state.coverFilterIndex = 0;
-                                state.coverFilterActive = false; // 同步清除封面 key 过滤
-                                state.coverFilterPath.clear();
-                                state.coverFilterMatchSig = 0;
-                                state.coverFilterMatchPaths.clear();
                                 break;
                             case FilterChipType::Category:
                                 state.categoryFilterBuffer[0] = '\0';
@@ -42549,6 +42572,15 @@ void RenderUI(AppState& state) {
                     RefreshSearchResults(state, true);
                     state.syncToTab();
                 }
+#if ARIS_PREVIEW_ISOLATION
+                {
+                    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                    const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                    state.qaFilterUiRects["clear_all"] = ImVec4(
+                        min.x - origin.x, min.y - origin.y,
+                        max.x - origin.x, max.y - origin.y);
+                }
+#endif
                 ImGui::PopStyleColor(3);
                 if (filterFont) ImGui::PopFont();
                 ImGui::PopStyleVar(3);
@@ -44461,7 +44493,6 @@ void RenderUI(AppState& state) {
                                 state.folderFilterActive = true;
                                 // Store the context-menu folder filter in canonical form.
                                 state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(targetFolder);
-                                ClearSpecificCoverKeyFilter(state);
                                 state.viewMode = ViewMode::Database;
                                 state.clearPendingWaveforms();
                                 RefreshSearchResults(state, true);
