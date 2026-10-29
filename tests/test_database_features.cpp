@@ -5295,11 +5295,11 @@ int testLegacyDescriptionDisplay() {
         return bytes;
     };
     const std::string sourceFrameHex =
-        "01656e67fffe0000fffe32006700650069002e0063006f006d005f00386e0f62"
-        "f397504ef39748655f003172d97e517f";
+        "01656e67fffe0000fffe640065006d006f002e0063006f006d005f003a798b4f"
+        "2d4e8765cf63f08f5f00f48b0e66575b";
     const std::string damagedDbHex =
-        "656e67fffe0000fffe32006700650069002e0063006f006d005f00386e0f62"
-        "f397504ef39748655f0031fdff7e51";
+        "656e67fffe0000fffe640065006d006f002e0063006f006d005f003a798b4f"
+        "2d4e8765cf63f08f5f00f48b0e66fdff";
     std::vector<uint8_t> mp3 = {'I', 'D', '3', 3, 0, 0, 0, 0, 0, 58,
                                 'C', 'O', 'M', 'M', 0, 0, 0, 48, 0, 0};
     const auto frame = fromHex(sourceFrameHex);
@@ -5313,7 +5313,7 @@ int testLegacyDescriptionDisplay() {
     AudioMetadata sourceChinese;
     const bool sourceChineseReadable = MetadataReader::readMetadata(
         PathToUtf8(chinesePath), sourceChinese) &&
-        sourceChinese.comment == "2gei.com_游戏音乐音效_爱给网";
+        sourceChinese.comment == "demo.com_示例中文描述_说明字";
     AudioRecord chinese = legacy;
     chinese.filePath = PathToUtf8(chinesePath);
     chinese.fileName = "real-chinese-comment.mp3";
