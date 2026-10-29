@@ -3904,6 +3904,7 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
 }
 
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
+extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
 
 static void PollQaCommandFile(AppState& state) {
     static int s_pollSkip = 0;
@@ -4724,6 +4725,12 @@ static void PollQaCommandFile(AppState& state) {
                     ",\"h\":" + std::to_string(zone.maxY - zone.minY) + "}";
             }
             result += "}}";
+        }
+    } else if (cmd == "about_window") {
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            result = ControlAboutWindowForQa(state, getStr(raw, "action"));
         }
     } else if (cmd == "update_notice" || cmd == "update_notice_pointer") {
         if (!MagicEqQaIsolationReady()) {

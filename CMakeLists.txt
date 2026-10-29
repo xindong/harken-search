@@ -1547,6 +1547,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand")
         COMMENT "Copying brand icons...")
 endif()
 
+# Contributor logos shown in the About dialog ship beside the executable.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/contributors"
+        COMMENT "Copying contributor icons...")
+endif()
+
 # Copy brand logo lockups next to HarkenSearch.exe. These are larger wordmark assets
 # used by splash/about/welcome surfaces and are kept separate from the small
 # 20px/40px toolbar brand icons above.
