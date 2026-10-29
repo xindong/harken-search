@@ -17,6 +17,20 @@ import time
 from qa_folder_shortcuts import Driver
 
 
+def all_results(driver):
+    """Read every loaded native result before comparing filter intersections."""
+    page = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})
+    total = page["total"]
+    rows = list(page["items"])
+    while len(rows) < total:
+        page = driver.command({"cmd": "get_results", "offset": len(rows), "limit": 100})
+        assert page["total"] == total, "result set changed while reading pages"
+        assert page["items"], "native result page was empty before the end"
+        rows.extend(page["items"])
+    assert len(rows) == total, "native result page count changed"
+    return rows
+
+
 def run(exe, root, output, mode):
     import win32con
     import win32gui
@@ -162,7 +176,7 @@ def run(exe, root, output, mode):
         state = state_ready()
         assert state["cover_filter"]["active"], "real cover tile click did not apply"
         cover_key = state["cover_filter"]["path"]
-        cover_rows = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})["items"]
+        cover_rows = all_results(driver)
         assert cover_rows, "cover click yielded no rows"
         record("cover-click", state)
         words = re.findall(r"[A-Za-z]{4,}", cover_rows[0]["name"])
@@ -172,7 +186,7 @@ def run(exe, root, output, mode):
         record("cover-then-keyword", state)
         assert state["cover_filter"]["active"] and state["cover_filter"]["path"] == cover_key, (
             "search cleared selected cover", state["cover_filter"])
-        rows = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})["items"]
+        rows = all_results(driver)
         cover_paths = {row["path"] for row in cover_rows}
         assert rows, "matching cover keyword unexpectedly returned no results"
         assert {row["path"] for row in rows} <= cover_paths, "result is not filter intersection"
@@ -212,12 +226,11 @@ def run(exe, root, output, mode):
         query = max(words, key=len)
         state = search(query)
         assert state["result_count"] > 0
-        keyword_paths = {row["path"] for row in driver.command(
-            {"cmd": "get_results", "offset": 0, "limit": 100})["items"]}
+        keyword_paths = {row["path"] for row in all_results(driver)}
         click("cover_tile_0")
         state = until("keyword then cover", lambda s: s["cover_filter"]["active"] and
                       s["search_text"] == query and s["result_count"] > 0)
-        rows = driver.command({"cmd": "get_results", "offset": 0, "limit": 100})["items"]
+        rows = all_results(driver)
         assert {row["path"] for row in rows} <= keyword_paths
         record("keyword-then-cover", state)
 
