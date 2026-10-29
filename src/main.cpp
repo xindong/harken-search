@@ -28789,18 +28789,6 @@ static const char* StartupNoDatabaseSetupTitle(const AppState& state) {
         : "No database yet";
 }
 
-static const char* StartupNoDatabaseSetupBody(const AppState& state) {
-    if (state.startupDatabaseSetupReason ==
-        AppState::StartupDatabaseSetupReason::MissingConfiguredDatabase) {
-        return state.settings.language == AppLanguage::Chinese
-            ? u8"上次使用的数据库当前不可用。请重新打开已有数据库，或先新建一个数据库再开始导入和搜索。"
-            : "Your previous database is currently unavailable. Open an existing database or create a new one before importing and searching.";
-    }
-    return state.settings.language == AppLanguage::Chinese
-        ? u8"请先新建或打开音效库，完成后才能开始导入、搜索和试听。"
-        : "Create or open a sound library before importing, searching, and auditioning.";
-}
-
 static const char* StartupNoDatabaseSetupHint(const AppState& state) {
     return state.settings.language == AppLanguage::Chinese
         ? u8"建立数据库后，Harken Search 才会启动库级搜索、重扫和相关后台准备。"
@@ -33089,10 +33077,6 @@ void RenderUI(AppState& state) {
             EmptyStateVisualAudit::Record("title", setupSurfaces);
             ImGui::PopStyleColor();
             if (emphasisFont) ImGui::PopFont();
-            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.bodyColor);
-            ImGui::TextWrapped("%s", StartupNoDatabaseSetupBody(state));
-            EmptyStateVisualAudit::Record("body", setupSurfaces);
-            ImGui::PopStyleColor();
             ImGui::Spacing();
         }
 
@@ -33100,8 +33084,10 @@ void RenderUI(AppState& state) {
             newDbDir = GetDefaultDbDirUtf8();
         }
         std::string dbDir = newDbDir;
-        ImGui::TextColored(requireDatabaseSetup ? setupPalette.bodyColor : ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
-        ImGui::TextWrapped("%s", dbDir.c_str());
+        if (!requireDatabaseSetup) {
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
+            ImGui::TextWrapped("%s", dbDir.c_str());
+        }
         if (ImGui::Button(L(Main_ChooseStorageLocation), ImVec2(140, 0))) {
             std::string folder = OpenFolderDialog(g_hwnd);
             if (!folder.empty()) {

@@ -37,10 +37,10 @@ def fresh(driver, theme):
         snap = driver.command({'cmd': 'empty_state_audit'})
         if (snap['theme'] == theme and snap['frame'] >= first['current_frame'] + 8
                 and snap['current_frame'] - snap['frame'] <= 2
-                and {c['id'] for c in snap['checks']} == {'title', 'body', 'hint', 'new', 'open'}):
+                and {c['id'] for c in snap['checks']} == {'title', 'hint', 'new', 'open'}):
             return snap
         time.sleep(.04)
-    raise TimeoutError('No fresh empty-state frame with all five text elements')
+    raise TimeoutError('No fresh setup frame with all four text elements')
 
 
 def run(args):
