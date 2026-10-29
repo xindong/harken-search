@@ -509,6 +509,48 @@ void test_transport_append_intent_uses_trusted_relative_sink() {
           "queued old-generation effects cannot land after re-admission");
 }
 
+void test_retention_listing_and_removal_stay_scoped_to_version_trees() {
+    Fixture fixture;
+    check(fixture.write("1.0.21/staging/pkg.zip", "old"), "old package staged");
+    check(fixture.write("1.0.22/staging/pkg.zip", "prev"), "previous package staged");
+    check(fixture.write("1.0.23/staging/pkg.zip", "current"), "current package staged");
+    check(fixture.write("staging/shared.bin", "keep"), "shared staging written");
+    check(fixture.write("quarantine/x.zip", "keep"), "quarantine written");
+
+    const auto listing = fixture.port->ObserveVersionDirectories();
+    check(listing.ok, "retention listing reads the update root");
+    check(listing.directoryNames == std::vector<std::string>(
+              {"1.0.21", "1.0.22", "1.0.23", "quarantine", "staging"}),
+          "listing is sorted and exposes names, never absolute roots");
+
+    const auto plan = aris::update::UpdateDownloadManager::PlanVersionRetention(
+        listing.directoryNames, "1.0.23");
+    check(plan.ok && plan.pruneVersions == std::vector<std::string>({"1.0.21"}),
+          "real listing feeds the same keep-current-and-previous decision");
+
+    for (const auto& version : plan.pruneVersions) {
+        const auto removed = fixture.port->DeleteVersionDirectory(version);
+        check(removed.ok() && removed.completedIntents == 1,
+              "one listed version tree is removed through the port");
+    }
+    check(!Platform::FileSystem::Exists(join(fixture.root, "1.0.21")),
+          "pruned tree including nested staging is gone from disk");
+    check(Platform::FileSystem::Exists(join(fixture.root, "1.0.22/staging/pkg.zip")) &&
+              Platform::FileSystem::Exists(join(fixture.root, "1.0.23/staging/pkg.zip")),
+          "previous and running packages survive the prune");
+    check(Platform::FileSystem::Exists(join(fixture.root, "staging/shared.bin")) &&
+              Platform::FileSystem::Exists(join(fixture.root, "quarantine/x.zip")),
+          "non-version directories are never pruned");
+
+    const auto rejected = fixture.port->DeleteVersionDirectory("staging");
+    check(!rejected.ok(), "non-semver names are rejected before any effect");
+    const auto forged = fixture.port->DeleteVersionDirectory("../1.0.22");
+    check(!forged.ok(), "traversal names are rejected before any effect");
+
+    const auto requeued = fixture.port->DeleteVersionDirectory("1.0.21");
+    check(requeued.ok(), "a second prune of the same version stays idempotent");
+}
+
 }  // namespace
 
 int main() {
@@ -519,5 +561,6 @@ int main() {
     test_platform_failures_stop_the_plan_and_propagate_error();
     test_manager_intents_compose_without_root_prefix_adaptation();
     test_transport_append_intent_uses_trusted_relative_sink();
+    test_retention_listing_and_removal_stay_scoped_to_version_trees();
     return failures == 0 ? 0 : 1;
 }
