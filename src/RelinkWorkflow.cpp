@@ -253,10 +253,10 @@ bool RenderRelinkBanner(AppState& state) {
         }
         ImGui::SameLine();
 
-        ButtonOptions ghost;
-        ghost.variant = ButtonVariant::Ghost;
-        ghost.size = ButtonSize::Sm;
-        if (Button(L(Relink_SkipThisBtn), ghost)) {
+        ButtonOptions quiet;
+        quiet.variant = ButtonVariant::Quiet;
+        quiet.size = ButtonSize::Sm;
+        if (Button(L(Relink_SkipThisBtn), quiet)) {
             state.relinkBannerSearchGeneration.fetch_add(1, std::memory_order_acq_rel);
             state.relinkIgnoredThisSession.insert(state.relinkBanner.missingPath);
             state.relinkBanner.visible = false;
@@ -296,7 +296,7 @@ bool RenderRelinkTool(AppState& state) {
         state.relinkTool.searchRoot = rlkRootBuf;
     }
     ImGui::SameLine();
-    if (ImGui::Button(L(DAW_Browse), ImVec2(buttonWidth, 0))) {
+    if (aura::ui::ActionButton(L(DAW_Browse), ImVec2(buttonWidth, 0))) {
         const std::string folder = Platform::BrowseFolderDialogModern(
             HarkenSearch::UiHost::MainWindowOwner(), u8"选择音频文件夹");
         if (!folder.empty()) {
@@ -312,7 +312,7 @@ bool RenderRelinkTool(AppState& state) {
 
     const bool wasScanning = state.relinkTool.scanning;
     if (wasScanning) ImGui::BeginDisabled();
-    if (ImGui::Button(L(Relink_AutoMatch), ImVec2(scanButtonWidth, 0))) {
+    if (aura::ui::ActionButton(L(Relink_AutoMatch), ImVec2(scanButtonWidth, 0), aura::ui::ButtonVariant::PrimarySearch)) {
         state.relinkTool.scanning = true;
         state.relinkTool.results.clear();
         state.relinkTool.confirmed = false;
@@ -458,7 +458,7 @@ bool RenderRelinkTool(AppState& state) {
         ImGui::SameLine(
             ImGui::GetContentRegionAvail().x -
             confirmButtonWidth + ImGui::GetCursorPosX());
-        if (ImGui::Button(confirmLabel, ImVec2(confirmButtonWidth, 0))) {
+        if (aura::ui::ActionButton(confirmLabel, ImVec2(confirmButtonWidth, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             decltype(state.relinkTool.results) pendingResults;
             for (auto& [candidate, paths] : state.relinkTool.results) {
                 if (paths.empty()) continue;

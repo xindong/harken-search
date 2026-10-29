@@ -2,6 +2,7 @@
 
 #include "AppState.h"
 #include "HarkenSearchWidgets.h"
+#include "HarkenSearchMetrics.h"
 #include "DockNativeCaptionBridge.h"
 #include "imgui_internal.h"
 #include "Localization.h"
@@ -80,7 +81,8 @@ static bool DrawSimilarSoundsActionRow(
         120.0f + comboWidth + actionWidth + ImGui::GetStyle().ItemSpacing.x * 3.0f;
     const bool stacked = sharedPanelStyle && ImGui::GetContentRegionAvail().x < minimumSingleRowWidth;
     const float actionHeight = sharedPanelStyle
-        ? frameHeight * (stacked ? 2.0f : 1.0f) + (stacked ? kItemGap : 0.0f)
+        ? (stacked ? frameHeight + kItemGap : 0.0f) +
+            std::max(frameHeight, aura::ui::metrics::kHeightMd)
         : 62.0f;
     if (sharedPanelStyle) ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.metadataPanelBG);
     if (ImGui::BeginChild("##SimilarActionRow", ImVec2(0.0f, actionHeight), false,
