@@ -1603,6 +1603,7 @@ void SearchWorker::workerThread() {
         if (result.success && req.viewMode == 1 && !result.results.empty()) {
             try {
                 for (auto& record : result.results) {
+                    if (!m_running.load(std::memory_order_acquire)) break;
                     if (req.requestId < m_latestRequestId.load(std::memory_order_acquire)) break;
                     if (!record.databaseListDescriptionNeedsSource || record.filePath.empty() ||
                         !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(record.filePath) ||
@@ -1631,6 +1632,10 @@ void SearchWorker::workerThread() {
             } catch (...) {
                 // A failed source probe must not discard the database rows.
             }
+        }
+        if (!m_running.load(std::memory_order_acquire)) {
+            m_searching.store(false);
+            break;
         }
         totalCountLocal = result.totalCount;
         // Publish rows immediately; count and facets can follow.

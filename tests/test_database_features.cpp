@@ -3,6 +3,7 @@
 
 #include "Database.h"
 #include "MetadataReader.h"
+#include "AsyncWorker.h"
 #include "AudioEngine.h"
 #include "CoverModule.h"
 #include "CoverWallSelectionKey.h"
@@ -5348,6 +5349,50 @@ int testLegacyDescriptionDisplay() {
     }
     sqlite3_finalize(convertedUpdate);
     const AudioRecord convertedRead = db.getFileByPath(converted.filePath);
+    const int64_t scopePlaylist = db.createPlaylist("legacy-description-scope");
+    const bool scopePlaylistAdded = scopePlaylist > 0 &&
+        db.addToPlaylist(scopePlaylist, restoredChinese.id);
+    SearchWorker searchWorker;
+    searchWorker.start(dbPath);
+    auto waitForSearch = [&](AsyncSearchRequest request, AsyncSearchResult& out) {
+        const uint64_t requestId = searchWorker.submitSearch(request);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (searchWorker.pollResult(out, requestId)) return out.success;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    AsyncSearchRequest databaseRequest;
+    databaseRequest.viewMode = 1;
+    databaseRequest.limit = 20;
+    AsyncSearchResult databaseResult;
+    const bool databaseSearched = waitForSearch(databaseRequest, databaseResult);
+    auto findRow = [](const AsyncSearchResult& result, const std::string& path)
+        -> const AudioRecord* {
+        for (const auto& row : result.results)
+            if (row.filePath == path) return &row;
+        return nullptr;
+    };
+    const AudioRecord* workerChinese = findRow(databaseResult, chinese.filePath);
+    const AudioRecord* workerConverted = findRow(databaseResult, converted.filePath);
+    const AudioRecord* workerUnreadable = findRow(databaseResult, legacy.filePath);
+    AsyncSearchRequest playlistRequest;
+    playlistRequest.viewMode = 3;
+    playlistRequest.playlistId = scopePlaylist;
+    playlistRequest.limit = 20;
+    AsyncSearchResult playlistResult;
+    const bool playlistSearched = scopePlaylistAdded &&
+        waitForSearch(playlistRequest, playlistResult);
+    const AudioRecord* playlistChinese = findRow(playlistResult, chinese.filePath);
+    const bool workerScoped = databaseSearched && workerChinese && workerConverted &&
+        workerUnreadable && playlistSearched && playlistChinese &&
+        workerChinese->databaseListDescriptionOverride == sourceChinese.comment &&
+        workerConverted->databaseListDescriptionOverride == sourceChinese.comment &&
+        workerUnreadable->databaseListDescriptionOverride ==
+            decoded.databaseListDescriptionOverride &&
+        playlistChinese->databaseListDescriptionOverride != sourceChinese.comment;
+    searchWorker.stop();
     const bool ok = updated && decoded.id > 0 &&
         decoded.databaseListDescriptionNeedsSource &&
         decoded.databaseListDescriptionOverride.empty() &&
@@ -5360,7 +5405,7 @@ int testLegacyDescriptionDisplay() {
         restoredChinese.databaseListDescriptionOverride != sourceChinese.comment &&
         convertedAdded && convertedUpdated &&
         convertedRead.databaseListDescriptionNeedsSource &&
-        convertedRead.databaseListDescriptionOverride.empty();
+        convertedRead.databaseListDescriptionOverride.empty() && workerScoped;
     db.close();
     if (!keepQaFixture) fs::remove_all(root);
     if (!ok) std::cerr << "FAIL: legacy description list display was not recovered"
@@ -5376,7 +5421,8 @@ int testLegacyDescriptionDisplay() {
                        << " restoredChinese=" << restoredChinese.databaseListDescriptionOverride
                        << " convertedAdded=" << convertedAdded
                        << " convertedUpdated=" << convertedUpdated
-                       << " convertedNeedsSource=" << convertedRead.databaseListDescriptionNeedsSource;
+                       << " convertedNeedsSource=" << convertedRead.databaseListDescriptionNeedsSource
+                       << " workerScoped=" << workerScoped;
     return ok ? 0 : 1;
 }
 

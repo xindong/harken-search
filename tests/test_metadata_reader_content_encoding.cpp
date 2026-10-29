@@ -147,6 +147,17 @@ bool WriteId3v23(const fs::path& path, std::vector<uint8_t> tag) {
     return WriteBytes(path, file);
 }
 
+bool WriteId3v22(const fs::path& path, const std::vector<uint8_t>& tag) {
+    std::vector<uint8_t> file;
+    AppendAscii(file, "ID3", 3);
+    file.push_back(2);
+    file.push_back(0);
+    file.push_back(0);
+    AppendSyncSafe32(file, static_cast<uint32_t>(tag.size()));
+    file.insert(file.end(), tag.begin(), tag.end());
+    return WriteBytes(path, file);
+}
+
 bool WriteId3v1(const fs::path& path, const std::vector<uint8_t>& title) {
     std::vector<uint8_t> bytes(128, 0);
     bytes[0] = 'T';
@@ -233,6 +244,16 @@ int main() {
     Check(Id3CommentText::RecoverStoredLegacy(storedComment) ==
               std::optional<std::string>("A\xE9\x9F\xB3"),
           "legacy database bytes recover the original comment for list display");
+    const fs::path id3v22CommentPath = temp.path / "comment_v22.mp3";
+    const std::vector<uint8_t> id3v22CommentTag = {
+        'C', 'O', 'M', 0, 0, 9, 0, 'e', 'n', 'g', 0, '2', '.', '2', '!'
+    };
+    Check(WriteId3v22(id3v22CommentPath, id3v22CommentTag),
+          "write ID3v2.2 COM comment fixture");
+    AudioMetadata id3v22CommentMetadata;
+    Check(MetadataReader::readMetadata(id3v22CommentPath.u8string(), id3v22CommentMetadata) &&
+              id3v22CommentMetadata.comment == "2.2!",
+          "ID3v2.2 COM comment reaches the comment decoder");
     std::string truncatedStoredComment = storedComment;
     truncatedStoredComment.pop_back();
     truncatedStoredComment.back() = '6';

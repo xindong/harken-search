@@ -45251,6 +45251,8 @@ void RenderUI(AppState& state) {
                     // not search snippet (snippet may come from path/other fields).
                     ImGui::TableNextColumn();
                     const std::string& listDescription =
+                        state.viewMode != ViewMode::Database ||
+                        !state.lastAppliedSearchText.empty() ||
                         record.databaseListDescriptionOverride.empty()
                             ? record.description : record.databaseListDescriptionOverride;
                     ImGui::PushStyleColor(ImGuiCol_Text, listDescription.empty() ? kL3 : kL2);

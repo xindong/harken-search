@@ -215,7 +215,7 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
 
     // Parse frames
     size_t pos = 0;
-    while (pos + 10 < tagSize) {
+    while (pos + (majorVersion >= 3 ? 10u : 6u) <= tagSize) {
         // Frame header
         char frameId[5] = {0};
         if (majorVersion >= 3) {
@@ -240,17 +240,22 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
             // ID3v2.2: 3-byte size
             frameSize = (tagData[pos] << 16) | (tagData[pos + 1] << 8) | tagData[pos + 2];
             pos += 3;
-            pos += frameSize;
-            continue;
+            if (frameSize == 0 || frameSize > tagSize - pos) break;
+            // Keep the previous v2.2 behavior for unrelated frames. Only COM
+            // is part of this description repair.
+            if (std::strcmp(frameId, "COM") != 0) {
+                pos += frameSize;
+                continue;
+            }
         }
-        pos += 4;
 
         // Skip flags (2 bytes for v2.3/2.4)
         if (majorVersion >= 3) {
+            pos += 4;
             pos += 2;
         }
 
-        if (frameSize == 0 || pos + frameSize > tagSize) break;
+        if (frameSize == 0 || frameSize > tagSize - pos) break;
 
         // Read frame content
         std::string content;
