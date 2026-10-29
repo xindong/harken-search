@@ -5179,6 +5179,8 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"loaded\":" + std::string(state.coverWall.loaded ? "true" : "false") + ",";
         result += "\"loading\":" + std::string(state.coverWall.loading ? "true" : "false") + ",";
         result += "\"thumb_size\":" + std::to_string(state.coverWall.thumbSize) + ",";
+        result += "\"grid_columns\":" + std::to_string(state.coverWall.qaGridColumns) + ",";
+        result += "\"rendered_thumb_size\":" + std::to_string(state.coverWall.qaRenderedThumbSize) + ",";
         result += "\"entries_in_flight\":" + std::string(state.coverWall.entriesInFlight ? "true" : "false") + ",";
         result += "\"folders_in_flight\":" + std::string(state.coverWall.foldersInFlight ? "true" : "false") + ",";
         result += "\"preload_in_flight\":" + std::string(state.coverWall.preloadInFlight ? "true" : "false") + ",";

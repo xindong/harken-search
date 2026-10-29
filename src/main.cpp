@@ -5368,6 +5368,7 @@ void LoadAppSettings(AppState& state) {
 
     state.settings.infoPages.visibleMask = ParseInt(kv["infoPageVisibleMask"], 15);
     state.settings.infoPages.selected = ParseInt(kv["infoSelectedPage"], 1);
+    state.settings.infoPages.similarSoundsVisible = ParseBool(kv["infoShowSimilarSounds"], true);
     state.settings.infoPages.Normalize(AURA_BUILD_DIAGNOSTICS != 0);
 
     // UI sizing. Reading font is the single user-facing size; chrome is pinned.
@@ -6301,6 +6302,7 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"infoPanelLayoutVersion", "1"});
     items.push_back({"infoPageVisibleMask", std::to_string(state.settings.infoPages.visibleMask)});
     items.push_back({"infoSelectedPage", std::to_string(state.settings.infoPages.selected)});
+    items.push_back({"infoShowSimilarSounds", state.settings.infoPages.similarSoundsVisible ? "1" : "0"});
 
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
@@ -19140,6 +19142,8 @@ void RenderFileInfoPanelTabContents(
             cw.qaDisplayCount = pDisplayItems ? pDisplayItems->size() : 0;
             cw.qaPrefetchTileCount = 0;
             cw.qaVisibleTileCount = 0;
+            cw.qaGridColumns = 0;
+            cw.qaRenderedThumbSize = 0.0f;
             cw.qaVisibleReadyCount = 0;
             cw.qaVisibleLiveTextureCount = 0;
             cw.qaVisibleMirrorCount = 0;
@@ -19206,7 +19210,10 @@ void RenderFileInfoPanelTabContents(
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().coverWallBG);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            BeginTransientScrollbarChild("##ArtworkScroll", ImVec2(0, scrollH), true);
+            // Reserve a stable gutter: auto scrollbar visibility otherwise changes
+            // fitted cover sizes, which can alternate the content height every frame.
+            BeginTransientScrollbarChild("##ArtworkScroll", ImVec2(0, scrollH), true,
+                ImGuiWindowFlags_AlwaysVerticalScrollbar);
             int coverWallReadyCount = 0;  // 供底部统计显示
             int coverWallLiveTextureCount = 0;
             int coverWallMirrorCount = 0;
@@ -19300,7 +19307,7 @@ void RenderFileInfoPanelTabContents(
                     bool largeThumbWarmup = false;
                     bool denseThumbWarmup = false;
 
-                    // 最小尺寸限制放宽，并限制单行最多 8 个封面
+                    // Small covers use all available columns, including wide horizontal docks.
                     if (cw.texturesPendingClear) {
                         // texCache mirrors CoverModule-owned GL texture ids. After a DB switch
                         // those ids may be reused by unrelated textures, so only drop the mirror.
@@ -19317,10 +19324,11 @@ void RenderFileInfoPanelTabContents(
                         cw.thumbSize,
                         gap,
                         aura::coverwall::kMinThumbSizePx,
-                        aura::coverwall::kMaxThumbSizePx,
-                        8);
+                        aura::coverwall::kMaxThumbSizePx);
                     int columns = coverGrid.columns;
                     float thumb = coverGrid.thumbSizePx;
+                    cw.qaGridColumns = columns;
+                    cw.qaRenderedThumbSize = thumb;
                     float cellH = coverGrid.cellHeightPx;
                     float availY = ImGui::GetContentRegionAvail().y;
                     int totalRows = (totalItems + columns - 1) / columns;
@@ -26167,11 +26175,22 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
         const ImVec2 grip(e.window.x + e.window.width * .5f,
             top ? e.window.y + e.window.height + 3.0f : e.window.y - 3.0f);
         r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
+    } else if (part == "column-splitter") {
+        if (e.panel->floating) return false;
+        const bool left = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left) == g_dockLayout.Find(module);
+        const bool right = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right) == g_dockLayout.Find(module);
+        if (!left && !right) return false;
+        const ImVec2 grip(left ? e.window.x + e.window.width + 6.0f : e.window.x - 6.0f,
+                          e.window.y + e.window.height * .5f);
+        r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
     } else if (part != "title") return false;
     if (r.GetWidth() <= 0.0f || r.GetHeight() <= 0.0f) return false;
     x = r.GetCenter().x;
     y = r.GetCenter().y;
-    viewportId = e.viewport;
+    // Outer splitters live on the workspace, even while the re-docked panel's
+    // native viewport is being retired after a floating-window handoff.
+    viewportId = part == "band-splitter" || part == "column-splitter"
+        ? ImGui::GetMainViewport()->ID : e.viewport;
     return true;
 }
 
@@ -38336,7 +38355,7 @@ void RenderUI(AppState& state) {
         : 0.0f;
     const float requestedRightDockWidth = rightDockSlotRequired
         ? (showRightColumn ? rightPanelWidth
-                           : std::clamp(state.panelSimilarSounds.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
+                           : std::clamp(state.panelFileInfo.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
         : 0.0f;
     const aura::ui::dock::DockColumnBudget dockColumnBudget =
         aura::ui::dock::ResolveDockColumnBudget(
@@ -40026,7 +40045,8 @@ void RenderUI(AppState& state) {
     const float topDockReserve = topDockBandHeight > 0.0f ? topDockBandHeight + dockBandSplitter : 0.0f;
     const float bottomDockReserve = bottomDockBandHeight > 0.0f ? bottomDockBandHeight + dockBandSplitter : 0.0f;
     float fixedOverhead = baseOverhead + topDockReserve + bottomDockReserve;
-    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f, mainWorkH - fixedOverhead - minContentHeight);
+    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f,
+        mainWorkH - fixedOverhead - playlistQuickBarHeight - minContentHeight);
     const float minWaveformH = 96.0f;
     float waveformPanelHeight = 0.0f;
     if (showDockedWaveform) {
@@ -40216,57 +40236,18 @@ void RenderUI(AppState& state) {
 
     // The Info title actions belong to the module shell, so they must be
     // rendered by both the legacy right column and every Dock tree leaf.
-    // Keep a fixed reserve so the drag hit area cannot cover either button.
+    // Reserve the actual row width so title dragging cannot cover its buttons.
     auto drawFileInfoTitleActions = [&](AppState& infoState,
                                         const DockModuleShellLayout& shell,
-                                        ImDrawList* infoDl,
                                         float pageOffsetY) {
         const float pageAvailableWidth = shell.shellWidth - 28.0f;
         const float pageWidth = FileInfoPageActionsWidth(infoState, pageAvailableWidth);
-        RenderFileInfoPageActions(infoState,
-            ImVec2(shell.insetL + shell.shellWidth - 28.0f - pageWidth, pageOffsetY),
-            shell.titleHeight, pageAvailableWidth);
-        const float iconBtnSize = 18.0f;
-        const float iconPad = 4.0f;
-        const float similarIconX = shell.insetL + shell.shellWidth - iconBtnSize - iconPad - 2.0f;
-        const float iconY = (shell.titleHeight - iconBtnSize) * 0.5f;
-
-        const auto& panelTheme = ThemeColors::current();
-        const ImVec4 panelBg = ThemeColors::infoPanelDockBG(panelTheme);
-        const ImVec4 iconBase = uiMix(panelTheme.metadataPanelText, panelBg, 0.30f);
-        const ImVec4 iconHover = uiMix(panelTheme.metadataPanelText, COLOR_ACCENT, 0.34f);
-        const ImU32 iconHoverColor = ImGui::GetColorU32(uiWithAlpha(iconHover, 0.98f));
-
-        ImGui::SetCursorPos(ImVec2(similarIconX, iconY));
-        ImGui::PushID("##InfoSimilarSoundsIcon");
-        ImGui::PushStyleColor(ImGuiCol_Button, uiWithAlpha(panelBg, 0.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.18f), 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.28f), 0.82f));
-        const bool similarClicked = ImGui::Button("##similarSoundsBtn", ImVec2(iconBtnSize, iconBtnSize));
-        const bool similarHovered = ImGui::IsItemHovered();
-        ImGui::PopStyleColor(3);
-        {
-            const ImVec2 btnMin = ImGui::GetItemRectMin();
-            const float s = iconBtnSize;
-            const float cx = btnMin.x + s * 0.5f;
-            const float cy = btnMin.y + s * 0.5f;
-            const ImU32 col = similarHovered ? iconHoverColor : ImGui::GetColorU32(uiWithAlpha(iconBase, 0.72f));
-            const ImVec2 points[] = {
-                ImVec2(cx - s * 0.32f, cy),
-                ImVec2(cx - s * 0.18f, cy - s * 0.22f),
-                ImVec2(cx - s * 0.03f, cy + s * 0.28f),
-                ImVec2(cx + s * 0.12f, cy - s * 0.32f),
-                ImVec2(cx + s * 0.28f, cy + s * 0.08f)
-            };
-            infoDl->AddPolyline(points, IM_ARRAYSIZE(points), col, ImDrawFlags_None, 1.4f);
+        if (RenderFileInfoPageActions(infoState,
+                ImVec2(shell.insetL + shell.shellWidth - 6.0f - pageWidth, pageOffsetY),
+                shell.titleHeight, pageAvailableWidth)) {
+            aura::ui::OpenSimilarSoundsWindow(infoState);
         }
-        if (similarClicked) aura::ui::OpenSimilarSoundsWindow(infoState);
-        if (similarHovered) aura::ui::Tooltip(L(Similar_OpenTooltip));
-        ImGui::PopID();
-
-        return 28.0f + pageWidth;
+        return 6.0f + pageWidth;
     };
 
     auto drawFloatingInfoTitleActions = [&]() {
@@ -40280,7 +40261,7 @@ void RenderUI(AppState& state) {
         shell.shellWidth = title.GetWidth() - title.GetHeight() - 4.0f;
         shell.titleHeight = title.GetHeight();
         ImGui::PushClipRect(title.Min, title.Max, false);
-        drawFileInfoTitleActions(state, shell, ImGui::GetWindowDrawList(), 0.0f);
+        drawFileInfoTitleActions(state, shell, 0.0f);
         ImGui::PopClipRect();
         ImGui::SetCursorPos(saved);
     };
@@ -46088,7 +46069,7 @@ void RenderUI(AppState& state) {
             kTitleText);
 
 // 标题栏右上角：编辑元数据图标按钮
-        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, dl, 2.0f);
+        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, 2.0f);
 
         // Right-click menu on title bar (remaining area)
         ImGui::SetCursorPos(ImVec2(rightShell.insetL, rightShell.insetT));
@@ -51123,9 +51104,9 @@ void RenderUI(AppState& state) {
             rememberedSide,
             true,
             rememberedSide == aura::ui::dock::DockSide::Top || rememberedSide == aura::ui::dock::DockSide::Bottom
-                ? std::clamp(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight, aura::ui::dock::kDockBandMaxHeight)
+                ? std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
                 : rememberedDockExtentForModule(draggingId, rememberedSide),
-            std::clamp(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight, aura::ui::dock::kDockBandMaxHeight)
+            std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
         };
         const auto hit = aura::ui::dock::HitDockTarget(
             {pointer.x - 0.5f, pointer.y - 0.5f, 1.0f, 1.0f},
@@ -51206,7 +51187,7 @@ void RenderUI(AppState& state) {
         const ImRect label(title.Min, ImVec2(
             (std::min)(title.Min.x + labelWidth, title.Max.x - title.GetHeight() - 4.0f), title.Max.y));
         const float infoActionsWidth = std::strcmp(moduleId, "info") == 0
-            ? 28.0f + FileInfoPageActionsWidth(state, title.GetWidth()-title.GetHeight()-4.0f-28.0f) : 0.0f;
+            ? 6.0f + FileInfoPageActionsWidth(state, title.GetWidth()-title.GetHeight()-4.0f-28.0f) : 0.0f;
         const ImRect dockDragLabel(title.Min, ImVec2(
             (std::max)(title.Min.x, title.Max.x - title.GetHeight() - 4.0f - infoActionsWidth), title.Max.y));
         drawDockTitleFeedback(moduleId, title, label, true, ImGui::IsWindowHovered() && dockDragLabel.Contains(ImGui::GetMousePos()));
@@ -51698,7 +51679,7 @@ void RenderUI(AppState& state) {
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
                     L(View_InfoPanel), bodyBg, kTitleText);
-                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, ImGui::GetWindowDrawList(), 2.0f);
+                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, 2.0f);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
                     ImVec2((std::max)(1.0f, shell.shellWidth - kInfoTitleActionsWidth), shell.titleHeight));
@@ -51849,16 +51830,16 @@ void RenderUI(AppState& state) {
 
     {
         const float minBandHeight = aura::ui::dock::kDockBandMinHeight;
-        const float maxBandHeight = aura::ui::dock::kDockBandMaxHeight;
         float* topHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Top);
         if (topHeightOwner != nullptr && topDockReserve > 0.0f) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.top.x, dockColumnTop + topDockBandHeight));
             const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
                 g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top), viewport->DpiScale).height);
-            if (HorizontalSplitter("##TopDockSplitter", topHeightOwner, minimum,
-                    std::max(minimum, std::min(maxBandHeight, availHeight + topDockBandHeight - 200.0f)),
+            float resizedHeight = topDockBandHeight;
+            if (HorizontalSplitter("##TopDockSplitter", &resizedHeight, minimum,
+                    std::max(minimum, availHeight + topDockBandHeight - minContentHeight),
                     rootSlots.top.width, true)) {
-                auto rect = rootSlots.top; rect.height = *topHeightOwner;
+                auto rect = rootSlots.top; rect.height = resizedHeight;
                 MirrorDockRootExtent(state, aura::ui::dock::DockSide::Top, rect);
                 MarkSettingsDirty(state);
             }
@@ -51868,10 +51849,11 @@ void RenderUI(AppState& state) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.bottom.x, bottomSlotY - dockBandSplitter));
             const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
                 g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom), viewport->DpiScale).height);
-            if (HorizontalSplitter("##BottomDockSplitter", bottomHeightOwner, minimum,
-                    std::max(minimum, std::min(maxBandHeight, availHeight + bottomDockBandHeight - 200.0f)),
+            float resizedHeight = bottomDockBandHeight;
+            if (HorizontalSplitter("##BottomDockSplitter", &resizedHeight, minimum,
+                    std::max(minimum, availHeight + bottomDockBandHeight - minContentHeight),
                     rootSlots.bottom.width, false)) {
-                auto rect = rootSlots.bottom; rect.height = *bottomHeightOwner;
+                auto rect = rootSlots.bottom; rect.height = resizedHeight;
                 MirrorDockRootExtent(state, aura::ui::dock::DockSide::Bottom, rect);
                 MarkSettingsDirty(state);
             }
@@ -51923,8 +51905,11 @@ void RenderUI(AppState& state) {
         const int gripLeafCount = gripSnapshot.moduleCount;
         const aura::ui::dock::AdjacentLeafGrip* adjacentGrips = gripSnapshot.grips;
         const int adjacentCount = gripSnapshot.gripCount;
+        const auto leftOuterGrip = leftDockSlotRequired && !showLeftColumn
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, splitterWidth)
+            : aura::ui::dock::AdjacentLeafGrip{};
         const auto rightOuterGrip = rightDockSlotRequired && !showRightColumn
-            ? aura::ui::dock::PlanRightDockOuterGrip(gripSnapshot, "similar-sounds")
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, splitterWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
@@ -52019,8 +52004,11 @@ void RenderUI(AppState& state) {
             }
             ImGui::End();
         }
-        if (rightOuterGrip.visible) {
-            const auto& grip = rightOuterGrip;
+        for (int column = 0; column < 2; ++column) {
+            const bool left = column == 0;
+            const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
+            const auto& grip = left ? leftOuterGrip : rightOuterGrip;
+            if (!grip.visible) continue;
             ImGui::SetNextWindowPos(ImVec2(grip.rect.x, grip.rect.y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(grip.rect.width, grip.rect.height), ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -52031,15 +52019,16 @@ void RenderUI(AppState& state) {
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing;
             const bool visible = BeginTransientScrollbarWindow(
-                "##RightDockLeafSplitter", nullptr, flags);
+                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", nullptr, flags);
             ImGui::PopStyleVar(3);
             if (visible) {
-                ImGui::InvisibleButton("##RightDockLeafSplitterHit",
+                ImGui::InvisibleButton(left ? "##LeftDockLeafSplitterHit" : "##RightDockLeafSplitterHit",
                     ImVec2(grip.rect.width, grip.rect.height));
                 const bool pointerHit = ImGui::IsMouseHoveringRect(
                     ImVec2(grip.rect.x, grip.rect.y),
                     ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                static bool activeRightOuterGrip = false;
+                static bool activeOuterGrips[2]{};
+                bool& activeRightOuterGrip = activeOuterGrips[column];
                 if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) activeRightOuterGrip = false;
                 if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
                     activeRightOuterGrip = true;
@@ -52060,10 +52049,15 @@ void RenderUI(AppState& state) {
                         ImGui::GetColorU32(color));
                 }
                 if (dragging) {
-                    aura::ui::dock::DragRightDockOuterGrip(
-                        state.panelSimilarSounds.dockedWidth,
-                        ImGui::GetIO().MouseDelta.x, rightPanelMinWidth,
-                        rightPanelMaxWidth);
+                    auto resizedRect = left ? rootSlots.left : rootSlots.right;
+                    const float minimum = aura::ui::dock::DockSubtreeMinimum(
+                        g_dockLayout.RegionRoot(side), viewport->DpiScale).width;
+                    const float maximum = std::max(minimum, resizedRect.width + centerWidth - minReadableCenterWidth);
+                    if (aura::ui::dock::DragRightDockOuterGrip(resizedRect.width,
+                            ImGui::GetIO().MouseDelta.x * (left ? -1.0f : 1.0f), minimum, maximum)) {
+                        MirrorDockRootExtent(state, side, resizedRect);
+                        MarkSettingsDirty(state);
+                    }
                 }
             }
             ImGui::End();

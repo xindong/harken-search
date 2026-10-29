@@ -156,6 +156,8 @@ int PushFileInfoShellStyle(const ThemeColorScheme& tcs) {
 namespace {
 constexpr bool kDiagnostics = AURA_BUILD_DIAGNOSTICS != 0;
 constexpr float kPageButtonWidth = 24.0f;
+constexpr int kVisibilityAction = 4;
+constexpr int kSimilarSoundsAction = 5;
 const char* PageLabel(int page) {
     switch (page) {
     case 0: return L(Info_MetaSummaryTab);
@@ -188,6 +190,13 @@ void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
         dl->PathStroke(color,0,1.3f);
         line(4,2,4,8); line(4,8,10,8);
         line(10,8,16,12); line(16,12,10,16); line(10,16,10,8);
+    } else if (page == kSimilarSoundsAction) {
+        // The existing waveform mark, centered in the same 18px icon box.
+        const ImVec2 points[] = {
+            p(4.32f,12), p(7.68f,6.72f), p(11.28f,18.72f),
+            p(14.88f,4.32f), p(18.72f,13.92f)
+        };
+        dl->AddPolyline(points, IM_ARRAYSIZE(points), color, ImDrawFlags_None, 1.3f);
     } else {
         for (float x : {5.0f,12.0f,19.0f}) dl->AddCircleFilled(p(x,12),1.0f,color);
     }
@@ -197,10 +206,10 @@ void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
 float FileInfoPageActionsWidth(AppState& state, float availableWidth) {
     state.settings.infoPages.Normalize(kDiagnostics);
     const int count = availableWidth < 172.0f ? 1 : state.settings.infoPages.VisibleCount(kDiagnostics);
-    return (count + 1) * kPageButtonWidth + 6.0f;
+    return (count + 1 + (state.settings.infoPages.similarSoundsVisible ? 1 : 0)) * kPageButtonWidth + 6.0f;
 }
 
-void RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth) {
+bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth) {
     auto& pages = state.settings.infoPages;
     pages.Normalize(kDiagnostics);
     const bool compact = availableWidth < 172.0f;
@@ -220,18 +229,21 @@ void RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         const ImVec4 color = selected || hovered ? base : ImVec4(base.x,base.y,base.z,base.w*.72f);
         DrawPageIcon(dl, ImVec2(a.x+3.0f, a.y+(height-18.0f)*.5f), page, ImGui::GetColorU32(color));
         if (selected) dl->AddLine(ImVec2(a.x+4,a.y+height-2),ImVec2(a.x+20,a.y+height-2),ImGui::GetColorU32(accent),2.0f);
-        const char* label = page < 4 ? PageLabel(page) : L(Info_VisiblePages);
-        ThemeInspector::RegisterLastItem(page < 4 ? PageId(page) : "info.pageVisibility", label, "src/FileInfoPanel.cpp");
+        const bool similar = page == kSimilarSoundsAction;
+        const char* label = similar ? L(Similar_OpenTooltip) : (page < 4 ? PageLabel(page) : L(Info_VisiblePages));
+        const char* id = similar ? "info.similarSounds" : (page < 4 ? PageId(page) : "info.pageVisibility");
+        ThemeInspector::RegisterLastItem(id, label, "src/FileInfoPanel.cpp");
         if (hovered) ImGui::SetTooltip("%s", label);
         ImGui::PopID();
         x += kPageButtonWidth;
         return clicked;
     };
+    const bool similarClicked = pages.similarSoundsVisible && button(kSimilarSoundsAction, false);
     for (int i=0; i<4; ++i) {
         if (!pages.IsVisible(static_cast<InfoPage>(i), kDiagnostics) || (compact && pages.selected != i)) continue;
         if (button(i, pages.selected == i) && pages.Select(static_cast<InfoPage>(i),kDiagnostics)) state.settingsDirty = true;
     }
-    if (button(4,false)) ImGui::OpenPopup("visibility");
+    if (button(kVisibilityAction,false)) ImGui::OpenPopup("visibility");
     if (BeginTransientScrollbarPopup("visibility")) {
         if (compact) {
             for (int i=0; i<4; ++i) {
@@ -246,6 +258,8 @@ void RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
             ImGui::Separator();
         }
         ImGui::TextDisabled("%s", L(Info_VisiblePages));
+        if (ImGui::MenuItem(L(Similar_Title), nullptr, &pages.similarSoundsVisible)) state.settingsDirty = true;
+        ThemeInspector::RegisterLastItem("info.visibility.similarSounds", L(Similar_Title), "src/FileInfoPanel.cpp");
         for (int i=0; i<4; ++i) {
             const auto page = static_cast<InfoPage>(i);
             if (!InfoPageNavigation::Available(page,kDiagnostics)) continue;
@@ -263,6 +277,7 @@ void RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
     }
     ImGui::PopID();
     ImGui::SetCursorPos(saved);
+    return similarClicked;
 }
 
 void RenderFileInfoPanelContent(AppState& state, float panelWidth) {
