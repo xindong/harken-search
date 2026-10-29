@@ -133,13 +133,7 @@ static void ApplyDraftToLive(AppState& state) {
     ThemeColors::markPendingUiChromeResync();
 }
 
-static void RestoreSnapshot(AppState& state) {
-    if (g_ed.schedulePeriod >= 0) {
-        g_ed.draft = g_ed.initialDraft;
-        if (g_ed.livePreview) ApplyDraftToLive(state);
-        return;
-    }
-    g_ed.draft = g_ed.openSnapshot;
+static void RestoreOpenAppearance(AppState& state) {
     state.settings.theme = g_ed.openTheme;
     state.settings.useCustomColors = g_ed.openUseCustomColors;
     state.settings.customThemeName = g_ed.openCustomThemeName;
@@ -151,6 +145,16 @@ static void RestoreSnapshot(AppState& state) {
     }
     ThemeColors::applyToImGui();
     ThemeColors::markPendingUiChromeResync();
+}
+
+static void RestoreSnapshot(AppState& state) {
+    if (g_ed.schedulePeriod >= 0) {
+        g_ed.draft = g_ed.initialDraft;
+        if (g_ed.livePreview) ApplyDraftToLive(state);
+        return;
+    }
+    g_ed.draft = g_ed.openSnapshot;
+    RestoreOpenAppearance(state);
 }
 
 static void LoadPresetToDraft(int idx) {
@@ -405,6 +409,7 @@ void RenderThemeEditor(AppState& state) {
             g_ed.inspectMode = false;
             ThemeInspector::SetActive(false);
             if (g_ed.schedulePeriod >= 0) {
+                if (!harken::theme_schedule::ControlsTheme(state)) RestoreOpenAppearance(state);
                 harken::theme_schedule::Invalidate();
                 state.themeScheduleEditorPeriod = -1;
                 state.showSettingsDialog = true;
@@ -524,9 +529,14 @@ void RenderThemeEditor(AppState& state) {
         if (ImGui::Checkbox(L(ThemeEditor_LivePreview), &g_ed.livePreview)) {
             if (g_ed.livePreview) ApplyDraftToLive(state);
             else {
-                ThemeColors::activateCustomScheme(harken::theme_schedule::Palette(harken::theme_schedule::CurrentPeriod()));
-                ThemeColors::applyToImGui();
-                ThemeColors::markPendingUiChromeResync();
+                const auto period = harken::theme_schedule::SelectedPeriod(state);
+                if (period) {
+                    ThemeColors::activateCustomScheme(harken::theme_schedule::Palette(*period));
+                    ThemeColors::applyToImGui();
+                    ThemeColors::markPendingUiChromeResync();
+                } else {
+                    RestoreOpenAppearance(state);
+                }
             }
         }
         ImGui::Separator();

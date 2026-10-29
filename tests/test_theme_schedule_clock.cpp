@@ -8,6 +8,10 @@ using harken::theme_schedule::ApplyInput;
 using harken::theme_schedule::Period;
 using harken::theme_schedule::PeriodAtLocalTime;
 using harken::theme_schedule::ShouldApply;
+using harken::theme_schedule::Mode;
+using harken::theme_schedule::ResolvePeriod;
+using harken::theme_schedule::ModeAfterManualTheme;
+using harken::theme_schedule::ModeFromSetting;
 
 namespace {
 int failures = 0;
@@ -38,6 +42,25 @@ int main() {
     Check(!PeriodAtLocalTime(24, 0).has_value(), "hour 24 rejected");
     Check(!PeriodAtLocalTime(8, 60).has_value(), "minute 60 rejected");
     Check(!PeriodAtLocalTime(8, -1).has_value(), "negative minute rejected");
+
+    for (const auto& c : cases) {
+        const auto clock = PeriodAtLocalTime(c.hour, c.minute);
+        Check(ResolvePeriod(Mode::Automatic, clock) == c.expected, "automatic follows clock");
+        Check(ResolvePeriod(Mode::FixedDay, clock) == Period::Day, "fixed day ignores clock");
+        Check(ResolvePeriod(Mode::FixedNight, clock) == Period::Night, "fixed night ignores clock");
+        Check(!ResolvePeriod(Mode::Off, clock), "off never overrides manual theme");
+    }
+    Check(ResolvePeriod(Mode::FixedDay, std::nullopt) == Period::Day, "fixed day works without clock");
+    Check(ResolvePeriod(Mode::FixedNight, std::nullopt) == Period::Night, "fixed night works without clock");
+    Check(!ResolvePeriod(Mode::Automatic, std::nullopt), "invalid clock does not change automatic palette");
+    Check(ModeAfterManualTheme(Mode::Automatic) == Mode::Automatic, "automatic restores after manual selection");
+    for (auto mode : {Mode::Off, Mode::FixedDay, Mode::FixedNight}) {
+        Check(ModeAfterManualTheme(mode) == Mode::Off, "manual selection replaces fixed palette when automatic is off");
+    }
+    for (auto mode : {Mode::Off, Mode::Automatic, Mode::FixedDay, Mode::FixedNight}) {
+        Check(ModeFromSetting(static_cast<int>(mode)) == mode, "saved mode round trips");
+    }
+    Check(ModeFromSetting(-1) == Mode::Off && ModeFromSetting(4) == Mode::Off, "invalid saved mode does not force theme");
 
     Check(ShouldApply({Period::Day, std::nullopt, false, false, false}), "first application");
     Check(!ShouldApply({Period::Day, Period::Day, false, false, false}), "unchanged frame");

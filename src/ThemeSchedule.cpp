@@ -63,6 +63,17 @@ void Initialize(const std::string& path) {
     g_runtime.ready = true;
 }
 bool Ready() { return g_runtime.ready; }
+bool ControlsTheme(const AppState& state) { return Ready() && state.settings.themeScheduleMode != Mode::Off; }
+std::optional<Period> SelectedPeriod(const AppState& state) {
+    return ResolvePeriod(state.settings.themeScheduleMode, ReadPeriod());
+}
+void SetMode(AppState& state, Mode mode) {
+    state.settings.themeScheduleMode = mode;
+    Invalidate();
+}
+void OnManualThemeSelected(AppState& state) {
+    SetMode(state, ModeAfterManualTheme(state.settings.themeScheduleMode));
+}
 void Invalidate() { g_runtime.dirty = true; }
 Period CurrentPeriod() { return ReadPeriod().value_or(g_runtime.applied.value_or(Period::Night)); }
 const ThemeColorScheme& Palette(Period period) { return g_runtime.palettes[Index(period)]; }
@@ -72,8 +83,11 @@ void Tick(AppState& state, bool force) {
     if (!Ready()) return;
     const bool editorClosed = g_runtime.editorWasOpen && !state.showThemeEditor;
     g_runtime.editorWasOpen = state.showThemeEditor;
-    const auto wanted = ReadPeriod();
-    if (!wanted) return;
+    const auto wanted = SelectedPeriod(state);
+    if (!wanted) {
+        g_runtime.applied.reset();
+        return;
+    }
     if (!ShouldApply({*wanted, g_runtime.applied,
             state.settings.theme != AppTheme::Custom || state.settings.useCustomColors || !ThemeColors::customized(),
             force || g_runtime.dirty || editorClosed, state.showThemeEditor})) return;

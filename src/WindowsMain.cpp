@@ -6376,9 +6376,13 @@ static void PollQaCommandFile(AppState& state) {
             using namespace harken::theme_schedule;
             const auto& day = Palette(Period::Day);
             const auto& night = Palette(Period::Night);
+            const auto toggle = QaAutoToggleBounds();
             result = nlohmann::json({
                 {"ok",ok}, {"cmd",cmd}, {"frame",ImGui::GetFrameCount()},
                 {"period",CurrentPeriod() == Period::Day ? "day" : "night"},
+                {"mode",(int)state.settings.themeScheduleMode},
+                {"auto_toggle_bounds",{toggle.x,toggle.y,toggle.z,toggle.w}},
+                {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
                 {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
                 {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
                 {"active_bg",ThemeColors::toARGBHex(ThemeColors::current().mainWindowBG)},
@@ -6409,6 +6413,9 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"cmd\":\"set_theme\",\"error\":\"custom theme unavailable\"}";
         } else {
             state.settings.theme = (AppTheme)theme;
+            harken::theme_schedule::OnManualThemeSelected(state);
+            state.settings.useCustomColors = false;
+            if (theme != (int)AppTheme::Custom) ThemeColors::deactivateCustomTheme();
             MarkSettingsDirty(state);
             SaveAppSettings(state);
             result = "{\"ok\":true,\"cmd\":\"set_theme\",\"theme\":" + std::to_string(theme) + "}";

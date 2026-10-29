@@ -10,6 +10,10 @@ namespace harken::theme_schedule {
 // beside the settings file; Tick never performs disk IO.
 void Initialize(const std::string& settingsFileUtf8);
 bool Ready();
+bool ControlsTheme(const AppState& state);
+void SetMode(AppState& state, Mode mode);
+void OnManualThemeSelected(AppState& state);
+std::optional<Period> SelectedPeriod(const AppState& state);
 void Tick(AppState& state, bool force = false);
 void Invalidate();
 Period CurrentPeriod();
@@ -19,5 +23,6 @@ bool SavePalette(Period period, const ThemeColorScheme& scheme, std::string& err
 void RenderSettings(AppState& state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
 bool SetQaClock(int minuteOfDay); // -1 returns to the actual local clock.
+ImVec4 QaAutoToggleBounds(); // Observed screen coordinates from the actual settings checkbox.
 #endif
 }

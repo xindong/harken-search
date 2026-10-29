@@ -115,6 +115,18 @@ def run(args):
         click_at(save['bounds'][0]+20,(clear['bounds'][1]+clear['bounds'][3])/2)
         find('编辑白天配色'); find('编辑夜间配色')
     def close_settings(): click('保存并关闭')
+    def automatic(enabled):
+        if (state()['mode']==1) != enabled:
+            x,y,r,b=state()['auto_toggle_bounds']
+            assert r>x and b>y
+            click_at((x+r)/2,(y+b)/2)
+        return wait(lambda s:(s['mode']==1)==enabled, 'automatic switch')
+    def fixed_clock(minute, period):
+        command(cmd='theme_schedule',action='clock',minute=minute); settle()
+        value=state()
+        assert value['selected_period']==period and value['active_bg']==value[period+'_bg'],value
+        assert value['active_accent']==value[period+'_accent'] and value['imgui_bg']==value['active_bg'],value
+        return value
     def clock(minute):
         command(cmd='theme_schedule',action='clock',minute=minute)
         period='day' if 480<=minute<960 else 'night'
@@ -194,6 +206,71 @@ def run(args):
         value=start(480)
         assert not value['day_warning'] and value['active_accent']==value['day_accent'],value
         check('day-restart-preserves-edited-palette',state=value)
+        # The corruption/recovery fixture intentionally rewrote the day file.
+        # Keep its verified bytes, but use the restored file's new modification time.
+        assert day_file.read_bytes()==day_saved[0]
+        day_saved=snapshot(day_file)
+        settings()
+        automatic(False)
+        value=fixed_clock(960,'day')
+        assert value['mode']==2,value
+        capture(driver,out/'fixed-day-at-night.png')
+        check('automatic-off-freezes-day-across-boundary',state=value)
+        close_settings(); stop()
+        value=start(960)
+        assert value['mode']==2 and value['active_bg']==value['day_bg'],value
+        check('fixed-day-survives-night-restart',state=value)
+        settings(); click('固定夜间')
+        value=fixed_clock(480,'night')
+        assert value['mode']==3,value
+        capture(driver,out/'fixed-night-during-day.png')
+        check('fixed-night-ignores-day-clock',state=value)
+        # Editing the inactive day palette must return to the fixed night palette.
+        open_editor(True); draft('toolbarAccent',[.75,.2,.3,1]); click('取消修改')
+        wait(lambda s:not s['editor_open'],'fixed palette cancel'); settle()
+        assert snapshot(day_file)==day_saved
+        fixed_clock(480,'night')
+        open_editor(True); draft('toolbarAccent',[.24,.48,.66,1]); click('保存配色')
+        wait(lambda s:not s['editor_open'],'inactive palette saved'); settle()
+        assert snapshot(night_file)==night_saved
+        fixed_clock(480,'night')
+        check('inactive-edit-save-and-cancel-keep-fixed-night',state=state())
+        close_settings(); stop()
+        value=start(480)
+        assert value['mode']==3 and value['active_bg']==value['night_bg'],value
+        check('fixed-night-survives-day-restart',state=value)
+        settings(); automatic(True); value=clock(480)
+        assert value['mode']==1,value
+        check('reenable-automatic-immediately-follows-clock',state=value)
+        automatic(False)
+        for theme in (0,1,2,3,10):
+            command(cmd='set_theme',theme=theme); settle()
+            before=state()
+            command(cmd='theme_schedule',action='clock',minute=960); settle()
+            value=state()
+            assert value['mode']==0 and value['theme']==theme,value
+            assert value['active_bg']==before['active_bg'] and value['active_accent']==before['active_accent'],value
+            check('automatic-off-keeps-manual-theme-'+str(theme),state=value)
+            command(cmd='theme_schedule',action='clock',minute=480); settle()
+        manual=state()
+        open_editor(False); draft('toolbarAccent',[.5,.4,.8,1]); click('取消修改')
+        wait(lambda s:not s['editor_open'],'off-mode cancel'); settle()
+        value=state()
+        assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+        open_editor(False); draft('toolbarAccent',[.5,.4,.8,1]); click('保存配色')
+        wait(lambda s:not s['editor_open'],'off-mode save'); settle()
+        value=state()
+        assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+        check('off-mode-editor-save-and-cancel-restore-manual-theme',state=value)
+        capture(driver,out/'automatic-off-manual-theme.png')
+        close_settings(); stop()
+        value=start(960)
+        assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+        check('automatic-off-and-manual-theme-survive-restart',state=value)
+        settings(); click('固定白天'); value=fixed_clock(960,'day')
+        assert value['mode']==2,value
+        check('manual-theme-can-return-to-fixed-day',state=value)
+        automatic(True); clock(960); close_settings()
         # Leave the delivered profile on the real local clock.
         command(cmd='theme_schedule',action='clock',minute=-1); settle()
         stop()
