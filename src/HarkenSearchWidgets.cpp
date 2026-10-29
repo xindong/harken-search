@@ -5,6 +5,7 @@
 #include "HarkenSearchIcons.h"
 #include "Theme.h"
 #include "ui/TransportContrast.h"
+#include "ui/ActionButtonStyle.h"
 #include "SettingsSearchHighlightSpans.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -231,65 +232,14 @@ float ButtonPadX(ButtonSize s) {
 
 struct ButtonPalette { ImU32 bg, bgHover, bgActive, text; };
 
-ButtonPalette ResolvePalette(ButtonVariant v) {
-    const ThemeColorScheme& th = ThemeColors::current();
-    const ImVec4 white{1, 1, 1, 1};
-    ButtonPalette p{};
-    switch (v) {
-        case ButtonVariant::PrimarySearch:
-            p.bg       = ImGui::ColorConvertFloat4ToU32(th.searchButtonBG);
-            p.bgHover  = LerpPack(th.searchButtonBG, white, 0.08f);
-            p.bgActive = LerpPack(th.searchButtonBG, white, -0.08f);
-            p.text     = ImGui::ColorConvertFloat4ToU32(
-                TransportContrast::Ratio(white, th.searchButtonBG) >= 4.5
-                    ? white
-                    : TransportContrast::ForSurface(
-                        th.interfaceText, th.searchButtonBG, 7.0));
-            break;
-        case ButtonVariant::PrimaryTransfer:
-            p.bg       = ImGui::ColorConvertFloat4ToU32(th.transferButtonBG);
-            p.bgHover  = LerpPack(th.transferButtonBG, white, 0.08f);
-            p.bgActive = LerpPack(th.transferButtonBG, white, -0.08f);
-            p.text     = IM_COL32_WHITE;
-            break;
-        case ButtonVariant::Secondary:
-            p.bg       = ImGui::ColorConvertFloat4ToU32(th.filterBrowserButtonBG);
-            p.bgHover  = LerpPack(th.filterBrowserButtonBG, white, 0.08f);
-            p.bgActive = LerpPack(th.filterBrowserButtonBG, white, -0.08f);
-            p.text     = ImGui::ColorConvertFloat4ToU32(th.filterBrowserText);
-            break;
-        case ButtonVariant::Ghost: {
-            p.bg = IM_COL32(0, 0, 0, 0);
-            ImVec4 hover = th.filterBrowserButtonBG; hover.w *= 0.40f;
-            p.bgHover  = ImGui::ColorConvertFloat4ToU32(hover);
-            p.bgActive = ImGui::ColorConvertFloat4ToU32(th.filterBrowserButtonBG);
-            p.text     = ImGui::ColorConvertFloat4ToU32(th.interfaceText);
-            break;
-        }
-        case ButtonVariant::Danger: {
-            const ImVec4& danger = th.volumeClipColor;
-            const ImVec4& bg     = th.mainWindowBG;
-            ImVec4 mix{
-                danger.x + (bg.x - danger.x) * 0.35f,
-                danger.y + (bg.y - danger.y) * 0.35f,
-                danger.z + (bg.z - danger.z) * 0.35f,
-                1.0f };
-            p.bg       = ImGui::ColorConvertFloat4ToU32(mix);
-            p.bgHover  = LerpPack(mix, white, 0.08f);
-            p.bgActive = LerpPack(mix, white, -0.08f);
-            p.text     = IM_COL32_WHITE;
-            break;
-        }
-        case ButtonVariant::Icon: {
-            p.bg = IM_COL32(0, 0, 0, 0);
-            ImVec4 hover = th.filterBrowserButtonBG; hover.w *= 0.50f;
-            p.bgHover  = ImGui::ColorConvertFloat4ToU32(hover);
-            p.bgActive = ImGui::ColorConvertFloat4ToU32(th.filterBrowserButtonBG);
-            p.text     = ImGui::ColorConvertFloat4ToU32(th.sidebarIconInactive);
-            break;
-        }
-    }
-    return p;
+ButtonPalette ResolveGraphicPalette(ButtonVariant variant) {
+    const auto& theme = ThemeColors::current();
+    ImVec4 hover = theme.filterBrowserButtonBG;
+    hover.w *= variant == ButtonVariant::Icon ? .50f : .40f;
+    return {IM_COL32(0, 0, 0, 0), ImGui::ColorConvertFloat4ToU32(hover),
+            ImGui::ColorConvertFloat4ToU32(theme.filterBrowserButtonBG),
+            ImGui::ColorConvertFloat4ToU32(variant == ButtonVariant::Icon
+                ? theme.sidebarIconInactive : theme.interfaceText)};
 }
 
 } // anonymous namespace
@@ -298,61 +248,45 @@ ButtonPalette ResolvePalette(ButtonVariant v) {
 
 bool Button(const char* label, const ButtonOptions& opts) {
     using namespace aura::ui::metrics;
-    const float h    = ButtonHeight(opts.size);
-    const float padX = ButtonPadX(opts.size);
-    const ButtonPalette pal = ResolvePalette(opts.variant);
-
-    ImGui::PushStyleColor(ImGuiCol_Button,        pal.bg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, pal.bgHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  pal.bgActive);
-    ImGui::PushStyleColor(ImGuiCol_Text,          pal.text);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kRadiusDefault);
-    const float vertPad = (h - ImGui::GetFontSize()) * 0.5f;
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(padX, vertPad > 0 ? vertPad : 0));
-
-    const bool greyedOut = opts.disabled || opts.loading;
-    if (greyedOut) ImGui::BeginDisabled();
-
-    // Compose "icon  label" into a local buffer so ImGui::Button can render
-    // both through its normal glyph pipeline (Lucide font is merged into
-    // the atlas by MergeLucideFont once Task 4 lands).
+    const float h = ButtonHeight(opts.size);
+    const float vertPad = ImMax(0.0f, (h - ImGui::GetFontSize()) * .5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ButtonPadX(opts.size), vertPad));
+    if (opts.disabled) ImGui::BeginDisabled();
     char buf[512];
-    if (opts.icon && label) {
-        std::snprintf(buf, sizeof(buf), "%s  %s", opts.icon, label);
-    } else if (opts.icon) {
-        std::snprintf(buf, sizeof(buf), "%s", opts.icon);
-    } else if (label) {
-        std::snprintf(buf, sizeof(buf), "%s", label);
+    if (opts.icon && label) std::snprintf(buf, sizeof(buf), "%s  %s", opts.icon, label);
+    else std::snprintf(buf, sizeof(buf), "%s", opts.icon ? opts.icon : label ? label : "");
+    bool clicked;
+    if (opts.variant == ButtonVariant::Icon || opts.variant == ButtonVariant::Ghost) {
+        // Compact glyph tools keep their transparent appearance and old geometry.
+        const auto palette = ResolveGraphicPalette(opts.variant);
+        ImGui::PushStyleColor(ImGuiCol_Button, palette.bg);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette.bgHover);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette.bgActive);
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.text);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kRadiusDefault);
+        clicked = opts.loading ? ActionButtonStyle::Draw(buf, ImVec2(0, h), true)
+                               : ImGui::Button(buf, ImVec2(0, h));
+        DrawFocusRing();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(4);
     } else {
-        buf[0] = '\0';
+        const ActionButtonStyle::Scope style(ActionButtonStyle::Make(
+            ThemeColors::current(), ActionButtonStyle::CurrentSurface(), opts.variant));
+        clicked = ActionButtonStyle::Draw(buf, ImVec2(0, h), opts.loading);
+        DrawFocusRing();
     }
+    if (opts.disabled) ImGui::EndDisabled();
+    ImGui::PopStyleVar();
+    if (opts.tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", opts.tooltip);
+    return clicked && !opts.disabled && !opts.loading;
+}
 
-    bool clicked = false;
-    if (opts.loading) {
-        // Draw a button-sized invisible hit zone plus manual bg fill and a
-        // tiny spinner. Clicks are suppressed because BeginDisabled is active.
-        const ImVec2 textSize = ImGui::CalcTextSize(buf[0] ? buf : " ");
-        const ImVec2 btnSize(textSize.x + padX * 2 + kGap4 + kIconMd, h);
-        ImGui::InvisibleButton(label ? label : "##ld", btnSize);
-        const ImVec2 p0 = ImGui::GetItemRectMin();
-        const ImVec2 p1 = ImGui::GetItemRectMax();
-        ImGui::GetWindowDrawList()->AddRectFilled(p0, p1, pal.bg, kRadiusDefault);
-        ImGui::SameLine(0, 0);
-        ImGui::SetCursorScreenPos(ImVec2(p0.x + padX, p0.y + vertPad));
-        LoadingSpinner(kIconMd);
-    } else {
-        clicked = ImGui::Button(buf, ImVec2(0, h));
-    }
-
-    if (greyedOut) ImGui::EndDisabled();
+bool ActionButton(const char* label, const ImVec2& size, ButtonVariant variant) {
+    const ActionButtonStyle::Scope style(ActionButtonStyle::Make(
+        ThemeColors::current(), ActionButtonStyle::CurrentSurface(), variant));
+    const bool clicked = ActionButtonStyle::Draw(label, size);
     DrawFocusRing();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
-
-    if (opts.tooltip && ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", opts.tooltip);
-    }
-    return clicked && !greyedOut;
+    return clicked;
 }
 
 bool IconButton(const char* icon, const char* tooltip, ButtonSize size) {
@@ -363,6 +297,15 @@ bool IconButton(const char* icon, const char* tooltip, ButtonSize size) {
     // Pass icon as label (anonymous-id trick: ImGui::Button uses the full
     // string as its ID; Lucide glyphs are unique enough here in practice).
     return Button(icon, o);
+}
+
+bool SmallActionButton(const char* label, ButtonVariant variant) {
+    const ActionButtonStyle::Scope style(ActionButtonStyle::Make(
+        ThemeColors::current(), ActionButtonStyle::CurrentSurface(), variant));
+    const bool clicked = ImGui::SmallButton(label);
+    ActionButtonStyle::Record(label);
+    DrawFocusRing();
+    return clicked;
 }
 
 // TextInput / NumberInput (Task 8)
@@ -941,8 +884,7 @@ bool SettingsSliderRow(const char* label, bool* enabled, float* value,
 bool SettingsButtonRow(const char* label, const ImVec2& size, const SettingsRowOptions& opts) {
     ImGui::BeginGroup();
     if (opts.disabled) ImGui::BeginDisabled();
-    const bool clicked = ImGui::Button(label ? label : "##settingsButton", size);
-    DrawFocusRing();
+    const bool clicked = ActionButton(label ? label : "##settingsButton", size);
     NotifySettingsSearchLabeledItem(label, SettingsSearchLabelKind::Button);
     if (opts.disabled) ImGui::EndDisabled();
     ShowSettingsRowTooltip(opts);

@@ -63,12 +63,12 @@ class ScanPauseResumeContract(unittest.TestCase):
         active_start = MAIN.index("const bool showBackgroundContinueButton")
         active_end = MAIN.index("if (state.scanCancelRequested.load())", active_start)
         active_block = MAIN[active_start:active_end]
-        self.assertIn('ImGui::Button(L(Main_StopBtn)', active_block)
-        self.assertNotIn('ImGui::Button(L(Main_PauseKeepBtn)', active_block)
+        self.assertIn('aura::ui::ActionButton(L(Main_StopBtn)', active_block)
+        self.assertNotIn('aura::ui::ActionButton(L(Main_PauseKeepBtn)', active_block)
         self.assertIn('ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str())', active_block)
-        self.assertIn('ImGui::Button(L(Main_PauseKeepBtn), ImVec2(btnW, 30))', MAIN)
+        self.assertIn('aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(btnW, 30))', MAIN)
         self.assertIn('ImGui::SameLine(0, gap)', MAIN)
-        self.assertIn('ImGui::Button(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))', MAIN)
+        self.assertIn('aura::ui::ActionButton(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))', MAIN)
         self.assertEqual(LOCALIZED["Main_StopBtn"]["zh"], "停止…")
         self.assertEqual(LOCALIZED["Scan_StopScan"]["zh"], "停止扫描")
 

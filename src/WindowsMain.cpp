@@ -131,6 +131,8 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WwiseTransferConfig.h"
 #include "WwiseTransferExecute.h"
 #include "WwiseTransferPanel.h"
+#include "ui/ActionButtonStyle.h"
+#include "nlohmann_json.hpp"
 #include "WwiseTransferPersist.h"
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
@@ -4735,6 +4737,51 @@ static void PollQaCommandFile(AppState& state) {
                 }
             }
         }
+    } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
+            (!state.currentDbPathUtf8.empty() &&
+             !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(state.currentDbPathUtf8))) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (cmd == "ordinary_button_audit") {
+            namespace paint = aura::ui::ActionButtonStyle;
+            paint::RequestAudit();
+            auto checks = nlohmann::json::array();
+            auto rgba = [](ImU32 c) { return std::array<int, 4>{
+                int((c >> IM_COL32_R_SHIFT) & 255), int((c >> IM_COL32_G_SHIFT) & 255),
+                int((c >> IM_COL32_B_SHIFT) & 255), int((c >> IM_COL32_A_SHIFT) & 255)}; };
+            for (const auto& item : paint::observations) {
+                checks.push_back({{"label", item.label}, {"window", item.window},
+                    {"bounds", {item.min.x, item.min.y, item.max.x, item.max.y}},
+                    {"clip", {item.clip.x, item.clip.y, item.clip.z, item.clip.w}},
+                    {"fg", rgba(item.text)}, {"fill", rgba(item.fill)}, {"disabled", item.disabled}});
+            }
+            result = nlohmann::json({{"ok", true}, {"frame", paint::auditFrame},
+                {"current_frame", ImGui::GetFrameCount()}, {"theme", int(state.settings.theme)},
+                {"checks", checks}}).dump();
+        } else {
+            // Only open existing UI on the isolated profile. No connection,
+            // file operation, update install or button activation is exposed.
+            const std::string module = getStr(raw, "module");
+            const std::string action = getStr(raw, "action");
+            bool handled = action == "open";
+            if (action == "close" && module == "theme-editor") {
+                state.showThemeEditor = false;
+                handled = true;
+            } else if (action == "open") {
+                if (module == "settings") state.showSettingsDialog = true;
+                else if (module == "library") state.showDbManagerDialog = true;
+                else if (module == "batch-rename") state.showBatchRenameDialog = true;
+                else if (module == "naming") state.showNamingDialog = true;
+                else if (module == "theme-editor") state.showThemeEditor = true;
+                else if (module == "wwise") aura::wwise::OpenWwiseTransferPanel({}, {});
+                else handled = false;
+            }
+            result = handled ? R"({"ok":true})" : R"({"ok":false,"error":"unknown_button_window_action"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "function_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||

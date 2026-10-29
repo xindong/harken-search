@@ -1474,7 +1474,7 @@ void RenderWwiseTransferPanel() {
         if (!nameOk) ImGui::EndDisabled();
         ImGui::SameLine();
         if (aura::ui::Button(wz("Cancel", u8"取消"),
-                aura::ui::ButtonOptions{aura::ui::ButtonVariant::Ghost,
+                aura::ui::ButtonOptions{aura::ui::ButtonVariant::Quiet,
                                         aura::ui::ButtonSize::Md})) {
             g_ps.pendingPresetAction = 0;
             ImGui::CloseCurrentPopup();
@@ -1502,7 +1502,7 @@ void RenderWwiseTransferPanel() {
         }
         ImGui::SameLine();
         if (aura::ui::Button(wz("Cancel", u8"取消"),
-                aura::ui::ButtonOptions{aura::ui::ButtonVariant::Ghost,
+                aura::ui::ButtonOptions{aura::ui::ButtonVariant::Quiet,
                                         aura::ui::ButtonSize::Md})) {
             g_ps.pendingPresetAction = 0;
             ImGui::CloseCurrentPopup();
@@ -1980,8 +1980,9 @@ void RenderWwiseTransferPanel() {
                                                      "The last row stays SoundSFX so the imported file always lands on a playable leaf."));
                     }
                 }
-                ImGui::EndChild();
                 }
+                // BeginChild still opens a scope when the properties are clipped.
+                ImGui::EndChild();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor(2);
 
