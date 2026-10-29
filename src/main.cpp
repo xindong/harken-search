@@ -36003,11 +36003,10 @@ void RenderUI(AppState& state) {
 
                         ImGui::TableNextColumn();
                         // Highlight the row currently being edited.
-                        bool isEditingThisRow = (s_editingIndex == i);
-                        if (isEditingThisRow) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.95f, 0.75f, 0.2f, 0.45f));
-                        }
-                        if (aura::ui::ActionButton(L(Set_ThesEditBtn), ImVec2(65, 0))) {
+                        const bool isEditingThisRow = (s_editingIndex == i);
+                        if (aura::ui::ActionButton(L(Set_ThesEditBtn), ImVec2(65, 0),
+                                isEditingThisRow ? aura::ui::ButtonVariant::Selected
+                                                 : aura::ui::ButtonVariant::Secondary)) {
                             // Pre-fill the form with this rule's tokens (space-joined).
                             std::string t, r;
                             for (const auto& s : g_userThesaurus[i].triggers) { t += s; t += ' '; }
@@ -36015,9 +36014,6 @@ void RenderUI(AppState& state) {
                             std::snprintf(trigBuf, sizeof(trigBuf), "%s", t.c_str());
                             std::snprintf(relBuf,  sizeof(relBuf),  "%s", r.c_str());
                             s_editingIndex = i;
-                        }
-                        if (isEditingThisRow) {
-                            ImGui::PopStyleColor();
                         }
                         ImGui::SameLine();
                         if (aura::ui::ActionButton(L(Delete), ImVec2(-FLT_MIN, 0), aura::ui::ButtonVariant::Danger)) {

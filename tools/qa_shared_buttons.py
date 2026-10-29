@@ -15,6 +15,21 @@ from qa_required_library_setup import PrivateDesktop, capture, wait_state
 from qa_transport_themes import Driver, THEMES
 
 
+# This suite uses the first-library fixture's Simplified Chinese UI. Match each
+# exact root and its children, never a similarly named or unrelated window.
+WINDOW_BUTTONS = {
+    'settings': ('设置', ('清除', '保存并关闭', '取消', '恢复默认主题', '导出设置...', '导入设置...', '恢复全部默认')),
+    'library': ('素材库管理器', ('载入资产库', '打开文件位置', '重新连接', '清理丢失记录', '从列表中移除', '彻底删除', '关闭')),
+    'batch-rename': ('批量操作', ('添加到队列', '上移', '下移', '移除', '清空', '生成预览', '执行重命名', '关闭')),
+    'transfer': ('##DockedTransfer', ('选择...', '开始传输')),
+    'workflow': ('##DockedWorkflow', ('保存', '预览结果', '执行工作流')),
+    'theme-editor': ('高级主题编辑器', ('恢复打开时状态', '撤销 (Ctrl+Z)', '保存为新主题', '放弃修改', '导入 JSON', '导入并创建主题', '导出 JSON')),
+    'update': ('更新中心##HarkenSearchUpdateCenter', ('更新历史', '×', '检查更新', '稍后')),
+    'similar': ('相似音效##DockedSimilarSounds', ('查找相似音效',)),
+    'wwise': ('传输到 Wwise (F-034)', ('连接', '', '另存为...', '重命名', '删除', '', '', '添加父层', '添加子层', '传输到 Wwise', '从 Wwise 刷新')),
+}
+
+
 def contrast(fg, bg):
     def luminance(color):
         rgb = [v / 255 for v in color[:3]]
@@ -22,6 +37,31 @@ def contrast(fg, bg):
         return sum(v * w for v, w in zip(linear, (.2126, .7152, .0722)))
     a, b = luminance(fg), luminance(bg)
     return (max(a, b) + .05) / (min(a, b) + .05)
+
+
+def validate_observations(module, observations):
+    window, required = WINDOW_BUTTONS[module]
+    checks = [b for b in observations
+              if b['window'] == window or b['window'].startswith(window + '/')]
+    def label_text(label):
+        # Text actions may prepend a Lucide glyph; keep a glyph-only Save ID.
+        text = ''.join(c for c in label if not '' <= c <= '').strip()
+        return text or label.strip()
+    present = {label_text(b['label']) for b in checks}
+    missing = sorted(set(required) - present)
+    failures = [{'kind': 'missing-buttons', 'labels': missing, 'window': window}] if missing else []
+    for button in checks:
+        left, top, right, bottom = button['bounds']
+        cl, ct, cr, cb = button['clip']
+        if left < cl - 1 or top < ct - 1 or right > cr + 1 or bottom > cb + 1:
+            failures.append({'label': button['label'], 'kind': 'clipped-button',
+                             'bounds': button['bounds'], 'clip': button['clip']})
+        if not button['disabled']:
+            ratio = contrast(button['fg'], button['fill'])
+            button['contrast'] = ratio
+            if ratio < 4.5:
+                failures.append({'label': button['label'], 'kind': 'contrast', 'contrast': ratio})
+    return checks, failures
 
 
 def audit(driver, theme):
@@ -81,19 +121,8 @@ def run(args):
                 observed['module'] = module
                 observed['origin'] = list(win32gui.ClientToScreen(identity['hwnd'], (0, 0)))
                 observed['screenshot'] = f'{module}-theme-{theme}.png'
-                for button in observed['checks']:
-                    left, top, right, bottom = button['bounds']
-                    cl, ct, cr, cb = button['clip']
-                    if left < cl - 1 or top < ct - 1 or right > cr + 1 or bottom > cb + 1:
-                        report['failures'].append({'module': module, 'theme': theme,
-                            'label': button['label'], 'kind': 'clipped-button',
-                            'bounds': button['bounds'], 'clip': button['clip']})
-                    if not button['disabled']:
-                        ratio = contrast(button['fg'], button['fill'])
-                        button['contrast'] = ratio
-                        if ratio < 4.5:
-                            report['failures'].append({'module': module, 'theme': theme,
-                                'label': button['label'], 'contrast': ratio})
+                observed['checks'], failures = validate_observations(module, observed['checks'])
+                report['failures'].extend(dict(f, module=module, theme=theme) for f in failures)
                 capture(driver, out / observed['screenshot'])
                 report['windows'].append(observed)
                 count = len(observed['checks'])
