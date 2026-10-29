@@ -4917,10 +4917,44 @@ static void PollQaCommandFile(AppState& state) {
                    height < 180 || height > 1200) {
             result = "{\"ok\":false,\"error\":\"invalid_preview_layout\"}";
         } else if (action != "open" && action != "close" && action != "start" &&
-                   action != "cancel" && action != "find" && action != "state") {
+                   action != "cancel" && action != "find" && action != "state" &&
+                   action != "pointer") {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
+        } else if (action == "pointer") {
+#if AURA_BUILD_DIAGNOSTICS
+            // App-owned input only over freshly observed Similar Sounds controls.
+            // This remains inside the compile-time pinned QA build.
+            const float x = static_cast<float>(getDouble(raw, "x", -10000));
+            const float y = static_cast<float>(getDouble(raw, "y", -10000));
+            const std::string phase = getStr(raw, "phase");
+            bool hit = false;
+            for (const auto& item : aura::ui::ActionButtonStyle::observations) {
+                const auto* window = ImGui::FindWindowByName(item.window.c_str());
+                const bool ownPopup = window && (window->Flags & ImGuiWindowFlags_Popup) &&
+                    window->ParentWindow && std::strstr(window->ParentWindow->Name, "SimilarActionRow");
+                if ((item.window.find("SimilarActionRow") != std::string::npos || ownPopup) &&
+                    x >= item.min.x && x < item.max.x && y >= item.min.y && y < item.max.y) hit = true;
+            }
+            const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();
+            if (!hit || !fresh || s_magicEqQaPointer.pending ||
+                (phase != "hover" && phase != "down" && phase != "up") ||
+                ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
+                (phase == "up" && !s_magicEqQaPointer.held)) {
+                result = R"({"ok":false,"error":"invalid_similar_control_pointer"})";
+            } else {
+                s_magicEqQaPointer.active = true;
+                s_magicEqQaPointer.pending = phase != "hover";
+                s_magicEqQaPointer.held = phase == "down";
+                s_magicEqQaPointer.x = x;
+                s_magicEqQaPointer.y = y;
+                s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                result = R"({"ok":true})";
+            }
+#else
+            result = R"({"ok":false,"error":"diagnostics_required"})";
+#endif
         } else {
             if (action == "open") {
                 g_currentLanguage = static_cast<AppLanguage>(language);
@@ -4959,6 +4993,8 @@ static void PollQaCommandFile(AppState& state) {
                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
+                ",\"preset\":" + std::to_string(static_cast<int>(state.similarSoundsPreset)) +
+                ",\"open_popups\":" + std::to_string(ImGui::GetCurrentContext()->OpenPopupStack.Size) +
                 ",\"database\":\"" + jsonEscape(state.currentDbPathUtf8) + "\"}";
         }
 #else
