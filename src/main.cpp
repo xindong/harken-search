@@ -13796,22 +13796,12 @@ static void ResetPlaylistCoverWallScope(AppState& state) {
     aura::cover_wall::RequestDisplayRefresh(state);
 }
 
-// Reset folder + cover click-filters when a new search query is committed,
-// so a fresh query isn't constrained by stale facet clicks. Does NOT clear
-// the search buffer itself (that would loop with the search-change handler).
-static void ClearPathAndCoverFiltersForNewSearch(AppState& state) {
-    bool changed = false;
-    if (state.folderFilterActive) {
-        state.folderFilterActive = false;
-        state.selectedFolderPath.clear();
-        changed = true;
-    }
+// A new keyword keeps the selected folder, but still clears a cover click-filter.
+// Do not clear the search buffer here (that would loop with the change handler).
+static void ClearCoverFilterForNewSearch(AppState& state) {
     if (state.coverFilterActive) {
         ClearSpecificCoverKeyFilter(state);
         state.coverFilterIndex = 0;
-        changed = true;
-    }
-    if (changed) {
         DIAG_ACTION("Filter", "AutoClearOnSearchChange");
     }
 }
@@ -39708,7 +39698,7 @@ void RenderUI(AppState& state) {
                 // 非路径输入：不做搜索也不切模式，保持浏览器
             } else {
                 if (!rejectInvalidSlashSearch(textToSearch)) {
-                    ClearPathAndCoverFiltersForNewSearch(state);
+                    ClearCoverFilterForNewSearch(state);
                     KeepPlaylistSearchScopeOrEnterDatabase(state);
                     RefreshSearchResults(state, true);
                 }
@@ -39740,7 +39730,7 @@ void RenderUI(AppState& state) {
             state.lastAppliedSearchText = debouncedSearch;
             state.clearPendingWaveforms();
             if (!rejectInvalidSlashSearch(debouncedSearch)) {
-                ClearPathAndCoverFiltersForNewSearch(state);
+                ClearCoverFilterForNewSearch(state);
                 DIAG_ACTION("Search", "KeywordSearch");
 
                 // 百万库场景下，实时搜索只刷新结果，不自动加载/播放第一条。
