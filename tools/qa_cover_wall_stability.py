@@ -11,9 +11,23 @@ from PIL import Image
 from qa_transport_themes import Driver, THEMES, window_api
 
 
-def audit_pixels(output, runtime):
+def audit_pixels(output, runtime, report=None):
+    """Finalize the main report only after pixel validation has completed."""
+    if report is None:
+        report = json.loads((output/'report.json').read_text('utf-8'))
+    try:
+        _audit_pixel_cases(output, runtime, report)
+    except Exception as error:
+        report['passed'] = False
+        report['error'] = str(error)
+        raise
+    finally:
+        (output/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+
+
+def _audit_pixel_cases(output, runtime, report):
     """Compare rendered grid pixels, excluding the transient scrollbar and slider."""
-    report=json.loads((output/'report.json').read_text('utf-8')); results=[]
+    results=[]
     for case in report['cases']:
         if 'screenshot' not in case: continue
         target=Image.open(case['screenshot']).convert('RGB')
@@ -172,8 +186,17 @@ def run(args):
         report = dict(passed=failure is None,error=failure,cases=cases,identity=identity,
             exe_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),input_method='app-owned; no desktop cursor',
             capture_method='consecutive OpenGL frames; local-only QA supplement')
-        (output/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-    audit_pixels(output, runtime)
+        if failure is None:
+            audit_pixels(output, runtime, report)
+        else:
+            (output/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+
+
+def frame_count(value):
+    count = int(value)
+    if count < 24:
+        raise argparse.ArgumentTypeError('Capture requires at least 24 frames for pixel validation')
+    return count
 
 
 if __name__=='__main__':
@@ -181,7 +204,7 @@ if __name__=='__main__':
     parser.add_argument('--exe',type=Path,required=True)
     parser.add_argument('--isolation-root',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--frames',type=int,default=180)
+    parser.add_argument('--frames',type=frame_count,default=180)
     parser.add_argument('--boundary-only',action='store_true')
     parser.add_argument('--audit-only',action='store_true',help='Check saved consecutive frame pixels without launching the app')
     args=parser.parse_args()
