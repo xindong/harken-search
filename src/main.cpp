@@ -100,6 +100,7 @@
 #include "VoiceAssetOrganizer.h"
 #include "Theme.h"              // 主题颜色系统
 #include "ThemeSchedule.h"
+#include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/TransportContrast.h"
@@ -6322,13 +6323,14 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterWidth", std::to_string(state.settings.meterWidth)});
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
-    items.push_back({"theme", std::to_string((int)state.settings.theme)});
+    const auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    items.push_back({"theme", std::to_string((int)savedAppearance.theme)});
     items.push_back({"themeScheduleMode", std::to_string((int)state.settings.themeScheduleMode)});
     items.push_back({"language", std::to_string((int)state.settings.language)});
     items.push_back({"customThemeName", state.settings.customThemeName});
 
     // Custom colors
-    items.push_back({"useCustomColors", state.settings.useCustomColors ? "1" : "0"});
+    items.push_back({"useCustomColors", savedAppearance.useCustomColors ? "1" : "0"});
     items.push_back({"customAccentR", std::to_string(state.settings.customAccentColor.x)});
     items.push_back({"customAccentG", std::to_string(state.settings.customAccentColor.y)});
     items.push_back({"customAccentB", std::to_string(state.settings.customAccentColor.z)});

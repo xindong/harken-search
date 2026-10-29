@@ -123,6 +123,12 @@ static void PushUndo() {
         g_ed.undoStack.erase(g_ed.undoStack.begin());
 }
 
+ThemeEditorSavedAppearance ThemeEditorAppearanceForSettings(const AppState& state) {
+    if (g_ed.wasOpen && g_ed.schedulePeriod >= 0)
+        return {g_ed.openTheme, g_ed.openUseCustomColors};
+    return {state.settings.theme, state.settings.useCustomColors};
+}
+
 static void ApplyDraftToLive(AppState& state) {
     // While previewing in the editor, treat the draft as the active custom theme
     // so the main loop does not re-sync stock theme tokens over the draft each frame.

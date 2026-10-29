@@ -1,7 +1,9 @@
 #include "ThemeSchedule.h"
 #include "AppState.h"
 #include "Localization.h"
+#ifdef _WIN32
 #include "WindowsMain.h"
+#endif
 #include "imgui.h"
 #include <algorithm>
 
@@ -101,7 +103,9 @@ bool RenderSettings(AppState& state) {
     if (AutomaticSwitch(automatic)) {
         SetMode(state, automatic ? Mode::Automatic
             : (CurrentPeriod() == Period::Day ? Mode::FixedDay : Mode::FixedNight));
+#ifdef _WIN32
         SaveAppSettings(state);
+#endif
     }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     g_autoToggleBounds = ItemBounds();
@@ -118,7 +122,9 @@ bool RenderSettings(AppState& state) {
         ImGui::SetCursorPos(ImVec2(origin.x+i*(width+gap),origin.y));
         if (PaletteCard(period,selected==period,automatic,width)) {
             SetMode(state,i==0 ? Mode::FixedDay : Mode::FixedNight);
+#ifdef _WIN32
             SaveAppSettings(state);
+#endif
         }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
         g_ui.cards[i]=ItemBounds();

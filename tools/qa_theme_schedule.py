@@ -58,9 +58,10 @@ def run(args):
         assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe,identity
         assert Path(identity['isolation_root']).resolve()==root,identity
         wait_state(driver,lambda s:s['main_ui_ready'],'startup',60)
-        note=command(cmd='qa_narration',action='state')
-        assert note['open'] and not note['error'],note
-        command(cmd='qa_narration',action='close'); settle()
+        if args.qa_narration:
+            note=command(cmd='qa_narration',action='state')
+            assert note['open'] and not note['error'],note
+            command(cmd='qa_narration',action='close'); settle()
         current=command(cmd='get_state')
         if current['db_path']!=str(library):
             command(cmd='switch_db',path=str(library))
@@ -305,6 +306,22 @@ def run(args):
         value=start(960)
         assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
         check('automatic-off-and-manual-theme-survive-restart',state=value)
+        # Exiting directly from a live draft must persist the last chosen theme,
+        # not the temporary Custom appearance used to render the editor preview.
+        for day in (True,False):
+            settings()
+            before_files=(snapshot(day_file),snapshot(night_file))
+            saved_settings=dict(line.split('=',1) for line in (profiles/'settings.ini').read_text(encoding='utf-8').splitlines() if '=' in line)
+            open_editor(day); draft('toolbarAccent',[.25,.45,.65,1])
+            assert state()['editor_open'] and state()['theme']==7,state()
+            stop()
+            persisted=dict(line.split('=',1) for line in (profiles/'settings.ini').read_text(encoding='utf-8').splitlines() if '=' in line)
+            assert persisted['theme']==str(manual['theme']),('preview leaked to saved theme',persisted['theme'],manual['theme'])
+            assert persisted['useCustomColors']==saved_settings['useCustomColors'],persisted['useCustomColors']
+            value=start(960)
+            assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+            assert (snapshot(day_file),snapshot(night_file))==before_files,'unsaved draft changed palette files'
+            check('exit-during-'+('day' if day else 'night')+'-preview-keeps-manual-theme',state=value)
         settings(); click_card(True); value=fixed_clock(960,'day')
         assert value['mode']==2,value
         check('manual-theme-can-return-to-fixed-day',state=value)
@@ -336,4 +353,6 @@ if __name__=='__main__':
     parser.add_argument('--isolation-root',required=True,type=Path)
     parser.add_argument('--library',required=True,type=Path)
     parser.add_argument('--output',required=True,type=Path)
+    parser.add_argument('--qa-narration',action='store_true',
+                        help='Also verify the optional local-only QA narration panel')
     run(parser.parse_args())
