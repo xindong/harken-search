@@ -19140,6 +19140,8 @@ void RenderFileInfoPanelTabContents(
             cw.qaDisplayCount = pDisplayItems ? pDisplayItems->size() : 0;
             cw.qaPrefetchTileCount = 0;
             cw.qaVisibleTileCount = 0;
+            cw.qaGridColumns = 0;
+            cw.qaRenderedThumbSize = 0.0f;
             cw.qaVisibleReadyCount = 0;
             cw.qaVisibleLiveTextureCount = 0;
             cw.qaVisibleMirrorCount = 0;
@@ -19300,7 +19302,7 @@ void RenderFileInfoPanelTabContents(
                     bool largeThumbWarmup = false;
                     bool denseThumbWarmup = false;
 
-                    // 最小尺寸限制放宽，并限制单行最多 8 个封面
+                    // Small covers use all available columns, including wide horizontal docks.
                     if (cw.texturesPendingClear) {
                         // texCache mirrors CoverModule-owned GL texture ids. After a DB switch
                         // those ids may be reused by unrelated textures, so only drop the mirror.
@@ -19317,10 +19319,11 @@ void RenderFileInfoPanelTabContents(
                         cw.thumbSize,
                         gap,
                         aura::coverwall::kMinThumbSizePx,
-                        aura::coverwall::kMaxThumbSizePx,
-                        8);
+                        aura::coverwall::kMaxThumbSizePx);
                     int columns = coverGrid.columns;
                     float thumb = coverGrid.thumbSizePx;
+                    cw.qaGridColumns = columns;
+                    cw.qaRenderedThumbSize = thumb;
                     float cellH = coverGrid.cellHeightPx;
                     float availY = ImGui::GetContentRegionAvail().y;
                     int totalRows = (totalItems + columns - 1) / columns;
@@ -26167,11 +26170,22 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
         const ImVec2 grip(e.window.x + e.window.width * .5f,
             top ? e.window.y + e.window.height + 3.0f : e.window.y - 3.0f);
         r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
+    } else if (part == "column-splitter") {
+        if (e.panel->floating) return false;
+        const bool left = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left) == g_dockLayout.Find(module);
+        const bool right = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right) == g_dockLayout.Find(module);
+        if (!left && !right) return false;
+        const ImVec2 grip(left ? e.window.x + e.window.width + 6.0f : e.window.x - 6.0f,
+                          e.window.y + e.window.height * .5f);
+        r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
     } else if (part != "title") return false;
     if (r.GetWidth() <= 0.0f || r.GetHeight() <= 0.0f) return false;
     x = r.GetCenter().x;
     y = r.GetCenter().y;
-    viewportId = e.viewport;
+    // Outer splitters live on the workspace, even while the re-docked panel's
+    // native viewport is being retired after a floating-window handoff.
+    viewportId = part == "band-splitter" || part == "column-splitter"
+        ? ImGui::GetMainViewport()->ID : e.viewport;
     return true;
 }
 
@@ -38336,7 +38350,7 @@ void RenderUI(AppState& state) {
         : 0.0f;
     const float requestedRightDockWidth = rightDockSlotRequired
         ? (showRightColumn ? rightPanelWidth
-                           : std::clamp(state.panelSimilarSounds.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
+                           : std::clamp(state.panelFileInfo.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
         : 0.0f;
     const aura::ui::dock::DockColumnBudget dockColumnBudget =
         aura::ui::dock::ResolveDockColumnBudget(
@@ -40026,7 +40040,8 @@ void RenderUI(AppState& state) {
     const float topDockReserve = topDockBandHeight > 0.0f ? topDockBandHeight + dockBandSplitter : 0.0f;
     const float bottomDockReserve = bottomDockBandHeight > 0.0f ? bottomDockBandHeight + dockBandSplitter : 0.0f;
     float fixedOverhead = baseOverhead + topDockReserve + bottomDockReserve;
-    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f, mainWorkH - fixedOverhead - minContentHeight);
+    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f,
+        mainWorkH - fixedOverhead - playlistQuickBarHeight - minContentHeight);
     const float minWaveformH = 96.0f;
     float waveformPanelHeight = 0.0f;
     if (showDockedWaveform) {
@@ -51123,9 +51138,9 @@ void RenderUI(AppState& state) {
             rememberedSide,
             true,
             rememberedSide == aura::ui::dock::DockSide::Top || rememberedSide == aura::ui::dock::DockSide::Bottom
-                ? std::clamp(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight, aura::ui::dock::kDockBandMaxHeight)
+                ? std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
                 : rememberedDockExtentForModule(draggingId, rememberedSide),
-            std::clamp(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight, aura::ui::dock::kDockBandMaxHeight)
+            std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
         };
         const auto hit = aura::ui::dock::HitDockTarget(
             {pointer.x - 0.5f, pointer.y - 0.5f, 1.0f, 1.0f},
@@ -51849,16 +51864,16 @@ void RenderUI(AppState& state) {
 
     {
         const float minBandHeight = aura::ui::dock::kDockBandMinHeight;
-        const float maxBandHeight = aura::ui::dock::kDockBandMaxHeight;
         float* topHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Top);
         if (topHeightOwner != nullptr && topDockReserve > 0.0f) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.top.x, dockColumnTop + topDockBandHeight));
             const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
                 g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top), viewport->DpiScale).height);
-            if (HorizontalSplitter("##TopDockSplitter", topHeightOwner, minimum,
-                    std::max(minimum, std::min(maxBandHeight, availHeight + topDockBandHeight - 200.0f)),
+            float resizedHeight = topDockBandHeight;
+            if (HorizontalSplitter("##TopDockSplitter", &resizedHeight, minimum,
+                    std::max(minimum, availHeight + topDockBandHeight - minContentHeight),
                     rootSlots.top.width, true)) {
-                auto rect = rootSlots.top; rect.height = *topHeightOwner;
+                auto rect = rootSlots.top; rect.height = resizedHeight;
                 MirrorDockRootExtent(state, aura::ui::dock::DockSide::Top, rect);
                 MarkSettingsDirty(state);
             }
@@ -51868,10 +51883,11 @@ void RenderUI(AppState& state) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.bottom.x, bottomSlotY - dockBandSplitter));
             const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
                 g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom), viewport->DpiScale).height);
-            if (HorizontalSplitter("##BottomDockSplitter", bottomHeightOwner, minimum,
-                    std::max(minimum, std::min(maxBandHeight, availHeight + bottomDockBandHeight - 200.0f)),
+            float resizedHeight = bottomDockBandHeight;
+            if (HorizontalSplitter("##BottomDockSplitter", &resizedHeight, minimum,
+                    std::max(minimum, availHeight + bottomDockBandHeight - minContentHeight),
                     rootSlots.bottom.width, false)) {
-                auto rect = rootSlots.bottom; rect.height = *bottomHeightOwner;
+                auto rect = rootSlots.bottom; rect.height = resizedHeight;
                 MirrorDockRootExtent(state, aura::ui::dock::DockSide::Bottom, rect);
                 MarkSettingsDirty(state);
             }
@@ -51923,8 +51939,11 @@ void RenderUI(AppState& state) {
         const int gripLeafCount = gripSnapshot.moduleCount;
         const aura::ui::dock::AdjacentLeafGrip* adjacentGrips = gripSnapshot.grips;
         const int adjacentCount = gripSnapshot.gripCount;
+        const auto leftOuterGrip = leftDockSlotRequired && !showLeftColumn
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, splitterWidth)
+            : aura::ui::dock::AdjacentLeafGrip{};
         const auto rightOuterGrip = rightDockSlotRequired && !showRightColumn
-            ? aura::ui::dock::PlanRightDockOuterGrip(gripSnapshot, "similar-sounds")
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, splitterWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
@@ -52019,8 +52038,11 @@ void RenderUI(AppState& state) {
             }
             ImGui::End();
         }
-        if (rightOuterGrip.visible) {
-            const auto& grip = rightOuterGrip;
+        for (int column = 0; column < 2; ++column) {
+            const bool left = column == 0;
+            const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
+            const auto& grip = left ? leftOuterGrip : rightOuterGrip;
+            if (!grip.visible) continue;
             ImGui::SetNextWindowPos(ImVec2(grip.rect.x, grip.rect.y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(grip.rect.width, grip.rect.height), ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -52031,15 +52053,16 @@ void RenderUI(AppState& state) {
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing;
             const bool visible = BeginTransientScrollbarWindow(
-                "##RightDockLeafSplitter", nullptr, flags);
+                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", nullptr, flags);
             ImGui::PopStyleVar(3);
             if (visible) {
-                ImGui::InvisibleButton("##RightDockLeafSplitterHit",
+                ImGui::InvisibleButton(left ? "##LeftDockLeafSplitterHit" : "##RightDockLeafSplitterHit",
                     ImVec2(grip.rect.width, grip.rect.height));
                 const bool pointerHit = ImGui::IsMouseHoveringRect(
                     ImVec2(grip.rect.x, grip.rect.y),
                     ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                static bool activeRightOuterGrip = false;
+                static bool activeOuterGrips[2]{};
+                bool& activeRightOuterGrip = activeOuterGrips[column];
                 if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) activeRightOuterGrip = false;
                 if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
                     activeRightOuterGrip = true;
@@ -52060,10 +52083,15 @@ void RenderUI(AppState& state) {
                         ImGui::GetColorU32(color));
                 }
                 if (dragging) {
-                    aura::ui::dock::DragRightDockOuterGrip(
-                        state.panelSimilarSounds.dockedWidth,
-                        ImGui::GetIO().MouseDelta.x, rightPanelMinWidth,
-                        rightPanelMaxWidth);
+                    auto resizedRect = left ? rootSlots.left : rootSlots.right;
+                    const float minimum = aura::ui::dock::DockSubtreeMinimum(
+                        g_dockLayout.RegionRoot(side), viewport->DpiScale).width;
+                    const float maximum = std::max(minimum, resizedRect.width + centerWidth - minReadableCenterWidth);
+                    if (aura::ui::dock::DragRightDockOuterGrip(resizedRect.width,
+                            ImGui::GetIO().MouseDelta.x * (left ? -1.0f : 1.0f), minimum, maximum)) {
+                        MirrorDockRootExtent(state, side, resizedRect);
+                        MarkSettingsDirty(state);
+                    }
                 }
             }
             ImGui::End();
