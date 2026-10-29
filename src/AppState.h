@@ -1673,6 +1673,7 @@ struct AppState {
 #ifdef ARIS_PREVIEW_ISOLATION
     bool qaCreateNewDbNow = false;
     std::string qaNewDbName;
+    std::string qaOpenExistingDbPath;
 #endif
     bool showShortcutsDialog = false;
 

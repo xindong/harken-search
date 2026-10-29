@@ -1170,6 +1170,8 @@ bool g_searchBarFocusedForShortcuts = false;
 // SECTION 2 - Keybindings and Shortcuts
 
 static void ProcessKeybindings(AppState& state) {
+    // The first-library modal must also block shortcuts handled outside ImGui.
+    if (state.startupNeedsDatabaseSetup) return;
     // AUDITION_NATIVE_EXCEPTION: keyboard-transport
     // Keyboard play/stop intentionally retains its origin-specific region and
     // rewind policy during the overnight control-plane proof.
@@ -33183,7 +33185,10 @@ void RenderUI(AppState& state) {
         }
         ImGui::End();
     }
-    if (state.showNewDbDialog) {
+    const bool requireDatabaseSetup = state.startupNeedsDatabaseSetup &&
+        (state.dbSwitchInProgress || !state.database.isOpen());
+    if (state.showNewDbDialog ||
+        (requireDatabaseSetup && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))) {
         ImGui::OpenPopup(L(Dlg_NewDB));
         state.showNewDbDialog = false;
     }
@@ -33211,11 +33216,16 @@ void RenderUI(AppState& state) {
                 snprintf(newDbNameBuf, sizeof(newDbNameBuf), "soundmanager");
                 ImGui::CloseCurrentPopup();
             } else {
-                newDbError = std::string(L(Db_CreateFailedHint)) + "\n" + state.dbSwitchError;
+                newDbError = std::string(requireDatabaseSetup ? L(NewDB_SetupFailed) : L(Db_CreateFailedHint)) +
+                    "\n" + state.dbSwitchError;
             }
         }
-        if (!newDbPending) EscClosePopup();
+        if (!newDbPending && !requireDatabaseSetup) EscClosePopup();
         ImGui::BeginDisabled(newDbPending);
+        if (requireDatabaseSetup) {
+            ImGui::TextWrapped("%s", L(NewDB_RequiredSetup));
+            ImGui::Spacing();
+        }
 
         if (newDbDir.empty()) {
             newDbDir = GetDefaultDbDirUtf8();
@@ -33278,7 +33288,10 @@ void RenderUI(AppState& state) {
         bool canCreate = nameValid && (!exists || confirmOverwrite);
 
         ImGui::BeginDisabled(!canCreate);
-        bool createClicked = ImGui::Button(exists ? L(NewDB_OverwriteCreate) : L(Create), ImVec2(120, 32));
+        const float setupButtonWidth = requireDatabaseSetup
+            ? (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f
+            : 120.0f;
+        bool createClicked = ImGui::Button(exists ? L(NewDB_OverwriteCreate) : L(Create), ImVec2(setupButtonWidth, 32));
 #ifdef ARIS_PREVIEW_ISOLATION
         const bool qaCreateClicked = std::exchange(state.qaCreateNewDbNow, false);
         createClicked = createClicked || (qaCreateClicked && canCreate);
@@ -33314,7 +33327,30 @@ void RenderUI(AppState& state) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(120, 32))) {
+        if (requireDatabaseSetup) {
+            bool openExistingClicked = ImGui::Button(L(File_OpenDB), ImVec2(setupButtonWidth, 32));
+            std::string openPath;
+#ifdef ARIS_PREVIEW_ISOLATION
+            if (!state.qaOpenExistingDbPath.empty()) {
+                openPath = std::exchange(state.qaOpenExistingDbPath, {});
+                openExistingClicked = true;
+            }
+#endif
+            if (openExistingClicked) {
+                if (openPath.empty()) {
+                    openPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
+                        g_hwnd, GetDefaultDbDirWide());
+                }
+                if (!openPath.empty() && SwitchDatabase(state, openPath, false, &newDbError)) {
+                    newDbError.clear();
+                    newDbPending = true;
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(L(File_Exit), ImVec2(setupButtonWidth, 32))) {
+                RequestHarkenSearchExit(g_hwnd, L"first-library-setup-exit");
+            }
+        } else if (ImGui::Button(L(Cancel), ImVec2(120, 32))) {
             newDbError.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -33324,7 +33360,7 @@ void RenderUI(AppState& state) {
             ImGui::TextColored(ImVec4(1, 0.5f, 0.2f, 1), L(Main_IllegalCharsMsg));
         }
         ImGui::EndDisabled();
-        if (newDbPending) ImGui::TextUnformatted(L(Db_Creating));
+        if (newDbPending) ImGui::TextUnformatted(requireDatabaseSetup ? L(NewDB_SetupPending) : L(Db_Creating));
 
         }
         ImGui::EndPopup();

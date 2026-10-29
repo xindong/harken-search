@@ -72,6 +72,10 @@ static constexpr const char* kLegacyAuroAudioFileAssociation = "Auro.AudioFile";
 #include <fstream>
 #include <iomanip>
 
+#if ARIS_PREVIEW_ISOLATION
+static std::string s_previewFrameCapturePath;
+#endif
+
 #if AURA_BUILD_DIAGNOSTICS
 // Forward-declare the diagnostic widget smoke window.
 // Its implementation stays in DevToolsHarkenSearchSmoke.cpp.
@@ -4428,6 +4432,9 @@ static void PollQaCommandFile(AppState& state) {
                 else if (getStr(raw,"action")=="new_db_dialog") state.showNewDbDialog=true;
                 else if (getStr(raw,"action")=="new_db_name") state.qaNewDbName=getStr(raw,"text");
                 else if (getStr(raw,"action")=="new_db_create") state.qaCreateNewDbNow=true;
+                else if (getStr(raw,"action")=="open_existing_db" &&
+                    Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(getStr(raw,"text")))
+                    state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
@@ -4910,6 +4917,20 @@ static void PollQaCommandFile(AppState& state) {
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
 #endif
 
+    } else if (cmd == "capture_preview_frame") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
+            !s_previewFrameCapturePath.empty() || path.empty() || PathExistsUtf8(path) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) {
+            result = R"({"ok":false,"error":"isolated_capture_path_required"})";
+        } else {
+            s_previewFrameCapturePath = path;
+            result = R"({"ok":true,"pending":true})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "get_state") {
         // Return current app state snapshot
         int resultCount = (int)state.searchResults.size();
@@ -5006,6 +5027,21 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_view\":\"" + std::string(viewModeToString(state.viewMode)) + "\",";
         result += "\"active_library\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
         result += "\"db_path\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
+#if ARIS_PREVIEW_ISOLATION
+        // Observe the real setup modal without sending desktop input.
+        const auto* newDbWindow = ImGui::FindWindowByName(L(Dlg_NewDB));
+        const bool newDbVisible = newDbWindow && newDbWindow->WasActive &&
+            std::any_of(ImGui::GetCurrentContext()->OpenPopupStack.begin(),
+                        ImGui::GetCurrentContext()->OpenPopupStack.end(),
+                        [newDbWindow](const ImGuiPopupData& popup) { return popup.Window == newDbWindow; });
+        result += "\"new_db_dialog_open\":" + std::string(newDbVisible ? "true" : "false") + ",";
+        result += "\"new_db_modal_blocks_background\":" +
+            std::string(newDbVisible && ImGui::GetTopMostPopupModal() == newDbWindow ? "true" : "false") + ",";
+        result += "\"startup_needs_database_setup\":" + std::string(state.startupNeedsDatabaseSetup ? "true" : "false") + ",";
+        result += "\"default_db_directory\":\"" + jsonEscape(GetDefaultDbDirUtf8()) + "\",";
+        result += "\"db_switch_error\":\"" + jsonEscape(state.dbSwitchError) + "\",";
+        result += "\"db_switch_notice\":\"" + jsonEscape(state.dbSwitchNotice) + "\",";
+#endif
         result += "\"file_player_fast_path\":" + std::string(state.filePlayerFastPathActive ? "true" : "false") + ",";
         result += "\"pending_db_path\":\"" + jsonEscape(state.pendingDbPath) + "\",";
         result += "\"recent_db_paths\":" + recentDbPathsJson + ",";
@@ -13861,6 +13897,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             glClearColor(clearBg.x, clearBg.y, clearBg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#if ARIS_PREVIEW_ISOLATION
+            // Capture the actual rendered client frame on an inactive desktop,
+            // where Windows PrintWindow cannot capture this OpenGL surface.
+            if (!s_previewFrameCapturePath.empty()) {
+                const int width = rect.right - rect.left, height = rect.bottom - rect.top;
+                if (width > 0 && height > 0 && width <= 8192 && height <= 8192) {
+                    std::vector<unsigned char> rgb(static_cast<size_t>(width) * height * 3);
+                    GLint alignment = 4, readBuffer = GL_BACK;
+                    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+                    glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                    glReadBuffer(GL_BACK);
+                    glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
+                    glReadBuffer(readBuffer);
+                    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+                    std::ofstream file(Utf8ToPath(s_previewFrameCapturePath), std::ios::binary);
+                    file << "P6\n" << width << " " << height << "\n255\n";
+                    for (int y = height - 1; y >= 0; --y)
+                        file.write(reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3);
+                }
+                s_previewFrameCapturePath.clear();
+            }
+#endif
         }
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
         if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
