@@ -72,6 +72,10 @@ static constexpr const char* kLegacyAuroAudioFileAssociation = "Auro.AudioFile";
 #include <fstream>
 #include <iomanip>
 
+#if ARIS_PREVIEW_ISOLATION
+static std::string s_previewFrameCapturePath;
+#endif
+
 #if AURA_BUILD_DIAGNOSTICS
 // Forward-declare the diagnostic widget smoke window.
 // Its implementation stays in DevToolsHarkenSearchSmoke.cpp.
@@ -127,6 +131,8 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WwiseTransferConfig.h"
 #include "WwiseTransferExecute.h"
 #include "WwiseTransferPanel.h"
+#include "ui/ActionButtonStyle.h"
+#include "nlohmann_json.hpp"
 #include "WwiseTransferPersist.h"
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
@@ -4429,6 +4435,9 @@ static void PollQaCommandFile(AppState& state) {
                 else if (getStr(raw,"action")=="new_db_dialog") state.showNewDbDialog=true;
                 else if (getStr(raw,"action")=="new_db_name") state.qaNewDbName=getStr(raw,"text");
                 else if (getStr(raw,"action")=="new_db_create") state.qaCreateNewDbNow=true;
+                else if (getStr(raw,"action")=="open_existing_db" &&
+                    Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(getStr(raw,"text")))
+                    state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
@@ -4729,6 +4738,51 @@ static void PollQaCommandFile(AppState& state) {
                 }
             }
         }
+    } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
+            (!state.currentDbPathUtf8.empty() &&
+             !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(state.currentDbPathUtf8))) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (cmd == "ordinary_button_audit") {
+            namespace paint = aura::ui::ActionButtonStyle;
+            paint::RequestAudit();
+            auto checks = nlohmann::json::array();
+            auto rgba = [](ImU32 c) { return std::array<int, 4>{
+                int((c >> IM_COL32_R_SHIFT) & 255), int((c >> IM_COL32_G_SHIFT) & 255),
+                int((c >> IM_COL32_B_SHIFT) & 255), int((c >> IM_COL32_A_SHIFT) & 255)}; };
+            for (const auto& item : paint::observations) {
+                checks.push_back({{"label", item.label}, {"window", item.window},
+                    {"bounds", {item.min.x, item.min.y, item.max.x, item.max.y}},
+                    {"clip", {item.clip.x, item.clip.y, item.clip.z, item.clip.w}},
+                    {"fg", rgba(item.text)}, {"fill", rgba(item.fill)}, {"disabled", item.disabled}});
+            }
+            result = nlohmann::json({{"ok", true}, {"frame", paint::auditFrame},
+                {"current_frame", ImGui::GetFrameCount()}, {"theme", int(state.settings.theme)},
+                {"checks", checks}}).dump();
+        } else {
+            // Only open existing UI on the isolated profile. No connection,
+            // file operation, update install or button activation is exposed.
+            const std::string module = getStr(raw, "module");
+            const std::string action = getStr(raw, "action");
+            bool handled = action == "open";
+            if (action == "close" && module == "theme-editor") {
+                state.showThemeEditor = false;
+                handled = true;
+            } else if (action == "open") {
+                if (module == "settings") state.showSettingsDialog = true;
+                else if (module == "library") state.showDbManagerDialog = true;
+                else if (module == "batch-rename") state.showBatchRenameDialog = true;
+                else if (module == "naming") state.showNamingDialog = true;
+                else if (module == "theme-editor") state.showThemeEditor = true;
+                else if (module == "wwise") aura::wwise::OpenWwiseTransferPanel({}, {});
+                else handled = false;
+            }
+            result = handled ? R"({"ok":true})" : R"({"ok":false,"error":"unknown_button_window_action"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "function_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
@@ -4911,6 +4965,20 @@ static void PollQaCommandFile(AppState& state) {
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
 #endif
 
+    } else if (cmd == "capture_preview_frame") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
+            !s_previewFrameCapturePath.empty() || path.empty() || PathExistsUtf8(path) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) {
+            result = R"({"ok":false,"error":"isolated_capture_path_required"})";
+        } else {
+            s_previewFrameCapturePath = path;
+            result = R"({"ok":true,"pending":true})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "get_state") {
         // Return current app state snapshot
         int resultCount = (int)state.searchResults.size();
@@ -5007,6 +5075,27 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_view\":\"" + std::string(viewModeToString(state.viewMode)) + "\",";
         result += "\"active_library\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
         result += "\"db_path\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
+#if ARIS_PREVIEW_ISOLATION
+        // Observe the real setup modal without sending desktop input.
+        const auto* newDbWindow = ImGui::FindWindowByName(L(Dlg_NewDB));
+        const bool newDbVisible = newDbWindow && newDbWindow->WasActive &&
+            std::any_of(ImGui::GetCurrentContext()->OpenPopupStack.begin(),
+                        ImGui::GetCurrentContext()->OpenPopupStack.end(),
+                        [newDbWindow](const ImGuiPopupData& popup) { return popup.Window == newDbWindow; });
+        result += "\"new_db_dialog_open\":" + std::string(newDbVisible ? "true" : "false") + ",";
+        result += "\"new_db_modal_blocks_background\":" +
+            std::string(newDbVisible && ImGui::GetTopMostPopupModal() == newDbWindow ? "true" : "false") + ",";
+        if (newDbVisible) {
+            result += "\"new_db_dialog_bounds\":[" + std::to_string(newDbWindow->Pos.x) + "," +
+                std::to_string(newDbWindow->Pos.y) + "," +
+                std::to_string(newDbWindow->Pos.x + newDbWindow->Size.x) + "," +
+                std::to_string(newDbWindow->Pos.y + newDbWindow->Size.y) + "],";
+        }
+        result += "\"startup_needs_database_setup\":" + std::string(state.startupNeedsDatabaseSetup ? "true" : "false") + ",";
+        result += "\"default_db_directory\":\"" + jsonEscape(GetDefaultDbDirUtf8()) + "\",";
+        result += "\"db_switch_error\":\"" + jsonEscape(state.dbSwitchError) + "\",";
+        result += "\"db_switch_notice\":\"" + jsonEscape(state.dbSwitchNotice) + "\",";
+#endif
         result += "\"file_player_fast_path\":" + std::string(state.filePlayerFastPathActive ? "true" : "false") + ",";
         result += "\"pending_db_path\":\"" + jsonEscape(state.pendingDbPath) + "\",";
         result += "\"recent_db_paths\":" + recentDbPathsJson + ",";
@@ -13996,6 +14085,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             glClearColor(clearBg.x, clearBg.y, clearBg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#if ARIS_PREVIEW_ISOLATION
+            // Capture the actual rendered client frame on an inactive desktop,
+            // where Windows PrintWindow cannot capture this OpenGL surface.
+            if (!s_previewFrameCapturePath.empty()) {
+                const int width = rect.right - rect.left, height = rect.bottom - rect.top;
+                if (width > 0 && height > 0 && width <= 8192 && height <= 8192) {
+                    std::vector<unsigned char> rgb(static_cast<size_t>(width) * height * 3);
+                    GLint alignment = 4, readBuffer = GL_BACK;
+                    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+                    glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                    glReadBuffer(GL_BACK);
+                    glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
+                    glReadBuffer(readBuffer);
+                    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+                    std::ofstream file(Utf8ToPath(s_previewFrameCapturePath), std::ios::binary);
+                    file << "P6\n" << width << " " << height << "\n255\n";
+                    for (int y = height - 1; y >= 0; --y)
+                        file.write(reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3);
+                }
+                s_previewFrameCapturePath.clear();
+            }
+#endif
         }
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
         if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {

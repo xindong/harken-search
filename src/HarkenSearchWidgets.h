@@ -35,7 +35,9 @@ enum class ButtonVariant {
     Secondary,       // neutral fill (Save, Rename, Apply)
     Ghost,           // transparent background, label only
     Danger,          // destructive (Delete, Clear, Remove)
-    Icon             // icon-only, transparent
+    Icon,            // icon-only, transparent
+    Quiet,           // subdued ordinary action (Cancel, Close, Exit)
+    Selected         // current edit action; preserves its visible selection
 };
 enum class ButtonSize { Sm, Md, Lg };
 
@@ -50,6 +52,14 @@ struct ButtonOptions {
 
 // Returns true on click. Renders focus ring automatically.
 bool Button(const char* label, const ButtonOptions& opts = {});
+
+// Ordinary action with the caller's existing layout: zero = auto, negative =
+// fill the available width, positive = exact pixels. Uses the same appearance
+// as Button without imposing ButtonSize padding. Not for tabs or graphic tools.
+bool ActionButton(const char* label, const ImVec2& size = ImVec2(0, 0),
+                  ButtonVariant variant = ButtonVariant::Secondary);
+// Inline text action: retains SmallButton's compact baseline and dimensions.
+bool SmallActionButton(const char* label, ButtonVariant variant = ButtonVariant::Secondary);
 
 // Icon-only convenience wrapper. `icon` is a Lucide glyph string.
 bool IconButton(const char* icon, const char* tooltip,
