@@ -36413,6 +36413,7 @@ void RenderUI(AppState& state) {
             } else {
                 // Reset to default dark theme
                 state.settings.theme = AppTheme::Dark;
+                harken::theme_schedule::OnManualThemeSelected(state);
                 state.settings.useCustomColors = false;
                 ThemeColors::deactivateCustomTheme();
                 SaveAppSettings(state);

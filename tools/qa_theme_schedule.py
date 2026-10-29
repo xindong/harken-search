@@ -325,6 +325,18 @@ def run(args):
         settings(); click_card(True); value=fixed_clock(960,'day')
         assert value['mode']==2,value
         check('manual-theme-can-return-to-fixed-day',state=value)
+        for day in (True,False):
+            click_card(day)
+            fixed_clock(960 if day else 480,'day' if day else 'night')
+            click('恢复默认主题'); value=settle()
+            assert value['mode']==0 and value['theme']==0,('restore default was overridden by fixed palette',value)
+            default_bg,default_accent=value['active_bg'],value['active_accent']
+            close_settings(); stop()
+            value=start(960 if day else 480)
+            assert value['mode']==0 and value['theme']==0,value
+            assert value['active_bg']==default_bg and value['active_accent']==default_accent,value
+            check('fixed-'+('day' if day else 'night')+'-restore-default-survives-restart',state=value)
+            settings()
         automatic(True); clock(960)
         assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
         capture(driver,out/'automatic-hides-other-themes.png')
