@@ -113,8 +113,32 @@ def run(args):
         # from current measured controls instead of using screen-size assumptions.
         clear,save=find('清除'),find('保存并关闭')
         click_at(save['bounds'][0]+20,(clear['bounds'][1]+clear['bounds'][3])/2)
-        find('编辑白天配色'); find('编辑夜间配色')
+        value=settle()
+        ui=value.get('ui',{})
+        assert len(ui.get('cards',[]))==2 and len(ui.get('edit_buttons',[]))==2, 'Expected two selectable palette cards with separate editors'
+        assert ui['cards'][0][1]==ui['cards'][1][1] and ui['cards'][0][2]<ui['cards'][1][0],ui
+        l,t,r,b=ui['clip']
+        for bounds in [value['auto_toggle_bounds'],*ui['cards'],*ui['edit_buttons']]:
+            assert bounds[0]>=l and bounds[1]>=t and bounds[2]<=r and bounds[3]<=b, ('clipped day/night control',bounds,ui['clip'])
+        assert not any(b['label'] in ('固定白天','固定夜间') for b in audit()),'Redundant fixed-palette buttons remain'
     def close_settings(): click('保存并关闭')
+    def click_rect(rect):
+        a,b,c,d=rect
+        assert c>a and d>b,rect
+        click_at((a+c)/2,(b+d)/2)
+    def click_card(day):
+        click_rect(settle()['ui']['cards'][0 if day else 1])
+    def other_themes(expanded):
+        ui=settle()['ui']
+        if ui['other_themes_expanded']!=expanded:
+            click_rect(ui['other_themes'])
+        ui=settle()['ui']
+        assert ui['other_themes_expanded']==expanded,ui
+        assert len(ui['stock'])==(5 if expanded else 0),ui
+    def click_stock(theme):
+        other_themes(True)
+        item=next(x for x in settle()['ui']['stock'] if x['theme']==theme)
+        click_rect(item['bounds'])
     def automatic(enabled):
         if (state()['mode']==1) != enabled:
             x,y,r,b=state()['auto_toggle_bounds']
@@ -138,13 +162,18 @@ def run(args):
     def draft(key,value): command(cmd='theme_schedule',action='draft_color',key=key,rgba=value); settle()
     def snapshot(path): return (path.read_bytes(),path.stat().st_mtime_ns) if path.exists() else None
     def open_editor(day):
-        click('编辑白天配色' if day else '编辑夜间配色')
+        click_rect(settle()['ui']['edit_buttons'][0 if day else 1])
         return wait(lambda s:s['editor_open'] and s['editor_period']==(0 if day else 1),'editor opens')
     try:
         initial=start(480)
         assert initial['period']=='day' and initial['active_bg']==initial['day_bg'],initial
         check('day-startup-real-library',state=initial)
         settings(); capture(driver,out/'settings-day.png')
+        assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
+        click_card(False)
+        value=settle()
+        assert value['mode']==1 and value['selected_period']=='day',value
+        check('automatic-hides-stock-and-card-click-keeps-schedule',state=value)
         night_before=snapshot(night_file)
         open_editor(True); capture(driver,out/'editor-day.png')
         draft('toolbarAccent',[.2,.42,.64,1])
@@ -212,6 +241,8 @@ def run(args):
         day_saved=snapshot(day_file)
         settings()
         automatic(False)
+        assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
+        check('manual-mode-starts-with-other-themes-collapsed',state=state())
         value=fixed_clock(960,'day')
         assert value['mode']==2,value
         capture(driver,out/'fixed-day-at-night.png')
@@ -220,7 +251,7 @@ def run(args):
         value=start(960)
         assert value['mode']==2 and value['active_bg']==value['day_bg'],value
         check('fixed-day-survives-night-restart',state=value)
-        settings(); click('固定夜间')
+        settings(); click_card(False)
         value=fixed_clock(480,'night')
         assert value['mode']==3,value
         capture(driver,out/'fixed-night-during-day.png')
@@ -244,15 +275,22 @@ def run(args):
         check('reenable-automatic-immediately-follows-clock',state=value)
         automatic(False)
         for theme in (0,1,2,3,10):
-            command(cmd='set_theme',theme=theme); settle()
+            click_stock(theme); settle()
             before=state()
             command(cmd='theme_schedule',action='clock',minute=960); settle()
             value=state()
             assert value['mode']==0 and value['theme']==theme,value
+            assert value['ui']['selected']==[False,False],value
             assert value['active_bg']==before['active_bg'] and value['active_accent']==before['active_accent'],value
             check('automatic-off-keeps-manual-theme-'+str(theme),state=value)
             command(cmd='theme_schedule',action='clock',minute=480); settle()
         manual=state()
+        other_themes(False)
+        assert state()['theme']==manual['theme'] and state()['mode']==0
+        capture(driver,out/'other-themes-collapsed.png')
+        other_themes(True)
+        capture(driver,out/'other-themes-expanded.png')
+        check('collapsing-other-themes-keeps-manual-choice',state=state())
         open_editor(False); draft('toolbarAccent',[.5,.4,.8,1]); click('取消修改')
         wait(lambda s:not s['editor_open'],'off-mode cancel'); settle()
         value=state()
@@ -267,10 +305,14 @@ def run(args):
         value=start(960)
         assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
         check('automatic-off-and-manual-theme-survive-restart',state=value)
-        settings(); click('固定白天'); value=fixed_clock(960,'day')
+        settings(); click_card(True); value=fixed_clock(960,'day')
         assert value['mode']==2,value
         check('manual-theme-can-return-to-fixed-day',state=value)
-        automatic(True); clock(960); close_settings()
+        automatic(True); clock(960)
+        assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
+        capture(driver,out/'automatic-hides-other-themes.png')
+        check('reenabling-automatic-collapses-and-hides-other-themes',state=state())
+        close_settings()
         # Leave the delivered profile on the real local clock.
         command(cmd='theme_schedule',action='clock',minute=-1); settle()
         stop()

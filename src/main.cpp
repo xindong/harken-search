@@ -34223,6 +34223,8 @@ void RenderUI(AppState& state) {
 // 外观与主题
                 SectionHeader(L(Settings_SectionAppearance), nullptr);
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Settings_SectionAppearanceHint));
+                const bool showOtherThemes = harken::theme_schedule::RenderSettings(state);
+                if (showOtherThemes) {
                 struct ThemeSwatch {
                     AppTheme    value;
                     const char* label;
@@ -34245,6 +34247,9 @@ void RenderUI(AppState& state) {
 
                     ImGui::PushID(ts.label);
                     bool clicked = ImGui::InvisibleButton("##swatch", cardSize);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+                    harken::theme_schedule::QaRecordStock((int)ts.value);
+#endif
                     bool hovered = ImGui::IsItemHovered();
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const ImU32 canvas = hexU32(ts.canvasHex);
@@ -34327,8 +34332,6 @@ void RenderUI(AppState& state) {
                     }
                 }
 
-                harken::theme_schedule::RenderSettings(state);
-
                 // Action row beneath the swatches
                 ImGui::Spacing();
                 const bool hasCustom = !harken::theme_schedule::ControlsTheme(state) && !state.settings.customThemeName.empty();
@@ -34399,6 +34402,8 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::Unindent(12.0f);
                 }
+
+                } // Existing ordinary themes are disclosed only when requested.
 
                 // Language picker — sits inside Appearance because it changes how the UI looks/reads
                 ImGui::Spacing();

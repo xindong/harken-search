@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "BuildConfig.h"
 #include <string>
+#include <vector>
 struct AppState;
 
 namespace harken::theme_schedule {
@@ -20,9 +21,19 @@ Period CurrentPeriod();
 const ThemeColorScheme& Palette(Period period);
 const std::string& LoadWarning(Period period);
 bool SavePalette(Period period, const ThemeColorScheme& scheme, std::string& error);
-void RenderSettings(AppState& state);
+// Returns whether the caller should draw its existing ordinary-theme controls.
+bool RenderSettings(AppState& state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
 bool SetQaClock(int minuteOfDay); // -1 returns to the actual local clock.
 ImVec4 QaAutoToggleBounds(); // Observed screen coordinates from the actual settings checkbox.
+struct QaSettingsObservation {
+    int frame = 0;
+    ImVec4 cards[2]{}, editButtons[2]{}, otherThemes{}, clip{};
+    bool selected[2]{}, otherThemesExpanded = false;
+    struct Stock { int theme; ImVec4 bounds; };
+    std::vector<Stock> stock;
+};
+const QaSettingsObservation& QaSettingsUi();
+void QaRecordStock(int theme);
 #endif
 }
