@@ -36,7 +36,8 @@ enum class ButtonVariant {
     Ghost,           // transparent background, label only
     Danger,          // destructive (Delete, Clear, Remove)
     Icon,            // icon-only, transparent
-    Quiet            // subdued ordinary action (Cancel, Close, Exit)
+    Quiet,           // subdued ordinary action (Cancel, Close, Exit)
+    Selected         // current edit action; preserves its visible selection
 };
 enum class ButtonSize { Sm, Md, Lg };
 

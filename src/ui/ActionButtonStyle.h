@@ -56,7 +56,8 @@ inline Palette Make(ImVec4 surface, ImVec4 accent, ImVec4 body,
     accent = ImLerp(TransportContrast::Over(accent, surface), ImVec4(1, 1, 1, 1),
                     TransportContrast::Luminance(surface) > .5 ? 0.0f : .10f);
     Palette p;
-    p.fill = primary ? accent : ImLerp(surface, accent, quiet ? .07f : .24f);
+    p.fill = (primary || variant == ButtonVariant::Selected)
+        ? accent : ImLerp(surface, accent, quiet ? .07f : .24f);
     p.fill.w = 1.0f;
     p.text = primary ? primaryText : body;
     p.text.w = 1.0f;
@@ -82,6 +83,11 @@ inline Palette Make(ImVec4 surface, ImVec4 accent, ImVec4 body,
 
 inline Palette Make(const ThemeColorScheme& theme, ImVec4 surface, ButtonVariant variant) {
     surface = TransportContrast::Over(surface, theme.mainWindowBG);
+    if (variant == ButtonVariant::Selected) {
+        // Keep the existing warm edit marker inside the common paint scope.
+        return Make(surface, ImVec4(.95f, .75f, .2f, .45f),
+                    theme.interfaceText, theme.interfaceText, variant);
+    }
     const ImVec4 color = variant == ButtonVariant::PrimaryTransfer ? theme.transferButtonBG :
                          variant == ButtonVariant::Danger ? theme.volumeClipColor : theme.searchButtonBG;
     ImVec4 accent = ImLerp(color, surface, .10f);

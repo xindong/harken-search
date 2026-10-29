@@ -29,8 +29,13 @@ int main() {
     for (int id : {0, 1, 2, 3, 10}) {
         const auto t = MakeBuiltinScheme(static_cast<AppTheme>(id));
         for (auto surface : {t.dialogPanelBG, t.mainWindowBG, t.filterBrowserBG}) {
+            const auto normal = Style::Make(t, surface, ButtonVariant::Secondary);
+            const auto selected = Style::Make(t, surface, ButtonVariant::Selected);
+            Check(!Same(normal.fill, selected.fill) && !Same(normal.hover, selected.hover) &&
+                  !Same(normal.active, selected.active), "editing selection remains distinct in every state");
             for (auto role : {ButtonVariant::PrimarySearch, ButtonVariant::PrimaryTransfer,
-                              ButtonVariant::Secondary, ButtonVariant::Quiet, ButtonVariant::Danger}) {
+                              ButtonVariant::Secondary, ButtonVariant::Quiet, ButtonVariant::Danger,
+                              ButtonVariant::Selected}) {
                 const auto p = Style::Make(t, surface, role);
                 for (auto bg : {p.fill, p.hover, p.active}) {
                     const double ratio = TransportContrast::Ratio(TransportContrast::Quantize(p.text),
