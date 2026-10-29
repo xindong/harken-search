@@ -31,6 +31,34 @@ if(WIN32)
 endif()
 
 if(WIN32)
+    add_executable(TestWin32UnifiedCaptionLayout EXCLUDE_FROM_ALL
+        tests/test_win32_unified_caption_layout.cpp
+    )
+    target_include_directories(TestWin32UnifiedCaptionLayout PRIVATE src)
+    target_compile_features(TestWin32UnifiedCaptionLayout PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(TestWin32UnifiedCaptionLayout PRIVATE /W3 /utf-8 /UNDEBUG)
+    endif()
+    add_test(NAME TestWin32UnifiedCaptionLayout COMMAND TestWin32UnifiedCaptionLayout)
+    aura_set_test_labels(TestWin32UnifiedCaptionLayout core)
+endif()
+
+if(WIN32)
+    add_executable(TestWin32UnifiedCaption EXCLUDE_FROM_ALL
+        tests/test_win32_unified_caption.cpp
+        src/platform/win32_unified_caption.cpp
+    )
+    target_include_directories(TestWin32UnifiedCaption PRIVATE src)
+    target_compile_features(TestWin32UnifiedCaption PRIVATE cxx_std_17)
+    target_link_libraries(TestWin32UnifiedCaption PRIVATE user32 gdi32 gdiplus dwmapi)
+    if(MSVC)
+        target_compile_options(TestWin32UnifiedCaption PRIVATE /W3 /utf-8 /UNDEBUG)
+    endif()
+    add_test(NAME TestWin32UnifiedCaption COMMAND TestWin32UnifiedCaption)
+    aura_set_test_labels(TestWin32UnifiedCaption core)
+endif()
+
+if(WIN32)
     set(AURO_AUDIO_TEXT_SOURCE src/platform/text_encoding_win32.cpp)
     set(_auro_audio_selected_text text_encoding_win32.cpp)
     set(_auro_audio_unselected_text text_encoding_std.cpp)

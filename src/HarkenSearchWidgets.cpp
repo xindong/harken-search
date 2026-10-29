@@ -3,6 +3,7 @@
 #include "HarkenSearchWidgets.h"
 #include "HarkenSearchMetrics.h"
 #include "HarkenSearchIcons.h"
+#include "../thirdparty/lucide/IconsLucide.h"
 #include "Theme.h"
 #include "ui/TransportContrast.h"
 #include "SettingsSearchHighlightSpans.h"
@@ -300,7 +301,13 @@ bool Button(const char* label, const ButtonOptions& opts) {
     using namespace aura::ui::metrics;
     const float h    = ButtonHeight(opts.size);
     const float padX = ButtonPadX(opts.size);
-    const ButtonPalette pal = ResolvePalette(opts.variant);
+    ButtonPalette pal = ResolvePalette(opts.variant);
+    if (opts.variant == ButtonVariant::Icon && label &&
+        std::strcmp(label, ICON_LC_X) == 0) {
+        const ThemeColorScheme& theme = ThemeColors::current();
+        pal.text = ImGui::ColorConvertFloat4ToU32(TransportContrast::ForSurface(
+            theme.sidebarIconInactive, theme.dialogBG, 3.0));
+    }
 
     ImGui::PushStyleColor(ImGuiCol_Button,        pal.bg);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, pal.bgHover);
@@ -1025,12 +1032,28 @@ bool DrawStandaloneCaptionButton(const char* id,
     const ImVec2 itemMax = ImGui::GetItemRectMax();
 
     if (hovered || active) {
-        const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
-        drawList->AddRectFilled(itemMin, itemMax,
-            ImGui::ColorConvertFloat4ToU32(background));
+        if (action == StandaloneWindowAction::Close) {
+            ImVec4 background = th.filterBrowserButtonBG;
+            if (!active) background.w *= 0.50f;
+            const ImVec2 center((itemMin.x + itemMax.x) * 0.5f,
+                                (itemMin.y + itemMax.y) * 0.5f);
+            const float half = kHeightSm * 0.5f;
+            drawList->AddRectFilled(ImVec2(center.x - half, center.y - half),
+                                    ImVec2(center.x + half, center.y + half),
+                                    ImGui::ColorConvertFloat4ToU32(background),
+                                    kRadiusDefault);
+        } else {
+            const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
+            drawList->AddRectFilled(itemMin, itemMax,
+                ImGui::ColorConvertFloat4ToU32(background));
+        }
     }
 
-    const ImVec4& iconColor = hovered ? th.interfaceText : th.sidebarIconInactive;
+    const ImVec4 closeColor = TransportContrast::ForSurface(
+        th.sidebarIconInactive, th.menuBarBG, 3.0);
+    const ImVec4& iconColor = action == StandaloneWindowAction::Close
+        ? closeColor
+        : (hovered ? th.interfaceText : th.sidebarIconInactive);
     const ImU32 packedIcon = ImGui::ColorConvertFloat4ToU32(iconColor);
     const float centerX = (itemMin.x + itemMax.x) * 0.5f;
     const float centerY = (itemMin.y + itemMax.y) * 0.5f;
@@ -1061,14 +1084,12 @@ bool DrawStandaloneCaptionButton(const char* id,
             }
             break;
         case StandaloneWindowAction::Close:
-            drawList->AddLine(
-                ImVec2(centerX - halfIcon, centerY - halfIcon),
-                ImVec2(centerX + halfIcon, centerY + halfIcon),
-                packedIcon, kFocusRingWidth);
-            drawList->AddLine(
-                ImVec2(centerX + halfIcon, centerY - halfIcon),
-                ImVec2(centerX - halfIcon, centerY + halfIcon),
-                packedIcon, kFocusRingWidth);
+            {
+                const ImVec2 glyphSize = ImGui::CalcTextSize(ICON_LC_X);
+                drawList->AddText(ImVec2(centerX - glyphSize.x * 0.5f,
+                                         centerY - glyphSize.y * 0.5f),
+                                  packedIcon, ICON_LC_X);
+            }
             break;
         case StandaloneWindowAction::None:
             break;

@@ -10,6 +10,7 @@
 #include "Theme.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
+#include "ui/TransportContrast.h"
 #include "ui/EmptyStateVisualAudit.h"
 #include "AnnotationBridge.h"
 #include "BackgroundIoPolicy.h"
@@ -39,6 +40,7 @@
 #ifdef CopyFile
 #undef CopyFile
 #endif
+#include "platform/win32_unified_caption.h"
 
 #include "AppState.h"
 #include "FileInfoPanel.h"
@@ -1159,6 +1161,32 @@ HWND g_hwnd = nullptr;
 static HDC g_mainHdc = nullptr;
 static HGLRC g_hRC = nullptr;
 
+static COLORREF CaptionRgb(const ImVec4& color) {
+    const auto channel = [](float value) {
+        return static_cast<int>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+    return RGB(channel(color.x), channel(color.y), channel(color.z));
+}
+
+static COLORREF CaptionBlend(const ImVec4& base, const ImVec4& overlay, float opacity) {
+    const float alpha = std::clamp(opacity, 0.0f, 1.0f);
+    return CaptionRgb(ImVec4(base.x + (overlay.x - base.x) * alpha,
+                             base.y + (overlay.y - base.y) * alpha,
+                             base.z + (overlay.z - base.z) * alpha, 1.0f));
+}
+
+static harken::caption::Palette CurrentCaptionPalette() {
+    const auto& theme = ThemeColors::current();
+    return {CaptionRgb(theme.menuBarBG), CaptionRgb(theme.menuText),
+            CaptionRgb(TransportContrast::ForSurface(
+                theme.sidebarIconInactive, theme.menuBarBG, 3.0)),
+            CaptionBlend(theme.menuBarBG, theme.filterBrowserButtonBG,
+                         theme.filterBrowserButtonBG.w * 0.5f),
+            CaptionBlend(theme.menuBarBG, theme.filterBrowserButtonBG,
+                         theme.filterBrowserButtonBG.w),
+            CaptionRgb(theme.chromeBorder)};
+}
+
 static LRESULT CALLBACK ExtraViewportCaptionProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 extern void NotifyDockNativePointerMessage(void*, bool, bool, void*);
 
@@ -1182,6 +1210,7 @@ static void SubclassExtraViewportCaption(HWND hwnd) {
     if (current == reinterpret_cast<LONG_PTR>(&ExtraViewportCaptionProc)) return;
     if (!aura::ui::dock::RememberExtraViewportProc(hwnd, reinterpret_cast<void*>(current))) return;
     ::SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&ExtraViewportCaptionProc));
+    harken::caption::Install(hwnd);
 }
 
 static void SyncExtraViewportCaptionSubclasses() {
@@ -1204,6 +1233,9 @@ static LRESULT CALLBACK ExtraViewportCaptionProc(HWND hwnd, UINT msg, WPARAM wPa
         if (trace.enabled && trace.extraNcHitTests < 1000000) ++trace.extraNcHitTests;
     }
 #endif
+    if (const auto handled = harken::caption::HandleMessage(
+            hwnd, msg, wParam, lParam, ExtraViewportOriginalProc(hwnd),
+            CurrentCaptionPalette())) return *handled;
     aura::ui::dock::DockCaptionRuntime runtime{};
     runtime.hostHwnd = g_hwnd;
     runtime.originalProc = ExtraViewportOriginalProc(hwnd);
@@ -8174,6 +8206,7 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
         }
         s_lastTheme = themeNow;
         s_lastUseCustom = useCustomNow;
+        harken::caption::RefreshAll();
     }
 }
 
@@ -8488,6 +8521,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     // Let ImGui handle other messages
+    if (const auto handled = harken::caption::HandleMessage(
+            hwnd, msg, wParam, lParam, DefWindowProcW,
+            CurrentCaptionPalette())) return *handled;
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
         return true;
 
@@ -12138,6 +12174,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (wc.hIconSm) {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
     }
+    harken::caption::Install(hwnd);
 
     // Setup OpenGL
     HDC hdc;

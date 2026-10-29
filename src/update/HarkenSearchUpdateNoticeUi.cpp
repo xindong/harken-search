@@ -7,6 +7,8 @@
 
 #include "../Localization.h"
 #include "../Theme.h"
+#include "../HarkenSearchWidgets.h"
+#include "../../thirdparty/lucide/IconsLucide.h"
 #include "../Version.h"
 
 namespace aris::update {
@@ -201,16 +203,17 @@ void RenderHeader(
         notes.showHistory = false;
         notes.summaryScrollKey.clear();
     }
-    if (ButtonAt(
-            "close",
-            u8"×",
-            714.0f,
-            20.0f,
-            28.0f,
-            22.0f,
-            false,
-            true,
-            theme)) {
+    ImGui::SetCursorPos(ImVec2(714.0f, 18.0f));
+    ImGui::PushID("close");
+    const bool closeClicked = aura::ui::IconButton(ICON_LC_X, L(Close),
+                                                    aura::ui::ButtonSize::Sm);
+#if AURA_BUILD_DIAGNOSTICS
+    const auto closeMin = ImGui::GetItemRectMin();
+    const auto closeMax = ImGui::GetItemRectMax();
+    g_noticeQa.controls["close"] = {closeMin.x, closeMin.y, closeMax.x, closeMax.y};
+#endif
+    ImGui::PopID();
+    if (closeClicked) {
         FinalizeHarkenSearchUpdateNoticeClose(open, notes);
     }
 }

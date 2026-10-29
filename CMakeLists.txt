@@ -695,6 +695,7 @@ if(WIN32)
     list(APPEND APP_SOURCES
         src/main.cpp
         src/WindowsMain.cpp
+        src/platform/win32_unified_caption.cpp
         src/DefaultAudioPlayerAssociation.cpp
         src/platform/filesystem_win32.cpp
         src/platform/floating_window_corners_win32.cpp
