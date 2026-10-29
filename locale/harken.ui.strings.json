@@ -569,6 +569,13 @@
       "ja": "フォルダーをスキャン"
     },
     {
+      "id": "Dlg_ScanResults",
+      "type": "ui",
+      "zh": "扫描结果",
+      "en": "Scan Results",
+      "ja": "スキャン結果"
+    },
+    {
       "id": "Dlg_NewPlaylist",
       "type": "ui",
       "zh": "新建播放列表",
@@ -10165,6 +10172,41 @@
       "ja": "全ファイルのインデックス完了！"
     },
     {
+      "id": "Main_IndexPartialFailFmt",
+      "type": "ui",
+      "zh": "本次有 %d 个文件未成功索引，请重试。",
+      "en": "%d files were not indexed; please retry.",
+      "ja": "今回、%d ファイルをインデックスできませんでした。再試行してください。"
+    },
+    {
+      "id": "Main_IndexFailureUnsupportedFmt",
+      "type": "ui",
+      "zh": "格式不受当前相似分析支持：%d 个（当前支持 WAV、MP3、FLAC）。",
+      "en": "Unsupported format for similarity analysis: %d (WAV, MP3, and FLAC are supported).",
+      "ja": "類似分析でサポートされていない形式：%d（WAV、MP3、FLAC をサポート）。"
+    },
+    {
+      "id": "Main_IndexFailureDecodeFmt",
+      "type": "ui",
+      "zh": "无法读取或文件损坏：%d 个。",
+      "en": "Could not read the file or the file is damaged: %d.",
+      "ja": "ファイルを読み取れないか、ファイルが破損しています：%d。"
+    },
+    {
+      "id": "Main_IndexFailureNoSamplesFmt",
+      "type": "ui",
+      "zh": "文件没有可用音频内容：%d 个。",
+      "en": "The file has no readable audio samples: %d.",
+      "ja": "ファイルに読み取り可能な音声サンプルがありません：%d。"
+    },
+    {
+      "id": "Main_IndexFailureWriteFmt",
+      "type": "ui",
+      "zh": "特征保存失败：%d 个。",
+      "en": "Could not save the extracted features: %d.",
+      "ja": "抽出した特徴量を保存できませんでした：%d。"
+    },
+    {
       "id": "Main_ScannerTitle",
       "type": "ui",
       "zh": "AUDIO LIBRARY SCANNER",
@@ -10296,6 +10338,48 @@
       "zh": "错误详情",
       "en": "Error details",
       "ja": "エラー詳細"
+    },
+    {
+      "id": "Main_ScanFailureSummaryTitle",
+      "type": "ui",
+      "zh": "失败原因（所有失败均计入）",
+      "en": "Failure reasons (all failures are counted)",
+      "ja": "失敗理由（すべての失敗を集計）"
+    },
+    {
+      "id": "Main_ScanFailureInaccessibleFmt",
+      "type": "ui",
+      "zh": "文件夹或网络位置无法访问：%d 个。",
+      "en": "Folder or network location unavailable: %d.",
+      "ja": "フォルダーまたはネットワーク場所にアクセスできません：%d 件。"
+    },
+    {
+      "id": "Main_ScanFailureUnreadableFmt",
+      "type": "ui",
+      "zh": "无法读取文件或文件已损坏：%d 个。",
+      "en": "Could not read the file or the file is damaged: %d.",
+      "ja": "ファイルを読み取れないか、ファイルが破損しています：%d 件。"
+    },
+    {
+      "id": "Main_ScanFailureNoAudioFmt",
+      "type": "ui",
+      "zh": "文件没有可用音频内容：%d 个。",
+      "en": "The file has no readable audio content: %d.",
+      "ja": "ファイルに読み取り可能な音声内容がありません：%d 件。"
+    },
+    {
+      "id": "Main_ScanFailureWriteFmt",
+      "type": "ui",
+      "zh": "无法保存到音效库：%d 个。",
+      "en": "Could not save the file to the sound library: %d.",
+      "ja": "サウンドライブラリに保存できません：%d 件。"
+    },
+    {
+      "id": "Main_ScanFailureOtherFmt",
+      "type": "ui",
+      "zh": "其他扫描错误：%d 个。",
+      "en": "Other scan errors: %d.",
+      "ja": "その他のスキャンエラー：%d 件。"
     },
     {
       "id": "Main_DupNameWarn",

@@ -9,8 +9,10 @@
 #include "platform/audio_file.h"
 #include <complex>
 #include <algorithm>
+#include <cctype>
 #include <numeric>
 #include <cmath>
+#include <string>
 #include <vector>
 
 // Constants
@@ -21,6 +23,21 @@ static constexpr int   kHopSize          = 1024;
 static constexpr int   kNumMelFilters    = 40;
 static constexpr int   kNumMFCC          = 13;
 static constexpr float kPI               = 3.14159265358979f;
+
+static bool isKnownUnsupportedFeatureExtension(const std::string& filePath) {
+    const size_t dot = filePath.find_last_of('.');
+    if (dot == std::string::npos) return false;
+
+    std::string extension = filePath.substr(dot);
+    for (char& c : extension)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // The bundled miniaudio decoder used by similarity analysis supports
+    // WAV/MP3/FLAC. These common library formats need another decoder path.
+    return extension == ".m4a" || extension == ".wma" ||
+           extension == ".ogg" || extension == ".aac" ||
+           extension == ".mp4";
+}
 
 // FFT (Radix-2 Cooley-Tukey, matches main.cpp implementation)
 
@@ -553,6 +570,11 @@ FeatureExtractionResult FeatureExtractor::extractFromFileChecked(
 
     if (cancelCheck && cancelCheck()) {
         result.error = FeatureExtractionError::Cancelled;
+        return result;
+    }
+
+    if (isKnownUnsupportedFeatureExtension(filePath)) {
+        result.error = FeatureExtractionError::UnsupportedFormat;
         return result;
     }
 

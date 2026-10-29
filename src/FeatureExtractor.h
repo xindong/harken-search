@@ -71,6 +71,7 @@ struct AudioFeatureVector {
 
 enum class FeatureExtractionError {
     None,
+    UnsupportedFormat,
     DecodeFailed,
     NoSamples,
     Cancelled,

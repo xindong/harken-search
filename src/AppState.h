@@ -1885,6 +1885,11 @@ struct AppState {
     std::atomic<int> scanSkippedCount{0};
     std::atomic<int> scanRemovedCount{0};
     std::atomic<int> scanErrorCount{0};
+    std::atomic<int> scanFailureInaccessibleCount{0};
+    std::atomic<int> scanFailureUnreadableFileCount{0};
+    std::atomic<int> scanFailureNoAudioCount{0};
+    std::atomic<int> scanFailureDatabaseWriteCount{0};
+    std::atomic<int> scanFailureOtherCount{0};
     std::atomic<int> scanIngestedCount{0};
     std::atomic<HarkenSearch::ScanWorkflowStage> scanWorkflowStage{
         HarkenSearch::ScanWorkflowStage::Idle
@@ -1986,14 +1991,45 @@ struct AppState {
     }
     std::mutex scanErrorMutex;
     std::vector<std::string> scanErrorMessages_;  // guarded by scanErrorMutex
+    void clearScanFailureCounts() {
+        scanFailureInaccessibleCount.store(0, std::memory_order_relaxed);
+        scanFailureUnreadableFileCount.store(0, std::memory_order_relaxed);
+        scanFailureNoAudioCount.store(0, std::memory_order_relaxed);
+        scanFailureDatabaseWriteCount.store(0, std::memory_order_relaxed);
+        scanFailureOtherCount.store(0, std::memory_order_relaxed);
+    }
+    void setScanFailureCounts(const ScanFailureCounts& counts) {
+        scanFailureInaccessibleCount.store(counts.inaccessible, std::memory_order_relaxed);
+        scanFailureUnreadableFileCount.store(counts.unreadableFile, std::memory_order_relaxed);
+        scanFailureNoAudioCount.store(counts.noAudio, std::memory_order_relaxed);
+        scanFailureDatabaseWriteCount.store(counts.databaseWrite, std::memory_order_relaxed);
+        scanFailureOtherCount.store(counts.other, std::memory_order_relaxed);
+    }
+    void setScanFailureSummary(const ScanStats& stats) {
+        scanErrorCount.store(stats.errors, std::memory_order_relaxed);
+        setScanFailureCounts(stats.failureCounts);
+    }
+    ScanFailureCounts getScanFailureCounts() const {
+        ScanFailureCounts counts;
+        counts.inaccessible = scanFailureInaccessibleCount.load(std::memory_order_relaxed);
+        counts.unreadableFile = scanFailureUnreadableFileCount.load(std::memory_order_relaxed);
+        counts.noAudio = scanFailureNoAudioCount.load(std::memory_order_relaxed);
+        counts.databaseWrite = scanFailureDatabaseWriteCount.load(std::memory_order_relaxed);
+        counts.other = scanFailureOtherCount.load(std::memory_order_relaxed);
+        return counts;
+    }
     void clearScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         scanErrorMessages_.clear();
+        clearScanFailureCounts();
     }
     void addScanError(const std::string& s) {
         if (s.empty()) return;
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         if (scanErrorMessages_.size() < 32) scanErrorMessages_.push_back(s);
+        ScanFailureCounts counts = getScanFailureCounts();
+        counts.add(ClassifyScanFailureMessage(s));
+        setScanFailureCounts(counts);
     }
     void addScanErrors(const std::vector<std::string>& messages) {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
@@ -3054,6 +3090,11 @@ struct AppState {
     std::atomic<bool> batchFeatureExtracting{false};
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
+    std::atomic<int>  batchFeatureFailedCount{0};
+    std::atomic<int>  batchFeatureUnsupportedCount{0};
+    std::atomic<int>  batchFeatureDecodeFailedCount{0};
+    std::atomic<int>  batchFeatureNoSamplesCount{0};
+    std::atomic<int>  batchFeatureWriteFailedCount{0};
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
     std::thread batchFeatureThread;

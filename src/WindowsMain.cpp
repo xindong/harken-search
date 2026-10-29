@@ -3283,7 +3283,7 @@ static bool BeginFolderScan(
             state.scanAddedCount = combined.added;
             state.scanUpdatedCount = combined.updated;
             state.scanRemovedCount = combined.removed;
-            state.scanErrorCount = combined.errors;
+            state.setScanFailureSummary(combined);
             state.scanIngestDurationMs = combined.ingestDurationMs;
             state.addScanErrors(combined.errorMessages);
             if (precomputeWaveforms && !cancelled) {
@@ -3562,7 +3562,7 @@ static bool BeginFolderScan(
                     state.scanRemovedCount = combined.removed;
                     state.scanIngestedCount = combined.ingested;
                     state.scanIngestDurationMs = combined.ingestDurationMs;
-                    state.scanErrorCount = combined.errors;
+                    state.setScanFailureSummary(combined);
                 }
                 DIAG_SYSTEM("Scan", "Foreground completion cancel detected. Rolled back scan session.");
             }
@@ -4899,11 +4899,16 @@ static void PollQaCommandFile(AppState& state) {
                 ",\"running\":" + (state.batchFeatureExtracting.load() ? "true" : "false") +
                 ",\"cancel_requested\":" + (state.batchFeatureCancelRequested.load() ? "true" : "false") +
                 ",\"completion_notice\":" + (completionNotice ? "true" : "false") +
-                ",\"indexed\":" + std::to_string(indexed) +
-                ",\"total\":" + std::to_string(total) +
-                ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
-                ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
-                ",\"rows\":" + std::to_string(snapshot.rows.size()) +
+                 ",\"indexed\":" + std::to_string(indexed) +
+                 ",\"total\":" + std::to_string(total) +
+                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
+                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
+                 ",\"failed_count\":" + std::to_string(state.batchFeatureFailedCount.load()) +
+                 ",\"unsupported_count\":" + std::to_string(state.batchFeatureUnsupportedCount.load()) +
+                 ",\"decode_failed_count\":" + std::to_string(state.batchFeatureDecodeFailedCount.load()) +
+                 ",\"no_samples_count\":" + std::to_string(state.batchFeatureNoSamplesCount.load()) +
+                 ",\"write_failed_count\":" + std::to_string(state.batchFeatureWriteFailedCount.load()) +
+                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
                 ",\"database\":\"" + jsonEscape(state.currentDbPathUtf8) + "\"}";
         }
 #else
@@ -5281,6 +5286,11 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"skipped\":" + std::to_string(state.scanSkippedCount.load()) + ",";
         result += "\"removed\":" + std::to_string(state.scanRemovedCount.load()) + ",";
         result += "\"errors\":" + std::to_string(state.scanErrorCount.load()) + ",";
+        result += "\"failure_inaccessible\":" + std::to_string(state.scanFailureInaccessibleCount.load()) + ",";
+        result += "\"failure_unreadable_file\":" + std::to_string(state.scanFailureUnreadableFileCount.load()) + ",";
+        result += "\"failure_no_audio\":" + std::to_string(state.scanFailureNoAudioCount.load()) + ",";
+        result += "\"failure_database_write\":" + std::to_string(state.scanFailureDatabaseWriteCount.load()) + ",";
+        result += "\"failure_other\":" + std::to_string(state.scanFailureOtherCount.load()) + ",";
         result += "\"total\":" + std::to_string(state.scanTotal.load()) + "},";
         result += "\"scan_in_progress\":" + std::string(state.isScanning.load() ? "true" : "false") + ",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
@@ -6968,6 +6978,12 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"skipped\":" + std::to_string(skipped) + ",";
         result += "\"removed\":" + std::to_string(removed) + ",";
         result += "\"errors\":" + std::to_string(errors) + ",";
+        const ScanFailureCounts failureCounts = state.getScanFailureCounts();
+        result += "\"failure_inaccessible\":" + std::to_string(failureCounts.inaccessible) + ",";
+        result += "\"failure_unreadable_file\":" + std::to_string(failureCounts.unreadableFile) + ",";
+        result += "\"failure_no_audio\":" + std::to_string(failureCounts.noAudio) + ",";
+        result += "\"failure_database_write\":" + std::to_string(failureCounts.databaseWrite) + ",";
+        result += "\"failure_other\":" + std::to_string(failureCounts.other) + ",";
         {
             int unreachableHint = 0;
             for (const auto& msg : errorDetails) {

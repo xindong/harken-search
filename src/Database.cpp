@@ -13957,6 +13957,10 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
         if (longStatus != Platform::FileSystem::PathStatus::Present ||
             !Platform::FileSystem::IsDirectory(longDirUtf8)) {
+            stats.addError("Scan folder is unavailable or is not a directory: " + dirPath);
+            if (callback) {
+                callback(0, 1, std::string("Scan folder is unavailable"), false);
+            }
             return stats;
         }
         dir = std::move(longDir);
