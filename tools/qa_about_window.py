@@ -1,7 +1,7 @@
 """Capture the real About window without touching the desktop pointer.
 
 Launches the pinned-isolation QA package, opens the About popup through the
-functional harness seam, and saves a full-window screenshot. No mouse
+app's built-in QA command, and saves a full-window screenshot. No mouse
 movement, key injection, or foreground activation beyond ShowWindow(SW_SHOW).
 """
 from __future__ import annotations

@@ -335,6 +335,27 @@ class LocalizationPurityBaselineTests(unittest.TestCase):
         self.assertNotIn("Search_NoResultTips", mixes([tips]))
         self.assertIn("ZZ_TIPS", mixes([dict(tips, id="ZZ_TIPS")]))
 
+    def test_about_brand_names_are_allowed_only_in_their_own_rows(self) -> None:
+        license_row = {
+            "id": "Main_AboutLicenseNote", "type": "ui",
+            "zh": "本软件基于 Apache License 2.0 开源发布",
+            "en": "Released under the Apache License 2.0", "ja": "x",
+        }
+        credit_row = {
+            "id": "Main_AboutCindyCredit", "type": "ui",
+            "zh": "感谢 Cindy 对本软件的开发支持。",
+            "en": "With thanks to Cindy for development support of this software.", "ja": "x",
+        }
+        def mixed_ids(*rows):
+            return {item["id"] for item in localization_purity.find_ledger_mixes({"entries": rows})}
+
+        self.assertEqual(mixed_ids(license_row, credit_row), set())
+        self.assertEqual(mixed_ids(dict(license_row, zh="本软件基于 Apache License extra 开源发布")),
+                         {"Main_AboutLicenseNote"})
+        self.assertEqual(mixed_ids(dict(credit_row, zh="感谢 Cindy extra 对本软件的开发支持。")),
+                         {"Main_AboutCindyCredit"})
+        self.assertEqual(mixed_ids(dict(credit_row, id="ZZ_UnrelatedCredit")), {"ZZ_UnrelatedCredit"})
+
     def test_batch4_scans_colored_and_new_controls(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             src = Path(temp_dir) / "src"

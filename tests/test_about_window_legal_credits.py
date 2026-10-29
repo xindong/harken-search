@@ -44,6 +44,7 @@ def test_about_carries_legal_and_credit_copy():
         "Main_AboutCopyright",
         "Main_AboutLegalTab",
         "Main_AboutCindyCredit",
+        "Main_AboutCindyName",
         "Main_AboutRepoLine",
         "Main_AboutDownloadLine",
         "Main_AboutCindyRepoLine",
@@ -122,6 +123,7 @@ def test_ledger_entries_complete_for_about():
         "Main_AboutPageFmt",
         "Main_AboutLegalUnavailable",
         "Main_AboutCindyCredit",
+        "Main_AboutCindyName",
         "Main_AboutRepoLine",
         "Main_AboutDownloadLine",
         "Main_AboutCindyRepoLine",
@@ -131,6 +133,7 @@ def test_ledger_entries_complete_for_about():
         for lang in ("zh", "en", "ja"):
             assert entry[lang].strip(), (key, lang)
     assert "Cindy" in entries["Main_AboutCindyCredit"]["zh"]
+    assert {entries["Main_AboutCindyName"][lang] for lang in ("zh", "en", "ja")} == {"Cindy"}
     assert "Apache" in entries["Main_AboutLicenseNote"]["zh"]
     for retired in ("Main_UpdateCenterMovedNote", "Main_OpenUpdateCenterBtn",
                     "Main_AboutGithubAction", "Main_AboutDownloadAction",
