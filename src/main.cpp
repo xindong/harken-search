@@ -30733,7 +30733,7 @@ void RenderUI(AppState& state) {
                     urlLine(L(Main_AboutRepoLine), "https://github.com/xindong/harken-search");
                     urlLine(L(Main_AboutDownloadLine), "https://harkensearch.xd.com");
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::TextDisabled("Cindy");
+                    ImGui::TextDisabled("%s", L(Main_AboutCindyName));
                     urlLine(L(Main_AboutCindyRepoLine), "https://github.com/makecindy/cindy");
                     urlLine(L(Main_AboutCindyDownloadLine), "https://cindy.app");
                     ImGui::EndTable();

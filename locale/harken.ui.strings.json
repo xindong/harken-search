@@ -8772,6 +8772,13 @@
       "ja": "このインストールには法的文書がありません。"
     },
     {
+      "id": "Main_AboutCindyName",
+      "type": "ui",
+      "zh": "Cindy",
+      "en": "Cindy",
+      "ja": "Cindy"
+    },
+    {
       "id": "Main_AboutCindyCredit",
       "type": "ui",
       "zh": "感谢 Cindy 对本软件的开发支持。",
