@@ -3830,8 +3830,9 @@ static bool MagicEqQaIsolationReady() {
     // environment work on every UI frame.
     static const bool ready = [] {
     const std::string fixedRoot = Platform::HarkenUserData::PreviewIsolationRootUtf8();
+    const std::string laneKind = GetHarkenSearchHarnessLaneKindUtf8();
     if (!Platform::HarkenUserData::PreviewIsolationActive() || fixedRoot.empty() ||
-        GetHarkenSearchHarnessLaneKindUtf8() != "functional") return false;
+        (laneKind != "functional" && laneKind != "folder-search")) return false;
     const auto normalized = [](std::string path) {
         std::replace(path.begin(), path.end(), '/', '\\');
         std::transform(path.begin(), path.end(), path.begin(), [](unsigned char c) {
@@ -5061,11 +5062,32 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active\":" + std::string(state.coverFilterActive ? "true" : "false") + ",";
         result += "\"path\":\"" + jsonEscape(state.coverFilterPath) + "\",";
         result += "\"mode\":\"" + jsonEscape(coverFilterValue(state.coverFilterIndex)) + "\"},";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"qa_filter_ui_rects\":{";
+        bool firstQaFilterRect = true;
+        for (const auto& [key, rect] : state.qaFilterUiRects) {
+            if (!firstQaFilterRect) result += ",";
+            firstQaFilterRect = false;
+            result += "\"" + jsonEscape(key) + "\":[" + std::to_string(rect.x) + "," +
+                std::to_string(rect.y) + "," + std::to_string(rect.z) + "," +
+                std::to_string(rect.w) + "]";
+        }
+        result += "},";
+#endif
         result += "\"metadata_filters\":{";
         result += "\"artist\":\"" + jsonEscape(state.artistFilterBuffer) + "\",";
         result += "\"album\":\"" + jsonEscape(state.albumFilterBuffer) + "\",";
         result += "\"category\":\"" + jsonEscape(state.categoryFilterBuffer) + "\",";
         result += "\"format\":\"" + jsonEscape(formatFilterValue(state.formatFilterIndex)) + "\"},";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"qa_filter_extras\":{";
+        result += "\"key\":\"" + jsonEscape(state.keyFilterBuffer) + "\",";
+        result += "\"genre_count\":" + std::to_string(state.genrePillState.size()) + ",";
+        result += "\"instrument_count\":" + std::to_string(state.instrumentPillState.size()) + ",";
+        result += "\"all_file_types\":" + std::string(
+            state.showWAV && state.showMP3 && state.showFLAC && state.showOGG &&
+            state.showAIFF && state.showM4A && state.showWMA && state.showOther ? "true" : "false") + "},";
+#endif
         result += "\"history_panel_visible\":" + std::string(state.showHistoryPanel ? "true" : "false") + ",";
         result += "\"metadata_dialog_visible\":" + std::string((state.showMetadataEditDialog || state.metadataEditMode) ? "true" : "false") + ",";
         result += "\"metadata_batch_mode\":" + std::string(state.metadataBatchMode ? "true" : "false") + ",";
@@ -5341,7 +5363,11 @@ static void PollQaCommandFile(AppState& state) {
         std::string query = getStr(raw, "query");
         if (query.size() < sizeof(state.searchBuffer) - 1) {
             strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), query.c_str(), _TRUNCATE);
-            state.focusSearchBar = !ShouldUseHarnessImmediateFilterRefresh();
+            const bool renderUiSearchLane =
+                Platform::HarkenUserData::PreviewIsolationActive() &&
+                GetHarkenSearchHarnessLaneKindUtf8() == "folder-search";
+            if (renderUiSearchLane) ImGui::ClearActiveID();
+            state.focusSearchBar = !ShouldUseHarnessImmediateFilterRefresh() && !renderUiSearchLane;
             state.filterQueryGeneration++;
             if (ShouldUseHarnessImmediateFilterRefresh()) {
                 state.viewMode = ViewMode::Database;
@@ -5540,6 +5566,122 @@ static void PollQaCommandFile(AppState& state) {
             state.qaOpenSidebarPlaylistContextId = playlistId;
             result = "{\"ok\":true,\"cmd\":\"open_playlist_context_menu\",\"playlist_id\":" + std::to_string((long long)playlistId) + "}";
         }
+
+    } else if (cmd == "folder_search_seed_extra_filters") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search") {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else {
+            const bool enabled = getBool(raw, "enabled", true);
+            strncpy_s(state.keyFilterBuffer, sizeof(state.keyFilterBuffer), enabled ? "C" : "", _TRUNCATE);
+            state.genrePillState.clear();
+            state.instrumentPillState.clear();
+            if (enabled) {
+                state.genrePillState["__qa_genre__"] = 1;
+                state.instrumentPillState["__qa_instrument__"] = 1;
+            }
+            state.showWAV = !enabled;
+            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
+                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            cancelPendingSearchForQaMutation();
+            RefreshSearchResults(state, true);
+            state.syncToTab();
+            result = "{\"ok\":true,\"cmd\":\"folder_search_seed_extra_filters\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "folder_search_sidebar") {
+#if ARIS_PREVIEW_ISOLATION
+        const int section = getInt(raw, "section", -1);
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            (section != 1 && section != 2 && section != 4)) {
+            result = "{\"ok\":false,\"error\":\"invalid_folder_search_sidebar\"}";
+        } else {
+            state.settings.activeSidebarSection = section;
+            result = "{\"ok\":true,\"cmd\":\"folder_search_sidebar\",\"section\":" +
+                std::to_string(section) + "}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "folder_search_pointer") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string phase = getStr(raw, "phase");
+        const float x = static_cast<float>(getDouble(raw, "x", -1.0));
+        const float y = static_cast<float>(getDouble(raw, "y", -1.0));
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const ImVec2 viewportPos = ImGui::GetMainViewport()->Pos;
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            !s_mainUiReady.load(std::memory_order_acquire) ||
+            !Platform::WindowIsVisible(g_hwnd) || IsIconic(g_hwnd) ||
+            !std::isfinite(x) || !std::isfinite(y) ||
+            x < 0.0f || y < 0.0f || x >= display.x || y >= display.y ||
+            s_magicEqQaPointer.pending ||
+            (phase == "down" && s_magicEqQaPointer.active) ||
+            (phase == "up" && !s_magicEqQaPointer.active) ||
+            (phase != "down" && phase != "up")) {
+            result = "{\"ok\":false,\"error\":\"invalid_folder_search_pointer\",\"display\":[" +
+                std::to_string(display.x) + "," + std::to_string(display.y) +
+                "],\"point\":[" + std::to_string(x) + "," + std::to_string(y) +
+                "],\"ui_ready\":" + std::string(s_mainUiReady.load(std::memory_order_acquire) ? "true" : "false") +
+                ",\"visible\":" + std::string(Platform::WindowIsVisible(g_hwnd) ? "true" : "false") +
+                ",\"iconic\":" + std::string(IsIconic(g_hwnd) ? "true" : "false") +
+                ",\"pending\":" + std::string(s_magicEqQaPointer.pending ? "true" : "false") +
+                ",\"active\":" + std::string(s_magicEqQaPointer.active ? "true" : "false") + "}";
+        } else {
+            s_magicEqQaPointer.active = true;
+            s_magicEqQaPointer.x = viewportPos.x + x;
+            s_magicEqQaPointer.y = viewportPos.y + y;
+            s_magicEqQaPointer.held = phase == "down";
+            s_magicEqQaPointer.pending = true;
+            s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+            result = "{\"ok\":true,\"cmd\":\"folder_search_pointer\",\"phase\":\"" + phase +
+                "\",\"display\":[" + std::to_string(display.x) + "," + std::to_string(display.y) +
+                "],\"viewport\":[" + std::to_string(ImGui::GetMainViewport()->Pos.x) + "," +
+                std::to_string(ImGui::GetMainViewport()->Pos.y) + "]}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "search_enter_key") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string phase = getStr(raw, "phase");
+        if (!MagicEqQaIsolationReady()) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (phase == "down" || phase == "up") {
+            ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, phase == "down");
+            result = "{\"ok\":true,\"cmd\":\"search_enter_key\"}";
+        } else {
+            result = "{\"ok\":false,\"error\":\"invalid phase\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "queue_folder_tree_selection") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (!path.empty()) {
+            // The next RenderUI frame applies the same deferred folder-tree path.
+            state.uiState.pendingFolderPath = path;
+            state.uiState.pendingFolderTime = ImGui::GetTime() - 0.2;
+            result = "{\"ok\":true,\"cmd\":\"queue_folder_tree_selection\"}";
+        } else {
+            result = "{\"ok\":false,\"error\":\"path missing\"}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "remove_folder_subtree") {
         const std::string path = getStr(raw, "path");
@@ -6245,8 +6387,6 @@ static void PollQaCommandFile(AppState& state) {
             state.folderFilterActive = true;
             // External folder commands store a canonical filter path.
             state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(path);
-            state.coverFilterActive = false;
-            state.coverFilterPath.clear();
             cancelPendingSearchForQaMutation();
             state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
             RefreshSearchResults(state, true);
@@ -6339,10 +6479,6 @@ static void PollQaCommandFile(AppState& state) {
         if (result.empty()) {
             state.viewMode = ViewMode::Database;
             state.coverFilterIndex = coverIndex;
-            state.coverFilterActive = false;
-            state.coverFilterPath.clear();
-            state.coverFilterMatchSig = 0;
-            state.coverFilterMatchPaths.clear();
             cancelPendingSearchForQaMutation();
             state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
             RefreshSearchResults(state, true);
@@ -6376,13 +6512,10 @@ static void PollQaCommandFile(AppState& state) {
             const std::string folderPath = getStr(raw, "folder_path");
             const std::string label = getStr(raw, "label");
             state.viewMode = ViewMode::Database;
-            state.coverFilterIndex = 0;
             state.coverFilterActive = true;
             state.coverFilterPath = key;
             state.coverFilterMatchSig = 0;
             state.coverFilterMatchPaths.clear();
-            state.folderFilterActive = false;
-            state.selectedFolderPath.clear();
             state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
             state.coverWall.pinnedCoverFilterItem.key = key;
             state.coverWall.pinnedCoverFilterItem.label = label;
