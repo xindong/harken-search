@@ -28809,6 +28809,47 @@ static void RenderDatabaseSetupSeparator() {
     ImGui::PopStyleColor();
 }
 
+enum class DatabaseSetupAction { Create, Open, Exit };
+
+// Scoped to the three first-run actions: keep native button input/navigation,
+// but use the approved flat fills and a single border without an inset shadow.
+static bool DatabaseSetupButton(const char* label, const ImVec2& size,
+    const EmptyStatePalette::Colors& palette, DatabaseSetupAction action) {
+    const bool primary = action == DatabaseSetupAction::Create;
+    const bool quiet = action == DatabaseSetupAction::Exit;
+    const bool light = TransportContrast::Luminance(palette.panelBg) > 0.5;
+    const ImVec4 accent = ImLerp(
+        TransportContrast::Over(palette.primaryButtonBg, palette.panelBg),
+        ImVec4(1, 1, 1, 1), light ? 0.0f : 0.10f);
+    const ImVec4 fill = primary ? accent :
+        ImLerp(palette.panelBg, accent, quiet ? 0.07f : 0.24f);
+    ImVec4 text = primary ? palette.primaryButtonText : palette.bodyColor;
+    text.w = 1.0f;
+    const ImVec4 hover = ImLerp(fill, text, 0.06f);
+    const ImVec4 active = ImLerp(fill, text, 0.11f);
+    text = EmptyStatePalette::Readable(text, {fill, hover, active});
+    ImVec4 border = ImLerp(palette.panelBg, palette.bodyColor, 0.20f);
+    border.w = 1.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, primary ? 0.0f : 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_BorderShadow, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Border, border);
+    ImGui::PushStyleColor(ImGuiCol_Button, fill);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
+    ImGui::PushStyleColor(ImGuiCol_Text, text);
+    const bool clicked = ImGui::Button(label, size);
+    const ImGuiCol fillId = ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
+        ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button;
+    std::array<ImVec4, 4> surfaces;
+    surfaces.fill(TransportContrast::Over(
+        ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(fillId)), palette.panelBg));
+    EmptyStateVisualAudit::Record(primary ? "new" : quiet ? "exit" : "open", surfaces);
+    ImGui::PopStyleColor(6);
+    ImGui::PopStyleVar(2);
+    return clicked;
+}
+
 // Render the asynchronous library workspace.
 // Result sets and cover work remain owned by their worker handoffs.
 
@@ -33150,24 +33191,13 @@ void RenderUI(AppState& state) {
         bool canCreate = nameValid && (!exists || confirmOverwrite);
 
         ImGui::BeginDisabled(!canCreate);
-        if (requireDatabaseSetup) {
-            ImGui::PushStyleColor(ImGuiCol_Button, setupPalette.primaryButtonBg);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, setupPalette.primaryButtonHover);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, setupPalette.primaryButtonActive);
-            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.primaryButtonText);
-        }
         const float setupButtonWidth = requireDatabaseSetup
             ? (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f - 72.0f) * 0.5f
             : 120.0f;
-        bool createClicked = ImGui::Button(exists ? L(NewDB_OverwriteCreate) : L(Create), ImVec2(setupButtonWidth, 32));
-        if (requireDatabaseSetup) {
-            auto buttonSurfaces = setupSurfaces;
-            const ImVec4 fill = ImGui::GetStyleColorVec4(ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
-                ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
-            for (auto& surface : buttonSurfaces) surface = TransportContrast::Over(fill, surface);
-            EmptyStateVisualAudit::Record("new", buttonSurfaces);
-            ImGui::PopStyleColor(4);
-        }
+        const char* createLabel = exists ? L(NewDB_OverwriteCreate) : L(Create);
+        bool createClicked = requireDatabaseSetup
+            ? DatabaseSetupButton(createLabel, ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Create)
+            : ImGui::Button(createLabel, ImVec2(setupButtonWidth, 32));
 #ifdef ARIS_PREVIEW_ISOLATION
         const bool qaCreateClicked = std::exchange(state.qaCreateNewDbNow, false);
         createClicked = createClicked || (qaCreateClicked && canCreate);
@@ -33204,17 +33234,8 @@ void RenderUI(AppState& state) {
 
         ImGui::SameLine();
         if (requireDatabaseSetup) {
-            ImGui::PushStyleColor(ImGuiCol_Button, setupPalette.secondaryButtonBg);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, setupPalette.secondaryButtonHover);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, setupPalette.secondaryButtonActive);
-            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.secondaryButtonText);
-            bool openExistingClicked = ImGui::Button(L(File_OpenDB), ImVec2(setupButtonWidth, 32));
-            auto buttonSurfaces = setupSurfaces;
-            const ImVec4 fill = ImGui::GetStyleColorVec4(ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
-                ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
-            for (auto& surface : buttonSurfaces) surface = TransportContrast::Over(fill, surface);
-            EmptyStateVisualAudit::Record("open", buttonSurfaces);
-            ImGui::PopStyleColor(4);
+            bool openExistingClicked = DatabaseSetupButton(L(File_OpenDB),
+                ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Open);
             std::string openPath;
 #ifdef ARIS_PREVIEW_ISOLATION
             if (!state.qaOpenExistingDbPath.empty()) {
@@ -33233,7 +33254,7 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(File_Exit), ImVec2(72.0f, 32))) {
+            if (DatabaseSetupButton(L(File_Exit), ImVec2(72.0f, 32), setupPalette, DatabaseSetupAction::Exit)) {
                 RequestHarkenSearchExit(g_hwnd, L"first-library-setup-exit");
             }
         } else if (ImGui::Button(L(Cancel), ImVec2(120, 32))) {

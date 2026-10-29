@@ -156,7 +156,7 @@ def run(args):
             state = driver.command({'cmd': 'get_state'})
             bounds = state['new_db_dialog_bounds']
             assert all(abs(a - b) < 1 for a, b in zip(bounds, audit['panel'])), (bounds, audit)
-            assert {item['id'] for item in audit['checks']} == {'title', 'hint', 'new', 'open'}, audit
+            assert {item['id'] for item in audit['checks']} == {'title', 'hint', 'new', 'open', 'exit'}, audit
             for item in audit['checks']:
                 left, top, right, bottom = item['bounds']
                 assert bounds[0] <= left < right <= bounds[2], item
