@@ -99,6 +99,8 @@
 #include "AITranscriptionResultStateAdapter.h"
 #include "VoiceAssetOrganizer.h"
 #include "Theme.h"              // 主题颜色系统
+#include "ThemeSchedule.h"
+#include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/TransportContrast.h"
@@ -5414,6 +5416,8 @@ void LoadAppSettings(AppState& state) {
     }
     // [已移除 WebUI]
     state.settings.theme = (AppTheme)ParseInt(kv["theme"], (int)state.settings.theme);
+    state.settings.themeScheduleMode = harken::theme_schedule::ModeFromSetting(
+        ParseInt(kv["themeScheduleMode"], (int)state.settings.themeScheduleMode));
     state.settings.language = (AppLanguage)ParseInt(kv["language"], (int)state.settings.language);
     g_currentLanguage = state.settings.language;  // Apply language immediately
     {
@@ -6319,12 +6323,14 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterWidth", std::to_string(state.settings.meterWidth)});
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
-    items.push_back({"theme", std::to_string((int)state.settings.theme)});
+    const auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    items.push_back({"theme", std::to_string((int)savedAppearance.theme)});
+    items.push_back({"themeScheduleMode", std::to_string((int)state.settings.themeScheduleMode)});
     items.push_back({"language", std::to_string((int)state.settings.language)});
     items.push_back({"customThemeName", state.settings.customThemeName});
 
     // Custom colors
-    items.push_back({"useCustomColors", state.settings.useCustomColors ? "1" : "0"});
+    items.push_back({"useCustomColors", savedAppearance.useCustomColors ? "1" : "0"});
     items.push_back({"customAccentR", std::to_string(state.settings.customAccentColor.x)});
     items.push_back({"customAccentG", std::to_string(state.settings.customAccentColor.y)});
     items.push_back({"customAccentB", std::to_string(state.settings.customAccentColor.z)});
@@ -34219,6 +34225,8 @@ void RenderUI(AppState& state) {
 // 外观与主题
                 SectionHeader(L(Settings_SectionAppearance), nullptr);
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Settings_SectionAppearanceHint));
+                const bool showOtherThemes = harken::theme_schedule::RenderSettings(state);
+                if (showOtherThemes) {
                 struct ThemeSwatch {
                     AppTheme    value;
                     const char* label;
@@ -34241,6 +34249,9 @@ void RenderUI(AppState& state) {
 
                     ImGui::PushID(ts.label);
                     bool clicked = ImGui::InvisibleButton("##swatch", cardSize);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+                    harken::theme_schedule::QaRecordStock((int)ts.value);
+#endif
                     bool hovered = ImGui::IsItemHovered();
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const ImU32 canvas = hexU32(ts.canvasHex);
@@ -34310,6 +34321,7 @@ void RenderUI(AppState& state) {
                             const bool prevCustomized = ThemeColors::customized();
                             LogThemeStockSwitchSnapshot("before", prevTheme, ts.value, prevUseCustom, prevCustomized);
                             state.settings.theme = ts.value;
+                            harken::theme_schedule::OnManualThemeSelected(state);
                             state.settings.useCustomColors = false;
                             ThemeColors::deactivateCustomTheme();
                             // Do not re-bake ImGuiStyle in the middle of this frame.
@@ -34324,7 +34336,7 @@ void RenderUI(AppState& state) {
 
                 // Action row beneath the swatches
                 ImGui::Spacing();
-                const bool hasCustom = !state.settings.customThemeName.empty();
+                const bool hasCustom = !harken::theme_schedule::ControlsTheme(state) && !state.settings.customThemeName.empty();
                 const bool customActive = (state.settings.theme == AppTheme::Custom && ThemeColors::customized());
                 if (hasCustom) {
                     ImGui::TextDisabled(L(Main_CustomThemeListLabel));
@@ -34354,7 +34366,7 @@ void RenderUI(AppState& state) {
                     }
                 }
 #if AURA_BUILD_DIAGNOSTICS
-                if (ProductEdition::hasFeature("theme_editor")) {
+                if (!harken::theme_schedule::ControlsTheme(state) && ProductEdition::hasFeature("theme_editor")) {
                     if (hasCustom) ImGui::SameLine(0.0f, 16.0f);
                     if (aura::ui::SmallActionButton(L(Set_EditTheme))) {
                         state.showThemeEditor = true;
@@ -34363,7 +34375,7 @@ void RenderUI(AppState& state) {
 #endif
 
                 // Inline custom color editor — only meaningful when Custom is active
-                if (state.settings.theme == AppTheme::Custom) {
+                if (!harken::theme_schedule::ControlsTheme(state) && state.settings.theme == AppTheme::Custom) {
                     ImGui::Spacing();
                     ImGui::Indent(12.0f);
                     ImGui::TextDisabled(L(Main_LightCustomColorsHint));
@@ -34392,6 +34404,8 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::Unindent(12.0f);
                 }
+
+                } // Existing ordinary themes are disclosed only when requested.
 
                 // Language picker — sits inside Appearance because it changes how the UI looks/reads
                 ImGui::Spacing();
@@ -36399,6 +36413,7 @@ void RenderUI(AppState& state) {
             } else {
                 // Reset to default dark theme
                 state.settings.theme = AppTheme::Dark;
+                harken::theme_schedule::OnManualThemeSelected(state);
                 state.settings.useCustomColors = false;
                 ThemeColors::deactivateCustomTheme();
                 SaveAppSettings(state);

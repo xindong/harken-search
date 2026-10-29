@@ -1,0 +1,370 @@
+"""Verify day/night palettes in the actual isolated EXE on a private desktop.
+
+Requires pywin32 and Pillow. Pointer events enter only the app's ImGui queue.
+The caller supplies a disposable profile and a real library snapshot inside it.
+Clock and draft-color seams are compiled only into isolated diagnostic packages.
+"""
+from __future__ import annotations
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import time
+import traceback
+from qa_required_library_setup import PrivateDesktop, capture, wait_state
+from qa_transport_themes import Driver
+
+def run(args):
+    import win32con, win32event, win32process, win32gui
+    exe, root, out = args.exe.resolve(), args.isolation_root.resolve(), args.output.resolve()
+    library = args.library.resolve()
+    assert library.is_relative_to(root) and library.is_file(), 'Use a library snapshot inside the isolated profile'
+    out.mkdir(parents=True, exist_ok=False)
+    runtime = root/'profile/runtime'
+    runtime.mkdir(parents=True, exist_ok=True)
+    driver, desktop = Driver(runtime, out), PrivateDesktop()
+    process = None
+    client_origin = (0,0)
+    report = dict(exe=str(exe), sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),
+                  started_at=datetime.now(timezone.utc).isoformat(), checks=[], exit_codes=[])
+    profiles = root/'profile/Local/HarkenSearch'
+    day_file, night_file = profiles/'theme_schedule_day.json', profiles/'theme_schedule_night.json'
+    def command(**payload): return driver.command(payload)
+    def check(name, **details):
+        report['checks'].append(dict(case=name, **details))
+        print(name, flush=True)
+    def state(): return command(cmd='theme_schedule')
+    def wait(predicate, label):
+        deadline = time.monotonic()+12
+        while time.monotonic() < deadline:
+            value = state()
+            if predicate(value): return value
+            time.sleep(.08)
+        raise AssertionError((label, value))
+    def settle():
+        first=state()['frame']
+        return wait(lambda s:s['frame']>first+3, 'rendered frames')
+    def start(minute):
+        nonlocal process, client_origin
+        previous=os.environ.get('HARKEN_THEME_QA_MINUTE')
+        os.environ['HARKEN_THEME_QA_MINUTE']=str(minute)
+        try: process,pid=desktop.start(exe)
+        finally:
+            if previous is None: os.environ.pop('HARKEN_THEME_QA_MINUTE',None)
+            else: os.environ['HARKEN_THEME_QA_MINUTE']=previous
+        identity=driver.command({'cmd':'magic_eq_identity'},timeout=60)
+        assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe,identity
+        assert Path(identity['isolation_root']).resolve()==root,identity
+        wait_state(driver,lambda s:s['main_ui_ready'],'startup',60)
+        if args.qa_narration:
+            note=command(cmd='qa_narration',action='state')
+            assert note['open'] and not note['error'],note
+            command(cmd='qa_narration',action='close'); settle()
+        current=command(cmd='get_state')
+        if current['db_path']!=str(library):
+            command(cmd='switch_db',path=str(library))
+        current=wait_state(driver,lambda s:s['total_count']>0 and not s['db_switch_in_progress'],'real library',60)
+        report['library']=dict(path=current['db_path'],total=current['total_count'])
+        command(cmd='dock_pointer',phase='focus'); settle()
+        client_origin = win32gui.ClientToScreen(identity['hwnd'],(0,0))
+        report['client_origin'] = client_origin
+        return state()
+    def stop():
+        nonlocal process
+        if process is None: return
+        if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+            command(cmd='info_edit_input',action='exit')
+        assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0,'exit timeout'
+        code=win32process.GetExitCodeProcess(process)
+        report['exit_codes'].append(code)
+        process.Close(); process=None
+        assert code==0,code
+    def audit():
+        first=command(cmd='ordinary_button_audit')
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            snapshot=command(cmd='ordinary_button_audit')
+            if snapshot['frame']>first['current_frame']+2 and snapshot['current_frame']-snapshot['frame']<=2:
+                return snapshot['checks']
+            time.sleep(.08)
+        raise AssertionError('No fresh UI button measurements')
+    def find(label):
+        buttons=[b for b in audit() if b['label']==label and not b['disabled']]
+        assert len(buttons)==1,(label,buttons)
+        button=buttons[0]
+        x0,y0,x1,y1=button['bounds']; l,t,r,b=button['clip']
+        assert x0>=l-1 and y0>=t-1 and x1<=r+1 and y1<=b+1,button
+        return button
+    def click_at(x,y):
+        # Button observations use screen coordinates; the app-owned pointer
+        # accepts client coordinates and adds its main viewport origin itself.
+        x,y=x-client_origin[0],y-client_origin[1]
+        for phase in ('hover','down','up'):
+            command(cmd='theme_schedule',action='pointer',phase=phase,x=x,y=y)
+            settle()
+    def click(label):
+        button=find(label)
+        a,b,c,d=button['bounds']
+        click_at((a+c)/2,(b+d)/2)
+    def settings():
+        command(cmd='ordinary_button_window',module='settings',action='open'); settle()
+        # First navigation item is aligned with the search row; derive coordinates
+        # from current measured controls instead of using screen-size assumptions.
+        clear,save=find('清除'),find('保存并关闭')
+        click_at(save['bounds'][0]+20,(clear['bounds'][1]+clear['bounds'][3])/2)
+        value=settle()
+        ui=value.get('ui',{})
+        assert len(ui.get('cards',[]))==2 and len(ui.get('edit_buttons',[]))==2, 'Expected two selectable palette cards with separate editors'
+        assert ui['cards'][0][1]==ui['cards'][1][1] and ui['cards'][0][2]<ui['cards'][1][0],ui
+        l,t,r,b=ui['clip']
+        for bounds in [value['auto_toggle_bounds'],*ui['cards'],*ui['edit_buttons']]:
+            assert bounds[0]>=l and bounds[1]>=t and bounds[2]<=r and bounds[3]<=b, ('clipped day/night control',bounds,ui['clip'])
+        assert not any(b['label'] in ('固定白天','固定夜间') for b in audit()),'Redundant fixed-palette buttons remain'
+    def close_settings(): click('保存并关闭')
+    def click_rect(rect):
+        a,b,c,d=rect
+        assert c>a and d>b,rect
+        click_at((a+c)/2,(b+d)/2)
+    def click_card(day):
+        click_rect(settle()['ui']['cards'][0 if day else 1])
+    def other_themes(expanded):
+        ui=settle()['ui']
+        if ui['other_themes_expanded']!=expanded:
+            click_rect(ui['other_themes'])
+        ui=settle()['ui']
+        assert ui['other_themes_expanded']==expanded,ui
+        assert len(ui['stock'])==(5 if expanded else 0),ui
+    def click_stock(theme):
+        other_themes(True)
+        item=next(x for x in settle()['ui']['stock'] if x['theme']==theme)
+        click_rect(item['bounds'])
+    def automatic(enabled):
+        if (state()['mode']==1) != enabled:
+            x,y,r,b=state()['auto_toggle_bounds']
+            assert r>x and b>y
+            click_at((x+r)/2,(y+b)/2)
+        return wait(lambda s:(s['mode']==1)==enabled, 'automatic switch')
+    def fixed_clock(minute, period):
+        command(cmd='theme_schedule',action='clock',minute=minute); settle()
+        value=state()
+        assert value['selected_period']==period and value['active_bg']==value[period+'_bg'],value
+        assert value['active_accent']==value[period+'_accent'] and value['imgui_bg']==value['active_bg'],value
+        return value
+    def clock(minute):
+        command(cmd='theme_schedule',action='clock',minute=minute)
+        period='day' if 480<=minute<960 else 'night'
+        value=wait(lambda s:s['period']==period and s['theme']==7 and
+            s['active_bg']==s[period+'_bg'] and s['active_accent']==s[period+'_accent'] and
+            s['imgui_bg']==s['active_bg'], 'scheduled colors rendered')
+        settle()
+        return value
+    def draft(key,value): command(cmd='theme_schedule',action='draft_color',key=key,rgba=value); settle()
+    def snapshot(path): return (path.read_bytes(),path.stat().st_mtime_ns) if path.exists() else None
+    def open_editor(day):
+        click_rect(settle()['ui']['edit_buttons'][0 if day else 1])
+        return wait(lambda s:s['editor_open'] and s['editor_period']==(0 if day else 1),'editor opens')
+    try:
+        initial=start(480)
+        assert initial['period']=='day' and initial['active_bg']==initial['day_bg'],initial
+        check('day-startup-real-library',state=initial)
+        settings(); capture(driver,out/'settings-day.png')
+        assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
+        click_card(False)
+        value=settle()
+        assert value['mode']==1 and value['selected_period']=='day',value
+        check('automatic-hides-stock-and-card-click-keeps-schedule',state=value)
+        night_before=snapshot(night_file)
+        open_editor(True); capture(driver,out/'editor-day.png')
+        draft('toolbarAccent',[.2,.42,.64,1])
+        click('保存配色')
+        wait(lambda s:not s['editor_open'],'day saved')
+        assert snapshot(night_file)==night_before,'day save touched night'
+        day_saved=snapshot(day_file)
+        assert day_saved and len(json.loads(day_saved[0])['colors'])==113
+        check('day-save-is-independent',state=state())
+        open_editor(True)
+        draft('toolbarAccent',[.9,.1,.2,1]); click('取消修改')
+        wait(lambda s:not s['editor_open'],'cancel closes')
+        assert snapshot(day_file)==day_saved,'cancel changed day file'
+        open_editor(True)
+        draft('mainWindowBG',[.1,.1,.1,1]); click('保存配色')
+        rejected=state()
+        assert rejected['editor_open'] and rejected['editor_status'],rejected
+        assert snapshot(day_file)==day_saved,'invalid palette changed file'
+        capture(driver,out/'light-palette-guard.png')
+        click('取消修改'); wait(lambda s:not s['editor_open'],'invalid draft cancelled')
+        check('cancel-and-day-category-guard',state=rejected)
+        open_editor(False)
+        draft('toolbarAccent',[.65,.42,.86,1]); capture(driver,out/'editor-night.png')
+        # A clock jump must not overwrite a live draft.
+        command(cmd='theme_schedule',action='clock',minute=960); settle()
+        assert state()['editor_open'] and state()['active_accent']!='ff6f98c1'
+        command(cmd='theme_schedule',action='clock',minute=480); settle()
+        click('保存配色'); wait(lambda s:not s['editor_open'],'night saved')
+        assert snapshot(day_file)==day_saved,'night save touched day'
+        night_saved=snapshot(night_file)
+        assert night_saved
+        check('night-save-is-independent-and-preview-survives-clock-jump',state=state())
+        for minute in (479,480,959,960,0,1439,480):
+            value=clock(minute)
+            capture(driver,out/f'clock-{minute//60:02d}-{minute%60:02d}.png')
+            check('clock-boundary-'+str(minute),state=value)
+        for theme in (0,1,2,3,10):
+            command(cmd='set_theme',theme=theme)
+            value=clock(480)
+            assert snapshot(day_file)==day_saved and snapshot(night_file)==night_saved
+            check('manual-theme-restored-'+str(theme),state=value)
+        close_settings(); capture(driver,out/'library-day.png')
+        stop()
+        value=start(960)
+        assert value['period']=='night' and value['active_accent']==value['night_accent'],value
+        assert snapshot(day_file)==day_saved and snapshot(night_file)==night_saved
+        check('night-restart-preserves-both',state=value)
+        settings(); capture(driver,out/'settings-night.png'); close_settings()
+        capture(driver,out/'library-night.png'); stop()
+        # Corrupt one slot while stopped, then ensure only that slot falls back.
+        day_file.write_text('{broken',encoding='utf-8')
+        value=start(480)
+        assert value['day_warning'] and not value['night_warning'],value
+        assert snapshot(night_file)==night_saved,'damaged day affected night'
+        settings(); capture(driver,out/'damaged-day-fallback.png'); close_settings()
+        check('corrupt-day-falls-back-independently',state=value)
+        stop()
+        day_file.write_bytes(day_saved[0])
+        value=start(480)
+        assert not value['day_warning'] and value['active_accent']==value['day_accent'],value
+        check('day-restart-preserves-edited-palette',state=value)
+        # The corruption/recovery fixture intentionally rewrote the day file.
+        # Keep its verified bytes, but use the restored file's new modification time.
+        assert day_file.read_bytes()==day_saved[0]
+        day_saved=snapshot(day_file)
+        settings()
+        automatic(False)
+        assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
+        check('manual-mode-starts-with-other-themes-collapsed',state=state())
+        value=fixed_clock(960,'day')
+        assert value['mode']==2,value
+        capture(driver,out/'fixed-day-at-night.png')
+        check('automatic-off-freezes-day-across-boundary',state=value)
+        close_settings(); stop()
+        value=start(960)
+        assert value['mode']==2 and value['active_bg']==value['day_bg'],value
+        check('fixed-day-survives-night-restart',state=value)
+        settings(); click_card(False)
+        value=fixed_clock(480,'night')
+        assert value['mode']==3,value
+        capture(driver,out/'fixed-night-during-day.png')
+        check('fixed-night-ignores-day-clock',state=value)
+        # Editing the inactive day palette must return to the fixed night palette.
+        open_editor(True); draft('toolbarAccent',[.75,.2,.3,1]); click('取消修改')
+        wait(lambda s:not s['editor_open'],'fixed palette cancel'); settle()
+        assert snapshot(day_file)==day_saved
+        fixed_clock(480,'night')
+        open_editor(True); draft('toolbarAccent',[.24,.48,.66,1]); click('保存配色')
+        wait(lambda s:not s['editor_open'],'inactive palette saved'); settle()
+        assert snapshot(night_file)==night_saved
+        fixed_clock(480,'night')
+        check('inactive-edit-save-and-cancel-keep-fixed-night',state=state())
+        close_settings(); stop()
+        value=start(480)
+        assert value['mode']==3 and value['active_bg']==value['night_bg'],value
+        check('fixed-night-survives-day-restart',state=value)
+        settings(); automatic(True); value=clock(480)
+        assert value['mode']==1,value
+        check('reenable-automatic-immediately-follows-clock',state=value)
+        automatic(False)
+        for theme in (0,1,2,3,10):
+            click_stock(theme); settle()
+            before=state()
+            command(cmd='theme_schedule',action='clock',minute=960); settle()
+            value=state()
+            assert value['mode']==0 and value['theme']==theme,value
+            assert value['ui']['selected']==[False,False],value
+            assert value['active_bg']==before['active_bg'] and value['active_accent']==before['active_accent'],value
+            check('automatic-off-keeps-manual-theme-'+str(theme),state=value)
+            command(cmd='theme_schedule',action='clock',minute=480); settle()
+        manual=state()
+        other_themes(False)
+        assert state()['theme']==manual['theme'] and state()['mode']==0
+        capture(driver,out/'other-themes-collapsed.png')
+        other_themes(True)
+        capture(driver,out/'other-themes-expanded.png')
+        check('collapsing-other-themes-keeps-manual-choice',state=state())
+        open_editor(False); draft('toolbarAccent',[.5,.4,.8,1]); click('取消修改')
+        wait(lambda s:not s['editor_open'],'off-mode cancel'); settle()
+        value=state()
+        assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+        open_editor(False); draft('toolbarAccent',[.5,.4,.8,1]); click('保存配色')
+        wait(lambda s:not s['editor_open'],'off-mode save'); settle()
+        value=state()
+        assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+        check('off-mode-editor-save-and-cancel-restore-manual-theme',state=value)
+        capture(driver,out/'automatic-off-manual-theme.png')
+        close_settings(); stop()
+        value=start(960)
+        assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+        check('automatic-off-and-manual-theme-survive-restart',state=value)
+        # Exiting directly from a live draft must persist the last chosen theme,
+        # not the temporary Custom appearance used to render the editor preview.
+        for day in (True,False):
+            settings()
+            before_files=(snapshot(day_file),snapshot(night_file))
+            saved_settings=dict(line.split('=',1) for line in (profiles/'settings.ini').read_text(encoding='utf-8').splitlines() if '=' in line)
+            open_editor(day); draft('toolbarAccent',[.25,.45,.65,1])
+            assert state()['editor_open'] and state()['theme']==7,state()
+            stop()
+            persisted=dict(line.split('=',1) for line in (profiles/'settings.ini').read_text(encoding='utf-8').splitlines() if '=' in line)
+            assert persisted['theme']==str(manual['theme']),('preview leaked to saved theme',persisted['theme'],manual['theme'])
+            assert persisted['useCustomColors']==saved_settings['useCustomColors'],persisted['useCustomColors']
+            value=start(960)
+            assert value['mode']==0 and value['theme']==manual['theme'] and value['active_bg']==manual['active_bg'],value
+            assert (snapshot(day_file),snapshot(night_file))==before_files,'unsaved draft changed palette files'
+            check('exit-during-'+('day' if day else 'night')+'-preview-keeps-manual-theme',state=value)
+        settings(); click_card(True); value=fixed_clock(960,'day')
+        assert value['mode']==2,value
+        check('manual-theme-can-return-to-fixed-day',state=value)
+        for day in (True,False):
+            click_card(day)
+            fixed_clock(960 if day else 480,'day' if day else 'night')
+            click('恢复默认主题'); value=settle()
+            assert value['mode']==0 and value['theme']==0,('restore default was overridden by fixed palette',value)
+            default_bg,default_accent=value['active_bg'],value['active_accent']
+            close_settings(); stop()
+            value=start(960 if day else 480)
+            assert value['mode']==0 and value['theme']==0,value
+            assert value['active_bg']==default_bg and value['active_accent']==default_accent,value
+            check('fixed-'+('day' if day else 'night')+'-restore-default-survives-restart',state=value)
+            settings()
+        automatic(True); clock(960)
+        assert not state()['ui']['stock'] and not state()['ui']['other_themes_expanded'],state()
+        capture(driver,out/'automatic-hides-other-themes.png')
+        check('reenabling-automatic-collapses-and-hides-other-themes',state=state())
+        close_settings()
+        # Leave the delivered profile on the real local clock.
+        command(cmd='theme_schedule',action='clock',minute=-1); settle()
+        stop()
+        report['passed']=True
+    except Exception:
+        report['passed']=False; report['error']=traceback.format_exc()
+        try: capture(driver,out/'failure.png')
+        except Exception: pass
+        raise
+    finally:
+        try: stop()
+        finally:
+            desktop.close()
+            report['finished_at']=datetime.now(timezone.utc).isoformat()
+            report['not_covered']=['User visual acceptance', 'Physical sleep/resume and OS timezone changes; equivalent wall-clock jumps tested', 'Every individual color-picker gesture; draft-color seam used with real open/save/cancel buttons']
+            (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--exe',required=True,type=Path)
+    parser.add_argument('--isolation-root',required=True,type=Path)
+    parser.add_argument('--library',required=True,type=Path)
+    parser.add_argument('--output',required=True,type=Path)
+    parser.add_argument('--qa-narration',action='store_true',
+                        help='Also verify the optional local-only QA narration panel')
+    run(parser.parse_args())

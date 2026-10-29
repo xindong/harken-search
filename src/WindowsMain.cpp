@@ -8,6 +8,8 @@
 #include "PathUtils.h"  // Canonical folder filtering.
 #include "SpectrogramMath.h"
 #include "Theme.h"
+#include "ThemeSchedule.h"
+#include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/EmptyStateVisualAudit.h"
@@ -6377,6 +6379,67 @@ static void PollQaCommandFile(AppState& state) {
         result = std::string("{\"ok\":true,\"cmd\":\"set_loudness_norm\",\"enabled\":")
                + (enabled ? "true" : "false") + "}";
 
+    } else if (cmd == "theme_schedule") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"isolated package required"})";
+        } else {
+            const auto action = getStr(raw, "action");
+            bool ok = action.empty() || action == "state";
+            if (action == "clock") ok = harken::theme_schedule::SetQaClock(getInt(raw, "minute", -2));
+            if (action == "pointer") {
+                const auto phase = getStr(raw, "phase");
+                const float x = static_cast<float>(getDouble(raw, "x", -1));
+                const float y = static_cast<float>(getDouble(raw, "y", -1));
+                const auto display = ImGui::GetIO().DisplaySize;
+                if (s_mainUiReady.load(std::memory_order_acquire) &&
+                    std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < display.x && y < display.y &&
+                    !s_magicEqQaPointer.pending &&
+                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || (phase == "up" && s_magicEqQaPointer.held))) {
+                    const auto* viewport = ImGui::GetMainViewport();
+                    s_magicEqQaPointer = {true, phase != "hover", phase == "down", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
+                    ok = true;
+                }
+            }
+            if (action == "draft_color") {
+                const auto request = nlohmann::json::parse(raw, nullptr, false);
+                if (request.is_object() && request.contains("rgba") && request["rgba"].is_array() && request["rgba"].size() == 4) {
+                    const auto& c = request["rgba"];
+                    if (c[0].is_number() && c[1].is_number() && c[2].is_number() && c[3].is_number())
+                        ok = ThemeScheduleEditorQaSetColor(getStr(raw, "key"), ImVec4(c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()));
+                }
+            }
+            using namespace harken::theme_schedule;
+            const auto& day = Palette(Period::Day);
+            const auto& night = Palette(Period::Night);
+            const auto toggle = QaAutoToggleBounds();
+            const auto& ui = QaSettingsUi();
+            const auto bounds = [](ImVec4 r) { return nlohmann::json::array({r.x,r.y,r.z,r.w}); };
+            auto stock = nlohmann::json::array();
+            for (const auto& item : ui.stock) stock.push_back({{"theme",item.theme},{"bounds",bounds(item.bounds)}});
+            result = nlohmann::json({
+                {"ok",ok}, {"cmd",cmd}, {"frame",ImGui::GetFrameCount()},
+                {"period",CurrentPeriod() == Period::Day ? "day" : "night"},
+                {"mode",(int)state.settings.themeScheduleMode},
+                {"auto_toggle_bounds",{toggle.x,toggle.y,toggle.z,toggle.w}},
+                {"ui",{{"frame",ui.frame},{"clip",bounds(ui.clip)},{"cards",{bounds(ui.cards[0]),bounds(ui.cards[1])}},
+                    {"edit_buttons",{bounds(ui.editButtons[0]),bounds(ui.editButtons[1])}},
+                    {"selected",{ui.selected[0],ui.selected[1]}},{"other_themes",bounds(ui.otherThemes)},
+                    {"other_themes_expanded",ui.otherThemesExpanded},{"stock",stock}}},
+                {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
+                {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
+                {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
+                {"active_bg",ThemeColors::toARGBHex(ThemeColors::current().mainWindowBG)},
+                {"active_accent",ThemeColors::toARGBHex(ThemeColors::current().toolbarAccent)},
+                {"imgui_bg",ThemeColors::toARGBHex(ImGui::GetStyle().Colors[ImGuiCol_WindowBg])},
+                {"day_bg",ThemeColors::toARGBHex(day.mainWindowBG)}, {"night_bg",ThemeColors::toARGBHex(night.mainWindowBG)},
+                {"day_accent",ThemeColors::toARGBHex(day.toolbarAccent)}, {"night_accent",ThemeColors::toARGBHex(night.toolbarAccent)},
+                {"day_warning",LoadWarning(Period::Day)}, {"night_warning",LoadWarning(Period::Night)}
+            }).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"isolated package required"})";
+#endif
     } else if (cmd == "set_theme") {
         int theme = getInt(raw, "theme", -1);
         const bool validTheme =
@@ -6394,6 +6457,9 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"cmd\":\"set_theme\",\"error\":\"custom theme unavailable\"}";
         } else {
             state.settings.theme = (AppTheme)theme;
+            harken::theme_schedule::OnManualThemeSelected(state);
+            state.settings.useCustomColors = false;
+            if (theme != (int)AppTheme::Custom) ThemeColors::deactivateCustomTheme();
             MarkSettingsDirty(state);
             SaveAppSettings(state);
             result = "{\"ok\":true,\"cmd\":\"set_theme\",\"theme\":" + std::to_string(theme) + "}";
@@ -8195,7 +8261,10 @@ static void ApplyThemeAndScaleForSettings(const AppState& state, float scale) {
         state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty();
     bool appliedVisualTheme = false;
 
-    if (state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty()) {
+    if (harken::theme_schedule::Ready() && state.settings.theme == AppTheme::Custom && ThemeColors::customized()) {
+        ThemeColors::applyToImGui();
+        appliedVisualTheme = true;
+    } else if (state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty()) {
         if (!ThemeColors::customized()) {
             try {
                 std::string exeDir = GetExeDirUtf8();
@@ -12446,6 +12515,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     AppendDiagLogLine(L"STARTUP: after audioEngine.initialize");
     AppendDiagLogLine(L"STARTUP: before LoadAppSettings");
     LoadAppSettings(state);
+    harken::theme_schedule::Initialize(g_appSettingsPathUtf8);
     AppendDiagLogLine(L"STARTUP: after LoadAppSettings");
 
 // F-035: Crash sentinel — detect previous abnormal exit
@@ -12500,6 +12570,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (state.settings.useCustomColors) {
         ApplyCustomColors(state.settings);
     }
+    harken::theme_schedule::Tick(state, true);
     HarkenSearchSplash::ConfigureThemePalette(state.settings);
     ApplyShowManagerGlobalHotkey(state.settings);
     
@@ -12963,6 +13034,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (state.settings.useCustomColors) {
         ApplyCustomColors(state.settings);
     }
+    harken::theme_schedule::Tick(state, true);
     s_mainUiReady.store(true, std::memory_order_release);
     DIAG_SYSTEM("App", "MainUIReady");
     // Lottie 精灵功能已禁用（见主循环内注释）
@@ -13238,6 +13310,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         // Rebuild fonts before NewFrame so the active OpenGL texture is not destroyed.
         // Scheme B: dynamic UI scale (font rebuild + style scaling, debounced)
+        harken::theme_schedule::Tick(state);
         UpdateImGuiUiScaleSchemeB(state);
 
         // Start ImGui frame
