@@ -1,36 +1,47 @@
-# REQ-20261029-ABOUT-LEGAL-CREDITS 关于窗口：法务、品牌与 Cindy 标识、明文链接
+# REQ-20261029-ABOUT-LEGAL-CREDITS 关于窗口双页设计
 
-## 需求（用户 2026-10-29）
+## 用户确认的范围（2026-10-29）
 
-1. 关于窗口不再放“打开更新中心”迁移提示（更新中心已有独立入口）。
-2. 显示法务信息：Apache License 2.0、Copyright 2026 xindong、随包 LICENSE /
-   PRIVACY.md / docs/legal 指引。
-3. 标注“感谢 Cindy 对本软件的开发支持”，并带 Cindy 女头 logo。
-4. 带 Harken Search 图标与文字 logo（官方 wordmark 图，深浅底自动选黑白）。
-5. 明文标出四个地址（文字链接，点击打开浏览器）：
-   - 仓库 https://github.com/xindong/harken-search
-   - 下载 https://harkensearch.xd.com
-   - Cindy 仓库 https://github.com/makecindy/cindy
-   - Cindy 下载 https://cindy.app
+- 窗口整体加大、加高，文字和界面元素对齐。
+- 头部并排使用 Harken Search 官方图形标志与用户指定的 HARKEN search 官方文字标志，两者垂直居中。
+- 第一页“关于”：Apache License 2.0、Copyright 2026 xindong、Cindy 女头和致谢，以及 Harken Search / Cindy 各自的仓库与下载明文地址。
+- 第二页“法律文档”：在窗口内直接阅读安装与使用协议、隐私政策、开源发布说明和 Apache 2.0 全文；长文可滚动。两页可用页签及底部按钮往返。
+- 用户已先看过布局预览，随后授权直接修改产品代码；实际界面仍需用户验收。
 
-## 改动
+## 模块设计
 
-- `src/HarkenSearchIcons.h/.cpp`：新增 `LoadPackagedAsset`（按 exe 相对路径
-  加载并缓存 PNG 贴图，缺失静默返回空，调用方保留文字回退）。
-- `src/main.cpp`：关于窗口重排——品牌图标 + 官方 wordmark + 版本、法务两行、
-  Cindy 头像 + 致谢行、四行明文 URL（点击 `Platform::OpenUrl`）。
-- `src/WindowsMain.cpp` + main.cpp：新增受固定隔离与主界面就绪门控的
-  `about_window` QA 命令（仅 open/state），用于真实截图。
-- `locale/harken.ui.strings.json`：移除两条更新中心迁移文案；新增版权、
-  法务指引、Cindy 致谢与四行链接标签（zh/en/ja 齐全）。
-- `assets/icons/contributors/cindy.png`：Cindy 女头 logo 随包资源；
-  `CMakeLists.txt` 拷贝 contributors 目录到 exe 旁。
-- `tests/test_about_window_legal_credits.py`：8 项契约测试。
-- `tools/qa_about_window.py`：隔离启动、打开关于窗口、截独立弹窗 OS 窗口
-  （多视口下弹窗是独立窗口）；不占桌面鼠标。
+### 1. 关于窗口与导航
 
-## 验证
+src/main.cpp 在既有“帮助 → 关于”弹窗内维护当前页和当前法律文档。窗口按可用桌面区域限制为最大 980 × 780；页签和底部按钮切换两页，右上角与 Esc 均可关闭。头部用已随包的官方图形标志与 harken-search-menu-wordmark 图片；根据主题背景选择黑白文字图。版本号靠右，与图标行垂直居中。字号、头像、选项按钮和留白均随这张卡放大。
 
-- 8 项契约测试通过；语言账本生成器 generate+check 通过。
-- 本卡包实际运行截图：runtime-4/about-window.png（品牌图标、wordmark、
-  法务、Cindy 头像致谢、四行完整不折行 URL）。
+### 2. 关于内容与链接
+
+第一页把版权、许可、Cindy 致谢和两列地址分区排齐。Cindy 女头取自用户提供的头像，随包放在 assets/icons/contributors/cindy.png。四个地址以完整文字显示，点击地址后由原有 Platform::OpenUrl 打开：
+
+| 对象 | 仓库 | 下载 |
+| --- | --- | --- |
+| Harken Search | https://github.com/xindong/harken-search | https://harkensearch.xd.com |
+| Cindy | https://github.com/makecindy/cindy | https://cindy.app |
+
+### 3. 法律文档阅读
+
+第二页有四个选择按钮，选中文档后把随安装包提供的正文载入窗口内的独立滚动区。切换文档时滚动位置回到顶部；文件缺失时显示明确提示。中文界面读中文文档，英文及日文界面读英文文档；Apache 2.0 使用同一份 LICENSE。文档只读取现有安装资源，修改范围不涉及协议正文。
+
+| 入口 | 中文文件 | 英文/日文文件 |
+| --- | --- | --- |
+| 安装与使用协议 | docs/legal/EULA.md | docs/legal/EULA.en.md |
+| 隐私政策 | docs/legal/PRIVACY_POLICY.md | docs/legal/PRIVACY_POLICY.en.md |
+| 开源发布说明 | docs/legal/OPEN_SOURCE_RELEASE_NOTICE.md | docs/legal/OPEN_SOURCE_RELEASE_NOTICE.en.md |
+| Apache 2.0 | LICENSE | LICENSE |
+
+### 4. 文案、资源与隔离验收
+
+locale/harken.ui.strings.json 提供三种语言的页签、按钮、标题、地址标签和文件缺失提示。tools/qa_about_window.py 只在隔离 QA 启动时用现有诊断命令打开指定页面并抓取独立弹窗，不占用用户鼠标；产品正常入口仍为“帮助 → 关于”。
+
+## 验证与交付
+
+- tests/test_about_window_legal_credits.py：10 项针对性检查，覆盖官方资源、双页、法律文件映射、文案和链接。
+- tools/generate_localization.py 的 generate 与 check 均通过；HarkenSearch Debug 目标构建通过。
+- 本卡实际测试包：D:/Harken-QA/REQ-20261029-ABOUT-LEGAL-CREDITS/preview-v3/package/HarkenSearch.exe。包内含法律文档和品牌资源。
+- 同一测试包的实际运行截图：preview-v3/runtime-about-final/about-window.png 与 preview-v3/runtime-legal-final/about-window.png。截图分别显示关于页与可滚动的协议正文页。
+- 当前仍是本卡分支；等待用户对实际运行界面的验收，不在此阶段合入 qa/current。

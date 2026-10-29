@@ -78,6 +78,18 @@ def run(args):
     hwnd = None
     results = {}
     try:
+        # Startup may replace the command file while initializing its pinned
+        # runtime. Wait for the native window and first frames before sending.
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f'application exited during startup: {process.returncode}')
+            if enum_process_windows(user32, process.pid):
+                break
+            time.sleep(0.2)
+        else:
+            raise TimeoutError('native application window did not appear')
+        time.sleep(5.0)
         identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
         if identity['pid'] != process.pid:
             raise RuntimeError('identity pid mismatch')
@@ -98,12 +110,15 @@ def run(args):
                 raise FileNotFoundError(library)
             driver.command({'cmd': 'switch_db', 'path': str(library)})
             time.sleep(2.0)
-        results['open'] = driver.command({'cmd': 'about_window', 'action': 'open'})
+        results['open'] = driver.command({
+            'cmd': 'about_window',
+            'action': 'legal' if args.page == 'legal' else 'open',
+        })
         time.sleep(1.2)
         # With multi-viewport enabled the modal popup is its own OS window;
         # capture the new window (the one that is not the main frame).
         wins = enum_process_windows(ctypes.windll.user32, process.pid)
-        popups = [w for w in wins if w[0] != hwnd and w[3] > 100 and w[4] > 50]
+        popups = [w for w in wins if w[0] != hwnd and w[3] > 500 and w[4] > 450]
         if not popups:
             raise RuntimeError(f'about popup window did not appear: {wins}')
         popup = popups[0]
@@ -135,4 +150,5 @@ if __name__ == '__main__':
     parser.add_argument('--isolation-root', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--library', type=Path, default=None)
+    parser.add_argument('--page', choices=('about', 'legal'), default='about')
     raise SystemExit(run(parser.parse_args()))
