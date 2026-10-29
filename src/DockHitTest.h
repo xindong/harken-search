@@ -1072,6 +1072,31 @@ inline bool DragRightDockOuterGrip(
     return true;
 }
 
+// The outer seam belongs to the occupied column, regardless of which module
+// currently lives there. Keep its hit area inside the reserved column gap.
+inline AdjacentLeafGrip PlanDockColumnOuterGrip(
+    const DockFrameGeometry& frame, DockSide side, float gapWidth = 12.0f) {
+    AdjacentLeafGrip grip;
+    if (side != DockSide::Left && side != DockSide::Right) return grip;
+    const auto& column = side == DockSide::Left ? frame.rootSlots.left : frame.rootSlots.right;
+    if (column.width <= 1.0f || column.height <= 1.0f || gapWidth <= 0.0f) return grip;
+    for (int i = 0; i < frame.moduleCount; ++i) {
+        const auto& leaf = frame.modules[i];
+        const float cx = leaf.rect.x + leaf.rect.width * .5f;
+        const float cy = leaf.rect.y + leaf.rect.height * .5f;
+        if (cx < column.x || cx >= column.x + column.width ||
+            cy < column.y || cy >= column.y + column.height) continue;
+        grip.firstId = side == DockSide::Left ? leaf.id : "search-results";
+        grip.secondId = side == DockSide::Left ? "search-results" : leaf.id;
+        grip.axis = Axis::Horizontal;
+        grip.rect = {side == DockSide::Left ? column.x + column.width : column.x - gapWidth,
+                     column.y, gapWidth, column.height};
+        grip.visible = true;
+        break;
+    }
+    return grip;
+}
+
 inline DockRootSlots ResolveDockRootSlots(
     const DockLayout& layout,
     const DockRect& work,

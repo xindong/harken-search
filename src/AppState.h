@@ -1317,6 +1317,8 @@ struct CoverWallState {
     double qaCandidateLastQueryTime = 0.0;
     size_t qaPrefetchTileCount = 0;     // Tiles in the current viewport prefetch band.
     size_t qaVisibleTileCount = 0;      // Tiles actually rendered by the ImGui clipper this frame.
+    int qaGridColumns = 0;             // Actual rendered grid, not the requested slider value.
+    float qaRenderedThumbSize = 0.0f;
     size_t qaVisibleReadyCount = 0;     // Viewport tiles with a texture handle this frame.
     size_t qaVisibleLiveTextureCount = 0; // Viewport tiles whose texture handle is still current this frame.
     size_t qaVisibleMirrorCount = 0;    // Viewport tiles backed by a cached texture mirror this frame.
@@ -2447,6 +2449,10 @@ struct AppState {
     float minBpmFilter = 0.0f;
     float maxBpmFilter = 0.0f;
     char keyFilterBuffer[64] = "";
+#if ARIS_PREVIEW_ISOLATION
+    // Client-space rectangles from the last RenderUI frame for native QA clicks.
+    std::map<std::string, ImVec4> qaFilterUiRects;
+#endif
 
     // Naming convention filter
     int namingFilter = 0;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.41 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.42 LANGUAGES C CXX)
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -1125,6 +1125,7 @@ if(WIN32)
         src/bootstrap/WindowsBootstrapJournal.cpp
         src/bootstrap/WindowsBootstrapRuntimeWin32.cpp
         src/platform/update_bootstrap_authority_base.cpp
+        src/update/UpdateDownloadManager.cpp
         src/platform/update_persistence_port.cpp
         src/platform/text_encoding_win32.cpp
         src/ed25519/tweetnacl.c
