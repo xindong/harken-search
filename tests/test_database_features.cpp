@@ -2,6 +2,7 @@
 // 数据库拆分和路径索引功能测试程序
 
 #include "Database.h"
+#include "MetadataReader.h"
 #include "AudioEngine.h"
 #include "CoverModule.h"
 #include "CoverWallSelectionKey.h"
@@ -5286,10 +5287,55 @@ int testLegacyDescriptionDisplay() {
     normal.description = "普通中文描述";
     const bool normalAdded = db.addFile(normal);
     const AudioRecord untouched = db.getFileByPath(normal.filePath);
+
+    const auto fromHex = [](const std::string& hex) {
+        std::vector<uint8_t> bytes;
+        for (size_t i = 0; i + 1 < hex.size(); i += 2)
+            bytes.push_back(static_cast<uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
+        return bytes;
+    };
+    const std::string sourceFrameHex =
+        "01656e67fffe0000fffe32006700650069002e0063006f006d005f00386e0f62"
+        "f397504ef39748655f003172d97e517f";
+    const std::string damagedDbHex =
+        "656e67fffe0000fffe32006700650069002e0063006f006d005f00386e0f62"
+        "f397504ef39748655f0031fdff7e51";
+    std::vector<uint8_t> mp3 = {'I', 'D', '3', 3, 0, 0, 0, 0, 0, 58,
+                                'C', 'O', 'M', 'M', 0, 0, 0, 48, 0, 0};
+    const auto frame = fromHex(sourceFrameHex);
+    mp3.insert(mp3.end(), frame.begin(), frame.end());
+    const fs::path chinesePath = root / "real-chinese-comment.mp3";
+    {
+        std::ofstream audio(chinesePath, std::ios::binary);
+        audio.write(reinterpret_cast<const char*>(mp3.data()),
+                    static_cast<std::streamsize>(mp3.size()));
+    }
+    AudioMetadata sourceChinese;
+    const bool sourceChineseReadable = MetadataReader::readMetadata(
+        PathToUtf8(chinesePath), sourceChinese) &&
+        sourceChinese.comment == "2gei.com_游戏音乐音效_爱给网";
+    AudioRecord chinese = legacy;
+    chinese.filePath = PathToUtf8(chinesePath);
+    chinese.fileName = "real-chinese-comment.mp3";
+    const bool chineseAdded = db.addFile(chinese);
+    sqlite3_stmt* chineseUpdate = nullptr;
+    const std::string updateChineseSql =
+        "UPDATE audio_files SET description=CAST(x'" + damagedDbHex +
+        "' AS TEXT) WHERE file_path=?";
+    bool chineseUpdated = false;
+    if (sqlite3_prepare_v2(db.db(), updateChineseSql.c_str(), -1,
+                           &chineseUpdate, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(chineseUpdate, 1, chinese.filePath.c_str(), -1, SQLITE_TRANSIENT);
+        chineseUpdated = sqlite3_step(chineseUpdate) == SQLITE_DONE;
+    }
+    sqlite3_finalize(chineseUpdate);
+    const AudioRecord restoredChinese = db.getFileByPath(chinese.filePath);
     const bool ok = updated && decoded.id > 0 &&
         decoded.databaseListDescriptionOverride == "A音6" &&
         normalAdded && untouched.description == normal.description &&
-        untouched.databaseListDescriptionOverride.empty();
+        untouched.databaseListDescriptionOverride.empty() &&
+        sourceChineseReadable && chineseAdded && chineseUpdated &&
+        restoredChinese.databaseListDescriptionOverride == sourceChinese.comment;
     db.close();
     if (!keepQaFixture) fs::remove_all(root);
     if (!ok) std::cerr << "FAIL: legacy description list display was not recovered"
@@ -5298,7 +5344,11 @@ int testLegacyDescriptionDisplay() {
                        << " descriptionLength=" << decoded.description.size()
                        << " storedHex=" << storedHex
                        << " normalAdded=" << normalAdded
-                       << " normal=" << untouched.description;
+                       << " normal=" << untouched.description
+                       << " sourceChineseReadable=" << sourceChineseReadable
+                       << " chineseAdded=" << chineseAdded
+                       << " chineseUpdated=" << chineseUpdated
+                       << " restoredChinese=" << restoredChinese.databaseListDescriptionOverride;
     return ok ? 0 : 1;
 }
 

@@ -5150,6 +5150,16 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
         case ColId::Unknown: break;
         }
     }
+    // A few old COMM values lost bytes in the middle of the UTF-16 text, so
+    // decoding the stored bytes alone cannot recover their original Chinese.
+    // Only for the exact legacy signature, use the source tag as a read-only
+    // list override. Keep the database value and all other views unchanged.
+    if (!r.databaseListDescriptionOverride.empty() && !r.filePath.empty() &&
+        Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(r.filePath)) {
+        AudioMetadata source;
+        if (MetadataReader::readMetadata(r.filePath, source) && !source.comment.empty())
+            r.databaseListDescriptionOverride = source.comment;
+    }
     return r;
 }
 
