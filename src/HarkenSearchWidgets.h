@@ -112,7 +112,7 @@ bool SliderRange(const char* label, float* minVal, float* maxVal,
 
 // Combo / ComboMulti (Task 11)
 
-enum class ComboVariant { Default, MultiSelect, Searchable };
+enum class ComboVariant { Default, MultiSelect, Searchable, Flat };
 
 // items[] must have at least itemCount entries. Returns true on selection change.
 bool Combo(const char* label, int* currentIndex,

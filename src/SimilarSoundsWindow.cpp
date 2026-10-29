@@ -125,7 +125,7 @@ static bool DrawSimilarSoundsActionRow(
         int preset = static_cast<int>(state.similarSoundsPreset);
         ImGui::SetNextItemWidth(comboWidth);
         if (aura::ui::Combo("##SimilarPreset", &preset, presetLabels,
-                IM_ARRAYSIZE(presetLabels))) {
+                IM_ARRAYSIZE(presetLabels), aura::ui::ComboVariant::Flat)) {
             state.similarSoundsPreset = static_cast<SimilarityPreset>(preset);
         }
         ImGui::SameLine();

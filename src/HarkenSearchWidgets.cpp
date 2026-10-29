@@ -593,8 +593,73 @@ bool SliderRange(const char* label, float* minVal, float* maxVal,
 
 // Combo / ComboMulti (Task 11)
 
+// Opt-in companion to ordinary action buttons. Keep native combo navigation and
+// selection; only its surface, spacing and arrow presentation are different.
+static bool FlatCombo(const char* label, int* currentIndex,
+                      const char* const items[], int itemCount) {
+    using namespace aura::ui::metrics;
+    const auto& theme = ThemeColors::current();
+    const auto palette = ActionButtonStyle::Make(
+        theme, ActionButtonStyle::CurrentSurface(), ButtonVariant::Secondary);
+    const ActionButtonStyle::Scope scope(palette);
+    const float padY = ImMax(0.0f, (kHeightMd - ImGui::GetFontSize()) * .5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kPadXMd, padY));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ActionButtonStyle::kRounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kGap8, kGap8));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, palette.fill);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, palette.hover);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, palette.active);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, palette.fill);
+    ImGui::PushStyleColor(ImGuiCol_Header, palette.active);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, palette.hover);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, palette.active);
+
+    const char* preview = (*currentIndex >= 0 && *currentIndex < itemCount)
+        ? items[*currentIndex] : "";
+    auto* draw = ImGui::GetWindowDrawList();
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + ImGui::CalcItemWidth(), min.y + ImGui::GetFrameHeight());
+    const ImU32 ink = ImGui::GetColorU32(ImGuiCol_Text);
+    const bool open = ImGui::BeginCombo(label ? label : "##combo", "", ImGuiComboFlags_NoArrowButton);
+    // Draw inside the native item's rectangle. Reserving the arrow width also
+    // keeps long translated labels from colliding with the chevron.
+    draw->PushClipRect(min, max, true);
+    const ImVec2 textMin(min.x + kPadXMd, min.y);
+    const ImVec2 textMax(max.x - kHeightMd, max.y);
+    ImGui::RenderTextClippedEx(draw, textMin, textMax, preview, nullptr, nullptr, ImVec2(0, .5f));
+    const ImVec2 center(max.x - kHeightMd * .5f, (min.y + max.y) * .5f);
+    const ImVec2 chevron[] = {ImVec2(center.x - 4, center.y - 2),
+                             ImVec2(center.x, center.y + 2), ImVec2(center.x + 4, center.y - 2)};
+    draw->AddPolyline(chevron, 3, ink, 0, 1.5f);
+    draw->PopClipRect();
+    bool changed = false;
+    if (open) {
+        for (int i = 0; i < itemCount; ++i) {
+            ImGui::PushID(i);
+            const bool selected = i == *currentIndex;
+            if (ImGui::Selectable(items[i], selected)) {
+                *currentIndex = i;
+                changed = true;
+            }
+            ImGui::PushStyleColor(ImGuiCol_Button, selected ? palette.active : palette.fill);
+            ActionButtonStyle::Record(items[i]);
+            ImGui::PopStyleColor();
+            if (selected) ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    DrawFocusRing();
+    // The existing diagnostic audit now covers the matching combo surface too.
+    ActionButtonStyle::Record(preview);
+    ImGui::PopStyleColor(7);
+    ImGui::PopStyleVar(3);
+    return changed;
+}
+
 bool Combo(const char* label, int* currentIndex,
-           const char* const items[], int itemCount, ComboVariant /*variant*/) {
+           const char* const items[], int itemCount, ComboVariant variant) {
+    if (variant == ComboVariant::Flat) return FlatCombo(label, currentIndex, items, itemCount);
     using namespace aura::ui::metrics;
     const ThemeColorScheme& th = ThemeColors::current();
     const ImVec4 whiteV{1,1,1,1};
