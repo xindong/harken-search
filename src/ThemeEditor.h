@@ -11,3 +11,12 @@ struct AppState;
 // transfers AppState ownership or retains transient caller references.
 void RenderThemeEditor(AppState& state);
 void ResetThemeEditorSession();
+
+#include "BuildConfig.h"
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+#include <string>
+struct ImVec4;
+// Isolated package only; exercises the same editor draft, undo and live preview.
+bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value);
+std::string ThemeScheduleEditorQaStatus();
+#endif

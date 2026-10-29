@@ -99,6 +99,7 @@
 #include "AITranscriptionResultStateAdapter.h"
 #include "VoiceAssetOrganizer.h"
 #include "Theme.h"              // 主题颜色系统
+#include "ThemeSchedule.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/TransportContrast.h"
@@ -34322,9 +34323,11 @@ void RenderUI(AppState& state) {
                     }
                 }
 
+                harken::theme_schedule::RenderSettings(state);
+
                 // Action row beneath the swatches
                 ImGui::Spacing();
-                const bool hasCustom = !state.settings.customThemeName.empty();
+                const bool hasCustom = !harken::theme_schedule::Ready() && !state.settings.customThemeName.empty();
                 const bool customActive = (state.settings.theme == AppTheme::Custom && ThemeColors::customized());
                 if (hasCustom) {
                     ImGui::TextDisabled(L(Main_CustomThemeListLabel));
@@ -34354,7 +34357,7 @@ void RenderUI(AppState& state) {
                     }
                 }
 #if AURA_BUILD_DIAGNOSTICS
-                if (ProductEdition::hasFeature("theme_editor")) {
+                if (!harken::theme_schedule::Ready() && ProductEdition::hasFeature("theme_editor")) {
                     if (hasCustom) ImGui::SameLine(0.0f, 16.0f);
                     if (aura::ui::SmallActionButton(L(Set_EditTheme))) {
                         state.showThemeEditor = true;
@@ -34363,7 +34366,7 @@ void RenderUI(AppState& state) {
 #endif
 
                 // Inline custom color editor — only meaningful when Custom is active
-                if (state.settings.theme == AppTheme::Custom) {
+                if (!harken::theme_schedule::Ready() && state.settings.theme == AppTheme::Custom) {
                     ImGui::Spacing();
                     ImGui::Indent(12.0f);
                     ImGui::TextDisabled(L(Main_LightCustomColorsHint));

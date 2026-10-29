@@ -2984,6 +2984,7 @@ struct AppState {
 
     // 高级主题编辑器
     bool showThemeEditor = false;
+    int themeScheduleEditorPeriod = -1; // -1: legacy editor; 0: day; 1: night
     int themeEditorPresetIdx = 0;
 
     // 元数据字段管理

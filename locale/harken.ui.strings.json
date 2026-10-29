@@ -15746,6 +15746,55 @@
     {
       "id": "Dock_UxDropBottom", "type": "ui",
       "zh": "松手放到下方 · Esc 取消", "en": "Release to dock below · Esc cancels", "ja": "離すと下に配置 · Esc でキャンセル"
-    }
+    },
+    {
+      "id": "ThemeSchedule_Title", "type": "ui",
+      "zh": "日夜自动配色", "en": "Automatic day and night palettes", "ja": "昼夜の自動配色"
+    },
+    {
+      "id": "ThemeSchedule_Hint", "type": "ui",
+      "zh": "按本机时间切换。手选主题后，会立即恢复当前时段的配色。",
+      "en": "Uses local time. Manual theme choices immediately return to the current period's palette.",
+      "ja": "本機の時刻で切り替えます。手動で選んでも現在の時間帯の配色に戻ります。"
+    },
+    {"id": "ThemeSchedule_Day", "type": "ui", "zh": "白天 · 浅色", "en": "Day · Light", "ja": "昼 · ライト"},
+    {"id": "ThemeSchedule_Night", "type": "ui", "zh": "夜间 · 暗色", "en": "Night · Dark", "ja": "夜 · ダーク"},
+    {"id": "ThemeSchedule_EditDay", "type": "ui", "zh": "编辑白天配色", "en": "Edit day palette", "ja": "昼の配色を編集"},
+    {"id": "ThemeSchedule_EditNight", "type": "ui", "zh": "编辑夜间配色", "en": "Edit night palette", "ja": "夜の配色を編集"},
+    {"id": "ThemeSchedule_Save", "type": "ui", "zh": "保存配色", "en": "Save palette", "ja": "配色を保存"},
+    {"id": "ThemeSchedule_Cancel", "type": "ui", "zh": "取消修改", "en": "Cancel changes", "ja": "変更を取り消す"},
+    {
+      "id": "ThemeSchedule_SaveHint", "type": "ui",
+      "zh": "只保存正在编辑的这一套；关闭后恢复当前时段的配色。",
+      "en": "Saves only this palette. Closing restores the current period's palette.",
+      "ja": "編集中の配色だけ保存します。閉じると現在の時間帯の配色に戻ります。"
+    },
+    {"id": "ThemeSchedule_DayEditorHint", "type": "ui", "zh": "白天 · 08:00–16:00 · 浅色配色", "en": "Day · 08:00–16:00 · Light palette", "ja": "昼 · 08:00–16:00 · ライト配色"},
+    {"id": "ThemeSchedule_NightEditorHint", "type": "ui", "zh": "夜间 · 16:00–08:00 · 暗色配色", "en": "Night · 16:00–08:00 · Dark palette", "ja": "夜 · 16:00–08:00 · ダーク配色"},
+    {
+      "id": "ThemeSchedule_DayFallback", "type": "ui",
+      "zh": "白天配色未能读取，暂用玫瑰雪松。重新编辑并保存可修复。",
+      "en": "Day palette could not be read; using Rose Cedar. Edit and save it to repair.",
+      "ja": "昼の配色を読めないため Rose Cedar を使用中です。再編集して保存してください。"
+    },
+    {
+      "id": "ThemeSchedule_NightFallback", "type": "ui",
+      "zh": "夜间配色未能读取，暂用玄夜。重新编辑并保存可修复。",
+      "en": "Night palette could not be read; using Dark. Edit and save it to repair.",
+      "ja": "夜の配色を読めないため Dark を使用中です。再編集して保存してください。"
+    },
+    {
+      "id": "ThemeSchedule_RequireLight", "type": "ui",
+      "zh": "白天请保持主窗口、列表、对话框和波形背景为浅色，且不透明度至少为 90%。",
+      "en": "Keep day window, list, dialog and waveform backgrounds light, with at least 90% opacity.",
+      "ja": "昼のウィンドウ・一覧・ダイアログ・波形背景は明るく、不透明度 90% 以上にしてください。"
+    },
+    {
+      "id": "ThemeSchedule_RequireDark", "type": "ui",
+      "zh": "夜间请保持主窗口、列表、对话框和波形背景为暗色，且不透明度至少为 90%。",
+      "en": "Keep night window, list, dialog and waveform backgrounds dark, with at least 90% opacity.",
+      "ja": "夜のウィンドウ・一覧・ダイアログ・波形背景は暗く、不透明度 90% 以上にしてください。"
+    },
+    {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"}
   ]
 }
