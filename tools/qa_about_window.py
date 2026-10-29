@@ -109,16 +109,31 @@ def run(args):
             if not library.is_file():
                 raise FileNotFoundError(library)
             driver.command({'cmd': 'switch_db', 'path': str(library)})
-            time.sleep(2.0)
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                state = driver.command({'cmd': 'get_state'})
+                if (state.get('db_path') and
+                        Path(state['db_path']).resolve() == library and
+                        not state.get('db_switch_in_progress') and
+                        state.get('main_ui_ready')):
+                    break
+                time.sleep(0.5)
+            else:
+                raise TimeoutError('QA library did not finish opening')
         results['open'] = driver.command({
             'cmd': 'about_window',
             'action': 'legal' if args.page == 'legal' else 'open',
         })
-        time.sleep(1.2)
         # With multi-viewport enabled the modal popup is its own OS window;
         # capture the new window (the one that is not the main frame).
-        wins = enum_process_windows(ctypes.windll.user32, process.pid)
-        popups = [w for w in wins if w[0] != hwnd and w[3] > 500 and w[4] > 450]
+        deadline = time.monotonic() + 30
+        popups = []
+        while time.monotonic() < deadline:
+            wins = enum_process_windows(user32, process.pid)
+            popups = [w for w in wins if w[0] != hwnd and w[3] > 500 and w[4] > 450]
+            if popups:
+                break
+            time.sleep(0.2)
         if not popups:
             raise RuntimeError(f'about popup window did not appear: {wins}')
         popup = popups[0]
@@ -136,12 +151,19 @@ def run(args):
         print(json.dumps(results['screenshot'], ensure_ascii=False))
         return 0
     finally:
-        if process.poll() is None and hwnd:
-            user32.PostMessageW(hwnd, 0x0010, 0, 0)
+        if process.poll() is None:
+            # Startup or identity failures can happen before hwnd is assigned.
+            # Close only the process launched by this invocation.
+            if hwnd is None:
+                own_windows = enum_process_windows(user32, process.pid)
+                hwnd = own_windows[0][0] if own_windows else None
+            if hwnd:
+                user32.PostMessageW(hwnd, 0x0010, 0, 0)
             try:
                 process.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 process.terminate()
+                process.wait(timeout=10)
 
 
 if __name__ == '__main__':

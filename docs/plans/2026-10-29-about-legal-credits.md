@@ -12,7 +12,7 @@
 
 ### 1. 关于窗口与导航
 
-src/main.cpp 在既有“帮助 → 关于”弹窗内维护当前页和当前法律文档。窗口按可用桌面区域限制为最大 980 × 780；页签和底部按钮切换两页，右上角与 Esc 均可关闭。头部用已随包的官方图形标志与 harken-search-menu-wordmark 图片；根据主题背景选择黑白文字图。版本号靠右，与图标行垂直居中。字号、头像、选项按钮和留白均随这张卡放大。
+src/main.cpp 在既有“帮助 → 关于”弹窗内维护当前页和当前法律文档。窗口按可用桌面区域限制为最大 980 × 780；页签和底部按钮切换两页，右上角与 Esc 均可关闭。右上角关闭 X 使用应用现有的共用图标按钮及主题样式，不单独画文字按钮。头部用已随包的官方图形标志与 harken-search-menu-wordmark 图片；根据主题背景选择黑白文字图。版本号靠右，与图标行垂直居中。字号、头像、选项按钮和留白均随这张卡放大。
 
 ### 2. 关于内容与链接
 
@@ -42,6 +42,6 @@ locale/harken.ui.strings.json 提供三种语言的页签、按钮、标题、�
 
 - tests/test_about_window_legal_credits.py：10 项针对性检查，覆盖官方资源、双页、法律文件映射、文案和链接。
 - tools/generate_localization.py 的 generate 与 check 均通过；HarkenSearch Debug 目标构建通过。
-- 本卡实际测试包：D:/Harken-QA/REQ-20261029-ABOUT-LEGAL-CREDITS/preview-v3/package/HarkenSearch.exe。包内含法律文档和品牌资源。
-- 同一测试包的实际运行截图：preview-v3/runtime-about-final/about-window.png 与 preview-v3/runtime-legal-final/about-window.png。截图分别显示关于页与可滚动的协议正文页。
+- 本卡当前实际测试包：D:/Harken-QA/REQ-20261029-ABOUT-LEGAL-CREDITS/preview-v4/package/HarkenSearch.exe。包内含法律文档和品牌资源。v4 针对用户指出的关闭 X，改用现有共用图标按钮。
+- 同一 v4 测试包的实际运行截图：preview-v4/runtime-about-fixed/about-window.png 与 preview-v4/runtime-legal-fixed2/about-window.png。截图分别显示关于页与可滚动的协议正文页，两页共用同一个关闭 X。
 - 当前仍是本卡分支；等待用户对实际运行界面的验收，不在此阶段合入 qa/current。

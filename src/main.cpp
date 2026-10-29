@@ -30641,10 +30641,14 @@ void RenderUI(AppState& state) {
             const auto brandIcon = aura::ui::LoadPackagedAsset("assets/icons/brand/harken@2x.png");
             const auto wordmark = aura::ui::LoadPackagedAsset(wordmarkAsset);
             const ImVec2 header = ImGui::GetCursorScreenPos();
-            ImGui::Dummy(ImVec2(contentW - 36.0f, 58.0f));
-            ImGui::SameLine(0.0f, 12.0f);
-            if (ImGui::Button("×##AboutClose", ImVec2(24.0f, 24.0f)))
+            ImGui::Dummy(ImVec2(contentW, 58.0f));
+            const ImVec2 afterHeader = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ImVec2(header.x + contentW - 32.0f, header.y + 19.0f));
+            ImGui::PushID("AboutClose");
+            if (aura::ui::IconButton(ICON_LC_X, L(Close), aura::ui::ButtonSize::Sm))
                 ImGui::CloseCurrentPopup();
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(afterHeader);
             ImDrawList* draw = ImGui::GetWindowDrawList();
             if (brandIcon.glId != 0)
                 draw->AddImage((ImTextureID)(intptr_t)brandIcon.glId,
