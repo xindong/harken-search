@@ -5037,6 +5037,12 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"new_db_dialog_open\":" + std::string(newDbVisible ? "true" : "false") + ",";
         result += "\"new_db_modal_blocks_background\":" +
             std::string(newDbVisible && ImGui::GetTopMostPopupModal() == newDbWindow ? "true" : "false") + ",";
+        if (newDbVisible) {
+            result += "\"new_db_dialog_bounds\":[" + std::to_string(newDbWindow->Pos.x) + "," +
+                std::to_string(newDbWindow->Pos.y) + "," +
+                std::to_string(newDbWindow->Pos.x + newDbWindow->Size.x) + "," +
+                std::to_string(newDbWindow->Pos.y + newDbWindow->Size.y) + "],";
+        }
         result += "\"startup_needs_database_setup\":" + std::string(state.startupNeedsDatabaseSetup ? "true" : "false") + ",";
         result += "\"default_db_directory\":\"" + jsonEscape(GetDefaultDbDirUtf8()) + "\",";
         result += "\"db_switch_error\":\"" + jsonEscape(state.dbSwitchError) + "\",";

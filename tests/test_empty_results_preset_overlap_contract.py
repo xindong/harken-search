@@ -47,13 +47,11 @@ def test_database_setup_guidance_stays_outside_the_result_layer() -> None:
     assert "Empty_NoFiles" not in block
 
 
-def test_database_setup_surface_precedes_the_file_table() -> None:
+def test_database_setup_guidance_is_not_duplicated_behind_the_modal() -> None:
     block = _file_table_surface_block()
-    table_start = block.index('BeginTransientScrollbarTable("FileTableV6"')
 
     assert "state.startupNeedsDatabaseSetup && !state.database.isOpen()" in block
-    assert "RenderNoDatabaseSetupEmptyState(state)" in block[:table_start]
-    assert "RenderNoDatabaseSetupEmptyState(state)" not in block[table_start:]
+    assert "RenderNoDatabaseSetupEmptyState(state)" not in block
 
 
 def test_no_dedicated_zero_result_surface_is_reserved() -> None:
@@ -78,7 +76,7 @@ if __name__ == "__main__":
     test_zero_results_do_not_render_a_search_toolbar_message()
     test_zero_results_do_not_render_a_toolbar_glass_tag()
     test_database_setup_guidance_stays_outside_the_result_layer()
-    test_database_setup_surface_precedes_the_file_table()
+    test_database_setup_guidance_is_not_duplicated_behind_the_modal()
     test_no_dedicated_zero_result_surface_is_reserved()
     test_zero_result_list_still_keeps_the_player_footer_below()
     print("PASS")

@@ -28797,8 +28797,8 @@ static const char* StartupNoDatabaseSetupBody(const AppState& state) {
             : "Your previous database is currently unavailable. Open an existing database or create a new one before importing and searching.";
     }
     return state.settings.language == AppLanguage::Chinese
-        ? u8"这是一次安全的首启状态。请先新建一个数据库，或打开已有数据库，然后再开始导入、搜索和试听。"
-        : "This is a safe first-run state. Create a database or open an existing one before importing, searching, and auditioning.";
+        ? u8"请先新建或打开音效库，完成后才能开始导入、搜索和试听。"
+        : "Create or open a sound library before importing, searching, and auditioning.";
 }
 
 static const char* StartupNoDatabaseSetupHint(const AppState& state) {
@@ -28807,186 +28807,18 @@ static const char* StartupNoDatabaseSetupHint(const AppState& state) {
         : "Library search, reconcile, and background warmup start only after a database is created or opened.";
 }
 
-static void RenderNoDatabaseSetupEmptyState(AppState& state) {
-    EmptyStateVisualAudit::Begin(static_cast<int>(state.settings.theme));
-    const ThemeColorScheme& tcs = ThemeColors::current();
-    ImGuiStyle& style = ImGui::GetStyle();
-    auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
-        return ImVec4(
-            a.x + (b.x - a.x) * t,
-            a.y + (b.y - a.y) * t,
-            a.z + (b.z - a.z) * t,
-            a.w + (b.w - a.w) * t);
-    };
-    auto withAlpha = [](const ImVec4& color, float alpha) -> ImVec4 {
-        return ImVec4(color.x, color.y, color.z, alpha);
-    };
-    const float panelWidth =
-        std::min(ImGui::GetContentRegionAvail().x, 560.0f);
-    const float horizontalPad =
-        style.WindowPadding.x + style.FramePadding.x * 1.25f;
-    const float verticalPad =
-        style.WindowPadding.y + style.FramePadding.y * 1.2f;
-    const float contentWidth =
-        (std::max)(panelWidth - horizontalPad * 2.0f, 1.0f);
-    const float indent =
-        (ImGui::GetContentRegionAvail().x - panelWidth) * 0.5f;
-
-    const auto palette = EmptyStatePalette::Make(tcs,
-        ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(ImGuiCol_ChildBg)));
-    auto buttonSurfaces = [&](ImVec4 normal,ImVec4 hover,ImVec4 active) {
-        const ImVec4 bg = (ImGui::IsItemActive() && ImGui::IsItemHovered()) ? active :
-            ImGui::IsItemHovered() ? hover : normal;
-        auto surfaces=palette.surfaces;
-        for(auto& surface:surfaces) surface=TransportContrast::Over(TransportContrast::Quantize(bg),surface);
-        return surfaces;
-    };
-    const auto& panelBg = palette.panelBg;
-    const auto& panelGlow = palette.panelGlow;
-    const auto& panelBorder = palette.panelBorder;
-    const auto& panelAccentLine = palette.panelAccentLine;
-    const auto& titleColor = palette.titleColor;
-    const auto& bodyColor = palette.bodyColor;
-    const auto& hintColor = palette.hintColor;
-    const auto& separatorColor = palette.separatorColor;
-    const auto& primaryButtonBg = palette.primaryButtonBg;
-    const auto& primaryButtonHover = palette.primaryButtonHover;
-    const auto& primaryButtonActive = palette.primaryButtonActive;
-    const auto& primaryButtonText = palette.primaryButtonText;
-    const auto& secondaryButtonBg = palette.secondaryButtonBg;
-    const auto& secondaryButtonHover = palette.secondaryButtonHover;
-    const auto& secondaryButtonActive = palette.secondaryButtonActive;
-    const auto& secondaryButtonText = palette.secondaryButtonText;
-
-    if (indent > 0.0f) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
-    }
-
+static void RenderDatabaseSetupSeparator() {
+    const float contentWidth = ImGui::GetContentRegionAvail().x;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImDrawListSplitter splitter;
-    splitter.Split(drawList, 2);
-    splitter.SetCurrentChannel(drawList, 1);
-
-    const float contentStartX = ImGui::GetCursorPosX() + horizontalPad;
-    const bool stackButtons =
-        contentWidth < (170.0f * 2.0f + style.ItemSpacing.x + style.FramePadding.x * 2.0f);
-    const float buttonWidth = stackButtons
-        ? contentWidth
-        : (contentWidth - style.ItemSpacing.x) * 0.5f;
-    const ImVec2 actionButtonSize(buttonWidth, 34.0f);
-
-    ImFont* emphasisFont = GetUIFontEmphasis();
-    ImGui::BeginGroup();
-    ImGui::SetCursorPosX(contentStartX);
-    if (emphasisFont) {
-        ImGui::PushFont(emphasisFont);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, titleColor);
-    ImGui::PushTextWrapPos(contentStartX + contentWidth);
-    ImGui::TextWrapped("%s", StartupNoDatabaseSetupTitle(state));
-    EmptyStateVisualAudit::Record("title",palette.surfaces);
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    if (emphasisFont) {
-        ImGui::PopFont();
-    }
-
-    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y + style.FramePadding.y * 0.35f));
-    ImGui::SetCursorPosX(contentStartX);
-    ImGui::PushStyleColor(ImGuiCol_Text, bodyColor);
-    ImGui::PushTextWrapPos(contentStartX + contentWidth);
-    ImGui::TextWrapped("%s", StartupNoDatabaseSetupBody(state));
-    EmptyStateVisualAudit::Record("body",palette.surfaces);
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-
-    ImGui::Dummy(ImVec2(0.0f, style.FramePadding.y + style.ItemSpacing.y * 0.5f));
-    ImGui::SetCursorPosX(contentStartX);
-    ImGui::PushStyleColor(ImGuiCol_Button, primaryButtonBg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primaryButtonHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primaryButtonActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, primaryButtonText);
-    if (ImGui::Button(L(File_NewDB), actionButtonSize)) {
-        state.showNewDbDialog = true;
-    }
-    EmptyStateVisualAudit::Record("new",buttonSurfaces(primaryButtonBg,primaryButtonHover,primaryButtonActive));
-    ImGui::PopStyleColor(4);
-
-    if (!stackButtons) {
-        ImGui::SameLine();
-    } else {
-        ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y));
-        ImGui::SetCursorPosX(contentStartX);
-    }
-
-    ImGui::PushStyleColor(ImGuiCol_Button, secondaryButtonBg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, secondaryButtonHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, secondaryButtonActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, secondaryButtonText);
-    if (ImGui::Button(L(File_OpenDB), actionButtonSize)) {
-        std::string openPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
-            g_hwnd,
-            GetDefaultDbDirWide());
-        if (!openPath.empty()) {
-            SwitchDatabase(state, openPath);
-        }
-    }
-    EmptyStateVisualAudit::Record("open",buttonSurfaces(secondaryButtonBg,secondaryButtonHover,secondaryButtonActive));
-    ImGui::PopStyleColor(4);
-
-    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y + style.FramePadding.y * 0.55f));
-    ImGui::SetCursorPosX(contentStartX);
+    const ImVec4 separatorColor = ImGui::GetStyleColorVec4(ImGuiCol_Separator);
     ImGui::PushStyleColor(ImGuiCol_Separator, separatorColor);
-    // Separator() spans the host window, not this centered card.
     const ImVec2 separatorStart = ImGui::GetCursorScreenPos();
     drawList->AddRectFilled(
         separatorStart,
         ImVec2(separatorStart.x + contentWidth, separatorStart.y + 1.0f),
         ImGui::GetColorU32(ImGuiCol_Separator));
-    // Match Separator()'s zero-height layout reservation.
     ImGui::Dummy(ImVec2(contentWidth, 0.0f));
     ImGui::PopStyleColor();
-
-    ImGui::Dummy(ImVec2(0.0f, style.FramePadding.y * 0.35f));
-    ImGui::SetCursorPosX(contentStartX);
-    ImGui::PushStyleColor(ImGuiCol_Text, hintColor);
-    ImGui::PushTextWrapPos(contentStartX + contentWidth);
-    ImGui::TextWrapped("%s", StartupNoDatabaseSetupHint(state));
-    EmptyStateVisualAudit::Record("hint",palette.surfaces);
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    ImGui::EndGroup();
-
-    const ImVec2 groupMin = ImGui::GetItemRectMin();
-    const ImVec2 groupMax = ImGui::GetItemRectMax();
-    const ImVec2 panelMin(groupMin.x - horizontalPad, groupMin.y - verticalPad);
-    const ImVec2 panelMax(groupMax.x + horizontalPad, groupMax.y + verticalPad);
-    EmptyStateVisualAudit::End(panelMin,panelMax);
-
-    splitter.SetCurrentChannel(drawList, 0);
-    drawList->AddRectFilled(
-        panelMin,
-        panelMax,
-        ImGui::GetColorU32(panelBg),
-        style.ChildRounding);
-    drawList->AddRectFilledMultiColor(
-        panelMin,
-        panelMax,
-        ImGui::GetColorU32(panelGlow),
-        ImGui::GetColorU32(withAlpha(panelGlow, 0.12f)),
-        ImGui::GetColorU32(withAlpha(mixColor(panelBg, tcs.mainWindowBG, 0.10f), 0.18f)),
-        ImGui::GetColorU32(withAlpha(mixColor(panelBg, tcs.mainWindowBG, 0.16f), 0.24f)));
-    drawList->AddRect(
-        panelMin,
-        panelMax,
-        ImGui::GetColorU32(panelBorder),
-        style.ChildRounding);
-    drawList->AddLine(
-        ImVec2(panelMin.x, panelMin.y + 0.5f),
-        ImVec2(panelMax.x, panelMin.y + 0.5f),
-        ImGui::GetColorU32(panelAccentLine),
-        1.0f);
-    splitter.Merge(drawList);
 }
 
 // Render the asynchronous library workspace.
@@ -33192,9 +33024,35 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewDB));
         state.showNewDbDialog = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
     ThemeDialogStyleScope newDbDialogSurfaceStyle(state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized());
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewDB), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    EmptyStatePalette::Colors setupPalette{};
+    if (requireDatabaseSetup) {
+        setupPalette = EmptyStatePalette::Make(ThemeColors::current(),
+            ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+    }
+    setupPalette.panelBg.w = 1.0f;
+    std::array<ImVec4, 4> setupSurfaces;
+    setupSurfaces.fill(setupPalette.panelBg);
+    ImGuiWindowFlags newDbFlags = ImGuiWindowFlags_AlwaysAutoResize;
+    if (requireDatabaseSetup) {
+        const auto* viewport = ImGui::GetMainViewport();
+        const float topInset = (std::min)(106.0f, viewport->WorkSize.y * 0.10f);
+        const float width = (std::min)(560.0f, viewport->WorkSize.x - 32.0f);
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+            viewport->WorkPos.y + topInset), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0),
+            ImVec2(width, viewport->WorkSize.y - topInset - 16.0f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, setupPalette.panelBg);
+        ImGui::PushStyleColor(ImGuiCol_Border, setupPalette.panelBorder);
+        ImGui::PushStyleColor(ImGuiCol_Separator, setupPalette.separatorColor);
+        // BeginPopupModal captures this color for its own background scrim.
+        ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0, 0, 0, 0.64f));
+        newDbFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
+    }
+    if (BeginTransientScrollbarPopupModal(L(Dlg_NewDB), nullptr, newDbFlags)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         static char newDbNameBuf[128] = "Harken Search";
         static std::string newDbError;
@@ -33223,7 +33081,18 @@ void RenderUI(AppState& state) {
         if (!newDbPending && !requireDatabaseSetup) EscClosePopup();
         ImGui::BeginDisabled(newDbPending);
         if (requireDatabaseSetup) {
-            ImGui::TextWrapped("%s", L(NewDB_RequiredSetup));
+            EmptyStateVisualAudit::Begin(static_cast<int>(state.settings.theme));
+            ImFont* emphasisFont = GetUIFontEmphasis();
+            if (emphasisFont) ImGui::PushFont(emphasisFont);
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.titleColor);
+            ImGui::TextWrapped("%s", StartupNoDatabaseSetupTitle(state));
+            EmptyStateVisualAudit::Record("title", setupSurfaces);
+            ImGui::PopStyleColor();
+            if (emphasisFont) ImGui::PopFont();
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.bodyColor);
+            ImGui::TextWrapped("%s", StartupNoDatabaseSetupBody(state));
+            EmptyStateVisualAudit::Record("body", setupSurfaces);
+            ImGui::PopStyleColor();
             ImGui::Spacing();
         }
 
@@ -33231,7 +33100,7 @@ void RenderUI(AppState& state) {
             newDbDir = GetDefaultDbDirUtf8();
         }
         std::string dbDir = newDbDir;
-        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
+        ImGui::TextColored(requireDatabaseSetup ? setupPalette.bodyColor : ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
         ImGui::TextWrapped("%s", dbDir.c_str());
         if (ImGui::Button(L(Main_ChooseStorageLocation), ImVec2(140, 0))) {
             std::string folder = OpenFolderDialog(g_hwnd);
@@ -33260,7 +33129,13 @@ void RenderUI(AppState& state) {
             if (ext != ".db") fullName += ".db";
         }
         std::string fullPath = BuildDatabasePackageMainPathUtf8(dbDir + "\\" + fullName);
-        ImGui::TextDisabled("%s %s", L(Meta_FullPath), fullPath.c_str());
+        if (requireDatabaseSetup) {
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.hintColor);
+            ImGui::TextWrapped("%s %s", L(Meta_FullPath), fullPath.c_str());
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextDisabled("%s %s", L(Meta_FullPath), fullPath.c_str());
+        }
 
         // 检查是否已存在
         const std::string packageRoot = GetDatabasePackageRootUtf8(fullPath);
@@ -33281,17 +33156,32 @@ void RenderUI(AppState& state) {
         }
 
         ImGui::Spacing();
-        ImGui::Separator();
+        if (requireDatabaseSetup) RenderDatabaseSetupSeparator();
+        else ImGui::Separator();
         ImGui::Spacing();
 
         bool nameValid = !nameStr.empty() && nameStr.find_first_of("\\/:*?\"<>|") == std::string::npos;
         bool canCreate = nameValid && (!exists || confirmOverwrite);
 
         ImGui::BeginDisabled(!canCreate);
+        if (requireDatabaseSetup) {
+            ImGui::PushStyleColor(ImGuiCol_Button, setupPalette.primaryButtonBg);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, setupPalette.primaryButtonHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, setupPalette.primaryButtonActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.primaryButtonText);
+        }
         const float setupButtonWidth = requireDatabaseSetup
-            ? (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f
+            ? (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f - 72.0f) * 0.5f
             : 120.0f;
         bool createClicked = ImGui::Button(exists ? L(NewDB_OverwriteCreate) : L(Create), ImVec2(setupButtonWidth, 32));
+        if (requireDatabaseSetup) {
+            auto buttonSurfaces = setupSurfaces;
+            const ImVec4 fill = ImGui::GetStyleColorVec4(ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
+                ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+            for (auto& surface : buttonSurfaces) surface = TransportContrast::Over(fill, surface);
+            EmptyStateVisualAudit::Record("new", buttonSurfaces);
+            ImGui::PopStyleColor(4);
+        }
 #ifdef ARIS_PREVIEW_ISOLATION
         const bool qaCreateClicked = std::exchange(state.qaCreateNewDbNow, false);
         createClicked = createClicked || (qaCreateClicked && canCreate);
@@ -33328,7 +33218,17 @@ void RenderUI(AppState& state) {
 
         ImGui::SameLine();
         if (requireDatabaseSetup) {
+            ImGui::PushStyleColor(ImGuiCol_Button, setupPalette.secondaryButtonBg);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, setupPalette.secondaryButtonHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, setupPalette.secondaryButtonActive);
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.secondaryButtonText);
             bool openExistingClicked = ImGui::Button(L(File_OpenDB), ImVec2(setupButtonWidth, 32));
+            auto buttonSurfaces = setupSurfaces;
+            const ImVec4 fill = ImGui::GetStyleColorVec4(ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
+                ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+            for (auto& surface : buttonSurfaces) surface = TransportContrast::Over(fill, surface);
+            EmptyStateVisualAudit::Record("open", buttonSurfaces);
+            ImGui::PopStyleColor(4);
             std::string openPath;
 #ifdef ARIS_PREVIEW_ISOLATION
             if (!state.qaOpenExistingDbPath.empty()) {
@@ -33347,7 +33247,7 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(File_Exit), ImVec2(setupButtonWidth, 32))) {
+            if (ImGui::Button(L(File_Exit), ImVec2(72.0f, 32))) {
                 RequestHarkenSearchExit(g_hwnd, L"first-library-setup-exit");
             }
         } else if (ImGui::Button(L(Cancel), ImVec2(120, 32))) {
@@ -33356,15 +33256,27 @@ void RenderUI(AppState& state) {
         }
 
         if (!nameValid && !nameStr.empty()) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1, 0.5f, 0.2f, 1), L(Main_IllegalCharsMsg));
+            if (!requireDatabaseSetup) ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.5f, 0.2f, 1));
+            ImGui::TextWrapped("%s", L(Main_IllegalCharsMsg));
+            ImGui::PopStyleColor();
         }
         ImGui::EndDisabled();
         if (newDbPending) ImGui::TextUnformatted(requireDatabaseSetup ? L(NewDB_SetupPending) : L(Db_Creating));
+        if (requireDatabaseSetup) {
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.hintColor);
+            ImGui::TextWrapped("%s", StartupNoDatabaseSetupHint(state));
+            EmptyStateVisualAudit::Record("hint", setupSurfaces);
+            ImGui::PopStyleColor();
+            const ImVec2 pos = ImGui::GetWindowPos();
+            const ImVec2 size = ImGui::GetWindowSize();
+            EmptyStateVisualAudit::End(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+        }
 
         }
         ImGui::EndPopup();
     }
+    if (requireDatabaseSetup) ImGui::PopStyleColor(4);
     newDbDialogSurfaceStyle.reset();
 
     // DAW Target Configuration Dialog
@@ -42683,9 +42595,7 @@ void RenderUI(AppState& state) {
             tableFlags &= ~ImGuiTableFlags_BordersOuter;
         constexpr float kResultsTableOuterBorder = kResultsPerimeterWidth;
 
-        if (needsDbSetup) {
-            RenderNoDatabaseSetupEmptyState(state);
-        } else {
+        if (!needsDbSetup) {
         // Results list background should follow the active theme tokens, not a fixed AppTheme branch.
         {
             ImDrawList* bg = ImGui::GetWindowDrawList();

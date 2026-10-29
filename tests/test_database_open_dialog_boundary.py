@@ -47,7 +47,7 @@ assert "OpenDatabaseFileDialogWithInitialDirectoryUtf8" in PORTABLE
 legacy_call = "Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(g_hwnd)"
 initial_call = "Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8("
 assert MAIN.count(legacy_call) == 1
-assert MAIN.count(initial_call) == 5  # Includes the required first-library setup.
+assert MAIN.count(initial_call) == 4  # Setup owns the single first-library entry.
 assert MAIN.count("GetDefaultDbDirWide()") >= 4
 assert "static std::string OpenDatabaseFileDialogUtf8(HWND owner)" not in MAIN
 

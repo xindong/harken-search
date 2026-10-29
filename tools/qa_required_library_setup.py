@@ -141,10 +141,29 @@ def run(args):
         state = wait_state(driver, lambda s: s['new_db_dialog_open'] and
             s['new_db_modal_blocks_background'], 'No-library startup must require setup', timeout=8)
         checks.append({'case': 'no-library-blocks-main-ui', 'state': state})
+        layouts = []
         for theme, _ in THEMES:
             driver.command({'cmd': 'set_theme', 'theme': theme})
             time.sleep(.35)
+            first = driver.command({'cmd': 'empty_state_audit'})
+            deadline = time.monotonic() + 8
+            while True:
+                audit = driver.command({'cmd': 'empty_state_audit'})
+                if audit['theme'] == theme and audit['frame'] > first['current_frame'] + 2:
+                    break
+                assert time.monotonic() < deadline, 'No current setup layout observation'
+                time.sleep(.08)
+            state = driver.command({'cmd': 'get_state'})
+            bounds = state['new_db_dialog_bounds']
+            assert all(abs(a - b) < 1 for a, b in zip(bounds, audit['panel'])), (bounds, audit)
+            assert {item['id'] for item in audit['checks']} == {'title', 'body', 'hint', 'new', 'open'}, audit
+            for item in audit['checks']:
+                left, top, right, bottom = item['bounds']
+                assert bounds[0] <= left < right <= bounds[2], item
+                assert bounds[1] <= top < bottom <= bounds[3], item
+            layouts.append({'theme': theme, 'modal': bounds, 'audit': audit})
             capture(driver, out / f'setup-theme-{theme}.png')
+        checks.append({'case': 'single-setup-window-in-five-themes', 'layouts': layouts})
         driver.command({'cmd': 'info_edit_input', 'action': 'escape_down'})
         time.sleep(.15)
         driver.command({'cmd': 'info_edit_input', 'action': 'escape_up'})
@@ -173,6 +192,21 @@ def run(args):
         assert state['total_count'] == 0 and not state['startup_needs_database_setup'], state
         checks.append({'case': 'create-empty-library-unlocks', 'state': state})
         capture(driver, out / 'created-empty-library.png')
+        from PIL import Image, ImageStat
+        dimming = []
+        for theme, _ in THEMES:
+            driver.command({'cmd': 'set_theme', 'theme': theme})
+            time.sleep(.35)
+            normal_path = out / f'unblocked-theme-{theme}.png'
+            capture(driver, normal_path)
+            # The same left filter region is behind the modal in every theme.
+            region = (24, 140, 150, 240)
+            with Image.open(out / f'setup-theme-{theme}.png') as modal, Image.open(normal_path) as normal:
+                dim = ImageStat.Stat(modal.crop(region).convert('L')).mean[0]
+                bright = ImageStat.Stat(normal.crop(region).convert('L')).mean[0]
+            assert dim < bright * .75, f'Theme {theme}: background did not dim ({dim} / {bright})'
+            dimming.append({'theme': theme, 'modal_luminance': dim, 'normal_luminance': bright})
+        checks.append({'case': 'background-dims-and-restores-in-five-themes', 'themes': dimming})
         stop()
 
         identity = start()
