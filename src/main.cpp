@@ -10715,6 +10715,11 @@ static bool SwitchDatabase(AppState& state,
     state.batchFeatureCancelRequested.store(true);
     state.pendingPostScanSimilarityIndex.store(false, std::memory_order_release);
     state.batchFeatureCompletionNotice.store(false);
+    state.batchFeatureFailedCount.store(0);
+    state.batchFeatureUnsupportedCount.store(0);
+    state.batchFeatureDecodeFailedCount.store(0);
+    state.batchFeatureNoSamplesCount.store(0);
+    state.batchFeatureWriteFailedCount.store(0);
     state.showPostScanSimilarityIndexNotice = false;
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
 
@@ -10828,6 +10833,7 @@ static bool StartGlobalMissingRecordsCleanup(AppState& state) {
         } catch (...) {
             hadException = true;
             if (state.isScanTaskCurrent(scanGeneration)) {
+                state.addScanError("Database cleanup failed before completion.");
                 state.scanErrorCount = state.scanErrorCount.load(std::memory_order_relaxed) + 1;
                 state.setScanFileKey(LStr::SCAN_CleanupAborted);
             }
@@ -28981,6 +28987,11 @@ void StartBatchFeatureExtraction(AppState& state) {
     aura::ui::InvalidateSimilarSoundsWindow(state);
     state.batchFeatureCancelRequested.store(false);
     state.batchFeatureCompletionNotice.store(false);
+    state.batchFeatureFailedCount.store(0);
+    state.batchFeatureUnsupportedCount.store(0);
+    state.batchFeatureDecodeFailedCount.store(0);
+    state.batchFeatureNoSamplesCount.store(0);
+    state.batchFeatureWriteFailedCount.store(0);
     state.batchFeatureExtracting.store(true);
     state.batchFeatureProgress.store(0);
     const int pending = state.database.countFilesWithoutFeatures(0);
@@ -29008,7 +29019,24 @@ void StartBatchFeatureExtraction(AppState& state) {
                             path, [&state] {
                                 return state.batchFeatureCancelRequested.load();
                             });
-                    if (!extracted.ok || state.batchFeatureCancelRequested.load()) {
+                    const bool cancelled = state.batchFeatureCancelRequested.load();
+                    if (!extracted.ok || cancelled) {
+                        if (!cancelled) {
+                            state.batchFeatureFailedCount.fetch_add(1);
+                            switch (extracted.error) {
+                            case FeatureExtractionError::UnsupportedFormat:
+                                state.batchFeatureUnsupportedCount.fetch_add(1);
+                                break;
+                            case FeatureExtractionError::NoSamples:
+                                state.batchFeatureNoSamplesCount.fetch_add(1);
+                                break;
+                            case FeatureExtractionError::DecodeFailed:
+                            case FeatureExtractionError::None:
+                            default:
+                                state.batchFeatureDecodeFailedCount.fetch_add(1);
+                                break;
+                            }
+                        }
                         state.batchFeatureProgress.fetch_add(1);
                         continue;
                     }
@@ -29025,7 +29053,10 @@ void StartBatchFeatureExtraction(AppState& state) {
                     FeatureExtractor::fillGlobalFeatures(vec, lufs, trueRms, rec.durationSeconds, tp);
                     {
                         std::lock_guard<std::mutex> lk(dbMutex);
-                        state.database.saveAudioFeaturesByPath(path, vec);
+                        if (!state.database.saveAudioFeaturesByPath(path, vec)) {
+                            state.batchFeatureFailedCount.fetch_add(1);
+                            state.batchFeatureWriteFailedCount.fetch_add(1);
+                        }
                     }
                     state.batchFeatureProgress.fetch_add(1);
                 }
@@ -29035,7 +29066,8 @@ void StartBatchFeatureExtraction(AppState& state) {
 
         if (!state.batchFeatureCancelRequested.load()) {
             state.similaritySearch.loadFeatureCache(state.database);
-            state.batchFeatureCompletionNotice.store(!paths.empty());
+            state.batchFeatureCompletionNotice.store(
+                !paths.empty() && state.batchFeatureFailedCount.load() == 0);
         }
         state.batchFeatureExtracting.store(false);
     });
@@ -29102,6 +29134,26 @@ void DrawSimilarityIndexPanel(AppState& state) {
         const int pending = std::max(0, cachedTotal - cachedIndexed);
         if (pending > 0) {
             ImGui::Spacing();
+            const int failed = state.batchFeatureFailedCount.load();
+            if (failed > 0) {
+                const ImVec4 failure(1.0f, 0.45f, 0.25f, 1.0f);
+                ImGui::TextColored(sharedSimilarStyle ? TransportContrast::ForSurface(
+                    failure, ThemeColors::current().metadataPanelBG, 6.0) : failure,
+                    L(Main_IndexPartialFailFmt), failed);
+                ThemeInspector::RegisterLastItem("similar.index.partial-failure");
+                const int unsupported = state.batchFeatureUnsupportedCount.load();
+                const int decodeFailed = state.batchFeatureDecodeFailedCount.load();
+                const int noSamples = state.batchFeatureNoSamplesCount.load();
+                const int writeFailed = state.batchFeatureWriteFailedCount.load();
+                if (unsupported > 0)
+                    ImGui::TextWrapped(L(Main_IndexFailureUnsupportedFmt), unsupported);
+                if (decodeFailed > 0)
+                    ImGui::TextWrapped(L(Main_IndexFailureDecodeFmt), decodeFailed);
+                if (noSamples > 0)
+                    ImGui::TextWrapped(L(Main_IndexFailureNoSamplesFmt), noSamples);
+                if (writeFailed > 0)
+                    ImGui::TextWrapped(L(Main_IndexFailureWriteFmt), writeFailed);
+            }
             char label[128];
             snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
             if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
@@ -31153,6 +31205,7 @@ void RenderUI(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_Button, scanDialogButtonBg);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, scanDialogButtonHover);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, scanDialogButtonActive);
+    bool openScanResultDialog = false;
     if (BeginTransientScrollbarPopupModal(L(Dlg_ScanFolder), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         const HarkenSearch::ScanWorkflowSnapshot scanWorkflowSnapshot =
@@ -31177,8 +31230,20 @@ void RenderUI(AppState& state) {
             scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Completed &&
             HarkenSearch::CanEnterCompleted(scanWorkflowSnapshot);
         const bool scanProgressSurfaceActive =
-            state.isScanning || scanForegroundCompletionActive || scanCompleteSummaryActive;
-        if (!scanProgressSurfaceActive) {
+            state.isScanning || scanForegroundCompletionActive ||
+            scanCompleteSummaryActive;
+        const bool scanResultSummaryActive =
+            !state.isScanning &&
+            !scanCompleteSummaryActive &&
+            !state.scanCompletionPending.load(std::memory_order_acquire) &&
+            (state.scanTotal > 0 || state.scanWasPaused ||
+             state.scanWasCancelled || state.scanErrorCount > 0);
+        if (scanResultSummaryActive) {
+            // Transfer only while the progress popup is open. Acknowledging the
+            // result must not reopen it from unchanged terminal workflow state.
+            ImGui::CloseCurrentPopup();
+            openScanResultDialog = true;
+        } else if (!scanProgressSurfaceActive) {
             EscClosePopup();
         }
         if (scanProgressSurfaceActive) {
@@ -31440,6 +31505,9 @@ void RenderUI(AppState& state) {
             if (aura::ui::ActionButton(L(Main_StopBtn), ImVec2(btnW, 30))) {
                 ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str());
             }
+#if ARIS_PREVIEW_ISOLATION
+            ThemeInspector::RegisterLastItem("info.qaScanStop", L(Main_StopBtn), "src/main.cpp");
+#endif
             ImGui::EndDisabled();
             }
             if (state.scanCancelRequested.load()) {
@@ -31468,7 +31536,7 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndPopup();
             }
-        } else {
+        } else if (!scanResultSummaryActive) {
             // Drop diagnostics
             if (!state.lastDropSummary.empty()) {
                 ImGui::TextColored(scanDialogAccent, L(Scan_DragDetected));
@@ -31888,7 +31956,7 @@ void RenderUI(AppState& state) {
                         state.scanUpdatedCount = combined.updated;
                         state.scanSkippedCount = combined.skipped;
                         state.scanRemovedCount = combined.removed;
-                        state.scanErrorCount = combined.errors;
+                        state.setScanFailureSummary(combined);
                         state.scanIngestedCount = combined.ingested;
                         state.scanIngestDurationMs = combined.ingestDurationMs;
                         state.addScanErrors(combined.errorMessages);
@@ -32225,7 +32293,7 @@ void RenderUI(AppState& state) {
                                 state.scanRemovedCount = combined.removed;
                                 state.scanIngestedCount = combined.ingested;
                                 state.scanIngestDurationMs = combined.ingestDurationMs;
-                                state.scanErrorCount = combined.errors;
+                                state.setScanFailureSummary(combined);
                             }
                             DIAG_SYSTEM(
                                 "Scan",
@@ -32426,11 +32494,15 @@ void RenderUI(AppState& state) {
 
             }
         }
-        if (!state.isScanning &&
-            !scanCompleteSummaryActive &&
-            !state.scanCompletionPending.load(std::memory_order_acquire) &&
-            (state.scanTotal > 0 || state.scanWasPaused ||
-             state.scanWasCancelled || state.scanErrorCount > 0)) {
+        }
+        ImGui::EndPopup();
+    }
+    if (openScanResultDialog) {
+        ImGui::OpenPopup(L(Dlg_ScanResults));
+    }
+    if (BeginTransientScrollbarPopupModal(L(Dlg_ScanResults), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        { ReadingTextScope _readingPopup;
+        if (!EscClosePopup()) {
             // Keep iterator pairs and displayed details on the same locked copy.
             const auto scanErrorSnapshot = state.getScanErrors();
             ImGui::Separator();
@@ -32493,7 +32565,35 @@ void RenderUI(AppState& state) {
                         scanIngested,
                         scanIngestDuration.c_str());
             const int scanErrors = state.scanErrorCount.load();
+            const ScanFailureCounts scanFailureCounts = state.getScanFailureCounts();
             if (scanErrors > 0) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.42f, 1.0f),
+                                   L(Main_ScanFailureSummaryTitle));
+                if (scanFailureCounts.inaccessible > 0) {
+                    ImGui::TextWrapped(L(Main_ScanFailureInaccessibleFmt),
+                                       scanFailureCounts.inaccessible);
+                }
+                if (scanFailureCounts.unreadableFile > 0) {
+                    ImGui::TextWrapped(L(Main_ScanFailureUnreadableFmt),
+                                       scanFailureCounts.unreadableFile);
+                }
+                if (scanFailureCounts.noAudio > 0) {
+                    ImGui::TextWrapped(L(Main_ScanFailureNoAudioFmt),
+                                       scanFailureCounts.noAudio);
+                }
+                if (scanFailureCounts.databaseWrite > 0) {
+                    ImGui::TextWrapped(L(Main_ScanFailureWriteFmt),
+                                       scanFailureCounts.databaseWrite);
+                }
+                const int classifiedFailureCount = scanFailureCounts.total();
+                const int unclassifiedFailureCount =
+                    std::max(0, scanErrors - classifiedFailureCount);
+                const int otherFailureCount = scanFailureCounts.other + unclassifiedFailureCount;
+                if (otherFailureCount > 0) {
+                    ImGui::TextWrapped(L(Main_ScanFailureOtherFmt), otherFailureCount);
+                }
+
                 const auto& scanErrorDetails = scanErrorSnapshot;
                 ImGui::Spacing();
                 ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.42f, 1.0f), L(Main_ErrorDetailsTitle));
@@ -32557,6 +32657,9 @@ void RenderUI(AppState& state) {
                 state.scanDataCommitted = false; // Allow one clean refresh after reset.
                 ImGui::CloseCurrentPopup();
             }
+#if ARIS_PREVIEW_ISOLATION
+            ThemeInspector::RegisterLastItem("info.qaScanResultDone", L(Done), "src/main.cpp");
+#endif
             ImGui::EndDisabled();
             if (scanCompletionBlocked) {
                 ImGui::SameLine(0, 8);

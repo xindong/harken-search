@@ -193,6 +193,24 @@ int main() {
           "empty saved search name is rejected");
 
     AppState scanResetState;
+    ScanStats scanFailureStats;
+    scanFailureStats.addError("Scan_NetworkLibraryUnreachable");
+    scanFailureStats.addError("Cannot read directory entry in C:/Library");
+    scanFailureStats.addError("Recursive scan failed for folder: C:/Library");
+    scanFailureStats.addError("Failed to read audio metadata: broken.wav");
+    scanFailureStats.addError("Audio file too small to decode: empty.wav");
+    scanFailureStats.addError("Database write failed during scan: database is locked");
+    scanFailureStats.addError("ScanDatabaseOpenFailed: database is unavailable");
+    scanFailureStats.addError("Scan thread crashed before completion.", 2);
+    check(scanFailureStats.errors == 9 &&
+              scanFailureStats.failureCounts.inaccessible == 3 &&
+              scanFailureStats.failureCounts.unreadableFile == 1 &&
+              scanFailureStats.failureCounts.noAudio == 1 &&
+              scanFailureStats.failureCounts.databaseWrite == 2 &&
+              scanFailureStats.failureCounts.other == 2 &&
+              scanFailureStats.failureCounts.total() == scanFailureStats.errors,
+          "scan failures are classified without losing the total");
+
     scanResetState.isScanning = true;
     scanResetState.scanPhase = AppState::ScanPhase::IncrementalScan;
     scanResetState.scanProgress = 7;
@@ -202,6 +220,11 @@ int main() {
     scanResetState.scanSkippedCount = 3;
     scanResetState.scanRemovedCount = 4;
     scanResetState.scanErrorCount = 5;
+    scanResetState.scanFailureInaccessibleCount = 1;
+    scanResetState.scanFailureUnreadableFileCount = 1;
+    scanResetState.scanFailureNoAudioCount = 1;
+    scanResetState.scanFailureDatabaseWriteCount = 1;
+    scanResetState.scanFailureOtherCount = 1;
     scanResetState.scanIngestedCount = 6;
     scanResetState.scanIngestDurationMs = 99;
     scanResetState.scanStartedAtMs = 100;
@@ -228,6 +251,11 @@ int main() {
               scanResetState.scanSkippedCount == 0 &&
               scanResetState.scanRemovedCount == 0 &&
               scanResetState.scanErrorCount == 0 &&
+              scanResetState.scanFailureInaccessibleCount == 0 &&
+              scanResetState.scanFailureUnreadableFileCount == 0 &&
+              scanResetState.scanFailureNoAudioCount == 0 &&
+              scanResetState.scanFailureDatabaseWriteCount == 0 &&
+              scanResetState.scanFailureOtherCount == 0 &&
               scanResetState.scanIngestedCount == 0 &&
               scanResetState.scanIngestDurationMs == 0,
           "database session scan reset clears result counters");

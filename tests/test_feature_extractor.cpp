@@ -62,6 +62,12 @@ void TestMissingFileReportsDecodeFailure(const fs::path& root) {
     Check(!result.ok && result.error == FeatureExtractionError::DecodeFailed,
           "missing audio reports DecodeFailed");
 }
+void TestUnsupportedFormatHasItsOwnFailureReason(const fs::path& root) {
+    const auto result = FeatureExtractor::extractFromFileChecked(
+        (root / "unsupported.m4a").u8string());
+    Check(!result.ok && result.error == FeatureExtractionError::UnsupportedFormat,
+          "unsupported audio format reports UnsupportedFormat");
+}
 void TestPreCancelledRequestReportsCancellation(const fs::path& root) {
     const auto result = FeatureExtractor::extractFromFileChecked(
         (root / "missing.wav").u8string(), [] { return true; });
@@ -113,6 +119,8 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
         ReadTextFile(repoRoot / "src" / "WindowsMain.cpp");
     const std::string windowsHeader =
         ReadTextFile(repoRoot / "src" / "WindowsMain.h");
+    const std::string locale =
+        ReadTextFile(repoRoot / "locale" / "harken.ui.strings.json");
     const size_t surfaceStart = mainSource.find(
         "void StartBatchFeatureExtraction(AppState& state)");
     const size_t surfaceEnd = mainSource.find(
@@ -220,6 +228,39 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
               switchDatabaseClose != std::string::npos &&
               switchJoinStep < switchDatabaseClose,
           "database switch worker joins batch extraction before closing the database");
+
+    Check(appState.find("batchFeatureFailedCount") != std::string::npos,
+          "batch state publishes failed-file count separately from attempted progress");
+    Check(appState.find("batchFeatureUnsupportedCount") != std::string::npos &&
+              appState.find("batchFeatureDecodeFailedCount") != std::string::npos &&
+              appState.find("batchFeatureNoSamplesCount") != std::string::npos &&
+              appState.find("batchFeatureWriteFailedCount") != std::string::npos,
+          "batch state keeps failure reasons separately");
+    Check(surface.find("if (!state.database.saveAudioFeaturesByPath(path, vec))") !=
+              std::string::npos,
+          "batch treats a failed database write as a failed file");
+    Check(surface.find("batchFeatureCompletionNotice.store(!paths.empty())") ==
+              std::string::npos,
+          "batch completion notice is not based only on a non-empty input list");
+    Check(surface.find("Main_IndexPartialFailFmt") != std::string::npos,
+          "similarity index panel has a partial-failure status");
+    Check(windowsMain.find("batchFeatureFailedCount.load()") != std::string::npos,
+          "isolated similarity-index status reports failed-file count");
+    Check(windowsMain.find("unsupported_count") != std::string::npos &&
+              windowsMain.find("decode_failed_count") != std::string::npos &&
+              windowsMain.find("no_samples_count") != std::string::npos &&
+              windowsMain.find("write_failed_count") != std::string::npos,
+          "isolated similarity-index status reports failure reasons");
+    Check(surface.find("Main_IndexFailureUnsupportedFmt") != std::string::npos &&
+              surface.find("Main_IndexFailureDecodeFmt") != std::string::npos &&
+              surface.find("Main_IndexFailureNoSamplesFmt") != std::string::npos &&
+              surface.find("Main_IndexFailureWriteFmt") != std::string::npos,
+          "similarity index panel renders failure reasons");
+    Check(locale.find("Main_IndexFailureUnsupportedFmt") != std::string::npos &&
+              locale.find("Main_IndexFailureDecodeFmt") != std::string::npos &&
+              locale.find("Main_IndexFailureNoSamplesFmt") != std::string::npos &&
+              locale.find("Main_IndexFailureWriteFmt") != std::string::npos,
+          "failure reason labels are localized");
 }
 } // namespace
 
@@ -227,6 +268,7 @@ int main() {
     const fs::path root = fs::temp_directory_path() / "aris_feature_extractor_test";
     std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root, ec);
     TestMissingFileReportsDecodeFailure(root);
+    TestUnsupportedFormatHasItsOwnFailureReason(root);
     TestPreCancelledRequestReportsCancellation(root);
     TestValidPcmProducesFiniteFeatures(root);
     TestEmptyPcmReportsNoSamples(root);

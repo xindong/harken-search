@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <optional>
 #include <chrono>
+#include <string_view>
 
 #include "platform/file_watcher.h"
 #include "FeatureExtractor.h"
@@ -194,6 +195,86 @@ struct BackfillPendingRow {
     int64_t scanSessionId = 0;
 };
 
+enum class ScanFailureCategory : uint8_t {
+    Inaccessible,
+    UnreadableFile,
+    NoAudio,
+    DatabaseWrite,
+    Other,
+};
+
+struct ScanFailureCounts {
+    int inaccessible = 0;
+    int unreadableFile = 0;
+    int noAudio = 0;
+    int databaseWrite = 0;
+    int other = 0;
+
+    void add(ScanFailureCategory category, int count = 1) {
+        if (count <= 0) return;
+        switch (category) {
+        case ScanFailureCategory::Inaccessible: inaccessible += count; break;
+        case ScanFailureCategory::UnreadableFile: unreadableFile += count; break;
+        case ScanFailureCategory::NoAudio: noAudio += count; break;
+        case ScanFailureCategory::DatabaseWrite: databaseWrite += count; break;
+        case ScanFailureCategory::Other: other += count; break;
+        }
+    }
+
+    void mergeFrom(const ScanFailureCounts& other) {
+        inaccessible += other.inaccessible;
+        unreadableFile += other.unreadableFile;
+        noAudio += other.noAudio;
+        databaseWrite += other.databaseWrite;
+        this->other += other.other;
+    }
+
+    int total() const {
+        return inaccessible + unreadableFile + noAudio + databaseWrite + other;
+    }
+};
+
+inline ScanFailureCategory ClassifyScanFailureMessage(std::string_view message) {
+    const auto contains = [message](std::string_view token) {
+        return message.find(token) != std::string_view::npos;
+    };
+    if (contains("Scan_NetworkLibraryUnreachable") ||
+        contains("Cannot read directory") ||
+        contains("Failed to scan directory") ||
+        contains("Scan failed for folder") ||
+        contains("Recursive scan failed for folder") ||
+        contains("Scan folder is unavailable") ||
+        contains("Scan folder is not accessible")) {
+        return ScanFailureCategory::Inaccessible;
+    }
+    if (contains("Audio file too small") ||
+        contains("no readable audio") ||
+        contains("NoAudio")) {
+        return ScanFailureCategory::NoAudio;
+    }
+    if (contains("Failed to read audio") ||
+        contains("Failed to scan file") ||
+        contains("Failed to queue audio file")) {
+        return ScanFailureCategory::UnreadableFile;
+    }
+    if (contains("Database write") ||
+        contains("ScanDatabase") ||
+        contains("Failed to open database") ||
+        contains("database is not open") ||
+        contains("Failed to UPSERT") ||
+        contains("Failed to save") ||
+        contains("Failed to set tags") ||
+        contains("Failed to write") ||
+        contains("Failed to mark") ||
+        contains("Failed to seed") ||
+        contains("Failed to flush scan foreground") ||
+        contains("Failed to snapshot") ||
+        contains("rollback failed")) {
+        return ScanFailureCategory::DatabaseWrite;
+    }
+    return ScanFailureCategory::Other;
+}
+
 struct ScanStats {
     int total = 0;
     int added = 0;
@@ -212,11 +293,13 @@ struct ScanStats {
     int waveformCacheReused = 0;
     int waveformPendingFixedDone = 0;
     int waveformLongDetailSkipped = 0;
+    ScanFailureCounts failureCounts;
     std::vector<std::string> errorMessages;
 
     void addError(std::string message = {}, int count = 1) {
         if (count <= 0) return;
         errors += count;
+        failureCounts.add(ClassifyScanFailureMessage(message), count);
         if (!message.empty() && errorMessages.size() < 32) {
             errorMessages.push_back(std::move(message));
         }
@@ -240,6 +323,7 @@ struct ScanStats {
         waveformCacheReused += other.waveformCacheReused;
         waveformPendingFixedDone += other.waveformPendingFixedDone;
         waveformLongDetailSkipped += other.waveformLongDetailSkipped;
+        failureCounts.mergeFrom(other.failureCounts);
         for (const auto& msg : other.errorMessages) {
             if (errorMessages.size() >= 32) break;
             if (!msg.empty()) errorMessages.push_back(msg);
