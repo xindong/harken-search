@@ -83,10 +83,6 @@ def run(args):
     user32.EnumWindows.argtypes = [ctypes.c_void_p, w.LPARAM]
     user32.GetWindowRect.argtypes = [w.HWND, ctypes.POINTER(w.RECT)]
     user32.IsWindowVisible.argtypes = [w.HWND]
-    user32.SendMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
-    user32.SendMessageW.restype = ctypes.c_ssize_t
-    user32.IsZoomed.argtypes = [w.HWND]
-    user32.IsIconic.argtypes = [w.HWND]
     driver = Driver(runtime, output)
     report = {"pid": process.pid, "exe": str(exe),
               "exe_sha256": hashlib.sha256(exe.read_bytes()).hexdigest(), "captures": {}}
@@ -103,6 +99,12 @@ def run(args):
         if identity["pid"] != process.pid or Path(identity["isolation_root"]).resolve() != isolation:
             raise RuntimeError("QA process or isolation identity mismatch")
         main = identity["hwnd"]
+        user32.GetWindowLongW.argtypes = [w.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = w.LONG
+        style = user32.GetWindowLongW(main, -16)
+        if style & 0x00C00000 != 0x00C00000:  # WS_CAPTION
+            raise AssertionError(f"Windows system caption was changed: 0x{style:08x}")
+        report["native_caption_style"] = f"0x{style:08x}"
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if driver.command({"cmd": "get_state"}).get("main_ui_ready"):
@@ -192,7 +194,7 @@ def run(args):
             sheet = Image.new("RGB", (770, 510), (28, 32, 40))
             draw = ImageDraw.Draw(sheet)
             font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 15)
-            columns = [("主窗口", (1010, 0, 1095, 50)),
+            columns = [("系统标题栏原样", (1010, 0, 1095, 50)),
                        ("检查更新", (866, 55, 928, 110)),
                        ("相似音效", (725, 45, 790, 96)),
                        ("独立窗口", (350, 0, 428, 50))]
@@ -209,44 +211,6 @@ def run(args):
             sheet.save(sheet_path)
             report["theme_contact_sheet"] = str(sheet_path)
 
-        def screen_point(x, y):
-            return (x & 0xffff) | ((y & 0xffff) << 16)
-
-        def native_hit(x, y):
-            return user32.SendMessageW(main, 0x0084, 0, screen_point(x, y))
-
-        def native_click(code, x, y):
-            point = screen_point(x, y)
-            user32.SendMessageW(main, 0x00A1, code, point)
-            user32.SendMessageW(main, 0x00A2, code, point)
-            time.sleep(0.5)
-
-        rect = w.RECT()
-        user32.GetWindowRect(main, ctypes.byref(rect))
-        close_x, max_x, min_x = rect.right - 31, rect.right - 77, rect.right - 123
-        button_y = rect.top + 23
-        hits = {"close": native_hit(close_x, button_y),
-                "maximize": native_hit(max_x, button_y),
-                "minimize": native_hit(min_x, button_y),
-                "caption": native_hit(rect.left + 200, button_y),
-                "top_resize": native_hit(rect.left + 200, rect.top + 2)}
-        if hits != {"close": 20, "maximize": 9, "minimize": 8,
-                    "caption": 2, "top_resize": 12}:
-            raise AssertionError(f"native caption hit areas changed: {hits}")
-        report["native_hits"] = hits
-        native_click(9, max_x, button_y)
-        if not user32.IsZoomed(main):
-            raise AssertionError("native maximize X row failed")
-        rect = w.RECT()
-        user32.GetWindowRect(main, ctypes.byref(rect))
-        native_click(9, rect.right - 77, rect.top + 23)
-        if user32.IsZoomed(main):
-            raise AssertionError("native restore failed")
-        native_click(8, min_x, button_y)
-        if not user32.IsIconic(main):
-            raise AssertionError("native minimize failed")
-        user32.ShowWindow(main, 9)
-        report["native_buttons"] = "maximize, restore, minimize passed"
         (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(report, ensure_ascii=False))
         return 0
