@@ -795,7 +795,8 @@ public:
         listing.ok = true;
         for (const auto& name : names) {
             if (!IsSafeSegment(name)) continue;
-            if (ProbeRetentionEntry(name) != RetentionEntryKind::Directory) {
+            if (ProbeEntryUnder(trustedRoot_.get(), name) !=
+                RetentionEntryKind::Directory) {
                 continue;
             }
             listing.directoryNames.push_back(name);
@@ -814,10 +815,7 @@ public:
             !UpdateDownloadManager::IsVersionDirectoryName(directoryName)) {
             return Failure(UpdatePersistenceError::InvalidIntent);
         }
-        std::size_t removed = 0;
-        const auto pruned = DeleteRetentionTree(directoryName, 0U, removed);
-        if (!pruned.ok()) return pruned;
-        return Failure(UpdatePersistenceError::None, 0, 1);
+        return DeleteVersionDirectoryTree(directoryName);
     }
 
     UpdatePersistenceResult AppendTransferChunk(
@@ -960,15 +958,13 @@ private:
         Rejected,
     };
 
-    // Classify one child through the same non-following relative opens used
-    // by the rest of the port; reparse points never classify as deletable.
-    RetentionEntryKind ProbeRetentionEntry(const std::string& relative) const {
-        if (!IsSafeSegment(Segments(relative).empty() ? std::string()
-                                                      : Segments(relative).back())) {
-            return RetentionEntryKind::Rejected;
-        }
+    // Classify one child through a non-following relative open against the
+    // caller-held parent handle, so a path swap cannot re-point the probe at a
+    // different object.  Reparse points never classify as deletable.
+    RetentionEntryKind ProbeEntryUnder(HANDLE parent, const std::string& name) const {
+        if (!IsSafeSegment(name)) return RetentionEntryKind::Rejected;
         auto directory = OpenRelative(
-            trustedRoot_.get(), relative, FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+            parent, name, FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             kFileOpen, kFileDirectoryFile);
         if (directory.ok()) {
@@ -980,7 +976,7 @@ private:
             return RetentionEntryKind::Rejected;
         }
         auto file = OpenRelative(
-            trustedRoot_.get(), relative, FILE_READ_ATTRIBUTES,
+            parent, name, FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             kFileOpen, kFileNonDirectoryFile);
         if (file.ok()) {
@@ -992,76 +988,124 @@ private:
         return RetentionEntryKind::Rejected;
     }
 
-    // Depth-bounded removal of one observed version download tree.  Nothing
-    // is followed through reparse points and a single unexpected entry aborts
-    // the whole tree; retention is best-effort and retries next update.
-    UpdatePersistenceResult DeleteRetentionTree(
-        const std::string& relative, std::size_t depth,
-        std::size_t& removed) const {
-        if (depth > kMaximumRetentionDepth ||
-            !IsSafeRelativePath(relative)) {
+    static bool MarkFileForDeletion(HANDLE file) {
+        FILE_DISPOSITION_INFO disposition{};
+        disposition.DeleteFile = TRUE;
+        return SetFileInformationByHandle(file, FileDispositionInfo,
+                                         &disposition,
+                                         sizeof(disposition)) != FALSE;
+    }
+
+    static bool MarkDirectoryForDeletion(HANDLE directory) {
+        FILE_DISPOSITION_INFO_EX disposition{};
+        disposition.Flags = FILE_DISPOSITION_FLAG_DELETE |
+                            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
+        return SetFileInformationByHandle(directory, FileDispositionInfoEx,
+                                         &disposition,
+                                         sizeof(disposition)) != FALSE;
+    }
+
+    // Remove every child of one already-pinned directory handle.  All opens,
+    // probes and deletions go through this held handle, never through a
+    // re-opened root-relative path, so a concurrent rename+replace of the
+    // walked directory cannot redirect the walk onto a retained package.
+    // The walk handle is opened without share-delete, which also blocks other
+    // processes from renaming or deleting the directory while it is drained.
+    // Reparse points and unexpected entries abort the whole tree; retention
+    // is best-effort and retries next update.
+    UpdatePersistenceResult DrainPinnedDirectory(
+        HANDLE directory, std::size_t depth, std::size_t& removed) const {
+        if (depth > kMaximumRetentionDepth) {
             return Failure(UpdatePersistenceError::InvalidIntent,
                            ERROR_INVALID_PARAMETER, removed);
         }
-        const auto kind = ProbeRetentionEntry(relative);
-        if (kind == RetentionEntryKind::Missing) {
-            return Failure(UpdatePersistenceError::None, 0, removed);
-        }
-        if (kind != RetentionEntryKind::Directory) {
-            return Failure(UpdatePersistenceError::InvalidIntent,
-                           ERROR_REPARSE_TAG_INVALID, removed);
-        }
-        auto directory = OpenRelative(
-            trustedRoot_.get(), relative,
-            DELETE | FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            kFileOpen, kFileDirectoryFile, FILE_ATTRIBUTE_DIRECTORY);
-        if (!directory.ok()) {
-            if (directory.missing()) {
-                return Failure(UpdatePersistenceError::None, 0, removed);
-            }
-            return Failure(UpdatePersistenceError::OpenFailed,
-                           static_cast<std::uint32_t>(directory.status), removed);
-        }
-        if (!IsSafeDirectoryHandle(directory.handle.get())) {
-            return Failure(UpdatePersistenceError::InvalidIntent,
-                           ERROR_REPARSE_TAG_INVALID, removed);
-        }
         std::vector<std::string> children;
         std::uint32_t systemError = 0;
-        if (!ListImmediateNames(directory.handle.get(), children, systemError)) {
+        if (!ListImmediateNames(directory, children, systemError)) {
             return Failure(UpdatePersistenceError::DeleteFailed, systemError, removed);
         }
         for (const auto& childName : children) {
-            if (!IsSafeSegment(childName)) {
-                return Failure(UpdatePersistenceError::InvalidIntent,
-                               ERROR_INVALID_NAME, removed);
-            }
-            const std::string child = relative + "/" + childName;
-            const auto childKind = ProbeRetentionEntry(child);
-            if (childKind == RetentionEntryKind::Directory) {
-                const auto nested = DeleteRetentionTree(child, depth + 1U, removed);
-                if (!nested.ok()) return nested;
-                continue;
-            }
-            if (childKind != RetentionEntryKind::RegularFile &&
-                childKind != RetentionEntryKind::Missing) {
+            const auto kind = ProbeEntryUnder(directory, childName);
+            if (kind == RetentionEntryKind::Missing) continue;
+            if (kind == RetentionEntryKind::Rejected) {
                 return Failure(UpdatePersistenceError::InvalidIntent,
                                ERROR_REPARSE_TAG_INVALID, removed);
             }
-            const auto deleted = Delete(child, removed);
-            if (!deleted.ok()) return deleted;
-            ++removed;
+            if (kind == RetentionEntryKind::RegularFile) {
+                auto file = OpenRelative(
+                    directory, childName, DELETE | FILE_READ_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    kFileOpen, kFileNonDirectoryFile);
+                if (!file.ok()) {
+                    if (file.missing()) continue;
+                    return Failure(UpdatePersistenceError::DeleteFailed,
+                                   static_cast<std::uint32_t>(file.status), removed);
+                }
+                if (!IsSafeRegularFileHandle(file.handle.get()) ||
+                    !MarkFileForDeletion(file.handle.get())) {
+                    return Failure(UpdatePersistenceError::DeleteFailed,
+                                   GetLastError(), removed);
+                }
+                ++removed;
+                continue;
+            }
+            auto child = OpenRelative(
+                directory, childName,
+                DELETE | FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                kFileOpen, kFileDirectoryFile, FILE_ATTRIBUTE_DIRECTORY);
+            if (!child.ok()) {
+                if (child.missing()) continue;
+                return Failure(UpdatePersistenceError::DeleteFailed,
+                               static_cast<std::uint32_t>(child.status), removed);
+            }
+            if (!IsSafeDirectoryHandle(child.handle.get())) {
+                return Failure(UpdatePersistenceError::InvalidIntent,
+                               ERROR_REPARSE_TAG_INVALID, removed);
+            }
+            const auto drained = DrainPinnedDirectory(child.handle.get(), depth + 1U, removed);
+            if (!drained.ok()) return drained;
+            if (!MarkDirectoryForDeletion(child.handle.get())) {
+                return Failure(UpdatePersistenceError::DeleteFailed,
+                               GetLastError(), removed);
+            }
         }
-        FILE_DISPOSITION_INFO disposition{};
-        disposition.DeleteFile = TRUE;
-        if (!SetFileInformationByHandle(directory.handle.get(),
-                                        FileDispositionInfo, &disposition,
-                                        sizeof(disposition))) {
+        return Failure(UpdatePersistenceError::None, 0, removed);
+    }
+
+    UpdatePersistenceResult DeleteVersionDirectoryTree(
+        const std::string& directoryName) const {
+        std::size_t removed = 0;
+        // Pinned first: everything below walks through this single handle.
+        // Share mode excludes FILE_SHARE_DELETE, so while we walk this
+        // directory nobody can rename or replace it.
+        auto top = OpenRelative(
+            trustedRoot_.get(), directoryName,
+            DELETE | FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            kFileOpen, kFileDirectoryFile, FILE_ATTRIBUTE_DIRECTORY);
+        if (!top.ok()) {
+            if (top.missing()) {
+                return Failure(UpdatePersistenceError::None, 0, 1);
+            }
+            if (top.status == kStatusNotADirectory) {
+                return Failure(UpdatePersistenceError::InvalidIntent,
+                               ERROR_REPARSE_TAG_INVALID, removed);
+            }
+            return Failure(UpdatePersistenceError::OpenFailed,
+                           static_cast<std::uint32_t>(top.status), removed);
+        }
+        if (!IsSafeDirectoryHandle(top.handle.get())) {
+            return Failure(UpdatePersistenceError::InvalidIntent,
+                           ERROR_REPARSE_TAG_INVALID, removed);
+        }
+        const auto drained = DrainPinnedDirectory(top.handle.get(), 1U, removed);
+        if (!drained.ok()) return drained;
+        if (!MarkDirectoryForDeletion(top.handle.get())) {
             return Failure(UpdatePersistenceError::DeleteFailed,
                            GetLastError(), removed);
         }
-        return Failure(UpdatePersistenceError::None, 0, removed);
+        return Failure(UpdatePersistenceError::None, 0, 1);
     }
 
     bool ValidateStoreIntent(const StoreIntent& intent) const {
