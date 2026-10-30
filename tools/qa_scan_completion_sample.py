@@ -19,6 +19,7 @@ import wave
 from PIL import Image, ImageGrab
 import win32con
 import win32gui
+import win32process
 
 from qa_folder_shortcuts import Driver
 
@@ -102,6 +103,17 @@ def run(exe: Path, root: Path, output: Path, pause: bool) -> None:
         win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
         shot = output / ("scan-paused.png" if pause else "scan-complete.png")
         ImageGrab.grab(window=hwnd).save(shot)
+        owned_windows = []
+        def capture_owned_window(window, _):
+            if (window == hwnd or not win32gui.IsWindowVisible(window)):
+                return
+            if win32process.GetWindowThreadProcessId(window)[1] != process.pid:
+                return
+            title = win32gui.GetWindowText(window)
+            target = output / f"scan-popup-{len(owned_windows)}.png"
+            ImageGrab.grab(window=window).save(target)
+            owned_windows.append({"title": title, "screenshot": str(target)})
+        win32gui.EnumWindows(capture_owned_window, None)
         frame = root / "profile/runtime" / f"scan-complete-{uuid.uuid4().hex}.ppm"
         driver.command({"cmd": "capture_preview_frame", "path": str(frame)})
         capture_deadline = time.monotonic() + 10
@@ -116,6 +128,7 @@ def run(exe: Path, root: Path, output: Path, pause: bool) -> None:
                   "pause_requested": pause_sent, "was_paused": state["was_paused"],
                   "kept_file_count": kept_file_count,
                   "observed": observed, "screenshot": str(shot),
+                  "owned_windows": owned_windows,
                   "preview_frame": str(preview)}
         (output / "result.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
