@@ -2,6 +2,62 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.42",
+      "release_date": "2026-10-29",
+      "headline": "优化竖屏停靠、封面墙与相似音效入口",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "竖屏停靠",
+                  "description": "Info 在文件列表上方或下方停靠时，可以在更大范围内调整高度，并记住调整后的布局。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "小封面浏览",
+                  "description": "封面尺寸调到最小时可显示更小封面和更多列，宽面板中不再被自动铺满放大。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "相似音效入口",
+                  "description": "相似音效图标移到 Info 图标组最左，与其他图标对齐；可在省略号菜单中隐藏或恢复，重启会记住选择。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "停靠分隔条",
+                  "description": "修复筛选器与 Info 互换左右位置后，三点拖拽区域消失的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "封面墙闪烁",
+                  "description": "修复部分窗口尺寸下封面墙反复缩放、闪烁的问题。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu"
+      ]
+    },
+    {
       "version": "1.0.41",
       "release_date": "2026-10-29",
       "headline": "改善窗口停靠、Info 编辑与五主题显示",
@@ -9,26 +65,58 @@
       "sections": [
         {
           "title": "体验优化",
-          "items": [{
-            "name": "HarkenDeveloper-zhongziyu",
-            "list": [
-              {"title": "窗口停靠", "description": "靠近边缘才显示停靠预览；文件列表上下支持停靠、调整高度和恢复布局，方便竖屏使用。", "source": "Harken Search"},
-              {"title": "Info 面板", "description": "标题栏图标切换详情页，支持选择显示的页面；双击编辑元数据，离开前可保存或放弃，保存失败保留编辑内容。", "source": "Harken Search"},
-              {"title": "五主题显示", "description": "统一 Info 与相似音效面板的边框和留白，改善播放栏、EQ 状态和空库文字的可读性。", "source": "Harken Search"},
-              {"title": "搜索与更新入口", "description": "点击搜索框即隐藏提示文字，更新历史统一放入更新中心。", "source": "Harken Search"}
-            ]
-          }]
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "窗口停靠",
+                  "description": "靠近边缘才显示停靠预览；文件列表上下支持停靠、调整高度和恢复布局，方便竖屏使用。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "Info 面板",
+                  "description": "标题栏图标切换详情页，支持选择显示的页面；双击编辑元数据，离开前可保存或放弃，保存失败保留编辑内容。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "五主题显示",
+                  "description": "统一 Info 与相似音效面板的边框和留白，改善播放栏、EQ 状态和空库文字的可读性。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "搜索与更新入口",
+                  "description": "点击搜索框即隐藏提示文字，更新历史统一放入更新中心。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
         },
         {
           "title": "问题修复",
-          "items": [{
-            "name": "HarkenDeveloper-zhongziyu",
-            "list": [
-              {"title": "界面操作", "description": "修复 Info 内容越过右边框、浮窗跨屏后点击失灵、任务栏恢复丢失最大化状态，以及小波形闪烁的问题。", "source": "Harken Search"},
-              {"title": "素材库浏览", "description": "修复全局封面墙刷新、重复封面及合并封面成员不完整的问题；文件夹快捷入口保留原来的浏览模式。", "source": "Harken Search"},
-              {"title": "扫描诊断与安装", "description": "记录扫描时数据库打开失败的原因，长中文路径提示保持完整；安装包不再生成多余的 Auro 程序副本。", "source": "Harken Search"}
-            ]
-          }]
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "界面操作",
+                  "description": "修复 Info 内容越过右边框、浮窗跨屏后点击失灵、任务栏恢复丢失最大化状态，以及小波形闪烁的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "素材库浏览",
+                  "description": "修复全局封面墙刷新、重复封面及合并封面成员不完整的问题；文件夹快捷入口保留原来的浏览模式。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "扫描诊断与安装",
+                  "description": "记录扫描时数据库打开失败的原因，长中文路径提示保持完整；安装包不再生成多余的 Auro 程序副本。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
         }
       ],
       "contributors": ["HarkenDeveloper-zhongziyu", "Cindy"]
@@ -60,7 +148,9 @@
           ]
         }
       ],
-      "contributors": ["HarkenDeveloper-zhongziyu"]
+      "contributors": [
+        "HarkenDeveloper-zhongziyu"
+      ]
     },
     {
       "version": "1.0.39",
@@ -162,7 +252,9 @@
           ]
         }
       ],
-      "contributors": ["HarkenDeveloper-zhongziyu"]
+      "contributors": [
+        "HarkenDeveloper-zhongziyu"
+      ]
     },
     {
       "version": "1.0.11",

@@ -10,11 +10,13 @@ def test_update_center_reads_live_semantic_theme_tokens() -> None:
     source = SOURCE.read_text(encoding="utf-8")
     assert "ThemeColors::current()" in source
     for token in (
-        "resultsText", "frameBgBase", "mainWindowBG", "dialogBG",
+        "resultsText", "dialogBG",
         "dialogPanelBG", "chromeBorder", "interfaceText", "resultsSecondaryText",
         "wwiseConnectFail",
     ):
         assert f"theme.{token}" in source
+    assert "ActionButtonStyle::Make(" in source
+    assert "ActionButtonStyle::Draw(" in source
 
 
 def test_update_center_has_no_private_palette_or_orange_escape_hatch() -> None:

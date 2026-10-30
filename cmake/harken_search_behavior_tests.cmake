@@ -5422,6 +5422,7 @@ add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_database_features.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
+    src/AsyncWorker.cpp
     src/AppState.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
@@ -5466,6 +5467,7 @@ target_link_libraries(TestDatabaseFeatures PRIVATE
     winmm
 )
 target_compile_definitions(TestDatabaseFeatures PRIVATE
+    AURO_TEST_REAL_ASYNC_WORKER
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -5482,6 +5484,18 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
+set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
+    ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")
+aura_set_test_labels(TestLegacyDescriptionDisplay db)
+add_test(NAME TestRelinkWorkflowPathUpdate COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowPathUpdate PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_PATH_UPDATE_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowPathUpdate db)
+add_test(NAME TestRelinkWorkflowSearchReport COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowSearchReport PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_SEARCH_REPORT_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowSearchReport db)
 add_test(NAME TestFavoritesMigrationError COMMAND TestDatabaseFeatures)
 set_tests_properties(TestFavoritesMigrationError PROPERTIES
     ENVIRONMENT "HARKEN_FAVORITES_MIGRATION_ONLY=1")
@@ -6104,6 +6118,17 @@ aura_set_test_labels(TestDatabaseNavNonblockingContract core)
 
 
 add_executable(TestTransportContrast EXCLUDE_FROM_ALL tests/test_transport_contrast.cpp)
+add_executable(TestActionButtonStyle EXCLUDE_FROM_ALL tests/test_action_button_style.cpp
+    src/BuiltinThemeScheme.cpp
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+add_dependencies(TestActionButtonStyle ArisLocalizationGenerated)
+target_include_directories(TestActionButtonStyle PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
+if(MSVC)
+    target_compile_options(TestActionButtonStyle PRIVATE /utf-8)
+endif()
+add_test(NAME TestActionButtonStyle COMMAND TestActionButtonStyle)
+aura_set_test_labels(TestActionButtonStyle ui)
 add_executable(TestEmptyStateContrast EXCLUDE_FROM_ALL tests/test_empty_state_contrast.cpp src/BuiltinThemeScheme.cpp)
 add_dependencies(TestEmptyStateContrast ArisLocalizationGenerated)
 target_include_directories(TestEmptyStateContrast PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
@@ -7775,6 +7800,7 @@ add_executable(TestBootstrapExitExplanation
     tests/test_bootstrap_exit_explanation.cpp
     src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
     src/platform/update_bootstrap_authority_base.cpp
+    src/update/UpdateDownloadManager.cpp
     src/platform/update_persistence_port.cpp
     src/platform/text_encoding_win32.cpp
 )

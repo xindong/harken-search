@@ -87,9 +87,9 @@ class DockTestWindowContract(unittest.TestCase):
         main = _read()
         right_column = main[main.index("// Right Column - File Info with title bar"):main.index("if (g_dockTestBandHintsVisible)")]
         self.assertIn("rightDockSlotRequired && !showRightColumn", right_column)
-        self.assertIn('BeginTransientScrollbarWindow(\n                "##RightDockLeafSplitter"', right_column)
-        self.assertIn("state.panelSimilarSounds.dockedWidth", right_column)
-        splitter = right_column.split('if (rightOuterGrip.visible) {', 1)[1]
+        self.assertIn('left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter"', right_column)
+        self.assertIn("MirrorDockRootExtent(state, side, resizedRect)", right_column)
+        splitter = right_column.split('for (int column = 0; column < 2; ++column) {', 1)[1]
         self.assertIn('ImGuiStyleVar_WindowBorderSize', splitter)
         self.assertIn('ImGui::IsMouseHoveringRect(', splitter,
                       'the painted seam and pointer hit must use the same rect')
