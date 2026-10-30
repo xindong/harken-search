@@ -30,6 +30,11 @@ struct QaSettingsObservation {
     int frame = 0;
     ImVec4 cards[2]{}, editButtons[2]{}, otherThemes{}, clip{};
     bool selected[2]{}, otherThemesExpanded = false;
+    bool autoCheckbox = false;
+    ImVec4 selectorButtons[2]{};
+    int selectorPresets[2] = {7, 7};
+    struct PresetOption { int period; int theme; ImVec4 bounds; };
+    std::vector<PresetOption> presetOptions;
     struct Stock { int theme; ImVec4 bounds; };
     std::vector<Stock> stock;
 };

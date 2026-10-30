@@ -23,6 +23,16 @@ bool ValidChannel(float value) { return std::isfinite(value) && value >= 0.f && 
 float Luma(const ImVec4& color) { return .299f*color.x + .587f*color.y + .114f*color.z; }
 }
 
+bool PalettesEqual(const ThemeColorScheme& a, const ThemeColorScheme& b) {
+    bool equal = true;
+    ForEachColor([&](const char*, auto member) {
+        const auto& x = a.*member;
+        const auto& y = b.*member;
+        equal = equal && x.x == y.x && x.y == y.y && x.z == y.z && x.w == y.w;
+    });
+    return equal;
+}
+
 bool ValidatePalette(const ThemeColorScheme& scheme, Period period, std::string& error) {
     error.clear();
     ForEachColor([&](const char*, auto member) {

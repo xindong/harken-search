@@ -6417,6 +6417,9 @@ static void PollQaCommandFile(AppState& state) {
             const auto bounds = [](ImVec4 r) { return nlohmann::json::array({r.x,r.y,r.z,r.w}); };
             auto stock = nlohmann::json::array();
             for (const auto& item : ui.stock) stock.push_back({{"theme",item.theme},{"bounds",bounds(item.bounds)}});
+            auto presetOptions = nlohmann::json::array();
+            for (const auto& item : ui.presetOptions)
+                presetOptions.push_back({{"period",item.period},{"theme",item.theme},{"bounds",bounds(item.bounds)}});
             result = nlohmann::json({
                 {"ok",ok}, {"cmd",cmd}, {"frame",ImGui::GetFrameCount()},
                 {"period",CurrentPeriod() == Period::Day ? "day" : "night"},
@@ -6425,7 +6428,11 @@ static void PollQaCommandFile(AppState& state) {
                 {"ui",{{"frame",ui.frame},{"clip",bounds(ui.clip)},{"cards",{bounds(ui.cards[0]),bounds(ui.cards[1])}},
                     {"edit_buttons",{bounds(ui.editButtons[0]),bounds(ui.editButtons[1])}},
                     {"selected",{ui.selected[0],ui.selected[1]}},{"other_themes",bounds(ui.otherThemes)},
-                    {"other_themes_expanded",ui.otherThemesExpanded},{"stock",stock}}},
+                    {"other_themes_expanded",ui.otherThemesExpanded},{"stock",stock},
+                    {"auto_checkbox",ui.autoCheckbox},
+                    {"selector_buttons",{bounds(ui.selectorButtons[0]),bounds(ui.selectorButtons[1])}},
+                    {"selector_presets",{ui.selectorPresets[0],ui.selectorPresets[1]}},
+                    {"preset_options",presetOptions}}},
                 {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
                 {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
                 {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
