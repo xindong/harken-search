@@ -10018,13 +10018,6 @@
       "ja": "対象フォルダーを選択:"
     },
     {
-      "id": "Relink_ArrowFileFmt",
-      "type": "ui",
-      "zh": "→ %s",
-      "en": "→ %s",
-      "ja": "→ %s"
-    },
-    {
       "id": "ThemeEditor_ColorSession",
       "type": "ui",
       "zh": "调色会话",
