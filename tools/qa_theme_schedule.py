@@ -156,8 +156,8 @@ def run(args):
         click_rect(settle()['ui']['selector_buttons'][index])
         value=settle()
         options=[o for o in value['ui']['preset_options'] if o['period']==index]
-        expected={3,10} if day else {0,1,2}
-        assert {o['theme'] for o in options}==expected,('incorrect light/dark choices',options)
+        expected={0,1,2,3,10}
+        assert {o['theme'] for o in options}==expected,('both periods must offer all five themes',options)
         return value
     def choose(day,theme):
         index=0 if day else 1
@@ -197,16 +197,28 @@ def run(args):
         assert value['auto_toggle_bounds'][:2]==off_bounds[:2],('checkbox moved on toggle',value['auto_toggle_bounds'],off_bounds)
         capture(driver,out/'settings-auto-day.png')
         check('checked-hides-five-themes-and-shows-two-selectors',state=value)
-        for day,choices in ((True,(3,10)),(False,(1,2,0))):
+        for day,choices in ((True,(3,10,1,2,0)),(False,(1,2,0,3,10))):
             for theme in choices:
                 other=night_file if day else day_file
                 before=snapshot(other)
                 value=choose(day,theme)
                 assert snapshot(other)==before,'choosing one preset changed the other palette'
                 check(('day' if day else 'night')+'-preset-'+str(theme),state=value)
+        # Keep dark-by-day/light-by-night across restart, with correct preset names.
+        expected_palettes=(snapshot(day_file),snapshot(night_file))
+        close_settings(); stop(); value=start(480)
+        assert value['active_bg']==value['day_bg'] and not value['day_warning'] and not value['night_warning'],value
+        settings(); assert_groups(True)
+        assert state()['ui']['selector_presets']==[0,10],state()
+        assert (snapshot(day_file),snapshot(night_file))==expected_palettes
+        clock(960); check('dark-day-light-night-presets-survive-restart',state=state())
+        clock(480)
         open_selector(True); capture(driver,out/'day-theme-menu.png')
         # Close this menu by selecting its existing choice through the real item.
-        option=next(o for o in state()['ui']['preset_options'] if o['period']==0 and o['theme']==10)
+        option=next(o for o in state()['ui']['preset_options'] if o['period']==0 and o['theme']==0)
+        click_rect(option['bounds']); settle()
+        open_selector(False); capture(driver,out/'night-theme-menu.png')
+        option=next(o for o in state()['ui']['preset_options'] if o['period']==1 and o['theme']==10)
         click_rect(option['bounds']); settle()
         night_before=snapshot(night_file)
         open_editor(True); draft('toolbarAccent',[.2,.42,.64,1])
@@ -222,14 +234,15 @@ def run(args):
         open_editor(True); draft('toolbarAccent',[.9,.1,.2,1]); click('取消修改')
         wait(lambda s:not s['editor_open'],'cancel closes')
         assert snapshot(day_file)==day_saved,'cancel changed day file'
+        check('cancel-keeps-saved-day-palette',state=state())
         open_editor(True); draft('mainWindowBG',[.1,.1,.1,1]); click('保存配色')
-        rejected=state()
-        assert rejected['editor_open'] and rejected['editor_status'],rejected
-        assert snapshot(day_file)==day_saved,'invalid palette changed day file'
-        capture(driver,out/'light-palette-guard.png')
-        click('取消修改'); wait(lambda s:not s['editor_open'],'invalid draft cancelled')
-        check('cancel-and-light-palette-guard',state=rejected)
-        open_editor(False); draft('toolbarAccent',[.65,.42,.86,1])
+        wait(lambda s:not s['editor_open'],'dark day background saved'); settle()
+        day_saved=snapshot(day_file)
+        colors=json.loads(day_saved[0])['colors']
+        assert all(abs(a-b)<1e-6 for a,b in zip(colors['mainWindowBG'],[.1,.1,.1,1]))
+        assert snapshot(night_file)==night_before,'dark day edit touched night'
+        check('dark-day-background-saves',state=state())
+        open_editor(False); draft('toolbarAccent',[.65,.42,.86,1]); draft('mainWindowBG',[.94,.94,.94,1])
         command(cmd='theme_schedule',action='clock',minute=960); settle()
         value=state()
         assert value['editor_open'] and value['active_accent']!='ff6f98c1',value
@@ -239,7 +252,8 @@ def run(args):
         night_saved=snapshot(night_file)
         colors=json.loads(night_saved[0])['colors']
         assert all(abs(a-b)<1e-6 for a,b in zip(colors['toolbarAccent'],[.65,.42,.86,1])),colors['toolbarAccent']
-        check('night-edit-saves-exact-rgba-and-keeps-day',state=state())
+        assert all(abs(a-b)<1e-6 for a,b in zip(colors['mainWindowBG'],[.94,.94,.94,1]))
+        check('light-night-edit-saves-exact-rgba-and-keeps-day',state=state())
         for minute in (479,480,959,960,0,1439,480):
             value=clock(minute); assert_groups(True)
             check('clock-boundary-'+str(minute),state=value)

@@ -20,7 +20,6 @@ template<class Fn> void ForEachColor(Fn fn) {
 #undef COLOR
 }
 bool ValidChannel(float value) { return std::isfinite(value) && value >= 0.f && value <= 1.f; }
-float Luma(const ImVec4& color) { return .299f*color.x + .587f*color.y + .114f*color.z; }
 }
 
 bool PalettesEqual(const ThemeColorScheme& a, const ThemeColorScheme& b) {
@@ -33,23 +32,14 @@ bool PalettesEqual(const ThemeColorScheme& a, const ThemeColorScheme& b) {
     return equal;
 }
 
-bool ValidatePalette(const ThemeColorScheme& scheme, Period period, std::string& error) {
+bool ValidatePalette(const ThemeColorScheme& scheme, Period /*period*/, std::string& error) {
     error.clear();
     ForEachColor([&](const char*, auto member) {
         const auto& c = scheme.*member;
         if (!ValidChannel(c.x) || !ValidChannel(c.y) || !ValidChannel(c.z) || !ValidChannel(c.w))
             error = "invalid_color";
     });
-    if (!error.empty()) return false;
-    // Keep the four principal surfaces light by day and dark by night. Accent
-    // colors remain freely editable (including dark text on a light surface).
-    for (const auto c : {scheme.mainWindowBG, scheme.resultsBG, scheme.dialogBG, scheme.waveformBG}) {
-        if ((Luma(c) >= .72f) != (period == Period::Day) || c.w < .9f) {
-            error = period == Period::Day ? "day_requires_light" : "night_requires_dark";
-            return false;
-        }
-    }
-    return true;
+    return error.empty();
 }
 
 std::string EncodePalette(const ThemeColorScheme& scheme) {

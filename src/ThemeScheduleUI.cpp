@@ -26,22 +26,21 @@ ImVec4 ItemBounds() {
 struct Preset {
     AppTheme theme;
     LStr label;
-    Period period;
     ThemeColorScheme scheme;
 };
 const std::array<Preset, 5>& Presets() {
     static const std::array<Preset, 5> presets{{
-        {AppTheme::RoseCedar, LStr::Set_ThemeRoseCedar, Period::Day, MakeBuiltinScheme(AppTheme::RoseCedar)},
-        {AppTheme::JadeMist, LStr::Set_ThemeJadeMist, Period::Day, MakeBuiltinScheme(AppTheme::JadeMist)},
-        {AppTheme::Dark, LStr::Set_ThemeDark, Period::Night, MakeBuiltinScheme(AppTheme::Dark)},
-        {AppTheme::LapisBlue, LStr::Set_ThemeLapisBlue, Period::Night, MakeBuiltinScheme(AppTheme::LapisBlue)},
-        {AppTheme::Ocean, LStr::Set_ThemeOcean, Period::Night, MakeBuiltinScheme(AppTheme::Ocean)}
+        {AppTheme::Dark, LStr::Set_ThemeDark, MakeBuiltinScheme(AppTheme::Dark)},
+        {AppTheme::RoseCedar, LStr::Set_ThemeRoseCedar, MakeBuiltinScheme(AppTheme::RoseCedar)},
+        {AppTheme::LapisBlue, LStr::Set_ThemeLapisBlue, MakeBuiltinScheme(AppTheme::LapisBlue)},
+        {AppTheme::Ocean, LStr::Set_ThemeOcean, MakeBuiltinScheme(AppTheme::Ocean)},
+        {AppTheme::JadeMist, LStr::Set_ThemeJadeMist, MakeBuiltinScheme(AppTheme::JadeMist)}
     }};
     return presets;
 }
 const Preset* MatchingPreset(Period period) {
     for (const auto& preset : Presets()) {
-        if (preset.period == period && PalettesEqual(Palette(period), preset.scheme)) return &preset;
+        if (PalettesEqual(Palette(period), preset.scheme)) return &preset;
     }
     return nullptr;
 }
@@ -70,7 +69,6 @@ bool PaletteSelector(Period period, float width) {
     bool edit = false;
     if (ImGui::BeginCombo("##DayNightPreset", preview)) {
         for (const auto& option : Presets()) {
-            if (option.period != period) continue;
             const bool selected = preset == &option;
             if (ImGui::Selectable(GetLocalizedString(option.label), selected)) {
                 SavePalette(period, option.scheme, g_saveErrors[index]);

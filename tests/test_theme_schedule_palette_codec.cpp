@@ -32,7 +32,8 @@ int main() {
     auto hiddenEdit = decoded;
     hiddenEdit.wwiseDiffNew.x = .8f;
     Check(!PalettesEqual(night, hiddenEdit), "non-editor field must affect preset identity");
-    Check(!DecodePalette(encoded, Period::Day, decoded, error), "dark palette rejected for day");
+    Check(DecodePalette(encoded, Period::Day, decoded, error), "dark palette accepted for day");
+    Check(PalettesEqual(night, decoded), "day slot preserves the chosen dark palette");
     const auto before = decoded.toolbarAccent.x;
     for (const char* bad : {"{}", "{broken", "[]", "null"}) {
         Check(!DecodePalette(bad, Period::Night, decoded, error), "bad JSON rejected");
@@ -47,8 +48,9 @@ int main() {
     auto day = night;
     day.mainWindowBG = day.resultsBG = day.dialogBG = day.waveformBG = ImVec4(.94f,.95f,.97f,1);
     Check(DecodePalette(EncodePalette(day), Period::Day, decoded, error), "light palette accepted for day");
-    Check(!DecodePalette(EncodePalette(day), Period::Night, decoded, error), "light palette rejected for night");
+    Check(DecodePalette(EncodePalette(day), Period::Night, decoded, error), "light palette accepted for night");
+    Check(PalettesEqual(day, decoded), "night slot preserves the chosen light palette");
     day.toolbarAccent.x = std::numeric_limits<float>::quiet_NaN();
     Check(!ValidatePalette(day, Period::Day, error), "nonfinite value rejected before writing");
-    std::cout << "Full palette round-trip, category and corrupt input checks passed\n";
+    std::cout << "Full palette round-trip, unrestricted periods and corrupt input checks passed\n";
 }
