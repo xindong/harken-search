@@ -62,6 +62,14 @@ def run(args):
     notes = exe.parent / 'aris_release_notes.json'
     if not notes.is_file():
         raise FileNotFoundError(f'release notes missing next to the exe: {notes}')
+    notes_data = json.loads(notes.read_bytes().decode('utf-8'))
+    notes_release = (notes_data.get('releases') or [{}])[0]
+    expected_version = str(notes_release.get('version', ''))
+    expected_contributors = {item.get('name', '')
+        for section in notes_release.get('sections', [])
+        for item in section.get('items', [])}
+    if not expected_version:
+        raise RuntimeError('release notes have no current version')
 
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -115,6 +123,10 @@ def run(args):
         results['final'] = state
         if not state.get('rendered_version') or state.get('items', 0) < 1:
             raise RuntimeError(f'local version panel rendered no content: {state}')
+        if state.get('rendered_version') != expected_version:
+            raise RuntimeError(f'panel showed {state.get("rendered_version")!r}, expected {expected_version!r}')
+        if 'Cindy' not in expected_contributors:
+            raise RuntimeError(f'release notes contributors lack Cindy: {sorted(expected_contributors)}')
         time.sleep(0.6)
         png = output / 'update-notice-local-version.png'
         digest = capture_window(user32, hwnd, process.pid, png)
@@ -149,12 +161,19 @@ def run(args):
         print(json.dumps(results['final'], ensure_ascii=False))
         return 0
     finally:
-        if process.poll() is None and hwnd:
-            user32.PostMessageW(hwnd, 0x0010, 0, 0)
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
+        if process.poll() is None:
+            if hwnd:
+                user32.PostMessageW(hwnd, 0x0010, 0, 0)
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+            else:
                 process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
 
 
 if __name__ == '__main__':

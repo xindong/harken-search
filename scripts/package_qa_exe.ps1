@@ -282,7 +282,7 @@ try {
         )
         # The QA notice panel reads aris_release_notes.json next to the exe; bundle it
         # from the canonical release history so local-version notes stay truthful.
-        $qaNotesVersion = (& python -B -c "import sys; sys.path.insert(0, r'$Root'); from tools.pack_engine import read_current_version; print(read_current_version())").Trim()
+        $qaNotesVersion = (& python -B -c "import sys; sys.path.insert(0, sys.argv[1]); from tools.pack_engine import read_current_version; print(read_current_version())" $Root).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $qaNotesVersion) {
             throw "Unable to read the current version for QA release notes"
         }
