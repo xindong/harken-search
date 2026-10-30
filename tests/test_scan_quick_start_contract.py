@@ -118,6 +118,12 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertLess(resume.index("finishInterruptedScanSession(paused);"),
                         resume.index("scanDb.discardScanRollbackSession();"))
 
+    def test_isolated_qa_can_exercise_native_right_click_and_pause_path(self):
+        self.assertIn('cmd == "qa_rightclick_scan"', WINDOWS_MAIN)
+        self.assertIn('PrepareQuickScanDialogForPath(state, path, true)', WINDOWS_MAIN)
+        self.assertIn('cmd == "qa_scan_pause_keep"', WINDOWS_MAIN)
+        self.assertIn('state.requestPauseScanTask();', WINDOWS_MAIN)
+
     def test_pending_errors_and_cancelled_summaries_remain_visible(self):
         self.assertIn("BuildScanCompletionPendingLabel(state)", MAIN)
         self.assertIn("if (state.scanWasCancelled)", MAIN)

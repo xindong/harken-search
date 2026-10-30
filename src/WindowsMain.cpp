@@ -6,6 +6,9 @@
 #include "DefaultAudioPlayerAssociation.h"
 #include "CoverBrowseSurfaceState.h"
 #include "PathUtils.h"  // Canonical folder filtering.
+#if ARIS_PREVIEW_ISOLATION
+#include "FolderTreeContextActions.h"
+#endif
 #include "SpectrogramMath.h"
 #include "Theme.h"
 #include "ThemeSchedule.h"
@@ -5434,6 +5437,8 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"scan_in_progress\":" + std::string(state.isScanning.load() ? "true" : "false") + ",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
+        result += "\"was_paused\":" + std::string(state.scanWasPaused ? "true" : "false") + ",";
+        result += "\"data_committed\":" + std::string(state.scanDataCommitted.load() ? "true" : "false") + ",";
         result += "\"scan_workflow_stage\":\"" + std::string(HarkenSearch::ScanWorkflowStageName(state.scanWorkflowStage.load(std::memory_order_acquire))) + "\",";
         result += "\"scan_discovered\":" + std::to_string(state.scanDiscoveredCount.load(std::memory_order_acquire)) + ",";
         result += "\"scan_processed\":" + std::to_string(state.scanProcessedCount.load(std::memory_order_acquire)) + ",";
@@ -6539,6 +6544,20 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"cmd\":\"set_view_mode\",\"error\":\"unknown mode\"}";
         }
 
+    } else if (cmd == "qa_rightclick_scan") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (path.empty() || !PathExistsUtf8(path) || state.isScanning.load()) {
+            result = R"({"ok":false,"cmd":"qa_rightclick_scan","error":"invalid path or scan active"})";
+        } else {
+            state.settings.cacheWaveformsOnScan = false;
+            state.scanBuildSimilarityIndexAfterScan = false;
+            PrepareQuickScanDialogForPath(state, path, true);
+            result = R"({"ok":true,"cmd":"qa_rightclick_scan"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "open_scan_dialog") {
         state.scanDialogAutoStart = false;
         state.showScanDialog = true;
@@ -7348,6 +7367,15 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"ready_to_work_main_wave_pending\":" + std::string(readyToWork.mainWavePending ? "true" : "false");
         result += "}";
 
+    } else if (cmd == "qa_scan_pause_keep") {
+#if ARIS_PREVIEW_ISOLATION
+        const bool wasScanning = state.isScanning.load();
+        if (wasScanning) state.requestPauseScanTask();
+        result = "{\"ok\":true,\"cmd\":\"qa_scan_pause_keep\",\"was_scanning\":"
+               + std::string(wasScanning ? "true" : "false") + "}";
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "scan_stop") {
         bool wasScanning = state.isScanning.load();
         if (wasScanning) {
