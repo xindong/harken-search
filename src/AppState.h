@@ -589,6 +589,7 @@ struct ListTab {
     
     // Search/filter state
     char searchBuffer[256] = "";
+    std::string lastAppliedSearchText;
     bool focusSearchBar = false;
     std::string selectedFolderPath;
     bool folderFilterActive = false;

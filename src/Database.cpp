@@ -14,6 +14,7 @@
 #include "CoverWallSelectionKey.h"
 #include "CoverReplacementFoundation.h"
 #include "MetadataReader.h"
+#include "Id3CommentText.h"
 #include "platform/database_audio_probe.h"
 #include "TagVocabularyMapper.h"
 #include "SearchQuery.h"
@@ -5053,7 +5054,28 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
         case ColId::Title:                  r.title = safeGetText(stmt, i); break;
         case ColId::Artist:                 r.artist = safeGetText(stmt, i); break;
         case ColId::Album:                  r.album = safeGetText(stmt, i); break;
-        case ColId::Description:            r.description = safeGetText(stmt, i); break;
+        case ColId::Description: {
+            const auto* bytes = sqlite3_column_blob(stmt, i);
+            const int byteCount = sqlite3_column_bytes(stmt, i);
+            if (bytes && byteCount > 0) {
+                const auto recovered = Id3CommentText::RecoverStoredLegacy(
+                    std::string_view(reinterpret_cast<const char*>(bytes),
+                                     static_cast<size_t>(byteCount)));
+                if (recovered) {
+                    r.databaseListDescriptionOverride = *recovered;
+                    r.databaseListDescriptionNeedsSource = true;
+                }
+            }
+            const auto* utf8 = sqlite3_column_text(stmt, i);
+            const int utf8Count = sqlite3_column_bytes(stmt, i);
+            if (utf8 && utf8Count > 0 &&
+                Id3CommentText::LooksLikeConvertedLegacy(
+                    std::string_view(reinterpret_cast<const char*>(utf8),
+                                     static_cast<size_t>(utf8Count))))
+                r.databaseListDescriptionNeedsSource = true;
+            r.description = safeGetText(stmt, i);
+            break;
+        }
         case ColId::Category:               r.category = safeGetText(stmt, i); break;
         case ColId::Keywords:               r.keywords = safeGetText(stmt, i); break;
         case ColId::Rating:                 r.rating = sqlite3_column_int(stmt, i); break;

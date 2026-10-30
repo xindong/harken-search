@@ -84,6 +84,8 @@ struct AudioRecord {
 
     // 3. 冷数据 (Cold Zone)：右键/详情/搜索/封面时访问
     std::string description;
+    std::string databaseListDescriptionOverride; // Legacy display only; never persisted.
+    bool databaseListDescriptionNeedsSource = false;
     std::string matchSnippet;
     SearchMatchSource matchSource = SearchMatchSource::None;
     std::string folderPath;

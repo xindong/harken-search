@@ -5422,6 +5422,7 @@ add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_database_features.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
+    src/AsyncWorker.cpp
     src/AppState.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
@@ -5466,6 +5467,7 @@ target_link_libraries(TestDatabaseFeatures PRIVATE
     winmm
 )
 target_compile_definitions(TestDatabaseFeatures PRIVATE
+    AURO_TEST_REAL_ASYNC_WORKER
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -5482,6 +5484,10 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
+set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
+    ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")
+aura_set_test_labels(TestLegacyDescriptionDisplay db)
 add_test(NAME TestRelinkWorkflowPathUpdate COMMAND TestDatabaseFeatures)
 set_tests_properties(TestRelinkWorkflowPathUpdate PROPERTIES
     ENVIRONMENT "HARKEN_RELINK_PATH_UPDATE_ONLY=1")
