@@ -78,6 +78,7 @@ if(WIN32)
         ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
         ../../src/platform/update_bootstrap_authority_base.cpp
         ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
         ../../src/platform/text_encoding_win32.cpp)
     target_include_directories(bootstrap_progress_window_tests PRIVATE ../../src ../../thirdparty)
     include(../../cmake/harken_bootstrap_progress_ui.cmake)
@@ -93,6 +94,7 @@ if(WIN32)
         ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
         ../../src/platform/update_bootstrap_authority_base.cpp
         ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
         ../../src/platform/text_encoding_win32.cpp)
     target_include_directories(bootstrap_progress_view_tests PRIVATE ../../src ../../thirdparty)
     target_compile_features(bootstrap_progress_view_tests PRIVATE cxx_std_17)
@@ -104,6 +106,7 @@ if(WIN32)
         ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
         ../../src/platform/update_bootstrap_authority_base.cpp
         ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
         ../../src/platform/text_encoding_win32.cpp)
     harken_bootstrap_progress_ui(bootstrap_webview_tests)
     target_include_directories(bootstrap_webview_tests PRIVATE ../../src ../../thirdparty)
@@ -245,6 +248,7 @@ if(WIN32)
         ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
         ../../src/platform/update_bootstrap_authority_base.cpp
         ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
         ../../src/platform/text_encoding_win32.cpp)
     target_compile_definitions(bootstrap_progress_transaction_fixture PRIVATE
         ${_progress_definitions} HARKEN_BOOTSTRAP_WEBVIEW_TESTING=1)
