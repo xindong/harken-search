@@ -4952,6 +4952,159 @@ static int testReadOnlyPinyinRecomputeStops() {
     return failures;
 }
 
+static int testRelinkUpdateRequiresExistingSource() {
+    const fs::path root = fs::temp_directory_path() /
+        ("harken-relink-update-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::remove_all(root);
+    fs::create_directories(root);
+    Database db;
+    if (!db.open((root / "library.db").string(), true)) {
+        std::cout << "FAIL: could not create relink update test database\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const std::string originalPath = (root / "missing-source.wav").string();
+    const std::string unrelatedPath = (root / "unrelated-source.wav").string();
+    const std::string replacementPath = (root / "replacement.wav").string();
+    sqlite3_stmt* insert = nullptr;
+    bool inserted = sqlite3_prepare_v2(
+        db.db(),
+        "INSERT INTO audio_files(file_path, file_name) VALUES(?1, ?2)",
+        -1,
+        &insert,
+        nullptr) == SQLITE_OK;
+    if (inserted) {
+        sqlite3_bind_text(insert, 1, originalPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert, 2, "missing-source.wav", -1, SQLITE_STATIC);
+        inserted = sqlite3_step(insert) == SQLITE_DONE;
+    }
+    if (insert) sqlite3_finalize(insert);
+
+    sqlite3_stmt* insertTarget = nullptr;
+    bool targetInserted = sqlite3_prepare_v2(
+        db.db(),
+        "INSERT INTO audio_files(file_path, file_name) VALUES(?1, ?2)",
+        -1,
+        &insertTarget,
+        nullptr) == SQLITE_OK;
+    if (targetInserted) {
+        sqlite3_bind_text(insertTarget, 1, replacementPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insertTarget, 2, "replacement.wav", -1, SQLITE_STATIC);
+        targetInserted = sqlite3_step(insertTarget) == SQLITE_DONE;
+    }
+    if (insertTarget) sqlite3_finalize(insertTarget);
+
+    Database::RelinkPathUpdateStatus missingSourceStatus =
+        Database::RelinkPathUpdateStatus::Failed;
+    const bool missingSourceUpdated = inserted && targetInserted &&
+        db.updateFilePath(
+            unrelatedPath,
+            (root / "unused.wav").string(),
+            "unused.wav",
+            &missingSourceStatus);
+    Database::RelinkPathUpdateStatus conflictStatus =
+        Database::RelinkPathUpdateStatus::Failed;
+    const bool conflictingPathUpdated = inserted && targetInserted &&
+        db.updateFilePath(
+            originalPath,
+            replacementPath,
+            "replacement.wav",
+            &conflictStatus);
+    const auto original = db.executeRawQuery(
+        "SELECT COUNT(*) FROM audio_files WHERE file_path = '" + originalPath + "';");
+    const auto replacement = db.executeRawQuery(
+        "SELECT COUNT(*) FROM audio_files WHERE file_path = '" + replacementPath + "';");
+    const bool sourcePreserved = original.rows.size() == 1 && original.rows[0][0] == "1";
+    const bool destinationPreserved = replacement.rows.size() == 1 && replacement.rows[0][0] == "1";
+    const bool passed = inserted && targetInserted && !missingSourceUpdated &&
+        missingSourceStatus == Database::RelinkPathUpdateStatus::SourceChanged &&
+        !conflictingPathUpdated &&
+        conflictStatus == Database::RelinkPathUpdateStatus::PathConflict &&
+        sourcePreserved && destinationPreserved;
+    std::cout << (passed ? "PASS" : "FAIL")
+              << ": relink update distinguishes a missing source row and occupied destination\n";
+    db.close();
+    fs::remove_all(root);
+    return passed ? 0 : 1;
+}
+
+static int testRelinkSearchReportsStatusReasonAndProgress() {
+    const fs::path root = fs::temp_directory_path() /
+        ("harken-relink-search-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const fs::path searchRoot = root / "search";
+    fs::create_directories(searchRoot);
+    const fs::path candidatePath = searchRoot / "forest.wav";
+    const fs::path missingPath = root / "old" / "forest.wav";
+    {
+        std::ofstream file(candidatePath, std::ios::binary);
+        file << std::string(64, 'R');
+    }
+
+    Database db;
+    if (!db.open((root / "library.db").string(), true)) {
+        std::cout << "FAIL: could not create relink search test database\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    sqlite3_stmt* insert = nullptr;
+    bool inserted = sqlite3_prepare_v2(
+        db.db(),
+        "INSERT INTO audio_files(file_path, file_name, file_size) VALUES(?1, ?2, ?3)",
+        -1,
+        &insert,
+        nullptr) == SQLITE_OK;
+    if (inserted) {
+        const std::string missingPathUtf8 = missingPath.string();
+        sqlite3_bind_text(insert, 1, missingPathUtf8.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert, 2, "forest.wav", -1, SQLITE_STATIC);
+        sqlite3_bind_int64(insert, 3, 64);
+        inserted = sqlite3_step(insert) == SQLITE_DONE;
+    }
+    if (insert) sqlite3_finalize(insert);
+
+    std::atomic<bool> cancel{false};
+    std::atomic<uint64_t> scannedEntries{0};
+    const auto matched = db.findRelinkCandidatesDetailed(
+        {searchRoot.string()}, &cancel, &scannedEntries);
+    const bool exactMatch = inserted &&
+        matched.status == Database::RelinkSearchStatus::Completed &&
+        matched.candidates.size() == 1 &&
+        matched.candidates[0].second.size() == 1 &&
+        matched.candidates[0].second[0].path == candidatePath.string() &&
+        matched.candidates[0].second[0].reason ==
+            Database::RelinkMatchReason::ExactFileNameAndSize &&
+        matched.scannedEntries > 0 &&
+        scannedEntries.load(std::memory_order_acquire) == matched.scannedEntries;
+
+    const auto noRoots = db.findRelinkCandidatesDetailed({}, &cancel);
+    const bool emptySearchIsComplete =
+        noRoots.status == Database::RelinkSearchStatus::Completed &&
+        noRoots.candidates.size() == 1 && noRoots.candidates[0].second.empty();
+
+    const auto missingRoot = db.findRelinkCandidatesDetailed(
+        {(root / "unavailable").string()}, &cancel);
+    const bool unreadableRootIsFailure =
+        missingRoot.status == Database::RelinkSearchStatus::Failed &&
+        missingRoot.failedRoots.size() == 1;
+
+    cancel.store(true, std::memory_order_release);
+    const auto cancelled = db.findRelinkCandidatesDetailed(
+        {searchRoot.string()}, &cancel);
+    const bool cancellationIsDistinct =
+        cancelled.status == Database::RelinkSearchStatus::Cancelled;
+
+    const bool passed = exactMatch && emptySearchIsComplete &&
+                        unreadableRootIsFailure && cancellationIsDistinct;
+    std::cout << (passed ? "PASS" : "FAIL")
+              << ": relink search reports exact matches, progress, empty, failed, and cancelled outcomes\n";
+    db.close();
+    fs::remove_all(root);
+    return passed ? 0 : 1;
+}
+
 int testReadOnlyOpenDoesNotCreateLegacySidecars() {
     const fs::path root = fs::temp_directory_path() /
         ("harken-readonly-sidecars-" +
@@ -5232,6 +5385,20 @@ int main(int argc, char* argv[]) {
                    "HARKEN_FAVORITES_MIGRATION_ONLY") == 0 && favoritesOnlyRaw;
     std::free(favoritesOnlyRaw);
     if (favoritesOnly) return testFavoriteColumnMigrationReportsFailure();
+    char* relinkUpdateOnlyRaw = nullptr;
+    size_t relinkUpdateOnlyLen = 0;
+    const bool relinkUpdateOnly =
+        _dupenv_s(&relinkUpdateOnlyRaw, &relinkUpdateOnlyLen,
+                   "HARKEN_RELINK_PATH_UPDATE_ONLY") == 0 && relinkUpdateOnlyRaw;
+    std::free(relinkUpdateOnlyRaw);
+    if (relinkUpdateOnly) return testRelinkUpdateRequiresExistingSource();
+    char* relinkSearchOnlyRaw = nullptr;
+    size_t relinkSearchOnlyLen = 0;
+    const bool relinkSearchOnly =
+        _dupenv_s(&relinkSearchOnlyRaw, &relinkSearchOnlyLen,
+                   "HARKEN_RELINK_SEARCH_REPORT_ONLY") == 0 && relinkSearchOnlyRaw;
+    std::free(relinkSearchOnlyRaw);
+    if (relinkSearchOnly) return testRelinkSearchReportsStatusReasonAndProgress();
     const int readOnlySidecarFailures = testReadOnlyOpenDoesNotCreateLegacySidecars() +
         testReadOnlyOpenSurvivesCorruptRebuildableSidecars();
     char* focusedFallbackRaw = nullptr;

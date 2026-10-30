@@ -5482,6 +5482,14 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestRelinkWorkflowPathUpdate COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowPathUpdate PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_PATH_UPDATE_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowPathUpdate db)
+add_test(NAME TestRelinkWorkflowSearchReport COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowSearchReport PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_SEARCH_REPORT_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowSearchReport db)
 add_test(NAME TestFavoritesMigrationError COMMAND TestDatabaseFeatures)
 set_tests_properties(TestFavoritesMigrationError PROPERTIES
     ENVIRONMENT "HARKEN_FAVORITES_MIGRATION_ONLY=1")

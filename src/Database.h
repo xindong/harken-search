@@ -439,6 +439,44 @@ public:
         int         sampleRate = 0;
     };
 
+    enum class RelinkPathUpdateStatus : uint8_t {
+        Updated,
+        SourceChanged,
+        TargetUnavailable,
+        PathConflict,
+        Failed,
+    };
+
+    enum class RelinkSearchStatus : uint8_t {
+        NotStarted,
+        Searching,
+        Completed,
+        Cancelled,
+        PartialFailure,
+        Failed,
+    };
+
+    enum class RelinkMatchReason : uint8_t {
+        ExactFileNameAndSize,
+    };
+
+    struct RelinkCandidatePath {
+        std::string path;
+        RelinkMatchReason reason = RelinkMatchReason::ExactFileNameAndSize;
+    };
+
+    using RelinkCandidateMatches = std::vector<std::pair<
+        RelinkCandidate,
+        std::vector<RelinkCandidatePath>>>;
+
+    struct RelinkSearchResult {
+        RelinkSearchStatus status = RelinkSearchStatus::NotStarted;
+        RelinkCandidateMatches candidates;
+        std::vector<std::string> failedRoots;
+        std::string errorMessage;
+        uint64_t scannedEntries = 0;
+    };
+
     /// 扫描/清理进度回调类型，用于 scanDirectory、scanDirectoryEx、removeMissingFilesDatabaseWide
     using ScanProgressCallback = std::function<void(int current, int total, const std::string& currentFile, bool dataCommitted)>;
 
@@ -868,7 +906,11 @@ public:
     int  getSnoozedCount();
 
     // Path maintenance (for rename/move on disk)
-    bool updateFilePath(const std::string& oldPath, const std::string& newPath, const std::string& newFileName = "");
+    bool updateFilePath(
+        const std::string& oldPath,
+        const std::string& newPath,
+        const std::string& newFileName = "",
+        RelinkPathUpdateStatus* relinkResult = nullptr);
     bool updatePathPrefix(const std::string& oldFolderPath, const std::string& newFolderPath);
 
     // 业务层本地文件系统操作去重：抑制 watcher 对「本进程主动 rename」的重复回流
@@ -1101,6 +1143,10 @@ public:
     std::vector<std::pair<RelinkCandidate, std::vector<std::string>>>
         findRelinkCandidates(const std::vector<std::string>& searchRoots,
                              std::atomic<bool>* cancelFlag = nullptr);
+    RelinkSearchResult findRelinkCandidatesDetailed(
+        const std::vector<std::string>& searchRoots,
+        std::atomic<bool>* cancelFlag = nullptr,
+        std::atomic<uint64_t>* scannedEntries = nullptr);
 
     void mergeLibraryRoots(const std::vector<std::string>& roots);
     std::vector<std::string> getLibraryRoots() const;
