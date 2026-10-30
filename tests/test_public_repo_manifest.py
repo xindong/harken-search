@@ -511,6 +511,7 @@ PUBLIC_INTERNAL_FEATURE_ALLOWLIST = {
     ("scripts/package_local_update_demo.ps1", "127.0.0.1"): "本地更新演示绑定本机回环",
     ("scripts/package_local_update_demo.ps1", "provenance"): "演示包 provenance 校验",
     ("scripts/qa_probe_cover_browse_surface.py", "harness"): "QA 探针注释中的测试 harness 词",
+    ("tools/qa_update_notice_panel.py", "harness"): "更新面板 QA 工具注释中的隔离驱动接缝描述",
     ("scripts/qa_probe_cover_browse_surface.py", "openclaw"): "QA 探针注释中的已退役路径名",
     ("scripts/qa_probe_cover_replacement_integration.py", "harness"): "QA 探针注释中的测试 harness 词",
     ("scripts/qa_probe_cover_replacement_integration.py", "openclaw"): "QA 探针注释中的已退役路径名",

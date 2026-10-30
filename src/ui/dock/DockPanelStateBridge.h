@@ -175,7 +175,6 @@ inline DockColumnBudget ResolveDockColumnBudget(
 }
 
 inline constexpr float kDockBandMinHeight = 96.0f;
-inline constexpr float kDockBandMaxHeight = 320.0f;
 
 inline void PurgeObsoleteDockTestModules(DockLayout& layout) {
     for (const char* id : {"mod-docktest-similar", "mod-docktest-band"}) {
@@ -219,8 +218,9 @@ inline DockBandReserve ResolveDockBandReserve(
             }
         };
         visit(visit, root);
-        const float preferred = std::clamp(saved > 0.0f ? saved : fallbackHeight,
-            kDockBandMinHeight, kDockBandMaxHeight);
+        // The workspace budget below is the ceiling, including on tall screens.
+        const float preferred = std::max(kDockBandMinHeight,
+            std::isfinite(saved) && saved > 0.0f ? saved : fallbackHeight);
         return std::max(preferred, DockSubtreeMinimum(root, scale).height);
     };
     DockBandReserve result{height(DockSide::Top), height(DockSide::Bottom)};
@@ -278,8 +278,7 @@ inline DockBandReserve ResolveDockBandReserve(
             height = std::max(height, infoDockedHeight);
         }
         if (hasHeightOwner) {
-            height = std::max(kDockBandMinHeight,
-                              std::min(height, kDockBandMaxHeight));
+            height = std::max(kDockBandMinHeight, height);
         } else {
             height = fallbackHeight;
         }

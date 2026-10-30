@@ -12,7 +12,7 @@ def main():
     out = parser.parse_args().build_dir.resolve()
     out.mkdir(parents=True, exist_ok=True)
     source = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
-    function = source.split("static void RenderNoDatabaseSetupEmptyState(", 1)[1]
+    function = source.split("static void RenderDatabaseSetupSeparator(", 1)[1]
     block = function.split("ImGui::PushStyleColor(ImGuiCol_Separator, separatorColor);", 1)[1].split("ImGui::PopStyleColor();", 1)[0]
     cpp = r'''
 #include "imgui.h"

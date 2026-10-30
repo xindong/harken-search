@@ -42,6 +42,17 @@ int main() {
                "cover-wall grid metrics should stay valid in narrow panels")) {
         return 1;
     }
+    for (const float width : {740.0f, 980.0f, 1920.0f}) {
+        const auto dense = CalculateCoverWallGridMetrics(width, kMinThumbSizePx);
+        if (!Check(dense.columns > 8 && dense.thumbSizePx < 62.0f,
+                   "minimum-size covers must stay small in a wide top/bottom dock")) return 1;
+        const float occupied = dense.columns * dense.thumbSizePx + (dense.columns - 1) * 4.0f;
+        if (!Check(occupied <= width + .01f && occupied >= width - .01f,
+                   "dense cover rows must still fit the panel without overflow")) return 1;
+        const auto enlarged = CalculateCoverWallGridMetrics(width, 132.0f);
+        if (!Check(enlarged.columns < dense.columns && enlarged.thumbSizePx > dense.thumbSizePx,
+                   "enlarging covers must reduce the column count")) return 1;
+    }
     if (!Check(ResolveThumbSizeSliderMaxPx(452.0f) == 452.0f,
                "wide cover-wall panels should extend the slider range to the real fill width")) {
         return 1;

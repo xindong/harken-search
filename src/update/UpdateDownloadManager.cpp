@@ -4,6 +4,7 @@
 #include <cctype>
 #include <limits>
 #include <string_view>
+#include <string_view>
 
 namespace aris::update {
 namespace {
@@ -87,6 +88,38 @@ bool HasReservedTargetSuffix(const std::string& target) {
 std::string JoinPath(const std::string& version,
                      const std::string& relativeTarget) {
     return version + "/" + NormalizeSeparators(relativeTarget);
+}
+
+bool ParseVersionComponents(std::string_view value, std::uint64_t (&parts)[3]) {
+    if (!IsStrictNumericSemVersion(value)) return false;
+    std::size_t begin = 0;
+    for (int component = 0; component < 3; ++component) {
+        const std::size_t end = component == 2 ? value.size()
+                                               : value.find('.', begin);
+        std::uint64_t number = 0;
+        for (std::size_t index = begin; index < end; ++index) {
+            number = number * 10 + static_cast<unsigned>(value[index] - '0');
+        }
+        parts[component] = number;
+        begin = end + 1;
+    }
+    return true;
+}
+
+// Negative when left < right, zero when equal, positive when left > right.
+int CompareVersions(const std::string& left, const std::string& right) {
+    std::uint64_t leftParts[3]{};
+    std::uint64_t rightParts[3]{};
+    if (!ParseVersionComponents(left, leftParts) ||
+        !ParseVersionComponents(right, rightParts)) {
+        return 0;
+    }
+    for (int component = 0; component < 3; ++component) {
+        if (leftParts[component] != rightParts[component]) {
+            return leftParts[component] < rightParts[component] ? -1 : 1;
+        }
+    }
+    return 0;
 }
 
 std::string LowerAscii(std::string value) {
@@ -328,6 +361,44 @@ DownloadCleanupDecision UpdateDownloadManager::FinalizeChecksum(
             Intent(DownloadCleanupIntentKind::DeleteMeta, paths.paths.metaPath));
     }
     return decision;
+}
+
+bool UpdateDownloadManager::IsVersionDirectoryName(const std::string& name) {
+    return IsStrictNumericSemVersion(name);
+}
+
+UpdateVersionRetentionPlan UpdateDownloadManager::PlanVersionRetention(
+    const std::vector<std::string>& topLevelDirectoryNames,
+    const std::string& currentVersion) {
+    UpdateVersionRetentionPlan plan;
+    std::uint64_t currentParts[3]{};
+    if (!ParseVersionComponents(currentVersion, currentParts)) {
+        return plan;
+    }
+    plan.ok = true;
+
+    std::vector<std::string> olderVersions;
+    for (const auto& name : topLevelDirectoryNames) {
+        std::uint64_t parts[3]{};
+        if (!ParseVersionComponents(name, parts)) {
+            continue;  // staging/transaction/quarantine/other names stay.
+        }
+        const int order = CompareVersions(name, currentVersion);
+        if (order >= 0) {
+            continue;  // the running package and any pending package stay.
+        }
+        olderVersions.push_back(name);
+    }
+    if (olderVersions.empty()) return plan;
+
+    std::sort(olderVersions.begin(), olderVersions.end(),
+              [](const std::string& left, const std::string& right) {
+                  return CompareVersions(left, right) < 0;
+              });
+    // Keep exactly the newest older package; it is the only rollback window.
+    plan.pruneVersions.assign(olderVersions.begin(),
+                              olderVersions.end() - 1);
+    return plan;
 }
 
 }  // namespace aris::update

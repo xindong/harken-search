@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.41 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.42 LANGUAGES C CXX)
 
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -560,6 +560,10 @@ set(APP_SOURCES
     src/ThemeMascot.cpp
     src/Theme.cpp
     src/ThemeEditor.cpp
+    src/ThemeSchedule.cpp
+    src/ThemeScheduleUI.cpp
+    src/ThemeSchedulePaletteCodec.cpp
+    src/ThemeSchedulePaletteFiles.cpp
     src/ThemeInspector.cpp
     src/AnnotationBridge.cpp
     src/CueviFeedbackClient.cpp
@@ -644,6 +648,7 @@ set(APP_SOURCES
     src/SimilaritySearch.cpp
     src/SimilarityWorkflow.cpp
     src/SimilarityQueryService.cpp
+    src/LibraryStatisticsWorker.cpp
     src/SimilarSoundsWindow.cpp
     src/RelinkWorkflow.cpp
     # BPM / key / mood detection (F-033)
@@ -880,6 +885,14 @@ if(WIN32)
     aura_set_test_labels(SearchTextIndex core)
 endif()
 
+add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
+    tests/test_feature_index_statistics.cpp src/LibraryStatisticsWorker.cpp ${SQLITE_SOURCES})
+target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
+target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
+add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
+set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
+
 add_executable(TestUpdateNoticePresentation EXCLUDE_FROM_ALL
     tests/test_update_notice_presentation.cpp
 )
@@ -892,6 +905,36 @@ if(MSVC)
     target_compile_options(TestUpdateNoticePresentation PRIVATE /utf-8)
 endif()
 add_test(NAME UpdateNoticePresentation COMMAND TestUpdateNoticePresentation)
+
+add_executable(TestThemeSchedulePaletteCodec EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_palette_codec.cpp
+    src/ThemeSchedulePaletteCodec.cpp)
+target_include_directories(TestThemeSchedulePaletteCodec PRIVATE src thirdparty ${IMGUI_DIR})
+target_compile_features(TestThemeSchedulePaletteCodec PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeSchedulePaletteCodec PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeSchedulePaletteCodec COMMAND TestThemeSchedulePaletteCodec)
+
+add_executable(TestThemeScheduleClock EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_clock.cpp)
+target_include_directories(TestThemeScheduleClock PRIVATE src)
+target_compile_features(TestThemeScheduleClock PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeScheduleClock PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeScheduleClock COMMAND TestThemeScheduleClock)
+
+add_executable(TestThemeSchedulePaletteFiles EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_palette_files.cpp
+    src/ThemeSchedulePaletteFiles.cpp)
+target_include_directories(TestThemeSchedulePaletteFiles PRIVATE src)
+target_compile_features(TestThemeSchedulePaletteFiles PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeSchedulePaletteFiles PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
 
 add_executable(TestUpdateNoticeContent EXCLUDE_FROM_ALL
     tests/test_update_notice_content.cpp
@@ -1129,6 +1172,7 @@ if(WIN32)
         src/bootstrap/WindowsBootstrapJournal.cpp
         src/bootstrap/WindowsBootstrapRuntimeWin32.cpp
         src/platform/update_bootstrap_authority_base.cpp
+        src/update/UpdateDownloadManager.cpp
         src/platform/update_persistence_port.cpp
         src/platform/text_encoding_win32.cpp
         src/ed25519/tweetnacl.c

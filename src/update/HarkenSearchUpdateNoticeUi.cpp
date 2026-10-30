@@ -7,6 +7,7 @@
 
 #include "../Localization.h"
 #include "../Theme.h"
+#include "../ui/ActionButtonStyle.h"
 #include "../Version.h"
 #include "platform/animation_preferences.h"
 
@@ -91,38 +92,19 @@ bool ButtonAt(
     bool primary,
     bool enabled,
     const ThemeColorScheme& theme) {
-    const ImVec4 background = enabled
-        ? (primary ? theme.resultsText : theme.dialogPanelBG)
-        : theme.frameBgBase;
-    const ImVec4 hovered = primary
-        ? MixColor(theme.resultsText, theme.mainWindowBG, 0.06f)
-        : MixColor(theme.dialogPanelBG, theme.resultsText, 0.08f);
-    const ImVec4 active = primary
-        ? MixColor(theme.resultsText, theme.mainWindowBG, 0.10f)
-        : theme.frameBgBase;
-    const ImVec4 text = enabled
-        ? (primary ? theme.mainWindowBG : theme.resultsText)
-        : theme.resultsText;
-
     ImGui::SetCursorPos(ImVec2(x, y));
     ImGui::PushID(id);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, background);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hovered);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, active);
-    ImGui::PushStyleColor(ImGuiCol_Text, text);
-    ImGui::PushStyleColor(ImGuiCol_Border, primary ? theme.resultsText : theme.chromeBorder);
     ImGui::BeginDisabled(!enabled);
-    const bool clicked = ImGui::Button(label, ImVec2(width, height));
+    const aura::ui::ActionButtonStyle::Scope buttonStyle(aura::ui::ActionButtonStyle::Make(
+        theme, aura::ui::ActionButtonStyle::CurrentSurface(),
+        primary ? aura::ui::ButtonVariant::PrimarySearch : aura::ui::ButtonVariant::Secondary));
+    const bool clicked = aura::ui::ActionButtonStyle::Draw(label, ImVec2(width, height));
 #if AURA_BUILD_DIAGNOSTICS
     const auto min = ImGui::GetItemRectMin();
     const auto max = ImGui::GetItemRectMax();
     g_noticeQa.controls[id] = {min.x, min.y, max.x, max.y};
 #endif
     ImGui::EndDisabled();
-    ImGui::PopStyleColor(5);
-    ImGui::PopStyleVar(2);
     ImGui::PopID();
     return clicked;
 }
@@ -683,7 +665,9 @@ void RenderHarkenSearchUpdateNoticeUi(
                       : updateState.currentVersion)
             : std::string_view(updateState.candidateVersion);
         const bool candidate = state != HarkenSearchUpdateNoticeVisibleState::Latest;
-        const ReleaseNotesEntry* release = SelectHarkenSearchReleaseNotes(notes, releaseVersion, candidate);
+        const ReleaseNotesEntry* release = candidate
+            ? SelectHarkenSearchReleaseNotes(notes, releaseVersion, true)
+            : SelectHarkenSearchLocalDisplayReleaseNotes(notes, releaseVersion);
         const float actionY = panelHeight - 54.0f;
 
         switch (state) {

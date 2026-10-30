@@ -53,7 +53,7 @@ class ScanBackgroundIndicatorContract(unittest.TestCase):
         )
 
     def test_done_acknowledgement_keeps_pause_until_next_scan(self):
-        start = MAIN.index("if (ImGui::Button(L(Done), ImVec2(100, 0)))")
+        start = MAIN.index("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0)))")
         end = MAIN.index("state.scanDialogAutoStart = false;", start)
         done_acknowledgement = MAIN[start:end]
         self.assertNotIn("scanStopDisposition.store", done_acknowledgement)

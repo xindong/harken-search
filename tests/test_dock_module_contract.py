@@ -49,10 +49,18 @@ def test_single_similar_right_keeps_width_grip_without_fake_leaf():
     main = read("src/main.cpp")
     assert "PlanRightDockOuterGrip(" in hit
     assert "DragRightDockOuterGrip(" in hit
-    assert 'PlanRightDockOuterGrip(gripSnapshot, "similar-sounds")' in main
-    assert 'ImGui::InvisibleButton("##RightDockLeafSplitterHit"' in main
+    assert 'PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right' in main
+    assert '"##RightDockLeafSplitterHit"' in main
     assert "state.panelSimilarSounds.dockedWidth" in main
     assert "!showRightColumn" in main
+
+
+def test_swapped_columns_keep_both_outer_width_grips():
+    main = read("src/main.cpp")
+    assert "leftDockSlotRequired && !showLeftColumn" in main
+    assert "PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left" in main
+    assert "PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right" in main
+    assert "MirrorDockRootExtent(state, side, resizedRect)" in main
 
 
 def test_band_hint_is_read_only_and_retired_blank_modules_are_purged():
