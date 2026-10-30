@@ -317,10 +317,10 @@ bool RenderRelinkBanner(AppState& state) {
         }
         ImGui::SameLine();
 
-        ButtonOptions ghost;
-        ghost.variant = ButtonVariant::Ghost;
-        ghost.size = ButtonSize::Sm;
-        if (Button(L(Relink_SkipThisBtn), ghost)) {
+        ButtonOptions quiet;
+        quiet.variant = ButtonVariant::Quiet;
+        quiet.size = ButtonSize::Sm;
+        if (Button(L(Relink_SkipThisBtn), quiet)) {
             RequestRelinkSearchCancel(state.relinkBannerSearchCancel);
             state.relinkBannerSearchGeneration.fetch_add(1, std::memory_order_acq_rel);
             state.relinkIgnoredThisSession.insert(state.relinkBanner.missingPath);
@@ -365,7 +365,7 @@ bool RenderRelinkTool(AppState& state) {
         state.relinkTool.searchRoot = rlkRootBuf;
     }
     ImGui::SameLine();
-    if (ImGui::Button(L(DAW_Browse), ImVec2(buttonWidth, 0))) {
+    if (aura::ui::ActionButton(L(DAW_Browse), ImVec2(buttonWidth, 0))) {
         const std::string folder = Platform::BrowseFolderDialogModern(
             HarkenSearch::UiHost::MainWindowOwner(), u8"选择音频文件夹");
         if (!folder.empty()) {
@@ -381,7 +381,7 @@ bool RenderRelinkTool(AppState& state) {
 
     const bool wasScanning = state.relinkTool.scanning;
     if (wasScanning) ImGui::BeginDisabled();
-    if (ImGui::Button(L(Relink_AutoMatch), ImVec2(scanButtonWidth, 0))) {
+    if (aura::ui::ActionButton(L(Relink_AutoMatch), ImVec2(scanButtonWidth, 0), aura::ui::ButtonVariant::PrimarySearch)) {
         state.relinkTool.scanning = true;
         state.relinkTool.results.clear();
         state.relinkTool.confirmed = false;
@@ -595,7 +595,9 @@ bool RenderRelinkTool(AppState& state) {
         // Screen coordinates avoid counting the settings group's offset twice.
         ImGui::SetCursorScreenPos(ImVec2(confirmButtonX, ImGui::GetCursorScreenPos().y));
         ImGui::BeginDisabled(linkCount == 0);
-        const bool confirm = ImGui::Button(confirmLabel, ImVec2(confirmButtonWidth, 0));
+        const bool confirm = aura::ui::ActionButton(
+            confirmLabel, ImVec2(confirmButtonWidth, 0),
+            aura::ui::ButtonVariant::PrimarySearch);
         ImGui::EndDisabled();
         if (confirm) {
             decltype(state.relinkTool.results) pendingResults;

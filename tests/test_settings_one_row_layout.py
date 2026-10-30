@@ -197,7 +197,7 @@ def test_settings_function_rows_use_shared_tooltip() -> None:
     assert "ImGui::SetTooltip" not in fragment
     repair = _between(MAIN, "s_repairSnapshotReady", "getRepairCenterSnapshot")
     assert "SettingsButtonRow" in repair
-    assert "ImGui::Button(" not in repair
+    assert "aura::ui::ActionButton(" not in repair
 
 
 def test_settings_dialog_tooltip_does_not_pass_percent_s() -> None:
@@ -349,9 +349,9 @@ def _settings_popup_fragment() -> str:
 def test_settings_chrome_is_pinned_to_dialog_client_rect() -> None:
     popup = _settings_popup_fragment()
     nav_at = popup.index('BeginTransientScrollbarChild("SettingsNav"')
-    save_at = popup.index("ImGui::Button(L(Set_SaveAndClose)")
+    save_at = popup.index("aura::ui::ActionButton(L(Set_SaveAndClose)")
     chrome = popup[: popup.index("selectedNav == 0")]
-    footer = popup[popup.rfind("// Bottom buttons") : save_at + len("ImGui::Button(L(Set_SaveAndClose)")]
+    footer = popup[popup.rfind("// Bottom buttons") : save_at + len("aura::ui::ActionButton(L(Set_SaveAndClose)")]
     assert nav_at < save_at
     assert "leftPanelWidth" not in chrome
     assert "leftPanelWidth" not in footer
@@ -380,7 +380,7 @@ def test_settings_chrome_is_pinned_to_dialog_client_rect() -> None:
 
 def test_settings_footer_primary_buttons_fit_their_labels() -> None:
     popup = _settings_popup_fragment()
-    footer = popup[popup.rfind("// Bottom buttons") : popup.index("ImGui::Button(L(Set_ExportSettings)")]
+    footer = popup[popup.rfind("// Bottom buttons") : popup.index("aura::ui::ActionButton(L(Set_ExportSettings)")]
     chrome = popup[: popup.index("selectedNav == 0")]
     assert "Set_SaveAndClose" in footer
     assert "Set_RestoreDefaultTheme" in footer
@@ -530,7 +530,7 @@ def test_settings_details_scrollbar_drag_grabs_mouse_not_window() -> None:
 
 def test_settings_footer_primary_buttons_inset_from_dialog_edge() -> None:
     popup = _settings_popup_fragment()
-    footer = popup[popup.rfind("// Bottom buttons") : popup.index("ImGui::Button(L(Set_SaveAndClose)")]
+    footer = popup[popup.rfind("// Bottom buttons") : popup.index("aura::ui::ActionButton(L(Set_SaveAndClose)")]
     assert "settingsClientMin.x + aura::ui::metrics::kGap12" in footer
     assert "ImGui::SetCursorPos(ImVec2(settingsClientMin.x, settingsFooterY))" not in footer
     assert "SetCursorPosX(settingsClientMax.x - rightGroupW)" in popup[popup.rfind("// Bottom buttons") :]

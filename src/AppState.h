@@ -1,6 +1,8 @@
 #pragma once
 #include "InfoPageNavigation.h"
 #include "InfoEditSession.h"
+#include "ThemeScheduleClock.h"
+#include "LibraryStatisticsWorker.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -860,6 +862,7 @@ struct AppSettings {
     float meterWidth = 68.0f;  // Loudness meter width (px); user-draggable, clamp [40, 300]
     MeterChannelLayout meterChannelLayout = MeterChannelLayout::SMPTE;  // Channel naming preset for N>2
     AppTheme theme = AppTheme::Dark;
+    harken::theme_schedule::Mode themeScheduleMode = harken::theme_schedule::Mode::Automatic;
     AppLanguage language = AppLanguage::Chinese;
 
     // Custom colors (legacy simple custom)
@@ -1583,6 +1586,13 @@ struct AppState {
     AudioEngine audioEngine;
     FileBrowser fileBrowser;
     Database database;
+    // AppState owns these workers; shared_ptr keeps unrelated state-only test
+    // targets independent of the optional worker implementation at link time.
+    std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> featureIndexStatistics;
+    std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> idleAssetStatistics;
+    bool idleAssetStatisticsPending = false;
+    std::string idleAssetStatisticsDbPath;
+    int64_t idleAssetStatisticsDbGeneration = -1;
     aura::BackfillQueue backfillQueue;
     int64_t backfillDbGeneration = 0;
     AppSettings settings;
@@ -1675,6 +1685,7 @@ struct AppState {
 #ifdef ARIS_PREVIEW_ISOLATION
     bool qaCreateNewDbNow = false;
     std::string qaNewDbName;
+    std::string qaOpenExistingDbPath;
 #endif
     bool showShortcutsDialog = false;
 
@@ -2993,6 +3004,7 @@ struct AppState {
 
     // 高级主题编辑器
     bool showThemeEditor = false;
+    int themeScheduleEditorPeriod = -1; // -1: legacy editor; 0: day; 1: night
     int themeEditorPresetIdx = 0;
 
     // 元数据字段管理

@@ -1,7 +1,8 @@
 """Capture five empty-database themes from a pinned isolated EXE; never use the mouse.
 
 Exit 0: captured text checks pass; 1: contrast failure; 2: capture/identity failure.
-Buttons' hover/active palette combinations are covered by TestEmptyStateContrast.
+Button text is checked against the actual rendered fill. The approved flat
+secondary actions use a subtle fill and border, not the old high-contrast slab.
 """
 import argparse
 import ctypes
@@ -37,10 +38,10 @@ def fresh(driver, theme):
         snap = driver.command({'cmd': 'empty_state_audit'})
         if (snap['theme'] == theme and snap['frame'] >= first['current_frame'] + 8
                 and snap['current_frame'] - snap['frame'] <= 2
-                and {c['id'] for c in snap['checks']} == {'title', 'body', 'hint', 'new', 'open'}):
+                and {c['id'] for c in snap['checks']} == {'title', 'hint', 'new', 'open', 'exit'}):
             return snap
         time.sleep(.04)
-    raise TimeoutError('No fresh empty-state frame with all five text elements')
+    raise TimeoutError('No fresh setup frame with all five text elements')
 
 
 def run(args):
@@ -98,7 +99,7 @@ def run(args):
                 surface_ratio=min(contrast(a,b) for a,b in zip(c['backgrounds'],panel_backgrounds)) if c['id']=='open' else None
                 checks.append(dict(c, ratio=ratio, pixel_max_contrast=strongest,
                     button_surface_ratio=surface_ratio,
-                    status='pass' if min(ratio,strongest)>=4.5 and (surface_ratio is None or surface_ratio>=3) else 'fail'))
+                    status='pass' if min(ratio,strongest)>=4.5 else 'fail'))
             after=driver.command({'cmd':'empty_state_audit'})
             if after['theme']!=theme or after['frame']<snap['frame']: raise RuntimeError('Theme changed during capture')
             if after['checks']!=snap['checks'] or after['panel']!=snap['panel']:
