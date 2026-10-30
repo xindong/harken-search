@@ -1,7 +1,6 @@
 #include "LibraryStatisticsWorker.h"
 #include "sqlite3.h"
 #include <chrono>
-#include <memory>
 #include <utility>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -52,8 +51,10 @@ struct ReadOnlyCounter {
 };
 }
 LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler() {
-    auto counter = std::make_shared<ReadOnlyCounter>();
-    return [counter](const std::string& path, const auto& cancel) { return counter->Count(path, cancel); };
+    return [](const std::string& path, const auto& cancel) {
+        ReadOnlyCounter counter;
+        return counter.Count(path, cancel);
+    };
 }
 LibraryStatisticsWorker::LibraryStatisticsWorker(Handler handler)
     : handler_(std::move(handler)), worker_([this] { Run(); }) {}
@@ -70,6 +71,12 @@ void LibraryStatisticsWorker::SetDatabase(const std::string& path, int64_t gener
 }
 void LibraryStatisticsWorker::Cancel() {
     std::lock_guard<std::mutex> lock(mutex_); InvalidateLocked();
+}
+void LibraryStatisticsWorker::CancelAndWait() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    path_.clear(); databaseGeneration_ = -1;
+    InvalidateLocked();
+    idle_.wait(lock, [this] { return activeEpoch_ == 0; });
 }
 bool LibraryStatisticsWorker::Request() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -108,6 +115,7 @@ void LibraryStatisticsWorker::Run() {
             std::lock_guard<std::mutex> lock(mutex_); activeEpoch_ = 0;
             if (!cancel()) completion_ = result;
         }
+        idle_.notify_all();
     }
 }
 } // namespace HarkenSearch

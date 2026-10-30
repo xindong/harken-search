@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <thread>
 #include <filesystem>
+#include <future>
 #include "sqlite3.h"
 using namespace std::chrono_literals;
 using HarkenSearch::LibraryStatisticsWorker;
@@ -93,6 +94,65 @@ int main() {
         until([&] { result=databaseStats.Poll(); return result.has_value(); });
         require(result->success && result->total==0 && result->indexed==0, "empty library mismatch");
         sqlite3_close(writer);
+        // Reproduce the Windows library-replacement boundary with a real SQLite
+        // reader. Cancellation is observable before its connection is released.
+        std::atomic<bool> sqlEntered{false}, closeAllowed{false}, cancelSeen{false}, connectionClosed{false};
+        LibraryStatisticsWorker heldReader([&](const std::string& path, const auto& cancel) {
+            sqlite3* db = nullptr;
+            require(sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK,
+                    "held reader open failed");
+            sqlite3_stmt* statement = nullptr;
+            require(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM audio_files", -1, &statement, nullptr) == SQLITE_OK,
+                    "held reader prepare failed");
+            require(sqlite3_step(statement) == SQLITE_ROW, "held reader did not read SQLite");
+            sqlEntered = true;
+            while (!cancel()) std::this_thread::sleep_for(1ms);
+            cancelSeen = true;
+            while (!closeAllowed) std::this_thread::sleep_for(1ms);
+            sqlite3_finalize(statement);
+            require(sqlite3_close(db) == SQLITE_OK, "held connection did not close");
+            connectionClosed = true;
+            return HarkenSearch::LibraryStatisticsResult{};
+        });
+        std::future<void> drain;
+        // Declared after the future: release both waits before its destructor
+        // joins, including assertion failures or a failed async launch.
+        struct ReleaseReaderOnExit {
+            LibraryStatisticsWorker& worker;
+            std::atomic<bool>& allowed;
+            ~ReleaseReaderOnExit() { allowed = true; worker.Cancel(); }
+        } releaseReader{heldReader, closeAllowed};
+        heldReader.SetDatabase(dbPath, 1); heldReader.Request();
+        until([&] { return sqlEntered.load(); });
+        drain = std::async(std::launch::async, [&] { heldReader.CancelAndWait(); });
+        until([&] { return cancelSeen.load(); });
+        const bool waitedForConnection = drain.wait_for(20ms) == std::future_status::timeout;
+        const auto pollingStart = std::chrono::steady_clock::now();
+        bool requestsRejected = true;
+        for (int i = 0; i < 1000; ++i) {
+            requestsRejected &= !heldReader.Request() && !heldReader.Poll();
+        }
+        const bool pollingResponsive = std::chrono::steady_clock::now()-pollingStart < 100ms;
+#ifdef _WIN32
+        std::error_code lockedRenameError;
+        std::filesystem::rename(std::filesystem::u8path(dbPath), std::filesystem::u8path(dbPath+".blocked"), lockedRenameError);
+        const bool liveConnectionBlocksRename = bool(lockedRenameError);
+#endif
+        closeAllowed = true;
+        const bool drained = drain.wait_for(3s) == std::future_status::ready;
+        require(drained, "connection drain did not finish");
+        drain.get();
+        require(waitedForConnection && connectionClosed, "replacement started before reader closed");
+        require(requestsRejected && pollingResponsive, "draining statistics blocked UI or admitted new work");
+#ifdef _WIN32
+        require(liveConnectionBlocksRename, "fixture did not reproduce the Windows open-file constraint");
+#endif
+        std::filesystem::rename(std::filesystem::u8path(dbPath), std::filesystem::u8path(dbPath+".released"));
+        std::filesystem::rename(std::filesystem::u8path(dbPath+".released"), std::filesystem::u8path(dbPath));
+        heldReader.CancelAndWait(); // idle repeated drain must also return
+        heldReader.SetDatabase(dbPath, 2);
+        require(heldReader.Request(), "drained worker could not be used for the next database");
+        heldReader.CancelAndWait();
         databaseStats.SetDatabase(dbPath+".missing",2); databaseStats.Request();
         until([&] { result=databaseStats.Poll(); return result.has_value(); });
         require(!result->success && !std::filesystem::exists(dbPath+".missing"), "read-only worker created missing database");

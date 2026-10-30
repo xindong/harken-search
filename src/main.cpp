@@ -10766,12 +10766,21 @@ static bool SwitchDatabase(AppState& state,
     state.pendingDbPath = effectiveDbPathUtf8;
     state.pendingDbOldPath = state.currentDbPathUtf8;
     state.dbSwitchInProgress = true;
+    if (state.featureIndexStatistics) state.featureIndexStatistics->SetDatabase("", -1);
+    if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
+    state.idleAssetStatisticsPending = false;
 
     WaitForDatabaseSwitchThread();
 
 // 后台线程做所有可能阻塞的 teardown + open
     g_databaseSwitchWorkerRuntime.Start(
-        [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent]() {
+        [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent,
+         featureStatistics = state.featureIndexStatistics,
+         idleStatistics = state.idleAssetStatistics]() {
+        // Cancel on the UI immediately, but drain connections only here. Windows
+        // package replacement must not race a statistics reader's file handle.
+        if (featureStatistics) featureStatistics->CancelAndWait();
+        if (idleStatistics) idleStatistics->CancelAndWait();
         return aura::database_switch::RunBlockingDatabaseSwitchOperation(
             state.batchFeatureThread,
             g_sameFolderScanner,

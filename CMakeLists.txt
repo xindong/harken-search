@@ -889,6 +889,7 @@ target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR}
 target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
 target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
 add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
+set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
 
 add_executable(TestUpdateNoticePresentation EXCLUDE_FROM_ALL
     tests/test_update_notice_presentation.cpp

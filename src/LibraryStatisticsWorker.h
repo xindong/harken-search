@@ -33,6 +33,10 @@ public:
     bool Request();
     std::optional<LibraryStatisticsResult> Poll();
     void Cancel();
+    // Blocking maintenance-thread boundary: rejects new requests and waits for
+    // the handler to return, after it has released its read-only connection.
+    // Never call from a UI frame or from this worker's own handler.
+    void CancelAndWait();
 private:
     struct RequestValue { std::string path; uint64_t epoch; };
     void InvalidateLocked();
@@ -40,6 +44,7 @@ private:
     Handler handler_;
     std::mutex mutex_;
     std::condition_variable wake_;
+    std::condition_variable idle_;
     std::string path_;
     int64_t databaseGeneration_ = -1;
     std::atomic<uint64_t> epoch_{1};
