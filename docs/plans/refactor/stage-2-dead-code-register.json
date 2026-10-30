@@ -9924,6 +9924,121 @@
       "reviewer": "Harken Search migration audit 2026-10-29",
       "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
       "rollback": ""
+    },
+    {
+      "id": "S2-3A403C9340",
+      "path": "tools/qa_folder_keyword_search.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_folder_keyword_search.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Manual QA entry point for isolated folder and keyword search checks. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-4757ABD070",
+      "path": "tools/qa_info_similar_action.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_info_similar_action.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Manual QA entry point for Info shortcut visibility and restart persistence. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-7D0BBF74CF",
+      "path": "tools/qa_portrait_dock_size.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_portrait_dock_size.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Manual QA entry point for portrait Dock resizing and cover rendering. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-5AF6FFC68A",
+      "path": "tools/qa_similar_controls.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_similar_controls.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Manual QA entry point for Similar Sounds controls on a private desktop. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-7D48B825F2",
+      "path": "tools/qa_theme_schedule.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_theme_schedule.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Manual QA entry point for day/night theme scheduling on a private desktop. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
     }
   ]
 }
