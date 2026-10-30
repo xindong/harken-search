@@ -105,9 +105,18 @@ class ScanQuickStartContract(unittest.TestCase):
         summary_condition = MAIN[summary_start:summary_end]
         self.assertIn("state.scanCompletionReadyAtMs.load(std::memory_order_acquire) > 0", summary_condition)
         self.assertNotIn("state.scanCompletionPendingFiles.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("state.scanCompletionMiniUnresolved.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("state.scanCompletionCoverUnresolved.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire) == 0", summary_condition)
+        self.assertIn("AreScanCompletionCountersReady(", summary_condition)
+        self.assertIn("!state.settings.cacheWaveformsOnScan", summary_condition)
+
+    def test_fast_completion_skips_redundant_queue_rebuild_and_honors_pause(self):
+        resume_start = MAIN.index("const bool resumeBackground =")
+        resume_end = MAIN.index("// Full scans retain their foreground", resume_start)
+        resume = MAIN[resume_start:resume_end]
+        self.assertIn("ShouldRebuildScanBackfillQueue", resume)
+        self.assertIn("state.isScanTaskCancelled(scanGeneration, scanCancelToken)", resume)
+        self.assertIn("finishInterruptedScanSession(paused);", resume)
+        self.assertLess(resume.index("finishInterruptedScanSession(paused);"),
+                        resume.index("scanDb.discardScanRollbackSession();"))
 
     def test_pending_errors_and_cancelled_summaries_remain_visible(self):
         self.assertIn("BuildScanCompletionPendingLabel(state)", MAIN)

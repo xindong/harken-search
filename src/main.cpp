@@ -31177,9 +31177,11 @@ void RenderUI(AppState& state) {
             state.scanTotal.load() > 0 &&
             state.scanErrorCount.load() == 0 &&
             state.scanCompletionReadyAtMs.load(std::memory_order_acquire) > 0 &&
-            state.scanCompletionMiniUnresolved.load(std::memory_order_acquire) == 0 &&
-            state.scanCompletionCoverUnresolved.load(std::memory_order_acquire) == 0 &&
-            state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire) == 0 &&
+            HarkenSearch::AreScanCompletionCountersReady(
+                !state.settings.cacheWaveformsOnScan,
+                state.scanCompletionMiniUnresolved.load(std::memory_order_acquire),
+                state.scanCompletionCoverUnresolved.load(std::memory_order_acquire),
+                state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire)) &&
             scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Completed &&
             HarkenSearch::CanEnterCompleted(scanWorkflowSnapshot);
         const bool scanProgressSurfaceActive =
@@ -32240,11 +32242,10 @@ void RenderUI(AppState& state) {
                                     : "Foreground completion cancel detected. Rolled back scan session.");
                         }
                     }
-                    if (!cancelled) {
-                        scanDb.discardScanRollbackSession();
-                    }
-                    if (!cancelled &&
-                        !state.scanCompletionPending.load(std::memory_order_acquire)) {
+                    const bool resumeBackground =
+                        !cancelled &&
+                        !state.scanCompletionPending.load(std::memory_order_acquire);
+                    if (resumeBackground) {
                         if (!precomputeWaveforms) {
                             const auto backgroundResumeDeferStartedAt =
                                 std::chrono::steady_clock::now();
@@ -32293,27 +32294,56 @@ void RenderUI(AppState& state) {
                                     std::memory_order_release);
                             }
                         }
-                        state.backfillQueue.rebuildFromDatabase(&scanDb, 4096);
-                        state.scanBackgroundBackfillPhase.store(
-                            static_cast<int>(AppState::ScanBackgroundBackfillPhase::Resumed),
-                            std::memory_order_release);
-                        state.scanBackgroundBackfillResumeThreads.store(
-                            backgroundBackfillThreads,
-                            std::memory_order_release);
-                        DIAG_SYSTEM_FMT("Scan",
-                                        "ScanBackgroundBackfillResume: session=%lld strategy=%s threads=%d",
-                                        (long long)scanGeneration,
-                                        precomputeWaveforms ? "full" : "fast",
-                                        backgroundBackfillThreads);
-                        aura::GlobalBackfillWorkerPool().start(
-                            state.backfillQueue.currentDbPath(),
-                            state.backfillQueue.currentGeneration(),
-                            &state.backfillQueue,
-                            backgroundBackfillThreads);
+                        if (state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
+                            const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
+                            paused = HarkenSearch::IsScanPause(disposition);
+                            rollbackCancelled = !paused;
+                            finishInterruptedScanSession(paused);
+                            cancelled = true;
+                        }
+                        if (!cancelled) {
+                            const auto queueSnapshot = state.backfillQueue.snapshot();
+                            int queuedJobs = 0;
+                            for (int kind = 0; kind < aura::kBackfillJobKindCount; ++kind) {
+                                queuedJobs += queueSnapshot.byKind[kind];
+                            }
+                            if (HarkenSearch::ShouldRebuildScanBackfillQueue(
+                                    !precomputeWaveforms, queuedJobs, queueSnapshot.inFlight)) {
+                                state.backfillQueue.rebuildFromDatabase(&scanDb, 4096);
+                            }
+                        }
+                        if (!cancelled && state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
+                            const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
+                            paused = HarkenSearch::IsScanPause(disposition);
+                            rollbackCancelled = !paused;
+                            finishInterruptedScanSession(paused);
+                            cancelled = true;
+                        }
+                        if (!cancelled) {
+                            scanDb.discardScanRollbackSession();
+                            state.scanBackgroundBackfillPhase.store(
+                                static_cast<int>(AppState::ScanBackgroundBackfillPhase::Resumed),
+                                std::memory_order_release);
+                            state.scanBackgroundBackfillResumeThreads.store(
+                                backgroundBackfillThreads,
+                                std::memory_order_release);
+                            DIAG_SYSTEM_FMT("Scan",
+                                            "ScanBackgroundBackfillResume: session=%lld strategy=%s threads=%d",
+                                            (long long)scanGeneration,
+                                            precomputeWaveforms ? "full" : "fast",
+                                            backgroundBackfillThreads);
+                            aura::GlobalBackfillWorkerPool().start(
+                                state.backfillQueue.currentDbPath(),
+                                state.backfillQueue.currentGeneration(),
+                                &state.backfillQueue,
+                                backgroundBackfillThreads);
+                        }
                     }
-                    // Current-scan mini/cover work is part of the foreground
-                    // completion gate. The dialog must stay open until the
-                    // scan-session ledger has no unresolved mini/cover rows.
+                    if (!cancelled && !resumeBackground) {
+                        scanDb.discardScanRollbackSession();
+                    }
+                    // Full scans retain their foreground completion gate;
+                    // fast scans leave optional cover work to background workers.
                     }
 
                   } catch (...) {
