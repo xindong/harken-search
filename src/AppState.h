@@ -2,6 +2,7 @@
 #include "InfoPageNavigation.h"
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
+#include "LibraryStatisticsWorker.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -1585,6 +1586,13 @@ struct AppState {
     AudioEngine audioEngine;
     FileBrowser fileBrowser;
     Database database;
+    // AppState owns these workers; shared_ptr keeps unrelated state-only test
+    // targets independent of the optional worker implementation at link time.
+    std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> featureIndexStatistics;
+    std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> idleAssetStatistics;
+    bool idleAssetStatisticsPending = false;
+    std::string idleAssetStatisticsDbPath;
+    int64_t idleAssetStatisticsDbGeneration = -1;
     aura::BackfillQueue backfillQueue;
     int64_t backfillDbGeneration = 0;
     AppSettings settings;
