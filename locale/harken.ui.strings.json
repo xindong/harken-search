@@ -15875,8 +15875,6 @@
     {"id": "ThemeSchedule_Automatic", "type": "ui", "zh": "开启日夜切换主题模式", "en": "Enable automatic day/night themes", "ja": "昼夜テーマの自動切り替えを有効にする"},
     {"id": "ThemeSchedule_DayThemeFmt", "type": "ui", "zh": "白天：%s", "en": "Day: %s", "ja": "昼：%s"},
     {"id": "ThemeSchedule_NightThemeFmt", "type": "ui", "zh": "黑夜：%s", "en": "Night: %s", "ja": "夜：%s"},
-    {"id": "ThemeSchedule_Day", "type": "ui", "zh": "白天", "en": "Day", "ja": "昼"},
-    {"id": "ThemeSchedule_Night", "type": "ui", "zh": "黑夜", "en": "Night", "ja": "夜"},
     {"id": "ThemeSchedule_EditPalette", "type": "ui", "zh": "编辑配色", "en": "Edit palette", "ja": "配色を編集"},
     {"id": "ThemeSchedule_EditDay", "type": "ui", "zh": "编辑白天配色", "en": "Edit day palette", "ja": "昼の配色を編集"},
     {"id": "ThemeSchedule_EditNight", "type": "ui", "zh": "编辑夜间配色", "en": "Edit night palette", "ja": "夜の配色を編集"},
