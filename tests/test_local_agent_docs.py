@@ -24,7 +24,9 @@ def test_local_agent_entry_and_methods_are_utf8_and_complete() -> None:
 
 
 def test_local_agent_docs_do_not_depend_on_old_external_repository_paths() -> None:
-    machine_path = re.compile(r"(?i)(?:[a-z]:[/\\]|file://)")
+    machine_path = re.compile(
+        r"(?i)(?:[a-z]:[/\\]|file://|(?<![\w./:])(?:/|~/)[\w.-]+/)"
+    )
     for path in [ENTRY, *METHODS.glob("*.md")]:
         text = path.read_text(encoding="utf-8")
         assert not machine_path.search(text), path
@@ -37,4 +39,6 @@ def test_local_agent_links_resolve_inside_this_repository() -> None:
         for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", text):
             if "://" in target or target.startswith("#"):
                 continue
-            assert (source.parent / target).resolve().is_file(), (source, target)
+            resolved = (source.parent / target).resolve()
+            assert resolved.is_relative_to(ROOT), (source, target)
+            assert resolved.is_file(), (source, target)
