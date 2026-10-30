@@ -391,6 +391,7 @@ AUDIT_INTERNAL_GLOBS = (
 
 # 新增排除必须写进本表并附理由，禁止只改 tools/public_repo_manifest.EXCLUDED_GLOBS。
 EXPLICIT_SAME_FAMILY_EXCLUSION_GLOBS: tuple[tuple[str, str], ...] = (
+    ("tests/test_local_agent_docs.py", "Development-method contracts depend on repository-local documents outside the product export."),
     ("tools/aris_design_review_server.py", "Private design review needs unpublished design data."),
     ("tools/start_aris_design_review.ps1", "Launcher for the private design review server."),
     ("tests/test_aris_design_review_server.py", "Tests require the private design review data."),
