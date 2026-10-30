@@ -646,6 +646,7 @@ set(APP_SOURCES
     src/SimilaritySearch.cpp
     src/SimilarityWorkflow.cpp
     src/SimilarityQueryService.cpp
+    src/LibraryStatisticsWorker.cpp
     src/SimilarSoundsWindow.cpp
     src/RelinkWorkflow.cpp
     # BPM / key / mood detection (F-033)
@@ -881,6 +882,14 @@ if(WIN32)
     add_test(NAME SearchTextIndex COMMAND TestSearchTextIndex)
     aura_set_test_labels(SearchTextIndex core)
 endif()
+
+add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
+    tests/test_feature_index_statistics.cpp src/LibraryStatisticsWorker.cpp ${SQLITE_SOURCES})
+target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
+target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
+add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
+set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
 
 add_executable(TestUpdateNoticePresentation EXCLUDE_FROM_ALL
     tests/test_update_notice_presentation.cpp

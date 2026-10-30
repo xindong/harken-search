@@ -2,6 +2,7 @@
 #include "InfoPageNavigation.h"
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
+#include "LibraryStatisticsWorker.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -1585,6 +1586,13 @@ struct AppState {
     AudioEngine audioEngine;
     FileBrowser fileBrowser;
     Database database;
+    // AppState owns these workers; shared_ptr keeps unrelated state-only test
+    // targets independent of the optional worker implementation at link time.
+    std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> featureIndexStatistics;
+    std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> idleAssetStatistics;
+    bool idleAssetStatisticsPending = false;
+    std::string idleAssetStatisticsDbPath;
+    int64_t idleAssetStatisticsDbGeneration = -1;
     aura::BackfillQueue backfillQueue;
     int64_t backfillDbGeneration = 0;
     AppSettings settings;
@@ -2221,31 +2229,41 @@ struct AppState {
         bool        searching        = false;  // background search in progress
         std::vector<std::string> candidates;   // found candidate paths
         int         selectedCandidate = 0;     // index for multi-candidate combo
+        Database::RelinkSearchResult searchReport;
     };
     RelinkBannerState relinkBanner;
 
     // Atomics for merging background search results on main thread
     std::atomic<bool>        relinkBannerSearchDone{false};
     std::vector<std::string> pendingRelinkCandidates; // protected by relinkWorkflowResultMutex
+    Database::RelinkSearchResult pendingRelinkBannerSearchReport;
     uint64_t                 pendingRelinkBannerGeneration = 0;
     std::atomic<uint64_t>    relinkBannerSearchGeneration{0};
+    std::atomic<uint64_t>    relinkBannerSearchScannedEntries{0};
     std::thread              relinkBannerSearchThread;
 
     struct RelinkToolState {
         bool        scanning  = false;
         std::string searchRoot;    // extra search dir (empty = watched dirs only)
-        std::vector<std::pair<Database::RelinkCandidate, std::vector<std::string>>> results;
+        Database::RelinkCandidateMatches results;
+        Database::RelinkSearchResult searchReport;
         std::unordered_map<int, int> selectedByOrphanId; // cand.id → chosen path index
+        std::unordered_map<int, Database::RelinkPathUpdateStatus> updateFailures;
+        bool        failedRootsExpanded = false;
         bool        confirmed = false;
     };
     RelinkToolState relinkTool;
-    std::vector<std::pair<Database::RelinkCandidate, std::vector<std::string>>>
-        pendingRelinkToolResults;
+    Database::RelinkPathUpdateStatus relinkPathUpdateStatus =
+        Database::RelinkPathUpdateStatus::Failed;
+    Database::RelinkCandidateMatches pendingRelinkToolResults;
+    Database::RelinkSearchResult pendingRelinkToolSearchReport;
     uint64_t                 pendingRelinkToolGeneration = 0;
     std::atomic<uint64_t>    relinkToolSearchGeneration{0};
+    std::atomic<uint64_t>    relinkToolSearchScannedEntries{0};
     std::thread              relinkToolSearchThread;
     std::atomic<bool> relinkToolSearchDone{false};
-    std::atomic<bool> relinkSearchCancel{false};
+    std::atomic<bool> relinkBannerSearchCancel{false};
+    std::atomic<bool> relinkToolSearchCancel{false};
     std::mutex relinkWorkflowResultMutex;
     std::vector<std::thread> retiredRelinkSearchThreads;
 
