@@ -1719,7 +1719,7 @@ static void RenderFieldManager(AppState& state) {
 void RenderModuleDialogs(AppState& state) {
     RenderEmbedDialog(state);
     RenderNamingDialog(state);
-    if (ProductEdition::hasFeature("theme_editor")) {
+    if (state.themeScheduleEditorPeriod >= 0 || ProductEdition::hasFeature("theme_editor")) {
         RenderThemeEditor(state);
     }
     RenderFieldManager(state);

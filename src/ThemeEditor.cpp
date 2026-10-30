@@ -3,6 +3,8 @@
 // Uses ThemeEditorSchema.h for explicit group-based field layout.
 
 #include "ThemeEditor.h"
+#include "ThemeSchedule.h"
+#include "BuiltinThemeScheme.h"
 #include "ThemeEditorSchema.h"
 #include "ThemeInspector.h"
 
@@ -28,6 +30,8 @@
 // Editor State (file-static singleton)
 
 struct ThemeEditorState {
+    int schedulePeriod = -1;
+    ThemeColorScheme initialDraft{};
     bool wasOpen          = false;
     bool savedThisSession = false;
     bool livePreview      = true;
@@ -119,6 +123,12 @@ static void PushUndo() {
         g_ed.undoStack.erase(g_ed.undoStack.begin());
 }
 
+ThemeEditorSavedAppearance ThemeEditorAppearanceForSettings(const AppState& state) {
+    if (g_ed.wasOpen && g_ed.schedulePeriod >= 0)
+        return {g_ed.openTheme, g_ed.openUseCustomColors};
+    return {state.settings.theme, state.settings.useCustomColors};
+}
+
 static void ApplyDraftToLive(AppState& state) {
     // While previewing in the editor, treat the draft as the active custom theme
     // so the main loop does not re-sync stock theme tokens over the draft each frame.
@@ -129,8 +139,7 @@ static void ApplyDraftToLive(AppState& state) {
     ThemeColors::markPendingUiChromeResync();
 }
 
-static void RestoreSnapshot(AppState& state) {
-    g_ed.draft = g_ed.openSnapshot;
+static void RestoreOpenAppearance(AppState& state) {
     state.settings.theme = g_ed.openTheme;
     state.settings.useCustomColors = g_ed.openUseCustomColors;
     state.settings.customThemeName = g_ed.openCustomThemeName;
@@ -142,6 +151,16 @@ static void RestoreSnapshot(AppState& state) {
     }
     ThemeColors::applyToImGui();
     ThemeColors::markPendingUiChromeResync();
+}
+
+static void RestoreSnapshot(AppState& state) {
+    if (g_ed.schedulePeriod >= 0) {
+        g_ed.draft = g_ed.initialDraft;
+        if (g_ed.livePreview) ApplyDraftToLive(state);
+        return;
+    }
+    g_ed.draft = g_ed.openSnapshot;
+    RestoreOpenAppearance(state);
 }
 
 static void LoadPresetToDraft(int idx) {
@@ -171,6 +190,17 @@ static void SetThemeNameFromPathUtf8(const std::string& pathUtf8) {
 }
 
 static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
+    if (g_ed.schedulePeriod >= 0) {
+        const auto period = g_ed.schedulePeriod == 0 ? harken::theme_schedule::Period::Day : harken::theme_schedule::Period::Night;
+        std::string error;
+        if (!harken::theme_schedule::SavePalette(period, g_ed.draft, error)) {
+            statusMsg = std::string(L(ThemeSchedule_SaveFailed)) + " (" + error + ")";
+            return false;
+        }
+        g_ed.savedThisSession = true;
+        state.showThemeEditor = false;
+        return true;
+    }
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
@@ -249,10 +279,12 @@ static bool DrawColorItem(const ThemeEditorItem& item) {
     ImGui::PushStyleColor(ImGuiCol_Text, rowText);
     ImGui::TextUnformatted(GetLocalizedString(item.labelId));
     ImGui::PopStyleColor();
-    ImGui::SameLine(0.0f, 10.0f);
-    ImGui::PushStyleColor(ImGuiCol_TextDisabled, rowKey);
-    ImGui::TextDisabled(L(ThemeEditor_ItemKeyFmt), item.key);
-    ImGui::PopStyleColor();
+    if (g_ed.schedulePeriod < 0) {
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::PushStyleColor(ImGuiCol_TextDisabled, rowKey);
+        ImGui::TextDisabled(L(ThemeEditor_ItemKeyFmt), item.key);
+        ImGui::PopStyleColor();
+    }
     ImGui::SetCursorScreenPos(ImVec2(rowOrigin.x, rowOrigin.y + rowHeight + 4.0f));
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
     ImGui::PopID();
@@ -356,13 +388,36 @@ void ResetThemeEditorSession() {
     std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "My Theme");
 }
 
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value) {
+    if (!g_ed.wasOpen || g_ed.schedulePeriod < 0 || !g_appState || !g_appState->showThemeEditor) return false;
+    size_t count = 0;
+    const auto* fields = GetThemeEditorItems(count);
+    for (size_t i = 0; i < count; ++i) {
+        if (key == fields[i].key) {
+            PushUndo();
+            g_ed.draft.*(fields[i].member) = value;
+            if (g_ed.livePreview) ApplyDraftToLive(*g_appState);
+            return true;
+        }
+    }
+    return false;
+}
+std::string ThemeScheduleEditorQaStatus() { return g_ed.exportMsg; }
+#endif
+
 void RenderThemeEditor(AppState& state) {
 // Closed → revert if not saved
     if (!state.showThemeEditor) {
         if (g_ed.wasOpen) {
             g_ed.inspectMode = false;
             ThemeInspector::SetActive(false);
-            if (!g_ed.savedThisSession) {
+            if (g_ed.schedulePeriod >= 0) {
+                if (!harken::theme_schedule::ControlsTheme(state)) RestoreOpenAppearance(state);
+                harken::theme_schedule::Invalidate();
+                state.themeScheduleEditorPeriod = -1;
+                state.showSettingsDialog = true;
+            } else if (!g_ed.savedThisSession) {
                 state.settings.theme = g_ed.openTheme;
                 state.settings.useCustomColors = g_ed.openUseCustomColors;
                 state.settings.customThemeName = g_ed.openCustomThemeName;
@@ -383,6 +438,7 @@ void RenderThemeEditor(AppState& state) {
 // First frame open → snapshot
     if (!g_ed.wasOpen) {
         g_ed.wasOpen          = true;
+        g_ed.schedulePeriod = state.themeScheduleEditorPeriod;
         g_ed.savedThisSession = false;
         g_ed.openCustomized   = ThemeColors::customized();
         g_ed.openTheme        = state.settings.theme;
@@ -390,6 +446,13 @@ void RenderThemeEditor(AppState& state) {
         g_ed.openCustomThemeName = state.settings.customThemeName;
         g_ed.openSnapshot     = ThemeColors::current();
         g_ed.draft            = ThemeColors::current();
+        if (g_ed.schedulePeriod >= 0) {
+            g_ed.draft = harken::theme_schedule::Palette(g_ed.schedulePeriod == 0
+                ? harken::theme_schedule::Period::Day : harken::theme_schedule::Period::Night);
+            g_ed.livePreview = true;
+            ApplyDraftToLive(state);
+        }
+        g_ed.initialDraft = g_ed.draft;
         g_ed.undoStack.clear();
         g_ed.exportMsg.clear();
         g_ed.importMsg.clear();
@@ -433,7 +496,9 @@ void RenderThemeEditor(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_PopupBg, scheme.popupBG);
     ImGui::PushStyleColor(ImGuiCol_NavWindowingDimBg, editorNavDimBg);
     ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, editorModalDimBg);
-    if (!ImGui::Begin(L(ThemeEditor_WindowTitle), &state.showThemeEditor)) {
+    const char* windowTitle = g_ed.schedulePeriod == 0 ? L(ThemeSchedule_EditDay)
+        : g_ed.schedulePeriod == 1 ? L(ThemeSchedule_EditNight) : L(ThemeEditor_WindowTitle);
+    if (!ImGui::Begin(windowTitle, &state.showThemeEditor)) {
         ImGui::End();
         ImGui::PopStyleColor(5);
         return;
@@ -456,12 +521,40 @@ void RenderThemeEditor(AppState& state) {
     }
 
     const float topConsoleH = 92.0f;
-    const float bottomConsoleH = 102.0f;
+    const float bottomConsoleH = g_ed.schedulePeriod >= 0 ? 82.0f : 102.0f;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorConsoleBg);
     ImGui::PushStyleColor(ImGuiCol_Border, editorConsoleEdge);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     ImGui::BeginChild("##ThemeEditorTopConsole", ImVec2(0, topConsoleH), true);
+    if (g_ed.schedulePeriod >= 0) {
+        ImGui::TextUnformatted(g_ed.schedulePeriod == 0 ? L(ThemeSchedule_DayEditorHint) : L(ThemeSchedule_NightEditorHint));
+        ImGui::SameLine();
+        if (ImGui::Checkbox(L(ThemeEditor_LivePreview), &g_ed.livePreview)) {
+            if (g_ed.livePreview) ApplyDraftToLive(state);
+            else {
+                const auto period = harken::theme_schedule::SelectedPeriod(state);
+                if (period) {
+                    ThemeColors::activateCustomScheme(harken::theme_schedule::Palette(*period));
+                    ThemeColors::applyToImGui();
+                    ThemeColors::markPendingUiChromeResync();
+                } else {
+                    RestoreOpenAppearance(state);
+                }
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted(L(Module_ColorPreset));
+        const AppTheme seeds[] = {AppTheme::RoseCedar, AppTheme::JadeMist, AppTheme::Dark, AppTheme::Ocean, AppTheme::LapisBlue};
+        for (int i = g_ed.schedulePeriod == 0 ? 0 : 2; i < (g_ed.schedulePeriod == 0 ? 2 : 5); ++i) {
+            ImGui::SameLine();
+            if (aura::ui::ActionButton(ThemeDiagPublicThemeLabel(seeds[i]))) {
+                PushUndo();
+                g_ed.draft = MakeBuiltinScheme(seeds[i]);
+                if (g_ed.livePreview) ApplyDraftToLive(state);
+            }
+        }
+    } else {
     ImGui::TextColored(ThemeEditorWithAlpha(editorAccent, 0.92f), L(ThemeEditor_ColorSession));
     ImGui::SameLine();
     ImGui::TextDisabled(L(ThemeEditor_PresetSectionHint));
@@ -493,6 +586,7 @@ void RenderThemeEditor(AppState& state) {
         ImGui::EndCombo();
     }
 
+    }
     ImGui::SameLine();
     if (aura::ui::ActionButton(L(ThemeEditor_RestoreOnOpen))) {
         PushUndo();
@@ -511,8 +605,8 @@ void RenderThemeEditor(AppState& state) {
         if (!canUndo) ImGui::EndDisabled();
     }
 
-    ImGui::SameLine(0.0f, 16.0f);
-    {
+    if (g_ed.schedulePeriod < 0) {
+        ImGui::SameLine(0.0f, 16.0f);
         const ImVec4 inspectOn  = ImVec4(0.14f, 0.62f, 0.60f, 1.0f);
         const bool wasInspect = g_ed.inspectMode;
         if (wasInspect) {
@@ -568,6 +662,14 @@ void RenderThemeEditor(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_Border, editorConsoleEdge);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     ImGui::BeginChild("##ThemeEditorBottomConsole", ImVec2(0, bottomConsoleH), true);
+    if (g_ed.schedulePeriod >= 0) {
+        if (aura::ui::ActionButton(L(ThemeSchedule_Save), ImVec2(140,0), aura::ui::ButtonVariant::PrimaryTransfer))
+            SaveDraftAsCustomTheme(state, g_ed.exportMsg);
+        ImGui::SameLine();
+        if (aura::ui::ActionButton(L(ThemeSchedule_Cancel))) state.showThemeEditor = false;
+        if (!g_ed.exportMsg.empty()) ImGui::TextWrapped("%s", g_ed.exportMsg.c_str());
+        else ImGui::TextWrapped("%s", L(ThemeSchedule_SaveHint));
+    } else {
     ImGui::TextColored(ThemeEditorWithAlpha(editorAccent, 0.88f), L(ThemeEditor_OutputApply));
     ImGui::SameLine();
     ImGui::TextDisabled(L(ThemeEditor_SaveSectionHint));
@@ -780,6 +882,7 @@ void RenderThemeEditor(AppState& state) {
         ImGui::TextColored(editorStatusOk, "%s", s_presetSaveMsg.c_str());
     }
 #endif
+    }
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(2);
