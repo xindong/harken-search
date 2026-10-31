@@ -10039,6 +10039,52 @@
       "reviewer": "Cindy GPT-6 Astra QA integration review",
       "reason": "Manual QA entry point for day/night theme scheduling on a private desktop. Invoked from the command line; zero incoming tracked references does not make this unused.",
       "rollback": ""
+    },
+    {
+      "id": "S2-CF90821638",
+      "path": "tools/qa_scan_completion_sample.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E4",
+          "source": "isolated native runtime verification",
+          "detail": "CLI QA entry exercises native right-click completion and pause retention on isolated fixtures; prior complete-evidence-native3 and pause-evidence-native3 receipts exist."
+        }
+      ],
+      "contract_refs": [
+        "docs/plans/2026-10-30-rightclick-scan-finalize.md"
+      ],
+      "dynamic_lookup_checked": true,
+      "compatibility_checked": true,
+      "reviewer": "Cindy GPT-6 Astra scan takeover review",
+      "reason": "User-requested reproducible QA utility invoked manually, not a product runtime import. Keep for repeated completion and pause validation.",
+      "rollback": "git restore --source=HEAD -- tools/qa_scan_completion_sample.py"
+    },
+    {
+      "id": "S2-4D3401D657",
+      "path": "tools/qa_about_window.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E4",
+          "source": "manual QA entrypoint review",
+          "detail": "CLI help succeeds; the tool drives an isolated package, records source/package identity, captures the actual About window and checks its credits/legal links."
+        }
+      ],
+      "contract_refs": [
+        "docs/plans/2026-10-29-about-legal-credits.md"
+      ],
+      "dynamic_lookup_checked": true,
+      "compatibility_checked": true,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Repeatable manual About-window QA utility; lack of a product importer is expected. Retain the runtime evidence entrypoint.",
+      "rollback": "git restore --source=HEAD -- tools/qa_about_window.py"
     }
   ]
 }

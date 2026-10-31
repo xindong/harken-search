@@ -79,7 +79,15 @@ class ScanPauseResumeContract(unittest.TestCase):
         finish_end = MAIN.index("};", rollback_start)
         self.assertNotIn("zeroCancelledSummary();", MAIN[finish_start:rollback_start])
         self.assertIn("zeroCancelledSummary();", MAIN[rollback_start:finish_end])
-        self.assertEqual(MAIN.count("finishInterruptedScanSession(paused);"), 2)
+        resume_start = MAIN.index("const bool resumeBackground =")
+        resume_end = MAIN.index("// Full scans retain their foreground", resume_start)
+        self.assertEqual(MAIN[:resume_start].count("finishInterruptedScanSession(paused);"), 2)
+        resume = MAIN[resume_start:resume_end]
+        before_queue, after_queue = resume.split("const auto queueSnapshot =", 1)
+        self.assertEqual(before_queue.count("finishInterruptedScanSession(paused);"), 1)
+        self.assertEqual(after_queue.count("finishInterruptedScanSession(paused);"), 1)
+        self.assertLess(after_queue.index("finishInterruptedScanSession(paused);"),
+                        after_queue.index("scanDb.discardScanRollbackSession();"))
 
     def test_full_scan_timeout_cannot_publish_false_completion(self):
         wait_start = MAIN.index("constexpr int64_t kCompletionWaitTimeoutMs")

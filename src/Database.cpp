@@ -1293,6 +1293,17 @@ bool Database::requireFts5() {
     return true;
 }
 
+static bool ReplaceSearchIndexTriggers(sqlite3* db, const char* sql, std::string* error) {
+    // Multiple database connections can initialize simultaneously. Keep each
+    // DROP/CREATE group atomic, including rollback if one CREATE fails. A
+    // savepoint also preserves any transaction owned by the caller.
+    if (!execSqlite(db, "SAVEPOINT harken_fts_trigger_refresh;", error)) return false;
+    if (execSqlite(db, sql, error) &&
+        execSqlite(db, "RELEASE harken_fts_trigger_refresh;", error)) return true;
+    execSqlite(db, "ROLLBACK TO harken_fts_trigger_refresh; RELEASE harken_fts_trigger_refresh;", nullptr);
+    return false;
+}
+
 bool Database::ensureFtsSchema() {
     if (!m_db) return false;
     if (!requireFts5()) return false;
@@ -1382,7 +1393,7 @@ bool Database::ensureFtsSchema() {
             VALUES (new.id, new.file_name, new.file_path, new.folder_path, new.title, new.artist, new.album, new.description, new.keywords, new.category, new.search_data);
         END;
     )";
-    if (!execSqlite(m_db, trig, &err)) {
+    if (!ReplaceSearchIndexTriggers(m_db, trig, &err)) {
         m_lastError = FormatDbError(L(Db_FtsTriggerFailFmt), err.c_str());
         return false;
     }
@@ -1478,7 +1489,7 @@ bool Database::ensureFtsSchema() {
             VALUES (new.id, new.file_name, new.folder_path);
         END;
     )";
-    if (!execSqlite(m_db, trigramTriggers, &err)) {
+    if (!ReplaceSearchIndexTriggers(m_db, trigramTriggers, &err)) {
         m_lastError = FormatDbError(L(Db_TrigramTriggerFailFmt), err.c_str());
         return false;
     }
