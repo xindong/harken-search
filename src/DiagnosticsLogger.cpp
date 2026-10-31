@@ -254,6 +254,11 @@ void DiagnosticsLogger::writerLoop() {
                     if (m_count == m_maxEntries && nowMs() - e.timestampMs > kRetentionWindowMs) {
                         continue;
                     }
+                    if (m_count == 0) {
+                        m_timestampsOrdered = true;
+                    } else if (e.timestampMs < m_ring[(m_head + m_maxEntries - 1) % m_maxEntries].timestampMs) {
+                        m_timestampsOrdered = false;
+                    }
                     m_oldestTimestampMs = m_count == 0 ? e.timestampMs
                         : std::min(m_oldestTimestampMs, e.timestampMs);
                     if (m_count == m_maxEntries) {
@@ -278,23 +283,39 @@ void DiagnosticsLogger::writerLoop() {
 void DiagnosticsLogger::pruneExpiredLocked(int64_t nowMs) {
     if (m_count == 0 || m_maxEntries == 0) return;
     if (nowMs - m_oldestTimestampMs <= kRetentionWindowMs) return;
-    const size_t ringStart = (m_count < m_maxEntries) ? 0 : m_head;
-    // Producers timestamp before enqueueing, so expired entries can appear
-    // anywhere. The minimum above keeps ordinary non-expiring writes O(1).
-    std::vector<DiagLogEntry> retained;
-    retained.reserve(m_count);
+    const size_t ringStart = (m_head + m_maxEntries - m_count) % m_maxEntries;
+    if (m_timestampsOrdered) {
+        size_t expired = 0;
+        while (expired < m_count &&
+               nowMs - m_ring[(ringStart + expired) % m_maxEntries].timestampMs > kRetentionWindowMs) {
+            ++expired;
+        }
+        m_count -= expired;
+        m_oldestTimestampMs = m_count == 0 ? 0
+            : m_ring[(ringStart + expired) % m_maxEntries].timestampMs;
+        return;
+    }
+
+    // Producers may enqueue out of timestamp order. Compact survivors in place
+    // in logical ring order; the write offset never overtakes the read offset.
+    size_t retained = 0;
     int64_t oldestTimestamp = 0;
+    int64_t previousTimestamp = 0;
+    bool ordered = true;
     for (size_t i = 0; i < m_count; ++i) {
         const auto& entry = m_ring[(ringStart + i) % m_maxEntries];
         if (nowMs - entry.timestampMs > kRetentionWindowMs) continue;
-        oldestTimestamp = retained.empty() ? entry.timestampMs
+        oldestTimestamp = retained == 0 ? entry.timestampMs
             : std::min(oldestTimestamp, entry.timestampMs);
-        retained.push_back(entry);
+        if (retained != 0 && entry.timestampMs < previousTimestamp) ordered = false;
+        previousTimestamp = entry.timestampMs;
+        if (retained != i) m_ring[(ringStart + retained) % m_maxEntries] = entry;
+        ++retained;
     }
-    m_count = retained.size();
-    m_head = m_count % m_maxEntries;
+    m_count = retained;
+    m_head = (ringStart + retained) % m_maxEntries;
     m_oldestTimestampMs = oldestTimestamp;
-    for (size_t i = 0; i < retained.size(); ++i) m_ring[i] = retained[i];
+    m_timestampsOrdered = ordered;
 }
 
 // Log methods
@@ -366,10 +387,24 @@ void DiagnosticsLogger::setMaxEntries(size_t n) {
     std::lock_guard<std::mutex> lk(m_mutex);
     if (n < 50) n = 50;
     if (n > 10000) n = 10000;
+    if (n == m_maxEntries) return;
+    const size_t retained = std::min(m_count, n);
+    const size_t start = (m_head + m_maxEntries - retained) % m_maxEntries;
+    std::vector<DiagLogEntry> resized(n);
+    int64_t oldestTimestamp = 0;
+    bool ordered = true;
+    for (size_t i = 0; i < retained; ++i) {
+        resized[i] = m_ring[(start + i) % m_maxEntries];
+        oldestTimestamp = i == 0 ? resized[i].timestampMs
+            : std::min(oldestTimestamp, resized[i].timestampMs);
+        if (i != 0 && resized[i].timestampMs < resized[i - 1].timestampMs) ordered = false;
+    }
+    m_ring.swap(resized);
     m_maxEntries = n;
-    m_ring.resize(n);
-    if (m_head >= n) m_head = 0;
-    if (m_count > n) m_count = n;
+    m_count = retained;
+    m_head = retained % n;
+    m_oldestTimestampMs = oldestTimestamp;
+    m_timestampsOrdered = ordered;
 }
 
 size_t DiagnosticsLogger::entryCount() const {
@@ -383,6 +418,7 @@ void DiagnosticsLogger::clear() {
     m_count = 0;
     m_head = 0;
     m_oldestTimestampMs = 0;
+    m_timestampsOrdered = true;
 }
 
 // FPS tracking
@@ -465,7 +501,7 @@ std::string DiagnosticsLogger::getRecentJsonLines(int maxLines) const {
     if (m_count == 0 || maxLines <= 0) return {};
 
     size_t n = (size_t)maxLines < m_count ? (size_t)maxLines : m_count;
-    size_t ringStart = (m_count < m_maxEntries) ? 0 : m_head;
+    size_t ringStart = (m_head + m_maxEntries - m_count) % m_maxEntries;
     size_t offset = m_count - n;
 
     std::ostringstream oss;
@@ -495,7 +531,7 @@ std::string DiagnosticsLogger::getRecentFilteredLines(int maxLines) const {
     // Scan the entire ring so Metric-heavy periods don't starve meaningful entries.
     std::vector<const DiagLogEntry*> raw;
     raw.reserve(m_count);
-    size_t ringStart = (m_count < m_maxEntries) ? 0 : m_head;
+    size_t ringStart = (m_head + m_maxEntries - m_count) % m_maxEntries;
     for (size_t i = 0; i < m_count; ++i) {
         size_t idx = (ringStart + i) % m_maxEntries;
         const auto& e = m_ring[idx];
@@ -551,7 +587,7 @@ std::string DiagnosticsLogger::exportJsonString() const {
     const_cast<DiagnosticsLogger*>(this)->pruneExpiredLocked(nowMs());
 
     // 先扫一遍生成摘要，便于一眼看清卡顿/封面耗时
-    size_t start = (m_count < m_maxEntries) ? 0 : m_head;
+    size_t start = (m_head + m_maxEntries - m_count) % m_maxEntries;
     int pointerSpikeCount = 0;
     double pointerSpikeMaxMs = 0;
     int coverUploadCount = 0;
