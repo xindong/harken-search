@@ -4,6 +4,18 @@
 
 int main() {
     using namespace aura::ui::dock;
+    for (const char* id : {"filter", "info", "similar-sounds", "search-results",
+                          "mod-ucs-browser", "mod-tag-browser", "mod-workflow", "mod-transfer"}) {
+        for (DockSide side : {DockSide::Top, DockSide::Bottom}) {
+            DockLayout vertical;
+            if (!vertical.InsertModule(id, side, .24f)) return 230;
+            auto saved = [&](std::string_view module) { return module == id ? 280.0f : 0.0f; };
+            const auto band = ResolveDockBandReserve(vertical, saved, 120.0f, 1.0f);
+            const float actual = side == DockSide::Top ? band.top : band.bottom;
+            if (actual != std::max(280.0f, DockModuleMinimum(id).height)) return 231;
+            if ((side == DockSide::Top ? band.bottom : band.top) != 0.0f) return 232;
+        }
+    }
     {
         DockLayout workspace;
         workspace.InsertModule("filter", DockSide::Left, 0.24f);

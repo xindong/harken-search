@@ -68,6 +68,14 @@ struct ResumeMetadataObservation {
     std::uint32_t systemError = 0;
 };
 
+// Retention observation of first-level directories under the update root.
+// The adapter never exposes the absolute root; names are relative to it.
+struct UpdateVersionDirectoryListing {
+    bool ok = false;
+    std::vector<std::string> directoryNames;
+    std::uint32_t systemError = 0;
+};
+
 class UpdatePersistencePort {
 public:
     virtual ~UpdatePersistencePort() = default;
@@ -100,6 +108,23 @@ public:
         const std::string& relativePath) = 0;
     virtual StagedIdentityObservation ObserveStagedPatch(
         const std::string& relativePath) = 0;
+
+    // Package retention: list first-level directories of the updater-owned
+    // download root and remove exactly one listed version directory with its
+    // contents. Directory names must be strict numeric semver; anything else
+    // (staging, transaction, quarantine or forged paths) is rejected before
+    // any filesystem effect. The default implementations report "no retention
+    // support" so test fakes stay focused on the download contract.
+    virtual UpdateVersionDirectoryListing ObserveVersionDirectories() {
+        return {};
+    }
+    virtual UpdatePersistenceResult DeleteVersionDirectory(
+        const std::string& directoryName) {
+        (void)directoryName;
+        UpdatePersistenceResult result;
+        result.error = UpdatePersistenceError::InvalidIntent;
+        return result;
+    }
 };
 
 }  // namespace aris::update

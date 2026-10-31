@@ -3,6 +3,7 @@
 // Aris-owned preset and custom color definitions
 
 #include "Theme.h"
+#include "ui/MistBlueChrome.h"
 #include "ThemeEditorSchema.h"
 #include <cstring>
 #include "HarkenSearchDesignTokens.generated.h"
@@ -251,13 +252,14 @@ void ThemeColors::applyStyleBaseline(ImGuiStyle& style) {
     style.PopupBorderSize   = 0.0f;
 }
 
-ThemeDialogStyleScope::ThemeDialogStyleScope() {
+ThemeDialogStyleScope::ThemeDialogStyleScope(bool layeredNavy) {
     if (!ImGui::GetCurrentContext()) {
         return;
     }
 
     const ThemeColorScheme& cs = ThemeColors::current();
     const bool light = ThemeColors::isLightChromeTheme(cs);
+    const auto controls = MistBlueChrome::Controls(cs);
 
     auto withAlpha = [](ImVec4 c, float alpha) {
         c.w = alpha;
@@ -276,18 +278,18 @@ ThemeDialogStyleScope::ThemeDialogStyleScope() {
         ++m_varCount;
     };
 
-    const ImVec4 popupBase = OpaqueThemeColor(ThemeColors::popupModalBG(cs));
-    const ImVec4 bg = OpaqueThemeColor(ThemeColors::popupModalBG(cs));
-    const ImVec4 panel = OpaqueThemeColor(ThemeColors::popupModalPanelBG(cs));
-    const ImVec4 input = withAlpha(MixThemeColor(cs.frameBgBase, panel, light ? 0.18f : 0.34f), light ? 0.94f : 0.98f);
+    const ImVec4 popupBase = layeredNavy ? cs.dialogBG : OpaqueThemeColor(ThemeColors::popupModalBG(cs));
+    const ImVec4 bg = layeredNavy ? cs.dialogBG : OpaqueThemeColor(ThemeColors::popupModalBG(cs));
+    const ImVec4 panel = layeredNavy ? cs.dialogPanelBG : OpaqueThemeColor(ThemeColors::popupModalPanelBG(cs));
+    const ImVec4 input = layeredNavy ? controls.normal : withAlpha(MixThemeColor(cs.frameBgBase, panel, light ? 0.18f : 0.34f), light ? 0.94f : 0.98f);
     const ImVec4 text = OpaqueThemeColor(cs.interfaceText);
-    const ImVec4 textMuted = OpaqueThemeColor(MixThemeColor(cs.interfaceText, bg, light ? 0.40f : 0.54f));
+    const ImVec4 textMuted = layeredNavy ? controls.muted : OpaqueThemeColor(MixThemeColor(cs.interfaceText, bg, light ? 0.40f : 0.54f));
     const ImVec4 accent = OpaqueThemeColor(cs.controlAccent);
     const ImVec4 border = ThemeColors::popupBorder(cs);
-    const ImVec4 button = OpaqueThemeColor(MixThemeColor(panel, cs.transportBarBG, light ? 0.12f : 0.24f));
-    const ImVec4 buttonHover = OpaqueThemeColor(MixThemeColor(button, cs.controlAccent, light ? 0.14f : 0.18f));
-    const ImVec4 buttonActive = OpaqueThemeColor(MixThemeColor(button, cs.controlAccent, light ? 0.22f : 0.28f));
-    const ImVec4 title = OpaqueThemeColor(MixThemeColor(cs.transportBarBG, panel, light ? 0.38f : 0.10f));
+    const ImVec4 button = layeredNavy ? controls.normal : OpaqueThemeColor(MixThemeColor(panel, cs.transportBarBG, light ? 0.12f : 0.24f));
+    const ImVec4 buttonHover = layeredNavy ? controls.hovered : OpaqueThemeColor(MixThemeColor(button, cs.controlAccent, light ? 0.14f : 0.18f));
+    const ImVec4 buttonActive = layeredNavy ? controls.active : OpaqueThemeColor(MixThemeColor(button, cs.controlAccent, light ? 0.22f : 0.28f));
+    const ImVec4 title = layeredNavy ? controls.title : OpaqueThemeColor(MixThemeColor(cs.transportBarBG, panel, light ? 0.38f : 0.10f));
     const ImVec4 scrollbarGrab = OpaqueThemeColor(MixThemeColor(cs.resultsScrollbar, panel, light ? 0.16f : 0.20f));
 
     pushColor(ImGuiCol_Text, text);
@@ -298,8 +300,8 @@ ThemeDialogStyleScope::ThemeDialogStyleScope() {
     pushColor(ImGuiCol_Border, border);
     pushColor(ImGuiCol_BorderShadow, ThemeColors::popupShadow(cs));
     pushColor(ImGuiCol_FrameBg, input);
-    pushColor(ImGuiCol_FrameBgHovered, OpaqueThemeColor(MixThemeColor(input, accent, light ? 0.10f : 0.14f)));
-    pushColor(ImGuiCol_FrameBgActive, OpaqueThemeColor(MixThemeColor(input, accent, light ? 0.18f : 0.22f)));
+    pushColor(ImGuiCol_FrameBgHovered, layeredNavy ? controls.hovered : OpaqueThemeColor(MixThemeColor(input, accent, light ? 0.10f : 0.14f)));
+    pushColor(ImGuiCol_FrameBgActive, layeredNavy ? controls.active : OpaqueThemeColor(MixThemeColor(input, accent, light ? 0.18f : 0.22f)));
     pushColor(ImGuiCol_TitleBg, title);
     pushColor(ImGuiCol_TitleBgActive, title);
     pushColor(ImGuiCol_TitleBgCollapsed, title);

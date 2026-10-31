@@ -267,6 +267,7 @@ int AppState::duplicateTab(int index) {
         // Duplicating that tab requires one copy of the live result sets.
         if (index == activeTabIndex) {
             newTab.searchResults = searchResults;
+            newTab.lastAppliedSearchText = lastAppliedSearchText;
             newTab.coverFacets = currentCoverFacets;
             newTab.pathFacets = currentPathFacets;
             newTab.searchResultsSnapshotValid = true;
@@ -610,6 +611,7 @@ void AppState::syncFromTab() {
     loadedCount = tab.loadedCount;
     hasMoreResults = tab.hasMoreResults;
     memcpy(searchBuffer, tab.searchBuffer, sizeof(searchBuffer));
+    lastAppliedSearchText = tab.lastAppliedSearchText;
 }
 
 void AppState::syncToTab() {
@@ -671,6 +673,7 @@ void AppState::syncToTab() {
     tab.loadedCount = loadedCount;
     tab.hasMoreResults = hasMoreResults;
     memcpy(tab.searchBuffer, searchBuffer, sizeof(searchBuffer));
+    tab.lastAppliedSearchText = lastAppliedSearchText;
 }
 
 void AppState::parkLiveResultsInCurrentTab() {

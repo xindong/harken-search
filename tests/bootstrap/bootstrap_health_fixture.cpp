@@ -54,6 +54,7 @@ int wmain(const int argc, wchar_t** argv) {
         {"version", value["version"]},
     };
     const std::string bytes = acknowledgement.dump() + "\n";
+    if (value["build_id"] == "progress-real-update") Sleep(1800U);
     DWORD written = 0;
     const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
     if (fragmentAcknowledgement) {

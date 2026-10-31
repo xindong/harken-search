@@ -105,6 +105,13 @@ int main() {
                "specific cover filter QA command should fail safely when integrated mode is disabled")) {
         return 1;
     }
+    // The public desktop repository deliberately excludes the private harness.
+    // Keep its checks when present, and still run every product routing check.
+    if (qaDriver.empty()) {
+        if (!Check(!std::filesystem::exists(repoRoot / ".openclaw"),
+                   "an existing private harness must not be incomplete")) return 1;
+        std::printf("NOT APPLICABLE: private harness API/CLI checks; .openclaw is not distributed\n");
+    } else {
     if (!Check(qaDriver.find("def set_cover_wall_integrated_mode") != std::string::npos &&
                    qaDriver.find("sub.add_parser(\"set_cover_wall_integrated_mode\")") != std::string::npos,
                "QA driver should expose the integrated-mode command in API and CLI forms")) {
@@ -118,6 +125,7 @@ int main() {
                    qaDriver.find("sub.add_parser(\"wait_cover_rebuild_complete\")") != std::string::npos,
                "QA driver should expose cover rebuild control and wait helpers for retirement probes")) {
         return 1;
+    }
     }
     if (!Check(probeScript.find("ensure_integrated_mode") != std::string::npos &&
                    probeScript.find("coverWallIntegratedMode") != std::string::npos &&

@@ -325,7 +325,7 @@ public:
 // active ThemeColorScheme, so each shipped preset keeps its own palette.
 class ThemeDialogStyleScope {
 public:
-    ThemeDialogStyleScope();
+    explicit ThemeDialogStyleScope(bool layeredNavy = false);
     ~ThemeDialogStyleScope();
 
     void reset();

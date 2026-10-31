@@ -5,6 +5,7 @@
 // 每个模块对应一个 Render 函数，在 RenderUI() 中调用。
 
 #include <string>
+#include "MiniWaveformPresentation.h"
 
 struct AppState;
 
@@ -33,5 +34,10 @@ void RenderTagBrowserContent(AppState& state);
 void RenderTransferDialogContent(AppState& state);
 void RenderWorkflowDialogContent(AppState& state);
 
-// 4b：释放被 MemoryBudget 淘汰的 waveform 条目（waveformCache + waveformFailed + mini 纹理）
-void ReleaseWaveformEvictedEntry(AppState& state, const std::string& key);
+// Release CPU waveform data; explicit invalidation also releases the texture.
+void ReleaseWaveformEvictedEntry(AppState& state, const std::string& key,
+    MiniWaveformPresentation::Removal removal =
+        MiniWaveformPresentation::Removal::ExplicitInvalidation);
+void InvalidateMiniWaveTextureForPath(const std::string& key);
+void InvalidateMiniWaveTextureAfterFrame(const std::string& key);
+void FlushDeferredMiniWaveTextureDeletes();

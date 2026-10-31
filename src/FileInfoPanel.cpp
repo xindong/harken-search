@@ -2,9 +2,12 @@
 
 #include "AppState.h"
 #include "Localization.h"
+#include "ThemeInspector.h"
+#include <cmath>
 #include "Theme.h"
 #include "TransientScrollbarHost.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/TransportContrast.h"
 
 #include "imgui.h"
 
@@ -138,44 +141,155 @@ int PushFileInfoShellStyle(const ThemeColorScheme& tcs) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg,             infoPanelBg);
     ImGui::PushStyleColor(ImGuiCol_ChildBg,              infoPanelBg);
     ImGui::PushStyleColor(ImGuiCol_Text,                 tcs.metadataPanelText);
+    const ImVec4 muted = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, ThemeColors::customized() ? muted :
+        TransportContrast::ForSurface(muted, infoPanelBg, 6.0));
     ImGui::PushStyleColor(ImGuiCol_Border,               infoPanelBorder);
     aura::ui::workspace::PushTransientScrollbarColors(
         ImVec4(infoScrollbar.x, infoScrollbar.y, infoScrollbar.z, 0.40f),
         ImVec4(infoScrollbar.x, infoScrollbar.y, infoScrollbar.z, 0.60f),
         ImVec4(infoScrollbar.x, infoScrollbar.y, infoScrollbar.z, 0.80f));
-    return 8;
+    return 9;
+}
+
+
+namespace {
+constexpr bool kDiagnostics = AURA_BUILD_DIAGNOSTICS != 0;
+constexpr float kPageButtonWidth = 24.0f;
+constexpr int kVisibilityAction = 4;
+constexpr int kSimilarSoundsAction = 5;
+const char* PageLabel(int page) {
+    switch (page) {
+    case 0: return L(Info_MetaSummaryTab);
+    case 1: return L(Info_ArtworkTab);
+    case 2: return L(Info_TransferHistoryTab);
+    default: return L(Info_PlayHistoryTab);
+    }
+}
+const char* PageId(int page) {
+    static const char* ids[] = {"info.metadataSummary", "info.artwork", "info.transferHistory", "info.playHistory"};
+    return ids[page];
+}
+void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
+    auto p = [&](float x, float y) { return ImVec2(origin.x + x * .75f, origin.y + y * .75f); };
+    auto line = [&](float x, float y, float x2, float y2) { dl->AddLine(p(x,y),p(x2,y2),color,1.3f); };
+    if (page == 0) {
+        line(14,3,5,3); line(5,3,5,21); line(5,21,19,21); line(19,21,19,8);
+        line(19,8,14,3); line(14,3,14,8); line(14,8,19,8);
+        line(8,12,16,12); line(8,16,14,16);
+    } else if (page == 1) {
+        dl->AddRect(p(3,3),p(21,21),color,1.5f,0,1.3f);
+        dl->AddCircle(p(8.5f,8.5f),1.1f,color,8,1.1f);
+        line(4,17,10,12); line(10,12,14,16); line(14,16,17,13); line(17,13,21,17);
+    } else if (page == 2) {
+        line(4,6,20,6); line(20,6,16,2); line(20,6,16,10);
+        line(8,14,20,14); line(8,19,17,19);
+        dl->AddCircleFilled(p(4,14),.8f,color); dl->AddCircleFilled(p(4,19),.8f,color);
+    } else if (page == 3) {
+        dl->PathArcTo(p(12,12),6.75f,3.66519f,8.90118f,22);
+        dl->PathStroke(color,0,1.3f);
+        line(4,2,4,8); line(4,8,10,8);
+        line(10,8,16,12); line(16,12,10,16); line(10,16,10,8);
+    } else if (page == kSimilarSoundsAction) {
+        // The existing waveform mark, centered in the same 18px icon box.
+        const ImVec2 points[] = {
+            p(4.32f,12), p(7.68f,6.72f), p(11.28f,18.72f),
+            p(14.88f,4.32f), p(18.72f,13.92f)
+        };
+        dl->AddPolyline(points, IM_ARRAYSIZE(points), color, ImDrawFlags_None, 1.3f);
+    } else {
+        for (float x : {5.0f,12.0f,19.0f}) dl->AddCircleFilled(p(x,12),1.0f,color);
+    }
+}
+}
+
+float FileInfoPageActionsWidth(AppState& state, float availableWidth) {
+    state.settings.infoPages.Normalize(kDiagnostics);
+    const int count = availableWidth < 172.0f ? 1 : state.settings.infoPages.VisibleCount(kDiagnostics);
+    return (count + 1 + (state.settings.infoPages.similarSoundsVisible ? 1 : 0)) * kPageButtonWidth + 6.0f;
+}
+
+bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth) {
+    auto& pages = state.settings.infoPages;
+    pages.Normalize(kDiagnostics);
+    const bool compact = availableWidth < 172.0f;
+    const ImVec2 saved = ImGui::GetCursorPos();
+    const auto& theme = ThemeColors::current();
+    const ImVec4 base = theme.metadataPanelText;
+    const ImVec4 accent = ThemeColors::infoPanelAccent(theme);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float x = position.x;
+    ImGui::PushID("InfoPageActions");
+    auto button = [&](int page, bool selected) {
+        ImGui::SetCursorPos(ImVec2(x, position.y));
+        ImGui::PushID(page);
+        const bool clicked = ImGui::InvisibleButton("page", ImVec2(kPageButtonWidth, height));
+        const bool hovered = ImGui::IsItemHovered();
+        const ImVec2 a = ImGui::GetItemRectMin();
+        const ImVec4 color = selected || hovered ? base : ImVec4(base.x,base.y,base.z,base.w*.72f);
+        DrawPageIcon(dl, ImVec2(a.x+3.0f, a.y+(height-18.0f)*.5f), page, ImGui::GetColorU32(color));
+        if (selected) dl->AddLine(ImVec2(a.x+4,a.y+height-2),ImVec2(a.x+20,a.y+height-2),ImGui::GetColorU32(accent),2.0f);
+        const bool similar = page == kSimilarSoundsAction;
+        const char* label = similar ? L(Similar_OpenTooltip) : (page < 4 ? PageLabel(page) : L(Info_VisiblePages));
+        const char* id = similar ? "info.similarSounds" : (page < 4 ? PageId(page) : "info.pageVisibility");
+        ThemeInspector::RegisterLastItem(id, label, "src/FileInfoPanel.cpp");
+        if (hovered) ImGui::SetTooltip("%s", label);
+        ImGui::PopID();
+        x += kPageButtonWidth;
+        return clicked;
+    };
+    const bool similarClicked = pages.similarSoundsVisible && button(kSimilarSoundsAction, false);
+    for (int i=0; i<4; ++i) {
+        if (!pages.IsVisible(static_cast<InfoPage>(i), kDiagnostics) || (compact && pages.selected != i)) continue;
+        if (button(i, pages.selected == i) && pages.Select(static_cast<InfoPage>(i),kDiagnostics)) state.settingsDirty = true;
+    }
+    if (button(kVisibilityAction,false)) ImGui::OpenPopup("visibility");
+    if (BeginTransientScrollbarPopup("visibility")) {
+        if (compact) {
+            for (int i=0; i<4; ++i) {
+                if (!pages.IsVisible(static_cast<InfoPage>(i),kDiagnostics)) continue;
+                ImGui::PushID(i);
+                if (ImGui::MenuItem(PageLabel(i), nullptr, pages.selected==i)) {
+                    if (pages.Select(static_cast<InfoPage>(i),kDiagnostics)) state.settingsDirty = true;
+                }
+                ThemeInspector::RegisterLastItem((std::string("info.select.")+std::to_string(i)).c_str(),PageLabel(i),"src/FileInfoPanel.cpp");
+                ImGui::PopID();
+            }
+            ImGui::Separator();
+        }
+        ImGui::TextDisabled("%s", L(Info_VisiblePages));
+        if (ImGui::MenuItem(L(Similar_Title), nullptr, &pages.similarSoundsVisible)) state.settingsDirty = true;
+        ThemeInspector::RegisterLastItem("info.visibility.similarSounds", L(Similar_Title), "src/FileInfoPanel.cpp");
+        for (int i=0; i<4; ++i) {
+            const auto page = static_cast<InfoPage>(i);
+            if (!InfoPageNavigation::Available(page,kDiagnostics)) continue;
+            const bool visible = pages.IsVisible(page,kDiagnostics);
+            const bool enabled = !visible || pages.VisibleCount(kDiagnostics)>1;
+            ImGui::PushID(i+10);
+            if (ImGui::MenuItem(PageLabel(i),nullptr,visible,enabled)) {
+                if (pages.SetVisible(page,!visible,kDiagnostics)) state.settingsDirty = true;
+            }
+            ThemeInspector::RegisterLastItem((std::string("info.visibility.")+std::to_string(i)).c_str(),PageLabel(i),"src/FileInfoPanel.cpp");
+            if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",L(Info_KeepOnePage));
+            ImGui::PopID();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    ImGui::SetCursorPos(saved);
+    return similarClicked;
 }
 
 void RenderFileInfoPanelContent(AppState& state, float panelWidth) {
-    const FileInfoPanelChrome chrome = MakeFileInfoPanelChrome();
-    RenderFileInfoFieldVisibilityMenu(state);
-
-    // 默认打开 artwork 标签页（仅首次）；重建封面完成后也自动切到封面墙
-    static bool s_firstOpen = true;
-    ImGuiTabItemFlags artworkFlags = 0;
-    if (s_firstOpen) {
-        artworkFlags = ImGuiTabItemFlags_SetSelected;
-        s_firstOpen = false;
-    }
+    GuardInfoMetadataContext(state);
+    auto& pages = state.settings.infoPages;
+    pages.Normalize(kDiagnostics);
     if (state.switchToCoverTabAfterRebuild) {
-        artworkFlags = ImGuiTabItemFlags_SetSelected;
+        // A background rebuild must not restore an explicitly hidden entry.
+        if (!state.infoEditSession.active && pages.Select(InfoPage::Artwork,kDiagnostics)) state.settingsDirty = true;
         state.switchToCoverTabAfterRebuild = false;
     }
-
-    // Info tabs: low-saturation guidance with a clearer shell.
-    ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, 5.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_TabBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 3.0f));
-    ImGui::PushStyleColor(ImGuiCol_Tab, chrome.kPanelTab);
-    ImGui::PushStyleColor(ImGuiCol_TabHovered, chrome.kPanelTabHover);
-    ImGui::PushStyleColor(ImGuiCol_TabActive, chrome.kPanelTabActive);
-    ImGui::PushStyleColor(ImGuiCol_TabUnfocused, chrome.kPanelTabUnfocused);
-    ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive, chrome.kPanelTabUnfocusedActive);
-
-    if (ImGui::BeginTabBar("##FileInfoTabs")) {
-        RenderFileInfoPanelTabContents(state, panelWidth, chrome, artworkFlags);
-        ImGui::EndTabBar();
-    }
-    ImGui::PopStyleColor(5);
-    ImGui::PopStyleVar(3);
+    const FileInfoPanelChrome chrome = MakeFileInfoPanelChrome();
+    RenderFileInfoFieldVisibilityMenu(state);
+    RenderFileInfoPanelTabContents(state, panelWidth, chrome);
 }

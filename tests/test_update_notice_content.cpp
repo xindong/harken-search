@@ -23,6 +23,22 @@ int main(int argc, char** argv) {
     SyncHarkenSearchCandidateReleaseNotes(notes, "1.0.37", "broken-json", false);
     check(notes.candidateNotesFailed && !SelectHarkenSearchReleaseNotes(notes, "1.0.37", true), "invalid fetched document cannot fall back to a stale local copy");
     check(SelectHarkenSearchReleaseNotes(notes, "1.0.37", false) != nullptr, "local history remains available after preview failure");
+    check(SelectHarkenSearchLocalDisplayReleaseNotes(notes, "1.0.37") != nullptr &&
+              SelectHarkenSearchLocalDisplayReleaseNotes(notes, "1.0.37")->version == "1.0.37",
+          "local panel keeps the exact installed record when present");
+    {
+        ReleaseNotesUiState stale;
+        const std::string staleDocument = R"({"schema_version":2,"releases":[{"version":"1.0.41","release_date":"2026-10-29","headline":"Newest","contributors":["Dev A","Dev B"],"sections":[{"title":"优化","items":[{"name":"Dev A","list":[{"title":"停靠","description":"停靠细节"}]}]}]},{"version":"1.0.40","release_date":"2026-10-28","headline":"Older","items":[{"text":"旧细节"}]}]})";
+        check(ParseHarkenSearchReleaseNotes(staleDocument, stale.releases), "stale fallback document parses");
+        const auto* exact = SelectHarkenSearchLocalDisplayReleaseNotes(stale, "1.0.41");
+        check(exact && exact->version == "1.0.41", "stale fallback prefers the exact installed version");
+        const auto* fallback = SelectHarkenSearchLocalDisplayReleaseNotes(stale, "1.0.42");
+        check(fallback && fallback->version == "1.0.41" && !fallback->contributors.empty() &&
+                  fallback->contributors.front() == "Dev A",
+              "missing installed version falls back to the newest available record with contributors");
+        ReleaseNotesUiState empty;
+        check(!SelectHarkenSearchLocalDisplayReleaseNotes(empty, "1.0.42"), "no local data still shows no notes");
+    }
     SyncHarkenSearchCandidateReleaseNotes(notes, "1.0.37", document, false);
     check(!notes.candidateNotesFailed && notes.candidateRelease.has_value(), "successful retry recovers failed notes");
     check(!ParseHarkenSearchReleaseNotes("{\"schema_version\":99999999999999999999}", notes.releases), "invalid input is a display error, not a crash");

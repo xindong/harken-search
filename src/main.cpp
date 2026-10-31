@@ -61,6 +61,8 @@
 #include "FileBrowser.h"
 #include "CoverReplacementFoundation.h"
 #include "Database.h"
+#include "sqlite3.h"
+#include "ScanDatabaseOpenDiagnostics.h"
 #include "PathUtils.h"  // Canonical folder filters and scroll targets.
 #include "FolderTreeContextActions.h"
 #include "SearchQuery.h"
@@ -98,7 +100,16 @@
 #include "AITranscriptionResultStateAdapter.h"
 #include "VoiceAssetOrganizer.h"
 #include "Theme.h"              // 主题颜色系统
-#include "ThemeInspector.h"     // 主题检视模式
+#include "ThemeSchedule.h"
+#include "ThemeEditor.h"
+#include "ThemeInspector.h"
+#include "ui/TransportVisualAudit.h"
+#include "ui/TransportContrast.h"
+#include "ui/MistBlueChrome.h"
+#include "ui/EmptyStatePalette.h"
+#include "ui/ActionButtonStyle.h"
+#include "ui/EmptyStateVisualAudit.h"
+#include "ui/TransportBlendSlider.h"
 #include "HarkenSearchThemeManager.h"   // 次世代视觉管理器
 #include "HarkenSearchWidgets.h"        // Aris shared controls for core product flows
 #include "HarkenSearchIcons.h"          // 官方品牌字标（菜单栏/启动页同源）
@@ -130,6 +141,7 @@
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
+#include "CoverWallSelectionKey.h"
 #include "CoverWallFacetRefreshPolicy.h"
 #include "CoverWallCachePolicy.h"
 #include "CoverWallTextureMirrorPolicy.h"
@@ -223,6 +235,7 @@
 #include "WaveformExtractor.h"
 #include "WaveformRegionEditor.h"
 #include "MiniWaveformGeometry.h"
+#include "MiniWaveformPresentation.h"
 #include "MiniWaveformScheduler.h"
 #include "SelectedWaveformRebuildQueue.h"
 #include "RenderFrameRequestPolicy.h"
@@ -943,7 +956,8 @@ SwitchDatabase(AppState& state,
                bool allowCreate = false,
                std::string* outImmediateError = nullptr,
                int initialWaveformCacheMode = -1,
-               bool overwriteExisting = false);
+               bool overwriteExisting = false,
+               std::function<void(bool, const std::string&)> afterDeferredStart = {});
 static bool SidebarRefreshGlyphButton(const char* id_str, const ImVec2& size_arg = ImVec2(30, 24), bool is_busy = false);
 static bool SidebarClearAllGlyphButton(const char* id_str, const ImVec2& size_arg = ImVec2(30, 24), bool is_emphasized = false);
 bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight = 50.0f, float maxHeight = 500.0f, float width = 0.0f, bool growWhenDraggingDown = false);
@@ -963,7 +977,7 @@ using aura::cover_wall::SanitizeCoverWallItemsForCache;
 using aura::cover_wall::BuildCoverWallItemsFromCachedKeys;
 using aura::cover_wall::BuildCoverWallItemsFromSearchResultsFallback;
 using aura::cover_wall::ConvertCoverWallEntryToItem;
-using aura::cover_wall::BuildCoverWallVisualDedupeToken;
+using aura::cover_wall::AppendUniqueCoverWallPageItems;
 using aura::cover_wall::BuildCoverWallPageLoadResult;
 using aura::cover_wall::BuildCoverWallLoadResultFromEntries;
 using aura::cover_wall::LoadGlobalCoverWallPage;
@@ -1160,6 +1174,8 @@ bool g_searchBarFocusedForShortcuts = false;
 // SECTION 2 - Keybindings and Shortcuts
 
 static void ProcessKeybindings(AppState& state) {
+    // The first-library modal must also block shortcuts handled outside ImGui.
+    if (state.startupNeedsDatabaseSetup) return;
     // AUDITION_NATIVE_EXCEPTION: keyboard-transport
     // Keyboard play/stop intentionally retains its origin-specific region and
     // rewind policy during the overnight control-plane proof.
@@ -1565,7 +1581,6 @@ static void ProcessKeybindings(AppState& state) {
             if (IsShortcutPressedSnapshot(ShortcutAction::Refresh, ks)) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database) {
-                    ClearAllFiltersForShowAll(state);
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
                     RefreshSearchResults(state, true);
@@ -1883,6 +1898,7 @@ struct MiniWaveTextureEntry {
 };
 
 static std::unordered_map<std::string, MiniWaveTextureEntry> g_miniWaveTextureCache; // filePath -> texture
+static MiniWaveformPresentation::DeferredTextureDeletes g_deferredMiniWaveTextureDeletes;
 static const size_t kMaxMiniWaveTextures = 250;
 
 // Mini waveform texture upload queue.
@@ -2016,6 +2032,15 @@ static bool HasCompatibleMiniWaveTexture(const std::string& path, int targetW, i
     }
 
     cacheIt->second.lastUsedFrame = frame;
+    return true;
+}
+
+static bool GetRetainedMiniWaveTexture(const std::string& path, MiniWaveTextureEntry& outTex) {
+    auto it = g_miniWaveTextureCache.find(path);
+    if (it == g_miniWaveTextureCache.end() || !it->second.hasTexture || it->second.textureId == 0)
+        return false;
+    it->second.lastUsedFrame = (uint64_t)ImGui::GetFrameCount();
+    outTex = it->second;
     return true;
 }
 
@@ -2441,16 +2466,34 @@ static void ScheduleMiniWaveformRequestsForRange(AppState& state, int displaySta
     }
 }
 
-void ReleaseWaveformEvictedEntry(AppState& state, const std::string& key) {
-    state.waveformCache.erase(key);
-    state.waveformFailed.erase(key);
+void InvalidateMiniWaveTextureForPath(const std::string& key) {
     auto texIt = g_miniWaveTextureCache.find(key);
     if (texIt != g_miniWaveTextureCache.end()) {
-        if (texIt->second.textureId != 0) {
+        if (texIt->second.textureId != 0)
             DeleteMiniWaveTexture(texIt->second.textureId);
-        }
         g_miniWaveTextureCache.erase(texIt);
     }
+}
+
+void InvalidateMiniWaveTextureAfterFrame(const std::string& key) {
+    auto texIt = g_miniWaveTextureCache.find(key);
+    if (texIt == g_miniWaveTextureCache.end()) return;
+    g_deferredMiniWaveTextureDeletes.Queue(texIt->second.textureId);
+    g_miniWaveTextureCache.erase(texIt);
+}
+
+void FlushDeferredMiniWaveTextureDeletes() {
+    g_deferredMiniWaveTextureDeletes.Flush([](GLuint id) {
+        DeleteMiniWaveTexture(id);
+    });
+}
+
+void ReleaseWaveformEvictedEntry(AppState& state, const std::string& key,
+                                 MiniWaveformPresentation::Removal removal) {
+    state.waveformCache.erase(key);
+    state.waveformFailed.erase(key);
+    if (!MiniWaveformPresentation::RetainTextureAfterRemoval(removal))
+        InvalidateMiniWaveTextureForPath(key);
 }
 
 // 封面图片文件读取 / 文件夹封面缓存 / 内嵌封面纹理等逻辑已迁移到 `CoverModule.*`
@@ -2602,7 +2645,7 @@ bool PitchKnob(const char* label, float* value, float minVal, float maxVal, floa
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(OK))) {
+        if (aura::ui::ActionButton(L(OK), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             float newVal = (float)atof(inputBuffer);
             newVal = std::clamp(newVal, minVal, maxVal);
             if (editingValue) *editingValue = newVal;
@@ -5328,6 +5371,11 @@ void LoadAppSettings(AppState& state) {
         state.settingsDirty = true;
     }
 
+    state.settings.infoPages.visibleMask = ParseInt(kv["infoPageVisibleMask"], 15);
+    state.settings.infoPages.selected = ParseInt(kv["infoSelectedPage"], 1);
+    state.settings.infoPages.similarSoundsVisible = ParseBool(kv["infoShowSimilarSounds"], true);
+    state.settings.infoPages.Normalize(AURA_BUILD_DIAGNOSTICS != 0);
+
     // UI sizing. Reading font is the single user-facing size; chrome is pinned.
     {
         auto itReading = kv.find("readingFontSize");
@@ -5369,6 +5417,8 @@ void LoadAppSettings(AppState& state) {
     }
     // [已移除 WebUI]
     state.settings.theme = (AppTheme)ParseInt(kv["theme"], (int)state.settings.theme);
+    state.settings.themeScheduleMode = harken::theme_schedule::ModeFromSetting(
+        ParseInt(kv["themeScheduleMode"], (int)state.settings.themeScheduleMode));
     state.settings.language = (AppLanguage)ParseInt(kv["language"], (int)state.settings.language);
     g_currentLanguage = state.settings.language;  // Apply language immediately
     {
@@ -6115,6 +6165,7 @@ void LoadAppSettings(AppState& state) {
             FolderShortcut sc;
             sc.name = kv[prefix + "name"];
             sc.path = kv[prefix + "path"];
+            sc.openInBrowser = ParseBool(kv[prefix + "openInBrowser"], false);
             if (sc.name.empty() || sc.path.empty()) continue;
             state.folderShortcuts.push_back(std::move(sc));
         }
@@ -6256,6 +6307,9 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"fileInfoDockSide", std::to_string((int)state.fileInfoDockSide)});
     items.push_back({"sidebarDockSide", std::to_string((int)state.sidebarDockSide)});
     items.push_back({"infoPanelLayoutVersion", "1"});
+    items.push_back({"infoPageVisibleMask", std::to_string(state.settings.infoPages.visibleMask)});
+    items.push_back({"infoSelectedPage", std::to_string(state.settings.infoPages.selected)});
+    items.push_back({"infoShowSimilarSounds", state.settings.infoPages.similarSoundsVisible ? "1" : "0"});
 
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
@@ -6270,12 +6324,14 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterWidth", std::to_string(state.settings.meterWidth)});
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
-    items.push_back({"theme", std::to_string((int)state.settings.theme)});
+    const auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    items.push_back({"theme", std::to_string((int)savedAppearance.theme)});
+    items.push_back({"themeScheduleMode", std::to_string((int)state.settings.themeScheduleMode)});
     items.push_back({"language", std::to_string((int)state.settings.language)});
     items.push_back({"customThemeName", state.settings.customThemeName});
 
     // Custom colors
-    items.push_back({"useCustomColors", state.settings.useCustomColors ? "1" : "0"});
+    items.push_back({"useCustomColors", savedAppearance.useCustomColors ? "1" : "0"});
     items.push_back({"customAccentR", std::to_string(state.settings.customAccentColor.x)});
     items.push_back({"customAccentG", std::to_string(state.settings.customAccentColor.y)});
     items.push_back({"customAccentB", std::to_string(state.settings.customAccentColor.z)});
@@ -6633,6 +6689,7 @@ bool TrySaveAppSettings(const AppState& state) {
             std::string prefix = "folderShortcut" + std::to_string(i) + "_";
             items.push_back({prefix + "name", sc.name});
             items.push_back({prefix + "path", sc.path});
+            items.push_back({prefix + "openInBrowser", sc.openInBrowser ? "1" : "0"});
         }
     }
 
@@ -8192,7 +8249,8 @@ static void DrawSidebarFilterPopupBody(
     OnPickFn&& onPick,
     bool synthAllRow = true,
     int searchThreshold = kSidebarFilterSearchThreshold,
-    float listHeight = kSidebarFilterListHeight)
+    float listHeight = kSidebarFilterListHeight,
+    AppState* qaState = nullptr)
 {
     const bool showSearch = (int)items.size() > searchThreshold;
     if (showSearch) {
@@ -8223,7 +8281,17 @@ static void DrawSidebarFilterPopupBody(
             if (n.find(needle) == std::string::npos) continue;
         }
         ImGui::PushID(i);
-        if (ImGui::Selectable(it.c_str(), false)) {
+        const bool picked = ImGui::Selectable(it.c_str(), false);
+#if ARIS_PREVIEW_ISOLATION
+        if (qaState) {
+            const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+            const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+            qaState->qaFilterUiRects["cover_mode_option_" + std::to_string(i)] = ImVec4(
+                min.x - origin.x, min.y - origin.y,
+                max.x - origin.x, max.y - origin.y);
+        }
+#endif
+        if (picked) {
             onPick(i, it);
             ImGui::CloseCurrentPopup();
             ImGui::PopID();
@@ -8293,7 +8361,8 @@ static void DrawSidebarEnumFilter(
     const char* idSuffix,
     int* selectedIndex,
     const char* const* items, int itemCount,
-    OnChangeFn&& onChange)
+    OnChangeFn&& onChange,
+    AppState* qaState = nullptr)
 {
     if (!selectedIndex || !items || itemCount <= 0) return;
     if (*selectedIndex < 0 || *selectedIndex >= itemCount) *selectedIndex = 0;
@@ -8307,7 +8376,16 @@ static void DrawSidebarEnumFilter(
     const float comboWidth = ImGui::CalcItemWidth();
     const ImVec2 comboMax(comboMin.x + comboWidth, comboMin.y + ImGui::GetFrameHeight());
     SetupSidebarPickerPopup(comboMin, comboMax);
-    if (BeginTransientScrollbarCombo(comboId, preview)) {
+    const bool comboOpen = BeginTransientScrollbarCombo(comboId, preview);
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+        qaState->qaFilterUiRects["cover_mode_selector"] = ImVec4(
+            comboMin.x - origin.x, comboMin.y - origin.y,
+            comboMax.x - origin.x, comboMax.y - origin.y);
+    }
+#endif
+    if (comboOpen) {
         std::vector<std::string> strItems;
         strItems.reserve((size_t)itemCount);
         for (int i = 0; i < itemCount; ++i) strItems.emplace_back(items[i] ? items[i] : "");
@@ -8325,7 +8403,8 @@ static void DrawSidebarEnumFilter(
             },
             /*synthAllRow*/ false,
             kSidebarFilterSearchThreshold,
-            kSidebarWideFilterListHeight);
+            kSidebarWideFilterListHeight,
+            qaState);
         ImGui::EndCombo();
     }
 }
@@ -9108,6 +9187,8 @@ static uint64_t SubmitAsyncSearch(AppState& state, const SearchFilter& filter, A
     AsyncSearchRequest req;
     req.filter = filter;
     req.viewMode = (int)state.viewMode;
+    req.allowDatabaseListSourceDescription =
+        state.viewMode == ViewMode::Database && state.lastAppliedSearchText.empty();
     req.playlistId = state.selectedPlaylistId;
     req.limit = limit;
     req.offset = offset;
@@ -9890,7 +9971,8 @@ BuildAsyncSearchResultApplicationEffects() {
             IsCoverWallPriorityMode,
             ResetWaveformZoom,
             [](AppState& appState, const std::string& key) {
-                ReleaseWaveformEvictedEntry(appState, key);
+                ReleaseWaveformEvictedEntry(appState, key,
+                    MiniWaveformPresentation::Removal::BudgetEviction);
             },
         });
 }
@@ -10415,7 +10497,8 @@ void AppState::performGlobalMemoryGC() {
             uint64_t over = wUsage - wBudget;
             auto evicted = memoryBudget->evictLRU(MemoryBudget::CacheType::Waveform, over);
             for (const auto& e : evicted)
-                ReleaseWaveformEvictedEntry(*this, e.key);
+                ReleaseWaveformEvictedEntry(*this, e.key,
+                    MiniWaveformPresentation::Removal::BudgetEviction);
         }
     } else {
         waveformCache.clear();
@@ -10546,12 +10629,58 @@ void PumpDatabaseSwitchIfPending(AppState& state) {
 // 主线程仅做必须主线程的事（GPU 资源 + 轻量 state 清理 + 设置 in-progress 标志），
 // 全部可能阻塞的 teardown（scanner/searchWorker/waveformWorker/database.close）和
 // database.open 一起放到后台线程，避免大库切换时主线程被 join 卡数十秒。
+static InfoEditValues CurrentInfoEditValues(const AppState& state) {
+    return {state.metadataDescBuffer,state.metadataKeywordsBuffer,state.metadataCategoryBuffer};
+}
+
+bool RequestInfoMetadataLeave(AppState& state, std::function<void()> afterLeave) {
+    if (!state.infoEditSession.active) return false;
+    const bool alreadyPending=state.infoEditSession.awaitingChoice;
+    if (!state.infoEditSession.RequestLeave(CurrentInfoEditValues(state))) {
+        state.metadataEditMode=false;
+        state.metadataBatchMode=false;
+        state.metadataBatchIds.clear();
+        state.infoEditRecords.clear();
+        return false;
+    }
+    if (!alreadyPending) state.infoEditAfterLeave=std::move(afterLeave);
+    return true;
+}
+
+void GuardInfoMetadataContext(AppState& state) {
+    if (!state.infoEditSession.active) return;
+    int64_t selectedId=state.currentFileId;
+    if (state.selectedResultIndex>=0 && state.selectedResultIndex<(int)state.searchResults.size())
+        selectedId=state.searchResults[state.selectedResultIndex].id;
+    const bool leaving = selectedId!=state.infoEditSelectionId ||
+        state.viewMode==ViewMode::Browser || !state.panelFileInfo.visible ||
+        state.settings.infoPages.selected!=0 || !state.settings.infoPages.IsVisible(InfoPage::Metadata,true);
+    if (leaving && !state.infoEditSession.awaitingChoice) {
+        const bool visible=state.panelFileInfo.visible;
+        const auto pages=state.settings.infoPages;
+        RequestInfoMetadataLeave(state,[&state,visible,pages] {
+            state.panelFileInfo.visible=visible; state.settings.infoPages=pages; state.settingsDirty=true;
+        });
+    }
+    if (state.infoEditSession.awaitingChoice) {
+        state.panelFileInfo.visible=true;
+        state.settings.infoPages.visibleMask=state.infoEditVisibleMask;
+        state.settings.infoPages.selected=0;
+    }
+}
+
 static bool SwitchDatabase(AppState& state,
                            const std::string& newDbPathUtf8,
                            bool allowCreate,
                            std::string* outImmediateError,
                            int initialWaveformCacheMode,
-                           bool overwriteExisting) {
+                           bool overwriteExisting,
+                           std::function<void(bool, const std::string&)> afterDeferredStart) {
+    if (RequestInfoMetadataLeave(state,[&state,newDbPathUtf8,allowCreate,initialWaveformCacheMode,overwriteExisting,afterDeferredStart=std::move(afterDeferredStart)] {
+        std::string error;
+        const bool started=SwitchDatabase(state,newDbPathUtf8,allowCreate,&error,initialWaveformCacheMode,overwriteExisting);
+        if(afterDeferredStart) afterDeferredStart(started,error);
+    })) return false;
     const std::string effectiveDbPathUtf8 = newDbPathUtf8.empty()
         ? std::string()
         : ResolveCanonicalHarkenSearchDatabasePathUtf8(newDbPathUtf8);
@@ -10639,12 +10768,21 @@ static bool SwitchDatabase(AppState& state,
     state.pendingDbPath = effectiveDbPathUtf8;
     state.pendingDbOldPath = state.currentDbPathUtf8;
     state.dbSwitchInProgress = true;
+    if (state.featureIndexStatistics) state.featureIndexStatistics->SetDatabase("", -1);
+    if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
+    state.idleAssetStatisticsPending = false;
 
     WaitForDatabaseSwitchThread();
 
 // 后台线程做所有可能阻塞的 teardown + open
     g_databaseSwitchWorkerRuntime.Start(
-        [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent]() {
+        [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent,
+         featureStatistics = state.featureIndexStatistics,
+         idleStatistics = state.idleAssetStatistics]() {
+        // Cancel on the UI immediately, but drain connections only here. Windows
+        // package replacement must not race a statistics reader's file handle.
+        if (featureStatistics) featureStatistics->CancelAndWait();
+        if (idleStatistics) idleStatistics->CancelAndWait();
         return aura::database_switch::RunBlockingDatabaseSwitchOperation(
             state.batchFeatureThread,
             g_sameFolderScanner,
@@ -10851,7 +10989,7 @@ static std::string ResolveBrowserEntryFolderPath(const FileEntry& entry) {
     }
 }
 
-static bool AddBrowserFolderToQuickPaths(AppState& state, const std::string& folderPath) {
+bool AddBrowserFolderToQuickPaths(AppState& state, const std::string& folderPath) {
     if (folderPath.empty()) {
         return false;
     }
@@ -10860,11 +10998,25 @@ static bool AddBrowserFolderToQuickPaths(AppState& state, const std::string& fol
     if (folderName.empty()) {
         folderName = folderPath;
     }
-    if (!AddFolderShortcutIfMissing(state, folderName, folderPath)) {
+    if (!AddFolderShortcutIfMissing(state, folderName, folderPath, true)) {
         return false;
     }
     MarkSettingsDirty(state);
     return true;
+}
+
+void OpenFolderShortcut(AppState& state, const FolderShortcut& shortcut) {
+    if (shortcut.openInBrowser) {
+        state.viewMode = ViewMode::Browser;
+        NavigateBrowserToFolder(state, shortcut.path, state.fileBrowser.getScope());
+    } else {
+        state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(shortcut.path);
+        state.folderFilterActive = true;
+        state.viewMode = ViewMode::Database;
+        state.preferDeferredCountForNextRefresh = true;
+        RefreshSearchResults(state, true);
+    }
+    state.syncToTab();
 }
 
 static void QueueBrowserFolderScan(AppState& state, const std::string& folderPath) {
@@ -11561,7 +11713,7 @@ static bool StartWaveformRebuild(AppState& state,
     return true;
 }
 
-static void StartIncrementalWaveformRebuild(AppState& state) {
+static void StartIncrementalWaveformRebuild(AppState& state, int64_t knownMiniCount = -1) {
     if (state.waveformRebuildActive) return;
     if (state.dbSwitchInProgress) {
         DIAG_SYSTEM_FMT("Database",
@@ -11569,7 +11721,8 @@ static void StartIncrementalWaveformRebuild(AppState& state) {
             state.currentDbPathUtf8.c_str());
         return;
     }
-    const int64_t rebuildTotal = state.database.countFilesNeedingWaveformCache();
+    const int64_t rebuildTotal = knownMiniCount >= 0
+        ? knownMiniCount : state.database.countFilesNeedingWaveformCache();
     const int64_t miniTotal = rebuildTotal;
     const int64_t detailTotal = 0;
     if (rebuildTotal <= 0) {
@@ -11677,15 +11830,53 @@ static int64_t RefreshIdleAssetBackfillProgress(AppState& state) {
     return pendingCover;
 }
 
-static bool StartIdleAssetBackfill(AppState& state) {
-    if (state.idleAssetBackfillActive ||
-        DescribeIdleAssetBackfillBlocker(state) != nullptr) {
-        return false;
+static HarkenSearch::LibraryStatisticsResult QueryIdleAssetCounts(
+    const std::string& path, const HarkenSearch::LibraryStatisticsWorker::CancelCheck& cancel) {
+    HarkenSearch::LibraryStatisticsResult result;
+    Database readOnly;
+    if (cancel() || !readOnly.openReadOnly(path)) return result;
+    auto* check = const_cast<HarkenSearch::LibraryStatisticsWorker::CancelCheck*>(&cancel);
+    readOnly.setQueryProgressHandler(1000, [](void* p) {
+        return (*static_cast<HarkenSearch::LibraryStatisticsWorker::CancelCheck*>(p))() ? 1 : 0;
+    }, check);
+    sqlite3_busy_handler(readOnly.db(), [](void* p, int attempts) {
+        if (attempts >= 50 || (*static_cast<HarkenSearch::LibraryStatisticsWorker::CancelCheck*>(p))()) return 0;
+        sqlite3_sleep(10); return 1;
+    }, check);
+    {
+        DiagScopedTimer timer("Performance", "IdleAssetBackfill.CountWaveforms");
+        result.missingWaveforms = readOnly.countFilesNeedingWaveformCache();
     }
+    if (cancel() || sqlite3_errcode(readOnly.db()) != SQLITE_OK) return result;
+    {
+        DiagScopedTimer timer("Performance", "IdleAssetBackfill.CountCoverMetadata");
+        result.pendingAssets = readOnly.countBackfillPendingKind(
+            static_cast<int>(aura::BackfillJobKind::CoverResolveAndThumb));
+        if (cancel() || sqlite3_errcode(readOnly.db()) != SQLITE_OK) return result;
+        result.pendingAssets += readOnly.countBackfillPendingKind(
+            static_cast<int>(aura::BackfillJobKind::MetadataRefresh));
+    }
+    result.success = !cancel() && sqlite3_errcode(readOnly.db()) == SQLITE_OK;
+    return result;
+}
 
-    state.backfillQueue.refillFromDatabaseIfBelowWaterMark(&state.database, 128, 4096);
-    const int64_t miniPending = state.database.countFilesNeedingWaveformCache();
-    const int64_t coverAndMetadataPending = CountIdleAssetCoverAndMetadataPending(state);
+static bool StartIdleAssetBackfill(AppState& state) {
+    if (state.idleAssetBackfillActive || DescribeIdleAssetBackfillBlocker(state) != nullptr) return false;
+    if (!state.idleAssetStatistics) {
+        state.idleAssetStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(QueryIdleAssetCounts);
+    }
+    state.idleAssetStatistics->SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
+    if (!state.idleAssetStatistics->Request()) return false;
+    state.idleAssetStatisticsDbPath = state.currentDbPathUtf8;
+    state.idleAssetStatisticsDbGeneration = state.backfillDbGeneration;
+    state.idleAssetStatisticsPending = true;
+    return true;
+}
+
+static bool ApplyIdleAssetCounts(AppState& state, const HarkenSearch::LibraryStatisticsResult& counts) {
+    if (!counts.success || state.idleAssetBackfillActive || DescribeIdleAssetBackfillBlocker(state)) return false;
+    const int64_t miniPending = counts.missingWaveforms;
+    const int64_t coverAndMetadataPending = counts.pendingAssets;
     if (miniPending <= 0 && coverAndMetadataPending <= 0) {
         state.lastInputTime = std::chrono::steady_clock::now();
         return false;
@@ -11700,7 +11891,7 @@ static bool StartIdleAssetBackfill(AppState& state) {
     state.idleAssetBackfillOwnsBackfillPool = false;
 
     if (miniPending > 0) {
-        StartIncrementalWaveformRebuild(state);
+        StartIncrementalWaveformRebuild(state, miniPending);
         state.idleAssetBackfillStartedMiniProgress = state.waveformRebuildProgress;
     }
     if (coverAndMetadataPending > 0) {
@@ -11753,6 +11944,10 @@ static void StopIdleAssetBackfill(AppState& state, bool completed, bool interrup
 
 static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
     const auto now = std::chrono::steady_clock::now();
+    const auto cancelPendingCheck = [&state] {
+        if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
+        state.idleAssetStatisticsPending = false;
+    };
     if (state.lastInputTime.time_since_epoch().count() == 0) {
         state.lastInputTime = now;
     }
@@ -11760,6 +11955,7 @@ static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
         ScheduleNextIdleAssetBackfillCheck(state, now);
     }
     if (userInteraction) {
+        cancelPendingCheck();
         state.lastInputTime = now;
         ScheduleNextIdleAssetBackfillCheck(state, now);
         if (state.idleAssetBackfillActive) {
@@ -11769,6 +11965,7 @@ static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
     }
 
     if (!state.settings.idleAssetBackfillEnabled) {
+        cancelPendingCheck();
         if (state.idleAssetBackfillActive) {
             StopIdleAssetBackfill(state, false, false);
         }
@@ -11776,6 +11973,26 @@ static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
             std::chrono::steady_clock::time_point{};
         state.idleAssetBackfillNextProgressPollAt =
             std::chrono::steady_clock::time_point{};
+        return;
+    }
+
+    if (state.idleAssetStatisticsPending) {
+        const bool stale = state.idleAssetStatisticsDbPath != state.currentDbPathUtf8 ||
+            state.idleAssetStatisticsDbGeneration != state.backfillDbGeneration;
+        if (stale || DescribeIdleAssetBackfillBlocker(state) != nullptr ||
+            !HasIdleAssetBackfillDelayElapsed(now, state.lastInputTime, state.settings.idleAssetBackfillDelayMinutes)) {
+            cancelPendingCheck();
+            ScheduleNextIdleAssetBackfillCheck(state, now);
+            return;
+        }
+        if (auto result = state.idleAssetStatistics->Poll()) {
+            state.idleAssetStatisticsPending = false;
+            ApplyIdleAssetCounts(state, *result);
+            ScheduleNextIdleAssetBackfillCheck(state, now);
+            DIAG_SYSTEM_FMT("Performance", "IdleAssetBackfill.AsyncResult success=%d mini=%lld assets=%lld workerMs=%.3f",
+                result->success ? 1 : 0, (long long)result->missingWaveforms,
+                (long long)result->pendingAssets, result->queryMilliseconds);
+        }
         return;
     }
 
@@ -13652,8 +13869,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
         });
 }
 
-// Path filter click should only clear specific cover-key filter from previous
-// cover-click selection, without disabling cover display system.
+// Clear the database cover selection when navigating into playlist views.
 static void ClearSpecificCoverKeyFilter(AppState& state) {
     if (!state.coverFilterActive) return;
     state.coverFilterActive = false;
@@ -13684,26 +13900,6 @@ static void ResetPlaylistCoverWallScope(AppState& state) {
     cw.filteredLastSelSize = 0;
     cw.filteredLastId0 = 0;
     aura::cover_wall::RequestDisplayRefresh(state);
-}
-
-// Reset folder + cover click-filters when a new search query is committed,
-// so a fresh query isn't constrained by stale facet clicks. Does NOT clear
-// the search buffer itself (that would loop with the search-change handler).
-static void ClearPathAndCoverFiltersForNewSearch(AppState& state) {
-    bool changed = false;
-    if (state.folderFilterActive) {
-        state.folderFilterActive = false;
-        state.selectedFolderPath.clear();
-        changed = true;
-    }
-    if (state.coverFilterActive) {
-        ClearSpecificCoverKeyFilter(state);
-        state.coverFilterIndex = 0;
-        changed = true;
-    }
-    if (changed) {
-        DIAG_ACTION("Filter", "AutoClearOnSearchChange");
-    }
 }
 
 static void RequestRemoveFolderFromDatabase(AppState& state, const std::string& folderPath) {
@@ -13828,7 +14024,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.56f, 0.16f, 0.12f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.17f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.12f, 0.10f, 1.0f));
-    if (ImGui::Button(L(Main_RemoveBtnReuse), ImVec2(96, 0))) {
+    if (aura::ui::ActionButton(L(Main_RemoveBtnReuse), ImVec2(96, 0), aura::ui::ButtonVariant::Danger)) {
         const int removed = state.database.removeFolderSubtreeFromDb(targetPath);
         FinalizeFolderSubtreeDbRemoval(state, targetPath, removed);
         state.pendingRemoveFolderDbPath.clear();
@@ -13837,7 +14033,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
     ImGui::PopStyleColor(3);
 
     ImGui::SameLine();
-    if (ImGui::Button(L(Main_CancelBtn4), ImVec2(96, 0))) {
+    if (aura::ui::ActionButton(L(Main_CancelBtn4), ImVec2(96, 0), aura::ui::ButtonVariant::Quiet)) {
         state.pendingRemoveFolderDbPath.clear();
         ImGui::CloseCurrentPopup();
     }
@@ -14219,6 +14415,7 @@ static void ShuffleCurrentResultsAndPlayFirst(AppState& state) {
     // Random ordering must stay on the search worker, not the UI thread.
     // 我们仅发起一个异步请求，UI 线程立即返回，保持 120FPS 丝滑。
     SearchFilter filter = BuildCurrentDbFilter(state);
+    state.lastAppliedSearchText = state.searchBuffer;
 
     // 设置 UI 加载状态，给用户视觉反馈
     state.loadingMore = true;
@@ -14294,6 +14491,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.coverFilterPath.clear();
     state.coverFilterMatchSig = 0;
     state.coverFilterMatchPaths.clear();
+    state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
     state.coverFilterIndex = 0;
     state.categoryFilterBuffer[0] = '\0';
     state.artistFilterBuffer[0] = '\0';
@@ -14306,6 +14504,12 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.maxDurationFilter = 0.0f;
     state.minBpmFilter = 0.0f;
     state.maxBpmFilter = 0.0f;
+    state.keyFilterBuffer[0] = '\0';
+    state.genrePillState.clear();
+    state.instrumentPillState.clear();
+    state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
+    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+    state.suppressNextRealtimeSearchCommit = true;
 
     // Clear both same-folder and same-name search modes.
     state.findSameFilenameActive = false;
@@ -15360,7 +15564,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             ImGui::Separator();
             ImGui::TextDisabled(L(Main_IndentNameFmt), L(Col_MyCollections));
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Main_AddColumnBtn))) {
+            if (aura::ui::SmallActionButton(L(Main_AddColumnBtn))) {
                 // Create an empty collection and open the editor for it
                 AppState::UserSmartCollection newCol;
                 strncpy_s(newCol.name, L(Col_NewDefault), _TRUNCATE);
@@ -15437,11 +15641,11 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         }
                         ImGui::PopID();
                     }
-                    if (ImGui::SmallButton(L(Col_AddRule)) && col.rules.size() < 8) {
+                    if (aura::ui::SmallActionButton(L(Col_AddRule)) && col.rules.size() < 8) {
                         col.rules.push_back(AppState::CollectionRule{});
                     }
                     ImGui::Separator();
-                    if (ImGui::Button(L(Apply), ImVec2(80, 0))) {
+                    if (aura::ui::ActionButton(L(Apply), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                         state.activeUserCollectionIdx = editIdx;
                         state.activeSmartCollection   = SmartCollection::None;
                         state.viewMode = ViewMode::Database;
@@ -15450,7 +15654,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button(L(Close), ImVec2(80, 0))) {
+                    if (aura::ui::ActionButton(L(Close), ImVec2(80, 0), aura::ui::ButtonVariant::Quiet)) {
                         ImGui::CloseCurrentPopup();
                     }
                 }
@@ -15477,15 +15681,14 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
                 // 渲染快捷项
                 // T2.6: 比较两侧都过 canonical (sc.path 来自 facet 可能是 raw)
-                bool isSelected = (state.folderFilterActive && state.selectedFolderPath == HarkenSearch::CanonicalFolderPath(sc.path));
+                const std::string shortcutPath = HarkenSearch::CanonicalFolderPath(sc.path);
+                bool isSelected = sc.openInBrowser
+                    ? (state.viewMode == ViewMode::Browser &&
+                       HarkenSearch::CanonicalFolderPath(state.fileBrowser.getCurrentPath()) == shortcutPath)
+                    : (state.viewMode == ViewMode::Database && state.folderFilterActive &&
+                       state.selectedFolderPath == shortcutPath);
                 if (ImGui::Selectable(sc.name.c_str(), isSelected)) {
-                    state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(sc.path);
-                    state.folderFilterActive = true;
-                    state.viewMode = ViewMode::Database;
-                    state.preferDeferredCountForNextRefresh = true;
-                    // 使用已有的异步刷新机制
-                    RefreshSearchResults(state, true);
-                    state.syncToTab();
+                    OpenFolderShortcut(state, sc);
                 }
 
                 // 右键菜单：删除快捷方式
@@ -15676,7 +15879,6 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                             if (!(state.folderFilterActive && state.selectedFolderPath == canonPathFacet)) {
                                 state.folderFilterActive = true;
                                 state.selectedFolderPath = canonPathFacet;
-                                ClearSpecificCoverKeyFilter(state);
                                 state.suppressFacetsForNextRefresh = true;
                                 state.preservePathFacetsForNextRefresh = true;
                                 RefreshSearchResults(state, true);
@@ -16399,16 +16601,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         {
             const char* coverItems[] = { L(Filter_All), L(Filter_HasCover), L(Filter_NoCover) };
             DrawSidebarEnumFilter("Cover", &state.coverFilterIndex, coverItems, IM_ARRAYSIZE(coverItems),
-                [&]() {
-                    // 切换封面时同步清除 CoverKey 过滤（避免残留 specificCoverKey 导致列表不刷新）
-                    if (state.coverFilterActive) {
-                        state.coverFilterActive = false;
-                        state.coverFilterPath.clear();
-                        state.coverFilterMatchSig = 0;
-                        state.coverFilterMatchPaths.clear();
-                    }
-                    applyMetaFilters();
-                });
+                [&]() { applyMetaFilters(); }, &state);
         }
 
         drawSidebarFilterLabel(L(Filter_DurationSec));
@@ -16758,7 +16951,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             }
 
             // Exit random mode button
-            if (ImGui::Button(L(Msg_ExitRandomMode), ImVec2(-1, 0))) {
+            if (aura::ui::ActionButton(L(Msg_ExitRandomMode), ImVec2(-1, 0))) {
                 state.randomSampleMode = false;
                 state.resetRandomSampling();
                 RefreshSearchResults(state, true);
@@ -17204,7 +17397,6 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ARTWORK_WALL_ITEM")) {
                         if (payload->Data && payload->DataSize > 0) {
                             std::string key((const char*)payload->Data);
-                            auto fileIds = state.database.getFileIdsForCoverTileMembership(key);
                             playlistChanged = AddCoverTileMembershipToPlaylist(
                                 state, pl.id, pl.name, key, "sidebar-cover-drag");
                         }
@@ -17304,7 +17496,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
-        if (ImGui::Button(L(Tab_NewTab), ImVec2(-1, 0))) {
+        if (aura::ui::ActionButton(L(Tab_NewTab), ImVec2(-1, 0))) {
             ImGui::OpenPopup("##LeftPanelAddMenu");
         }
         ImGui::PopStyleColor(3);
@@ -17346,11 +17538,100 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
 // SECTION 9 - File Info Panel
 
+static void BeginInfoMetadataEdit(AppState& state, const AudioRecord& record) {
+    if (record.id<=0 || state.infoEditSession.active || state.dbSwitchInProgress) return;
+    state.infoEditRecords.clear();
+    if (state.selectedIndicesSet.size()>1) {
+        for (int i:state.selectedIndicesSet)
+            if(i>=0 && i<(int)state.searchResults.size()) state.infoEditRecords.push_back(state.searchResults[i]);
+    }
+    if (state.infoEditRecords.empty()) state.infoEditRecords.push_back(record);
+    state.metadataBatchMode=state.infoEditRecords.size()>1;
+    state.metadataBatchIds.clear();
+    for (const auto& item:state.infoEditRecords) state.metadataBatchIds.push_back(item.id);
+    state.metadataEditFileId=record.id;
+    state.infoEditSelectionId=record.id;
+    state.infoEditDatabasePath=state.database.getMainDbPath();
+    state.infoEditVisibleMask=state.settings.infoPages.visibleMask;
+    strncpy_s(state.metadataDescBuffer,sizeof(state.metadataDescBuffer),state.metadataBatchMode?"":record.description.c_str(),_TRUNCATE);
+    strncpy_s(state.metadataKeywordsBuffer,sizeof(state.metadataKeywordsBuffer),state.metadataBatchMode?"":record.keywords.c_str(),_TRUNCATE);
+    strncpy_s(state.metadataCategoryBuffer,sizeof(state.metadataCategoryBuffer),state.metadataBatchMode?"":record.category.c_str(),_TRUNCATE);
+    state.infoEditSession.Begin(CurrentInfoEditValues(state));
+    state.infoEditError.clear();
+    state.infoEditAfterLeave={};
+    state.metadataEditMode=true;
+}
+
+static bool SaveInfoMetadataDraft(AppState& state) {
+    state.infoEditError.clear();
+    if (state.database.getMainDbPath()!=state.infoEditDatabasePath || state.infoEditRecords.empty()) return false;
+    const auto values=CurrentInfoEditValues(state);
+    const auto& old=state.infoEditSession.original;
+    const bool desc=values.description!=old.description, keys=values.keywords!=old.keywords, cat=values.category!=old.category;
+    MetadataEditPatch patch;
+    if(desc) patch.setDescription(values.description);
+    if(keys) patch.setKeywords(values.keywords);
+    if(cat) patch.setCategory(values.category);
+    auto undo=std::make_unique<MetadataPatchOp>();
+    undo->operationName=state.metadataBatchMode?"Batch edit metadata":"Edit metadata";
+    std::vector<int64_t> ids;
+    for(const auto& original:state.infoEditRecords) {
+        // Resolve by the captured identity, never by the new selection.
+        const auto current=state.database.getFileById(original.id);
+        if(current.id!=original.id || current.filePath!=original.filePath) return false;
+        if (Platform::FileSystem::IsNetworkPath(original.filePath)) {
+            state.infoEditError = L(Write_BlockedNetworkLibrary);
+            return false;
+        }
+        if (!Platform::FileSystem::Exists(original.filePath)) return false;
+        MetadataPatchEntry entry; entry.fileId=original.id;
+        if(desc) { entry.oldValues["description"]=current.description; entry.newValues["description"]=values.description; }
+        if(keys) { entry.oldValues["keywords"]=current.keywords; entry.newValues["keywords"]=values.keywords; }
+        if(cat) { entry.oldValues["category"]=current.category; entry.newValues["category"]=values.category; }
+        undo->entries.push_back(std::move(entry)); ids.push_back(original.id);
+    }
+    const auto result=state.database.applyMetadataPatchBatch(ids,patch);
+    if(result.failed || result.success!=(int)ids.size()) return false;
+    state.undoStack.push(std::move(undo));
+    state.database.invalidateFacetQueryCache();
+    g_forceMetaCacheInvalidate=true;
+    RefreshSearchResults(state,false);
+    return true;
+}
+
+void RenderInfoMetadataLeavePrompt(AppState& state) {
+    if (!state.infoEditSession.awaitingChoice) return;
+    const char* title=L(Info_SaveBeforeLeaving);
+    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    bool resolved=false;
+    if (BeginTransientScrollbarPopupModal(title,nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(L(Info_SaveBeforeLeavingBody));
+        if (!state.infoEditError.empty()) ImGui::TextWrapped("%s",state.infoEditError.c_str());
+        const bool yes=aura::ui::ActionButton(L(Info_SaveYes),ImVec2(140,0), aura::ui::ButtonVariant::PrimarySearch);
+        ThemeInspector::RegisterLastItem("info.saveYes",L(Info_SaveYes),"src/main.cpp");
+        ImGui::SameLine();
+        const bool no=aura::ui::ActionButton(L(Info_SaveNo),ImVec2(140,0), aura::ui::ButtonVariant::Quiet);
+        ThemeInspector::RegisterLastItem("info.saveNo",L(Info_SaveNo),"src/main.cpp");
+        if (yes || no) {
+            const bool saved=yes && SaveInfoMetadataDraft(state);
+            resolved=state.infoEditSession.Resolve(yes,saved);
+            if(resolved) ImGui::CloseCurrentPopup();
+            else if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);
+        }
+        ImGui::EndPopup();
+    }
+    if (resolved) {
+        state.metadataEditMode=false; state.metadataBatchMode=false; state.metadataBatchIds.clear();
+        state.infoEditRecords.clear(); state.infoEditError.clear();
+        auto after=std::move(state.infoEditAfterLeave); state.infoEditAfterLeave={};
+        if(after) after();
+    }
+}
+
 void RenderFileInfoPanelTabContents(
     AppState& state,
     float panelWidth,
-    const FileInfoPanelChrome& chrome,
-    ImGuiTabItemFlags artworkFlags) {
+    const FileInfoPanelChrome& chrome) {
     auto withAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
     auto mix = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
@@ -17366,7 +17647,7 @@ void RenderFileInfoPanelTabContents(
         // 其他标签：优先保持当前选中项的稳定布局，不因为异步加载中途掉到 fallback 分支而整块跳动
         // Keep the selected record as a stable display source until audio is ready.
         const int selIndex = state.selectedResultIndex;
-        const bool hasSelectedRecord =
+        bool hasSelectedRecord =
             (state.viewMode != ViewMode::Browser) &&
             (selIndex >= 0) &&
             (selIndex < (int)state.searchResults.size());
@@ -17375,11 +17656,18 @@ void RenderFileInfoPanelTabContents(
             selectedRecord = state.searchResults[(size_t)selIndex];
         }
 
+        if (state.infoEditSession.active && !state.infoEditRecords.empty()) {
+            selectedRecord = state.infoEditRecords.front();
+            for (const auto& item:state.infoEditRecords)
+                if(item.id==state.metadataEditFileId) selectedRecord=item;
+            hasSelectedRecord=true;
+        }
+
         const AudioFileInfo& engineInfo = state.audioEngine.getFileInfo();
         const bool hasEngineInfo = state.audioEngine.isLoaded() && !engineInfo.filePath.empty();
         const bool useSelectedRecordInfo =
             hasSelectedRecord &&
-            (!hasEngineInfo || state.audioEngine.isLoadFilePending() || engineInfo.filePath != selectedRecord.filePath);
+            (state.infoEditSession.active || !hasEngineInfo || state.audioEngine.isLoadFilePending() || engineInfo.filePath != selectedRecord.filePath);
         bool isAudioValid = hasEngineInfo || useSelectedRecordInfo;
         if (isAudioValid) {
         AudioFileInfo info = engineInfo;
@@ -17395,9 +17683,8 @@ void RenderFileInfoPanelTabContents(
         // ---------------------------------------------------------------------
         // Metadata Summary (classic library layout)
         // ---------------------------------------------------------------------
-        bool tabMetaOpen = ImGui::BeginTabItem(L(Info_MetaSummaryTab));
-        ThemeInspector::RegisterLastItem("info.metadataSummary", L(Info_MetaSummaryTab), "src/main.cpp:22027");
-        DecorateFileInfoTab(chrome, tabMetaOpen);
+        bool tabMetaOpen = (state.settings.infoPages.selected == 0);
+
         if (tabMetaOpen) {
             BeginTransientScrollbarChild("##MetaSummaryScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             ImGui::Indent(10.0f);
@@ -17420,6 +17707,14 @@ void RenderFileInfoPanelTabContents(
             } else if (useSelectedRecordInfo) {
                 record = selectedRecord;
             }
+
+            const ImVec2 infoOrigin=ImGui::GetWindowPos();
+            const ImVec2 infoSize=ImGui::GetWindowSize();
+            ThemeInspector::RegisterZone(infoOrigin,ImVec2(infoOrigin.x+infoSize.x,infoOrigin.y+infoSize.y),
+                "info.metadataContent",L(Info_MetaSummaryTab),"src/main.cpp");
+            if (hasDb && !state.infoEditSession.active &&
+                ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseDoubleClicked(0))
+                BeginInfoMetadataEdit(state,record);
 
             // Async info-panel IO (metadata + file times + bit depth): avoid UI thread blocking.
             struct InfoPanelAsyncPayload {
@@ -17891,6 +18186,7 @@ void RenderFileInfoPanelTabContents(
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputText("##EditDesc", state.metadataDescBuffer, sizeof(state.metadataDescBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.description",L(Info_Description),"src/main.cpp");
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -17898,6 +18194,7 @@ void RenderFileInfoPanelTabContents(
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputText("##EditKeywords", state.metadataKeywordsBuffer, sizeof(state.metadataKeywordsBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.keywords",L(Info_Keywords),"src/main.cpp");
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -17905,6 +18202,7 @@ void RenderFileInfoPanelTabContents(
                     ImGui::TableNextColumn();
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputText("##EditCategory", state.metadataCategoryBuffer, sizeof(state.metadataCategoryBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.category",L(Info_Category),"src/main.cpp");
                 } else {
                     // Display mode
                     row(L(Info_Description), desc.empty() ? "-" : desc);
@@ -17946,119 +18244,6 @@ void RenderFileInfoPanelTabContents(
                 ImGui::EndTable();
             }
 
-            // Metadata edit buttons
-            static std::string s_inlineMetaSaveMsg;
-            static int s_inlineMetaSaveSuccess = 0, s_inlineMetaSaveSkipped = 0, s_inlineMetaSaveFailed = 0;
-            ImGui::Separator();
-            if (hasDb) {
-                bool isEditing = state.metadataEditMode &&
-                    (state.metadataBatchMode ? !state.metadataBatchIds.empty() : state.metadataEditFileId == record.id);
-
-                if (isEditing) {
-                    // Show batch info if in batch mode
-                    if (state.metadataBatchMode) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), L(Info_BatchEditN), (int)state.metadataBatchIds.size());
-                    }
-
-                    // Save / Cancel buttons
-                    if (ImGui::Button(L(Main_SaveChangesBtn), ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4, 28))) {
-                        s_inlineMetaSaveSuccess = 0;
-                        s_inlineMetaSaveSkipped = 0;
-                        s_inlineMetaSaveFailed = 0;
-                        auto undoOp = std::make_unique<MetadataPatchOp>();
-                        undoOp->operationName = state.metadataBatchMode ? "Batch edit metadata" : "Edit metadata";
-
-                        if (state.metadataBatchMode) {
-                            std::unordered_map<int64_t, const AudioRecord*> recMap;
-                            for (const auto& r : state.searchResults) recMap[r.id] = &r;
-
-                            std::vector<int64_t> applyIds;
-                            MetadataEditPatch patch;
-                            patch.setDescription(state.metadataDescBuffer);
-                            patch.setKeywords(state.metadataKeywordsBuffer);
-                            patch.setCategory(state.metadataCategoryBuffer);
-                            for (int64_t id : state.metadataBatchIds) {
-                                auto it = recMap.find(id);
-                                if (it == recMap.end()) { s_inlineMetaSaveFailed++; continue; }
-                                const AudioRecord* rec = it->second;
-                                if (!Platform::FileSystem::Exists(rec->filePath)) {
-                                    s_inlineMetaSaveSkipped++;
-                                    continue;
-                                }
-                                applyIds.push_back(id);
-                                MetadataPatchEntry entry;
-                                entry.fileId = id;
-                                entry.oldValues = {{"description", rec->description}, {"keywords", rec->keywords}, {"category", rec->category}};
-                                entry.newValues = {{"description", state.metadataDescBuffer}, {"keywords", state.metadataKeywordsBuffer}, {"category", state.metadataCategoryBuffer}};
-                                undoOp->entries.push_back(std::move(entry));
-                            }
-                            if (!applyIds.empty()) {
-                                BatchMetadataApplyResult res = state.database.applyMetadataPatchBatch(applyIds, patch);
-                                if (res.failed == 0) {
-                                    s_inlineMetaSaveSuccess = res.success;
-                                } else {
-                                    s_inlineMetaSaveSuccess = 0;
-                                    s_inlineMetaSaveFailed += (int)applyIds.size();
-                                    undoOp->entries.clear();
-                                }
-                            }
-                        } else {
-                            // Single file
-                            if (!Platform::FileSystem::Exists(record.filePath)) {
-                                s_inlineMetaSaveSkipped = 1;
-                            } else {
-                                MetadataEditPatch patch;
-                                patch.setDescription(state.metadataDescBuffer);
-                                patch.setKeywords(state.metadataKeywordsBuffer);
-                                patch.setCategory(state.metadataCategoryBuffer);
-                                MetadataPatchEntry entry;
-                                entry.fileId = record.id;
-                                entry.oldValues = {{"description", record.description}, {"keywords", record.keywords}, {"category", record.category}};
-                                entry.newValues = {{"description", state.metadataDescBuffer}, {"keywords", state.metadataKeywordsBuffer}, {"category", state.metadataCategoryBuffer}};
-                                undoOp->entries.push_back(std::move(entry));
-                                if (state.database.applyMetadataPatch(record.id, patch)) {
-                                    s_inlineMetaSaveSuccess = 1;
-                                } else {
-                                    s_inlineMetaSaveFailed = 1;
-                                }
-                            }
-                        }
-                        if (s_inlineMetaSaveSuccess > 0) {
-                            state.undoStack.push(std::move(undoOp));
-                            state.database.invalidateFacetQueryCache();
-                            s_cachedMetaFileId = -1; // invalidate to reflect updated values
-                            RefreshSearchResults(state, false);
-                        }
-                        s_inlineMetaSaveMsg = std::to_string(s_inlineMetaSaveSuccess) + u8" 成功";
-                        if (s_inlineMetaSaveSkipped > 0)
-                            s_inlineMetaSaveMsg += u8", " + std::to_string(s_inlineMetaSaveSkipped) + u8" 跳过（文件不在磁盘上）";
-                        if (s_inlineMetaSaveFailed > 0) {
-                            s_inlineMetaSaveMsg += u8", " + std::to_string(s_inlineMetaSaveFailed) + u8" 失败";
-                            if (!state.database.getLastError().empty()) {
-                                s_inlineMetaSaveMsg += u8" ";
-                                s_inlineMetaSaveMsg += L(Write_BlockedNetworkLibrary);
-                            }
-                        }
-                        state.metadataEditMode = false;
-                        state.metadataBatchMode = false;
-                        state.metadataBatchIds.clear();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button(L(Main_CancelBracketBtn), ImVec2(-1, 28))) {
-                        state.metadataEditMode = false;
-                        state.metadataBatchMode = false;
-                        state.metadataBatchIds.clear();
-                        s_inlineMetaSaveMsg.clear();
-                    }
-                }
-                if (!s_inlineMetaSaveMsg.empty()) {
-                    ImGui::TextColored(
-                        s_inlineMetaSaveFailed > 0 ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) :
-                        (s_inlineMetaSaveSkipped > 0 ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f)),
-                        "%s", s_inlineMetaSaveMsg.c_str());
-                }
-            }
-
             // Region info (display only, no DAW drag buttons)
             float inPt = state.audioEngine.getInPoint();
             float outPt = state.audioEngine.getOutPoint();
@@ -18091,13 +18276,12 @@ void RenderFileInfoPanelTabContents(
 
             ImGui::Unindent(10.0f);
             ImGui::EndChild();
-            ImGui::EndTabItem();
+
         }
         } else {
             // Fallback: keep Info functional even when no file is loaded in engine.
-            bool tabMetaOpen = ImGui::BeginTabItem(L(Info_MetaSummaryTab));
-            ThemeInspector::RegisterLastItem("info.metadataSummary", L(Info_MetaSummaryTab), "src/main.cpp:22787");
-            DecorateFileInfoTab(chrome, tabMetaOpen);
+            bool tabMetaOpen = (state.settings.infoPages.selected == 0);
+
             if (tabMetaOpen) {
                 BeginTransientScrollbarChild("##MetaSummaryNoLoaded", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
                 ImGui::Indent(10.0f);
@@ -18155,7 +18339,7 @@ void RenderFileInfoPanelTabContents(
                 }
             ImGui::Unindent(10.0f);
             ImGui::EndChild();
-            ImGui::EndTabItem();
+
         }
         } // end loaded/unloaded meta summary
 
@@ -18166,9 +18350,8 @@ void RenderFileInfoPanelTabContents(
         // ---------------------------------------------------------------------
         // Artwork wall (封面墙 - 极速版)
         // ---------------------------------------------------------------------
-        bool tabCoverOpen = ImGui::BeginTabItem(L(Info_ArtworkTab), nullptr, artworkFlags);
-        ThemeInspector::RegisterLastItem("info.artwork", L(Info_ArtworkTab), "src/main.cpp:22857");
-        DecorateFileInfoTab(chrome, tabCoverOpen);
+        bool tabCoverOpen = (state.settings.infoPages.selected == 1);
+
         SetCoverWallPriorityMode(tabCoverOpen);
 
         // 方案 A：仅当封面墙 Tab 打开时才拉表+首屏预填，非封面墙时不跑以降低主线程压力（见 第一刀）
@@ -18697,20 +18880,7 @@ void RenderFileInfoPanelTabContents(
                     } else if (!staleEntriesView) {
                     SanitizeCoverWallItemsForCache(page.items);
                     if (wasLoadingNextPage) {
-                        std::unordered_set<std::string> existingTokens;
-                        existingTokens.reserve(cw.items.size() + page.items.size());
-                        for (const auto& it : cw.items) {
-                            existingTokens.insert(BuildCoverWallVisualDedupeToken(it));
-                        }
-                        for (auto& item : page.items) {
-                            const std::string dedupeToken =
-                                BuildCoverWallVisualDedupeToken(item);
-                            if (!item.key.empty() &&
-                                !dedupeToken.empty() &&
-                                existingTokens.insert(dedupeToken).second) {
-                                cw.items.push_back(std::move(item));
-                            }
-                        }
+                        AppendUniqueCoverWallPageItems(cw.items, page.items);
                     } else {
                         cw.items = std::move(page.items);
                     }
@@ -18840,6 +19010,9 @@ void RenderFileInfoPanelTabContents(
                     setDisplayItems(&cw.items, CoverWallSource::Global);
                 }
 
+                globalPageLoadingWithoutStableItems =
+                    (cw.loading || cw.entriesInFlight || cw.foldersInFlight || cw.preloadInFlight) &&
+                    (!pDisplayItems || pDisplayItems->empty());
                 // Refresh the cover-wall load-state text.
                 }
             }
@@ -18870,9 +19043,8 @@ void RenderFileInfoPanelTabContents(
 // 底部工具栏（固定，不跟随滚动）
             constexpr float kArtworkFaderTrackH = 14.0f;
             constexpr float kArtworkSliderStripH = 22.0f;
-            float bottomBarH = kArtworkSliderStripH + 4.0f;
             float availH = ImGui::GetContentRegionAvail().y;
-            float scrollH = std::max(32.0f, availH - bottomBarH);
+            float scrollH = FileInfoArtworkContentHeight(availH, kArtworkSliderStripH);
             cw.thumbSize = aura::coverwall::ClampThumbSize(cw.thumbSize);
 
             // When a specific cover-key filter is active, force-narrow the
@@ -18889,15 +19061,21 @@ void RenderFileInfoPanelTabContents(
                 state.coverFilterActive &&
                 !state.coverFilterPath.empty()) {
                 CoverModule::CoverItem ci;
+                std::vector<std::string> selectedKeys;
+                const bool exactSelection = aura::cover_wall::DecodeCoverWallSelectionKey(
+                    state.coverFilterPath, selectedKeys);
+                const std::string selectedTileKey = exactSelection
+                    ? selectedKeys.front() : state.coverFilterPath;
                 if (UseReplacementCoverWallIntegratedMode(state) &&
                     !cw.pinnedCoverFilterItem.key.empty() &&
-                    cw.pinnedCoverFilterItem.key == state.coverFilterPath) {
+                    (cw.pinnedCoverFilterItem.key == state.coverFilterPath ||
+                     cw.pinnedCoverFilterItem.wallSelectionKey == state.coverFilterPath)) {
                     ci = cw.pinnedCoverFilterItem;
                 } else {
                     auto findByKey = [&](const std::vector<CoverModule::CoverItem>* src) -> const CoverModule::CoverItem* {
                         if (!src) return nullptr;
                         for (const auto& it : *src) {
-                            if (it.key == state.coverFilterPath) return &it;
+                            if (it.key == selectedTileKey) return &it;
                         }
                         return nullptr;
                     };
@@ -18908,11 +19086,12 @@ void RenderFileInfoPanelTabContents(
                     if (found) {
                         ci = *found;
                     } else {
-                        ci.key = state.coverFilterPath;
+                        ci.key = selectedTileKey;
                         ci.kind = CoverModule::CoverKind::FolderCover;
-                        ci.label = BaseNameFromUtf8Path(state.coverFilterPath);
+                        ci.label = BaseNameFromUtf8Path(selectedTileKey);
                     }
                 }
+                ci.wallSelectionKey = state.coverFilterPath;
                 ci.hitCount = (int64_t)state.searchResults.size();
                 coverFilterPinned.push_back(std::move(ci));
                 pDisplayItems = &coverFilterPinned;
@@ -19047,6 +19226,8 @@ void RenderFileInfoPanelTabContents(
             cw.qaDisplayCount = pDisplayItems ? pDisplayItems->size() : 0;
             cw.qaPrefetchTileCount = 0;
             cw.qaVisibleTileCount = 0;
+            cw.qaGridColumns = 0;
+            cw.qaRenderedThumbSize = 0.0f;
             cw.qaVisibleReadyCount = 0;
             cw.qaVisibleLiveTextureCount = 0;
             cw.qaVisibleMirrorCount = 0;
@@ -19113,7 +19294,10 @@ void RenderFileInfoPanelTabContents(
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().coverWallBG);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            BeginTransientScrollbarChild("##ArtworkScroll", ImVec2(0, scrollH), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            // Reserve a stable gutter: auto scrollbar visibility otherwise changes
+            // fitted cover sizes, which can alternate the content height every frame.
+            BeginTransientScrollbarChild("##ArtworkScroll", ImVec2(0, scrollH), true,
+                ImGuiWindowFlags_AlwaysVerticalScrollbar);
             int coverWallReadyCount = 0;  // 供底部统计显示
             int coverWallLiveTextureCount = 0;
             int coverWallMirrorCount = 0;
@@ -19207,7 +19391,7 @@ void RenderFileInfoPanelTabContents(
                     bool largeThumbWarmup = false;
                     bool denseThumbWarmup = false;
 
-                    // 最小尺寸限制放宽，并限制单行最多 8 个封面
+                    // Small covers use all available columns, including wide horizontal docks.
                     if (cw.texturesPendingClear) {
                         // texCache mirrors CoverModule-owned GL texture ids. After a DB switch
                         // those ids may be reused by unrelated textures, so only drop the mirror.
@@ -19224,10 +19408,11 @@ void RenderFileInfoPanelTabContents(
                         cw.thumbSize,
                         gap,
                         aura::coverwall::kMinThumbSizePx,
-                        aura::coverwall::kMaxThumbSizePx,
-                        8);
+                        aura::coverwall::kMaxThumbSizePx);
                     int columns = coverGrid.columns;
                     float thumb = coverGrid.thumbSizePx;
+                    cw.qaGridColumns = columns;
+                    cw.qaRenderedThumbSize = thumb;
                     float cellH = coverGrid.cellHeightPx;
                     float availY = ImGui::GetContentRegionAvail().y;
                     int totalRows = (totalItems + columns - 1) / columns;
@@ -19622,26 +19807,38 @@ void RenderFileInfoPanelTabContents(
                                 }
 
                                 ImGui::SetCursorScreenPos(cellScreenPos);
+#if ARIS_PREVIEW_ISOLATION
+                                if (idx == 0 && ImGui::GetWindowViewport() == ImGui::GetMainViewport()) {
+                                    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                                    const ImVec2 display = ImGui::GetIO().DisplaySize;
+                                    const float localX = cellScreenPos.x - origin.x;
+                                    const float localY = cellScreenPos.y - origin.y;
+                                    if (localX >= 0.0f && localY >= 0.0f &&
+                                        localX + thumb <= display.x && localY + thumb <= display.y) {
+                                        state.qaFilterUiRects["cover_tile_0"] = ImVec4(
+                                            localX, localY, localX + thumb, localY + thumb);
+                                    }
+                                }
+#endif
                                 if (ImGui::InvisibleButton("##ArtHit", ImVec2(thumb, thumb))) {
                                     auto t0 = std::chrono::steady_clock::now();
-                                    if (item.key.rfind("?|", 0) == 0) {
-                                        state.folderFilterActive = true;
-                                        // T2.6: cover wall art click 入口 canonical
-                                        state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(item.folderPathUtf8);
-                                        state.coverFilterActive = false;
-                                        state.coverFilterPath.clear();
-                                        state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
-                                    } else {
-                                        // Query without a folder boundary for this identity.
-                                        if (state.coverFilterActive && state.coverFilterPath == item.key) {
+                                    const std::string selectionKey = !item.wallSelectionKey.empty()
+                                        ? item.wallSelectionKey
+                                        : item.wallMemberKeys.size() > 1
+                                        ? aura::cover_wall::EncodeGroupedCoverWallKeys(item.wallMemberKeys)
+                                        : (state.folderFilterActive
+                                            ? aura::cover_wall::EncodeExactCoverWallKey(item.key)
+                                            : item.key);
+                                    {
+                                        if (state.coverFilterActive && state.coverFilterPath == selectionKey) {
                                             state.coverFilterActive = false;
                                             state.coverFilterPath.clear();
                                             state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
                                         } else {
                                             state.coverFilterActive = true;
-                                            state.coverFilterPath = item.key;
+                                            state.coverFilterPath = selectionKey;
                                             if (state.database.isOpen()) {
-                                                (void)state.database.getFileIdsForCoverTileMembership(item.key);
+                                                (void)state.database.getFileIdsForCoverTileMembership(selectionKey);
                                             }
                                             // Snapshot the clicked item so the render-time
                                             // "narrow wall to active cover" override always
@@ -19652,12 +19849,10 @@ void RenderFileInfoPanelTabContents(
                                             // collapses to "0 个封面".
                                             if (UseReplacementCoverWallIntegratedMode(state)) {
                                                 state.coverWall.pinnedCoverFilterItem = item;
+                                                state.coverWall.pinnedCoverFilterItem.wallSelectionKey = selectionKey;
                                             } else {
                                                 state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
                                             }
-                                            // Allow the database to match this cover across subfolders.
-                                            state.folderFilterActive = false;
-                                            state.selectedFolderPath.clear();
                                         }
                                     }
                                     state.coverFilterMatchPaths.clear();
@@ -19683,7 +19878,14 @@ void RenderFileInfoPanelTabContents(
 
                                 if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
                                     MaybePausePlaybackOnInScopeDragStart();
-                                    ImGui::SetDragDropPayload("ARTWORK_WALL_ITEM", item.key.c_str(), (int)(item.key.size() + 1));
+                                    const std::string selectionKey = !item.wallSelectionKey.empty()
+                                        ? item.wallSelectionKey
+                                        : item.wallMemberKeys.size() > 1
+                                        ? aura::cover_wall::EncodeGroupedCoverWallKeys(item.wallMemberKeys)
+                                        : (state.folderFilterActive
+                                            ? aura::cover_wall::EncodeExactCoverWallKey(item.key)
+                                            : item.key);
+                                    ImGui::SetDragDropPayload("ARTWORK_WALL_ITEM", selectionKey.c_str(), (int)(selectionKey.size() + 1));
                                     ImGui::Text(L(Main_CategorizeCoverAllFmt), item.label.c_str());
                                     ImGui::EndDragDropSource();
                                 }
@@ -19859,20 +20061,19 @@ void RenderFileInfoPanelTabContents(
                     cw.thumbSize,
                     aura::coverwall::kMinThumbSizePx,
                     aura::coverwall::ResolveThumbSizeSliderMaxPx(panelWidth));
-                ImGui::SetCursorScreenPos(ImVec2(stripPos.x, stripPos.y + stripH));
+                FinishFileInfoArtworkFooter(stripPos, stripH);
             }
 
             } // end warmup skip else
 
-            ImGui::EndTabItem();
+
             DevTools_EndFramePhase();
         }
 
         // Transfer History tab — hidden in release builds (placeholder only)
 #if AURA_BUILD_DIAGNOSTICS
-        bool tabTransferOpen = ImGui::BeginTabItem(L(Info_TransferHistoryTab));
-        ThemeInspector::RegisterLastItem("info.transferHistory", L(Info_TransferHistoryTab), "src/main.cpp:24590");
-        DecorateFileInfoTab(chrome, tabTransferOpen);
+        bool tabTransferOpen = (state.settings.infoPages.selected == 2);
+
         if (tabTransferOpen) {
             BeginTransientScrollbarChild("##TransferHistoryScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             ImGui::Indent(10.0f);
@@ -19910,16 +20111,15 @@ void RenderFileInfoPanelTabContents(
             ImGui::PopStyleColor(2);
             ImGui::Unindent(10.0f);
             ImGui::EndChild();
-            ImGui::EndTabItem();
+
         }
 #endif // AURA_BUILD_DIAGNOSTICS
 
         // ---------------------------------------------------------------------
         // Play History - Recent playback history — 始终可见
         // ---------------------------------------------------------------------
-        bool tabPlayOpen = ImGui::BeginTabItem(L(Info_PlayHistoryTab));
-        ThemeInspector::RegisterLastItem("info.playHistory", L(Info_PlayHistoryTab), "src/main.cpp:24636");
-        DecorateFileInfoTab(chrome, tabPlayOpen);
+        bool tabPlayOpen = (state.settings.infoPages.selected == 3);
+
         if (tabPlayOpen) {
             BeginTransientScrollbarChild("##PlayHistoryScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             ImGui::Indent(10.0f);
@@ -19964,7 +20164,7 @@ void RenderFileInfoPanelTabContents(
             }
             ImGui::Unindent(10.0f);
             ImGui::EndChild();
-            ImGui::EndTabItem();
+
         }
 }
 
@@ -20583,7 +20783,8 @@ static int PushWaveformShellStyle(const ThemeColorScheme& tcs) {
     return 7;
 }
 
-static void DrawUnifiedProgressBar(float fraction, const ImVec2& sizeArg, const char* overlayText = nullptr) {
+static void DrawUnifiedProgressBar(float fraction, const ImVec2& sizeArg,
+                                   const char* overlayText = nullptr, bool splitTextContrast = false) {
     auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -20614,6 +20815,17 @@ static void DrawUnifiedProgressBar(float fraction, const ImVec2& sizeArg, const 
     if (overlayText && overlayText[0]) {
         ImVec2 textSize = ImGui::CalcTextSize(overlayText);
         ImVec2 textPos(pos.x + (size.x - textSize.x) * 0.5f, pos.y + (size.y - textSize.y) * 0.5f);
+        if (splitTextContrast) {
+            const float fillEnd = pos.x + size.x * fraction;
+            const ImVec4 fillInk = TransportContrast::ForSurface(tcs.interfaceText, tcs.controlAccent, 4.5);
+            const ImVec4 trackInk = TransportContrast::ForSurface(tcs.interfaceText, tcs.frameBgBase, 4.5);
+            dl->PushClipRect(pos, ImVec2(fillEnd, pos.y + size.y), true);
+            dl->AddText(textPos, ImGui::GetColorU32(fillInk), overlayText);
+            dl->PopClipRect();
+            dl->PushClipRect(ImVec2(fillEnd, pos.y), ImVec2(pos.x + size.x, pos.y + size.y), true);
+            dl->AddText(textPos, ImGui::GetColorU32(trackInk), overlayText);
+            dl->PopClipRect();
+        } else {
         const ImVec4 textCol = fraction >= 0.55f
             ? withAlpha(mixColor(tcs.mainWindowBG, tcs.interfaceText, 0.24f), 1.0f)
             : withAlpha(tcs.interfaceText, 1.0f);
@@ -20622,6 +20834,7 @@ static void DrawUnifiedProgressBar(float fraction, const ImVec2& sizeArg, const 
             : withAlpha(mixColor(tcs.mainWindowBG, tcs.chromeBorder, 0.60f), 0.74f);
         dl->AddText(ImVec2(textPos.x + 1, textPos.y + 1), ImGui::GetColorU32(shadowCol), overlayText);
         dl->AddText(textPos, ImGui::GetColorU32(textCol), overlayText);
+        }
     }
     ImGui::Dummy(size);
 }
@@ -20736,6 +20949,7 @@ void ApplyTheme(AppTheme theme) {
         ThemeColors::current() = MakeBuiltinScheme(theme);
         ThemeColors::deactivateCustomTheme();
         ThemeColors::applyToImGui();
+        if (theme == AppTheme::LapisBlue) MistBlueChrome::Apply(colors, ThemeColors::current());
         ThemeColors::markPendingUiChromeResync();
         SyncLegacyColorsFromTheme();
         return;
@@ -24623,7 +24837,7 @@ static bool SidebarClearAllGlyphButton(const char* id_str, const ImVec2& size_ar
 // 独立组件：PAN 旋钮 (半圆弧 + 白点 + 蓝字 + 左右排版)
 // 布局：左侧 "PAN" 标签 → 中间半圆弧旋钮 → 右侧数值 (L/R/C)
 // 拖拽改值、双击归零、右键归零
-static bool PanKnob(const char* label, float* v, float v_min, float v_max, const ImVec2& size_arg = ImVec2(110, 32)) {
+static bool PanKnob(const char* label, float* v, float v_min, float v_max, const ImVec4& transportSurface, const ImVec2& size_arg = ImVec2(110, 32)) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
 
@@ -24699,6 +24913,26 @@ static bool PanKnob(const char* label, float* v, float v_min, float v_max, const
         }
     }
 
+    const ImVec4 panSurface = is_disabled ? transportSurface : TransportContrast::Over(
+        ImVec4(0, 0, 0, isLightTheme ? 0.04f : 0.12f), transportSurface);
+    if (!is_disabled) {
+        const auto readable = [&](ImU32 color) {
+            return ImGui::GetColorU32(TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(color), panSurface, 3.2));
+        };
+        bg_arc_col = readable(bg_arc_col);
+        dot_col = readable(dot_col);
+        fill_arc_col = readable(fill_arc_col);
+        tick_col = readable(tick_col);
+        text_col = ImGui::GetColorU32(TransportContrast::ForSurface(
+            ImGui::ColorConvertU32ToFloat4(text_col), transportSurface, 4.7));
+    }
+    if (TransportVisualAudit::Collecting()) {
+        const ImU32 bg = ImGui::GetColorU32(panSurface);
+        TransportVisualAudit::Record("pan.arc", false, bg_arc_col, bg, bb.Min, bb.Max, is_disabled);
+        TransportVisualAudit::Record("pan.dot", false, dot_col, bg, bb.Min, bb.Max, is_disabled);
+        if (!is_center) TransportVisualAudit::Record("pan.value", true, text_col,
+            TransportVisualAudit::surface, bb.Min, bb.Max, is_disabled);
+    }
     // 3. 标签已去除（节省空间）
     ImDrawList* dl = window->DrawList;
 
@@ -24887,7 +25121,7 @@ int g_magicEqQaActiveDragPart = 0;
 #endif
 
 static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sampleRate,
-                           bool& saveSettingsNow) {
+                           bool& saveSettingsNow, const ImVec4& transportSurface, bool navyStateContrast) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (!window || window->SkipItems) return false;
     settings.widgetWidth = std::clamp(settings.widgetWidth, 120.0f, 1600.0f);
@@ -25296,25 +25530,29 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     rightX = railLeft + railWidth * highPercent * 0.01f;
 
     const ThemeColorScheme& theme = ThemeColors::current();
-    const ImU32 baseText = ImGui::GetColorU32(theme.interfaceText);
-    const ImU32 muted = ImGui::GetColorU32(ImVec4(theme.interfaceText.x, theme.interfaceText.y,
-                                                  theme.interfaceText.z, 0.48f));
-    const ImVec4& statusColor = !settings.enabled ? theme.interfaceText
-        : (settings.mode == MagicEQMode::Notch ? theme.waveformSelectionEdge : theme.controlAccent);
+    const ImVec4 primaryText = TransportContrast::ForSurface(theme.interfaceText, transportSurface, 4.7);
+    const ImU32 baseText = ImGui::GetColorU32(primaryText);
+    const ImU32 muted = ImGui::GetColorU32(TransportContrast::ForSurface(
+        ImVec4(primaryText.x, primaryText.y, primaryText.z, .48f), transportSurface, 4.7));
+    const auto navyEq = MistBlueChrome::EqState(theme, transportSurface, settings.enabled, toggleHit, toggleHit && held);
+    const ImVec4 navyBandColor = settings.enabled && settings.mode == MagicEQMode::Notch
+        ? theme.waveformPositionLine : navyEq.signal;
+    const ImVec4 statusColor = navyStateContrast ? navyBandColor : TransportContrast::ForSurface(!settings.enabled ? theme.interfaceText
+        : (settings.mode == MagicEQMode::Notch ? theme.waveformSelectionEdge : theme.controlAccent), transportSurface, 3.2);
     const ImU32 status = ImGui::GetColorU32(statusColor);
     ImDrawList* draw = window->DrawList;
     // The EQ shares the transport bar surface; only the switch, rail and mode
     // have their own shapes. This keeps the full player bar visually continuous.
     const bool markHover = toggleHit;
     const bool markPressed = markHover && held;
-    const ImVec4 markBackground = !settings.enabled
-        ? ImLerp(theme.transportBarBG, theme.chromeBorder, markHover ? 0.38f : 0.23f)
-        : ImLerp(theme.transportBarBG, theme.controlAccent,
+    const ImVec4 markBackground = navyStateContrast ? navyEq.button : !settings.enabled
+        ? ImLerp(transportSurface, theme.chromeBorder, markHover ? 0.38f : 0.23f)
+        : ImLerp(transportSurface, theme.controlAccent,
                  markPressed ? 0.06f : (markHover ? 0.17f : 0.11f));
-    const ImU32 markColor = settings.enabled
-        ? ImGui::GetColorU32(ImLerp(theme.controlAccent, theme.interfaceText,
-                                   markHover && !markPressed ? 0.23f : 0.0f))
-        : muted;
+    const ImU32 markColor = navyStateContrast ? ImGui::GetColorU32(navyEq.ink) : ImGui::GetColorU32(TransportContrast::ForSurface(settings.enabled
+        ? ImLerp(theme.controlAccent, primaryText, markHover && !markPressed ? .23f : 0.f)
+        : ImGui::ColorConvertU32ToFloat4(muted),
+        TransportContrast::Over(markBackground, transportSurface), 4.7));
     draw->AddRectFilled(markMin, markMax, ImGui::GetColorU32(markBackground), 3.0f);
     const ImVec2 magicEqStar(markMin.x + 9.5f, markMin.y + 12.0f);
     const float starOuter = 5.5f, starInner = 2.2f;
@@ -25330,42 +25568,54 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     draw->AddText(markFont ? markFont : ImGui::GetFont(), 14.0f,
                   ImVec2(markMin.x + 18.0f, markMin.y + 3.5f), markColor, "EQ");
     const ImU32 markLineColor = settings.enabled
-        ? ImGui::GetColorU32(ImLerp(theme.controlAccent, theme.transportBarBG,
+        ? ImGui::GetColorU32(ImLerp(theme.controlAccent, transportSurface,
                                    markPressed ? 0.12f : (markHover ? 0.04f : 0.0f)))
         : ImGui::GetColorU32(ImVec4(theme.interfaceText.x, theme.interfaceText.y,
                                     theme.interfaceText.z, 0.22f));
     draw->AddLine(ImVec2(markMin.x + 3.0f, markMax.y - 1.0f),
                   ImVec2(markMax.x - 3.0f, markMax.y - 1.0f), markLineColor,
                   markPressed ? 2.0f : 1.5f);
+    TransportVisualAudit::RecordGlyphs("eq.label", markColor, ImGui::GetColorU32(markBackground),
+        ImVec2(markMin.x + 18.0f, markMin.y + 3.5f), "EQ", markFont, 14.0f);
     const SlopeDisplay steepnessLabel = slopeDisplay(settings.steepness);
     const float slopeAvailableWidth = std::max(0.0f, steepnessVisibleRight - steepnessLeft);
     const ImVec2 fullSlopeSize = ImGui::CalcTextSize(steepnessLabel.compact);
     const ImVec2 shortSlopeSize = ImGui::CalcTextSize(steepnessLabel.shortValue);
     if (slopeAvailableWidth >= 4.0f) {
+        const float slopeClipHeight = std::max(13.0f, 1.0f + std::max(fullSlopeSize.y, shortSlopeSize.y));
         draw->PushClipRect(ImVec2(steepnessLeft, pos.y),
-                           ImVec2(steepnessVisibleRight, pos.y + 13.0f), true);
+                           ImVec2(steepnessVisibleRight, pos.y + slopeClipHeight), true);
         if (slopeAvailableWidth >= 22.0f + fullSlopeSize.x) {
             drawSteepnessCurve(draw, ImVec2(steepnessLeft + 1.0f, pos.y + 8.0f), settings.mode,
                                settings.steepness, settings.enabled ? status : muted);
             draw->AddText(ImVec2(steepnessLeft + 22.0f, pos.y + 1.0f), muted,
                           steepnessLabel.compact);
+            TransportVisualAudit::RecordGlyphs("eq.slope", muted, ImGui::GetColorU32(transportSurface),
+                ImVec2(steepnessLeft + 22.0f, pos.y + 1.0f), steepnessLabel.compact);
         } else if (slopeAvailableWidth >= shortSlopeSize.x + 2.0f) {
             draw->AddText(ImVec2(steepnessLeft + 1.0f, pos.y + 1.0f), muted,
                           steepnessLabel.shortValue);
+            TransportVisualAudit::RecordGlyphs("eq.slope", muted, ImGui::GetColorU32(transportSurface),
+                ImVec2(steepnessLeft + 1.0f, pos.y + 1.0f), steepnessLabel.shortValue);
         } else if (slopeAvailableWidth >= 18.0f) {
             drawSteepnessCurve(draw, ImVec2(steepnessLeft, pos.y + 8.0f), settings.mode,
                                settings.steepness, settings.enabled ? status : muted);
+            TransportVisualAudit::Record("eq.slope", false, settings.enabled ? status : muted,
+                ImGui::GetColorU32(transportSurface), ImVec2(steepnessLeft, pos.y),
+                ImVec2(steepnessVisibleRight, pos.y + 13.0f));
         } else {
             const float arrowX = steepnessLeft + slopeAvailableWidth * 0.5f;
             draw->AddTriangleFilled(ImVec2(arrowX - 3.0f, pos.y + 4.0f),
                                     ImVec2(arrowX + 3.0f, pos.y + 4.0f),
                                     ImVec2(arrowX, pos.y + 8.0f), muted);
+            TransportVisualAudit::Record("eq.slope", false, muted, ImGui::GetColorU32(transportSurface),
+                ImVec2(arrowX - 3.0f, pos.y + 4.0f), ImVec2(arrowX + 3.0f, pos.y + 8.0f));
         }
         draw->PopClipRect();
     }
 
-    const ImU32 tickColor = ImGui::GetColorU32(ImVec4(theme.interfaceText.x, theme.interfaceText.y,
-                                                      theme.interfaceText.z, 0.20f));
+    const ImU32 tickColor = ImGui::GetColorU32(TransportContrast::ForSurface(
+        ImVec4(primaryText.x, primaryText.y, primaryText.z, .20f), transportSurface, 3.1));
     struct RulerTick { float frequencyHz; const char* label; };
     constexpr RulerTick majorTicks[] = {
         {20.0f, "20"}, {50.0f, "50"}, {100.0f, "100"}, {200.0f, "200"},
@@ -25423,32 +25673,51 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                 labelLeft + labelSize.x > frequencyLabelMinX - 2.0f;
             if (!frequencyLabelOverlap && labelLeft >= lastLabelRight + 4.0f) {
                 draw->AddText(ImVec2(labelLeft, pos.y + 2.0f), muted, tick.label);
+                TransportVisualAudit::RecordGlyphs("eq.tick_label", muted, ImGui::GetColorU32(transportSurface),
+                    ImVec2(labelLeft, pos.y + 2.0f), tick.label);
                 lastLabelRight = labelLeft + labelSize.x;
             }
         }
     }
-    draw->AddLine(ImVec2(railLeft, railY), ImVec2(railRight, railY), muted, 2.0f);
+    draw->AddLine(ImVec2(railLeft, railY), ImVec2(railRight, railY),
+                  navyStateContrast && !settings.enabled ? status : muted,
+                  navyStateContrast && !settings.enabled ? 1.0f : 2.0f);
+    const float bandAlpha = navyStateContrast && !settings.enabled ? 0.f
+        : (settings.enabled ? (navyStateContrast ? .60f : .42f) : .20f);
     draw->AddRectFilled(ImVec2(leftX, railY - 4.5f), ImVec2(rightX, railY + 4.5f),
                         ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z,
-                                                   settings.enabled ? 0.42f : 0.20f)), 4.5f);
-    draw->AddLine(ImVec2(leftX, railY), ImVec2(rightX, railY), status, 2.0f);
-    draw->AddCircleFilled(ImVec2(centerX, railY), 3.2f, baseText, 12);
-    const auto drawVerticalGrip = [&](float x, bool highlighted) {
-        const ImU32 gripFill = highlighted ? ImGui::GetColorU32(theme.controlAccent) : status;
+                                                   bandAlpha)), 4.5f);
+    draw->AddLine(ImVec2(leftX, railY), ImVec2(rightX, railY), status,
+                  navyStateContrast ? (settings.enabled ? 3.0f : 1.0f) : 2.0f);
+    const ImVec4 bandSurface = TransportContrast::Over(
+        ImVec4(statusColor.x, statusColor.y, statusColor.z, bandAlpha), transportSurface);
+    const ImU32 centerDotColor = ImGui::GetColorU32(TransportContrast::ForSurface(primaryText, bandSurface, 3.2));
+    if (navyStateContrast && !settings.enabled)
+        draw->AddCircle(ImVec2(centerX, railY), 3.2f, centerDotColor, 12, 1.0f);
+    else
+        draw->AddCircleFilled(ImVec2(centerX, railY), 3.2f, centerDotColor, 12);
+    const auto drawVerticalGrip = [&](float x, bool highlighted, const char* auditId) {
+        const ImU32 gripFill = highlighted ? ImGui::GetColorU32(TransportContrast::ForSurface(
+            theme.controlAccent, transportSurface, 3.2)) : status;
         draw->AddRectFilled(ImVec2(x - 3.5f, gripTop), ImVec2(x + 3.5f, gripBottom),
-                            ImGui::GetColorU32(theme.transportBarBG), 2.0f);
+                            ImGui::GetColorU32(transportSurface), 2.0f);
         draw->AddRect(ImVec2(x - 3.5f, gripTop), ImVec2(x + 3.5f, gripBottom), gripFill, 2.0f);
         draw->AddLine(ImVec2(x, gripTop + 3.0f), ImVec2(x, gripBottom - 3.0f), gripFill, 1.5f);
+        TransportVisualAudit::Record(auditId, false, gripFill, ImGui::GetColorU32(transportSurface),
+            ImVec2(x - 3.5f, gripTop), ImVec2(x + 3.5f, gripBottom));
     };
-    drawVerticalGrip(leftX, leftEndpointHit || drag.part == DragPart::LeftEndpoint);
-    drawVerticalGrip(rightX, rightEndpointHit || drag.part == DragPart::RightEndpoint);
+    drawVerticalGrip(leftX, leftEndpointHit || drag.part == DragPart::LeftEndpoint, "eq.grip");
+    drawVerticalGrip(rightX, rightEndpointHit || drag.part == DragPart::RightEndpoint, "eq.grip.right");
+    TransportVisualAudit::Record("eq.center", false, centerDotColor, ImGui::GetColorU32(bandSurface), ImVec2(centerX - 3.2f, railY - 3.2f), ImVec2(centerX + 3.2f, railY + 3.2f));
     // Frequency detail lives above the rail so the chosen band and grips stay clear.
     if (frequencyInfoText[0] != '\0') {
         draw->AddRectFilled(ImVec2(frequencyLabelMinX, pos.y + 1.0f),
                             ImVec2(frequencyLabelMaxX, pos.y + 14.0f),
-                            ImGui::GetColorU32(theme.transportBarBG), 2.0f);
+                            ImGui::GetColorU32(transportSurface), 2.0f);
         draw->AddText(ImVec2(frequencyInfoX, pos.y + 1.0f),
                       showFrequencyFallback ? baseText : muted, frequencyInfoText);
+        TransportVisualAudit::RecordGlyphs("eq.frequency", showFrequencyFallback ? baseText : muted,
+            ImGui::GetColorU32(transportSurface), ImVec2(frequencyInfoX, pos.y + 1), frequencyInfoText);
     } else {
         const float indicatorX = frequencyInfoLeft + frequencyInfoWidth * 0.5f;
         draw->AddTriangleFilled(ImVec2(indicatorX - 3.0f, pos.y + 4.0f),
@@ -25483,7 +25752,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
         ImDrawList* bubbleDraw = ImGui::GetForegroundDrawList();
         bubbleDraw->AddRectFilled(ImVec2(bubbleX, pos.y - 19.0f),
                                   ImVec2(bubbleX + bubbleWidth, pos.y - 3.0f),
-                                  ImGui::GetColorU32(theme.transportBarBG), 2.0f);
+                                  ImGui::GetColorU32(transportSurface), 2.0f);
         bubbleDraw->AddRect(ImVec2(bubbleX, pos.y - 19.0f),
                             ImVec2(bubbleX + bubbleWidth, pos.y - 3.0f),
                             ImGui::GetColorU32(theme.controlAccent), 2.0f);
@@ -25495,10 +25764,20 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     }
 
     const float modeLeft = pos.x + width - statusWidth;
+    const auto navyMode = MistBlueChrome::EqModeState(theme, transportSurface, settings.enabled,
+        settings.mode == MagicEQMode::Notch, modeHit, modeHit && held);
+    const ImVec4 modeBackground = navyStateContrast ? navyMode.button : TransportContrast::Over(
+        ImVec4(statusColor.x, statusColor.y, statusColor.z, settings.enabled ? .16f : .10f), transportSurface);
     draw->AddRectFilled(ImVec2(modeLeft + 1.0f, pos.y + 4.0f),
                         ImVec2(pos.x + width - 4.0f, pos.y + 28.0f),
-                        ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z,
+                        navyStateContrast ? ImGui::GetColorU32(modeBackground) : ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z,
                                                    settings.enabled ? 0.16f : 0.10f)), 4.0f);
+    if (navyStateContrast && settings.enabled && settings.mode == MagicEQMode::Pass)
+        draw->AddRect(ImVec2(modeLeft + 1.0f, pos.y + 4.0f),
+                      ImVec2(pos.x + width - 4.0f, pos.y + 28.0f),
+                      ImGui::GetColorU32(theme.chromeBorder), 4.0f);
+    const ImU32 modeInk = navyStateContrast ? ImGui::GetColorU32(navyMode.ink) : ImGui::GetColorU32(TransportContrast::ForSurface(
+        settings.enabled ? statusColor : ImGui::ColorConvertU32ToFloat4(muted), modeBackground, 4.7));
     const char* modeLabel = GetMagicEQModeLabel(settings.enabled, static_cast<int>(settings.mode));
     const float modeTextWidth = ImGui::CalcTextSize(modeLabel).x;
     if (modeTextWidth + 8.0f > statusWidth) {
@@ -25514,15 +25793,20 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                        ImVec2(pos.x + width - 3.0f, pos.y + 28.0f), true);
     if (modeIconOnly) {
         const float iconX = modeLeft + (statusWidth - 18.0f) * 0.5f;
+        const ImU32 modeShape = navyStateContrast ? modeInk : (settings.enabled ? status : muted);
+        TransportVisualAudit::Record("eq.mode", false, modeShape,
+            ImGui::GetColorU32(modeBackground), ImVec2(iconX, pos.y + 8), ImVec2(iconX + 18, pos.y + 24));
         if (settings.enabled)
             drawSteepnessCurve(draw, ImVec2(iconX, pos.y + 16.0f), settings.mode,
-                               settings.steepness, status);
+                               settings.steepness, modeShape);
         else
             draw->AddLine(ImVec2(iconX, pos.y + 16.0f),
-                          ImVec2(iconX + 18.0f, pos.y + 16.0f), muted, 1.5f);
+                          ImVec2(iconX + 18.0f, pos.y + 16.0f), modeShape, 1.5f);
     } else {
         draw->AddText(ImVec2(modeLeft + std::max(4.0f, (statusWidth - labelSize.x) * 0.5f), pos.y + 8.0f),
-                      settings.enabled ? status : muted, modeLabel);
+                      modeInk, modeLabel);
+        TransportVisualAudit::RecordGlyphs("eq.mode", modeInk, ImGui::GetColorU32(modeBackground),
+            ImVec2(modeLeft + std::max(4.0f, (statusWidth - labelSize.x) * 0.5f), pos.y + 8.0f), modeLabel);
     }
     draw->PopClipRect();
     draw->AddLine(ImVec2(pos.x + 1.5f, pos.y + 9.0f), ImVec2(pos.x + 1.5f, pos.y + 23.0f), status, 1.5f);
@@ -25969,11 +26253,30 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
         if (!e.panel->floating) return false;
         const ImVec2 corner(e.window.x + e.window.width - 3.0f, e.window.y + e.window.height - 3.0f);
         r = ImRect(corner, ImVec2(corner.x + 1.0f, corner.y + 1.0f));
+    } else if (part == "band-splitter") {
+        if (e.panel->floating) return false;
+        const bool top = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top) == g_dockLayout.Find(module);
+        const bool bottom = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom) == g_dockLayout.Find(module);
+        if (!top && !bottom) return false;
+        const ImVec2 grip(e.window.x + e.window.width * .5f,
+            top ? e.window.y + e.window.height + 3.0f : e.window.y - 3.0f);
+        r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
+    } else if (part == "column-splitter") {
+        if (e.panel->floating) return false;
+        const bool left = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left) == g_dockLayout.Find(module);
+        const bool right = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right) == g_dockLayout.Find(module);
+        if (!left && !right) return false;
+        const ImVec2 grip(left ? e.window.x + e.window.width + 6.0f : e.window.x - 6.0f,
+                          e.window.y + e.window.height * .5f);
+        r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
     } else if (part != "title") return false;
     if (r.GetWidth() <= 0.0f || r.GetHeight() <= 0.0f) return false;
     x = r.GetCenter().x;
     y = r.GetCenter().y;
-    viewportId = e.viewport;
+    // Outer splitters live on the workspace, even while the re-docked panel's
+    // native viewport is being retired after a floating-window handoff.
+    viewportId = part == "band-splitter" || part == "column-splitter"
+        ? ImGui::GetMainViewport()->ID : e.viewport;
     return true;
 }
 
@@ -26127,10 +26430,14 @@ static void MirrorDockRootExtent(AppState& state, aura::ui::dock::DockSide root,
         state.panelSimilarSounds.dockedWidth = rect.width;
     }
     if (root == DockSide::Top || root == DockSide::Bottom) {
-        if (aura::ui::dock::DockSubtreeContainsModule(g_dockLayout.RegionRoot(root), "filter"))
-            state.panelSidebar.dockedHeight = rect.height;
-        if (aura::ui::dock::DockSubtreeContainsModule(g_dockLayout.RegionRoot(root), "info"))
-            state.panelFileInfo.dockedHeight = rect.height;
+        struct Entry { const char* id; AppState::PanelState* panel; };
+        const Entry entries[] = {{"filter", &state.panelSidebar}, {"info", &state.panelFileInfo},
+            {"similar-sounds", &state.panelSimilarSounds}, {"search-results", &g_searchResultsDockPanel},
+            {"mod-ucs-browser", &state.panelUCSBrowser}, {"mod-tag-browser", &state.panelTagBrowser},
+            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer}};
+        for (const auto& entry : entries)
+            if (aura::ui::dock::DockSubtreeContainsModule(g_dockLayout.RegionRoot(root), entry.id))
+                entry.panel->dockedHeight = rect.height;
     }
 }
 
@@ -26179,6 +26486,11 @@ static bool FloatDockedPanel(
     const bool floated = aura::ui::dock::BeginDockPanelFloat(
         g_dockLayout, moduleId, panel, committedLeafRect);
     if (!floated) return false;
+    if (std::strcmp(moduleId, "similar-sounds") == 0) {
+        // A full-height dock leaf is too narrow for the five-column results table.
+        panel.floatW = (std::max)(panel.floatW, 640.0f);
+        panel.floatH = (std::min)(panel.floatH, 620.0f);
+    }
     ++g_dockGeometryRevision;
     panel.wasDragging = false;
     return true;
@@ -28580,212 +28892,47 @@ static const char* StartupNoDatabaseSetupTitle(const AppState& state) {
         : "No database yet";
 }
 
-static const char* StartupNoDatabaseSetupBody(const AppState& state) {
-    if (state.startupDatabaseSetupReason ==
-        AppState::StartupDatabaseSetupReason::MissingConfiguredDatabase) {
-        return state.settings.language == AppLanguage::Chinese
-            ? u8"上次使用的数据库当前不可用。请重新打开已有数据库，或先新建一个数据库再开始导入和搜索。"
-            : "Your previous database is currently unavailable. Open an existing database or create a new one before importing and searching.";
-    }
-    return state.settings.language == AppLanguage::Chinese
-        ? u8"这是一次安全的首启状态。请先新建一个数据库，或打开已有数据库，然后再开始导入、搜索和试听。"
-        : "This is a safe first-run state. Create a database or open an existing one before importing, searching, and auditioning.";
-}
-
 static const char* StartupNoDatabaseSetupHint(const AppState& state) {
     return state.settings.language == AppLanguage::Chinese
         ? u8"建立数据库后，Harken Search 才会启动库级搜索、重扫和相关后台准备。"
         : "Library search, reconcile, and background warmup start only after a database is created or opened.";
 }
 
-static void RenderNoDatabaseSetupEmptyState(AppState& state) {
-    const ThemeColorScheme& tcs = ThemeColors::current();
-    ImGuiStyle& style = ImGui::GetStyle();
-    auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
-        return ImVec4(
-            a.x + (b.x - a.x) * t,
-            a.y + (b.y - a.y) * t,
-            a.z + (b.z - a.z) * t,
-            a.w + (b.w - a.w) * t);
-    };
-    auto withAlpha = [](const ImVec4& color, float alpha) -> ImVec4 {
-        return ImVec4(color.x, color.y, color.z, alpha);
-    };
-    auto luminance = [](const ImVec4& color) -> float {
-        return color.x * 0.299f + color.y * 0.587f + color.z * 0.114f;
-    };
-
-    const float panelWidth =
-        std::min(ImGui::GetContentRegionAvail().x, 560.0f);
-    const float horizontalPad =
-        style.WindowPadding.x + style.FramePadding.x * 1.25f;
-    const float verticalPad =
-        style.WindowPadding.y + style.FramePadding.y * 1.2f;
-    const float contentWidth =
-        (std::max)(panelWidth - horizontalPad * 2.0f, 1.0f);
-    const float indent =
-        (ImGui::GetContentRegionAvail().x - panelWidth) * 0.5f;
-
-    const ImVec4 panelBg =
-        withAlpha(mixColor(tcs.resultsBG, tcs.dialogPanelBG, 0.34f), 0.98f);
-    const ImVec4 panelGlow =
-        withAlpha(mixColor(panelBg, tcs.searchButtonBG, 0.10f), 0.24f);
-    const ImVec4 panelBorder =
-        withAlpha(mixColor(tcs.resultsOutline, tcs.controlAccent, 0.16f), 0.52f);
-    const ImVec4 panelAccentLine =
-        withAlpha(mixColor(tcs.searchButtonBG, tcs.controlAccent, 0.20f), 0.70f);
-    const ImVec4 titleColor =
-        withAlpha(mixColor(ThemeColors::peerPanelHeading(tcs), tcs.controlAccent, 0.12f), 0.98f);
-    const ImVec4 bodyColor =
-        withAlpha(mixColor(tcs.resultsText, tcs.resultsSecondaryText, 0.12f), 0.96f);
-    const ImVec4 hintColor =
-        withAlpha(mixColor(tcs.resultsSecondaryText, tcs.resultsText, 0.10f), 0.88f);
-    const ImVec4 separatorColor =
-        withAlpha(mixColor(panelBorder, panelAccentLine, 0.12f), 0.74f);
-
-    const ImVec4 primaryButtonBg =
-        withAlpha(mixColor(tcs.searchButtonBG, panelBg, 0.10f), 0.96f);
-    const ImVec4 primaryButtonHover =
-        withAlpha(mixColor(primaryButtonBg, tcs.resultsText, 0.08f), 1.0f);
-    const ImVec4 primaryButtonActive =
-        withAlpha(mixColor(primaryButtonBg, tcs.resultsText, 0.16f), 1.0f);
-    const ImVec4 primaryButtonText =
-        luminance(primaryButtonBg) >= 0.62f
-            ? withAlpha(mixColor(tcs.mainWindowBG, tcs.interfaceText, 0.20f), 0.98f)
-            : withAlpha(tcs.resultsText, 0.98f);
-
-    const ImVec4 secondaryButtonBg =
-        withAlpha(mixColor(panelBg, tcs.frameBgBase, 0.26f), 0.98f);
-    const ImVec4 secondaryButtonHover =
-        withAlpha(mixColor(secondaryButtonBg, tcs.searchButtonBG, 0.10f), 1.0f);
-    const ImVec4 secondaryButtonActive =
-        withAlpha(mixColor(secondaryButtonBg, tcs.searchButtonBG, 0.18f), 1.0f);
-    const ImVec4 secondaryButtonText =
-        withAlpha(mixColor(tcs.resultsText, tcs.resultsSecondaryText, 0.08f), 0.95f);
-
-    if (indent > 0.0f) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
-    }
-
+static void RenderDatabaseSetupSeparator() {
+    const float contentWidth = ImGui::GetContentRegionAvail().x;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImDrawListSplitter splitter;
-    splitter.Split(drawList, 2);
-    splitter.SetCurrentChannel(drawList, 1);
-
-    const float contentStartX = ImGui::GetCursorPosX() + horizontalPad;
-    const bool stackButtons =
-        contentWidth < (170.0f * 2.0f + style.ItemSpacing.x + style.FramePadding.x * 2.0f);
-    const float buttonWidth = stackButtons
-        ? contentWidth
-        : (contentWidth - style.ItemSpacing.x) * 0.5f;
-    const ImVec2 actionButtonSize(buttonWidth, 34.0f);
-
-    ImFont* emphasisFont = GetUIFontEmphasis();
-    ImGui::BeginGroup();
-    ImGui::SetCursorPosX(contentStartX);
-    if (emphasisFont) {
-        ImGui::PushFont(emphasisFont);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, titleColor);
-    ImGui::PushTextWrapPos(contentStartX + contentWidth);
-    ImGui::TextWrapped("%s", StartupNoDatabaseSetupTitle(state));
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    if (emphasisFont) {
-        ImGui::PopFont();
-    }
-
-    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y + style.FramePadding.y * 0.35f));
-    ImGui::SetCursorPosX(contentStartX);
-    ImGui::PushStyleColor(ImGuiCol_Text, bodyColor);
-    ImGui::PushTextWrapPos(contentStartX + contentWidth);
-    ImGui::TextWrapped("%s", StartupNoDatabaseSetupBody(state));
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-
-    ImGui::Dummy(ImVec2(0.0f, style.FramePadding.y + style.ItemSpacing.y * 0.5f));
-    ImGui::SetCursorPosX(contentStartX);
-    ImGui::PushStyleColor(ImGuiCol_Button, primaryButtonBg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primaryButtonHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primaryButtonActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, primaryButtonText);
-    if (ImGui::Button(L(File_NewDB), actionButtonSize)) {
-        state.showNewDbDialog = true;
-    }
-    ImGui::PopStyleColor(4);
-
-    if (!stackButtons) {
-        ImGui::SameLine();
-    } else {
-        ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y));
-        ImGui::SetCursorPosX(contentStartX);
-    }
-
-    ImGui::PushStyleColor(ImGuiCol_Button, secondaryButtonBg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, secondaryButtonHover);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, secondaryButtonActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, secondaryButtonText);
-    if (ImGui::Button(L(File_OpenDB), actionButtonSize)) {
-        std::string openPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
-            g_hwnd,
-            GetDefaultDbDirWide());
-        if (!openPath.empty()) {
-            SwitchDatabase(state, openPath);
-        }
-    }
-    ImGui::PopStyleColor(4);
-
-    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y + style.FramePadding.y * 0.55f));
-    ImGui::SetCursorPosX(contentStartX);
+    const ImVec4 separatorColor = ImGui::GetStyleColorVec4(ImGuiCol_Separator);
     ImGui::PushStyleColor(ImGuiCol_Separator, separatorColor);
-    // Separator() spans the host window, not this centered card.
     const ImVec2 separatorStart = ImGui::GetCursorScreenPos();
     drawList->AddRectFilled(
         separatorStart,
         ImVec2(separatorStart.x + contentWidth, separatorStart.y + 1.0f),
         ImGui::GetColorU32(ImGuiCol_Separator));
-    // Match Separator()'s zero-height layout reservation.
     ImGui::Dummy(ImVec2(contentWidth, 0.0f));
     ImGui::PopStyleColor();
+}
 
-    ImGui::Dummy(ImVec2(0.0f, style.FramePadding.y * 0.35f));
-    ImGui::SetCursorPosX(contentStartX);
-    ImGui::PushStyleColor(ImGuiCol_Text, hintColor);
-    ImGui::PushTextWrapPos(contentStartX + contentWidth);
-    ImGui::TextWrapped("%s", StartupNoDatabaseSetupHint(state));
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-    ImGui::EndGroup();
+enum class DatabaseSetupAction { Create, Open, Exit };
 
-    const ImVec2 groupMin = ImGui::GetItemRectMin();
-    const ImVec2 groupMax = ImGui::GetItemRectMax();
-    const ImVec2 panelMin(groupMin.x - horizontalPad, groupMin.y - verticalPad);
-    const ImVec2 panelMax(groupMax.x + horizontalPad, groupMax.y + verticalPad);
-
-    splitter.SetCurrentChannel(drawList, 0);
-    drawList->AddRectFilled(
-        panelMin,
-        panelMax,
-        ImGui::GetColorU32(panelBg),
-        style.ChildRounding);
-    drawList->AddRectFilledMultiColor(
-        panelMin,
-        panelMax,
-        ImGui::GetColorU32(panelGlow),
-        ImGui::GetColorU32(withAlpha(panelGlow, 0.12f)),
-        ImGui::GetColorU32(withAlpha(mixColor(panelBg, tcs.mainWindowBG, 0.10f), 0.18f)),
-        ImGui::GetColorU32(withAlpha(mixColor(panelBg, tcs.mainWindowBG, 0.16f), 0.24f)));
-    drawList->AddRect(
-        panelMin,
-        panelMax,
-        ImGui::GetColorU32(panelBorder),
-        style.ChildRounding);
-    drawList->AddLine(
-        ImVec2(panelMin.x, panelMin.y + 0.5f),
-        ImVec2(panelMax.x, panelMin.y + 0.5f),
-        ImGui::GetColorU32(panelAccentLine),
-        1.0f);
-    splitter.Merge(drawList);
+// Scoped to the three first-run actions: keep native button input/navigation,
+// but use the approved flat fills and a single border without an inset shadow.
+static bool DatabaseSetupButton(const char* label, const ImVec2& size,
+    const EmptyStatePalette::Colors& palette, DatabaseSetupAction action) {
+    const bool primary = action == DatabaseSetupAction::Create;
+    const bool quiet = action == DatabaseSetupAction::Exit;
+    const auto variant = primary ? aura::ui::ButtonVariant::PrimarySearch :
+        quiet ? aura::ui::ButtonVariant::Quiet : aura::ui::ButtonVariant::Secondary;
+    const aura::ui::ActionButtonStyle::Scope style(aura::ui::ActionButtonStyle::Make(
+        palette.panelBg, palette.primaryButtonBg, palette.bodyColor, palette.primaryButtonText, variant));
+    const bool clicked = aura::ui::ActionButtonStyle::Draw(label, size);
+    aura::ui::DrawFocusRing();
+    const ImGuiCol fillId = ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
+        ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button;
+    std::array<ImVec4, 4> surfaces;
+    surfaces.fill(TransportContrast::Over(
+        ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(fillId)), palette.panelBg));
+    EmptyStateVisualAudit::Record(primary ? "new" : quiet ? "exit" : "open", surfaces);
+    return clicked;
 }
 
 // Render the asynchronous library workspace.
@@ -28979,8 +29126,10 @@ void StartBatchFeatureExtraction(AppState& state) {
 }
 
 void DrawSimilarityIndexPanel(AppState& state) {
-    // Counting indexed files scans the feature table: keep the existing 2s
-    // cadence, but never reuse another database's counts or query during a switch.
+    const bool sharedSimilarStyle = state.settings.theme != AppTheme::Custom &&
+        !state.settings.useCustomColors && !ThemeColors::customized();
+    // Full-table counts run on one independent read-only connection. This UI
+    // path only submits work and polls values; it never waits for SQLite.
     static int cachedIndexed = 0;
     static int cachedTotal = 0;
     static double lastCountTime = -999.0;
@@ -28988,22 +29137,32 @@ void DrawSimilarityIndexPanel(AppState& state) {
     static int64_t cachedDbGeneration = -1;
     static bool wasExtracting = false;
     const bool extracting = state.batchFeatureExtracting.load();
-    if (state.dbSwitchInProgress ||
-        cachedDbPath != state.currentDbPathUtf8 ||
-        cachedDbGeneration != state.backfillDbGeneration ||
-        ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
+    if (cachedDbPath != state.currentDbPathUtf8 ||
+        cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
+        cachedIndexed = cachedTotal = 0;
+        cachedDbPath = state.currentDbPathUtf8;
+        cachedDbGeneration = state.backfillDbGeneration;
+        lastCountTime = -999.0;
+    }
+    if (ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
         lastCountTime = -999.0;
     }
     wasExtracting = extracting;
     const double now = ImGui::GetTime();
-    if (!state.dbSwitchInProgress && now - lastCountTime > 2.0 &&
-        state.database.tryGetFeatureIndexCounts(cachedIndexed, cachedTotal)) {
-        cachedDbPath = state.currentDbPathUtf8;
-        cachedDbGeneration = state.backfillDbGeneration;
-        lastCountTime = now;
+    if (!state.dbSwitchInProgress && state.database.isOpen()) {
+        if (!state.featureIndexStatistics) {
+            state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
+                HarkenSearch::MakeFeatureIndexCountHandler());
+        }
+        auto& statistics = *state.featureIndexStatistics;
+        statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
+        if (const auto result = statistics.Poll()) {
+            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; }
+        }
+        if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
 
-    ImGui::Separator();
+    if (!sharedSimilarStyle) ImGui::Separator();
     ImGui::BeginDisabled(state.dbSwitchInProgress);
     ImGui::Text(L(Main_IndexedProgressFmt), cachedIndexed, cachedTotal);
     ThemeInspector::RegisterLastItem("similar.index.count");
@@ -29013,10 +29172,24 @@ void DrawSimilarityIndexPanel(AppState& state) {
         const float fraction = std::clamp(static_cast<float>(progress) / total, 0.0f, 1.0f);
         char progressLabel[48];
         snprintf(progressLabel, sizeof(progressLabel), "%d / %d", progress, total);
-        DrawUnifiedProgressBar(fraction, ImVec2(-1, 0), progressLabel);
+        DrawUnifiedProgressBar(fraction, ImVec2(-1, 18), progressLabel, true);
         ThemeInspector::RegisterLastItem("similar.index.progress");
-        if (ImGui::Button(L(Cancel), ImVec2(-1, 30))) {
+        if (sharedSimilarStyle) {
+            const auto& colors = ThemeColors::current();
+            ImGui::PushStyleColor(ImGuiCol_Button, colors.toolbarBG);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                ImLerp(colors.toolbarBG, colors.metadataPanelText, 0.10f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                ImLerp(colors.toolbarBG, colors.metadataPanelText, 0.14f));
+            ImGui::PushStyleColor(ImGuiCol_Border, colors.chromeBorder);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        }
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(-1, 30), aura::ui::ButtonVariant::Quiet)) {
             state.batchFeatureCancelRequested.store(true);
+        }
+        if (sharedSimilarStyle) {
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(4);
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
@@ -29025,7 +29198,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
             ImGui::Spacing();
             char label[128];
             snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
-            if (ImGui::Button(label, ImVec2(-1, 35))) {
+            if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
                 StartBatchFeatureExtraction(state);
                 wasExtracting = true;
             }
@@ -29033,15 +29206,24 @@ void DrawSimilarityIndexPanel(AppState& state) {
         } else if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), L(Main_IndexAllDone));
+            const ImVec4 success(0.3f, 0.9f, 0.3f, 1.0f);
+            ImGui::TextColored(sharedSimilarStyle ? TransportContrast::ForSurface(
+                success, ThemeColors::current().metadataPanelBG, 6.0) : success, L(Main_IndexAllDone));
             ThemeInspector::RegisterLastItem("similar.index.done");
         }
     }
     ImGui::EndDisabled();
-    ImGui::Separator();
+    if (!sharedSimilarStyle) ImGui::Separator();
 }
 
 void RenderUI(AppState& state) {
+    if (state.featureIndexStatistics &&
+        (!state.panelSimilarSounds.visible || state.dbSwitchInProgress || !state.database.isOpen())) {
+        state.featureIndexStatistics->SetDatabase("", -1);
+    }
+#if ARIS_PREVIEW_ISOLATION
+    state.qaFilterUiRects.clear();
+#endif
     if (HarkenSearch::ShouldConsumePendingPostScanSimilarityIndex(
             state.pendingPostScanSimilarityIndex.load(std::memory_order_acquire),
             state.dbSwitchInProgress,
@@ -29228,7 +29410,9 @@ void RenderUI(AppState& state) {
     }
     const ImVec4 kThemeTextStrong = uiColors[ImGuiCol_Text];
     const ImVec4 kThemeTextMuted = uiMix(uiColors[ImGuiCol_TextDisabled], uiColors[ImGuiCol_Text], 0.32f);
-    const ImVec4 kThemeTextSubtle = uiMix(uiColors[ImGuiCol_TextDisabled], uiColors[ImGuiCol_ChildBg], 0.18f);
+    const ImVec4 kThemeTextSubtle = state.settings.theme == AppTheme::LapisBlue
+        ? ThemeColors::current().resultsSecondaryText
+        : uiMix(uiColors[ImGuiCol_TextDisabled], uiColors[ImGuiCol_ChildBg], 0.18f);
     const ImVec4 kThemeTextChrome = uiMix(kThemeTextMuted, kThemeTextStrong, 0.16f);
     const ImVec4 kThemeTextMinor = uiMix(kThemeTextSubtle, kThemeTextMuted, 0.58f);
     const ImVec4 kThemeAccentText = kUseSoftChromeTheme ? uiMix(uiColors[ImGuiCol_Text], COLOR_ACCENT, 0.38f)
@@ -29420,7 +29604,7 @@ void RenderUI(AppState& state) {
         ImGui::Checkbox(L(CloseDlg_Remember), &state.closeChoiceRemember);
 
         ImGui::Separator();
-        if (ImGui::Button(L(OK), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             int sel = std::clamp(state.closeChoiceSelection, 1, 2);
             if (state.closeChoiceRemember) {
                 state.settings.closeButtonAction = sel;
@@ -29440,7 +29624,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -29463,7 +29647,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextItemWidth(520);
         ImGui::InputText("##RenameRoot", state.folderRenameRoot, sizeof(state.folderRenameRoot));
         ImGui::SameLine();
-        if (ImGui::Button(L(Browse))) {
+        if (aura::ui::ActionButton(L(Browse))) {
             std::string folder = OpenFolderDialog(g_hwnd);
             if (!folder.empty()) {
                 snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s", folder.c_str());
@@ -29479,18 +29663,18 @@ void RenderUI(AppState& state) {
         ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
 
         ImGui::Separator();
-        if (ImGui::Button(L(Batch_GenPreview), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Batch_GenPreview), ImVec2(120, 0))) {
             BuildFolderRenamePreview(state);
         }
         ImGui::SameLine();
         bool hasPreview = !state.folderRenamePreview.empty();
         ImGui::BeginDisabled(!hasPreview);
-        if (ImGui::Button(L(Batch_ExecRename), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Batch_ExecRename), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ExecuteFolderRename(state);
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button(L(Close), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Close), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
 
@@ -29546,7 +29730,7 @@ void RenderUI(AppState& state) {
 
         bool canRename = strlen(state.editFilenameBuffer) > 0;
         ImGui::BeginDisabled(!canRename);
-        if (ImGui::Button(L(OK), ImVec2(100, 0)) || (enterPressed && canRename)) {
+        if (aura::ui::ActionButton(L(OK), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch) || (enterPressed && canRename)) {
             std::string newFileName = state.editFilenameBuffer;
             if (RenameFileOnDisk(state, state.editFilenameRecordId, state.editFilenameOriginalPath, newFileName)) {
                 ImGui::CloseCurrentPopup();
@@ -29557,7 +29741,7 @@ void RenderUI(AppState& state) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
 
@@ -29594,14 +29778,14 @@ void RenderUI(AppState& state) {
         ImGui::Text(L(Main_RemoveRecordsNote));
         ImGui::Separator();
 
-        if (ImGui::Button(L(OK), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(OK), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             RemoveRecordsFromDatabase(state, state.pendingDeleteIds);
             state.pendingDeleteIds.clear();
             state.pendingDeletePaths.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             state.pendingDeleteIds.clear();
             state.pendingDeletePaths.clear();
             ImGui::CloseCurrentPopup();
@@ -29636,7 +29820,7 @@ void RenderUI(AppState& state) {
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-        if (ImGui::Button(L(Delete), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Delete), ImVec2(100, 0), aura::ui::ButtonVariant::Danger)) {
             DeleteFilesFromSystem(state, state.pendingDeleteIds, state.pendingDeletePaths);
             state.pendingDeleteIds.clear();
             state.pendingDeletePaths.clear();
@@ -29645,7 +29829,7 @@ void RenderUI(AppState& state) {
         ImGui::PopStyleColor(2);
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             state.pendingDeleteIds.clear();
             state.pendingDeletePaths.clear();
             ImGui::CloseCurrentPopup();
@@ -29675,7 +29859,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextItemWidth(400);
         ImGui::InputText("##TransferDest", state.transferDestFolder, sizeof(state.transferDestFolder));
         ImGui::SameLine();
-        if (ImGui::Button(L(Main_TransferBrowseBtn2))) {
+        if (aura::ui::ActionButton(L(Main_TransferBrowseBtn2))) {
             std::string folder = OpenFolderDialog(g_hwnd);
             if (!folder.empty()) {
                 strncpy_s(state.transferDestFolder, sizeof(state.transferDestFolder), folder.c_str(), _TRUNCATE);
@@ -29755,7 +29939,7 @@ void RenderUI(AppState& state) {
         ImGui::Separator();
         bool destValid = state.transferDestFolder[0] != '\0';
         if (!destValid) ImGui::BeginDisabled();
-        if (ImGui::Button(L(Export_Start), ImVec2(120, 0)) && !state.transferInProgress) {
+        if (aura::ui::ActionButton(L(Export_Start), ImVec2(120, 0), aura::ui::ButtonVariant::PrimaryTransfer) && !state.transferInProgress) {
             // Validate destination directory
             std::string destDir = state.transferDestFolder;
             if (Platform::FileSystem::IsNetworkPath(destDir)) {
@@ -29868,12 +30052,12 @@ void RenderUI(AppState& state) {
 
         ImGui::SameLine();
         if (state.transferInProgress) {
-            if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+            if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
                 state.transferInProgress = false;
                 state.setTransferStatus(L(Export_Cancelled), AppState::TransferStatusKind::Neutral);
             }
         } else {
-            if (ImGui::Button(L(Close), ImVec2(100, 0))) {
+            if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
                 ImGui::CloseCurrentPopup();
             }
         }
@@ -30010,7 +30194,7 @@ void RenderUI(AppState& state) {
             ImGui::Spacing();
 
             // Add to queue button
-            if (ImGui::Button(L(Batch_AddToQueue), ImVec2(150, 0))) {
+            if (aura::ui::ActionButton(L(Batch_AddToQueue), ImVec2(150, 0))) {
                 AppState::RenameRule rule;
                 rule.mode = currentMode;
                 rule.searchText = state.renameSearchBuffer;
@@ -30048,7 +30232,10 @@ void RenderUI(AppState& state) {
             // Queue display
             ImGui::Text(L(Main_ActionQueueFmt), (int)state.renameRuleQueue.size());
 
-            BeginTransientScrollbarChild("RuleQueue", ImVec2(0, 150), true);
+            // Leave room for the ordinary queue actions below the scroll area.
+            const float queueHeight = std::clamp(ImGui::GetContentRegionAvail().y -
+                ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y, 40.0f, 150.0f);
+            BeginTransientScrollbarChild("RuleQueue", ImVec2(0, queueHeight), true);
             for (int i = 0; i < (int)state.renameRuleQueue.size(); ++i) {
                 ImGui::PushID(i);
                 bool selected = (i == state.renameRuleSelectedIndex);
@@ -30060,7 +30247,7 @@ void RenderUI(AppState& state) {
             ImGui::EndChild();
 
             // Queue control buttons
-            if (ImGui::Button(L(Main_MoveUpBtn))) {
+            if (aura::ui::ActionButton(L(Main_MoveUpBtn))) {
                 if (state.renameRuleSelectedIndex > 0 &&
                     state.renameRuleSelectedIndex < (int)state.renameRuleQueue.size()) {
                     std::swap(state.renameRuleQueue[state.renameRuleSelectedIndex],
@@ -30069,7 +30256,7 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Main_MoveDownBtn))) {
+            if (aura::ui::ActionButton(L(Main_MoveDownBtn))) {
                 if (state.renameRuleSelectedIndex >= 0 &&
                     state.renameRuleSelectedIndex < (int)state.renameRuleQueue.size() - 1) {
                     std::swap(state.renameRuleQueue[state.renameRuleSelectedIndex],
@@ -30078,7 +30265,7 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Main_RemoveBtn2))) {
+            if (aura::ui::ActionButton(L(Main_RemoveBtn2), ImVec2(0, 0), aura::ui::ButtonVariant::Danger)) {
                 if (state.renameRuleSelectedIndex >= 0 &&
                     state.renameRuleSelectedIndex < (int)state.renameRuleQueue.size()) {
                     state.renameRuleQueue.erase(state.renameRuleQueue.begin() + state.renameRuleSelectedIndex);
@@ -30088,7 +30275,7 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Main_ClearQueueBtn))) {
+            if (aura::ui::ActionButton(L(Main_ClearQueueBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Danger)) {
                 state.renameRuleQueue.clear();
                 state.renameRuleSelectedIndex = -1;
             }
@@ -30101,7 +30288,7 @@ void RenderUI(AppState& state) {
         BeginTransientScrollbarChild("PreviewPanel", ImVec2(0, 450), true);
         {
             // Generate preview button
-            if (ImGui::Button(L(Batch_GenPreview))) {
+            if (aura::ui::ActionButton(L(Batch_GenPreview))) {
                 GenerateBatchRenamePreview(state);
             }
             ImGui::SameLine();
@@ -30171,7 +30358,7 @@ void RenderUI(AppState& state) {
         }
 
         ImGui::BeginDisabled(!hasPreview || !hasOK);
-        if (ImGui::Button(L(Batch_ExecRename), ImVec2(150, 0))) {
+        if (aura::ui::ActionButton(L(Batch_ExecRename), ImVec2(150, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ExecuteBatchRename(state);
             state.renameRuleQueue.clear();
             state.renamePreviewList.clear();
@@ -30180,7 +30367,7 @@ void RenderUI(AppState& state) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Close), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             state.renameRuleQueue.clear();
             state.renamePreviewList.clear();
             ImGui::CloseCurrentPopup();
@@ -30248,7 +30435,7 @@ void RenderUI(AppState& state) {
                           strlen(state.batchMetaCategory) > 0);
 
         ImGui::BeginDisabled(!hasContent || selectedRecords.empty());
-        if (ImGui::Button(L(Batch_ApplyMeta), ImVec2(150, 0))) {
+        if (aura::ui::ActionButton(L(Batch_ApplyMeta), ImVec2(150, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             s_batchMetaSaveSuccess = 0;
             s_batchMetaSaveSkipped = 0;
             s_batchMetaSaveFailed = 0;
@@ -30326,7 +30513,7 @@ void RenderUI(AppState& state) {
                 (s_batchMetaSaveSkipped > 0 ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f)),
                 "%s", s_batchMetaSaveMsg.c_str());
         }
-        if (ImGui::Button(L(Close), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             s_batchMetaSaveMsg.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -30349,12 +30536,12 @@ void RenderUI(AppState& state) {
         ImGui::TextDisabled(L(Main_VersionFmt), SOUNDMANAGER_VERSION_STRING);
         ImGui::Separator();
         ImGui::TextWrapped(L(Main_UpdateCenterMovedNote));
-        if (ImGui::Button(L(Main_OpenUpdateCenterBtn), ImVec2(160.0f, 0.0f))) {
+        if (aura::ui::ActionButton(L(Main_OpenUpdateCenterBtn), ImVec2(160.0f, 0.0f))) {
             state.showUpdateCenter = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::Separator();
-        if (ImGui::Button(L(OK), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -30537,7 +30724,7 @@ void RenderUI(AppState& state) {
                          && strlen(state.feedbackTitleBuf) > 0;
         if (!canSubmit) ImGui::BeginDisabled();
         const char* feedbackButtonLabel = state.feedbackSubmitError.empty() ? L(Menu_SendFeedback) : L(Feedback_Retry);
-        if (ImGui::Button(feedbackButtonLabel, ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(feedbackButtonLabel, ImVec2(120, 0))) {
             state.feedbackSubmitting = true;
             state.feedbackSubmitOk = false;
             state.feedbackSubmitError.clear();
@@ -30579,7 +30766,7 @@ void RenderUI(AppState& state) {
         }
         if (!canSubmit) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button(state.feedbackSubmitOk ? L(Close) : L(Cancel), ImVec2(80, 0))) {
+        if (aura::ui::ActionButton(state.feedbackSubmitOk ? L(Close) : L(Cancel), ImVec2(80, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -30656,7 +30843,7 @@ void RenderUI(AppState& state) {
                         selectedModelExists ? L(AI_LoadLocalFmt) : L(AI_DownloadLoadFmt),
                         GetAIModelSizeLabel(selectedModelName));
                     ImGui::SameLine();
-                    if (ImGui::Button(modelButtonLabel)) {
+                    if (aura::ui::ActionButton(modelButtonLabel)) {
                         state.aiModelDownloading.store(true);
                         state.aiModelDownloadProgress.store(0.0f);
                         std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
@@ -30732,7 +30919,7 @@ void RenderUI(AppState& state) {
                         if (state.aiModelLoaded.load()) {
                             const bool currentTaskRunning = state.aiCurrentTranscriptionTaskId > 0;
                             ImGui::BeginDisabled(currentTaskRunning);
-                            if (ImGui::Button(L(Main_StartRecognizeBtn), ImVec2(-1, 35))) {
+                            if (aura::ui::ActionButton(L(Main_StartRecognizeBtn), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
                                 int taskId = GetAIEngine().TranscribeAsync(
                                     aiFileInfo.filePath,
                                     GetAIRecognitionLanguageCode(state),
@@ -30758,7 +30945,7 @@ void RenderUI(AppState& state) {
                                 ImGui::TextDisabled("%s", GetAITaskStatusName(task.status));
                                 if (task.status == AITaskStatus::Pending) {
                                     ImGui::SameLine();
-                                    if (ImGui::SmallButton(L(Main_CancelQueuedBtn))) {
+                                    if (aura::ui::SmallActionButton(L(Main_CancelQueuedBtn), aura::ui::ButtonVariant::Quiet)) {
                                         GetAIEngine().CancelTask(state.aiCurrentTranscriptionTaskId);
                                     }
                                 }
@@ -30791,11 +30978,11 @@ void RenderUI(AppState& state) {
                                     }
                                     ImGui::TextWrapped("%s", it->second.c_str());
 
-                                    if (ImGui::Button(L(Main_CopyToClipboardBtn))) {
+                                    if (aura::ui::ActionButton(L(Main_CopyToClipboardBtn))) {
                                         ImGui::SetClipboardText(it->second.c_str());
                                     }
                                     ImGui::SameLine();
-                                    if (ImGui::Button(L(Main_SaveOrganizedResultBtn))) {
+                                    if (aura::ui::ActionButton(L(Main_SaveOrganizedResultBtn))) {
                                         // 更新数据库描述 - 通过 updateFile
                                         AudioRecord rec = state.database.getFileById(state.currentFileId);
                                         if (rec.id > 0) {
@@ -30814,12 +31001,12 @@ void RenderUI(AppState& state) {
                                     }
                                     if (transcript) {
                                         ImGui::SameLine();
-                                        if (ImGui::Button(L(Main_CopySrtBtn))) {
+                                        if (aura::ui::ActionButton(L(Main_CopySrtBtn))) {
                                             std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
                                             ImGui::SetClipboardText(srt.c_str());
                                         }
                                         ImGui::SameLine();
-                                        if (ImGui::Button(L(Main_CopyCsvBtn))) {
+                                        if (aura::ui::ActionButton(L(Main_CopyCsvBtn))) {
                                             std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
                                             ImGui::SetClipboardText(csv.c_str());
                                         }
@@ -30850,7 +31037,7 @@ void RenderUI(AppState& state) {
                                                     }
                                                 }
                                                 ImGui::SameLine();
-                                                if (ImGui::SmallButton(L(Main_CopyBtn))) {
+                                                if (aura::ui::SmallActionButton(L(Main_CopyBtn))) {
                                                     ImGui::SetClipboardText(seg.text.c_str());
                                                 }
                                                 ImGui::SameLine();
@@ -30885,11 +31072,11 @@ void RenderUI(AppState& state) {
                     } else {
                         ImGui::Text(L(Main_TaskTotalFmt), (int)tasks.size());
                         ImGui::SameLine();
-                        if (ImGui::SmallButton(L(Main_ClearCompletedBtn))) {
+                        if (aura::ui::SmallActionButton(L(Main_ClearCompletedBtn))) {
                             GetAIEngine().ClearCompletedTasks();
                         }
                         ImGui::SameLine();
-                        if (ImGui::SmallButton(L(Main_CancelQueuedBtn))) {
+                        if (aura::ui::SmallActionButton(L(Main_CancelQueuedBtn), aura::ui::ButtonVariant::Quiet)) {
                             GetAIEngine().CancelAllTasks();
                         }
 
@@ -30943,15 +31130,15 @@ void RenderUI(AppState& state) {
                         ImGui::Text(L(Main_CurrentFileFmt), state.audioEngine.getFileInfo().filePath.c_str());
                         ImGui::Separator();
 
-                        if (ImGui::Button(L(Main_VoiceEnhanceBtn), ImVec2(-1, 30))) {
+                        if (aura::ui::ActionButton(L(Main_VoiceEnhanceBtn), ImVec2(-1, 30))) {
                             GetAIEngine().EnhanceAudio(state.audioEngine.getFileInfo().filePath);
                         }
 
-                        if (ImGui::Button(L(Main_ConvertStereoBtn), ImVec2(-1, 30))) {
+                        if (aura::ui::ActionButton(L(Main_ConvertStereoBtn), ImVec2(-1, 30))) {
                             GetAIEngine().ConvertToStereo(state.audioEngine.getFileInfo().filePath);
                         }
 
-                        if (ImGui::Button(L(Main_VolumeNormalizeBtn), ImVec2(-1, 30))) {
+                        if (aura::ui::ActionButton(L(Main_VolumeNormalizeBtn), ImVec2(-1, 30))) {
                             GetAIEngine().NormalizeAudio(state.audioEngine.getFileInfo().filePath);
                         }
 
@@ -30974,7 +31161,7 @@ void RenderUI(AppState& state) {
                     // 模型路径
                     ImGui::Text(L(Main_ModelDirFmt), GetDefaultModelDir().c_str());
 
-                    if (ImGui::Button(L(Main_OpenModelDirBtn))) {
+                    if (aura::ui::ActionButton(L(Main_OpenModelDirBtn))) {
                         std::string modelDir = GetDefaultModelDir();
                         Platform::OpenInFileManager(modelDir);
                     }
@@ -31026,12 +31213,12 @@ void RenderUI(AppState& state) {
         ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        if (ImGui::Button(L(Main_SetDefaultBtn), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Main_SetDefaultBtn), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             SetAsDefaultPlayer();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Main_MaybeLaterBtn), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Main_MaybeLaterBtn), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -31043,18 +31230,20 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_ScanFolder));
         state.showScanDialog = false;
     }
-    ThemeDialogStyleScope scanDialogSurfaceStyle;
+    const bool layeredNavyDialog = state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized();
+    ThemeDialogStyleScope scanDialogSurfaceStyle(layeredNavyDialog);
     const ThemeColorScheme& scanTheme = ThemeColors::current();
-    const ImVec4 scanDialogBg = uiWithAlpha(scanTheme.dialogBG, 0.995f);
-    const ImVec4 scanDialogPanelBg = uiWithAlpha(uiMix(scanTheme.dialogPanelBG, scanTheme.frameBgBase, 0.10f), 1.0f);
+    const auto scanControls = MistBlueChrome::Controls(scanTheme);
+    const ImVec4 scanDialogBg = layeredNavyDialog ? scanTheme.dialogBG : uiWithAlpha(scanTheme.dialogBG, 0.995f);
+    const ImVec4 scanDialogPanelBg = layeredNavyDialog ? scanTheme.dialogPanelBG : uiWithAlpha(uiMix(scanTheme.dialogPanelBG, scanTheme.frameBgBase, 0.10f), 1.0f);
     const ImVec4 scanDialogBorder = uiWithAlpha(uiMix(scanTheme.chromeBorder, scanDialogPanelBg, 0.30f), 0.62f);
     const ImVec4 scanDialogAccent = uiWithAlpha(uiMix(scanTheme.controlAccent, scanTheme.interfaceText, 0.18f), 1.0f);
     const ImVec4 scanDialogAccentSoft = uiWithAlpha(uiMix(scanDialogAccent, scanDialogPanelBg, 0.52f), 1.0f);
-    const ImVec4 scanDialogText = uiWithAlpha(scanTheme.interfaceText, 0.96f);
-    const ImVec4 scanDialogMutedText = uiWithAlpha(uiMix(scanTheme.interfaceText, scanDialogPanelBg, 0.42f), 0.88f);
-    const ImVec4 scanDialogButtonBg = uiWithAlpha(uiMix(scanTheme.frameBgBase, scanDialogPanelBg, 0.18f), 0.96f);
-    const ImVec4 scanDialogButtonHover = uiWithAlpha(uiMix(scanDialogButtonBg, scanTheme.controlAccent, 0.10f), 1.0f);
-    const ImVec4 scanDialogButtonActive = uiWithAlpha(uiMix(scanDialogButtonBg, scanTheme.controlAccent, 0.18f), 1.0f);
+    const ImVec4 scanDialogText = layeredNavyDialog ? scanTheme.interfaceText : uiWithAlpha(scanTheme.interfaceText, 0.96f);
+    const ImVec4 scanDialogMutedText = layeredNavyDialog ? scanControls.muted : uiWithAlpha(uiMix(scanTheme.interfaceText, scanDialogPanelBg, 0.42f), 0.88f);
+    const ImVec4 scanDialogButtonBg = layeredNavyDialog ? scanControls.normal : uiWithAlpha(uiMix(scanTheme.frameBgBase, scanDialogPanelBg, 0.18f), 0.96f);
+    const ImVec4 scanDialogButtonHover = layeredNavyDialog ? scanControls.hovered : uiWithAlpha(uiMix(scanDialogButtonBg, scanTheme.controlAccent, 0.10f), 1.0f);
+    const ImVec4 scanDialogButtonActive = layeredNavyDialog ? scanControls.active : uiWithAlpha(uiMix(scanDialogButtonBg, scanTheme.controlAccent, 0.18f), 1.0f);
     ImGui::PushStyleColor(ImGuiCol_PopupBg, scanDialogBg);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, scanDialogBg);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, scanDialogPanelBg);
@@ -31306,7 +31495,7 @@ void RenderUI(AppState& state) {
             // Only active ingest may continue in the background. Once ingest
             // finishes, keep this scan's foreground completion debt visible.
             if (showBackgroundContinueButton) {
-                if (ImGui::Button(L(Main_ContinueBackgroundBtn), ImVec2(btnW, 30))) {
+                if (aura::ui::ActionButton(L(Main_ContinueBackgroundBtn), ImVec2(btnW, 30))) {
                     state.needsDatabaseRefresh = true;
                     ImGui::CloseCurrentPopup();
                 }
@@ -31317,7 +31506,7 @@ void RenderUI(AppState& state) {
             }
 
             if (scanCompleteSummaryActive) {
-                if (ImGui::Button(L(Done), ImVec2(btnW, 30))) {
+                if (aura::ui::ActionButton(L(Done), ImVec2(btnW, 30))) {
                     state.dbSwitchSettleFramesRemaining =
                         (std::max)(state.dbSwitchSettleFramesRemaining, 120);
                     state.needsDatabaseRefresh = true;
@@ -31346,7 +31535,7 @@ void RenderUI(AppState& state) {
                 }
             } else {
             ImGui::BeginDisabled(state.scanCancelRequested.load());
-            if (ImGui::Button(L(Main_StopBtn), ImVec2(btnW, 30))) {
+            if (aura::ui::ActionButton(L(Main_StopBtn), ImVec2(btnW, 30))) {
                 ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str());
             }
             ImGui::EndDisabled();
@@ -31364,13 +31553,13 @@ void RenderUI(AppState& state) {
                 ImGui::TextWrapped(
                     L(Main_PauseCancelExplain));
                 ImGui::Spacing();
-                if (ImGui::Button(L(Main_PauseKeepBtn), ImVec2(btnW, 30))) {
+                if (aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(btnW, 30))) {
                     DIAG_ACTION("Scan", "ScanPauseRequested");
                     state.requestPauseScanTask();
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine(0, gap);
-                if (ImGui::Button(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))) {
+                if (aura::ui::ActionButton(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))) {
                     DIAG_ACTION("Scan", "ScanCancelRollbackRequested");
                     state.requestCancelScanTask();
                     ImGui::CloseCurrentPopup();
@@ -31385,7 +31574,7 @@ void RenderUI(AppState& state) {
                 if (!state.lastDropFirstPath.empty()) {
                     ImGui::TextWrapped(L(Main_FirstItemFmt), state.lastDropFirstPath.c_str());
                 }
-                if (ImGui::SmallButton(L(Main_ClearDragInfoBtn))) {
+                if (aura::ui::SmallActionButton(L(Main_ClearDragInfoBtn))) {
                     state.lastDropSummary.clear();
                     state.lastDropFirstPath.clear();
                     state.lastDropTick = 0;
@@ -31523,6 +31712,7 @@ void RenderUI(AppState& state) {
                     if (!scanDbOpen) {
                         std::string err = scanDb.getLastError();
                         if (err.empty()) err = "open scan database failed";
+                        DIAG_SYSTEM("Scan", aura::FormatScanDatabaseOpenFailure(scanDbPath, err, foldersToScan).c_str());
                         if (state.isScanTaskCurrent(scanGeneration)) {
                             state.setScanFileKeyStr(LStr::SCAN_FailedFmt, err);
                             state.addScanError(err);
@@ -32297,22 +32487,26 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             if (!quickAutoStarted && !state.pendingScanFolders.empty()) {
-                if (ImGui::Button(L(Scan_StartScan), ImVec2(160, 0))) {
+                if (aura::ui::ActionButton(L(Scan_StartScan), ImVec2(160, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                     state.scanDialogAutoStart = false;
                     startScanForFolders(state.pendingScanFolders, false);
                     state.pendingScanFolders.clear();
                     state.scanDialogAutoStart = false;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+                if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
                     state.scanDialogAutoStart = false;
                     state.pendingScanFolders.clear();
                     state.scanDialogAutoStart = false;
                     ImGui::CloseCurrentPopup();
                 }
+#if ARIS_PREVIEW_ISOLATION
+                ThemeInspector::RegisterLastItem("info.qaScanCancel",L(Cancel),"src/main.cpp");
+#endif
+
             } else if (!quickAutoStarted) {
                 // 手动打开对话框 → 需要选择文件夹
-                if (ImGui::Button(L(Scan_SelectAndScan), ImVec2(220, 0))) {
+                if (aura::ui::ActionButton(L(Scan_SelectAndScan), ImVec2(220, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                     std::string folder = OpenFolderDialog(g_hwnd);
                     if (!folder.empty()) {
                         state.scanDialogAutoStart = false;
@@ -32320,10 +32514,14 @@ void RenderUI(AppState& state) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+                if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
                     state.scanDialogAutoStart = false;
                     ImGui::CloseCurrentPopup();
                 }
+#if ARIS_PREVIEW_ISOLATION
+                ThemeInspector::RegisterLastItem("info.qaScanCancel",L(Cancel),"src/main.cpp");
+#endif
+
             }
         }
         if (!state.isScanning &&
@@ -32424,7 +32622,7 @@ void RenderUI(AppState& state) {
                 !state.scanWasCancelled &&
                 !state.scanWasPaused;
             ImGui::BeginDisabled(scanCompletionBlocked);
-            if (ImGui::Button(L(Done), ImVec2(100, 0))) {
+            if (aura::ui::ActionButton(L(Done), ImVec2(100, 0))) {
                 // Keep the click path lightweight. The real scan-completion
                 // refresh runs on the main loop after the popup closes so
                 // large-library folder-index rebuilds and result reloads stay
@@ -32503,7 +32701,7 @@ void RenderUI(AppState& state) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), L(Main_DupNameWarn));
         }
         ImGui::BeginDisabled(!canCreate);
-        if (ImGui::Button(L(Main_CreateBtn), ImVec2(100, 0)) || (canCreate && enterPressed)) {
+        if (aura::ui::ActionButton(L(Main_CreateBtn), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch) || (canCreate && enterPressed)) {
             int64_t newId = state.database.createPlaylist(state.playlistNameBuffer);
             if (newId > 0) {
                 state.playlists = state.database.getAllPlaylists();
@@ -32525,7 +32723,7 @@ void RenderUI(AppState& state) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -32563,7 +32761,7 @@ void RenderUI(AppState& state) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), L(Main_DupNameWarn));
         }
         ImGui::BeginDisabled(!canCreate);
-        if (ImGui::Button(L(Main_CreateBtn), ImVec2(100, 0)) || (canCreate && enterPressed)) {
+        if (aura::ui::ActionButton(L(Main_CreateBtn), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch) || (canCreate && enterPressed)) {
             int64_t newId = state.database.createPlaylist(state.folderNameBuffer);
             if (newId > 0 && state.database.markAsFolder(newId)) {
                 state.playlists = state.database.getAllPlaylists();
@@ -32582,7 +32780,7 @@ void RenderUI(AppState& state) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -32651,7 +32849,7 @@ void RenderUI(AppState& state) {
             const float gap = 8.0f;
             const float rowW = btnW * 2 + gap;
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - rowW - 16.0f);
-            if (ImGui::Button(L(Main_ClearCacheCancelBtn), ImVec2(btnW, 0))) {
+            if (aura::ui::ActionButton(L(Main_ClearCacheCancelBtn), ImVec2(btnW, 0), aura::ui::ButtonVariant::Quiet)) {
                 g_pendingClearCachePath.clear();
                 ImGui::CloseCurrentPopup();
             }
@@ -32659,7 +32857,7 @@ void RenderUI(AppState& state) {
             ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.62f, 0.18f, 0.14f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.24f, 0.18f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.50f, 0.13f, 0.11f, 1.0f));
-            if (ImGui::Button(L(Main_ClearCacheConfirmBtn), ImVec2(btnW, 0))) {
+            if (aura::ui::ActionButton(L(Main_ClearCacheConfirmBtn), ImVec2(btnW, 0), aura::ui::ButtonVariant::Danger)) {
                 const std::string targetPath = g_pendingClearCachePath;
                 const int removed = state.database.removeFolderSubtreeFromDb(targetPath);
                 FinalizeFolderSubtreeDbRemoval(state, targetPath, removed);
@@ -32709,14 +32907,14 @@ void RenderUI(AppState& state) {
             ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), L(Main_DupNameWarn));
         }
         ImGui::BeginDisabled(!canRename);
-        if (ImGui::Button(L(Main_ConfirmBtn), ImVec2(100, 0)) || (canRename && enterPressed)) {
+        if (aura::ui::ActionButton(L(Main_ConfirmBtn), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch) || (canRename && enterPressed)) {
             state.database.renamePlaylist(state.editingPlaylistId, renameCandidate);
             state.playlists = state.database.getAllPlaylists();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -32814,7 +33012,7 @@ void RenderUI(AppState& state) {
         ImGui::BeginDisabled(!hasSelection);
 
         ImGui::BeginDisabled(!canLoadSelection);
-        if (ImGui::Button(L(Main_LoadAssetLibrary), ImVec2(-1, 35))) {
+        if (aura::ui::ActionButton(L(Main_LoadAssetLibrary), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
             if (!state.isScanning.load()) SwitchDatabase(state, state.dbManagerSelectedPath);
         }
         ImGui::EndDisabled();
@@ -32825,12 +33023,12 @@ void RenderUI(AppState& state) {
 
         ImGui::Spacing();
         ImGui::BeginDisabled(!IsDatabaseLibrarySelectable(selectedLibraryState));
-        if (ImGui::Button(L(Main_OpenFileLocation), ImVec2(-1, 35))) RevealFileInExplorer(state.dbManagerSelectedPath);
+        if (aura::ui::ActionButton(L(Main_OpenFileLocation), ImVec2(-1, 35))) RevealFileInExplorer(state.dbManagerSelectedPath);
         ImGui::EndDisabled();
 
         ImGui::Spacing();
         ImGui::BeginDisabled(!canReconnectSelection);
-            if (ImGui::Button(L(Main_ReconnectBtn), ImVec2(-1, 35))) {
+            if (aura::ui::ActionButton(L(Main_ReconnectBtn), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
                 std::string reconnectPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
                     g_hwnd,
                     GetDefaultDbDirWide());
@@ -32849,7 +33047,7 @@ void RenderUI(AppState& state) {
             const bool canPurgeMissingSelection = isSelectionCurrent &&
                 state.database.isOpen() && !state.isScanning.load() && state.database.getFileCount() > 0;
             ImGui::BeginDisabled(!canPurgeMissingSelection);
-            if (ImGui::Button(L(Main_CleanMissingRecords), ImVec2(-1, 35))) {
+            if (aura::ui::ActionButton(L(Main_CleanMissingRecords), ImVec2(-1, 35), aura::ui::ButtonVariant::Danger)) {
                 StartGlobalMissingRecordsCleanup(state);
             }
             ImGui::EndDisabled();
@@ -32862,7 +33060,7 @@ void RenderUI(AppState& state) {
             ImGui::Spacing();
 
         ImGui::BeginDisabled(isSelectionCurrent);
-        if (ImGui::Button(L(Main_RemoveFromList), ImVec2(-1, 35))) {
+        if (aura::ui::ActionButton(L(Main_RemoveFromList), ImVec2(-1, 35), aura::ui::ButtonVariant::Danger)) {
             RemoveRecentDatabasePath(state.recentDbPathsUtf8, state.dbManagerSelectedPath);
             SaveAppSettings(state);
             state.dbManagerSelectedPath.clear();
@@ -32873,7 +33071,7 @@ void RenderUI(AppState& state) {
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
         ImGui::BeginDisabled(!IsDatabaseLibrarySelectable(selectedLibraryState));
-        if (ImGui::Button(L(Main_DeletePermanently), ImVec2(-1, 35))) {
+        if (aura::ui::ActionButton(L(Main_DeletePermanently), ImVec2(-1, 35), aura::ui::ButtonVariant::Danger)) {
             state.showDbDestroyConfirmDialog = true;
         }
         ImGui::EndDisabled();
@@ -32911,7 +33109,7 @@ void RenderUI(AppState& state) {
                 ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), L(Main_DelFailFmt), state.dbDestroyErrorMsg.c_str());
             }
             ImGui::Spacing();
-            if (ImGui::Button(L(Main_ConfirmDeleteBtn), ImVec2(120, 35))) {
+            if (aura::ui::ActionButton(L(Main_ConfirmDeleteBtn), ImVec2(120, 35), aura::ui::ButtonVariant::Danger)) {
                 std::string err;
                 if (Database::DestroyDatabasePackage(state.dbManagerSelectedPath, err)) {
                     state.recentDbPathsUtf8.erase(std::remove(state.recentDbPathsUtf8.begin(), state.recentDbPathsUtf8.end(), state.dbManagerSelectedPath), state.recentDbPathsUtf8.end());
@@ -32922,7 +33120,7 @@ void RenderUI(AppState& state) {
                 } else { state.dbDestroyErrorMsg = err.empty() ? L(Db_DestroyBusyFallback) : err; }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Cancel), ImVec2(100, 35))) { state.dbDestroyErrorMsg.clear(); ImGui::CloseCurrentPopup(); }
+            if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 35), aura::ui::ButtonVariant::Quiet)) { state.dbDestroyErrorMsg.clear(); ImGui::CloseCurrentPopup(); }
             }
             ImGui::EndPopup();
         }
@@ -32930,7 +33128,7 @@ void RenderUI(AppState& state) {
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 38.0f);
         }
         ImGui::Separator();
-        if (ImGui::Button(L(Close), ImVec2(100, 0))) ImGui::CloseCurrentPopup();
+        if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -32953,13 +33151,42 @@ void RenderUI(AppState& state) {
         }
         ImGui::End();
     }
-    if (state.showNewDbDialog) {
+    const bool requireDatabaseSetup = state.startupNeedsDatabaseSetup &&
+        (state.dbSwitchInProgress || !state.database.isOpen());
+    if (state.showNewDbDialog ||
+        (requireDatabaseSetup && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))) {
         ImGui::OpenPopup(L(Dlg_NewDB));
         state.showNewDbDialog = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
-    ThemeDialogStyleScope newDbDialogSurfaceStyle;
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewDB), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ThemeDialogStyleScope newDbDialogSurfaceStyle(state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized());
+    EmptyStatePalette::Colors setupPalette{};
+    if (requireDatabaseSetup) {
+        setupPalette = EmptyStatePalette::Make(ThemeColors::current(),
+            ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+    }
+    setupPalette.panelBg.w = 1.0f;
+    std::array<ImVec4, 4> setupSurfaces;
+    setupSurfaces.fill(setupPalette.panelBg);
+    ImGuiWindowFlags newDbFlags = ImGuiWindowFlags_AlwaysAutoResize;
+    if (requireDatabaseSetup) {
+        const auto* viewport = ImGui::GetMainViewport();
+        const float topInset = (std::min)(106.0f, viewport->WorkSize.y * 0.10f);
+        const float width = (std::min)(560.0f, viewport->WorkSize.x - 32.0f);
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+            viewport->WorkPos.y + topInset), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0),
+            ImVec2(width, viewport->WorkSize.y - topInset - 16.0f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, setupPalette.panelBg);
+        ImGui::PushStyleColor(ImGuiCol_Border, setupPalette.panelBorder);
+        ImGui::PushStyleColor(ImGuiCol_Separator, setupPalette.separatorColor);
+        // BeginPopupModal captures this color for its own background scrim.
+        ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0, 0, 0, 0.64f));
+        newDbFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
+    }
+    if (BeginTransientScrollbarPopupModal(L(Dlg_NewDB), nullptr, newDbFlags)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         static char newDbNameBuf[128] = "Harken Search";
         static std::string newDbError;
@@ -32967,6 +33194,12 @@ void RenderUI(AppState& state) {
         static int newDbCacheMode = (int)WaveformCachePolicy::Mode::MiniOnly;
         static bool newDbPending = false;
         static bool confirmOverwrite = false;
+#ifdef ARIS_PREVIEW_ISOLATION
+        if (!state.qaNewDbName.empty()) {
+            snprintf(newDbNameBuf, sizeof(newDbNameBuf), "%s", state.qaNewDbName.c_str());
+            state.qaNewDbName.clear();
+        }
+#endif
         if (newDbPending && !state.dbSwitchInProgress) {
             newDbPending = false;
             if (state.dbSwitchError.empty()) {
@@ -32975,19 +33208,33 @@ void RenderUI(AppState& state) {
                 snprintf(newDbNameBuf, sizeof(newDbNameBuf), "soundmanager");
                 ImGui::CloseCurrentPopup();
             } else {
-                newDbError = std::string(L(Db_CreateFailedHint)) + "\n" + state.dbSwitchError;
+                newDbError = std::string(requireDatabaseSetup ? L(NewDB_SetupFailed) : L(Db_CreateFailedHint)) +
+                    "\n" + state.dbSwitchError;
             }
         }
-        if (!newDbPending) EscClosePopup();
+        if (!newDbPending && !requireDatabaseSetup) EscClosePopup();
         ImGui::BeginDisabled(newDbPending);
+        if (requireDatabaseSetup) {
+            EmptyStateVisualAudit::Begin(static_cast<int>(state.settings.theme));
+            ImFont* emphasisFont = GetUIFontEmphasis();
+            if (emphasisFont) ImGui::PushFont(emphasisFont);
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.titleColor);
+            ImGui::TextWrapped("%s", StartupNoDatabaseSetupTitle(state));
+            EmptyStateVisualAudit::Record("title", setupSurfaces);
+            ImGui::PopStyleColor();
+            if (emphasisFont) ImGui::PopFont();
+            ImGui::Spacing();
+        }
 
         if (newDbDir.empty()) {
             newDbDir = GetDefaultDbDirUtf8();
         }
         std::string dbDir = newDbDir;
-        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
-        ImGui::TextWrapped("%s", dbDir.c_str());
-        if (ImGui::Button(L(Main_ChooseStorageLocation), ImVec2(140, 0))) {
+        if (!requireDatabaseSetup) {
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
+            ImGui::TextWrapped("%s", dbDir.c_str());
+        }
+        if (aura::ui::ActionButton(L(Main_ChooseStorageLocation), ImVec2(140, 0))) {
             std::string folder = OpenFolderDialog(g_hwnd);
             if (!folder.empty()) {
                 if (Platform::FileSystem::IsNetworkPath(folder)) {
@@ -33014,7 +33261,13 @@ void RenderUI(AppState& state) {
             if (ext != ".db") fullName += ".db";
         }
         std::string fullPath = BuildDatabasePackageMainPathUtf8(dbDir + "\\" + fullName);
-        ImGui::TextDisabled("%s %s", L(Meta_FullPath), fullPath.c_str());
+        if (requireDatabaseSetup) {
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.hintColor);
+            ImGui::TextWrapped("%s %s", L(Meta_FullPath), fullPath.c_str());
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextDisabled("%s %s", L(Meta_FullPath), fullPath.c_str());
+        }
 
         // 检查是否已存在
         const std::string packageRoot = GetDatabasePackageRootUtf8(fullPath);
@@ -33035,22 +33288,44 @@ void RenderUI(AppState& state) {
         }
 
         ImGui::Spacing();
-        ImGui::Separator();
+        if (requireDatabaseSetup) RenderDatabaseSetupSeparator();
+        else ImGui::Separator();
         ImGui::Spacing();
 
         bool nameValid = !nameStr.empty() && nameStr.find_first_of("\\/:*?\"<>|") == std::string::npos;
         bool canCreate = nameValid && (!exists || confirmOverwrite);
 
         ImGui::BeginDisabled(!canCreate);
-        if (ImGui::Button(exists ? L(NewDB_OverwriteCreate) : L(Create), ImVec2(120, 32))) {
+        const float setupButtonWidth = requireDatabaseSetup
+            ? (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f - 72.0f) * 0.5f
+            : 120.0f;
+        const char* createLabel = exists ? L(NewDB_OverwriteCreate) : L(Create);
+        bool createClicked = requireDatabaseSetup
+            ? DatabaseSetupButton(createLabel, ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Create)
+            : aura::ui::ActionButton(createLabel, ImVec2(setupButtonWidth, 32), aura::ui::ButtonVariant::PrimarySearch);
+#ifdef ARIS_PREVIEW_ISOLATION
+        const bool qaCreateClicked = std::exchange(state.qaCreateNewDbNow, false);
+        createClicked = createClicked || (qaCreateClicked && canCreate);
+#endif
+        if (createClicked) {
             if (Platform::FileSystem::IsNetworkPath(dbDir) ||
                 Platform::FileSystem::IsNetworkPath(fullPath)) {
                 newDbError = L(Db_RejectNetworkPath);
             } else {
-            if (SwitchDatabase(state, fullPath, true, &newDbError, newDbCacheMode, confirmOverwrite)) {
+            auto deferredStart=[&state](bool started, const std::string& error) {
+                if (started) {
+                    newDbError.clear();
+                    newDbPending=true;
+                } else {
+                    newDbError=error.empty() ? state.dbSwitchError : error;
+                    if (newDbError.empty()) newDbError=state.database.getLastError();
+                    if (newDbError.empty()) newDbError=L(Db_CreateNotStarted);
+                }
+            };
+            if (SwitchDatabase(state, fullPath, true, &newDbError, newDbCacheMode, confirmOverwrite, deferredStart)) {
                 newDbError.clear();
                 newDbPending = true;
-            } else {
+            } else if (!state.infoEditSession.awaitingChoice) {
                 if (newDbError.empty()) {
                     newDbError = state.database.getLastError();
                 }
@@ -33063,21 +33338,57 @@ void RenderUI(AppState& state) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(120, 32))) {
+        if (requireDatabaseSetup) {
+            bool openExistingClicked = DatabaseSetupButton(L(File_OpenDB),
+                ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Open);
+            std::string openPath;
+#ifdef ARIS_PREVIEW_ISOLATION
+            if (!state.qaOpenExistingDbPath.empty()) {
+                openPath = std::exchange(state.qaOpenExistingDbPath, {});
+                openExistingClicked = true;
+            }
+#endif
+            if (openExistingClicked) {
+                if (openPath.empty()) {
+                    openPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
+                        g_hwnd, GetDefaultDbDirWide());
+                }
+                if (!openPath.empty() && SwitchDatabase(state, openPath, false, &newDbError)) {
+                    newDbError.clear();
+                    newDbPending = true;
+                }
+            }
+            ImGui::SameLine();
+            if (DatabaseSetupButton(L(File_Exit), ImVec2(72.0f, 32), setupPalette, DatabaseSetupAction::Exit)) {
+                RequestHarkenSearchExit(g_hwnd, L"first-library-setup-exit");
+            }
+        } else if (aura::ui::ActionButton(L(Cancel), ImVec2(120, 32), aura::ui::ButtonVariant::Quiet)) {
             newDbError.clear();
             ImGui::CloseCurrentPopup();
         }
 
         if (!nameValid && !nameStr.empty()) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1, 0.5f, 0.2f, 1), L(Main_IllegalCharsMsg));
+            if (!requireDatabaseSetup) ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.5f, 0.2f, 1));
+            ImGui::TextWrapped("%s", L(Main_IllegalCharsMsg));
+            ImGui::PopStyleColor();
         }
         ImGui::EndDisabled();
-        if (newDbPending) ImGui::TextUnformatted(L(Db_Creating));
+        if (newDbPending) ImGui::TextUnformatted(requireDatabaseSetup ? L(NewDB_SetupPending) : L(Db_Creating));
+        if (requireDatabaseSetup) {
+            ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.hintColor);
+            ImGui::TextWrapped("%s", StartupNoDatabaseSetupHint(state));
+            EmptyStateVisualAudit::Record("hint", setupSurfaces);
+            ImGui::PopStyleColor();
+            const ImVec2 pos = ImGui::GetWindowPos();
+            const ImVec2 size = ImGui::GetWindowSize();
+            EmptyStateVisualAudit::End(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+        }
 
         }
         ImGui::EndPopup();
     }
+    if (requireDatabaseSetup) ImGui::PopStyleColor(4);
     newDbDialogSurfaceStyle.reset();
 
     // DAW Target Configuration Dialog
@@ -33235,7 +33546,7 @@ void RenderUI(AppState& state) {
                 }
                 const bool pathCommitted = ImGui::IsItemDeactivatedAfterEdit();
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_BrowseReaperPath), ImVec2(90, 0))) {
+                if (aura::ui::ActionButton(L(Main_BrowseReaperPath), ImVec2(90, 0))) {
                     const std::string picked = OpenFolderDialog(g_hwnd);
                     if (!picked.empty()) {
                         const std::string oldReaperCacheKey = ReaperBridgeUiCacheKey(selected);
@@ -33247,7 +33558,7 @@ void RenderUI(AppState& state) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_ClearReaperPath), ImVec2(70, 0))) {
+                if (aura::ui::ActionButton(L(Main_ClearReaperPath), ImVec2(70, 0))) {
                     const std::string oldReaperCacheKey = ReaperBridgeUiCacheKey(selected);
                     EraseReaperBridgeUiStatus(oldReaperCacheKey);
                     selected.exePath.clear();
@@ -33257,14 +33568,14 @@ void RenderUI(AppState& state) {
                 if (pathCommitted) requestReaperStatusRefresh();
 
                 ImGui::TextDisabled(L(Main_ReaperPathHint));
-                if (ImGui::Button(L(Main_AutoDetect))) {
+                if (aura::ui::ActionButton(L(Main_AutoDetect))) {
                     g_reaperAutoDetectRequests.insert(ReaperAutoDetectRequestKey(selected));
                     requestReaperStatusRefresh();
                     state.loadErrorToast = L(REAPER_AutoDetecting);
                     state.loadErrorToastUntil = ImGui::GetTime() + 4.0;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_InstallReaperBridge))) {
+                if (aura::ui::ActionButton(L(Main_InstallReaperBridge))) {
                     if (selected.exePath.empty()) {
                         state.loadErrorToast = L(REAPER_PickOrDetect);
                     } else if (StartReaperBridgeUpdateAfterExit(
@@ -33276,11 +33587,11 @@ void RenderUI(AppState& state) {
                     state.loadErrorToastUntil = ImGui::GetTime() + 12.0;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_RecheckBridge))) {
+                if (aura::ui::ActionButton(L(Main_RecheckBridge))) {
                     requestReaperStatusRefresh();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_CopyDiagnostic))) {
+                if (aura::ui::ActionButton(L(Main_CopyDiagnostic))) {
                     const auto status = ReaperBridgeUiStatusForTarget(selected);
                     if (status.has_value()) {
                         const std::string summary =
@@ -33326,7 +33637,7 @@ void RenderUI(AppState& state) {
                     selected.exePath = TrimCopy(s_dawExePathBuf);
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_DawBrowseBtn), ImVec2(80, 0))) {
+                if (aura::ui::ActionButton(L(Main_DawBrowseBtn), ImVec2(80, 0))) {
                     std::wstring title = L"Select " + Utf8ToWide(selected.name) + L" executable";
                     std::string picked = Platform::ExecutableDialogs::OpenExecutableFileDialogUtf8(
                         g_hwnd,
@@ -33338,7 +33649,7 @@ void RenderUI(AppState& state) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_DawClearBtn), ImVec2(70, 0))) {
+                if (aura::ui::ActionButton(L(Main_DawClearBtn), ImVec2(70, 0))) {
                     selected.exePath.clear();
                     s_dawExePathBuf[0] = '\0';
                 }
@@ -33378,7 +33689,7 @@ void RenderUI(AppState& state) {
                         ImGui::TextDisabled(L(Main_ProToolsListDash), item.detail.c_str());
                     }
                 }
-                if (ImGui::Button(L(Main_ProToolsTestBtn))) {
+                if (aura::ui::ActionButton(L(Main_ProToolsTestBtn))) {
                     const auto smoke = HarkenSearch::ProTools::DispatchLivePtslSmokeTest();
                     state.lastProToolsConnectionOk =
                         smoke.helperAvailable &&
@@ -33406,7 +33717,7 @@ void RenderUI(AppState& state) {
                     state.lastProToolsConnectionTime = ImGui::GetTime();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Main_ProToolsRepairBtn))) {
+                if (aura::ui::ActionButton(L(Main_ProToolsRepairBtn))) {
                     EnsureProToolsSdkGuideReadme(ptPlan);
                     Platform::OpenInFileManager(ptPlan.userSdkDirectoryUtf8);
                     state.lastProToolsConnectionOk = false;
@@ -33416,7 +33727,7 @@ void RenderUI(AppState& state) {
                     state.lastProToolsConnectionTime = ImGui::GetTime();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(ptResetPresentation.actionLabel.c_str())) {
+                if (aura::ui::ActionButton(ptResetPresentation.actionLabel.c_str())) {
                     const auto reset = HarkenSearch::ProTools::ResetProToolsConnection(false);
                     state.lastProToolsConnectionOk = reset.ok;
                     state.lastProToolsConnectionStatus = reset.status;
@@ -33427,7 +33738,7 @@ void RenderUI(AppState& state) {
                     ImGui::TextWrapped("%s", ptResetPresentation.safetySummary.c_str());
                 }
                 if (ptResetPresentation.canRequestProToolsClose) {
-                    if (ImGui::Button(ptResetPresentation.closeProToolsLabel.c_str())) {
+                    if (aura::ui::ActionButton(ptResetPresentation.closeProToolsLabel.c_str())) {
                         state.showProToolsCloseConfirm = true;
                     }
                 }
@@ -33437,7 +33748,7 @@ void RenderUI(AppState& state) {
                 }
                 if (BeginTransientScrollbarPopupModal(L(PtCloseAfterSave), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                     ImGui::TextWrapped(L(Main_ProToolsCloseWarn));                    ImGui::Spacing();
-                    if (ImGui::Button(L(Main_ProToolsSavedCloseBtn))) {
+                    if (aura::ui::ActionButton(L(Main_ProToolsSavedCloseBtn))) {
                         const auto reset = HarkenSearch::ProTools::ResetProToolsConnection(true);
                         state.lastProToolsConnectionOk = reset.ok;
                         state.lastProToolsConnectionStatus = reset.status;
@@ -33446,7 +33757,7 @@ void RenderUI(AppState& state) {
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button(L(Main_ProToolsCancelBtn))) {
+                    if (aura::ui::ActionButton(L(Main_ProToolsCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::EndPopup();
@@ -33534,7 +33845,7 @@ void RenderUI(AppState& state) {
         float buttonWidth = 120;
         float windowWidth = ImGui::GetWindowSize().x;
         ImGui::SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
-        if (ImGui::Button(L(Main_CloseBtn), ImVec2(buttonWidth, 28))) {
+        if (aura::ui::ActionButton(L(Main_CloseBtn), ImVec2(buttonWidth, 28), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         }
@@ -33559,7 +33870,7 @@ void RenderUI(AppState& state) {
         std::clamp(state.settings.settingsDialogHeight, settingsMinSize.y, settingsMaxSize.y));
     ImGui::SetNextWindowSize(settingsOpenSize, ImGuiCond_Appearing);
     ImGui::SetNextWindowSizeConstraints(settingsMinSize, settingsMaxSize);
-    ThemeDialogStyleScope settingsDialogSurfaceStyle;
+    ThemeDialogStyleScope settingsDialogSurfaceStyle(state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized());
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().dialogPanelBG);
@@ -33848,7 +34159,7 @@ void RenderUI(AppState& state) {
         HintAwareInputTextWithHint("##SettingsQuickSearch", L(Set_SearchQuickHint),
                                    settingsQuickSearchBuf, sizeof(settingsQuickSearchBuf));
         ImGui::SameLine();
-        if (ImGui::Button(L(Main_ClearBtn))) {
+        if (aura::ui::ActionButton(L(Main_ClearBtn))) {
             settingsQuickSearchBuf[0] = '\0';
             settingsSearchCursor = 0;
         }
@@ -34006,6 +34317,8 @@ void RenderUI(AppState& state) {
 // 外观与主题
                 SectionHeader(L(Settings_SectionAppearance), nullptr);
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Settings_SectionAppearanceHint));
+                const bool showOtherThemes = harken::theme_schedule::RenderSettings(state);
+                if (showOtherThemes) {
                 struct ThemeSwatch {
                     AppTheme    value;
                     const char* label;
@@ -34016,7 +34329,7 @@ void RenderUI(AppState& state) {
                 const ThemeSwatch kThemeSwatches[] = {
                     { AppTheme::Dark,      L(Set_ThemeDark),      0xff0f141b, 0xff6f98c1, true  },
                     { AppTheme::RoseCedar, L(Set_ThemeRoseCedar), 0xfffdf3f6, 0xffe8b4c8, true  },
-                    { AppTheme::LapisBlue, L(Set_ThemeLapisBlue), 0xff0e1621, 0xffd7e4f1, true  },
+                    { AppTheme::LapisBlue, L(Set_ThemeLapisBlue), 0xff34485f, 0xfff1f5fa, true  },
                     { AppTheme::Ocean,     L(Set_ThemeOcean),     0xff141516, 0xff38a8be, false },
                     { AppTheme::JadeMist,  L(Set_ThemeJadeMist),  0xfffdfbf7, 0xff246e68, false },
                 };
@@ -34028,6 +34341,9 @@ void RenderUI(AppState& state) {
 
                     ImGui::PushID(ts.label);
                     bool clicked = ImGui::InvisibleButton("##swatch", cardSize);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+                    harken::theme_schedule::QaRecordStock((int)ts.value);
+#endif
                     bool hovered = ImGui::IsItemHovered();
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const ImU32 canvas = hexU32(ts.canvasHex);
@@ -34097,6 +34413,7 @@ void RenderUI(AppState& state) {
                             const bool prevCustomized = ThemeColors::customized();
                             LogThemeStockSwitchSnapshot("before", prevTheme, ts.value, prevUseCustom, prevCustomized);
                             state.settings.theme = ts.value;
+                            harken::theme_schedule::OnManualThemeSelected(state);
                             state.settings.useCustomColors = false;
                             ThemeColors::deactivateCustomTheme();
                             // Do not re-bake ImGuiStyle in the middle of this frame.
@@ -34111,7 +34428,7 @@ void RenderUI(AppState& state) {
 
                 // Action row beneath the swatches
                 ImGui::Spacing();
-                const bool hasCustom = !state.settings.customThemeName.empty();
+                const bool hasCustom = !harken::theme_schedule::ControlsTheme(state) && !state.settings.customThemeName.empty();
                 const bool customActive = (state.settings.theme == AppTheme::Custom && ThemeColors::customized());
                 if (hasCustom) {
                     ImGui::TextDisabled(L(Main_CustomThemeListLabel));
@@ -34122,7 +34439,7 @@ void RenderUI(AppState& state) {
                     if (customActive) {
                         ImGui::TextDisabled(L(Main_CurrentTag));
                     } else {
-                        if (ImGui::SmallButton(L(Main_ApplyCustomBtn))) {
+                        if (aura::ui::SmallActionButton(L(Main_ApplyCustomBtn))) {
                             const AppTheme startTheme = state.settings.theme;
                             state.settings.theme = AppTheme::Custom;
                             state.settings.useCustomColors = false;
@@ -34141,16 +34458,16 @@ void RenderUI(AppState& state) {
                     }
                 }
 #if AURA_BUILD_DIAGNOSTICS
-                if (ProductEdition::hasFeature("theme_editor")) {
+                if (!harken::theme_schedule::ControlsTheme(state) && ProductEdition::hasFeature("theme_editor")) {
                     if (hasCustom) ImGui::SameLine(0.0f, 16.0f);
-                    if (ImGui::SmallButton(L(Set_EditTheme))) {
+                    if (aura::ui::SmallActionButton(L(Set_EditTheme))) {
                         state.showThemeEditor = true;
                     }
                 }
 #endif
 
                 // Inline custom color editor — only meaningful when Custom is active
-                if (state.settings.theme == AppTheme::Custom) {
+                if (!harken::theme_schedule::ControlsTheme(state) && state.settings.theme == AppTheme::Custom) {
                     ImGui::Spacing();
                     ImGui::Indent(12.0f);
                     ImGui::TextDisabled(L(Main_LightCustomColorsHint));
@@ -34166,7 +34483,7 @@ void RenderUI(AppState& state) {
                         ApplyCustomColors(state.settings);
                         SaveAppSettings(state);
                     }
-                    if (ImGui::SmallButton(L(Set_ResetColors))) {
+                    if (aura::ui::SmallActionButton(L(Set_ResetColors))) {
                         state.settings.customAccentColor   = ImVec4(0.337f, 0.612f, 0.839f, 1.0f);
                         state.settings.customWaveformColor = ImVec4(0.686f, 0.843f, 1.000f, 1.0f);
                         state.settings.customTextColor     = ImVec4(0.800f, 0.800f, 0.800f, 1.0f);
@@ -34179,6 +34496,8 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::Unindent(12.0f);
                 }
+
+                } // Existing ordinary themes are disclosed only when requested.
 
                 // Language picker — sits inside Appearance because it changes how the UI looks/reads
                 ImGui::Spacing();
@@ -34260,7 +34579,7 @@ void RenderUI(AppState& state) {
                     MarkSettingsDirty(state);
                 }
                 ImGui::Spacing();
-                if (ImGui::Button(L(Set_ResetDefaultSize), ImVec2(150, 0))) {
+                if (aura::ui::ActionButton(L(Set_ResetDefaultSize), ImVec2(150, 0))) {
                     state.settings.rowHeight = 28;
                     state.settings.readingFontSize = 14;
                     state.settings.fontSize = kChromeFontPx;
@@ -34320,7 +34639,7 @@ void RenderUI(AppState& state) {
                 SectionHeader(L(Set_DBLocation), nullptr);
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Settings_CurrentDatabaseLabel));                {
                     ImGui::TextWrapped("%s: %s", L(Set_Current), state.currentDbPathUtf8.c_str());
-                    if (ImGui::Button(L(Set_OpenDBFolder))) {
+                    if (aura::ui::ActionButton(L(Set_OpenDBFolder))) {
 #ifdef _WIN32
                         std::wstring wPath = Utf8ToWide(state.currentDbPathUtf8);
                         PIDLIST_ABSOLUTE pidl = ILCreateFromPathW(wPath.c_str());
@@ -34342,12 +34661,12 @@ void RenderUI(AppState& state) {
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Settings_DefaultPlayerHint));                {                    bool isDefault = IsRegisteredAsDefault();
                     if (isDefault) {
                         ImGui::TextColored(mixVec(cs.volumeColor, cs.metadataPanelText, 0.18f), "%s", L(Set_ShellIsDefault));
-                        if (ImGui::Button(L(Set_ShellUnsetDefault), ImVec2(200, 0))) {
+                        if (aura::ui::ActionButton(L(Set_ShellUnsetDefault), ImVec2(200, 0))) {
                             RemoveDefaultPlayer();
                         }
                     } else {
                         ImGui::TextUnformatted(L(Set_ShellNotDefault));
-                        if (ImGui::Button(L(Set_ShellSetDefault), ImVec2(200, 0))) {
+                        if (aura::ui::ActionButton(L(Set_ShellSetDefault), ImVec2(200, 0))) {
                             SetAsDefaultPlayer();
                         }
                     }
@@ -34381,7 +34700,7 @@ void RenderUI(AppState& state) {
                     if (devModeExists) {
                         ImGui::TextColored(mixVec(cs.volumeColor, cs.metadataPanelText, 0.18f), L(Set_DevModeEnabled));
                         ImGui::TextDisabled("%s", L(Set_DevDebugHint));
-                        if (ImGui::Button(L(Set_PublishUserDefaults), ImVec2(220, 0))) {
+                        if (aura::ui::ActionButton(L(Set_PublishUserDefaults), ImVec2(220, 0))) {
                             s_publishUserDefaultsOk = PublishCurrentDevConfigToUserDefaults(state, &s_publishUserDefaultsStatus);
                         }
                         if (HoveredForHelp()) {
@@ -34394,16 +34713,16 @@ void RenderUI(AppState& state) {
                                     : mixVec(cs.volumeClipColor, cs.metadataPanelText, 0.16f),
                                 "%s", s_publishUserDefaultsStatus.c_str());
                         }
-                        if (ImGui::Button(L(Set_DeleteDevMode), ImVec2(260, 0))) {
+                        if (aura::ui::ActionButton(L(Set_DeleteDevMode), ImVec2(260, 0))) {
                             Platform::FileSystem::RemoveFile(devModePath);
                         }
                     } else {
                         ImGui::TextDisabled("%s", L(Set_DevModeHint));
-                        if (ImGui::Button(L(Set_CreateDevMode), ImVec2(220, 0))) {
+                        if (aura::ui::ActionButton(L(Set_CreateDevMode), ImVec2(220, 0))) {
                             Platform::FileSystem::WriteFileText(devModePath, "# Aris dev mode\n");
                         }
                     }
-                    if (ImGui::Button(L(Set_OpenExeDir), ImVec2(220, 0))) {
+                    if (aura::ui::ActionButton(L(Set_OpenExeDir), ImVec2(220, 0))) {
                         RevealFileInExplorer(Platform::HarkenUserData::JoinExeFileUtf8(exeDir, Platform::HarkenUserData::CanonicalThesaurusFileName()));
                     }
                     if (HoveredForHelp()) aura::ui::Tooltip(L(Set_OpenExeDirHint));
@@ -34877,7 +35196,7 @@ void RenderUI(AppState& state) {
                     ImGui::Spacing();
 
                     ImGui::BeginDisabled(state.cleanupInvalidRecordsActive);
-                    if (ImGui::Button(L(Set_CleanInvalid2), ImVec2(180, 28))) {
+                    if (aura::ui::ActionButton(L(Set_CleanInvalid2), ImVec2(180, 28))) {
                         if (!state.cleanupInvalidRecordsActive) {
                             state.cleanupInvalidRecordsActive = true;
                             state.cleanupInvalidRecordsCancel = false;
@@ -34903,11 +35222,11 @@ void RenderUI(AppState& state) {
                         char buf[128];
                         snprintf(buf, sizeof(buf), u8"%d / %d", prog, tot);
                         DrawUnifiedProgressBar(frac, ImVec2(-1, 0), buf);
-                        if (ImGui::SmallButton(L(Set_CancelClean))) state.cleanupInvalidRecordsCancel = true;
+                        if (aura::ui::SmallActionButton(L(Set_CancelClean), aura::ui::ButtonVariant::Quiet)) state.cleanupInvalidRecordsCancel = true;
                     }
                     // 重建封面索引始终新起一行，避免清理进行时 SameLine 随「取消清理」导致位置跑偏
                     ImGui::BeginDisabled(state.coverRebuildActive);
-                    if (ImGui::Button(L(Set_RebuildCoverIndex), ImVec2(180, 28))) {
+                    if (aura::ui::ActionButton(L(Set_RebuildCoverIndex), ImVec2(180, 28))) {
                         state.audioEngine.stop();
                         ForceCoverWallReload(state);
                         StartCoverRebuild(state);
@@ -34920,14 +35239,14 @@ void RenderUI(AppState& state) {
                         snprintf(buf, sizeof(buf), L(Scan_ProgressCountFmt),
                                  (long long)state.coverRebuildProgress, (long long)state.coverRebuildTotal, state.coverRebuildFound);
                         DrawUnifiedProgressBar(progress, ImVec2(-1, 0), buf);
-                        if (ImGui::SmallButton(L(Set_CancelRebuild))) state.coverRebuildCancel = true;
+                        if (aura::ui::SmallActionButton(L(Set_CancelRebuild), aura::ui::ButtonVariant::Quiet)) state.coverRebuildCancel = true;
                     }
 
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_WaveCache));
                     ImGui::Separator();
                     static int s_detailPurged = -1, s_miniPurged = -1;
-                    if (ImGui::Button(L(Set_ClearDetailCache), ImVec2(180, 28))) {
+                    if (aura::ui::ActionButton(L(Set_ClearDetailCache), ImVec2(180, 28), aura::ui::ButtonVariant::Danger)) {
                         s_detailPurged = state.database.purgeAllWaveformDetail();
                         DIAG_ACTION_FMT("Database", "ManualPurgeWaveformDetail: rows=%d", s_detailPurged);
                     }
@@ -34936,7 +35255,7 @@ void RenderUI(AppState& state) {
                         ImGui::SameLine();
                         ImGui::TextColored(ImVec4(0.3f,0.8f,0.3f,1), L(Set_ClearedN), s_detailPurged);
                     }
-                    if (ImGui::Button(L(Set_ClearMiniCache), ImVec2(180, 28))) {
+                    if (aura::ui::ActionButton(L(Set_ClearMiniCache), ImVec2(180, 28), aura::ui::ButtonVariant::Danger)) {
                         s_miniPurged = state.database.purgeAllMiniWaveform();
                         DIAG_ACTION_FMT("Database", "ManualPurgeMiniWaveform: rows=%d", s_miniPurged);
                     }
@@ -34974,7 +35293,7 @@ void RenderUI(AppState& state) {
                 ImGui::Text(L(Main_DiskLogFmt),
                             GetDiagnosticFileSizeBytes() / (1024.0 * 1024.0),
                             GetDiagnosticFileMaxBytes() / (1024.0 * 1024.0));
-                if (ImGui::Button(L(Main_CleanDiskDiagBtn))) {
+                if (aura::ui::ActionButton(L(Main_CleanDiskDiagBtn))) {
                     ClearDiagnosticFile();
                 }
                 ImGui::Spacing();
@@ -35103,7 +35422,7 @@ void RenderUI(AppState& state) {
                     ImGui::SameLine();
                     ImGui::BeginGroup();
 
-                    if (ImGui::Button(L(Set_AvatarChangeLabelZh))) {
+                    if (aura::ui::ActionButton(L(Set_AvatarChangeLabelZh))) {
                         std::string selected =
                             Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(g_hwnd);
                         if (!selected.empty()) {
@@ -35124,7 +35443,7 @@ void RenderUI(AppState& state) {
 
                     if (state.settings.hasCustomAvatar) {
                         ImGui::SameLine();
-                        if (ImGui::Button(L(Set_AvatarRemoveLabelZh))) {
+                        if (aura::ui::ActionButton(L(Set_AvatarRemoveLabelZh))) {
                             const std::string avatarPath = GetCustomAvatarPathUtf8();
                             Platform::FileSystem::RemoveFile(avatarPath);
                             CoverModule::EvictCoverTextureByImagePath(avatarPath);
@@ -35136,7 +35455,7 @@ void RenderUI(AppState& state) {
                     }
                     const std::string settingsAvatarPickerOpenLabel =
                         std::string(L(Set_AvatarPickerOpenLabelZh)) + "##settings-avatar-picker-open";
-                    if (ImGui::Button(settingsAvatarPickerOpenLabel.c_str())) {
+                    if (aura::ui::ActionButton(settingsAvatarPickerOpenLabel.c_str())) {
                         s_pendingBuiltInAvatarIndex = ResolveSettingsBuiltinAvatarIndex(state.settings.diceBearAvatarIndex);
                         ImGui::OpenPopup(L(Set_AvatarPickerTitleZh));
                     }
@@ -35177,7 +35496,7 @@ void RenderUI(AppState& state) {
                             }
                         }
 
-                        if (ImGui::Button(L(Main_SaveBtn2))) {
+                        if (aura::ui::ActionButton(L(Main_SaveBtn2), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                             const std::string dest = GetCustomAvatarPathUtf8();
                             if (SaveCroppedAvatarPng(s_cropPixels, s_cropSrcW, s_cropSrcH,
                                                       s_cropState, dest, 512)) {
@@ -35194,7 +35513,7 @@ void RenderUI(AppState& state) {
                             ImGui::CloseCurrentPopup();
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button(L(Main_CancelBtn2))) {
+                        if (aura::ui::ActionButton(L(Main_CancelBtn2), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                             s_cropPixels.clear();
                             if (s_cropPreviewGLTex) { glDeleteTextures(1, &s_cropPreviewGLTex); s_cropPreviewGLTex = 0; }
                             s_cropSrcW = s_cropSrcH = 0;
@@ -35221,13 +35540,13 @@ void RenderUI(AppState& state) {
                     ImGui::SameLine(0.0f, 12.0f);
                     const std::string settingsAvatarPickerOpenSmallLabel =
                         std::string(L(Set_AvatarPickerOpenLabelZh)) + "##settings-avatar-picker-open-small";
-                    if (ImGui::SmallButton(settingsAvatarPickerOpenSmallLabel.c_str())) {
+                    if (aura::ui::SmallActionButton(settingsAvatarPickerOpenSmallLabel.c_str())) {
                         s_pendingBuiltInAvatarIndex = activeBuiltInIdx;
                         ImGui::OpenPopup(L(Set_AvatarPickerTitleZh));
                     }
                     ImGui::SameLine();
                     if (!state.settings.hasCustomAvatar && state.settings.diceBearAvatarIndex != 0) {
-                        if (ImGui::SmallButton(L(Set_AvatarResetAutoLabelZh))) {
+                        if (aura::ui::SmallActionButton(L(Set_AvatarResetAutoLabelZh))) {
                             state.settings.diceBearAvatarIndex = 0;
                             MarkSettingsDirty(state);
                         }
@@ -35257,14 +35576,14 @@ void RenderUI(AppState& state) {
                         ImGui::TextDisabled("%s", L(Set_AvatarPickerActualLabelZh));
                         ImGui::Text(L(Set_AvatarStatusLabelZh), s_pendingBuiltInAvatarIndex);
                         ImGui::Spacing();
-                        if (ImGui::Button(L(Set_AvatarPickerUseLabelZh), ImVec2(130.0f, 0.0f))) {
+                        if (aura::ui::ActionButton(L(Set_AvatarPickerUseLabelZh), ImVec2(130.0f, 0.0f), aura::ui::ButtonVariant::PrimarySearch)) {
                             state.settings.hasCustomAvatar = false;
                             state.settings.diceBearAvatarIndex = s_pendingBuiltInAvatarIndex;
                             MarkSettingsDirty(state);
                             ImGui::CloseCurrentPopup();
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button(L(Cancel), ImVec2(90.0f, 0.0f))) {
+                        if (aura::ui::ActionButton(L(Cancel), ImVec2(90.0f, 0.0f), aura::ui::ButtonVariant::Quiet)) {
                             ImGui::CloseCurrentPopup();
                         }
                         ImGui::EndGroup();
@@ -35322,7 +35641,7 @@ void RenderUI(AppState& state) {
                     MarkSettingsDirty(state);
                 }
                 ImGui::SameLine();
-                if (ImGui::Button((std::string(L(Browse)) + "##ExportPath").c_str())) {
+                if (aura::ui::ActionButton((std::string(L(Browse)) + "##ExportPath").c_str())) {
                     std::string folder = OpenFolderDialog(g_hwnd);
                     if (!folder.empty()) {
                         strncpy_s(exportPathBuf, sizeof(exportPathBuf), folder.c_str(), _TRUNCATE);
@@ -35410,7 +35729,7 @@ void RenderUI(AppState& state) {
 
                 if (state.settings.closeButtonAction != 0) {
                     ImGui::SameLine(0, 12);
-                    if (ImGui::SmallButton(L(Set_RestoreAskOnClose))) {
+                    if (aura::ui::SmallActionButton(L(Set_RestoreAskOnClose))) {
                         state.settings.closeButtonAction = 0;
                         MarkSettingsDirty(state);
                     }
@@ -35504,7 +35823,7 @@ void RenderUI(AppState& state) {
                 // Recording center uses a full-window HUD.
 
                 if (!recordingShowHotkey) {
-                    if (ImGui::Button((std::string(L(Set_RecordHotkey)) + "##ShowManagerHotkey").c_str())) {
+                    if (aura::ui::ActionButton((std::string(L(Set_RecordHotkey)) + "##ShowManagerHotkey").c_str())) {
                         recordingShowHotkey = true;
                         recordingStartTime = ImGui::GetTime();
                         ImGui::ClearActiveID();
@@ -35569,7 +35888,7 @@ void RenderUI(AppState& state) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button((std::string(L(Set_ClearHotkey2)) + "##ShowManagerHotkey").c_str())) {
+                if (aura::ui::ActionButton((std::string(L(Set_ClearHotkey2)) + "##ShowManagerHotkey").c_str())) {
                     state.settings.showManagerHotkey.key = ImGuiKey_None;
                     state.settings.showManagerHotkey.ctrl = false;
                     state.settings.showManagerHotkey.shift = false;
@@ -35632,7 +35951,7 @@ void RenderUI(AppState& state) {
                     state.audioEngine.setFadeInOutMs(state.settings.fadeInOutMs);
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton(L(Set_UseRecommended))) {
+                if (aura::ui::SmallActionButton(L(Set_UseRecommended))) {
                     state.settings.fadeInOutMs = 12;
                     state.audioEngine.setFadeInOutMs(state.settings.fadeInOutMs);
                 }
@@ -35656,13 +35975,13 @@ void RenderUI(AppState& state) {
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                if (ImGui::Button(L(Set_ThesOpenJSON), ImVec2(160, 30))) {
+                if (aura::ui::ActionButton(L(Set_ThesOpenJSON), ImVec2(160, 30))) {
                     RevealFileInExplorer(thesaurusPath);
                 }
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Set_ThesShareHint));
 
                 ImGui::SameLine();
-                if (ImGui::Button(L(Set_ThesMerge), ImVec2(160, 30))) {
+                if (aura::ui::ActionButton(L(Set_ThesMerge), ImVec2(160, 30))) {
                     #ifdef _WIN32
                     const std::string importPath =
                         Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd);
@@ -35679,7 +35998,7 @@ void RenderUI(AppState& state) {
                     #endif
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Set_ThesResetDefault), ImVec2(100, 30))) {
+                if (aura::ui::ActionButton(L(Set_ThesResetDefault), ImVec2(100, 30))) {
                     g_userThesaurusLoaded = false;
                     {
                         const std::string exe = GetExeDirUtf8();
@@ -35721,7 +36040,7 @@ void RenderUI(AppState& state) {
                 ImGui::PushID("thesaurus_row_edit");
                 if (s_editingIndex < 0) {
                     // Add-new mode (existing behavior): one "Add" button.
-                    if (ImGui::Button(L(Set_ThesAddBtn), ImVec2(80, 0))) {
+                    if (aura::ui::ActionButton(L(Set_ThesAddBtn), ImVec2(80, 0))) {
                         ThesaurusGroup g;
                         g.triggers = SplitThesaurusWords(trigBuf);
                         g.related = SplitThesaurusWords(relBuf);
@@ -35734,7 +36053,7 @@ void RenderUI(AppState& state) {
                     }
                 } else {
                     // Edit mode: "Save Changes" + "Cancel"
-                    if (ImGui::Button(L(Set_ThesSaveEditBtn), ImVec2(100, 0))) {
+                    if (aura::ui::ActionButton(L(Set_ThesSaveEditBtn), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                         ThesaurusGroup g;
                         g.triggers = SplitThesaurusWords(trigBuf);
                         g.related = SplitThesaurusWords(relBuf);
@@ -35748,7 +36067,7 @@ void RenderUI(AppState& state) {
                         }
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button(L(Cancel), ImVec2(60, 0))) {
+                    if (aura::ui::ActionButton(L(Cancel), ImVec2(60, 0), aura::ui::ButtonVariant::Quiet)) {
                         memset(trigBuf, 0, sizeof(trigBuf));
                         memset(relBuf, 0, sizeof(relBuf));
                         s_editingIndex = -1;
@@ -35790,11 +36109,10 @@ void RenderUI(AppState& state) {
 
                         ImGui::TableNextColumn();
                         // Highlight the row currently being edited.
-                        bool isEditingThisRow = (s_editingIndex == i);
-                        if (isEditingThisRow) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.95f, 0.75f, 0.2f, 0.45f));
-                        }
-                        if (ImGui::Button(L(Set_ThesEditBtn), ImVec2(65, 0))) {
+                        const bool isEditingThisRow = (s_editingIndex == i);
+                        if (aura::ui::ActionButton(L(Set_ThesEditBtn), ImVec2(65, 0),
+                                isEditingThisRow ? aura::ui::ButtonVariant::Selected
+                                                 : aura::ui::ButtonVariant::Secondary)) {
                             // Pre-fill the form with this rule's tokens (space-joined).
                             std::string t, r;
                             for (const auto& s : g_userThesaurus[i].triggers) { t += s; t += ' '; }
@@ -35803,11 +36121,8 @@ void RenderUI(AppState& state) {
                             std::snprintf(relBuf,  sizeof(relBuf),  "%s", r.c_str());
                             s_editingIndex = i;
                         }
-                        if (isEditingThisRow) {
-                            ImGui::PopStyleColor();
-                        }
                         ImGui::SameLine();
-                        if (ImGui::Button(L(Delete), ImVec2(-FLT_MIN, 0))) {
+                        if (aura::ui::ActionButton(L(Delete), ImVec2(-FLT_MIN, 0), aura::ui::ButtonVariant::Danger)) {
                             g_userThesaurus.erase(g_userThesaurus.begin() + i);
                             SaveThesaurusJson();
                             // Index drift handling: keep edit state in sync.
@@ -36023,7 +36338,7 @@ void RenderUI(AppState& state) {
                     ImGui::Text("%s", L(Set_DiagExportMgmt));
                     ImGui::Separator();
 
-                    if (ImGui::Button(L(Set_DiagExportJSON), ImVec2(180, 0))) {
+                    if (aura::ui::ActionButton(L(Set_DiagExportJSON), ImVec2(180, 0))) {
                         // Export to exe directory
                         std::string exportPath = GetExeDirUtf8() + "\\aura_diagnostics.json";
                         if (diag.exportJson(exportPath)) {
@@ -36035,7 +36350,7 @@ void RenderUI(AppState& state) {
                     }
 
                     ImGui::SameLine();
-                    if (ImGui::Button(L(Set_DiagCopyClipboard), ImVec2(140, 0))) {
+                    if (aura::ui::ActionButton(L(Set_DiagCopyClipboard), ImVec2(140, 0))) {
                         std::string json = diag.exportJsonString();
                         ImGui::SetClipboardText(json.c_str());
                     }
@@ -36044,7 +36359,7 @@ void RenderUI(AppState& state) {
                     }
 
                     ImGui::SameLine();
-                    if (ImGui::Button(L(Set_DiagClearLog), ImVec2(100, 0))) {
+                    if (aura::ui::ActionButton(L(Set_DiagClearLog), ImVec2(100, 0), aura::ui::ButtonVariant::Danger)) {
                         diag.clear();
                     }
                 } else {
@@ -36161,7 +36476,7 @@ void RenderUI(AppState& state) {
         ImGui::SetCursorPos(ImVec2(settingsClientMin.x + aura::ui::metrics::kGap12, settingsFooterY));
         ImGui::Separator();
 
-        if (ImGui::Button(L(Set_SaveAndClose), ImVec2(footerSaveW, 0))) {
+        if (aura::ui::ActionButton(L(Set_SaveAndClose), ImVec2(footerSaveW, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             const bool saved = TrySaveAppSettings(state);
             if (saved) {
                 s_settingsDialogGeometryDirty = false;
@@ -36169,13 +36484,13 @@ void RenderUI(AppState& state) {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(footerCancelW, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(footerCancelW, 0), aura::ui::ButtonVariant::Quiet)) {
             SaveAppSettings(state);
             s_settingsDialogGeometryDirty = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Set_RestoreDefaultTheme), ImVec2(footerRestoreW, 0))) {
+        if (aura::ui::ActionButton(L(Set_RestoreDefaultTheme), ImVec2(footerRestoreW, 0))) {
             if (state.settings.theme == AppTheme::Dark &&
                 !state.settings.useCustomColors &&
                 !ThemeColors::customized()) {
@@ -36183,6 +36498,7 @@ void RenderUI(AppState& state) {
             } else {
                 // Reset to default dark theme
                 state.settings.theme = AppTheme::Dark;
+                harken::theme_schedule::OnManualThemeSelected(state);
                 state.settings.useCustomColors = false;
                 ThemeColors::deactivateCustomTheme();
                 SaveAppSettings(state);
@@ -36192,7 +36508,7 @@ void RenderUI(AppState& state) {
         ImGui::SameLine();
         ImGui::SetCursorPosX(settingsClientMax.x - rightGroupW);
 
-        if (ImGui::Button(L(Set_ExportSettings), ImVec2(footerExportW, 0))) {
+        if (aura::ui::ActionButton(L(Set_ExportSettings), ImVec2(footerExportW, 0))) {
             // Export settings to a user-chosen location
             std::string exportPath = GetExeDirUtf8() + "\\aris_settings_export.ini";
             SaveAppSettings(state); // ensure current state is flushed
@@ -36208,7 +36524,7 @@ void RenderUI(AppState& state) {
         }
         if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Set_ExportSettingsHint));
         ImGui::SameLine();
-        if (ImGui::Button(L(Set_ImportSettings), ImVec2(footerImportW, 0))) {
+        if (aura::ui::ActionButton(L(Set_ImportSettings), ImVec2(footerImportW, 0))) {
             // Import settings from file
             const std::string importPath =
                 Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd);
@@ -36229,13 +36545,13 @@ void RenderUI(AppState& state) {
         // same window layer; salt this toggle so the confirm state stops colliding.
         ImGui::PushID("reset_all_confirm");
         if (!s_confirmResetAll) {
-            if (ImGui::Button(L(Set_ResetAllDefaults), ImVec2(footerResetW, 0))) {
+            if (aura::ui::ActionButton(L(Set_ResetAllDefaults), ImVec2(footerResetW, 0))) {
                 s_confirmResetAll = true;
             }
             if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Set_ResetAllDefaultsHint));
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
-            if (ImGui::Button(L(Set_ConfirmReset), ImVec2(footerResetW, 0))) {
+            if (aura::ui::ActionButton(L(Set_ConfirmReset), ImVec2(footerResetW, 0), aura::ui::ButtonVariant::Danger)) {
                 AppLanguage savedLang = state.settings.language;  // preserve language
                 state.settings = AppSettings{};
                 state.settings.language = savedLang;
@@ -36246,7 +36562,7 @@ void RenderUI(AppState& state) {
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (ImGui::Button(L(Main_CancelBtn3), ImVec2(confirmCancelW, 0))) s_confirmResetAll = false;
+            if (aura::ui::ActionButton(L(Main_CancelBtn3), ImVec2(confirmCancelW, 0), aura::ui::ButtonVariant::Quiet)) s_confirmResetAll = false;
         }
         ImGui::PopID();  // BUG-20260912-02
 
@@ -36442,7 +36758,7 @@ void RenderUI(AppState& state) {
 
             const float meBtnW = 100.0f;
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - meBtnW * 2 - 24);
-            if (ImGui::Button(L(Main_SaveMeBtn), ImVec2(meBtnW, 0))) {
+            if (aura::ui::ActionButton(L(Main_SaveMeBtn), ImVec2(meBtnW, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                 // Collect all field defs
                 const MetaEditField* allGroups[] = { kBasicFields, kLibraryFields, kMusicFields, kBWFFields };
                 const int allCounts[] = { IM_ARRAYSIZE(kBasicFields), IM_ARRAYSIZE(kLibraryFields),
@@ -36518,7 +36834,7 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Main_MeCancelBtn), ImVec2(meBtnW, 0))) {
+            if (aura::ui::ActionButton(L(Main_MeCancelBtn), ImVec2(meBtnW, 0), aura::ui::ButtonVariant::Quiet)) {
                 state.metadataEditMode = false;
                 state.metadataBatchMode = false;
                 state.metadataBatchIds.clear();
@@ -36542,21 +36858,21 @@ void RenderUI(AppState& state) {
             const bool canUndo = state.undoStack.canUndo();
             const bool canRedo = state.undoStack.canRedo();
             if (!canUndo) ImGui::BeginDisabled();
-            if (ImGui::Button(L(Undo_UndoBtn), ImVec2(90, 0))) {
+            if (aura::ui::ActionButton(L(Undo_UndoBtn), ImVec2(90, 0))) {
                 state.undoStack.undo(state.database);
                 RefreshSearchResults(state, false);
             }
             if (!canUndo) ImGui::EndDisabled();
             ImGui::SameLine();
             if (!canRedo) ImGui::BeginDisabled();
-            if (ImGui::Button(L(Undo_RedoBtn), ImVec2(90, 0))) {
+            if (aura::ui::ActionButton(L(Undo_RedoBtn), ImVec2(90, 0))) {
                 state.undoStack.redo(state.database);
                 RefreshSearchResults(state, false);
             }
             if (!canRedo) ImGui::EndDisabled();
             ImGui::SameLine();
             if (state.undoStack.undoCount() == 0) ImGui::BeginDisabled();
-            if (ImGui::Button(L(Undo_ClearAll), ImVec2(0, 0))) {
+            if (aura::ui::ActionButton(L(Undo_ClearAll), ImVec2(0, 0), aura::ui::ButtonVariant::Danger)) {
                 state.undoStack.clear();
             }
             if (state.undoStack.undoCount() == 0) ImGui::EndDisabled();
@@ -36626,7 +36942,7 @@ void RenderUI(AppState& state) {
                 SaveAppSettings(state);
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Main_RestorePresetBtn))) {
+            if (aura::ui::ActionButton(L(Main_RestorePresetBtn))) {
                 ApplyShortcutPreset(ShortcutPreset::ProTools);
                 currentPreset = 0;
                 SaveAppSettings(state);
@@ -36850,7 +37166,7 @@ void RenderUI(AppState& state) {
         ImGui::Spacing();
 
         // Reset to defaults button
-        if (ImGui::Button(L(Main_RestoreDefaultsBtn), ImVec2(130, 0))) {
+        if (aura::ui::ActionButton(L(Main_RestoreDefaultsBtn), ImVec2(130, 0))) {
             // Clear all custom key bindings
             for (int i = 0; i < SHORTCUT_COUNT; i++) {
                 g_shortcuts[i].customKey = KeyBinding();  // Reset to empty (use default)
@@ -36862,7 +37178,7 @@ void RenderUI(AppState& state) {
         }
 
         ImGui::SameLine();
-        if (ImGui::Button(L(Close), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Close), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             recordingShortcutIndex = -1;
             s_shortcutsWindowOpen = false;
         }
@@ -36962,7 +37278,7 @@ void RenderUI(AppState& state) {
         ImGui::Text(L(Main_DelCoverNote));
         ImGui::Separator();
 
-        if (ImGui::Button(L(Delete), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Delete), ImVec2(120, 0), aura::ui::ButtonVariant::Danger)) {
             // Remove per-file so we can persist exact successes
             std::vector<std::string> succeeded;
             succeeded.reserve(state.coverRemovePaths.size());
@@ -36995,7 +37311,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             state.coverRemoveIds.clear();
             state.coverRemovePaths.clear();
             ImGui::CloseCurrentPopup();
@@ -37026,12 +37342,12 @@ void RenderUI(AppState& state) {
         ImGui::TextUnformatted(L(Main_WriteOriginalAudioNote));
         ImGui::Separator();
 
-        if (ImGui::Button(L(OK), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ApplyPendingOriginalAudioWrite(state);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(Cancel), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(Cancel), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             ClearPendingOriginalAudioWrite(state);
             ImGui::CloseCurrentPopup();
         }
@@ -37083,7 +37399,6 @@ void RenderUI(AppState& state) {
             state.folderFilterActive = true;
             // T2.6: pending folder 入口 canonical
             state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
-            ClearSpecificCoverKeyFilter(state);
             state.viewMode = ViewMode::Database;
             state.preferDeferredCountForNextRefresh = true;
 
@@ -37100,7 +37415,8 @@ void RenderUI(AppState& state) {
         auto pending = state.memoryBudget->getAndClearPendingEvicted();
         for (const auto& [t, e] : pending) {
             if (t == MemoryBudget::CacheType::Waveform) {
-                ReleaseWaveformEvictedEntry(state, e.key);
+                ReleaseWaveformEvictedEntry(state, e.key,
+                    MiniWaveformPresentation::Removal::BudgetEviction);
             } else if (t == MemoryBudget::CacheType::Cover) {
                 CoverModule::ReleaseCoverEvictedEntry(e.key);
             }
@@ -37211,7 +37527,7 @@ void RenderUI(AppState& state) {
                 ImGui::EndDisabled();
                 if (g_selectedWaveformRebuildWorkflow.currentFileTaskActive()) {
                     ImGui::TextUnformatted(L(Main_RebuildingWaveform));
-                    if (ImGui::SmallButton(L(Main_CancelCurrentRebuildBtn))) {
+                    if (aura::ui::SmallActionButton(L(Main_CancelCurrentRebuildBtn), aura::ui::ButtonVariant::Quiet)) {
                         state.waveformWorker.cancelAllPending();
                         g_selectedWaveformRebuildWorkflow.cancel();
                         ShowCurrentFileWaveformRebuildToast(state);
@@ -37243,7 +37559,7 @@ void RenderUI(AppState& state) {
                         snprintf(buf, sizeof(buf), u8"%lld / %lld",
                                  (long long)displayProgress, (long long)state.waveformRebuildTotal);
                     DrawUnifiedProgressBar(prog, ImVec2(-1, 0), buf);
-                    if (ImGui::SmallButton(L(Main_CancelRebuildBtn))) state.waveformRebuildCancel = true;
+                    if (aura::ui::SmallActionButton(L(Main_CancelRebuildBtn), aura::ui::ButtonVariant::Quiet)) state.waveformRebuildCancel = true;
                 }
             }
 
@@ -37467,8 +37783,6 @@ void RenderUI(AppState& state) {
             if (ImGui::MenuItem(L(Refresh), GetShortcutString(ShortcutAction::Refresh).c_str())) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database) {
-                    // Show All：清除所有筛选条件并重新加载全部
-                    ClearAllFiltersForShowAll(state);
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
                     RefreshSearchResults(state, true);
@@ -37858,10 +38172,6 @@ void RenderUI(AppState& state) {
             if (ImGui::MenuItem(L(Main_MenuUpdateCenter))) {
                 state.showUpdateCenter = true;
             }
-            if (ImGui::MenuItem(L(Main_MenuUpdateChangelog))) {
-                LoadReleaseNotesFromExeDir(true);
-                g_releaseNotesUiState.wantOpen = true;
-            }
             const bool feedbackUiEnabled = CueviFeedback::IsUiEntryEnabled(BuildCueviFeedbackConfig());
             if (feedbackUiEnabled) {
             ImGui::Separator();
@@ -38002,18 +38312,28 @@ void RenderUI(AppState& state) {
     const bool leftDockSlotRequired = showLeftColumn || leftRegionRoot != nullptr;
     const bool rightDockSlotRequired = showRightColumn || rightRegionRoot != nullptr;
 
-    // Top and bottom Dock bands participate in the vertical budget. Each band
-    // reads the matching Filter/File Info dockedHeight so the persisted control
-    // is actually consumed, not just written.
-    const aura::ui::dock::DockBandReserve dockBandReserve =
-        aura::ui::dock::ResolveDockBandReserve(
-            g_dockLayout, state.panelSidebar.dockedHeight,
-            state.panelFileInfo.dockedHeight,
-            std::clamp(mainWorkH * 0.20f, 96.0f, 240.0f));
-    const float topDockBandHeight = dockBandReserve.top;
-    const float bottomDockBandHeight = dockBandReserve.bottom;
-    const float topDockReserve = topDockBandHeight > 0.0f ? topDockBandHeight : 0.0f;
-    const float bottomDockReserve = bottomDockBandHeight > 0.0f ? bottomDockBandHeight : 0.0f;
+    const auto dockBandHeightOwner = [&](aura::ui::dock::DockSide side) -> float* {
+        struct Entry { const char* id; PanelState* panel; };
+        const Entry entries[] = {{"filter", &state.panelSidebar}, {"info", &state.panelFileInfo},
+            {"similar-sounds", &state.panelSimilarSounds}, {"search-results", &g_searchResultsDockPanel},
+            {"mod-ucs-browser", &state.panelUCSBrowser}, {"mod-tag-browser", &state.panelTagBrowser},
+            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer}};
+        for (const auto& entry : entries)
+            if (moduleDockedInRegion(entry.id, side)) return &entry.panel->dockedHeight;
+        return nullptr;
+    };
+    const auto dockSavedHeight = [&](std::string_view id) {
+        if (id == "filter") return state.panelSidebar.dockedHeight;
+        if (id == "info") return state.panelFileInfo.dockedHeight;
+        if (id == "similar-sounds") return state.panelSimilarSounds.dockedHeight;
+        if (id == "search-results") return g_searchResultsDockPanel.dockedHeight;
+        if (id == "mod-ucs-browser") return state.panelUCSBrowser.dockedHeight;
+        if (id == "mod-tag-browser") return state.panelTagBrowser.dockedHeight;
+        if (id == "mod-workflow") return state.panelWorkflow.dockedHeight;
+        if (id == "mod-transfer") return state.panelTransfer.dockedHeight;
+        return 0.0f;
+    };
+    const float dockBandSplitter = aura::ui::dock::kDockBandSplitterHeight;
 
     // The waveform remains rendered by the fixed legacy workspace band; it is
     // deliberately absent from the Dock tree and from all Dock split math.
@@ -38071,7 +38391,7 @@ void RenderUI(AppState& state) {
         : 0.0f;
     const float requestedRightDockWidth = rightDockSlotRequired
         ? (showRightColumn ? rightPanelWidth
-                           : std::clamp(state.panelSimilarSounds.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
+                           : std::clamp(state.panelFileInfo.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
         : 0.0f;
     const aura::ui::dock::DockColumnBudget dockColumnBudget =
         aura::ui::dock::ResolveDockColumnBudget(
@@ -38141,7 +38461,7 @@ void RenderUI(AppState& state) {
             ? uiWithAlpha(toolbarTheme.historyCapsuleBG, 1.0f)
             : uiWithAlpha(uiMix(uiMix(uiColors[ImGuiCol_FrameBg], toolbarTheme.toolbarBG, 0.34f), kToolbarSearchCue, 0.06f), 1.0f);
         const ImVec4 kToolbarSearchBorder = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(toolbarTheme.chromeBorder, 0.72f)
+            ? uiWithAlpha(toolbarTheme.chromeBorder, 1.0f)
             : uiWithAlpha(uiMix(kToolbarSearchCue, uiColors[ImGuiCol_Border], 0.18f), 0.34f);
         auto drawToolbarGlassTag = [&](const char* text, float anchorY, const ImVec4& tint, const ImVec4& textColor) {
             ImDrawList* chipDl = ImGui::GetWindowDrawList();
@@ -38459,6 +38779,19 @@ void RenderUI(AppState& state) {
                         state.filterQueryState = FilterQueryState::Idle;
                 }
             }
+            static bool searchHintHidden = false;
+            static bool hasSearchInputRect = false;
+            static ImVec2 searchInputRectMin(0.0f, 0.0f);
+            static ImVec2 searchInputRectMax(0.0f, 0.0f);
+            const bool searchFocusRequested = state.searchSuggestRequestFocus || state.focusSearchBar;
+            bool searchClickStarting = false;
+            if (hasSearchInputRect && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                const ImVec2 mouse = ImGui::GetMousePos();
+                searchClickStarting = mouse.x >= searchInputRectMin.x && mouse.x < searchInputRectMax.x
+                    && mouse.y >= searchInputRectMin.y && mouse.y < searchInputRectMax.y;
+            }
+            const bool hideSearchPlaceholder = searchHintHidden || searchClickStarting || searchFocusRequested;
+
             if (state.searchSuggestRequestFocus) {
                 if (!state.searchSuggestPendingText.empty()) {
                     strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), state.searchSuggestPendingText.c_str(), _TRUNCATE);
@@ -38503,7 +38836,9 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Border, kUseLightSoftChromeTheme
                     ? kLightSoftBorder
                     : kToolbarSearchBorder); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_TextDisabled, kUseLightSoftChromeTheme ? kLightSoftHintText : kToolbarSearchHintText); colorPushes++;
+                ImGui::PushStyleColor(ImGuiCol_TextDisabled, hideSearchPlaceholder
+                    ? ImVec4(0, 0, 0, 0)
+                    : (kUseLightSoftChromeTheme ? kLightSoftHintText : kToolbarSearchHintText)); colorPushes++;
             }
 
             // Reclaim search focus after popup input.
@@ -38532,6 +38867,10 @@ void RenderUI(AppState& state) {
             g_searchBarFocusedForShortcuts = searchFocused;
             searchRectMin = ImGui::GetItemRectMin();
             searchRectMax = ImGui::GetItemRectMax();
+            searchHintHidden = searchFocused;
+            searchInputRectMin = searchRectMin;
+            searchInputRectMax = searchRectMax;
+            hasSearchInputRect = true;
             if (ThemeInspector::IsCollecting()) {
                 ThemeInspector::RegisterZone(searchRectMin, searchRectMax, "searchButtonBG", L(ThemeCol_searchButtonBG));
             }
@@ -38646,14 +38985,15 @@ void RenderUI(AppState& state) {
                 (ThemeColors::current().modeCapsuleBG.x +
                  ThemeColors::current().modeCapsuleBG.y +
                  ThemeColors::current().modeCapsuleBG.z) > 2.10f;
+            const bool layeredNavyNav = state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized();
             const ImU32 navShellCol = useSoftNavChrome
-                ? ImGui::GetColorU32(uiWithAlpha(ThemeColors::current().modeCapsuleBG, 0.92f))
+                ? ImGui::GetColorU32(uiWithAlpha(ThemeColors::current().modeCapsuleBG, layeredNavyNav ? 1.0f : 0.92f))
                 : IM_COL32(18, 24, 38, 215);
             const ImU32 navActiveBgCol = useSoftNavChrome
-                ? ImGui::GetColorU32(uiWithAlpha(uiMix(ThemeColors::current().modeCapsuleActiveBG, kToolbarAccent, 0.12f), 0.98f))
+                ? ImGui::GetColorU32(layeredNavyNav ? ThemeColors::current().modeCapsuleActiveBG : uiWithAlpha(uiMix(ThemeColors::current().modeCapsuleActiveBG, kToolbarAccent, 0.12f), 0.98f))
                 : IM_COL32(255, 255, 255, 245);
             const ImU32 navActiveHoverBgCol = useSoftNavChrome
-                ? ImGui::GetColorU32(uiWithAlpha(uiMix(uiColors[ImGuiCol_TabHovered], uiColors[ImGuiCol_WindowBg], 0.66f), 0.98f))
+                ? ImGui::GetColorU32(layeredNavyNav ? ThemeColors::current().resultsTabHover : uiWithAlpha(uiMix(uiColors[ImGuiCol_TabHovered], uiColors[ImGuiCol_WindowBg], 0.66f), 0.98f))
                 : IM_COL32(240, 244, 255, 252);
             const ImU32 navActiveShadowCol = useSoftNavChrome
                 ? ImGui::GetColorU32(uiWithAlpha(uiMix(uiColors[ImGuiCol_Border], uiColors[ImGuiCol_WindowBg], 0.10f), isLightModeCapsuleTheme ? 0.08f : 0.20f))
@@ -38791,6 +39131,14 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorScreenPos(itemMin);
                 char btnId[32]; snprintf(btnId, sizeof(btnId), "##NavItem%d", i);
                 ImGui::InvisibleButton(btnId, ImVec2(itemWidths[i], innerH));
+#if ARIS_PREVIEW_ISOLATION
+                if (i == 4) {
+                    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                    state.qaFilterUiRects["refresh"] = ImVec4(
+                        itemMin.x - origin.x, itemMin.y - origin.y,
+                        itemMax.x - origin.x, itemMax.y - origin.y);
+                }
+#endif
                 ThemeInspector::RegisterLastItem(navZoneKeys[i], navItems[i].label, "src/main.cpp:42813");
                 navHovered[i] = ImGui::IsItemHovered();
                 navClicked[i] = ImGui::IsItemClicked(ImGuiMouseButton_Left);
@@ -39000,7 +39348,6 @@ void RenderUI(AppState& state) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database ||
                     IsPlaylistSystemView(state.viewMode)) {
-                    if (state.viewMode == ViewMode::Database) ClearAllFiltersForShowAll(state);
                     if (state.viewMode == ViewMode::Database) {
                         aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                         state.suppressFacetsForNextRefresh = true;
@@ -39384,8 +39731,6 @@ void RenderUI(AppState& state) {
                 state.searchSuggestRequestFocus = true; // 下一帧重新夺回光标焦点
             }
 
-            state.lastAppliedSearchText = textToSearch;
-
             state.clearPendingWaveforms();
 
             // 文件浏览器模式：输入的是有效路径则导航过去，否则留在浏览器不切模式
@@ -39404,7 +39749,7 @@ void RenderUI(AppState& state) {
                 // 非路径输入：不做搜索也不切模式，保持浏览器
             } else {
                 if (!rejectInvalidSlashSearch(textToSearch)) {
-                    ClearPathAndCoverFiltersForNewSearch(state);
+                    state.lastAppliedSearchText = textToSearch;
                     KeepPlaylistSearchScopeOrEnterDatabase(state);
                     RefreshSearchResults(state, true);
                 }
@@ -39433,10 +39778,9 @@ void RenderUI(AppState& state) {
             // Track the applied text from searchBuffer, the filter's actual source.
             // 而不是 lastSearchSubmitted（可能因用户继续打字而过时），消除去重逻辑失配
             std::string debouncedSearch(state.searchBuffer);
-            state.lastAppliedSearchText = debouncedSearch;
             state.clearPendingWaveforms();
             if (!rejectInvalidSlashSearch(debouncedSearch)) {
-                ClearPathAndCoverFiltersForNewSearch(state);
+                state.lastAppliedSearchText = debouncedSearch;
                 DIAG_ACTION("Search", "KeywordSearch");
 
                 // 百万库场景下，实时搜索只刷新结果，不自动加载/播放第一条。
@@ -39699,20 +40043,50 @@ void RenderUI(AppState& state) {
     // bar could be pushed into the parent clip rect and appear cut off.
     const bool showDockedWaveform = state.panelWaveform.visible && !state.panelWaveform.floating && !layoutVeryShortHeight;
     const float waveformSplitterReserve = showDockedWaveform ? 6.0f : 0.0f;
-    const bool hasBottomDockRegion =
-        g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom) != nullptr;
     const float startupListOffsetReserve = 15.0f * (1.0f - t);
     const float startupWaveformOffsetReserve =
         showDockedWaveform ? 40.0f * (1.0f - t) : 0.0f;
     const float reservedStatusBarHeight = showDockedWaveform ? 0.0f : statusBarHeight;
     const float statusBottomLayoutReserve =
         showDockedWaveform ? 0.0f : std::max(2.0f, ImGui::GetStyle().FramePadding.y + 1.0f);
-    float fixedOverhead = toolbarHeight + menuBarHeight + reservedStatusBarHeight +
-                          waveformSplitterReserve + topDockReserve + bottomDockReserve +
-                          statusBottomLayoutReserve + startupListOffsetReserve +
-                          startupWaveformOffsetReserve + 13.0f;
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
-    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f, mainWorkH - fixedOverhead - minContentHeight);
+    const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? 36.0f : 0.0f;
+    const float baseOverhead = toolbarHeight + menuBarHeight + reservedStatusBarHeight +
+        waveformSplitterReserve + statusBottomLayoutReserve + startupListOffsetReserve +
+        startupWaveformOffsetReserve + 13.0f;
+    const float minimumWaveform = showDockedWaveform ? (layoutShortHeight ? 96.0f : 150.0f) : 0.0f;
+    const float bandCenterWidth = std::max(1.0f, mainWorkW -
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
+        (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f));
+    const auto dockBandReserve = aura::ui::dock::ResolveDockBandReserve(
+        g_dockLayout, dockSavedHeight, std::clamp(mainWorkH * .20f, 96.0f, 240.0f),
+        viewport->DpiScale, mainWorkH - baseOverhead - playlistQuickBarHeight - minimumWaveform,
+        bandCenterWidth, minContentHeight);
+    const auto floatOverflowBand = [&](aura::ui::dock::DockSide side, bool overflow) {
+        if (!overflow) return;
+        struct Entry { const char* id; PanelState* panel; };
+        const Entry entries[] = {{"filter", &state.panelSidebar}, {"info", &state.panelFileInfo},
+            {"similar-sounds", &state.panelSimilarSounds}, {"search-results", &g_searchResultsDockPanel},
+            {"mod-ucs-browser", &state.panelUCSBrowser}, {"mod-tag-browser", &state.panelTagBrowser},
+            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer}};
+        for (const auto& entry : entries) {
+            if (!moduleDockedInRegion(entry.id, side)) continue;
+            auto& panel = *entry.panel;
+            const auto minimum = aura::ui::dock::DockModuleMinimum(entry.id, viewport->DpiScale);
+            if (FloatDockedPanel(entry.id, panel, {panel.floatX, panel.floatY,
+                    std::max(panel.floatW, minimum.width), std::max(panel.floatH, minimum.height)}))
+                state.settingsDirty = true;
+        }
+    };
+    floatOverflowBand(aura::ui::dock::DockSide::Bottom, dockBandReserve.floatBottom);
+    floatOverflowBand(aura::ui::dock::DockSide::Top, dockBandReserve.floatTop);
+    const float topDockBandHeight = dockBandReserve.top;
+    const float bottomDockBandHeight = dockBandReserve.bottom;
+    const float topDockReserve = topDockBandHeight > 0.0f ? topDockBandHeight + dockBandSplitter : 0.0f;
+    const float bottomDockReserve = bottomDockBandHeight > 0.0f ? bottomDockBandHeight + dockBandSplitter : 0.0f;
+    float fixedOverhead = baseOverhead + topDockReserve + bottomDockReserve;
+    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f,
+        mainWorkH - fixedOverhead - playlistQuickBarHeight - minContentHeight);
     const float minWaveformH = 96.0f;
     float waveformPanelHeight = 0.0f;
     if (showDockedWaveform) {
@@ -39721,7 +40095,6 @@ void RenderUI(AppState& state) {
             : state.panelWaveform.dockedHeight;
         waveformPanelHeight = std::min(desiredWaveformH, maxWaveformH);
     }
-    const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? 36.0f : 0.0f;
     const float waveBandHeight = waveformPanelHeight + playlistQuickBarHeight;
     float totalFixedHeight = fixedOverhead + waveformPanelHeight + playlistQuickBarHeight;
     float availHeight = mainWorkH - totalFixedHeight;
@@ -39734,9 +40107,8 @@ void RenderUI(AppState& state) {
     // shell and its outer splitter lag one frame behind a ratio/visibility change.
     const float dockColumnTop = ImGui::GetMainViewport()->WorkPos.y + menuBarHeight + toolbarHeight;
     const float dockContentTop = dockColumnTop + topDockReserve;
-    if (topDockReserve > 0.0f) {
-        ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x, dockContentTop));
-    }
+    const float sideColumnHeight = availHeight + topDockReserve + bottomDockReserve;
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x, dockColumnTop));
     auto refreshDockLeafGeometry = [&](const aura::ui::dock::DockNode* root,
                                        const aura::ui::dock::DockRect& slot,
                                        const char* id,
@@ -39759,7 +40131,7 @@ void RenderUI(AppState& state) {
     if (leftRegionSplit) {
         refreshDockLeafGeometry(
             leftRegionRoot,
-            {viewport->WorkPos.x, dockContentTop, leftPanelWidth, availHeight},
+            {viewport->WorkPos.x, dockColumnTop, leftPanelWidth, sideColumnHeight},
             "filter", filterLeafWidth, filterLeafHeight, filterLeafX, filterLeafY);
         filterShellWidth = aura::ui::dock::DockFilterShellWidth(
             true, leftPanelWidth, filterLeafWidth, leftSidebarMinWidth, leftSidebarMaxWidth);
@@ -39767,23 +40139,25 @@ void RenderUI(AppState& state) {
     if (rightRegionSplit) {
         refreshDockLeafGeometry(
             rightRegionRoot,
-            {viewport->WorkPos.x + mainWorkW - rightPanelWidth, dockContentTop, rightPanelWidth, availHeight},
+            {viewport->WorkPos.x + mainWorkW - rightPanelWidth, dockColumnTop, rightPanelWidth, sideColumnHeight},
             "info", infoLeafWidth, infoLeafHeight, infoLeafX, infoLeafY);
         infoShellWidth = aura::ui::dock::DockFilterShellWidth(
             true, rightPanelWidth, infoLeafWidth, rightPanelMinWidth, std::max(rightPanelMaxWidth, rightPanelWidth));
     }
     const aura::ui::dock::DockRect filterDockedRect{
         leftRegionSplit ? filterLeafX : viewport->WorkPos.x,
-        leftRegionSplit ? filterLeafY : dockContentTop,
+        leftRegionSplit ? filterLeafY : dockColumnTop,
         leftRegionSplit ? filterLeafWidth : leftPanelWidth,
-        leftRegionSplit ? filterLeafHeight : availHeight};
+        leftRegionSplit ? filterLeafHeight : sideColumnHeight};
     const aura::ui::dock::DockRect infoDockedRect{
         rightRegionSplit ? infoLeafX : viewport->WorkPos.x + mainWorkW - rightPanelWidth,
-        rightRegionSplit ? infoLeafY : dockContentTop,
+        rightRegionSplit ? infoLeafY : dockColumnTop,
         rightRegionSplit ? infoLeafWidth : rightPanelWidth,
-        rightRegionSplit ? infoLeafHeight : availHeight};
+        rightRegionSplit ? infoLeafHeight : sideColumnHeight};
 
-    const ImU32 kTitleText = ImGui::GetColorU32(ThemeColors::peerPanelHeading(ThemeColors::current()));
+    const ImU32 kTitleText = ImGui::GetColorU32(state.settings.theme == AppTheme::LapisBlue
+        ? ThemeColors::current().interfaceText
+        : ThemeColors::peerPanelHeading(ThemeColors::current()));
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
 
@@ -39851,6 +40225,9 @@ void RenderUI(AppState& state) {
         const aura::ui::workspace::ModuleWindowShellVisual shellVisual =
             aura::ui::workspace::ResolveModuleWindowShellVisual(workspacePalette, shellState);
         const bool isLightBody = (bodyBg.x + bodyBg.y + bodyBg.z) > 2.10f;
+        const ImVec4 moduleEdge = state.settings.theme == AppTheme::LapisBlue
+            ? (isLightBody ? kCurrentTheme.filterBrowserOutline : kCurrentTheme.chromeBorder)
+            : shellVisual.borderColor;
         const ImVec4 kLegacyDockShellSurface = uiWithAlpha(
             uiMix(
                 uiMix(bodyBg, kCurrentTheme.mainWindowBG, isLightBody ? 0.34f : 0.22f),
@@ -39890,7 +40267,7 @@ void RenderUI(AppState& state) {
         dl->AddRect(
             ImVec2(layout.shellMin.x + 0.5f, layout.shellMin.y + 0.5f),
             ImVec2(layout.shellMax.x - 0.5f, layout.shellMax.y - 0.5f),
-            ImGui::GetColorU32(shellVisual.borderColor),
+            ImGui::GetColorU32(moduleEdge),
             kFilterInfoShellRadius,
             shellRoundFlags,
             aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
@@ -39899,120 +40276,34 @@ void RenderUI(AppState& state) {
 
     // The Info title actions belong to the module shell, so they must be
     // rendered by both the legacy right column and every Dock tree leaf.
-    // Keep a fixed reserve so the drag hit area cannot cover either button.
-    constexpr float kInfoTitleActionsWidth = 48.0f;
+    // Reserve the actual row width so title dragging cannot cover its buttons.
     auto drawFileInfoTitleActions = [&](AppState& infoState,
                                         const DockModuleShellLayout& shell,
-                                        ImDrawList* infoDl) {
-        const float iconBtnSize = 18.0f;
-        const float iconPad = 4.0f;
-        const float editIconX = shell.insetL + shell.shellWidth - iconBtnSize - iconPad - 2.0f;
-        const float similarIconX = editIconX - iconBtnSize - 2.0f;
-        const float iconY = (shell.titleHeight - iconBtnSize) * 0.5f;
+                                        float pageOffsetY) {
+        const float pageAvailableWidth = shell.shellWidth - 28.0f;
+        const float pageWidth = FileInfoPageActionsWidth(infoState, pageAvailableWidth);
+        if (RenderFileInfoPageActions(infoState,
+                ImVec2(shell.insetL + shell.shellWidth - 6.0f - pageWidth, pageOffsetY),
+                shell.titleHeight, pageAvailableWidth)) {
+            aura::ui::OpenSimilarSoundsWindow(infoState);
+        }
+        return 6.0f + pageWidth;
+    };
 
-        const bool canEdit = (infoState.currentFileId > 0);
-        const bool isEditing = infoState.metadataEditMode;
-        const auto& panelTheme = ThemeColors::current();
-        const ImVec4 panelBg = ThemeColors::infoPanelDockBG(panelTheme);
-        const ImVec4 iconBase = uiMix(panelTheme.metadataPanelText, panelBg, 0.30f);
-        const ImVec4 iconActive = uiMix(panelTheme.metadataPanelText, COLOR_ACCENT, 0.20f);
-        const ImVec4 iconHover = uiMix(panelTheme.metadataPanelText, COLOR_ACCENT, 0.34f);
-        const ImU32 iconColor = isEditing
-            ? ImGui::GetColorU32(uiWithAlpha(iconActive, 0.92f))
-            : canEdit
-                ? ImGui::GetColorU32(uiWithAlpha(iconBase, 0.72f))
-                : ImGui::GetColorU32(uiWithAlpha(uiMix(iconBase, panelBg, 0.40f), 0.34f));
-        const ImU32 iconHoverColor = ImGui::GetColorU32(uiWithAlpha(iconHover, 0.98f));
-
-        ImGui::SetCursorPos(ImVec2(similarIconX, iconY));
-        ImGui::PushID("##InfoSimilarSoundsIcon");
-        ImGui::PushStyleColor(ImGuiCol_Button, uiWithAlpha(panelBg, 0.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.18f), 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.28f), 0.82f));
-        const bool similarClicked = ImGui::Button("##similarSoundsBtn", ImVec2(iconBtnSize, iconBtnSize));
-        const bool similarHovered = ImGui::IsItemHovered();
-        ImGui::PopStyleColor(3);
-        {
-            const ImVec2 btnMin = ImGui::GetItemRectMin();
-            const float s = iconBtnSize;
-            const float cx = btnMin.x + s * 0.5f;
-            const float cy = btnMin.y + s * 0.5f;
-            const ImU32 col = similarHovered ? iconHoverColor : ImGui::GetColorU32(uiWithAlpha(iconBase, 0.72f));
-            const ImVec2 points[] = {
-                ImVec2(cx - s * 0.32f, cy),
-                ImVec2(cx - s * 0.18f, cy - s * 0.22f),
-                ImVec2(cx - s * 0.03f, cy + s * 0.28f),
-                ImVec2(cx + s * 0.12f, cy - s * 0.32f),
-                ImVec2(cx + s * 0.28f, cy + s * 0.08f)
-            };
-            infoDl->AddPolyline(points, IM_ARRAYSIZE(points), col, ImDrawFlags_None, 1.4f);
-        }
-        if (similarClicked) aura::ui::OpenSimilarSoundsWindow(infoState);
-        if (similarHovered) aura::ui::Tooltip(L(Similar_OpenTooltip));
-        ImGui::PopID();
-
-        ImGui::SetCursorPos(ImVec2(editIconX, iconY));
-        ImGui::PushID("##InfoEditMetaIcon");
-        if (!canEdit && !isEditing) ImGui::BeginDisabled();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.18f), 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-            uiWithAlpha(uiMix(panelBg, ThemeColors::infoPanelAccent(panelTheme), 0.28f), 0.82f));
-        const bool editClicked = ImGui::Button("##editMetaBtn", ImVec2(iconBtnSize, iconBtnSize));
-        const bool editHovered = ImGui::IsItemHovered();
-        ImGui::PopStyleColor(3);
-        {
-            const ImVec2 btnMin = ImGui::GetItemRectMin();
-            const float s = iconBtnSize;
-            const float cx = btnMin.x + s * 0.5f;
-            const float cy = btnMin.y + s * 0.5f;
-            const ImU32 col = editHovered ? iconHoverColor : iconColor;
-            const float thick = 1.4f;
-            const ImVec2 p0(cx + s * 0.28f, cy - s * 0.28f);
-            const ImVec2 p1(cx - s * 0.18f, cy + s * 0.18f);
-            infoDl->AddLine(p0, p1, col, thick);
-            infoDl->AddLine(p1, ImVec2(cx - s * 0.32f, cy + s * 0.32f), col, thick);
-            infoDl->AddLine(ImVec2(cx + s * 0.20f, cy - s * 0.36f),
-                            ImVec2(cx + s * 0.36f, cy - s * 0.20f), col, thick);
-        }
-        if (editClicked) {
-            if (isEditing) {
-                infoState.metadataEditMode = false;
-                infoState.metadataBatchMode = false;
-                infoState.metadataBatchIds.clear();
-            } else if (canEdit) {
-                const bool isMultiSelect = infoState.selectedIndicesSet.size() > 1;
-                infoState.metadataEditMode = true;
-                if (isMultiSelect) {
-                    infoState.metadataBatchMode = true;
-                    infoState.metadataBatchIds.clear();
-                    for (int idx : infoState.selectedIndicesSet) {
-                        if (idx >= 0 && idx < (int)infoState.searchResults.size())
-                            infoState.metadataBatchIds.push_back(infoState.searchResults[idx].id);
-                    }
-                    infoState.metadataDescBuffer[0] = '\0';
-                    infoState.metadataKeywordsBuffer[0] = '\0';
-                    infoState.metadataCategoryBuffer[0] = '\0';
-                } else {
-                    infoState.metadataBatchMode = false;
-                    infoState.metadataEditFileId = infoState.currentFileId;
-                    AudioRecord rec = infoState.database.getFileById(infoState.currentFileId);
-                    strncpy_s(infoState.metadataDescBuffer, sizeof(infoState.metadataDescBuffer), rec.description.c_str(), _TRUNCATE);
-                    strncpy_s(infoState.metadataKeywordsBuffer, sizeof(infoState.metadataKeywordsBuffer), rec.keywords.c_str(), _TRUNCATE);
-                    strncpy_s(infoState.metadataCategoryBuffer, sizeof(infoState.metadataCategoryBuffer), rec.category.c_str(), _TRUNCATE);
-                }
-            }
-        }
-        if (editHovered) {
-            const char* tip = isEditing ? L(Info_ExitEditMode)
-                : (infoState.selectedIndicesSet.size() > 1 ? L(Info_BatchEditMetadata) : L(Info_EditMetadata));
-            HarkenSearch::SetTooltip("%s", tip);
-        }
-        if (!canEdit && !isEditing) ImGui::EndDisabled();
-        ImGui::PopID();
+    auto drawFloatingInfoTitleActions = [&]() {
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        const ImRect title = window->TitleBarRect();
+        const ImVec2 saved = ImGui::GetCursorPos();
+        ThemeInspector::RegisterZone(ImVec2(title.Max.x-title.GetHeight(),title.Min.y),title.Max,
+            "info.close",L(Panel_Hide),"src/main.cpp");
+        DockModuleShellLayout shell;
+        shell.insetL = 0.0f;
+        shell.shellWidth = title.GetWidth() - title.GetHeight() - 4.0f;
+        shell.titleHeight = title.GetHeight();
+        ImGui::PushClipRect(title.Min, title.Max, false);
+        drawFileInfoTitleActions(state, shell, 0.0f);
+        ImGui::PopClipRect();
+        ImGui::SetCursorPos(saved);
     };
 
     auto pressDockTitle = [&](const char* moduleId, PanelState& panel,
@@ -40137,22 +40428,33 @@ void RenderUI(AppState& state) {
         // Keep the native title's move/close hit targets, but render one shell
         // using the filter's existing chrome instead of nesting a second shell.
         const DockModuleShellLayout shell;
+        const bool infoFamily = state.settings.theme != AppTheme::Custom &&
+            !state.settings.useCustomColors && !ThemeColors::customized() &&
+            (std::strcmp(moduleId, "info") == 0 ||
+             std::strcmp(moduleId, "similar-sounds") == 0);
+        const ImVec4 floatingTitleSurface = infoFamily
+            ? uiWithAlpha(workspaceDockTitleSurface, 1.0f) : workspaceDockTitleSurface;
+        const ImVec4 floatingTitleInk = infoFamily
+            ? TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(kTitleText),
+                floatingTitleSurface, 4.7)
+            : ImGui::ColorConvertU32ToFloat4(kTitleText);
         ImFont* emph = GetUIFontEmphasis();
         if (emph) ImGui::PushFont(emph);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
             ImVec2(8.0f, (std::max)(0.0f, (shell.titleHeight - ImGui::GetFontSize()) * 0.5f)));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowTitleAlign, ImVec2(0.0f, 0.5f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-            ImVec2(shell.insetL + shell.innerPad, shell.innerPad));
+            infoFamily ? ImVec2(8.0f, 8.0f) : ImVec2(shell.insetL + shell.innerPad, shell.innerPad));
         // Draw the one rounded perimeter below. Native viewport decorations
         // otherwise force their perimeter to square even with WindowRounding.
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleColor(ImGuiCol_WindowBg,
-            uiWithAlpha(ThemeColors::current().filterBrowserBG, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TitleBg, workspaceDockTitleSurface);
-        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, workspaceDockTitleSurface);
-        ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, workspaceDockTitleSurface);
-        ImGui::PushStyleColor(ImGuiCol_Text, kTitleText);
+            infoFamily ? ThemeColors::infoPanelDockBG(ThemeColors::current())
+                       : uiWithAlpha(ThemeColors::current().filterBrowserBG, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, floatingTitleSurface);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, floatingTitleSurface);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, floatingTitleSurface);
+        ImGui::PushStyleColor(ImGuiCol_Text, floatingTitleInk);
         ImGui::PushStyleColor(ImGuiCol_BorderShadow, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         ImGuiWindowFlags floatFlags = ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse;
@@ -40182,10 +40484,13 @@ void RenderUI(AppState& state) {
 #endif
             ImDrawList* shellDrawList = ImGui::GetWindowDrawList();
             shellDrawList->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), false);
+            const ImVec4 floatingEdge = infoFamily
+                ? ThemeColors::infoPanelDockEdge(ThemeColors::current())
+                : workspacePalette.perimeter;
             shellDrawList->AddRect(
                 ImVec2(pos.x + 0.5f, pos.y + 0.5f),
                 ImVec2(pos.x + size.x - 0.5f, pos.y + size.y - 0.5f),
-                ImGui::GetColorU32(workspacePalette.perimeter),
+                ImGui::GetColorU32(floatingEdge),
                 kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
                 aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
             shellDrawList->AddLine(
@@ -40301,6 +40606,8 @@ void RenderUI(AppState& state) {
                 uiMix(tcs.filterBrowserBG, tcs.mainWindowBG, 0.10f), 0.995f);
             ImGui::PushStyleColor(ImGuiCol_ChildBg,              leftPanelBg);
             ImGui::PushStyleColor(ImGuiCol_Text,                 leftPanelText);
+            ImGui::PushStyleColor(ImGuiCol_TextDisabled, state.settings.theme == AppTheme::LapisBlue
+                ? tcs.filterBrowserText : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             ImGui::PushStyleColor(ImGuiCol_Border,               leftPanelOutline);
             ImGui::PushStyleColor(ImGuiCol_PopupBg,              leftPanelPopupBg);
             ImGui::PushStyleColor(ImGuiCol_FrameBg,              leftPanelInput);
@@ -40327,7 +40634,7 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,       ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,     3.0f);
         const float leftColumnChildWidth = leftRegionSplit ? filterShellWidth : leftPanelWidth;
-        const float leftColumnChildHeight = leftRegionSplit ? std::max(1.0f, filterLeafHeight) : availHeight;
+        const float leftColumnChildHeight = leftRegionSplit ? std::max(1.0f, filterLeafHeight) : sideColumnHeight;
         if (leftRegionSplit) {
             ImGui::SetCursorScreenPos(ImVec2(filterLeafX, filterLeafY));
         }
@@ -40344,7 +40651,7 @@ void RenderUI(AppState& state) {
             const ImVec4 kWarmWhite = ImVec4(0.988f, 0.978f, 0.952f, 1.0f);
             const float leftPanelLift = isLightFilterTheme ? 0.09f : 0.055f;
             const ImVec4 leftPanelBg = uiWithAlpha(uiMix(uiMix(tcs.filterBrowserBG, kWarmWhite, leftPanelLift), tcs.mainWindowBG, 0.05f), 1.0f);
-            const float leftShellHeight = leftRegionSplit ? leftColumnChildHeight : availHeight;
+            const float leftShellHeight = leftRegionSplit ? leftColumnChildHeight : sideColumnHeight;
             const DockModuleShellLayout leftShell = drawDockModuleShell(
                 dl,
                 winPos,
@@ -40401,16 +40708,16 @@ void RenderUI(AppState& state) {
                 ImVec2(wp.x, wp.y), ImVec2(wp.x + 2.0f, wp.y + ws.y),
                 "filterBrowserOutline", L(ThemeCol_filterBrowserOutline));
         }
-        ImGui::PopStyleColor(20);  // filterBrowser* + FrameBg* + PopupBg + transient scrollbar track
+        ImGui::PopStyleColor(21);  // filterBrowser* + readable muted text + FrameBg* + PopupBg + transient scrollbar track
         ImGui::PopStyleVar(4); // FrameBorderSize + FramePadding + ItemSpacing + FrameRounding.
         ImGui::EndChild();
 
         // The child may render a nested Dock leaf at an offset position. Restore
         // the outer column edge before creating ##LeftSplitter so the legacy
         // splitter remains the owner of the whole left-column width.
-        ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + leftPanelWidth, dockContentTop));
+        ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
         if (!hideLeftSplitterInBrowser) {
-            VerticalSplitter("##LeftSplitter", &state.panelSidebar.dockedWidth, 120.0f, leftSidebarMaxWidth, availHeight);
+            VerticalSplitter("##LeftSplitter", &state.panelSidebar.dockedWidth, 120.0f, leftSidebarMaxWidth, sideColumnHeight);
             ImGui::SameLine(0, 0);
         }
     }
@@ -40421,10 +40728,9 @@ void RenderUI(AppState& state) {
     // A Dock root can outlive its legacy Filter/Info shell. Keep Results beside
     // that live root until its last leaf floats, then this frame budget returns
     // to zero on the next layout pass.
-    if (!showLeftColumn && leftDockSlotRequired) {
-        ImGui::SetCursorScreenPos(ImVec2(
-            viewport->WorkPos.x + leftDockColumnWidth + splitterWidth, dockContentTop));
-    }
+    ImGui::SetCursorScreenPos(ImVec2(
+        viewport->WorkPos.x + (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f),
+        dockContentTop));
     // Calculate available width for center panel
     float centerWidth = ImGui::GetContentRegionAvail().x;
     if (rightDockSlotRequired) centerWidth -= rightDockColumnWidth + splitterWidth;
@@ -40517,7 +40823,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleVar(ImGuiStyleVar_TabBorderSize, 0.0f);
         const bool useLightResultsTabs =
             (resultsTheme.resultsTabActive.x + resultsTheme.resultsTabActive.y + resultsTheme.resultsTabActive.z) > 1.80f;
-        const ImVec4 kListTabText = useLightResultsTabs
+        const ImVec4 kListTabText = state.settings.theme == AppTheme::LapisBlue
+            ? MistBlueChrome::ResultsTabText(resultsTheme) : useLightResultsTabs
             ? uiWithAlpha(uiMix(resultsTheme.resultsText, resultsTheme.chromeBorder, 0.18f), 0.995f)
             : uiWithAlpha(uiMix(resultsTheme.resultsText, resultsTheme.resultsSelection, 0.12f), 0.96f);
         ImGui::PushStyleColor(ImGuiCol_Text, kListTabText);
@@ -41208,7 +41515,7 @@ void RenderUI(AppState& state) {
                 const bool canSave = tabPresetNameBuf[0] != '\0' && !state.listTabs.empty()
                                      && (int)state.tabPresets.size() < AppState::kMaxTabPresets;
                 if (!canSave) ImGui::BeginDisabled();
-                if (ImGui::Button(L(Main_SavePresetBtn2))) {
+                if (aura::ui::ActionButton(L(Main_SavePresetBtn2))) {
                     int newIdx = state.saveTabPresetFromCurrent(std::string(tabPresetNameBuf));
                     if (newIdx >= 0) {
                         SaveAppSettings(state);
@@ -41348,7 +41655,7 @@ void RenderUI(AppState& state) {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
                         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.28f, 0.28f, 0.20f));
                         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.28f, 0.28f, 0.30f));
-                        if (ImGui::SmallButton(delTxt)) {
+                        if (aura::ui::SmallActionButton(delTxt, aura::ui::ButtonVariant::Danger)) {
                             deleteIdx = idx;
                         }
                         ImGui::PopStyleColor(4);
@@ -41365,7 +41672,7 @@ void RenderUI(AppState& state) {
                         PopupTitle(L(TabPresets_Load));
                         PopupMuted(L(TabPresets_SummaryFmt), curTabs, presetTabCount);
                         PopupDivider();
-                        if (ImGui::Button(L(Main_LoadPresetBtn2), ImVec2(80, 0))) {
+                        if (aura::ui::ActionButton(L(Main_LoadPresetBtn2), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                             if (pendingPresetLoadIndex >= 0) {
                                 state.syncToTab();
                                 if (state.loadTabPreset(pendingPresetLoadIndex)) {
@@ -41377,7 +41684,7 @@ void RenderUI(AppState& state) {
                             ImGui::CloseCurrentPopup();  // close outer ##TabPresets too
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button(L(Cancel), ImVec2(80, 0))) {
+                        if (aura::ui::ActionButton(L(Cancel), ImVec2(80, 0), aura::ui::ButtonVariant::Quiet)) {
                             pendingPresetLoadIndex = -1;
                             ImGui::CloseCurrentPopup();
                         }
@@ -41413,7 +41720,7 @@ void RenderUI(AppState& state) {
             if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
 
         ImGui::Separator();
-            if (ImGui::Button(L(OK), ImVec2(80, 0)) || enter) {
+            if (aura::ui::ActionButton(L(OK), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch) || enter) {
                 if (renamingTabIndex >= 0 && renamingTabIndex < (int)state.listTabs.size()) {
                     state.listTabs[renamingTabIndex].name = renameBuffer;
             }
@@ -41421,7 +41728,7 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(Cancel), ImVec2(80, 0))) {
+            if (aura::ui::ActionButton(L(Cancel), ImVec2(80, 0), aura::ui::ButtonVariant::Quiet)) {
                 renamingTabIndex = -1;
                 ImGui::CloseCurrentPopup();
             }
@@ -41470,7 +41777,7 @@ void RenderUI(AppState& state) {
 
             float openButtonWidth = ImGui::CalcTextSize(L(Open)).x + ImGui::GetStyle().FramePadding.x * 2.0f;
             ImGui::BeginDisabled(!canNavigateUp);
-            if (ImGui::Button(L(Filter_ParentDir))) {
+            if (aura::ui::ActionButton(L(Filter_ParentDir))) {
                 state.fileBrowser.navigateUp();
                 SyncBrowserPathBuffer(state);
             }
@@ -41525,7 +41832,7 @@ void RenderUI(AppState& state) {
             }
             ShowBrowserCurrentPathContextMenu(state, currentPath, canNavigateUp);
             ImGui::SameLine();
-            if (ImGui::Button(L(Open))) {
+            if (aura::ui::ActionButton(L(Open))) {
                 std::string folder = OpenFolderDialog(g_hwnd);
                 if (!folder.empty()) {
                     std::snprintf(state.browserPathBuffer, sizeof(state.browserPathBuffer), "%s", folder.c_str());
@@ -42150,6 +42457,19 @@ void RenderUI(AppState& state) {
                     ImGui::PushID((int)i);
                     std::string chipLabel = activeFilters[i].label + u8" ×";
                     bool chipClicked = ImGui::SmallButton(chipLabel.c_str());
+#if ARIS_PREVIEW_ISOLATION
+                    const char* qaChipKey = activeFilters[i].type == FilterChipType::CoverKey ? "chip_cover_key" :
+                        activeFilters[i].type == FilterChipType::CoverMode ? "chip_cover_mode" :
+                        activeFilters[i].type == FilterChipType::Folder ? "chip_folder" :
+                        activeFilters[i].type == FilterChipType::Keyword ? "chip_keyword" : nullptr;
+                    if (qaChipKey) {
+                        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                        const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                        state.qaFilterUiRects[qaChipKey] = ImVec4(
+                            min.x - origin.x, min.y - origin.y,
+                            max.x - origin.x, max.y - origin.y);
+                    }
+#endif
                     ImGui::PopID();
                     ImGui::PopStyleColor(3);
                     if (activeFilters[i].type == FilterChipType::ExcludeKeyword
@@ -42233,14 +42553,10 @@ void RenderUI(AppState& state) {
                                 state.coverFilterPath.clear();
                                 state.coverFilterMatchSig = 0;
                                 state.coverFilterMatchPaths.clear();
-                                state.coverFilterIndex = 0; // 同步清除封面模式过滤
+                                state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
                                 break;
                             case FilterChipType::CoverMode:
                                 state.coverFilterIndex = 0;
-                                state.coverFilterActive = false; // 同步清除封面 key 过滤
-                                state.coverFilterPath.clear();
-                                state.coverFilterMatchSig = 0;
-                                state.coverFilterMatchPaths.clear();
                                 break;
                             case FilterChipType::Category:
                                 state.categoryFilterBuffer[0] = '\0';
@@ -42292,6 +42608,15 @@ void RenderUI(AppState& state) {
                     RefreshSearchResults(state, true);
                     state.syncToTab();
                 }
+#if ARIS_PREVIEW_ISOLATION
+                {
+                    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                    const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                    state.qaFilterUiRects["clear_all"] = ImVec4(
+                        min.x - origin.x, min.y - origin.y,
+                        max.x - origin.x, max.y - origin.y);
+                }
+#endif
                 ImGui::PopStyleColor(3);
                 if (filterFont) ImGui::PopFont();
                 ImGui::PopStyleVar(3);
@@ -42303,12 +42628,8 @@ void RenderUI(AppState& state) {
 
 // File table with sortable columns
         const bool needsDbSetup =
+            state.viewMode != ViewMode::Browser &&
             state.startupNeedsDatabaseSetup && !state.database.isOpen();
-        const bool showEmptyResultsSurface =
-            !needsDbSetup && state.searchResults.empty() &&
-            !state.asyncSearchInProgress && !state.searchDebounce.isPending() &&
-            !(state.totalFileCount == 0);
-        constexpr float kEmptyResultsSurfaceHeight = 180.0f;
         ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
                                       ImGuiTableFlags_Hideable |
                                       ImGuiTableFlags_BordersOuter |
@@ -42365,9 +42686,7 @@ void RenderUI(AppState& state) {
             tableFlags &= ~ImGuiTableFlags_BordersOuter;
         constexpr float kResultsTableOuterBorder = kResultsPerimeterWidth;
 
-        if (needsDbSetup) {
-            RenderNoDatabaseSetupEmptyState(state);
-        } else {
+        if (!needsDbSetup) {
         // Results list background should follow the active theme tokens, not a fixed AppTheme branch.
         {
             ImDrawList* bg = ImGui::GetWindowDrawList();
@@ -42441,10 +42760,10 @@ void RenderUI(AppState& state) {
             ImGui::Dummy(ImVec2(availW, lineH));
             if (listFont) ImGui::PopFont();
         };
-        const ImVec2 fileTableOuterSize = showEmptyResultsSurface
-            ? ImVec2(0.0f, -kEmptyResultsSurfaceHeight)
-            : ImVec2(0.0f, 0.0f);
-        ImVec2 adjustedFileTableOuterSize = fileTableOuterSize;
+        // UX #109 follow-up (TASK-20261028-NO-EMPTY-SURFACE): the standalone
+        // empty-results surface was removed at the user's request, so the
+        // results table keeps its full height even with zero rows.
+        ImVec2 adjustedFileTableOuterSize = ImVec2(0.0f, 0.0f);
         if (emptyLibraryFileTable) {
             // Dropping BordersOuter would otherwise let the header fill to the independent frame.
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kResultsTableOuterBorder);
@@ -43286,11 +43605,56 @@ void RenderUI(AppState& state) {
                                 }
                             }
                         } else {
-                            // 占位符：仅用 Dummy 保持列宽，不画背景框
                             ImVec2 pos = ImGui::GetCursorScreenPos();
-                            ImGui::Dummy(ImVec2(waveWidth, waveHeight));
-                            float cy = pos.y + waveHeight / 2.0f;
-                            ImGui::GetWindowDrawList()->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + waveWidth, cy), IM_COL32(50, 50, 55, 60));
+                            MiniWaveTextureEntry retained;
+                            const bool hasRetained = GetRetainedMiniWaveTexture(entry.fullPath, retained);
+                            if (MiniWaveformPresentation::Choose(false, hasRetained) ==
+                                MiniWaveformPresentation::Mode::Texture) {
+                                ImGui::Image((ImTextureID)(intptr_t)retained.textureId,
+                                             ImVec2(waveWidth, waveHeight));
+                                if (isCurrentFile && playPos > 0.0f) {
+                                    const float x = pos.x + playPos * waveWidth;
+                                    ImGui::GetWindowDrawList()->AddLine(
+                                        ImVec2(x, pos.y), ImVec2(x, pos.y + waveHeight),
+                                        IM_COL32(255, 100, 100, 220), 1.5f);
+                                }
+                                if (MiniWaveformPresentation::CanSeek(false, hasRetained)) {
+                                    ImGui::SetCursorScreenPos(pos);
+                                    ImGui::InvisibleButton(("wavebseek" + std::to_string(i)).c_str(),
+                                                           ImVec2(waveWidth, waveHeight));
+                                    if (ImGui::IsItemActive() || ImGui::IsItemClicked()) {
+                                        const ImVec2 visualMin = ImGui::GetItemRectMin();
+                                        const float visualWidth = ImGui::GetItemRectSize().x;
+                                        const float seekPos = std::clamp(
+                                            (ImGui::GetMousePos().x - visualMin.x) / visualWidth,
+                                            0.0f, 1.0f);
+                                        if (!isCurrentFile) {
+                                            if (ImGui::IsItemClicked()) {
+                                                state.uiState.pendingMiniWaveSeekPos = -1.0f;
+                                                state.uiState.miniWaveSeekApplied = true;
+                                                state.uiState.miniWaveSeekTargetPath = entry.fullPath;
+                                                state.uiState.lastMiniWaveSeekPos = seekPos;
+                                                BeginBrowserPathAudition(state, entry, true);
+                                                MarkFilePlayed(state, entry.fullPath, 0, false);
+                                                state.audioEngine.seekToPosition(seekPos);
+                                            }
+                                        } else if (ImGui::IsItemClicked()) {
+                                            state.uiState.pendingMiniWaveSeekPos = -1.0f;
+                                            state.uiState.lastMiniWaveSeekPos = seekPos;
+                                            state.audioEngine.seekToPosition(seekPos);
+                                            if (!state.audioEngine.isPlaying())
+                                                state.audioEngine.play();
+                                        } else if (std::abs(seekPos - state.uiState.lastMiniWaveSeekPos) > 0.002f) {
+                                            state.uiState.lastMiniWaveSeekPos = seekPos;
+                                            state.audioEngine.seekToPosition(seekPos);
+                                        }
+                                    }
+                                }
+                            } else {
+                                ImGui::Dummy(ImVec2(waveWidth, waveHeight));
+                                float cy = pos.y + waveHeight / 2.0f;
+                                ImGui::GetWindowDrawList()->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + waveWidth, cy), IM_COL32(50, 50, 55, 60));
+                            }
                         }
                     }
 
@@ -44163,7 +44527,6 @@ void RenderUI(AppState& state) {
                                 state.folderFilterActive = true;
                                 // Store the context-menu folder filter in canonical form.
                                 state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(targetFolder);
-                                ClearSpecificCoverKeyFilter(state);
                                 state.viewMode = ViewMode::Database;
                                 state.clearPendingWaveforms();
                                 RefreshSearchResults(state, true);
@@ -44237,7 +44600,7 @@ void RenderUI(AppState& state) {
                         }
 // F-006: Edit Metadata context entry
                         if (ProductEdition::hasFeature("metadata_edit")) {
-                        if (ImGui::MenuItem(L(MetaEdit_ContextEntry))) {
+                        if (ImGui::MenuItem(L(MetaEdit_ContextEntry),nullptr,false,!state.infoEditSession.active)) {
                             if (isMulti) {
                                 state.metadataBatchMode = true;
                                 state.metadataBatchIds.clear();
@@ -44860,9 +45223,23 @@ void RenderUI(AppState& state) {
                                 }
                             }
                         } else {
-                            ImGui::Dummy(ImVec2(cellW, cellH));
-                            float cy = cellMin.y + cellH / 2.0f;
-                            ImGui::GetWindowDrawList()->AddLine(ImVec2(cellMin.x, cy), ImVec2(cellMin.x + cellW, cy), IM_COL32(50, 50, 55, 60));
+                            MiniWaveTextureEntry retained;
+                            const bool hasRetained = GetRetainedMiniWaveTexture(record.filePath, retained);
+                            if (MiniWaveformPresentation::Choose(false, hasRetained) ==
+                                MiniWaveformPresentation::Mode::Texture) {
+                                ImGui::Image((ImTextureID)(intptr_t)retained.textureId,
+                                             ImVec2(cellW, cellH));
+                                if (isCurrentFile && playPos > 0.0f) {
+                                    const float x = waveLayout.seekXFromNormalized(playPos);
+                                    ImGui::GetWindowDrawList()->AddLine(
+                                        ImVec2(x, cellMin.y), ImVec2(x, cellMin.y + cellH),
+                                        IM_COL32(255, 100, 100, 220), 1.5f);
+                                }
+                            } else {
+                                ImGui::Dummy(ImVec2(cellW, cellH));
+                                float cy = cellMin.y + cellH / 2.0f;
+                                ImGui::GetWindowDrawList()->AddLine(ImVec2(cellMin.x, cy), ImVec2(cellMin.x + cellW, cy), IM_COL32(50, 50, 55, 60));
+                            }
                         }
 
                         // 3. Mini 波形热区：始终提交 InvisibleButton，避免 rowHovered 导致松手时丢点击；支持按住 scrub
@@ -44972,8 +45349,13 @@ void RenderUI(AppState& state) {
                     // Description column should always reflect real description,
                     // not search snippet (snippet may come from path/other fields).
                     ImGui::TableNextColumn();
-                    ImGui::PushStyleColor(ImGuiCol_Text, record.description.empty() ? kL3 : kL2);
-                    ImGui::TextUnformatted(record.description.empty() ? "-" : record.description.c_str());
+                    const std::string& listDescription =
+                        state.viewMode != ViewMode::Database ||
+                        !state.lastAppliedSearchText.empty() ||
+                        record.databaseListDescriptionOverride.empty()
+                            ? record.description : record.databaseListDescriptionOverride;
+                    ImGui::PushStyleColor(ImGuiCol_Text, listDescription.empty() ? kL3 : kL2);
+                    ImGui::TextUnformatted(listDescription.empty() ? "-" : listDescription.c_str());
                     ImGui::PopStyleColor();
                     const ImVec2 descriptionHoverRectMin = ImGui::GetItemRectMin();
                     const ImVec2 descriptionHoverRectMax = ImGui::GetItemRectMax();
@@ -44986,7 +45368,7 @@ void RenderUI(AppState& state) {
                         ImGui::PushStyleColor(ImGuiCol_TextDisabled, ThemeColors::current().resultsSecondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 56.0f);
                         ImGui::TextDisabled("%s", L(Info_Description));
-                        ImGui::TextUnformatted(record.description.empty() ? L(Info_NoDescription) : record.description.c_str());
+                        ImGui::TextUnformatted(listDescription.empty() ? L(Info_NoDescription) : listDescription.c_str());
                     if (HasSearchExplainability(record, state.lastAppliedSearchText)) {
                             ImGui::Separator();
                             RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
@@ -45308,8 +45690,9 @@ void RenderUI(AppState& state) {
                     LoadMoreResults(state);
                 }
 
-                // UX #109: Empty state guidance is owned by the dedicated empty-database surface.
-                // Keep the results layer empty so it cannot overlap the bottom transport controls.
+                // UX #109: Empty state — the results layer stays empty on
+                // purpose: no row is rendered and no guidance surface is
+                // reserved, so it cannot overlap the bottom transport controls.
 
                 // Apply per-tab scroll restoration only after rows/empty-state
                 // content have established this table's current scroll extent.
@@ -45348,68 +45731,6 @@ void RenderUI(AppState& state) {
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(); // Pop transparent ChildBg for table scroll region
         }
-    }
-
-    // UX #109: Empty state surface — keep guidance in its own bounded child,
-    // outside the results table and above the independent player footer.
-    const bool showStandaloneEmptyResultsSurface =
-        !(state.startupNeedsDatabaseSetup && !state.database.isOpen()) &&
-        state.searchResults.empty() && !state.asyncSearchInProgress && !state.searchDebounce.isPending() &&
-        !(state.totalFileCount == 0);
-    constexpr float kStandaloneEmptyResultsSurfaceHeight = 180.0f;
-    if (showStandaloneEmptyResultsSurface) {
-        BeginTransientScrollbarChild(
-            "##EmptyResultsSurface",
-            ImVec2(0.0f, kStandaloneEmptyResultsSurfaceHeight),
-            true,
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        const bool _hasKw = (state.searchBuffer[0] != '\0');
-        const bool _hasUserCollectionRules =
-            state.activeUserCollectionIdx >= 0 &&
-            state.activeUserCollectionIdx < static_cast<int>(state.userCollections.size()) &&
-            std::any_of(
-                state.userCollections[state.activeUserCollectionIdx].rules.begin(),
-                state.userCollections[state.activeUserCollectionIdx].rules.end(),
-                [](const AppState::CollectionRule& rule) { return rule.value[0] != '\0'; });
-        const auto _hasActivePillState = [](const auto& pillState) {
-            return std::any_of(
-                pillState.begin(), pillState.end(),
-                [](const auto& entry) { return entry.second != 0; });
-        };
-        const bool _hasFilt = state.folderFilterActive || state.coverFilterActive
-            || !state.selectedFolderPath.empty() || !state.coverFilterPath.empty()
-            || state.categoryFilterBuffer[0] != '\0'
-            || state.artistFilterBuffer[0] != '\0'
-            || !state.artistFilterAlternates.empty()
-            || state.albumFilterBuffer[0] != '\0'
-            || state.formatFilterIndex != 0
-            || state.channelFilterIndex != 0
-            || state.sampleRateFilterIndex != 0
-            || state.minDurationFilter > 0.0f || state.maxDurationFilter > 0.0f
-            || state.minBpmFilter > 0.0f || state.maxBpmFilter > 0.0f
-            || state.keyFilterBuffer[0] != '\0'
-            || state.coverFilterIndex != 0
-            || state.findSameFilenameActive
-            || state.activeSmartCollection != SmartCollection::None
-            || _hasUserCollectionRules
-            || _hasActivePillState(state.genrePillState)
-            || _hasActivePillState(state.instrumentPillState)
-            || !(state.showWAV && state.showMP3 && state.showFLAC && state.showOGG &&
-                 state.showAIFF && state.showM4A && state.showWMA && state.showOther);
-        const bool _dbEmpty = (state.totalFileCount == 0);
-        if (_dbEmpty) {
-            ImGui::TextDisabled("%s", L(Empty_NoFiles));
-        } else if (_hasKw && _hasFilt) {
-            ImGui::TextDisabled(L(Empty_FilterAndSearch), state.searchBuffer);
-        } else if (_hasFilt) {
-            ImGui::TextDisabled("%s", L(Empty_FilterOnly));
-        } else if (_hasKw) {
-            ImGui::TextDisabled(L(Empty_SearchOnly), state.searchBuffer);
-            ImGui::TextDisabled("%s", L(Search_NoResultTips));
-        } else {
-            ImGui::TextDisabled("%s", L(Empty_NoResults));
-        }
-        ImGui::EndChild();
     }
 
     // F-034 Relink: merge background candidate results + render inline banner
@@ -45542,13 +45863,7 @@ void RenderUI(AppState& state) {
                     state.waveformCache.erase(state.waveformCache.begin());
                 }
                 // Invalidate stale GPU texture so it regenerates from new data
-                auto texIt = g_miniWaveTextureCache.find(res.filePath);
-                if (texIt != g_miniWaveTextureCache.end()) {
-                    if (texIt->second.textureId != 0) {
-                        DeleteMiniWaveTexture(texIt->second.textureId);
-                    }
-                    g_miniWaveTextureCache.erase(texIt);
-                }
+                InvalidateMiniWaveTextureAfterFrame(res.filePath);
                 state.waveformCache[res.filePath] = std::move(res.waveform);
                 state.waveformFailed.erase(res.filePath);
                 state.waveformMiniCacheMiss.erase(res.filePath);
@@ -45763,13 +46078,13 @@ void RenderUI(AppState& state) {
         // legacy splitter still belongs at the outer results/info boundary.
         ImGui::SetCursorScreenPos(ImVec2(
             viewport->WorkPos.x + mainWorkW - rightPanelWidth - splitterWidth,
-            dockContentTop));
+            dockColumnTop));
         VerticalSplitter(
             "##RightSplitter",
             &state.panelFileInfo.dockedWidth,
             rightPanelMinWidth,
             rightPanelMaxWidth,
-            availHeight,
+            sideColumnHeight,
             true);  // invertDelta for right panel
 
         ImGui::SameLine(0, 0);
@@ -45786,7 +46101,7 @@ void RenderUI(AppState& state) {
                 ImVec4(infoScrollbar.x, infoScrollbar.y, infoScrollbar.z, 0.80f));
         }
         const float rightColumnChildWidth = rightRegionSplit ? infoShellWidth : rightPanelWidth;
-        const float rightColumnChildHeight = rightRegionSplit ? std::max(1.0f, infoLeafHeight) : availHeight;
+        const float rightColumnChildHeight = rightRegionSplit ? std::max(1.0f, infoLeafHeight) : sideColumnHeight;
         if (rightRegionSplit) {
             ImGui::SetCursorScreenPos(ImVec2(infoLeafX, infoLeafY));
         }
@@ -45800,18 +46115,21 @@ void RenderUI(AppState& state) {
         ImVec2 winPos = ImGui::GetWindowPos();
         const auto& tcs = ThemeColors::current();
         const ImVec4 infoPanelBg = ThemeColors::infoPanelDockBG(tcs);
-        const float rightShellHeight = rightRegionSplit ? rightColumnChildHeight : availHeight;
+        // The column budget may have reduced the requested panel size.
+        // Both the shell and its contents must use the final child bounds.
+        const ImVec2 rightShellSize = ImGui::GetWindowSize();
+        const float rightShellHeight = rightShellSize.y;
         const DockModuleShellLayout rightShell = drawDockModuleShell(
             dl,
             winPos,
-            infoShellWidth,
+            rightShellSize.x,
             rightShellHeight,
             L(View_InfoPanel),
             infoPanelBg,
             kTitleText);
 
 // 标题栏右上角：编辑元数据图标按钮
-        drawFileInfoTitleActions(state, rightShell, dl);
+        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, 2.0f);
 
         // Right-click menu on title bar (remaining area)
         ImGui::SetCursorPos(ImVec2(rightShell.insetL, rightShell.insetT));
@@ -45834,11 +46152,15 @@ void RenderUI(AppState& state) {
         }
 
         // Content area
+        const float kInfoContentTopInset = 8.0f;
+        const float kInfoContentBottomInset = 8.0f;
         const float rightContentWidth = rightShell.shellWidth - rightShell.innerPad * 2.0f;
-        ImGui::SetCursorPos(ImVec2(rightShell.insetL + rightShell.innerPad, rightShell.insetT + rightShell.titleHeight + 4.0f));
+        ImGui::SetCursorPos(ImVec2(rightShell.insetL + rightShell.innerPad,
+            rightShell.insetT + rightShell.titleHeight + kInfoContentTopInset));
         BeginTransientScrollbarChild(
             "FileInfoContent",
-            ImVec2(rightContentWidth, rightShellHeight - rightShell.titleHeight - rightShell.insetT - rightShell.insetB - 6.0f),
+            ImVec2(rightContentWidth, std::max(1.0f, rightShellHeight - rightShell.titleHeight -
+                rightShell.insetT - rightShell.insetB - kInfoContentTopInset - kInfoContentBottomInset)),
             false,
             ImGuiWindowFlags_NoScrollbar);
         DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
@@ -46029,6 +46351,10 @@ void RenderUI(AppState& state) {
     };
 
     // BOTTOM - Waveform and Transport (with resizable splitter)
+    // The center may end above a bottom Dock band; the waveform always starts
+    // after the full-height side columns, never over a newly docked panel.
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
+        dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y));
 
     if (showDockedWaveform) {
     // 启动动画：自底升起
@@ -46236,6 +46562,9 @@ void RenderUI(AppState& state) {
         const ImU32 transportDividerStrongCol = ImGui::GetColorU32(
             uiWithAlpha(workspacePalette.splitter, 0.50f));
 
+        TransportVisualAudit::Begin(static_cast<int>(state.settings.theme), barOrigin,
+            ImVec2(barOrigin.x + barW, barOrigin.y + kBarH), ImGui::GetColorU32(transportBarBg));
+
         // One docked transport surface. The waveform shell owns the perimeter.
         barDl->AddRectFilled(
             barOrigin,
@@ -46367,11 +46696,16 @@ void RenderUI(AppState& state) {
                 : ImGui::GetColorU32(transportBarIsDark
                     ? uiWithAlpha(uiMix(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), tcsTransport.timecodeText, 0.20f), 0.96f)
                     : uiWithAlpha(tcsTransport.timecodeText, transportIdleVisual ? 0.92f : 1.0f));
+            tcColor = ImGui::GetColorU32(TransportContrast::ForSurface(
+                ImGui::ColorConvertU32ToFloat4(tcColor), transportBarBg, 4.7));
             if (mono) {
                 dl->AddText(mono, tcFontSize, tcTextPos, tcColor, tcText);
             } else {
                 dl->AddText(tcTextPos, tcColor, tcText);
             }
+
+            TransportVisualAudit::Record("timecode", true, tcColor, ImGui::GetColorU32(transportBarBg),
+                tcTextPos, ImVec2(tcTextPos.x + tcTextSize.x, tcTextPos.y + tcTextSize.y));
 
             // Click to open time input popup
             if (tcClicked && isLoaded) {
@@ -46497,13 +46831,13 @@ void RenderUI(AppState& state) {
                 }
 
                 ImGui::Separator();
-                if (ImGui::Button(L(Wave_JumpBtn), ImVec2(55, 0))) {
+                if (aura::ui::ActionButton(L(Wave_JumpBtn), ImVec2(55, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                     if (tryJumpToTime()) {
                         ImGui::CloseCurrentPopup();
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button(L(Cancel), ImVec2(55, 0))) {
+                if (aura::ui::ActionButton(L(Cancel), ImVec2(55, 0), aura::ui::ButtonVariant::Quiet)) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndPopup();
@@ -46887,6 +47221,8 @@ void RenderUI(AppState& state) {
             // 4. 绘制原有的边框与装饰
             ThemeType mascotTheme = static_cast<ThemeType>((int)state.settings.theme);
             ImU32 borderColor = isOverdriven ? ThemeMascot::getInstance().getOverdriveColor(mascotTheme, volume) : kThemeControlBorder;
+            borderColor = ImGui::GetColorU32(TransportContrast::ForSurface(
+                ImGui::ColorConvertU32ToFloat4(borderColor), transportBarBg, 3.2));
             volDl->AddRect(volPos, ImVec2(volPos.x + volWidth, volPos.y + volHeight), kThemeControlBorderOuter, 4.0f, 0, 2.5f);
             volDl->AddRect(volPos, ImVec2(volPos.x + volWidth, volPos.y + volHeight), borderColor, 4.0f, 0, isOverdriven ? 2.0f : 1.5f);
 
@@ -46895,6 +47231,8 @@ void RenderUI(AppState& state) {
             float normalRatio = std::min(volume / 100.0f, 1.0f);
             float fillWidth = fillRatio * (volWidth - 4);
             float normalWidth = normalRatio * (volWidth - 4);
+            ImU32 volumeFillStart=kThemeControlShell,volumeFillEnd=kThemeControlShell;
+            ImU32 volumeOverStart=kThemeControlShell,volumeOverEnd=kThemeControlShell;
 
             // Normal range (use custom color if enabled)
             if (normalWidth > 0) {
@@ -46928,6 +47266,7 @@ void RenderUI(AppState& state) {
                         ? ImGui::GetColorU32(uiWithAlpha(uiMix(tcsTransport.meterWarning, tcsTransport.waveformColor, 0.16f), 1.0f))
                         : fillMid;
                 }
+                volumeFillStart=fillStart;volumeFillEnd=fillEnd;
                 volDl->AddRectFilledMultiColor(
                     ImVec2(volPos.x + 2, volPos.y + 2),
                     ImVec2(volPos.x + 2 + normalWidth, volPos.y + volHeight - 2),
@@ -46939,6 +47278,7 @@ void RenderUI(AppState& state) {
                 float overStart = volPos.x + 2 + normalWidth;
                 ImU32 overColor = ThemeMascot::getInstance().getOverdriveFillStart(mascotTheme);
                 ImU32 overColorBright = ThemeMascot::getInstance().getOverdriveFillEnd(mascotTheme);
+                volumeOverStart=overColor;volumeOverEnd=overColorBright;
                 volDl->AddRectFilledMultiColor(
                     ImVec2(overStart, volPos.y + 2),
                     ImVec2(volPos.x + 2 + fillWidth, volPos.y + volHeight - 2),
@@ -46961,19 +47301,33 @@ void RenderUI(AppState& state) {
             char volText[16];
             snprintf(volText, sizeof(volText), "%.0f%%", volume);
             ImVec2 textSize = ImGui::CalcTextSize(volText);
-            ImU32 textColor = isOverdriven
-                ? IM_COL32(255, 255, 255, 255)
-                : ImGui::GetColorU32(kIsRoseCedarTheme ? kThemeTextStrong
-                        : (transportBarIsDark ? uiWithAlpha(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.94f)
-                                              : uiWithAlpha(tcsTransport.interfaceText, 0.92f)));
+            const ImVec4 volumeShellSurface = TransportContrast::Over(
+                ImGui::ColorConvertU32ToFloat4(kThemeControlShell), transportBarBg);
             float jitter = isOverdriven ? (signalLevel * 1.5f * sinf(time * 40.0f)) : 0.0f;
             ImVec2 textDrawPos(
                 volPos.x + (volWidth - textSize.x) / 2,
                 volPos.y + (volHeight - textSize.y) / 2 + jitter
             );
-            ImU32 volLabelShadow = transportBarIsDark ? IM_COL32(0, 0, 0, 140) : IM_COL32(0, 0, 0, 100);
-            volDl->AddText(ImVec2(textDrawPos.x + 1, textDrawPos.y + 1), volLabelShadow, volText);
-            volDl->AddText(textDrawPos, textColor, volText);
+            auto volumeSurfaceAt = [&](float x) {
+                const float offset=x-(volPos.x+2);
+                // Match the existing rectangles and their paint order, including
+                // the reverse-directed overdrive rectangle.
+                const bool over=isOverdriven && fillWidth!=normalWidth &&
+                    offset>=(std::min)(normalWidth,fillWidth) && offset<(std::max)(normalWidth,fillWidth);
+                const bool normal=!over && offset>=0 && offset<normalWidth;
+                if(!normal && !over) return volumeShellSurface;
+                const float t=std::clamp(normal ? offset/normalWidth :
+                    (offset-normalWidth)/(fillWidth-normalWidth),0.f,1.f);
+                const auto a=ImGui::ColorConvertU32ToFloat4(normal ? volumeFillStart : volumeOverStart);
+                const auto b=ImGui::ColorConvertU32ToFloat4(normal ? volumeFillEnd : volumeOverEnd);
+                return TransportContrast::Over(ImLerp(a,b,t),volumeShellSurface);
+            };
+            TransportValueText::Draw(volDl,textDrawPos,volText,tcsTransport.interfaceText,
+                volumeSurfaceAt,"volume.label");
+            if (TransportVisualAudit::Collecting()) {
+                TransportVisualAudit::Record("volume.outline", false, borderColor, ImGui::GetColorU32(transportBarBg),
+                    volPos, ImVec2(volPos.x + volWidth, volPos.y + volHeight));
+            }
 
             // Invisible button for interaction — 必须重新定位到 volPos
             ImGui::SetCursorScreenPos(volPos);
@@ -47070,6 +47424,10 @@ void RenderUI(AppState& state) {
                 ImU32 fillCol   = IM_COL32(255, 255, 255, 10);
                 ImU32 borderCol = isMonoMode ? tbIconActive
                                 : (stHov ? tbIconHover : tbIconIdle);
+                const ImU32 stereoSurface = isMonoMode ? TransportVisualAudit::Over(stActiveGlow, ImGui::GetColorU32(transportBarBg))
+                    : (stHov ? TransportVisualAudit::Over(kThemeControlShellHover, ImGui::GetColorU32(transportBarBg)) : ImGui::GetColorU32(transportBarBg));
+                borderCol = ImGui::GetColorU32(TransportContrast::ForSurface(
+                    ImGui::ColorConvertU32ToFloat4(borderCol), ImGui::ColorConvertU32ToFloat4(stereoSurface), 3.2));
                 float cx = sp.x + stW * 0.5f, cy = sp.y + stH * 0.5f;
                 float r  = 7.0f * sDualScl, lw = 1.4f;
                 barDl->AddCircleFilled(ImVec2(cx - sDualOff, cy), r, fillCol, 24);
@@ -47077,6 +47435,10 @@ void RenderUI(AppState& state) {
                 barDl->AddCircleFilled(ImVec2(cx + sDualOff, cy), r, fillCol, 24);
                 barDl->AddCircle(      ImVec2(cx + sDualOff, cy), r, borderCol, 24, lw);
 
+                TransportVisualAudit::Record("stereo", false, borderCol,
+                    isMonoMode ? TransportVisualAudit::Over(stActiveGlow, ImGui::GetColorU32(transportBarBg))
+                        : (stHov ? TransportVisualAudit::Over(kThemeControlShellHover, ImGui::GetColorU32(transportBarBg)) : ImGui::GetColorU32(transportBarBg)),
+                    sp, ImVec2(sp.x + stW, sp.y + stH));
                 if (stClk) state.audioEngine.setMono(!isMonoMode);
                 if (stHov) HarkenSearch::SetTooltip("%s", isStereo ? L(Player_TooltipStereo) : L(Player_TooltipMono));
                 curX += stW + 10.0f;
@@ -47109,6 +47471,10 @@ void RenderUI(AppState& state) {
                 else if (revHov)
                     barDl->AddRectFilled(rp, ImVec2(rp.x + revW, rp.y + revH), kThemeControlShellHover, 6.0f);
                 ImU32 revCol = isReversed ? tbIconActive : (revHov ? tbIconHover : tbIconIdle);
+                const ImU32 reverseSurface = isReversed ? TransportVisualAudit::Over(revActiveGlow, ImGui::GetColorU32(transportBarBg))
+                    : (revHov ? TransportVisualAudit::Over(kThemeControlShellHover, ImGui::GetColorU32(transportBarBg)) : ImGui::GetColorU32(transportBarBg));
+                revCol = ImGui::GetColorU32(TransportContrast::ForSurface(
+                    ImGui::ColorConvertU32ToFloat4(revCol), ImGui::ColorConvertU32ToFloat4(reverseSurface), 3.2));
                 {
                     // 轻巧版：5 根细线 + swoosh，无填充无边框
                     const float fibFwd[] = {21, 13, 8, 5, 3};
@@ -47137,6 +47503,10 @@ void RenderUI(AppState& state) {
                         barDl->AddLine({ex,ey}, {ex+2.5f,ey-2.5f}, swooshCol, 1.0f);
                     }
                 }
+                TransportVisualAudit::Record("reverse", false, revCol,
+                    isReversed ? TransportVisualAudit::Over(revActiveGlow, ImGui::GetColorU32(transportBarBg))
+                        : (revHov ? TransportVisualAudit::Over(kThemeControlShellHover, ImGui::GetColorU32(transportBarBg)) : ImGui::GetColorU32(transportBarBg)),
+                    rp, ImVec2(rp.x + revW, rp.y + revH));
                 if (revClk) {
                     const bool wasReversed = isReversed;  // 本帧快照=点击前状态
                     (void)auditionTransportView.toggleReversePreservingRegion();
@@ -47161,7 +47531,7 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(panH)));
                 float panEngine = state.audioEngine.getPan();
                 float panUI = panEngine * 50.0f;
-                if (PanKnob("##Pan", &panUI, -50.0f, 50.0f, ImVec2(panW, panH))) {
+                if (PanKnob("##Pan", &panUI, -50.0f, 50.0f, transportBarBg, ImVec2(panW, panH))) {
                     // AUDITION_NATIVE_EXCEPTION: pan-center-sense
                     state.audioEngine.setPan(panUI / 50.0f);
                 }
@@ -47245,6 +47615,8 @@ void RenderUI(AppState& state) {
                         csDl->PathFillConvex(colFill);
                     }
 
+                    if (!isMonoMode) colLine = ImGui::GetColorU32(TransportContrast::ForSurface(
+                        ImGui::ColorConvertU32ToFloat4(colLine), transportBarBg, 3.2));
                     // 圆弧轮廓
                     float lw = 1.5f;
                     csDl->PathArcTo(ctr, rIn,  startA, endA, 24); csDl->PathStroke(colLine, 0, lw);
@@ -47254,6 +47626,8 @@ void RenderUI(AppState& state) {
                     csDl->AddLine({ctr.x+cosf(endA)*rIn, ctr.y+sinf(endA)*rIn},
                                 {ctr.x+cosf(endA)*rOut, ctr.y+sinf(endA)*rOut}, colLine, lw);
 
+                    TransportVisualAudit::Record("center.outline", false, colLine, ImGui::GetColorU32(transportBarBg),
+                        csBb.Min, csBb.Max, isMonoMode);
                     // 标签已移除 — 扇形图形本身已足够表达状态
 
                     if (csHov) {
@@ -47283,7 +47657,11 @@ void RenderUI(AppState& state) {
                                   mouse.y >= bmHitMin.y && mouse.y < bmHitMax.y);
                     ImU32 bmCol = bmIsOn ? (bmHov ? IM_COL32(100, 210, 255, 255) : IM_COL32(70, 170, 240, 200))
                                          : (bmHov ? IM_COL32(170, 170, 175, 190) : IM_COL32(100, 100, 105, 110));
+                    if (!isMonoMode) bmCol = ImGui::GetColorU32(TransportContrast::ForSurface(
+                        ImGui::ColorConvertU32ToFloat4(bmCol), transportBarBg, 4.7));
                     csDl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, bmTextPos, bmCol, bmTxt);
+                    TransportVisualAudit::Record("bass_mono", true, bmCol, ImGui::GetColorU32(transportBarBg),
+                        bmTextPos, ImVec2(bmTextPos.x + bmW, bmTextPos.y + bmH), isMonoMode);
                     if (bmHov && ImGui::IsMouseClicked(0)) bmWantOpen = true;
                     if (bmHov) {
                         if (bmIsOn)
@@ -47354,7 +47732,8 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorScreenPos(magicEQPos);
                 if (DrawMagicEQBar("##MagicEQ", magicEQ,
                                    magicEqSampleRate,
-                                   saveMagicEQSettings))
+                                   saveMagicEQSettings, transportBarBg,
+                                   state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized()))
                     state.audioEngine.setMagicEQ(magicEQ);
                 if (saveMagicEQSettings) SaveAppSettings(state);
                 ThemeInspector::RegisterZone(
@@ -47689,14 +48068,12 @@ void RenderUI(AppState& state) {
             const float expH = 24.0f;
             // Export region button
             ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(expH)));
-            const bool useJadeMistExportText = (state.settings.theme == AppTheme::JadeMist);
-            if (useJadeMistExportText) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 0.98f));
-            }
+            const ImVec4 exportSurface = TransportContrast::Over(ImGui::GetStyleColorVec4(ImGuiCol_Button), transportBarBg);
+            ImGui::PushStyleColor(ImGuiCol_Text, TransportContrast::ForSurface(
+                ImGui::GetStyleColorVec4(ImGuiCol_Text), exportSurface, 4.7));
             const bool exportRegionClicked = ImGui::Button(L(Main_ExportRegionBtn), ImVec2(90, expH));
-            if (useJadeMistExportText) {
-                ImGui::PopStyleColor();
-            }
+            TransportVisualAudit::Item("selection.export", true, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(exportSurface));
+            ImGui::PopStyleColor();
             if (exportRegionClicked) {
                 const std::string outputPath =
                     Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(g_hwnd);
@@ -47746,6 +48123,11 @@ void RenderUI(AppState& state) {
             if (m5Avail < 260.0f) m5Collapse = 3;
         }
         bool m5HasOverflow = (m5Collapse >= 1 && state.showSpectrogram);
+        if (TransportVisualAudit::Collecting()) {
+            TransportVisualAudit::spectrum = state.showSpectrogram;
+            TransportVisualAudit::selection = hasRegion && state.audioEngine.isLoaded();
+            TransportVisualAudit::spectrumCollapse = m5Collapse;
+        }
 
         float transportCountInlineW = 0.0f;
         if (!transportItemCountText.empty()) {
@@ -47797,13 +48179,14 @@ void RenderUI(AppState& state) {
             if (!transportItemCountText.empty()) {
                 ImGui::AlignTextToFramePadding();
                 ImGui::PushFont(GetUIFontEmphasis());
-                const ImVec4 transportCountTone = ImVec4(
+                const ImVec4 transportCountTone = TransportContrast::ForSurface(ImVec4(
                     1.0f,
                     1.0f,
                     1.0f,
-                    transportIdleVisual ? 0.88f : 0.98f);
+                    transportIdleVisual ? 0.88f : 0.98f), transportBarBg, 4.7);
                 ImGui::PushStyleColor(ImGuiCol_Text, transportCountTone);
                 ImGui::TextUnformatted(transportItemCountText.c_str());
+                TransportVisualAudit::Item("count", true, ImGui::GetColorU32(transportCountTone), ImGui::GetColorU32(transportBarBg));
                 ImGui::PopStyleColor();
                 ImGui::PopFont();
                 ImGui::SameLine(0, 8.0f);
@@ -47823,6 +48206,9 @@ void RenderUI(AppState& state) {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(164, 181, 203, 255));
             ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(82, 107, 137, 255));
             const bool dbComboOpen = BeginTransientScrollbarCombo("##DbSwitch", currentDbDisplay.c_str(), ImGuiComboFlags_HeightLarge);
+            TransportVisualAudit::Item("database.label", true, ImGui::GetColorU32(ImGuiCol_Text),
+                ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg));
+            TransportVisualAudit::Item("database.arrow", false, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(ImGuiCol_Button));
             ThemeInspector::RegisterLastItem(
                 "transport.database", "Database", "src/main.cpp:51867");
             ImGui::PopStyleColor(8);
@@ -47871,7 +48257,21 @@ void RenderUI(AppState& state) {
         }
 
 // 频谱开关（始终可见）
+        const ImVec4 spectrumFrame = TransportContrast::Over(ImGui::GetStyleColorVec4(ImGuiCol_FrameBg), transportBarBg);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, TransportContrast::ForSurface(
+            tcsTransport.interfaceText, transportBarBg, 4.7));
+        ImGui::PushStyleColor(ImGuiCol_Border, TransportContrast::ForSurface(
+            ImGui::GetStyleColorVec4(ImGuiCol_Border), transportBarBg, 3.2));
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, TransportContrast::ForSurface(
+            ImGui::GetStyleColorVec4(ImGuiCol_CheckMark), spectrumFrame, 3.2));
+        ImGui::PushStyleColor(ImGuiCol_SliderGrab, TransportContrast::ForSurface(
+            ImGui::GetStyleColorVec4(ImGuiCol_SliderGrab), spectrumFrame, 3.2));
         ImGui::Checkbox(L(Wave_SpectrogramToggle), &state.showSpectrogram);
+        TransportVisualAudit::Item("spectrum.label", true, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(transportBarBg));
+        TransportVisualAudit::Item("spectrum.box", false, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetColorU32(transportBarBg));
+        if (state.showSpectrogram) TransportVisualAudit::Item("spectrum.check", false,
+            ImGui::GetColorU32(ImGuiCol_CheckMark), ImGui::GetColorU32(ImGuiCol_FrameBg));
         ThemeInspector::RegisterLastItem(
             "transport.spectrum", "Spectrum", "src/main.cpp:51914");
         if (HoveredForHelp()) {
@@ -47884,9 +48284,13 @@ void RenderUI(AppState& state) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x * 0.18f));
                 float blendPercent = state.spectrogramBlend * 100.0f;
-                if (ImGui::SliderFloat(u8"##SpectrogramBlend", &blendPercent, 0.0f, 100.0f, u8"%.0f%%")) {
+                const ImU32 blendInk = ImGui::GetColorU32(TransportContrast::ForSurface(
+                    tcsTransport.interfaceText, spectrumFrame, 4.7));
+                if (TransportBlendSlider::Draw(u8"##SpectrogramBlend", &blendPercent,
+                    blendInk, ImGui::GetColorU32(transportBarBg))) {
                     state.spectrogramBlend = blendPercent / 100.0f;
                 }
+                TransportVisualAudit::Item("spectrum.blend.grip", false, ImGui::GetColorU32(ImGuiCol_SliderGrab), ImGui::GetColorU32(spectrumFrame));
                 if (HoveredForHelp()) {
                     HarkenSearch::SetTooltip("%s", L(Wave_BlendTooltip));
                 }
@@ -47904,11 +48308,17 @@ void RenderUI(AppState& state) {
                 else if (state.spectrogramFFTSize == 4096) fftIdx = 3;
                 else if (state.spectrogramFFTSize == 8192) fftIdx = 4;
                 else fftIdx = 5;
+                ImGui::PushStyleColor(ImGuiCol_Text, TransportContrast::ForSurface(
+                    tcsTransport.interfaceText, spectrumFrame, 4.7));
+                ImGui::PushStyleColor(ImGuiCol_Button, spectrumFrame);
                 if (ImGui::Combo(u8"##FFTSize", &fftIdx, fftSizes, 6)) {
                     const int sizes[] = { 512, 1024, 2048, 4096, 8192, 16384 };
                     state.spectrogramFFTSize = sizes[fftIdx];
                     state.spectrogramNeedsUpdate = true;
                 }
+                TransportVisualAudit::Item("spectrum.fft", true, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(spectrumFrame));
+                TransportVisualAudit::Item("spectrum.fft.arrow", false, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(ImGuiCol_Button));
+                ImGui::PopStyleColor(2);
                 if (HoveredForHelp()) {
                     HarkenSearch::SetTooltip("%s", L(Wave_FFTTooltip));
                 }
@@ -47919,6 +48329,8 @@ void RenderUI(AppState& state) {
                         state.spectrogramBlend = GetReadableSpectrogramPreset().blend;
                     }
                 }
+                TransportVisualAudit::Item("spectrum.split", true, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(transportBarBg));
+                TransportVisualAudit::Item("spectrum.split.box", false, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetColorU32(transportBarBg));
                 if (HoveredForHelp()) {
                     HarkenSearch::SetTooltip("%s", L(Wave_SplitTooltip));
                 }
@@ -47927,11 +48339,14 @@ void RenderUI(AppState& state) {
         }
 
 // 溢出按钮 ··· （有隐藏控件时显示）
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar();
         if (m5HasOverflow) {
             ImGui::SameLine(0, 4.0f);
             if (ImGui::Button(L(Main_M5OverflowBtn), ImVec2(26, 0))) {
                 ImGui::OpenPopup("##M5OverflowPopup");
             }
+            TransportVisualAudit::Item("spectrum.overflow", true, ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(ImGuiCol_Button));
             if (HoveredForHelp()) {
                 HarkenSearch::SetTooltip(L(Main_MoreSpectrumTip));
             }
@@ -50623,30 +51038,26 @@ void RenderUI(AppState& state) {
     const aura::ui::dock::DockRect mainWork{
         mainWinPos.x, mainWinPos.y, mainWinSize.x, mainWinSize.y};
 
-    const float columnTop = mainWinPos.y + menuBarHeight + toolbarHeight + topDockReserve;
-    const float columnHeight = std::max(1.0f, availHeight);
+    const float columnTop = dockColumnTop;
+    const float columnHeight = std::max(1.0f, sideColumnHeight);
     const float columnWidthLeft = leftDockSlotRequired
         ? leftDockColumnWidth : std::max(160.0f, mainWinSize.x * 0.24f);
     const float columnWidthRight = rightDockSlotRequired
         ? rightDockColumnWidth : std::max(160.0f, mainWinSize.x * 0.24f);
-    const float dockBandTopY = mainWinPos.y + menuBarHeight + toolbarHeight;
     aura::ui::dock::DockRootSlots rootSlots{};
     rootSlots.left = {mainWinPos.x, columnTop, columnWidthLeft, columnHeight};
     rootSlots.right = {mainWinPos.x + mainWinSize.x - columnWidthRight, columnTop, columnWidthRight, columnHeight};
-    rootSlots.top = {mainWinPos.x, dockBandTopY, mainWinSize.x, topDockBandHeight};
-    const float bottomSlotHeight = bottomDockBandHeight;
-    const float bottomSlotY = mainWinPos.y + mainWinSize.y - reservedStatusBarHeight - waveBandHeight - bottomSlotHeight;
-    if (g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom)) {
-        rootSlots.bottom = {
-            mainWinPos.x + (leftDockSlotRequired ? leftDockColumnWidth : 0.0f),
-            bottomSlotY,
-            std::max(1.0f, mainWinSize.x -
-                (leftDockSlotRequired ? leftDockColumnWidth : 0.0f) -
-                (rightDockSlotRequired ? rightDockColumnWidth : 0.0f)),
-            bottomSlotHeight};
-    } else {
-        rootSlots.bottom = {mainWinPos.x, bottomSlotY, mainWinSize.x, bottomSlotHeight};
-    }
+    const float centerDockX = mainWinPos.x +
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f);
+    const float centerDockWidth = std::max(1.0f, mainWinSize.x -
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
+        (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f));
+    const float emptyBandHeight = std::clamp(mainWinSize.y * .20f, 180.0f, 240.0f);
+    rootSlots.top = {centerDockX, dockColumnTop, centerDockWidth,
+        topDockBandHeight > 0.0f ? topDockBandHeight : emptyBandHeight};
+    const float bottomSlotHeight = bottomDockBandHeight > 0.0f ? bottomDockBandHeight : emptyBandHeight;
+    const float bottomSlotY = dockColumnTop + sideColumnHeight - bottomSlotHeight;
+    rootSlots.bottom = {centerDockX, bottomSlotY, centerDockWidth, bottomSlotHeight};
 
     aura::ui::dock::DockFrameGeometry cachedDockFrameGeometry{};
     uint64_t cachedDockGeometryRevision = 0;
@@ -50748,13 +51159,14 @@ void RenderUI(AppState& state) {
                     (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f)),
                 std::max(1.0f, availHeight)
         };
-        const float centerLandingInset = std::clamp(dockSnapDistance * 1.5f, 120.0f, 160.0f);
         const aura::ui::dock::DockCenterDropTarget centerDrop{
-            aura::ui::dock::InsetDockCenterDropRect(
-                centerSurface, centerLandingInset, centerLandingInset),
+            centerSurface,
             rememberedSide,
             true,
-            rememberedDockExtentForModule(draggingId, rememberedSide)
+            rememberedSide == aura::ui::dock::DockSide::Top || rememberedSide == aura::ui::dock::DockSide::Bottom
+                ? std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
+                : rememberedDockExtentForModule(draggingId, rememberedSide),
+            std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
         };
         const auto hit = aura::ui::dock::HitDockTarget(
             {pointer.x - 0.5f, pointer.y - 0.5f, 1.0f, 1.0f},
@@ -50834,9 +51246,11 @@ void RenderUI(AppState& state) {
         const float labelWidth = ImGui::CalcTextSize(window->Name, nullptr, true).x + 16.0f;
         const ImRect label(title.Min, ImVec2(
             (std::min)(title.Min.x + labelWidth, title.Max.x - title.GetHeight() - 4.0f), title.Max.y));
+        const float infoActionsWidth = std::strcmp(moduleId, "info") == 0
+            ? 6.0f + FileInfoPageActionsWidth(state, title.GetWidth()-title.GetHeight()-4.0f-28.0f) : 0.0f;
         const ImRect dockDragLabel(title.Min, ImVec2(
-            (std::max)(title.Min.x, title.Max.x - title.GetHeight() - 4.0f), title.Max.y));
-        drawDockTitleFeedback(moduleId, title, label, true, ImGui::IsWindowHovered());
+            (std::max)(title.Min.x, title.Max.x - title.GetHeight() - 4.0f - infoActionsWidth), title.Max.y));
+        drawDockTitleFeedback(moduleId, title, label, true, ImGui::IsWindowHovered() && dockDragLabel.Contains(ImGui::GetMousePos()));
 #if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
         RecordDockQaPanel(moduleId, panel, pos, size, title, label);
 #endif
@@ -51123,6 +51537,7 @@ void RenderUI(AppState& state) {
             if (ImGuiViewport* vp = ImGui::GetWindowViewport()) {
                 aura::ui::dock::BindNativeCaptionModule(vp->PlatformHandle, "info");
             }
+            drawFloatingInfoTitleActions();
             driveFloatingDockDrag("info", state.panelFileInfo, pos, size);
 
             if (ImGui::BeginPopupContextItem("##FloatFileInfoMenu")) {
@@ -51181,7 +51596,20 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndPopup();
             }
+            const ImVec2 similarContentMin = ImGui::GetCursorScreenPos();
+            const ImVec2 similarContentSize = ImGui::GetContentRegionAvail();
             aura::ui::RenderSimilarSoundsContent(state);
+            if (state.settings.theme != AppTheme::Custom &&
+                !state.settings.useCustomColors && !ThemeColors::customized()) {
+                ImDrawList* similarDl = ImGui::GetWindowDrawList();
+                similarDl->AddRect(
+                    similarContentMin,
+                    ImVec2(similarContentMin.x + similarContentSize.x,
+                           similarContentMin.y + similarContentSize.y),
+                    ImGui::GetColorU32(ThemeColors::infoPanelDockEdge(ThemeColors::current())),
+                    kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
+                    aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
+            }
         }
         if (!similarOpen) {
             state.panelSimilarSounds.visible = false;
@@ -51311,7 +51739,7 @@ void RenderUI(AppState& state) {
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
                     L(View_InfoPanel), bodyBg, kTitleText);
-                drawFileInfoTitleActions(state, shell, ImGui::GetWindowDrawList());
+                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, 2.0f);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
                     ImVec2((std::max)(1.0f, shell.shellWidth - kInfoTitleActionsWidth), shell.titleHeight));
@@ -51332,14 +51760,21 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::SetCursorPos(ImVec2(
                     shell.insetL + shell.innerPad,
-                    shell.insetT + shell.titleHeight + 4.0f));
+                    shell.insetT + shell.titleHeight + 8.0f));
+                const float infoContentWidth = std::max(1.0f, shell.shellWidth - shell.innerPad * 2.0f);
+                BeginTransientScrollbarChild(
+                    "FileInfoContent",
+                    ImVec2(infoContentWidth, std::max(1.0f, size.y - shell.titleHeight -
+                        shell.insetT - shell.insetB - 16.0f)),
+                    false,
+                    ImGuiWindowFlags_NoScrollbar);
                 DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
                 {
                     ReadingTextScope _readingInfo;
-                    RenderFileInfoPanelContent(state,
-                        std::max(120.0f, size.x - shell.insetL - shell.insetR - shell.innerPad * 2.0f));
+                    RenderFileInfoPanelContent(state, infoContentWidth);
                 }
                 DevTools_EndFramePhase();
+                ImGui::EndChild();
             }
             if (!open || !state.panelFileInfo.visible) {
                 g_dockLayout.Detach("info");
@@ -51361,7 +51796,10 @@ void RenderUI(AppState& state) {
                     dockFlags)) {
                 ImDrawList* similarDl = ImGui::GetWindowDrawList();
                 const auto& similarTheme = ThemeColors::current();
-                const ImVec4 similarBody = uiWithAlpha(similarTheme.filterBrowserBG, 1.0f);
+                const bool sharedSimilarStyle = state.settings.theme != AppTheme::Custom &&
+                    !state.settings.useCustomColors && !ThemeColors::customized();
+                const ImVec4 similarBody = uiWithAlpha(
+                    sharedSimilarStyle ? similarTheme.metadataPanelBG : similarTheme.filterBrowserBG, 1.0f);
                 const DockModuleShellLayout similarShell = drawDockModuleShell(
                     similarDl,
                     ImGui::GetWindowPos(),
@@ -51397,15 +51835,17 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::EndPopup();
                 }
+                const float similarContentInset = sharedSimilarStyle ? 4.0f : 0.0f;
                 ImGui::SetCursorPos(ImVec2(
-                    similarShell.insetL + similarShell.innerPad,
-                    similarShell.insetT + similarShell.titleHeight + 4.0f));
+                    similarShell.insetL + similarShell.innerPad + similarContentInset,
+                    similarShell.insetT + similarShell.titleHeight + 4.0f + similarContentInset));
                 const float similarContentWidth = std::max(1.0f,
                     leaf.rect.width - similarShell.insetL - similarShell.insetR -
-                        similarShell.innerPad * 2.0f);
+                        similarShell.innerPad * 2.0f - similarContentInset * 2.0f);
                 const float similarContentHeight = std::max(1.0f,
                     leaf.rect.height - similarShell.insetT - similarShell.insetB -
-                        similarShell.titleHeight - 8.0f);
+                        similarShell.titleHeight - 8.0f - similarContentInset * 2.0f);
+                const ImVec2 similarContentMin = ImGui::GetCursorScreenPos();
                 if (ImGui::BeginChild(
                         "##DockedSimilarSoundsContent",
                         ImVec2(similarContentWidth, similarContentHeight),
@@ -51416,6 +51856,16 @@ void RenderUI(AppState& state) {
                     aura::ui::RenderSimilarSoundsContent(state);
                 }
                 ImGui::EndChild();
+                if (sharedSimilarStyle) {
+                    similarDl->AddRect(
+                        similarContentMin,
+                        ImVec2(similarContentMin.x + similarContentWidth,
+                               similarContentMin.y + similarContentHeight),
+                        ImGui::GetColorU32(ThemeColors::infoPanelDockEdge(similarTheme)),
+                        kFilterInfoShellRadius,
+                        ImDrawFlags_RoundCornersAll,
+                        aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
+                }
             }
             if (!open) {
                 FloatDockedPanel("similar-sounds", state.panelSimilarSounds, leaf.rect);
@@ -51440,28 +51890,33 @@ void RenderUI(AppState& state) {
 
     {
         const float minBandHeight = aura::ui::dock::kDockBandMinHeight;
-        const float maxBandHeight = aura::ui::dock::kDockBandMaxHeight;
-        float* topHeightOwner = nullptr;
-        if (moduleDockedInRegion("filter", aura::ui::dock::DockSide::Top)) {
-            topHeightOwner = &state.panelSidebar.dockedHeight;
-        } else if (moduleDockedInRegion("info", aura::ui::dock::DockSide::Top)) {
-            topHeightOwner = &state.panelFileInfo.dockedHeight;
-        }
+        float* topHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Top);
         if (topHeightOwner != nullptr && topDockReserve > 0.0f) {
-            ImGui::SetCursorScreenPos(ImVec2(rootSlots.top.x, dockColumnTop + topDockBandHeight - 3.0f));
-            HorizontalSplitter("##TopDockSplitter", topHeightOwner, minBandHeight, maxBandHeight,
-                               rootSlots.top.width, true);
+            ImGui::SetCursorScreenPos(ImVec2(rootSlots.top.x, dockColumnTop + topDockBandHeight));
+            const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
+                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top), viewport->DpiScale).height);
+            float resizedHeight = topDockBandHeight;
+            if (HorizontalSplitter("##TopDockSplitter", &resizedHeight, minimum,
+                    std::max(minimum, availHeight + topDockBandHeight - minContentHeight),
+                    rootSlots.top.width, true)) {
+                auto rect = rootSlots.top; rect.height = resizedHeight;
+                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Top, rect);
+                MarkSettingsDirty(state);
+            }
         }
-        float* bottomHeightOwner = nullptr;
-        if (moduleDockedInRegion("filter", aura::ui::dock::DockSide::Bottom)) {
-            bottomHeightOwner = &state.panelSidebar.dockedHeight;
-        } else if (moduleDockedInRegion("info", aura::ui::dock::DockSide::Bottom)) {
-            bottomHeightOwner = &state.panelFileInfo.dockedHeight;
-        }
+        float* bottomHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Bottom);
         if (bottomHeightOwner != nullptr && bottomDockReserve > 0.0f) {
-            ImGui::SetCursorScreenPos(ImVec2(rootSlots.bottom.x, bottomSlotY - 3.0f));
-            HorizontalSplitter("##BottomDockSplitter", bottomHeightOwner, minBandHeight, maxBandHeight,
-                               rootSlots.bottom.width, false);
+            ImGui::SetCursorScreenPos(ImVec2(rootSlots.bottom.x, bottomSlotY - dockBandSplitter));
+            const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
+                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom), viewport->DpiScale).height);
+            float resizedHeight = bottomDockBandHeight;
+            if (HorizontalSplitter("##BottomDockSplitter", &resizedHeight, minimum,
+                    std::max(minimum, availHeight + bottomDockBandHeight - minContentHeight),
+                    rootSlots.bottom.width, false)) {
+                auto rect = rootSlots.bottom; rect.height = resizedHeight;
+                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Bottom, rect);
+                MarkSettingsDirty(state);
+            }
         }
     }
 
@@ -51510,8 +51965,11 @@ void RenderUI(AppState& state) {
         const int gripLeafCount = gripSnapshot.moduleCount;
         const aura::ui::dock::AdjacentLeafGrip* adjacentGrips = gripSnapshot.grips;
         const int adjacentCount = gripSnapshot.gripCount;
+        const auto leftOuterGrip = leftDockSlotRequired && !showLeftColumn
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, splitterWidth)
+            : aura::ui::dock::AdjacentLeafGrip{};
         const auto rightOuterGrip = rightDockSlotRequired && !showRightColumn
-            ? aura::ui::dock::PlanRightDockOuterGrip(gripSnapshot, "similar-sounds")
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, splitterWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
@@ -51606,8 +52064,11 @@ void RenderUI(AppState& state) {
             }
             ImGui::End();
         }
-        if (rightOuterGrip.visible) {
-            const auto& grip = rightOuterGrip;
+        for (int column = 0; column < 2; ++column) {
+            const bool left = column == 0;
+            const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
+            const auto& grip = left ? leftOuterGrip : rightOuterGrip;
+            if (!grip.visible) continue;
             ImGui::SetNextWindowPos(ImVec2(grip.rect.x, grip.rect.y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(grip.rect.width, grip.rect.height), ImGuiCond_Always);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -51618,15 +52079,16 @@ void RenderUI(AppState& state) {
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing;
             const bool visible = BeginTransientScrollbarWindow(
-                "##RightDockLeafSplitter", nullptr, flags);
+                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", nullptr, flags);
             ImGui::PopStyleVar(3);
             if (visible) {
-                ImGui::InvisibleButton("##RightDockLeafSplitterHit",
+                ImGui::InvisibleButton(left ? "##LeftDockLeafSplitterHit" : "##RightDockLeafSplitterHit",
                     ImVec2(grip.rect.width, grip.rect.height));
                 const bool pointerHit = ImGui::IsMouseHoveringRect(
                     ImVec2(grip.rect.x, grip.rect.y),
                     ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                static bool activeRightOuterGrip = false;
+                static bool activeOuterGrips[2]{};
+                bool& activeRightOuterGrip = activeOuterGrips[column];
                 if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) activeRightOuterGrip = false;
                 if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
                     activeRightOuterGrip = true;
@@ -51647,10 +52109,15 @@ void RenderUI(AppState& state) {
                         ImGui::GetColorU32(color));
                 }
                 if (dragging) {
-                    aura::ui::dock::DragRightDockOuterGrip(
-                        state.panelSimilarSounds.dockedWidth,
-                        ImGui::GetIO().MouseDelta.x, rightPanelMinWidth,
-                        rightPanelMaxWidth);
+                    auto resizedRect = left ? rootSlots.left : rootSlots.right;
+                    const float minimum = aura::ui::dock::DockSubtreeMinimum(
+                        g_dockLayout.RegionRoot(side), viewport->DpiScale).width;
+                    const float maximum = std::max(minimum, resizedRect.width + centerWidth - minReadableCenterWidth);
+                    if (aura::ui::dock::DragRightDockOuterGrip(resizedRect.width,
+                            ImGui::GetIO().MouseDelta.x * (left ? -1.0f : 1.0f), minimum, maximum)) {
+                        MirrorDockRootExtent(state, side, resizedRect);
+                        MarkSettingsDirty(state);
+                    }
                 }
             }
             ImGui::End();
@@ -51886,7 +52353,7 @@ void RenderUI(AppState& state) {
             char pctBuf[16]; snprintf(pctBuf, sizeof(pctBuf), "%.0f%%", p * 100.0f);
             ImGui::TextUnformatted(pctBuf);
             ImGui::SameLine();
-            if (ImGui::SmallButton((std::string(L(Scan_FtsCancelBtn)) + "##FtsCancel").c_str())) {
+            if (aura::ui::SmallActionButton((std::string(L(Scan_FtsCancelBtn)) + "##FtsCancel").c_str(), aura::ui::ButtonVariant::Quiet)) {
                 state.ftsRebuildCancel.store(true);
             }
         } else if (state.bgCacheRunning.load()) {
@@ -51999,7 +52466,7 @@ void RenderUI(AppState& state) {
                 ImGui::TextDisabled("%s", L(Status_NoHistory));
             } else {
                 // Clear history button
-                if (ImGui::Button(L(Status_ClearHistory))) {
+                if (aura::ui::ActionButton(L(Status_ClearHistory))) {
                     state.playHistory.clear();
                     state.playedFiles.clear();
                     state.playHistoryIndex = -1;
@@ -52065,6 +52532,7 @@ void RenderUI(AppState& state) {
         const bool detachedInfoVisible = beginSharedDockWindowHost(
             L(Panel_FileInfoTitle), &state.fileInfoDetached, ImGuiWindowFlags_MenuBar);
         if (detachedInfoVisible) {
+            drawFloatingInfoTitleActions();
             if (ImGui::BeginMenuBar()) {
                 if (ImGui::BeginMenu(L(Menu_DockTo))) {
                     if (ImGui::MenuItem(L(Panel_DockToLeft))) {

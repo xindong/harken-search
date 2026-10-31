@@ -12,29 +12,28 @@ def _file_table_surface_block() -> str:
     return MAIN[start:end]
 
 
-def _assignment(source: str, needle: str) -> str:
-    start = source.index(needle)
-    end = source.index(";", start)
-    return source[start:end]
-
-
 def test_empty_list_inner_chrome_contract_is_wired() -> None:
     assert "TestEmptyListInnerChromeContract" in CMAKE
 
 
-def test_truly_empty_list_does_not_reserve_inner_empty_surface() -> None:
+def test_zero_result_lists_reserve_no_standalone_empty_surface() -> None:
+    # TASK-20261028-NO-EMPTY-SURFACE: the user removed the framed
+    # "no results" panel. The results table keeps its full height and no
+    # bounded empty-state child is drawn anywhere in the list column.
     surface = _file_table_surface_block()
-    cond = _assignment(surface, "const bool showEmptyResultsSurface")
-    assert "totalFileCount == 0" in cond
-    assert "searchResults.empty()" in cond
+    for symbol in (
+        "showEmptyResultsSurface",
+        "showStandaloneEmptyResultsSurface",
+        "kEmptyResultsSurfaceHeight",
+        "kStandaloneEmptyResultsSurfaceHeight",
+        '"##EmptyResultsSurface"',
+    ):
+        assert symbol not in MAIN
 
 
-def test_truly_empty_list_does_not_draw_inner_info_child() -> None:
+def test_zero_result_table_keeps_full_height() -> None:
     surface = _file_table_surface_block()
-    cond = _assignment(surface, "const bool showStandaloneEmptyResultsSurface")
-    assert "totalFileCount == 0" in cond
-    assert '"##EmptyResultsSurface"' in surface
-    assert "Empty_NoFiles" in surface
+    assert "ImVec2 adjustedFileTableOuterSize = ImVec2(0.0f, 0.0f);" in surface
 
 
 def test_truly_empty_list_does_not_keep_table_outer_border() -> None:
@@ -46,21 +45,22 @@ def test_truly_empty_list_does_not_keep_table_outer_border() -> None:
     assert "totalFileCount == 0" in flags
 
 
-def test_non_empty_list_keeps_existing_empty_filter_guidance() -> None:
+def test_zero_result_layer_renders_no_guidance_messages() -> None:
     surface = _file_table_surface_block()
     for message in (
         "Empty_FilterAndSearch",
         "Empty_FilterOnly",
         "Empty_SearchOnly",
         "Empty_NoResults",
+        "Empty_NoFiles",
     ):
-        assert message in surface
+        assert message not in surface
 
 
 if __name__ == "__main__":
     test_empty_list_inner_chrome_contract_is_wired()
-    test_truly_empty_list_does_not_reserve_inner_empty_surface()
-    test_truly_empty_list_does_not_draw_inner_info_child()
+    test_zero_result_lists_reserve_no_standalone_empty_surface()
+    test_zero_result_table_keeps_full_height()
     test_truly_empty_list_does_not_keep_table_outer_border()
-    test_non_empty_list_keeps_existing_empty_filter_guidance()
+    test_zero_result_layer_renders_no_guidance_messages()
     print("PASS")

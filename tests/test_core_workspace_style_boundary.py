@@ -400,7 +400,7 @@ def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
     assert "toolbarTheme.chromeBorder" in toolbar_search
     assert "uiMix(toolbarTheme.toolbarBG, kCurrentTheme.resultsBG" not in toolbar_search
     builtin = read(BUILTIN_THEME_CPP)
-    assert "s.transportBarBG         = H(0xff10171d)" in builtin
+    assert "s.transportBarBG         = H(0xff2e445c)" in builtin
     assert "s.transportBarBG         = H(0xff000000)" not in builtin
     assert "const ImVec2 tableMin(winPos.x, ImGui::GetCursorScreenPos().y);" in main
     assert "ImGui::GetWindowPos().x + ImGui::GetWindowSize().x" in main
@@ -587,7 +587,7 @@ def test_toolbar_has_one_theme_derived_top_highlight_owner():
 def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     main = read(MAIN_CPP)
     assert "case AppTheme::LapisBlue:" in main
-    assert "s.resultsSecondaryText   = H(0xffd7e2ef);" in read(BUILTIN_THEME_CPP)
+    assert "s.resultsSecondaryText   = H(0xffe5ecf4);" in read(BUILTIN_THEME_CPP)
 
 
 def test_top_menu_dropdowns_use_one_chrome_font_scope():
@@ -788,7 +788,7 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert "BeginTransientScrollbarChild" in main
     assert "BeginTransientScrollbarTable" in main
     # The Similar Sounds leaf explicitly disables native scrollbars; normal
-    # content uses the wrapper. The local QA narrator stays on qa/current.
+    # content uses the wrapper. The QA narrator is a local packaging addition.
     assert main.count("ImGui::BeginChild(") == 1
     similar = between(main, 'ImGui::BeginChild(\n                        "##DockedSimilarSoundsContent"', 'ImGui::EndChild();')
     assert "ImGuiWindowFlags_NoScrollbar |" in similar

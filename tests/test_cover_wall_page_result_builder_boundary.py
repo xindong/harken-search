@@ -19,6 +19,7 @@ def test_cover_wall_page_mapping_has_independent_owner():
         "BuildCoverWallLoadResultFromEntries",
         "ConvertCoverWallEntryToItem",
         "BuildCoverWallVisualDedupeToken",
+        "AppendUniqueCoverWallPageItems",
     ):
         assert contract in source
     assert '"main.cpp"' not in source
@@ -42,7 +43,7 @@ def test_main_consumes_cover_wall_page_mapping_builder():
         "BuildCoverWallPageFromCurrentFileList",
         "BuildCoverWallPageLoadResult",
         "BuildCoverWallLoadResultFromEntries",
-        "BuildCoverWallVisualDedupeToken",
+        "AppendUniqueCoverWallPageItems",
     ):
         assert f"using aura::cover_wall::{symbol};" in main
 

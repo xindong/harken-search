@@ -38,8 +38,10 @@ static bool BrowserEntryMatchesQuery(
 }
 
 static int failed = 0;
+static int totalChecks = 0;
 
 #define CHECK(cond, msg) do { \
+    ++totalChecks; \
     if (cond) { std::cout << "PASS: " << msg << "\n"; } \
     else { std::cerr << "FAIL: " << msg << "\n"; ++failed; } \
 } while(0)
@@ -87,6 +89,33 @@ static std::string readTextFile(const std::filesystem::path& relativePath) {
 
 int main() {
     TestQuickScanDialogRejectsRetriggersWhileScanning();
+    {
+        struct Shortcut { std::string name, path; bool openInBrowser = false; };
+        struct State { std::vector<Shortcut> folderShortcuts; } state;
+        state.folderShortcuts.push_back({"Custom name", "C:/Audio", true});
+        CHECK(AddFolderShortcutIfMissing(state, "Audio", "C:/Audio"),
+              "re-bookmarking from database updates an existing browser shortcut");
+        CHECK(state.folderShortcuts.size() == 1 && !state.folderShortcuts[0].openInBrowser,
+              "re-bookmark updates mode without creating a duplicate");
+        CHECK(state.folderShortcuts[0].name == "Custom name", "re-bookmark preserves shortcut name");
+        CHECK(AddFolderShortcutIfMissing(state, "Audio", "C:/Audio", true),
+              "browser re-bookmark upgrades a legacy database shortcut");
+        CHECK(state.folderShortcuts.size() == 1 && state.folderShortcuts[0].openInBrowser,
+              "browser re-bookmark stores destination without duplicating the path");
+        CHECK(!AddFolderShortcutIfMissing(state, "Audio", "C:/Audio", true),
+              "same path and mode is a no-op");
+        CHECK(AddFolderShortcutIfMissing(state, "Other", "C:/Other", true) &&
+              state.folderShortcuts.back().openInBrowser, "new browser shortcut stores browser destination");
+        CHECK(AddFolderShortcutIfMissing(state, "Database", "C:/Database") &&
+              !state.folderShortcuts.back().openInBrowser, "database shortcuts retain database destination");
+        CHECK(!AddFolderShortcutIfMissing(state, "Empty", "", true), "empty path is rejected");
+#ifdef _WIN32
+        CHECK(AddFolderShortcutIfMissing(state, "Audio", "c:\\audio\\", false),
+              "same Windows folder with different spelling updates the existing mode");
+        CHECK(state.folderShortcuts.size() == 3 && !state.folderShortcuts[0].openInBrowser,
+              "slash and case differences do not duplicate shortcuts");
+#endif
+    }
 
     CHECK(BrowserEntryMatchesQuery("kick_01.wav", "", {}), "empty query matches");
     CHECK(BrowserEntryMatchesQuery("kick_01.wav", "", SplitBrowserQuery("kick")), "single term matches name");
@@ -105,6 +134,31 @@ int main() {
     CHECK(!browserPolicy.empty(), "source contract can read browser system folder search policy");
     CHECK(!browserRuntime.empty(), "source contract can read browser system folder search runtime");
     if (!mainCpp.empty() && !browserPolicy.empty() && !browserRuntime.empty()) {
+        {
+            const auto begin = mainCpp.find("const bool needsDbSetup =");
+            const auto end = mainCpp.find(';', begin);
+            CHECK(begin != std::string::npos &&
+                  mainCpp.substr(begin, end - begin).find("state.viewMode != ViewMode::Browser") != std::string::npos,
+                  "database empty-state surfaces never hide browser files");
+        }
+        CHECK(mainCpp.find("showEmptyResultsSurface") == std::string::npos &&
+              mainCpp.find("showStandaloneEmptyResultsSurface") == std::string::npos &&
+              mainCpp.find("\"##EmptyResultsSurface\"") == std::string::npos,
+              "TASK-20261028-NO-EMPTY-SURFACE: zero-result lists reserve no standalone empty box");
+        const auto shortcutStart = mainCpp.find("if (activeSectionId == 5 && state.settings.showFolderShortcuts)");
+        const auto shortcutEnd = mainCpp.find("// Section 1:", shortcutStart);
+        const std::string shortcuts = mainCpp.substr(shortcutStart, shortcutEnd - shortcutStart);
+        CHECK(shortcuts.find("OpenFolderShortcut(state, sc)") != std::string::npos &&
+              mainCpp.find("NavigateBrowserToFolder(state, shortcut.path, state.fileBrowser.getScope())") != std::string::npos,
+              "shortcut click routes browser paths through real scope-preserving navigation");
+        CHECK(shortcuts.find("state.viewMode == ViewMode::Browser") != std::string::npos &&
+              shortcuts.find("state.viewMode == ViewMode::Database") != std::string::npos,
+              "shortcut selection is scoped to the active mode");
+        CHECK(mainCpp.find("sc.openInBrowser = ParseBool(kv[prefix + \"openInBrowser\"], false)") != std::string::npos &&
+              mainCpp.find("{prefix + \"openInBrowser\", sc.openInBrowser ? \"1\" : \"0\"}") != std::string::npos,
+              "shortcut mode persists and old settings default to database");
+        CHECK(mainCpp.find("AddFolderShortcutIfMissing(state, folderName, folderPath, true)") != std::string::npos,
+              "all browser bookmark entry points explicitly save browser mode");
         CHECK(mainCpp.find("state.fileBrowser.tickDirScanResult();") != std::string::npos,
               "browser top strip pumps async current-directory scan results");
         CHECK(mainCpp.find("state.fileBrowser.tickScanResult();") != std::string::npos,
@@ -740,7 +794,6 @@ int main() {
               "exact-folder Browser metadata preload uses the same canonical folder identity as database writes");
     }
 
-    const int totalChecks = 120;
     std::cout << "\n" << (totalChecks - failed) << "/" << totalChecks
               << " passed, " << failed << " failed\n";
     return failed == 0 ? 0 : 1;

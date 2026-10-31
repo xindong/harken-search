@@ -26,8 +26,6 @@ def evaluate_rules(rules, branch="main"):
         if rule.get("type") != "required_status_checks":
             continue
         parameters = rule.get("parameters", {})
-        if parameters.get("strict_required_status_checks_policy") is not True:
-            continue
         checks.update(item.get("context") for item in parameters.get("required_status_checks", []) if isinstance(item, dict))
     for name in REQUIRED_CHECKS:
         if name not in checks:

@@ -47,55 +47,36 @@ def test_database_setup_guidance_stays_outside_the_result_layer() -> None:
     assert "Empty_NoFiles" not in block
 
 
-def test_database_setup_surface_precedes_the_file_table() -> None:
+def test_database_setup_guidance_is_not_duplicated_behind_the_modal() -> None:
     block = _file_table_surface_block()
-    table_start = block.index('BeginTransientScrollbarTable("FileTableV6"')
 
     assert "state.startupNeedsDatabaseSetup && !state.database.isOpen()" in block
-    assert "RenderNoDatabaseSetupEmptyState(state)" in block[:table_start]
-    assert "RenderNoDatabaseSetupEmptyState(state)" not in block[table_start:]
+    assert "RenderNoDatabaseSetupEmptyState(state)" not in block
 
 
-def test_zero_result_guidance_is_present_on_a_dedicated_visible_surface() -> None:
+def test_no_dedicated_zero_result_surface_is_reserved() -> None:
+    # TASK-20261028-NO-EMPTY-SURFACE: the user removed the framed
+    # "no results" panel and its 180px reservation; the results table
+    # occupies the full list area even with zero rows.
     surface = _file_table_surface_block()
-    assert "BeginTransientScrollbarChild(" in surface
-    assert '"##EmptyResultsSurface"' in surface
-    for message in (
-        "Empty_NoFiles",
-        "Empty_FilterAndSearch",
-        "Empty_FilterOnly",
-        "Empty_SearchOnly",
-        "Empty_NoResults",
-    ):
-        assert message in surface
+    assert '"##EmptyResultsSurface"' not in MAIN
+    assert "kEmptyResultsSurfaceHeight" not in MAIN
+    assert "kStandaloneEmptyResultsSurfaceHeight" not in MAIN
+    assert "BeginTransientScrollbarChild(\n            \"##EmptyResultsSurface\"" not in surface
 
 
-def test_zero_result_guidance_recognizes_all_visible_database_filters() -> None:
-    surface = _file_table_surface_block()
-    for active_filter_signal in (
-        "state.categoryFilterBuffer[0] != '\\0'",
-        "state.formatFilterIndex != 0",
-        "state.channelFilterIndex != 0",
-        "state.minDurationFilter > 0.0f",
-        "state.maxDurationFilter > 0.0f",
-        "state.minBpmFilter > 0.0f",
-        "state.maxBpmFilter > 0.0f",
-        "state.coverFilterIndex != 0",
-        "state.activeSmartCollection != SmartCollection::None",
-        "state.activeUserCollectionIdx >= 0",
-        "state.genrePillState",
-        "state.instrumentPillState",
-        "!(state.showWAV && state.showMP3 && state.showFLAC && state.showOGG &&",
-    ):
-        assert active_filter_signal in surface
-
-
-def test_zero_result_surface_reserves_space_before_the_player_footer() -> None:
-    surface = _file_table_surface_block()
-    assert "kEmptyResultsSurfaceHeight" in surface
-    assert "fileTableOuterSize" in MAIN
-    assert "-kEmptyResultsSurfaceHeight" in MAIN
-    assert "ImGui::EndChild();" in surface
+def test_zero_result_list_still_keeps_the_player_footer_below() -> None:
     assert MAIN.index("// UX #109: Empty state") < MAIN.index(
         "// INDEPENDENT PLAYER FOOTER CONTROL STRIP"
     )
+
+
+if __name__ == "__main__":
+    test_zero_results_do_not_render_a_result_layer_message()
+    test_zero_results_do_not_render_a_search_toolbar_message()
+    test_zero_results_do_not_render_a_toolbar_glass_tag()
+    test_database_setup_guidance_stays_outside_the_result_layer()
+    test_database_setup_guidance_is_not_duplicated_behind_the_modal()
+    test_no_dedicated_zero_result_surface_is_reserved()
+    test_zero_result_list_still_keeps_the_player_footer_below()
+    print("PASS")

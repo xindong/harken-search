@@ -33,7 +33,8 @@ def main() -> int:
                    '// Panel states (new unified system)', '// UI sizing.')
     save = between(source.split('bool TrySaveAppSettings(', 1)[1],
                    '// Panel states (new unified system)', '// UI sizing')
-    cpp = r'''
+    navigation = (ROOT / "src/InfoPageNavigation.h").read_text(encoding="utf-8").replace("#pragma once", "")
+    cpp = navigation + "\n#define AURA_BUILD_DIAGNOSTICS 1\n" + r'''
 #include <string>
 #include <map>
 #include <vector>
@@ -45,6 +46,7 @@ float ParseFloat(const std::string& s, float fallback) { try { return std::stof(
 bool ParseBool(const std::string& s, bool fallback) { return s.empty() ? fallback : s == "1" || s == "true"; }
 ''' + enum + '\n' + panel + '\nstruct AppState { using PanelState = ::PanelState;\n' + members + r'''
 bool settingsDirty = false;
+struct { InfoPageNavigation infoPages; } settings;
 ''' + legacy + '\n};\nvoid Load(AppState& state, Values kv) {\n' + load + r'''
 }
 Values Save(const AppState& state) {
@@ -71,6 +73,20 @@ int main() {
     check(saved["panelFileInfo_dockSide"] == "1", "wrong left record replaced on save");
     AppState reopened; Load(reopened, saved);
     check(reopened.panelFileInfo.dockSide == DockSide::Right, "reopen remains right");
+    repaired.settings.infoPages.visibleMask = 9;
+    repaired.settings.infoPages.selected = 3;
+    AppState pagesReopened; Load(pagesReopened, Save(repaired));
+    check(pagesReopened.settings.infoPages.visibleMask == 9 && pagesReopened.settings.infoPages.selected == 3, "page visibility and selection survive real settings roundtrip");
+    check(missing.settings.infoPages.visibleMask == 15 && missing.settings.infoPages.selected == 1, "legacy settings default to artwork and all available pages");
+    check(Save(missing)["infoShowSimilarSounds"] == "1", "legacy settings keep the Similar Sounds shortcut visible");
+    Values shortcutSettings = Save(repaired);
+    shortcutSettings["infoShowSimilarSounds"] = "0";
+    AppState hiddenShortcut; Load(hiddenShortcut, shortcutSettings);
+    check(Save(hiddenShortcut)["infoShowSimilarSounds"] == "0", "hidden Similar Sounds shortcut survives real settings roundtrip");
+    check(hiddenShortcut.settings.infoPages.visibleMask == 9 && hiddenShortcut.settings.infoPages.selected == 3, "hiding shortcut preserves page visibility and selection");
+    shortcutSettings["infoShowSimilarSounds"] = "1";
+    AppState restoredShortcut; Load(restoredShortcut, shortcutSettings);
+    check(Save(restoredShortcut)["infoShowSimilarSounds"] == "1", "restored Similar Sounds shortcut survives real settings roundtrip");
     repaired.panelFileInfo.dockSide = DockSide::Left;
     AppState deliberatelyLeft; Load(deliberatelyLeft, Save(repaired));
     check(deliberatelyLeft.panelFileInfo.dockSide == DockSide::Left, "later intentional left dock survives reopen");

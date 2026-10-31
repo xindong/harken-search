@@ -90,7 +90,7 @@ def test_personal_preference_saves_and_rebuilds_database_tree():
     assert "void FlushSettingsDirty(AppState& state)" in MAIN
     assert "FlushSettingsDirty(state);" in WINDOWS_MAIN
     exit_fn = WINDOWS_MAIN[WINDOWS_MAIN.index("void RequestHarkenSearchExit(") :]
-    exit_fn = exit_fn[:900]
+    exit_fn = exit_fn.split("\n}", 1)[0]
     assert "TrySaveAppSettings(*g_appState)" in exit_fn
     assert "StartDeferredSidebarBootstrap(state, true, true)" in WINDOWS_MAIN
     assert "StartDeferredSidebarBootstrap(state, true, true)" in MAIN

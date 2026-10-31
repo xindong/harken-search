@@ -802,6 +802,8 @@ aura_set_test_labels(TestTrigramE2E db)
 
 add_executable(TestBrowserSearch EXCLUDE_FROM_ALL
     tests/test_browser_search.cpp
+    src/PathUtils.cpp
+    tests/playlist_folder_tree_path_conversion_stub.cpp
 )
 if(MSVC)
     target_compile_options(TestBrowserSearch PRIVATE /W3 /utf-8)
@@ -5398,10 +5400,29 @@ endif()
 
 # dB-norm helper for Wwise-style RMS silhouette rendering (pure math, no deps).
 
+add_executable(TestCoverWallPageDedupe EXCLUDE_FROM_ALL
+    tests/test_cover_wall_page_dedupe.cpp
+    src/CoverWallPageResultBuilder.cpp
+    src/PathUtils.cpp
+)
+target_include_directories(TestCoverWallPageDedupe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${SQLITE_DIR}
+    ${IMGUI_DIR}
+)
+target_compile_features(TestCoverWallPageDedupe PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestCoverWallPageDedupe PRIVATE /utf-8)
+endif()
+add_test(NAME CoverWallPageDedupe COMMAND TestCoverWallPageDedupe)
+aura_set_test_labels(CoverWallPageDedupe db)
+
 add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_database_features.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
+    src/AsyncWorker.cpp
     src/AppState.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
@@ -5446,6 +5467,7 @@ target_link_libraries(TestDatabaseFeatures PRIVATE
     winmm
 )
 target_compile_definitions(TestDatabaseFeatures PRIVATE
+    AURO_TEST_REAL_ASYNC_WORKER
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -5462,6 +5484,18 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
+set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
+    ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")
+aura_set_test_labels(TestLegacyDescriptionDisplay db)
+add_test(NAME TestRelinkWorkflowPathUpdate COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowPathUpdate PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_PATH_UPDATE_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowPathUpdate db)
+add_test(NAME TestRelinkWorkflowSearchReport COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowSearchReport PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_SEARCH_REPORT_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowSearchReport db)
 add_test(NAME TestFavoritesMigrationError COMMAND TestDatabaseFeatures)
 set_tests_properties(TestFavoritesMigrationError PROPERTIES
     ENVIRONMENT "HARKEN_FAVORITES_MIGRATION_ONLY=1")
@@ -5928,6 +5962,22 @@ endif()
 add_test(NAME TestMiniWaveformScheduler COMMAND TestMiniWaveformScheduler)
 aura_set_test_labels(TestMiniWaveformScheduler core)
 
+add_executable(TestMiniWaveformPresentation EXCLUDE_FROM_ALL
+    tests/test_mini_waveform_presentation.cpp
+)
+target_include_directories(TestMiniWaveformPresentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+if(MSVC)
+    target_compile_options(TestMiniWaveformPresentation PRIVATE /W3 /utf-8)
+    set_target_properties(TestMiniWaveformPresentation PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestMiniWaveformPresentation COMMAND TestMiniWaveformPresentation)
+aura_set_test_labels(TestMiniWaveformPresentation core)
+
 add_executable(TestMiniRenderMath EXCLUDE_FROM_ALL
     tests/test_mini_render_math.cpp
 )
@@ -6066,6 +6116,53 @@ aura_set_test_labels(TestDatabaseNavNonblockingContract core)
 
 # F-033 Phase 0 QA: DB schema migration + TagVocabularyMapper unit tests
 
+
+add_executable(TestTransportContrast EXCLUDE_FROM_ALL tests/test_transport_contrast.cpp)
+add_executable(TestActionButtonStyle EXCLUDE_FROM_ALL tests/test_action_button_style.cpp
+    src/BuiltinThemeScheme.cpp
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+add_dependencies(TestActionButtonStyle ArisLocalizationGenerated)
+target_include_directories(TestActionButtonStyle PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
+if(MSVC)
+    target_compile_options(TestActionButtonStyle PRIVATE /utf-8)
+endif()
+add_test(NAME TestActionButtonStyle COMMAND TestActionButtonStyle)
+aura_set_test_labels(TestActionButtonStyle ui)
+add_executable(TestEmptyStateContrast EXCLUDE_FROM_ALL tests/test_empty_state_contrast.cpp src/BuiltinThemeScheme.cpp)
+add_dependencies(TestEmptyStateContrast ArisLocalizationGenerated)
+target_include_directories(TestEmptyStateContrast PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
+if(MSVC)
+    target_compile_options(TestEmptyStateContrast PRIVATE /utf-8)
+endif()
+add_test(NAME TestEmptyStateContrast COMMAND TestEmptyStateContrast)
+add_executable(TestMistBlueTheme EXCLUDE_FROM_ALL tests/test_mist_blue_theme.cpp src/BuiltinThemeScheme.cpp)
+add_dependencies(TestMistBlueTheme ArisLocalizationGenerated)
+target_include_directories(TestMistBlueTheme PRIVATE src ${IMGUI_DIR} ${CMAKE_CURRENT_BINARY_DIR}/generated thirdparty)
+if(MSVC)
+    target_compile_options(TestMistBlueTheme PRIVATE /utf-8)
+endif()
+add_test(NAME TestMistBlueTheme COMMAND TestMistBlueTheme)
+aura_set_test_labels(TestMistBlueTheme ui)
+aura_set_test_labels(TestEmptyStateContrast ui)
+add_test(NAME TestEmptyStateThemeAudit COMMAND ${Python3_EXECUTABLE} -m unittest discover
+    -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_empty_state_theme_audit.py)
+aura_set_test_labels(TestEmptyStateThemeAudit ui)
+add_test(NAME TestInfoFamilyThemeAudit COMMAND ${Python3_EXECUTABLE} -m unittest discover
+    -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_info_family_theme_audit.py)
+aura_set_test_labels(TestInfoFamilyThemeAudit ui)
+target_include_directories(TestTransportContrast PRIVATE src ${IMGUI_DIR})
+add_test(NAME TestTransportContrast COMMAND TestTransportContrast)
+aura_set_test_labels(TestTransportContrast ui)
+add_test(NAME TestTransportThemeAudit COMMAND ${Python3_EXECUTABLE} -m unittest discover
+    -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_transport_theme_audit.py)
+aura_set_test_labels(TestTransportThemeAudit ui)
+add_executable(TestTransportBlendInput EXCLUDE_FROM_ALL tests/test_transport_blend_input.cpp
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(TestTransportBlendInput PRIVATE src ${IMGUI_DIR})
+add_test(NAME TestTransportBlendInput COMMAND TestTransportBlendInput)
+aura_set_test_labels(TestTransportBlendInput ui)
 
 add_executable(TestThemeColors EXCLUDE_FROM_ALL
     tests/test_theme_colors.cpp
@@ -6555,6 +6652,18 @@ if(MSVC)
 endif()
 add_test(NAME TestDiagnosticsLoggerRetention COMMAND TestDiagnosticsLoggerRetention)
 aura_set_test_labels(TestDiagnosticsLoggerRetention core)
+
+add_executable(TestScanDatabaseOpenDiagnostics EXCLUDE_FROM_ALL
+    tests/test_scan_database_open_diagnostics.cpp
+    src/ScanDatabaseOpenDiagnostics.cpp
+)
+target_include_directories(TestScanDatabaseOpenDiagnostics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestScanDatabaseOpenDiagnostics PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestScanDatabaseOpenDiagnostics PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestScanDatabaseOpenDiagnostics COMMAND TestScanDatabaseOpenDiagnostics)
+aura_set_test_labels(TestScanDatabaseOpenDiagnostics core)
 
 add_executable(TestDiagnosticsLoggerPersistence EXCLUDE_FROM_ALL
     tests/test_diagnostics_logger_persistence.cpp
@@ -7619,6 +7728,29 @@ endif()
 add_test(NAME TestUpdateCheckService COMMAND TestUpdateCheckService)
 aura_set_test_labels(TestUpdateCheckService core stage4)
 
+if(WIN32 AND MSVC)
+    add_executable(TestUpdateRestartConfirmation tests/test_update_restart_confirmation.cpp)
+    target_include_directories(TestUpdateRestartConfirmation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
+    target_compile_features(TestUpdateRestartConfirmation PRIVATE cxx_std_17)
+    # Inert fixture key; the test never starts the worker or calls an authority port.
+    target_compile_definitions(TestUpdateRestartConfirmation PRIVATE
+        ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX="0000000000000000000000000000000000000000000000000000000000000000")
+    target_compile_options(TestUpdateRestartConfirmation PRIVATE /W3 /utf-8)
+    target_sources(TestUpdateRestartConfirmation PRIVATE
+        src/update/UpdateApplicationService.cpp
+        src/update/UpdateCheckService.cpp
+        src/update/UpdateManifest.cpp
+        src/update/UpdateRuntime.cpp
+        src/update/UpdateCoordinator.cpp
+        src/update/UpdateDownloadManager.cpp
+        src/update/UpdateHttpTransport.cpp
+        src/update/UpdateStateStore.cpp
+        src/ed25519/tweetnacl.c)
+    add_test(NAME TestUpdateRestartConfirmation COMMAND TestUpdateRestartConfirmation)
+    aura_set_test_labels(TestUpdateRestartConfirmation core stage4)
+endif()
+
 add_executable(TestUpdateApplicationService EXCLUDE_FROM_ALL
     tests/test_update_application_service.cpp
     src/update/UpdateApplicationService.cpp
@@ -7708,6 +7840,7 @@ add_executable(TestBootstrapExitExplanation
     tests/test_bootstrap_exit_explanation.cpp
     src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
     src/platform/update_bootstrap_authority_base.cpp
+    src/update/UpdateDownloadManager.cpp
     src/platform/update_persistence_port.cpp
     src/platform/text_encoding_win32.cpp
 )
@@ -8155,6 +8288,21 @@ if(WIN32)
         target_link_libraries(${_system_target} PRIVATE advapi32 crypt32 shell32 ole32 comdlg32 shlwapi)
     endforeach()
 endif()
+
+add_executable(TestInfoPageNavigation tests/test_info_page_navigation.cpp)
+add_executable(TestInfoEditSession tests/test_info_edit_session.cpp)
+target_include_directories(TestInfoEditSession PRIVATE src)
+add_test(NAME InfoEditSession COMMAND TestInfoEditSession)
+aura_set_test_labels(InfoEditSession ui info)
+add_executable(TestInfoArtworkFooterLayout tests/test_info_artwork_footer_layout.cpp
+    thirdparty/imgui/imgui.cpp thirdparty/imgui/imgui_draw.cpp
+    thirdparty/imgui/imgui_tables.cpp thirdparty/imgui/imgui_widgets.cpp)
+target_include_directories(TestInfoArtworkFooterLayout PRIVATE src thirdparty/imgui)
+add_test(NAME InfoArtworkFooterLayout COMMAND TestInfoArtworkFooterLayout)
+aura_set_test_labels(InfoArtworkFooterLayout ui info)
+target_include_directories(TestInfoPageNavigation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(NAME InfoPageNavigation COMMAND TestInfoPageNavigation)
+aura_set_test_labels(InfoPageNavigation ui info)
 
 foreach(_standalone_localized_target IN ITEMS
     TestMetadataWriterImageLoad TestShortcutPresets TestTransferEmbed TestConsentManager)

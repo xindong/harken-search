@@ -15,9 +15,6 @@ RULES = (
 STAGE7 = (ROOT / "tools" / "stage7_api_contract_audit.py").read_text(
     encoding="utf-8"
 )
-DEPENDENCY_MAP = (
-    ROOT / "docs" / "architecture" / "dependency-map.md"
-).read_text(encoding="utf-8")
 
 
 def test_file_info_panel_files_own_shell_entry():
@@ -32,7 +29,8 @@ def test_file_info_panel_files_own_shell_entry():
     assert "void RenderFileInfoPanelContent(AppState& state, float panelWidth)" in source
     assert "int PushFileInfoShellStyle(const ThemeColorScheme& tcs)" in source
     assert "##FileInfoVisibilityMenu" in source
-    assert 'ImGui::BeginTabBar("##FileInfoTabs")' in source
+    assert 'ImGui::BeginTabBar("##FileInfoTabs")' not in source
+    assert "RenderFileInfoPageActions" in source
     assert "DecorateFileInfoTab" in source
 
     for forbidden in ("main.cpp", "WindowsMain", "platform/"):
@@ -60,7 +58,9 @@ def test_file_info_panel_is_built_tested_and_governed():
     assert BEHAVIOR.count("tests/test_file_info_panel_boundary.py") == 1
     assert RULES.count("src/FileInfoPanel.cpp") >= 2
     assert RULES.count("src/FileInfoPanel.h") >= 2
-    assert "FileInfoPanel.*" in DEPENDENCY_MAP
+    # The public repository retains executable dependency rules, not the old
+    # migration-only dependency-map.md. The rules and API mapping above/below
+    # continue to verify this module boundary.
     assert (
         '"src/FileInfoPanel.h": '
         '"tests/test_file_info_panel_boundary.py"'

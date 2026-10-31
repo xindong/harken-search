@@ -673,16 +673,6 @@ int main() {
     if (!Check(ShouldEvaluateFloatingDockZone(true, false, true, true),
                "a floating panel may evaluate a drop after leaving its origin")) return 1;
 
-    const DockRect centerSurface{0.0f, 80.0f, 1600.0f, 720.0f};
-    const DockRect centerLanding = InsetDockCenterDropRect(centerSurface, 160.0f, 120.0f);
-    if (!Check(centerLanding.x > centerSurface.x && centerLanding.y > centerSurface.y &&
-               centerLanding.width < centerSurface.width &&
-               centerLanding.height < centerSurface.height,
-               "center drop must leave a visible margin outside the landing area")) return 1;
-    if (!Check(!RectsOverlap({0.0f, 80.0f, 1.0f, 1.0f}, centerLanding) &&
-               RectsOverlap({800.0f, 400.0f, 1.0f, 1.0f}, centerLanding),
-               "center landing must reject the outer edge and accept its middle")) return 1;
-
     DockRootSlots emptyBottom{};
     emptyBottom.bottom = {0.0f, 800.0f, 1920.0f, 200.0f};
     const DockRect overEmptyBottom{720.0f, 920.0f, 80.0f, 80.0f};
@@ -692,9 +682,8 @@ int main() {
         return 1;
     }
 
-    // Regression: when every visible side panel is floating, the central
-    // results surface is still a valid route back into the same Dock tree.
-    // The runtime supplies the remembered side; no second layout is created.
+    // A results-surface return target must never make its middle magnetic.
+    // Only the remembered edge is a route back into the same Dock tree.
     {
         DockLayout emptyLayout;
         DockRootSlots emptyLayoutSlots{};
@@ -702,13 +691,17 @@ int main() {
         emptyLayoutSlots.right = {1520.0f, 80.0f, 400.0f, 720.0f};
         const DockCenterDropTarget centerDrop{
             {400.0f, 80.0f, 1120.0f, 720.0f}, DockSide::Left, true};
-        const DockRect draggedOverCenter{700.0f, 300.0f, 300.0f, 360.0f};
+        const DockRect draggedOverCenter{800.0f, 350.0f, 1.0f, 1.0f};
         hit = HitDockTarget(draggedOverCenter, mainWork, snap, nullptr, 0,
                             &emptyLayoutSlots, &emptyLayout, &centerDrop);
-        if (!Check(hit.kind == DockHitKind::Main && hit.side == DockSide::Left,
-                   "all-floating layout must accept the center results surface as the remembered Dock side")) {
+        if (!Check(hit.kind == DockHitKind::None,
+                   "dragging over the results middle must remain floating")) {
             return 1;
         }
+        hit = HitDockTarget({402.0f, 350.0f, 1.0f, 1.0f}, mainWork, snap, nullptr, 0,
+                            &emptyLayoutSlots, &emptyLayout, &centerDrop);
+        if (!Check(hit.kind == DockHitKind::Main && hit.side == DockSide::Left,
+                   "all-floating layout must still accept its remembered edge")) return 1;
         const DockDropPlan centerPlan = PlanReadableDockDrop(
             emptyLayout, hit, "filter", mainWork, 80.0f, 40.0f,
             emptyLayoutSlots, 1.0f, 520.0f);
@@ -716,6 +709,119 @@ int main() {
                    centerPlan.rootRect.height > 1.0f,
                    "center result drop must produce a readable Dock leaf")) {
             return 1;
+        }
+    }
+
+    // Every return direction uses only its own edge, never the broad center
+    // or another direction. Use an offset surface to exercise viewport coords.
+    {
+        const DockRect work{-300.0f, 20.0f, 1920.0f, 1080.0f};
+        const DockRect surface{-100.0f, 100.0f, 1320.0f, 720.0f};
+        DockLayout empty;
+        DockRootSlots slots{};
+        for (DockSide side : {DockSide::Left, DockSide::Right, DockSide::Top, DockSide::Bottom}) {
+            const DockCenterDropTarget target{surface, side, true, 320.0f};
+            for (int x = 1; x < 5; ++x) {
+                for (int y = 1; y < 5; ++y) {
+                    const DockRect pointer{surface.x + surface.width * x / 5.0f,
+                        surface.y + surface.height * y / 5.0f, 1.0f, 1.0f};
+                    if (!Check(HitDockTarget(pointer, work, kDockSnapDistance,
+                            nullptr, 0, &slots, &empty, &target).kind == DockHitKind::None,
+                            "interior pointer grid must never dock in a remembered direction")) return 1;
+                }
+            }
+            DockRect edge{surface.x + surface.width * .5f, surface.y + surface.height * .5f, 1, 1};
+            if (side == DockSide::Left) edge.x = surface.x + 2;
+            if (side == DockSide::Right) edge.x = surface.x + surface.width - 2;
+            if (side == DockSide::Top) edge.y = surface.y + 2;
+            if (side == DockSide::Bottom) edge.y = surface.y + surface.height - 2;
+            hit = HitDockTarget(edge, work, kDockSnapDistance, nullptr, 0, &slots, &empty, &target);
+            if (!Check(hit.kind == DockHitKind::Main && hit.side == side &&
+                       hit.preferredRootExtent == 320.0f &&
+                       SameDockRect(hit.hitRect, InnerStripRect(surface, side, kDockSnapDistance)),
+                       "remembered edge must expose only its narrow hit band and retain its size")) return 1;
+            DockRect away = edge;
+            if (side == DockSide::Left) away.x = surface.x + kDockSnapDistance + 1;
+            if (side == DockSide::Right) away.x = surface.x + surface.width - kDockSnapDistance - 2;
+            if (side == DockSide::Top) away.y = surface.y + kDockSnapDistance + 1;
+            if (side == DockSide::Bottom) away.y = surface.y + surface.height - kDockSnapDistance - 2;
+            if (!Check(HitDockTarget(away, work, kDockSnapDistance, nullptr, 0,
+                       &slots, &empty, &target).kind == DockHitKind::None,
+                       "leaving the edge band must immediately remove the drop target")) return 1;
+            DockCenterDropTarget disabled = target;
+            disabled.enabled = false;
+            if (!Check(HitDockTarget(edge, work, kDockSnapDistance, nullptr, 0,
+                       &slots, &empty, &disabled).kind == DockHitKind::None,
+                       "disabled return targets must remain disabled")) return 1;
+            DockLayout occupied;
+            occupied.InsertModule("filter", side, .24f);
+            if (!Check(HitDockTarget(edge, work, kDockSnapDistance, nullptr, 0,
+                       &slots, &occupied, &target).kind == DockHitKind::None,
+                       "results edge must not insert into an occupied root behind its leaf")) return 1;
+        }
+    }
+
+    // Portrait users can dock above/below the results, regardless of a
+    // floating panel's remembered left/right side. The waveform is excluded.
+    {
+        DockLayout layout;
+        layout.InsertModule("filter", DockSide::Left, .24f);
+        const DockRect work{30, 40, 1080, 1600};
+        const DockRect surface{342, 120, 768, 1180};
+        const DockCenterDropTarget target{surface, DockSide::Right, true, 360};
+        DockRootSlots slots{};
+        slots.left = {30, 120, 300, 1180};
+        slots.right = {750, 120, 360, 1180};
+        slots.top = {342, 120, 768, 220};
+        slots.bottom = {342, 1080, 768, 220};
+        for (DockSide side : {DockSide::Top, DockSide::Bottom}) {
+            const DockRect pointer{700, side == DockSide::Top ? 122.0f : 1298.0f, 1, 1};
+            hit = HitDockTarget(pointer, work, kDockSnapDistance, nullptr, 0, &slots, &layout, &target);
+            if (!Check(hit.kind == DockHitKind::Main && hit.side == side,
+                       "results top/bottom edges must accept a formerly right-docked panel")) return 1;
+            hit.preferredRootExtent = 220;
+            const auto plan = PlanReadableDockDrop(layout, hit, "info", work, 80, 0, slots, 1, 520);
+            if (!Check(plan.accepted && plan.rootRect.x == surface.x &&
+                       plan.rootRect.width == surface.width && plan.rootRect.height == 220 &&
+                       plan.rootRect.y == (side == DockSide::Top ? 120.0f : 1080.0f),
+                       "vertical preview must stay inside the results column above the waveform")) return 1;
+            if (!Check(SameDockRect(plan.slots.left, slots.left),
+                       "vertical docking must preserve the full-height sidebar")) return 1;
+        }
+        for (float y : {80.0f, 700.0f, 1400.0f}) {
+            if (!Check(HitDockTarget({700, y, 1, 1}, work, kDockSnapDistance, nullptr, 0,
+                       &slots, &layout, &target).kind == DockHitKind::None,
+                       "toolbar, results middle and waveform must not become vertical dock targets")) return 1;
+        }
+        DockHit bottom;
+        bottom.kind = DockHitKind::Main;
+        bottom.side = bottom.rootRegion = DockSide::Bottom;
+        bottom.preferredRootExtent = 900;
+        DockRootSlots shortSlots = slots;
+        shortSlots.left.height = shortSlots.right.height = 350;
+        shortSlots.bottom.y = 250;
+        shortSlots.bottom.height = 220;
+        const auto rejected = PlanReadableDockDrop(layout, bottom, "info",
+            {30,40,1080,720}, 80, 0, shortSlots, 1, 520);
+        if (!Check(!rejected.accepted && rejected.tooSmall,
+                   "a vertical drop must leave 200px for the results or be rejected")) return 1;
+    }
+
+    // A vertical preview cannot borrow width that the central renderer lacks.
+    for (const char* incoming : {"similar-sounds", "mod-workflow"}) {
+        DockLayout narrow;
+        narrow.InsertModule("filter", DockSide::Left, .24f);
+        DockRootSlots slots{};
+        slots.left = {0,80,300,900};
+        slots.top = {312,80,388,220};
+        slots.bottom = {312,760,388,220};
+        for (auto side : {DockSide::Top, DockSide::Bottom}) {
+            DockHit drop;
+            drop.kind=DockHitKind::Main; drop.side=drop.rootRegion=side;
+            drop.preferredRootExtent=220;
+            const auto plan=PlanReadableDockDrop(narrow,drop,incoming,{0,0,700,1200},80,0,slots);
+            if (!Check(!plan.accepted && plan.tooSmall,
+                       "narrow central column rejects a wider vertical module")) return 1;
         }
     }
 
@@ -733,7 +839,7 @@ int main() {
         realWorkspaceSlots.right = {880.0f, 80.0f, 720.0f, 720.0f};
         const DockCenterDropTarget rememberedFilterDrop{
             {0.0f, 80.0f, 868.0f, 720.0f}, DockSide::Left, true, 300.0f};
-        const DockRect draggedFilter{560.0f, 300.0f, 300.0f, 360.0f};
+        const DockRect draggedFilter{2.0f, 300.0f, 1.0f, 1.0f};
         hit = HitDockTarget(draggedFilter, {0.0f, 0.0f, 1600.0f, 900.0f}, snap,
                             nullptr, 0, &realWorkspaceSlots, &rightLayout,
                             &rememberedFilterDrop);
@@ -743,7 +849,7 @@ int main() {
         if (!Check(rememberedPlan.accepted && !rememberedPlan.tooSmall &&
                    rememberedPlan.rootRect.width >= 299.0f &&
                    rememberedPlan.rootRect.width <= 301.0f,
-                   "center re-dock must preserve the floating filter's remembered 300px root extent")) {
+                   "edge re-dock must preserve the floating filter's remembered 300px root extent")) {
             return 1;
         }
     }

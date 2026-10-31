@@ -2,8 +2,11 @@
 // 数据库拆分和路径索引功能测试程序
 
 #include "Database.h"
+#include "MetadataReader.h"
+#include "AsyncWorker.h"
 #include "AudioEngine.h"
 #include "CoverModule.h"
+#include "CoverWallSelectionKey.h"
 #include "PathUtils.h"
 #include "SimilaritySearch.h"
 #include "Utils.h"
@@ -1127,6 +1130,61 @@ int testGlobalCoverWallPageFollowsCurrentFileListOrder() {
     return failures;
 }
 
+int testFolderCoverFacetsKeepDistinctSimilarArtworks() {
+    printSeparator("Test: folder cover wall keeps distinct similar artwork files");
+    const std::string dbPath = "test_folder_cover_distinct_similar.db";
+    removeDbFamily(dbPath);
+    Database db;
+    if (!db.open(dbPath)) return 1;
+
+    const std::string firstKey = "F|H|0000000000000001|100";
+    const std::string secondKey = "F|H|0000000000000002|100";
+    auto add = [&](const std::string& name, const std::string& folder, const std::string& key) {
+        AudioRecord record;
+        record.filePath = folder + "/" + name;
+        record.fileName = name;
+        record.folderPath = HarkenSearch::CanonicalFolderPath(folder);
+        record.extension = ".wav";
+        record.format = "WAV";
+        record.hasCover = true;
+        record.folderCoverKey = key;
+        return db.addFile(record);
+    };
+    const bool seeded =
+        add("one.wav", "C:/library/media/Album_01", firstKey) &&
+        add("two.wav", "C:/library/media/Album_01", firstKey) &&
+        add("three.wav", "C:/library/media/Album_02", secondKey) &&
+        sqlite3_exec(db.db(), R"SQL(
+            INSERT OR REPLACE INTO cover_cache_registry
+                (cover_key, rep_path, is_embedded, normalized_key, cover_phash)
+            VALUES
+                ('F|H|0000000000000001|100', 'c:\library\media\album_01', 0,
+                 'F|H|0000000000000001|100', 12345),
+                ('F|H|0000000000000002|100', 'c:\library\media\album_02', 0,
+                 'F|H|0000000000000002|100', 12345);
+        )SQL", nullptr, nullptr, nullptr) == SQLITE_OK;
+    SearchFilter parent;
+    parent.folderPath = HarkenSearch::CanonicalFolderPath("C:/library/media");
+    SearchFilter album;
+    album.folderPath = HarkenSearch::CanonicalFolderPath("C:/library/media/Album_01");
+    const auto parentFiles = db.searchFiles(parent, 10, 0);
+    const auto parentCovers = db.getCoverFacets(parent, 10);
+    const auto cachedParentCovers = db.getCoverFacets(parent, 10);
+    const auto albumFiles = db.searchFiles(album, 10, 0);
+    const auto albumCovers = db.getCoverFacets(album, 10);
+    const bool ok = seeded && parentFiles.size() == 3 && parentCovers.size() == 2 &&
+                    cachedParentCovers.size() == 2 &&
+                    albumFiles.size() == 2 && albumCovers.size() == 1;
+    std::cout << (ok ? "PASS" : "FAIL")
+              << ": parent files=" << parentFiles.size()
+              << " covers=" << parentCovers.size()
+              << "; album files=" << albumFiles.size()
+              << " covers=" << albumCovers.size() << "\n";
+    db.close();
+    removeDbFamily(dbPath);
+    return ok ? 0 : 1;
+}
+
 int testLargeCoverWallPageFollowsCurrentFileListPastFiftyThousandRows() {
     printSeparator("Test: large cover wall follows file list and continues after 50000 rows");
 
@@ -1139,6 +1197,38 @@ int testLargeCoverWallPageFollowsCurrentFileListPastFiftyThousandRows() {
         db.close();
         removeDbFamily(dbPath);
         return 1;
+    }
+    const auto denseStart = std::chrono::steady_clock::now();
+    const auto densePage = db.getGlobalCoverWallEntriesPage({}, 512, true);
+    const auto denseElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - denseStart).count();
+    const bool denseOk = densePage.largeLibrary && densePage.entries.size() == 512 &&
+        denseElapsed < 5000;
+    std::cout << (denseOk ? "PASS" : "FAIL")
+              << ": dense first cover page loads promptly; rows="
+              << densePage.entries.size() << " elapsed_ms=" << denseElapsed
+              << " error=" << db.getLastError() << "\n";
+    if (!denseOk) ++failures;
+    if (sqlite3_exec(db.db(),
+            "UPDATE audio_files SET embedded_cover_key='E|shared' WHERE id <= 49000;",
+            nullptr, nullptr, nullptr) != SQLITE_OK) {
+        ++failures;
+    } else {
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        sqlite3_progress_handler(db.db(), 10000, [](void* context) -> int {
+            const auto* end = static_cast<const std::chrono::steady_clock::time_point*>(context);
+            return std::chrono::steady_clock::now() >= *end ? 1 : 0;
+        }, &deadline);
+        const auto repeatedStart = std::chrono::steady_clock::now();
+        const auto repeatedPage = db.getGlobalCoverWallEntriesPage({}, 2, true);
+        const auto repeatedElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - repeatedStart).count();
+        sqlite3_progress_handler(db.db(), 0, nullptr, nullptr);
+        const bool repeatedOk = repeatedPage.entries.size() == 2 && repeatedElapsed < 5000;
+        std::cout << (repeatedOk ? "PASS" : "FAIL")
+                  << ": repeated cover keys do not stall global page; rows="
+                  << repeatedPage.entries.size() << " elapsed_ms=" << repeatedElapsed << "\n";
+        if (!repeatedOk) ++failures;
     }
     const char* fixtureSql =
         "UPDATE audio_files SET has_cover=0, embedded_cover_key='' "
@@ -1186,6 +1276,17 @@ int testLargeCoverWallPageFollowsCurrentFileListPastFiftyThousandRows() {
                   << second.entries.size() << "\n";
         if (!secondOk) ++failures;
     }
+    const std::string visualSelection =
+        aura::cover_wall::EncodeExactCoverWallKey("E|visual_late");
+    const auto aliasIds = db.getFileIdsForCoverTileMembership(visualSelection);
+    SearchFilter aliasFilter;
+    aliasFilter.specificCoverKey = visualSelection;
+    const auto aliasCount = db.searchFilesCount(aliasFilter);
+    const bool aliasOk = aliasIds.size() == 1 && aliasCount == 1;
+    std::cout << (aliasOk ? "PASS" : "FAIL")
+              << ": normalized visual key resolves its stored raw membership; ids="
+              << aliasIds.size() << " count=" << aliasCount << "\n";
+    if (!aliasOk) ++failures;
     db.close();
     removeDbFamily(dbPath);
     return failures;
@@ -1408,7 +1509,7 @@ int testLargeCoverBrowseHotPathsUseBoundedRegistryHeuristic() {
 
     const std::string pagedWallBody = extractFunctionBody(
         source,
-        "Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(const std::string& afterCursor, int limit)");
+        "Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(");
     const bool pagedWallUsesBoundedHelper =
         !pagedWallBody.empty() &&
         pagedWallBody.find("AssessGlobalCoverAggregationReadiness") != std::string::npos &&
@@ -2655,6 +2756,84 @@ int testTemporaryCoverIdentityReverseLookupMatchesCoverFilter() {
               << ": temporary folder identity cover filter matches tile membership semantics\n";
     if (!coverFilterMatchesTileMembership) ++failures;
 
+    db.close();
+    removeDbFamily(dbPath);
+    return failures;
+}
+
+int testCoverWallGroupedSelectionIncludesAllFoldersWithoutFuzzyNeighbors() {
+    printSeparator("Test: grouped cover wall selection uses exact member identities");
+    const std::string dbPath = "test_cover_wall_grouped_selection.db";
+    removeDbFamily(dbPath);
+    Database db;
+    if (!db.open(dbPath)) return 1;
+    const std::string keyA = CoverModule::CanonicalCoverKey("F|PATH|C:/covers/shared.jpg");
+    const std::string keyB = CoverModule::CanonicalCoverKey("F|PATH|C:/covers/near.jpg");
+    int failures = 0;
+    auto add = [&](const std::string& folder, const std::string& name, const std::string& key) {
+        AudioRecord r;
+        r.filePath = folder + "/" + name;
+        r.fileName = name;
+        r.folderPath = folder;
+        r.extension = ".wav";
+        r.format = "WAV";
+        r.channels = 2;
+        r.sampleRate = 48000;
+        r.bitDepth = 24;
+        r.durationSeconds = 1.0f;
+        r.fileSize = 1024;
+        r.totalFrames = 48000;
+        r.hasCover = true;
+        r.folderCoverKey = key;
+        if (!key.empty()) r.folderCoverSrcPath = key.substr(7);
+        if (!db.addFile(r)) ++failures;
+    };
+    add("C:/lib/wall-group/a", "a.wav", "");
+    add("C:/lib/wall-group/b", "b.wav", "");
+    add("C:/lib/wall-group/c", "c.wav", keyA);
+    add("C:/lib/wall-group/d", "d.wav", keyB);
+    std::ostringstream registrySql;
+    registrySql << "INSERT OR REPLACE INTO cover_cache_registry "
+        "(cover_key, rep_path, is_embedded, normalized_key, cover_phash, cover_phash_version) VALUES "
+        "('" << keyA << "', 'C:/lib/wall-group/c', 0, 'PHASH|12345', 12345, 2), "
+        "('" << keyB << "', 'C:/lib/wall-group/d', 0, 'PHASH|12345', 12345, 2);";
+    if (sqlite3_exec(db.db(), registrySql.str().c_str(), nullptr, nullptr, nullptr) != SQLITE_OK) ++failures;
+    const std::string group = aura::cover_wall::EncodeGroupedCoverWallKeys({
+        "?|C:/lib/wall-group/a", "?|C:/lib/wall-group/b", keyA});
+    std::vector<std::string> decoded;
+    if (!aura::cover_wall::DecodeCoverWallSelectionKey(group, decoded) || decoded.size() != 3) ++failures;
+    const auto ids = db.getFileIdsForCoverTileMembership(group);
+    SearchFilter filter;
+    filter.specificCoverKey = group;
+    const auto groupCount = db.searchFilesCount(filter);
+    const auto groupRows = db.searchFiles(filter, 10, 0).size();
+    std::cout << "group ids=" << ids.size() << " count=" << groupCount
+              << " rows=" << groupRows << '\n';
+    if (ids.size() != 3 || groupCount != 3 || groupRows != 3) ++failures;
+    const std::string exact = aura::cover_wall::EncodeExactCoverWallKey(keyA);
+    filter.specificCoverKey = exact;
+    const auto exactIds = db.getFileIdsForCoverTileMembership(exact).size();
+    const auto exactCount = db.searchFilesCount(filter);
+    std::cout << "exact ids=" << exactIds << " count=" << exactCount << '\n';
+    if (exactIds != 1 || exactCount != 1) ++failures;
+    sqlite3_stmt* deleteMembership = nullptr;
+    if (sqlite3_prepare_v2(db.db(),
+                           "DELETE FROM cover_tile_membership WHERE tile_key = ?",
+                           -1, &deleteMembership, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(deleteMembership, 1, keyB.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(deleteMembership) != SQLITE_DONE) ++failures;
+    } else {
+        ++failures;
+    }
+    if (deleteMembership) sqlite3_finalize(deleteMembership);
+    const std::string partlyIndexed =
+        aura::cover_wall::EncodeGroupedCoverWallKeys({keyA, keyB});
+    filter.specificCoverKey = partlyIndexed;
+    const auto repairedIds = db.getFileIdsForCoverTileMembership(partlyIndexed);
+    const auto repairedCount = db.searchFilesCount(filter);
+    std::cout << "partial index group ids=" << repairedIds.size()
+              << " count=" << repairedCount << '\n';
+    if (repairedIds.size() != 2 || repairedCount != 2) ++failures;
     db.close();
     removeDbFamily(dbPath);
     return failures;
@@ -4775,6 +4954,159 @@ static int testReadOnlyPinyinRecomputeStops() {
     return failures;
 }
 
+static int testRelinkUpdateRequiresExistingSource() {
+    const fs::path root = fs::temp_directory_path() /
+        ("harken-relink-update-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::remove_all(root);
+    fs::create_directories(root);
+    Database db;
+    if (!db.open((root / "library.db").string(), true)) {
+        std::cout << "FAIL: could not create relink update test database\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const std::string originalPath = (root / "missing-source.wav").string();
+    const std::string unrelatedPath = (root / "unrelated-source.wav").string();
+    const std::string replacementPath = (root / "replacement.wav").string();
+    sqlite3_stmt* insert = nullptr;
+    bool inserted = sqlite3_prepare_v2(
+        db.db(),
+        "INSERT INTO audio_files(file_path, file_name) VALUES(?1, ?2)",
+        -1,
+        &insert,
+        nullptr) == SQLITE_OK;
+    if (inserted) {
+        sqlite3_bind_text(insert, 1, originalPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert, 2, "missing-source.wav", -1, SQLITE_STATIC);
+        inserted = sqlite3_step(insert) == SQLITE_DONE;
+    }
+    if (insert) sqlite3_finalize(insert);
+
+    sqlite3_stmt* insertTarget = nullptr;
+    bool targetInserted = sqlite3_prepare_v2(
+        db.db(),
+        "INSERT INTO audio_files(file_path, file_name) VALUES(?1, ?2)",
+        -1,
+        &insertTarget,
+        nullptr) == SQLITE_OK;
+    if (targetInserted) {
+        sqlite3_bind_text(insertTarget, 1, replacementPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insertTarget, 2, "replacement.wav", -1, SQLITE_STATIC);
+        targetInserted = sqlite3_step(insertTarget) == SQLITE_DONE;
+    }
+    if (insertTarget) sqlite3_finalize(insertTarget);
+
+    Database::RelinkPathUpdateStatus missingSourceStatus =
+        Database::RelinkPathUpdateStatus::Failed;
+    const bool missingSourceUpdated = inserted && targetInserted &&
+        db.updateFilePath(
+            unrelatedPath,
+            (root / "unused.wav").string(),
+            "unused.wav",
+            &missingSourceStatus);
+    Database::RelinkPathUpdateStatus conflictStatus =
+        Database::RelinkPathUpdateStatus::Failed;
+    const bool conflictingPathUpdated = inserted && targetInserted &&
+        db.updateFilePath(
+            originalPath,
+            replacementPath,
+            "replacement.wav",
+            &conflictStatus);
+    const auto original = db.executeRawQuery(
+        "SELECT COUNT(*) FROM audio_files WHERE file_path = '" + originalPath + "';");
+    const auto replacement = db.executeRawQuery(
+        "SELECT COUNT(*) FROM audio_files WHERE file_path = '" + replacementPath + "';");
+    const bool sourcePreserved = original.rows.size() == 1 && original.rows[0][0] == "1";
+    const bool destinationPreserved = replacement.rows.size() == 1 && replacement.rows[0][0] == "1";
+    const bool passed = inserted && targetInserted && !missingSourceUpdated &&
+        missingSourceStatus == Database::RelinkPathUpdateStatus::SourceChanged &&
+        !conflictingPathUpdated &&
+        conflictStatus == Database::RelinkPathUpdateStatus::PathConflict &&
+        sourcePreserved && destinationPreserved;
+    std::cout << (passed ? "PASS" : "FAIL")
+              << ": relink update distinguishes a missing source row and occupied destination\n";
+    db.close();
+    fs::remove_all(root);
+    return passed ? 0 : 1;
+}
+
+static int testRelinkSearchReportsStatusReasonAndProgress() {
+    const fs::path root = fs::temp_directory_path() /
+        ("harken-relink-search-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const fs::path searchRoot = root / "search";
+    fs::create_directories(searchRoot);
+    const fs::path candidatePath = searchRoot / "forest.wav";
+    const fs::path missingPath = root / "old" / "forest.wav";
+    {
+        std::ofstream file(candidatePath, std::ios::binary);
+        file << std::string(64, 'R');
+    }
+
+    Database db;
+    if (!db.open((root / "library.db").string(), true)) {
+        std::cout << "FAIL: could not create relink search test database\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    sqlite3_stmt* insert = nullptr;
+    bool inserted = sqlite3_prepare_v2(
+        db.db(),
+        "INSERT INTO audio_files(file_path, file_name, file_size) VALUES(?1, ?2, ?3)",
+        -1,
+        &insert,
+        nullptr) == SQLITE_OK;
+    if (inserted) {
+        const std::string missingPathUtf8 = missingPath.string();
+        sqlite3_bind_text(insert, 1, missingPathUtf8.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(insert, 2, "forest.wav", -1, SQLITE_STATIC);
+        sqlite3_bind_int64(insert, 3, 64);
+        inserted = sqlite3_step(insert) == SQLITE_DONE;
+    }
+    if (insert) sqlite3_finalize(insert);
+
+    std::atomic<bool> cancel{false};
+    std::atomic<uint64_t> scannedEntries{0};
+    const auto matched = db.findRelinkCandidatesDetailed(
+        {searchRoot.string()}, &cancel, &scannedEntries);
+    const bool exactMatch = inserted &&
+        matched.status == Database::RelinkSearchStatus::Completed &&
+        matched.candidates.size() == 1 &&
+        matched.candidates[0].second.size() == 1 &&
+        matched.candidates[0].second[0].path == candidatePath.string() &&
+        matched.candidates[0].second[0].reason ==
+            Database::RelinkMatchReason::ExactFileNameAndSize &&
+        matched.scannedEntries > 0 &&
+        scannedEntries.load(std::memory_order_acquire) == matched.scannedEntries;
+
+    const auto noRoots = db.findRelinkCandidatesDetailed({}, &cancel);
+    const bool emptySearchIsComplete =
+        noRoots.status == Database::RelinkSearchStatus::Completed &&
+        noRoots.candidates.size() == 1 && noRoots.candidates[0].second.empty();
+
+    const auto missingRoot = db.findRelinkCandidatesDetailed(
+        {(root / "unavailable").string()}, &cancel);
+    const bool unreadableRootIsFailure =
+        missingRoot.status == Database::RelinkSearchStatus::Failed &&
+        missingRoot.failedRoots.size() == 1;
+
+    cancel.store(true, std::memory_order_release);
+    const auto cancelled = db.findRelinkCandidatesDetailed(
+        {searchRoot.string()}, &cancel);
+    const bool cancellationIsDistinct =
+        cancelled.status == Database::RelinkSearchStatus::Cancelled;
+
+    const bool passed = exactMatch && emptySearchIsComplete &&
+                        unreadableRootIsFailure && cancellationIsDistinct;
+    std::cout << (passed ? "PASS" : "FAIL")
+              << ": relink search reports exact matches, progress, empty, failed, and cancelled outcomes\n";
+    db.close();
+    fs::remove_all(root);
+    return passed ? 0 : 1;
+}
+
 int testReadOnlyOpenDoesNotCreateLegacySidecars() {
     const fs::path root = fs::temp_directory_path() /
         ("harken-readonly-sidecars-" +
@@ -5047,7 +5379,237 @@ int testFavoriteColumnMigrationReportsFailure() {
     return ok ? 0 : 1;
 }
 
+int testLegacyDescriptionDisplay() {
+    char* qaRootRaw = nullptr;
+    size_t qaRootLength = 0;
+    _dupenv_s(&qaRootRaw, &qaRootLength, "HARKEN_DESCRIPTION_QA_ROOT");
+    const bool keepQaFixture = qaRootRaw && *qaRootRaw;
+    const fs::path root = keepQaFixture
+        ? fs::u8path(qaRootRaw) / "Library"
+        : fs::temp_directory_path() /
+              ("harken-description-display-" +
+               std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::free(qaRootRaw);
+    if (!fs::create_directories(root)) return 1;
+    Database db;
+    const std::string dbPath = PathToUtf8(root / "main.db");
+    if (!db.open(dbPath, true)) return 1;
+
+    AudioRecord legacy;
+    legacy.filePath = "C:/fixture/legacy.mp3";
+    legacy.fileName = "legacy.mp3";
+    legacy.extension = ".mp3";
+    legacy.description = "old";
+    if (!db.addFile(legacy)) return 1;
+    const uint8_t oldBytes[] = {'e', 'n', 'g', 0xFF, 0xFE, 0, 0,
+                                0xFF, 0xFE, 'A', 0, 0xF3, 0x97, '6'};
+    sqlite3_stmt* update = nullptr;
+    const bool prepared = sqlite3_prepare_v2(
+        db.db(), "UPDATE audio_files SET description=? WHERE file_path=?",
+        -1, &update, nullptr) == SQLITE_OK;
+    bool updated = false;
+    if (prepared) {
+        sqlite3_bind_text(update, 1, reinterpret_cast<const char*>(oldBytes),
+                          sizeof(oldBytes), SQLITE_TRANSIENT);
+        sqlite3_bind_text(update, 2, legacy.filePath.c_str(), -1, SQLITE_TRANSIENT);
+        updated = sqlite3_step(update) == SQLITE_DONE;
+    }
+    sqlite3_finalize(update);
+    sqlite3_stmt* hexStmt = nullptr;
+    std::string storedHex;
+    if (sqlite3_prepare_v2(db.db(),
+            "SELECT hex(CAST(description AS BLOB)) FROM audio_files WHERE file_path=?",
+            -1, &hexStmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(hexStmt, 1, legacy.filePath.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(hexStmt) == SQLITE_ROW) {
+            storedHex = reinterpret_cast<const char*>(sqlite3_column_text(hexStmt, 0));
+        }
+    }
+    sqlite3_finalize(hexStmt);
+    const AudioRecord decoded = db.getFileByPath(legacy.filePath);
+
+    AudioRecord normal = legacy;
+    normal.filePath = "C:/fixture/normal.mp3";
+    normal.fileName = "normal.mp3";
+    normal.description = "普通中文描述";
+    const bool normalAdded = db.addFile(normal);
+    const AudioRecord untouched = db.getFileByPath(normal.filePath);
+
+    const auto fromHex = [](const std::string& hex) {
+        std::vector<uint8_t> bytes;
+        for (size_t i = 0; i + 1 < hex.size(); i += 2)
+            bytes.push_back(static_cast<uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
+        return bytes;
+    };
+    const std::string sourceFrameHex =
+        "01656e67fffe0000fffe640065006d006f002e0063006f006d005f003a798b4f"
+        "2d4e8765cf63f08f5f00f48b0e66575b";
+    const std::string damagedDbHex =
+        "656e67fffe0000fffe640065006d006f002e0063006f006d005f003a798b4f"
+        "2d4e8765cf63f08f5f00f48b0e66fdff";
+    std::vector<uint8_t> mp3 = {'I', 'D', '3', 3, 0, 0, 0, 0, 0, 58,
+                                'C', 'O', 'M', 'M', 0, 0, 0, 48, 0, 0};
+    const auto frame = fromHex(sourceFrameHex);
+    mp3.insert(mp3.end(), frame.begin(), frame.end());
+    const fs::path chinesePath = root / "real-chinese-comment.mp3";
+    {
+        std::ofstream audio(chinesePath, std::ios::binary);
+        audio.write(reinterpret_cast<const char*>(mp3.data()),
+                    static_cast<std::streamsize>(mp3.size()));
+    }
+    AudioMetadata sourceChinese;
+    const bool sourceChineseReadable = MetadataReader::readMetadata(
+        PathToUtf8(chinesePath), sourceChinese) &&
+        sourceChinese.comment == "demo.com_示例中文描述_说明字";
+    AudioRecord chinese = legacy;
+    chinese.filePath = PathToUtf8(chinesePath);
+    chinese.fileName = "real-chinese-comment.mp3";
+    const bool chineseAdded = db.addFile(chinese);
+    sqlite3_stmt* chineseUpdate = nullptr;
+    const std::string updateChineseSql =
+        "UPDATE audio_files SET description=CAST(x'" + damagedDbHex +
+        "' AS TEXT) WHERE file_path=?";
+    bool chineseUpdated = false;
+    if (sqlite3_prepare_v2(db.db(), updateChineseSql.c_str(), -1,
+                           &chineseUpdate, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(chineseUpdate, 1, chinese.filePath.c_str(), -1, SQLITE_TRANSIENT);
+        chineseUpdated = sqlite3_step(chineseUpdate) == SQLITE_DONE;
+    }
+    sqlite3_finalize(chineseUpdate);
+    const AudioRecord restoredChinese = db.getFileByPath(chinese.filePath);
+    const fs::path convertedPath = root / "converted-chinese-comment.mp3";
+    {
+        std::ofstream audio(convertedPath, std::ios::binary);
+        audio.write(reinterpret_cast<const char*>(mp3.data()),
+                    static_cast<std::streamsize>(mp3.size()));
+    }
+    AudioRecord converted = legacy;
+    converted.filePath = PathToUtf8(convertedPath);
+    converted.fileName = "converted-chinese-comment.mp3";
+    const bool convertedAdded = db.addFile(converted);
+    sqlite3_stmt* convertedUpdate = nullptr;
+    bool convertedUpdated = false;
+    const auto damagedBytes = fromHex(damagedDbHex);
+    if (sqlite3_prepare_v2(db.db(),
+            "UPDATE audio_files SET description=? WHERE file_path=?", -1,
+            &convertedUpdate, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(convertedUpdate, 1,
+                          reinterpret_cast<const char*>(damagedBytes.data()),
+                          static_cast<int>(damagedBytes.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_text(convertedUpdate, 2, converted.filePath.c_str(), -1,
+                          SQLITE_TRANSIENT);
+        convertedUpdated = sqlite3_step(convertedUpdate) == SQLITE_DONE;
+    }
+    sqlite3_finalize(convertedUpdate);
+    const AudioRecord convertedRead = db.getFileByPath(converted.filePath);
+    const int64_t scopePlaylist = db.createPlaylist("legacy-description-scope");
+    const bool scopePlaylistAdded = scopePlaylist > 0 &&
+        db.addToPlaylist(scopePlaylist, restoredChinese.id);
+    SearchWorker searchWorker;
+    searchWorker.start(dbPath);
+    auto waitForSearch = [&](AsyncSearchRequest request, AsyncSearchResult& out) {
+        const uint64_t requestId = searchWorker.submitSearch(request);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (searchWorker.pollResult(out, requestId)) return out.success;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    AsyncSearchRequest databaseRequest;
+    databaseRequest.viewMode = 1;
+    databaseRequest.allowDatabaseListSourceDescription = true;
+    databaseRequest.limit = 20;
+    AsyncSearchResult databaseResult;
+    const bool databaseSearched = waitForSearch(databaseRequest, databaseResult);
+    auto findRow = [](const AsyncSearchResult& result, const std::string& path)
+        -> const AudioRecord* {
+        for (const auto& row : result.results)
+            if (row.filePath == path) return &row;
+        return nullptr;
+    };
+    const AudioRecord* workerChinese = findRow(databaseResult, chinese.filePath);
+    const AudioRecord* workerConverted = findRow(databaseResult, converted.filePath);
+    const AudioRecord* workerUnreadable = findRow(databaseResult, legacy.filePath);
+    AsyncSearchRequest keywordRequest = databaseRequest;
+    keywordRequest.filter.keyword = "real";
+    keywordRequest.allowDatabaseListSourceDescription = false;
+    AsyncSearchResult keywordResult;
+    const bool keywordSearched = waitForSearch(keywordRequest, keywordResult);
+    const AudioRecord* keywordChinese = findRow(keywordResult, chinese.filePath);
+    AsyncSearchRequest collectionRequest = databaseRequest;
+    collectionRequest.filter.keyword = "real";
+    AsyncSearchResult collectionResult;
+    const bool collectionSearched = waitForSearch(collectionRequest, collectionResult);
+    const AudioRecord* collectionChinese = findRow(collectionResult, chinese.filePath);
+    AsyncSearchRequest playlistRequest;
+    playlistRequest.viewMode = 3;
+    playlistRequest.playlistId = scopePlaylist;
+    playlistRequest.limit = 20;
+    AsyncSearchResult playlistResult;
+    const bool playlistSearched = scopePlaylistAdded &&
+        waitForSearch(playlistRequest, playlistResult);
+    const AudioRecord* playlistChinese = findRow(playlistResult, chinese.filePath);
+    const bool workerScoped = databaseSearched && workerChinese && workerConverted &&
+        workerUnreadable && keywordSearched && keywordChinese &&
+        collectionSearched && collectionChinese &&
+        playlistSearched && playlistChinese &&
+        workerChinese->databaseListDescriptionOverride == sourceChinese.comment &&
+        workerConverted->databaseListDescriptionOverride == sourceChinese.comment &&
+        workerUnreadable->databaseListDescriptionOverride ==
+            decoded.databaseListDescriptionOverride &&
+        keywordChinese->databaseListDescriptionOverride != sourceChinese.comment &&
+        collectionChinese->databaseListDescriptionOverride == sourceChinese.comment &&
+        playlistChinese->databaseListDescriptionOverride != sourceChinese.comment;
+    searchWorker.stop();
+    const bool ok = updated && decoded.id > 0 &&
+        decoded.databaseListDescriptionNeedsSource &&
+        decoded.databaseListDescriptionOverride.empty() &&
+        normalAdded && untouched.description == normal.description &&
+        untouched.databaseListDescriptionOverride.empty() &&
+        !untouched.databaseListDescriptionNeedsSource &&
+        sourceChineseReadable && chineseAdded && chineseUpdated &&
+        restoredChinese.databaseListDescriptionNeedsSource &&
+        !restoredChinese.databaseListDescriptionOverride.empty() &&
+        restoredChinese.databaseListDescriptionOverride != sourceChinese.comment &&
+        convertedAdded && convertedUpdated &&
+        convertedRead.databaseListDescriptionNeedsSource &&
+        convertedRead.databaseListDescriptionOverride.empty() && workerScoped;
+    db.close();
+    if (!keepQaFixture) fs::remove_all(root);
+    if (!ok) std::cerr << "FAIL: legacy description list display was not recovered"
+                       << " updated=" << updated << " id=" << decoded.id
+                       << " override=" << decoded.databaseListDescriptionOverride
+                       << " descriptionLength=" << decoded.description.size()
+                       << " storedHex=" << storedHex
+                       << " normalAdded=" << normalAdded
+                       << " normal=" << untouched.description
+                       << " sourceChineseReadable=" << sourceChineseReadable
+                       << " chineseAdded=" << chineseAdded
+                       << " chineseUpdated=" << chineseUpdated
+                       << " restoredChinese=" << restoredChinese.databaseListDescriptionOverride
+                       << " convertedAdded=" << convertedAdded
+                       << " convertedUpdated=" << convertedUpdated
+                       << " convertedNeedsSource=" << convertedRead.databaseListDescriptionNeedsSource
+                       << " workerScoped=" << workerScoped
+                       << " keywordSearched=" << keywordSearched
+                       << " keywordRow=" << (keywordChinese != nullptr)
+                       << " keywordOverride=" << (keywordChinese
+                           ? keywordChinese->databaseListDescriptionOverride : std::string())
+                       << " collectionOverride=" << (collectionChinese
+                           ? collectionChinese->databaseListDescriptionOverride : std::string());
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char* argv[]) {
+    char* descriptionOnlyRaw = nullptr;
+    size_t descriptionOnlyLen = 0;
+    const bool descriptionOnly =
+        _dupenv_s(&descriptionOnlyRaw, &descriptionOnlyLen,
+                   "HARKEN_DESCRIPTION_DISPLAY_ONLY") == 0 &&
+        descriptionOnlyRaw && std::string(descriptionOnlyRaw) == "1";
+    std::free(descriptionOnlyRaw);
+    if (descriptionOnly) return testLegacyDescriptionDisplay();
     char* favoritesOnlyRaw = nullptr;
     size_t favoritesOnlyLen = 0;
     const bool favoritesOnly =
@@ -5055,6 +5617,20 @@ int main(int argc, char* argv[]) {
                    "HARKEN_FAVORITES_MIGRATION_ONLY") == 0 && favoritesOnlyRaw;
     std::free(favoritesOnlyRaw);
     if (favoritesOnly) return testFavoriteColumnMigrationReportsFailure();
+    char* relinkUpdateOnlyRaw = nullptr;
+    size_t relinkUpdateOnlyLen = 0;
+    const bool relinkUpdateOnly =
+        _dupenv_s(&relinkUpdateOnlyRaw, &relinkUpdateOnlyLen,
+                   "HARKEN_RELINK_PATH_UPDATE_ONLY") == 0 && relinkUpdateOnlyRaw;
+    std::free(relinkUpdateOnlyRaw);
+    if (relinkUpdateOnly) return testRelinkUpdateRequiresExistingSource();
+    char* relinkSearchOnlyRaw = nullptr;
+    size_t relinkSearchOnlyLen = 0;
+    const bool relinkSearchOnly =
+        _dupenv_s(&relinkSearchOnlyRaw, &relinkSearchOnlyLen,
+                   "HARKEN_RELINK_SEARCH_REPORT_ONLY") == 0 && relinkSearchOnlyRaw;
+    std::free(relinkSearchOnlyRaw);
+    if (relinkSearchOnly) return testRelinkSearchReportsStatusReasonAndProgress();
     const int readOnlySidecarFailures = testReadOnlyOpenDoesNotCreateLegacySidecars() +
         testReadOnlyOpenSurvivesCorruptRebuildableSidecars();
     char* focusedFallbackRaw = nullptr;
@@ -5104,6 +5680,7 @@ int main(int argc, char* argv[]) {
         std::free(focusedCaseRaw);
         if (focused == "cover_tile_membership") {
             int focusedFailures = 0;
+            focusedFailures += testCoverWallGroupedSelectionIncludesAllFoldersWithoutFuzzyNeighbors();
             focusedFailures += testTemporaryCoverIdentityReverseLookupMatchesCoverFilter();
             focusedFailures += testCoverTileMembershipUsesEquivalentRegistryKeys();
             focusedFailures += testCoverClickPhashLookupPreservesHammingTwoCluster();
@@ -5168,6 +5745,9 @@ int main(int argc, char* argv[]) {
             focusedFailures += testSmallCoverWallSameFilenamePageCursorDoesNotSkipOrRepeat();
             return focusedFailures == 0 ? 0 : 1;
         }
+        if (focused == "folder_cover_distinct_similar") {
+            return testFolderCoverFacetsKeepDistinctSimilarArtworks();
+        }
         if (focused == "cover_wall_page_cursor") {
             return testGlobalCoverWallPageApiUsesStableCursor() == 0 ? 0 : 1;
         }
@@ -5189,6 +5769,7 @@ int main(int argc, char* argv[]) {
     int coverWallFileListOrderFailures = testGlobalCoverWallPageFollowsCurrentFileListOrder();
     coverWallFileListOrderFailures += testLargeCoverWallPageFollowsCurrentFileListPastFiftyThousandRows();
     int sameFilenameCoverWallPageFailures = testSmallCoverWallSameFilenamePageCursorDoesNotSkipOrRepeat();
+    int folderCoverDistinctFailures = testFolderCoverFacetsKeepDistinctSimilarArtworks();
     int largeCoverFacetFailures = testLargeCoverFacetsUseIncrementalRegistryOnly();
     int largeCoverHotPathFailures = testLargeCoverBrowseHotPathsUseBoundedRegistryHeuristic();
     int searchCountFallbackFailures = testSearchFilesCountMirrorsFtsFallbackContract();
@@ -5239,7 +5820,7 @@ int main(int argc, char* argv[]) {
         coverWallPageFailures == 0 && coverWallSparsePageFailures == 0 &&
         smallCoverWallPageFailures == 0 &&
         coverWallFileListOrderFailures == 0 &&
-        sameFilenameCoverWallPageFailures == 0 &&
+        sameFilenameCoverWallPageFailures == 0 && folderCoverDistinctFailures == 0 &&
         largeCoverFacetFailures == 0 && largeCoverHotPathFailures == 0 &&
         searchCountFallbackFailures == 0 &&
         zeroFilteredCountCacheFailures == 0 &&
@@ -5290,6 +5871,7 @@ int main(int argc, char* argv[]) {
     std::cerr << "CoverWallPageSmallFallback: " << smallCoverWallPageFailures << " assertion(s) failed.\n";
     std::cerr << "CoverWallPageFileListOrder: " << coverWallFileListOrderFailures << " assertion(s) failed.\n";
     std::cerr << "CoverWallPageSameFilenameCursor: " << sameFilenameCoverWallPageFailures << " assertion(s) failed.\n";
+    std::cerr << "FolderCoverDistinctSimilar: " << folderCoverDistinctFailures << " assertion(s) failed.\n";
     std::cerr << "LargeCoverFacetIncremental: " << largeCoverFacetFailures << " assertion(s) failed.\n";
     std::cerr << "LargeCoverHotPathBoundedness: " << largeCoverHotPathFailures << " assertion(s) failed.\n";
     std::cerr << "SearchCountFtsFallback: " << searchCountFallbackFailures << " assertion(s) failed.\n";

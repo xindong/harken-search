@@ -15,6 +15,8 @@ CoverWallPageLoadResult BuildCoverWallPageFromCurrentFileList(
     const std::vector<AudioRecord>& records);
 CoverModule::CoverItem ConvertCoverWallEntryToItem(const Database::CoverWallEntry& entry);
 std::string BuildCoverWallVisualDedupeToken(const CoverModule::CoverItem& item);
+void AppendUniqueCoverWallPageItems(std::vector<CoverModule::CoverItem>& existing,
+                                    std::vector<CoverModule::CoverItem>& nextPage);
 CoverWallPageLoadResult BuildCoverWallPageLoadResult(const Database::CoverWallPage& page);
 CoverWallPageLoadResult BuildCoverWallLoadResultFromEntries(
     const std::vector<Database::CoverWallEntry>& entries);

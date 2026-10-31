@@ -80,7 +80,7 @@ class MagicEqUiContractTests(unittest.TestCase):
 
     def test_compact_visual_uses_transport_theme_and_draws_range_ticks_and_handles(self):
         body = self.draw_body()
-        for text in ("theme.transportBarBG", "AddRectFilled", "AddLine",
+        for text in ("transportSurface", "TransportContrast::ForSurface", "AddRectFilled", "AddLine",
                      "AddCircleFilled", "AddText", "for (const RulerTick& tick"):
             require_text(self, body, text)
 
@@ -156,7 +156,7 @@ class MagicEqUiContractTests(unittest.TestCase):
             "markMin.x + 9.5f", "markMin.x + 18.0f",
             "markMin.x + 3.0f", "markMax.x - 3.0f",
             "const bool markHover = toggleHit", "const bool markPressed = markHover && held",
-            "theme.controlAccent", "theme.transportBarBG",
+            "theme.controlAccent", "transportSurface",
             "steepnessLeft = markMax.x + 3.0f",
             "steepnessRight = pos.x + width - statusWidth",
             "mouse.x >= steepnessLeft && mouse.x < steepnessVisibleRight",
@@ -188,8 +188,8 @@ class MagicEqUiContractTests(unittest.TestCase):
         for fragment in (
             "leftDistance <= 7.0f && mouse.y >= gripTop && mouse.y <= gripBottom",
             "rightDistance <= 7.0f && mouse.y >= gripTop && mouse.y <= gripBottom",
-            "drawVerticalGrip(leftX, leftEndpointHit || drag.part == DragPart::LeftEndpoint)",
-            "drawVerticalGrip(rightX, rightEndpointHit || drag.part == DragPart::RightEndpoint)",
+            'drawVerticalGrip(leftX, leftEndpointHit || drag.part == DragPart::LeftEndpoint, "eq.grip")',
+            'drawVerticalGrip(rightX, rightEndpointHit || drag.part == DragPart::RightEndpoint, "eq.grip.right")',
             "drag.part == DragPart::LeftEndpoint ? lowHz :",
             "drag.part == DragPart::LeftEndpoint ? leftX :",
             "ImGui::IsMouseDown(ImGuiMouseButton_Left) &&",

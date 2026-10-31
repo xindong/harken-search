@@ -1400,7 +1400,7 @@ void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
     Check(source.find("FinalizeFolderSubtreeDbRemoval") != std::string::npos &&
           source.find("ForceCoverWallReload(state);", source.find("FinalizeFolderSubtreeDbRemoval")) != std::string::npos,
           "BDD: Removing records from the database still invalidates the cover wall as database content changed");
-    const size_t rebuildButton = source.find("ImGui::Button(L(Set_RebuildCoverIndex)");
+    const size_t rebuildButton = source.find("aura::ui::ActionButton(L(Set_RebuildCoverIndex)");
     const size_t rebuildForce = source.find("ForceCoverWallReload(state);", rebuildButton);
     const size_t rebuildStart = source.find("StartCoverRebuild(state);", rebuildButton);
     Check(rebuildButton != std::string::npos &&
@@ -1722,12 +1722,13 @@ void TestQaBrowseSurfaceCommandsPreserveReplacementScopeContract() {
 
     Check(specificCoverBody.find("state.coverFilterActive = true;") != std::string::npos &&
           specificCoverBody.find("state.coverFilterPath = key;") != std::string::npos &&
-          specificCoverBody.find("state.folderFilterActive = false;") != std::string::npos &&
-          specificCoverBody.find("state.selectedFolderPath.clear();") != std::string::npos &&
+          specificCoverBody.find("state.folderFilterActive = false;") == std::string::npos &&
+          specificCoverBody.find("state.selectedFolderPath.clear();") == std::string::npos &&
+          specificCoverBody.find("ClearAllFiltersForShowAll(state);") == std::string::npos &&
           specificCoverBody.find("state.coverWall.pinnedCoverFilterItem.key = key;") != std::string::npos &&
           specificCoverBody.find("cancelPendingSearchForQaMutation();") != std::string::npos &&
           specificCoverBody.find("RefreshSearchResults(state, true);") != std::string::npos,
-          "BDD: QA specific-cover filter mutation keeps the replacement wall on one active cover scope and submits it through the normal refresh path");
+          "BDD: QA specific-cover filter preserves the folder constraint and submits the combined scope through the normal refresh path");
     Check(thumbSizeBody.find("aura::coverwall::ClampThumbSize(requestedSize)") != std::string::npos,
           "BDD: QA thumb-size mutation clamps browse-surface tile size through the shared replacement helper");
     Check(tilePresetBody.find("aura::coverwall::ApplyThumbPreset(sizePreset, state.coverWall.thumbSize);") != std::string::npos,
@@ -1888,7 +1889,7 @@ void TestFilteredCoverWallRetirementNarrowsLegacySearchFallbackContract() {
           databaseHeaderSource.find("not display truth or texture recovery") != std::string::npos,
           "BDD: DB cover-key compatibility bridge names are retired while replacement tile membership remains explicit");
     Check(source.find("getFileIdsForCoverPlaylistCompatibilityBridge") == std::string::npos &&
-          source.find("getFileIdsForCoverTileMembership(key)") != std::string::npos &&
+          source.find("getFileIdsForCoverTileMembership(tileIdentityKey)") != std::string::npos &&
           coverModuleSource.find("getFilePathsForCoverCompatibilityBridge(") == std::string::npos,
           "BDD: Production artwork drag/drop uses replacement tile membership; embedded recovery no longer uses file-path bridge");
     const std::string tileMembershipBody =
@@ -1903,8 +1904,8 @@ void TestFilteredCoverWallRetirementNarrowsLegacySearchFallbackContract() {
           databaseSource.find("SELECT DISTINCT file_id FROM cover_tile_membership") != std::string::npos &&
           tileMembershipBody.find("ResolveEquivalentCoverKeys(this, lookupKey)") != std::string::npos &&
           tileMembershipBody.find("EnsureCoverTileMembershipForKeys(m_db, equivalentKeys, &out)") != std::string::npos &&
-          databaseSource.find("SyncCoverTileMembershipForKeys(db, tileKeys)") != std::string::npos &&
-          databaseSource.find("if (sqlite3_db_readonly(db, \"main\") == 1) return false;") != std::string::npos &&
+          databaseSource.find("SyncCoverTileMembershipForKeys(db, missingKeys)") != std::string::npos &&
+          databaseSource.find("if (sqlite3_db_readonly(db, \"main\") == 1) return !target->empty();") != std::string::npos &&
           tileMembershipBody.find("Tile membership unresolved after canonical lookup/self-heal; legacy field fallback fully retired.") != std::string::npos &&
           tileMembershipBody.find("embedded_cover_key IN (") == std::string::npos &&
           tileMembershipBody.find("folder_cover_key IN (") == std::string::npos,
@@ -2805,10 +2806,11 @@ void TestGlobalCoverWallCompletenessCeilingAndDiagnosticsContract() {
           "BDD: Cover-wall diagnostics report global next-page trigger and apply events");
     Check(renderBody.find("windowMax=%zu") == std::string::npos,
           "BDD: Global cover-wall diagnostics no longer report a legacy hard window max");
-    Check(mainSource.find("BuildCoverWallVisualDedupeToken(") != std::string::npos &&
-          mainSource.find("existingTokens") != std::string::npos &&
+    Check(mainSource.find("AppendUniqueCoverWallPageItems(cw.items, page.items)") != std::string::npos &&
           pageResultBuilderSource.find("BuildCoverWallVisualDedupeToken(") != std::string::npos &&
-          pageResultBuilderSource.find("seenTokens") != std::string::npos,
+          pageResultBuilderSource.find("byToken") != std::string::npos &&
+          pageResultBuilderSource.find("byKey") != std::string::npos &&
+          pageResultBuilderSource.find("AppendUniqueCoverWallPageItems(") != std::string::npos,
           "BDD: Global cover-wall page building keeps a visual dedupe token set so cross-page repeats can collapse");
     Check(renderBody.find("const bool blockGlobalStartLoadForPreload =") != std::string::npos &&
           renderBody.find("preloadReadyForReuse || preloadStillBuildingFirstPage") != std::string::npos &&

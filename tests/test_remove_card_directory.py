@@ -1,5 +1,7 @@
 """A card clone can be removed only after its work is on the QA branch."""
 from pathlib import Path
+import contextlib
+import io
 import os
 import subprocess
 import tempfile
@@ -47,6 +49,13 @@ class CardDirectoryCleanupTests(unittest.TestCase):
                 if repo.samefile(self.card) and args[:3] == ("fetch", "--no-tags", "origin"):
                     return actual_git(repo, "fetch", "--no-tags", str(self.origin), *args[3:])
                 raise AssertionError("unexpected fetch outside the isolated bare repository")
+            if args[:3] == ("ls-remote", "--heads", "origin") and repo.samefile(self.card):
+                return actual_git(repo, "ls-remote", "--heads", str(self.origin), *args[3:])
+            if args and args[0] == "push" and "origin" in args and repo.samefile(self.card):
+                rewritten = tuple(str(self.origin) if part == "origin" else part for part in args)
+                return actual_git(repo, *rewritten)
+            if args and args[0] in {"ls-remote", "push"}:
+                raise AssertionError("unexpected network git outside the isolated bare repository")
             return actual_git(repo, *args)
 
         self.local_fetch = local_fetch
@@ -59,7 +68,8 @@ class CardDirectoryCleanupTests(unittest.TestCase):
         return [
             "--workspace-root", str(self.root), "--card-name", self.card.name,
             "--card-prefix", "card-", "--main-repository", str(self.main_repo),
-            "--repository", REPOSITORY, "--integration-ref", REF, *mode,
+            "--repository", REPOSITORY, "--integration-ref", REF,
+            "--feature-branch", "feature/one-menu", *mode,
         ]
 
     def refused(self, *mode):
@@ -162,6 +172,82 @@ class CardDirectoryCleanupTests(unittest.TestCase):
         self.refused("--execute", "--expected-head", head)
         self.assertEqual(git(external, "rev-parse", "HEAD"), unique_head)
         self.assertEqual((external / "tracked.txt").read_text(encoding="utf-8"), "external unique work\n")
+
+    def _add_merged_submodule(self):
+        child_origin = self.root / "child-origin.git"
+        subprocess.run(["git", "init", "--bare", "-b", "main", str(child_origin)], check=True, capture_output=True)
+        seed = self.root / "child-seed"
+        subprocess.run(["git", "clone", str(child_origin), str(seed)], check=True, capture_output=True)
+        git(seed, "config", "user.name", "CI")
+        git(seed, "config", "user.email", "ci@example.invalid")
+        (seed / ".gitignore").write_text("*.db\n", encoding="utf-8")
+        (seed / "child.txt").write_text("saved\n", encoding="utf-8")
+        git(seed, "add", ".gitignore", "child.txt")
+        git(seed, "commit", "-m", "child baseline")
+        git(seed, "push", "origin", "HEAD:main")
+        git(self.card, "-c", "protocol.file.allow=always", "submodule", "add", str(child_origin), "modules/child")
+        git(self.card, "commit", "-am", "add child")
+        git(self.card, "push", str(self.origin), "HEAD:" + REF)
+        return self.card / "modules/child"
+
+    def test_clean_parent_with_ignored_submodule_database_is_preserved(self):
+        child = self._add_merged_submodule()
+        database = child / "private.db"
+        database.write_text("unpublished private data", encoding="utf-8")
+        self.assertEqual(git(self.card, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"), "")
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--dry-run")
+        self.refused("--execute", "--expected-head", head)
+        self.assertEqual(database.read_text(encoding="utf-8"), "unpublished private data")
+
+    def test_deinitialized_submodule_repository_with_unique_ref_is_preserved(self):
+        child = self._add_merged_submodule()
+        git(child, "config", "user.name", "CI")
+        git(child, "config", "user.email", "ci@example.invalid")
+        git(child, "switch", "-c", "unpublished")
+        (child / "child.txt").write_text("unpublished commit\n", encoding="utf-8")
+        git(child, "commit", "-am", "keep child commit")
+        child_head = git(child, "rev-parse", "HEAD")
+        git(self.card, "submodule", "deinit", "-f", "--", "modules/child")
+        git(self.card, "rm", "--cached", "modules/child")
+        git(self.card, "commit", "-m", "remove child gitlink")
+        git(self.card, "push", str(self.origin), "HEAD:" + REF)
+        stored = self.card / ".git/modules/modules/child"
+        self.assertEqual(git(stored, "rev-parse", "refs/heads/unpublished"), child_head)
+        self.assertNotIn("160000 ", git(self.card, "ls-files", "--stage"))
+        self.assertEqual(git(self.card, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"), "")
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--dry-run")
+        self.refused("--execute", "--expected-head", head)
+        self.assertEqual(git(stored, "rev-parse", "refs/heads/unpublished"), child_head)
+
+    def test_submodule_storage_added_after_commit_check_blocks_delete(self):
+        head = git(self.card, "rev-parse", "HEAD")
+        original_assert_no_links = cleanup.assert_no_links
+        checks = 0
+        stored = self.card / ".git/modules/orphan"
+
+        def add_stored_repository_at_second_link_check(root):
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                subprocess.run(["git", "init", "--bare", str(stored)], check=True, capture_output=True)
+            return original_assert_no_links(root)
+
+        with patch.object(cleanup, "assert_no_links", side_effect=add_stored_repository_at_second_link_check):
+            self.refused("--execute", "--expected-head", head)
+        self.assertTrue((stored / "HEAD").is_file())
+
+    def test_nested_protected_main_repository_is_preserved_without_submodule(self):
+        protected = self.card / ".git/protected-main.git"
+        subprocess.run(["git", "init", "--bare", str(protected)], check=True, capture_output=True)
+        self.assertTrue((protected / "HEAD").is_file())
+        self.assertEqual(git(self.card, "ls-files", "--stage").count("160000 "), 0)
+        self.assertEqual(git(self.card, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"), "")
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--main-repository", str(protected), "--dry-run")
+        self.refused("--main-repository", str(protected), "--execute", "--expected-head", head)
+        self.assertTrue((protected / "HEAD").is_file())
 
     def test_hidden_branch_with_unique_commit_is_preserved(self):
         git(self.card, "switch", "-c", "backup/unfinished")
@@ -273,6 +359,82 @@ class CardDirectoryCleanupTests(unittest.TestCase):
         with self.assertRaises(cleanup.CleanupRefused):
             cleanup.main(self.args("--dry-run") + ["--repository", "owner/repo;echo danger"])
 
+
+    def ref_exists(self, repo, ref):
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", ref],
+            capture_output=True,
+        ).returncode == 0
+
+    def publish_merged_feature_branch(self):
+        branch = "feature/one-menu"
+        git(self.card, "switch", "-c", branch)
+        (self.card / "tracked.txt").write_text("merged feature\n", encoding="utf-8")
+        git(self.card, "commit", "-am", "merged feature")
+        git(self.card, "push", str(self.origin), "HEAD:" + branch)
+        git(self.card, "push", str(self.origin), "HEAD:" + REF)
+        git(self.main_repo, "fetch", str(self.origin), "+" + branch + ":refs/heads/" + branch)
+        return branch
+
+    def test_dry_run_keeps_merged_feature_branch_until_execute(self):
+        self.publish_merged_feature_branch()
+        head = git(self.card, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+        text = output.getvalue()
+        self.assertIn("feature/one-menu", text)
+        self.assertIn("将删除", text)
+        self.assertNotIn("已删除", text)
+        self.assertTrue(self.card.exists())
+        self.assertTrue(self.ref_exists(self.main_repo, "refs/heads/feature/one-menu"))
+        self.assertTrue(self.ref_exists(self.origin, "refs/heads/feature/one-menu"))
+        self.refused("--execute", "--expected-head", "0" * 40)
+        self.assertTrue(self.ref_exists(self.origin, "refs/heads/feature/one-menu"))
+        self.assertEqual(cleanup.main(self.args("--execute", "--expected-head", head)), 0)
+        self.assertFalse(self.card.exists())
+        self.assertFalse(self.ref_exists(self.main_repo, "refs/heads/feature/one-menu"))
+        self.assertFalse(self.ref_exists(self.origin, "refs/heads/feature/one-menu"))
+        self.assertTrue(self.main_repo.exists())
+        self.assertTrue(self.ref_exists(self.main_repo, "refs/heads/" + REF))
+        self.assertTrue(self.ref_exists(self.origin, "refs/heads/" + REF))
+
+    def test_unmerged_feature_branch_is_preserved(self):
+        branch = "feature/one-menu"
+        git(self.card, "switch", "-c", branch)
+        (self.card / "tracked.txt").write_text("not merged feature\n", encoding="utf-8")
+        git(self.card, "commit", "-am", "not merged feature")
+        git(self.card, "push", str(self.origin), "HEAD:" + branch)
+        git(self.main_repo, "fetch", str(self.origin), "+" + branch + ":refs/heads/" + branch)
+        self.refused("--dry-run")
+        self.assertTrue(self.card.exists())
+        self.assertTrue(self.ref_exists(self.main_repo, "refs/heads/" + branch))
+        self.assertTrue(self.ref_exists(self.origin, "refs/heads/" + branch))
+
+    def test_unique_commit_on_main_repository_branch_is_preserved(self):
+        self.publish_merged_feature_branch()
+        git(self.main_repo, "config", "user.name", "CI")
+        git(self.main_repo, "config", "user.email", "ci@example.invalid")
+        git(self.main_repo, "switch", "feature/one-menu")
+        (self.main_repo / "tracked.txt").write_text("only in main\n", encoding="utf-8")
+        git(self.main_repo, "commit", "-am", "only in main")
+        unique = git(self.main_repo, "rev-parse", "HEAD")
+        git(self.main_repo, "switch", REF)
+        self.refused("--dry-run")
+        self.assertEqual(git(self.main_repo, "rev-parse", "refs/heads/feature/one-menu"), unique)
+        self.assertTrue(self.ref_exists(self.origin, "refs/heads/feature/one-menu"))
+
+    def test_checked_out_feature_branch_in_main_repository_is_preserved(self):
+        self.publish_merged_feature_branch()
+        git(self.main_repo, "switch", "feature/one-menu")
+        self.refused("--dry-run")
+        self.assertEqual(git(self.main_repo, "branch", "--show-current"), "feature/one-menu")
+        self.assertTrue(self.ref_exists(self.origin, "refs/heads/feature/one-menu"))
+
+    def test_protected_or_unrelated_branch_names_are_refused(self):
+        for branch in (REF, "main", "feature/other-card"):
+            with self.assertRaises(cleanup.CleanupRefused):
+                cleanup.main(self.args("--dry-run", "--feature-branch", branch))
+            self.assertTrue((self.card / ".git").exists())
 
 if __name__ == "__main__":
     unittest.main()

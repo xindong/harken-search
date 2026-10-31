@@ -163,7 +163,7 @@ def test_off_mode_preserves_canonical_stable_identity() -> None:
     assert "CompanyCloudStableManifestUrl()" in source
     assert "UpdateChannel::Stable" in source
     config = (root / "src/update/UpdateReleaseConfig.h").read_text(encoding="utf-8")
-    assert "manifest-win-x64-stable.json" in config
+    assert "manifest-harken-search-win-x64-stable.json" in config
     assert "ARIS_UPDATE_GITHUB_LATEST_DOWNLOAD_PREFIX" in config
 
 

@@ -108,7 +108,7 @@ class NetworkPathContract(unittest.TestCase):
     def test_transfer_rejects_network_destination(self) -> None:
         self.assertIn("IsNetworkPath", MODULE_UI)
         self.assertIn("Write_BlockedNetworkLibrary", MODULE_UI)
-        start = MAIN.split("if (ImGui::Button(L(Export_Start)", 1)[1].split(
+        start = MAIN.split("if (aura::ui::ActionButton(L(Export_Start)", 1)[1].split(
             "state.transferInProgress = true;", 1
         )[0]
         self.assertIn("IsNetworkPath", start)
@@ -119,7 +119,7 @@ class NetworkPathContract(unittest.TestCase):
         self.assertIn("IsNetworkPath", body)
         self.assertIn("Db_RejectNetworkPath", body)
         self.assertIn("IsNetworkPath", MAIN)
-        new_db = MAIN.split("if (state.showNewDbDialog)", 1)[1].split(
+        new_db = MAIN.split("// 新建数据库弹窗", 1)[1].split(
             "DAW Target Configuration Dialog", 1
         )[0]
         self.assertIn("IsNetworkPath", new_db)
@@ -185,10 +185,16 @@ class NetworkPathContract(unittest.TestCase):
         )[0]
         self.assertIn("IsNetworkPath", set_tags)
         self.assertIn("Write_BlockedNetworkLibrary", set_tags)
-        inline = MAIN.split("s_inlineMetaSaveFailed > 0", 1)[1].split(
-            "state.metadataEditMode = false", 1
+        inline = MAIN.split("static bool SaveInfoMetadataDraft(", 1)[1].split(
+            "void RenderInfoMetadataLeavePrompt(", 1
         )[0]
         self.assertIn("Write_BlockedNetworkLibrary", inline)
+        self.assertLess(inline.index("IsNetworkPath(original.filePath)"),
+                        inline.index("Platform::FileSystem::Exists(original.filePath)"))
+        prompt = MAIN.split("void RenderInfoMetadataLeavePrompt(", 1)[1].split(
+            "void RenderFileInfoPanelTabContents(", 1
+        )[0]
+        self.assertIn("else if (state.infoEditError.empty())", prompt)
 
     def test_scan_directory_checks_cancel_around_network_root_probe(self) -> None:
         scan = DATABASE.split("ScanStats Database::scanDirectoryEx(", 1)[1].split(

@@ -572,7 +572,7 @@ void test_direct_invocation_is_bounded_and_validated() {
 
     for (auto invalidRoots : std::vector<std::vector<std::string>>{
              {}, {""}, {"relative/data"},
-             {"C:/HarkenSearchTest/Data", "c:\\aristest\\data"},
+             {"C:/HarkenSearchTest/Data", "c:\\harkensearchtest\\data"},
              {"C:/HarkenSearchTest/Aris/Database", "C:/HarkenSearchTest/Roaming"},
              {"C:/HarkenSearchTest/HarkenSearchUpdates", "C:/HarkenSearchTest/Roaming"},
              {"C:/HarkenSearchTest/HarkenSearchUpdates/staging/cache", "C:/HarkenSearchTest/Roaming"},
@@ -585,6 +585,15 @@ void test_direct_invocation_is_bounded_and_validated() {
                   aris::bootstrap::BootstrapAdmissionStatus::InvalidInvocation,
               "protected roots must be two distinct absolute non-overlapping roots");
     }
+
+    auto distinctRoots = validInvocation(package.packageDigest);
+    distinctRoots.protectedDataRoots = {
+        "C:/HarkenSearchTest/Data", "c:\\aristest\\data"};
+    const auto distinctRootsAccepted =
+        aris::bootstrap::AdmitBootstrapInvocationForTesting(package, distinctRoots);
+    check(distinctRootsAccepted.status ==
+              aris::bootstrap::BootstrapAdmissionStatus::Accepted,
+          "different absolute data roots remain valid across legacy product names");
 
     auto excessiveFailures = validInvocation(package.packageDigest);
     excessiveFailures.previousFailureCount = 3U;

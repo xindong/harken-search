@@ -96,6 +96,17 @@ def test_release_packaging_supplies_the_installed_local_notes() -> None:
     assert 'Source: "{#SourceDir}\\aris_release_notes.json"; DestDir: "{app}"' in installer
 
 
+
+def test_help_menu_keeps_update_history_inside_update_center() -> None:
+    help_start = MAIN.index("if (ImGui::BeginMenu(L(Menu_Help)))")
+    help_end = MAIN.index("ImGui::EndMenu();", help_start)
+    help_menu = MAIN[help_start:help_end]
+    assert "L(Main_MenuUpdateCenter)" in help_menu
+    assert "L(Help_About)" in help_menu
+    assert "Main_MenuUpdateChangelog" not in help_menu
+    assert "wantOpen = true" not in help_menu
+    assert "u8\"更新历史\"" in NOTICE_UI
+
 def test_native_surface_uses_automatic_ready_and_manual_history_flows() -> None:
     assert "readyChanged && !state.updateNoticeSeenThisSession" in MAIN
     assert "state.showUpdateCenter = true" in MAIN

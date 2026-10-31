@@ -33,6 +33,9 @@ def test_database_browser_playlist_share_one_filetablev6_surface() -> None:
     ]
     assert 'BeginTransientScrollbarTable("FileTableV6"' in center
     setup = _file_table_setup_block()
+    # Database-only empty-state gates precede the shared table. The table's
+    # columns, border and inset must still be identical across view modes.
+    setup = setup[setup.index("ImGuiTableFlags tableFlags =") :]
     assert "ViewMode::Database" not in setup
     assert "ViewMode::Browser" not in setup
     assert "ViewMode::Playlist" not in setup
@@ -67,12 +70,11 @@ def test_empty_library_keeps_independent_frame_and_content_padding() -> None:
     assert "ImVec2(kResultsContentInsetX, 2.0f)" in center
     assert "s_centerPanelMin.x + 0.5f" in center
     assert "s_centerPanelMax.x - 0.5f" in center
-    surface_start = MAIN.index("// File table with sortable columns")
-    surface_end = MAIN.index("// F-034 Relink", surface_start)
-    surface = MAIN[surface_start:surface_end]
-    empty_surface = _assignment(surface, "const bool showStandaloneEmptyResultsSurface")
-    assert "totalFileCount == 0" in empty_surface
-    assert '"##EmptyResultsSurface"' in surface
+    # TASK-20261028-NO-EMPTY-SURFACE: the framed zero-result panel and its
+    # height reservation were removed at the user's request; the table keeps
+    # the full list area and only the independent frame/padding remains.
+    assert '"##EmptyResultsSurface"' not in MAIN
+    assert "showStandaloneEmptyResultsSurface" not in MAIN
 
 
 if __name__ == "__main__":

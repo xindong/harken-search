@@ -37,9 +37,15 @@ class PublicRepositoryRulesTests(unittest.TestCase):
                 value.pop(index)
                 self.assertTrue(evaluate_rules(value))
 
-    def test_checks_must_be_up_to_date_before_merge(self):
+    def test_passed_checks_do_not_need_to_match_the_latest_code(self):
         value = rules()
         value[-1]["parameters"]["strict_required_status_checks_policy"] = False
+        self.assertEqual(evaluate_rules(value), [])
+
+    def test_missing_checks_still_block_when_latest_code_is_not_required(self):
+        value = rules()
+        value[-1]["parameters"]["strict_required_status_checks_policy"] = False
+        value[-1]["parameters"]["required_status_checks"].pop()
         self.assertTrue(evaluate_rules(value))
 
     def test_qa_current_requires_the_same_effective_rules_as_main(self):

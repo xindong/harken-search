@@ -217,6 +217,11 @@ struct CoverItem {
     // Loads folder artwork from this path without reversing the identity key.
     std::string folderCoverSrcPathUtf8;
 
+    // Global-wall rows represented by this tile after visual deduplication.
+    std::vector<std::string> wallMemberKeys;
+    std::vector<std::string> wallVisualTokens;
+    std::string wallSelectionKey;
+
 
 
     int64_t hitCount = 0;       // Weight used for sorting and performance filtering

@@ -8,6 +8,7 @@ INSTALLER_NEW = ROOT / "installer" / "HarkenSearch_Setup.iss"
 INSTALLER_OLD = ROOT / "installer" / "Aris_Setup.iss"
 MANIFEST = ROOT / "resources" / "HarkenSearch.manifest"
 RESOURCES_RC = ROOT / "resources.rc"
+QA_PACKAGE = ROOT / "scripts" / "package_qa_exe.ps1"
 
 ALLOWED_OLD_IN_CMAKE = (
     re.compile(r"src/bootstrap/ArisBootstrap[A-Za-z0-9]*\.(cpp|h)"),
@@ -77,6 +78,14 @@ def _mask_allowed(text):
 
 
 class HarkenSearchBuildIdentityScanTests(unittest.TestCase):
+    def test_build_and_qa_package_do_not_ship_auro_executable_alias(self):
+        cmake = CMAKE.read_text(encoding="utf-8")
+        qa_package = QA_PACKAGE.read_text(encoding="utf-8")
+        for filename in ("Auro.exe", "Auro.exe.sig"):
+            with self.subTest(filename=filename):
+                self.assertNotIn(filename, cmake)
+                self.assertNotIn('"' + filename + '"', qa_package)
+
     def test_cmake_installer_resources_no_longer_emit_old_build_identity(self):
         cmake = CMAKE.read_text(encoding="utf-8")
         masked = _mask_allowed(cmake)

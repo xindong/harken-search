@@ -104,6 +104,25 @@ bool ConsumeRestartConfirmation() {
     return true;
 }
 
+// Bootstrap acked the new version as healthy on first presentation: retired
+// update download trees under the updater-owned root can go now.  Retention
+// keeps the running version's tree, the newest older tree as the rollback
+// package, and every pending tree (newer than the running version) so a
+// download or a retry is never deleted.  A new port instance owns its own
+// trusted-root handle, so pruning cannot interfere with the running updater.
+void PruneRetiredUpdateDownloadsAfterHealthAck() {
+    auto created = Platform::UpdatePersistence::CreateUpdatePersistencePort();
+    if (!created.ok()) return;
+    const auto listing = created.port->ObserveVersionDirectories();
+    if (!listing.ok) return;
+    const auto plan = UpdateDownloadManager::PlanVersionRetention(
+        listing.directoryNames, SOUNDMANAGER_VERSION_STRING);
+    if (!plan.ok) return;
+    for (const auto& directory : plan.pruneVersions) {
+        static_cast<void>(created.port->DeleteVersionDirectory(directory));
+    }
+}
+
 }  // namespace
 
 bool CaptureHarkenSearchBootstrapHealthChallenge() {
@@ -118,7 +137,9 @@ bool CaptureHarkenSearchBootstrapHealthChallenge() {
 bool AcknowledgeHarkenSearchBootstrapHealthReady() {
     if (!g_bootstrapHealthPort) return false;
     auto port = std::move(g_bootstrapHealthPort);
-    return port->AcknowledgeReady().ok();
+    if (!port->AcknowledgeReady().ok()) return false;
+    std::thread(PruneRetiredUpdateDownloadsAfterHealthAck).detach();
+    return true;
 }
 
 bool RunHarkenSearchBootstrapHealthAcknowledgement() {
@@ -342,6 +363,8 @@ bool ConfirmHarkenSearchUpdateRestart() {
     std::lock_guard<std::mutex> lock(g_updateUiMutex);
     if (g_updateUiState.phase != HarkenSearchUpdateUiPhase::Ready) return false;
     g_restartConfirmed = true;
+    // Show preparation immediately while the worker checks and hands off the update.
+    g_updateUiState.phase = HarkenSearchUpdateUiPhase::Restarting;
     return true;
 #else
     return false;
