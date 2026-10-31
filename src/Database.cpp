@@ -14283,16 +14283,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     ? 0
                     : sqlite3_column_int(skipStmts.hasMiniSidecar, 0);
                 const int channels = std::max(1, sqlite3_column_int(skipStmts.hasMiniSidecar, 1));
+                sqlite3_reset(skipStmts.hasMiniSidecar);
                 return bytes == kScanMiniPeaks * channels * (int)sizeof(float);
             }
+            sqlite3_reset(skipStmts.hasMiniSidecar);
         }
         if (skipStmts.hasMiniLegacy) {
             sqlite3_reset(skipStmts.hasMiniLegacy);
             sqlite3_bind_text(skipStmts.hasMiniLegacy, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(skipStmts.hasMiniLegacy) == SQLITE_ROW &&
-                sqlite3_column_type(skipStmts.hasMiniLegacy, 0) != SQLITE_NULL) {
-                return sqlite3_column_int(skipStmts.hasMiniLegacy, 0) == kScanMiniPeaks * (int)sizeof(float);
-            }
+            const bool usable = sqlite3_step(skipStmts.hasMiniLegacy) == SQLITE_ROW &&
+                sqlite3_column_type(skipStmts.hasMiniLegacy, 0) != SQLITE_NULL &&
+                sqlite3_column_int(skipStmts.hasMiniLegacy, 0) == kScanMiniPeaks * (int)sizeof(float);
+            sqlite3_reset(skipStmts.hasMiniLegacy);
+            return usable;
         }
         return false;
     };
@@ -15469,6 +15472,10 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 wi.existingCoverSuppressed = sqlite3_column_int(stmtExists, 5) != 0;
                 wi.existingDurationSeconds = (float)sqlite3_column_double(stmtExists, 6);
             }
+            // A SELECT left on SQLITE_ROW pins its WAL snapshot. Release it
+            // before any write or worker callback, otherwise a concurrent cache
+            // commit makes the scan's completion writes fail with BUSY_SNAPSHOT.
+            sqlite3_reset(stmtExists);
         } else {
             exists = fileExists(wi.filePath);
         }
@@ -15586,6 +15593,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                         state.cacheKey   = safeGetText(skipStmts.wfState, 4);
                         hasState = true;
                     }
+                    sqlite3_reset(skipStmts.wfState);
                 } else {
                     hasState = getWaveformCacheStateByPath(wi.filePath, state);
                 }

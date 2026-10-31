@@ -31731,6 +31731,9 @@ void RenderUI(AppState& state) {
                     state.scanDataCommitted = false;
                     ImGui::CloseCurrentPopup();
                 }
+#if ARIS_PREVIEW_ISOLATION
+                ThemeInspector::RegisterLastItem("info.qaScanDone", L(Done), "src/main.cpp");
+#endif
             } else {
             ImGui::BeginDisabled(state.scanCancelRequested.load());
             if (aura::ui::ActionButton(L(Main_StopBtn), ImVec2(btnW, 30))) {

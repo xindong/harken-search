@@ -6564,7 +6564,7 @@ static void PollQaCommandFile(AppState& state) {
         if (path.empty() || !PathExistsUtf8(path) || state.isScanning.load()) {
             result = R"({"ok":false,"cmd":"qa_rightclick_scan","error":"invalid path or scan active"})";
         } else {
-            state.settings.cacheWaveformsOnScan = false;
+            state.settings.cacheWaveformsOnScan = getBool(raw, "cache_waveforms", false);
             state.scanBuildSimilarityIndexAfterScan = false;
             PrepareQuickScanDialogForPath(state, path, true);
             result = R"({"ok":true,"cmd":"qa_rightclick_scan"})";
