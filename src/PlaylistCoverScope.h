@@ -12,21 +12,33 @@ namespace aura::playlist {
 
 struct PlaylistCoverGroup {
     std::string key;
+    std::string path;
+    std::string sourcePath;
+    bool isEmbedded = false;
     int64_t hitCount = 0;
 };
 
 inline void AddPlaylistCoverKey(std::vector<PlaylistCoverGroup>& groups,
                                 std::unordered_map<std::string, size_t>& index,
-                                const std::string& key) {
+                                const std::string& key,
+                                const std::string& path,
+                                const std::string& sourcePath,
+                                bool isEmbedded) {
     if (key.empty()) return;
     const auto [position, inserted] = index.emplace(key, groups.size());
     if (inserted) {
         PlaylistCoverGroup group;
         group.key = key;
+        group.path = path;
+        group.sourcePath = sourcePath;
+        group.isEmbedded = isEmbedded;
         group.hitCount = 1;
         groups.push_back(std::move(group));
     } else {
-        groups[position->second].hitCount++;
+        auto& group = groups[position->second];
+        group.hitCount++;
+        if (group.path.empty()) group.path = path;
+        if (group.sourcePath.empty()) group.sourcePath = sourcePath;
     }
 }
 
@@ -36,8 +48,10 @@ inline std::vector<PlaylistCoverGroup> BuildPlaylistCoverGroupsFromRecords(
     std::unordered_map<std::string, size_t> index;
     index.reserve(records.size());
     for (const AudioRecord& record : records) {
-        AddPlaylistCoverKey(groups, index, record.folderCoverKey);
-        AddPlaylistCoverKey(groups, index, record.embeddedCoverKey);
+        AddPlaylistCoverKey(groups, index, record.folderCoverKey,
+                            record.folderPath, record.folderCoverSrcPath, false);
+        AddPlaylistCoverKey(groups, index, record.embeddedCoverKey,
+                            record.filePath, {}, true);
     }
     return groups;
 }
@@ -58,10 +72,13 @@ inline std::vector<CoverModule::CoverItem> BuildPlaylistCoverItemsFromGroups(
         CoverModule::CoverItem item;
         item.key = group.key;
         item.hitCount = group.hitCount;
-        if (group.key.rfind("E|", 0) == 0) {
+        if (group.isEmbedded) {
             item.kind = CoverModule::CoverKind::EmbeddedCover;
+            item.filePathUtf8 = group.path;
         } else {
             item.kind = CoverModule::CoverKind::FolderCover;
+            item.folderPathUtf8 = group.path;
+            item.folderCoverSrcPathUtf8 = group.sourcePath;
         }
         items.push_back(std::move(item));
     }

@@ -1,6 +1,7 @@
 #include "PlaylistCoverScope.h"
 
 #include <cassert>
+#include <iostream>
 #include <string>
 
 namespace {
@@ -39,5 +40,18 @@ int main() {
     const auto* fire = FindGroup(groups, "F|PATH|H:/FX/Fire");
     assert(whoosh != nullptr);
     assert(fire != nullptr && fire->hitCount == 2);
+
+    AudioRecord embedded;
+    embedded.filePath = "H:/FX/Fire/scrape_01.mp3";
+    embedded.embeddedCoverKey = "E|example-cover";
+    const auto embeddedGroups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(
+        {embedded}, {});
+    const auto embeddedItems = aura::playlist::BuildPlaylistCoverItemsFromGroups(embeddedGroups);
+    if (embeddedItems.size() != 1 ||
+        embeddedItems[0].kind != CoverModule::CoverKind::EmbeddedCover ||
+        embeddedItems[0].filePathUtf8 != embedded.filePath) {
+        std::cerr << "FAIL: playlist embedded cover must retain its representative audio path\n";
+        return 1;
+    }
     return 0;
 }

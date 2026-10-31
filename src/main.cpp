@@ -675,7 +675,41 @@ static void LoadReleaseNotesFromExeDir(bool forceReload) {
     g_releaseNotesUiState.loadFailed = !g_releaseNotesUiState.hasData;
 }
 
+static int s_aboutPage = 0;
+static int s_aboutRequestedPage = 0;
+static int s_aboutLegalDocument = 0;
+static bool s_aboutResetLegalScroll = false;
+
+static const std::string& AboutLegalDocumentText(int document, AppLanguage language) {
+    static const char* paths[2][4] = {
+        {"docs/legal/EULA.md", "docs/legal/PRIVACY_POLICY.md",
+         "docs/legal/OPEN_SOURCE_RELEASE_NOTICE.md", "LICENSE"},
+        {"docs/legal/EULA.en.md", "docs/legal/PRIVACY_POLICY.en.md",
+         "docs/legal/OPEN_SOURCE_RELEASE_NOTICE.en.md", "LICENSE"},
+    };
+    static std::array<std::array<std::string, 4>, 2> contents;
+    static std::array<std::array<bool, 4>, 2> loaded{};
+    const int lang = language == AppLanguage::Chinese ? 0 : 1;
+    const int index = (std::max)(0, (std::min)(document, 3));
+    if (!loaded[lang][index]) {
+        Platform::FileSystem::ReadFileText(
+            GetExeDirUtf8() + "/" + paths[lang][index], contents[lang][index]);
+        loaded[lang][index] = true;
+    }
+    return contents[lang][index];
+}
+
 #if AURA_BUILD_DIAGNOSTICS
+std::string ControlAboutWindowForQa(AppState& state, const std::string& action) {
+    if (action == "open" || action == "legal") {
+        s_aboutRequestedPage = action == "legal" ? 1 : 0;
+        state.showAboutWindow = true;
+    } else if (action != "state") {
+        return R"({"ok":false,"error":"invalid_about_action"})";
+    }
+    return nlohmann::json({{"ok", true}, {"pending_open", state.showAboutWindow}}).dump();
+}
+
 std::string ControlUpdateNoticeForQa(AppState& state, const std::string& action) {
     if (action == "open" || action == "history" || action == "reload") {
         LoadReleaseNotesFromExeDir(action == "reload");
@@ -18571,6 +18605,7 @@ void RenderFileInfoPanelTabContents(
                                         it.filePathUtf8 = f.path;
                                     } else {
                                         it.folderPathUtf8 = f.path;
+                                        it.folderCoverSrcPathUtf8 = f.sourcePath;
                                     }
                                     it.label = BaseNameFromUtf8Path(f.path);
                                 }
@@ -30526,26 +30561,187 @@ void RenderUI(AppState& state) {
     // Handle popup dialogs
     // About window
     if (state.showAboutWindow) {
+        s_aboutPage = s_aboutRequestedPage;
+        s_aboutRequestedPage = 0;
+        s_aboutLegalDocument = 0;
+        s_aboutResetLegalScroll = true;
         ImGui::OpenPopup("##AboutAuro");
         state.showAboutWindow = false;
     }
-    if (BeginTransientScrollbarPopupModal("##AboutAuro", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-        { ReadingTextScope _readingPopup;  // dialog body is a reading surface
-        EscClosePopup();
-        ImGui::Text(L(Main_AppNameBrand));        ImGui::SameLine();
-        ImGui::TextDisabled(L(Main_VersionFmt), SOUNDMANAGER_VERSION_STRING);
-        ImGui::Separator();
-        ImGui::TextWrapped(L(Main_UpdateCenterMovedNote));
-        if (aura::ui::ActionButton(L(Main_OpenUpdateCenterBtn), ImVec2(160.0f, 0.0f))) {
-            state.showUpdateCenter = true;
-            ImGui::CloseCurrentPopup();
+    if (ImGui::IsPopupOpen("##AboutAuro")) {
+        const ImVec2 workSize = ImGui::GetMainViewport()->WorkSize;
+        const float popupW = (std::max)(520.0f, (std::min)(980.0f, workSize.x - 48.0f));
+        const float popupH = (std::max)(500.0f, (std::min)(780.0f, workSize.y - 48.0f));
+        ImGui::SetNextWindowSize(ImVec2(popupW, popupH), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24.0f, 20.0f));
+        if (BeginTransientScrollbarPopupModal("##AboutAuro", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+            {
+            ReadingTextScope readingPopup;
+            EscClosePopup();
+            ImGui::SetWindowFontScale(1.55f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
+            const float contentW = ImGui::GetContentRegionAvail().x;
+            const ImVec4 aboutBG = ThemeColors::current().dialogBG;
+            const float aboutLuma = aboutBG.x * 0.299f + aboutBG.y * 0.587f + aboutBG.z * 0.114f;
+            const ImVec4 aboutAccent(0.94f, 0.62f, 0.16f, 1.0f);
+            const char* wordmarkAsset = aboutLuma >= 0.5f
+                ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
+                : "assets/logos/brand/harken-search-menu-wordmark-white.png";
+            const auto brandIcon = aura::ui::LoadPackagedAsset("assets/icons/brand/harken@2x.png");
+            const auto wordmark = aura::ui::LoadPackagedAsset(wordmarkAsset);
+            const ImVec2 header = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(contentW, 58.0f));
+            const ImVec2 afterHeader = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ImVec2(header.x + contentW - 32.0f, header.y + 19.0f));
+            ImGui::PushID("AboutClose");
+            if (aura::ui::IconButton(ICON_LC_X, L(Close), aura::ui::ButtonSize::Sm))
+                ImGui::CloseCurrentPopup();
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(afterHeader);
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            if (brandIcon.glId != 0)
+                draw->AddImage((ImTextureID)(intptr_t)brandIcon.glId,
+                    ImVec2(header.x, header.y + 4.0f),
+                    ImVec2(header.x + 50.0f, header.y + 54.0f));
+            if (wordmark.glId != 0 && wordmark.h > 0) {
+                const float logoH = 28.0f;
+                const float logoW = logoH * (float)wordmark.w / (float)wordmark.h;
+                draw->AddImage((ImTextureID)(intptr_t)wordmark.glId,
+                    ImVec2(header.x + 66.0f, header.y + (58.0f - logoH) * 0.5f),
+                    ImVec2(header.x + 66.0f + logoW, header.y + (58.0f + logoH) * 0.5f));
+            } else {
+                draw->AddText(ImVec2(header.x + 66.0f, header.y + 19.0f),
+                    ImGui::GetColorU32(ImGuiCol_Text), L(Main_AppNameBrand));
+            }
+            char version[32]{};
+            snprintf(version, sizeof(version), L(Main_VersionFmt), SOUNDMANAGER_VERSION_STRING);
+            const ImVec2 versionSize = ImGui::CalcTextSize(version);
+            draw->AddText(ImVec2(header.x + contentW - 40.0f - versionSize.x,
+                                 header.y + (58.0f - versionSize.y) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), version);
+            ImGui::Separator();
+
+            const auto pageTab = [draw, aboutAccent](const char* title, int page) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.5f, 0.5f, 0.12f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.5f, 0.5f, 0.18f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 10.0f));
+                const float tabW = ImGui::CalcTextSize(title).x;
+                if (ImGui::Button(title, ImVec2(tabW, 40.0f))) s_aboutPage = page;
+                if (s_aboutPage == page) {
+                    const ImVec2 min = ImGui::GetItemRectMin();
+                    draw->AddLine(ImVec2(min.x, min.y + 39.0f),
+                                  ImVec2(min.x + tabW, min.y + 39.0f),
+                                  ImGui::GetColorU32(aboutAccent), 3.0f);
+                }
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor(3);
+            };
+            pageTab(L(Help_About), 0);
+            ImGui::SameLine(0.0f, 40.0f);
+            pageTab(L(Main_AboutLegalTab), 1);
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0.0f, 14.0f));
+
+            if (s_aboutPage == 0) {
+                ImGui::TextUnformatted(L(Main_AboutHeading));
+                ImGui::Dummy(ImVec2(0.0f, 12.0f));
+                ImGui::TextWrapped(L(Main_AboutLicenseNote));
+                ImGui::TextDisabled(L(Main_AboutCopyright));
+                ImGui::Dummy(ImVec2(0.0f, 12.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 14.0f));
+                const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/contributors/cindy.png");
+                if (cindyLogo.glId != 0 && cindyLogo.h > 0) {
+                    ImGui::Image((ImTextureID)(intptr_t)cindyLogo.glId, ImVec2(96.0f, 96.0f));
+                    ImGui::SameLine(0.0f, 18.0f);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
+                        (96.0f - ImGui::GetTextLineHeight()) * 0.5f);
+                }
+                ImGui::TextWrapped(L(Main_AboutCindyCredit));
+                ImGui::Dummy(ImVec2(0.0f, 14.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+                const auto urlLine = [](const char* label, const char* url) {
+                    const float startX = ImGui::GetCursorPosX();
+                    ImGui::TextDisabled("%s", label);
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(startX + 75.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().controlAccent);
+                    ImGui::TextUnformatted(url);
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (ImGui::IsItemClicked()) Platform::OpenUrl(url);
+                };
+                if (ImGui::BeginTable("##AboutLinks", 2, ImGuiTableFlags_SizingStretchSame)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextDisabled("%s", L(Main_AppNameBrand));
+                    urlLine(L(Main_AboutRepoLine), "https://github.com/xindong/harken-search");
+                    urlLine(L(Main_AboutDownloadLine), "https://harkensearch.xd.com");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextDisabled("%s", L(Main_AboutCindyName));
+                    urlLine(L(Main_AboutCindyRepoLine), "https://github.com/makecindy/cindy");
+                    urlLine(L(Main_AboutCindyDownloadLine), "https://cindy.app");
+                    ImGui::EndTable();
+                }
+            } else {
+                ImGui::TextUnformatted(L(Main_AboutLegalTab));
+                ImGui::TextDisabled("%s", L(Main_AboutLegalPrompt));
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const char* docLabels[] = {L(Main_AboutEula), L(Main_AboutPrivacy),
+                                           L(Main_AboutOpenSource), L(Main_AboutApache)};
+                const float buttonW = (contentW - 24.0f) / 4.0f;
+                for (int i = 0; i < 4; ++i) {
+                    if (i > 0) ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Border, aboutAccent);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,
+                        s_aboutLegalDocument == i ? 1.0f : 0.0f);
+                    if (ImGui::Button(docLabels[i], ImVec2(buttonW, 42.0f))) {
+                        s_aboutLegalDocument = i;
+                        s_aboutResetLegalScroll = true;
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                }
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const float legalH = (std::max)(140.0f,
+                    ImGui::GetWindowSize().y - ImGui::GetCursorPosY() - 120.0f);
+                if (BeginTransientScrollbarChild("##AboutLegalText", ImVec2(0.0f, legalH), true)) {
+                    ImGui::SetWindowFontScale(1.55f);
+                    if (s_aboutResetLegalScroll) {
+                        ImGui::SetScrollY(0.0f);
+                        s_aboutResetLegalScroll = false;
+                    }
+                    const auto& document = AboutLegalDocumentText(
+                        s_aboutLegalDocument, g_currentLanguage);
+                    if (document.empty())
+                        ImGui::TextWrapped(L(Main_AboutLegalUnavailable));
+                    else
+                        ImGui::TextWrapped("%s", document.c_str());
+                    ImGui::SetWindowFontScale(1.0f);
+                }
+                ImGui::EndChild();
+            }
+            const float footerY = ImGui::GetWindowSize().y -
+                ImGui::GetStyle().WindowPadding.y - 58.0f;
+            ImGui::SetCursorPosY((std::max)(ImGui::GetCursorPosY() + 12.0f, footerY));
+            ImGui::Separator();
+            ImGui::TextDisabled(L(Main_AboutPageFmt), s_aboutPage + 1);
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x + contentW - 170.0f);
+            if (aura::ui::ActionButton(s_aboutPage == 0 ? L(Main_AboutNextLegal) : L(Main_AboutBack),
+                              ImVec2(170.0f, 40.0f))) {
+                s_aboutPage = s_aboutPage == 0 ? 1 : 0;
+                s_aboutResetLegalScroll = true;
+            }
+            ImGui::PopStyleVar();
+            ImGui::SetWindowFontScale(1.0f);
+            }
+            ImGui::EndPopup();
         }
-        ImGui::Separator();
-        if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-            ImGui::CloseCurrentPopup();
-        }
-        }
-        ImGui::EndPopup();
+        ImGui::PopStyleVar();
     }
 
     #if defined(ARIS_UPDATE_NOTICE_QA)
@@ -36320,7 +36516,7 @@ void RenderUI(AppState& state) {
                 if (state.settings.diagnosticMode) {
                     ImGui::Spacing();
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), L(Set_DiagnosticsEnabled));
-                    ImGui::Text(L(Set_DiagCollected), (int)diag.entryCount(), (int)diag.maxEntries());
+                    ImGui::Text(L(Set_DiagCollected), (int)diag.entryCount());
                     ImGui::Text(L(Set_DiagFPS), diag.currentFps());
                     bool showDiagOverlay = state.settings.showDiagnosticOverlay;
                     if (aura::ui::Checkbox(L(Set_DiagShowOverlay), &showDiagOverlay)) {
@@ -36362,14 +36558,7 @@ void RenderUI(AppState& state) {
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_DiagBufferSize));
                     ImGui::Separator();
-                    static int diagCapacity = (int)diag.maxEntries();
-                    ImGui::SetNextItemWidth(150);
-                    if (ImGui::SliderInt(L(Set_DiagMaxEntries), &diagCapacity, 50, 2000)) {
-                        diag.setMaxEntries((size_t)diagCapacity);
-                    }
-                    if (HoveredForHelp()) {
-                        aura::ui::Tooltip(L(Set_DiagBufferHint));
-                    }
+                    ImGui::TextDisabled("%s", L(Set_DiagBufferHint));
 
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_DiagExportMgmt));

@@ -1,6 +1,7 @@
 #include "AppState.h"
 #include "BuiltinThemeScheme.h"
 #include "ui/ActionButtonStyle.h"
+#include "ui/CloseIconButton.h"
 #include "imgui_internal.h"
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,55 @@ static bool Same(ImVec4 a, ImVec4 b) {
     return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
 }
 
+static void CheckCloseIconStates() {
+    auto& io = ImGui::GetIO();
+    const bool trickle = io.ConfigInputTrickleEventQueue;
+    io.ConfigInputTrickleEventQueue = false;
+    for (int themeId : {0, 1, 2, 3, 10}) {
+        const auto theme = MakeBuiltinScheme(static_cast<AppTheme>(themeId));
+        const auto surface = TransportContrast::Over(theme.dialogBG, theme.mainWindowBG);
+        ImVec4 hover = theme.filterBrowserButtonBG; hover.w *= .5f;
+        bool seenNormal = false, seenHover = false, seenActive = false;
+        for (int frame = 0; frame < 7; ++frame) {
+            io.AddMousePosEvent(frame < 2 ? -100.f : 74.f, frame < 2 ? -100.f : 86.f);
+            io.AddMouseButtonEvent(0, frame == 3 || frame == 5);
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(20, 20));
+            ImGui::SetNextWindowSize(ImVec2(300, 160));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, surface);
+            ImGui::Begin("close icon", nullptr, ImGuiWindowFlags_NoSavedSettings);
+            ImGui::SetCursorScreenPos(ImVec2(60, 70));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme.filterBrowserButtonBG);
+            const bool disabled = frame >= 5;
+            if (disabled) ImGui::BeginDisabled();
+            const int colors = GImGui->ColorStack.Size, vars = GImGui->StyleVarStack.Size;
+            const bool clicked = aura::ui::CloseIconButton::Draw("X", ImVec2(28, 32),
+                theme.sidebarIconInactive, surface);
+            const bool active = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+            Check(GImGui->ColorStack.Size == colors && GImGui->StyleVarStack.Size == vars, "close icon balances styles");
+            Check(ImGui::GetItemRectSize().x == 28 && ImGui::GetItemRectSize().y == 32, "close icon preserves hit area");
+            Check(clicked == (frame == 4), "close icon preserves release and disabled behavior");
+            if (frame >= 1 && !disabled) {
+                const auto ink = ImGui::ColorConvertU32ToFloat4(ImGui::GetWindowDrawList()->VtxBuffer.back().col);
+                const auto fill = ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(active ? ImGuiCol_ButtonActive :
+                    hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button));
+                const auto actual = TransportContrast::Quantize(TransportContrast::Over(fill, surface));
+                const double contrast = TransportContrast::Ratio(ink, actual);
+                std::printf("close theme=%d active=%d hovered=%d contrast=%.4f\n", themeId, active, hovered, contrast);
+                Check(contrast >= 3.0, "close icon three-state rendered contrast");
+                seenActive |= active; seenHover |= hovered && !active; seenNormal |= !hovered && !active;
+            }
+            if (disabled) ImGui::EndDisabled();
+            ImGui::PopStyleColor(3);
+            ImGui::End(); ImGui::PopStyleColor(); ImGui::Render();
+        }
+        Check(seenNormal && seenHover && seenActive, "close icon samples all three real input states");
+    }
+    io.ConfigInputTrickleEventQueue = trickle;
+}
+
 int main() {
     ImGui::CreateContext();
     auto& io = ImGui::GetIO();
@@ -24,6 +74,7 @@ int main() {
     io.DisplaySize = ImVec2(1600, 1000);
     unsigned char* pixels; int w, h;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
+    CheckCloseIconStates();
     const auto theme = MakeBuiltinScheme(static_cast<AppTheme>(3));
     const auto palette = Style::Make(theme, theme.dialogPanelBG, ButtonVariant::Secondary);
     for (int id : {0, 1, 2, 3, 10}) {

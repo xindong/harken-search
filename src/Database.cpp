@@ -13360,9 +13360,11 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         : " AND af.id IN (" + bq.coverKeySubquery + ")";
     const std::string sql =
         "WITH search_candidates AS ("
-        " SELECT af.id AS id, af.folder_cover_key AS folder_cover_key, af.embedded_cover_key AS embedded_cover_key "
+        " SELECT af.id AS id, af.file_path AS file_path, af.folder_path AS folder_path,"
+        " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
+        " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
-        ") SELECT sc.folder_cover_key, sc.embedded_cover_key"
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path, sc.folder_cover_src_path"
         " FROM playlist_items pi"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE pi.playlist_id = ?";
@@ -13378,6 +13380,9 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         AudioRecord record;
         record.folderCoverKey = safeGetText(stmt, 0);
         record.embeddedCoverKey = safeGetText(stmt, 1);
+        record.filePath = safeGetText(stmt, 2);
+        record.folderPath = safeGetText(stmt, 3);
+        record.folderCoverSrcPath = safeGetText(stmt, 4);
         results.push_back(std::move(record));
     }
     sqlite3_finalize(stmt);
@@ -13634,16 +13639,20 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         : " AND af.id IN (" + bq.coverKeySubquery + ")";
     const std::string sql =
         "WITH search_candidates AS ("
-        " SELECT af.id AS id, af.folder_cover_key AS folder_cover_key, af.embedded_cover_key AS embedded_cover_key "
+        " SELECT af.id AS id, af.file_path AS file_path, af.folder_path AS folder_path,"
+        " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
+        " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
         "), ranked AS ("
-        " SELECT sc.id AS id, sc.folder_cover_key AS folder_cover_key, sc.embedded_cover_key AS embedded_cover_key"
+        " SELECT sc.id AS id, sc.file_path AS file_path, sc.folder_path AS folder_path,"
+        " sc.folder_cover_key AS folder_cover_key, sc.folder_cover_src_path AS folder_cover_src_path,"
+        " sc.embedded_cover_key AS embedded_cover_key"
         " FROM playlist_items pi"
         " JOIN playlists p ON p.id = pi.playlist_id"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE p.parent_id = ?"
         " GROUP BY sc.id"
-        ") SELECT folder_cover_key, embedded_cover_key FROM ranked";
+        ") SELECT folder_cover_key, embedded_cover_key, file_path, folder_path, folder_cover_src_path FROM ranked";
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
@@ -13656,6 +13665,9 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         AudioRecord record;
         record.folderCoverKey = safeGetText(stmt, 0);
         record.embeddedCoverKey = safeGetText(stmt, 1);
+        record.filePath = safeGetText(stmt, 2);
+        record.folderPath = safeGetText(stmt, 3);
+        record.folderCoverSrcPath = safeGetText(stmt, 4);
         results.push_back(std::move(record));
     }
     sqlite3_finalize(stmt);

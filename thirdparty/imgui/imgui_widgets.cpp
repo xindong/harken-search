@@ -889,7 +889,7 @@ bool ImGui::ArrowButton(const char* str_id, ImGuiDir dir)
 }
 
 // Button to close a window
-bool ImGui::CloseButton(ImGuiID id, const ImVec2& pos)
+bool ImGui::CloseButton(ImGuiID id, const ImVec2& pos, bool window_close_style)
 {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
@@ -913,9 +913,29 @@ bool ImGui::CloseButton(ImGuiID id, const ImVec2& pos)
 
     // Render
     ImU32 bg_col = GetColorU32(held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered);
-    if (hovered)
+    if (hovered && window_close_style)
+    {
+        ImVec4 background = g.Style.Colors[held ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered];
+        background.w *= 0.5f;
+        const ImVec2 pad(4.0f, 4.0f);
+        window->DrawList->AddRectFilled(bb.Min - pad, bb.Max + pad,
+            GetColorU32(background), g.Style.FrameRounding);
+    }
+    else if (hovered)
         window->DrawList->AddRectFilled(bb.Min, bb.Max, bg_col);
     RenderNavCursor(bb, id, ImGuiNavRenderCursorFlags_Compact);
+    if (window_close_style)
+    {
+        const ImVec2 center = bb.GetCenter();
+        const float half = 6.0f * g.FontSize / 16.0f;
+        const float stroke = 1.75f * g.FontSize / 16.0f;
+        const ImU32 color = GetColorU32(ImGuiCol_TextDisabled);
+        window->DrawList->AddLine(center + ImVec2(-half, -half),
+                                  center + ImVec2(+half, +half), color, stroke);
+        window->DrawList->AddLine(center + ImVec2(+half, -half),
+                                  center + ImVec2(-half, +half), color, stroke);
+        return pressed;
+    }
     const ImU32 cross_col = GetColorU32(ImGuiCol_Text);
     const ImVec2 cross_center = bb.GetCenter() - ImVec2(0.5f, 0.5f);
     const float cross_extent = g.FontSize * 0.5f * 0.7071f - 1.0f;
