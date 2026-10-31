@@ -246,10 +246,23 @@ void DiagnosticsLogger::writerLoop() {
             // 同步到导出环形缓冲（仅后台线程写入）
             {
                 std::lock_guard<std::mutex> lk(m_mutex);
+                pruneExpiredLocked(e.timestampMs);
                 if (!tryMergeWithLastLocked(e)) {
+                    // A delayed producer must not displace a current entry with
+                    // an already-expired one. The persistent log above still
+                    // records it; normal folding of queued repeats is unchanged.
+                    if (m_count == m_maxEntries && nowMs() - e.timestampMs > kRetentionWindowMs) {
+                        continue;
+                    }
+                    m_oldestTimestampMs = m_count == 0 ? e.timestampMs
+                        : std::min(m_oldestTimestampMs, e.timestampMs);
+                    if (m_count == m_maxEntries) {
+                        m_dropped.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        ++m_count;
+                    }
                     m_ring[m_head] = e;
                     m_head = (m_head + 1) % m_maxEntries;
-                    if (m_count < m_maxEntries) m_count++;
                 }
             }
         }
@@ -260,6 +273,28 @@ void DiagnosticsLogger::writerLoop() {
         }
     }
     if (out.IsOpen()) out.Flush();
+}
+
+void DiagnosticsLogger::pruneExpiredLocked(int64_t nowMs) {
+    if (m_count == 0 || m_maxEntries == 0) return;
+    if (nowMs - m_oldestTimestampMs <= kRetentionWindowMs) return;
+    const size_t ringStart = (m_count < m_maxEntries) ? 0 : m_head;
+    // Producers timestamp before enqueueing, so expired entries can appear
+    // anywhere. The minimum above keeps ordinary non-expiring writes O(1).
+    std::vector<DiagLogEntry> retained;
+    retained.reserve(m_count);
+    int64_t oldestTimestamp = 0;
+    for (size_t i = 0; i < m_count; ++i) {
+        const auto& entry = m_ring[(ringStart + i) % m_maxEntries];
+        if (nowMs - entry.timestampMs > kRetentionWindowMs) continue;
+        oldestTimestamp = retained.empty() ? entry.timestampMs
+            : std::min(oldestTimestamp, entry.timestampMs);
+        retained.push_back(entry);
+    }
+    m_count = retained.size();
+    m_head = m_count % m_maxEntries;
+    m_oldestTimestampMs = oldestTimestamp;
+    for (size_t i = 0; i < retained.size(); ++i) m_ring[i] = retained[i];
 }
 
 // Log methods
@@ -302,6 +337,18 @@ void DiagnosticsLogger::logMetric(const char* category, const char* detail, doub
     pushEntry(std::move(e));
 }
 
+bool DiagnosticsLogger::logSystemAt(const char* category, const char* detail, int64_t timestampMs) {
+    if (!isEnabled()) return false;
+    DiagLogEntry e;
+    e.type = DiagLogType::System;
+    copyTrunc(e.category, sizeof(e.category), category);
+    copyTrunc(e.detail, sizeof(e.detail), detail);
+    e.timestampMs = timestampMs;
+    e.threadId = threadId();
+    pushEntry(std::move(e));
+    return true;
+}
+
 void DiagnosticsLogger::logSystem(const char* category, const char* detail) {
     if (!isEnabled()) return;
     DiagLogEntry e;
@@ -327,6 +374,7 @@ void DiagnosticsLogger::setMaxEntries(size_t n) {
 
 size_t DiagnosticsLogger::entryCount() const {
     std::lock_guard<std::mutex> lk(m_mutex);
+    const_cast<DiagnosticsLogger*>(this)->pruneExpiredLocked(nowMs());
     return m_count;
 }
 
@@ -334,6 +382,7 @@ void DiagnosticsLogger::clear() {
     std::lock_guard<std::mutex> lk(m_mutex);
     m_count = 0;
     m_head = 0;
+    m_oldestTimestampMs = 0;
 }
 
 // FPS tracking
@@ -412,6 +461,7 @@ static std::string FormatTimestamp(int64_t ms) {
 
 std::string DiagnosticsLogger::getRecentJsonLines(int maxLines) const {
     std::lock_guard<std::mutex> lk(m_mutex);
+    const_cast<DiagnosticsLogger*>(this)->pruneExpiredLocked(nowMs());
     if (m_count == 0 || maxLines <= 0) return {};
 
     size_t n = (size_t)maxLines < m_count ? (size_t)maxLines : m_count;
@@ -438,6 +488,7 @@ std::string DiagnosticsLogger::getRecentJsonLines(int maxLines) const {
 
 std::string DiagnosticsLogger::getRecentFilteredLines(int maxLines) const {
     std::lock_guard<std::mutex> lk(m_mutex);
+    const_cast<DiagnosticsLogger*>(this)->pruneExpiredLocked(nowMs());
     if (m_count == 0 || maxLines <= 0) return {};
 
     // Collect candidate entries from the ring (oldest-first).
@@ -497,6 +548,7 @@ std::string DiagnosticsLogger::getRecentFilteredLines(int maxLines) const {
 
 std::string DiagnosticsLogger::exportJsonString() const {
     std::lock_guard<std::mutex> lk(m_mutex);
+    const_cast<DiagnosticsLogger*>(this)->pruneExpiredLocked(nowMs());
 
     // 先扫一遍生成摘要，便于一眼看清卡顿/封面耗时
     size_t start = (m_count < m_maxEntries) ? 0 : m_head;

@@ -6,7 +6,7 @@
 // 设计目标：
 //   1. 为 AI 后期优化提供结构化、易解析的性能 + 行为日志
 //   2. 生产级零开销：关闭时所有探针退化为空操作（内联 if 判断）
-//   3. 环形缓冲（默认 500 条），不撑爆内存
+//   3. 最近一分钟的环形缓冲（默认安全上限 50000 条），不撑爆内存
 //   4. 线程安全，可在任意线程（UI / Worker / Audio）调用
 //   5. 一键导出 JSON，可直接喂给 AI 做瓶颈分析
 //
@@ -69,6 +69,7 @@ public:
     void logPerformance(const char* category, const char* detail, double durationMs);
     void logMetric(const char* category, const char* detail, double value);
     void logSystem(const char* category, const char* detail);
+    bool logSystemAt(const char* category, const char* detail, int64_t timestampMs);
 
     // ---- 导出 ----
     // 导出环形缓冲中的所有日志到 JSON 文件，返回 true 表示成功
@@ -120,6 +121,7 @@ private:
 
     void pushEntry(DiagLogEntry&& entry);
     bool tryMergeWithLastLocked(const DiagLogEntry& entry);
+    void pruneExpiredLocked(int64_t nowMs);
     static int64_t nowMs();
     static uint32_t threadId();
 
@@ -143,10 +145,13 @@ private:
     void stopWriter();
 
     std::atomic<bool>          m_enabled{false};
-    size_t                     m_maxEntries = 500;
+    static constexpr int64_t   kRetentionWindowMs = 60000;
+    static constexpr size_t    kMemorySafetyEntries = 50000;
+    size_t                     m_maxEntries = kMemorySafetyEntries;
     std::vector<DiagLogEntry>  m_ring;       // 导出缓冲（由后台线程写入）
     size_t                     m_head = 0;   // 写入位置
     size_t                     m_count = 0;  // 当前条目数
+    int64_t                    m_oldestTimestampMs = 0; // Conservative minimum; enqueue order may differ.
     mutable std::mutex         m_mutex;      // 仅用于导出/管理
 
     static constexpr size_t    kQueueSize = 8192;
