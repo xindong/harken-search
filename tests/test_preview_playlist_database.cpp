@@ -3,6 +3,7 @@
 #include "PlaylistFolderTree.h"
 #include "PlaylistScopeCounts.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -117,6 +118,20 @@ int main() {
         ("UPDATE audio_files SET embedded_cover_key = 'E|playlist-test' WHERE id = " +
          std::to_string(ids[0]) + ";").c_str()).success,
         "set embedded cover on first playlist member");
+    const std::string folderImageSource = (audio / "fx/fire/folder-cover.png").u8string();
+    Expect(db.executeRawQuery(
+        ("UPDATE audio_files SET folder_cover_src_path = " + SqlQuote(folderImageSource) +
+         " WHERE id = " + std::to_string(ids[1]) + ";").c_str()).success,
+        "set folder image source on the second member of a shared cover group");
+    const auto retainsFolderItem = [&](const auto& coverGroups) {
+        const auto items = aura::playlist::BuildPlaylistCoverItemsFromGroups(coverGroups);
+        return std::any_of(items.begin(), items.end(), [&](const auto& item) {
+            return item.key == "F|PATH|D:/fx/fire" &&
+                item.kind == CoverModule::CoverKind::FolderCover &&
+                item.folderPathUtf8 == (audio / "fx/fire").u8string() &&
+                item.folderCoverSrcPathUtf8 == folderImageSource;
+        });
+    };
 
     const int64_t playlistId = db.createPlaylist("scope-four");
     Expect(playlistId > 0, "create ordinary playlist");
@@ -150,7 +165,12 @@ int main() {
         }
     }
     Expect(ordinaryEmbeddedSource, "ordinary playlist cover query retains embedded source path");
+    Expect(std::any_of(coverKeys.begin(), coverKeys.end(), [&](const auto& record) {
+        return record.folderCoverKey == "F|PATH|D:/fx/fire" &&
+            record.folderCoverSrcPath == folderImageSource;
+    }), "ordinary playlist cover query retains folder image source path");
     const auto groups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(coverKeys, page1);
+    Expect(retainsFolderItem(groups), "ordinary playlist CoverItem retains folder image source path");
     Expect(FindGroup(groups, "F|PATH|D:/fx/fire") != nullptr &&
                FindGroup(groups, "F|PATH|D:/fx/fire")->hitCount == 2,
            "complete cover groups keep the fire folder");
@@ -186,7 +206,12 @@ int main() {
         }
     }
     Expect(aggregatedEmbeddedSource, "aggregated playlist cover query retains embedded source path");
+    Expect(std::any_of(aggKeys.begin(), aggKeys.end(), [&](const auto& record) {
+        return record.folderCoverKey == "F|PATH|D:/fx/fire" &&
+            record.folderCoverSrcPath == folderImageSource;
+    }), "aggregated playlist cover query retains folder image source path");
     const auto aggGroups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(aggKeys, page1);
+    Expect(retainsFolderItem(aggGroups), "aggregated playlist CoverItem retains folder image source path");
     Expect(FindGroup(aggGroups, "F|PATH|D:/fx/fire") != nullptr &&
                FindGroup(aggGroups, "F|PATH|D:/fx/whoosh") != nullptr,
            "aggregated cover keys keep both groups");
