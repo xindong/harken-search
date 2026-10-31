@@ -276,7 +276,7 @@ bool Button(const char* label, const ButtonOptions& opts) {
             clicked = opts.loading ? ActionButtonStyle::Draw(buf, ImVec2(0, h), true)
                                    : ImGui::Button(buf, ImVec2(0, h));
         }
-        DrawFocusRing();
+        if (!closeIcon) DrawFocusRing();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(4);
     } else {

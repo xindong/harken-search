@@ -90,6 +90,7 @@ def update_close_glyph(capture_info, control):
     if len(points) > interior.width * interior.height * .55:
         raise AssertionError("close glyph detection includes the button surface")
     return {"width": x1 - x0 + 1, "height": y1 - y0 + 1,
+            "center_x": (x0 + x1) / 2.0,
             "center_y": (y0 + y1) / 2.0}
 
 

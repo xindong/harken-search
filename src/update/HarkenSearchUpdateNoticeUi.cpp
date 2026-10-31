@@ -186,7 +186,8 @@ void RenderHeader(
         notes.showHistory = false;
         notes.summaryScrollKey.clear();
     }
-    ImGui::SetCursorPos(ImVec2(714.0f, 25.0f));
+    // Center the 20px hit area on the adjacent 24px header action.
+    ImGui::SetCursorPos(ImVec2(714.0f, 22.0f));
     ImGui::PushID("close");
     // About uses a 1.55x window font. Match its visible X without scaling
     // the rest of this update window or changing the existing close action.
