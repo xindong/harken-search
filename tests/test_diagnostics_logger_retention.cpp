@@ -1,11 +1,52 @@
 ﻿#include "DiagnosticsLogger.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
+#include <new>
 #include <string>
 #include <thread>
 
 static int g_failed = 0;
+static bool g_countAllocations = false;
+static size_t g_allocations = 0;
+
+void* operator new(size_t size) {
+    if (g_countAllocations) ++g_allocations;
+    if (void* p = std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, size_t) noexcept { std::free(p); }
+
+// The writer is stopped for these deterministic retention fixtures. Friendship
+// keeps the production/private ABI intact (unlike redefining private as public).
+struct DiagnosticsRetentionTestAccess {
+    static void seed(DiagnosticsLogger& log, size_t capacity, size_t count,
+                     size_t head, int64_t firstTimestamp) {
+        log.clear();
+        std::lock_guard<std::mutex> lock(log.m_mutex);
+        log.m_ring.assign(capacity, {});
+        log.m_maxEntries = capacity;
+        log.m_count = count;
+        log.m_head = head;
+        log.m_oldestTimestampMs = firstTimestamp;
+        const size_t start = (head + capacity - count) % capacity;
+        for (size_t i = 0; i < count; ++i) {
+            auto& entry = log.m_ring[(start + i) % capacity];
+            entry.type = DiagLogType::System;
+            entry.timestampMs = firstTimestamp + static_cast<int64_t>(i);
+            std::snprintf(entry.detail, sizeof(entry.detail), "seed-%zu-end", i);
+        }
+    }
+    static void prune(DiagnosticsLogger& log, int64_t timestamp) {
+        std::lock_guard<std::mutex> lock(log.m_mutex);
+        log.pruneExpiredLocked(timestamp);
+    }
+    static int64_t physicalTimestamp(const DiagnosticsLogger& log, size_t slot) {
+        return log.m_ring[slot].timestampMs;
+    }
+};
 
 #define ASSERT(cond, msg) do { \
     if (!(cond)) { std::cerr << "FAIL: " << (msg) << "\n"; ++g_failed; } \
@@ -119,5 +160,57 @@ int main() {
            "expired incoming entry is absent from the exported window");
     ASSERT(log.droppedCount() == droppedBefore, "expired incoming entry is not counted as capacity loss");
     log.setEnabled(false);
+
+    DiagnosticsRetentionTestAccess::seed(log, 50000, 30000, 30000, 1000000);
+    g_allocations = 0;
+    g_countAllocations = true;
+    for (int i = 1; i <= 500; ++i)
+        DiagnosticsRetentionTestAccess::prune(log, 1060000 + i);
+    g_countAllocations = false;
+    ASSERT(g_allocations == 0, "incremental expiry makes no allocations");
+    ASSERT(DiagnosticsRetentionTestAccess::physicalTimestamp(log, 500) == 1000500,
+           "ordered expiry does not move surviving entries");
+
+    const int64_t wrapBase = nowMs() - 40000;
+    DiagnosticsRetentionTestAccess::seed(log, 50, 50, 17, wrapBase);
+    DiagnosticsRetentionTestAccess::prune(log, wrapBase + 60010);
+    ASSERT(log.entryCount() == 40, "wrapped ring drops exactly the expired prefix");
+    const auto wrappedFull = log.exportJsonString();
+    const auto wrappedTail = log.getRecentJsonLines(50);
+    const auto wrappedFiltered = log.getRecentFilteredLines(50);
+    for (const auto* output : {&wrappedFull, &wrappedTail, &wrappedFiltered}) {
+        ASSERT(output->find("seed-9-end") == std::string::npos &&
+               output->find("seed-10-end") < output->find("seed-49-end"),
+               "all exports preserve wrapped survivor order");
+    }
+    log.setMaxEntries(100);
+    ASSERT(log.entryCount() == 40 && log.getRecentJsonLines(1).find("seed-49-end") != std::string::npos,
+           "growing a partially expired ring preserves newest entry");
+    DiagnosticsRetentionTestAccess::seed(log, 100, 80, 23, nowMs() - 1000);
+    log.setMaxEntries(50);
+    const auto resized = log.getRecentJsonLines(100);
+    ASSERT(log.entryCount() == 50 && resized.find("seed-29-end") == std::string::npos &&
+           resized.find("seed-30-end") < resized.find("seed-79-end"),
+           "shrinking a wrapped ring retains the fifty newest entries in order");
+    const int64_t mixedBase = nowMs();
+    DiagnosticsRetentionTestAccess::seed(log, 50, 50, 17, mixedBase - 40000);
+    log.setEnabled(true);
+    log.logSystemAt("Retention", "delayed-to-expire", mixedBase - 59000);
+    log.logSystemAt("Retention", "wrapped-writer-barrier", mixedBase);
+    ASSERT(waitUntil([&] {
+        return log.getRecentJsonLines(1).find("wrapped-writer-barrier") != std::string::npos;
+    }), "writer appends out-of-order entries after ring wrap");
+    log.setEnabled(false);
+    g_allocations = 0;
+    g_countAllocations = true;
+    DiagnosticsRetentionTestAccess::prune(log, mixedBase + 2000);
+    g_countAllocations = false;
+    ASSERT(g_allocations == 0, "out-of-order expiry compacts without allocations");
+    const auto compacted = log.getRecentJsonLines(100);
+    ASSERT(log.entryCount() == 49 && compacted.find("delayed-to-expire") == std::string::npos &&
+           compacted.find("seed-2-end") < compacted.find("seed-49-end") &&
+           compacted.find("seed-49-end") < compacted.find("wrapped-writer-barrier"),
+           "wrapped out-of-order expiry preserves all survivors and enqueue order");
+    log.clear();
     return g_failed == 0 ? 0 : 1;
 }
