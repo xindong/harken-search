@@ -120,6 +120,7 @@ def run(args):
                 assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
                 assert win32process.GetExitCodeProcess(process) == 0
                 process.Close()
+                process = None
                 process, pid = desktop.start(exe)
                 identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
                 assert identity['pid'] == pid
@@ -186,6 +187,7 @@ def run(args):
         report['error'] = str(error)
         raise
     finally:
+        cleanup_errors = []
         if process is not None:
             try:
                 if win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
@@ -202,11 +204,25 @@ def run(args):
                         raise TimeoutError('QA app did not exit')
                 report['exit_code'] = win32process.GetExitCodeProcess(process)
             except Exception as error:
-                report['cleanup_error'] = str(error)
-                win32process.TerminateProcess(process, 1)
-                win32event.WaitForSingleObject(process, 5000)
-            process.Close()
-        desktop.close()
+                cleanup_errors.append(str(error))
+                try:
+                    win32process.TerminateProcess(process, 1)
+                    win32event.WaitForSingleObject(process, 5000)
+                except Exception as terminate_error:
+                    cleanup_errors.append(str(terminate_error))
+            finally:
+                try:
+                    process.Close()
+                except Exception as close_error:
+                    cleanup_errors.append(str(close_error))
+        try:
+            desktop.close()
+        except Exception as desktop_error:
+            cleanup_errors.append(str(desktop_error))
+        if cleanup_errors:
+            report['passed'] = False
+            report['cleanup_error'] = '; '.join(cleanup_errors)
+        report['passed'] = report['passed'] and report.get('exit_code') == 0
         (out / 'result.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     assert report.get('exit_code') == 0 and 'cleanup_error' not in report, report
     print('PASS: initial and repeated full scans complete all 49 mini waveforms; clean exit')
