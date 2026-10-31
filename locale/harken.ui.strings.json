@@ -3342,9 +3342,135 @@
     {
       "id": "Relink_ScopeHint",
       "type": "ui",
-      "zh": "留空则仅在已监控目录内搜索",
-      "en": "Leave empty to search only monitored directories",
-      "ja": "空欄の場合は監視済みディレクトリ内のみ検索"
+      "zh": "自动匹配会搜索已监控目录；也可指定一个目录。",
+      "en": "Auto Match searches monitored directories. You can add one folder.",
+      "ja": "自動マッチでは監視対象を検索します。フォルダーを追加できます。"
+    },
+    {
+      "id": "Relink_MatchReasonExactNameSize",
+      "type": "ui",
+      "zh": "依据：文件名与大小一致",
+      "en": "Matched by identical file name and size",
+      "ja": "照合理由：ファイル名とサイズが一致"
+    },
+    {
+      "id": "Relink_UpdateSourceChanged",
+      "type": "ui",
+      "zh": "原文件路径已恢复或变化，未更新关联。",
+      "en": "The original path changed; the link was not updated.",
+      "ja": "元のパスが復旧または変更されたため、リンクを更新しませんでした。"
+    },
+    {
+      "id": "Relink_UpdateTargetUnavailable",
+      "type": "ui",
+      "zh": "候选文件已不可用，未更新关联。",
+      "en": "The candidate file is unavailable; the link was not updated.",
+      "ja": "候補ファイルを利用できないため、リンクを更新しませんでした。"
+    },
+    {
+      "id": "Relink_UpdatePathConflict",
+      "type": "ui",
+      "zh": "该路径已被其他记录占用，未更新关联。",
+      "en": "Another record already uses this path; the link was not updated.",
+      "ja": "このパスは別のレコードで使用されているため、リンクを更新しませんでした。"
+    },
+    {
+      "id": "Relink_UpdateFailed",
+      "type": "ui",
+      "zh": "路径更新失败，请重试。",
+      "en": "Path update failed. Try again.",
+      "ja": "パスを更新できませんでした。もう一度お試しください。"
+    },
+    {
+      "id": "Relink_SearchStopping",
+      "type": "ui",
+      "zh": "正在停止搜索…",
+      "en": "Stopping search…",
+      "ja": "検索を停止しています…"
+    },
+    {
+      "id": "Relink_SearchingFmt",
+      "type": "ui",
+      "zh": "正在扫描 · 已扫描 %llu 项",
+      "en": "Scanning · %llu items scanned",
+      "ja": "スキャン中 · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_CancelSearch",
+      "type": "ui",
+      "zh": "取消搜索",
+      "en": "Cancel search",
+      "ja": "検索をキャンセル"
+    },
+    {
+      "id": "Relink_NoMissingRecordsFmt",
+      "type": "ui",
+      "zh": "没有缺失记录 · 已扫描 %llu 项",
+      "en": "No missing records · %llu items scanned",
+      "ja": "欠損レコードなし · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_NoCandidatesFmt",
+      "type": "ui",
+      "zh": "没有找到候选文件 · 已扫描 %llu 项",
+      "en": "No candidate files found · %llu items scanned",
+      "ja": "候補ファイルなし · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_SearchCompletedFmt",
+      "type": "ui",
+      "zh": "搜索完成 · 已扫描 %llu 项",
+      "en": "Search complete · %llu items scanned",
+      "ja": "検索完了 · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_SearchCancelledFmt",
+      "type": "ui",
+      "zh": "已取消搜索 · 已扫描 %llu 项",
+      "en": "Search cancelled · %llu items scanned",
+      "ja": "検索をキャンセルしました · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_SearchPartialFailureFmt",
+      "type": "ui",
+      "zh": "部分目录无法读取 · 已扫描 %llu 项，%zu 个目录未完成",
+      "en": "Some folders could not be read · %llu items scanned, %zu folders incomplete",
+      "ja": "一部のフォルダーを読み取れません · %llu 項目を確認、%zu フォルダー未完了"
+    },
+    {
+      "id": "Relink_HideFailedRoots",
+      "type": "ui",
+      "zh": "收起目录",
+      "en": "Hide folders",
+      "ja": "フォルダーを閉じる"
+    },
+    {
+      "id": "Relink_ShowFailedRoots",
+      "type": "ui",
+      "zh": "查看未读取目录",
+      "en": "View unreadable folders",
+      "ja": "読み取れないフォルダーを表示"
+    },
+    {
+      "id": "Relink_SearchFailedFmt",
+      "type": "ui",
+      "zh": "搜索未完成：%s",
+      "en": "Search did not complete: %s",
+      "ja": "検索が完了しませんでした：%s"
+    },
+    {
+      "id": "Relink_SearchFailedFallback",
+      "type": "ui",
+      "zh": "未知错误，请重试。",
+      "en": "Unknown error. Try again.",
+      "ja": "不明なエラーです。もう一度お試しください。"
+    },
+    {
+      "id": "Relink_NoMatchForFile",
+      "type": "ui",
+      "zh": "未找到候选",
+      "en": "No candidate found",
+      "ja": "候補が見つかりません"
     },
     {
       "id": "Relink_ReadyCount",
@@ -3384,9 +3510,9 @@
     {
       "id": "Relink_PreserveNote",
       "type": "ui",
-      "zh": "关联后评级、标签、播放记录全部保留",
-      "en": "Ratings, tags, and play history will be preserved after relinking",
-      "ja": "再リンク後も評価・タグ・再生履歴はすべて保持されます"
+      "zh": "确认后才更新路径；评级、标签和播放记录保留。",
+      "en": "Paths update after confirmation; ratings, tags, and play history are preserved.",
+      "ja": "確認後にパスを更新します。評価、タグ、再生履歴は保持されます。"
     },
     {
       "id": "Relink_ConfirmBtn",
@@ -5505,9 +5631,9 @@
     {
       "id": "Set_DiagCollected",
       "type": "ui",
-      "zh": "已采集日志: %d / %d",
-      "en": "Collected: %d / %d",
-      "ja": "収集済みログ: %d / %d"
+      "zh": "最近1分钟日志：%d 条",
+      "en": "Logs from the last minute: %d",
+      "ja": "直近1分のログ: %d件"
     },
     {
       "id": "Set_DiagFPS",
@@ -5547,23 +5673,16 @@
     {
       "id": "Set_DiagBufferSize",
       "type": "ui",
-      "zh": "缓冲区容量",
-      "en": "Buffer Size",
-      "ja": "バッファ容量"
-    },
-    {
-      "id": "Set_DiagMaxEntries",
-      "type": "ui",
-      "zh": "最大日志条数",
-      "en": "Max Log Entries",
-      "ja": "最大ログ件数"
+      "zh": "保留时间",
+      "en": "Retention",
+      "ja": "保持時間"
     },
     {
       "id": "Set_DiagBufferHint",
       "type": "ui",
-      "zh": "环形缓冲：超出上限后旧日志自动覆盖\n推荐 500，压力测试可调高到 2000",
-      "en": "Ring buffer: old entries auto-overwritten when full\nRecommended 500; stress testing up to 2000",
-      "ja": "リングバッファ：上限超過後は古いログを上書きします\n推奨 500、負荷テスト時は 2000 まで上げられます"
+      "zh": "只保留最近1分钟。新的日志会覆盖更早的日志；内存保护上限只用于防止日志过多撑满内存。",
+      "en": "Keeps only the last minute. New logs replace older logs; the memory limit only prevents excessive logs from exhausting memory.",
+      "ja": "直近1分だけ保持します。新しいログが古いログを上書きし、メモリ上限はメモリ不足を防ぐためだけに使います。"
     },
     {
       "id": "Set_DiagExportMgmt",
@@ -8695,18 +8814,137 @@
       "ja": "v%s"
     },
     {
-      "id": "Main_UpdateCenterMovedNote",
+      "id": "Main_AboutLicenseNote",
       "type": "ui",
-      "zh": "版本、下载进度和更新操作已集中到独立的更新中心。",
-      "en": "Version, download progress and update actions have moved to the standalone Update Center.",
-      "ja": "バージョン・ダウンロード進捗・更新操作は独立した更新センターに集約されました。"
+      "zh": "本软件基于 Apache License 2.0 开源发布",
+      "en": "Released under the Apache License 2.0",
+      "ja": "Apache License 2.0 で公開"
     },
     {
-      "id": "Main_OpenUpdateCenterBtn",
+      "id": "Main_AboutCopyright",
       "type": "ui",
-      "zh": "打开更新中心",
-      "en": "Open Update Center",
-      "ja": "更新センターを開く"
+      "zh": "Copyright 2026 xindong",
+      "en": "Copyright 2026 xindong",
+      "ja": "Copyright 2026 xindong"
+    },
+    {
+      "id": "Main_AboutHeading",
+      "type": "ui",
+      "zh": "关于 Harken Search",
+      "en": "About Harken Search",
+      "ja": "Harken Search について"
+    },
+    {
+      "id": "Main_AboutLegalTab",
+      "type": "ui",
+      "zh": "法律文档",
+      "en": "Legal documents",
+      "ja": "法的文書"
+    },
+    {
+      "id": "Main_AboutLegalPrompt",
+      "type": "ui",
+      "zh": "选择文档后在下方直接阅读全文",
+      "en": "Select a document to read it below",
+      "ja": "文書を選ぶと、下に全文が表示されます"
+    },
+    {
+      "id": "Main_AboutEula",
+      "type": "ui",
+      "zh": "安装与使用协议",
+      "en": "EULA",
+      "ja": "利用規約"
+    },
+    {
+      "id": "Main_AboutPrivacy",
+      "type": "ui",
+      "zh": "隐私政策",
+      "en": "Privacy policy",
+      "ja": "プライバシーポリシー"
+    },
+    {
+      "id": "Main_AboutOpenSource",
+      "type": "ui",
+      "zh": "开源发布说明",
+      "en": "Open-source notice",
+      "ja": "オープンソース公開説明"
+    },
+    {
+      "id": "Main_AboutApache",
+      "type": "ui",
+      "zh": "Apache 2.0",
+      "en": "Apache 2.0",
+      "ja": "Apache 2.0"
+    },
+    {
+      "id": "Main_AboutNextLegal",
+      "type": "ui",
+      "zh": "法律文档 →",
+      "en": "Legal documents →",
+      "ja": "法的文書 →"
+    },
+    {
+      "id": "Main_AboutBack",
+      "type": "ui",
+      "zh": "← 返回关于",
+      "en": "← Back to About",
+      "ja": "← 概要に戻る"
+    },
+    {
+      "id": "Main_AboutPageFmt",
+      "type": "ui",
+      "zh": "第 %d / 2 页",
+      "en": "Page %d / 2",
+      "ja": "%d / 2 ページ"
+    },
+    {
+      "id": "Main_AboutLegalUnavailable",
+      "type": "ui",
+      "zh": "法律文档未随包提供，请检查安装文件。",
+      "en": "The legal document is missing from this installation.",
+      "ja": "このインストールには法的文書がありません。"
+    },
+    {
+      "id": "Main_AboutCindyName",
+      "type": "ui",
+      "zh": "Cindy",
+      "en": "Cindy",
+      "ja": "Cindy"
+    },
+    {
+      "id": "Main_AboutCindyCredit",
+      "type": "ui",
+      "zh": "感谢 Cindy 对本软件的开发支持。",
+      "en": "With thanks to Cindy for development support of this software.",
+      "ja": "Cindy による本ソフトの開発支援に感謝します。"
+    },
+    {
+      "id": "Main_AboutRepoLine",
+      "type": "ui",
+      "zh": "仓库",
+      "en": "Repository",
+      "ja": "リポジトリ"
+    },
+    {
+      "id": "Main_AboutDownloadLine",
+      "type": "ui",
+      "zh": "下载",
+      "en": "Download",
+      "ja": "ダウンロード"
+    },
+    {
+      "id": "Main_AboutCindyRepoLine",
+      "type": "ui",
+      "zh": "仓库",
+      "en": "Repository",
+      "ja": "リポジトリ"
+    },
+    {
+      "id": "Main_AboutCindyDownloadLine",
+      "type": "ui",
+      "zh": "下载",
+      "en": "Download",
+      "ja": "ダウンロード"
     },
     {
       "id": "Main_CleanDiskDiagBtn",
@@ -9892,13 +10130,6 @@
       "ja": "対象フォルダーを選択:"
     },
     {
-      "id": "Relink_ArrowFileFmt",
-      "type": "ui",
-      "zh": "→ %s",
-      "en": "→ %s",
-      "ja": "→ %s"
-    },
-    {
       "id": "ThemeEditor_ColorSession",
       "type": "ui",
       "zh": "调色会话",
@@ -9922,9 +10153,9 @@
     {
       "id": "Update_BootstrapHandoff",
       "type": "ui",
-      "zh": "正在交接 Bootstrap",
-      "en": "Handing off to Bootstrap",
-      "ja": "Bootstrap に引き継ぎ中"
+      "zh": "正在准备更新，请稍候…",
+      "en": "Preparing the update. Please wait…",
+      "ja": "更新を準備しています。しばらくお待ちください…"
     },
     {
       "id": "Main_PitchInputHint",
@@ -15746,6 +15977,41 @@
     {
       "id": "Dock_UxDropBottom", "type": "ui",
       "zh": "松手放到下方 · Esc 取消", "en": "Release to dock below · Esc cancels", "ja": "離すと下に配置 · Esc でキャンセル"
-    }
+    },
+    {
+      "id": "ThemeSchedule_Hint", "type": "ui",
+      "zh": "08:00 使用白天 · 16:00 使用黑夜",
+      "en": "Day at 08:00 · Night at 16:00",
+      "ja": "08:00 に昼 · 16:00 に夜"
+    },
+    {"id": "ThemeSchedule_Automatic", "type": "ui", "zh": "开启日夜切换主题模式", "en": "Enable automatic day/night themes", "ja": "昼夜テーマの自動切り替えを有効にする"},
+    {"id": "ThemeSchedule_DayThemeFmt", "type": "ui", "zh": "白天：%s", "en": "Day: %s", "ja": "昼：%s"},
+    {"id": "ThemeSchedule_NightThemeFmt", "type": "ui", "zh": "黑夜：%s", "en": "Night: %s", "ja": "夜：%s"},
+    {"id": "ThemeSchedule_EditPalette", "type": "ui", "zh": "编辑配色", "en": "Edit palette", "ja": "配色を編集"},
+    {"id": "ThemeSchedule_EditDay", "type": "ui", "zh": "编辑白天配色", "en": "Edit day palette", "ja": "昼の配色を編集"},
+    {"id": "ThemeSchedule_EditNight", "type": "ui", "zh": "编辑夜间配色", "en": "Edit night palette", "ja": "夜の配色を編集"},
+    {"id": "ThemeSchedule_Save", "type": "ui", "zh": "保存配色", "en": "Save palette", "ja": "配色を保存"},
+    {"id": "ThemeSchedule_Cancel", "type": "ui", "zh": "取消修改", "en": "Cancel changes", "ja": "変更を取り消す"},
+    {
+      "id": "ThemeSchedule_SaveHint", "type": "ui",
+      "zh": "只保存正在编辑的这一套；关闭后继续使用你选定的配色模式。",
+      "en": "Saves only this palette. Closing resumes your chosen theme mode.",
+      "ja": "編集中の配色だけ保存します。閉じると選択中の配色モードに戻ります。"
+    },
+    {"id": "ThemeSchedule_DayEditorHint", "type": "ui", "zh": "白天 · 08:00–16:00", "en": "Day · 08:00–16:00", "ja": "昼 · 08:00–16:00"},
+    {"id": "ThemeSchedule_NightEditorHint", "type": "ui", "zh": "夜间 · 16:00–08:00", "en": "Night · 16:00–08:00", "ja": "夜 · 16:00–08:00"},
+    {
+      "id": "ThemeSchedule_DayFallback", "type": "ui",
+      "zh": "白天配色未能读取，暂用柔雾粉。重新编辑并保存可修复。",
+      "en": "Day palette could not be read; using Rose Cedar. Edit and save it to repair.",
+      "ja": "昼の配色を読めないため Rose Cedar を使用中です。再編集して保存してください。"
+    },
+    {
+      "id": "ThemeSchedule_NightFallback", "type": "ui",
+      "zh": "夜间配色未能读取，暂用经典深色。重新编辑并保存可修复。",
+      "en": "Night palette could not be read; using Dark. Edit and save it to repair.",
+      "ja": "夜の配色を読めないため Dark を使用中です。再編集して保存してください。"
+    },
+    {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"}
   ]
 }

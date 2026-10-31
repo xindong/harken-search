@@ -109,6 +109,23 @@ inline bool ShouldReleaseFastScanCompletionGate(
     return fastMode && processed >= safeDiscovered;
 }
 
+inline bool AreScanCompletionCountersReady(bool fastMode,
+                                           int miniUnresolved,
+                                           int coverUnresolved,
+                                           int metadataUnresolved) {
+    return miniUnresolved == 0 && metadataUnresolved == 0 &&
+        (fastMode || coverUnresolved == 0);
+}
+
+// Scan ingestion already queues durable background jobs in memory. Rebuilding
+// that populated queue before leaving the scan dialog is redundant and can
+// block behind disk/database contention. An empty queue still needs recovery.
+inline bool ShouldRebuildScanBackfillQueue(bool fastMode,
+                                           int queuedJobs,
+                                           int inFlight) {
+    return !fastMode || (queuedJobs <= 0 && inFlight <= 0);
+}
+
 inline bool ShouldPublishScanCompletionToast(
     bool wasScanning,
     bool scanningNow,

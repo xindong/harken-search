@@ -3,9 +3,11 @@
 #include "HarkenSearchWidgets.h"
 #include "HarkenSearchMetrics.h"
 #include "HarkenSearchIcons.h"
+#include "../thirdparty/lucide/IconsLucide.h"
 #include "Theme.h"
 #include "ui/TransportContrast.h"
 #include "ui/ActionButtonStyle.h"
+#include "ui/CloseIconButton.h"
 #include "SettingsSearchHighlightSpans.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -258,15 +260,23 @@ bool Button(const char* label, const ButtonOptions& opts) {
     bool clicked;
     if (opts.variant == ButtonVariant::Icon || opts.variant == ButtonVariant::Ghost) {
         // Compact glyph tools keep their transparent appearance and old geometry.
-        const auto palette = ResolveGraphicPalette(opts.variant);
+        auto palette = ResolveGraphicPalette(opts.variant);
+        const bool closeIcon = opts.variant == ButtonVariant::Icon && label &&
+            std::strcmp(label, ICON_LC_X) == 0;
         ImGui::PushStyleColor(ImGuiCol_Button, palette.bg);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette.bgHover);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette.bgActive);
         ImGui::PushStyleColor(ImGuiCol_Text, palette.text);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kRadiusDefault);
-        clicked = opts.loading ? ActionButtonStyle::Draw(buf, ImVec2(0, h), true)
-                               : ImGui::Button(buf, ImVec2(0, h));
-        DrawFocusRing();
+        if (closeIcon && !opts.loading) {
+            const auto& theme = ThemeColors::current();
+            clicked = CloseIconButton::Draw(buf, ImVec2(0, h), theme.sidebarIconInactive,
+                TransportContrast::Over(ActionButtonStyle::CurrentSurface(), theme.mainWindowBG));
+        } else {
+            clicked = opts.loading ? ActionButtonStyle::Draw(buf, ImVec2(0, h), true)
+                                   : ImGui::Button(buf, ImVec2(0, h));
+        }
+        if (!closeIcon) DrawFocusRing();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(4);
     } else {
@@ -1032,12 +1042,28 @@ bool DrawStandaloneCaptionButton(const char* id,
     const ImVec2 itemMax = ImGui::GetItemRectMax();
 
     if (hovered || active) {
-        const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
-        drawList->AddRectFilled(itemMin, itemMax,
-            ImGui::ColorConvertFloat4ToU32(background));
+        if (action == StandaloneWindowAction::Close) {
+            ImVec4 background = th.filterBrowserButtonBG;
+            if (!active) background.w *= 0.50f;
+            const ImVec2 center((itemMin.x + itemMax.x) * 0.5f,
+                                (itemMin.y + itemMax.y) * 0.5f);
+            const float half = kHeightSm * 0.5f;
+            drawList->AddRectFilled(ImVec2(center.x - half, center.y - half),
+                                    ImVec2(center.x + half, center.y + half),
+                                    ImGui::ColorConvertFloat4ToU32(background),
+                                    kRadiusDefault);
+        } else {
+            const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
+            drawList->AddRectFilled(itemMin, itemMax,
+                ImGui::ColorConvertFloat4ToU32(background));
+        }
     }
 
-    const ImVec4& iconColor = hovered ? th.interfaceText : th.sidebarIconInactive;
+    const ImVec4 closeColor = TransportContrast::ForSurface(
+        th.sidebarIconInactive, th.menuBarBG, 3.0);
+    const ImVec4& iconColor = action == StandaloneWindowAction::Close
+        ? closeColor
+        : (hovered ? th.interfaceText : th.sidebarIconInactive);
     const ImU32 packedIcon = ImGui::ColorConvertFloat4ToU32(iconColor);
     const float centerX = (itemMin.x + itemMax.x) * 0.5f;
     const float centerY = (itemMin.y + itemMax.y) * 0.5f;
@@ -1068,14 +1094,12 @@ bool DrawStandaloneCaptionButton(const char* id,
             }
             break;
         case StandaloneWindowAction::Close:
-            drawList->AddLine(
-                ImVec2(centerX - halfIcon, centerY - halfIcon),
-                ImVec2(centerX + halfIcon, centerY + halfIcon),
-                packedIcon, kFocusRingWidth);
-            drawList->AddLine(
-                ImVec2(centerX + halfIcon, centerY - halfIcon),
-                ImVec2(centerX - halfIcon, centerY + halfIcon),
-                packedIcon, kFocusRingWidth);
+            {
+                const ImVec2 glyphSize = ImGui::CalcTextSize(ICON_LC_X);
+                drawList->AddText(ImVec2(centerX - glyphSize.x * 0.5f,
+                                         centerY - glyphSize.y * 0.5f),
+                                  packedIcon, ICON_LC_X);
+            }
             break;
         case StandaloneWindowAction::None:
             break;

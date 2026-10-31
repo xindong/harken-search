@@ -61,6 +61,7 @@
 #include "FileBrowser.h"
 #include "CoverReplacementFoundation.h"
 #include "Database.h"
+#include "sqlite3.h"
 #include "ScanDatabaseOpenDiagnostics.h"
 #include "PathUtils.h"  // Canonical folder filters and scroll targets.
 #include "FolderTreeContextActions.h"
@@ -99,6 +100,8 @@
 #include "AITranscriptionResultStateAdapter.h"
 #include "VoiceAssetOrganizer.h"
 #include "Theme.h"              // 主题颜色系统
+#include "ThemeSchedule.h"
+#include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/TransportContrast.h"
@@ -672,7 +675,41 @@ static void LoadReleaseNotesFromExeDir(bool forceReload) {
     g_releaseNotesUiState.loadFailed = !g_releaseNotesUiState.hasData;
 }
 
+static int s_aboutPage = 0;
+static int s_aboutRequestedPage = 0;
+static int s_aboutLegalDocument = 0;
+static bool s_aboutResetLegalScroll = false;
+
+static const std::string& AboutLegalDocumentText(int document, AppLanguage language) {
+    static const char* paths[2][4] = {
+        {"docs/legal/EULA.md", "docs/legal/PRIVACY_POLICY.md",
+         "docs/legal/OPEN_SOURCE_RELEASE_NOTICE.md", "LICENSE"},
+        {"docs/legal/EULA.en.md", "docs/legal/PRIVACY_POLICY.en.md",
+         "docs/legal/OPEN_SOURCE_RELEASE_NOTICE.en.md", "LICENSE"},
+    };
+    static std::array<std::array<std::string, 4>, 2> contents;
+    static std::array<std::array<bool, 4>, 2> loaded{};
+    const int lang = language == AppLanguage::Chinese ? 0 : 1;
+    const int index = (std::max)(0, (std::min)(document, 3));
+    if (!loaded[lang][index]) {
+        Platform::FileSystem::ReadFileText(
+            GetExeDirUtf8() + "/" + paths[lang][index], contents[lang][index]);
+        loaded[lang][index] = true;
+    }
+    return contents[lang][index];
+}
+
 #if AURA_BUILD_DIAGNOSTICS
+std::string ControlAboutWindowForQa(AppState& state, const std::string& action) {
+    if (action == "open" || action == "legal") {
+        s_aboutRequestedPage = action == "legal" ? 1 : 0;
+        state.showAboutWindow = true;
+    } else if (action != "state") {
+        return R"({"ok":false,"error":"invalid_about_action"})";
+    }
+    return nlohmann::json({{"ok", true}, {"pending_open", state.showAboutWindow}}).dump();
+}
+
 std::string ControlUpdateNoticeForQa(AppState& state, const std::string& action) {
     if (action == "open" || action == "history" || action == "reload") {
         LoadReleaseNotesFromExeDir(action == "reload");
@@ -5414,6 +5451,8 @@ void LoadAppSettings(AppState& state) {
     }
     // [已移除 WebUI]
     state.settings.theme = (AppTheme)ParseInt(kv["theme"], (int)state.settings.theme);
+    state.settings.themeScheduleMode = harken::theme_schedule::ModeFromSetting(
+        ParseInt(kv["themeScheduleMode"], (int)state.settings.themeScheduleMode));
     state.settings.language = (AppLanguage)ParseInt(kv["language"], (int)state.settings.language);
     g_currentLanguage = state.settings.language;  // Apply language immediately
     {
@@ -6319,12 +6358,14 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterWidth", std::to_string(state.settings.meterWidth)});
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
-    items.push_back({"theme", std::to_string((int)state.settings.theme)});
+    const auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    items.push_back({"theme", std::to_string((int)savedAppearance.theme)});
+    items.push_back({"themeScheduleMode", std::to_string((int)state.settings.themeScheduleMode)});
     items.push_back({"language", std::to_string((int)state.settings.language)});
     items.push_back({"customThemeName", state.settings.customThemeName});
 
     // Custom colors
-    items.push_back({"useCustomColors", state.settings.useCustomColors ? "1" : "0"});
+    items.push_back({"useCustomColors", savedAppearance.useCustomColors ? "1" : "0"});
     items.push_back({"customAccentR", std::to_string(state.settings.customAccentColor.x)});
     items.push_back({"customAccentG", std::to_string(state.settings.customAccentColor.y)});
     items.push_back({"customAccentB", std::to_string(state.settings.customAccentColor.z)});
@@ -9180,6 +9221,8 @@ static uint64_t SubmitAsyncSearch(AppState& state, const SearchFilter& filter, A
     AsyncSearchRequest req;
     req.filter = filter;
     req.viewMode = (int)state.viewMode;
+    req.allowDatabaseListSourceDescription =
+        state.viewMode == ViewMode::Database && state.lastAppliedSearchText.empty();
     req.playlistId = state.selectedPlaylistId;
     req.limit = limit;
     req.offset = offset;
@@ -10759,12 +10802,21 @@ static bool SwitchDatabase(AppState& state,
     state.pendingDbPath = effectiveDbPathUtf8;
     state.pendingDbOldPath = state.currentDbPathUtf8;
     state.dbSwitchInProgress = true;
+    if (state.featureIndexStatistics) state.featureIndexStatistics->SetDatabase("", -1);
+    if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
+    state.idleAssetStatisticsPending = false;
 
     WaitForDatabaseSwitchThread();
 
 // 后台线程做所有可能阻塞的 teardown + open
     g_databaseSwitchWorkerRuntime.Start(
-        [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent]() {
+        [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent,
+         featureStatistics = state.featureIndexStatistics,
+         idleStatistics = state.idleAssetStatistics]() {
+        // Cancel on the UI immediately, but drain connections only here. Windows
+        // package replacement must not race a statistics reader's file handle.
+        if (featureStatistics) featureStatistics->CancelAndWait();
+        if (idleStatistics) idleStatistics->CancelAndWait();
         return aura::database_switch::RunBlockingDatabaseSwitchOperation(
             state.batchFeatureThread,
             g_sameFolderScanner,
@@ -11695,7 +11747,7 @@ static bool StartWaveformRebuild(AppState& state,
     return true;
 }
 
-static void StartIncrementalWaveformRebuild(AppState& state) {
+static void StartIncrementalWaveformRebuild(AppState& state, int64_t knownMiniCount = -1) {
     if (state.waveformRebuildActive) return;
     if (state.dbSwitchInProgress) {
         DIAG_SYSTEM_FMT("Database",
@@ -11703,7 +11755,8 @@ static void StartIncrementalWaveformRebuild(AppState& state) {
             state.currentDbPathUtf8.c_str());
         return;
     }
-    const int64_t rebuildTotal = state.database.countFilesNeedingWaveformCache();
+    const int64_t rebuildTotal = knownMiniCount >= 0
+        ? knownMiniCount : state.database.countFilesNeedingWaveformCache();
     const int64_t miniTotal = rebuildTotal;
     const int64_t detailTotal = 0;
     if (rebuildTotal <= 0) {
@@ -11811,15 +11864,53 @@ static int64_t RefreshIdleAssetBackfillProgress(AppState& state) {
     return pendingCover;
 }
 
-static bool StartIdleAssetBackfill(AppState& state) {
-    if (state.idleAssetBackfillActive ||
-        DescribeIdleAssetBackfillBlocker(state) != nullptr) {
-        return false;
+static HarkenSearch::LibraryStatisticsResult QueryIdleAssetCounts(
+    const std::string& path, const HarkenSearch::LibraryStatisticsWorker::CancelCheck& cancel) {
+    HarkenSearch::LibraryStatisticsResult result;
+    Database readOnly;
+    if (cancel() || !readOnly.openReadOnly(path)) return result;
+    auto* check = const_cast<HarkenSearch::LibraryStatisticsWorker::CancelCheck*>(&cancel);
+    readOnly.setQueryProgressHandler(1000, [](void* p) {
+        return (*static_cast<HarkenSearch::LibraryStatisticsWorker::CancelCheck*>(p))() ? 1 : 0;
+    }, check);
+    sqlite3_busy_handler(readOnly.db(), [](void* p, int attempts) {
+        if (attempts >= 50 || (*static_cast<HarkenSearch::LibraryStatisticsWorker::CancelCheck*>(p))()) return 0;
+        sqlite3_sleep(10); return 1;
+    }, check);
+    {
+        DiagScopedTimer timer("Performance", "IdleAssetBackfill.CountWaveforms");
+        result.missingWaveforms = readOnly.countFilesNeedingWaveformCache();
     }
+    if (cancel() || sqlite3_errcode(readOnly.db()) != SQLITE_OK) return result;
+    {
+        DiagScopedTimer timer("Performance", "IdleAssetBackfill.CountCoverMetadata");
+        result.pendingAssets = readOnly.countBackfillPendingKind(
+            static_cast<int>(aura::BackfillJobKind::CoverResolveAndThumb));
+        if (cancel() || sqlite3_errcode(readOnly.db()) != SQLITE_OK) return result;
+        result.pendingAssets += readOnly.countBackfillPendingKind(
+            static_cast<int>(aura::BackfillJobKind::MetadataRefresh));
+    }
+    result.success = !cancel() && sqlite3_errcode(readOnly.db()) == SQLITE_OK;
+    return result;
+}
 
-    state.backfillQueue.refillFromDatabaseIfBelowWaterMark(&state.database, 128, 4096);
-    const int64_t miniPending = state.database.countFilesNeedingWaveformCache();
-    const int64_t coverAndMetadataPending = CountIdleAssetCoverAndMetadataPending(state);
+static bool StartIdleAssetBackfill(AppState& state) {
+    if (state.idleAssetBackfillActive || DescribeIdleAssetBackfillBlocker(state) != nullptr) return false;
+    if (!state.idleAssetStatistics) {
+        state.idleAssetStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(QueryIdleAssetCounts);
+    }
+    state.idleAssetStatistics->SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
+    if (!state.idleAssetStatistics->Request()) return false;
+    state.idleAssetStatisticsDbPath = state.currentDbPathUtf8;
+    state.idleAssetStatisticsDbGeneration = state.backfillDbGeneration;
+    state.idleAssetStatisticsPending = true;
+    return true;
+}
+
+static bool ApplyIdleAssetCounts(AppState& state, const HarkenSearch::LibraryStatisticsResult& counts) {
+    if (!counts.success || state.idleAssetBackfillActive || DescribeIdleAssetBackfillBlocker(state)) return false;
+    const int64_t miniPending = counts.missingWaveforms;
+    const int64_t coverAndMetadataPending = counts.pendingAssets;
     if (miniPending <= 0 && coverAndMetadataPending <= 0) {
         state.lastInputTime = std::chrono::steady_clock::now();
         return false;
@@ -11834,7 +11925,7 @@ static bool StartIdleAssetBackfill(AppState& state) {
     state.idleAssetBackfillOwnsBackfillPool = false;
 
     if (miniPending > 0) {
-        StartIncrementalWaveformRebuild(state);
+        StartIncrementalWaveformRebuild(state, miniPending);
         state.idleAssetBackfillStartedMiniProgress = state.waveformRebuildProgress;
     }
     if (coverAndMetadataPending > 0) {
@@ -11887,6 +11978,10 @@ static void StopIdleAssetBackfill(AppState& state, bool completed, bool interrup
 
 static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
     const auto now = std::chrono::steady_clock::now();
+    const auto cancelPendingCheck = [&state] {
+        if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
+        state.idleAssetStatisticsPending = false;
+    };
     if (state.lastInputTime.time_since_epoch().count() == 0) {
         state.lastInputTime = now;
     }
@@ -11894,6 +11989,7 @@ static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
         ScheduleNextIdleAssetBackfillCheck(state, now);
     }
     if (userInteraction) {
+        cancelPendingCheck();
         state.lastInputTime = now;
         ScheduleNextIdleAssetBackfillCheck(state, now);
         if (state.idleAssetBackfillActive) {
@@ -11903,6 +11999,7 @@ static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
     }
 
     if (!state.settings.idleAssetBackfillEnabled) {
+        cancelPendingCheck();
         if (state.idleAssetBackfillActive) {
             StopIdleAssetBackfill(state, false, false);
         }
@@ -11910,6 +12007,26 @@ static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
             std::chrono::steady_clock::time_point{};
         state.idleAssetBackfillNextProgressPollAt =
             std::chrono::steady_clock::time_point{};
+        return;
+    }
+
+    if (state.idleAssetStatisticsPending) {
+        const bool stale = state.idleAssetStatisticsDbPath != state.currentDbPathUtf8 ||
+            state.idleAssetStatisticsDbGeneration != state.backfillDbGeneration;
+        if (stale || DescribeIdleAssetBackfillBlocker(state) != nullptr ||
+            !HasIdleAssetBackfillDelayElapsed(now, state.lastInputTime, state.settings.idleAssetBackfillDelayMinutes)) {
+            cancelPendingCheck();
+            ScheduleNextIdleAssetBackfillCheck(state, now);
+            return;
+        }
+        if (auto result = state.idleAssetStatistics->Poll()) {
+            state.idleAssetStatisticsPending = false;
+            ApplyIdleAssetCounts(state, *result);
+            ScheduleNextIdleAssetBackfillCheck(state, now);
+            DIAG_SYSTEM_FMT("Performance", "IdleAssetBackfill.AsyncResult success=%d mini=%lld assets=%lld workerMs=%.3f",
+                result->success ? 1 : 0, (long long)result->missingWaveforms,
+                (long long)result->pendingAssets, result->queryMilliseconds);
+        }
         return;
     }
 
@@ -14332,6 +14449,7 @@ static void ShuffleCurrentResultsAndPlayFirst(AppState& state) {
     // Random ordering must stay on the search worker, not the UI thread.
     // 我们仅发起一个异步请求，UI 线程立即返回，保持 120FPS 丝滑。
     SearchFilter filter = BuildCurrentDbFilter(state);
+    state.lastAppliedSearchText = state.searchBuffer;
 
     // 设置 UI 加载状态，给用户视觉反馈
     state.loadingMore = true;
@@ -18487,6 +18605,7 @@ void RenderFileInfoPanelTabContents(
                                         it.filePathUtf8 = f.path;
                                     } else {
                                         it.folderPathUtf8 = f.path;
+                                        it.folderCoverSrcPathUtf8 = f.sourcePath;
                                     }
                                     it.label = BaseNameFromUtf8Path(f.path);
                                 }
@@ -29044,8 +29163,8 @@ void StartBatchFeatureExtraction(AppState& state) {
 void DrawSimilarityIndexPanel(AppState& state) {
     const bool sharedSimilarStyle = state.settings.theme != AppTheme::Custom &&
         !state.settings.useCustomColors && !ThemeColors::customized();
-    // Counting indexed files scans the feature table: keep the existing 2s
-    // cadence, but never reuse another database's counts or query during a switch.
+    // Full-table counts run on one independent read-only connection. This UI
+    // path only submits work and polls values; it never waits for SQLite.
     static int cachedIndexed = 0;
     static int cachedTotal = 0;
     static double lastCountTime = -999.0;
@@ -29053,19 +29172,29 @@ void DrawSimilarityIndexPanel(AppState& state) {
     static int64_t cachedDbGeneration = -1;
     static bool wasExtracting = false;
     const bool extracting = state.batchFeatureExtracting.load();
-    if (state.dbSwitchInProgress ||
-        cachedDbPath != state.currentDbPathUtf8 ||
-        cachedDbGeneration != state.backfillDbGeneration ||
-        ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
+    if (cachedDbPath != state.currentDbPathUtf8 ||
+        cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
+        cachedIndexed = cachedTotal = 0;
+        cachedDbPath = state.currentDbPathUtf8;
+        cachedDbGeneration = state.backfillDbGeneration;
+        lastCountTime = -999.0;
+    }
+    if (ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
         lastCountTime = -999.0;
     }
     wasExtracting = extracting;
     const double now = ImGui::GetTime();
-    if (!state.dbSwitchInProgress && now - lastCountTime > 2.0 &&
-        state.database.tryGetFeatureIndexCounts(cachedIndexed, cachedTotal)) {
-        cachedDbPath = state.currentDbPathUtf8;
-        cachedDbGeneration = state.backfillDbGeneration;
-        lastCountTime = now;
+    if (!state.dbSwitchInProgress && state.database.isOpen()) {
+        if (!state.featureIndexStatistics) {
+            state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
+                HarkenSearch::MakeFeatureIndexCountHandler());
+        }
+        auto& statistics = *state.featureIndexStatistics;
+        statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
+        if (const auto result = statistics.Poll()) {
+            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; }
+        }
+        if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
 
     if (!sharedSimilarStyle) ImGui::Separator();
@@ -29123,6 +29252,10 @@ void DrawSimilarityIndexPanel(AppState& state) {
 }
 
 void RenderUI(AppState& state) {
+    if (state.featureIndexStatistics &&
+        (!state.panelSimilarSounds.visible || state.dbSwitchInProgress || !state.database.isOpen())) {
+        state.featureIndexStatistics->SetDatabase("", -1);
+    }
 #if ARIS_PREVIEW_ISOLATION
     state.qaFilterUiRects.clear();
 #endif
@@ -30428,26 +30561,187 @@ void RenderUI(AppState& state) {
     // Handle popup dialogs
     // About window
     if (state.showAboutWindow) {
+        s_aboutPage = s_aboutRequestedPage;
+        s_aboutRequestedPage = 0;
+        s_aboutLegalDocument = 0;
+        s_aboutResetLegalScroll = true;
         ImGui::OpenPopup("##AboutAuro");
         state.showAboutWindow = false;
     }
-    if (BeginTransientScrollbarPopupModal("##AboutAuro", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-        { ReadingTextScope _readingPopup;  // dialog body is a reading surface
-        EscClosePopup();
-        ImGui::Text(L(Main_AppNameBrand));        ImGui::SameLine();
-        ImGui::TextDisabled(L(Main_VersionFmt), SOUNDMANAGER_VERSION_STRING);
-        ImGui::Separator();
-        ImGui::TextWrapped(L(Main_UpdateCenterMovedNote));
-        if (aura::ui::ActionButton(L(Main_OpenUpdateCenterBtn), ImVec2(160.0f, 0.0f))) {
-            state.showUpdateCenter = true;
-            ImGui::CloseCurrentPopup();
+    if (ImGui::IsPopupOpen("##AboutAuro")) {
+        const ImVec2 workSize = ImGui::GetMainViewport()->WorkSize;
+        const float popupW = (std::max)(520.0f, (std::min)(980.0f, workSize.x - 48.0f));
+        const float popupH = (std::max)(500.0f, (std::min)(780.0f, workSize.y - 48.0f));
+        ImGui::SetNextWindowSize(ImVec2(popupW, popupH), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24.0f, 20.0f));
+        if (BeginTransientScrollbarPopupModal("##AboutAuro", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize)) {
+            {
+            ReadingTextScope readingPopup;
+            EscClosePopup();
+            ImGui::SetWindowFontScale(1.55f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
+            const float contentW = ImGui::GetContentRegionAvail().x;
+            const ImVec4 aboutBG = ThemeColors::current().dialogBG;
+            const float aboutLuma = aboutBG.x * 0.299f + aboutBG.y * 0.587f + aboutBG.z * 0.114f;
+            const ImVec4 aboutAccent(0.94f, 0.62f, 0.16f, 1.0f);
+            const char* wordmarkAsset = aboutLuma >= 0.5f
+                ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
+                : "assets/logos/brand/harken-search-menu-wordmark-white.png";
+            const auto brandIcon = aura::ui::LoadPackagedAsset("assets/icons/brand/harken@2x.png");
+            const auto wordmark = aura::ui::LoadPackagedAsset(wordmarkAsset);
+            const ImVec2 header = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(contentW, 58.0f));
+            const ImVec2 afterHeader = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ImVec2(header.x + contentW - 32.0f, header.y + 19.0f));
+            ImGui::PushID("AboutClose");
+            if (aura::ui::IconButton(ICON_LC_X, L(Close), aura::ui::ButtonSize::Sm))
+                ImGui::CloseCurrentPopup();
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(afterHeader);
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            if (brandIcon.glId != 0)
+                draw->AddImage((ImTextureID)(intptr_t)brandIcon.glId,
+                    ImVec2(header.x, header.y + 4.0f),
+                    ImVec2(header.x + 50.0f, header.y + 54.0f));
+            if (wordmark.glId != 0 && wordmark.h > 0) {
+                const float logoH = 28.0f;
+                const float logoW = logoH * (float)wordmark.w / (float)wordmark.h;
+                draw->AddImage((ImTextureID)(intptr_t)wordmark.glId,
+                    ImVec2(header.x + 66.0f, header.y + (58.0f - logoH) * 0.5f),
+                    ImVec2(header.x + 66.0f + logoW, header.y + (58.0f + logoH) * 0.5f));
+            } else {
+                draw->AddText(ImVec2(header.x + 66.0f, header.y + 19.0f),
+                    ImGui::GetColorU32(ImGuiCol_Text), L(Main_AppNameBrand));
+            }
+            char version[32]{};
+            snprintf(version, sizeof(version), L(Main_VersionFmt), SOUNDMANAGER_VERSION_STRING);
+            const ImVec2 versionSize = ImGui::CalcTextSize(version);
+            draw->AddText(ImVec2(header.x + contentW - 40.0f - versionSize.x,
+                                 header.y + (58.0f - versionSize.y) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), version);
+            ImGui::Separator();
+
+            const auto pageTab = [draw, aboutAccent](const char* title, int page) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.5f, 0.5f, 0.5f, 0.12f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.5f, 0.5f, 0.18f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 10.0f));
+                const float tabW = ImGui::CalcTextSize(title).x;
+                if (ImGui::Button(title, ImVec2(tabW, 40.0f))) s_aboutPage = page;
+                if (s_aboutPage == page) {
+                    const ImVec2 min = ImGui::GetItemRectMin();
+                    draw->AddLine(ImVec2(min.x, min.y + 39.0f),
+                                  ImVec2(min.x + tabW, min.y + 39.0f),
+                                  ImGui::GetColorU32(aboutAccent), 3.0f);
+                }
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor(3);
+            };
+            pageTab(L(Help_About), 0);
+            ImGui::SameLine(0.0f, 40.0f);
+            pageTab(L(Main_AboutLegalTab), 1);
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0.0f, 14.0f));
+
+            if (s_aboutPage == 0) {
+                ImGui::TextUnformatted(L(Main_AboutHeading));
+                ImGui::Dummy(ImVec2(0.0f, 12.0f));
+                ImGui::TextWrapped(L(Main_AboutLicenseNote));
+                ImGui::TextDisabled(L(Main_AboutCopyright));
+                ImGui::Dummy(ImVec2(0.0f, 12.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 14.0f));
+                const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/contributors/cindy.png");
+                if (cindyLogo.glId != 0 && cindyLogo.h > 0) {
+                    ImGui::Image((ImTextureID)(intptr_t)cindyLogo.glId, ImVec2(96.0f, 96.0f));
+                    ImGui::SameLine(0.0f, 18.0f);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
+                        (96.0f - ImGui::GetTextLineHeight()) * 0.5f);
+                }
+                ImGui::TextWrapped(L(Main_AboutCindyCredit));
+                ImGui::Dummy(ImVec2(0.0f, 14.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+                const auto urlLine = [](const char* label, const char* url) {
+                    const float startX = ImGui::GetCursorPosX();
+                    ImGui::TextDisabled("%s", label);
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(startX + 75.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().controlAccent);
+                    ImGui::TextUnformatted(url);
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    if (ImGui::IsItemClicked()) Platform::OpenUrl(url);
+                };
+                if (BeginTransientScrollbarTable("##AboutLinks", 2, ImGuiTableFlags_SizingStretchSame)) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextDisabled("%s", L(Main_AppNameBrand));
+                    urlLine(L(Main_AboutRepoLine), "https://github.com/xindong/harken-search");
+                    urlLine(L(Main_AboutDownloadLine), "https://harkensearch.xd.com");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextDisabled("%s", L(Main_AboutCindyName));
+                    urlLine(L(Main_AboutCindyRepoLine), "https://github.com/makecindy/cindy");
+                    urlLine(L(Main_AboutCindyDownloadLine), "https://cindy.app");
+                    ImGui::EndTable();
+                }
+            } else {
+                ImGui::TextUnformatted(L(Main_AboutLegalTab));
+                ImGui::TextDisabled("%s", L(Main_AboutLegalPrompt));
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const char* docLabels[] = {L(Main_AboutEula), L(Main_AboutPrivacy),
+                                           L(Main_AboutOpenSource), L(Main_AboutApache)};
+                const float buttonW = (contentW - 24.0f) / 4.0f;
+                for (int i = 0; i < 4; ++i) {
+                    if (i > 0) ImGui::SameLine(0.0f, 8.0f);
+                    ImGui::PushStyleColor(ImGuiCol_Border, aboutAccent);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,
+                        s_aboutLegalDocument == i ? 1.0f : 0.0f);
+                    if (ImGui::Button(docLabels[i], ImVec2(buttonW, 42.0f))) {
+                        s_aboutLegalDocument = i;
+                        s_aboutResetLegalScroll = true;
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::PopStyleColor();
+                }
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const float legalH = (std::max)(140.0f,
+                    ImGui::GetWindowSize().y - ImGui::GetCursorPosY() - 120.0f);
+                if (BeginTransientScrollbarChild("##AboutLegalText", ImVec2(0.0f, legalH), true)) {
+                    ImGui::SetWindowFontScale(1.55f);
+                    if (s_aboutResetLegalScroll) {
+                        ImGui::SetScrollY(0.0f);
+                        s_aboutResetLegalScroll = false;
+                    }
+                    const auto& document = AboutLegalDocumentText(
+                        s_aboutLegalDocument, g_currentLanguage);
+                    if (document.empty())
+                        ImGui::TextWrapped(L(Main_AboutLegalUnavailable));
+                    else
+                        ImGui::TextWrapped("%s", document.c_str());
+                    ImGui::SetWindowFontScale(1.0f);
+                }
+                ImGui::EndChild();
+            }
+            const float footerY = ImGui::GetWindowSize().y -
+                ImGui::GetStyle().WindowPadding.y - 58.0f;
+            ImGui::SetCursorPosY((std::max)(ImGui::GetCursorPosY() + 12.0f, footerY));
+            ImGui::Separator();
+            ImGui::TextDisabled(L(Main_AboutPageFmt), s_aboutPage + 1);
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x + contentW - 170.0f);
+            if (aura::ui::ActionButton(s_aboutPage == 0 ? L(Main_AboutNextLegal) : L(Main_AboutBack),
+                              ImVec2(170.0f, 40.0f))) {
+                s_aboutPage = s_aboutPage == 0 ? 1 : 0;
+                s_aboutResetLegalScroll = true;
+            }
+            ImGui::PopStyleVar();
+            ImGui::SetWindowFontScale(1.0f);
+            }
+            ImGui::EndPopup();
         }
-        ImGui::Separator();
-        if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-            ImGui::CloseCurrentPopup();
-        }
-        }
-        ImGui::EndPopup();
+        ImGui::PopStyleVar();
     }
 
     #if defined(ARIS_UPDATE_NOTICE_QA)
@@ -31171,9 +31465,11 @@ void RenderUI(AppState& state) {
             state.scanTotal.load() > 0 &&
             state.scanErrorCount.load() == 0 &&
             state.scanCompletionReadyAtMs.load(std::memory_order_acquire) > 0 &&
-            state.scanCompletionMiniUnresolved.load(std::memory_order_acquire) == 0 &&
-            state.scanCompletionCoverUnresolved.load(std::memory_order_acquire) == 0 &&
-            state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire) == 0 &&
+            HarkenSearch::AreScanCompletionCountersReady(
+                !state.settings.cacheWaveformsOnScan,
+                state.scanCompletionMiniUnresolved.load(std::memory_order_acquire),
+                state.scanCompletionCoverUnresolved.load(std::memory_order_acquire),
+                state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire)) &&
             scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Completed &&
             HarkenSearch::CanEnterCompleted(scanWorkflowSnapshot);
         const bool scanProgressSurfaceActive =
@@ -32234,11 +32530,10 @@ void RenderUI(AppState& state) {
                                     : "Foreground completion cancel detected. Rolled back scan session.");
                         }
                     }
-                    if (!cancelled) {
-                        scanDb.discardScanRollbackSession();
-                    }
-                    if (!cancelled &&
-                        !state.scanCompletionPending.load(std::memory_order_acquire)) {
+                    const bool resumeBackground =
+                        !cancelled &&
+                        !state.scanCompletionPending.load(std::memory_order_acquire);
+                    if (resumeBackground) {
                         if (!precomputeWaveforms) {
                             const auto backgroundResumeDeferStartedAt =
                                 std::chrono::steady_clock::now();
@@ -32287,27 +32582,56 @@ void RenderUI(AppState& state) {
                                     std::memory_order_release);
                             }
                         }
-                        state.backfillQueue.rebuildFromDatabase(&scanDb, 4096);
-                        state.scanBackgroundBackfillPhase.store(
-                            static_cast<int>(AppState::ScanBackgroundBackfillPhase::Resumed),
-                            std::memory_order_release);
-                        state.scanBackgroundBackfillResumeThreads.store(
-                            backgroundBackfillThreads,
-                            std::memory_order_release);
-                        DIAG_SYSTEM_FMT("Scan",
-                                        "ScanBackgroundBackfillResume: session=%lld strategy=%s threads=%d",
-                                        (long long)scanGeneration,
-                                        precomputeWaveforms ? "full" : "fast",
-                                        backgroundBackfillThreads);
-                        aura::GlobalBackfillWorkerPool().start(
-                            state.backfillQueue.currentDbPath(),
-                            state.backfillQueue.currentGeneration(),
-                            &state.backfillQueue,
-                            backgroundBackfillThreads);
+                        if (state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
+                            const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
+                            paused = HarkenSearch::IsScanPause(disposition);
+                            rollbackCancelled = !paused;
+                            finishInterruptedScanSession(paused);
+                            cancelled = true;
+                        }
+                        if (!cancelled) {
+                            const auto queueSnapshot = state.backfillQueue.snapshot();
+                            int queuedJobs = 0;
+                            for (int kind = 0; kind < aura::kBackfillJobKindCount; ++kind) {
+                                queuedJobs += queueSnapshot.byKind[kind];
+                            }
+                            if (HarkenSearch::ShouldRebuildScanBackfillQueue(
+                                    !precomputeWaveforms, queuedJobs, queueSnapshot.inFlight)) {
+                                state.backfillQueue.rebuildFromDatabase(&scanDb, 4096);
+                            }
+                        }
+                        if (!cancelled && state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
+                            const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
+                            paused = HarkenSearch::IsScanPause(disposition);
+                            rollbackCancelled = !paused;
+                            finishInterruptedScanSession(paused);
+                            cancelled = true;
+                        }
+                        if (!cancelled) {
+                            scanDb.discardScanRollbackSession();
+                            state.scanBackgroundBackfillPhase.store(
+                                static_cast<int>(AppState::ScanBackgroundBackfillPhase::Resumed),
+                                std::memory_order_release);
+                            state.scanBackgroundBackfillResumeThreads.store(
+                                backgroundBackfillThreads,
+                                std::memory_order_release);
+                            DIAG_SYSTEM_FMT("Scan",
+                                            "ScanBackgroundBackfillResume: session=%lld strategy=%s threads=%d",
+                                            (long long)scanGeneration,
+                                            precomputeWaveforms ? "full" : "fast",
+                                            backgroundBackfillThreads);
+                            aura::GlobalBackfillWorkerPool().start(
+                                state.backfillQueue.currentDbPath(),
+                                state.backfillQueue.currentGeneration(),
+                                &state.backfillQueue,
+                                backgroundBackfillThreads);
+                        }
                     }
-                    // Current-scan mini/cover work is part of the foreground
-                    // completion gate. The dialog must stay open until the
-                    // scan-session ledger has no unresolved mini/cover rows.
+                    if (!cancelled && !resumeBackground) {
+                        scanDb.discardScanRollbackSession();
+                    }
+                    // Full scans retain their foreground completion gate;
+                    // fast scans leave optional cover work to background workers.
                     }
 
                   } catch (...) {
@@ -34219,6 +34543,8 @@ void RenderUI(AppState& state) {
 // 外观与主题
                 SectionHeader(L(Settings_SectionAppearance), nullptr);
                 if (HoveredForHelp()) aura::ui::Tooltip(L(Settings_SectionAppearanceHint));
+                const bool showOtherThemes = harken::theme_schedule::RenderSettings(state);
+                if (showOtherThemes) {
                 struct ThemeSwatch {
                     AppTheme    value;
                     const char* label;
@@ -34241,6 +34567,9 @@ void RenderUI(AppState& state) {
 
                     ImGui::PushID(ts.label);
                     bool clicked = ImGui::InvisibleButton("##swatch", cardSize);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+                    harken::theme_schedule::QaRecordStock((int)ts.value);
+#endif
                     bool hovered = ImGui::IsItemHovered();
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const ImU32 canvas = hexU32(ts.canvasHex);
@@ -34310,6 +34639,7 @@ void RenderUI(AppState& state) {
                             const bool prevCustomized = ThemeColors::customized();
                             LogThemeStockSwitchSnapshot("before", prevTheme, ts.value, prevUseCustom, prevCustomized);
                             state.settings.theme = ts.value;
+                            harken::theme_schedule::OnManualThemeSelected(state);
                             state.settings.useCustomColors = false;
                             ThemeColors::deactivateCustomTheme();
                             // Do not re-bake ImGuiStyle in the middle of this frame.
@@ -34324,7 +34654,7 @@ void RenderUI(AppState& state) {
 
                 // Action row beneath the swatches
                 ImGui::Spacing();
-                const bool hasCustom = !state.settings.customThemeName.empty();
+                const bool hasCustom = !harken::theme_schedule::ControlsTheme(state) && !state.settings.customThemeName.empty();
                 const bool customActive = (state.settings.theme == AppTheme::Custom && ThemeColors::customized());
                 if (hasCustom) {
                     ImGui::TextDisabled(L(Main_CustomThemeListLabel));
@@ -34354,7 +34684,7 @@ void RenderUI(AppState& state) {
                     }
                 }
 #if AURA_BUILD_DIAGNOSTICS
-                if (ProductEdition::hasFeature("theme_editor")) {
+                if (!harken::theme_schedule::ControlsTheme(state) && ProductEdition::hasFeature("theme_editor")) {
                     if (hasCustom) ImGui::SameLine(0.0f, 16.0f);
                     if (aura::ui::SmallActionButton(L(Set_EditTheme))) {
                         state.showThemeEditor = true;
@@ -34363,7 +34693,7 @@ void RenderUI(AppState& state) {
 #endif
 
                 // Inline custom color editor — only meaningful when Custom is active
-                if (state.settings.theme == AppTheme::Custom) {
+                if (!harken::theme_schedule::ControlsTheme(state) && state.settings.theme == AppTheme::Custom) {
                     ImGui::Spacing();
                     ImGui::Indent(12.0f);
                     ImGui::TextDisabled(L(Main_LightCustomColorsHint));
@@ -34392,6 +34722,8 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::Unindent(12.0f);
                 }
+
+                } // Existing ordinary themes are disclosed only when requested.
 
                 // Language picker — sits inside Appearance because it changes how the UI looks/reads
                 ImGui::Spacing();
@@ -36184,7 +36516,7 @@ void RenderUI(AppState& state) {
                 if (state.settings.diagnosticMode) {
                     ImGui::Spacing();
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), L(Set_DiagnosticsEnabled));
-                    ImGui::Text(L(Set_DiagCollected), (int)diag.entryCount(), (int)diag.maxEntries());
+                    ImGui::Text(L(Set_DiagCollected), (int)diag.entryCount());
                     ImGui::Text(L(Set_DiagFPS), diag.currentFps());
                     bool showDiagOverlay = state.settings.showDiagnosticOverlay;
                     if (aura::ui::Checkbox(L(Set_DiagShowOverlay), &showDiagOverlay)) {
@@ -36226,14 +36558,7 @@ void RenderUI(AppState& state) {
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_DiagBufferSize));
                     ImGui::Separator();
-                    static int diagCapacity = (int)diag.maxEntries();
-                    ImGui::SetNextItemWidth(150);
-                    if (ImGui::SliderInt(L(Set_DiagMaxEntries), &diagCapacity, 50, 2000)) {
-                        diag.setMaxEntries((size_t)diagCapacity);
-                    }
-                    if (HoveredForHelp()) {
-                        aura::ui::Tooltip(L(Set_DiagBufferHint));
-                    }
+                    ImGui::TextDisabled("%s", L(Set_DiagBufferHint));
 
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_DiagExportMgmt));
@@ -36399,6 +36724,7 @@ void RenderUI(AppState& state) {
             } else {
                 // Reset to default dark theme
                 state.settings.theme = AppTheme::Dark;
+                harken::theme_schedule::OnManualThemeSelected(state);
                 state.settings.useCustomColors = false;
                 ThemeColors::deactivateCustomTheme();
                 SaveAppSettings(state);
@@ -39631,8 +39957,6 @@ void RenderUI(AppState& state) {
                 state.searchSuggestRequestFocus = true; // 下一帧重新夺回光标焦点
             }
 
-            state.lastAppliedSearchText = textToSearch;
-
             state.clearPendingWaveforms();
 
             // 文件浏览器模式：输入的是有效路径则导航过去，否则留在浏览器不切模式
@@ -39651,6 +39975,7 @@ void RenderUI(AppState& state) {
                 // 非路径输入：不做搜索也不切模式，保持浏览器
             } else {
                 if (!rejectInvalidSlashSearch(textToSearch)) {
+                    state.lastAppliedSearchText = textToSearch;
                     KeepPlaylistSearchScopeOrEnterDatabase(state);
                     RefreshSearchResults(state, true);
                 }
@@ -39679,9 +40004,9 @@ void RenderUI(AppState& state) {
             // Track the applied text from searchBuffer, the filter's actual source.
             // 而不是 lastSearchSubmitted（可能因用户继续打字而过时），消除去重逻辑失配
             std::string debouncedSearch(state.searchBuffer);
-            state.lastAppliedSearchText = debouncedSearch;
             state.clearPendingWaveforms();
             if (!rejectInvalidSlashSearch(debouncedSearch)) {
+                state.lastAppliedSearchText = debouncedSearch;
                 DIAG_ACTION("Search", "KeywordSearch");
 
                 // 百万库场景下，实时搜索只刷新结果，不自动加载/播放第一条。
@@ -45250,8 +45575,13 @@ void RenderUI(AppState& state) {
                     // Description column should always reflect real description,
                     // not search snippet (snippet may come from path/other fields).
                     ImGui::TableNextColumn();
-                    ImGui::PushStyleColor(ImGuiCol_Text, record.description.empty() ? kL3 : kL2);
-                    ImGui::TextUnformatted(record.description.empty() ? "-" : record.description.c_str());
+                    const std::string& listDescription =
+                        state.viewMode != ViewMode::Database ||
+                        !state.lastAppliedSearchText.empty() ||
+                        record.databaseListDescriptionOverride.empty()
+                            ? record.description : record.databaseListDescriptionOverride;
+                    ImGui::PushStyleColor(ImGuiCol_Text, listDescription.empty() ? kL3 : kL2);
+                    ImGui::TextUnformatted(listDescription.empty() ? "-" : listDescription.c_str());
                     ImGui::PopStyleColor();
                     const ImVec2 descriptionHoverRectMin = ImGui::GetItemRectMin();
                     const ImVec2 descriptionHoverRectMax = ImGui::GetItemRectMax();
@@ -45264,7 +45594,7 @@ void RenderUI(AppState& state) {
                         ImGui::PushStyleColor(ImGuiCol_TextDisabled, ThemeColors::current().resultsSecondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 56.0f);
                         ImGui::TextDisabled("%s", L(Info_Description));
-                        ImGui::TextUnformatted(record.description.empty() ? L(Info_NoDescription) : record.description.c_str());
+                        ImGui::TextUnformatted(listDescription.empty() ? L(Info_NoDescription) : listDescription.c_str());
                     if (HasSearchExplainability(record, state.lastAppliedSearchText)) {
                             ImGui::Separator();
                             RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);

@@ -7,8 +7,11 @@
 
 #include "../Localization.h"
 #include "../Theme.h"
+#include "../HarkenSearchWidgets.h"
+#include "../../thirdparty/lucide/IconsLucide.h"
 #include "../ui/ActionButtonStyle.h"
 #include "../Version.h"
+#include "platform/animation_preferences.h"
 
 namespace aris::update {
 namespace {
@@ -183,16 +186,22 @@ void RenderHeader(
         notes.showHistory = false;
         notes.summaryScrollKey.clear();
     }
-    if (ButtonAt(
-            "close",
-            u8"×",
-            714.0f,
-            20.0f,
-            28.0f,
-            22.0f,
-            false,
-            true,
-            theme)) {
+    // Center the 20px hit area on the adjacent 24px header action.
+    ImGui::SetCursorPos(ImVec2(714.0f, 22.0f));
+    ImGui::PushID("close");
+    // About uses a 1.55x window font. Match its visible X without scaling
+    // the rest of this update window or changing the existing close action.
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.55f);
+    const bool closeClicked = aura::ui::IconButton(ICON_LC_X, L(Close),
+                                                    aura::ui::ButtonSize::Sm);
+    ImGui::PopFont();
+#if AURA_BUILD_DIAGNOSTICS
+    const auto closeMin = ImGui::GetItemRectMin();
+    const auto closeMax = ImGui::GetItemRectMax();
+    g_noticeQa.controls["close"] = {closeMin.x, closeMin.y, closeMax.x, closeMax.y};
+#endif
+    ImGui::PopID();
+    if (closeClicked) {
         FinalizeHarkenSearchUpdateNoticeClose(open, notes);
     }
 }
@@ -218,7 +227,7 @@ void RenderStatusRow(
             label = u8"正在下载更新";
             break;
         case HarkenSearchUpdateNoticeVisibleState::Restarting:
-            label = u8"正在替换并重启";
+            label = u8"正在准备更新";
             color = theme.resultsText;
             break;
         case HarkenSearchUpdateNoticeVisibleState::Error: {
@@ -463,14 +472,17 @@ void RenderCheckingWait(
 }
 
 void RenderRestartNotice(float y, const ThemeColorScheme& theme) {
-    TextAt(u8"正在替换更新文件…", kContentLeft, y, theme.resultsSecondaryText);
-    TextAt(u8"正在重启 Harken Search…", kContentLeft, y + 24.0f, theme.resultsSecondaryText);
+    TextAt(L(Update_BootstrapHandoff), kContentLeft, y, theme.resultsSecondaryText);
+    TextAt(u8"关闭主窗口后，独立更新窗口会继续显示替换进度。",
+           kContentLeft, y + 24.0f, theme.resultsSecondaryText);
     ImGui::SetCursorPos(ImVec2(kContentLeft, y + 42.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, theme.dialogPanelBG);
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme.resultsText);
     ImGui::PushStyleColor(ImGuiCol_Text, theme.interfaceText);
-    ImGui::ProgressBar(-1.0f, ImVec2(kContentWidth, 22.0f), L(Update_BootstrapHandoff));
+    const float progress = Platform::Animation::ClientAreaAnimationEnabled()
+        ? -static_cast<float>(ImGui::GetTime() + 0.001) : 0.0f;
+    ImGui::ProgressBar(progress, ImVec2(kContentWidth, 8.0f), "");
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar();
 }
@@ -661,7 +673,9 @@ void RenderHarkenSearchUpdateNoticeUi(
                       : updateState.currentVersion)
             : std::string_view(updateState.candidateVersion);
         const bool candidate = state != HarkenSearchUpdateNoticeVisibleState::Latest;
-        const ReleaseNotesEntry* release = SelectHarkenSearchReleaseNotes(notes, releaseVersion, candidate);
+        const ReleaseNotesEntry* release = candidate
+            ? SelectHarkenSearchReleaseNotes(notes, releaseVersion, true)
+            : SelectHarkenSearchLocalDisplayReleaseNotes(notes, releaseVersion);
         const float actionY = panelHeight - 54.0f;
 
         switch (state) {

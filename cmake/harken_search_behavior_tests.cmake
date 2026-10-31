@@ -5420,8 +5420,10 @@ aura_set_test_labels(CoverWallPageDedupe db)
 
 add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_database_features.cpp
+    tests/test_database_fts_trigger_concurrency.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
+    src/AsyncWorker.cpp
     src/AppState.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
@@ -5466,6 +5468,7 @@ target_link_libraries(TestDatabaseFeatures PRIVATE
     winmm
 )
 target_compile_definitions(TestDatabaseFeatures PRIVATE
+    AURO_TEST_REAL_ASYNC_WORKER
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -5482,6 +5485,20 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestDatabaseFtsTriggerConcurrency COMMAND TestDatabaseFeatures --fts-trigger-concurrency)
+aura_set_test_labels(TestDatabaseFtsTriggerConcurrency db)
+add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
+set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
+    ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")
+aura_set_test_labels(TestLegacyDescriptionDisplay db)
+add_test(NAME TestRelinkWorkflowPathUpdate COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowPathUpdate PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_PATH_UPDATE_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowPathUpdate db)
+add_test(NAME TestRelinkWorkflowSearchReport COMMAND TestDatabaseFeatures)
+set_tests_properties(TestRelinkWorkflowSearchReport PROPERTIES
+    ENVIRONMENT "HARKEN_RELINK_SEARCH_REPORT_ONLY=1")
+aura_set_test_labels(TestRelinkWorkflowSearchReport db)
 add_test(NAME TestFavoritesMigrationError COMMAND TestDatabaseFeatures)
 set_tests_properties(TestFavoritesMigrationError PROPERTIES
     ENVIRONMENT "HARKEN_FAVORITES_MIGRATION_ONLY=1")
@@ -6622,6 +6639,36 @@ endif()
 add_test(NAME TestEmergencyFileWriter COMMAND TestEmergencyFileWriter)
 aura_set_test_labels(TestEmergencyFileWriter core)
 
+add_executable(TestDiagnosticsLoggerStub EXCLUDE_FROM_ALL
+    tests/test_diagnostics_logger_stub.cpp
+    src/DiagnosticsLoggerStub.cpp
+)
+target_include_directories(TestDiagnosticsLoggerStub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestDiagnosticsLoggerStub PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsLoggerStub PRIVATE AURA_BUILD_DIAGNOSTICS=0)
+if(MSVC)
+    target_compile_options(TestDiagnosticsLoggerStub PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsLoggerStub COMMAND TestDiagnosticsLoggerStub)
+aura_set_test_labels(TestDiagnosticsLoggerStub core)
+
+add_executable(TestDiagnosticsLoggerRetention EXCLUDE_FROM_ALL
+    tests/test_diagnostics_logger_retention.cpp
+    src/DiagnosticsLogger.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+)
+target_include_directories(TestDiagnosticsLoggerRetention PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestDiagnosticsLoggerRetention PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsLoggerRetention PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(TestDiagnosticsLoggerRetention PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsLoggerRetention COMMAND TestDiagnosticsLoggerRetention)
+aura_set_test_labels(TestDiagnosticsLoggerRetention core)
+
 add_executable(TestScanDatabaseOpenDiagnostics EXCLUDE_FROM_ALL
     tests/test_scan_database_open_diagnostics.cpp
     src/ScanDatabaseOpenDiagnostics.cpp
@@ -7696,6 +7743,29 @@ if(MSVC)
 endif()
 add_test(NAME TestUpdateCheckService COMMAND TestUpdateCheckService)
 aura_set_test_labels(TestUpdateCheckService core stage4)
+
+if(WIN32 AND MSVC)
+    add_executable(TestUpdateRestartConfirmation tests/test_update_restart_confirmation.cpp)
+    target_include_directories(TestUpdateRestartConfirmation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty)
+    target_compile_features(TestUpdateRestartConfirmation PRIVATE cxx_std_17)
+    # Inert fixture key; the test never starts the worker or calls an authority port.
+    target_compile_definitions(TestUpdateRestartConfirmation PRIVATE
+        ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX="0000000000000000000000000000000000000000000000000000000000000000")
+    target_compile_options(TestUpdateRestartConfirmation PRIVATE /W3 /utf-8)
+    target_sources(TestUpdateRestartConfirmation PRIVATE
+        src/update/UpdateApplicationService.cpp
+        src/update/UpdateCheckService.cpp
+        src/update/UpdateManifest.cpp
+        src/update/UpdateRuntime.cpp
+        src/update/UpdateCoordinator.cpp
+        src/update/UpdateDownloadManager.cpp
+        src/update/UpdateHttpTransport.cpp
+        src/update/UpdateStateStore.cpp
+        src/ed25519/tweetnacl.c)
+    add_test(NAME TestUpdateRestartConfirmation COMMAND TestUpdateRestartConfirmation)
+    aura_set_test_labels(TestUpdateRestartConfirmation core stage4)
+endif()
 
 add_executable(TestUpdateApplicationService EXCLUDE_FROM_ALL
     tests/test_update_application_service.cpp

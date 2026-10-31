@@ -582,6 +582,86 @@ void test_failure_count_binding_failure_after_old_exit_relaunches_exact_untouche
           "failure-count binding rejection relaunches only the exact captured old image without health IPC");
 }
 
+struct ProgressRecorder final : BootstrapProgressSink {
+    std::vector<BootstrapProgressSnapshot> snapshots;
+    void Report(BootstrapProgressSnapshot snapshot) noexcept override {
+        snapshots.push_back(snapshot);
+    }
+    bool saw(BootstrapProgressPhase phase) const {
+        return std::any_of(snapshots.begin(), snapshots.end(),
+            [phase](const auto& snapshot) { return snapshot.phase == phase; });
+    }
+};
+
+void test_progress_follows_real_operations_and_never_completes_a_failure() {
+    const auto admission = fixtureAdmission();
+    const WindowsBootstrapFilesystemRoots roots{
+        admission.plan->invocation.stagingRoot,
+        admission.plan->invocation.transactionRoot,
+        admission.plan->invocation.updaterOwnedBase,
+        admission.plan->invocation.invocationIdentity};
+    for (int failureMode = 0; failureMode != 4; ++failureMode) {
+        ProcessFake process;
+        HealthFake health;
+        FilesystemFake filesystem;
+        ProgressRecorder progress;
+        process.timeout = failureMode == 1;
+        if (failureMode == 2) {
+            filesystem.retryableAccessDeniedKind = BootstrapIntentKind::ReplaceInventoryItem;
+            filesystem.retryableAccessDeniedFailuresRemaining = 50U;
+        }
+        health.timeout = failureMode == 3;
+        BootstrapApplicationOptions options;
+        options.forwardOnly = true;
+        const auto result = RunBootstrapApplication(admission, roots,
+            {process, health, filesystem, nullptr, &progress}, options);
+        check(progress.saw(BootstrapProgressPhase::WaitingForExit),
+              "progress exposes the real old-process wait");
+        check(!progress.snapshots.empty() && progress.snapshots.back().phase ==
+              (result.ok() ? BootstrapProgressPhase::Completed : BootstrapProgressPhase::Failed),
+              "terminal progress agrees with the actual update result");
+        check(result.ok() == (failureMode == 0), "fixture drives the intended outcome");
+        if (failureMode == 1) {
+            check(!progress.saw(BootstrapProgressPhase::PreparingFiles) &&
+                  !progress.saw(BootstrapProgressPhase::ReplacingFiles) &&
+                  !progress.saw(BootstrapProgressPhase::Restarting),
+                  "exit timeout never claims files were replaced or app restarted");
+        } else {
+            check(progress.saw(BootstrapProgressPhase::PreparingFiles) &&
+                  progress.saw(BootstrapProgressPhase::ReplacingFiles),
+                  "file preparation and replacement are independently visible");
+        }
+        if (failureMode == 0 || failureMode == 3) {
+            check(progress.saw(BootstrapProgressPhase::Restarting) &&
+                  progress.saw(BootstrapProgressPhase::CheckingStartup),
+                  "launch and startup acknowledgement are separate stages");
+        }
+        if (failureMode != 0) {
+            check(!progress.saw(BootstrapProgressPhase::Completed),
+                  "no timeout or replacement failure is reported as complete");
+        } else {
+            check(progress.saw(BootstrapProgressPhase::Finalizing),
+                  "healthy startup still waits for transaction finalization");
+        }
+        std::size_t lastCount = 0;
+        std::size_t total = 0;
+        for (const auto& snapshot : progress.snapshots) {
+            if (snapshot.phase != BootstrapProgressPhase::ReplacingFiles) continue;
+            check(snapshot.completedFiles >= lastCount &&
+                  snapshot.completedFiles <= snapshot.totalFiles,
+                  "replacement count stays bounded and monotonic");
+            lastCount = snapshot.completedFiles;
+            total = snapshot.totalFiles;
+        }
+        if (failureMode == 0 || failureMode == 3) {
+            check(total > 0 && lastCount == total, "successful writes reach their exact file count");
+        } else if (failureMode == 2) {
+            check(total > 0 && lastCount < total && !progress.saw(BootstrapProgressPhase::Restarting),
+                  "failed write is not counted and never advances to restart");
+        }
+    }
+}
+
 void test_happy_path_and_wait_timeout() {
     const auto admission = fixtureAdmission();
     WindowsBootstrapFilesystemRoots roots{
@@ -2020,6 +2100,7 @@ void test_parent_image_identity_is_not_bound_to_a_fictional_filename() {
 }  // namespace
 
 int main() {
+    test_progress_follows_real_operations_and_never_completes_a_failure();
     test_happy_path_and_wait_timeout();
     test_default_invocation_cleanup_reports_committed_update_complete();
     test_forward_only_terminal_failures_never_restore_installed_payload();

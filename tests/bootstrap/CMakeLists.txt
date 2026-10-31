@@ -71,6 +71,52 @@ if(WIN32)
 endif()
 
 if(WIN32)
+    add_executable(bootstrap_progress_window_tests WIN32
+        test_bootstrap_progress_window.cpp
+        ../../src/bootstrap/WindowsBootstrapProgress.cpp
+        ../../src/platform/animation_preferences_win32.cpp
+        ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        ../../src/platform/update_bootstrap_authority_base.cpp
+        ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
+        ../../src/platform/text_encoding_win32.cpp)
+    target_include_directories(bootstrap_progress_window_tests PRIVATE ../../src ../../thirdparty)
+    include(../../cmake/harken_bootstrap_progress_ui.cmake)
+    harken_bootstrap_progress_ui(bootstrap_progress_window_tests)
+    target_compile_features(bootstrap_progress_window_tests PRIVATE cxx_std_17)
+    target_compile_options(bootstrap_progress_window_tests PRIVATE /W4 /WX /EHsc /utf-8)
+    target_link_libraries(bootstrap_progress_window_tests PRIVATE user32 gdi32 comctl32 uxtheme shell32 ole32 bcrypt)
+    add_test(NAME bootstrap_progress_window_tests COMMAND bootstrap_progress_window_tests)
+    set_tests_properties(bootstrap_progress_window_tests PROPERTIES TIMEOUT 30)
+
+    add_executable(bootstrap_progress_view_tests test_bootstrap_progress_view.cpp
+        ../../src/bootstrap/BootstrapProgressView.cpp
+        ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        ../../src/platform/update_bootstrap_authority_base.cpp
+        ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
+        ../../src/platform/text_encoding_win32.cpp)
+    target_include_directories(bootstrap_progress_view_tests PRIVATE ../../src ../../thirdparty)
+    target_compile_features(bootstrap_progress_view_tests PRIVATE cxx_std_17)
+    target_compile_options(bootstrap_progress_view_tests PRIVATE /W4 /WX /EHsc /utf-8)
+    target_link_libraries(bootstrap_progress_view_tests PRIVATE shell32 ole32 bcrypt)
+    add_test(NAME bootstrap_progress_view_tests COMMAND bootstrap_progress_view_tests)
+
+    add_executable(bootstrap_webview_tests test_bootstrap_webview.cpp
+        ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        ../../src/platform/update_bootstrap_authority_base.cpp
+        ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
+        ../../src/platform/text_encoding_win32.cpp)
+    harken_bootstrap_progress_ui(bootstrap_webview_tests)
+    target_include_directories(bootstrap_webview_tests PRIVATE ../../src ../../thirdparty)
+    target_compile_features(bootstrap_webview_tests PRIVATE cxx_std_17)
+    target_compile_definitions(bootstrap_webview_tests PRIVATE HARKEN_BOOTSTRAP_WEBVIEW_TESTING=1)
+    target_compile_options(bootstrap_webview_tests PRIVATE /W4 /WX /EHsc /utf-8)
+    target_link_libraries(bootstrap_webview_tests PRIVATE shell32 ole32 user32 bcrypt)
+    add_test(NAME bootstrap_webview_tests COMMAND bootstrap_webview_tests)
+    set_tests_properties(bootstrap_webview_tests PROPERTIES TIMEOUT 30)
+
     add_executable(aris_bootstrap_health_fixture bootstrap_health_fixture.cpp)
     add_executable(aris_bootstrap_sleep_fixture bootstrap_sleep_fixture.cpp)
     target_include_directories(aris_bootstrap_health_fixture PRIVATE
@@ -193,6 +239,26 @@ if(WIN32)
     target_compile_options(aris_bootstrap_blackbox_bootstrap PRIVATE
         /W4 /WX /EHsc /permissive- /utf-8)
 
+    # Same real transaction ports, fixture signing key only, with production UI.
+    get_target_property(_progress_sources aris_bootstrap_blackbox_bootstrap SOURCES)
+    get_target_property(_progress_definitions aris_bootstrap_blackbox_bootstrap COMPILE_DEFINITIONS)
+    add_executable(bootstrap_progress_transaction_fixture WIN32 ${_progress_sources}
+        ../../src/bootstrap/WindowsBootstrapProgress.cpp
+        ../../src/platform/animation_preferences_win32.cpp
+        ../../src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        ../../src/platform/update_bootstrap_authority_base.cpp
+        ../../src/platform/update_persistence_port.cpp
+        ../../src/update/UpdateDownloadManager.cpp
+        ../../src/platform/text_encoding_win32.cpp)
+    target_compile_definitions(bootstrap_progress_transaction_fixture PRIVATE
+        ${_progress_definitions} HARKEN_BOOTSTRAP_WEBVIEW_TESTING=1)
+    target_include_directories(bootstrap_progress_transaction_fixture PRIVATE ../../src ../../thirdparty)
+    target_compile_features(bootstrap_progress_transaction_fixture PRIVATE cxx_std_17)
+    target_compile_options(bootstrap_progress_transaction_fixture PRIVATE /W4 /WX /EHsc /utf-8)
+    target_link_libraries(bootstrap_progress_transaction_fixture PRIVATE advapi32 crypt32 shell32 ole32
+        wintrust user32 gdi32 comctl32 uxtheme bcrypt)
+    harken_bootstrap_progress_ui(bootstrap_progress_transaction_fixture)
+
     add_executable(aris_bootstrap_handoff_fixture
         bootstrap_handoff_fixture.cpp
         "${CMAKE_CURRENT_LIST_DIR}/../../src/bootstrap/HarkenSearchBootstrapAdmission.cpp"
@@ -294,20 +360,20 @@ endif()
 add_test(NAME aris_bootstrap_filesystem_tests COMMAND aris_bootstrap_filesystem_tests)
 
 if(WIN32)
-    foreach(target aris_bootstrap_runtime_tests aris_bootstrap_native_tests
-                   aris_bootstrap_launch_broker_tests aris_bootstrap_entrypoint_tests
+    foreach(target aris_bootstrap_native_tests
+                   aris_bootstrap_launch_broker_tests
                    aris_bootstrap_blackbox_bootstrap)
         target_sources(${target} PRIVATE
             "${CMAKE_CURRENT_LIST_DIR}/../../src/platform/update_bootstrap_authority_base.cpp")
     endforeach()
-    foreach(target aris_bootstrap_entrypoint_tests aris_bootstrap_blackbox_bootstrap)
+    foreach(target aris_bootstrap_blackbox_bootstrap)
         target_sources(${target} PRIVATE
             "${CMAKE_CURRENT_LIST_DIR}/bootstrap_test_diagnostics.cpp")
     endforeach()
 endif()
 
 set(ARIS_BOOTSTRAP_TEST_WORKDIR
-    "${CMAKE_BINARY_DIR}/system-temp")
+    "${CMAKE_BINARY_DIR}/system-temp" CACHE PATH "Isolated native update test working directory")
 file(MAKE_DIRECTORY "${ARIS_BOOTSTRAP_TEST_WORKDIR}")
 set_tests_properties(
     aris_bootstrap_admission_tests

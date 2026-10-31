@@ -110,6 +110,30 @@ void testFastModeReleasesOptionalCompletionDebtImmediately() {
           "full scan keeps the foreground completion contract for required waveform work");
 }
 
+void testFastCompletionDoesNotWaitForOptionalCovers() {
+    check(HarkenSearch::AreScanCompletionCountersReady(
+              /*fastMode=*/true, /*miniUnresolved=*/0,
+              /*coverUnresolved=*/7093, /*metadataUnresolved=*/0),
+          "fast scan summary is ready while covers continue in background");
+    check(!HarkenSearch::AreScanCompletionCountersReady(
+              /*fastMode=*/false, /*miniUnresolved=*/0,
+              /*coverUnresolved=*/7093, /*metadataUnresolved=*/0),
+          "full scan still waits for required covers");
+    check(!HarkenSearch::AreScanCompletionCountersReady(
+              /*fastMode=*/true, /*miniUnresolved=*/1,
+              /*coverUnresolved=*/0, /*metadataUnresolved=*/0),
+          "required mini work cannot be hidden by fast completion");
+}
+
+void testFastCompletionPreservesPopulatedBackgroundQueue() {
+    check(!HarkenSearch::ShouldRebuildScanBackfillQueue(true, 7093, 0),
+          "fast completion reuses queued cover work without a blocking rebuild");
+    check(HarkenSearch::ShouldRebuildScanBackfillQueue(true, 0, 0),
+          "empty fast queue recovers durable background work");
+    check(HarkenSearch::ShouldRebuildScanBackfillQueue(false, 7093, 0),
+          "full scan retains its existing queue recovery path");
+}
+
 void testPauseIsASeparateTerminalStage() {
     auto snapshot = completedSnapshot();
     snapshot.processed = 120;
@@ -219,6 +243,8 @@ int main() {
     testFailedFilesDoNotPreventNonFatalCompletion();
     testMiniWaveformDebtBlocksCompleted();
     testFastModeReleasesOptionalCompletionDebtImmediately();
+    testFastCompletionDoesNotWaitForOptionalCovers();
+    testFastCompletionPreservesPopulatedBackgroundQueue();
     testPauseIsASeparateTerminalStage();
     testPostScanSimilarityIndexStartsOnlyOnSuccessfulCompletedScan();
     testPendingPostScanSimilarityIndexDoesNotCrossDatabaseSwitch();

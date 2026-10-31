@@ -22,6 +22,16 @@ void MergeLucideFont(ImFontAtlas* atlas, float fontPixelSize);
 void LoadBrandIconsOnce();
 void DrawBrandIcon(BrandIcon icon, float size);
 void LoadBrandWordmarksOnce();
+// Loads (and caches) a PNG shipped relative to the executable, e.g.
+// "assets/icons/contributors/cindy.png". Returns glId==0 when the file or
+// decoding is unavailable; callers must keep a text fallback. The texture is
+// process-owned and released at shutdown.
+struct PackagedAssetTex {
+    unsigned int glId = 0;
+    int w = 0;
+    int h = 0;
+};
+PackagedAssetTex LoadPackagedAsset(const char* relativePath);
 // Draws the official Harken Search wordmark inside a horizontal band such as
 // the menu bar, vertically centred between y0 and y1, and picks the white
 // artwork for dark chrome or the black artwork for light chrome. When the

@@ -55,6 +55,43 @@ int main() {
     check(!state.settings.autoReconcileOnStartup,
           "startup reconcile is opt-in by default for large-library safety");
 
+    // An uncommitted edit in the search box must not replace the query that
+    // produced a tab's cached results when switching between tabs.
+    AppState tabQueryState;
+    tabQueryState.currentTab();
+    tabQueryState.lastAppliedSearchText = "applied-keyword";
+    setSearchText(tabQueryState, "pending-edit");
+    tabQueryState.syncToTab();
+    const int ordinaryTab = tabQueryState.createNewTab("ordinary database list");
+    check(tabQueryState.activateTab(ordinaryTab, 1.0, false),
+          "activates the ordinary database tab");
+    check(tabQueryState.lastAppliedSearchText.empty(),
+          "ordinary tab does not inherit the previous tab's applied keyword");
+    check(tabQueryState.activateTab(0, 2.0, false),
+          "returns to the keyword-search tab");
+    check(tabQueryState.lastAppliedSearchText == "applied-keyword" &&
+              std::string(tabQueryState.searchBuffer) == "pending-edit",
+          "keyword tab restores its applied query separately from pending text");
+    tabQueryState.lastAppliedSearchText.clear();
+    setSearchText(tabQueryState, "");
+    tabQueryState.syncToTab();
+    check(tabQueryState.activateTab(ordinaryTab, 3.0, false),
+          "returns to the ordinary tab");
+    tabQueryState.lastAppliedSearchText = "other-keyword";
+    setSearchText(tabQueryState, "other-keyword");
+    tabQueryState.syncToTab();
+    check(tabQueryState.activateTab(0, 4.0, false),
+          "returns to the now ordinary first tab");
+    check(tabQueryState.lastAppliedSearchText.empty(),
+          "ordinary tab does not inherit a later tab's applied keyword");
+    check(tabQueryState.activateTab(ordinaryTab, 5.0, false),
+          "returns to the second keyword tab");
+    tabQueryState.lastAppliedSearchText = "new-live-keyword";
+    const int duplicatedTab = tabQueryState.duplicateTab(ordinaryTab);
+    check(duplicatedTab >= 0 &&
+              tabQueryState.listTabs[(size_t)duplicatedTab].lastAppliedSearchText == "new-live-keyword",
+          "duplicating the active tab keeps its applied keyword");
+
     AppState targetState;
     AudioRecord targetRecord;
     targetRecord.id = 101;

@@ -6,8 +6,13 @@
 #include "DefaultAudioPlayerAssociation.h"
 #include "CoverBrowseSurfaceState.h"
 #include "PathUtils.h"  // Canonical folder filtering.
+#if ARIS_PREVIEW_ISOLATION
+#include "FolderTreeContextActions.h"
+#endif
 #include "SpectrogramMath.h"
 #include "Theme.h"
+#include "ThemeSchedule.h"
+#include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/EmptyStateVisualAudit.h"
@@ -3878,6 +3883,7 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
 }
 
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
+extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
 
 static void PollQaCommandFile(AppState& state) {
     static int s_pollSkip = 0;
@@ -4702,6 +4708,12 @@ static void PollQaCommandFile(AppState& state) {
             }
             result += "}}";
         }
+    } else if (cmd == "about_window") {
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            result = ControlAboutWindowForQa(state, getStr(raw, "action"));
+        }
     } else if (cmd == "update_notice" || cmd == "update_notice_pointer") {
         if (!MagicEqQaIsolationReady()) {
             result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
@@ -5432,6 +5444,8 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"scan_in_progress\":" + std::string(state.isScanning.load() ? "true" : "false") + ",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
+        result += "\"was_paused\":" + std::string(state.scanWasPaused ? "true" : "false") + ",";
+        result += "\"data_committed\":" + std::string(state.scanDataCommitted.load() ? "true" : "false") + ",";
         result += "\"scan_workflow_stage\":\"" + std::string(HarkenSearch::ScanWorkflowStageName(state.scanWorkflowStage.load(std::memory_order_acquire))) + "\",";
         result += "\"scan_discovered\":" + std::to_string(state.scanDiscoveredCount.load(std::memory_order_acquire)) + ",";
         result += "\"scan_processed\":" + std::to_string(state.scanProcessedCount.load(std::memory_order_acquire)) + ",";
@@ -6377,6 +6391,74 @@ static void PollQaCommandFile(AppState& state) {
         result = std::string("{\"ok\":true,\"cmd\":\"set_loudness_norm\",\"enabled\":")
                + (enabled ? "true" : "false") + "}";
 
+    } else if (cmd == "theme_schedule") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"isolated package required"})";
+        } else {
+            const auto action = getStr(raw, "action");
+            bool ok = action.empty() || action == "state";
+            if (action == "clock") ok = harken::theme_schedule::SetQaClock(getInt(raw, "minute", -2));
+            if (action == "pointer") {
+                const auto phase = getStr(raw, "phase");
+                const float x = static_cast<float>(getDouble(raw, "x", -1));
+                const float y = static_cast<float>(getDouble(raw, "y", -1));
+                const auto display = ImGui::GetIO().DisplaySize;
+                if (s_mainUiReady.load(std::memory_order_acquire) &&
+                    std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < display.x && y < display.y &&
+                    !s_magicEqQaPointer.pending &&
+                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || (phase == "up" && s_magicEqQaPointer.held))) {
+                    const auto* viewport = ImGui::GetMainViewport();
+                    s_magicEqQaPointer = {true, phase != "hover", phase == "down", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
+                    ok = true;
+                }
+            }
+            if (action == "draft_color") {
+                const auto request = nlohmann::json::parse(raw, nullptr, false);
+                if (request.is_object() && request.contains("rgba") && request["rgba"].is_array() && request["rgba"].size() == 4) {
+                    const auto& c = request["rgba"];
+                    if (c[0].is_number() && c[1].is_number() && c[2].is_number() && c[3].is_number())
+                        ok = ThemeScheduleEditorQaSetColor(getStr(raw, "key"), ImVec4(c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), c[3].get<float>()));
+                }
+            }
+            using namespace harken::theme_schedule;
+            const auto& day = Palette(Period::Day);
+            const auto& night = Palette(Period::Night);
+            const auto toggle = QaAutoToggleBounds();
+            const auto& ui = QaSettingsUi();
+            const auto bounds = [](ImVec4 r) { return nlohmann::json::array({r.x,r.y,r.z,r.w}); };
+            auto stock = nlohmann::json::array();
+            for (const auto& item : ui.stock) stock.push_back({{"theme",item.theme},{"bounds",bounds(item.bounds)}});
+            auto presetOptions = nlohmann::json::array();
+            for (const auto& item : ui.presetOptions)
+                presetOptions.push_back({{"period",item.period},{"theme",item.theme},{"bounds",bounds(item.bounds)}});
+            result = nlohmann::json({
+                {"ok",ok}, {"cmd",cmd}, {"frame",ImGui::GetFrameCount()},
+                {"period",CurrentPeriod() == Period::Day ? "day" : "night"},
+                {"mode",(int)state.settings.themeScheduleMode},
+                {"auto_toggle_bounds",{toggle.x,toggle.y,toggle.z,toggle.w}},
+                {"ui",{{"frame",ui.frame},{"clip",bounds(ui.clip)},{"cards",{bounds(ui.cards[0]),bounds(ui.cards[1])}},
+                    {"edit_buttons",{bounds(ui.editButtons[0]),bounds(ui.editButtons[1])}},
+                    {"selected",{ui.selected[0],ui.selected[1]}},{"other_themes",bounds(ui.otherThemes)},
+                    {"other_themes_expanded",ui.otherThemesExpanded},{"stock",stock},
+                    {"auto_checkbox",ui.autoCheckbox},
+                    {"selector_buttons",{bounds(ui.selectorButtons[0]),bounds(ui.selectorButtons[1])}},
+                    {"selector_presets",{ui.selectorPresets[0],ui.selectorPresets[1]}},
+                    {"preset_options",presetOptions}}},
+                {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
+                {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
+                {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
+                {"active_bg",ThemeColors::toARGBHex(ThemeColors::current().mainWindowBG)},
+                {"active_accent",ThemeColors::toARGBHex(ThemeColors::current().toolbarAccent)},
+                {"imgui_bg",ThemeColors::toARGBHex(ImGui::GetStyle().Colors[ImGuiCol_WindowBg])},
+                {"day_bg",ThemeColors::toARGBHex(day.mainWindowBG)}, {"night_bg",ThemeColors::toARGBHex(night.mainWindowBG)},
+                {"day_accent",ThemeColors::toARGBHex(day.toolbarAccent)}, {"night_accent",ThemeColors::toARGBHex(night.toolbarAccent)},
+                {"day_warning",LoadWarning(Period::Day)}, {"night_warning",LoadWarning(Period::Night)}
+            }).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"isolated package required"})";
+#endif
     } else if (cmd == "set_theme") {
         int theme = getInt(raw, "theme", -1);
         const bool validTheme =
@@ -6394,6 +6476,9 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"cmd\":\"set_theme\",\"error\":\"custom theme unavailable\"}";
         } else {
             state.settings.theme = (AppTheme)theme;
+            harken::theme_schedule::OnManualThemeSelected(state);
+            state.settings.useCustomColors = false;
+            if (theme != (int)AppTheme::Custom) ThemeColors::deactivateCustomTheme();
             MarkSettingsDirty(state);
             SaveAppSettings(state);
             result = "{\"ok\":true,\"cmd\":\"set_theme\",\"theme\":" + std::to_string(theme) + "}";
@@ -6473,6 +6558,20 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"cmd\":\"set_view_mode\",\"error\":\"unknown mode\"}";
         }
 
+    } else if (cmd == "qa_rightclick_scan") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string path = getStr(raw, "path");
+        if (path.empty() || !PathExistsUtf8(path) || state.isScanning.load()) {
+            result = R"({"ok":false,"cmd":"qa_rightclick_scan","error":"invalid path or scan active"})";
+        } else {
+            state.settings.cacheWaveformsOnScan = false;
+            state.scanBuildSimilarityIndexAfterScan = false;
+            PrepareQuickScanDialogForPath(state, path, true);
+            result = R"({"ok":true,"cmd":"qa_rightclick_scan"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "open_scan_dialog") {
         state.scanDialogAutoStart = false;
         state.showScanDialog = true;
@@ -7282,6 +7381,15 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"ready_to_work_main_wave_pending\":" + std::string(readyToWork.mainWavePending ? "true" : "false");
         result += "}";
 
+    } else if (cmd == "qa_scan_pause_keep") {
+#if ARIS_PREVIEW_ISOLATION
+        const bool wasScanning = state.isScanning.load();
+        if (wasScanning) state.requestPauseScanTask();
+        result = "{\"ok\":true,\"cmd\":\"qa_scan_pause_keep\",\"was_scanning\":"
+               + std::string(wasScanning ? "true" : "false") + "}";
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "scan_stop") {
         bool wasScanning = state.isScanning.load();
         if (wasScanning) {
@@ -8195,7 +8303,10 @@ static void ApplyThemeAndScaleForSettings(const AppState& state, float scale) {
         state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty();
     bool appliedVisualTheme = false;
 
-    if (state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty()) {
+    if (harken::theme_schedule::Ready() && state.settings.theme == AppTheme::Custom && ThemeColors::customized()) {
+        ThemeColors::applyToImGui();
+        appliedVisualTheme = true;
+    } else if (state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty()) {
         if (!ThemeColors::customized()) {
             try {
                 std::string exeDir = GetExeDirUtf8();
@@ -12446,6 +12557,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     AppendDiagLogLine(L"STARTUP: after audioEngine.initialize");
     AppendDiagLogLine(L"STARTUP: before LoadAppSettings");
     LoadAppSettings(state);
+    harken::theme_schedule::Initialize(g_appSettingsPathUtf8);
     AppendDiagLogLine(L"STARTUP: after LoadAppSettings");
 
 // F-035: Crash sentinel — detect previous abnormal exit
@@ -12500,6 +12612,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (state.settings.useCustomColors) {
         ApplyCustomColors(state.settings);
     }
+    harken::theme_schedule::Tick(state, true);
     HarkenSearchSplash::ConfigureThemePalette(state.settings);
     ApplyShowManagerGlobalHotkey(state.settings);
     
@@ -12963,6 +13076,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (state.settings.useCustomColors) {
         ApplyCustomColors(state.settings);
     }
+    harken::theme_schedule::Tick(state, true);
     s_mainUiReady.store(true, std::memory_order_release);
     DIAG_SYSTEM("App", "MainUIReady");
     // Lottie 精灵功能已禁用（见主循环内注释）
@@ -13238,6 +13352,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         // Rebuild fonts before NewFrame so the active OpenGL texture is not destroyed.
         // Scheme B: dynamic UI scale (font rebuild + style scaling, debounced)
+        harken::theme_schedule::Tick(state);
         UpdateImGuiUiScaleSchemeB(state);
 
         // Start ImGui frame
@@ -14136,10 +14251,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                     glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
                     glReadBuffer(readBuffer);
                     glPixelStorei(GL_PACK_ALIGNMENT, alignment);
-                    std::ofstream file(Utf8ToPath(s_previewFrameCapturePath), std::ios::binary);
-                    file << "P6\n" << width << " " << height << "\n255\n";
-                    for (int y = height - 1; y >= 0; --y)
-                        file.write(reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3);
+                    Platform::FileSystem::StreamWriter file;
+                    if (file.Open(s_previewFrameCapturePath, false, true)) {
+                        bool written = file.Write("P6\n" + std::to_string(width) + " " +
+                            std::to_string(height) + "\n255\n");
+                        for (int y = height - 1; written && y >= 0; --y)
+                            written = file.Write(std::string_view(
+                                reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3));
+                        const bool closed = file.CloseChecked();
+                        if (!written || !closed)
+                            Platform::FileSystem::RemoveFile(s_previewFrameCapturePath);
+                    }
                 }
                 s_previewFrameCapturePath.clear();
             }

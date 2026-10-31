@@ -560,6 +560,10 @@ set(APP_SOURCES
     src/ThemeMascot.cpp
     src/Theme.cpp
     src/ThemeEditor.cpp
+    src/ThemeSchedule.cpp
+    src/ThemeScheduleUI.cpp
+    src/ThemeSchedulePaletteCodec.cpp
+    src/ThemeSchedulePaletteFiles.cpp
     src/ThemeInspector.cpp
     src/AnnotationBridge.cpp
     src/CueviFeedbackClient.cpp
@@ -620,6 +624,8 @@ set(APP_SOURCES
     src/update/HarkenSearchUpdateComposition.cpp
     src/update/HarkenSearchUpdateFailureExplanation.cpp
     src/update/HarkenSearchUpdateNoticeUi.cpp
+    src/platform/animation_preferences_win32.cpp
+    src/platform/animation_preferences_unsupported.cpp
     src/update/HarkenSearchUpdateNoticeModel.cpp
     src/release_notes/ReleaseNotes.cpp
     src/bootstrap/HarkenSearchBootstrapPlan.cpp
@@ -642,6 +648,7 @@ set(APP_SOURCES
     src/SimilaritySearch.cpp
     src/SimilarityWorkflow.cpp
     src/SimilarityQueryService.cpp
+    src/LibraryStatisticsWorker.cpp
     src/SimilarSoundsWindow.cpp
     src/RelinkWorkflow.cpp
     # BPM / key / mood detection (F-033)
@@ -878,6 +885,15 @@ if(WIN32)
     aura_set_test_labels(SearchTextIndex core)
 endif()
 
+add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
+    tests/test_feature_index_statistics.cpp src/LibraryStatisticsWorker.cpp
+    ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
+target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
+target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
+add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
+set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
+
 add_executable(TestUpdateNoticePresentation EXCLUDE_FROM_ALL
     tests/test_update_notice_presentation.cpp
 )
@@ -890,6 +906,42 @@ if(MSVC)
     target_compile_options(TestUpdateNoticePresentation PRIVATE /utf-8)
 endif()
 add_test(NAME UpdateNoticePresentation COMMAND TestUpdateNoticePresentation)
+
+add_executable(TestThemeSchedulePaletteCodec EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_palette_codec.cpp
+    src/ThemeSchedulePaletteCodec.cpp)
+target_include_directories(TestThemeSchedulePaletteCodec PRIVATE src thirdparty ${IMGUI_DIR})
+target_compile_features(TestThemeSchedulePaletteCodec PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeSchedulePaletteCodec PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeSchedulePaletteCodec COMMAND TestThemeSchedulePaletteCodec)
+
+add_executable(TestThemeScheduleClock EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_clock.cpp)
+target_include_directories(TestThemeScheduleClock PRIVATE src)
+target_compile_features(TestThemeScheduleClock PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeScheduleClock PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeScheduleClock COMMAND TestThemeScheduleClock)
+
+add_executable(TestThemeSchedulePaletteFiles EXCLUDE_FROM_ALL
+    tests/test_theme_schedule_palette_files.cpp
+    src/ThemeSchedulePaletteFiles.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestThemeSchedulePaletteFiles PRIVATE
+        src/platform/filesystem_win32.cpp src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestThemeSchedulePaletteFiles PRIVATE shlwapi)
+endif()
+target_include_directories(TestThemeSchedulePaletteFiles PRIVATE src)
+target_compile_features(TestThemeSchedulePaletteFiles PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeSchedulePaletteFiles PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
 
 add_executable(TestUpdateNoticeContent EXCLUDE_FROM_ALL
     tests/test_update_notice_content.cpp
@@ -1119,6 +1171,8 @@ if(WIN32)
         src/bootstrap/HarkenSearchBootstrapMain.cpp
         src/bootstrap/HarkenSearchBootstrapAdmission.cpp
         src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        src/bootstrap/WindowsBootstrapProgress.cpp
+        src/platform/animation_preferences_win32.cpp
         src/bootstrap/HarkenSearchBootstrapRuntime.cpp
         src/bootstrap/WindowsBootstrapFilesystem.cpp
         src/bootstrap/WindowsBootstrapFilesystemWin32.cpp
@@ -1131,6 +1185,8 @@ if(WIN32)
         src/ed25519/tweetnacl.c
     )
     set_target_properties(HarkenSearchBootstrap PROPERTIES OUTPUT_NAME HarkenSearchBootstrap)
+    include(cmake/harken_bootstrap_progress_ui.cmake)
+    harken_bootstrap_progress_ui(HarkenSearchBootstrap)
     target_include_directories(HarkenSearchBootstrap PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
@@ -1143,6 +1199,9 @@ if(WIN32)
         shell32
         ole32
         user32
+        gdi32
+        comctl32
+        uxtheme
         wintrust
         bcrypt
     )
@@ -1546,6 +1605,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand")
         COMMENT "Copying brand icons...")
 endif()
 
+# Contributor logos shown in the About dialog ship beside the executable.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/contributors"
+        COMMENT "Copying contributor icons...")
+endif()
+
 # Copy brand logo lockups next to HarkenSearch.exe. These are larger wordmark assets
 # used by splash/about/welcome surfaces and are kept separate from the small
 # 20px/40px toolbar brand icons above.
@@ -1840,32 +1908,14 @@ if(Python3_Interpreter_FOUND)
     endif()
 
 
-    add_test(
-        NAME TestOpenClawHarness
-        COMMAND ${Python3_EXECUTABLE} -m unittest discover -s .openclaw/tests -p test_harness_*.py
-    )
-    set_tests_properties(TestOpenClawHarness PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestOpenClawHarness gui-harness)
 
-    add_test(
-        NAME TestCueviTaskContext
-        COMMAND ${Python3_EXECUTABLE} -m unittest tests.test_cuevi_task_context -v
-    )
-    set_tests_properties(TestCueviTaskContext PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestCueviTaskContext core)
 
-    add_test(
-        NAME TestCueviQueue
-        COMMAND ${Python3_EXECUTABLE} -m unittest tests.test_cuevi_queue -v
-    )
-    set_tests_properties(TestCueviQueue PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestCueviQueue core)
+
+    # Private workflow tests retired with the public repository split.
+    add_test(NAME TestCTestRegistration
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ctest_registration.py"
+            --build-dir "${CMAKE_BINARY_DIR}" --config "$<CONFIG>")
+    aura_set_test_labels(TestCTestRegistration core)
 
     add_test(
         NAME TestRetiredFeedbackCredentialScan
@@ -1938,14 +1988,6 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestHarkenLegacyDataDirScan core)
 
-    add_test(
-        NAME TestHarkenSearchWorkflowCueviContract
-        COMMAND ${Python3_EXECUTABLE} -m unittest tests.test_auro_workflow_cuevi_contract -v
-    )
-    set_tests_properties(TestHarkenSearchWorkflowCueviContract PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestHarkenSearchWorkflowCueviContract core)
 
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_aris_design_review_server.py)
         add_test(
@@ -1958,29 +2000,7 @@ if(Python3_Interpreter_FOUND)
         aura_set_test_labels(TestArisDesignReviewServer core ui)
     endif()
 
-    add_test(
-        NAME TestDailySelfReview
-        COMMAND ${Python3_EXECUTABLE} -m unittest
-            tests.test_daily_self_review_model
-            tests.test_daily_self_review_collectors
-            tests.test_daily_self_review_rules
-            tests.test_daily_self_review
-            tests.test_daily_self_review_scheduler
-            -v
-    )
-    set_tests_properties(TestDailySelfReview PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestDailySelfReview core)
 
-    add_test(
-        NAME TestHarkenSearchIntake
-        COMMAND ${Python3_EXECUTABLE} -m unittest tests.test_aris_intake -v
-    )
-    set_tests_properties(TestHarkenSearchIntake PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestHarkenSearchIntake core)
 
     add_test(
         NAME TestPackEngine
@@ -2002,7 +2022,7 @@ if(Python3_Interpreter_FOUND)
 
     add_test(
         NAME TestQaExePackagingContract
-        COMMAND ${Python3_EXECUTABLE}
+        COMMAND ${Python3_EXECUTABLE} -m pytest -q
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qa_exe_packaging_contract.py"
     )
     set_tests_properties(TestQaExePackagingContract PROPERTIES
@@ -2019,32 +2039,8 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestReaperSendProductization daw)
 
-    add_test(
-        NAME TestHarkenSearchProcessGate
-        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_auro_process_gate.py"
-    )
-    set_tests_properties(TestHarkenSearchProcessGate PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestHarkenSearchProcessGate core)
 
-    add_test(
-        NAME TestHarkenSearchGate
-        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_auro_gate.py"
-    )
-    set_tests_properties(TestHarkenSearchGate PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestHarkenSearchGate core)
 
-    add_test(
-        NAME TestHarkenSearchGateCompatibility
-        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_auro_gate.py"
-    )
-    set_tests_properties(TestHarkenSearchGateCompatibility PROPERTIES
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-    aura_set_test_labels(TestHarkenSearchGateCompatibility core)
 
     add_test(
         NAME TestBehaviorContractCheck

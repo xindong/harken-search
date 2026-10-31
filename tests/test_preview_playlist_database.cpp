@@ -3,6 +3,7 @@
 #include "PlaylistFolderTree.h"
 #include "PlaylistScopeCounts.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -14,7 +15,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kFixtureRoot =
-    "D:/Aris-QA/test-databases/RQ-20261010-NONDOCK-PREVIEW-playlists";
+    "D:/Harken-QA/BUG-20261029-PLAYLIST-COVER-WALL/test-databases/playlist-scope";
 
 int g_failures = 0;
 
@@ -113,6 +114,24 @@ int main() {
     for (const auto& row : idRows.rows) {
         ids.push_back(std::stoll(row[0]));
     }
+    Expect(db.executeRawQuery(
+        ("UPDATE audio_files SET embedded_cover_key = 'E|playlist-test' WHERE id = " +
+         std::to_string(ids[0]) + ";").c_str()).success,
+        "set embedded cover on first playlist member");
+    const std::string folderImageSource = (audio / "fx/fire/folder-cover.png").u8string();
+    Expect(db.executeRawQuery(
+        ("UPDATE audio_files SET folder_cover_src_path = " + SqlQuote(folderImageSource) +
+         " WHERE id = " + std::to_string(ids[1]) + ";").c_str()).success,
+        "set folder image source on the second member of a shared cover group");
+    const auto retainsFolderItem = [&](const auto& coverGroups) {
+        const auto items = aura::playlist::BuildPlaylistCoverItemsFromGroups(coverGroups);
+        return std::any_of(items.begin(), items.end(), [&](const auto& item) {
+            return item.key == "F|PATH|D:/fx/fire" &&
+                item.kind == CoverModule::CoverKind::FolderCover &&
+                item.folderPathUtf8 == (audio / "fx/fire").u8string() &&
+                item.folderCoverSrcPathUtf8 == folderImageSource;
+        });
+    };
 
     const int64_t playlistId = db.createPlaylist("scope-four");
     Expect(playlistId > 0, "create ordinary playlist");
@@ -138,7 +157,20 @@ int main() {
     Expect(pageTree.fileCount == 2, "loaded page tree is incomplete");
 
     const auto coverKeys = db.searchPlaylistCoverKeys(playlistId, empty);
+    bool ordinaryEmbeddedSource = false;
+    for (const auto& record : coverKeys) {
+        if (record.embeddedCoverKey == "E|playlist-test" &&
+            record.filePath == (audio / rows[0].rel).u8string()) {
+            ordinaryEmbeddedSource = true;
+        }
+    }
+    Expect(ordinaryEmbeddedSource, "ordinary playlist cover query retains embedded source path");
+    Expect(std::any_of(coverKeys.begin(), coverKeys.end(), [&](const auto& record) {
+        return record.folderCoverKey == "F|PATH|D:/fx/fire" &&
+            record.folderCoverSrcPath == folderImageSource;
+    }), "ordinary playlist cover query retains folder image source path");
     const auto groups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(coverKeys, page1);
+    Expect(retainsFolderItem(groups), "ordinary playlist CoverItem retains folder image source path");
     Expect(FindGroup(groups, "F|PATH|D:/fx/fire") != nullptr &&
                FindGroup(groups, "F|PATH|D:/fx/fire")->hitCount == 2,
            "complete cover groups keep the fire folder");
@@ -166,10 +198,72 @@ int main() {
     Expect(db.searchAggregatedPlaylistFileCount(folderId, empty) == 4,
            "aggregated complete count is 4");
     const auto aggKeys = db.searchAggregatedPlaylistCoverKeys(folderId, empty);
+    bool aggregatedEmbeddedSource = false;
+    for (const auto& record : aggKeys) {
+        if (record.embeddedCoverKey == "E|playlist-test" &&
+            record.filePath == (audio / rows[0].rel).u8string()) {
+            aggregatedEmbeddedSource = true;
+        }
+    }
+    Expect(aggregatedEmbeddedSource, "aggregated playlist cover query retains embedded source path");
+    Expect(std::any_of(aggKeys.begin(), aggKeys.end(), [&](const auto& record) {
+        return record.folderCoverKey == "F|PATH|D:/fx/fire" &&
+            record.folderCoverSrcPath == folderImageSource;
+    }), "aggregated playlist cover query retains folder image source path");
     const auto aggGroups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(aggKeys, page1);
+    Expect(retainsFolderItem(aggGroups), "aggregated playlist CoverItem retains folder image source path");
     Expect(FindGroup(aggGroups, "F|PATH|D:/fx/fire") != nullptr &&
                FindGroup(aggGroups, "F|PATH|D:/fx/whoosh") != nullptr,
            "aggregated cover keys keep both groups");
+
+    const fs::path inheritedFolder = audio / "inherited";
+    const fs::path representative = inheritedFolder / "source.wav";
+    std::vector<int64_t> inheritedIds;
+    for (const char* name : {"member-a.wav", "member-b.wav", "source.wav"}) {
+        const fs::path file = inheritedFolder / name;
+        TouchFile(file);
+        const std::string key = file == representative ? "E|inherited-playlist" : "";
+        const std::string sql =
+            "INSERT INTO audio_files(file_path,file_name,folder_path,embedded_cover_key) VALUES(" +
+            SqlQuote(file.u8string()) + "," + SqlQuote(name) + "," +
+            SqlQuote(inheritedFolder.u8string()) + "," + SqlQuote(key) + ");";
+        if (!Expect(db.executeRawQuery(sql.c_str()).success, "insert inherited-cover fixture")) return 1;
+        const auto inserted = db.executeRawQuery("SELECT last_insert_rowid();");
+        if (!Expect(inserted.success && inserted.rows.size() == 1, "read inherited fixture identity")) return 1;
+        inheritedIds.push_back(std::stoll(inserted.rows[0][0]));
+    }
+    Expect(db.propagateUniqueFolderCovers(0) >= 2, "propagate embedded cover to two unillustrated folder members");
+    db.syncCoverRegistry();
+    const int64_t inheritedPlaylist = db.createPlaylist("inherited-only");
+    const int64_t inheritedParent = db.createPlaylist("inherited-aggregate");
+    Expect(db.markAsFolder(inheritedParent), "create inherited aggregate folder");
+    const int64_t inheritedChildA = db.createSubPlaylist(inheritedParent, "child-a");
+    const int64_t inheritedChildB = db.createSubPlaylist(inheritedParent, "child-b");
+    Expect(db.addToPlaylist(inheritedPlaylist, inheritedIds[0]), "ordinary playlist contains only an inheriting member");
+    Expect(db.addToPlaylist(inheritedChildA, inheritedIds[0]) &&
+           db.addToPlaylist(inheritedChildB, inheritedIds[0]) &&
+           db.addToPlaylist(inheritedChildB, inheritedIds[1]), "aggregate contains two inheriting members and a duplicate membership");
+    const auto hasInheritedArtwork = [&](const std::vector<AudioRecord>& records, int64_t count) {
+        const auto items = aura::playlist::BuildPlaylistCoverItemsFromGroups(
+            aura::playlist::BuildPlaylistCoverGroupsFromRecords(records));
+        return items.size() == 1 && items[0].kind == CoverModule::CoverKind::EmbeddedCover &&
+            items[0].key == "E|inherited-playlist" && items[0].hitCount == count &&
+            items[0].filePathUtf8 == representative.u8string();
+    };
+    const auto inheritedRecords = db.searchPlaylistCoverKeys(inheritedPlaylist, empty);
+    Expect(inheritedRecords.size() == 1 && inheritedRecords[0].filePath == (inheritedFolder / "member-a.wav").u8string(),
+           "representative resolution preserves original playlist member path and count");
+    Expect(hasInheritedArtwork(inheritedRecords, 1), "ordinary inherited-only cover resolves audio outside the playlist");
+    Expect(hasInheritedArtwork(db.searchAggregatedPlaylistCoverKeys(inheritedParent, empty), 2),
+           "aggregate inherited-only cover resolves external audio without double counting membership");
+    Expect(db.executeRawQuery("DELETE FROM cover_cache_registry WHERE cover_key = 'E|inherited-playlist';").success,
+           "simulate missing representative registry entry");
+    Expect(hasInheritedArtwork(db.searchPlaylistCoverKeys(inheritedPlaylist, empty), 1) &&
+           hasInheritedArtwork(db.searchAggregatedPlaylistCoverKeys(inheritedParent, empty), 2),
+           "both cover queries recover source from existing audio records without a registry entry");
+    Expect(db.addToPlaylist(inheritedPlaylist, inheritedIds[2]), "append actual representative after inherited member");
+    Expect(hasInheritedArtwork(db.searchPlaylistCoverKeys(inheritedPlaylist, empty), 2),
+           "inherited member preceding representative still selects embedded loading");
 
     db.close();
     std::cout << "FAILURES " << g_failures << std::endl;
