@@ -136,8 +136,8 @@ def main():
         db_proj = db_vcx.read_text(encoding="utf-8")
         expect("ARIS_PREVIEW_ISOLATION=1" in db_proj, "playlist database test keeps ARIS_PREVIEW_ISOLATION=1")
         expect("preview_playlist_isolation_root.h" in db_proj, "playlist database test keeps /FI isolation header")
-        expect("RQ-20261010-NONDOCK-PREVIEW-playlists" in read("tests/preview_playlist_isolation_root.h"),
-               "playlist database FI header still points at the synthetic playlists root")
+        expect("BUG-20261029-PLAYLIST-COVER-WALL/test-databases/playlist-scope" in read("tests/preview_playlist_isolation_root.h"),
+               "playlist database FI header points at this card's isolated test root")
 
     print("FAILURES", len(failures))
     for item in failures:
