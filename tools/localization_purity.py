@@ -867,6 +867,10 @@ def residual_tokens(text: str) -> set[str]:
 # future prose mixed into the same row still fails the gate. Each entry's
 # source is the triage table (docs/process/RQ-20260909-02-knife5-triage.md).
 PROTECTED_ROW_TOKENS = {
+    # About page: these product and license names are official names on these
+    # exact rows. Additional English prose in either row remains a violation.
+    "Main_AboutLicenseNote": {"apache", "license"},
+    "Main_AboutCindyCredit": {"cindy"},
     "Main_ChannelOrderHint": {"smpte", "film", "ambix", "acn", "sn3d", "lfe", "ls", "rs"},
     "Main_DownmixCenterGainHint": {"center"},
     "Set_DownmixCenterDb": {"center"},

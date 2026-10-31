@@ -8814,18 +8814,137 @@
       "ja": "v%s"
     },
     {
-      "id": "Main_UpdateCenterMovedNote",
+      "id": "Main_AboutLicenseNote",
       "type": "ui",
-      "zh": "版本、下载进度和更新操作已集中到独立的更新中心。",
-      "en": "Version, download progress and update actions have moved to the standalone Update Center.",
-      "ja": "バージョン・ダウンロード進捗・更新操作は独立した更新センターに集約されました。"
+      "zh": "本软件基于 Apache License 2.0 开源发布",
+      "en": "Released under the Apache License 2.0",
+      "ja": "Apache License 2.0 で公開"
     },
     {
-      "id": "Main_OpenUpdateCenterBtn",
+      "id": "Main_AboutCopyright",
       "type": "ui",
-      "zh": "打开更新中心",
-      "en": "Open Update Center",
-      "ja": "更新センターを開く"
+      "zh": "Copyright 2026 xindong",
+      "en": "Copyright 2026 xindong",
+      "ja": "Copyright 2026 xindong"
+    },
+    {
+      "id": "Main_AboutHeading",
+      "type": "ui",
+      "zh": "关于 Harken Search",
+      "en": "About Harken Search",
+      "ja": "Harken Search について"
+    },
+    {
+      "id": "Main_AboutLegalTab",
+      "type": "ui",
+      "zh": "法律文档",
+      "en": "Legal documents",
+      "ja": "法的文書"
+    },
+    {
+      "id": "Main_AboutLegalPrompt",
+      "type": "ui",
+      "zh": "选择文档后在下方直接阅读全文",
+      "en": "Select a document to read it below",
+      "ja": "文書を選ぶと、下に全文が表示されます"
+    },
+    {
+      "id": "Main_AboutEula",
+      "type": "ui",
+      "zh": "安装与使用协议",
+      "en": "EULA",
+      "ja": "利用規約"
+    },
+    {
+      "id": "Main_AboutPrivacy",
+      "type": "ui",
+      "zh": "隐私政策",
+      "en": "Privacy policy",
+      "ja": "プライバシーポリシー"
+    },
+    {
+      "id": "Main_AboutOpenSource",
+      "type": "ui",
+      "zh": "开源发布说明",
+      "en": "Open-source notice",
+      "ja": "オープンソース公開説明"
+    },
+    {
+      "id": "Main_AboutApache",
+      "type": "ui",
+      "zh": "Apache 2.0",
+      "en": "Apache 2.0",
+      "ja": "Apache 2.0"
+    },
+    {
+      "id": "Main_AboutNextLegal",
+      "type": "ui",
+      "zh": "法律文档 →",
+      "en": "Legal documents →",
+      "ja": "法的文書 →"
+    },
+    {
+      "id": "Main_AboutBack",
+      "type": "ui",
+      "zh": "← 返回关于",
+      "en": "← Back to About",
+      "ja": "← 概要に戻る"
+    },
+    {
+      "id": "Main_AboutPageFmt",
+      "type": "ui",
+      "zh": "第 %d / 2 页",
+      "en": "Page %d / 2",
+      "ja": "%d / 2 ページ"
+    },
+    {
+      "id": "Main_AboutLegalUnavailable",
+      "type": "ui",
+      "zh": "法律文档未随包提供，请检查安装文件。",
+      "en": "The legal document is missing from this installation.",
+      "ja": "このインストールには法的文書がありません。"
+    },
+    {
+      "id": "Main_AboutCindyName",
+      "type": "ui",
+      "zh": "Cindy",
+      "en": "Cindy",
+      "ja": "Cindy"
+    },
+    {
+      "id": "Main_AboutCindyCredit",
+      "type": "ui",
+      "zh": "感谢 Cindy 对本软件的开发支持。",
+      "en": "With thanks to Cindy for development support of this software.",
+      "ja": "Cindy による本ソフトの開発支援に感謝します。"
+    },
+    {
+      "id": "Main_AboutRepoLine",
+      "type": "ui",
+      "zh": "仓库",
+      "en": "Repository",
+      "ja": "リポジトリ"
+    },
+    {
+      "id": "Main_AboutDownloadLine",
+      "type": "ui",
+      "zh": "下载",
+      "en": "Download",
+      "ja": "ダウンロード"
+    },
+    {
+      "id": "Main_AboutCindyRepoLine",
+      "type": "ui",
+      "zh": "仓库",
+      "en": "Repository",
+      "ja": "リポジトリ"
+    },
+    {
+      "id": "Main_AboutCindyDownloadLine",
+      "type": "ui",
+      "zh": "下载",
+      "en": "Download",
+      "ja": "ダウンロード"
     },
     {
       "id": "Main_CleanDiskDiagBtn",
