@@ -5,6 +5,7 @@ Only this script's QA process is controlled. The shared desktop mouse is never m
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import ctypes
 from ctypes import wintypes as w
 import hashlib
@@ -67,16 +68,27 @@ def update_close_glyph(capture_info, control):
     origin_x, origin_y = capture_info["rect"][:2]
     left, top = round(control[0] - origin_x), round(control[1] - origin_y)
     right, bottom = round(control[2] - origin_x), round(control[3] - origin_y)
+    if not (0 <= left < right <= image.width and 0 <= top < bottom <= image.height):
+        raise AssertionError("close glyph bounds are outside the screenshot")
+    # The button surface occupies most of its interior in both light and dark
+    # themes. Exclude the outline and measure strokes against that real surface.
+    if right - left <= 4 or bottom - top <= 4:
+        raise AssertionError("close glyph area is too small")
+    interior = image.crop((left + 2, top + 2, right - 2, bottom - 2))
+    background = Counter(interior.getpixel((x, y)) for y in range(interior.height)
+                         for x in range(interior.width)).most_common(1)[0][0]
     points = []
-    for y in range(top, bottom):
-        for x in range(left, right):
+    for y in range(top + 2, bottom - 2):
+        for x in range(left + 2, right - 2):
             rgb = image.getpixel((x, y))
-            if max(rgb) > 70 and max(rgb) - min(rgb) < 45:
+            if max(abs(a - b) for a, b in zip(rgb, background)) >= 28:
                 points.append((x + origin_x, y + origin_y))
     if not points:
         raise AssertionError("update X glyph is invisible")
     x0, x1 = min(x for x, _ in points), max(x for x, _ in points)
     y0, y1 = min(y for _, y in points), max(y for _, y in points)
+    if len(points) > interior.width * interior.height * .55:
+        raise AssertionError("close glyph detection includes the button surface")
     return {"width": x1 - x0 + 1, "height": y1 - y0 + 1,
             "center_y": (y0 + y1) / 2.0}
 
