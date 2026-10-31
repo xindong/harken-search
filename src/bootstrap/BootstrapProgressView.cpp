@@ -42,6 +42,7 @@ std::string BootstrapProgressFailureHint(int exitCode, BootstrapProgressPhase la
     if (explanation.requiresReinstall) return u8"请重新安装最新版，保留数据库和设置。";
     if (exitCode == 10 || exitCode == 11) return u8"更新包未通过校验，请把错误码发给我们。";
     if (explanation.outcome == BootstrapExitOutcome::RolledBack) return u8"已恢复原版本，请稍后重试。";
+    if (exitCode == 30) return u8"文件准备阶段被安全拒绝，不是文件被占用；请把错误码发给我们。";
     if (lastActive == BootstrapProgressPhase::CheckingStartup ||
         lastActive == BootstrapProgressPhase::Restarting ||
         lastActive == BootstrapProgressPhase::Finalizing)

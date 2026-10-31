@@ -679,6 +679,15 @@ struct WindowsBootstrapFilesystemResult {
     }
 };
 
+// Stable names for failure records and support dialogs.  Every enumerator
+// has a name; unknown values fall back to "Unknown".  These exist so a
+// filesystem-begin rejection can carry its exact cause instead of only the
+// coarse exit code 30.
+const char* WindowsBootstrapFilesystemStatusName(
+    WindowsBootstrapFilesystemStatus status);
+const char* WindowsFilesystemBackendStatusName(
+    WindowsFilesystemBackendStatus status);
+
 enum class WindowsBootstrapRecoveryDisposition {
     ContinueForward,
     Rollback,

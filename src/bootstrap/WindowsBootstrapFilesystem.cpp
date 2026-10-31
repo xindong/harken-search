@@ -3169,4 +3169,59 @@ bool WindowsBootstrapFilesystemPort::blocked() const noexcept {
     return state_ != nullptr && state_->blocked;
 }
 
+const char* WindowsBootstrapFilesystemStatusName(
+    WindowsBootstrapFilesystemStatus status) {
+    switch (status) {
+    case WindowsBootstrapFilesystemStatus::Ok: return "Ok";
+    case WindowsBootstrapFilesystemStatus::InvalidPlan: return "InvalidPlan";
+    case WindowsBootstrapFilesystemStatus::InvalidJournal: return "InvalidJournal";
+    case WindowsBootstrapFilesystemStatus::InvalidRoots: return "InvalidRoots";
+    case WindowsBootstrapFilesystemStatus::UnsupportedIntent: return "UnsupportedIntent";
+    case WindowsBootstrapFilesystemStatus::InvalidIntentPath: return "InvalidIntentPath";
+    case WindowsBootstrapFilesystemStatus::InvalidIntentOrder: return "InvalidIntentOrder";
+    case WindowsBootstrapFilesystemStatus::RootIdentityMismatch: return "RootIdentityMismatch";
+    case WindowsBootstrapFilesystemStatus::RootVolumeMismatch: return "RootVolumeMismatch";
+    case WindowsBootstrapFilesystemStatus::RootOverlapRejected: return "RootOverlapRejected";
+    case WindowsBootstrapFilesystemStatus::ReparsePointRejected: return "ReparsePointRejected";
+    case WindowsBootstrapFilesystemStatus::MissingPayloadItem: return "MissingPayloadItem";
+    case WindowsBootstrapFilesystemStatus::ExistingItemMissing: return "ExistingItemMissing";
+    case WindowsBootstrapFilesystemStatus::UnexpectedEntryType: return "UnexpectedEntryType";
+    case WindowsBootstrapFilesystemStatus::UnknownTargetItem: return "UnknownTargetItem";
+    case WindowsBootstrapFilesystemStatus::JournalCollision: return "JournalCollision";
+    case WindowsBootstrapFilesystemStatus::JournalNotDurable: return "JournalNotDurable";
+    case WindowsBootstrapFilesystemStatus::IdentityMismatch: return "IdentityMismatch";
+    case WindowsBootstrapFilesystemStatus::ContentMismatch: return "ContentMismatch";
+    case WindowsBootstrapFilesystemStatus::PartialDurableState: return "PartialDurableState";
+    case WindowsBootstrapFilesystemStatus::CleanupPending: return "CleanupPending";
+    case WindowsBootstrapFilesystemStatus::RetryableAccessDenied: return "RetryableAccessDenied";
+    case WindowsBootstrapFilesystemStatus::UnsupportedMetadata: return "UnsupportedMetadata";
+    case WindowsBootstrapFilesystemStatus::TransactionBlocked: return "TransactionBlocked";
+    case WindowsBootstrapFilesystemStatus::BackendFailure: return "BackendFailure";
+    }
+    return "Unknown";
+}
+
+const char* WindowsFilesystemBackendStatusName(
+    WindowsFilesystemBackendStatus status) {
+    switch (status) {
+    case WindowsFilesystemBackendStatus::Ok: return "Ok";
+    case WindowsFilesystemBackendStatus::NotFound: return "NotFound";
+    case WindowsFilesystemBackendStatus::AlreadyExists: return "AlreadyExists";
+    case WindowsFilesystemBackendStatus::AccessDenied: return "AccessDenied";
+    case WindowsFilesystemBackendStatus::InvalidPath: return "InvalidPath";
+    case WindowsFilesystemBackendStatus::ExactPathMismatch: return "ExactPathMismatch";
+    case WindowsFilesystemBackendStatus::ReparsePoint: return "ReparsePoint";
+    case WindowsFilesystemBackendStatus::NotDirectory: return "NotDirectory";
+    case WindowsFilesystemBackendStatus::NotRegularFile: return "NotRegularFile";
+    case WindowsFilesystemBackendStatus::IdentityMismatch: return "IdentityMismatch";
+    case WindowsFilesystemBackendStatus::ContentMismatch: return "ContentMismatch";
+    case WindowsFilesystemBackendStatus::DirectoryNotEmpty: return "DirectoryNotEmpty";
+    case WindowsFilesystemBackendStatus::CrossVolume: return "CrossVolume";
+    case WindowsFilesystemBackendStatus::UnsupportedMetadata: return "UnsupportedMetadata";
+    case WindowsFilesystemBackendStatus::DurabilityFailed: return "DurabilityFailed";
+    case WindowsFilesystemBackendStatus::IoFailure: return "IoFailure";
+    }
+    return "Unknown";
+}
+
 }  // namespace aris::bootstrap

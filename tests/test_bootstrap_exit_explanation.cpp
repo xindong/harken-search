@@ -178,6 +178,25 @@ int main(int argc, char** argv) {
     check(!unknown.requiresReinstall && !unknown.message.empty(),
           "an unrecognised code does not default to demanding a reinstall");
 
+    // Error 30 used to tell users to quit the application and retry, but the
+    // old application has always fully exited by the time the filesystem
+    // stage rejects.  The message must name the real stage and must not
+    // repeat the misleading quit-and-retry advice.
+    {
+        const int code = static_cast<int>(BootstrapExitCode::FilesystemRejected);
+        const auto e = ExplainBootstrapExit(code);
+        check(e.outcome == BootstrapExitOutcome::Retryable,
+              "filesystem rejection stays retryable");
+        check(!e.requiresReinstall,
+              "filesystem rejection never demands a reinstall");
+        check(e.message.find(std::to_string(code)) != std::string::npos,
+              "filesystem rejection still carries the raw code");
+        check(e.message.find(u8"\u51c6\u5907\u6587\u4ef6\u9636\u6bb5") != std::string::npos,
+              "filesystem rejection names the file preparation stage");
+        check(e.message.find(u8"\u8bf7\u5b8c\u5168\u9000\u51fa") == std::string::npos,
+              "filesystem rejection no longer gives the misleading quit advice");
+    }
+
     if (g_failures == 0) std::printf("all bootstrap exit explanations pass\n");
     return g_failures == 0 ? 0 : 1;
 }
