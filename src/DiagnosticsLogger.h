@@ -114,6 +114,7 @@ public:
     bool exportJsonLinesCrashSafe(const wchar_t* pathW);
 
 private:
+    friend struct DiagnosticsRetentionTestAccess;
     DiagnosticsLogger();
     ~DiagnosticsLogger();
     DiagnosticsLogger(const DiagnosticsLogger&) = delete;
@@ -152,6 +153,7 @@ private:
     size_t                     m_head = 0;   // 写入位置
     size_t                     m_count = 0;  // 当前条目数
     int64_t                    m_oldestTimestampMs = 0; // Conservative minimum; enqueue order may differ.
+    bool                       m_timestampsOrdered = true; // Protected by m_mutex.
     mutable std::mutex         m_mutex;      // 仅用于导出/管理
 
     static constexpr size_t    kQueueSize = 8192;
