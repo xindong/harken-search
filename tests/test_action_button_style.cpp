@@ -44,13 +44,23 @@ static void CheckCloseGlyphCenter() {
                 ImRect ink(vertices[vertices.Size - 4].pos, vertices[vertices.Size - 4].pos);
                 for (int i = vertices.Size - 3; i < vertices.Size; ++i) ink.Add(vertices[i].pos);
                 const ImRect button(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-                const auto delta = ImVec2(ink.GetCenter().x - button.GetCenter().x,
-                                          ink.GetCenter().y - button.GetCenter().y);
-                std::printf("close glyph size=%.1f frame=%d delta=(%.2f,%.2f)\n",
-                            fontSize, frame, delta.x, delta.y);
-                Check(std::fabs(delta.x) <= .6f && std::fabs(delta.y) <= .6f,
-                      "Lucide X is centered inside its own button surface");
-                Check(button.Contains(ink), "close glyph stays within its hit area");
+                const auto* glyph = ImGui::GetFontBaked()->FindGlyph((ImWchar)codepoint);
+                auto* texture = io.Fonts->TexData;
+                int minX = texture->Width, minY = texture->Height, maxX = -1, maxY = -1;
+                const auto& first = vertices[vertices.Size - 4];
+                const auto& last = vertices[vertices.Size - 2];
+                const float u0 = first.uv.x * texture->Width, v0 = first.uv.y * texture->Height;
+                const float u1 = last.uv.x * texture->Width, v1 = last.uv.y * texture->Height;
+                for (int y = int(std::ceil(v0)); y < int(v1); ++y) for (int x = int(std::ceil(u0)); x < int(u1); ++x) {
+                    const auto* pixel = static_cast<const unsigned char*>(texture->GetPixelsAt(x, y));
+                    const int alpha = texture->Format == ImTextureFormat_Alpha8 ? pixel[0] : pixel[3];
+                    if (alpha >= 64) { minX = ImMin(minX, x); minY = ImMin(minY, y); maxX = ImMax(maxX, x); maxY = ImMax(maxY, y); }
+                }
+                const ImVec2 bitmapCenter(ink.Min.x + ((minX + maxX + 1) * .5f - u0) / (u1 - u0) * ink.GetWidth(),
+                                          ink.Min.y + ((minY + maxY + 1) * .5f - v0) / (v1 - v0) * ink.GetHeight());
+                std::printf("close glyph size=%.1f frame=%d source=%d visible delta=(%.2f,%.2f)\n", fontSize, frame, glyph->SourceIdx, bitmapCenter.x - button.GetCenter().x, bitmapCenter.y - button.GetCenter().y);
+                Check(std::fabs(bitmapCenter.x - button.GetCenter().x) <= 1 && std::fabs(bitmapCenter.y - button.GetCenter().y) <= 1, "visible X pixels are centered");
+                Check(minX <= maxX && minY <= maxY, "real font texture contains visible close strokes");
             }
             ImGui::PopStyleVar();
             ImGui::PopFont();
@@ -153,6 +163,16 @@ int main() {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigNavCursorVisibleAlways = true;
     io.DisplaySize = ImVec2(1600, 1000);
+    // Match the actual desktop backend's dynamic glyph rasterization.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+#ifdef _WIN32
+    if (std::filesystem::exists("C:/Windows/Fonts/segoeui.ttf") && std::filesystem::exists("C:/Windows/Fonts/msyh.ttc")) {
+        ImFontConfig config; config.OversampleH = 3; config.OversampleV = 2; config.PixelSnapH = true;
+        io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf", 14, &config);
+        config.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc", 14, &config, io.Fonts->GetGlyphRangesChineseFull());
+    } else
+#endif
     io.Fonts->AddFontDefault();
     ImFontConfig icons;
     icons.MergeMode = true; icons.PixelSnapH = true;
@@ -162,8 +182,6 @@ int main() {
         "thirdparty/lucide/lucide.ttf";
     Check(io.Fonts->AddFontFromFileTTF(iconPath.string().c_str(), 14.0f, &icons, iconRange) != nullptr,
           "load shipped Lucide font");
-    unsigned char* pixels; int w, h;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
     CheckCloseGlyphCenter();
     CheckCloseIconStates();
     CheckCloseKeyboardInput();
