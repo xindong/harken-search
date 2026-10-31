@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -273,7 +274,7 @@ static void checkScanDialogPrecomputeControlContract() {
               source.find("ScanBackgroundBackfillDeferred: session=%lld reason=ready_to_work strategy=fast ready=%d interactIdleMs=%lld") != std::string::npos &&
               source.find("ScanBackgroundBackfillDeferredSatisfied: session=%lld strategy=fast waitedMs=%lld") != std::string::npos &&
               source.find("ScanBackgroundBackfillResume: session=%lld strategy=%s threads=%d") != std::string::npos &&
-              source.find("&state.backfillQueue,\n                            backgroundBackfillThreads);") != std::string::npos,
+              std::regex_search(source, std::regex(R"(&state[.]backfillQueue,[[:space:]]*backgroundBackfillThreads[)];)")),
           "BDD: Fast scan defers post-completion mini backfill briefly until ready-to-work pressure eases, then resumes on a lighter background worker count");
     check(source.find("const bool foregroundBackfillKickNeeded =") != std::string::npos &&
               source.find("state.scanCompletionPending.load(std::memory_order_acquire) &&") != std::string::npos &&

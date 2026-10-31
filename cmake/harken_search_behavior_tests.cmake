@@ -5420,6 +5420,7 @@ aura_set_test_labels(CoverWallPageDedupe db)
 
 add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_database_features.cpp
+    tests/test_database_fts_trigger_concurrency.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AsyncWorker.cpp
@@ -5484,6 +5485,8 @@ if(MSVC)
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestDatabaseFtsTriggerConcurrency COMMAND TestDatabaseFeatures --fts-trigger-concurrency)
+aura_set_test_labels(TestDatabaseFtsTriggerConcurrency db)
 add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
 set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
     ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")

@@ -5601,7 +5601,11 @@ int testLegacyDescriptionDisplay() {
     return ok ? 0 : 1;
 }
 
+int testConcurrentFtsTriggerRefresh();
+
 int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string(argv[1]) == "--fts-trigger-concurrency")
+        return testConcurrentFtsTriggerRefresh();
     char* descriptionOnlyRaw = nullptr;
     size_t descriptionOnlyLen = 0;
     const bool descriptionOnly =

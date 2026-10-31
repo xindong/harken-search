@@ -16,7 +16,7 @@
     {
       "fingerprint": "src/WindowsMain.cpp|native-include|windows.h|d395cd89463e8f58|1",
       "path": "src/WindowsMain.cpp",
-      "line": 34,
+      "line": 37,
       "rule": "native-include",
       "token": "windows.h",
       "occurrence": 1,
@@ -26,7 +26,7 @@
     {
       "fingerprint": "src/WindowsMain.cpp|native-include|shellapi.h|a3407e692c94a8de|1",
       "path": "src/WindowsMain.cpp",
-      "line": 35,
+      "line": 38,
       "rule": "native-include",
       "token": "shellapi.h",
       "occurrence": 1,
@@ -36,7 +36,7 @@
     {
       "fingerprint": "src/WindowsMain.cpp|native-include|ole2.h|d9e53221b9eff462|1",
       "path": "src/WindowsMain.cpp",
-      "line": 37,
+      "line": 40,
       "rule": "native-include",
       "token": "ole2.h",
       "occurrence": 1,
@@ -46,7 +46,7 @@
     {
       "fingerprint": "src/WindowsMain.cpp|native-include|dbghelp.h|0c862e39dfa4b607|1",
       "path": "src/WindowsMain.cpp",
-      "line": 182,
+      "line": 185,
       "rule": "native-include",
       "token": "dbghelp.h",
       "occurrence": 1,
@@ -56,7 +56,7 @@
     {
       "fingerprint": "src/WindowsMain.cpp|native-include|WebView2.h|b2137ebe9b764182|1",
       "path": "src/WindowsMain.cpp",
-      "line": 201,
+      "line": 204,
       "rule": "native-include",
       "token": "WebView2.h",
       "occurrence": 1,
@@ -66,7 +66,7 @@
     {
       "fingerprint": "src/WindowsMain.cpp|native-include|wrl.h|9a6f80392d3201fd|1",
       "path": "src/WindowsMain.cpp",
-      "line": 202,
+      "line": 205,
       "rule": "native-include",
       "token": "wrl.h",
       "occurrence": 1,
