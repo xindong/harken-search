@@ -2,6 +2,128 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.43",
+      "release_date": "2026-10-31",
+      "headline": "完善日夜主题、独立筛选、扫描与更新体验",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "新增内容",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "日夜主题",
+                  "description": "支持按时间切换白天与黑夜主题，两边均可选择全部五个主题并分别编辑；手动选择和定时设置会在重启后保留。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新过程提示",
+                  "description": "更新执行期间显示官方 Logo、实际步骤与进度；完成后自动关闭，失败时保留原因。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "关于与法律文档",
+                  "description": "关于页补充 Cindy 致谢、仓库和下载地址，并提供随包法律文档。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "独立筛选",
+                  "description": "搜索关键词保留文件夹范围；文件夹、封面、标签和元数据等筛选独立叠加，刷新或清除单项时保留其他条件。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "扫描收尾与再次扫描",
+                  "description": "修复右键快速扫描不能正常收尾，以及暂停保留后重启再次扫描的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "中文描述与封面",
+                  "description": "修复数据库列表中可识别的旧中文描述乱码，并补齐播放列表封面墙中的真实封面。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "丢失文件重新关联",
+                  "description": "完善单个与批量重新关联的确认、结果和冲突提示，改善窄窗口下的操作。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "关闭按钮与控件裁切",
+                  "description": "应用内关闭 X 去掉底框并居中，修复部分普通按钮裁切；Windows 原生标题栏保持原样。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "停靠分隔条与封面闪烁",
+                  "description": "修复左右面板互换后分隔条消失，以及部分窗口尺寸下封面墙反复缩放、闪烁的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新说明显示",
+                  "description": "随包提供完整版本说明与贡献者；本机版本没有精确匹配时显示已有最新记录。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "首次建库",
+                  "description": "首次使用时合为一个压暗背景的建库窗口，名称、位置和完整路径直接可见。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "五主题控件",
+                  "description": "统一普通按钮、相似音效按钮与预设下拉的外观，日夜设置按勾选状态显示。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "大库响应",
+                  "description": "相似音效与后台补全减少同步统计造成的界面停顿。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "诊断日志",
+                  "description": "诊断界面和相关导出保留最近一分钟的日志，满容量时保留新记录。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新缓存",
+                  "description": "成功升级并确认新版启动后，更新器下载区保留当前版本和上一版本，清理更早的旧缓存。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "竖屏与封面浏览",
+                  "description": "扩大 Info 上下停靠的高度调整范围；封面墙支持更小封面和更多列；Info 相似音效入口可隐藏并记住选择。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
+    },
+    {
       "version": "1.0.42",
       "release_date": "2026-10-29",
       "headline": "优化竖屏停靠、封面墙与相似音效入口",
