@@ -58,7 +58,7 @@ assert 'return "";' in PORTABLE
 
 qualified_call = "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd)"
 assert MAIN.count(qualified_call) == 1
-button = MAIN.index("ImGui::Button(L(Set_ImportSettings)")
+button = MAIN.index("aura::ui::ActionButton(L(Set_ImportSettings)")
 tooltip = MAIN.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
 body = MAIN[button:tooltip]
 assert "OPENFILENAMEW" not in body

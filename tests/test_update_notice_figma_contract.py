@@ -30,11 +30,14 @@ def test_truthful_copy_and_actions_are_present() -> None:
     source = _source()
     for copy in (
         "正在检查更新", "当前已是最新版本", "有新版本可用", "正在下载更新",
-        "正在替换更新文件", "正在重启 Harken Search", "立即更新", "重试", "知道了",
+        "正在准备更新", "独立更新窗口", "立即更新", "重试", "知道了",
     ):
         assert copy in source
     assert "已更新到" not in source
     assert "50%" not in source
+    # The main process cannot truthfully claim replacement while still alive.
+    assert "正在替换并重启" not in source
+    assert "正在替换更新文件" not in source
 
 
 def test_history_shares_full_content_and_returns_to_update() -> None:

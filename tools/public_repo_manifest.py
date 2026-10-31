@@ -34,6 +34,7 @@ EXCLUDED_PREFIXES = (
 
 # Internal governance / board / review / QA-packaging paths that must not ship.
 EXCLUDED_GLOBS = (
+    "tests/test_local_agent_docs.py",
     "tools/aris_design_review_server.py",
     "tools/start_aris_design_review.ps1",
     "tests/test_aris_design_review_server.py",
