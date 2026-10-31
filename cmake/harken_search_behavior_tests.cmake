@@ -6295,6 +6295,28 @@ endif()
 add_test(NAME TestReverseReloadContract COMMAND TestReverseReloadContract)
 aura_set_test_labels(TestReverseReloadContract core)
 
+add_executable(TestBatchFeatureResultState EXCLUDE_FROM_ALL tests/test_batch_feature_result_state.cpp)
+target_include_directories(TestBatchFeatureResultState PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestBatchFeatureResultState PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestBatchFeatureResultState COMMAND TestBatchFeatureResultState)
+aura_set_test_labels(TestBatchFeatureResultState core)
+
+add_executable(TestScanDialogPresentation EXCLUDE_FROM_ALL tests/test_scan_dialog_presentation.cpp)
+target_include_directories(TestScanDialogPresentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestScanDialogPresentation PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestScanDialogPresentation COMMAND TestScanDialogPresentation)
+aura_set_test_labels(TestScanDialogPresentation core)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME TestScanDialogSimpleContract COMMAND ${Python3_EXECUTABLE} -m pytest -q
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_dialog_simple_contract.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qa_scan_dialog_driver.py)
+    aura_set_test_labels(TestScanDialogSimpleContract core)
+endif()
+
 add_executable(TestScanWorkflowState EXCLUDE_FROM_ALL
     tests/test_scan_workflow_state.cpp
 )

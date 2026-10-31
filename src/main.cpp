@@ -63,6 +63,7 @@
 #include "Database.h"
 #include "sqlite3.h"
 #include "ScanDatabaseOpenDiagnostics.h"
+#include "ScanDialogPresentation.h"
 #include "PathUtils.h"  // Canonical folder filters and scroll targets.
 #include "FolderTreeContextActions.h"
 #include "SearchQuery.h"
@@ -10759,6 +10760,8 @@ static bool SwitchDatabase(AppState& state,
     state.pendingPostScanSimilarityIndex.store(false, std::memory_order_release);
     state.batchFeatureCompletionNotice.store(false);
     state.showPostScanSimilarityIndexNotice = false;
+    state.scanSimilarityOwned = false;
+    state.showScanSimilarityDialog = false;
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
 
 // 主线程必须做的事：GPU 资源释放 + UI 数据结构清理（一帧内完成）
@@ -10896,6 +10899,14 @@ static bool StartGlobalMissingRecordsCleanup(AppState& state) {
     });
     return true;
 }
+
+#if ARIS_PREVIEW_ISOLATION
+bool StartGlobalMissingRecordsCleanupForQa(AppState& state) {
+    const bool started = StartGlobalMissingRecordsCleanup(state);
+    if (started) state.showScanDialog = true;
+    return started;
+}
+#endif
 
 static void ExecuteFolderRename(AppState& state) {
     struct AppliedOp {
@@ -29104,9 +29115,13 @@ void StartBatchFeatureExtraction(AppState& state) {
     state.batchFeatureProgress.store(0);
     const int pending = state.database.countFilesWithoutFeatures(0);
     state.batchFeatureTotal.store(pending);
+    state.batchFeatureResults.Reset(pending);
+    state.scanSimilarityOwned = false;
+    state.showScanSimilarityDialog = false;
     state.batchFeatureThread = std::thread([&state]() {
         auto paths = state.database.getFilesWithoutFeatures(0);
         state.batchFeatureTotal.store((int)paths.size());
+        state.batchFeatureResults.SetTotal(static_cast<int>(paths.size()));
 
         unsigned int nThreads = std::max(1u,
             std::min(4u, std::thread::hardware_concurrency()));
@@ -29121,13 +29136,19 @@ void StartBatchFeatureExtraction(AppState& state) {
                     int i = pathIdx.fetch_add(1);
                     if (i >= (int)paths.size()) break;
                     const std::string& path = paths[i];
+                    state.batchFeatureResults.SetCurrentFile(path);
 
                     const FeatureExtractionResult extracted =
                         FeatureExtractor::extractFromFileChecked(
                             path, [&state] {
                                 return state.batchFeatureCancelRequested.load();
                             });
-                    if (!extracted.ok || state.batchFeatureCancelRequested.load()) {
+                    if (state.batchFeatureCancelRequested.load() || extracted.error == FeatureExtractionError::Cancelled) {
+                        break; // Cancelled work remains unprocessed, not failed or successful.
+                    }
+                    if (!extracted.ok) {
+                        state.batchFeatureResults.RecordFailure(extracted.error == FeatureExtractionError::NoSamples
+                            ? HarkenSearch::BatchFeatureFailure::Empty : HarkenSearch::BatchFeatureFailure::Unreadable);
                         state.batchFeatureProgress.fetch_add(1);
                         continue;
                     }
@@ -29142,10 +29163,13 @@ void StartBatchFeatureExtraction(AppState& state) {
                     }
                     float trueRms = vec.features[AudioFeatureVector::ENERGY_OFFSET];
                     FeatureExtractor::fillGlobalFeatures(vec, lufs, trueRms, rec.durationSeconds, tp);
+                    bool saved = false;
                     {
                         std::lock_guard<std::mutex> lk(dbMutex);
-                        state.database.saveAudioFeaturesByPath(path, vec);
+                        saved = state.database.saveAudioFeaturesByPath(path, vec);
                     }
+                    if (saved) state.batchFeatureResults.RecordSuccess();
+                    else state.batchFeatureResults.RecordFailure(HarkenSearch::BatchFeatureFailure::Save);
                     state.batchFeatureProgress.fetch_add(1);
                 }
             });
@@ -29156,6 +29180,7 @@ void StartBatchFeatureExtraction(AppState& state) {
             state.similaritySearch.loadFeatureCache(state.database);
             state.batchFeatureCompletionNotice.store(!paths.empty());
         }
+        state.batchFeatureResults.Finish(state.batchFeatureCancelRequested.load());
         state.batchFeatureExtracting.store(false);
     });
 }
@@ -29251,6 +29276,176 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!sharedSimilarStyle) ImGui::Separator();
 }
 
+static std::string ScanDialogLeafName(const std::string& path) {
+    const auto end = path.find_last_not_of("/\\");
+    if (end == std::string::npos) return path;
+    const auto slash = path.find_last_of("/\\", end);
+    return path.substr(slash == std::string::npos ? 0 : slash + 1,
+        end - (slash == std::string::npos ? 0 : slash + 1) + 1);
+}
+
+static bool DrawScanDialogHeader(const char* title, bool closable) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(title);
+    bool close = false;
+    if (closable) {
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - 28.f));
+        close = aura::ui::IconButton(ICON_LC_X, L(Close));
+        ThemeInspector::RegisterLastItem("scan.dialog.close");
+    }
+    ImGui::Dummy(ImVec2(0.f, 4.f));
+    return close;
+}
+
+static void DrawScanWaitingBar() {
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float segment = width * .24f;
+    const float offset = (width - segment) * (.5f + .5f * std::sin(float(ImGui::GetTime()) * 2.f));
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(start, ImVec2(start.x + width, start.y + 8.f), ImGui::GetColorU32(ImGuiCol_FrameBg), 4.f);
+    draw->AddRectFilled(ImVec2(start.x + offset, start.y), ImVec2(start.x + offset + segment, start.y + 8.f),
+        ImGui::GetColorU32(ThemeColors::current().controlAccent), 4.f);
+    ImGui::Dummy(ImVec2(width, 8.f));
+}
+
+static void DrawScanDialogSource(const std::vector<std::string>& folders) {
+    if (folders.empty()) return;
+    const auto first = ScanDialogLeafName(folders.front());
+    char caption[1024];
+    if (folders.size() > 1) std::snprintf(caption, sizeof(caption), L(ScanUi_FolderCountFmt), first.c_str(), int(folders.size()));
+    else std::snprintf(caption, sizeof(caption), "%s", first.c_str());
+    if (ImGui::TreeNodeEx("##ScanFolders", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", caption)) {
+        for (const auto& path : folders) ImGui::TextWrapped("%s", path.c_str());
+        ImGui::TreePop();
+    }
+}
+
+static void ResetScanDialogResult(AppState& state) {
+    // Presentation dismissal only. Refresh stays deferred on the main loop.
+    if (state.isScanning.load() || state.scanCompletionPending.load()) return;
+    if (state.scanTotal.load() > 0 && !state.scanWasCancelled) {
+        state.dbSwitchSettleFramesRemaining = std::max(state.dbSwitchSettleFramesRemaining, 120);
+        state.needsDatabaseRefresh = true;
+    }
+    state.scanProgress = 0; state.scanTotal = 0;
+    state.scanAddedCount = 0; state.scanUpdatedCount = 0;
+    state.scanSkippedCount = 0; state.scanRemovedCount = 0; state.scanErrorCount = 0;
+    state.scanIngestedCount = 0; state.scanIngestDurationMs = 0;
+    state.clearScanTiming(); state.clearScanWorkflowState();
+    state.scanSummaryToastUntil = 0.; state.resetScanReadyToWorkState(); state.clearScanErrors();
+    state.scanCancelRequested = false; state.scanWasCancelled = false; state.scanWasPaused = false;
+    state.scanDialogAutoStart = false; state.scanDataCommitted = false;
+    // A paused scan stays paused after dismissing its result. Only the next
+    // beginNewScanTask clears this latch and permits background work again.
+}
+
+static void PlaceScanDialogInMainViewport(const char* name, float width, float maxHeight) {
+    const auto* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowViewport(viewport->ID);
+    const auto* previous = ImGui::FindWindowByName(name);
+    if (previous && previous->WasActive) {
+        const float left = viewport->WorkPos.x + 16.f;
+        const float top = viewport->WorkPos.y + 16.f;
+        const float right = std::max(left, viewport->WorkPos.x + viewport->WorkSize.x - 16.f - width);
+        const float bottom = std::max(top, viewport->WorkPos.y + viewport->WorkSize.y - 16.f - std::min(previous->Size.y, maxHeight));
+        const ImVec2 position(std::clamp(previous->Pos.x, left, right), std::clamp(previous->Pos.y, top, bottom));
+        if (position.x != previous->Pos.x || position.y != previous->Pos.y)
+            ImGui::SetNextWindowPos(position, ImGuiCond_Always);
+    } else {
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * .5f,
+            viewport->WorkPos.y + viewport->WorkSize.y * .5f), ImGuiCond_Appearing, ImVec2(.5f, .5f));
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.f), ImVec2(width, maxHeight));
+}
+
+static void DrawScanSimilarityDialogs(AppState& state) {
+    constexpr const char* progressId = "##ScanSimilarityProgress";
+    constexpr const char* resultId = "##ScanSimilarityResult";
+    if (!state.scanSimilarityOwned) {
+        // A database switch must not leave an unrendered modal on the stack.
+        for (const char* id : {progressId, resultId}) {
+            if (BeginTransientScrollbarPopupModal(id, nullptr, ImGuiWindowFlags_NoTitleBar)) {
+                ImGui::CloseCurrentPopup(); ImGui::EndPopup();
+            }
+        }
+        return;
+    }
+    const auto result = state.batchFeatureResults.Snapshot();
+    if (!result.available) return;
+    const auto& colors = ThemeColors::current();
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, colors.dialogBG);
+    ImGui::PushStyleColor(ImGuiCol_Text, colors.interfaceText);
+    ImGui::PushStyleColor(ImGuiCol_Border, colors.chromeBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22.f, 18.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12.f, 12.f));
+    const float width = std::min(520.f, std::max(300.f, ImGui::GetMainViewport()->WorkSize.x - 32.f));
+    const float maxHeight = std::max(240.f, ImGui::GetMainViewport()->WorkSize.y - 32.f);
+    const auto flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
+    if (state.showScanSimilarityDialog && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
+        ImGui::OpenPopup(result.running ? progressId : resultId);
+        state.showScanSimilarityDialog = false;
+    }
+    bool openResult = false;
+    PlaceScanDialogInMainViewport(progressId, width, maxHeight);
+    if (BeginTransientScrollbarPopupModal(progressId, nullptr, flags)) {
+        { ReadingTextScope reading;
+        if (!result.running) {
+            ImGui::CloseCurrentPopup(); openResult = true;
+        } else {
+            DrawScanDialogHeader(L(ScanUi_SimilarTitle), false);
+            const bool stopping = state.batchFeatureCancelRequested.load();
+            ImGui::PushFont(GetUIFontEmphasis());
+            ImGui::TextUnformatted(stopping ? L(ScanUi_StoppingAnalysis) : L(ScanUi_Analyzing));
+            ImGui::PopFont();
+            ImGui::TextDisabled("%s", L(ScanUi_ImportComplete));
+            if (result.total > 0 && !stopping) {
+                const float fraction = std::clamp(float(result.Processed()) / result.total, 0.f, 1.f);
+                DrawUnifiedProgressBar(fraction, ImVec2(-1, 8.f));
+                ImGui::Text("%d / %d", result.Processed(), result.total);
+                ImGui::SameLine(); ImGui::TextDisabled("%.0f%%", fraction * 100.f);
+                if (!result.currentFile.empty()) ImGui::TextWrapped("%s", ScanDialogLeafName(result.currentFile).c_str());
+            } else DrawScanWaitingBar();
+            if (!stopping) {
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                if (aura::ui::ActionButton(L(ScanUi_StopAnalysis), ImVec2(0, 32.f), aura::ui::ButtonVariant::Quiet)) state.batchFeatureCancelRequested.store(true);
+                ThemeInspector::RegisterLastItem("scan.similar.stop");
+                ImGui::SameLine();
+                if (aura::ui::ActionButton(L(Main_ContinueBackgroundBtn), ImVec2(0, 32.f), aura::ui::ButtonVariant::PrimarySearch)) ImGui::CloseCurrentPopup();
+                ThemeInspector::RegisterLastItem("scan.similar.background");
+            }
+        }
+        }
+        ImGui::EndPopup();
+    }
+    if (openResult) ImGui::OpenPopup(resultId);
+    PlaceScanDialogInMainViewport(resultId, width, maxHeight);
+    if (BeginTransientScrollbarPopupModal(resultId, nullptr, flags)) {
+        { ReadingTextScope reading;
+        if (DrawScanDialogHeader(result.stopped ? L(ScanUi_AnalysisStopped) : L(ScanUi_AnalysisComplete), true) ||
+            (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape))) {
+            state.scanSimilarityOwned = false; ImGui::CloseCurrentPopup();
+        }
+        ImGui::PushFont(GetUIFontEmphasis());
+        ImGui::Text(result.stopped ? L(ScanUi_AnalyzedFmt) : L(ScanUi_AnalysisSuccessFmt), result.succeeded);
+        ImGui::PopFont();
+        if (result.Failed() > 0) {
+            ImGui::Text(L(Main_FailedFmt), result.Failed());
+            const char* labels[] = {L(ScanUi_Unsupported), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty), L(ScanUi_FailedSave)};
+            for (size_t i = 0; i < result.failures.size(); ++i) ImGui::Text("%s  %d", labels[i], result.failures[i]);
+        }
+        if (result.Remaining() > 0) ImGui::Text(L(ScanUi_UnprocessedFmt), result.Remaining());
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        if (aura::ui::ActionButton(L(Done), ImVec2(-1.f, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
+            state.scanSimilarityOwned = false; ImGui::CloseCurrentPopup();
+        }
+        ThemeInspector::RegisterLastItem("scan.similar.done");
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
+}
+
 void RenderUI(AppState& state) {
     if (state.featureIndexStatistics &&
         (!state.panelSimilarSounds.visible || state.dbSwitchInProgress || !state.database.isOpen())) {
@@ -29265,8 +29460,10 @@ void RenderUI(AppState& state) {
             state.batchFeatureExtracting.load())) {
         state.pendingPostScanSimilarityIndex.store(false, std::memory_order_release);
         StartBatchFeatureExtraction(state);
-        if (state.batchFeatureExtracting.load()) {
+        if (state.batchFeatureResults.Snapshot().available) {
             state.showPostScanSimilarityIndexNotice = true;
+            state.scanSimilarityOwned = true;
+            state.showScanSimilarityDialog = true;
         }
     }
     if (!state.batchFeatureExtracting.load() &&
@@ -31422,8 +31619,21 @@ void RenderUI(AppState& state) {
     }
 
     // Scan folder dialog
+    auto scanWorkflowSnapshot = state.getScanWorkflowSnapshot();
+    const bool scanIsCleanup = scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Idle && state.scanTotal.load() > 0;
+    if (scanIsCleanup) scanWorkflowSnapshot = HarkenSearch::BuildCleanupScanSnapshot(
+        state.isScanning.load(), state.scanCancelRequested.load(), state.scanErrorCount.load() > 0,
+        state.scanProgress.load(), state.scanTotal.load());
+    const auto scanView = HarkenSearch::BuildScanDialogView({
+        scanWorkflowSnapshot, state.isScanning.load(std::memory_order_acquire),
+        state.scanCompletionPending.load(std::memory_order_acquire),
+        state.scanStopDisposition.load(std::memory_order_acquire),
+        state.scanFatalFailure.load(std::memory_order_acquire), state.scanErrorCount.load()});
+    constexpr const char* scanResultPopup = "##ScanResult";
+    if (!scanView.canStop) state.scanUiRequestStopChoice = false;
     if (state.showScanDialog) {
-        ImGui::OpenPopup(L(Dlg_ScanFolder));
+        ImGui::OpenPopup(scanView.surface == HarkenSearch::ScanDialogSurface::Result
+            ? scanResultPopup : L(Dlg_ScanFolder));
         state.showScanDialog = false;
     }
     const bool layeredNavyDialog = state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized();
@@ -31447,413 +31657,157 @@ void RenderUI(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_Button, scanDialogButtonBg);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, scanDialogButtonHover);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, scanDialogButtonActive);
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ScanFolder), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        { ReadingTextScope _readingPopup;  // dialog body is a reading surface
-        const HarkenSearch::ScanWorkflowSnapshot scanWorkflowSnapshot =
-            state.getScanWorkflowSnapshot();
-        const HarkenSearch::ScanProgressView scanProcessingProgress =
-            HarkenSearch::BuildScanProcessingProgress(scanWorkflowSnapshot);
-        const bool scanForegroundCompletionActive =
-            state.scanCompletionPending.load(std::memory_order_acquire) &&
-            !state.scanWasCancelled &&
-            !state.scanWasPaused;
-        const bool scanCompleteSummaryActive =
-            !state.isScanning.load(std::memory_order_acquire) &&
-            !state.scanCompletionPending.load(std::memory_order_acquire) &&
-            !state.scanWasCancelled &&
-            !state.scanWasPaused &&
-            state.scanTotal.load() > 0 &&
-            state.scanErrorCount.load() == 0 &&
-            state.scanCompletionReadyAtMs.load(std::memory_order_acquire) > 0 &&
-            HarkenSearch::AreScanCompletionCountersReady(
-                !state.settings.cacheWaveformsOnScan,
-                state.scanCompletionMiniUnresolved.load(std::memory_order_acquire),
-                state.scanCompletionCoverUnresolved.load(std::memory_order_acquire),
-                state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire)) &&
-            scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Completed &&
-            HarkenSearch::CanEnterCompleted(scanWorkflowSnapshot);
-        const bool scanProgressSurfaceActive =
-            state.isScanning || scanForegroundCompletionActive || scanCompleteSummaryActive;
-        if (!scanProgressSurfaceActive) {
-            EscClosePopup();
-        }
-        if (scanProgressSurfaceActive) {
-            ImGuiIO& io = ImGui::GetIO();
-            const int completionTotalFiles =
-                state.scanCompletionTotal.load(std::memory_order_acquire);
-            const int completionDisplayFiles =
-                completionTotalFiles > 0
-                    ? completionTotalFiles
-                    : state.scanTotal.load();
-            (void)state.scanCompletionPendingFiles.load(std::memory_order_acquire);
-            const int completionMiniUnresolved =
-                state.scanCompletionMiniUnresolved.load(std::memory_order_acquire);
-            const int completionCoverUnresolved =
-                state.scanCompletionCoverUnresolved.load(std::memory_order_acquire);
-            const int completionMetadataUnresolved =
-                state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire);
-            const bool workflowProgressActive =
-                scanWorkflowSnapshot.stage != HarkenSearch::ScanWorkflowStage::Idle;
-            const int curProg = workflowProgressActive
-                ? scanProcessingProgress.current
-                : state.scanProgress.load();
-            const int curTotal = workflowProgressActive
-                ? scanProcessingProgress.total
-                : std::max(state.scanTotal.load(), 0);
-            const float targetProgress = workflowProgressActive
-                ? scanProcessingProgress.fraction
-                : (curTotal > 0
-                    ? std::clamp((float)curProg / (float)curTotal, 0.0f, 1.0f)
-                    : 0.0f);
-
-            // 进度条动画（检测扫描开始时重置）
-            static float displayProgress = 0.0f;
-            static int lastKnownTotal = 0;
-            // 当 total 从 0 变为正数或减小（新扫描），重置进度
-            if (curTotal != lastKnownTotal && (lastKnownTotal == 0 || curTotal < lastKnownTotal)) {
-                displayProgress = 0.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22.f, 18.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12.f, 12.f));
+    const float scanDialogWidth = std::min(520.f, std::max(300.f, ImGui::GetMainViewport()->WorkSize.x - 32.f));
+    const float scanDialogMaxHeight = std::max(240.f, ImGui::GetMainViewport()->WorkSize.y - 32.f);
+    const ImGuiWindowFlags scanDialogFlags = ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
+    PlaceScanDialogInMainViewport(L(Dlg_ScanFolder), scanDialogWidth, scanDialogMaxHeight);
+    bool openScanResult = false;
+    if (BeginTransientScrollbarPopupModal(L(Dlg_ScanFolder), nullptr, scanDialogFlags)) {
+        { ReadingTextScope readingScan;
+        if (scanView.surface == HarkenSearch::ScanDialogSurface::Result) {
+            ImGui::CloseCurrentPopup();
+            openScanResult = true;
+        } else if (scanView.surface == HarkenSearch::ScanDialogSurface::Progress) {
+            DrawScanDialogHeader(scanIsCleanup ? L(ScanUi_CleanupTitle) : L(ScanUi_Title), false);
+            const char* phase = L(ScanUi_Finalizing);
+            using Phase = HarkenSearch::ScanDialogPhase;
+            switch (scanView.phase) {
+                case Phase::Counting: phase = L(ScanUi_Counting); break;
+                case Phase::Ingesting: phase = L(ScanUi_Ingesting); break;
+                case Phase::Waveforms: phase = L(ScanUi_Waveforms); break;
+                case Phase::Saving: phase = L(ScanUi_Saving); break;
+                case Phase::Revoking: phase = L(ScanUi_Revoking); break;
+                default: break;
             }
-            lastKnownTotal = curTotal;
-            if (workflowProgressActive) {
-                displayProgress = targetProgress;
-            } else if (displayProgress < targetProgress) {
-                displayProgress += (targetProgress - displayProgress) * 12.0f * io.DeltaTime;
-            } else {
-                displayProgress = targetProgress; // 直接跟踪，不滞后
-            }
-            displayProgress = std::clamp(displayProgress, 0.0f, 1.0f);
-
+            if (scanIsCleanup) phase = state.scanCancelRequested.load() ? L(ScanUi_Saving) : L(ScanPhase_RemoveMissing);
             ImGui::PushFont(GetUIFontEmphasis());
-            ImGui::TextColored(scanDialogAccent, L(Main_ScannerTitle));
+            ImGui::TextUnformatted(phase);
             ImGui::PopFont();
-            if (scanCompleteSummaryActive && state.scanDialogAutoStart) {
-                // Quick scans close this one-shot surface once the terminal
-                // summary is truthful; the bottom information bar remains.
-                state.scanDialogAutoStart = false;
-                ImGui::CloseCurrentPopup();
-            }
-            const char* workflowStageLabel = L(Wf_StageScanning);
-            switch (scanWorkflowSnapshot.stage) {
-                case HarkenSearch::ScanWorkflowStage::Ingesting:
-                    workflowStageLabel = L(Wf_StageIngesting);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::CachingMiniWaveforms:
-                    workflowStageLabel = L(Wf_StageMiniWave);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::Finalizing:
-                    workflowStageLabel = L(Wf_StageFinalizing);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::Completed:
-                    workflowStageLabel = L(Wf_StageDone);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::Paused:
-                    workflowStageLabel = L(Wf_StagePaused);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::Cancelled:
-                    workflowStageLabel = L(Wf_StageCancelled);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::Failed:
-                    workflowStageLabel = L(Wf_StageFailed);
-                    break;
-                case HarkenSearch::ScanWorkflowStage::Scanning:
-                case HarkenSearch::ScanWorkflowStage::Idle:
-                default:
-                    break;
-            }
-            ImGui::SameLine(425.0f);
-            ImGui::TextColored(
-                scanCompleteSummaryActive
-                    ? ImVec4(0.56f, 0.94f, 0.78f, 1.0f)
-                    : scanDialogAccentSoft,
-                "%s",
-                workflowStageLabel);
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            const float barWidth = 520.0f;
-            const float barHeight = 12.0f;
-            char scanBarBuf[64];
-            std::snprintf(scanBarBuf, sizeof(scanBarBuf), "%d / %d", curProg, curTotal);
-            DrawUnifiedProgressBar(displayProgress, ImVec2(barWidth, barHeight), scanBarBuf);
-            ImGui::Spacing();
-
-            ImGui::PushFont(GetUIFontMono());
-            static double lastSampleTime = ImGui::GetTime();
-            static float lastSampleProgress = 0.0f;
-            static float speedStr = 0.0f;
-            static bool lastDerivedProgressActive = false;
-            static int lastSampleTotal = 0;
-            double now = ImGui::GetTime();
-            const bool miniCacheStage =
-                scanWorkflowSnapshot.stage ==
-                    HarkenSearch::ScanWorkflowStage::CachingMiniWaveforms;
-            const float speedBasis = miniCacheStage
-                ? static_cast<float>(scanWorkflowSnapshot.miniWaveformsCompleted)
-                : static_cast<float>(curProg);
-            if (lastDerivedProgressActive != workflowProgressActive ||
-                lastSampleTotal != curTotal) {
-                lastSampleProgress = speedBasis;
-                lastSampleTime = now;
-                lastDerivedProgressActive = workflowProgressActive;
-                lastSampleTotal = curTotal;
-            }
-            if (now - lastSampleTime >= 0.2) {
-                float instant = (speedBasis - lastSampleProgress) / (float)(now - lastSampleTime);
-                if (instant < 0.0f) instant = 0.0f;
-                if (instant > 0.01f) {
-                    speedStr = (speedStr <= 0.01f) ? instant : (speedStr * 0.78f + instant * 0.22f);
-                } else {
-                    speedStr = 0.0f;
-                }
-                lastSampleProgress = speedBasis;
-                lastSampleTime = now;
-            }
-            ImGui::PopFont();
-
-            ImGui::TextColored(scanDialogText, "%d / %d", curProg, curTotal);
-            ImGui::SameLine(barWidth - 120.0f);
-            ImGui::PushFont(GetUIFontMono());
-            ImGui::TextColored(scanDialogAccent, "%.1f f/s", speedStr);
-            ImGui::PopFont();
-            if (scanCompleteSummaryActive) {
-                const std::string completionDuration =
-                    FormatDurationMsCompact(state.scanCompletionDurationMs.load(std::memory_order_acquire));
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::TextColored(scanDialogText, L(Main_FoundFilesFmt),
-                                   scanWorkflowSnapshot.discovered);
-                ImGui::TextColored(scanDialogText, L(Main_ScannedProcessedFmt),
-                                   scanProcessingProgress.current,
-                                   scanProcessingProgress.total);
-                ImGui::TextColored(scanDialogText, L(Main_ImportedFmt),
-                                   scanWorkflowSnapshot.succeeded);
-                ImGui::TextColored(scanDialogText, L(Main_SkippedDupInvalidFmt),
-                                   scanWorkflowSnapshot.skipped);
-                const ImVec4 scanFailureText(1.0f, 0.62f, 0.42f, 1.0f);
-                ImGui::TextColored(
-                    scanWorkflowSnapshot.failed > 0 ? scanFailureText : scanDialogText,
-                    L(Main_FailedFmt),
-                    scanWorkflowSnapshot.failed);
-                if (scanWorkflowSnapshot.miniWaveformsRequired) {
-                    ImGui::TextColored(scanDialogText, L(Main_MiniCacheProgressFmt),
-                                       scanWorkflowSnapshot.miniWaveformsCompleted,
-                                       scanWorkflowSnapshot.miniWaveformsTotal);
-                } else {
-                    ImGui::TextColored(
-                        scanDialogAccentSoft,
-                        L(Main_MiniCacheNotIncluded));
-                }
-                ImGui::TextColored(scanDialogMutedText, L(Main_TotalElapsedFmt),
-                                   completionDuration.c_str());
-            } else if (miniCacheStage) {
-                ImGui::Spacing();
-                ImGui::TextColored(scanDialogAccentSoft,
-                                   L(Main_MiniCacheProgressFmt),
-                                   scanWorkflowSnapshot.miniWaveformsCompleted,
-                                   scanWorkflowSnapshot.miniWaveformsTotal);
-            } else if (scanForegroundCompletionActive) {
-                ImGui::Spacing();
-                ImGui::TextColored(scanDialogMutedText, "%s",
-                                   BuildScanCompletionPendingLabel(state).c_str());
-            }
-            if (scanCompleteSummaryActive && !state.settings.cacheWaveformsOnScan) {
-                ImGui::Spacing();
-                ImGui::TextColored(
-                    scanDialogAccentSoft,
-                    L(Main_IndexReadyNote));
-            }
-            if (state.batchFeatureExtracting.load()) {
-                ImGui::Spacing();
-                ImGui::TextColored(
-                    scanDialogAccentSoft,
-                    L(Main_SimIndexBuildingFmt),
-                    state.batchFeatureProgress.load(),
-                    std::max(state.batchFeatureTotal.load(), 1));
-            }
-            if (state.showPostScanSimilarityIndexNotice) {
-                ImGui::Spacing();
-                ImGui::TextColored(
-                    scanDialogMutedText,
-                    L(Scan_SimIndexRunningBg));
-            }
-
-
-            ImGui::Spacing();
-
-            // Two buttons: "Background" (close dialog, scan continues) + "Cancel" (abort)
-            const float btnW = 130.0f;
-            const float gap = 12.0f;
-            const bool showBackgroundContinueButton =
-                state.isScanning.load() && !scanForegroundCompletionActive;
-            const float totalBtnW =
-                showBackgroundContinueButton ? (btnW + gap + btnW) : btnW;
-            ImGui::SetCursorPosX((ImGui::GetWindowContentRegionMax().x - totalBtnW) * 0.5f);
-
-            // "后台继续" — close dialog, scan keeps running in background.
-            // Only active ingest may continue in the background. Once ingest
-            // finishes, keep this scan's foreground completion debt visible.
-            if (showBackgroundContinueButton) {
-                if (aura::ui::ActionButton(L(Main_ContinueBackgroundBtn), ImVec2(btnW, 30))) {
-                    state.needsDatabaseRefresh = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                if (HoveredForHelp()) {
-                    HarkenSearch::SetTooltip(L(Main_ContinueBackgroundTooltip));
-                }
-                ImGui::SameLine(0, gap);
-            }
-
-            if (scanCompleteSummaryActive) {
-                if (aura::ui::ActionButton(L(Done), ImVec2(btnW, 30))) {
-                    state.dbSwitchSettleFramesRemaining =
-                        (std::max)(state.dbSwitchSettleFramesRemaining, 120);
-                    state.needsDatabaseRefresh = true;
-                    state.scanProgress = 0;
-                    state.scanTotal = 0;
-                    state.scanAddedCount = 0;
-                    state.scanUpdatedCount = 0;
-                    state.scanSkippedCount = 0;
-                    state.scanRemovedCount = 0;
-                    state.scanErrorCount = 0;
-                    state.scanIngestedCount = 0;
-                    state.scanIngestDurationMs = 0;
-                    state.clearScanTiming();
-                    state.clearScanWorkflowState();
-                    state.scanSummaryToastUntil = 0.0;
-                    state.resetScanReadyToWorkState();
-                    state.clearScanErrors();
-                    state.scanCancelRequested = false;
-                    state.scanWasCancelled = false;
-                    state.scanWasPaused = false;
-                    state.scanStopDisposition.store(
-                        HarkenSearch::ScanStopDisposition::None,
-                        std::memory_order_release);
-                    state.scanDataCommitted = false;
-                    ImGui::CloseCurrentPopup();
-                }
+            ThemeInspector::RegisterLastItem("scan.dialog.phase");
+            if (scanView.progressKnown) {
+                DrawUnifiedProgressBar(scanView.fraction, ImVec2(-1.f, 8.f));
+                ImGui::Text("%d / %d", scanView.current, scanView.total);
+                char percentage[32];
+                std::snprintf(percentage, sizeof(percentage), "%d%%", HarkenSearch::ScanProgressPercent(scanView.current, scanView.total));
+                ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(percentage).x));
+                ImGui::TextDisabled("%s", percentage);
             } else {
-            ImGui::BeginDisabled(state.scanCancelRequested.load());
-            if (aura::ui::ActionButton(L(Main_StopBtn), ImVec2(btnW, 30))) {
-                ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str());
+                DrawScanWaitingBar();
+                if (scanView.phase == Phase::Counting && scanView.total > 0)
+                    ImGui::Text(L(ScanUi_FoundAudioFmt), scanView.total);
             }
-            ImGui::EndDisabled();
+            if (scanView.phase == Phase::Ingesting || scanView.phase == Phase::Waveforms) {
+                const auto file = state.getScanFile();
+                if (!file.empty()) {
+                    ImGui::TextWrapped("%s", ScanDialogLeafName(file).c_str());
+                    if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", file.c_str());
+                }
             }
-            if (state.scanCancelRequested.load()) {
-                ImGui::SameLine();
-                const int dotCount = (int)(ImGui::GetTime() * 4.0) % 3 + 1;
-                const std::string dots((size_t)dotCount, '.');
-                ImGui::TextColored(uiWithAlpha(uiMix(scanTheme.volumeClipColor, scanDialogText, 0.18f), 1.0f), "%s", dots.c_str());
+            const float btnW = std::min(130.f, (ImGui::GetContentRegionAvail().x - 12.f) * .5f);
+            const float gap = 12.f;
+            const bool showBackgroundContinueButton = scanView.canBackground;
+            if (scanView.canStop) {
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                const float totalWidth = showBackgroundContinueButton ? 2.f * btnW + gap : btnW;
+                ImGui::SetCursorPosX(std::max(ImGui::GetStyle().WindowPadding.x, ImGui::GetWindowContentRegionMax().x - totalWidth));
+                if (aura::ui::ActionButton(L(Main_StopBtn), ImVec2(btnW, 32.f), aura::ui::ButtonVariant::Quiet)) {
+                    if (scanIsCleanup) state.requestCancelScanTask();
+                    else ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str());
+                }
+                ThemeInspector::RegisterLastItem("scan.dialog.stop");
+                if (showBackgroundContinueButton) {
+                    ImGui::SameLine(0.f, gap);
+                    if (aura::ui::ActionButton(L(Main_ContinueBackgroundBtn), ImVec2(btnW, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
+                        state.needsDatabaseRefresh = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ThemeInspector::RegisterLastItem("scan.dialog.background");
+                }
             }
+            if (state.scanUiRequestStopChoice && scanView.canStop) {
+                if (scanIsCleanup) state.requestCancelScanTask();
+                else ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str());
+                state.scanUiRequestStopChoice = false;
+            }
+            PlaceScanDialogInMainViewport((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str(), scanDialogWidth, scanDialogMaxHeight);
             if (BeginTransientScrollbarPopupModal(
-                    (std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str(),
-                    nullptr,
-                    ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::TextWrapped(
-                    L(Main_PauseCancelExplain));
-                ImGui::Spacing();
-                if (aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(btnW, 30))) {
+                    (std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str(), nullptr, scanDialogFlags)) {
+                const bool close = DrawScanDialogHeader(L(Scan_StopScan), true);
+                if (close || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape))) ImGui::CloseCurrentPopup();
+                if (aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(0, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
                     DIAG_ACTION("Scan", "ScanPauseRequested");
                     state.requestPauseScanTask();
                     ImGui::CloseCurrentPopup();
                 }
+                ThemeInspector::RegisterLastItem("scan.dialog.pause");
                 ImGui::SameLine(0, gap);
-                if (aura::ui::ActionButton(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))) {
+                if (aura::ui::ActionButton(L(ScanUi_RevokeScan), ImVec2(0, 32.f), aura::ui::ButtonVariant::Danger)) {
                     DIAG_ACTION("Scan", "ScanCancelRollbackRequested");
                     state.requestCancelScanTask();
                     ImGui::CloseCurrentPopup();
                 }
+                ThemeInspector::RegisterLastItem("scan.dialog.revoke");
+                ImGui::TextWrapped("%s", L(ScanUi_RevokeReminder));
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                if (aura::ui::ActionButton(L(ScanUi_ContinueScan), ImVec2(-1.f, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
+                ThemeInspector::RegisterLastItem("scan.dialog.continue");
                 ImGui::EndPopup();
             }
-        } else {
-            // Drop diagnostics
-            if (!state.lastDropSummary.empty()) {
-                ImGui::TextColored(scanDialogAccent, L(Scan_DragDetected));
-                ImGui::TextWrapped("%s", state.lastDropSummary.c_str());
-                if (!state.lastDropFirstPath.empty()) {
-                    ImGui::TextWrapped(L(Main_FirstItemFmt), state.lastDropFirstPath.c_str());
-                }
-                if (aura::ui::SmallActionButton(L(Main_ClearDragInfoBtn))) {
-                    state.lastDropSummary.clear();
-                    state.lastDropFirstPath.clear();
-                    state.lastDropTick = 0;
-                }
-                ImGui::Separator();
+        } else if (scanView.surface == HarkenSearch::ScanDialogSurface::Setup) {
+            if (DrawScanDialogHeader(L(ScanUi_Title), true) ||
+                (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape))) {
+                state.pendingScanFolders.clear(); state.scanDialogAutoStart = false;
+                ImGui::CloseCurrentPopup();
             }
-            ImGui::Text(L(Main_ScanFolderHint));
-            ImGui::Separator();
+            DrawScanDialogSource(state.pendingScanFolders);
+            const std::string modeSummary = std::string(state.settings.cacheWaveformsOnScan ? L(Main_FullScanMode) : L(Main_FastScanMode)) +
+                " · " + (state.scanRecursive ? L(Main_IncludeSubfolders) : L(ScanUi_CurrentFolderOnly)) +
+                (state.scanWorkerThreads > 0 ? std::string(" · ") + L(ScanUi_CustomThreads) : "");
+            ImGui::TextWrapped("%s", modeSummary.c_str());
+            const bool pendingHasNetwork = std::any_of(state.pendingScanFolders.begin(), state.pendingScanFolders.end(),
+                [](const std::string& path) { return Platform::FileSystem::IsNetworkPath(path); });
+            if (pendingHasNetwork) state.scanRemoveMissing = false;
+            if (state.scanRemoveMissing) ImGui::TextWrapped("%s", L(ScanUi_RemoveReminder));
+            if (state.scanBuildSimilarityIndexAfterScan) ImGui::TextDisabled("%s", L(ScanUi_SimilarEnabled));
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+            if (ImGui::IsWindowAppearing()) ImGui::SetNextItemOpen(false);
+            const bool advancedOpen = ImGui::TreeNodeEx(L(ScanUi_AdvancedOptions), ImGuiTreeNodeFlags_SpanAvailWidth);
+            ThemeInspector::RegisterLastItem("scan.dialog.advanced");
+            if (advancedOpen) {
+                ImGui::Checkbox(L(Main_IncludeSubfolders), &state.scanRecursive);
+                ThemeInspector::RegisterLastItem("scan.option.recursive");
+                ImGui::Checkbox(L(Main_UpdateImportedFiles), &state.scanUpdateExisting);
+                ImGui::Spacing();
+                const bool fastScanMode = !state.settings.cacheWaveformsOnScan;
+                if (ImGui::RadioButton(L(Main_FastScanMode), fastScanMode)) state.settings.cacheWaveformsOnScan = false;
+                if (ImGui::RadioButton(L(Main_FullScanMode), state.settings.cacheWaveformsOnScan)) state.settings.cacheWaveformsOnScan = true;
+                bool automaticThreads = state.scanWorkerThreads == 0;
+                if (ImGui::Checkbox(L(ScanUi_AutoThreads), &automaticThreads)) state.scanWorkerThreads = automaticThreads ? 0 : 4;
+                if (!automaticThreads) {
+                    ImGui::SetNextItemWidth(150.f);
+                    if (ImGui::InputInt(L(Scan_ThreadCount), &state.scanWorkerThreads))
+                        state.scanWorkerThreads = std::clamp(state.scanWorkerThreads, 1, 64);
+                }
+                ImGui::Spacing();
+                ImGui::BeginDisabled(pendingHasNetwork);
+                ImGui::Checkbox(L(ScanUi_RemoveInvalid), &state.scanRemoveMissing);
+                ImGui::EndDisabled();
+                if (pendingHasNetwork && HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Scan_NetworkLibraryReadonlyHint));
+                ImGui::Checkbox(L(Main_BuildSimilarIndexCheck), &state.scanBuildSimilarityIndexAfterScan);
+                if (ScanFoldersHaveNetworkAndMappedDrive(state.pendingScanFolders)) ImGui::TextWrapped("%s", L(Scan_NetworkDualPathWarn));
+                ImGui::TreePop();
+            }
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-            // 显示待扫描的文件夹路径（拖拽进来的）
-            if (!state.pendingScanFolders.empty()) {
-                ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), L(Scan_PendingFolders));
-                for (const auto& f : state.pendingScanFolders) {
-                    ImGui::BulletText("%s", f.c_str());
-                }
-                ImGui::Separator();
-            }
-
-            ImGui::Checkbox(L(Main_IncludeSubfolders), &state.scanRecursive);
-            ImGui::SameLine();
-            ImGui::Checkbox(L(Main_UpdateImportedFiles), &state.scanUpdateExisting);
-            bool pendingHasNetwork = false;
-            for (const auto& folder : state.pendingScanFolders) {
-                if (Platform::FileSystem::IsNetworkPath(folder)) {
-                    pendingHasNetwork = true;
-                    break;
-                }
-            }
-            if (pendingHasNetwork) {
-                state.scanRemoveMissing = false;
-            }
-            ImGui::BeginDisabled(pendingHasNetwork);
-            ImGui::Checkbox(L(Main_RemoveMissingFiles), &state.scanRemoveMissing);
-            ImGui::EndDisabled();
-            if (pendingHasNetwork) {
-                ImGui::TextWrapped("%s", L(Scan_NetworkLibraryReadonlyHint));
-            }
-            if (ScanFoldersHaveNetworkAndMappedDrive(state.pendingScanFolders)) {
-                ImGui::TextWrapped("%s", L(Scan_NetworkDualPathWarn));
-            }
-#ifdef _WIN32
-            if (ProcessIsElevated()) {
-                ImGui::TextWrapped("%s", L(Scan_MappedDriveHiddenHint));
-            }
-#endif
-            ImGui::SetNextItemWidth(180);
-            ImGui::InputInt(L(Scan_ThreadCount), &state.scanWorkerThreads);
-            if (state.scanWorkerThreads < 0) state.scanWorkerThreads = 0;
-            if (state.scanWorkerThreads > 64) state.scanWorkerThreads = 64;
-            if (HoveredForHelp()) {
-                HarkenSearch::SetTooltip(L(Main_ThreadHint));
-            }
-            ImGui::TextColored(scanDialogAccent, L(Main_ScanStrategyTitle));
-            const bool fastScanMode = !state.settings.cacheWaveformsOnScan;
-            if (ImGui::RadioButton(L(Main_FastScanMode), fastScanMode)) {
-                state.settings.cacheWaveformsOnScan = false;
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton(L(Main_FullScanMode), state.settings.cacheWaveformsOnScan)) {
-                state.settings.cacheWaveformsOnScan = true;
-            }
-            ImGui::TextDisabled("%s",
-                state.settings.cacheWaveformsOnScan
-                    ? L(Scan_FullModeHint)
-                    : L(Scan_FastModeHint));
-            if (HoveredForHelp()) {
-                HarkenSearch::SetTooltip(L(Main_ScanModeTooltip));
-            }
-            ImGui::Checkbox(L(Main_BuildSimilarIndexCheck),
-                            &state.scanBuildSimilarityIndexAfterScan);
-            if (HoveredForHelp()) {
-                HarkenSearch::SetTooltip(L(Main_BuildSimilarIndexTooltip));
-            }
-            ImGui::Separator();
-
-// 拖拽进来的文件夹：点击按钮开始扫描
             auto startScanForFolders = [&](const std::vector<std::string>& foldersToScan, bool lightweightInsert) {
                 if (foldersToScan.empty()) return;
                 // 重建/扫描时一律停止播放，避免文件句柄冲突
                 state.audioEngine.stop();
                 state.lastScannedPath = foldersToScan.front();
+                state.lastScannedFolders = foldersToScan;
                 state.isScanning = true;
                 state.scanProgress = 0;
                 state.scanTotal = 0;
@@ -32712,186 +32666,208 @@ void RenderUI(AppState& state) {
                 quickAutoStarted = true;
                 ImGui::CloseCurrentPopup();
             }
-            if (!quickAutoStarted && !state.pendingScanFolders.empty()) {
-                if (aura::ui::ActionButton(L(Scan_StartScan), ImVec2(160, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-                    state.scanDialogAutoStart = false;
-                    startScanForFolders(state.pendingScanFolders, false);
-                    state.pendingScanFolders.clear();
-                    state.scanDialogAutoStart = false;
-                }
-                ImGui::SameLine();
-                if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
-                    state.scanDialogAutoStart = false;
-                    state.pendingScanFolders.clear();
-                    state.scanDialogAutoStart = false;
+            if (!quickAutoStarted) {
+                const bool selected = !state.pendingScanFolders.empty();
+                const float primaryWidth = selected ? 160.f : 220.f;
+                const bool stackFooter = ImGui::GetContentRegionAvail().x < primaryWidth + 112.f;
+                if (!stackFooter) ImGui::SetCursorPosX(std::max(ImGui::GetStyle().WindowPadding.x,
+                    ImGui::GetWindowContentRegionMax().x - primaryWidth - 112.f));
+                if (aura::ui::ActionButton(L(Cancel), ImVec2(stackFooter ? -1.f : 100.f, 32.f), aura::ui::ButtonVariant::Quiet)) {
+                    state.pendingScanFolders.clear(); state.scanDialogAutoStart = false;
                     ImGui::CloseCurrentPopup();
                 }
+                ThemeInspector::RegisterLastItem("scan.dialog.cancel");
 #if ARIS_PREVIEW_ISOLATION
-                ThemeInspector::RegisterLastItem("info.qaScanCancel",L(Cancel),"src/main.cpp");
+                ThemeInspector::RegisterLastItem("info.qaScanCancel", L(Cancel), "src/main.cpp");
 #endif
-
-            } else if (!quickAutoStarted) {
-                // 手动打开对话框 → 需要选择文件夹
-                if (aura::ui::ActionButton(L(Scan_SelectAndScan), ImVec2(220, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-                    std::string folder = OpenFolderDialog(g_hwnd);
-                    if (!folder.empty()) {
-                        state.scanDialogAutoStart = false;
-                        startScanForFolders({ folder }, false);
-                    }
-                }
-                ImGui::SameLine();
-                if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
+                if (!stackFooter) ImGui::SameLine(0.f, 12.f);
+                if (aura::ui::ActionButton(selected ? L(Scan_StartScan) : L(Scan_SelectAndScan),
+                        ImVec2(stackFooter ? -1.f : primaryWidth, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
                     state.scanDialogAutoStart = false;
-                    ImGui::CloseCurrentPopup();
-                }
-#if ARIS_PREVIEW_ISOLATION
-                ThemeInspector::RegisterLastItem("info.qaScanCancel",L(Cancel),"src/main.cpp");
-#endif
-
-            }
-        }
-        if (!state.isScanning &&
-            !scanCompleteSummaryActive &&
-            !state.scanCompletionPending.load(std::memory_order_acquire) &&
-            (state.scanTotal > 0 || state.scanWasPaused ||
-             state.scanWasCancelled || state.scanErrorCount > 0)) {
-            // Keep iterator pairs and displayed details on the same locked copy.
-            const auto scanErrorSnapshot = state.getScanErrors();
-            ImGui::Separator();
-            if (state.scanWasPaused) {
-                ImGui::TextColored(
-                    ImVec4(0.95f, 0.82f, 0.32f, 1.0f),
-                    L(Main_ScanPausedNote));
-                ImGui::TextWrapped(
-                    L(Main_RescanResumeHint));
-            } else if (state.scanWasCancelled) {
-                ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), L(Scan_Cancelled));
-            } else {
-                if (state.scanCompletionPending.load(std::memory_order_acquire)) {
-                    ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.32f, 1.0f), L(Main_BackfillingStatus));
-                    ImGui::SameLine(0, 8);
-                    ImGui::TextDisabled("%s", BuildScanCompletionPendingLabel(state).c_str());
-                } else if (state.scanTotal.load() == 0) {
-                    const bool networkUnreachable = std::any_of(
-                        scanErrorSnapshot.begin(),
-                        scanErrorSnapshot.end(),
-                        [](const std::string& msg) {
-                            return msg.find("Scan_NetworkLibraryUnreachable") != std::string::npos;
-                        });
-                    if (networkUnreachable) {
-                        ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), L(Scan_NetworkLibraryUnreachable));
+                    if (selected) {
+                        startScanForFolders(state.pendingScanFolders, false);
+                        state.pendingScanFolders.clear();
                     } else {
-                        ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1), L(Scan_NoAudioFound));
-                        ImGui::TextWrapped(L(Main_RecursiveScanTip));
-                    }
-                } else {
-                    ImGui::Text(L(Main_ScanDoneMsg));
-                }
-                // needsDatabaseRefresh 已在扫描线程结束时设置（line ~9683），
-                // 这里不能重复设置，否则弹窗显示期间每帧都会全量刷新导致卡死
-            }
-            ImGui::Text(L(Main_ScanStatsFmt),
-                        state.scanTotal.load(),
-                        state.scanAddedCount.load(),
-                        state.scanUpdatedCount.load(),
-                        state.scanSkippedCount.load(),
-                        state.scanRemovedCount.load(),
-                        state.scanErrorCount.load());
-            if (!scanErrorSnapshot.empty()) {
-                const int unreachableHint = static_cast<int>(std::count_if(
-                    scanErrorSnapshot.begin(),
-                    scanErrorSnapshot.end(),
-                    [](const std::string& msg) {
-                        return msg.find("Scan_NetworkLibraryUnreachable") != std::string::npos;
-                    }));
-                if (unreachableHint > 0) {
-                    ImGui::TextColored(ImVec4(1, 0.7f, 0.2f, 1),
-                                       L(Scan_NetworkUnreachableCountFmt),
-                                       unreachableHint);
-                }
-            }
-            const int scanIngested = state.scanIngestedCount.load();
-            const std::string scanIngestDuration =
-                FormatDurationMsCompact(state.scanCompletionDurationMs.load(std::memory_order_acquire));
-            ImGui::Text(L(Main_ImportRunFmt),
-                        scanIngested,
-                        scanIngestDuration.c_str());
-            const int scanErrors = state.scanErrorCount.load();
-            if (scanErrors > 0) {
-                const auto& scanErrorDetails = scanErrorSnapshot;
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.42f, 1.0f), L(Main_ErrorDetailsTitle));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, uiWithAlpha(uiMix(scanDialogPanelBg, scanTheme.waveformBG, 0.14f), 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Border, uiWithAlpha(uiMix(scanDialogBorder, scanTheme.volumeClipColor, 0.20f), 0.85f));
-                const float detailHeight = scanErrorDetails.empty()
-                    ? 46.0f
-                    : std::min(128.0f, 28.0f + (float)scanErrorDetails.size() * 24.0f);
-                BeginTransientScrollbarChild("ScanErrorDetails", ImVec2(520.0f, detailHeight), true);
-                if (scanErrorDetails.empty()) {
-                    ImGui::TextWrapped(L(Main_ScanErrorsNoFileFmt), scanErrors);
-                } else {
-                    for (size_t i = 0; i < scanErrorDetails.size(); ++i) {
-                        const std::string shownError = (scanErrorDetails[i].find("Scan_NetworkLibraryUnreachable") != std::string::npos)
-                            ? std::string(L(Scan_NetworkLibraryUnreachable))
-                            : scanErrorDetails[i];
-                        ImGui::TextWrapped(L(Main_ScanErrorItemFmt), i + 1, shownError.c_str());
-                    }
-                    if (scanErrors > (int)scanErrorDetails.size()) {
-                        ImGui::TextDisabled(L(Main_MoreErrorsOmittedFmt), scanErrors - (int)scanErrorDetails.size());
+                        const auto folder = OpenFolderDialog(g_hwnd);
+                        if (!folder.empty()) startScanForFolders({folder}, false);
                     }
                 }
-                ImGui::EndChild();
-                ImGui::PopStyleColor(2);
-            }
-            const bool scanCompletionBlocked =
-                state.scanCompletionPending.load(std::memory_order_acquire) &&
-                !state.scanWasCancelled &&
-                !state.scanWasPaused;
-            ImGui::BeginDisabled(scanCompletionBlocked);
-            if (aura::ui::ActionButton(L(Done), ImVec2(100, 0))) {
-                // Keep the click path lightweight. The real scan-completion
-                // refresh runs on the main loop after the popup closes so
-                // large-library folder-index rebuilds and result reloads stay
-                // off the button press and preserve deferred ready-to-work debt.
-                if (state.scanTotal.load() > 0 && !state.scanWasCancelled) {
-                    state.dbSwitchSettleFramesRemaining =
-                        (std::max)(state.dbSwitchSettleFramesRemaining, 120);
-                    state.needsDatabaseRefresh = true;
-                }
-
-                if (!state.scanCompletionPending.load(std::memory_order_acquire)) {
-                    state.scanProgress = 0;
-                    state.scanTotal = 0;
-                    state.scanAddedCount = 0;
-                    state.scanUpdatedCount = 0;
-                    state.scanSkippedCount = 0;
-                    state.scanRemovedCount = 0;
-                    state.scanErrorCount = 0;
-                    state.scanIngestedCount = 0;
-                    state.scanIngestDurationMs = 0;
-                    state.clearScanTiming();
-                    state.scanSummaryToastUntil = 0.0;
-                    state.resetScanReadyToWorkState();
-                    state.clearScanErrors();
-                }
-                state.scanCancelRequested = false;
-                state.scanWasCancelled = false;
-                state.scanWasPaused = false;
-                state.scanDialogAutoStart = false;
-                state.scanDataCommitted = false; // Allow one clean refresh after reset.
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndDisabled();
-            if (scanCompletionBlocked) {
-                ImGui::SameLine(0, 8);
-                ImGui::TextDisabled(L(Main_WaitForegroundImport));
+                ThemeInspector::RegisterLastItem("scan.dialog.start");
             }
         }
         }
         ImGui::EndPopup();
     }
+    if (openScanResult) ImGui::OpenPopup(scanResultPopup);
+    PlaceScanDialogInMainViewport(scanResultPopup, scanDialogWidth, scanDialogMaxHeight);
+    if (BeginTransientScrollbarPopupModal(scanResultPopup, nullptr, scanDialogFlags)) {
+        { ReadingTextScope readingResult;
+        using Phase = HarkenSearch::ScanDialogPhase;
+        const auto scanErrorSnapshot = state.getScanErrors();
+        const bool networkUnreachable = std::any_of(scanErrorSnapshot.begin(), scanErrorSnapshot.end(),
+            [](const std::string& error) { return error.find("Scan_NetworkLibraryUnreachable") != std::string::npos; });
+        const bool rollbackFailed = !scanIsCleanup && scanView.phase == Phase::Failed &&
+            HarkenSearch::IsScanRollbackCancel(state.scanStopDisposition.load());
+        const char* title = L(ScanUi_ResultTitle);
+        if (scanView.phase == Phase::Completed) title = L(ScanUi_CompletedTitle);
+        else if (scanView.phase == Phase::Paused) title = L(ScanUi_PausedTitle);
+        else if (scanView.phase == Phase::Cancelled) title = L(ScanUi_CancelledTitle);
+        else if (scanView.phase == Phase::Failed) title = L(ScanUi_ScanStopped);
+        if (scanIsCleanup) title = L(ScanUi_CleanupTitle);
+        const bool dismissed = DrawScanDialogHeader(title, true) ||
+            (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape));
+        if (dismissed) {
+            ResetScanDialogResult(state);
+            ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::PushFont(GetUIFontEmphasis());
+            if (scanIsCleanup) {
+                ImGui::Text(L(ScanUi_CleanupRemovedFmt), state.scanRemovedCount.load());
+                if (state.scanCancelRequested.load()) ImGui::TextUnformatted(L(ScanUi_CleanupStopped));
+            } else if (rollbackFailed) ImGui::TextUnformatted(L(ScanUi_RollbackFailed));
+            else if (networkUnreachable && scanWorkflowSnapshot.discovered == 0) ImGui::TextUnformatted(L(ScanUi_NetworkTitle));
+            else if (scanView.phase == Phase::Empty) ImGui::TextUnformatted(L(ScanUi_Empty));
+            else if (scanView.phase == Phase::Cancelled) ImGui::TextUnformatted(L(ScanUi_Revoked));
+            else ImGui::Text(scanView.phase == Phase::Paused ? L(ScanUi_RetainedFmt) : L(ScanUi_ImportedFmt), scanView.succeeded);
+            ImGui::PopFont();
+            if (rollbackFailed) ImGui::TextWrapped("%s", L(ScanUi_SaveUnavailable));
+            if (networkUnreachable && scanWorkflowSnapshot.discovered == 0) {
+                ImGui::TextWrapped("%s", state.lastScannedPath.c_str());
+                ImGui::TextWrapped("%s", L(ScanUi_NetworkAction));
+#ifdef _WIN32
+                if (ProcessIsElevated() && ImGui::TreeNode(L(ScanUi_MappedDriveHelp))) {
+                    ImGui::TextWrapped("%s", L(Scan_MappedDriveHiddenHint));
+                    ImGui::TreePop();
+                }
+#endif
+            } else if (scanView.phase == Phase::Empty) DrawScanDialogSource({state.lastScannedPath});
+            const bool showFailures = scanView.failed > 0 && scanView.phase != Phase::Cancelled;
+            if (showFailures) {
+                ImGui::TextColored(TransportContrast::ForSurface(scanTheme.volumeClipColor, scanDialogBg, 4.5), L(Main_FailedFmt), scanView.failed);
+                if (!rollbackFailed) {
+                    const auto reasons = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, scanView.failed);
+                    const char* labels[] = {L(ScanUi_FailedPath), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty), L(ScanUi_FailedSave), L(ScanUi_FailedOther)};
+                    for (size_t i = 0; i < reasons.size(); ++i) {
+                        ImGui::Text("%s  %d", labels[i], reasons[i]);
+                    }
+                }
+            }
+            if (scanView.phase == Phase::Paused) {
+                ImGui::Text(L(ScanUi_UnprocessedFmt), scanView.unprocessed);
+                ImGui::Text(L(ScanUi_SkippedFmt), scanView.skipped);
+            } else if (!scanIsCleanup && (scanView.phase == Phase::Completed || scanView.phase == Phase::Partial)) {
+                if (ImGui::TreeNode(L(ScanUi_Statistics))) {
+                    ImGui::Text(L(ScanUi_AddedFmt), state.scanAddedCount.load());
+                    ImGui::Text(L(ScanUi_UpdatedFmt), state.scanUpdatedCount.load());
+                    ImGui::Text(L(ScanUi_SkippedFmt), scanView.skipped);
+                    if (state.scanRemovedCount.load() > 0) ImGui::Text(L(ScanUi_RemovedFmt), state.scanRemovedCount.load());
+                    ImGui::Text(L(Main_TotalElapsedFmt), FormatDurationMsCompact(state.scanCompletionDurationMs.load()).c_str());
+                    ImGui::TreePop();
+                }
+            }
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+            if (showFailures) {
+                if (aura::ui::ActionButton(L(ScanUi_ViewFailures), ImVec2(0, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::OpenPopup("##ScanFailureDetails");
+                ThemeInspector::RegisterLastItem("scan.result.failures");
+                ImGui::SameLine();
+            }
+            if (!scanIsCleanup && (scanView.phase == Phase::Paused || scanView.phase == Phase::Empty ||
+                (networkUnreachable && scanWorkflowSnapshot.discovered == 0))) {
+                const bool resume = scanView.phase == Phase::Paused;
+                if (aura::ui::ActionButton(resume ? L(ScanUi_Rescan) : L(ScanUi_ChooseAgain), ImVec2(0, 32.f), aura::ui::ButtonVariant::Quiet)) {
+                    const auto folders = resume ? state.lastScannedFolders : std::vector<std::string>{};
+                    ResetScanDialogResult(state);
+                    state.pendingScanFolders = folders;
+                    state.showScanDialog = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                ThemeInspector::RegisterLastItem("scan.result.rescan");
+                ImGui::SameLine();
+            }
+            if (aura::ui::ActionButton(L(Done), ImVec2(100.f, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
+                ResetScanDialogResult(state);
+                ImGui::CloseCurrentPopup();
+            }
+            ThemeInspector::RegisterLastItem("scan.result.done");
+            PlaceScanDialogInMainViewport("##ScanFailureDetails", scanDialogWidth, scanDialogMaxHeight);
+            if (BeginTransientScrollbarPopupModal("##ScanFailureDetails", nullptr, scanDialogFlags)) {
+                char caption[128]; std::snprintf(caption, sizeof(caption), L(ScanUi_FailuresTitleFmt), scanView.failed);
+                if (DrawScanDialogHeader(caption, true) || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape))) ImGui::CloseCurrentPopup();
+                const char* reasons[] = {L(ScanUi_FailedPath), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty), L(ScanUi_FailedSave), L(ScanUi_FailedOther)};
+                const float detailsHeight = std::min(300.f, scanDialogMaxHeight - 160.f);
+                BeginTransientScrollbarChild("ScanErrorDetails", ImVec2(0, detailsHeight), false);
+                for (size_t i = 0; i < scanErrorSnapshot.size(); ++i) {
+                    ImGui::PushID(int(i));
+                    const auto& error = scanErrorSnapshot[i];
+                    const auto category = HarkenSearch::ClassifyScanFailure(error);
+                    const auto subject = HarkenSearch::ScanFailureSubject(error);
+                    const auto row = subject.empty() ? std::string(reasons[static_cast<size_t>(category)]) :
+                        subject + " · " + reasons[static_cast<size_t>(category)];
+                    if (ImGui::TreeNodeEx("##error", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", row.c_str())) {
+                        const auto networkKey = error.find("Scan_NetworkLibraryUnreachable");
+                        if (networkKey != std::string::npos) {
+                            ImGui::TextWrapped("%s", L(Scan_NetworkLibraryUnreachable));
+                            const auto context = error.substr(networkKey + std::strlen("Scan_NetworkLibraryUnreachable"));
+                            if (!context.empty()) ImGui::TextWrapped("%s", context.c_str());
+                        } else ImGui::TextWrapped("%s", error.c_str());
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                if (scanView.failed > int(scanErrorSnapshot.size())) ImGui::TextWrapped(L(Main_MoreErrorsOmittedFmt), scanView.failed - int(scanErrorSnapshot.size()));
+                ImGui::EndChild();
+                ImGui::Separator();
+                if (aura::ui::ActionButton(L(ScanUi_ReturnResult), ImVec2(-1, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
+                ThemeInspector::RegisterLastItem("scan.failures.back");
+                ImGui::EndPopup();
+            }
+        }
+        }
+        ImGui::EndPopup();
+    }
+    if (state.showScanBusyNotice) {
+        ImGui::OpenPopup("##ScanDropBusy");
+        state.showScanBusyNotice = false;
+    }
+    PlaceScanDialogInMainViewport("##ScanDropBusy", scanDialogWidth, scanDialogMaxHeight);
+    if (BeginTransientScrollbarPopupModal("##ScanDropBusy", nullptr, scanDialogFlags)) {
+        { ReadingTextScope readingBusy;
+        if (DrawScanDialogHeader(L(ScanUi_BusyTitle), true) ||
+            (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape))) ImGui::CloseCurrentPopup();
+        ImGui::TextWrapped(L(ScanUi_BusyFmt), state.scanIgnoredDropCount);
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+        if (aura::ui::ActionButton(L(Close), ImVec2(100.f, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
+        ImGui::SameLine();
+        if (aura::ui::ActionButton(L(ScanUi_ViewProgress), ImVec2(0, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
+            state.showScanDialog = true;
+            ImGui::CloseCurrentPopup();
+        }
+        }
+        ImGui::EndPopup();
+    }
+    if (state.showScanDropNotice && Platform::MonotonicMilliseconds() - state.lastDropTick < 7000) {
+        const auto* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 20.f, viewport->WorkPos.y + 60.f),
+            ImGuiCond_Always, ImVec2(1.f, 0.f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(360.f, scanDialogWidth), 0.f), ImVec2(scanDialogWidth, scanDialogMaxHeight));
+        if (ImGui::Begin("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+            { ReadingTextScope readingDrop;
+            char title[128];
+            if (state.scanDropImportedCount > 0) std::snprintf(title, sizeof(title), L(ScanUi_DroppedFmt), state.scanDropImportedCount);
+            else if (state.scanDropFailedCount > 0) std::snprintf(title, sizeof(title), L(ScanUi_DropFailedFmt), state.scanDropFailedCount);
+            else std::snprintf(title, sizeof(title), L(ScanUi_AlreadyImportedFmt), state.scanDropExistingCount);
+            if (DrawScanDialogHeader(title, true)) state.showScanDropNotice = false;
+            if (!state.lastDropFirstPath.empty()) ImGui::TextWrapped("%s", ScanDialogLeafName(state.lastDropFirstPath).c_str());
+            if (state.scanDropImportedCount > 0 && state.scanDropFailedCount > 0) ImGui::TextWrapped(L(ScanUi_DropFailedFmt), state.scanDropFailedCount);
+            }
+        }
+        ImGui::End();
+    }
+    ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(7);
     scanDialogSurfaceStyle.reset();
+    DrawScanSimilarityDialogs(state);
 
     // New playlist dialog
     if (state.showPlaylistDialog) {
@@ -52492,58 +52468,43 @@ void RenderUI(AppState& state) {
         const bool statusBarScanningNow = bottomStatusScanningNow;
         DrawScanActivityIndicator(state, statusTextH);
 
-        // 如果正在扫描，显示扫描进度信息
-        if (statusBarScanningNow) {
-            int scanProgress = state.scanProgress.load();
-            int scanTotal = state.scanTotal.load();
-            int scanAdded = state.scanAddedCount.load();
-            int scanUpdated = state.scanUpdatedCount.load();
-
-            // 显示扫描进度（标签 Regular + 数字 Mono）
-            // 检测后处理阶段：进度接近上限且扫描文件显示后处理状态文本
-            std::string sbScanFile = state.getScanFile();
-            bool sbPostPhase = (scanTotal > 0 && scanProgress >= scanTotal - 1)
-                && (!sbScanFile.empty() && sbScanFile[0] != '[' && sbScanFile.find("...") != std::string::npos);
-            if (sbPostPhase) {
-                ImGui::TextColored(kUseLightSoftChromeTheme ? kThemeAccentText : kThemeSuccessText, L(Scan_PostProcessing));
+        // Compact background controls share the foreground's real counters.
+        if (statusBarScanningNow || state.scanCompletionPending.load()) {
+            const char* phase = L(ScanUi_Finalizing);
+            if (scanView.phase == HarkenSearch::ScanDialogPhase::Counting) phase = L(ScanUi_Counting);
+            else if (scanView.phase == HarkenSearch::ScanDialogPhase::Ingesting) phase = L(ScanUi_Ingesting);
+            else if (scanView.phase == HarkenSearch::ScanDialogPhase::Waveforms) phase = L(ScanUi_Waveforms);
+            else if (scanView.phase == HarkenSearch::ScanDialogPhase::Saving) phase = L(ScanUi_Saving);
+            else if (scanView.phase == HarkenSearch::ScanDialogPhase::Revoking) phase = L(ScanUi_Revoking);
+            if (scanIsCleanup) phase = state.scanCancelRequested.load() ? L(ScanUi_Saving) : L(ScanPhase_RemoveMissing);
+            ImGui::TextUnformatted(phase);
+            if (scanView.progressKnown) { ImGui::SameLine(0, 12); ImGui::Text("%d / %d", scanView.current, scanView.total); }
+            ImGui::SameLine(0, 16);
+            if (aura::ui::SmallActionButton(L(ScanUi_ViewProgress), aura::ui::ButtonVariant::Quiet)) state.showScanDialog = true;
+            ThemeInspector::RegisterLastItem("scan.background.show");
+            if (scanView.canStop) {
                 ImGui::SameLine(0, 8);
-                ImGui::TextColored(kUseLightSoftChromeTheme ? kThemeTextMuted : kThemeInfoText, "%s", sbScanFile.c_str());
-            } else {
-                char progressBuf[64];
-                snprintf(progressBuf, sizeof(progressBuf), "%d / %d", scanProgress, scanTotal);
-                textMonoValue(progressBuf);
-            }
-
-            ImGui::SameLine(0, 20);
-            // 显示已添加/更新的文件数
-            if (scanAdded > 0 || scanUpdated > 0) {
-                ImGui::TextUnformatted(L(Scan_NewAdded));
-                ImGui::SameLine(0, 6);
-                char addBuf[24];
-                snprintf(addBuf, sizeof(addBuf), "%d", scanAdded);
-                textMonoValue(addBuf);
-                if (scanUpdated > 0) {
-                    ImGui::SameLine(0, 10);
-                    ImGui::TextUnformatted(L(Scan_UpdatedCount));
-                    ImGui::SameLine(0, 6);
-                    char updBuf[24];
-                    snprintf(updBuf, sizeof(updBuf), "%d", scanUpdated);
-                    textMonoValue(updBuf);
+                if (aura::ui::SmallActionButton(L(Main_StopBtn), aura::ui::ButtonVariant::Quiet)) {
+                    state.showScanDialog = true; state.scanUiRequestStopChoice = true;
                 }
+                ThemeInspector::RegisterLastItem("scan.background.stop");
             }
-
-            // 显示当前处理的文件（截断过长的路径）
-            ImGui::SameLine(0, 20);
-            std::string currentFile = state.getScanFile();
-            if (currentFile.length() > 60) {
-                currentFile = "..." + currentFile.substr(currentFile.length() - 57);
+        } else if (scanIsCleanup) {
+            ImGui::Text(L(ScanUi_CleanupRemovedFmt), state.scanRemovedCount.load());
+            ImGui::SameLine();
+            if (aura::ui::SmallActionButton(L(ScanUi_ViewResult), aura::ui::ButtonVariant::Quiet)) state.showScanDialog = true;
+        } else if (state.scanSimilarityOwned) {
+            const auto result = state.batchFeatureResults.Snapshot();
+            ImGui::TextUnformatted(result.running ? L(ScanUi_SimilarTitle) :
+                result.stopped ? L(ScanUi_AnalysisStopped) : L(ScanUi_AnalysisComplete));
+            if (result.running && result.total > 0) { ImGui::SameLine(0, 12); ImGui::Text("%d / %d", result.Processed(), result.total); }
+            ImGui::SameLine(0, 16);
+            if (aura::ui::SmallActionButton(result.running ? L(ScanUi_ViewProgress) : L(ScanUi_ViewResult), aura::ui::ButtonVariant::Quiet)) state.showScanSimilarityDialog = true;
+            ThemeInspector::RegisterLastItem("scan.similar.show");
+            if (result.running && !state.batchFeatureCancelRequested.load()) {
+                ImGui::SameLine(0, 8);
+                if (aura::ui::SmallActionButton(L(ScanUi_StopAnalysis), aura::ui::ButtonVariant::Quiet)) state.batchFeatureCancelRequested.store(true);
             }
-            ImGui::TextDisabled(L(Main_PipeStatusFmt), currentFile.c_str());
-        } else if (state.scanCompletionPending.load(std::memory_order_acquire) &&
-                   state.scanTotal.load() > 0) {
-            ImGui::TextColored(kUseLightSoftChromeTheme ? kThemeAccentText : kThemeWarningText, L(Main_ImportFinalizing));
-            ImGui::SameLine(0, 8);
-            ImGui::TextDisabled("%s", BuildScanCompletionPendingLabel(state).c_str());
         } else if (state.scanSummaryToastUntil > ImGui::GetTime() && state.scanTotal.load() > 0) {
             ImGui::TextColored(kUseLightSoftChromeTheme ? kThemeAccentText : kThemeSuccessText, L(Main_ScanDoneShort));
             ImGui::SameLine(0, 8);

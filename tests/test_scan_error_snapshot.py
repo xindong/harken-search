@@ -10,11 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope='module')
 def predicate_exe(tmp_path_factory):
     source = (ROOT / 'src/main.cpp').read_text(encoding='utf-8')
-    start = source.index('if (!state.isScanning &&\n            !scanCompleteSummaryActive')
-    block = source[start:source.index('const int scanIngested', start)]
+    start = source.index('ReadingTextScope readingResult;')
+    block = source[start:source.index('const bool rollbackFailed', start)]
     snapshot = re.search(r'const auto scanErrorSnapshot = state.getScanErrors\(\);', block)
-    any_expr = re.search(r'const bool networkUnreachable = std::any_of\([\s\S]*?\n\s*\}\);', block).group()
-    count_expr = re.search(r'const int unreachableHint = static_cast<int>\(std::count_if\([\s\S]*?\n\s*\}\)\);', block).group()
+    any_expr = re.search(r'const bool networkUnreachable = std::any_of\([\s\S]*?\}\);', block).group()
+    count_expr = "const int unreachableHint = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, int(scanErrorSnapshot.size()))[0];"
     setup = sorted(glob.glob('C:/Program Files/Microsoft Visual Studio/*/*/VC/Auxiliary/Build/vcvars64.bat'))
     assert setup, 'VS C++ toolchain required for checked-iterator regression'
     folder = tmp_path_factory.mktemp('scan-error-snapshot')
@@ -24,7 +24,9 @@ def predicate_exe(tmp_path_factory):
 #include <string>
 #include <cstdlib>
 #include <crtdbg.h>
+#define NOMINMAX
 #include <windows.h>
+#include "ScanDialogPresentation.h"
 struct State {
   std::vector<std::string> messages;
   int reads = 0;
@@ -46,7 +48,7 @@ int main(int argc, char** argv) {
 }
 ''', encoding='utf-8')
     script = folder / 'compile.cmd'
-    script.write_text(f'@echo off\ncall "{setup[-1]}" >nul\nif errorlevel 1 exit /b 1\ncl /nologo /std:c++17 /EHsc /MDd /Od /D_ITERATOR_DEBUG_LEVEL=2 "{cpp}" /Fe:predicate.exe\n', encoding='utf-8')
+    script.write_text(f'@echo off\ncall "{setup[-1]}" >nul\nif errorlevel 1 exit /b 1\ncl /nologo /std:c++17 /EHsc /MDd /Od /D_ITERATOR_DEBUG_LEVEL=2 /I "{ROOT / "src"}" "{cpp}" /Fe:predicate.exe\n', encoding='utf-8')
     result = subprocess.run(['cmd', '/c', str(script)], cwd=folder, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     return folder / 'predicate.exe'

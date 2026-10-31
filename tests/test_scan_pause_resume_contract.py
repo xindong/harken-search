@@ -51,24 +51,26 @@ class ScanPauseResumeContract(unittest.TestCase):
 
     def test_pause_and_cancel_are_distinct_summaries(self):
         self.assertIn("scanWasPaused", MAIN)
-        self.assertIn("case HarkenSearch::ScanWorkflowStage::Paused", MAIN)
+        self.assertIn("scanView.phase == Phase::Paused", MAIN)
         self.assertIn("L(Main_PauseKeepBtn)", MAIN)
-        self.assertIn("L(Main_CancelRollbackBtn)", MAIN)
-        self.assertIn("L(Main_RescanResumeHint)", MAIN)
+        self.assertIn("L(ScanUi_RevokeScan)", MAIN)
+        self.assertIn("L(ScanUi_Rescan)", MAIN)
         self.assertEqual(LOCALIZED["Main_PauseKeepBtn"]["zh"], "暂停并保留")
-        self.assertEqual(LOCALIZED["Main_CancelRollbackBtn"]["zh"], "取消并回滚")
-        self.assertIn("重新扫描同一文件夹可继续处理剩余文件", LOCALIZED["Main_RescanResumeHint"]["zh"])
+        self.assertEqual(LOCALIZED["ScanUi_RevokeScan"]["zh"], "撤销本次入库")
+        self.assertIn("原文件不动", LOCALIZED["ScanUi_RevokeReminder"]["zh"])
+        self.assertIn("state.lastScannedPath", MAIN)
 
     def test_stop_choice_does_not_add_a_third_primary_scan_button(self):
         active_start = MAIN.index("const bool showBackgroundContinueButton")
-        active_end = MAIN.index("if (state.scanCancelRequested.load())", active_start)
+        active_end = MAIN.index("if (BeginTransientScrollbarPopupModal(", active_start)
         active_block = MAIN[active_start:active_end]
         self.assertIn('aura::ui::ActionButton(L(Main_StopBtn)', active_block)
         self.assertNotIn('aura::ui::ActionButton(L(Main_PauseKeepBtn)', active_block)
         self.assertIn('ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str())', active_block)
-        self.assertIn('aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(btnW, 30))', MAIN)
+        self.assertIn('aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(0, 32.f)', MAIN)
         self.assertIn('ImGui::SameLine(0, gap)', MAIN)
-        self.assertIn('aura::ui::ActionButton(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))', MAIN)
+        self.assertIn('aura::ui::ActionButton(L(ScanUi_RevokeScan), ImVec2(0, 32.f)', MAIN)
+        self.assertIn("L(ScanUi_ContinueScan)", MAIN)
         self.assertEqual(LOCALIZED["Main_StopBtn"]["zh"], "停止…")
         self.assertEqual(LOCALIZED["Scan_StopScan"]["zh"], "停止扫描")
 
