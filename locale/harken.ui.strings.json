@@ -3342,9 +3342,135 @@
     {
       "id": "Relink_ScopeHint",
       "type": "ui",
-      "zh": "留空则仅在已监控目录内搜索",
-      "en": "Leave empty to search only monitored directories",
-      "ja": "空欄の場合は監視済みディレクトリ内のみ検索"
+      "zh": "自动匹配会搜索已监控目录；也可指定一个目录。",
+      "en": "Auto Match searches monitored directories. You can add one folder.",
+      "ja": "自動マッチでは監視対象を検索します。フォルダーを追加できます。"
+    },
+    {
+      "id": "Relink_MatchReasonExactNameSize",
+      "type": "ui",
+      "zh": "依据：文件名与大小一致",
+      "en": "Matched by identical file name and size",
+      "ja": "照合理由：ファイル名とサイズが一致"
+    },
+    {
+      "id": "Relink_UpdateSourceChanged",
+      "type": "ui",
+      "zh": "原文件路径已恢复或变化，未更新关联。",
+      "en": "The original path changed; the link was not updated.",
+      "ja": "元のパスが復旧または変更されたため、リンクを更新しませんでした。"
+    },
+    {
+      "id": "Relink_UpdateTargetUnavailable",
+      "type": "ui",
+      "zh": "候选文件已不可用，未更新关联。",
+      "en": "The candidate file is unavailable; the link was not updated.",
+      "ja": "候補ファイルを利用できないため、リンクを更新しませんでした。"
+    },
+    {
+      "id": "Relink_UpdatePathConflict",
+      "type": "ui",
+      "zh": "该路径已被其他记录占用，未更新关联。",
+      "en": "Another record already uses this path; the link was not updated.",
+      "ja": "このパスは別のレコードで使用されているため、リンクを更新しませんでした。"
+    },
+    {
+      "id": "Relink_UpdateFailed",
+      "type": "ui",
+      "zh": "路径更新失败，请重试。",
+      "en": "Path update failed. Try again.",
+      "ja": "パスを更新できませんでした。もう一度お試しください。"
+    },
+    {
+      "id": "Relink_SearchStopping",
+      "type": "ui",
+      "zh": "正在停止搜索…",
+      "en": "Stopping search…",
+      "ja": "検索を停止しています…"
+    },
+    {
+      "id": "Relink_SearchingFmt",
+      "type": "ui",
+      "zh": "正在扫描 · 已扫描 %llu 项",
+      "en": "Scanning · %llu items scanned",
+      "ja": "スキャン中 · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_CancelSearch",
+      "type": "ui",
+      "zh": "取消搜索",
+      "en": "Cancel search",
+      "ja": "検索をキャンセル"
+    },
+    {
+      "id": "Relink_NoMissingRecordsFmt",
+      "type": "ui",
+      "zh": "没有缺失记录 · 已扫描 %llu 项",
+      "en": "No missing records · %llu items scanned",
+      "ja": "欠損レコードなし · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_NoCandidatesFmt",
+      "type": "ui",
+      "zh": "没有找到候选文件 · 已扫描 %llu 项",
+      "en": "No candidate files found · %llu items scanned",
+      "ja": "候補ファイルなし · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_SearchCompletedFmt",
+      "type": "ui",
+      "zh": "搜索完成 · 已扫描 %llu 项",
+      "en": "Search complete · %llu items scanned",
+      "ja": "検索完了 · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_SearchCancelledFmt",
+      "type": "ui",
+      "zh": "已取消搜索 · 已扫描 %llu 项",
+      "en": "Search cancelled · %llu items scanned",
+      "ja": "検索をキャンセルしました · %llu 項目を確認"
+    },
+    {
+      "id": "Relink_SearchPartialFailureFmt",
+      "type": "ui",
+      "zh": "部分目录无法读取 · 已扫描 %llu 项，%zu 个目录未完成",
+      "en": "Some folders could not be read · %llu items scanned, %zu folders incomplete",
+      "ja": "一部のフォルダーを読み取れません · %llu 項目を確認、%zu フォルダー未完了"
+    },
+    {
+      "id": "Relink_HideFailedRoots",
+      "type": "ui",
+      "zh": "收起目录",
+      "en": "Hide folders",
+      "ja": "フォルダーを閉じる"
+    },
+    {
+      "id": "Relink_ShowFailedRoots",
+      "type": "ui",
+      "zh": "查看未读取目录",
+      "en": "View unreadable folders",
+      "ja": "読み取れないフォルダーを表示"
+    },
+    {
+      "id": "Relink_SearchFailedFmt",
+      "type": "ui",
+      "zh": "搜索未完成：%s",
+      "en": "Search did not complete: %s",
+      "ja": "検索が完了しませんでした：%s"
+    },
+    {
+      "id": "Relink_SearchFailedFallback",
+      "type": "ui",
+      "zh": "未知错误，请重试。",
+      "en": "Unknown error. Try again.",
+      "ja": "不明なエラーです。もう一度お試しください。"
+    },
+    {
+      "id": "Relink_NoMatchForFile",
+      "type": "ui",
+      "zh": "未找到候选",
+      "en": "No candidate found",
+      "ja": "候補が見つかりません"
     },
     {
       "id": "Relink_ReadyCount",
@@ -3384,9 +3510,9 @@
     {
       "id": "Relink_PreserveNote",
       "type": "ui",
-      "zh": "关联后评级、标签、播放记录全部保留",
-      "en": "Ratings, tags, and play history will be preserved after relinking",
-      "ja": "再リンク後も評価・タグ・再生履歴はすべて保持されます"
+      "zh": "确认后才更新路径；评级、标签和播放记录保留。",
+      "en": "Paths update after confirmation; ratings, tags, and play history are preserved.",
+      "ja": "確認後にパスを更新します。評価、タグ、再生履歴は保持されます。"
     },
     {
       "id": "Relink_ConfirmBtn",
@@ -9892,13 +10018,6 @@
       "ja": "対象フォルダーを選択:"
     },
     {
-      "id": "Relink_ArrowFileFmt",
-      "type": "ui",
-      "zh": "→ %s",
-      "en": "→ %s",
-      "ja": "→ %s"
-    },
-    {
       "id": "ThemeEditor_ColorSession",
       "type": "ui",
       "zh": "调色会话",
@@ -9922,9 +10041,9 @@
     {
       "id": "Update_BootstrapHandoff",
       "type": "ui",
-      "zh": "正在交接 Bootstrap",
-      "en": "Handing off to Bootstrap",
-      "ja": "Bootstrap に引き継ぎ中"
+      "zh": "正在准备更新，请稍候…",
+      "en": "Preparing the update. Please wait…",
+      "ja": "更新を準備しています。しばらくお待ちください…"
     },
     {
       "id": "Main_PitchInputHint",
@@ -15753,15 +15872,10 @@
       "en": "Day at 08:00 · Night at 16:00",
       "ja": "08:00 に昼 · 16:00 に夜"
     },
-    {"id": "ThemeSchedule_Automatic", "type": "ui", "zh": "自动日夜切换", "en": "Switch automatically", "ja": "昼夜を自動切り替え"},
-    {"id": "ThemeSchedule_ManualHint", "type": "ui", "zh": "点击下方配色，固定使用白天或黑夜。", "en": "Choose a palette below to keep using day or night.", "ja": "下の配色を選んで、昼または夜に固定します。"},
-    {"id": "ThemeSchedule_Day", "type": "ui", "zh": "白天", "en": "Day", "ja": "昼"},
-    {"id": "ThemeSchedule_Night", "type": "ui", "zh": "黑夜", "en": "Night", "ja": "夜"},
+    {"id": "ThemeSchedule_Automatic", "type": "ui", "zh": "开启日夜切换主题模式", "en": "Enable automatic day/night themes", "ja": "昼夜テーマの自動切り替えを有効にする"},
+    {"id": "ThemeSchedule_DayThemeFmt", "type": "ui", "zh": "白天：%s", "en": "Day: %s", "ja": "昼：%s"},
+    {"id": "ThemeSchedule_NightThemeFmt", "type": "ui", "zh": "黑夜：%s", "en": "Night: %s", "ja": "夜：%s"},
     {"id": "ThemeSchedule_EditPalette", "type": "ui", "zh": "编辑配色", "en": "Edit palette", "ja": "配色を編集"},
-    {"id": "ThemeSchedule_Using", "type": "ui", "zh": "使用中", "en": "In use", "ja": "使用中"},
-    {"id": "ThemeSchedule_OtherThemes", "type": "ui", "zh": "其他主题", "en": "Other themes", "ja": "その他のテーマ"},
-    {"id": "ThemeSchedule_AutoDay", "type": "ui", "zh": "当前按时间使用白天配色", "en": "Currently using the scheduled day palette", "ja": "現在の時間帯：昼の配色"},
-    {"id": "ThemeSchedule_AutoNight", "type": "ui", "zh": "当前按时间使用黑夜配色", "en": "Currently using the scheduled night palette", "ja": "現在の時間帯：夜の配色"},
     {"id": "ThemeSchedule_EditDay", "type": "ui", "zh": "编辑白天配色", "en": "Edit day palette", "ja": "昼の配色を編集"},
     {"id": "ThemeSchedule_EditNight", "type": "ui", "zh": "编辑夜间配色", "en": "Edit night palette", "ja": "夜の配色を編集"},
     {"id": "ThemeSchedule_Save", "type": "ui", "zh": "保存配色", "en": "Save palette", "ja": "配色を保存"},
@@ -15772,8 +15886,8 @@
       "en": "Saves only this palette. Closing resumes your chosen theme mode.",
       "ja": "編集中の配色だけ保存します。閉じると選択中の配色モードに戻ります。"
     },
-    {"id": "ThemeSchedule_DayEditorHint", "type": "ui", "zh": "白天 · 08:00–16:00 · 浅色配色", "en": "Day · 08:00–16:00 · Light palette", "ja": "昼 · 08:00–16:00 · ライト配色"},
-    {"id": "ThemeSchedule_NightEditorHint", "type": "ui", "zh": "夜间 · 16:00–08:00 · 暗色配色", "en": "Night · 16:00–08:00 · Dark palette", "ja": "夜 · 16:00–08:00 · ダーク配色"},
+    {"id": "ThemeSchedule_DayEditorHint", "type": "ui", "zh": "白天 · 08:00–16:00", "en": "Day · 08:00–16:00", "ja": "昼 · 08:00–16:00"},
+    {"id": "ThemeSchedule_NightEditorHint", "type": "ui", "zh": "夜间 · 16:00–08:00", "en": "Night · 16:00–08:00", "ja": "夜 · 16:00–08:00"},
     {
       "id": "ThemeSchedule_DayFallback", "type": "ui",
       "zh": "白天配色未能读取，暂用柔雾粉。重新编辑并保存可修复。",
@@ -15785,18 +15899,6 @@
       "zh": "夜间配色未能读取，暂用经典深色。重新编辑并保存可修复。",
       "en": "Night palette could not be read; using Dark. Edit and save it to repair.",
       "ja": "夜の配色を読めないため Dark を使用中です。再編集して保存してください。"
-    },
-    {
-      "id": "ThemeSchedule_RequireLight", "type": "ui",
-      "zh": "白天请保持主窗口、列表、对话框和波形背景为浅色，且不透明度至少为 90%。",
-      "en": "Keep day window, list, dialog and waveform backgrounds light, with an opacity of at least 90 percent.",
-      "ja": "昼のウィンドウ・一覧・ダイアログ・波形背景は明るく、不透明度 90% 以上にしてください。"
-    },
-    {
-      "id": "ThemeSchedule_RequireDark", "type": "ui",
-      "zh": "夜间请保持主窗口、列表、对话框和波形背景为暗色，且不透明度至少为 90%。",
-      "en": "Keep night window, list, dialog and waveform backgrounds dark, with an opacity of at least 90 percent.",
-      "ja": "夜のウィンドウ・一覧・ダイアログ・波形背景は暗く、不透明度 90% 以上にしてください。"
     },
     {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"}
   ]

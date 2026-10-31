@@ -1,14 +1,8 @@
 #include "ThemeSchedulePaletteFiles.h"
+#include "platform/filesystem.h"
 
 #include <atomic>
 #include <chrono>
-#include <fstream>
-#include <iterator>
-#include <system_error>
-
-#ifdef _WIN32
-#include <Windows.h>
-#endif
 
 namespace harken::theme_schedule {
 namespace fs = std::filesystem;
@@ -27,8 +21,7 @@ bool SavePaletteJson(const fs::path& settingsFile, Period period,
         error = "settings path or palette JSON is empty";
         return false;
     }
-    std::error_code ec;
-    if (!fs::is_directory(target.parent_path(), ec)) {
+    if (!Platform::FileSystem::IsDirectory(target.parent_path().u8string())) {
         error = "settings directory is unavailable";
         return false;
     }
@@ -38,38 +31,27 @@ bool SavePaletteJson(const fs::path& settingsFile, Period period,
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
         "-" + std::to_string(++sequence);
     {
-        std::ofstream out(pending, std::ios::binary | std::ios::trunc);
-        if (!out) { error = "cannot open palette staging file"; return false; }
-        out.write(json.data(), static_cast<std::streamsize>(json.size()));
-        out.flush();
-        if (!out) {
+        Platform::FileSystem::StreamWriter out;
+        if (!out.Open(pending.u8string(), false, true)) {
+            error = "cannot open palette staging file"; return false;
+        }
+        if (!out.Write(json) || !out.Flush()) {
             error = "cannot write palette staging file";
-            out.close();
-            fs::remove(pending, ec);
+            out.Close();
+            Platform::FileSystem::RemoveFile(pending.u8string());
             return false;
         }
-        out.close();
-        if (!out) {
+        if (!out.CloseChecked()) {
             error = "cannot close palette staging file";
-            fs::remove(pending, ec);
+            Platform::FileSystem::RemoveFile(pending.u8string());
             return false;
         }
     }
-#ifdef _WIN32
-    if (!MoveFileExW(pending.c_str(), target.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        error = "cannot replace palette file, Windows error " + std::to_string(GetLastError());
-        fs::remove(pending, ec);
+    if (!Platform::FileSystem::AtomicFileReplace(target.u8string(), pending.u8string())) {
+        error = "cannot replace palette file";
+        Platform::FileSystem::RemoveFile(pending.u8string());
         return false;
     }
-#else
-    fs::rename(pending, target, ec);
-    if (ec) {
-        error = "cannot replace palette file: " + ec.message();
-        fs::remove(pending, ec);
-        return false;
-    }
-#endif
     return true;
 }
 
@@ -79,14 +61,13 @@ bool ReadPaletteJson(const fs::path& settingsFile, Period period,
     json.clear();
     const fs::path source = PaletteFilePath(settingsFile, period);
     if (source.empty()) { error = "settings path is empty"; return false; }
-    std::ifstream in(source, std::ios::binary);
-    if (!in) { error = "cannot open palette file"; return false; }
-    json.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    if (in.bad() || json.empty()) {
+    const auto bytes = Platform::FileSystem::ReadFileBytes(source.u8string());
+    if (bytes.empty()) {
         error = "cannot read palette file";
         json.clear();
         return false;
     }
+    json.assign(bytes.begin(), bytes.end());
     return true;
 }
 

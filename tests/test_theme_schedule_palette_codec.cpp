@@ -18,14 +18,22 @@ int main() {
     std::string error;
     const auto encoded = EncodePalette(night);
     Check(DecodePalette(encoded, Period::Night, decoded, error), "night round trip");
+    Check(PalettesEqual(night, decoded), "preset identity survives palette round trip");
     size_t count = 0;
     const auto* fields = GetThemeEditorItems(count);
     for (size_t i = 0; i < count; ++i) {
         const auto a = night.*(fields[i].member), b = decoded.*(fields[i].member);
         Check(a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w, fields[i].key);
+        auto edited = decoded;
+        (edited.*(fields[i].member)).w = b.w == 1.f ? .5f : 1.f;
+        Check(!PalettesEqual(night, edited), "edited field must not keep the stock preset name");
     }
     Check(decoded.sidebarIconActive.w == .6f && decoded.wwiseDiffNew.z == .7f, "non-editor colors survive");
-    Check(!DecodePalette(encoded, Period::Day, decoded, error), "dark palette rejected for day");
+    auto hiddenEdit = decoded;
+    hiddenEdit.wwiseDiffNew.x = .8f;
+    Check(!PalettesEqual(night, hiddenEdit), "non-editor field must affect preset identity");
+    Check(DecodePalette(encoded, Period::Day, decoded, error), "dark palette accepted for day");
+    Check(PalettesEqual(night, decoded), "day slot preserves the chosen dark palette");
     const auto before = decoded.toolbarAccent.x;
     for (const char* bad : {"{}", "{broken", "[]", "null"}) {
         Check(!DecodePalette(bad, Period::Night, decoded, error), "bad JSON rejected");
@@ -40,8 +48,9 @@ int main() {
     auto day = night;
     day.mainWindowBG = day.resultsBG = day.dialogBG = day.waveformBG = ImVec4(.94f,.95f,.97f,1);
     Check(DecodePalette(EncodePalette(day), Period::Day, decoded, error), "light palette accepted for day");
-    Check(!DecodePalette(EncodePalette(day), Period::Night, decoded, error), "light palette rejected for night");
+    Check(DecodePalette(EncodePalette(day), Period::Night, decoded, error), "light palette accepted for night");
+    Check(PalettesEqual(day, decoded), "night slot preserves the chosen light palette");
     day.toolbarAccent.x = std::numeric_limits<float>::quiet_NaN();
     Check(!ValidatePalette(day, Period::Day, error), "nonfinite value rejected before writing");
-    std::cout << "Full palette round-trip, category and corrupt input checks passed\n";
+    std::cout << "Full palette round-trip, unrestricted periods and corrupt input checks passed\n";
 }

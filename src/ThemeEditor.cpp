@@ -194,9 +194,7 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
         const auto period = g_ed.schedulePeriod == 0 ? harken::theme_schedule::Period::Day : harken::theme_schedule::Period::Night;
         std::string error;
         if (!harken::theme_schedule::SavePalette(period, g_ed.draft, error)) {
-            if (error == "day_requires_light") statusMsg = L(ThemeSchedule_RequireLight);
-            else if (error == "night_requires_dark") statusMsg = L(ThemeSchedule_RequireDark);
-            else statusMsg = std::string(L(ThemeSchedule_SaveFailed)) + " (" + error + ")";
+            statusMsg = std::string(L(ThemeSchedule_SaveFailed)) + " (" + error + ")";
             return false;
         }
         g_ed.savedThisSession = true;
