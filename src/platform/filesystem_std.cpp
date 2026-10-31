@@ -167,8 +167,15 @@ std::int64_t StreamWriter::Tell() const {
 }
 
 void StreamWriter::Close() {
-    if (impl_->stream.is_open()) impl_->stream.close();
+    (void)CloseChecked();
+}
+
+bool StreamWriter::CloseChecked() {
+    if (!impl_->stream.is_open()) return false;
+    impl_->stream.close();
+    const bool succeeded = !impl_->stream.fail();
     impl_->stream.clear();
+    return succeeded;
 }
 
 bool StreamWriter::IsOpen() const {

@@ -87,7 +87,6 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(1, header_test.count("#include"))
         self.assertIn('#include "platform/database_audio_probe.h"', header_test)
 
-        plan = (ROOT / "docs/superpowers/plans/2026-07-20-stage6-s6-05b-database-audio-metadata-probe.md").read_text(encoding="utf-8")
         for later_file in (
             "src/platform/database_audio_probe.cpp",
             "src/platform/database_audio_probe_miniaudio.cpp",
@@ -96,7 +95,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "tests/test_database_audio_probe_routing.cpp",
             "tests/test_database_audio_probe_backend.cpp",
             "tests/test_database_audio_probe_integration.cpp"):
-            self.assertIn(later_file, plan)
+            self.assertTrue((ROOT / later_file).is_file(), later_file)
 
         behavior = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
         block = behavior.split("add_executable(TestDatabaseAudioProbeHeaderSelfContained", 1)[1].split(
@@ -2550,9 +2549,9 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
         )
         self.assertEqual(1, main.count(qualified_call))
-        merge_button = main.index("ImGui::Button(L(Set_ThesMerge)")
+        merge_button = main.index("aura::ui::ActionButton(L(Set_ThesMerge)")
         reset_button = main.index(
-            "ImGui::Button(L(Set_ThesResetDefault)", merge_button
+            "aura::ui::ActionButton(L(Set_ThesResetDefault)", merge_button
         )
         merge_body = main[merge_button:reset_button]
         self.assertNotIn("OPENFILENAMEW", merge_body)
@@ -2609,7 +2608,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd)"
         )
         self.assertEqual(1, main.count(qualified_call))
-        button = main.index("ImGui::Button(L(Set_ImportSettings)")
+        button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
         tooltip = main.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
         body = main[button:tooltip]
         self.assertNotIn("OPENFILENAMEW", body)
@@ -4082,8 +4081,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_pro_tools_repair_bridge_opens_sdk_directory_through_system_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split('if (ImGui::Button(L(Main_ProToolsRepairBtn))) {', 1)[1].split(
-            "if (ImGui::Button(ptResetPresentation.actionLabel.c_str()))", 1
+        body = source.split('if (aura::ui::ActionButton(L(Main_ProToolsRepairBtn))) {', 1)[1].split(
+            "if (aura::ui::ActionButton(ptResetPresentation.actionLabel.c_str()))", 1
         )[0]
 
         self.assertIn(
@@ -4118,8 +4117,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
     def test_main_custom_avatar_removal_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
         body = source.split(
-            "if (ImGui::Button(L(Set_AvatarRemoveLabelZh)))", 1
-        )[1].split("if (ImGui::Button(settingsAvatarPickerOpenLabel.c_str()))", 1)[0]
+            "if (aura::ui::ActionButton(L(Set_AvatarRemoveLabelZh)))", 1
+        )[1].split("if (aura::ui::ActionButton(settingsAvatarPickerOpenLabel.c_str()))", 1)[0]
 
         remove_call = "Platform::FileSystem::RemoveFile(avatarPath);"
         self.assertIn(remove_call, body)
@@ -4385,8 +4384,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         backend = (
             ROOT / "src" / "platform" / "thesaurus_json_dialog_win32.cpp"
         ).read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Set_ThesMerge)", 1)[1].split(
-            "if (ImGui::Button(L(Set_ThesResetDefault)", 1
+        body = source.split("if (aura::ui::ActionButton(L(Set_ThesMerge)", 1)[1].split(
+            "if (aura::ui::ActionButton(L(Set_ThesResetDefault)", 1
         )[0]
 
         capability_call = (
@@ -4408,8 +4407,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_dev_mode_marker_creation_uses_filesystem_text_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Set_CreateDevMode)", 1)[1].split(
-            "if (ImGui::Button(L(Set_OpenExeDir)", 1
+        body = source.split("if (aura::ui::ActionButton(L(Set_CreateDevMode)", 1)[1].split(
+            "if (aura::ui::ActionButton(L(Set_OpenExeDir)", 1
         )[0]
 
         self.assertIn(
@@ -4420,8 +4419,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_dev_mode_marker_removal_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Set_DeleteDevMode)", 1)[1].split(
-            "if (ImGui::Button(L(Set_CreateDevMode)", 1
+        body = source.split("if (aura::ui::ActionButton(L(Set_DeleteDevMode)", 1)[1].split(
+            "if (aura::ui::ActionButton(L(Set_CreateDevMode)", 1
         )[0]
 
         self.assertIn("Platform::FileSystem::RemoveFile(devModePath);", body)
@@ -4473,7 +4472,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_thesaurus_reset_removes_current_and_legacy_files_through_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Set_ThesResetDefault)", 1)[1].split(
+        body = source.split("if (aura::ui::ActionButton(L(Set_ThesResetDefault)", 1)[1].split(
             "ImGui::Spacing();", 1
         )[0]
 
@@ -9003,8 +9002,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
         self.assertEqual(0, result)
         output = stdout.getvalue()
-        self.assertIn("Scanned findings: 593", output)
-        self.assertIn("Audited exceptions: 593", output)
+        self.assertIn("Scanned findings: 637", output)
+        self.assertIn("Audited exceptions: 637", output)
         self.assertIn("Unresolved findings: 0", output)
         self.assertIn("Ledger findings: 0", output)
         self.assertEqual("", stderr.getvalue())
@@ -9019,7 +9018,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             entry.get("disposition") for entry in register["findings"]
         ]
         self.assertEqual(13, dispositions.count("platform-entry"))
-        self.assertEqual(580, dispositions.count("platform-adapter"))
+        self.assertEqual(624, dispositions.count("platform-adapter"))
         owners = [entry.get("owner_slice") for entry in register["findings"]]
         self.assertEqual(94, owners.count("BOOTSTRAP-FILESYSTEM"))
         self.assertEqual(480, owners.count("BOOTSTRAP-RUNTIME"))
@@ -9031,7 +9030,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             ROOT,
         )
         self.assertEqual([], classification.errors)
-        self.assertEqual(593, len(classification.audited_fingerprints))
+        self.assertEqual(637, len(classification.audited_fingerprints))
         self.assertEqual(0, len(classification.unresolved_findings))
 
         runtime_fingerprints = {
@@ -9110,7 +9109,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(
-            "`593` exact audited entries",
+            "`637` exact audited entries",
             report,
             "the report must describe the current exact exception register",
         )
@@ -9252,7 +9251,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_export_destination_presence_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Export_Start)", 1)[1].split(
+        body = source.split("if (aura::ui::ActionButton(L(Export_Start)", 1)[1].split(
             "std::thread([&state, destDir, folderStrat, existBehav, keepSource]()",
             1,
         )[0]
@@ -9286,7 +9285,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_settings_export_source_probe_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Set_ExportSettings)", 1)[1].split(
+        body = source.split("if (aura::ui::ActionButton(L(Set_ExportSettings)", 1)[1].split(
             "if (HoveredForHelp()) Aura::SetTooltip",
             1,
         )[0]
@@ -9300,11 +9299,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
     def test_main_settings_import_export_copy_uses_filesystem_pal(self) -> None:
         header = (ROOT / "src" / "platform" / "filesystem.h").read_text(encoding="utf-8")
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        export_body = source.split("if (ImGui::Button(L(Set_ExportSettings)", 1)[1].split(
+        export_body = source.split("if (aura::ui::ActionButton(L(Set_ExportSettings)", 1)[1].split(
             "if (HoveredForHelp()) Aura::SetTooltip",
             1,
         )[0]
-        import_body = source.split("if (ImGui::Button(L(Set_ImportSettings)", 1)[1].split(
+        import_body = source.split("if (aura::ui::ActionButton(L(Set_ImportSettings)", 1)[1].split(
             "if (HoveredForHelp()) Aura::SetTooltip",
             1,
         )[0]
@@ -9348,7 +9347,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
     def test_main_transfer_subfolder_creation_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (ImGui::Button(L(Export_Start), ImVec2(120, 0)) && !state.transferInProgress)", 1)[1].split(
+        body = source.split("if (aura::ui::ActionButton(L(Export_Start), ImVec2(120, 0), aura::ui::ButtonVariant::PrimaryTransfer) && !state.transferInProgress)", 1)[1].split(
             "TransferDestinationResolution resolved =",
             1,
         )[0]
@@ -9359,7 +9358,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
     def test_main_transfer_copy_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
         body = source.split("std::thread([&state, destDir, folderStrat, existBehav, keepSource]()", 1)[1].split(
-            "if (ImGui::Button(L(Set_ExportSettings),", 1
+            "if (aura::ui::ActionButton(L(Set_ExportSettings),", 1
         )[0]
 
         self.assertIn("Platform::FileSystem::CopyFile(", body)

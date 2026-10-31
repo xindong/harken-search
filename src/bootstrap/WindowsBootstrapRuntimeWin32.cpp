@@ -2,6 +2,7 @@
 #include "bootstrap/HarkenSearchBootstrapMain.h"
 #include "bootstrap/HarkenSearchBootstrapExitExplanation.h"
 #include "bootstrap/WindowsBootstrapLaunchBroker.h"
+#include "bootstrap/WindowsBootstrapProgress.h"
 #include "platform/update_bootstrap_authority_port.h"
 
 #ifdef _WIN32
@@ -4178,20 +4179,34 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     options.oldProcessWaitMs = 1000U;
     options.healthWaitMs = 5000U;
 #endif
+#ifdef HARKEN_BOOTSTRAP_WEBVIEW_TESTING
+    options.oldProcessWaitMs = 6000U;
+#endif
     const aris::bootstrap::PackagePlanTrustConfig trust =
         aris::bootstrap::ProductionPackagePlanTrust();
     const bool launchedFromHandoff =
         handoff != nullptr && handoff != INVALID_HANDLE_VALUE &&
         GetFileType(handoff) == FILE_TYPE_PIPE;
-#if defined(ARIS_BOOTSTRAP_TEST_DIAGNOSTICS)
+#if defined(ARIS_BOOTSTRAP_TEST_DIAGNOSTICS) && !defined(HARKEN_BOOTSTRAP_WEBVIEW_TESTING)
     static_cast<void>(launchedFromHandoff);
+#else
+    // Only the interactive normal updater owns a window. Brokers and terminal
+    // cleanup never create another UI, and observation grants no authority.
+    // UI browser subprocesses must not inherit the one-shot channel or pinned
+    // parent. Broker handles are made non-inheritable before SetTargetVersion.
+    const bool webViewAllowed = mode == BootstrapNativeMode::Normal && launchedFromHandoff &&
+        clearTerminalInheritedHandleFlags(handoff, ready, parentProcess);
+    auto progress = mode == BootstrapNativeMode::Normal && launchedFromHandoff
+        ? aris::bootstrap::CreateBootstrapProgressWindow(false, webViewAllowed) : nullptr;
+    options.progress = progress.get();
 #endif
     const int result = aris::bootstrap::RunHarkenSearchBootstrapEntrypoint(
         reinterpret_cast<std::uintptr_t>(handoff),
         reinterpret_cast<std::uintptr_t>(parentProcess), trust, options);
-#if !defined(ARIS_BOOTSTRAP_TEST_DIAGNOSTICS)
+#if !defined(ARIS_BOOTSTRAP_TEST_DIAGNOSTICS) || defined(HARKEN_BOOTSTRAP_WEBVIEW_TESTING)
+    const bool progressPresented = progress && progress->Finish(result);
     if (mode == BootstrapNativeMode::Normal && result != 0 &&
-        launchedFromHandoff) {
+        launchedFromHandoff && !progressPresented) {
         // Bootstrap distinguishes 30+ exit codes; this dialog used to collapse
         // all of them into "uninstall and reinstall".  That is wrong for most:
         // a rollback leaves the previous version working, a stray process just
