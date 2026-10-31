@@ -5,6 +5,8 @@ enum class InfoPage { Metadata = 0, Artwork = 1, Transfer = 2, Playback = 3 };
 struct InfoPageNavigation {
     int visibleMask = 15;
     int selected = 1;
+    // A window shortcut, independent of the selectable content pages.
+    bool similarSoundsVisible = true;
     static bool Available(InfoPage page, bool diagnostics) {
         const int index = static_cast<int>(page);
         return index >= 0 && index < 4 && (diagnostics || page != InfoPage::Transfer);

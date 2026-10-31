@@ -1068,6 +1068,8 @@ int run(const std::wstring& monitorPath,
                 Sleep(5U);
             }
             if (mode == L"timeout") Sleep(parentHoldMs);
+            if (mode == L"progress-normal") Sleep(2200U);
+            if (mode == L"progress-timeout") Sleep(7000U);
             const BOOL signaledOld = SetEvent(oldProcess.process.exitEvent);
             const DWORD oldWait = WaitForSingleObject(
                 oldProcess.process.process, 5000U);

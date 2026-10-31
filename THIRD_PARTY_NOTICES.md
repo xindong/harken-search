@@ -15,7 +15,7 @@ Harken Search public-release builds bundle, link, or intentionally reference the
 | whisper.cpp | `thirdparty/whisper.cpp/` | MIT | Local speech-to-text support |
 | IXWebSocket | `thirdparty/ixwebsocket/` | BSD-3-Clause | WAAPI and localhost bridge transport |
 | rlottie | `thirdparty/rlottie/` | MIT + permissive bundled sub-licenses | Lottie animation renderer |
-| Microsoft WebView2 Loader | `thirdparty/webview2/` + `build_public/Release/WebView2Loader.dll` | Microsoft WebView2 SDK license | Bundled loader DLL for the startup/login WebView surfaces; the full Microsoft Edge WebView2 Runtime must still be installed on target machines |
+| Microsoft WebView2 Loader | `thirdparty/webview2/` + `build_public/Release/WebView2Loader.dll` + `HarkenSearchBootstrap.exe` | Microsoft WebView2 SDK license | Bundled loader DLL for startup/login and static loader for the independent updater; the full Microsoft Edge WebView2 Runtime must still be installed on target machines |
 | REAPER Plug-in API header subset | `reaper_extension/reaper_plugin.h` | REAPER SDK zlib-style notice | Altered minimal ABI declarations used by the Harken Search REAPER extension; the source header retains the upstream notice and marks the alteration |
 | TweetNaCl verify-only subset | `src/ed25519/tweetnacl.c` + `.h` | Public domain | Ed25519 signature verification; Harken Search removed keypair generation and signing and retains the original author attribution |
 | Lucide icon font | `thirdparty/lucide/lucide.ttf` + generated `IconsLucide.h` | ISC | Shipped icon font used by the desktop UI |

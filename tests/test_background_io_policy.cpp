@@ -1400,7 +1400,7 @@ void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
     Check(source.find("FinalizeFolderSubtreeDbRemoval") != std::string::npos &&
           source.find("ForceCoverWallReload(state);", source.find("FinalizeFolderSubtreeDbRemoval")) != std::string::npos,
           "BDD: Removing records from the database still invalidates the cover wall as database content changed");
-    const size_t rebuildButton = source.find("ImGui::Button(L(Set_RebuildCoverIndex)");
+    const size_t rebuildButton = source.find("aura::ui::ActionButton(L(Set_RebuildCoverIndex)");
     const size_t rebuildForce = source.find("ForceCoverWallReload(state);", rebuildButton);
     const size_t rebuildStart = source.find("StartCoverRebuild(state);", rebuildButton);
     Check(rebuildButton != std::string::npos &&
@@ -1722,12 +1722,13 @@ void TestQaBrowseSurfaceCommandsPreserveReplacementScopeContract() {
 
     Check(specificCoverBody.find("state.coverFilterActive = true;") != std::string::npos &&
           specificCoverBody.find("state.coverFilterPath = key;") != std::string::npos &&
-          specificCoverBody.find("state.folderFilterActive = false;") != std::string::npos &&
-          specificCoverBody.find("state.selectedFolderPath.clear();") != std::string::npos &&
+          specificCoverBody.find("state.folderFilterActive = false;") == std::string::npos &&
+          specificCoverBody.find("state.selectedFolderPath.clear();") == std::string::npos &&
+          specificCoverBody.find("ClearAllFiltersForShowAll(state);") == std::string::npos &&
           specificCoverBody.find("state.coverWall.pinnedCoverFilterItem.key = key;") != std::string::npos &&
           specificCoverBody.find("cancelPendingSearchForQaMutation();") != std::string::npos &&
           specificCoverBody.find("RefreshSearchResults(state, true);") != std::string::npos,
-          "BDD: QA specific-cover filter mutation keeps the replacement wall on one active cover scope and submits it through the normal refresh path");
+          "BDD: QA specific-cover filter preserves the folder constraint and submits the combined scope through the normal refresh path");
     Check(thumbSizeBody.find("aura::coverwall::ClampThumbSize(requestedSize)") != std::string::npos,
           "BDD: QA thumb-size mutation clamps browse-surface tile size through the shared replacement helper");
     Check(tilePresetBody.find("aura::coverwall::ApplyThumbPreset(sizePreset, state.coverWall.thumbSize);") != std::string::npos,

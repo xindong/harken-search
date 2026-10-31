@@ -15,7 +15,7 @@
 
 #define MyAppName "Harken Search"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.41"
+#define MyAppVersion "1.0.42"
 #endif
 #define MyAppPublisher "Harken Search"
 #define MyAppURL "https://harkensearch.xd.com/"

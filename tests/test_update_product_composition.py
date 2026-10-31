@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import json
 import re
 import pytest
@@ -187,7 +188,7 @@ def test_bootstrap_handoff_gate_is_exact() -> None:
     )
     assert re.search(
         r"if \(mode == BootstrapNativeMode::Normal && result != 0 &&\s*"
-        r"launchedFromHandoff\)\s*\{.*?"
+        r"launchedFromHandoff && !progressPresented\)\s*\{.*?"
         r"const auto explanation = aris::bootstrap::ExplainBootstrapExit\(result\);"
         r".*?if \(explanation\.showDialog\).*?"
         r"explanation\.requiresReinstall \? L\"Harken Search 需要重新安装\" : "
@@ -195,7 +196,6 @@ def test_bootstrap_handoff_gate_is_exact() -> None:
         source,
         re.DOTALL,
     )
-@pytest.mark.skipif(not (ROOT / "docs/plans/refactor/stage-6-platform-audited-exceptions.json").is_file(), reason="Historical audit ledger is retained in the private repository")
 def test_internal_bootstrap_runtime_audit_entries_are_exact() -> None:
     register = json.loads(
         (
@@ -215,7 +215,10 @@ def test_internal_bootstrap_runtime_audit_entries_are_exact() -> None:
     assert set(entries) == expected
     for fingerprint, entry in entries.items():
         assert entry["path"] == "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp"
-        assert entry["line"] == (4185 if "GetFileType" in fingerprint else 4218)
+        source_lines = (ROOT / entry["path"]).read_text(encoding="utf-8").splitlines()
+        assert 0 < entry["line"] <= len(source_lines)
+        source_line = " ".join(source_lines[entry["line"] - 1].strip().split())
+        assert hashlib.sha256(source_line.encode("utf-8")).hexdigest()[:16] == fingerprint.split("|")[3]
         assert entry["rule"] == "native-symbol"
         assert entry["owner_slice"] == "BOOTSTRAP-RUNTIME"
         assert entry["disposition"] == "platform-adapter"
