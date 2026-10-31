@@ -95,5 +95,29 @@ int main() {
     ASSERT(log.getRecentFilteredLines(50).find("expired-delayed-entry") == std::string::npos,
            "filtered tail excludes out-of-order expired entries");
     log.setEnabled(false);
+    log.clear();
+    log.setEnabled(true);
+    const int64_t fullTimestamp = nowMs();
+    for (int i = 0; i < 50; ++i) {
+        const std::string detail = "valid-at-capacity-" + std::to_string(i) + "-end";
+        log.logSystemAt("Retention", detail.c_str(), fullTimestamp);
+    }
+    ASSERT(waitUntil([&] { return log.entryCount() == 50; }),
+           "capacity fixture contains fifty current entries");
+    const auto droppedBefore = log.droppedCount();
+    log.logSystemAt("Retention", "expired-at-capacity", fullTimestamp - 61000);
+    // Repeating the final current entry is a queue barrier without consuming
+    // another ring slot or legitimately evicting one of the fifty entries.
+    log.logSystemAt("Retention", "valid-at-capacity-49-end", fullTimestamp);
+    ASSERT(waitUntil([&] {
+        return log.getRecentJsonLines(1).find("\"repeat\":2") != std::string::npos;
+    }), "writer processes the expired entry and the following folding barrier");
+    ASSERT(log.entryCount() == 50, "expired incoming entry preserves all current entries at capacity");
+    ASSERT(log.exportJsonString().find("valid-at-capacity-0-end") != std::string::npos,
+           "expired incoming entry does not evict the oldest current entry");
+    ASSERT(log.exportJsonString().find("expired-at-capacity") == std::string::npos,
+           "expired incoming entry is absent from the exported window");
+    ASSERT(log.droppedCount() == droppedBefore, "expired incoming entry is not counted as capacity loss");
+    log.setEnabled(false);
     return g_failed == 0 ? 0 : 1;
 }

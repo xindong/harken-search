@@ -248,6 +248,12 @@ void DiagnosticsLogger::writerLoop() {
                 std::lock_guard<std::mutex> lk(m_mutex);
                 pruneExpiredLocked(e.timestampMs);
                 if (!tryMergeWithLastLocked(e)) {
+                    // A delayed producer must not displace a current entry with
+                    // an already-expired one. The persistent log above still
+                    // records it; normal folding of queued repeats is unchanged.
+                    if (m_count == m_maxEntries && nowMs() - e.timestampMs > kRetentionWindowMs) {
+                        continue;
+                    }
                     m_oldestTimestampMs = m_count == 0 ? e.timestampMs
                         : std::min(m_oldestTimestampMs, e.timestampMs);
                     if (m_count == m_maxEntries) {
