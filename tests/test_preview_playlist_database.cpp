@@ -216,6 +216,55 @@ int main() {
                FindGroup(aggGroups, "F|PATH|D:/fx/whoosh") != nullptr,
            "aggregated cover keys keep both groups");
 
+    const fs::path inheritedFolder = audio / "inherited";
+    const fs::path representative = inheritedFolder / "source.wav";
+    std::vector<int64_t> inheritedIds;
+    for (const char* name : {"member-a.wav", "member-b.wav", "source.wav"}) {
+        const fs::path file = inheritedFolder / name;
+        TouchFile(file);
+        const std::string key = file == representative ? "E|inherited-playlist" : "";
+        const std::string sql =
+            "INSERT INTO audio_files(file_path,file_name,folder_path,embedded_cover_key) VALUES(" +
+            SqlQuote(file.u8string()) + "," + SqlQuote(name) + "," +
+            SqlQuote(inheritedFolder.u8string()) + "," + SqlQuote(key) + ");";
+        if (!Expect(db.executeRawQuery(sql.c_str()).success, "insert inherited-cover fixture")) return 1;
+        const auto inserted = db.executeRawQuery("SELECT last_insert_rowid();");
+        if (!Expect(inserted.success && inserted.rows.size() == 1, "read inherited fixture identity")) return 1;
+        inheritedIds.push_back(std::stoll(inserted.rows[0][0]));
+    }
+    Expect(db.propagateUniqueFolderCovers(0) >= 2, "propagate embedded cover to two unillustrated folder members");
+    db.syncCoverRegistry();
+    const int64_t inheritedPlaylist = db.createPlaylist("inherited-only");
+    const int64_t inheritedParent = db.createPlaylist("inherited-aggregate");
+    Expect(db.markAsFolder(inheritedParent), "create inherited aggregate folder");
+    const int64_t inheritedChildA = db.createSubPlaylist(inheritedParent, "child-a");
+    const int64_t inheritedChildB = db.createSubPlaylist(inheritedParent, "child-b");
+    Expect(db.addToPlaylist(inheritedPlaylist, inheritedIds[0]), "ordinary playlist contains only an inheriting member");
+    Expect(db.addToPlaylist(inheritedChildA, inheritedIds[0]) &&
+           db.addToPlaylist(inheritedChildB, inheritedIds[0]) &&
+           db.addToPlaylist(inheritedChildB, inheritedIds[1]), "aggregate contains two inheriting members and a duplicate membership");
+    const auto hasInheritedArtwork = [&](const std::vector<AudioRecord>& records, int64_t count) {
+        const auto items = aura::playlist::BuildPlaylistCoverItemsFromGroups(
+            aura::playlist::BuildPlaylistCoverGroupsFromRecords(records));
+        return items.size() == 1 && items[0].kind == CoverModule::CoverKind::EmbeddedCover &&
+            items[0].key == "E|inherited-playlist" && items[0].hitCount == count &&
+            items[0].filePathUtf8 == representative.u8string();
+    };
+    const auto inheritedRecords = db.searchPlaylistCoverKeys(inheritedPlaylist, empty);
+    Expect(inheritedRecords.size() == 1 && inheritedRecords[0].filePath == (inheritedFolder / "member-a.wav").u8string(),
+           "representative resolution preserves original playlist member path and count");
+    Expect(hasInheritedArtwork(inheritedRecords, 1), "ordinary inherited-only cover resolves audio outside the playlist");
+    Expect(hasInheritedArtwork(db.searchAggregatedPlaylistCoverKeys(inheritedParent, empty), 2),
+           "aggregate inherited-only cover resolves external audio without double counting membership");
+    Expect(db.executeRawQuery("DELETE FROM cover_cache_registry WHERE cover_key = 'E|inherited-playlist';").success,
+           "simulate missing representative registry entry");
+    Expect(hasInheritedArtwork(db.searchPlaylistCoverKeys(inheritedPlaylist, empty), 1) &&
+           hasInheritedArtwork(db.searchAggregatedPlaylistCoverKeys(inheritedParent, empty), 2),
+           "both cover queries recover source from existing audio records without a registry entry");
+    Expect(db.addToPlaylist(inheritedPlaylist, inheritedIds[2]), "append actual representative after inherited member");
+    Expect(hasInheritedArtwork(db.searchPlaylistCoverKeys(inheritedPlaylist, empty), 2),
+           "inherited member preceding representative still selects embedded loading");
+
     db.close();
     std::cout << "FAILURES " << g_failures << std::endl;
     return g_failures == 0 ? 0 : 1;

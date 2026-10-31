@@ -92,6 +92,7 @@ struct AudioRecord {
     std::string embeddedCoverKey;
     int64_t embeddedCoverKeyMtime = 0;
     std::string folderCoverKey;
+    // Cover-key-only playlist queries use the audio source here for inherited E| keys.
     std::string folderCoverSrcPath;
     int64_t folderCoverSrcMtime = 0;
     bool coverSuppressed = false;

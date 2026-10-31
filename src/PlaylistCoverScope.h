@@ -48,8 +48,13 @@ inline std::vector<PlaylistCoverGroup> BuildPlaylistCoverGroupsFromRecords(
     std::unordered_map<std::string, size_t> index;
     index.reserve(records.size());
     for (const AudioRecord& record : records) {
-        AddPlaylistCoverKey(groups, index, record.folderCoverKey,
-                            record.folderPath, record.folderCoverSrcPath, false);
+        if (record.folderCoverKey != record.embeddedCoverKey) {
+            const bool inheritedEmbedded = record.folderCoverKey.rfind("E|", 0) == 0;
+            AddPlaylistCoverKey(groups, index, record.folderCoverKey,
+                                inheritedEmbedded ? record.folderCoverSrcPath : record.folderPath,
+                                inheritedEmbedded ? std::string() : record.folderCoverSrcPath,
+                                inheritedEmbedded);
+        }
         AddPlaylistCoverKey(groups, index, record.embeddedCoverKey,
                             record.filePath, {}, true);
     }

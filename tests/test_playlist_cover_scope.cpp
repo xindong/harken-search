@@ -69,5 +69,34 @@ int main() {
         std::cerr << "FAIL: playlist embedded cover must retain its representative audio path\n";
         return 1;
     }
+    AudioRecord inherited;
+    inherited.filePath = "H:/FX/Fire/no-artwork.wav";
+    inherited.folderPath = "H:/FX/Fire";
+    inherited.folderCoverKey = embedded.embeddedCoverKey;
+    const auto inheritedFirst = aura::playlist::BuildPlaylistCoverGroupsFromRecords({inherited, embedded});
+    const auto inheritedFirstItems = aura::playlist::BuildPlaylistCoverItemsFromGroups(inheritedFirst);
+    if (inheritedFirstItems.size() != 1 || inheritedFirstItems[0].hitCount != 2 ||
+        inheritedFirstItems[0].kind != CoverModule::CoverKind::EmbeddedCover ||
+        inheritedFirstItems[0].filePathUtf8 != embedded.filePath) {
+        std::cerr << "FAIL: inherited-first group must use the actual embedded audio representative\n";
+        return 1;
+    }
+    inherited.folderCoverSrcPath = embedded.filePath;
+    const auto inheritedOnlyItems = aura::playlist::BuildPlaylistCoverItemsFromGroups(
+        aura::playlist::BuildPlaylistCoverGroupsFromRecords({inherited}));
+    if (inheritedOnlyItems.size() != 1 || inheritedOnlyItems[0].hitCount != 1 ||
+        inheritedOnlyItems[0].kind != CoverModule::CoverKind::EmbeddedCover ||
+        inheritedOnlyItems[0].filePathUtf8 != embedded.filePath) {
+        std::cerr << "FAIL: inherited-only member must retain its external embedded source\n";
+        return 1;
+    }
+    embedded.folderCoverKey = embedded.embeddedCoverKey;
+    const auto duplicateKeyItems = aura::playlist::BuildPlaylistCoverItemsFromGroups(
+        aura::playlist::BuildPlaylistCoverGroupsFromRecords({embedded}));
+    if (duplicateKeyItems.size() != 1 || duplicateKeyItems[0].hitCount != 1 ||
+        duplicateKeyItems[0].filePathUtf8 != embedded.filePath) {
+        std::cerr << "FAIL: one member contributes once to an identical inherited/embedded key\n";
+        return 1;
+    }
     return 0;
 }

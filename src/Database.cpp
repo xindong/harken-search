@@ -13353,7 +13353,13 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
         " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
-        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path, sc.folder_cover_src_path"
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path,"
+        " CASE WHEN sc.folder_cover_key LIKE 'E|%' THEN COALESCE("
+        " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
+        " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
+        " (SELECT source.file_path FROM audio_files source"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key ORDER BY source.id LIMIT 1), '')"
+        " ELSE sc.folder_cover_src_path END"
         " FROM playlist_items pi"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE pi.playlist_id = ?";
@@ -13641,7 +13647,13 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE p.parent_id = ?"
         " GROUP BY sc.id"
-        ") SELECT folder_cover_key, embedded_cover_key, file_path, folder_path, folder_cover_src_path FROM ranked";
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path,"
+        " CASE WHEN sc.folder_cover_key LIKE 'E|%' THEN COALESCE("
+        " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
+        " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
+        " (SELECT source.file_path FROM audio_files source"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key ORDER BY source.id LIMIT 1), '')"
+        " ELSE sc.folder_cover_src_path END FROM ranked sc";
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
