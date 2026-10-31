@@ -169,7 +169,9 @@ assert "GetAIEngine().GetAllTasks()" not in index_panel
 assert "L(Main_BackgroundTasksFmt)" in main
 # Folder-index totals can briefly be stale after switching libraries. The
 # analysis controls must count the same audio records as the extraction task.
-assert "state.database.tryGetFeatureIndexCounts(cachedIndexed, cachedTotal)" in index_panel
+assert "tryGetFeatureIndexCounts" not in index_panel, "Full-library SQL must not execute on the UI thread"
+assert "statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration)" in index_panel
+assert "statistics.Poll()" in index_panel and "statistics.Request()" in index_panel
 assert "state.database.getFileCount()" not in index_panel
 
 # The isolated QA executable must exercise the same batch entry as the button.

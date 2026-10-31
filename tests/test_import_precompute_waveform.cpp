@@ -333,7 +333,7 @@ static void checkScanDialogPrecomputeControlContract() {
     check(source.find("if (!state.scanCompletionPending.load(std::memory_order_acquire)) {\n                    state.scanProgress = 0;") != std::string::npos,
           "BDD: Closing the scan popup preserves the completed-scan summary until foreground debt actually settles");
     check(source.find("const bool scanCompletionBlocked =\n                state.scanCompletionPending.load(std::memory_order_acquire) &&") != std::string::npos &&
-              source.find("ImGui::BeginDisabled(scanCompletionBlocked);\n            if (ImGui::Button(L(Done), ImVec2(100, 0))) {") != std::string::npos &&
+              source.find("ImGui::BeginDisabled(scanCompletionBlocked);\n            if (aura::ui::ActionButton(L(Done), ImVec2(100, 0))) {") != std::string::npos &&
               source.find("ImGui::EndDisabled();\n            if (scanCompletionBlocked) {") != std::string::npos,
           "BDD: Scan dialog keeps Done disabled until the foreground completion gate clears");
     check(source.find("ImGui::TextDisabled(L(Main_WaitForegroundImport));") != std::string::npos &&
@@ -343,7 +343,7 @@ static void checkScanDialogPrecomputeControlContract() {
               source.find("ImGui::BeginDisabled(state.scanCancelRequested.load());") != std::string::npos &&
               source.find("if (!scanForegroundCompletionActive) {\n                    state.requestCancelScanTask();") == std::string::npos,
           "BDD: Foreground completion keeps Cancel actionable instead of disabling rollback");
-    const size_t doneButtonBlock = source.find("if (ImGui::Button(L(Done), ImVec2(100, 0))) {");
+    const size_t doneButtonBlock = source.find("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0))) {");
     const size_t doneButtonClose = doneButtonBlock == std::string::npos
         ? std::string::npos
         : source.find("ImGui::CloseCurrentPopup();", doneButtonBlock);
@@ -711,7 +711,7 @@ static void checkIncrementalWaveformMenuFillsMiniOnlyContract() {
     check(!source.empty(), "main.cpp source is readable for incremental waveform menu contract");
 
     const std::string startBody =
-        extractFunctionBody(source, "static void StartIncrementalWaveformRebuild(AppState& state)");
+        extractFunctionBody(source, "static void StartIncrementalWaveformRebuild(AppState& state,");
     check(!startBody.empty(), "StartIncrementalWaveformRebuild body can be inspected");
     check(startBody.find("countFilesNeedingWaveformCache()") != std::string::npos,
           "BDD: Given fast scan has filled mini cache, when user clicks fill missing waveforms, then only missing mini cache is counted");
@@ -883,6 +883,13 @@ static void checkIdleAssetBackfillContract() {
           "BDD: Idle asset backfill pump runs before the generic waveform rebuild pump");
     check(source.find("StartIdleAssetBackfill(state)") != std::string::npos,
           "BDD: Idle asset backfill starts through its own current-library mini/cover path");
+    const std::string idleStart = extractFunctionBody(source, "static bool StartIdleAssetBackfill(AppState& state)");
+    check(idleStart.find("idleAssetStatistics->Request()") != std::string::npos &&
+          idleStart.find("countFilesNeedingWaveformCache()") == std::string::npos,
+          "BDD: Idle checks submit background work without a UI-thread waveform census");
+    check(source.find("StartIncrementalWaveformRebuild(state, miniPending)") != std::string::npos &&
+          source.find("? knownMiniCount : state.database.countFilesNeedingWaveformCache()") != std::string::npos,
+          "BDD: Idle rebuild reuses its already-computed mini count");
     check(source.find("BackfillJobKind::CoverResolveAndThumb") != std::string::npos &&
               source.find("GlobalBackfillWorkerPool().start") != std::string::npos,
           "BDD: Idle asset backfill includes current-library pending cover aggregation work");

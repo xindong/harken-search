@@ -48,13 +48,18 @@ def test_same_folder_menu_has_no_unreachable_async_product_pipeline() -> None:
         "std::string targetFolder = record.folderPath;",
         "state.folderFilterActive = true;",
         "state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(targetFolder);",
-        "ClearSpecificCoverKeyFilter(state);",
         "state.viewMode = ViewMode::Database;",
         "RefreshSearchResults(state, true);",
         "state.syncToTab();",
         "rowContextInvalidatedResults = true;",
     ):
         assert preserved in menu
+    for reset in (
+        "ClearSpecificCoverKeyFilter(state);", "ClearAllFiltersForShowAll(state);",
+        "state.coverFilterActive = false;", r"state.searchBuffer[0] = '\0';",
+        "state.selectedTags.clear();",
+    ):
+        assert reset not in menu
 
     assert "aura::same_folder::SameFolderScanRuntime g_sameFolderScanner" in main
     assert "g_sameFolderScanner," in main

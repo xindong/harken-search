@@ -39,7 +39,7 @@ class ScanQuickStartContract(unittest.TestCase):
         quick_end = MAIN.index("if (!quickAutoStarted", quick_start)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN[quick_start:quick_end])
         self.assertNotIn("startScanForFolders(state.pendingScanFolders, true)", MAIN[quick_start:quick_end])
-        manual_start = MAIN.index("if (ImGui::Button(L(Scan_StartScan)")
+        manual_start = MAIN.index("if (aura::ui::ActionButton(L(Scan_StartScan)")
         manual_end = MAIN.index("} else if (!quickAutoStarted)", manual_start)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN[manual_start:manual_end])
         self.assertIn("startScanForFolders({ folder }, false)", MAIN[manual_end:])
@@ -52,9 +52,9 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertNotIn("state.scanDialogAutoStart = false;", MAIN[start:end])
 
     def test_manual_and_drag_flows_remain_confirmed(self):
-        self.assertIn("if (ImGui::Button(L(Scan_StartScan)", MAIN)
+        self.assertIn("if (aura::ui::ActionButton(L(Scan_StartScan)", MAIN)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN)
-        self.assertIn("ImGui::Button(L(Cancel)", MAIN)
+        self.assertIn("aura::ui::ActionButton(L(Cancel)", MAIN)
         self.assertIn("state.pendingScanFolders.clear();", MAIN)
         self.assertIn("state.showScanDialog = true;", MAIN)
         self.assertIn("g_appState->scanDialogAutoStart = false;", WINDOWS_MAIN)
@@ -126,7 +126,7 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertNotIn("state.needsDatabaseRefresh = true;", summary_header)
 
     def test_done_acknowledgement_clears_quick_completion_intent(self):
-        done_start = MAIN.index("if (ImGui::Button(L(Done), ImVec2(100, 0)))")
+        done_start = MAIN.index("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0)))")
         done_end = MAIN.index("ImGui::EndDisabled();", done_start)
         self.assertIn("state.scanDialogAutoStart = false;", MAIN[done_start:done_end])
 

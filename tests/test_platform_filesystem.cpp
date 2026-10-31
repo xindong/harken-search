@@ -401,7 +401,10 @@ int main() {
         fs::remove_all(root, ec);
         return 1;
     }
-    writer.Close();
+    if (!writer.CloseChecked() || writer.IsOpen() || writer.CloseChecked()) {
+        std::cerr << "FAIL: checked close should flush buffered bytes and report an already closed stream\n";
+        return 1;
+    }
     if (!Platform::FileSystem::ReadFileText(streamPath.u8string(), text) ||
         text != "first\nsecond\n") {
         std::cerr << "FAIL: streaming writer should preserve append order\n";
