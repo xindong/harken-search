@@ -13,6 +13,13 @@ HEADER_SUFFIXES = {".h", ".hpp", ".inl"}
 SOURCE_SUFFIXES = HEADER_SUFFIXES | {".c", ".cc", ".cpp", ".cxx", ".mm"}
 INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]+)[>\"]")
 REVIEWED_CONTRACTS = {
+    "src/Id3CommentText.h": "tests/test_metadata_reader_content_encoding.cpp",
+    "src/LibraryStatisticsWorker.h": "tests/test_feature_index_statistics.cpp",
+    "src/ThemeSchedule.h": "tools/qa_theme_schedule.py",
+    "src/ThemeScheduleClock.h": "tests/test_theme_schedule_clock.cpp",
+    "src/ThemeSchedulePaletteCodec.h": "tests/test_theme_schedule_palette_codec.cpp",
+    "src/ThemeSchedulePaletteFiles.h": "tests/test_theme_schedule_palette_files.cpp",
+    "src/ui/ActionButtonStyle.h": "tests/test_action_button_style.cpp",
     "src/bootstrap/BootstrapProgress.h": "tests/bootstrap/test_aris_bootstrap_runtime.cpp",
     "src/bootstrap/WindowsBootstrapProgress.h": "tests/bootstrap/test_bootstrap_progress_window.cpp",
     "src/bootstrap/BootstrapProgressView.h": "tests/bootstrap/test_bootstrap_progress_view.cpp",

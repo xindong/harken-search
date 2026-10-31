@@ -886,7 +886,8 @@ if(WIN32)
 endif()
 
 add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
-    tests/test_feature_index_statistics.cpp src/LibraryStatisticsWorker.cpp ${SQLITE_SOURCES})
+    tests/test_feature_index_statistics.cpp src/LibraryStatisticsWorker.cpp
+    ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
 target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
 target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
 target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
@@ -927,7 +928,13 @@ add_test(NAME ThemeScheduleClock COMMAND TestThemeScheduleClock)
 
 add_executable(TestThemeSchedulePaletteFiles EXCLUDE_FROM_ALL
     tests/test_theme_schedule_palette_files.cpp
-    src/ThemeSchedulePaletteFiles.cpp)
+    src/ThemeSchedulePaletteFiles.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestThemeSchedulePaletteFiles PRIVATE
+        src/platform/filesystem_win32.cpp src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestThemeSchedulePaletteFiles PRIVATE shlwapi)
+endif()
 target_include_directories(TestThemeSchedulePaletteFiles PRIVATE src)
 target_compile_features(TestThemeSchedulePaletteFiles PRIVATE cxx_std_17)
 if(MSVC)

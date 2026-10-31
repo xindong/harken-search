@@ -3,6 +3,7 @@
 #include "ThemeSchedulePaletteCodec.h"
 #include "BuiltinThemeScheme.h"
 #include "AppState.h"
+#include "platform/filesystem.h"
 #include <array>
 #include <ctime>
 #include <cstdlib>
@@ -53,8 +54,8 @@ void Initialize(const std::string& path) {
     for (const auto period : {Period::Day, Period::Night}) {
         const auto index = Index(period);
         const auto file = PaletteFilePath(g_runtime.settingsFile, period);
-        std::error_code ec;
-        if (!std::filesystem::exists(file, ec) && !ec) continue;
+        if (Platform::FileSystem::ProbePath(file.u8string()) ==
+            Platform::FileSystem::PathStatus::Missing) continue;
         auto& warning = g_runtime.warnings[index];
         std::string json;
         if (ReadPaletteJson(g_runtime.settingsFile, period, json, warning))

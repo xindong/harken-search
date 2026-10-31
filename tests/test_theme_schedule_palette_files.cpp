@@ -51,6 +51,19 @@ int main(int argc, char** argv) {
     Check(!SavePaletteJson({}, Period::Day, "{}", error), "empty settings path rejected");
     Check(!SavePaletteJson(settings, Period::Day, "", error), "empty palette rejected");
     Check(ReadBytes(day) == "{\"background\":\"cream\"}", "failed save preserves old palette");
+    const fs::path blocked = root / "blocked";
+    fs::create_directories(PaletteFilePath(blocked / "settings.ini", Period::Day));
+    Check(!SavePaletteJson(blocked / "settings.ini", Period::Day, "{}", error),
+          "failed replacement reports an error");
+    Check(!error.empty(), "replacement failure has a diagnostic");
+    Check(fs::is_directory(PaletteFilePath(blocked / "settings.ini", Period::Day)),
+          "failed replacement preserves the occupied target");
+    for (const auto& entry : fs::directory_iterator(blocked))
+        Check(entry.path().filename().u8string().find(".pending-") == std::string::npos,
+              "failed replacement removes only its staging file");
+    loaded = "stale";
+    Check(!ReadPaletteJson(root / "missing" / "settings.ini", Period::Day, loaded, error) &&
+          loaded.empty() && !error.empty(), "missing palette clears stale output and reports failure");
     std::cout << "theme schedule palette files: " << failed << " failure(s)\n";
     return failed == 0 ? 0 : 1;
 }

@@ -83,10 +83,11 @@ def test_menu_refresh_uses_the_same_explicit_cover_retry_as_f5_and_toolbar():
     menu_end = MAIN.index("ImGui::EndMenu();", menu_start)
     menu_refresh = MAIN[menu_start:menu_end]
 
-    assert "ClearAllFiltersForShowAll(state);" in menu_refresh
+    assert "ClearAllFiltersForShowAll(state);" not in menu_refresh
+    assert "ClearSpecificCoverKeyFilter(state);" not in menu_refresh
     assert "aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);" in menu_refresh
     assert "state.suppressFacetsForNextRefresh = true;" in menu_refresh
-    assert menu_refresh.index("ClearAllFiltersForShowAll(state);") < menu_refresh.index(
+    assert menu_refresh.index(
         "aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);"
     ) < menu_refresh.index("RefreshSearchResults(state, true);")
 
