@@ -1549,6 +1549,9 @@ void SearchWorker::workerThread() {
                                 for (const auto& group : groups) {
                                     Database::CoverFacetEntry entry;
                                     entry.key = group.key;
+                                    entry.path = group.path;
+                                    entry.isEmbedded = group.isEmbedded;
+                                    entry.sourcePath = group.sourcePath;
                                     entry.count = group.hitCount;
                                     result.coverFacets.push_back(std::move(entry));
                                 }

@@ -18484,6 +18484,7 @@ void RenderFileInfoPanelTabContents(
                                         it.filePathUtf8 = f.path;
                                     } else {
                                         it.folderPathUtf8 = f.path;
+                                        it.folderCoverSrcPathUtf8 = f.sourcePath;
                                     }
                                     it.label = BaseNameFromUtf8Path(f.path);
                                 }

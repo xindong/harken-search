@@ -14,7 +14,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kFixtureRoot =
-    "D:/Aris-QA/test-databases/RQ-20261010-NONDOCK-PREVIEW-playlists";
+    "D:/Harken-QA/BUG-20261029-PLAYLIST-COVER-WALL/test-databases/playlist-scope";
 
 int g_failures = 0;
 
@@ -113,6 +113,10 @@ int main() {
     for (const auto& row : idRows.rows) {
         ids.push_back(std::stoll(row[0]));
     }
+    Expect(db.executeRawQuery(
+        ("UPDATE audio_files SET embedded_cover_key = 'E|playlist-test' WHERE id = " +
+         std::to_string(ids[0]) + ";").c_str()).success,
+        "set embedded cover on first playlist member");
 
     const int64_t playlistId = db.createPlaylist("scope-four");
     Expect(playlistId > 0, "create ordinary playlist");
@@ -138,6 +142,14 @@ int main() {
     Expect(pageTree.fileCount == 2, "loaded page tree is incomplete");
 
     const auto coverKeys = db.searchPlaylistCoverKeys(playlistId, empty);
+    bool ordinaryEmbeddedSource = false;
+    for (const auto& record : coverKeys) {
+        if (record.embeddedCoverKey == "E|playlist-test" &&
+            record.filePath == (audio / rows[0].rel).u8string()) {
+            ordinaryEmbeddedSource = true;
+        }
+    }
+    Expect(ordinaryEmbeddedSource, "ordinary playlist cover query retains embedded source path");
     const auto groups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(coverKeys, page1);
     Expect(FindGroup(groups, "F|PATH|D:/fx/fire") != nullptr &&
                FindGroup(groups, "F|PATH|D:/fx/fire")->hitCount == 2,
@@ -166,6 +178,14 @@ int main() {
     Expect(db.searchAggregatedPlaylistFileCount(folderId, empty) == 4,
            "aggregated complete count is 4");
     const auto aggKeys = db.searchAggregatedPlaylistCoverKeys(folderId, empty);
+    bool aggregatedEmbeddedSource = false;
+    for (const auto& record : aggKeys) {
+        if (record.embeddedCoverKey == "E|playlist-test" &&
+            record.filePath == (audio / rows[0].rel).u8string()) {
+            aggregatedEmbeddedSource = true;
+        }
+    }
+    Expect(aggregatedEmbeddedSource, "aggregated playlist cover query retains embedded source path");
     const auto aggGroups = aura::playlist::BuildPlaylistCoverGroupsFromCompleteMembers(aggKeys, page1);
     Expect(FindGroup(aggGroups, "F|PATH|D:/fx/fire") != nullptr &&
                FindGroup(aggGroups, "F|PATH|D:/fx/whoosh") != nullptr,

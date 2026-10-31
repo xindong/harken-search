@@ -1,3 +1,3 @@
 #pragma once
 #undef ARIS_PREVIEW_ISOLATION_ROOT_UTF8
-#define ARIS_PREVIEW_ISOLATION_ROOT_UTF8 "D:/Aris-QA/test-databases/RQ-20261010-NONDOCK-PREVIEW-playlists"
+#define ARIS_PREVIEW_ISOLATION_ROOT_UTF8 "D:/Harken-QA/BUG-20261029-PLAYLIST-COVER-WALL/test-databases/playlist-scope"
