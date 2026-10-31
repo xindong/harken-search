@@ -30,6 +30,7 @@ def test_only_strokes_determine_size_and_screen_center(tmp_path, background, ink
                                 [110, 210, 138, 238])
     assert 13 <= result['width'] <= 16
     assert 13 <= result['height'] <= 16
+    assert abs(result['center_x'] - 123.5) <= 1
     assert abs(result['center_y'] - 223.5) <= 1
 
 
