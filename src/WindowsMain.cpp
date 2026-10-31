@@ -14216,10 +14216,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                     glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, rgb.data());
                     glReadBuffer(readBuffer);
                     glPixelStorei(GL_PACK_ALIGNMENT, alignment);
-                    std::ofstream file(Utf8ToPath(s_previewFrameCapturePath), std::ios::binary);
-                    file << "P6\n" << width << " " << height << "\n255\n";
-                    for (int y = height - 1; y >= 0; --y)
-                        file.write(reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3);
+                    Platform::FileSystem::StreamWriter file;
+                    if (file.Open(s_previewFrameCapturePath, false, true)) {
+                        bool written = file.Write("P6\n" + std::to_string(width) + " " +
+                            std::to_string(height) + "\n255\n");
+                        for (int y = height - 1; written && y >= 0; --y)
+                            written = file.Write(std::string_view(
+                                reinterpret_cast<const char*>(rgb.data() + static_cast<size_t>(y) * width * 3), width * 3));
+                        const bool closed = file.CloseChecked();
+                        if (!written || !closed)
+                            Platform::FileSystem::RemoveFile(s_previewFrameCapturePath);
+                    }
                 }
                 s_previewFrameCapturePath.clear();
             }

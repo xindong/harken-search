@@ -69,6 +69,7 @@ bool PaletteSelector(Period period, float width) {
     bool edit = false;
     if (ImGui::BeginCombo("##DayNightPreset", preview)) {
         for (const auto& option : Presets()) {
+            ImGui::PushID(static_cast<int>(option.theme));
             const bool selected = preset == &option;
             if (ImGui::Selectable(GetLocalizedString(option.label), selected)) {
                 SavePalette(period, option.scheme, g_saveErrors[index]);
@@ -77,6 +78,7 @@ bool PaletteSelector(Period period, float width) {
             g_ui.presetOptions.push_back({index, static_cast<int>(option.theme), ItemBounds()});
 #endif
             if (selected) ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
         }
         ImGui::Separator();
         edit = ImGui::MenuItem(L(ThemeSchedule_EditPalette));

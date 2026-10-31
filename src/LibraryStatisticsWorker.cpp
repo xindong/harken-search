@@ -1,13 +1,8 @@
 #include "LibraryStatisticsWorker.h"
+#include "platform/thread_id.h"
 #include "sqlite3.h"
 #include <chrono>
 #include <utility>
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace HarkenSearch {
 namespace {
@@ -106,11 +101,7 @@ void LibraryStatisticsWorker::Run() {
         try { result = handler_(request.path, cancel); } catch (...) { result.success = false; }
         result.startedWallMs = wall;
         result.queryMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-start).count();
-#ifdef _WIN32
-        result.threadId = GetCurrentThreadId();
-#else
-        result.threadId = static_cast<unsigned long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-#endif
+        result.threadId = Platform::CurrentThreadId();
         {
             std::lock_guard<std::mutex> lock(mutex_); activeEpoch_ = 0;
             if (!cancel()) completion_ = result;
