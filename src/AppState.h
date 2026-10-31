@@ -210,6 +210,7 @@ namespace HarkenSearch {
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
+#include "SimilarityIndexer.h"
 #include "HarkenSearchWidgets.h"
 #include "UndoSystem.h"
 #include "ProductEdition.h"
@@ -3073,6 +3074,8 @@ struct AppState {
     std::unique_ptr<HarkenSearch::SimilarityWorkflow> similarSoundsWorkflow;
     aura::ui::StandaloneWindowState similarSoundsWindow;
     SimilarityPreset similarSoundsPreset = SimilarityPreset::Balanced;
+    HarkenSearch::SimilarityMode similarSoundsMode = HarkenSearch::SimilarityMode::Perceptual;
+    bool similarSoundsDeep = false;
     int similarSoundsSelectedRow = -1;
     int64_t similarSoundsObservedSelectionId = -1;
     std::optional<HarkenSearch::SimilarityReference> similarSoundsLocalReference;
@@ -3084,6 +3087,9 @@ struct AppState {
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
     std::thread batchFeatureThread;
+    std::mutex batchFeatureResultMutex;
+    HarkenSearch::SimilarityIndexResult batchFeatureResult;
+    bool showSimilarAnalysisReport = false;
 
     // -----------------------------------------------------------------
     // BPM / Music Analysis State (F-033, music mode only)

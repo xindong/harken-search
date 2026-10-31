@@ -204,7 +204,7 @@ for required in (
     "state.similarSoundsSelectedRow >= 0",
     "state.similarSoundsLocalReference =",
     "workflow.SetReference(state.similarSoundsLocalReference)",
-    "workflow.RequestSearch(state.similarSoundsPreset, 50)",
+    "workflow.RequestSearch(searchOptions, 50)",
 ):
     assert required in action_impl
 for required in (

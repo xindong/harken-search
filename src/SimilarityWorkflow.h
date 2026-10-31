@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SimilaritySearch.h"
+#include "AcousticSimilarity.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -37,7 +38,9 @@ enum class SimilarityWorkflowError {
     ReferenceUnreadable,
     NoCandidates,
     Cancelled,
-    SearchFailed
+    SearchFailed,
+    ModelUnavailable,
+    IndexRequired
 };
 
 struct SimilarityReference {
@@ -55,6 +58,7 @@ struct SimilarityDisplayRow {
     float durationSeconds = 0.0f;
     std::string format;
     float similarity = 0.0f;
+    SimilarityScore breakdown;
 };
 
 struct SimilarityRequest {
@@ -63,6 +67,8 @@ struct SimilarityRequest {
     SimilarityReference reference;
     SimilarityPreset preset = SimilarityPreset::Balanced;
     int topK = 50;
+    SimilarityOptions options;
+    int analysisVersion = 1;
 };
 
 struct SimilarityCompletion {
@@ -71,6 +77,8 @@ struct SimilarityCompletion {
     std::vector<SimilarityDisplayRow> rows;
     SimilarityWorkflowError error = SimilarityWorkflowError::None;
     float queryMilliseconds = 0.0f;
+    int64_t indexed = 0, totalFiles = 0, staleFiles = 0;
+    SimilarityOptions options;
 };
 
 struct SimilarityWorkflowSnapshot {
@@ -78,6 +86,8 @@ struct SimilarityWorkflowSnapshot {
     SimilarityReference reference;
     std::vector<SimilarityDisplayRow> rows;
     SimilarityWorkflowError error = SimilarityWorkflowError::None;
+    int64_t indexed = 0, totalFiles = 0, staleFiles = 0;
+    SimilarityOptions options;
 };
 
 class SimilarityWorkflow final {
@@ -95,11 +105,13 @@ public:
     void SetDatabasePath(std::string path);
     void SetReference(std::optional<SimilarityReference> reference);
     bool RequestSearch(SimilarityPreset preset, int topK = 50);
+    bool RequestSearch(const SimilarityOptions& options, int topK = 50);
     void Poll();
     void Invalidate();
     SimilarityWorkflowSnapshot Snapshot() const;
 
 private:
+    bool RequestSearchImpl(const SimilarityOptions& options, int topK, int analysisVersion);
     void InvalidateLocked();
     void Run();
 

@@ -28,6 +28,7 @@ void SimilarityWorkflow::InvalidateLocked() {
     pending_.reset();
     completion_.reset();
     snapshot_.rows.clear();
+    snapshot_.indexed = snapshot_.totalFiles = snapshot_.staleFiles = 0;
     snapshot_.error = SimilarityWorkflowError::None;
     if (reference_) {
         snapshot_.reference = *reference_;
@@ -57,6 +58,13 @@ void SimilarityWorkflow::SetReference(
 }
 
 bool SimilarityWorkflow::RequestSearch(SimilarityPreset preset, int topK) {
+    SimilarityOptions options; options.preset = preset;
+    return RequestSearchImpl(options, topK, 1);
+}
+bool SimilarityWorkflow::RequestSearch(const SimilarityOptions& options, int topK) {
+    return RequestSearchImpl(options, topK, SimilarityOptions::VERSION);
+}
+bool SimilarityWorkflow::RequestSearchImpl(const SimilarityOptions& options, int topK, int version) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_.load(std::memory_order_acquire) || !reference_) {
@@ -68,11 +76,15 @@ bool SimilarityWorkflow::RequestSearch(SimilarityPreset preset, int topK) {
             latestGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
         request.databasePath = databasePath_;
         request.reference = *reference_;
-        request.preset = preset;
+        request.preset = options.preset;
+        request.options = options;
+        request.analysisVersion = version;
         request.topK = topK;
         pending_ = std::move(request);
         completion_.reset();
         snapshot_.status = SimilarityWorkflowStatus::Searching;
+        snapshot_.options = options;
+        snapshot_.indexed = snapshot_.totalFiles = snapshot_.staleFiles = 0;
         snapshot_.reference = *reference_;
         snapshot_.rows.clear();
         snapshot_.error = SimilarityWorkflowError::None;
@@ -97,6 +109,10 @@ void SimilarityWorkflow::Poll() {
     snapshot_.reference = *reference_;
     snapshot_.rows = std::move(completion.rows);
     snapshot_.error = completion.error;
+    snapshot_.options = completion.options;
+    snapshot_.indexed = completion.indexed;
+    snapshot_.totalFiles = completion.totalFiles;
+    snapshot_.staleFiles = completion.staleFiles;
     snapshot_.status = completion.error == SimilarityWorkflowError::None
         ? SimilarityWorkflowStatus::ResultsReady
         : SimilarityWorkflowStatus::Error;

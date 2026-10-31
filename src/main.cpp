@@ -148,6 +148,7 @@
 #include "CoverWallFailureCooldownPolicy.h"
 #include "CoverWallVisibleMirrorAudit.h"
 #include "SimilarSoundsWindow.h"
+#include "SimilarityIndexer.h"
 #include "RelinkWorkflow.h"
 #include "RecordRemovalWorkflow.h"
 #include "RecordRenameWorkflow.h"
@@ -5356,6 +5357,9 @@ void LoadAppSettings(AppState& state) {
     (void)RemoveKeyValueFileEntry(g_appSettingsPathUtf8, "siliconFlowApiKey");
     (void)RemoveKeyValueFileEntry(g_appSettingsPathUtf8, "siliconFlowApiKeyPendingClear");
     if (kv.empty()) return;
+    state.similarSoundsMode = static_cast<HarkenSearch::SimilarityMode>(std::clamp(ParseInt(kv["similarMode"], 0), 0, 1));
+    state.similarSoundsDeep = ParseBool(kv["similarDeep"], false);
+    state.similarSoundsPreset = static_cast<SimilarityPreset>(std::clamp(ParseInt(kv["similarPreset"], 0), 0, 4));
 
     // Panel states (new unified system)
     auto loadPanel = [&](const std::string& prefix, AppState::PanelState& p) {
@@ -6305,6 +6309,9 @@ bool TrySaveAppSettings(const AppState& state) {
         return true;
     }
     std::vector<std::pair<std::string, std::string>> items;
+    items.push_back({"similarMode", std::to_string(static_cast<int>(state.similarSoundsMode))});
+    items.push_back({"similarDeep", state.similarSoundsDeep ? "1" : "0"});
+    items.push_back({"similarPreset", std::to_string(static_cast<int>(state.similarSoundsPreset))});
     const auto sanitizeSavedTabName = [](const ListTab& tab) {
         const std::string sanitized = SanitizeTabNameFromSettings(tab.name);
         return sanitized.empty() ? std::string(L(Misc_AllFiles)) : sanitized;
@@ -29095,67 +29102,36 @@ static bool ClampFloatingPanelToViewport(
 
 void StartBatchFeatureExtraction(AppState& state) {
     if (state.batchFeatureExtracting.load() || state.dbSwitchInProgress) return;
-    if (state.batchFeatureThread.joinable())
-        state.batchFeatureThread.join();
+    if (state.batchFeatureThread.joinable()) state.batchFeatureThread.join();
     aura::ui::InvalidateSimilarSoundsWindow(state);
     state.batchFeatureCancelRequested.store(false);
     state.batchFeatureCompletionNotice.store(false);
-    state.batchFeatureExtracting.store(true);
     state.batchFeatureProgress.store(0);
-    const int pending = state.database.countFilesWithoutFeatures(0);
-    state.batchFeatureTotal.store(pending);
-    state.batchFeatureThread = std::thread([&state]() {
-        auto paths = state.database.getFilesWithoutFeatures(0);
-        state.batchFeatureTotal.store((int)paths.size());
-
-        unsigned int nThreads = std::max(1u,
-            std::min(4u, std::thread::hardware_concurrency()));
-        std::atomic<int> pathIdx{0};
-        std::mutex dbMutex;
-
-        std::vector<std::thread> workers;
-        workers.reserve(nThreads);
-        for (unsigned int t = 0; t < nThreads; ++t) {
-            workers.emplace_back([&]() {
-                while (!state.batchFeatureCancelRequested.load()) {
-                    int i = pathIdx.fetch_add(1);
-                    if (i >= (int)paths.size()) break;
-                    const std::string& path = paths[i];
-
-                    const FeatureExtractionResult extracted =
-                        FeatureExtractor::extractFromFileChecked(
-                            path, [&state] {
-                                return state.batchFeatureCancelRequested.load();
-                            });
-                    if (!extracted.ok || state.batchFeatureCancelRequested.load()) {
-                        state.batchFeatureProgress.fetch_add(1);
-                        continue;
-                    }
-                    AudioFeatureVector vec = extracted.features;
-
-                    float lufs = -70.f, mom = -70.f, st = -70.f, tp = -70.f;
-                    AudioRecord rec;
-                    {
-                        std::lock_guard<std::mutex> lk(dbMutex);
-                        state.database.getLoudnessByPath(path, lufs, mom, st, tp);
-                        rec = state.database.getFileByPath(path);
-                    }
-                    float trueRms = vec.features[AudioFeatureVector::ENERGY_OFFSET];
-                    FeatureExtractor::fillGlobalFeatures(vec, lufs, trueRms, rec.durationSeconds, tp);
-                    {
-                        std::lock_guard<std::mutex> lk(dbMutex);
-                        state.database.saveAudioFeaturesByPath(path, vec);
-                    }
-                    state.batchFeatureProgress.fetch_add(1);
-                }
-            });
+    state.batchFeatureTotal.store(0);
+    {
+        std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+        state.batchFeatureResult = {};
+    }
+    const std::string databasePath = state.currentDbPathUtf8;
+    const std::string modelDirectory = GetExeDirUtf8() + "/models/clap";
+    state.batchFeatureExtracting.store(true);
+    state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory]() {
+        HarkenSearch::SimilarityIndexResult result;
+        try {
+            result = HarkenSearch::BuildSimilarityIndex(databasePath, modelDirectory,
+                [&state] { return state.batchFeatureCancelRequested.load(); },
+                [&state](const HarkenSearch::SimilarityIndexProgress& progress) {
+                    state.batchFeatureTotal.store(progress.total);
+                    state.batchFeatureProgress.store(progress.completed);
+                });
+        } catch (const std::exception& error) { result.error = error.what(); }
+          catch (...) { result.error = "analysis_failed"; }
+        const bool complete = result.ok && !result.cancelled && result.progress.failed == 0 && result.modelError.empty();
+        {
+            std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+            state.batchFeatureResult = std::move(result);
         }
-        for (auto& w : workers) w.join();
-
-        if (!state.batchFeatureCancelRequested.load()) {
-            state.similaritySearch.loadFeatureCache(state.database);
-            state.batchFeatureCompletionNotice.store(!paths.empty());
-        }
+        state.batchFeatureCompletionNotice.store(complete);
         state.batchFeatureExtracting.store(false);
     });
 }
@@ -29166,6 +29142,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     // Full-table counts run on one independent read-only connection. This UI
     // path only submits work and polls values; it never waits for SQLite.
     static int cachedIndexed = 0;
+    static int cachedSemantic = 0;
     static int cachedTotal = 0;
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
@@ -29175,6 +29152,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (cachedDbPath != state.currentDbPathUtf8 ||
         cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
         cachedIndexed = cachedTotal = 0;
+        cachedSemantic = 0;
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
         lastCountTime = -999.0;
@@ -29187,12 +29165,12 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!state.dbSwitchInProgress && state.database.isOpen()) {
         if (!state.featureIndexStatistics) {
             state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
-                HarkenSearch::MakeFeatureIndexCountHandler());
+                HarkenSearch::MakeFeatureIndexCountHandler(true));
         }
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; }
+            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; cachedSemantic = result->semanticIndexed; }
         }
         if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
@@ -29200,6 +29178,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!sharedSimilarStyle) ImGui::Separator();
     ImGui::BeginDisabled(state.dbSwitchInProgress);
     ImGui::Text(L(Main_IndexedProgressFmt), cachedIndexed, cachedTotal);
+    ImGui::Text(L(Similar_SemanticCoverageFmt), cachedSemantic, cachedTotal);
     ThemeInspector::RegisterLastItem("similar.index.count");
     if (extracting) {
         const int progress = state.batchFeatureProgress.load();
@@ -29228,23 +29207,32 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, cachedTotal - cachedIndexed);
-        if (pending > 0) {
+        const int pending = std::max(0, cachedTotal - std::min(cachedIndexed, cachedSemantic));
+        if (cachedTotal > 0) {
             ImGui::Spacing();
             char label[128];
-            snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
+            if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
+            else snprintf(label, sizeof(label), "%s", L(Similar_Recheck));
             if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
                 StartBatchFeatureExtraction(state);
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
-        } else if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
+        }
+        if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {
             ImGui::Spacing();
             const ImVec4 success(0.3f, 0.9f, 0.3f, 1.0f);
             ImGui::TextColored(sharedSimilarStyle ? TransportContrast::ForSurface(
                 success, ThemeColors::current().metadataPanelBG, 6.0) : success, L(Main_IndexAllDone));
             ThemeInspector::RegisterLastItem("similar.index.done");
+        }
+        std::lock_guard<std::mutex> reportLock(state.batchFeatureResultMutex);
+        const auto& report = state.batchFeatureResult;
+        if (report.cancelled || report.progress.failed > 0 || !report.error.empty() || !report.modelError.empty()) {
+            if (aura::ui::ActionButton(L(Similar_AnalysisReport), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
+                state.showSimilarAnalysisReport = true;
+            }
         }
     }
     ImGui::EndDisabled();

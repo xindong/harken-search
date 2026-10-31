@@ -120,6 +120,12 @@ def test_manifest_rejects_missing_distribution_obligation(tmp_path: Path):
     assert any("distribution_obligation" in issue for issue in issues)
 
 
+def test_optional_similarity_components_have_reviewed_licenses_and_notices():
+    checker = load_checker()
+    issues = checker.validate_component_manifest(ROOT / "THIRD_PARTY_COMPONENTS.json", repo_root=ROOT)
+    assert not issues, issues
+
+
 def test_manifest_rejects_unknown_distribution_obligation_values(tmp_path: Path):
     checker = load_checker()
     manifest = manifest_copy(tmp_path)
