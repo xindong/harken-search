@@ -5499,9 +5499,9 @@
     {
       "id": "Set_DiagCollected",
       "type": "ui",
-      "zh": "已采集日志: %d / %d",
-      "en": "Collected: %d / %d",
-      "ja": "収集済みログ: %d / %d"
+      "zh": "最近1分钟日志：%d 条",
+      "en": "Logs from the last minute: %d",
+      "ja": "直近1分のログ: %d件"
     },
     {
       "id": "Set_DiagFPS",
@@ -5541,9 +5541,9 @@
     {
       "id": "Set_DiagBufferSize",
       "type": "ui",
-      "zh": "缓冲区容量",
-      "en": "Buffer Size",
-      "ja": "バッファ容量"
+      "zh": "保留时间",
+      "en": "Retention",
+      "ja": "保持時間"
     },
     {
       "id": "Set_DiagMaxEntries",
@@ -5555,9 +5555,9 @@
     {
       "id": "Set_DiagBufferHint",
       "type": "ui",
-      "zh": "环形缓冲：超出上限后旧日志自动覆盖\n推荐 500，压力测试可调高到 2000",
-      "en": "Ring buffer: old entries auto-overwritten when full\nRecommended 500; stress testing up to 2000",
-      "ja": "リングバッファ：上限超過後は古いログを上書きします\n推奨 500、負荷テスト時は 2000 まで上げられます"
+      "zh": "只保留最近1分钟。新的日志会覆盖更早的日志；内存保护上限只用于防止日志过多撑满内存。",
+      "en": "Keeps only the last minute. New logs replace older logs; the memory limit only prevents excessive logs from exhausting memory.",
+      "ja": "直近1分だけ保持します。新しいログが古いログを上書きし、メモリ上限はメモリ不足を防ぐためだけに使います。"
     },
     {
       "id": "Set_DiagExportMgmt",

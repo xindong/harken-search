@@ -69,6 +69,7 @@ public:
     void logPerformance(const char* category, const char* detail, double durationMs);
     void logMetric(const char* category, const char* detail, double value);
     void logSystem(const char* category, const char* detail);
+    bool logSystemAt(const char* category, const char* detail, int64_t timestampMs);
 
     // ---- 导出 ----
     // 导出环形缓冲中的所有日志到 JSON 文件，返回 true 表示成功
@@ -120,6 +121,7 @@ private:
 
     void pushEntry(DiagLogEntry&& entry);
     bool tryMergeWithLastLocked(const DiagLogEntry& entry);
+    void pruneExpiredLocked(int64_t nowMs);
     static int64_t nowMs();
     static uint32_t threadId();
 
@@ -143,7 +145,9 @@ private:
     void stopWriter();
 
     std::atomic<bool>          m_enabled{false};
-    size_t                     m_maxEntries = 500;
+    static constexpr int64_t   kRetentionWindowMs = 60000;
+    static constexpr size_t    kMemorySafetyEntries = 50000;
+    size_t                     m_maxEntries = kMemorySafetyEntries;
     std::vector<DiagLogEntry>  m_ring;       // 导出缓冲（由后台线程写入）
     size_t                     m_head = 0;   // 写入位置
     size_t                     m_count = 0;  // 当前条目数

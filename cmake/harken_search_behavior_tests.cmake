@@ -6539,6 +6539,23 @@ endif()
 add_test(NAME TestEmergencyFileWriter COMMAND TestEmergencyFileWriter)
 aura_set_test_labels(TestEmergencyFileWriter core)
 
+add_executable(TestDiagnosticsLoggerRetention EXCLUDE_FROM_ALL
+    tests/test_diagnostics_logger_retention.cpp
+    src/DiagnosticsLogger.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+)
+target_include_directories(TestDiagnosticsLoggerRetention PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestDiagnosticsLoggerRetention PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsLoggerRetention PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(TestDiagnosticsLoggerRetention PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsLoggerRetention COMMAND TestDiagnosticsLoggerRetention)
+aura_set_test_labels(TestDiagnosticsLoggerRetention core)
+
 add_executable(TestDiagnosticsLoggerPersistence EXCLUDE_FROM_ALL
     tests/test_diagnostics_logger_persistence.cpp
     src/DiagnosticsLogger.cpp

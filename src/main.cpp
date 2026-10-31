@@ -35975,7 +35975,7 @@ void RenderUI(AppState& state) {
                 if (state.settings.diagnosticMode) {
                     ImGui::Spacing();
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), L(Set_DiagnosticsEnabled));
-                    ImGui::Text(L(Set_DiagCollected), (int)diag.entryCount(), (int)diag.maxEntries());
+                    ImGui::Text(L(Set_DiagCollected), (int)diag.entryCount());
                     ImGui::Text(L(Set_DiagFPS), diag.currentFps());
                     bool showDiagOverlay = state.settings.showDiagnosticOverlay;
                     if (aura::ui::Checkbox(L(Set_DiagShowOverlay), &showDiagOverlay)) {
@@ -36017,14 +36017,7 @@ void RenderUI(AppState& state) {
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_DiagBufferSize));
                     ImGui::Separator();
-                    static int diagCapacity = (int)diag.maxEntries();
-                    ImGui::SetNextItemWidth(150);
-                    if (ImGui::SliderInt(L(Set_DiagMaxEntries), &diagCapacity, 50, 2000)) {
-                        diag.setMaxEntries((size_t)diagCapacity);
-                    }
-                    if (HoveredForHelp()) {
-                        aura::ui::Tooltip(L(Set_DiagBufferHint));
-                    }
+                    ImGui::TextDisabled("%s", L(Set_DiagBufferHint));
 
                     ImGui::Spacing();
                     ImGui::Text("%s", L(Set_DiagExportMgmt));
