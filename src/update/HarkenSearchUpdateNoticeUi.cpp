@@ -7,6 +7,8 @@
 
 #include "../Localization.h"
 #include "../Theme.h"
+#include "../HarkenSearchWidgets.h"
+#include "../../thirdparty/lucide/IconsLucide.h"
 #include "../ui/ActionButtonStyle.h"
 #include "../Version.h"
 #include "platform/animation_preferences.h"
@@ -184,16 +186,21 @@ void RenderHeader(
         notes.showHistory = false;
         notes.summaryScrollKey.clear();
     }
-    if (ButtonAt(
-            "close",
-            u8"×",
-            714.0f,
-            20.0f,
-            28.0f,
-            22.0f,
-            false,
-            true,
-            theme)) {
+    ImGui::SetCursorPos(ImVec2(714.0f, 25.0f));
+    ImGui::PushID("close");
+    // About uses a 1.55x window font. Match its visible X without scaling
+    // the rest of this update window or changing the existing close action.
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.55f);
+    const bool closeClicked = aura::ui::IconButton(ICON_LC_X, L(Close),
+                                                    aura::ui::ButtonSize::Sm);
+    ImGui::PopFont();
+#if AURA_BUILD_DIAGNOSTICS
+    const auto closeMin = ImGui::GetItemRectMin();
+    const auto closeMax = ImGui::GetItemRectMax();
+    g_noticeQa.controls["close"] = {closeMin.x, closeMin.y, closeMax.x, closeMax.y};
+#endif
+    ImGui::PopID();
+    if (closeClicked) {
         FinalizeHarkenSearchUpdateNoticeClose(open, notes);
     }
 }

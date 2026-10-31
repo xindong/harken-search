@@ -104,6 +104,9 @@ def run(args):
             time.sleep(0.5)
         else:
             raise TimeoutError('main UI never became ready')
+        if args.theme is not None:
+            driver.command({'cmd': 'set_theme', 'theme': args.theme})
+            driver.rendered(args.theme)
         if args.library:
             library = Path(args.library).resolve()
             if not library.is_file():
@@ -173,4 +176,5 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--library', type=Path, default=None)
     parser.add_argument('--page', choices=('about', 'legal'), default='about')
+    parser.add_argument('--theme', type=int, default=None)
     raise SystemExit(run(parser.parse_args()))
