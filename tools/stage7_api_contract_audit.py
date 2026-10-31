@@ -20,6 +20,8 @@ REVIEWED_CONTRACTS = {
     "src/ThemeSchedulePaletteCodec.h": "tests/test_theme_schedule_palette_codec.cpp",
     "src/ThemeSchedulePaletteFiles.h": "tests/test_theme_schedule_palette_files.cpp",
     "src/ui/ActionButtonStyle.h": "tests/test_action_button_style.cpp",
+    # Borrows the current ImGui context/draw list on the UI thread; owns no state.
+    "src/ui/CloseIconButton.h": "tests/test_action_button_style.cpp",
     "src/bootstrap/BootstrapProgress.h": "tests/bootstrap/test_aris_bootstrap_runtime.cpp",
     "src/bootstrap/WindowsBootstrapProgress.h": "tests/bootstrap/test_bootstrap_progress_window.cpp",
     "src/bootstrap/BootstrapProgressView.h": "tests/bootstrap/test_bootstrap_progress_view.cpp",

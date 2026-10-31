@@ -30674,7 +30674,7 @@ void RenderUI(AppState& state) {
                     if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     if (ImGui::IsItemClicked()) Platform::OpenUrl(url);
                 };
-                if (ImGui::BeginTable("##AboutLinks", 2, ImGuiTableFlags_SizingStretchSame)) {
+                if (BeginTransientScrollbarTable("##AboutLinks", 2, ImGuiTableFlags_SizingStretchSame)) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::TextDisabled("%s", L(Main_AppNameBrand));
