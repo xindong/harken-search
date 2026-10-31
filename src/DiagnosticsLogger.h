@@ -151,6 +151,7 @@ private:
     std::vector<DiagLogEntry>  m_ring;       // 导出缓冲（由后台线程写入）
     size_t                     m_head = 0;   // 写入位置
     size_t                     m_count = 0;  // 当前条目数
+    int64_t                    m_oldestTimestampMs = 0; // Conservative minimum; enqueue order may differ.
     mutable std::mutex         m_mutex;      // 仅用于导出/管理
 
     static constexpr size_t    kQueueSize = 8192;

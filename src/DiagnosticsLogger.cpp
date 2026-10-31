@@ -248,6 +248,8 @@ void DiagnosticsLogger::writerLoop() {
                 std::lock_guard<std::mutex> lk(m_mutex);
                 pruneExpiredLocked(e.timestampMs);
                 if (!tryMergeWithLastLocked(e)) {
+                    m_oldestTimestampMs = m_count == 0 ? e.timestampMs
+                        : std::min(m_oldestTimestampMs, e.timestampMs);
                     if (m_count == m_maxEntries) {
                         m_dropped.fetch_add(1, std::memory_order_relaxed);
                     } else {
@@ -269,21 +271,23 @@ void DiagnosticsLogger::writerLoop() {
 
 void DiagnosticsLogger::pruneExpiredLocked(int64_t nowMs) {
     if (m_count == 0 || m_maxEntries == 0) return;
+    if (nowMs - m_oldestTimestampMs <= kRetentionWindowMs) return;
     const size_t ringStart = (m_count < m_maxEntries) ? 0 : m_head;
-    size_t dropCount = 0;
-    while (dropCount < m_count) {
-        const size_t idx = (ringStart + dropCount) % m_maxEntries;
-        if (nowMs - m_ring[idx].timestampMs <= kRetentionWindowMs) break;
-        ++dropCount;
-    }
-    if (dropCount == 0) return;
+    // Producers timestamp before enqueueing, so expired entries can appear
+    // anywhere. The minimum above keeps ordinary non-expiring writes O(1).
     std::vector<DiagLogEntry> retained;
-    retained.reserve(m_count - dropCount);
-    for (size_t i = dropCount; i < m_count; ++i) {
-        retained.push_back(m_ring[(ringStart + i) % m_maxEntries]);
+    retained.reserve(m_count);
+    int64_t oldestTimestamp = 0;
+    for (size_t i = 0; i < m_count; ++i) {
+        const auto& entry = m_ring[(ringStart + i) % m_maxEntries];
+        if (nowMs - entry.timestampMs > kRetentionWindowMs) continue;
+        oldestTimestamp = retained.empty() ? entry.timestampMs
+            : std::min(oldestTimestamp, entry.timestampMs);
+        retained.push_back(entry);
     }
     m_count = retained.size();
     m_head = m_count % m_maxEntries;
+    m_oldestTimestampMs = oldestTimestamp;
     for (size_t i = 0; i < retained.size(); ++i) m_ring[i] = retained[i];
 }
 
@@ -372,6 +376,7 @@ void DiagnosticsLogger::clear() {
     std::lock_guard<std::mutex> lk(m_mutex);
     m_count = 0;
     m_head = 0;
+    m_oldestTimestampMs = 0;
 }
 
 // FPS tracking

@@ -78,5 +78,22 @@ int main() {
     ASSERT(log.exportJsonString().find("idle-entry") == std::string::npos,
            "idle export agrees with the visible count");
     log.setEnabled(false);
+    log.clear();
+    log.setEnabled(true);
+    const int64_t unorderedNow = nowMs();
+    log.logSystemAt("Retention", "recent-before-delayed-entry", unorderedNow);
+    log.logSystemAt("Retention", "expired-delayed-entry", unorderedNow - 61000);
+    log.logSystemAt("Retention", "unordered-drain-marker", unorderedNow + 1);
+    ASSERT(waitUntil([&] {
+        return log.exportJsonString().find("unordered-drain-marker") != std::string::npos;
+    }), "writer drains entries whose capture times differ from enqueue order");
+    ASSERT(log.entryCount() == 2, "count excludes expired entries behind a fresh entry");
+    ASSERT(log.exportJsonString().find("expired-delayed-entry") == std::string::npos,
+           "full export excludes out-of-order expired entries");
+    ASSERT(log.getRecentJsonLines(50).find("expired-delayed-entry") == std::string::npos,
+           "JSONL tail excludes out-of-order expired entries");
+    ASSERT(log.getRecentFilteredLines(50).find("expired-delayed-entry") == std::string::npos,
+           "filtered tail excludes out-of-order expired entries");
+    log.setEnabled(false);
     return g_failed == 0 ? 0 : 1;
 }
