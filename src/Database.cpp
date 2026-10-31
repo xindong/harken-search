@@ -13358,7 +13358,8 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
         " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
         " (SELECT source.file_path FROM audio_files source"
-        " WHERE source.embedded_cover_key = sc.folder_cover_key ORDER BY source.id LIMIT 1), '')"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key AND source.embedded_cover_key <> ''"
+        " ORDER BY source.id LIMIT 1), '')"
         " ELSE sc.folder_cover_src_path END"
         " FROM playlist_items pi"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
@@ -13652,7 +13653,8 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
         " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
         " (SELECT source.file_path FROM audio_files source"
-        " WHERE source.embedded_cover_key = sc.folder_cover_key ORDER BY source.id LIMIT 1), '')"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key AND source.embedded_cover_key <> ''"
+        " ORDER BY source.id LIMIT 1), '')"
         " ELSE sc.folder_cover_src_path END FROM ranked sc";
 
     sqlite3_stmt* stmt = nullptr;
