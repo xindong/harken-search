@@ -6636,6 +6636,19 @@ endif()
 add_test(NAME TestEmergencyFileWriter COMMAND TestEmergencyFileWriter)
 aura_set_test_labels(TestEmergencyFileWriter core)
 
+add_executable(TestDiagnosticsLoggerStub EXCLUDE_FROM_ALL
+    tests/test_diagnostics_logger_stub.cpp
+    src/DiagnosticsLoggerStub.cpp
+)
+target_include_directories(TestDiagnosticsLoggerStub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestDiagnosticsLoggerStub PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsLoggerStub PRIVATE AURA_BUILD_DIAGNOSTICS=0)
+if(MSVC)
+    target_compile_options(TestDiagnosticsLoggerStub PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsLoggerStub COMMAND TestDiagnosticsLoggerStub)
+aura_set_test_labels(TestDiagnosticsLoggerStub core)
+
 add_executable(TestDiagnosticsLoggerRetention EXCLUDE_FROM_ALL
     tests/test_diagnostics_logger_retention.cpp
     src/DiagnosticsLogger.cpp
