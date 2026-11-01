@@ -3909,9 +3909,78 @@ static int testCancelledScanRollsBackCommittedRowsAndQueueDebt() {
     return failures;
 }
 
-int main() {
+static int testUnchangedFullScanWithConcurrentCacheWrite(bool cached) {
+    int failures = 0;
+    const fs::path root = makeTempRoot(cached ? "rescan_cached_concurrent_write"
+                                            : "rescan_missing_concurrent_write");
+    const fs::path audioRoot = root / "audio";
+    fs::create_directories(audioRoot);
+    for (int index = 0; index < 51; ++index) {
+        writeSilentMonoWav(audioRoot / ("voice-" + std::to_string(index) + ".wav"));
+    }
+    Database db;
+    const fs::path dbPath = root / "library.db";
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open rescan fixture: " << db.getLastError() << '\n';
+        return 1;
+    }
+    const auto initial = db.scanDirectoryEx(audioRoot.u8string(), true, false, false,
+                                            nullptr, nullptr, 1, false, false);
+    check(initial.added == 51, "seed previously scanned audio files", failures);
+    const auto records = db.searchFiles(SearchFilter{}, 100, 0);
+    for (const auto& record : records) {
+        if (cached) {
+            check(db.saveWaveformByPath(record.filePath,
+                  std::vector<float>(AppState::WAVEFORM_MINI_PEAKS, 0.2f), -18.0f, 1),
+                  "seed cached mini", failures);
+        }
+        check(db.upsertWaveformCacheStateByPath(record.filePath, cached ? "done" : "pending",
+              "", 0, WaveformExtractor::BuildCacheKey(record.filePath, record.fileSize, record.fileMtime)),
+              "seed existing waveform state", failures);
+    }
+    Database writer;
+    if (!writer.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open concurrent writer: " << writer.getLastError() << '\n';
+        return failures + 1;
+    }
+    aura::BackfillQueue queue;
+    queue.onDbOpened(dbPath.u8string(), 31);
+    constexpr int64_t session = 57;
+    bool wrote = false;
+    const auto stats = db.scanDirectoryEx(audioRoot.u8string(), true, false, false,
+        [&](int current, int, const std::string&, bool committed) {
+            if (current != 50 || committed || wrote) return;
+            // A real second connection commits between scan reads and the next
+            // completion write, just like the visible waveform worker.
+            const int rc = sqlite3_exec(writer.db(),
+                "UPDATE waveforms_db.waveforms SET updated_at = updated_at + 1;"
+                "INSERT OR REPLACE INTO app_meta(key, value) VALUES('concurrent_scan_test', '1');",
+                nullptr, nullptr, nullptr);
+            check(rc == SQLITE_OK, "concurrent cache writer commits", failures);
+            wrote = rc == SQLITE_OK;
+        }, nullptr, 1, false, true, &queue, dbPath.u8string(), 31, session);
+    check(wrote, "rescan exercised concurrent cache update", failures);
+    for (const auto& error : stats.errorMessages) std::cerr << error << '\n';
+    check(stats.errors == 0, "unchanged rescan accepts completion writes after concurrent update", failures);
+    const auto counts = db.getScanForegroundCompletionCounts(session);
+    check(counts.total == 51, "all unchanged files enter the completion ledger", failures);
+    check(cached ? counts.miniTerminal == 51 : counts.miniUnresolved == 51,
+          "cache reuse or missing mini work is recorded for every file", failures);
+    queue.shutdown();
+    writer.close();
+    db.close();
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::cout << "=== Scan/Waveform Cache Contract Tests ===\n";
+    if (argc == 2 && std::string(argv[1]) == "--concurrent-rescan") {
+        return testUnchangedFullScanWithConcurrentCacheWrite(false) +
+               testUnchangedFullScanWithConcurrentCacheWrite(true) == 0 ? 0 : 1;
+    }
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -4032,6 +4101,9 @@ int main() {
     failures += testFastScanDoesNotQueueWaveformBackfillWhenDisabled();
     std::cout << "-- testScanForegroundCompletionLedgerCounts\n";
     failures += testScanForegroundCompletionLedgerCounts();
+    std::cout << "-- testUnchangedFullScanWithConcurrentCacheWrite\n";
+    failures += testUnchangedFullScanWithConcurrentCacheWrite(false);
+    failures += testUnchangedFullScanWithConcurrentCacheWrite(true);
     std::cout << "-- testCancelledScanRollsBackCommittedRowsAndQueueDebt\n";
     failures += testCancelledScanRollsBackCommittedRowsAndQueueDebt();
     std::cout << "-- testCoverWallIgnoresStaleOrphanRegistryRows\n";

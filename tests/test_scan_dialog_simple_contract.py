@@ -95,6 +95,13 @@ def test_paused_rescan_keeps_every_selected_folder():
     assert "resume ? state.lastScannedFolders" in SCAN
 
 
+def test_existing_full_scan_check_can_dismiss_the_new_result_window():
+    result = SCAN.split("if (BeginTransientScrollbarPopupModal(scanResultPopup", 1)[1]
+    done = result.split('ThemeInspector::RegisterLastItem("scan.result.done");', 1)[1]
+    assert '#if ARIS_PREVIEW_ISOLATION' in done
+    assert 'ThemeInspector::RegisterLastItem("info.qaScanDone", L(Done), "src/main.cpp");' in done
+
+
 def test_setup_footer_stacks_when_two_buttons_do_not_fit():
     footer = SCAN.split("if (!quickAutoStarted)", 1)[1].split("if (openScanResult)", 1)[0]
     assert "stackFooter" in footer

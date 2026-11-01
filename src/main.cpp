@@ -32814,6 +32814,9 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             ThemeInspector::RegisterLastItem("scan.result.done");
+#if ARIS_PREVIEW_ISOLATION
+            ThemeInspector::RegisterLastItem("info.qaScanDone", L(Done), "src/main.cpp");
+#endif
             PlaceScanDialogInMainViewport("##ScanFailureDetails", scanDialogWidth, scanDialogMaxHeight);
             if (BeginTransientScrollbarPopupModal("##ScanFailureDetails", nullptr, scanDialogFlags)) {
                 char caption[128]; std::snprintf(caption, sizeof(caption), L(ScanUi_FailuresTitleFmt), scanView.failed);
