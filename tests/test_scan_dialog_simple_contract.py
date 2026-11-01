@@ -35,6 +35,27 @@ def test_setup_and_terminal_results_are_separate_surfaces():
     assert "if (scanIsCleanup) state.requestCancelScanTask()" in SCAN
 
 
+def test_new_folder_request_discards_only_finished_result_and_preserves_autostart():
+    before_snapshot = SCAN.split('auto scanWorkflowSnapshot', 1)[0]
+    assert 'state.showScanDialog && !state.pendingScanFolders.empty()' in before_snapshot
+    assert '!state.isScanning.load() && !state.scanCompletionPending.load()' in before_snapshot
+    assert 'const bool autoStart = state.scanDialogAutoStart;' in before_snapshot
+    assert 'ResetScanDialogResult(state);' in before_snapshot
+    assert 'state.scanDialogAutoStart = autoStart;' in before_snapshot
+    assert 'pendingScanFolders.clear' not in before_snapshot
+
+
+def test_stop_and_result_actions_measure_text_before_deciding_same_line():
+    helper = MAIN.split('static void ScanDialogNextAction', 1)[-1].split('static void PlaceScanDialogInMainViewport', 1)[0]
+    assert 'ImGui::CalcTextSize(label, nullptr, true).x' in helper
+    assert 'ImGui::GetStyle().FramePadding.x' in helper
+    assert 'ImGui::GetWindowContentRegionMax().x' in helper
+    assert 'ImGui::GetItemRectMax().x' in helper
+    assert 'ScanDialogNextAction(L(ScanUi_RevokeScan));' in SCAN
+    assert 'ScanDialogNextAction(resume ? L(ScanUi_Rescan) : L(ScanUi_ChooseAgain));' in SCAN
+    assert 'ScanDialogNextAction(L(Done), 100.f);' in SCAN
+
+
 def test_advanced_disclosure_contains_original_scan_options():
     assert "L(ScanUi_AdvancedOptions)" in SETUP
     for option in ("scanRecursive", "scanUpdateExisting", "scanRemoveMissing",

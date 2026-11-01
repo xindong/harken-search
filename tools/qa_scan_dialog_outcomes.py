@@ -7,6 +7,7 @@ is retained. No fabricated app states, shared mouse or installed process access.
 from __future__ import annotations
 import argparse
 import json
+import os
 from pathlib import Path
 import time
 import traceback
@@ -27,16 +28,31 @@ def run(args):
     require(not (runtime/'qa_cmd.json').exists() and not (runtime/'qa_scan_dialog_simple.lock').exists(), '另一条 QA 命令仍在运行')
     out.mkdir(parents=True)
     runtime.mkdir(parents=True, exist_ok=True)
-    driver = Driver(runtime, out)
-    desktop = PrivateDesktop()
-    process, pid = desktop.start(exe)
     report = {'status':'running','started_at':utc_now(),'exe':str(exe),'exe_sha256':sha256(exe),
               'checks':[], 'human_visual_acceptance':'未验收',
               'not_covered':['网络失联、真实磁盘故障、撤销失败和拖入通知尚未做实机故障注入',
                              '未用此脚本证明每个瞬时阶段都已截图']}
     verified = False
-    ui = Smoke(driver, root, out, 180)
+    desktop = process = ui = None
+    process_exited = True  # No process exists until start() returns our handle.
+    lock = runtime / 'qa_scan_dialog_simple.lock'
+    lock_contents = json.dumps({'helper_pid':os.getpid(), 'output':str(out), 'owner':uuid.uuid4().hex})
+    lock_identity = None
+    lock_written = False
+    # Same atomic create as smoke QA: an exists() preflight is not ownership.
+    # Failure here must never enter the owner's cleanup or remove another lock.
+    lock_file = lock.open('x', encoding='utf-8')
     try:
+        with lock_file:
+            lock_identity = os.fstat(lock_file.fileno())
+            lock_file.write(lock_contents)
+            lock_file.flush()
+            lock_written = True
+        driver = Driver(runtime, out)
+        desktop = PrivateDesktop()
+        process, pid = desktop.start(exe)
+        process_exited = False
+        ui = Smoke(driver, root, out, 180)
         identity = driver.command({'cmd':'magic_eq_identity'}, timeout=60)
         require(identity['pid'] == pid and path_key(identity['exe_path']) == path_key(exe)
                 and path_key(identity['isolation_root']) == path_key(root), '启动身份不符')
@@ -198,24 +214,53 @@ def run(args):
         ui.click('scan.dialog.stop'); ui.click('scan.dialog.pause','##ScanStopChoice')
         result('paused'); done()
         report['status']='passed'
-    except Exception as error:
-        report.update(status='failed',error=str(error),traceback=traceback.format_exc(),last_observed=ui.last)
+    except BaseException as error:
+        report.update(status='failed',error=str(error),traceback=traceback.format_exc())
+        if ui is not None: report['last_observed'] = ui.last
         if verified:
             try: capture(driver,out/'failure-diagnostic.png')
             except Exception as capture_error: report['capture_error']=str(capture_error)
+        if not isinstance(error, Exception):
+            raise  # Keep Ctrl+C/SystemExit semantics; finally still owns cleanup.
     finally:
         try:
-            if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
-                if verified: driver.command({'cmd':'info_edit_input','action':'exit'},timeout=10)
-                if win32event.WaitForSingleObject(process,15000)!=win32con.WAIT_OBJECT_0:
-                    win32process.TerminateProcess(process,1)
-                    win32event.WaitForSingleObject(process,5000)
-                    report.update(status='failed',forced_private_exit=True)
-            report['exit_code']=win32process.GetExitCodeProcess(process)
-            require(report['exit_code']==0 and sha256(exe)==report['exe_sha256'],'程序退出失败或测试期间 EXE 被替换')
+            if process is not None:
+                wait_result = win32event.WaitForSingleObject(process,0)
+                if wait_result == win32con.WAIT_TIMEOUT:
+                    if verified:
+                        try: driver.command({'cmd':'info_edit_input','action':'exit'},timeout=10)
+                        except Exception as error: report['exit_command_error'] = str(error)
+                    wait_result = win32event.WaitForSingleObject(process,15000)
+                    if wait_result == win32con.WAIT_TIMEOUT:
+                        # Only the handle returned by our private-desktop launch.
+                        win32process.TerminateProcess(process,1)
+                        report.update(status='failed',forced_private_exit=True)
+                        wait_result = win32event.WaitForSingleObject(process,5000)
+                require(wait_result == win32con.WAIT_OBJECT_0, '私有 QA 进程未确认退出，保留锁和隔离现场')
+                process_exited = True
+                report['exit_code']=win32process.GetExitCodeProcess(process)
+                require(report['exit_code']==0, '程序退出失败')
+            require(sha256(exe)==report['exe_sha256'],'测试期间 EXE 被替换')
         except Exception as error: report.update(status='failed',exit_error=str(error))
         finally:
-            process.Close(); desktop.close()
+            # A handle/desktop cleanup failure must not skip the other cleanup,
+            # nor confuse "handle closed" with "process exit confirmed".
+            if process is not None:
+                try: process.Close()
+                except Exception as error: report.update(status='failed',handle_close_error=str(error))
+            if desktop is not None:
+                try: desktop.close()
+                except Exception as error: report.update(status='failed',desktop_close_error=str(error))
+            try:
+                if process_exited:
+                    require(lock_identity is not None
+                            and os.path.samestat(lock_identity, lock.stat(follow_symlinks=False))
+                            and (not lock_written or lock.read_text(encoding='utf-8') == lock_contents),
+                            '锁的归属已变化，保留锁，不删除其他运行的锁')
+                    lock.unlink()
+                else:
+                    report['lock_retained'] = str(lock)
+            except Exception as error: report.update(status='failed',lock_cleanup_error=str(error))
             report['finished_at']=utc_now()
             save_json(out/'report.json',report)
     print(json.dumps({'status':report['status'],'report':str(out/'report.json')},ensure_ascii=False),flush=True)

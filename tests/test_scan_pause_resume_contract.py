@@ -68,7 +68,7 @@ class ScanPauseResumeContract(unittest.TestCase):
         self.assertNotIn('aura::ui::ActionButton(L(Main_PauseKeepBtn)', active_block)
         self.assertIn('ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str())', active_block)
         self.assertIn('aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(0, 32.f)', MAIN)
-        self.assertIn('ImGui::SameLine(0, gap)', MAIN)
+        self.assertIn('ScanDialogNextAction(L(ScanUi_RevokeScan));', MAIN)
         self.assertIn('aura::ui::ActionButton(L(ScanUi_RevokeScan), ImVec2(0, 32.f)', MAIN)
         self.assertIn("L(ScanUi_ContinueScan)", MAIN)
         self.assertEqual(LOCALIZED["Main_StopBtn"]["zh"], "停止…")

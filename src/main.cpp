@@ -29357,6 +29357,14 @@ static void ResetScanDialogResult(AppState& state) {
     // beginNewScanTask clears this latch and permits background work again.
 }
 
+static void ScanDialogNextAction(const char* label, float minimumWidth = 0.f) {
+    const float width = std::max(minimumWidth,
+        ImGui::CalcTextSize(label, nullptr, true).x + 2.f * ImGui::GetStyle().FramePadding.x);
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + width <= right)
+        ImGui::SameLine();
+}
+
 static void PlaceScanDialogInMainViewport(const char* name, float width, float maxHeight) {
     const auto* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowViewport(viewport->ID);
@@ -31636,6 +31644,14 @@ void RenderUI(AppState& state) {
     }
 
     // Scan folder dialog
+    if (state.showScanDialog && !state.pendingScanFolders.empty() &&
+        !state.isScanning.load() && !state.scanCompletionPending.load()) {
+        // A new folder is a new request, not a request to reopen the old result.
+        // Keep its auto-start intent; dismissing a result normally clears that.
+        const bool autoStart = state.scanDialogAutoStart;
+        ResetScanDialogResult(state);
+        state.scanDialogAutoStart = autoStart;
+    }
     auto scanWorkflowSnapshot = state.getScanWorkflowSnapshot();
     const bool scanIsCleanup = scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Idle && state.scanTotal.load() > 0;
     if (scanIsCleanup) scanWorkflowSnapshot = HarkenSearch::BuildCleanupScanSnapshot(
@@ -31768,7 +31784,7 @@ void RenderUI(AppState& state) {
                     ImGui::CloseCurrentPopup();
                 }
                 ThemeInspector::RegisterLastItem("scan.dialog.pause");
-                ImGui::SameLine(0, gap);
+                ScanDialogNextAction(L(ScanUi_RevokeScan));
                 if (aura::ui::ActionButton(L(ScanUi_RevokeScan), ImVec2(0, 32.f), aura::ui::ButtonVariant::Danger)) {
                     DIAG_ACTION("Scan", "ScanCancelRollbackRequested");
                     state.requestCancelScanTask();
@@ -32794,11 +32810,12 @@ void RenderUI(AppState& state) {
             if (showFailures) {
                 if (aura::ui::ActionButton(L(ScanUi_ViewFailures), ImVec2(0, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::OpenPopup("##ScanFailureDetails");
                 ThemeInspector::RegisterLastItem("scan.result.failures");
-                ImGui::SameLine();
             }
-            if (!scanIsCleanup && (scanView.phase == Phase::Paused || scanView.phase == Phase::Empty ||
-                (networkUnreachable && scanWorkflowSnapshot.discovered == 0))) {
+            const bool showRescan = !scanIsCleanup && (scanView.phase == Phase::Paused || scanView.phase == Phase::Empty ||
+                (networkUnreachable && scanWorkflowSnapshot.discovered == 0));
+            if (showRescan) {
                 const bool resume = scanView.phase == Phase::Paused;
+                if (showFailures) ScanDialogNextAction(resume ? L(ScanUi_Rescan) : L(ScanUi_ChooseAgain));
                 if (aura::ui::ActionButton(resume ? L(ScanUi_Rescan) : L(ScanUi_ChooseAgain), ImVec2(0, 32.f), aura::ui::ButtonVariant::Quiet)) {
                     const auto folders = resume ? state.lastScannedFolders : std::vector<std::string>{};
                     ResetScanDialogResult(state);
@@ -32807,8 +32824,8 @@ void RenderUI(AppState& state) {
                     ImGui::CloseCurrentPopup();
                 }
                 ThemeInspector::RegisterLastItem("scan.result.rescan");
-                ImGui::SameLine();
             }
+            if (showFailures || showRescan) ScanDialogNextAction(L(Done), 100.f);
             if (aura::ui::ActionButton(L(Done), ImVec2(100.f, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
                 ResetScanDialogResult(state);
                 ImGui::CloseCurrentPopup();

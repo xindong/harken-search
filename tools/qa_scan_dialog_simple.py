@@ -6,9 +6,11 @@ an existing owned ScanDialogQA library, and a NEW output under D:/Harken-QA.
 Wait for any other QA process using that root to exit. No input reaches the
 user's desktop. Populated QA libraries are retained; a new QA library is created.
 
-This first version requires --smoke: five themes, advanced expand/collapse,
+The default --smoke case covers five themes, advanced expand/collapse,
 real full scan of 24 deterministic WAVs, SQLite readback, Done and reopen.
-Pause/revoke/failure/empty/similarity are explicitly NOT covered yet.
+Optional --boundary covers a new input after background completion, or Japanese
+stop/paused/partial result controls at the 300px minimum popup width.
+The separate outcomes helper covers pause/revoke/failure/empty/similarity.
 Exit 0: smoke checks passed, NOT human visual acceptance; 1: failed; 2: preflight.
 Retains the isolated database, fixtures, PNGs, JSON evidence and command log.
 """
@@ -185,11 +187,15 @@ class Smoke:
         save_json(self.output / (name + '.json'), evidence)
         return str(path)
 
-    def create_library(self):
+    def create_library(self, always_new=False):
         get = lambda: self.driver.command({'cmd': 'get_state'})
         state = self.wait(lambda s: s.get('main_ui_ready') and not s.get('db_switch_in_progress'),
                           '程序未就绪', timeout=60, getter=get)
-        if state.get('db_path'):
+        if always_new and state.get('db_path') and not state.get('new_db_dialog_open'):
+            # A separate case may leave its own populated QA library selected.
+            # Do not read or modify that library; create a fresh one for this case.
+            self.driver.command({'cmd': 'info_edit_input', 'action': 'new_db_dialog'})
+        if state.get('db_path') and not always_new:
             database = Path(state['db_path']).resolve()
             require(inside(database, self.root / 'profile'), '已有库不在固定隔离 profile 内')
             require(database.parent.name == 'ScanDialogQA' or database.parent.name.startswith('ScanDialogQA-'),
@@ -281,6 +287,63 @@ class Smoke:
         return {'state': state, 'scan_status': status, 'database_rows': len(expected),
                 'screenshots': [image, reopened]}
 
+    def boundary(self, mode, fixtures, database):
+        """Real worker results; setup only supplies new input, never resets results."""
+        import win32con, win32gui, win32process
+        seed, next_folder = fixtures / 'seed', fixtures / 'next'
+        make_wavs(seed, 6000)
+        make_wavs(next_folder, 3)
+        identity = self.driver.command({'cmd': 'magic_eq_identity'})
+        require(path_key(identity['isolation_root']) == path_key(self.root), '隔离身份改变')
+        if mode == 'narrow-ja':
+            # Existing isolated-only language seam; immediately close its panel.
+            self.driver.command({'cmd': 'similar_index', 'action': 'open', 'language': 2})
+            self.driver.command({'cmd': 'similar_index', 'action': 'close'})
+            require(win32process.GetWindowThreadProcessId(identity['hwnd'])[1] == identity['pid'], '窗口身份改变')
+            win32gui.SetWindowPos(identity['hwnd'], 0, 30, 30, 348, 720,
+                                 win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
+        self.setup([seed])
+        self.click('scan.dialog.start')
+        if mode == 'new-request':
+            self.click('scan.dialog.background')
+            previous = self.wait(lambda s: s['surface'] == 'result' and not s['is_scanning']
+                                 and not s['completion_pending'], '后台扫描未结束')
+            require(not self.has(previous, 'scan.result.done'), '旧结果不是后台状态')
+            # This reproduces the directory-drop input fields without fabricating
+            # completion or clearing the previous workflow/timing counters.
+            new_input = self.setup([next_folder])
+            shot = self.shot('new-directory-after-background', 'scan.dialog.start')
+            self.click('scan.dialog.start')
+            result = self.wait(lambda s: s['surface'] == 'result'
+                               and self.target(s, 'scan.result.done', '##ScanResult') is not None,
+                               '新目录没有完成扫描')
+            require(result['succeeded'] == 3 and result['last_folders'] == [str(next_folder)], '新目录请求丢失')
+            require(len(self.rows(database)) == 6003, '扫描记录数不符')
+            self.click('scan.result.done', '##ScanResult')
+            return {'previous': previous, 'new_input': new_input, 'result': result, 'screenshots': [shot],
+                    'limitation': '准备了真实拖入使用的入口字段，未注入 Windows WM_DROPFILES'}
+        self.click('scan.dialog.stop')
+        stopped = self.wait(lambda s: self.has(s, 'scan.dialog.pause'), '停止选择未打开')
+        shots = [self.shot('narrow-ja-stop', 'scan.dialog.pause', '##ScanStopChoice')]
+        for key in ('scan.dialog.pause', 'scan.dialog.revoke', 'scan.dialog.continue'):
+            require(self.target(stopped, key, '##ScanStopChoice') is not None, '日语窄窗口按钮被裁切：' + key)
+        self.click('scan.dialog.pause', '##ScanStopChoice')
+        paused = self.wait(lambda s: s['phase'] == 'paused'
+                           and self.target(s, 'scan.result.done', '##ScanResult') is not None, '暂停结果未就绪')
+        for key in ('scan.result.rescan', 'scan.result.done'):
+            require(self.target(paused, key, '##ScanResult') is not None, '日语暂停结果按钮被裁切：' + key)
+        shots.append(self.shot('narrow-ja-paused', 'scan.result.done', '##ScanResult'))
+        self.click('scan.result.done', '##ScanResult')
+        (next_folder / 'bad.wav').write_bytes(b'')
+        self.setup([next_folder]); self.click('scan.dialog.start')
+        partial = self.wait(lambda s: s['phase'] == 'partial'
+                            and self.target(s, 'scan.result.done', '##ScanResult') is not None, '失败结果未就绪')
+        for key in ('scan.result.failures', 'scan.result.done'):
+            require(self.target(partial, key, '##ScanResult') is not None, '日语失败结果按钮被裁切：' + key)
+        shots.append(self.shot('narrow-ja-partial', 'scan.result.done', '##ScanResult'))
+        self.click('scan.result.done', '##ScanResult')
+        return {'stop': stopped, 'paused': paused, 'partial': partial, 'screenshots': shots}
+
 
 def run(args):
     require(sys.platform == 'win32', '需要 Windows、pywin32 和 Pillow')
@@ -344,16 +407,22 @@ def run(args):
             save_json(args.output / 'report.json', report)
             return current['evidence']
 
-        database = Path(case('create-isolated-library', lambda: str(smoke.create_library())))
+        database = Path(case('create-isolated-library', lambda: str(smoke.create_library(always_new=bool(args.boundary)))))
         report['database'] = str(database)
         fixtures = args.isolation_root / ('scan-dialog-fixtures-' + uuid.uuid4().hex[:12])
-        folders = [fixtures / 'complete-a', fixtures / 'complete-b']
-        for folder in folders:
-            make_wavs(folder)
-        report['fixtures'] = {'folders': [str(p) for p in folders], 'files': 24,
-                              'format': 'mono PCM16 / 16000 Hz / 1 second / deterministic sine'}
-        case('five-themes-setup-advanced-collapse', lambda: smoke.themes(folders))
-        case('full-scan-completed-and-reopen', lambda: smoke.completed(folders, database))
+        if args.boundary:
+            report['mode'] = args.boundary
+            report['not_covered'] = ['Windows 拖放事件、系统目录选择器、真实网络/磁盘故障、人工验收',
+                                     '本次仅运行所选边界场景，其他报告另行留存']
+            case(args.boundary, lambda: smoke.boundary(args.boundary, fixtures, database))
+        else:
+            folders = [fixtures / 'complete-a', fixtures / 'complete-b']
+            for folder in folders:
+                make_wavs(folder)
+            report['fixtures'] = {'folders': [str(p) for p in folders], 'files': 24,
+                                  'format': 'mono PCM16 / 16000 Hz / 1 second / deterministic sine'}
+            case('five-themes-setup-advanced-collapse', lambda: smoke.themes(folders))
+            case('full-scan-completed-and-reopen', lambda: smoke.completed(folders, database))
         report['status'] = 'passed'
     except Exception as error:
         report.update(status='failed', error=str(error), traceback=traceback.format_exc())
@@ -406,7 +475,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ('exe', 'isolation-root', 'output'):
         parser.add_argument('--' + option, type=Path, required=True)
-    parser.add_argument('--smoke', action='store_true', help='本版仅实现 smoke')
+    parser.add_argument('--smoke', action='store_true', help='运行基础或指定边界检查')
+    parser.add_argument('--boundary', choices=('new-request', 'narrow-ja'), help='指定扫描入口或日语窄窗回归场景')
     parser.add_argument('--timeout', type=float, default=180, help='业务等待超时秒数，默认180')
     args = parser.parse_args()
     if not args.smoke:
