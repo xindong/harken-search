@@ -46,6 +46,8 @@ typedef unsigned int GLuint;
 #include "BatchRenamePolicy.h"
 #include "SendToTargetSurfaceModel.h"
 #include "ScanWorkflow.h"
+#include "ScanDialogPresentation.h"
+#include "BatchFeatureResultState.h"
 #include "VoiceAssetOrganizer.h"
 #include "CueviFeedbackClient.h"
 
@@ -1912,8 +1914,10 @@ struct AppState {
     std::atomic<bool> scanFatalFailure{false};
     std::atomic<int64_t> scanIngestDurationMs{0};
     std::atomic<int64_t> scanStartedAtMs{0};
+    std::atomic<int64_t> scanFinishedAtMs{0}; // Presentation timestamp, not a completion gate.
     std::atomic<int64_t> scanCompletionReadyAtMs{0};
     std::atomic<int64_t> scanCompletionDurationMs{0};
+    HarkenSearch::ScanDialogMetrics scanUiMetrics; // UI-thread presentation only.
     std::atomic<bool> scanCancelRequested{false};
     std::atomic<HarkenSearch::ScanStopDisposition> scanStopDisposition{
         HarkenSearch::ScanStopDisposition::None
@@ -2019,6 +2023,7 @@ struct AppState {
         return scanErrorMessages_;
     }
     std::string lastScannedPath;
+    std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.
     std::vector<std::string> pendingScanFolders; // 拖入但尚未开始扫描的文件夹
     std::string pendingOpenFilePath;             // argv/IPC 传入的音频文件路径，主循环消费后清空
     bool filePlayerFastPathActive = false;       // 双击音频/IPC 打开时跳过素材库预热，优先进入播放
@@ -2051,6 +2056,7 @@ struct AppState {
 
     void beginScanTiming() {
         scanStartedAtMs.store(nowSteadyMs(), std::memory_order_release);
+        scanFinishedAtMs.store(0, std::memory_order_release);
         scanCompletionReadyAtMs.store(0, std::memory_order_release);
         scanCompletionDurationMs.store(0, std::memory_order_release);
     }
@@ -2076,6 +2082,7 @@ struct AppState {
 
     void clearScanTiming() {
         scanStartedAtMs.store(0, std::memory_order_release);
+        scanFinishedAtMs.store(0, std::memory_order_release);
         scanCompletionReadyAtMs.store(0, std::memory_order_release);
         scanCompletionDurationMs.store(0, std::memory_order_release);
     }
@@ -2147,10 +2154,16 @@ struct AppState {
         if (cancelled && stopDisposition == HarkenSearch::ScanStopDisposition::None) {
             stopDisposition = HarkenSearch::ScanStopDisposition::CancelRollback;
         }
-        scanWorkflowStage.store(
-            HarkenSearch::ResolveTerminalScanWorkflowStage(
-                getScanWorkflowSnapshot(), stopDisposition, fatalFailure),
-            std::memory_order_release);
+        const auto terminal = HarkenSearch::ResolveTerminalScanWorkflowStage(
+            getScanWorkflowSnapshot(), stopDisposition, fatalFailure);
+        if (terminal == HarkenSearch::ScanWorkflowStage::Completed ||
+            terminal == HarkenSearch::ScanWorkflowStage::Paused ||
+            terminal == HarkenSearch::ScanWorkflowStage::Cancelled ||
+            terminal == HarkenSearch::ScanWorkflowStage::Failed) {
+            int64_t unset = 0;
+            scanFinishedAtMs.compare_exchange_strong(unset, nowSteadyMs(), std::memory_order_acq_rel);
+        }
+        scanWorkflowStage.store(terminal, std::memory_order_release);
     }
 
     void clearScanWorkflowState() {
@@ -2380,6 +2393,10 @@ struct AppState {
     std::string lastDropSummary;
     std::string lastDropFirstPath;
     uint64_t lastDropTick = 0;
+    int scanIgnoredDropCount = 0;
+    bool showScanBusyNotice = false;
+    int scanDropImportedCount = 0, scanDropExistingCount = 0, scanDropFailedCount = 0;
+    bool showScanDropNotice = false;
 
     // Scan options
     bool scanRecursive = true;
@@ -2387,6 +2404,7 @@ struct AppState {
     bool scanRemoveMissing = false;
     int scanWorkerThreads = 0;
     bool scanBuildSimilarityIndexAfterScan = false;
+    bool scanUiRequestStopChoice = false;
     std::atomic<bool> pendingPostScanSimilarityIndex{false};
     bool showPostScanSimilarityIndexNotice = false;
 
@@ -3084,6 +3102,9 @@ struct AppState {
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
     std::thread batchFeatureThread;
+    HarkenSearch::BatchFeatureResultState batchFeatureResults;
+    bool scanSimilarityOwned = false; // UI-thread-only; post-scan analysis surface.
+    bool showScanSimilarityDialog = false;
 
     // -----------------------------------------------------------------
     // BPM / Music Analysis State (F-033, music mode only)

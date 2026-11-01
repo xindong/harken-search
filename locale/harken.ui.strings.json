@@ -1,6 +1,77 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id":"ScanUi_SpeedFmt","type":"ui","zh":"速度 %.1f 文件/秒","en":"Speed %.1f files/s","ja":"速度 %.1f ファイル/秒"},
+    {"id":"ScanUi_SpeedPending","type":"ui","zh":"速度 —","en":"Speed —","ja":"速度 —"},
+    {"id":"ScanUi_CleanupTitle","type":"ui","zh":"清理失效记录","en":"Clean missing records","ja":"無効な記録を整理"},
+    {"id":"ScanUi_CleanupRemovedFmt","type":"ui","zh":"已清理 %d 条失效记录","en":"Removed %d missing records","ja":"無効な記録 %d 件を削除"},
+    {"id":"ScanUi_CleanupStopped","type":"ui","zh":"清理已停止","en":"Cleanup stopped","ja":"整理を停止しました"},
+    {"id":"ScanUi_BusyTitle","type":"ui","zh":"扫描进行中","en":"Scan in progress","ja":"スキャン中"},
+    {"id":"ScanUi_BusyFmt","type":"ui","zh":"%d 个文件夹未加入，扫描结束后再拖入。","en":"%d folders were not added. Drop them after this scan finishes.","ja":"%d フォルダーは追加されませんでした。スキャン終了後に再度ドロップしてください。"},
+    {"id":"ScanUi_DroppedFmt","type":"ui","zh":"已加入 %d 个音效","en":"Added %d sounds","ja":"音声 %d 件を追加"},
+    {"id":"ScanUi_AlreadyImportedFmt","type":"ui","zh":"已在库中 %d 个音效","en":"Already in library: %d sounds","ja":"登録済みの音声 %d 件"},
+    {"id":"ScanUi_DropFailedFmt","type":"ui","zh":"%d 个音效未加入，请重试。","en":"%d sounds were not added. Try again.","ja":"音声 %d 件を追加できませんでした。再試行してください。"},
+    {"id":"ScanUi_SimilarTitle","type":"ui","zh":"相似音效分析","en":"Similarity analysis","ja":"類似音声の解析"},
+    {"id":"ScanUi_Analyzing","type":"ui","zh":"正在分析","en":"Analyzing","ja":"解析中"},
+    {"id":"ScanUi_ImportComplete","type":"ui","zh":"入库已完成","en":"Import complete","ja":"取り込み完了"},
+    {"id":"ScanUi_StopAnalysis","type":"ui","zh":"停止分析","en":"Stop analysis","ja":"解析を停止"},
+    {"id":"ScanUi_StoppingAnalysis","type":"ui","zh":"正在停止…","en":"Stopping…","ja":"停止中…"},
+    {"id":"ScanUi_AnalysisStopped","type":"ui","zh":"相似分析已停止","en":"Similarity analysis stopped","ja":"類似解析を停止しました"},
+    {"id":"ScanUi_AnalysisComplete","type":"ui","zh":"相似分析完成","en":"Similarity analysis complete","ja":"類似解析が完了しました"},
+    {"id":"ScanUi_AnalyzedFmt","type":"ui","zh":"已完成 %d 个音效","en":"Completed %d sounds","ja":"音声 %d 件の解析を完了"},
+    {"id":"ScanUi_AnalysisSuccessFmt","type":"ui","zh":"成功 %d 个音效","en":"Succeeded: %d sounds","ja":"成功した音声 %d 件"},
+    {"id":"ScanUi_ViewProgress","type":"ui","zh":"查看进度","en":"View progress","ja":"進捗を表示"},
+    {"id":"ScanUi_ViewResult","type":"ui","zh":"查看结果","en":"View results","ja":"結果を表示"},
+    {"id":"ScanUi_Title","type":"ui","zh":"扫描入库","en":"Scan library","ja":"ライブラリに取り込む"},
+    {"id":"ScanUi_AdvancedOptions","type":"ui","zh":"高级选项","en":"Advanced options","ja":"詳細設定"},
+    {"id":"ScanUi_AutoThreads","type":"ui","zh":"自动分配线程","en":"Automatic threads","ja":"スレッド数を自動設定"},
+    {"id":"ScanUi_CurrentFolderOnly","type":"ui","zh":"仅当前文件夹","en":"Current folder only","ja":"現在のフォルダーのみ"},
+    {"id":"ScanUi_CustomThreads","type":"ui","zh":"自定义线程","en":"Custom threads","ja":"スレッド数を指定"},
+    {"id":"ScanUi_RemoveInvalid","type":"ui","zh":"移除库中的失效记录","en":"Remove missing library records","ja":"ライブラリの無効な記録を削除"},
+    {"id":"ScanUi_RemoveReminder","type":"ui","zh":"将移除失效记录，不删除原文件。","en":"Removes missing records, not source files.","ja":"無効な記録のみ削除します。元ファイルは削除しません。"},
+    {"id":"ScanUi_SimilarEnabled","type":"ui","zh":"已开启扫描后相似分析","en":"Post-scan similarity analysis enabled","ja":"スキャン後の類似解析が有効"},
+    {"id":"ScanUi_Counting","type":"ui","zh":"正在统计文件","en":"Counting files","ja":"ファイルを集計中"},
+    {"id":"ScanUi_FoundAudioFmt","type":"ui","zh":"已找到 %d 个音频","en":"Found %d audio files","ja":"音声ファイル %d 件を検出"},
+    {"id":"ScanUi_Ingesting","type":"ui","zh":"正在入库","en":"Importing","ja":"取り込み中"},
+    {"id":"ScanUi_Waveforms","type":"ui","zh":"正在生成波形","en":"Preparing waveforms","ja":"波形を生成中"},
+    {"id":"ScanUi_Finalizing","type":"ui","zh":"正在整理封面与列表","en":"Finalizing covers and results","ja":"カバーと一覧を整理中"},
+    {"id":"ScanUi_Saving","type":"ui","zh":"正在保存…","en":"Saving…","ja":"保存中…"},
+    {"id":"ScanUi_Revoking","type":"ui","zh":"正在撤销…","en":"Reverting…","ja":"取り消し中…"},
+    {"id":"ScanUi_Statistics","type":"ui","zh":"统计明细","en":"Statistics","ja":"集計の詳細"},
+    {"id":"ScanUi_RevokeScan","type":"ui","zh":"撤销本次入库","en":"Revert this import","ja":"今回の取り込みを取り消す"},
+    {"id":"ScanUi_RevokeReminder","type":"ui","zh":"撤销数据库改动，原文件不动。","en":"Reverts library changes; source files stay unchanged.","ja":"ライブラリの変更を取り消します。元ファイルは変更しません。"},
+    {"id":"ScanUi_ContinueScan","type":"ui","zh":"继续扫描","en":"Continue scanning","ja":"スキャンを続ける"},
+    {"id":"ScanUi_Rescan","type":"ui","zh":"再次扫描","en":"Scan again","ja":"再スキャン"},
+    {"id":"ScanUi_ResultTitle","type":"ui","zh":"扫描结果","en":"Scan results","ja":"スキャン結果"},
+    {"id":"ScanUi_CompletedTitle","type":"ui","zh":"扫描完成","en":"Scan complete","ja":"スキャン完了"},
+    {"id":"ScanUi_PausedTitle","type":"ui","zh":"扫描已暂停","en":"Scan paused","ja":"スキャンを一時停止"},
+    {"id":"ScanUi_CancelledTitle","type":"ui","zh":"扫描已取消","en":"Scan cancelled","ja":"スキャンをキャンセル"},
+    {"id":"ScanUi_RetainedFmt","type":"ui","zh":"已保留 %d 个音效","en":"Kept %d sounds","ja":"音声 %d 件を保持"},
+    {"id":"ScanUi_ImportedFmt","type":"ui","zh":"已入库 %d 个音效","en":"Imported %d sounds","ja":"音声 %d 件を取り込み済み"},
+    {"id":"ScanUi_UnprocessedFmt","type":"ui","zh":"未处理  %d","en":"Unprocessed  %d","ja":"未処理  %d"},
+    {"id":"ScanUi_SkippedFmt","type":"ui","zh":"跳过  %d","en":"Skipped  %d","ja":"スキップ  %d"},
+    {"id":"ScanUi_AddedFmt","type":"ui","zh":"新增  %d","en":"Added  %d","ja":"追加  %d"},
+    {"id":"ScanUi_UpdatedFmt","type":"ui","zh":"更新  %d","en":"Updated  %d","ja":"更新  %d"},
+    {"id":"ScanUi_RemovedFmt","type":"ui","zh":"移除  %d","en":"Removed  %d","ja":"削除  %d"},
+    {"id":"ScanUi_Revoked","type":"ui","zh":"本次入库已撤销","en":"This import was reverted","ja":"今回の取り込みを取り消しました"},
+    {"id":"ScanUi_Empty","type":"ui","zh":"未找到可入库音频","en":"No audio files found","ja":"取り込める音声がありません"},
+    {"id":"ScanUi_NetworkTitle","type":"ui","zh":"目录无法访问","en":"Folder unavailable","ja":"フォルダーにアクセスできません"},
+    {"id":"ScanUi_NetworkAction","type":"ui","zh":"请检查网络与权限。","en":"Check your connection and permissions.","ja":"ネットワークとアクセス権を確認してください。"},
+    {"id":"ScanUi_ChooseAgain","type":"ui","zh":"重新选择文件夹","en":"Choose another folder","ja":"フォルダーを選び直す"},
+    {"id":"ScanUi_FailedPath","type":"ui","zh":"路径不可访问","en":"Path unavailable","ja":"パスにアクセスできません"},
+    {"id":"ScanUi_FailedRead","type":"ui","zh":"无法读取或已损坏","en":"Unreadable or damaged","ja":"読み込み不能・破損"},
+    {"id":"ScanUi_FailedEmpty","type":"ui","zh":"无可用音频","en":"No usable audio","ja":"有効な音声がありません"},
+    {"id":"ScanUi_FailedSave","type":"ui","zh":"保存失败","en":"Save failed","ja":"保存失敗"},
+    {"id":"ScanUi_FailedOther","type":"ui","zh":"其他错误","en":"Other errors","ja":"その他のエラー"},
+    {"id":"ScanUi_FailuresTitleFmt","type":"ui","zh":"失败文件（%d）","en":"Failed files (%d)","ja":"失敗したファイル（%d）"},
+    {"id":"ScanUi_ViewFailures","type":"ui","zh":"查看失败文件","en":"View failed files","ja":"失敗したファイルを表示"},
+    {"id":"ScanUi_ReturnResult","type":"ui","zh":"返回结果","en":"Back to results","ja":"結果に戻る"},
+    {"id":"ScanUi_ScanStopped","type":"ui","zh":"扫描已停止","en":"Scan stopped","ja":"スキャンを停止しました"},
+    {"id":"ScanUi_RollbackFailed","type":"ui","zh":"部分记录未撤销","en":"Some records were not reverted","ja":"一部の記録を取り消せませんでした"},
+    {"id":"ScanUi_SaveUnavailable","type":"ui","zh":"数据库暂时无法写入。","en":"The library could not be written.","ja":"ライブラリに書き込めませんでした。"},
+    {"id":"ScanUi_FolderCountFmt","type":"ui","zh":"%s 等 %d 个文件夹","en":"%s and %d folders in total","ja":"%s ほか、合計 %d フォルダー"},
+    {"id":"ScanUi_Unsupported","type":"ui","zh":"格式不支持","en":"Unsupported format","ja":"未対応の形式"},
+    {"id":"ScanUi_MappedDriveHelp","type":"ui","zh":"映射盘不可见？","en":"Mapped drive missing?","ja":"ネットワークドライブが見えませんか？"},
     {
       "id": "NewDB_SetupPending",
       "type": "ui",
@@ -2508,13 +2579,6 @@
       "ja": "分離モード：スペクトルを上、波形を下\n統合モード：スペクトルと波形を重ね表示"
     },
     {
-      "id": "Scan_Cancelled",
-      "type": "ui",
-      "zh": "扫描已取消",
-      "en": "Scan cancelled",
-      "ja": "スキャンをキャンセルしました"
-    },
-    {
       "id": "Scan_NoAudioFound",
       "type": "ui",
       "zh": "未找到可识别的音频文件",
@@ -2527,20 +2591,6 @@
       "zh": "后处理中",
       "en": "Post-processing",
       "ja": "ポスト処理中"
-    },
-    {
-      "id": "Scan_DragDetected",
-      "type": "ui",
-      "zh": "拖拽检测：",
-      "en": "Drag detected:",
-      "ja": "ドラッグ検出："
-    },
-    {
-      "id": "Scan_PendingFolders",
-      "type": "ui",
-      "zh": "待扫描文件夹：",
-      "en": "Folders pending scan:",
-      "ja": "スキャン待ちフォルダー："
     },
     {
       "id": "Scan_Activated",
@@ -2869,20 +2919,6 @@
       "zh": "后台索引中... (%d/%d)",
       "en": "Background indexing... (%d/%d)",
       "ja": "バックグラウンドインデックス中... (%d/%d)"
-    },
-    {
-      "id": "Scan_NewAdded",
-      "type": "ui",
-      "zh": "| 新增:",
-      "en": "| New:",
-      "ja": "| 新規:"
-    },
-    {
-      "id": "Scan_UpdatedCount",
-      "type": "ui",
-      "zh": "更新:",
-      "en": "Updated:",
-      "ja": "更新:"
     },
     {
       "id": "Scan_CountingResults",
@@ -7827,13 +7863,6 @@
       "ja": "バックグラウンドで続行"
     },
     {
-      "id": "Main_ContinueBackgroundTooltip",
-      "type": "ui",
-      "zh": "关闭此窗口，扫描在后台继续。\n已入库的文件可立即使用。",
-      "en": "Close this window; the scan continues in the background.\nAlready-imported files are ready to use.",
-      "ja": "このウィンドウを閉じてもスキャンはバックグラウンドで続行します。\n既にインポート済みのファイルはすぐ使えます。"
-    },
-    {
       "id": "Main_StopBtn",
       "type": "ui",
       "zh": "停止…",
@@ -7841,39 +7870,11 @@
       "ja": "停止..."
     },
     {
-      "id": "Main_PauseCancelExplain",
-      "type": "ui",
-      "zh": "暂停会保留已经提交的文件；取消会回滚本次扫描的全部改动。",
-      "en": "Pausing keeps already-committed files; canceling rolls back all changes of this scan.",
-      "ja": "一時停止は確定済みのファイルを残します。キャンセルは今回のスキャンの全変更をロールバックします。"
-    },
-    {
       "id": "Main_PauseKeepBtn",
       "type": "ui",
       "zh": "暂停并保留",
       "en": "Pause and keep",
       "ja": "一時停止して保持"
-    },
-    {
-      "id": "Main_CancelRollbackBtn",
-      "type": "ui",
-      "zh": "取消并回滚",
-      "en": "Cancel and roll back",
-      "ja": "キャンセルしてロールバック"
-    },
-    {
-      "id": "Main_FirstItemFmt",
-      "type": "ui",
-      "zh": "首项: %s",
-      "en": "First: %s",
-      "ja": "先頭: %s"
-    },
-    {
-      "id": "Main_ClearDragInfoBtn",
-      "type": "ui",
-      "zh": "清除拖拽信息",
-      "en": "Clear drag info",
-      "ja": "ドラッグ情報をクリア"
     },
     {
       "id": "Main_IncludeSubfolders",
@@ -7890,20 +7891,6 @@
       "ja": "既存インポートファイルを更新"
     },
     {
-      "id": "Main_RemoveMissingFiles",
-      "type": "ui",
-      "zh": "移除已丢失文件",
-      "en": "Remove missing files",
-      "ja": "欠損ファイルを削除"
-    },
-    {
-      "id": "Main_ThreadHint",
-      "type": "ui",
-      "zh": "建议：\n- 0=自动（推荐）\n- 机械硬盘/网络盘：2-4\n- SSD：4-8\n- NVMe/高核处理器：8-12\n线程过多会吃满处理器并降低界面响应。",
-      "en": "Recommended:\n- 0=auto (recommended)\n- HDD/network drive: 2-4\n- SSD: 4-8\n- NVMe/high-end: 8+",
-      "ja": "推奨:\n- 0=自動（推奨）\n- HDD/ネットワーク: 2-4\n- SSD: 4-8\n- NVMe/ハイエンド: 8+"
-    },
-    {
       "id": "Main_FastScanMode",
       "type": "ui",
       "zh": "极速模式",
@@ -7918,25 +7905,11 @@
       "ja": "完全モード"
     },
     {
-      "id": "Main_ScanModeTooltip",
-      "type": "ui",
-      "zh": "极速模式不会在扫描阶段强制补齐全库迷你波形，适合大库快速进库。\n完整模式会把迷你波形也纳入本次扫描收尾。",
-      "en": "Fast mode does not force a full-library mini-waveform rebuild during scanning, good for large libraries. Full mode also fills mini waveforms for the whole library.",
-      "ja": "高速モードはスキャン段階で全ライブラリのミニ波形補完を強制しません。大規模ライブラリの高速インポートに向きます。完全モードはミニ波形も全ライブラリ分補完します。"
-    },
-    {
       "id": "Main_BuildSimilarIndexCheck",
       "type": "ui",
-      "zh": "扫描完成后立即建立相似数据库索引",
-      "en": "Build the similarity database index immediately after scanning",
-      "ja": "スキャン完了後に類似データベースインデックスを即構築"
-    },
-    {
-      "id": "Main_BuildSimilarIndexTooltip",
-      "type": "ui",
-      "zh": "勾选后，扫描成功完成才开始建立相似数据库索引。\n取消、失败或部分失败不会启动。默认关闭以免拖慢扫描。",
-      "en": "When checked, the similarity index build starts only after the scan finishes successfully.\nCancel, failure or partial failure will not start it. Off by default to avoid slowing the scan.",
-      "ja": "チェックすると、スキャンが正常完了してから類似インデックス構築を開始します。\nキャンセル・失敗・部分失敗では起動しません。スキャンを遅らせないため既定はオフ。"
+      "zh": "扫描后准备相似搜索",
+      "en": "Prepare similarity search after scanning",
+      "ja": "スキャン後に類似検索を準備"
     },
     {
       "id": "Main_LibraryOperations",
@@ -8637,34 +8610,6 @@
       "zh": "刷新后显示数据库包、WAL、缺失根目录和缓存异常统计。",
       "en": "After refresh, shows database package, WAL, missing roots and cache anomaly statistics.",
       "ja": "更新後はデータベースパッケージ、WAL、欠損ルート、キャッシュ異常の統計を表示します。"
-    },
-    {
-      "id": "Main_RescanResumeHint",
-      "type": "ui",
-      "zh": "重新扫描同一文件夹可继续处理剩余文件；已经入库的文件会快速跳过。",
-      "en": "Re-scanning the same folder continues the remaining files; already-imported files are skipped quickly.",
-      "ja": "同じフォルダーを再スキャンすれば残りファイルの処理を続けられます。既に取り込み済みファイルはすぐスキップされます。"
-    },
-    {
-      "id": "Main_RecursiveScanTip",
-      "type": "ui",
-      "zh": "提示：如果音频都在子文件夹里，请开启“递归扫描子文件夹”。",
-      "en": "Tip: if audio files are in subfolders, enable “recursive scan subfolders”.",
-      "ja": "ヒント：サブフォルダーにオーディオがある場合は「サブフォルダーを再帰スキャン」を有効にしてください。"
-    },
-    {
-      "id": "Main_ScanErrorsNoFileFmt",
-      "type": "ui",
-      "zh": "扫描遇到 %d 个错误，但底层没有返回具体文件。请查看诊断日志里的 Scan 事件。",
-      "en": "The scan hit %d errors, but the backend returned no specific files. Check Scan events in the diagnostics log.",
-      "ja": "スキャンで %d 件のエラーが発生しましたが、具体的なファイルは返されませんでした。診断ログの Scan イベントを確認してください。"
-    },
-    {
-      "id": "Main_ScanErrorItemFmt",
-      "type": "ui",
-      "zh": "%zu. %s",
-      "en": "%zu. %s",
-      "ja": "%zu. %s"
     },
     {
       "id": "Main_MoreErrorsOmittedFmt",
@@ -9633,13 +9578,6 @@
       "ja": "上半分: フェードハンドル · 下半分: イン/アウト端点"
     },
     {
-      "id": "Main_PipeStatusFmt",
-      "type": "ui",
-      "zh": "| %s",
-      "en": "| %s",
-      "ja": "| %s"
-    },
-    {
       "id": "Main_ImportRunLabel",
       "type": "ui",
       "zh": "本次入库",
@@ -10410,13 +10348,6 @@
       "ja": "全ファイルのインデックス完了！"
     },
     {
-      "id": "Main_ScannerTitle",
-      "type": "ui",
-      "zh": "AUDIO LIBRARY SCANNER",
-      "en": "AUDIO LIBRARY SCANNER",
-      "ja": "AUDIO LIBRARY SCANNER"
-    },
-    {
       "id": "Main_FoundFilesFmt",
       "type": "ui",
       "zh": "本次发现文件数：%d",
@@ -10459,13 +10390,6 @@
       "ja": "ミニ波形キャッシュ：%d / %d"
     },
     {
-      "id": "Main_MiniCacheNotIncluded",
-      "type": "ui",
-      "zh": "迷你波形缓存：未纳入本次完整流程（后台继续）",
-      "en": "mini waveform cache: not included in this full pass (continues in background)",
-      "ja": "ミニ波形キャッシュ：今回の完全フロー未含ま（バックグラウンドで継続）"
-    },
-    {
       "id": "Main_TotalElapsedFmt",
       "type": "ui",
       "zh": "总耗时：%s",
@@ -10478,69 +10402,6 @@
       "zh": "已可开始工作；迷你波形将按需或后台渐进补齐。",
       "en": "Ready to work; mini waveforms fill on demand or gradually in background.",
       "ja": "作業開始できます。ミニ波形は都度またはバックグラウンドで順次補完します。"
-    },
-    {
-      "id": "Main_SimIndexBuildingFmt",
-      "type": "ui",
-      "zh": "正在建立相似数据库索引：%d / %d",
-      "en": "Building similarity index: %d / %d",
-      "ja": "類似データベースインデックス構築中：%d / %d"
-    },
-    {
-      "id": "Main_ScanFolderHint",
-      "type": "ui",
-      "zh": "选择要扫描的文件夹，将音频文件添加到数据库。",
-      "en": "Choose folders to scan and add audio files to the database.",
-      "ja": "スキャンするフォルダーを選択し、オーディオファイルをデータベースへ追加します。"
-    },
-    {
-      "id": "Main_ScanStrategyTitle",
-      "type": "ui",
-      "zh": "扫描策略",
-      "en": "Scan Strategy",
-      "ja": "スキャン戦略"
-    },
-    {
-      "id": "Main_ScanPausedNote",
-      "type": "ui",
-      "zh": "扫描已暂停，已提交文件已保留",
-      "en": "Scan paused; submitted files are kept",
-      "ja": "スキャン一時停止中、送信済みファイルは保持しました"
-    },
-    {
-      "id": "Main_BackfillingStatus",
-      "type": "ui",
-      "zh": "入库后优化中",
-      "en": "Post-import: optimizing",
-      "ja": "インポート後：最適化中"
-    },
-    {
-      "id": "Main_ScanDoneMsg",
-      "type": "ui",
-      "zh": "扫描完成！",
-      "en": "Scan complete!",
-      "ja": "スキャン完了！"
-    },
-    {
-      "id": "Main_ScanStatsFmt",
-      "type": "ui",
-      "zh": "总计: %d  新增: %d  更新: %d  跳过: %d  移除: %d  错误: %d",
-      "en": "Total: %d  New: %d  Updated: %d  Skipped: %d  Removed: %d  Errors: %d",
-      "ja": "合計: %d  新規: %d  更新: %d  スキップ: %d  除去: %d  エラー: %d"
-    },
-    {
-      "id": "Main_ImportRunFmt",
-      "type": "ui",
-      "zh": "本次入库: %d  入库耗时: %s",
-      "en": "Imported this run: %d  Elapsed: %s",
-      "ja": "今回取り込み: %d  所要時間: %s"
-    },
-    {
-      "id": "Main_ErrorDetailsTitle",
-      "type": "ui",
-      "zh": "错误详情",
-      "en": "Error details",
-      "ja": "エラー詳細"
     },
     {
       "id": "Main_DupNameWarn",
@@ -10828,13 +10689,6 @@
       "zh": "+%d BPM",
       "en": "+%d BPM",
       "ja": "+%d BPM"
-    },
-    {
-      "id": "Main_ImportFinalizing",
-      "type": "ui",
-      "zh": "本次入库收尾中",
-      "en": "Finalizing this import",
-      "ja": "今回の取り込みを仕上げ中"
     },
     {
       "id": "Main_ScanDoneShort",
@@ -12601,13 +12455,6 @@
       "ja": "ネットワークライブラリに現在接続できません"
     },
     {
-      "id": "Scan_NetworkUnreachableCountFmt",
-      "type": "ui",
-      "zh": "不可达条目: %d",
-      "en": "Unreachable items: %d",
-      "ja": "到達できない項目: %d"
-    },
-    {
       "id": "Scan_NetworkLibraryReadonlyHint",
       "type": "ui",
       "zh": "这是只读网络库，不会修改网络共享上的文件。",
@@ -12886,62 +12733,6 @@
       "zh": "拖边缘微调 · Ctrl+双击退出",
       "en": "Drag edge to fine-tune · Ctrl+double-click to exit",
       "ja": "端ドラッグで微調整 · Ctrl+ダブルクリックで終了"
-    },
-    {
-      "id": "Wf_StageScanning",
-      "type": "ui",
-      "zh": "正在扫描",
-      "en": "Scanning",
-      "ja": "スキャン中"
-    },
-    {
-      "id": "Wf_StageIngesting",
-      "type": "ui",
-      "zh": "正在入库",
-      "en": "Ingesting",
-      "ja": "取り込み中"
-    },
-    {
-      "id": "Wf_StageMiniWave",
-      "type": "ui",
-      "zh": "正在缓存 mini 波形",
-      "en": "Caching mini waveforms",
-      "ja": "mini波形キャッシュ中"
-    },
-    {
-      "id": "Wf_StageFinalizing",
-      "type": "ui",
-      "zh": "正在整理结果",
-      "en": "Finalizing results",
-      "ja": "結果整理中"
-    },
-    {
-      "id": "Wf_StageDone",
-      "type": "ui",
-      "zh": "本次处理完成",
-      "en": "This run complete",
-      "ja": "今回の処理完了"
-    },
-    {
-      "id": "Wf_StagePaused",
-      "type": "ui",
-      "zh": "已暂停",
-      "en": "Paused",
-      "ja": "一時停止中"
-    },
-    {
-      "id": "Wf_StageCancelled",
-      "type": "ui",
-      "zh": "已取消",
-      "en": "Cancelled",
-      "ja": "キャンセル済み"
-    },
-    {
-      "id": "Wf_StageFailed",
-      "type": "ui",
-      "zh": "扫描失败",
-      "en": "Scan failed",
-      "ja": "スキャン失敗"
     },
     {
       "id": "Wf_CountingFiles",
@@ -13229,13 +13020,6 @@
       "zh": "点击开启精准搜索模式\n\n开启后：不扩展前缀，不展开同义词\n关闭后：恢复模糊匹配（默认）",
       "en": "Click to enable precise search\n\nWhen on: no prefix or synonym expansion\nWhen off: fuzzy matching (default)",
       "ja": "クリックで精密検索オン\n\nオン時：前拡張・同義語展開なし\nオフ時：曖昧マッチ（既定）"
-    },
-    {
-      "id": "Scan_FullModeHint",
-      "type": "ui",
-      "zh": "完整模式：metadata、封面和 mini 波形都进入本次入库完成门。",
-      "en": "Full mode: metadata, covers and mini waveforms all gate this ingest completion.",
-      "ja": "完全モード：metadata・ジャケット・mini波形すべて今回の取り込み完了ゲートに含まれます。"
     },
     {
       "id": "Scan_FastModeHint",

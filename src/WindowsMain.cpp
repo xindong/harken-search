@@ -67,6 +67,7 @@
 #include "platform/platform.h"
 #include "DiagnosticFileLifecycle.h"
 #include "ScanDatabaseOpenDiagnostics.h"
+#include "ScanDialogPresentation.h"
 
 // Legacy compatibility identifier: Auro.AudioFile.
 static constexpr const char* kLegacyAuroAudioFileAssociation = "Auro.AudioFile";
@@ -3095,6 +3096,7 @@ static bool BeginFolderScan(
     state.resetScanReadyToWorkState();
     state.autoFilterToScannedPath = true;
     state.lastScannedPath = path;
+    state.lastScannedFolders = {path};
     state.needsDatabaseRefresh = false;
     state.scanDataCommitted = false;
     state.scanDialogAutoStart = false;
@@ -6558,6 +6560,119 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"cmd\":\"set_view_mode\",\"error\":\"unknown mode\"}";
         }
 
+    } else if (cmd == "scan_dialog_ui") {
+#if ARIS_PREVIEW_ISOLATION
+        // Exercise native scan controls only inside this build's fixed QA root.
+        const auto request = nlohmann::json::parse(raw, nullptr, false);
+        const std::string action = getStr(raw, "action");
+        const bool isolated = MagicEqQaIsolationReady() &&
+            Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(state.currentDbPathUtf8);
+        const auto snapshot = ThemeInspector::CopyLatestSnapshot();
+        s_magicEqQaCollectUntilMs.store(Platform::MonotonicMilliseconds() + 10000, std::memory_order_release);
+        if (!isolated || state.dbSwitchInProgress || !s_mainUiReady.load()) {
+            result = R"({"ok":false,"error":"isolated_ready_library_required"})";
+        } else if (action == "cleanup") {
+            extern bool StartGlobalMissingRecordsCleanupForQa(AppState&);
+            const bool idle = !state.isScanning.load() && !state.scanCompletionPending.load() &&
+                !state.batchFeatureExtracting.load() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+            result = nlohmann::json({{"ok", idle && StartGlobalMissingRecordsCleanupForQa(state)}}).dump();
+        } else if (action == "theme") {
+            const int theme = getInt(raw, "theme", -1);
+            if (theme != 0 && theme != 1 && theme != 2 && theme != 3 && theme != 10) {
+                result = R"({"ok":false,"error":"builtin_theme_required"})";
+            } else {
+                harken::theme_schedule::SetMode(state, harken::theme_schedule::Mode::Off);
+                state.settings.theme = static_cast<AppTheme>(theme);
+                state.settings.useCustomColors = false;
+                ThemeColors::deactivateCustomTheme();
+                result = R"({"ok":true})";
+            }
+        } else if (action == "setup") {
+            std::vector<std::string> folders;
+            bool valid = request.is_object() && request.contains("folders") && request["folders"].is_array();
+            if (valid) for (const auto& entry : request["folders"]) {
+                if (!entry.is_string()) { valid = false; break; }
+                const auto path = entry.get<std::string>();
+                if (!Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path) || !PathExistsUtf8(path)) { valid = false; break; }
+                folders.push_back(path);
+            }
+            if (!valid || state.isScanning.load() || state.scanCompletionPending.load() || state.batchFeatureExtracting.load() ||
+                ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
+                result = R"({"ok":false,"error":"invalid_scan_setup_or_task_active"})";
+            } else {
+                state.pendingScanFolders = folders;
+                state.settings.cacheWaveformsOnScan = !getBool(raw, "fast", false);
+                state.scanBuildSimilarityIndexAfterScan = getBool(raw, "similar", false);
+                state.scanDialogAutoStart = false;
+                state.showScanDialog = true;
+                result = R"({"ok":true})";
+            }
+        } else if (action == "pointer") {
+            const float x = static_cast<float>(getDouble(raw, "x", -10000));
+            const float y = static_cast<float>(getDouble(raw, "y", -10000));
+            const std::string phase = getStr(raw, "phase");
+            bool hit = false;
+            const auto* modal = ImGui::GetTopMostPopupModal();
+            for (const auto& zone : snapshot.zones) {
+                if (zone.key.rfind("scan.", 0) == 0 && x >= zone.minX && x < zone.maxX &&
+                    y >= zone.minY && y < zone.maxY && (!modal || modal->Rect().Contains(ImVec2(x, y)))) hit = true;
+            }
+            if (!hit || snapshot.frameNumber == 0 || snapshot.frameNumber + 2 < static_cast<uint64_t>(ImGui::GetFrameCount()) ||
+                s_magicEqQaPointer.pending || (phase != "hover" && phase != "down" && phase != "up") ||
+                ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
+                (phase == "up" && !s_magicEqQaPointer.held)) {
+                result = R"({"ok":false,"error":"invalid_scan_control_pointer"})";
+            } else {
+                s_magicEqQaPointer = {true, phase != "hover", phase == "down", x, y,
+                    modal ? modal->Viewport->ID : ImGui::GetMainViewport()->ID};
+                result = R"({"ok":true})";
+            }
+        } else if (action == "state") {
+            auto workflow = state.getScanWorkflowSnapshot();
+            if (workflow.stage == HarkenSearch::ScanWorkflowStage::Idle && state.scanTotal.load() > 0)
+                workflow = HarkenSearch::BuildCleanupScanSnapshot(state.isScanning.load(), state.scanCancelRequested.load(),
+                    state.scanErrorCount.load() > 0, state.scanProgress.load(), state.scanTotal.load());
+            const auto view = HarkenSearch::BuildScanDialogView({workflow, state.isScanning.load(),
+                state.scanCompletionPending.load(), state.scanStopDisposition.load(), state.scanFatalFailure.load(), state.scanErrorCount.load()});
+            const char* surfaces[] = {"setup", "progress", "result"};
+            const char* phases[] = {"setup", "counting", "ingesting", "waveforms", "finalizing", "saving", "revoking",
+                "completed", "partial", "paused", "cancelled", "empty", "failed"};
+            auto windows = nlohmann::json::array();
+            for (const auto* window : ImGui::GetCurrentContext()->Windows) {
+                if (!window->WasActive || (std::strstr(window->Name, "Scan") == nullptr && std::strcmp(window->Name, L(Dlg_ScanFolder)) != 0)) continue;
+                windows.push_back({{"name", window->Name}, {"bounds", {window->Pos.x, window->Pos.y,
+                    window->Pos.x + window->Size.x, window->Pos.y + window->Size.y}}, {"no_title_bar", bool(window->Flags & ImGuiWindowFlags_NoTitleBar)}});
+            }
+            auto items = nlohmann::json::array();
+            for (const auto& zone : snapshot.zones) {
+                if (zone.key.rfind("scan.", 0) != 0) continue;
+                std::string owner;
+                for (const auto& window : windows) {
+                    const auto& bounds = window["bounds"];
+                    if (zone.minX >= bounds[0].get<float>() - 1 && zone.minY >= bounds[1].get<float>() - 1 &&
+                        zone.maxX <= bounds[2].get<float>() + 1 && zone.maxY <= bounds[3].get<float>() + 1) owner = window["name"].get<std::string>();
+                }
+                items.push_back({{"id", zone.key}, {"label", zone.displayName}, {"window", owner},
+                    {"bounds", {zone.minX, zone.minY, zone.maxX, zone.maxY}}});
+            }
+            const auto batch = state.batchFeatureResults.Snapshot();
+            result = nlohmann::json({{"ok", true}, {"frame", snapshot.frameNumber}, {"theme", static_cast<int>(state.settings.theme)},
+                {"imgui_errors", ImGui::GetCurrentContext()->ErrorCountCurrentFrame},
+                {"imgui_debug_log", HarkenSearch::ScanDiagnosticTailUtf8(ImGui::GetCurrentContext()->DebugLogBuf.c_str(), 4096)},
+                {"surface", surfaces[static_cast<int>(view.surface)]}, {"phase", phases[static_cast<int>(view.phase)]},
+                {"is_scanning", state.isScanning.load()}, {"completion_pending", state.scanCompletionPending.load()},
+                {"can_stop", view.canStop}, {"stop_disposition", static_cast<int>(state.scanStopDisposition.load())},
+                {"pending_folders", state.pendingScanFolders}, {"last_folders", state.lastScannedFolders},
+                {"succeeded", view.succeeded}, {"failed", view.failed}, {"skipped", view.skipped}, {"unprocessed", view.unprocessed},
+                {"metrics", {{"elapsed_ms", state.scanUiMetrics.Value().elapsedMs},
+                    {"speed_known", state.scanUiMetrics.Value().speedKnown}, {"files_per_second", state.scanUiMetrics.Value().filesPerSecond}}},
+                {"similarity", {{"available", batch.available}, {"running", batch.running}, {"stopped", batch.stopped},
+                    {"total", batch.total}, {"succeeded", batch.succeeded}, {"failed", batch.Failed()}, {"remaining", batch.Remaining()}}},
+                {"items", items}, {"windows", windows}}).dump();
+        } else result = R"({"ok":false,"error":"unknown_scan_ui_action"})";
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "qa_rightclick_scan") {
 #if ARIS_PREVIEW_ISOLATION
         const std::string path = getStr(raw, "path");
@@ -8579,8 +8694,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (g_appState && !folders.empty()) {
                 if (g_appState->isScanning.load()) {
                     g_appState->scanDialogAutoStart = false;
-                    g_appState->showScanDialog = true;
-                    g_appState->setScanFile("A scan is already running. New drop ignored.");
+                    g_appState->scanIgnoredDropCount = static_cast<int>(folders.size());
+                    g_appState->showScanBusyNotice = true;
                     return 0;
                 }
                 // 不立即扫描，保存待扫描路径并弹出对话框让用户确认选项
@@ -8591,6 +8706,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
             // Process files - add individual files to database (small drops only)
             if (g_appState && !files.empty()) {
+                g_appState->scanDropImportedCount = 0;
+                g_appState->scanDropExistingCount = 0;
+                g_appState->scanDropFailedCount = 0;
                 for (const auto& filePath : files) {
                     try {
                         AudioRecord record;
@@ -8621,12 +8739,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                                                 record.durationSeconds);
 
                         if (!g_appState->database.fileExists(filePath)) {
-                            g_appState->database.addFile(record);
-                        }
+                            if (g_appState->database.addFile(record)) ++g_appState->scanDropImportedCount;
+                            else ++g_appState->scanDropFailedCount;
+                        } else ++g_appState->scanDropExistingCount;
                     } catch (...) {
                         // Skip bad file and continue importing others.
+                        ++g_appState->scanDropFailedCount;
                     }
                 }
+                g_appState->showScanDropNotice = true;
+                g_appState->lastDropTick = Platform::MonotonicMilliseconds();
 
                 if (!files.empty()) {
                     g_appState->audioEngine.loadFileAsync(files[0], true);
@@ -8641,7 +8763,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 g_appState->lastDropTick = Platform::MonotonicMilliseconds();
                 g_appState->lastDropSummary = "Drop handling failed unexpectedly. Please try dropping a top-level folder.";
                 g_appState->scanDialogAutoStart = false;
-                g_appState->showScanDialog = true;
+                g_appState->scanDropImportedCount = 0;
+                g_appState->scanDropExistingCount = 0;
+                g_appState->scanDropFailedCount = 1;
+                g_appState->showScanDropNotice = true;
             }
             return 0;
         }

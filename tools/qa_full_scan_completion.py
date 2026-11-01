@@ -127,6 +127,8 @@ def run(args):
                 wait_state(driver, lambda s: s['main_ui_ready'] and s['db_path'] and
                            not s['db_switch_in_progress'], 'Reopen interrupted library', timeout=60)
                 report['restart_identity'] = identity
+            else:
+                dismiss_result()
         if args.fast_first or args.pause_first:
             start_scan(fixture, not args.fast_first)
             until = time.monotonic() + args.timeout
@@ -144,8 +146,7 @@ def run(args):
             while driver.command({'cmd': 'scan_status'})['scanning']:
                 assert time.monotonic() < until, 'Seed scan did not stop'
                 time.sleep(.04)
-            if args.fast_first:
-                dismiss_result()
+            dismiss_result()
         for case in ('initial-full', 'repeat-full'):
             observed = []
             case_report = {'case': case, 'observed': observed}
