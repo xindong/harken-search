@@ -21,7 +21,10 @@ CMAKE = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 FMT_RE = re.compile(r"%[-+0-9\.]*[sdif]")
 KEYS = [
     "Scan_NetworkLibraryUnreachable",
-    "Scan_NetworkUnreachableCountFmt",
+    "Main_FailedFmt",
+    "ScanUi_FailedPath",
+    "ScanUi_NetworkTitle",
+    "ScanUi_NetworkAction",
     "Scan_NetworkLibraryReadonlyHint",
     "Scan_NetworkDualPathWarn",
     "Scan_MappedDriveHiddenHint",
@@ -122,12 +125,17 @@ class NetworkPathContract(unittest.TestCase):
 
     def test_ui_maps_unreachable_key_not_localized_match(self) -> None:
         key = '"Scan_NetworkLibraryUnreachable"'
-        self.assertIn("msg.find(" + key + ")", MAIN)
-        self.assertNotIn("msg.find(L(Scan_NetworkLibraryUnreachable))", MAIN)
+        self.assertIn("error.find(" + key + ")", MAIN)
+        self.assertNotIn("error.find(L(Scan_NetworkLibraryUnreachable))", MAIN)
         self.assertIn("msg.find(" + key + ")", WINDOWS_MAIN)
         self.assertNotIn("unreachableCopy = L(Scan_NetworkLibraryUnreachable)", WINDOWS_MAIN)
         self.assertIn("L(Scan_NetworkLibraryUnreachable)", MAIN)
-        self.assertIn("L(Scan_NetworkUnreachableCountFmt)", MAIN)
+        result = MAIN.split("if (BeginTransientScrollbarPopupModal(scanResultPopup", 1)[1].split("// New playlist dialog", 1)[0]
+        self.assertIn("L(Main_FailedFmt), scanView.failed", result)
+        self.assertIn("BuildScanFailureSummary(scanErrorSnapshot, scanView.failed)", result)
+        self.assertIn("L(ScanUi_FailedPath)", result)
+        self.assertIn('error.find("Scan_NetworkLibraryUnreachable")', result)
+        self.assertIn("L(Scan_NetworkLibraryUnreachable)", result)
 
     def test_scan_callback_does_not_treat_key_as_filename(self) -> None:
         for label, text in (("main", MAIN), ("windows", WINDOWS_MAIN)):

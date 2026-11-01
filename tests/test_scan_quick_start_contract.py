@@ -9,6 +9,10 @@ HELPER = (ROOT / "src/FolderTreeContextActions.h").read_text(encoding="utf-8")
 APP = (ROOT / "src/AppState.h").read_text(encoding="utf-8")
 REAPER_IMPORT = (ROOT / "src/ReaperFileListImportWorkflow.cpp").read_text(encoding="utf-8")
 CMake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+PRESENTATION = (ROOT / "src/ScanDialogPresentation.h").read_text(encoding="utf-8")
+SCAN = MAIN.split("// Scan folder dialog", 1)[1].split("// New playlist dialog", 1)[0]
+RESULT = SCAN.split("if (BeginTransientScrollbarPopupModal(scanResultPopup", 1)[1]
+RESET = MAIN.split("static void ResetScanDialogResult", 1)[1].split("static void PlaceScanDialogInMainViewport", 1)[0]
 LOCALIZED = {
     entry["id"]: entry
     for entry in json.loads(
@@ -39,10 +43,11 @@ class ScanQuickStartContract(unittest.TestCase):
         quick_end = MAIN.index("if (!quickAutoStarted", quick_start)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN[quick_start:quick_end])
         self.assertNotIn("startScanForFolders(state.pendingScanFolders, true)", MAIN[quick_start:quick_end])
-        manual_start = MAIN.index("if (aura::ui::ActionButton(L(Scan_StartScan)")
-        manual_end = MAIN.index("} else if (!quickAutoStarted)", manual_start)
-        self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN[manual_start:manual_end])
-        self.assertIn("startScanForFolders({ folder }, false)", MAIN[manual_end:])
+        manual = SCAN.split("if (!quickAutoStarted) {", 1)[1].split("if (openScanResult)", 1)[0]
+        self.assertIn("selected ? L(Scan_StartScan) : L(Scan_SelectAndScan)", manual)
+        self.assertIn("startScanForFolders(state.pendingScanFolders, false)", manual)
+        self.assertIn("startScanForFolders({folder}, false)", manual)
+        self.assertNotIn("startScanForFolders(state.pendingScanFolders, true)", manual)
         self.assertIn("bool updateExisting = lightweightInsert ? false : state.scanUpdateExisting;", MAIN)
         self.assertIn("bool removeMissing = lightweightInsert ? false : state.scanRemoveMissing;", MAIN)
 
@@ -52,7 +57,7 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertNotIn("state.scanDialogAutoStart = false;", MAIN[start:end])
 
     def test_manual_and_drag_flows_remain_confirmed(self):
-        self.assertIn("if (aura::ui::ActionButton(L(Scan_StartScan)", MAIN)
+        self.assertIn("aura::ui::ActionButton(selected ? L(Scan_StartScan) : L(Scan_SelectAndScan)", SCAN)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN)
         self.assertIn("aura::ui::ActionButton(L(Cancel)", MAIN)
         self.assertIn("state.pendingScanFolders.clear();", MAIN)
@@ -84,29 +89,23 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertIn("state.scanCompletionCoversPending.store(\n                    false,", WINDOWS_MAIN)
         self.assertIn("state.scanReadyToWorkCoverPostProcessPending = coverCompletionPending;", WINDOWS_MAIN)
 
-    def test_ready_completion_summary_does_not_hold_blocking_modal(self):
-        summary_start = MAIN.index(
-            "if (scanCompleteSummaryActive && state.scanDialogAutoStart) {"
-        )
-        summary_end = MAIN.index("ImGui::Separator();", summary_start)
-        summary_header = MAIN[summary_start:summary_end]
-        self.assertIn("ImGui::CloseCurrentPopup();", summary_header)
-        self.assertIn(
-            "if (scanCompleteSummaryActive && state.scanDialogAutoStart) {", MAIN
-        )
+    def test_ready_completion_leaves_progress_for_a_separate_dismissible_result(self):
+        transition = SCAN.split("if (scanView.surface == HarkenSearch::ScanDialogSurface::Result)", 1)[1].split("} else if", 1)[0]
+        self.assertIn("ImGui::CloseCurrentPopup();", transition)
+        self.assertIn("openScanResult = true;", transition)
+        self.assertIn("if (openScanResult) ImGui::OpenPopup(scanResultPopup);", SCAN)
+        self.assertIn("DrawScanDialogHeader(title, true)", RESULT)
+        self.assertIn("aura::ui::ActionButton(L(Done)", RESULT)
         self.assertIn("scanSummaryToastUntil", MAIN)
         self.assertIn("scanCompletionPending.load(std::memory_order_acquire)", MAIN)
-        self.assertIn("const bool scanCompletionBlocked", MAIN)
-        self.assertIn("ImGui::BeginDisabled(scanCompletionBlocked)", MAIN)
 
     def test_ready_summary_requires_terminal_completion_counters(self):
-        summary_start = MAIN.index("const bool scanCompleteSummaryActive =")
-        summary_end = MAIN.index(";", summary_start)
-        summary_condition = MAIN[summary_start:summary_end]
-        self.assertIn("state.scanCompletionReadyAtMs.load(std::memory_order_acquire) > 0", summary_condition)
-        self.assertNotIn("state.scanCompletionPendingFiles.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("AreScanCompletionCountersReady(", summary_condition)
-        self.assertIn("!state.settings.cacheWaveformsOnScan", summary_condition)
+        projection = PRESENTATION.split("inline ScanDialogView BuildScanDialogView", 1)[1].split("enum class ScanFailureCategory", 1)[0]
+        busy = projection.split("if (input.scanning || input.completionPending)", 1)[1].split("return view;", 1)[0]
+        self.assertIn("view.surface = ScanDialogSurface::Progress", busy)
+        self.assertIn("view.canClose = false", busy)
+        self.assertIn("snapshot.stage == ScanWorkflowStage::Completed && CanEnterCompleted(snapshot)", projection)
+        self.assertIn("state.scanCompletionPending.load(std::memory_order_acquire)", SCAN)
 
     def test_fast_completion_skips_redundant_queue_rebuild_and_honors_pause(self):
         resume_start = MAIN.index("const bool resumeBackground =")
@@ -126,24 +125,27 @@ class ScanQuickStartContract(unittest.TestCase):
 
     def test_pending_errors_and_cancelled_summaries_remain_visible(self):
         self.assertIn("BuildScanCompletionPendingLabel(state)", MAIN)
-        self.assertIn("if (state.scanWasCancelled)", MAIN)
-        self.assertIn("if (scanErrors > 0)", MAIN)
-        self.assertIn("L(Main_WaitForegroundImport)", MAIN)
-        self.assertIn("等待本次入库前台完成", LOCALIZED["Main_WaitForegroundImport"]["zh"])
+        self.assertIn("scanView.phase == Phase::Cancelled", RESULT)
+        self.assertIn("L(ScanUi_Revoked)", RESULT)
+        self.assertIn("const bool showFailures = scanView.failed > 0", RESULT)
+        self.assertIn("L(Main_FailedFmt), scanView.failed", RESULT)
+        self.assertIn("L(ScanUi_ViewFailures)", RESULT)
+        self.assertIn("const char* phase = L(ScanUi_Finalizing)", SCAN)
+        self.assertIn("正在整理", LOCALIZED["ScanUi_Finalizing"]["zh"])
 
     def test_ready_summary_does_not_duplicate_refresh_or_acknowledgement(self):
-        summary_start = MAIN.index(
-            "if (scanCompleteSummaryActive && state.scanDialogAutoStart) {"
-        )
-        summary_end = MAIN.index("ImGui::SameLine(425.0f);", summary_start)
-        summary_header = MAIN[summary_start:summary_end]
+        summary_header = SCAN.split("if (scanView.surface == HarkenSearch::ScanDialogSurface::Result)", 1)[1].split("} else if", 1)[0]
         self.assertNotIn("state.resetScanReadyToWorkState();", summary_header)
         self.assertNotIn("state.needsDatabaseRefresh = true;", summary_header)
+        self.assertNotIn("ResetScanDialogResult(state)", summary_header)
+        self.assertNotIn("state.scanDialogAutoStart = false", summary_header)
 
     def test_done_acknowledgement_clears_quick_completion_intent(self):
-        done_start = MAIN.index("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0)))")
-        done_end = MAIN.index("ImGui::EndDisabled();", done_start)
-        self.assertIn("state.scanDialogAutoStart = false;", MAIN[done_start:done_end])
+        done = RESULT.split("if (aura::ui::ActionButton(L(Done)", 1)[1].split('ThemeInspector::RegisterLastItem("scan.result.done")', 1)[0]
+        self.assertIn("ResetScanDialogResult(state);", done)
+        self.assertIn("ImGui::CloseCurrentPopup();", done)
+        self.assertIn("state.scanDialogAutoStart = false;", RESET)
+        self.assertIn("if (state.isScanning.load() || state.scanCompletionPending.load()) return;", RESET)
 
     def test_progressive_refresh_keeps_existing_safe_gate(self):
         self.assertIn("state.scanDataCommitted.load()", WINDOWS_MAIN)
