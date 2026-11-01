@@ -29321,6 +29321,22 @@ static void DrawScanDialogSource(const std::vector<std::string>& folders) {
     }
 }
 
+static void DrawScanDialogMetrics(const HarkenSearch::ScanDialogMetricsSnapshot& metrics, bool showSpeed) {
+    char elapsed[96];
+    std::snprintf(elapsed, sizeof(elapsed), L(Main_TotalElapsedFmt), FormatDurationMsCompact(metrics.elapsedMs).c_str());
+    if (showSpeed) {
+        char speed[96];
+        if (metrics.speedKnown) std::snprintf(speed, sizeof(speed), L(ScanUi_SpeedFmt), metrics.filesPerSecond);
+        else std::snprintf(speed, sizeof(speed), "%s", L(ScanUi_SpeedPending));
+        const bool sameLine = ImGui::CalcTextSize(speed).x + 24.f + ImGui::CalcTextSize(elapsed).x <= ImGui::GetContentRegionAvail().x;
+        ImGui::TextUnformatted(speed);
+        ThemeInspector::RegisterLastItem("scan.metrics.speed");
+        if (sameLine) ImGui::SameLine(0.f, 24.f);
+    }
+    ImGui::TextUnformatted(elapsed);
+    ThemeInspector::RegisterLastItem("scan.metrics.elapsed");
+}
+
 static void ResetScanDialogResult(AppState& state) {
     // Presentation dismissal only. Refresh stays deferred on the main loop.
     if (state.isScanning.load() || state.scanCompletionPending.load()) return;
@@ -31629,6 +31645,13 @@ void RenderUI(AppState& state) {
         state.scanCompletionPending.load(std::memory_order_acquire),
         state.scanStopDisposition.load(std::memory_order_acquire),
         state.scanFatalFailure.load(std::memory_order_acquire), state.scanErrorCount.load()});
+    const auto scanStartedAt = state.scanStartedAtMs.load();
+    const auto scanFinishedAt = state.scanFinishedAtMs.load();
+    const auto scanRecordedDuration = state.scanCompletionDurationMs.load();
+    const auto scanTerminalDuration = scanRecordedDuration > 0 ? scanRecordedDuration :
+        (scanFinishedAt > 0 && scanStartedAt > 0 ? std::max<int64_t>(0, scanFinishedAt - scanStartedAt) : 0);
+    state.scanUiMetrics.Update(state.scanTaskGeneration.load(), scanStartedAt,
+        scanTerminalDuration, AppState::nowSteadyMs(), scanView);
     constexpr const char* scanResultPopup = "##ScanResult";
     if (!scanView.canStop) state.scanUiRequestStopChoice = false;
     if (state.showScanDialog) {
@@ -31699,6 +31722,7 @@ void RenderUI(AppState& state) {
                 if (scanView.phase == Phase::Counting && scanView.total > 0)
                     ImGui::Text(L(ScanUi_FoundAudioFmt), scanView.total);
             }
+            DrawScanDialogMetrics(state.scanUiMetrics.Value(), true);
             if (scanView.phase == Phase::Ingesting || scanView.phase == Phase::Waveforms) {
                 const auto file = state.getScanFile();
                 if (!file.empty()) {
@@ -32730,6 +32754,7 @@ void RenderUI(AppState& state) {
             else if (scanView.phase == Phase::Cancelled) ImGui::TextUnformatted(L(ScanUi_Revoked));
             else ImGui::Text(scanView.phase == Phase::Paused ? L(ScanUi_RetainedFmt) : L(ScanUi_ImportedFmt), scanView.succeeded);
             ImGui::PopFont();
+            DrawScanDialogMetrics(state.scanUiMetrics.Value(), false);
             if (rollbackFailed) ImGui::TextWrapped("%s", L(ScanUi_SaveUnavailable));
             if (networkUnreachable && scanWorkflowSnapshot.discovered == 0) {
                 ImGui::TextWrapped("%s", state.lastScannedPath.c_str());
@@ -32761,7 +32786,6 @@ void RenderUI(AppState& state) {
                     ImGui::Text(L(ScanUi_UpdatedFmt), state.scanUpdatedCount.load());
                     ImGui::Text(L(ScanUi_SkippedFmt), scanView.skipped);
                     if (state.scanRemovedCount.load() > 0) ImGui::Text(L(ScanUi_RemovedFmt), state.scanRemovedCount.load());
-                    ImGui::Text(L(Main_TotalElapsedFmt), FormatDurationMsCompact(state.scanCompletionDurationMs.load()).c_str());
                     ImGui::TreePop();
                 }
             }

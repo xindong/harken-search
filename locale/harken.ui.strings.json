@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id":"ScanUi_SpeedFmt","type":"ui","zh":"速度 %.1f 文件/秒","en":"Speed %.1f files/s","ja":"速度 %.1f ファイル/秒"},
+    {"id":"ScanUi_SpeedPending","type":"ui","zh":"速度 —","en":"Speed —","ja":"速度 —"},
     {"id":"ScanUi_CleanupTitle","type":"ui","zh":"清理失效记录","en":"Clean missing records","ja":"無効な記録を整理"},
     {"id":"ScanUi_CleanupRemovedFmt","type":"ui","zh":"已清理 %d 条失效记录","en":"Removed %d missing records","ja":"無効な記録 %d 件を削除"},
     {"id":"ScanUi_CleanupStopped","type":"ui","zh":"清理已停止","en":"Cleanup stopped","ja":"整理を停止しました"},

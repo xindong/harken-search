@@ -46,6 +46,7 @@ typedef unsigned int GLuint;
 #include "BatchRenamePolicy.h"
 #include "SendToTargetSurfaceModel.h"
 #include "ScanWorkflow.h"
+#include "ScanDialogPresentation.h"
 #include "BatchFeatureResultState.h"
 #include "VoiceAssetOrganizer.h"
 #include "CueviFeedbackClient.h"
@@ -1913,8 +1914,10 @@ struct AppState {
     std::atomic<bool> scanFatalFailure{false};
     std::atomic<int64_t> scanIngestDurationMs{0};
     std::atomic<int64_t> scanStartedAtMs{0};
+    std::atomic<int64_t> scanFinishedAtMs{0}; // Presentation timestamp, not a completion gate.
     std::atomic<int64_t> scanCompletionReadyAtMs{0};
     std::atomic<int64_t> scanCompletionDurationMs{0};
+    HarkenSearch::ScanDialogMetrics scanUiMetrics; // UI-thread presentation only.
     std::atomic<bool> scanCancelRequested{false};
     std::atomic<HarkenSearch::ScanStopDisposition> scanStopDisposition{
         HarkenSearch::ScanStopDisposition::None
@@ -2053,6 +2056,7 @@ struct AppState {
 
     void beginScanTiming() {
         scanStartedAtMs.store(nowSteadyMs(), std::memory_order_release);
+        scanFinishedAtMs.store(0, std::memory_order_release);
         scanCompletionReadyAtMs.store(0, std::memory_order_release);
         scanCompletionDurationMs.store(0, std::memory_order_release);
     }
@@ -2078,6 +2082,7 @@ struct AppState {
 
     void clearScanTiming() {
         scanStartedAtMs.store(0, std::memory_order_release);
+        scanFinishedAtMs.store(0, std::memory_order_release);
         scanCompletionReadyAtMs.store(0, std::memory_order_release);
         scanCompletionDurationMs.store(0, std::memory_order_release);
     }
@@ -2149,10 +2154,16 @@ struct AppState {
         if (cancelled && stopDisposition == HarkenSearch::ScanStopDisposition::None) {
             stopDisposition = HarkenSearch::ScanStopDisposition::CancelRollback;
         }
-        scanWorkflowStage.store(
-            HarkenSearch::ResolveTerminalScanWorkflowStage(
-                getScanWorkflowSnapshot(), stopDisposition, fatalFailure),
-            std::memory_order_release);
+        const auto terminal = HarkenSearch::ResolveTerminalScanWorkflowStage(
+            getScanWorkflowSnapshot(), stopDisposition, fatalFailure);
+        if (terminal == HarkenSearch::ScanWorkflowStage::Completed ||
+            terminal == HarkenSearch::ScanWorkflowStage::Paused ||
+            terminal == HarkenSearch::ScanWorkflowStage::Cancelled ||
+            terminal == HarkenSearch::ScanWorkflowStage::Failed) {
+            int64_t unset = 0;
+            scanFinishedAtMs.compare_exchange_strong(unset, nowSteadyMs(), std::memory_order_acq_rel);
+        }
+        scanWorkflowStage.store(terminal, std::memory_order_release);
     }
 
     void clearScanWorkflowState() {

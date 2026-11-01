@@ -9,6 +9,38 @@ static void Check(bool ok, const char* message) {
     if (!ok) { std::cerr << "FAIL: " << message << "\n"; std::exit(1); }
 }
 int main() {
+    ScanDialogMetrics metrics;
+    ScanDialogView active;
+    active.surface = ScanDialogSurface::Progress;
+    active.phase = ScanDialogPhase::Ingesting;
+    active.current = 10;
+    auto timing = metrics.Update(1, 1000, 0, 1100, active);
+    Check(timing.elapsedMs == 100 && !timing.speedKnown, "first frame starts elapsed time without invented speed");
+    active.current = 30;
+    timing = metrics.Update(1, 1000, 0, 1600, active);
+    Check(timing.elapsedMs == 600 && timing.speedKnown && std::abs(timing.filesPerSecond - 40.) < .001, "speed follows actual processed delta");
+    timing = metrics.Update(1, 1000, 0, 2100, active);
+    Check(timing.speedKnown && timing.filesPerSecond == 0., "stalled progress clears old speed");
+    active.phase = ScanDialogPhase::Waveforms; active.current = 2;
+    timing = metrics.Update(1, 1000, 0, 2200, active);
+    Check(!timing.speedKnown && timing.elapsedMs == 1200, "stage change resets speed but not total elapsed");
+    active.current = 12;
+    timing = metrics.Update(1, 1000, 0, 2700, active);
+    Check(timing.speedKnown && timing.filesPerSecond == 20., "waveform speed uses waveform counter");
+    active.phase = ScanDialogPhase::Finalizing;
+    timing = metrics.Update(1, 1000, 0, 2800, active);
+    Check(!timing.speedKnown && timing.elapsedMs == 1800, "finalizing retains elapsed without stale speed");
+    active.surface = ScanDialogSurface::Result; active.phase = ScanDialogPhase::Paused;
+    timing = metrics.Update(1, 1000, 0, 3000, active);
+    Check(timing.elapsedMs == 2000, "pause freezes total elapsed");
+    timing = metrics.Update(1, 1000, 0, 8000, active);
+    Check(timing.elapsedMs == 2000, "reading a paused result does not extend elapsed");
+    active.surface = ScanDialogSurface::Progress; active.phase = ScanDialogPhase::Counting; active.current = 0;
+    timing = metrics.Update(2, 10000, 0, 10000, active);
+    Check(!timing.speedKnown && timing.elapsedMs == 0, "new task resets both metrics");
+    active.surface = ScanDialogSurface::Result; active.phase = ScanDialogPhase::Completed;
+    timing = metrics.Update(2, 10000, 1234, 13000, active);
+    Check(timing.elapsedMs == 1234, "completed result uses actual recorded completion duration");
     Check(ScanProgressPercent(499, 500) == 99, "progress must not round unfinished work up to 100 percent");
     Check(ScanProgressPercent(500, 500) == 100 && ScanProgressPercent(0, 0) == 0, "complete and unknown progress");
     ScanDialogInput input;

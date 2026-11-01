@@ -55,6 +55,71 @@ struct ScanDialogView {
     int succeeded = 0, failed = 0, skipped = 0, unprocessed = 0;
     bool canBackground = false, canStop = false, canClose = true;
 };
+
+struct ScanDialogMetricsSnapshot {
+    std::int64_t elapsedMs = 0;
+    double filesPerSecond = 0.;
+    bool speedKnown = false;
+};
+
+// UI-thread sampler: no worker/database changes. Poll even when the popup is
+// hidden, so background progress and reading a result do not distort timing.
+class ScanDialogMetrics {
+public:
+    const ScanDialogMetricsSnapshot& Value() const { return value_; }
+    ScanDialogMetricsSnapshot Update(std::uint64_t task, std::int64_t startedAt,
+                                    std::int64_t completedMs, std::int64_t now,
+                                    const ScanDialogView& view) {
+        if (view.surface == ScanDialogSurface::Setup) {
+            *this = {};
+            return value_;
+        }
+        if (!initialized_ || task != task_ || startedAt != startedAt_) {
+            *this = {};
+            initialized_ = true;
+            task_ = task;
+            startedAt_ = startedAt;
+        }
+        if (view.surface == ScanDialogSurface::Result) {
+            if (!resultLatched_) {
+                value_.elapsedMs = completedMs > 0 ? completedMs : Elapsed(now);
+                resultLatched_ = true;
+            }
+            value_.speedKnown = false;
+            value_.filesPerSecond = 0.;
+            return value_;
+        }
+        value_.elapsedMs = Elapsed(now);
+        const bool measurable = view.phase == ScanDialogPhase::Ingesting ||
+            view.phase == ScanDialogPhase::Waveforms;
+        if (!measurable || !sampling_ || phase_ != view.phase ||
+            view.current < lastCount_ || now < lastSampleAt_) {
+            value_.speedKnown = false;
+            value_.filesPerSecond = 0.;
+            sampling_ = measurable;
+            phase_ = view.phase;
+            lastCount_ = view.current;
+            lastSampleAt_ = now;
+        } else if (now - lastSampleAt_ >= 250) {
+            value_.filesPerSecond = 1000. * (view.current - lastCount_) / (now - lastSampleAt_);
+            value_.speedKnown = true;
+            lastCount_ = view.current;
+            lastSampleAt_ = now;
+        }
+        return value_;
+    }
+private:
+    std::int64_t Elapsed(std::int64_t now) const {
+        return startedAt_ > 0 ? std::max<std::int64_t>(0, now - startedAt_) : 0;
+    }
+    ScanDialogMetricsSnapshot value_;
+    bool initialized_ = false, sampling_ = false, resultLatched_ = false;
+    std::uint64_t task_ = 0;
+    std::int64_t startedAt_ = 0, lastSampleAt_ = 0;
+    int lastCount_ = 0;
+    ScanDialogPhase phase_ = ScanDialogPhase::Setup;
+};
+
 inline ScanDialogView BuildScanDialogView(const ScanDialogInput& input) {
     ScanDialogView view;
     const auto& snapshot = input.workflow;

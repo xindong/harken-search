@@ -6664,6 +6664,8 @@ static void PollQaCommandFile(AppState& state) {
                 {"can_stop", view.canStop}, {"stop_disposition", static_cast<int>(state.scanStopDisposition.load())},
                 {"pending_folders", state.pendingScanFolders}, {"last_folders", state.lastScannedFolders},
                 {"succeeded", view.succeeded}, {"failed", view.failed}, {"skipped", view.skipped}, {"unprocessed", view.unprocessed},
+                {"metrics", {{"elapsed_ms", state.scanUiMetrics.Value().elapsedMs},
+                    {"speed_known", state.scanUiMetrics.Value().speedKnown}, {"files_per_second", state.scanUiMetrics.Value().filesPerSecond}}},
                 {"similarity", {{"available", batch.available}, {"running", batch.running}, {"stopped", batch.stopped},
                     {"total", batch.total}, {"succeeded", batch.succeeded}, {"failed", batch.Failed()}, {"remaining", batch.Remaining()}}},
                 {"items", items}, {"windows", windows}}).dump();

@@ -45,11 +45,32 @@ def test_advanced_disclosure_contains_original_scan_options():
     assert "L(Scan_FastModeHint)" not in SETUP
 
 
-def test_progress_does_not_duplicate_numbers_or_zero_speed():
+def test_progress_does_not_duplicate_numbers_and_preserves_waiting_phase():
     assert "%.1f f/s" not in SCAN
     assert "scanView.progressKnown" in SCAN
     assert "DrawScanWaitingBar" in SCAN
     assert "L(ScanUi_Statistics)" in SCAN
+
+
+def test_speed_and_elapsed_are_visible_without_opening_statistics():
+    assert "state.scanUiMetrics.Update(" in SCAN
+    assert "DrawScanDialogMetrics(state.scanUiMetrics.Value(), true)" in SETUP
+    result = SCAN.split("if (BeginTransientScrollbarPopupModal(scanResultPopup", 1)[1]
+    assert "DrawScanDialogMetrics(state.scanUiMetrics.Value(), false)" in result
+    statistics = result.split("if (ImGui::TreeNode(L(ScanUi_Statistics)))", 1)[1].split("ImGui::TreePop();", 1)[0]
+    assert "Main_TotalElapsedFmt" not in statistics
+    metrics = MAIN.split("static void DrawScanDialogMetrics",1)[1].split("static void ResetScanDialogResult",1)[0]
+    assert "L(ScanUi_SpeedFmt)" in metrics and "L(Main_TotalElapsedFmt)" in metrics
+    assert '"scan.metrics.speed"' in metrics and '"scan.metrics.elapsed"' in metrics
+    assert "ImGui::GetContentRegionAvail().x" in metrics
+
+
+def test_terminal_timing_is_recorded_even_when_the_scan_popup_is_not_rendering():
+    state = (ROOT / "src/AppState.h").read_text(encoding="utf-8")
+    terminal = state.split("void resolveScanWorkflowTerminalStage",1)[1].split("void clearScanWorkflowState",1)[0]
+    assert "scanFinishedAtMs.compare_exchange_strong" in terminal
+    timing = state.split("void beginScanTiming",1)[1].split("void markScanCompletionReadyNow",1)[0]
+    assert "scanFinishedAtMs.store(0" in timing
 
 
 def test_stop_choice_preserves_original_actions_and_explicit_continue():

@@ -69,6 +69,10 @@ def run(args):
         def result(phase):
             state = ui.wait(lambda s:s['surface']=='result' and ui.has(s,'scan.result.done'), '等待结果 '+phase)
             require(state['phase']==phase and not state['is_scanning'] and not state['completion_pending'], '结果类型错误 '+str(state))
+            require(ui.target(state,'scan.metrics.elapsed','##ScanResult') is not None, '结果页没有直接显示总用时')
+            require(state['metrics']['elapsed_ms'] > 0, '实际扫描总用时无效')
+            time.sleep(.35)
+            require(ui.state()['metrics']['elapsed_ms']==state['metrics']['elapsed_ms'], '结果页的总用时仍在增长')
             return state
 
         def done():
@@ -122,6 +126,12 @@ def run(args):
         before = {str(p):sha256(p) for folder in folders for p in folder.glob('*.wav')}
         ui.setup(folders); ui.click('scan.dialog.start')
         ui.wait(lambda s:s['surface']=='progress' and s['can_stop'], '等待可停止的真实扫描')
+        measured = ui.wait(lambda s:s['surface']=='progress' and s.get('metrics',{}).get('speed_known')
+                           and s['metrics']['files_per_second']>0, '等待真实速度采样', 25)
+        require(ui.target(measured,'scan.metrics.speed') is not None and ui.target(measured,'scan.metrics.elapsed') is not None,
+                '进度页速度或总用时不可见')
+        time.sleep(.3)
+        require(ui.state()['metrics']['elapsed_ms']>measured['metrics']['elapsed_ms'],'扫描用时没有随处理增长')
         ui.shot('scan-progress','scan.dialog.stop')
         ui.click('scan.dialog.stop')
         ui.shot('scan-stop-choice','scan.dialog.pause','##ScanStopChoice')
@@ -178,6 +188,13 @@ def run(args):
             require(ui.target(state,key) is not None,'窄窗口控件越界 '+key)
         remember('narrow-entry',state,ui.shot('narrow-setup','scan.dialog.start'))
         ui.cancel()
+        ui.setup(folders); ui.click('scan.dialog.start')
+        state = ui.wait(lambda s:s['surface']=='progress' and s.get('metrics',{}).get('speed_known'), '窄窗口真实速度')
+        for key in ('scan.metrics.speed','scan.metrics.elapsed','scan.dialog.stop'):
+            require(ui.target(state,key) is not None,'窄窗口指标或按钮被裁切 '+key)
+        remember('narrow-progress-metrics',state,ui.shot('narrow-progress','scan.dialog.stop'))
+        ui.click('scan.dialog.stop'); ui.click('scan.dialog.pause','##ScanStopChoice')
+        result('paused'); done()
         report['status']='passed'
     except Exception as error:
         report.update(status='failed',error=str(error),traceback=traceback.format_exc(),last_observed=ui.last)
