@@ -5011,7 +5011,9 @@ static void PollQaCommandFile(AppState& state) {
             const auto counts = HarkenSearch::MakeFeatureIndexCountHandler(true)(state.currentDbPathUtf8, [] { return false; });
             const int indexed = counts.indexed, total = counts.total;
             nlohmann::json matches = nlohmann::json::array();
-            for (const auto& row : snapshot.rows) matches.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights}});
+            for (const auto& row : snapshot.rows) matches.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights},{"fingerprint",row.contentFingerprint}});
+            const nlohmann::json queryStats={{"scanned_files",snapshot.stats.scannedFiles},{"visited_segments",snapshot.stats.visitedSegments},
+                {"candidates",snapshot.stats.candidates},{"detailed_comparisons",snapshot.stats.detailedComparisons}};
             nlohmann::json controlBounds = nlohmann::json::object();
             for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
                 if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
@@ -5039,6 +5041,8 @@ static void PollQaCommandFile(AppState& state) {
                 ",\"error\":" + std::to_string(static_cast<int>(snapshot.error)) +
                 ",\"reference_id\":" + std::to_string(snapshot.reference.fileId) +
                 ",\"matches\":" + matches.dump() +
+                ",\"batch_number\":" + std::to_string(snapshot.batchNumber) +
+                ",\"query_stats\":" + queryStats.dump() +
                 ",\"controls\":" + controlBounds.dump() +
                 ",\"batch_summary\":" + batchSummary.dump() +
                 ",\"total\":" + std::to_string(total) +

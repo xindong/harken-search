@@ -40,7 +40,8 @@ enum class SimilarityWorkflowError {
     Cancelled,
     SearchFailed,
     ModelUnavailable,
-    IndexRequired
+    IndexRequired,
+    NoMoreCandidates
 };
 
 struct SimilarityReference {
@@ -59,6 +60,15 @@ struct SimilarityDisplayRow {
     std::string format;
     float similarity = 0.0f;
     SimilarityScore breakdown;
+    std::string contentFingerprint;
+};
+
+struct SimilarityShownSound {
+    int64_t fileId = -1;
+    std::string filePath, contentFingerprint;
+};
+struct SimilarityQueryStats {
+    uint64_t scannedFiles = 0, visitedSegments = 0, candidates = 0, detailedComparisons = 0;
 };
 
 struct SimilarityRequest {
@@ -69,6 +79,10 @@ struct SimilarityRequest {
     int topK = 50;
     SimilarityOptions options;
     int analysisVersion = 1;
+    // History is copied only from results the workflow actually displayed.
+    std::string historyToken;
+    std::vector<SimilarityShownSound> shownSounds;
+    float minimumScore = 0.0f;
 };
 
 struct SimilarityCompletion {
@@ -79,6 +93,9 @@ struct SimilarityCompletion {
     float queryMilliseconds = 0.0f;
     int64_t indexed = 0, totalFiles = 0, staleFiles = 0;
     SimilarityOptions options;
+    std::string historyToken;
+    float minimumScore = 0.0f;
+    SimilarityQueryStats stats;
 };
 
 struct SimilarityWorkflowSnapshot {
@@ -88,6 +105,8 @@ struct SimilarityWorkflowSnapshot {
     SimilarityWorkflowError error = SimilarityWorkflowError::None;
     int64_t indexed = 0, totalFiles = 0, staleFiles = 0;
     SimilarityOptions options;
+    unsigned batchNumber = 0;
+    SimilarityQueryStats stats;
 };
 
 class SimilarityWorkflow final {
@@ -108,6 +127,7 @@ public:
     bool RequestSearch(const SimilarityOptions& options, int topK = 50);
     void Poll();
     void Invalidate();
+    void CancelSearch();
     SimilarityWorkflowSnapshot Snapshot() const;
 
 private:
@@ -125,6 +145,9 @@ private:
     std::string databasePath_;
     std::optional<SimilarityReference> reference_;
     SimilarityWorkflowSnapshot snapshot_;
+    std::string historyToken_;
+    std::vector<SimilarityShownSound> shownSounds_;
+    float minimumScore_ = 0.0f;
     std::thread worker_;
 };
 

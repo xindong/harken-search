@@ -113,6 +113,29 @@ def run(args):
         assert played['selected_file_id']==baseline['selected_file_id'],played
         driver.command({'cmd':'stop'})
         report['checks'].append({'case':'actual-result-waveform-audition-preserves-main-selection','passed':True})
+        current=audit(driver,0)
+        next_button=next(c for c in current['checks'] if 'SimilarActionRow' in c['window'] and c['label']=='换一批')
+        click(next_button['bounds'])
+        next_result=until(state,lambda s:s['status'] in (3,4),180)
+        assert (next_result['status']==3 and next_result['rows']>0) or (next_result['status']==4 and next_result['error']==8 and next_result['rows']==0),next_result
+        assert next_result['reference_id']==found['reference_id'],(found,next_result)
+        assert not ({r['id'] for r in found['matches']} & {r['id'] for r in next_result['matches']}),(found,next_result)
+        after=driver.command({'cmd':'get_state'})
+        assert after['selected_file_id']==baseline['selected_file_id'] and after['result_count']==baseline['result_count']
+        report['checks'].append({'case':'actual-next-batch-after-audition-keeps-reference-and-does-not-repeat','first':found,'second':next_result});save()
+        # The small real corpus may exhaust the tighter same-type/deep query
+        # in one page. Also exercise a real multi-page perceptual query.
+        configure(0,False);first=find()
+        click(until(state,lambda s:'similar.result.wave.0' in s['controls'])['controls']['similar.result.wave.0'])
+        driver.command({'cmd':'stop'})
+        controls=audit(driver,0)
+        button=next(c for c in controls['checks'] if 'SimilarActionRow' in c['window'] and c['label']=='换一批')
+        click(button['bounds']);second=until(state,lambda s:s['status'] in (3,4),180)
+        assert second['status']==3 and second['rows']>0,second
+        assert second['reference_id']==first['reference_id'],(first,second)
+        assert not ({r['fingerprint'] for r in first['matches']} & {r['fingerprint'] for r in second['matches']}),(first,second)
+        assert second['batch_number']==2 and second['query_stats']['detailed_comparisons']==0,second
+        report['checks'].append({'case':'actual-perceptual-second-page-has-new-content','first':first,'second':second});save()
         for theme,name in THEMES:
             driver.command({'cmd':'set_theme','theme':theme})
             for width in (640,420):

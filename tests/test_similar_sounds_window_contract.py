@@ -195,15 +195,14 @@ assert "windowWasOpen && !state.similarSoundsWindow.open" in close_branch
 assert "workflow.Invalidate()" in close_branch
 assert "state.similarSoundsLocalReference.reset()" in close_branch
 
-# A selected local result becomes the next reference only when Find is
-# explicitly clicked. It never writes the central-list selection, and a real
-# main-list selection change clears the local override.
+# Repeated Find advances around the original reference. Audition/selection
+# never becomes an implicit new reference; the main-list selection owns it.
 action_impl = window[window.index("static bool DrawSimilarSoundsActionRow"):
                      window.index("static const char* SimilarSoundsBodyMessage")]
 for required in (
-    "state.similarSoundsSelectedRow >= 0",
-    "state.similarSoundsLocalReference =",
-    "workflow.SetReference(state.similarSoundsLocalReference)",
+    "snapshot.batchNumber > 0",
+    "Similar_NextBatch",
+    "workflow.CancelSearch()",
     "workflow.RequestSearch(searchOptions, 50)",
 ):
     assert required in action_impl
@@ -213,22 +212,18 @@ for required in (
 ):
     assert required in window
 
-# RQ-20260725-01: the action-row filename is the next Find reference.
-# A valid similarSoundsSelectedRow must win over snapshot.reference.displayName
-# for currentName. Selection-only display must not SetReference; Find still does.
+# The action-row filename remains the original query reference while auditioning.
 current_name_start = action_impl.index("const char* currentName")
 current_name_end = action_impl.index("ImVec2 currentNameSize", current_name_start)
 current_name_init = action_impl[current_name_start:current_name_end]
 button_click_start = action_impl.index("if (aura::ui::Button(actionLabel, options))")
 pre_button = action_impl[:button_click_start]
 button_click = action_impl[button_click_start:]
-assert "similarSoundsSelectedRow" in current_name_init
-assert "snapshot.rows[" in current_name_init
-assert ".fileName" in current_name_init
+assert "similarSoundsSelectedRow" not in current_name_init
+assert "snapshot.rows[" not in current_name_init
 assert "snapshot.reference.displayName" in current_name_init
-assert current_name_init.index("similarSoundsSelectedRow") <     current_name_init.index("snapshot.reference.displayName")
 assert "workflow.SetReference" not in pre_button
-assert "workflow.SetReference(state.similarSoundsLocalReference)" in button_click
+assert "workflow.SetReference" not in button_click
 
 # A partial feature-index build cannot publish provisional results as if they
 # were final. Starting a batch invalidates rows; Find remains disabled until

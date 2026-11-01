@@ -35,7 +35,7 @@ int main(int argc,char** argv) {
                 report.back()["active_start"]=a.analysis.activeStart;report.back()["active_seconds"]=a.analysis.activeSeconds;
                 if(report.size()==5)break;
             }
-        } else if(action=="batch" && argc==6) {
+        } else if((action=="batch" || action=="batches") && argc==6) {
             SimilarityAnalysisStore store; if(!store.Open(argv[1])) return 2;
             std::vector<SimilarityFile> files; if(!store.Files(files)) return 2; store.Close();
             std::unordered_map<std::string,SimilarityFile> byPath;
@@ -72,10 +72,16 @@ int main(int argc,char** argv) {
                 for(int mode=0;mode<2;++mode) for(bool deep:{false,true}) {
                     SimilarityRequest request;request.generation=1;request.analysisVersion=2;request.databasePath=argv[1];request.reference={file.id,file.path,file.name};
                     request.options.mode=mode?SimilarityMode::Substitute:SimilarityMode::Perceptual;request.options.deep=deep;
-                    const auto result=service.Execute(request,{});
-                    nlohmann::json rows=nlohmann::json::array();
-                    for(const auto& row:result.rows)rows.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights}});
-                    item["variants"].push_back({{"mode",mode},{"deep",deep},{"error",int(result.error)},{"query_ms",result.queryMilliseconds},{"rows",rows}});
+                    for (int batch=1;batch<=(action=="batches"?3:1);++batch) {
+                        const auto result=service.Execute(request,{});
+                        nlohmann::json rows=nlohmann::json::array();
+                        for(const auto& row:result.rows)rows.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights},{"fingerprint",row.contentFingerprint}});
+                        item["variants"].push_back({{"mode",mode},{"deep",deep},{"batch",batch},{"error",int(result.error)},{"query_ms",result.queryMilliseconds},{"rows",rows},
+                            {"scanned_files",result.stats.scannedFiles},{"visited_segments",result.stats.visitedSegments},{"candidates",result.stats.candidates},{"detailed_comparisons",result.stats.detailedComparisons}});
+                        if(result.error!=SimilarityWorkflowError::None) break;
+                        request.historyToken=result.historyToken; request.minimumScore=result.minimumScore; ++request.generation;
+                        for(const auto& row:result.rows) request.shownSounds.push_back({row.fileId,row.filePath,row.contentFingerprint});
+                    }
                 }
                 report["references"].push_back(item);
                 std::cout<<"reference "<<report["references"].size()<<"/"<<manifest["references"].size()<<std::endl;

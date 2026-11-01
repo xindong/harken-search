@@ -69,7 +69,8 @@ static bool DrawSimilarSoundsActionRow(
     const bool searching = snapshot.status == HarkenSearch::SimilarityWorkflowStatus::Searching;
     const bool indexing = state.batchFeatureExtracting.load();
     const bool hasReference = snapshot.status != HarkenSearch::SimilarityWorkflowStatus::NoSelection;
-    const char* actionLabel = indexing ? L(Similar_Indexing) : (searching ? L(Similar_Searching) : L(Similar_Find));
+    const char* actionLabel = indexing ? L(Similar_Indexing) : (searching ? L(Similar_Searching) :
+        (snapshot.batchNumber > 0 ? L(Similar_NextBatch) : L(Similar_Find)));
     const float height = std::max(ImGui::GetFrameHeight(), aura::ui::metrics::kHeightMd);
     const float available = ImGui::GetContentRegionAvail().x;
     const float modeWidth = std::max(112.0f, std::max(ImGui::CalcTextSize(L(Similar_ModePerceptual)).x, ImGui::CalcTextSize(L(Similar_ModeSubstitute)).x) + 28.0f);
@@ -100,9 +101,7 @@ static bool DrawSimilarSoundsActionRow(
         ImGui::InvisibleButton("##SimilarCurrentFile", ImVec2(fileWidth,height));
         const ImVec2 textMax(textMin.x+fileWidth,textMin.y+height);
         const char* currentName = L(Similar_NoSelection);
-        if (state.similarSoundsSelectedRow >= 0 && state.similarSoundsSelectedRow < static_cast<int>(snapshot.rows.size())) {
-            currentName = snapshot.rows[state.similarSoundsSelectedRow].fileName.c_str();
-        } else if (!snapshot.reference.displayName.empty()) currentName = snapshot.reference.displayName.c_str();
+        if (!snapshot.reference.displayName.empty()) currentName = snapshot.reference.displayName.c_str();
         ImVec2 currentNameSize = ImGui::CalcTextSize(currentName);
         ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), ImVec2(textMin.x,textMin.y+ImGui::GetStyle().FramePadding.y),
             textMax,textMax.x,currentName,nullptr,&currentNameSize);
@@ -137,14 +136,9 @@ static bool DrawSimilarSoundsActionRow(
         options.disabled = indexing || !hasReference;
         if (searching && !changed) {
             if (aura::ui::ActionButton(L(Cancel), ImVec2(0,height), aura::ui::ButtonVariant::Quiet)) {
-                workflow.Invalidate(); state.similarSoundsSelectedRow = -1; changed = true;
+                workflow.CancelSearch(); state.similarSoundsSelectedRow = -1; changed = true;
             }
         } else if (aura::ui::Button(actionLabel, options)) {
-            if (state.similarSoundsSelectedRow >= 0 && state.similarSoundsSelectedRow < static_cast<int>(snapshot.rows.size())) {
-                const auto& selected = snapshot.rows[state.similarSoundsSelectedRow];
-                state.similarSoundsLocalReference = HarkenSearch::SimilarityReference{selected.fileId,selected.filePath,selected.fileName};
-                workflow.SetReference(state.similarSoundsLocalReference);
-            }
             state.similarSoundsSelectedRow = -1;
             HarkenSearch::SimilarityOptions searchOptions;
             searchOptions.mode = state.similarSoundsMode; searchOptions.deep = state.similarSoundsDeep; searchOptions.preset = state.similarSoundsPreset;
@@ -173,6 +167,7 @@ static const char* SimilarSoundsBodyMessage(
         if (snapshot.error == HarkenSearch::SimilarityWorkflowError::IndexRequired) return L(Similar_IndexRequired);
         if (snapshot.error == HarkenSearch::SimilarityWorkflowError::SearchFailed) return L(Similar_SearchFailed);
         if (snapshot.error == HarkenSearch::SimilarityWorkflowError::Cancelled) return L(Similar_Cancelled);
+        if (snapshot.error == HarkenSearch::SimilarityWorkflowError::NoMoreCandidates) return L(Similar_NoMoreCandidates);
         return L(Similar_NoResults);
     }
     if (snapshot.status != HarkenSearch::SimilarityWorkflowStatus::Searching &&
