@@ -31,9 +31,9 @@ int main() {
     timing = metrics.Update(1, 1000, 0, 2800, active);
     Check(!timing.speedKnown && timing.elapsedMs == 1800, "finalizing retains elapsed without stale speed");
     active.surface = ScanDialogSurface::Result; active.phase = ScanDialogPhase::Paused;
-    timing = metrics.Update(1, 1000, 0, 3000, active);
+    timing = metrics.Update(1, 1000, -1, 3000, active);
     Check(timing.elapsedMs == 2000, "pause freezes total elapsed");
-    timing = metrics.Update(1, 1000, 0, 8000, active);
+    timing = metrics.Update(1, 1000, -1, 8000, active);
     Check(timing.elapsedMs == 2000, "reading a paused result does not extend elapsed");
     active.surface = ScanDialogSurface::Progress; active.phase = ScanDialogPhase::Counting; active.current = 0;
     timing = metrics.Update(2, 10000, 0, 10000, active);
@@ -41,6 +41,8 @@ int main() {
     active.surface = ScanDialogSurface::Result; active.phase = ScanDialogPhase::Completed;
     timing = metrics.Update(2, 10000, 1234, 13000, active);
     Check(timing.elapsedMs == 1234, "completed result uses actual recorded completion duration");
+    timing = metrics.Update(3, 20000, 0, 25000, active);
+    Check(timing.elapsedMs == 0, "zero-duration task does not count time until window restoration");
     Check(ScanProgressPercent(499, 500) == 99, "progress must not round unfinished work up to 100 percent");
     Check(ScanProgressPercent(500, 500) == 100 && ScanProgressPercent(0, 0) == 0, "complete and unknown progress");
     ScanDialogInput input;

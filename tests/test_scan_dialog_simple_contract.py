@@ -71,6 +71,9 @@ def test_terminal_timing_is_recorded_even_when_the_scan_popup_is_not_rendering()
     assert "scanFinishedAtMs.compare_exchange_strong" in terminal
     timing = state.split("void beginScanTiming",1)[1].split("void markScanCompletionReadyNow",1)[0]
     assert "scanFinishedAtMs.store(0" in timing
+    cleanup = MAIN.split("static bool StartGlobalMissingRecordsCleanup",1)[1].split("bool StartGlobalMissingRecordsCleanupForQa",1)[0]
+    assert "state.scanFinishedAtMs.store(AppState::nowSteadyMs()" in cleanup
+    assert cleanup.index("state.scanFinishedAtMs.store(") < cleanup.index("state.isScanning = false")
 
 
 def test_stop_choice_preserves_original_actions_and_explicit_continue():

@@ -10890,6 +10890,7 @@ static bool StartGlobalMissingRecordsCleanup(AppState& state) {
         if (state.isScanTaskCurrent(scanGeneration)) {
             state.scanRemovedCount = removed;
             state.scanPhase.store(AppState::ScanPhase::Idle);
+            state.scanFinishedAtMs.store(AppState::nowSteadyMs(), std::memory_order_release);
             state.isScanning = false;
             state.needsDatabaseRefresh = true;
             if (!hadException)
@@ -31649,7 +31650,7 @@ void RenderUI(AppState& state) {
     const auto scanFinishedAt = state.scanFinishedAtMs.load();
     const auto scanRecordedDuration = state.scanCompletionDurationMs.load();
     const auto scanTerminalDuration = scanRecordedDuration > 0 ? scanRecordedDuration :
-        (scanFinishedAt > 0 && scanStartedAt > 0 ? std::max<int64_t>(0, scanFinishedAt - scanStartedAt) : 0);
+        (scanFinishedAt > 0 && scanStartedAt > 0 ? std::max<int64_t>(0, scanFinishedAt - scanStartedAt) : -1);
     state.scanUiMetrics.Update(state.scanTaskGeneration.load(), scanStartedAt,
         scanTerminalDuration, AppState::nowSteadyMs(), scanView);
     constexpr const char* scanResultPopup = "##ScanResult";

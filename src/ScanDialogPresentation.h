@@ -82,7 +82,7 @@ public:
         }
         if (view.surface == ScanDialogSurface::Result) {
             if (!resultLatched_) {
-                value_.elapsedMs = completedMs > 0 ? completedMs : Elapsed(now);
+                value_.elapsedMs = completedMs >= 0 ? completedMs : Elapsed(now);
                 resultLatched_ = true;
             }
             value_.speedKnown = false;
