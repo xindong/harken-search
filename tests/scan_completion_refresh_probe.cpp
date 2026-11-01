@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
         // Keep the first refresh pending on a cover while mini is optional.
         before.coverUnresolved = 1;
         --before.coverTerminal;
-        after.miniUnresolved = 1;
+        after.miniUnresolved = after.pendingFiles = 1;
         --after.miniTerminal;
         mini = total = 0;
     } else if (scenario == "pause") {
@@ -98,6 +98,9 @@ int main(int argc, char** argv) {
         std::cout << (ok ? "PASS " : "FAIL ") << scenario << ": " << label << '\n';
         if (!ok) ++failures;
     };
+    check(before.pendingFiles >= std::max({before.miniUnresolved, before.coverUnresolved, before.metadataUnresolved}) &&
+          after.pendingFiles >= std::max({after.miniUnresolved, after.coverUnresolved, after.metadataUnresolved}),
+          "scripted ledger pending count includes each unresolved category");
     // These are the actual functions called in this order by a Windows frame.
     RefreshScanCompletionStateForQa(state);
     check(state.scanCompletionPending, "first read keeps the completion gate");

@@ -8,6 +8,12 @@ SCAN = MAIN.split("// Scan folder dialog", 1)[1].split("// New playlist dialog",
 SETUP = SCAN.split("auto startScanForFolders", 1)[0]
 
 
+def test_completion_refresh_runtime_regression_is_registered():
+    cmake = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
+    entry = cmake.split("add_test(NAME TestScanDialogSimpleContract", 1)[1].split("aura_set_test_labels", 1)[0]
+    assert "tests/test_scan_completion_refresh_runtime.py" in entry
+
+
 def test_completion_refresh_publishes_final_mini_count_before_releasing_gate():
     # The final backfill can finish between the Windows and RenderUI reads.
     # Either reader may release the gate, after which neither refresh runs.
