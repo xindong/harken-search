@@ -36,7 +36,7 @@ except FileExistsError:
 
 
 @pytest.fixture
-def harness(tmp_path, monkeypatch):
+def case_env(tmp_path, monkeypatch):
     exe = tmp_path / 'qa.exe'
     exe.write_bytes(b'not an executable; launch is mocked')
     root = tmp_path / 'isolated'
@@ -137,68 +137,68 @@ def fail(message):
     raise RuntimeError(message)
 
 
-def report(harness):
-    return json.loads((harness.args.output / 'report.json').read_text(encoding='utf-8'))
+def report(case_env):
+    return json.loads((case_env.args.output / 'report.json').read_text(encoding='utf-8'))
 
 
-def test_holds_shared_atomic_lock_before_driver_and_launch(harness):
+def test_holds_shared_atomic_lock_before_driver_and_launch(case_env):
     observations = []
 
     def observe():
-        attempt = contender(harness.lock)
+        attempt = contender(case_env.lock)
         observations.append((attempt.returncode, attempt.stderr))
 
-    harness.driver_hook = harness.start_hook = observe
-    assert qa.run(harness.args) == 1
+    case_env.driver_hook = case_env.start_hook = observe
+    assert qa.run(case_env.args) == 1
     assert observations == [(23, ''), (23, '')]
-    assert not harness.lock.exists()
-    assert harness.process_closed == harness.desktop_closed == 1
+    assert not case_env.lock.exists()
+    assert case_env.process_closed == case_env.desktop_closed == 1
 
 
-def test_existing_lock_is_never_overwritten_or_removed(harness):
-    harness.lock.parent.mkdir(parents=True)
-    harness.lock.write_text('another helper owns this lock', encoding='utf-8')
+def test_existing_lock_is_never_overwritten_or_removed(case_env):
+    case_env.lock.parent.mkdir(parents=True)
+    case_env.lock.write_text('another helper owns this lock', encoding='utf-8')
     with pytest.raises((RuntimeError, FileExistsError)):
-        qa.run(harness.args)
-    assert harness.started == 0 and harness.commands == []
-    assert harness.lock.read_text(encoding='utf-8') == 'another helper owns this lock'
+        qa.run(case_env.args)
+    assert case_env.started == 0 and case_env.commands == []
+    assert case_env.lock.read_text(encoding='utf-8') == 'another helper owns this lock'
 
 
-def test_atomic_create_rejects_lock_arriving_after_preflight(harness, monkeypatch):
+def test_atomic_create_rejects_lock_arriving_after_preflight(case_env, monkeypatch):
     original_mkdir = Path.mkdir
     inserted = False
 
     def racing_mkdir(path, *args, **kwargs):
         nonlocal inserted
         result = original_mkdir(path, *args, **kwargs)
-        if path == harness.lock.parent and not inserted:
+        if path == case_env.lock.parent and not inserted:
             inserted = True
-            with harness.lock.open('x', encoding='utf-8') as owner:
+            with case_env.lock.open('x', encoding='utf-8') as owner:
                 owner.write('winner between preflight and acquire')
         return result
 
     monkeypatch.setattr(Path, 'mkdir', racing_mkdir)
     with pytest.raises(FileExistsError):
-        qa.run(harness.args)
-    assert harness.started == 0 and harness.commands == []
-    assert harness.lock.read_text(encoding='utf-8') == 'winner between preflight and acquire'
+        qa.run(case_env.args)
+    assert case_env.started == 0 and case_env.commands == []
+    assert case_env.lock.read_text(encoding='utf-8') == 'winner between preflight and acquire'
 
 
 @pytest.mark.parametrize('boundary', ['driver_hook', 'desktop_hook', 'start_hook', 'smoke_hook', 'identity_hook'])
-def test_startup_failure_releases_only_owned_lock(harness, boundary):
+def test_startup_failure_releases_only_owned_lock(case_env, boundary):
     observed = []
 
     def abort():
-        observed.append(harness.lock.is_file())
+        observed.append(case_env.lock.is_file())
         fail('injected ' + boundary)
 
-    setattr(harness, boundary, abort)
-    assert qa.run(harness.args) == 1
+    setattr(case_env, boundary, abort)
+    assert qa.run(case_env.args) == 1
     assert observed == [True]
-    assert not harness.lock.exists()
-    assert report(harness)['error'] == 'injected ' + boundary
-    assert harness.process_closed == (1 if boundary in ('smoke_hook', 'identity_hook') else 0)
-    assert harness.desktop_closed == (0 if boundary in ('driver_hook', 'desktop_hook') else 1)
+    assert not case_env.lock.exists()
+    assert report(case_env)['error'] == 'injected ' + boundary
+    assert case_env.process_closed == (1 if boundary in ('smoke_hook', 'identity_hook') else 0)
+    assert case_env.desktop_closed == (0 if boundary in ('driver_hook', 'desktop_hook') else 1)
 
 
 @pytest.mark.parametrize('waits,exit_code,terminations', [
@@ -207,16 +207,16 @@ def test_startup_failure_releases_only_owned_lock(harness, boundary):
     ([258, 0], 0, 0),
     ([258, 258, 0], 1, 1),
 ])
-def test_confirmed_process_exit_releases_owned_lock(harness, waits, exit_code, terminations):
+def test_confirmed_process_exit_releases_owned_lock(case_env, waits, exit_code, terminations):
     held = []
-    harness.start_hook = lambda: held.append(harness.lock.is_file())
-    harness.wait_results, harness.exit_code = list(waits), exit_code
-    assert qa.run(harness.args) == 1  # Workflow intentionally stops before UI work.
+    case_env.start_hook = lambda: held.append(case_env.lock.is_file())
+    case_env.wait_results, case_env.exit_code = list(waits), exit_code
+    assert qa.run(case_env.args) == 1  # Workflow intentionally stops before UI work.
     assert held == [True]
-    assert not harness.lock.exists()
-    assert report(harness)['exit_code'] == exit_code
-    assert harness.terminated == terminations
-    assert harness.process_closed == harness.desktop_closed == 1
+    assert not case_env.lock.exists()
+    assert report(case_env)['exit_code'] == exit_code
+    assert case_env.terminated == terminations
+    assert case_env.process_closed == case_env.desktop_closed == 1
 
 
 @pytest.mark.parametrize('waits,terminate_error', [
@@ -225,73 +225,73 @@ def test_confirmed_process_exit_releases_owned_lock(harness, waits, exit_code, t
     ([0xFFFFFFFF], False),
     ([RuntimeError('wait failed')], False),
 ])
-def test_unconfirmed_exit_retains_lock_and_blocks_next_helper(harness, waits, terminate_error):
-    harness.wait_results, harness.terminate_error = list(waits), terminate_error
-    assert qa.run(harness.args) == 1
-    assert harness.lock.is_file()
-    assert contender(harness.lock).returncode == 23
-    assert harness.exit_reads == 0  # No exit-code guess substitutes for a signaled handle.
-    assert report(harness)['status'] == 'failed'
-    assert harness.process_closed == harness.desktop_closed == 1
+def test_unconfirmed_exit_retains_lock_and_blocks_next_helper(case_env, waits, terminate_error):
+    case_env.wait_results, case_env.terminate_error = list(waits), terminate_error
+    assert qa.run(case_env.args) == 1
+    assert case_env.lock.is_file()
+    assert contender(case_env.lock).returncode == 23
+    assert case_env.exit_reads == 0  # No exit-code guess substitutes for a signaled handle.
+    assert report(case_env)['status'] == 'failed'
+    assert case_env.process_closed == case_env.desktop_closed == 1
 
 
-def test_failed_exit_command_still_waits_and_terminates_owned_process(harness):
-    harness.exit_error = True
-    harness.wait_results, harness.exit_code = [258, 258, 0], 1
-    assert qa.run(harness.args) == 1
-    assert harness.terminated == 1 and not harness.lock.exists()
-    assert report(harness)['exit_command_error'] == 'exit command failed'
+def test_failed_exit_command_still_waits_and_terminates_owned_process(case_env):
+    case_env.exit_error = True
+    case_env.wait_results, case_env.exit_code = [258, 258, 0], 1
+    assert qa.run(case_env.args) == 1
+    assert case_env.terminated == 1 and not case_env.lock.exists()
+    assert report(case_env)['exit_command_error'] == 'exit command failed'
 
 
 @pytest.mark.parametrize('boundary', ['close_error', 'desktop_error'])
-def test_cleanup_error_after_confirmed_exit_does_not_leak_lock(harness, boundary):
-    setattr(harness, boundary, True)
-    assert qa.run(harness.args) == 1
-    assert not harness.lock.exists()
-    assert harness.process_closed == harness.desktop_closed == 1
-    assert report(harness)['status'] == 'failed'
+def test_cleanup_error_after_confirmed_exit_does_not_leak_lock(case_env, boundary):
+    setattr(case_env, boundary, True)
+    assert qa.run(case_env.args) == 1
+    assert not case_env.lock.exists()
+    assert case_env.process_closed == case_env.desktop_closed == 1
+    assert report(case_env)['status'] == 'failed'
 
 
 @pytest.mark.parametrize('replacement', ['new-file', 'changed-owner'])
-def test_replaced_lock_is_not_deleted(harness, replacement):
+def test_replaced_lock_is_not_deleted(case_env, replacement):
     def replace_owner():
         if replacement == 'new-file':
-            harness.lock.rename(harness.lock.with_suffix('.previous-owner'))
-        harness.lock.write_text('replacement owner', encoding='utf-8')
+            case_env.lock.rename(case_env.lock.with_suffix('.previous-owner'))
+        case_env.lock.write_text('replacement owner', encoding='utf-8')
 
-    harness.identity_hook = replace_owner
-    assert qa.run(harness.args) == 1
-    assert harness.lock.read_text(encoding='utf-8') == 'replacement owner'
-    assert contender(harness.lock).returncode == 23
+    case_env.identity_hook = replace_owner
+    assert qa.run(case_env.args) == 1
+    assert case_env.lock.read_text(encoding='utf-8') == 'replacement owner'
+    assert contender(case_env.lock).returncode == 23
 
 
 @pytest.mark.parametrize('interruption', [KeyboardInterrupt, SystemExit])
 @pytest.mark.parametrize('waits,retained', [([0], False), ([258, 258, 258], True)])
-def test_interrupted_helper_cleans_up_and_reports_failure(harness, interruption, waits, retained):
+def test_interrupted_helper_cleans_up_and_reports_failure(case_env, interruption, waits, retained):
     def interrupt():
         raise interruption('interrupted test launch')
 
-    harness.identity_hook = interrupt
-    harness.wait_results = list(waits)
+    case_env.identity_hook = interrupt
+    case_env.wait_results = list(waits)
     with pytest.raises(interruption, match='interrupted test launch'):
-        qa.run(harness.args)
-    assert harness.lock.exists() is retained
-    assert report(harness)['status'] == 'failed'
-    assert report(harness)['error'] == 'interrupted test launch'
-    assert harness.process_closed == harness.desktop_closed == 1
+        qa.run(case_env.args)
+    assert case_env.lock.exists() is retained
+    assert report(case_env)['status'] == 'failed'
+    assert report(case_env)['error'] == 'interrupted test launch'
+    assert case_env.process_closed == case_env.desktop_closed == 1
 
 
 @pytest.mark.parametrize('waits,retained', [([0], False), ([258, 258, 258], True)])
-def test_report_write_failure_does_not_change_exit_based_lock_decision(harness, monkeypatch, waits, retained):
-    harness.wait_results = list(waits)
+def test_report_write_failure_does_not_change_exit_based_lock_decision(case_env, monkeypatch, waits, retained):
+    case_env.wait_results = list(waits)
     monkeypatch.setattr(qa, 'save_json', lambda *args: fail('report write failed'))
     with pytest.raises(RuntimeError, match='report write failed'):
-        qa.run(harness.args)
-    assert harness.lock.exists() is retained
-    assert harness.process_closed == harness.desktop_closed == 1
+        qa.run(case_env.args)
+    assert case_env.lock.exists() is retained
+    assert case_env.process_closed == case_env.desktop_closed == 1
 
 
-def test_real_smoke_runner_cannot_launch_while_outcomes_owns_lock(harness, monkeypatch):
+def test_real_smoke_runner_cannot_launch_while_outcomes_owns_lock(case_env, monkeypatch):
     import qa_scan_dialog_simple as smoke
 
     monkeypatch.setattr(smoke, 'sys', SimpleNamespace(platform='win32'))
@@ -302,14 +302,14 @@ def test_real_smoke_runner_cannot_launch_while_outcomes_owns_lock(harness, monke
 
     def try_smoke():
         smoke_args = SimpleNamespace(
-            exe=harness.args.exe, isolation_root=harness.args.isolation_root,
-            output=harness.args.output.parent / 'smoke-evidence', timeout=15,
+            exe=case_env.args.exe, isolation_root=case_env.args.isolation_root,
+            output=case_env.args.output.parent / 'smoke-evidence', timeout=15,
         )
         with pytest.raises(FileExistsError):
             smoke.run(smoke_args)
         blocked.append(True)
 
-    harness.driver_hook = try_smoke
-    assert qa.run(harness.args) == 1
+    case_env.driver_hook = try_smoke
+    assert qa.run(case_env.args) == 1
     assert blocked == [True]
-    assert not harness.lock.exists()
+    assert not case_env.lock.exists()
