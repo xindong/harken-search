@@ -87,3 +87,23 @@ No visual redesign: reuse the approved compact scan dialog and existing tokens.
   callback/UI slice. No database schema, SQL, decoder or writer policy changed.
 - In progress: final native regression, exact package identity and acceptance
   delivery. No user visual acceptance, merge or public release has occurred.
+
+## 2026-11-01 QA follow-up: stale completion text during waveforms
+
+- User screenshot from the delivered 518db3d package shows 1,034/7,093
+  waveforms (14%) with an extra `ScanDone` line. That package is not accepted.
+- Cause: the shared ingest text becomes `ScanDone` after the bounded backfill
+  wait, although required waveform work can remain pending. The progress view
+  incorrectly displays this ingest field during both ingest and waveform phases.
+- Minimal correction: display the current ingest file only while ingesting.
+  Keep waveform progress, speed, elapsed time, and all actual completion/stop
+  behavior unchanged. Do not replace the line with another explanation.
+- Regression: fail the source-wiring check before changing the guard; then test
+  the real native boundary with 7,093 synthetic WAVs. Verify the file row exists
+  during ingestion, disappears during pending waveforms, and completion still
+  waits for every required waveform. Capture the actual pink-theme dialog.
+- Isolation: retain the user-running original package and its profile. Build
+  this revision for `D:/Harken-QA/OPT-20261101-SCAN-PROGRESS-SPEED/`
+  `waveform-label-r2/data` and deliver a new package beside it. No automated
+  commands, replacement or process control may target the old package/profile.
+- Status: regression reproduced RED; revised package/runtime checks pending.

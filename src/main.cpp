@@ -31743,10 +31743,13 @@ void RenderUI(AppState& state) {
                     ImGui::Text(L(ScanUi_ProcessedFmt), scanView.current);
             }
             DrawScanDialogMetrics(state.scanUiMetrics.Value(), true);
-            if (scanView.phase == Phase::Ingesting || scanView.phase == Phase::Waveforms) {
+            // The ingest text may already be ScanDone while required waveforms
+            // are still pending; it is not a live waveform filename.
+            if (scanView.phase == Phase::Ingesting) {
                 const auto file = state.getScanFile();
                 if (!file.empty()) {
                     ImGui::TextWrapped("%s", ScanDialogLeafName(file).c_str());
+                    ThemeInspector::RegisterLastItem("scan.dialog.file", file.c_str(), "src/main.cpp");
                     if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", file.c_str());
                 }
             }

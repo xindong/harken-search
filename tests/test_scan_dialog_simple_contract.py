@@ -86,6 +86,15 @@ def test_speed_and_elapsed_are_visible_without_opening_statistics():
     assert "ImGui::GetContentRegionAvail().x" in metrics
 
 
+def test_current_ingest_file_is_not_shown_as_waveform_completion_status():
+    detail = SETUP.split("DrawScanDialogMetrics(state.scanUiMetrics.Value(), true);", 1)[1].split("const float btnW", 1)[0]
+    assert "if (scanView.phase == Phase::Ingesting)" in detail
+    assert "Phase::Waveforms" not in detail
+    assert "state.getScanFile()" in detail
+    assert "ScanDialogLeafName(file)" in detail
+    assert 'ThemeInspector::RegisterLastItem("scan.dialog.file"' in detail
+
+
 def test_terminal_timing_is_recorded_even_when_the_scan_popup_is_not_rendering():
     state = (ROOT / "src/AppState.h").read_text(encoding="utf-8")
     terminal = state.split("void resolveScanWorkflowTerminalStage",1)[1].split("void clearScanWorkflowState",1)[0]
