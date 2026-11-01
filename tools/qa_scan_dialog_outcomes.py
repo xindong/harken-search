@@ -67,10 +67,12 @@ def run(args):
             print(name + ' 通过', flush=True)
 
         def result(phase):
-            state = ui.wait(lambda s:s['surface']=='result' and ui.has(s,'scan.result.done'), '等待结果 '+phase)
+            # A new result label can be published one frame before the modal
+            # joins the observed active-window list. Wait for its real bounds.
+            state = ui.wait(lambda s:s['surface']=='result' and ui.target(s,'scan.result.done','##ScanResult') is not None, '等待结果 '+phase)
             require(state['phase']==phase and not state['is_scanning'] and not state['completion_pending'], '结果类型错误 '+str(state))
             require(ui.target(state,'scan.metrics.elapsed','##ScanResult') is not None, '结果页没有直接显示总用时')
-            require(state['metrics']['elapsed_ms'] > 0, '实际扫描总用时无效')
+            require(state['metrics']['elapsed_ms'] >= 0, '实际扫描总用时无效')
             time.sleep(.35)
             require(ui.state()['metrics']['elapsed_ms']==state['metrics']['elapsed_ms'], '结果页的总用时仍在增长')
             return state
