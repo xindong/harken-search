@@ -106,4 +106,21 @@ No visual redesign: reuse the approved compact scan dialog and existing tokens.
   this revision for `D:/Harken-QA/OPT-20261101-SCAN-PROGRESS-SPEED/`
   `waveform-label-r2/data` and deliver a new package beside it. No automated
   commands, replacement or process control may target the old package/profile.
-- Status: regression reproduced RED; revised package/runtime checks pending.
+- Verified: regression reproduced RED; the minimal guard passes, with 61
+  related Python checks and the native presentation tests. Package source is
+  `2c308cf13aee2c559924f71551d3d3c918464029`.
+- Verified: the actual package completed all 11 outcomes checks, including the
+  pending-waveform boundary in pink, visible speed/elapsed, exact 7,093 audio
+  rows and completed required waveforms, pause/keep, rollback and narrow UI.
+  The screenshot shows no stale detail row even though read-only scan status
+  still contains the previous ingest-stage `ScanDone` text.
+- QA-script incident retained: the first check incorrectly required
+  `is_scanning=false` while full-scan completion was pending. Full scanning
+  intentionally stays active until required waveforms finish. The scan itself
+  completed; the check missed its screenshot window and later timed out reading
+  QA state. Only the script predicate was corrected; the identical product EXE
+  passed the rerun. Reports: `waveform-label-r2/outcomes/report.json` (failed)
+  and `waveform-label-r2/outcomes-rerun/report.json` (passed).
+- This follow-up QA-script/document commit changes no product source after
+  the tested package build. User visual acceptance and QA integration remain
+  pending; no public release or user-data modification occurred.

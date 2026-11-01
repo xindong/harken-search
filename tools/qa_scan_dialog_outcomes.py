@@ -207,7 +207,8 @@ def run(args):
         driver.command({'cmd':'scan_dialog_ui','action':'theme','theme':10})
         ui.setup([waveforms]); ui.click('scan.dialog.start')
         state = ui.wait(lambda s:s['surface']=='progress' and s['phase']=='waveforms'
-                        and s['completion_pending'] and not s['is_scanning'],
+                        and s['completion_pending'] and s['progress']['current']>0
+                        and s['metrics']['speed_known'],
                         '等待入库结束后的真实波形阶段')
         require(state['progress']['known'] and 0 <= state['progress']['current'] < state['progress']['total'],
                 '波形进度不是未完成的实际计数')
