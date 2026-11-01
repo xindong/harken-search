@@ -144,10 +144,12 @@ def run(args):
         before = {str(p):sha256(p) for folder in folders for p in folder.glob('*.wav')}
         ui.setup(folders); ui.click('scan.dialog.start')
         ui.wait(lambda s:s['surface']=='progress' and s['can_stop'], '等待可停止的真实扫描')
-        measured = ui.wait(lambda s:s['surface']=='progress' and s.get('metrics',{}).get('speed_known')
+        measured = ui.wait(lambda s:s['surface']=='progress' and s['phase']=='ingesting'
+                           and s.get('metrics',{}).get('speed_known')
                            and s['metrics']['files_per_second']>0, '等待真实速度采样', 25)
         require(ui.target(measured,'scan.metrics.speed') is not None and ui.target(measured,'scan.metrics.elapsed') is not None,
                 '进度页速度或总用时不可见')
+        require(ui.target(measured,'scan.dialog.file') is not None, '入库阶段丢失当前文件行')
         time.sleep(.3)
         require(ui.state()['metrics']['elapsed_ms']>measured['metrics']['elapsed_ms'],'扫描用时没有随处理增长')
         ui.shot('scan-progress','scan.dialog.stop')
@@ -195,6 +197,40 @@ def run(args):
         remember('post-scan-similarity',state,ui.shot('similar-completed','scan.similar.done','##ScanSimilarityResult'))
         ui.click('scan.similar.done','##ScanSimilarityResult')
         ui.wait(lambda s:not ui.has(s,'scan.similar.done'),'关闭相似结果')
+
+        # Reproduce the user-reported boundary: ingestion has finished, but
+        # required mini waveforms have not. Never show its stale ScanDone text
+        # as a waveform filename. Keep real metrics and completion gates.
+        waveform_db = new_library('waveform-label')
+        waveforms = fixtures/'waveform-label'
+        make_wavs(waveforms,7093,seconds=4)
+        driver.command({'cmd':'scan_dialog_ui','action':'theme','theme':10})
+        ui.setup([waveforms]); ui.click('scan.dialog.start')
+        state = ui.wait(lambda s:s['surface']=='progress' and s['phase']=='waveforms'
+                        and s['completion_pending'] and s['progress']['current']>0
+                        and s['metrics']['speed_known'],
+                        '等待入库结束后的真实波形阶段')
+        require(state['progress']['known'] and 0 <= state['progress']['current'] < state['progress']['total'],
+                '波形进度不是未完成的实际计数')
+        for key in ('scan.metrics.speed','scan.metrics.elapsed'):
+            require(ui.target(state,key) is not None, '波形阶段指标丢失 '+key)
+        require(not ui.has(state,'scan.dialog.file'), '波形阶段仍显示入库文件或上一阶段的处理完成')
+        save_json(out/'waveform-scan-status.json',driver.command({'cmd':'scan_status'}))
+        shot = ui.shot('waveform-progress','scan.dialog.stop')
+        after = ui.state()
+        require(after['phase']=='waveforms' and after['completion_pending']
+                and not ui.has(after,'scan.dialog.file'), '截图期间已离开待完成的波形阶段')
+        remember('waveforms-hide-stale-ingest-text-keep-metrics',state,shot)
+        state = result('completed')
+        status = driver.command({'cmd':'scan_status'})
+        require(state['succeeded']==7093 and state['failed']==0
+                and ui.rows(waveform_db)=={path_key(p) for p in waveforms.glob('*.wav')}
+                and status['mini_waveforms_completed']==7093 and status['mini_waveforms_total']==7093
+                and not status['scan_completion_waveforms_pending']
+                and status['scan_completion_mini_unresolved']==0, '波形尚未真正完成或入库记录不符')
+        remember('waveforms-reach-real-completion',state,ui.shot('waveform-completed','scan.result.done','##ScanResult'))
+        done()
+        driver.command({'cmd':'scan_dialog_ui','action':'theme','theme':0})
 
         # Resize only this verified private-desktop HWND, never activate it.
         require(win32process.GetWindowThreadProcessId(identity['hwnd'])[1]==pid,'窗口身份改变')

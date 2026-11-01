@@ -139,12 +139,38 @@ void testCancelStillRollsBack(int& failures) {
     fs::remove_all(root, ec);
 }
 
+void testPostProcessingNeverInflatesFileCounts(int& failures) {
+    const fs::path root = makeFixture("progress_counts");
+    Database db;
+    check(db.open((root / "library.db").u8string()), "open progress database", failures);
+    int maxCurrent = 0, maxTotal = 0, lastCurrent = -1, lastTotal = -1;
+    int finalizingCalls = 0;
+    bool finalizingCountsSeen = false;
+    const auto stats = db.scanDirectoryEx(
+        (root / "audio").u8string(), true, false, false,
+        [&](int current, int total, const std::string&, bool) {
+            maxCurrent = std::max(maxCurrent, current);
+            maxTotal = std::max(maxTotal, total);
+            lastCurrent = current; lastTotal = total;
+            if (finalizingCalls > 0) finalizingCountsSeen = current == 3 && total == 3;
+        }, nullptr, 1, false, false, nullptr, {}, 0, 0, nullptr,
+        [&]() { ++finalizingCalls; });
+    check(stats.total == 3 && db.getFileCount() == 3, "progress fixture imports three real files", failures);
+    check(maxCurrent == 3 && maxTotal == 3 && lastCurrent == 3 && lastTotal == 3,
+          "post-processing is not counted as extra audio files", failures);
+    check(finalizingCalls == 1 && finalizingCountsSeen,
+          "synchronous finalizing notification precedes real-count tail reports", failures);
+    db.close();
+    // Retain this small fixture; the QA temp root owns its lifecycle.
+}
+
 } // namespace
 
 int main() {
     int failures = 0;
     testPausePersistsAcrossRestart(failures);
     testCancelStillRollsBack(failures);
+    testPostProcessingNeverInflatesFileCounts(failures);
     if (failures == 0) {
         std::cout << "All scan pause and resume tests passed.\n";
         return 0;

@@ -3210,8 +3210,11 @@ static bool BeginFolderScan(
             }
 
             auto runOne = [&](bool rec) -> ScanStats {
+                bool folderFinalizing = false;
+                if (state.isScanTaskCurrent(scanGeneration))
+                    state.scanWorkflowStage.store(HarkenSearch::ScanWorkflowStage::Scanning, std::memory_order_release);
                 return scanDb.scanDirectoryEx(folder, rec, updateExisting, removeMissing,
-                    [&state, scanGeneration](int current, int total, const std::string& file, bool dataCommitted) {
+                    [&state, scanGeneration, &folderFinalizing](int current, int total, const std::string& file, bool dataCommitted) {
                         if (!state.isScanTaskCurrent(scanGeneration)) return;
                         state.scanProgress = current;
                         state.scanTotal = total;
@@ -3222,7 +3225,8 @@ static bool BeginFolderScan(
                             std::memory_order_release);
                         if (total > 0) {
                             state.scanWorkflowStage.store(
-                                HarkenSearch::ScanWorkflowStage::Ingesting,
+                                folderFinalizing ? HarkenSearch::ScanWorkflowStage::Finalizing :
+                                    HarkenSearch::ScanWorkflowStage::Ingesting,
                                 std::memory_order_release);
                         }
                         if (file.find("Scan_NetworkLibraryUnreachable") != std::string::npos) {
@@ -3239,7 +3243,13 @@ static bool BeginFolderScan(
                        &state.backfillQueue,
                        backfillDbPathSnapshot,
                        backfillDbGenerationSnapshot,
-                       static_cast<int64_t>(scanGeneration));
+                       static_cast<int64_t>(scanGeneration), nullptr,
+                       [&state, scanGeneration, &folderFinalizing]() {
+                           folderFinalizing = true;
+                           if (state.isScanTaskCurrent(scanGeneration))
+                               state.scanWorkflowStage.store(HarkenSearch::ScanWorkflowStage::Finalizing,
+                                   std::memory_order_release);
+                       });
             };  // slice7-B/C/D -- see equivalent comment in main.cpp scan thread.
                 // 2026-05-20: fixed arg-position bug from original commit; see main.cpp.
 
@@ -6629,11 +6639,12 @@ static void PollQaCommandFile(AppState& state) {
             }
         } else if (action == "state") {
             auto workflow = state.getScanWorkflowSnapshot();
-            if (workflow.stage == HarkenSearch::ScanWorkflowStage::Idle && state.scanTotal.load() > 0)
+            const bool cleanup = workflow.stage == HarkenSearch::ScanWorkflowStage::Idle && state.scanTotal.load() > 0;
+            if (cleanup)
                 workflow = HarkenSearch::BuildCleanupScanSnapshot(state.isScanning.load(), state.scanCancelRequested.load(),
                     state.scanErrorCount.load() > 0, state.scanProgress.load(), state.scanTotal.load());
             const auto view = HarkenSearch::BuildScanDialogView({workflow, state.isScanning.load(),
-                state.scanCompletionPending.load(), state.scanStopDisposition.load(), state.scanFatalFailure.load(), state.scanErrorCount.load()});
+                state.scanCompletionPending.load(), state.scanStopDisposition.load(), state.scanFatalFailure.load(), state.scanErrorCount.load(), cleanup});
             const char* surfaces[] = {"setup", "progress", "result"};
             const char* phases[] = {"setup", "counting", "ingesting", "waveforms", "finalizing", "saving", "revoking",
                 "completed", "partial", "paused", "cancelled", "empty", "failed"};
@@ -6664,7 +6675,9 @@ static void PollQaCommandFile(AppState& state) {
                 {"can_stop", view.canStop}, {"stop_disposition", static_cast<int>(state.scanStopDisposition.load())},
                 {"pending_folders", state.pendingScanFolders}, {"last_folders", state.lastScannedFolders},
                 {"succeeded", view.succeeded}, {"failed", view.failed}, {"skipped", view.skipped}, {"unprocessed", view.unprocessed},
+                {"progress", {{"known", view.progressKnown}, {"current", view.current}, {"total", view.total}}},
                 {"metrics", {{"elapsed_ms", state.scanUiMetrics.Value().elapsedMs},
+                    {"waiting_for_progress", state.scanUiMetrics.Value().waitingForProgress},
                     {"speed_known", state.scanUiMetrics.Value().speedKnown}, {"files_per_second", state.scanUiMetrics.Value().filesPerSecond}}},
                 {"similarity", {{"available", batch.available}, {"running", batch.running}, {"stopped", batch.stopped},
                     {"total", batch.total}, {"succeeded", batch.succeeded}, {"failed", batch.Failed()}, {"remaining", batch.Remaining()}}},
