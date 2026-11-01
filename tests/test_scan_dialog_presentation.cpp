@@ -8,7 +8,72 @@ using namespace HarkenSearch;
 static void Check(bool ok, const char* message) {
     if (!ok) { std::cerr << "FAIL: " << message << "\n"; std::exit(1); }
 }
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 1 || std::string(argv[1]) == "--sampling-gap") {
+        ScanDialogMetrics metrics;
+        ScanDialogView view; view.surface = ScanDialogSurface::Progress;
+        view.phase = ScanDialogPhase::Ingesting;
+        metrics.Update(1, 1000, 0, 1000, view);
+        view.current = 10;
+        metrics.Update(1, 1000, 0, 1250, view);
+        view.current = 10000;
+        auto rate = metrics.Update(1, 1000, 0, 101250, view);
+        Check(!rate.speedKnown && rate.filesPerSecond == 0., "long observation gap must not present a whole-gap average as recent speed");
+        Check(rate.elapsedMs == 100250, "window restoration retains the real total elapsed");
+        view.current = 10010;
+        rate = metrics.Update(1, 1000, 0, 101500, view);
+        Check(rate.speedKnown && rate.filesPerSecond == 40., "recent sampling resumes from restoration");
+        std::cout << "PASS: observation gap resets recent speed only\n";
+        if (argc > 1) return 0;
+    }
+    if (argc == 1 || std::string(argv[1]) == "--streaming-total") {
+        ScanDialogInput input;
+        input.scanning = true;
+        input.workflow.stage = ScanWorkflowStage::Ingesting;
+        for (int discovered : {501, 1001, 19011, 38001}) {
+            input.workflow.discovered = discovered;
+            input.workflow.processed = discovered - 1;
+            const auto view = BuildScanDialogView(input);
+            Check(!view.progressKnown, "streaming discovered count must not masquerade as a final total at 99 percent");
+            Check(view.current == discovered - 1, "unknown total still exposes the real processed count");
+        }
+        std::cout << "PASS: streaming total remains indeterminate\n";
+        if (argc > 1) return 0;
+    }
+    if (argc == 1 || std::string(argv[1]) == "--batched-speed") {
+        ScanDialogMetrics metrics;
+        ScanDialogView view;
+        view.surface = ScanDialogSurface::Progress;
+        view.phase = ScanDialogPhase::Ingesting;
+        metrics.Update(1, 1000, 0, 1000, view);
+        view.current = 50;
+        auto rate = metrics.Update(1, 1000, 0, 1500, view);
+        Check(rate.speedKnown && rate.filesPerSecond > 0., "first completed batch produces a real measured rate");
+        rate = metrics.Update(1, 1000, 0, 1750, view);
+        Check(rate.speedKnown && rate.filesPerSecond > 0., "callback gap inside recent window must not flash zero");
+        Check(std::abs(rate.filesPerSecond - 50. / .75) < .001, "recent rate includes the elapsed callback gap");
+        for (int now = 2000; now <= 5000; now += 250)
+            rate = metrics.Update(1, 1000, 0, now, view);
+        Check(rate.filesPerSecond == 0., "real sustained inactivity expires the old rate");
+        Check(rate.waitingForProgress && !rate.speedKnown, "sustained inactivity is explicit, not a repeated zero-rate claim");
+        Check(rate.elapsedMs == 4000, "no-progress intervals still count toward total elapsed");
+        view.current = 55;
+        rate = metrics.Update(1, 1000, 0, 5250, view);
+        Check(rate.speedKnown && rate.filesPerSecond > 0. && !rate.waitingForProgress, "new progress clears the waiting state");
+        view.current = 1;
+        rate = metrics.Update(1, 1000, 0, 5500, view);
+        Check(!rate.speedKnown && !rate.waitingForProgress, "decreased counters reset rate history");
+        view.current = 2;
+        rate = metrics.Update(1, 1000, 0, 5400, view);
+        Check(!rate.speedKnown && rate.filesPerSecond == 0., "backwards clock resets without negative rates");
+        for (int now = 5650; now <= 100000; now += 250) {
+            ++view.current;
+            rate = metrics.Update(1, 1000, 0, now, view);
+        }
+        Check(rate.speedKnown && std::abs(rate.filesPerSecond - 4.) < .001, "long running rate remains a recent window not a task average");
+        std::cout << "PASS: batched throughput and sustained inactivity\n";
+        if (argc > 1) return 0;
+    }
     ScanDialogMetrics metrics;
     ScanDialogView active;
     active.surface = ScanDialogSurface::Progress;
@@ -20,7 +85,7 @@ int main() {
     timing = metrics.Update(1, 1000, 0, 1600, active);
     Check(timing.elapsedMs == 600 && timing.speedKnown && std::abs(timing.filesPerSecond - 40.) < .001, "speed follows actual processed delta");
     timing = metrics.Update(1, 1000, 0, 2100, active);
-    Check(timing.speedKnown && timing.filesPerSecond == 0., "stalled progress clears old speed");
+    Check(timing.speedKnown && timing.filesPerSecond == 20., "short batch gap uses the recent window");
     active.phase = ScanDialogPhase::Waveforms; active.current = 2;
     timing = metrics.Update(1, 1000, 0, 2200, active);
     Check(!timing.speedKnown && timing.elapsedMs == 1200, "stage change resets speed but not total elapsed");
@@ -56,6 +121,9 @@ int main() {
     Check(view.canBackground && view.canStop && !view.canClose, "active scan actions");
     input.workflow.stage = ScanWorkflowStage::Ingesting;
     input.workflow.discovered = 7093; input.workflow.processed = 4823;
+    view = BuildScanDialogView(input);
+    Check(!view.progressKnown && view.current == 4823, "dynamic total is not advertised as a final denominator");
+    input.ingestionTotalKnown = true;
     view = BuildScanDialogView(input);
     Check(view.current == 4823 && view.total == 7093 && view.progressKnown, "ingest uses file counters");
     Check(std::abs(view.fraction - 4823.f / 7093.f) < .0001f, "true ingest fraction");
@@ -112,6 +180,9 @@ int main() {
     Check(ScanFailureSubject("Failed to decode: X:/library (new)/door (1).wav") == "door (1).wav", "filename without diagnostic suffix survives");
     auto cleanup = BuildCleanupScanSnapshot(true, false, false, 7, 20);
     Check(cleanup.stage == ScanWorkflowStage::Ingesting && cleanup.processed == 7 && cleanup.discovered == 20, "legacy cleanup retains real progress");
+    ScanDialogInput cleanupInput;
+    cleanupInput.workflow = cleanup; cleanupInput.scanning = true; cleanupInput.ingestionTotalKnown = true;
+    Check(BuildScanDialogView(cleanupInput).progressKnown, "fixed cleanup retains its percentage");
     cleanup = BuildCleanupScanSnapshot(false, false, false, 20, 20);
     Check(CanEnterCompleted(cleanup), "legacy cleanup can show its terminal result");
     cleanup = BuildCleanupScanSnapshot(false, false, false, 0, 4);

@@ -14063,7 +14063,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                                    const std::string& backfillDbPathSnapshot,
                                    int64_t backfillDbGenerationSnapshot,
                                    int64_t scanForegroundSessionId,
-                                   const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition) {
+                                   const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition,
+                                   std::function<void()> onFinalizing) {
     ScanStats stats;
     fs::path dir = Utf8ToPath(dirPath);
     auto markCancelledAndReturn = [&]() -> ScanStats {
@@ -15911,6 +15912,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     }
     const bool wasCancelled = false; // 能执行到这里说明未取消，后续后处理可安全使用
 
+    // Finalization is a stage, not extra files added to the denominator.
+    // The callback is synchronous; callers retain their generation/cancel gates.
+    if (onFinalizing) onFinalizing();
     // Update callback once at end to ensure UI has latest counts.
     if (callback) {
         callback(completed.load(), stats.total,
@@ -15920,20 +15924,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
     // Count files whose persisted state actually changed.
     const int actualChangesCount = stats.added + stats.updated + stats.removed;
-    const int postBase = (std::max)(completed.load(), stats.total);
-    int postStageCount = 1; 
-    if (removeMissing) postStageCount++;
-    if (!scanCoverDeltas.empty()) postStageCount++;
-    if (completeImport && enqueueExtraction) postStageCount += 2;
-    postStageCount++; 
-    int postStageIdx = 0;
-
     auto reportPostStage = [&](const std::string& msg) {
-        postStageIdx++;
         if (!callback) return;
-        int cur = postBase + postStageIdx;
-        int tot = postBase + postStageCount;
-        callback(cur, tot, msg, true);
+        callback(completed.load(), stats.total, msg, true);
     };
 
     // Optional: remove missing files under this folder（先读完路径再验盘，避免长事务占锁）
@@ -15965,7 +15958,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
             checked++;
             if (callback && (checked % 500) == 0) {
-                callback(postBase + postStageIdx, postBase + postStageCount,
+                callback(completed.load(), stats.total,
                          std::string(L(ScanPost_CleanMissing)) + " (" + std::to_string(checked) + ")", true);
             }
         }
@@ -16009,7 +16002,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
            }
        }
         if (stats.unreachable > 0 && callback) {
-            callback(postBase + postStageIdx, postBase + postStageCount,
+            callback(completed.load(), stats.total,
                      std::string("Scan_NetworkLibraryUnreachable"), true);
         }
     }
@@ -16029,7 +16022,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (callback) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now - lastReport >= std::chrono::milliseconds(500)) {
-                    callback(postBase + postStageIdx, postBase + postStageCount,
+                    callback(completed.load(), stats.total,
                              std::string(L(ScanPost_FullWaveCache)) + " (" + std::to_string(depth) + ")", true);
                     lastReport = now;
                 }
@@ -16056,7 +16049,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (repaired <= 0) break;
             repairedTotal += repaired;
             if (callback) {
-                callback(postBase + postStageIdx, postBase + postStageCount,
+                callback(completed.load(), stats.total,
                          std::string(L(ScanPost_CoverThumb)) + " (" + std::to_string(repairedTotal) + ")", true);
             }
         }
@@ -16079,7 +16072,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     if (!fatalScanError && (!wasCancelled || hasCommittedChanges) && needsHeavyPostProcess) {
         // Mark foreground scanning complete before background maintenance begins.
         if (callback) {
-            callback(postBase + postStageCount, postBase + postStageCount, u8"扫描完毕！正在后台静默优化索引...", true);
+            callback(completed.load(), stats.total, u8"扫描完毕！正在后台静默优化索引...", true);
         }
 
         if (m_postProcessThread.joinable()) {
@@ -16136,7 +16129,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     } else {
         // Scans below 50 files can skip global reordering and close immediately.
         if (callback) {
-            callback(postBase + postStageCount, postBase + postStageCount,
+            callback(completed.load(), stats.total,
                      fatalScanError ? std::string(L(ScanFatalDbStop)) : std::string(L(ScanDone)),
                      true);
         }

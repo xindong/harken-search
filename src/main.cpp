@@ -29327,7 +29327,8 @@ static void DrawScanDialogMetrics(const HarkenSearch::ScanDialogMetricsSnapshot&
     std::snprintf(elapsed, sizeof(elapsed), L(Main_TotalElapsedFmt), FormatDurationMsCompact(metrics.elapsedMs).c_str());
     if (showSpeed) {
         char speed[96];
-        if (metrics.speedKnown) std::snprintf(speed, sizeof(speed), L(ScanUi_SpeedFmt), metrics.filesPerSecond);
+        if (metrics.waitingForProgress) std::snprintf(speed, sizeof(speed), "%s", L(ScanUi_NoNewProgress));
+        else if (metrics.speedKnown) std::snprintf(speed, sizeof(speed), L(ScanUi_SpeedFmt), metrics.filesPerSecond);
         else std::snprintf(speed, sizeof(speed), "%s", L(ScanUi_SpeedPending));
         const bool sameLine = ImGui::CalcTextSize(speed).x + 24.f + ImGui::CalcTextSize(elapsed).x <= ImGui::GetContentRegionAvail().x;
         ImGui::TextUnformatted(speed);
@@ -31661,7 +31662,7 @@ void RenderUI(AppState& state) {
         scanWorkflowSnapshot, state.isScanning.load(std::memory_order_acquire),
         state.scanCompletionPending.load(std::memory_order_acquire),
         state.scanStopDisposition.load(std::memory_order_acquire),
-        state.scanFatalFailure.load(std::memory_order_acquire), state.scanErrorCount.load()});
+        state.scanFatalFailure.load(std::memory_order_acquire), state.scanErrorCount.load(), scanIsCleanup});
     const auto scanStartedAt = state.scanStartedAtMs.load();
     const auto scanFinishedAt = state.scanFinishedAtMs.load();
     const auto scanRecordedDuration = state.scanCompletionDurationMs.load();
@@ -31738,6 +31739,8 @@ void RenderUI(AppState& state) {
                 DrawScanWaitingBar();
                 if (scanView.phase == Phase::Counting && scanView.total > 0)
                     ImGui::Text(L(ScanUi_FoundAudioFmt), scanView.total);
+                else if (scanView.phase == Phase::Ingesting)
+                    ImGui::Text(L(ScanUi_ProcessedFmt), scanView.current);
             }
             DrawScanDialogMetrics(state.scanUiMetrics.Value(), true);
             if (scanView.phase == Phase::Ingesting || scanView.phase == Phase::Waveforms) {
@@ -32010,8 +32013,11 @@ void RenderUI(AppState& state) {
                         }
 
                         auto runScanOnce = [&](bool rec) -> ScanStats {
+                            bool folderFinalizing = false;
+                            if (state.isScanTaskCurrent(scanGeneration))
+                                state.scanWorkflowStage.store(HarkenSearch::ScanWorkflowStage::Scanning, std::memory_order_release);
                             return scanDb.scanDirectoryEx(folder, rec, updateExisting, removeMissing,
-                            [&state, scanGeneration, &scanProgressAggregator](int current, int total, const std::string& file, bool dataCommitted) {
+                            [&state, scanGeneration, &scanProgressAggregator, &folderFinalizing](int current, int total, const std::string& file, bool dataCommitted) {
                                 if (!state.isScanTaskCurrent(scanGeneration)) return;
                                 const auto progress = scanProgressAggregator.updateCurrentFolder(current, total);
                                 state.scanProgress = progress.current;
@@ -32023,7 +32029,8 @@ void RenderUI(AppState& state) {
                                     std::memory_order_release);
                                 if (progress.total > 0) {
                                     state.scanWorkflowStage.store(
-                                        HarkenSearch::ScanWorkflowStage::Ingesting,
+                                        folderFinalizing ? HarkenSearch::ScanWorkflowStage::Finalizing :
+                                            HarkenSearch::ScanWorkflowStage::Ingesting,
                                         std::memory_order_release);
                                 }
                                 if (file.find("Scan_NetworkLibraryUnreachable") != std::string::npos) {
@@ -32042,7 +32049,13 @@ void RenderUI(AppState& state) {
                        backfillDbPathSnapshot,
                        backfillDbGenerationSnapshot,
                        static_cast<int64_t>(scanGeneration),
-                       &state.scanStopDisposition);
+                       &state.scanStopDisposition,
+                       [&state, scanGeneration, &folderFinalizing]() {
+                           folderFinalizing = true;
+                           if (state.isScanTaskCurrent(scanGeneration))
+                               state.scanWorkflowStage.store(HarkenSearch::ScanWorkflowStage::Finalizing,
+                                   std::memory_order_release);
+                       });
                         };  // slice7-B/C/D: scan writes base rows quickly,
                             // then durable backfill_pending rows let the
                             // independent worker pool fill covers and optional
@@ -52524,6 +52537,9 @@ void RenderUI(AppState& state) {
             if (scanIsCleanup) phase = state.scanCancelRequested.load() ? L(ScanUi_Saving) : L(ScanPhase_RemoveMissing);
             ImGui::TextUnformatted(phase);
             if (scanView.progressKnown) { ImGui::SameLine(0, 12); ImGui::Text("%d / %d", scanView.current, scanView.total); }
+            else if (scanView.phase == HarkenSearch::ScanDialogPhase::Ingesting) {
+                ImGui::SameLine(0, 12); ImGui::Text(L(ScanUi_ProcessedFmt), scanView.current);
+            }
             ImGui::SameLine(0, 16);
             if (aura::ui::SmallActionButton(L(ScanUi_ViewProgress), aura::ui::ButtonVariant::Quiet)) state.showScanDialog = true;
             ThemeInspector::RegisterLastItem("scan.background.show");

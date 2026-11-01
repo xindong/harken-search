@@ -1,0 +1,89 @@
+# Scan progress accuracy, then measured import performance
+
+## Scope and order
+
+First correct the progress/throughput presentation. Then measure the existing
+import path and retain only a narrow, repeatably beneficial optimization. Do not
+reduce metadata, cover or required mini-waveform work to make completion appear
+faster. Keep pause/keep, cancel/rollback, result windows and source audio intact.
+No visual redesign: reuse the approved compact scan dialog and existing tokens.
+
+## Modules
+
+1. **Progress projection** (`ScanDialogPresentation.h`, native callers): streaming
+   discovery counts are not a fixed total. While enumeration is unfinished, show
+   processed count with an indeterminate bar, not a denominator or percentage.
+   Cleanup and fixed waveform stages retain real current/total progress.
+2. **Rate sampling** (`ScanDialogPresentation.h`): use a bounded recent time
+   window of completed-count samples. Short callback gaps must not repeatedly
+   report zero. Genuine sustained inactivity must expire the old rate and show
+   a concise no-new-progress state. Reset at task/stage/counter/clock boundaries.
+   Elapsed time keeps its current completion latch and includes all foreground
+   work, not time spent reading the result.
+3. **Native rendering/localization**: keep speed and total elapsed visible; show
+   only the relevant count/status. Background indicator uses the same semantics.
+   Add a read-only isolated QA projection for assertions, not fake progress.
+   The scan callback must also stop counting post-processing steps as audio
+   files. A synchronous optional finalizing notification separates that stage;
+   native callers retain their generation guard and cancel/rollback authority.
+   It is not retained or invoked on a different thread. Existing non-UI callers
+   keep the default notification and unchanged completion behavior.
+4. **Measurement**: compare fresh isolated databases on identical fixture sets,
+   settings, worker counts and completion criteria. Capture elapsed stages,
+   errors, durable rows and required mini caches. No shared desktop input or
+   edits to real libraries. Separate first import from unchanged rescan results.
+5. **Performance change**: after the presentation passes, use measurements to
+   choose one bounded bottleneck. Write its failing behavioral regression first,
+   then compare repeated baseline/candidate runs. No gain means no retained
+   speculative change; report limitations honestly.
+
+## Verification / delivery
+
+- RED before GREEN for dynamic totals, batched rate callbacks, genuine stalls,
+  reset/phase transitions, fixed cleanup/waveform counts and terminal duration.
+- Native isolated package: large scan, multi-folder path, waveform completion,
+  pause/keep, rollback, failures, five themes and a narrow viewport.
+- Report fixture identity, cold/warm limitations, repeats and untested cases.
+- Deliver the exact QA package, real screenshots and measurements through one
+  self-contained acceptance page. Technical checks do not substitute for user
+  confirmation of the visible change; do not publish or merge before acceptance.
+
+## Current status
+
+- Verified: dynamic-total and callback-gap tests failed against the baseline;
+  the minimal presentation fix passes these and the existing presentation tests.
+- Verified: six related native test executables and 85 focused Python checks.
+- Verified: real isolated five-theme smoke and outcomes covering pause/keep,
+  rollback, failure/empty results, cleanup, similarity and narrow metrics.
+  This is technical verification, not user visual acceptance.
+- Verified: post-processing no longer adds fake files to progress totals. A
+  three-file database regression failed before the fix and now passes. Long
+  observation gaps reset only recent speed, not total elapsed time. Independent
+  review found no remaining blocker in these changes.
+- Measured: 2,000 identical synthetic 1-second 16-kHz mono PCM WAV files, fresh
+  database each run, full completion with 2,000 persisted mini waveforms and zero
+  scan errors. Baseline: 4.672 / 4.750 / 4.640 seconds (median 4.672).
+- Rejected experiment: start the native full-scan backfill pool before ingestion,
+  with an idempotent start and unchanged completion/cancel gates. Measured
+  4.687 / 4.891 / 4.844 seconds (median 4.844): no repeatable improvement.
+  The experimental product change and its source-order test were removed.
+  Keep the repeatable benchmark tool; do not claim actual throughput improved.
+  An A/B/A control using the original baseline binary returned 4.656 / 4.719 /
+  4.563 seconds (median 4.656), with all 2,000 caches persisted each time.
+- Measurement limits: synthetic local WAV first imports, warm OS caches and
+  100-ms polling. These results do not establish performance on the user's
+  MP3 library, network storage, long recordings or unchanged rescans.
+- Test infrastructure incident: the first benchmark finished its full scan and
+  durable readback but could not find a closed result dialog. The tool now opens
+  the real dialog before clicking Done; 90 tool tests pass and repeated native
+  runs pass. The original failed report is retained, not relabelled as passed.
+- Known baseline failure: `test_network_path_contract.py::NetworkPathContract::
+  test_scan_dialog_marks_readonly_network_library` still expects the older
+  `Scan_MappedDriveHiddenHint` copy. Reproduced unchanged at 80ee617; not weakened
+  or fixed as part of this task (126 other expanded checks passed).
+- Fresh final source check: six focused native executables passed; 216 Python
+  checks passed with only the independently reproduced baseline failure excluded.
+  The full 518-target CTest suite was not built/run for this reporting-only
+  callback/UI slice. No database schema, SQL, decoder or writer policy changed.
+- In progress: final native regression, exact package identity and acceptance
+  delivery. No user visual acceptance, merge or public release has occurred.
