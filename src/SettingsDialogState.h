@@ -96,7 +96,7 @@ struct Editor {
 inline Editor& SettingsEditor() { static Editor editor; return editor; }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
 struct Observation {
-    struct Item { std::string id; ImVec4 bounds, clip; bool disabled=false; };
+    struct Item { std::string id; ImVec4 bounds, clip; bool disabled=false; float fontPixels=0; };
     int frame=0; bool open=false, prompt=false; int page=0; size_t pending=0;
     float draftVolume=0; bool draftRealtime=false; int draftTheme=0;
     ImVec4 bounds{};
@@ -107,7 +107,7 @@ inline bool failSaveOnce=false;
 inline void Observe(const char* id) {
     const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
     const auto ca=ImGui::GetWindowDrawList()->GetClipRectMin(),cb=ImGui::GetWindowDrawList()->GetClipRectMax();
-    observation.items.push_back({id,{a.x,a.y,b.x,b.y},{ca.x,ca.y,cb.x,cb.y},(ImGui::GetCurrentContext()->CurrentItemFlags&ImGuiItemFlags_Disabled)!=0});
+    observation.items.push_back({id,{a.x,a.y,b.x,b.y},{ca.x,ca.y,cb.x,cb.y},(ImGui::GetCurrentContext()->CurrentItemFlags&ImGuiItemFlags_Disabled)!=0,ImGui::GetFontSize()});
 }
 #else
 inline void Observe(const char*) {}

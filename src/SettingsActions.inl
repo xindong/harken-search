@@ -14,7 +14,7 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
     const auto& cs=ThemeColors::current();
     auto mixVec=[](const ImVec4& a,const ImVec4& b,float t){return ImVec4(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t,a.w+(b.w-a.w)*t);};
     const char* title=editor.action=="avatar"?text(u8"编辑头像","Edit avatar",u8"アバターの編集"):editor.action=="dictionary"?su::PageLabel(su::Page::Search):editor.action=="maintenance"?L(Set_DBMaint2):editor.action=="diagnostics"?su::PageLabel(su::Page::Diagnostics):editor.action=="shell"?L(Set_ShellIntegration):editor.action=="reset-all"?L(Set_ResetAllDefaults):editor.action=="reset-size"?L(Set_ResetDefaultSize):editor.action=="custom-colors"?L(Set_EditTheme):su::PageLabel(su::Page::Backup);
-    ImGui::PushFont(GetUIFontEmphasis());ImGui::TextUnformatted(title);ImGui::PopFont();
+    ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(title);ImGui::PopFont();
     ImGui::TextWrapped("%s",text(u8"这里的操作有独立的保存方式。","Actions here save separately.",u8"ここでの操作は個別に保存されます。"));
     ImGui::Separator();
     ImGui::BeginChild("SettingsToolBody",ImVec2(0,-54),false);

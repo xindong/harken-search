@@ -141,6 +141,11 @@
     if (ImGui::BeginPopupModal("###HarkenSettings",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) {
         {
         ReadingTextScope reading;
+        // Settings is a reading surface with a comfortable minimum. Keep the
+        // saved global preference untouched and honor larger chosen sizes.
+        const float settingsBodyPx=std::max(18.f,static_cast<float>(state.settings.readingFontSize));
+        const float settingsTitlePx=settingsBodyPx*(4.f/3.f);
+        ImGui::PushFont(GetUIFontRegular(),settingsBodyPx);
         const auto winPos=ImGui::GetWindowPos(),winSize=ImGui::GetWindowSize();
         state.settings.settingsDialogWidth=winSize.x; state.settings.settingsDialogHeight=winSize.y;
         float navTextW=0;for(int i=0;i<=8;++i)navTextW=std::max(navTextW,ImGui::CalcTextSize(su::PageLabel((su::Page)i)).x);
@@ -154,7 +159,7 @@
 #endif
         ImGui::GetWindowDrawList()->AddRectFilled(winPos,ImVec2(winPos.x+navW,winPos.y+winSize.y),ImGui::GetColorU32(preview.dialogPanelBG));
         ImGui::SetCursorPos(ImVec2(24,22));
-        ImGui::PushFont(GetUIFontEmphasis()); ImGui::SetWindowFontScale(1.6f); ImGui::TextUnformatted(L(Dlg_Settings)); ImGui::SetWindowFontScale(1.f); ImGui::PopFont();
+        ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx); ImGui::TextUnformatted(L(Dlg_Settings)); su::Observe("settings-title"); ImGui::PopFont();
         ImGui::SetCursorPos(ImVec2(12,headerH+8));
         ImGui::BeginChild("SettingsNavigation",ImVec2(navW-24,winSize.y-headerH-65),false,ImGuiWindowFlags_NoBackground);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,4));
@@ -191,7 +196,7 @@
         ImGui::BeginChild("SettingsBody",ImVec2(contentW,winSize.y-headerH-footerH),false);
         if(editor.previousPage!=editor.page || editor.previousSearching!=(editor.query[0]!=0))ImGui::SetScrollY(0);
         editor.previousPage=editor.page;editor.previousSearching=editor.query[0]!=0;
-        auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis());ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
+        auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
         auto actionButton=[&](const char* label,const char* action){if(aura::ui::ActionButton(label))requestAction(action);};
         auto combo=[&](int& value,std::initializer_list<const char*> options){
             std::vector<const char*> list(options);bool changed=false;
@@ -253,7 +258,7 @@
             ImGui::PopStyleVar();
         }else{
             ImGui::TextDisabled("%s",text(u8"偏好设置","PREFERENCES",u8"環境設定"));
-            ImGui::PushFont(GetUIFontEmphasis());ImGui::SetWindowFontScale(1.7f);ImGui::TextUnformatted(su::PageLabel(editor.page));ImGui::SetWindowFontScale(1.f);ImGui::PopFont();ImGui::Dummy(ImVec2(0,8));
+            ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(su::PageLabel(editor.page));su::Observe("page-title");ImGui::PopFont();ImGui::Dummy(ImVec2(0,8));
             if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
                     {text(u8"试听","Listening",u8"試聴"),{"device","volume","normalize"}},
@@ -301,6 +306,7 @@
         if(!editor.open){ImGui::CloseCurrentPopup();MarkSettingsDirty(state);}
 #include "SettingsActions.inl"
         editor.hadChildPopup=ImGui::GetCurrentContext()->OpenPopupStack.Size>ImGui::GetCurrentContext()->BeginPopupStack.Size;
+        ImGui::PopFont();
         }
         ImGui::EndPopup();
     }

@@ -4784,7 +4784,7 @@ static void PollQaCommandFile(AppState& state) {
             const auto& editor=su::SettingsEditor();
             auto rect=[](const ImVec4& r){return std::array<float,4>{r.x,r.y,r.z,r.w};};
             auto items=nlohmann::json::array();
-            for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled}});
+            for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled},{"font_pixels",item.fontPixels}});
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
                 {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},

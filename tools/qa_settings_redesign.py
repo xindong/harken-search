@@ -76,6 +76,9 @@ def run(args):
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
         assert state()['open'];screenshot('01-common')
+        for id in ('nav-0','search','device','volume','done'):assert find(id)['font_pixels']>=18
+        for id in ('settings-title','page-title'):assert find(id)['font_pixels']>=24
+        report['typography']={'bodyMinimum':18,'titleMinimum':24,'savedGlobalFont':state()['live_font']}
         if args.expected_volume is not None:assert abs(state()['live_volume']-args.expected_volume)<.001
         if args.smoke:
             check('native settings open',state=state())
@@ -144,6 +147,7 @@ def run(args):
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
         query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
         assert state()['live_font']==24
+        assert find('search')['font_pixels']>=24 and find('done')['font_pixels']>=24
         screenshot('08-large-font');find('search');find('close');find('done')
         query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
         assert state()['live_font']==14
