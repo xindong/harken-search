@@ -2919,6 +2919,51 @@ static int testScanWriteInfrastructureFailureCountsDiscoveredFiles() {
     return failures;
 }
 
+static int testScanStatsKeepCategoriesWhenDetailsAreCapped() {
+    int failures = 0;
+    ScanStats first;
+    for (int i = 0; i < 32; ++i) first.addError("No audio samples: X:/empty.wav");
+    ScanStats second;
+    second.addError("Database write failed during scan: forced failure", 500);
+    first.mergeFrom(second);
+    check(first.errors == 532 && first.errorMessages.size() == 32,
+          "scan stats retain the file total while detail messages stay capped", failures);
+    check(first.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 32 &&
+          first.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
+          "scan stats retain categories beyond the detail cap", failures);
+    return failures;
+}
+
+static int testScanWriteFailureDoesNotRecountTerminalFailure() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("write_failure_terminal");
+    const fs::path dbPath = root / "write_failure_terminal.db";
+    std::ofstream(root / "empty.wav", std::ios::binary);
+    writeSilentMonoWav(root / "valid.wav");
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
+                  "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
+          "write-failure fixture is active", failures);
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
+                                               nullptr, nullptr, 1, false);
+    check(stats.total == 2 && stats.failedFiles == 2 && stats.errors == 2,
+          "terminal decode failure is not counted again when the batch write fails", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 1 &&
+          stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 1,
+          "one empty file and one write-failed file keep distinct reasons", failures);
+    check(db.getFileCount() == 0, "failed batch leaves no inserted files", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testScanBatchRetriesWhenDatabaseIsTemporarilyLocked() {
     int failures = 0;
     const fs::path root = makeTempRoot("write_lock_retry");
@@ -4076,6 +4121,8 @@ int main(int argc, char** argv) {
     failures += testRemoveSingleFileInvalidatesCountAndFolderIndex();
     std::cout << "-- testScanWriteInfrastructureFailureCountsDiscoveredFiles\n";
     failures += testScanWriteInfrastructureFailureCountsDiscoveredFiles();
+    failures += testScanStatsKeepCategoriesWhenDetailsAreCapped();
+    failures += testScanWriteFailureDoesNotRecountTerminalFailure();
     std::cout << "-- testScanBatchRetriesWhenDatabaseIsTemporarilyLocked\n";
     failures += testScanBatchRetriesWhenDatabaseIsTemporarilyLocked();
     std::cout << "-- testScanBatchFailsFastWhenDatabaseLockPersists\n";

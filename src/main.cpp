@@ -32211,7 +32211,7 @@ void RenderUI(AppState& state) {
                         state.scanErrorCount = combined.errors;
                         state.scanIngestedCount = combined.ingested;
                         state.scanIngestDurationMs = combined.ingestDurationMs;
-                        state.addScanErrors(combined.errorMessages, combined.errorMessageCounts);
+                        state.addScanErrors(combined.errorMessages, combined.errorMessageCounts, combined.errorCategoryCounts);
                         DIAG_SYSTEM_FMT("Scan",
                                         "ScanIndexComplete: total=%d added=%d updated=%d skipped=%d removed=%d errors=%d ingested=%d ingestMs=%lld cancelled=%d",
                                         combined.total,
@@ -32774,6 +32774,7 @@ void RenderUI(AppState& state) {
         { ReadingTextScope readingResult;
         using Phase = HarkenSearch::ScanDialogPhase;
         const auto [scanErrorSnapshot, scanErrorCounts] = state.getScanErrorSnapshot();
+        const auto scanCategoryCounts = state.getScanErrorCategoryCounts();
         const bool networkUnreachable = std::any_of(scanErrorSnapshot.begin(), scanErrorSnapshot.end(),
             [](const std::string& error) { return error.find("Scan_NetworkLibraryUnreachable") != std::string::npos; });
         const bool rollbackFailed = !scanIsCleanup && scanView.phase == Phase::Failed &&
@@ -32816,7 +32817,7 @@ void RenderUI(AppState& state) {
             if (showFailures) {
                 ImGui::TextColored(TransportContrast::ForSurface(scanTheme.volumeClipColor, scanDialogBg, 4.5), L(Main_FailedFmt), scanView.failed);
                 if (!rollbackFailed) {
-                    const auto reasons = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, scanView.failed, scanErrorCounts);
+                    const auto reasons = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, scanView.failed, scanErrorCounts, &scanCategoryCounts);
                     const char* labels[] = {L(ScanUi_FailedPath), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty), L(ScanUi_FailedSave), L(ScanUi_FailedOther)};
                     for (size_t i = 0; i < reasons.size(); ++i) {
                         ImGui::Text("%s  %d", labels[i], reasons[i]);
@@ -32874,10 +32875,13 @@ void RenderUI(AppState& state) {
                     ImGui::PushID(int(i));
                     const auto& error = scanErrorSnapshot[i];
                     const auto category = HarkenSearch::ClassifyScanFailure(error);
-                    const auto subject = HarkenSearch::ScanFailureSubject(error);
-                    const auto row = subject.empty() ? std::string(reasons[static_cast<size_t>(category)]) :
-                        subject + " · " + reasons[static_cast<size_t>(category)];
-                    if (ImGui::TreeNodeEx("##error", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", row.c_str())) {
+                    const int represented = i < scanErrorCounts.size() ? std::max(0, scanErrorCounts[i]) : 1;
+                    const auto row = HarkenSearch::ScanFailureRowLabel(error, reasons[static_cast<size_t>(category)], represented);
+                    const bool rowExpanded = ImGui::TreeNodeEx("##error", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", row.c_str());
+                    if (i == 0) ThemeInspector::RegisterLastItem("scan.failures.error.0");
+                    if (rowExpanded) {
+                        if (represented > 1)
+                            ImGui::TextWrapped(L(ScanUi_GroupedFailureCountFmt), represented);
                         const auto networkKey = error.find("Scan_NetworkLibraryUnreachable");
                         if (networkKey != std::string::npos) {
                             ImGui::TextWrapped("%s", L(Scan_NetworkLibraryUnreachable));

@@ -14695,7 +14695,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         writeBuffer.reserve((size_t)COMMIT_BATCH_SIZE);
 
         auto accountWriteBufferFailure = [&](const std::string& message) {
-            const int failedCount = (int)writeBuffer.size();
+            const int failedCount = (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                [](const WorkResult& result) { return !result.scanTerminalFailure; });
             if (failedCount > 0) {
                 stats.addError(message, failedCount);
                 stats.failedFiles += failedCount;

@@ -193,6 +193,20 @@ int main(int argc, char** argv) {
         "one message representing 500 files is not reported as 499 omitted details");
     Check(ScanFailureDetailsOmitted({"Database write failed during scan: forced failure"}, 5, {3}) == 2,
         "unknown failures still appear as omitted details");
+    ScanFailureCategoryCounts fullCounts{};
+    fullCounts[static_cast<size_t>(ScanFailureCategory::Empty)] = 32;
+    fullCounts[static_cast<size_t>(ScanFailureCategory::Save)] = 500;
+    const auto cappedDetails = BuildScanFailureSummary(
+        std::vector<std::string>(32, "No audio samples: X:/empty.wav"), 532,
+        std::vector<int>(32, 1), &fullCounts);
+    Check(cappedDetails[static_cast<size_t>(ScanFailureCategory::Empty)] == 32 &&
+        cappedDetails[static_cast<size_t>(ScanFailureCategory::Save)] == 500 &&
+        cappedDetails[static_cast<size_t>(ScanFailureCategory::Other)] == 0,
+        "capped detail log does not lose later save-failure category totals");
+    Check(ScanFailureDetailsOmitted(std::vector<std::string>(32, "No audio samples: X:/empty.wav"), 532,
+        std::vector<int>(32, 1)) == 500, "capped log still reports missing file details");
+    Check(ScanFailureRowLabel("Database write failed during scan: forced failure", "Save failed", 500) ==
+        "Save failed (500)", "grouped row displays represented file count");
     Check(ClassifyScanFailure("Unexpected failure") == ScanFailureCategory::Other, "unclassified remains other");
     Check(ScanFailureSubject("Failed to read audio metadata: X:/音效/door.wav (bad tag)") == "door.wav", "failure row exposes filename");
     Check(ScanFailureSubject("Database write failed during scan").empty(), "no invented filename");

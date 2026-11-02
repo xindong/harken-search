@@ -21,6 +21,7 @@
 #include "WaveformCachePolicy.h"
 #include "FolderTreePathModePolicy.h"
 #include "SearchTextIndex.h"
+#include "ScanFailureClassification.h"
 
 // Forward declarations
 struct sqlite3;
@@ -217,10 +218,12 @@ struct ScanStats {
     int waveformLongDetailSkipped = 0;
     std::vector<std::string> errorMessages;
     std::vector<int> errorMessageCounts;
+    HarkenSearch::ScanFailureCategoryCounts errorCategoryCounts{};
 
     void addError(std::string message = {}, int count = 1) {
         if (count <= 0) return;
         errors += count;
+        errorCategoryCounts[static_cast<size_t>(HarkenSearch::ClassifyScanFailure(message))] += count;
         if (!message.empty() && errorMessages.size() < 32) {
             errorMessages.push_back(std::move(message));
             errorMessageCounts.push_back(count);
@@ -236,6 +239,8 @@ struct ScanStats {
         removed += other.removed;
         unreachable += other.unreachable;
         errors += other.errors;
+        for (size_t i = 0; i < errorCategoryCounts.size(); ++i)
+            errorCategoryCounts[i] += other.errorCategoryCounts[i];
         ingested += other.ingested;
         fatalFailure = fatalFailure || other.fatalFailure;
         paused = paused || other.paused;

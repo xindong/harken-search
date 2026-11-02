@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ScanWorkflow.h"
+#include "ScanFailureClassification.h"
 #include <array>
 #include <deque>
 #include <string>
@@ -208,7 +209,6 @@ inline ScanDialogView BuildScanDialogView(const ScanDialogInput& input) {
     return view;
 }
 
-enum class ScanFailureCategory { Path, Read, Empty, Save, Other };
 inline std::string ScanFailureSubject(const std::string& error) {
     const auto marker = error.find(": ");
     if (marker == std::string::npos) return {};
@@ -222,26 +222,25 @@ inline std::string ScanFailureSubject(const std::string& error) {
     const auto slash = path.find_last_of("/\\");
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
-inline ScanFailureCategory ClassifyScanFailure(const std::string& error) {
-    const auto starts = [&](const char* prefix) { return error.rfind(prefix, 0) == 0; };
-    if (starts("Scan_NetworkLibraryUnreachable") || starts("Cannot read directory") ||
-        starts("Failed to scan directory") || starts("Path not found") || starts("File not found"))
-        return ScanFailureCategory::Path;
-    if (starts("No audio samples") || starts("No usable audio") || starts("Empty audio") || starts("Audio file too small to decode"))
-        return ScanFailureCategory::Empty;
-    if (starts("Failed to decode") || starts("Failed to read audio") || starts("Cannot decode") ||
-        starts("Cannot read audio") || starts("Failed to open audio"))
-        return ScanFailureCategory::Read;
-    if (starts("Database write failed") || starts("Scan aborted after database write failure") ||
-        starts("Failed to save") || starts("Failed to seed") ||
-        starts("Failed to snapshot rollback") || starts("Scan cancelled but rollback failed"))
-        return ScanFailureCategory::Save;
-    return ScanFailureCategory::Other;
+inline std::string ScanFailureRowLabel(const std::string& error, const std::string& categoryLabel, int represented) {
+    const auto subject = ScanFailureSubject(error);
+    auto row = subject.empty() ? categoryLabel : subject + " · " + categoryLabel;
+    if (represented > 1) row += " (" + std::to_string(represented) + ")";
+    return row;
 }
-inline std::array<int, 5> BuildScanFailureSummary(const std::vector<std::string>& errors, int total,
-                                                  const std::vector<int>& errorCounts = {}) {
-    std::array<int, 5> counts{};
+inline ScanFailureCategoryCounts BuildScanFailureSummary(const std::vector<std::string>& errors, int total,
+                                                         const std::vector<int>& errorCounts = {},
+                                                         const ScanFailureCategoryCounts* categoryCounts = nullptr) {
+    ScanFailureCategoryCounts counts{};
     int remaining = std::max(0, total);
+    if (categoryCounts) {
+        for (size_t i = 0; i < counts.size(); ++i) {
+            counts[i] = std::min(remaining, std::max(0, (*categoryCounts)[i]));
+            remaining -= counts[i];
+        }
+        counts[static_cast<size_t>(ScanFailureCategory::Other)] += remaining;
+        return counts;
+    }
     for (size_t i = 0; i < errors.size(); ++i) {
         if (remaining == 0) break;
         if (errors[i].empty()) continue;

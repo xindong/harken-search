@@ -2004,21 +2004,27 @@ struct AppState {
     std::mutex scanErrorMutex;
     std::vector<std::string> scanErrorMessages_;  // guarded by scanErrorMutex
     std::vector<int> scanErrorMessageCounts_;      // guarded by scanErrorMutex; aligned with messages
+    HarkenSearch::ScanFailureCategoryCounts scanErrorCategoryCounts_{}; // guarded by scanErrorMutex
     void clearScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         scanErrorMessages_.clear();
         scanErrorMessageCounts_.clear();
+        scanErrorCategoryCounts_.fill(0);
     }
     void addScanError(const std::string& s) {
         if (s.empty()) return;
         std::lock_guard<std::mutex> lk(scanErrorMutex);
+        ++scanErrorCategoryCounts_[static_cast<size_t>(HarkenSearch::ClassifyScanFailure(s))];
         if (scanErrorMessages_.size() < 32) {
             scanErrorMessages_.push_back(s);
             scanErrorMessageCounts_.push_back(1);
         }
     }
-    void addScanErrors(const std::vector<std::string>& messages, const std::vector<int>& counts = {}) {
+    void addScanErrors(const std::vector<std::string>& messages, const std::vector<int>& counts,
+                       const HarkenSearch::ScanFailureCategoryCounts& categoryCounts) {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
+        for (size_t i = 0; i < categoryCounts.size(); ++i)
+            scanErrorCategoryCounts_[i] += categoryCounts[i];
         for (size_t i = 0; i < messages.size(); ++i) {
             if (scanErrorMessages_.size() >= 32) break;
             if (messages[i].empty()) continue;
@@ -2033,6 +2039,10 @@ struct AppState {
     std::pair<std::vector<std::string>, std::vector<int>> getScanErrorSnapshot() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         return {scanErrorMessages_, scanErrorMessageCounts_};
+    }
+    HarkenSearch::ScanFailureCategoryCounts getScanErrorCategoryCounts() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return scanErrorCategoryCounts_;
     }
     std::string lastScannedPath;
     std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.

@@ -44,7 +44,7 @@ def run(args):
               'human_visual_acceptance': '未验收',
               'not_covered': ['没有模拟真实磁盘损坏',
                               '未复现队列残留消息；本次只验证隔离库写入触发器中止扫描的路径']}
-    lock = runtime / 'qa_scan_dbwrite_classify.lock'
+    lock = runtime / 'qa_scan_dialog_simple.lock'  # shared by both scan QA helpers
     owner = json.dumps({'pid': os.getpid(), 'output': str(out), 'nonce': uuid.uuid4().hex})
     desktop = process = driver = ui = database = None
     verified = False
@@ -84,10 +84,10 @@ def run(args):
             connection.execute("CREATE TRIGGER qa_scan_dbwrite_abort BEFORE INSERT ON audio_files "
                                "BEGIN SELECT RAISE(ABORT, 'qa forced database write failure'); END")
             connection.commit()
+            failure_fixture_installed = True
             present = connection.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' "
                                          "AND name='qa_scan_dbwrite_abort'").fetchone()
         require(present is not None, '写入故障夹具未生效')
-        failure_fixture_installed = True
         report['failure_setup'] = '新建隔离库的 INSERT 触发器强制中止数据库写入'
         folder = root / 'fixtures' / ('dbwrite-' + uuid.uuid4().hex[:10])
         make_wavs(folder, INPUT_COUNT, seconds=1)
@@ -115,6 +115,9 @@ def run(args):
         report['result_png'] = ui.shot('dbwrite-result', 'scan.result.failures', '##ScanResult')
         ui.click('scan.result.failures', '##ScanResult')
         report['details_png'] = ui.shot('dbwrite-details', 'scan.failures.back', '##ScanFailureDetails')
+        ui.click('scan.failures.error.0', '##ScanFailureDetails')
+        report['expanded_details_png'] = ui.shot(
+            'dbwrite-details-expanded', 'scan.failures.back', '##ScanFailureDetails')
         report['status'] = 'captured'
     except Exception as error:
         report.update(status='failed', error=str(error), traceback=traceback.format_exc())
@@ -141,8 +144,6 @@ def run(args):
                         '私有测试进程未确认退出')
                 process_exited = True
                 report['process_exit_code'] = win32process.GetExitCodeProcess(process)
-                require(report['process_exit_code'] == 0, '程序退出码非零')
-            require(sha256(exe) == report['exe_sha256'], '测试期间运行包发生变化')
             if process_exited and failure_fixture_installed:
                 with sqlite3.connect(database, timeout=5) as connection:
                     connection.execute('DROP TRIGGER qa_scan_dbwrite_abort')
@@ -152,6 +153,9 @@ def run(args):
                         "AND name='qa_scan_dbwrite_abort'").fetchone()
                 require(remaining_fixture is None, '故障夹具未从本次测试库移除')
                 report['failure_fixture_removed'] = True
+            if process is not None:
+                require(report['process_exit_code'] == 0, '程序退出码非零')
+            require(sha256(exe) == report['exe_sha256'], '测试期间运行包发生变化')
         except Exception as error:
             report.update(status='failed', cleanup_error=str(error))
         finally:
