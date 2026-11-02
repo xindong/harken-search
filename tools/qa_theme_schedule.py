@@ -144,7 +144,8 @@ def run(args):
     def clock(minute):
         command(cmd='theme_schedule',action='clock',minute=minute)
         period='day' if 480<=minute<960 else 'night'
-        value=wait(lambda s:s['period']==period and s['mode']==1 and s['theme']==7 and
+        value=wait(lambda s:s['period']==period and s['mode']==1 and
+            s['theme']==s['ui']['selector_presets'][0 if period=='day' else 1] and
             s['active_bg']==s[period+'_bg'] and s['active_accent']==s[period+'_accent'] and
             s['imgui_bg']==s['active_bg'],'scheduled colors rendered')
         settle()

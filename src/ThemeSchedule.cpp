@@ -3,6 +3,7 @@
 #include "ThemeSchedulePaletteCodec.h"
 #include "BuiltinThemeScheme.h"
 #include "AppState.h"
+#include "UIRenderer.h"
 #include "platform/filesystem.h"
 #include <array>
 #include <ctime>
@@ -17,6 +18,7 @@ struct Runtime {
     bool editorWasOpen = false;
     std::filesystem::path settingsFile;
     std::array<ThemeColorScheme, 2> palettes;
+    std::array<std::optional<AppTheme>, 2> builtinThemes;
     std::array<std::string, 2> warnings;
     std::optional<Period> applied;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
@@ -24,6 +26,13 @@ struct Runtime {
 #endif
 } g_runtime;
 size_t Index(Period period) { return period == Period::Day ? 0 : 1; }
+std::optional<AppTheme> BuiltinThemeForPalette(const ThemeColorScheme& palette) {
+    for (const auto theme : {AppTheme::Dark, AppTheme::RoseCedar,
+            AppTheme::LapisBlue, AppTheme::Ocean, AppTheme::JadeMist}) {
+        if (PalettesEqual(palette, MakeBuiltinScheme(theme))) return theme;
+    }
+    return std::nullopt;
+}
 std::optional<Period> ReadPeriod() {
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     if (g_runtime.qaMinute >= 0) return PeriodAtLocalTime(g_runtime.qaMinute / 60, g_runtime.qaMinute % 60);
@@ -54,12 +63,14 @@ void Initialize(const std::string& path) {
     for (const auto period : {Period::Day, Period::Night}) {
         const auto index = Index(period);
         const auto file = PaletteFilePath(g_runtime.settingsFile, period);
-        if (Platform::FileSystem::ProbePath(file.u8string()) ==
-            Platform::FileSystem::PathStatus::Missing) continue;
-        auto& warning = g_runtime.warnings[index];
-        std::string json;
-        if (ReadPaletteJson(g_runtime.settingsFile, period, json, warning))
-            DecodePalette(json, period, g_runtime.palettes[index], warning);
+        if (Platform::FileSystem::ProbePath(file.u8string()) !=
+            Platform::FileSystem::PathStatus::Missing) {
+            auto& warning = g_runtime.warnings[index];
+            std::string json;
+            if (ReadPaletteJson(g_runtime.settingsFile, period, json, warning))
+                DecodePalette(json, period, g_runtime.palettes[index], warning);
+        }
+        g_runtime.builtinThemes[index] = BuiltinThemeForPalette(g_runtime.palettes[index]);
     }
     g_runtime.ready = true;
 }
@@ -89,13 +100,20 @@ void Tick(AppState& state, bool force) {
         g_runtime.applied.reset();
         return;
     }
+    const auto builtin = g_runtime.builtinThemes[Index(*wanted)];
+    const auto selectedTheme = builtin.value_or(AppTheme::Custom);
     if (!ShouldApply({*wanted, g_runtime.applied,
-            state.settings.theme != AppTheme::Custom || state.settings.useCustomColors || !ThemeColors::customized(),
+            state.settings.theme != selectedTheme || state.settings.useCustomColors ||
+                (builtin ? ThemeColors::customized() : !ThemeColors::customized()),
             force || g_runtime.dirty || editorClosed, state.showThemeEditor})) return;
-    state.settings.theme = AppTheme::Custom;
+    state.settings.theme = selectedTheme;
     state.settings.useCustomColors = false;
-    ThemeColors::activateCustomScheme(Palette(*wanted));
-    ThemeColors::applyToImGui();
+    if (builtin) {
+        ApplyTheme(*builtin);
+    } else {
+        ThemeColors::activateCustomScheme(Palette(*wanted));
+        ThemeColors::applyToImGui();
+    }
     ThemeColors::markPendingUiChromeResync();
     g_runtime.applied = wanted;
     g_runtime.dirty = false;
@@ -105,6 +123,7 @@ bool SavePalette(Period period, const ThemeColorScheme& scheme, std::string& err
     if (!ValidatePalette(scheme, period, error)) return false;
     if (!SavePaletteJson(g_runtime.settingsFile, period, EncodePalette(scheme), error)) return false;
     g_runtime.palettes[Index(period)] = scheme;
+    g_runtime.builtinThemes[Index(period)] = BuiltinThemeForPalette(scheme);
     g_runtime.warnings[Index(period)].clear();
     Invalidate();
     return true;
