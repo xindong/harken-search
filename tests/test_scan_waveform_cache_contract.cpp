@@ -2984,6 +2984,27 @@ static int testScanStatsKeepCategoriesWhenDetailsAreCapped() {
                                 allSave.errorMessageCounts[i] == 500;
     check(specificCauseVisible && allSave.errorMessages.size() == 32 && allSave.errors == 932,
           "generic save failures cannot displace a specific write cause", failures);
+    ScanStats allNetwork;
+    for (int i = 0; i < 32; ++i) {
+        ++allNetwork.unreachable;
+        allNetwork.addError("Scan_NetworkLibraryUnreachable");
+    }
+    allNetwork.addError("Database write failed during scan: forced failure", 500);
+    bool hasNetworkSignal = false;
+    bool hasNetworkWriteCause = false;
+    for (const auto& detail : allNetwork.errorMessages) {
+        hasNetworkSignal |= detail == "Scan_NetworkLibraryUnreachable";
+        hasNetworkWriteCause |= detail.find("Database write failed during scan") != std::string::npos;
+    }
+    check(hasNetworkSignal && hasNetworkWriteCause && allNetwork.errorMessages.size() == 32 &&
+          allNetwork.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Path)] == 32 &&
+          allNetwork.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
+          "full network detail log retains both the network signal and a later write cause", failures);
+    AppState displayed;
+    displayed.addScanErrors(allNetwork.errorMessages, allNetwork.errorMessageCounts,
+                            allNetwork.errorCategoryCounts, allNetwork.unreachable);
+    check(displayed.getScanUnreachableCount() == 32,
+          "network failure count stays complete when a detail is displaced", failures);
     return failures;
 }
 

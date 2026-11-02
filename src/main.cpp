@@ -32211,7 +32211,7 @@ void RenderUI(AppState& state) {
                         state.scanErrorCount = combined.errors;
                         state.scanIngestedCount = combined.ingested;
                         state.scanIngestDurationMs = combined.ingestDurationMs;
-                        state.addScanErrors(combined.errorMessages, combined.errorMessageCounts, combined.errorCategoryCounts);
+                        state.addScanErrors(combined.errorMessages, combined.errorMessageCounts, combined.errorCategoryCounts, combined.unreachable);
                         DIAG_SYSTEM_FMT("Scan",
                                         "ScanIndexComplete: total=%d added=%d updated=%d skipped=%d removed=%d errors=%d ingested=%d ingestMs=%lld cancelled=%d",
                                         combined.total,

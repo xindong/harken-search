@@ -251,9 +251,12 @@ struct ScanStats {
             if ((currentPriority == 3 && networkDetails == 1) ||
                 (currentPriority == 2 && writeCauses == 1))
                 continue;
-            if (currentPriority <= incomingPriority && currentPriority < replacementPriority) {
+            // Duplicate network details can give way to a new write cause;
+            // their full count is carried separately from the display cap.
+            const int evictionPriority = currentPriority == 3 && networkDetails > 1 ? 1 : currentPriority;
+            if (evictionPriority <= incomingPriority && evictionPriority < replacementPriority) {
                 replacement = i;
-                replacementPriority = currentPriority;
+                replacementPriority = evictionPriority;
             }
         }
         if (replacement < errorMessages.size()) {
