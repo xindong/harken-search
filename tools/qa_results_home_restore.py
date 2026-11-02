@@ -28,10 +28,11 @@ def run(args):
     runtime = root / 'profile/runtime'
     runtime.mkdir(parents=True, exist_ok=True)
     driver = Driver(runtime, out)
-    desktop = PrivateDesktop()
     process = None
     report = {'exe': str(exe), 'exe_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
               'started_at': datetime.now(timezone.utc).isoformat(), 'cases': []}
+    desktop = PrivateDesktop()
+    failure = None
 
     def cmd(**payload):
         return driver.command(payload)
@@ -116,7 +117,7 @@ def run(args):
         state = cmd(cmd='get_state')
         return {key: state[key] for key in ('db_path', 'search_text', 'result_count',
             'selected_file_id', 'selected_path', 'play_state', 'current_file',
-            'folder_filter', 'metadata_filters')}
+            'folder_filter', 'metadata_filters', 'playback_position')}
 
     def populate_library():
         fixture = root / 'results-home-fixture'
@@ -156,7 +157,8 @@ def run(args):
         wait_state(driver, lambda s: s['audio_loaded'] and s['selected_file_id'] > 0,
                    'Selected real scanned audio')
         cmd(cmd='play')
-        wait_state(driver, lambda s: s['play_state'] == 'playing', 'Playback started')
+        wait_state(driver, lambda s: s['play_state'] == 'playing' and
+                   s['playback_position'] >= .05, 'Playback reached a nonzero position')
         cmd(cmd='pause')
         wait_state(driver, lambda s: s['play_state'] == 'paused', 'Playback paused')
         report['business_before'] = business_state()
@@ -238,6 +240,8 @@ def run(args):
             cmd(cmd='play')
             wait_state(driver, lambda s: s['play_state'] == 'playing', 'Active playback')
             playing_before = business_state()
+            playing_started = time.monotonic()
+            duration = cmd(cmd='get_state')['audio_duration']
             float_results(original)
             begin()
             x, y = original['x'] + original['w'] * .5, original['y'] + 10
@@ -247,7 +251,13 @@ def run(args):
             returned = settled(lambda s: not s['dragging'])
             home(returned, original)
             report['playing_after'] = business_state()
-            assert report['playing_after'] == playing_before, 'Return changed active playback/selection/filter state'
+            report['playing_before'] = playing_before
+            elapsed = time.monotonic() - playing_started
+            after = report['playing_after']
+            assert all(after[key] == value for key, value in playing_before.items()
+                       if key != 'playback_position'), 'Return changed active playback/selection/filter state'
+            advance = after['playback_position'] - playing_before['playback_position']
+            assert 0 < advance <= elapsed / duration + .02, ('Playback reset or jumped', advance, elapsed)
             record('playing-returned', returned)
             cmd(cmd='pause')
         if args.restart:
@@ -255,6 +265,7 @@ def run(args):
             assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
             assert win32process.GetExitCodeProcess(process) == 0
             process.Close()
+            process = None
             process, pid = desktop.start(exe)
             identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
             assert identity['pid'] == pid and Path(identity['exe_path']).resolve() == exe, identity
@@ -267,22 +278,51 @@ def run(args):
             home(restarted, original)
             record('restarted', restarted)
         report['status'] = 'passed'
-    except Exception as error:
+    except BaseException as error:
         report['status'] = 'failed'
         report['error'] = repr(error)
-        raise
+        failure = error
     finally:
-        if process is not None:
+        cleanup_errors = []
+
+        def cleanup(action):
             try:
-                if win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
-                    cmd(cmd='info_edit_input', action='exit')
-                    assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
-                report['process_exit_code'] = win32process.GetExitCodeProcess(process)
-            finally:
-                process.Close()
-        report['finished_at'] = datetime.now(timezone.utc).isoformat()
-        (out / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-        desktop.close()
+                action()
+            except Exception as error:
+                cleanup_errors.append(repr(error))
+
+        def stop_process():
+            if win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
+                cmd(cmd='info_edit_input', action='exit')
+                assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0, 'QA process did not exit'
+            report['process_exit_code'] = win32process.GetExitCodeProcess(process)
+            assert report['process_exit_code'] == 0, 'QA process failed during exit'
+
+        def stop_unresponsive_process():
+            # Only this runner's CreateProcess handle is eligible for fallback.
+            # Do not leave a hung QA app on the private desktop or find processes by name.
+            if win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
+                report['forced_termination'] = True
+                win32process.TerminateProcess(process, 1)
+                assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0, 'QA process termination timed out'
+
+        try:
+            if process is not None:
+                cleanup(stop_process)
+                cleanup(stop_unresponsive_process)
+                cleanup(process.Close)
+        finally:
+            cleanup(desktop.close)
+            report['finished_at'] = datetime.now(timezone.utc).isoformat()
+            if cleanup_errors:
+                report['status'] = 'failed'
+                report['cleanup_errors'] = cleanup_errors
+            cleanup(lambda: (out / 'report.json').write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8'))
+        if failure is None and cleanup_errors:
+            failure = RuntimeError('QA cleanup failed: ' + '; '.join(cleanup_errors))
+    if failure is not None:
+        raise failure
     print(json.dumps({'status': report['status'], 'report': str(out / 'report.json')}))
 
 
