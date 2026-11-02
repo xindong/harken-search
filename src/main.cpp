@@ -14539,6 +14539,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
         state.activeUserCollectionIdx = -1;
     }
     AutoRenameTabBySearch(state, "");
+    state.uiState.pendingFolderPath.clear();
     state.folderFilterActive = false;
     state.selectedFolderPath.clear();
     state.coverFilterActive = false;

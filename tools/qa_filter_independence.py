@@ -322,6 +322,29 @@ def run(exe, root, output, mode):
                       s["total_count"] == full_total and s["tabs"]["active_name"] == "全部文件")
         record("refresh-exits-user-collection", state)
 
+        # Click Refresh before a folder's deferred selection applies.
+        # The product debounce is 150 ms; the QA command extends this window
+        # for stable event ordering without changing the selection logic.
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        state = until("format before queued folder", lambda s: s["metadata_filters"]["format"] == "WAV")
+        rect = state["qa_filter_ui_rects"]["refresh"]
+        x, y = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+        started = time.monotonic()
+        driver.command({"cmd": "queue_folder_tree_selection", "path": str(isolated_folder),
+                        "defer_for_refresh": True})
+        driver.command({"cmd": "folder_search_pointer", "phase": "down", "x": x, "y": y})
+        time.sleep(.015)
+        driver.command({"cmd": "folder_search_pointer", "phase": "up", "x": x, "y": y})
+        elapsed_ms = (time.monotonic() - started) * 1000
+        assert elapsed_ms < 300, f"refresh missed the queued-folder window: {elapsed_ms:.1f} ms"
+        time.sleep(.55)
+        state = state_ready()
+        record("refresh-cancels-queued-folder", state)
+        cases[-1]["queued_refresh_elapsed_ms"] = elapsed_ms
+        assert state["metadata_filters"]["format"] == "", "Refresh did not clear the active format filter"
+        assert not state["folder_filter"]["active"], "queued folder filter reapplied after Refresh"
+        assert state["total_count"] == full_total, "Refresh did not restore all files"
+
         # A completed full scan may refresh results, but only the later manual
         # click should clear the user's active filters.
         fixture = root / ("refresh-full-scan-fixture-" + uuid.uuid4().hex[:8])

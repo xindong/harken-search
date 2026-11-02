@@ -5862,7 +5862,9 @@ static void PollQaCommandFile(AppState& state) {
         } else if (!path.empty()) {
             // The next RenderUI frame applies the same deferred folder-tree path.
             state.uiState.pendingFolderPath = path;
-            state.uiState.pendingFolderTime = ImGui::GetTime() - 0.2;
+            const bool deferForRefresh = getBool(raw, "defer_for_refresh", false);
+            // Extend the QA window so the refresh can deterministically run first.
+            state.uiState.pendingFolderTime = ImGui::GetTime() + (deferForRefresh ? 0.2 : -0.2);
             result = "{\"ok\":true,\"cmd\":\"queue_folder_tree_selection\"}";
         } else {
             result = "{\"ok\":false,\"error\":\"path missing\"}";
