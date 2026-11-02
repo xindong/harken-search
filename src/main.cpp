@@ -14534,6 +14534,10 @@ static void ClearAllFiltersForShowAll(AppState& state) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
     state.searchBuffer[0] = '\0';
+    if (state.viewMode == ViewMode::Database) {
+        state.activeSmartCollection = SmartCollection::None;
+        state.activeUserCollectionIdx = -1;
+    }
     AutoRenameTabBySearch(state, "");
     state.folderFilterActive = false;
     state.selectedFolderPath.clear();

@@ -5212,6 +5212,9 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"path\":\"" + jsonEscape(state.coverFilterPath) + "\",";
         result += "\"mode\":\"" + jsonEscape(coverFilterValue(state.coverFilterIndex)) + "\"},";
 #if ARIS_PREVIEW_ISOLATION
+        result += "\"qa_collection\":{";
+        result += "\"smart\":" + std::to_string(static_cast<int>(state.activeSmartCollection)) + ",";
+        result += "\"user_index\":" + std::to_string(state.activeUserCollectionIdx) + "},";
         result += "\"qa_filter_ui_rects\":{";
         bool firstQaFilterRect = true;
         for (const auto& [key, rect] : state.qaFilterUiRects) {
@@ -5742,6 +5745,40 @@ static void PollQaCommandFile(AppState& state) {
         }
 #else
         result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
+
+    } else if (cmd == "folder_search_collection") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string kind = getStr(raw, "kind");
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            (kind != "recently_played" && kind != "user")) {
+            result = R"({"ok":false,"error":"invalid_folder_search_collection"})";
+        } else {
+            state.viewMode = ViewMode::Database;
+            state.settings.activeSidebarSection = 0;
+            if (kind == "recently_played") {
+                state.activeSmartCollection = SmartCollection::RecentlyPlayed;
+                state.activeUserCollectionIdx = -1;
+            } else {
+                AppState::UserSmartCollection collection;
+                strncpy_s(collection.name, sizeof(collection.name), "__qa_refresh_collection__", _TRUNCATE);
+                AppState::CollectionRule rule;
+                rule.field = static_cast<int>(AppState::CRuleField::Artist);
+                rule.condition = static_cast<int>(AppState::CRuleCond::Equals);
+                strncpy_s(rule.value, sizeof(rule.value), "__qa_no_artist__", _TRUNCATE);
+                collection.rules.push_back(rule);
+                state.userCollections.push_back(collection);
+                state.activeSmartCollection = SmartCollection::None;
+                state.activeUserCollectionIdx = static_cast<int>(state.userCollections.size()) - 1;
+            }
+            cancelPendingSearchForQaMutation();
+            RefreshSearchResults(state, true);
+            state.syncToTab();
+            result = R"({"ok":true,"cmd":"folder_search_collection"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview only"})";
 #endif
 
     } else if (cmd == "folder_search_sidebar") {

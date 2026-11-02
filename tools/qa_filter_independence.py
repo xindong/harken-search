@@ -301,6 +301,27 @@ def run(exe, root, output, mode):
                       s["qa_filter_extras"]["all_file_types"] and s["total_count"] >= 11000)
         record("explicit-clear-all", state)
 
+        full_total = state["total_count"]
+        driver.command({"cmd": "folder_search_collection", "kind": "recently_played"})
+        state = until("recently played collection", lambda s:
+                      s["qa_collection"]["smart"] == 2 and s["total_count"] < full_total)
+        record("recently-played-before-refresh", state)
+        click("refresh")
+        state = until("refresh exits recently played", lambda s:
+                      s["qa_collection"] == {"smart": 0, "user_index": -1} and
+                      s["total_count"] == full_total and s["tabs"]["active_name"] == "全部文件")
+        record("refresh-exits-recently-played", state)
+
+        driver.command({"cmd": "folder_search_collection", "kind": "user"})
+        state = until("user collection", lambda s:
+                      s["qa_collection"]["user_index"] >= 0 and s["total_count"] == 0)
+        record("user-collection-before-refresh", state)
+        click("refresh")
+        state = until("refresh exits user collection", lambda s:
+                      s["qa_collection"] == {"smart": 0, "user_index": -1} and
+                      s["total_count"] == full_total and s["tabs"]["active_name"] == "全部文件")
+        record("refresh-exits-user-collection", state)
+
         # A completed full scan may refresh results, but only the later manual
         # click should clear the user's active filters.
         fixture = root / ("refresh-full-scan-fixture-" + uuid.uuid4().hex[:8])
