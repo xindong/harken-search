@@ -58,7 +58,7 @@ def run(exe, root, output, mode):
     startup.wShowWindow = win32con.SW_SHOWNOACTIVATE
     process = subprocess.Popen([str(exe)], cwd=exe.parent, startupinfo=startup, env=dict(
         os.environ, AURA_HARNESS_MULTI_INSTANCE="1", AURA_HARNESS_LANE_KIND="folder-search",
-        AURA_DISABLE_SINGLE_INSTANCE="1"))
+        AURA_DISABLE_SINGLE_INSTANCE="1", HARKEN_QA_SEARCH_DELAY_MS="500"))
     hwnd = None
     cases = []
     failure = None
@@ -429,6 +429,34 @@ def run(exe, root, output, mode):
         assert state["tabs"]["active_locked"], "manual refresh removed the tab lock"
         assert state["metadata_filters"]["format"] == "", "locked tab restored stale filters after Refresh"
         assert state["total_count"] == full_total, "locked tab did not keep the refreshed full list"
+
+        # Supersede a locked tab's explicit Refresh before its query completes.
+        # Returning to the tab must rebuild the saved reset view, not old WAV filters.
+        driver.command({"cmd": "set_tab_lock", "locked": False})
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        until("supersede baseline", lambda s: s["metadata_filters"]["format"] == "WAV")
+        driver.command({"cmd": "set_tab_lock", "locked": True})
+        rect = state_ready()["qa_filter_ui_rects"]["refresh"]
+        x, y = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+        driver.command({"cmd": "folder_search_pointer", "phase": "down", "x": x, "y": y})
+        time.sleep(.08)
+        driver.command({"cmd": "folder_search_pointer", "phase": "up", "x": x, "y": y})
+        deadline = time.monotonic() + 3
+        while True:
+            mid = driver.command({"cmd": "get_state"})
+            if mid["tabs"]["explicit_refresh_pending"] and mid["pending_search_request_id"]:
+                break
+            assert time.monotonic() < deadline, "could not observe pending locked-tab Refresh"
+            time.sleep(.01)
+        driver.command({"cmd": "set_metadata_filter", "format": "MP3"})
+        state_ready()
+        driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        until("supersede switch away", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = state_ready()
+        record("locked-tab-refresh-superseded", state)
+        assert state["metadata_filters"]["format"] == "", "superseded locked refresh restored old WAV filter"
+        assert state["total_count"] == full_total, "superseded locked refresh did not restore full list"
     except Exception as exc:
         failure = repr(exc)
         raise

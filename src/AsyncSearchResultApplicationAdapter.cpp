@@ -41,7 +41,11 @@ void AsyncSearchResultApplicationAdapter::apply() {
             state_.pendingFacetRequestId != 0) return;
         ListTab& tab = state_.currentTab();
         if (!tab.explicitRefreshPending) return;
-        state_.syncToTab();
+        if (result_.success &&
+            tab.explicitRefreshQueryGeneration == state_.filterQueryGeneration) {
+            state_.syncToTab();
+            tab.dataUnloaded = false;
+        }
         tab.explicitRefreshPending = false;
     };
     const double queryDurationMs =

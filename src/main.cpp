@@ -14535,7 +14535,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
     if (!state.listTabs.empty() && state.currentTab().isLocked) {
         state.currentTab().explicitRefreshPending = true;
-        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration;
     }
     state.searchBuffer[0] = '\0';
     if (state.viewMode == ViewMode::Database) {
@@ -14577,6 +14577,13 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.sameFolderScanDone = false;
     state.sameFolderScanPath.clear();
 
+    if (!state.listTabs.empty() && state.currentTab().isLocked) {
+        // Save the reset filters before an async result can be superseded.
+        // Keep the snapshot reloadable until this Refresh actually settles.
+        state.syncToTab();
+        state.currentTab().dataUnloaded = true;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+    }
     aura::cover_wall::RequestDisplayRefresh(state);
 }
 
