@@ -216,12 +216,14 @@ struct ScanStats {
     int waveformPendingFixedDone = 0;
     int waveformLongDetailSkipped = 0;
     std::vector<std::string> errorMessages;
+    std::vector<int> errorMessageCounts;
 
     void addError(std::string message = {}, int count = 1) {
         if (count <= 0) return;
         errors += count;
         if (!message.empty() && errorMessages.size() < 32) {
             errorMessages.push_back(std::move(message));
+            errorMessageCounts.push_back(count);
         }
     }
 
@@ -243,9 +245,11 @@ struct ScanStats {
         waveformCacheReused += other.waveformCacheReused;
         waveformPendingFixedDone += other.waveformPendingFixedDone;
         waveformLongDetailSkipped += other.waveformLongDetailSkipped;
-        for (const auto& msg : other.errorMessages) {
+        for (size_t i = 0; i < other.errorMessages.size(); ++i) {
             if (errorMessages.size() >= 32) break;
-            if (!msg.empty()) errorMessages.push_back(msg);
+            if (other.errorMessages[i].empty()) continue;
+            errorMessages.push_back(other.errorMessages[i]);
+            errorMessageCounts.push_back(i < other.errorMessageCounts.size() ? other.errorMessageCounts[i] : 1);
         }
     }
 };

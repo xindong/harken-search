@@ -2907,6 +2907,9 @@ static int testScanWriteInfrastructureFailureCountsDiscoveredFiles() {
           "forced write failure accounts every discovered file as failed", failures);
     check(stats.failedFiles == stats.total,
           "forced write failure exposes a file-level failure count", failures);
+    check(stats.errorMessages.size() == 1 && stats.errorMessageCounts.size() == 1 &&
+          stats.errorMessageCounts.front() == stats.total,
+          "forced write failure retains the number of files represented by its one message", failures);
     check(db.getFileCount() == 0, "forced write failure leaves database empty", failures);
 
     db.close();

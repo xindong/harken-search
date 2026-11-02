@@ -18,6 +18,7 @@
 #include <chrono>
 #include <future>
 #include <algorithm>
+#include <utility>
 #include <unordered_map>
 
 // OpenGL types — use typedef to avoid pulling in GL headers (which need
@@ -2002,25 +2003,36 @@ struct AppState {
     }
     std::mutex scanErrorMutex;
     std::vector<std::string> scanErrorMessages_;  // guarded by scanErrorMutex
+    std::vector<int> scanErrorMessageCounts_;      // guarded by scanErrorMutex; aligned with messages
     void clearScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         scanErrorMessages_.clear();
+        scanErrorMessageCounts_.clear();
     }
     void addScanError(const std::string& s) {
         if (s.empty()) return;
         std::lock_guard<std::mutex> lk(scanErrorMutex);
-        if (scanErrorMessages_.size() < 32) scanErrorMessages_.push_back(s);
+        if (scanErrorMessages_.size() < 32) {
+            scanErrorMessages_.push_back(s);
+            scanErrorMessageCounts_.push_back(1);
+        }
     }
-    void addScanErrors(const std::vector<std::string>& messages) {
+    void addScanErrors(const std::vector<std::string>& messages, const std::vector<int>& counts = {}) {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
-        for (const auto& s : messages) {
+        for (size_t i = 0; i < messages.size(); ++i) {
             if (scanErrorMessages_.size() >= 32) break;
-            if (!s.empty()) scanErrorMessages_.push_back(s);
+            if (messages[i].empty()) continue;
+            scanErrorMessages_.push_back(messages[i]);
+            scanErrorMessageCounts_.push_back(i < counts.size() ? counts[i] : 1);
         }
     }
     std::vector<std::string> getScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         return scanErrorMessages_;
+    }
+    std::pair<std::vector<std::string>, std::vector<int>> getScanErrorSnapshot() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return {scanErrorMessages_, scanErrorMessageCounts_};
     }
     std::string lastScannedPath;
     std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.

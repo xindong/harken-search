@@ -173,6 +173,26 @@ int main(int argc, char** argv) {
     Check(ClassifyScanFailure("No audio samples: X:/a.wav") == ScanFailureCategory::Empty, "empty reason");
     Check(ClassifyScanFailure("Audio file too small to decode: X:/zero.wav") == ScanFailureCategory::Empty, "real scanner empty-file reason");
     Check(ClassifyScanFailure("Database write failed during scan") == ScanFailureCategory::Save, "save reason");
+    const auto abortedWrite = BuildScanFailureSummary({"Scan aborted after database write failure; queued files were not imported."}, 1);
+    Check(abortedWrite[static_cast<size_t>(ScanFailureCategory::Save)] == 1 &&
+        abortedWrite[static_cast<size_t>(ScanFailureCategory::Other)] == 0,
+        "queued files after database write failure count as save failures");
+    const auto countedWrite = BuildScanFailureSummary({"Database write failed during scan: forced failure"}, 500, {500});
+    Check(countedWrite[static_cast<size_t>(ScanFailureCategory::Save)] == 500 &&
+        countedWrite[static_cast<size_t>(ScanFailureCategory::Other)] == 0,
+        "one logged database write error retains its 500 failed-file count");
+    const auto countedAbort = BuildScanFailureSummary({"Scan aborted after database write failure; queued files were not imported."}, 4, {4});
+    Check(countedAbort[static_cast<size_t>(ScanFailureCategory::Save)] == 4 &&
+        countedAbort[static_cast<size_t>(ScanFailureCategory::Other)] == 0,
+        "queued write abort retains its represented-file count");
+    const auto countedAndUnknown = BuildScanFailureSummary({"Database write failed during scan: forced failure"}, 5, {3});
+    Check(countedAndUnknown[static_cast<size_t>(ScanFailureCategory::Save)] == 3 &&
+        countedAndUnknown[static_cast<size_t>(ScanFailureCategory::Other)] == 2,
+        "unrecorded failures remain unknown rather than inheriting a known reason");
+    Check(ScanFailureDetailsOmitted({"Database write failed during scan: forced failure"}, 500, {500}) == 0,
+        "one message representing 500 files is not reported as 499 omitted details");
+    Check(ScanFailureDetailsOmitted({"Database write failed during scan: forced failure"}, 5, {3}) == 2,
+        "unknown failures still appear as omitted details");
     Check(ClassifyScanFailure("Unexpected failure") == ScanFailureCategory::Other, "unclassified remains other");
     Check(ScanFailureSubject("Failed to read audio metadata: X:/音效/door.wav (bad tag)") == "door.wav", "failure row exposes filename");
     Check(ScanFailureSubject("Database write failed during scan").empty(), "no invented filename");

@@ -132,7 +132,7 @@ class NetworkPathContract(unittest.TestCase):
         self.assertIn("L(Scan_NetworkLibraryUnreachable)", MAIN)
         result = MAIN.split("if (BeginTransientScrollbarPopupModal(scanResultPopup", 1)[1].split("// New playlist dialog", 1)[0]
         self.assertIn("L(Main_FailedFmt), scanView.failed", result)
-        self.assertIn("BuildScanFailureSummary(scanErrorSnapshot, scanView.failed)", result)
+        self.assertIn("BuildScanFailureSummary(scanErrorSnapshot, scanView.failed, scanErrorCounts)", result)
         self.assertIn("L(ScanUi_FailedPath)", result)
         self.assertIn('error.find("Scan_NetworkLibraryUnreachable")', result)
         self.assertIn("L(Scan_NetworkLibraryUnreachable)", result)

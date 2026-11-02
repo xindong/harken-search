@@ -32211,7 +32211,7 @@ void RenderUI(AppState& state) {
                         state.scanErrorCount = combined.errors;
                         state.scanIngestedCount = combined.ingested;
                         state.scanIngestDurationMs = combined.ingestDurationMs;
-                        state.addScanErrors(combined.errorMessages);
+                        state.addScanErrors(combined.errorMessages, combined.errorMessageCounts);
                         DIAG_SYSTEM_FMT("Scan",
                                         "ScanIndexComplete: total=%d added=%d updated=%d skipped=%d removed=%d errors=%d ingested=%d ingestMs=%lld cancelled=%d",
                                         combined.total,
@@ -32773,7 +32773,7 @@ void RenderUI(AppState& state) {
     if (BeginTransientScrollbarPopupModal(scanResultPopup, nullptr, scanDialogFlags)) {
         { ReadingTextScope readingResult;
         using Phase = HarkenSearch::ScanDialogPhase;
-        const auto scanErrorSnapshot = state.getScanErrors();
+        const auto [scanErrorSnapshot, scanErrorCounts] = state.getScanErrorSnapshot();
         const bool networkUnreachable = std::any_of(scanErrorSnapshot.begin(), scanErrorSnapshot.end(),
             [](const std::string& error) { return error.find("Scan_NetworkLibraryUnreachable") != std::string::npos; });
         const bool rollbackFailed = !scanIsCleanup && scanView.phase == Phase::Failed &&
@@ -32816,7 +32816,7 @@ void RenderUI(AppState& state) {
             if (showFailures) {
                 ImGui::TextColored(TransportContrast::ForSurface(scanTheme.volumeClipColor, scanDialogBg, 4.5), L(Main_FailedFmt), scanView.failed);
                 if (!rollbackFailed) {
-                    const auto reasons = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, scanView.failed);
+                    const auto reasons = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, scanView.failed, scanErrorCounts);
                     const char* labels[] = {L(ScanUi_FailedPath), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty), L(ScanUi_FailedSave), L(ScanUi_FailedOther)};
                     for (size_t i = 0; i < reasons.size(); ++i) {
                         ImGui::Text("%s  %d", labels[i], reasons[i]);
@@ -32888,7 +32888,8 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::PopID();
                 }
-                if (scanView.failed > int(scanErrorSnapshot.size())) ImGui::TextWrapped(L(Main_MoreErrorsOmittedFmt), scanView.failed - int(scanErrorSnapshot.size()));
+                const int omittedDetails = HarkenSearch::ScanFailureDetailsOmitted(scanErrorSnapshot, scanView.failed, scanErrorCounts);
+                if (omittedDetails > 0) ImGui::TextWrapped(L(Main_MoreErrorsOmittedFmt), omittedDetails);
                 ImGui::EndChild();
                 ImGui::Separator();
                 if (aura::ui::ActionButton(L(ScanUi_ReturnResult), ImVec2(-1, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();

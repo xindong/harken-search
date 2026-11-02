@@ -3308,7 +3308,7 @@ static bool BeginFolderScan(
             state.scanRemovedCount = combined.removed;
             state.scanErrorCount = combined.errors;
             state.scanIngestDurationMs = combined.ingestDurationMs;
-            state.addScanErrors(combined.errorMessages);
+            state.addScanErrors(combined.errorMessages, combined.errorMessageCounts);
             if (precomputeWaveforms && !cancelled) {
                 state.scanWorkflowStage.store(
                     HarkenSearch::ScanWorkflowStage::CachingMiniWaveforms,

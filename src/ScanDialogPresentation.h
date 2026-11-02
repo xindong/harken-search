@@ -232,23 +232,36 @@ inline ScanFailureCategory ClassifyScanFailure(const std::string& error) {
     if (starts("Failed to decode") || starts("Failed to read audio") || starts("Cannot decode") ||
         starts("Cannot read audio") || starts("Failed to open audio"))
         return ScanFailureCategory::Read;
-    if (starts("Database write failed") || starts("Failed to save") || starts("Failed to seed") ||
+    if (starts("Database write failed") || starts("Scan aborted after database write failure") ||
+        starts("Failed to save") || starts("Failed to seed") ||
         starts("Failed to snapshot rollback") || starts("Scan cancelled but rollback failed"))
         return ScanFailureCategory::Save;
     return ScanFailureCategory::Other;
 }
-inline std::array<int, 5> BuildScanFailureSummary(const std::vector<std::string>& errors, int total) {
+inline std::array<int, 5> BuildScanFailureSummary(const std::vector<std::string>& errors, int total,
+                                                  const std::vector<int>& errorCounts = {}) {
     std::array<int, 5> counts{};
     int remaining = std::max(0, total);
-    for (const auto& error : errors) {
+    for (size_t i = 0; i < errors.size(); ++i) {
         if (remaining == 0) break;
-        if (error.empty()) continue;
-        ++counts[static_cast<size_t>(ClassifyScanFailure(error))];
-        --remaining;
+        if (errors[i].empty()) continue;
+        const int represented = std::min(remaining, i < errorCounts.size() ? std::max(0, errorCounts[i]) : 1);
+        counts[static_cast<size_t>(ClassifyScanFailure(errors[i]))] += represented;
+        remaining -= represented;
     }
     // The existing scan error log is capped. Never invent reasons for omissions.
     counts[static_cast<size_t>(ScanFailureCategory::Other)] += remaining;
     return counts;
+}
+
+inline int ScanFailureDetailsOmitted(const std::vector<std::string>& errors, int total,
+                                     const std::vector<int>& errorCounts = {}) {
+    int remaining = std::max(0, total);
+    for (size_t i = 0; i < errors.size() && remaining > 0; ++i) {
+        if (errors[i].empty()) continue;
+        remaining -= std::min(remaining, i < errorCounts.size() ? std::max(0, errorCounts[i]) : 1);
+    }
+    return remaining;
 }
 
 } // namespace HarkenSearch
