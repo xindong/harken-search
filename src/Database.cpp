@@ -1922,6 +1922,7 @@ bool Database::markBackfillPending(int64_t fileId, int kind) {
 }
 
 bool Database::clearBackfillPending(int64_t fileId, int kind) {
+    DiagUiOperationScope diagOperation("DB.ClearBackfillPending");
     if (!m_db || fileId <= 0) return false;
     static const std::string sql =
         "DELETE FROM backfill_pending WHERE file_id = ? AND kind = ?";
@@ -3331,6 +3332,7 @@ bool Database::exitFastScanMode() {
 }
 
 bool Database::executeSQL(const std::string& sql) {
+    DiagUiOperationScope diagOperation("DB.ExecuteSQL");
     if (!m_db) return false;
 
     char* errMsg = nullptr;
@@ -5315,6 +5317,7 @@ static SearchMatchSource DeriveSearchMatchSource(const AudioRecord& record,
 }
 
 bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& updates) {
+    DiagUiOperationScope diagOperation("DB.UpdateCoverKeys");
     if (!m_db) return false;
     if (updates.empty()) return true;
 
@@ -5362,6 +5365,10 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
         return false;
     }
 
+    const auto stepUpdate = [](sqlite3_stmt* statement) {
+        DiagUiOperationScope step("DB.CoverKeys.SqliteStep");
+        return sqlite3_step(statement);
+    };
     for (const auto& u : updates) {
         if (u.filePath.empty()) continue;
 
@@ -5374,7 +5381,7 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
             sqlite3_bind_text(stBoth, 4, u.folderCoverSrcPath.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int64(stBoth, 5, u.folderCoverSrcMtime);
             sqlite3_bind_text(stBoth, 6, u.filePath.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(stBoth) != SQLITE_DONE) {
+            if (stepUpdate(stBoth) != SQLITE_DONE) {
                 m_lastError = sqlite3_errmsg(m_db);
                 rollbackTransaction();
                 sqlite3_finalize(stBoth);
@@ -5388,7 +5395,7 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
             sqlite3_bind_text(stEmb, 1, u.embeddedCoverKey.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int64(stEmb, 2, u.embeddedCoverKeyMtime);
             sqlite3_bind_text(stEmb, 3, u.filePath.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(stEmb) != SQLITE_DONE) {
+            if (stepUpdate(stEmb) != SQLITE_DONE) {
                 m_lastError = sqlite3_errmsg(m_db);
                 rollbackTransaction();
                 sqlite3_finalize(stBoth);
@@ -5403,7 +5410,7 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
             sqlite3_bind_text(stFolder, 2, u.folderCoverSrcPath.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_int64(stFolder, 3, u.folderCoverSrcMtime);
             sqlite3_bind_text(stFolder, 4, u.filePath.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(stFolder) != SQLITE_DONE) {
+            if (stepUpdate(stFolder) != SQLITE_DONE) {
                 m_lastError = sqlite3_errmsg(m_db);
                 rollbackTransaction();
                 sqlite3_finalize(stBoth);
@@ -5419,6 +5426,7 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
     sqlite3_finalize(stFolder);
     bool committed = commitTransaction();
     if (committed) {
+        DiagUiOperationScope invalidate("DB.CoverKeys.InvalidateFacets");
         std::vector<std::string> changedPaths;
         changedPaths.reserve(updates.size());
         for (const auto& u : updates) {
@@ -6918,6 +6926,7 @@ int64_t Database::getFolderFileCount(const std::string& folderPath) {
     return count;
 }
 int64_t Database::getFileCount() {
+    DiagUiOperationScope diagOperation("DB.GetFileCount");
     if (!m_db) return 0;
 
     // Cache total counts for two seconds to avoid full scans on every UI frame.
@@ -11247,6 +11256,7 @@ bool Database::upsertWaveformCacheStateByPath(const std::string& filePath,
                                               const std::string& errorCode,
                                               int retryCount,
                                               const std::string& cacheKey) {
+    DiagUiOperationScope diagOperation("DB.UpsertWaveformState");
     if (!m_db || filePath.empty()) return false;
 
     static const std::string sql = R"(
@@ -13762,10 +13772,12 @@ bool Database::updateLastPlayed(int64_t fileId) {
 }
 
 bool Database::beginTransaction() {
+    DiagUiOperationScope diagOperation("DB.BeginTransaction");
     return executeSQL("BEGIN TRANSACTION");
 }
 
 bool Database::commitTransaction() {
+    DiagUiOperationScope diagOperation("DB.CommitTransaction");
     return executeSQL("COMMIT");
 }
 

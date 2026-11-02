@@ -1,4 +1,5 @@
 #include "DiagnosticsLogger.h"
+#include "Version.h"
 #include "platform/emergency_file_writer.h"
 #include "platform/filesystem.h"
 #include "platform/thread_id.h"
@@ -49,8 +50,26 @@ uint32_t DiagnosticsLogger::threadId() {
 void DiagnosticsLogger::copyTrunc(char* dst, size_t dstSize, const char* src) {
     if (!dst || dstSize == 0) return;
     if (!src) { dst[0] = 0; return; }
-    std::snprintf(dst, dstSize, "%s", src);
-    dst[dstSize - 1] = 0;
+    // Preserve whole UTF-8 code points, even when an upstream snprintf has
+    // already cut a multibyte character. Invalid bytes become ASCII '?'.
+    size_t used = 0;
+    while (*src && used + 1 < dstSize) {
+        const unsigned char first = static_cast<unsigned char>(*src);
+        size_t count = first < 0x80 ? 1 : (first >= 0xc2 && first <= 0xdf ? 2 :
+            (first >= 0xe0 && first <= 0xef ? 3 : (first >= 0xf0 && first <= 0xf4 ? 4 : 0)));
+        bool valid = count != 0;
+        for (size_t i = 1; valid && i < count; ++i)
+            valid = src[i] != 0 && (static_cast<unsigned char>(src[i]) & 0xc0) == 0x80;
+        if (valid && count >= 3) {
+            const auto second = static_cast<unsigned char>(src[1]);
+            valid = !(first == 0xe0 && second < 0xa0) && !(first == 0xed && second >= 0xa0) &&
+                    !(first == 0xf0 && second < 0x90) && !(first == 0xf4 && second >= 0x90);
+        }
+        if (!valid) { dst[used++] = '?'; ++src; continue; }
+        if (used + count >= dstSize) break;
+        std::memcpy(dst + used, src, count); used += count; src += count;
+    }
+    dst[used] = 0;
 }
 
 // Push entry into ring buffer
@@ -58,6 +77,7 @@ void DiagnosticsLogger::copyTrunc(char* dst, size_t dstSize, const char* src) {
 void DiagnosticsLogger::setEnabled(bool on) {
     bool prev = m_enabled.exchange(on, std::memory_order_relaxed);
     if (prev == on) return;
+    m_uiOperations.clear();
     if (on) {
         startWriter();
     } else {
@@ -141,6 +161,7 @@ bool DiagnosticsLogger::tryMergeWithLastLocked(const DiagLogEntry& entry) {
     const size_t lastIdx = (m_head + m_maxEntries - 1) % m_maxEntries;
     DiagLogEntry& last = m_ring[lastIdx];
 
+    if (last.operationId || entry.operationId) return false;
     if (last.type != entry.type) return false;
     if (std::strcmp(last.category, entry.category) != 0) return false;
     if (std::strcmp(last.detail, entry.detail) != 0) return false;
@@ -223,6 +244,7 @@ void DiagnosticsLogger::writerLoop() {
     };
 
     while (!m_writerExit.load(std::memory_order_relaxed)) {
+        sampleUiOperations();
         openFileIfNeeded();
         int drained = 0;
         DiagLogEntry e;
@@ -237,6 +259,12 @@ void DiagnosticsLogger::writerLoop() {
                     << ",\"value\":" << e.value
                     << ",\"timestampMs\":" << e.timestampMs
                     << ",\"threadId\":" << e.threadId
+                    << ",\"operationId\":" << e.operationId
+                    << ",\"parentOperationId\":" << e.parentOperationId
+                    << ",\"frameId\":" << e.frameId
+                    << ",\"startTimestampMs\":" << e.startTimestampMs
+                    << ",\"selfMs\":" << e.selfMs
+                    << ",\"incomplete\":" << (e.incomplete ? "true" : "false")
                     << ",\"repeat\":" << e.repeatCount
                     << "}\n";
                 const std::string encoded = line.str();
@@ -424,6 +452,10 @@ void DiagnosticsLogger::clear() {
 // FPS tracking
 
 void DiagnosticsLogger::tickFrame() {
+    if (isEnabled()) {
+        m_uiThreadId.store(threadId(), std::memory_order_relaxed);
+        m_uiOperations.nextFrame();
+    }
     // 首次调用时重置基线（避免 Splash 阶段到主循环的时间差导致首帧 FPS 偏差）
     if (!m_fpsBaselineSet) {
         m_lastFpsTick = std::chrono::steady_clock::now();
@@ -484,9 +516,9 @@ static std::string FormatTimestamp(int64_t ms) {
     int millis = (int)(ms % 1000);
     struct tm tmBuf;
 #ifdef _WIN32
-    localtime_s(&tmBuf, &sec);
+    gmtime_s(&tmBuf, &sec);
 #else
-    localtime_r(&sec, &tmBuf);
+    gmtime_r(&sec, &tmBuf);
 #endif
     char buf[64];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tmBuf);
@@ -625,6 +657,13 @@ std::string DiagnosticsLogger::exportJsonString() const {
     oss << "{\n";
     oss << "  \"_comment\": \"Harken Search Diagnostics Export — performance analysis input\",\n";
     oss << "  \"exportTime\": \"" << FormatTimestamp(nowMs()) << "\",\n";
+    oss << "  \"schemaVersion\": 2,\n";
+    oss << "  \"appVersion\": \"" << SOUNDMANAGER_VERSION_STRING << "\",\n";
+    oss << "  \"diagnosticsBuild\": \"" << __DATE__ << " " << __TIME__ << "\",\n";
+    oss << "  \"timestampConvention\": \"UTC; timestampMs is Unix epoch milliseconds\",\n";
+    oss << "  \"uiThreadId\": " << m_uiThreadId.load() << ",\n";
+    oss << "  \"droppedEntries\": " << m_dropped.load() << ",\n";
+    oss << "  \"operationTiming\": \"UiOperation records completed scopes >=10ms; durationMs includes children, selfMs excludes instrumented children. UIStall samples active scopes after 500ms, at most once per second. These are instrumented operations, not native stack traces. FrameSpikeMs is a window maximum.\",\n";
     oss << "  \"entryCount\": " << m_count << ",\n";
     oss << "  \"maxEntries\": " << m_maxEntries << ",\n";
     oss << "  \"summary\": {\n";
@@ -652,7 +691,7 @@ std::string DiagnosticsLogger::exportJsonString() const {
         oss << "      \"category\": \"" << EscapeJson(e.category) << "\",\n";
         oss << "      \"detail\": \"" << EscapeJson(e.detail) << "\"";
 
-        if (e.type == DiagLogType::Performance) {
+        if (e.type == DiagLogType::Performance || e.operationId) {
             oss << ",\n      \"durationMs\": " << e.durationMs;
         }
         if (e.type == DiagLogType::Metric) {
@@ -660,6 +699,15 @@ std::string DiagnosticsLogger::exportJsonString() const {
         }
         if (e.repeatCount > 1) {
             oss << ",\n      \"repeatCount\": " << e.repeatCount;
+        }
+        oss << ",\n      \"timestampMs\": " << e.timestampMs;
+        if (e.operationId) {
+            oss << ",\n      \"operationId\": " << e.operationId
+                << ",\n      \"parentOperationId\": " << e.parentOperationId
+                << ",\n      \"frameId\": " << e.frameId
+                << ",\n      \"startTimestampMs\": " << e.startTimestampMs
+                << ",\n      \"selfMs\": " << (e.incomplete ? "null" : std::to_string(e.selfMs))
+                << ",\n      \"incomplete\": " << (e.incomplete ? "true" : "false");
         }
         oss << ",\n      \"threadId\": " << e.threadId;
         oss << "\n    }";
@@ -737,4 +785,34 @@ bool DiagnosticsLogger::exportJsonLinesCrashSafe(const wchar_t* pathW) {
     }
     (void)writer.Close();
     return true;
+}
+
+static double DiagnosticSteadyMilliseconds() {
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+uint64_t DiagnosticsLogger::beginUiOperation(const char* name) {
+    if (!isEnabled() || threadId() != m_uiThreadId.load(std::memory_order_relaxed)) return 0;
+    return m_uiOperations.begin(name, DiagnosticSteadyMilliseconds(), nowMs());
+}
+void DiagnosticsLogger::endUiOperation(uint64_t id) {
+    auto op = m_uiOperations.end(id, DiagnosticSteadyMilliseconds());
+    if (isEnabled() && op.id && op.duration >= 10.0) logUiOperation(op, false);
+}
+void DiagnosticsLogger::sampleUiOperations() {
+    if (!isEnabled()) return;
+    for (const auto& op : m_uiOperations.sample(DiagnosticSteadyMilliseconds()))
+        logUiOperation(op, true);
+}
+void DiagnosticsLogger::logUiOperation(const DiagnosticUiOperations::Operation& op, bool incomplete) {
+    DiagLogEntry entry;
+    entry.type = incomplete ? DiagLogType::System : DiagLogType::Performance;
+    copyTrunc(entry.category, sizeof(entry.category), incomplete ? "UIStall" : "UiOperation");
+    copyTrunc(entry.detail, sizeof(entry.detail), op.name.c_str());
+    entry.operationId = op.id; entry.parentOperationId = op.parent; entry.frameId = op.frame;
+    entry.startTimestampMs = op.startedAt; entry.timestampMs = nowMs();
+    entry.durationMs = op.duration; entry.selfMs = incomplete ? 0.0 : op.self;
+    entry.threadId = m_uiThreadId.load(); entry.incomplete = incomplete;
+    // Core stall evidence must remain available even with a category filter.
+    if (!enqueue(entry)) m_dropped.fetch_add(1, std::memory_order_relaxed);
 }

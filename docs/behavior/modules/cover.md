@@ -216,3 +216,13 @@
 ### 未证
 
 界面、人眼、整条使用路径、听感、内嵌网页、真实网络库、性能、合法可播放媒体和真实凭据删除都还没证。第4批真实文件读写这一轮不重跑，不能当成新证据。
+
+### Diagnostic Attribution (2026-11-02)
+
+- Given 已满足以下前置条件：AI analysis diagnostics is enabled and the UI enters cover-key persistence
+- When 执行以下操作：a database operation blocks the UI for more than 500ms
+- Then 应得到以下结果：the independent diagnostic writer samples active instrumented UI operations with parent IDs and frame IDs; completion emits monotonic inclusive/exclusive timings for operations taking at least 10ms
+- Given 已满足以下前置条件：an exported record contains a truncated Chinese path
+- When 执行以下操作：JSON is exported
+- Then 应得到以下结果：UTF-8 remains valid and timestamp strings use actual UTC with epoch milliseconds; instrumented operation snapshots are explicitly distinguished from native stack traces
+- Verification: `TestDiagnosticsUiOperations`, `TestDiagnosticsLoggerRetention`, `TestDiagnosticsLoggerStub`.

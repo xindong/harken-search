@@ -2583,3 +2583,20 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cover_identity_ui_boundary.py")
     aura_set_test_labels(TestCoverIdentityUiBoundary core ui)
 endif()
+
+add_executable(TestDiagnosticsUiOperations EXCLUDE_FROM_ALL
+    tests/test_diagnostics_ui_operations.cpp
+    src/DiagnosticsLogger.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+)
+target_include_directories(TestDiagnosticsUiOperations PRIVATE src)
+target_compile_features(TestDiagnosticsUiOperations PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsUiOperations PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(TestDiagnosticsUiOperations PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsUiOperations COMMAND TestDiagnosticsUiOperations)
+aura_set_test_labels(TestDiagnosticsUiOperations core ui)

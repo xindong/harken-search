@@ -14,6 +14,7 @@
 // 见 BuildConfig.h、DevToolsModule。
 
 #include "BuildConfig.h"
+#include "DiagnosticUiOperations.h"
 #include <string>
 #include <vector>
 #include <mutex>
@@ -34,6 +35,10 @@ enum class DiagLogType : uint8_t {
 };
 
 struct DiagLogEntry {
+    uint64_t operationId = 0, parentOperationId = 0, frameId = 0;
+    int64_t startTimestampMs = 0;
+    double selfMs = 0;
+    bool incomplete = false;
     DiagLogType type = DiagLogType::Action;
     char        category[32] = {};  // 分类标签，如 "Waveform", "Database", "Cover"
     char        detail[192] = {};   // 详细描述
@@ -91,6 +96,8 @@ public:
 
     // ---- 帧率追踪（主线程每帧调用一次）----
     void   tickFrame();
+    uint64_t beginUiOperation(const char* name);
+    void endUiOperation(uint64_t id);
 #if AURA_BUILD_DIAGNOSTICS
     float  currentFps() const { return m_currentFps; }
     double currentMemoryMb() const { return m_lastMemoryMb.load(std::memory_order_relaxed); }
@@ -145,6 +152,10 @@ private:
     void startWriter();
     void stopWriter();
 
+    DiagnosticUiOperations m_uiOperations;
+    std::atomic<uint32_t> m_uiThreadId{0};
+    void sampleUiOperations();
+    void logUiOperation(const DiagnosticUiOperations::Operation& op, bool incomplete);
     std::atomic<bool>          m_enabled{false};
     static constexpr int64_t   kRetentionWindowMs = 60000;
     static constexpr size_t    kMemorySafetyEntries = 50000;
@@ -257,3 +268,15 @@ public:
 #define DIAG_SYSTEM(category, detail)      do {} while(0)
 #define DIAG_SYSTEM_FMT(category, fmt, ...) do {} while(0)
 #endif
+
+// Database helpers also run on workers; the logger admits only the UI thread.
+class DiagUiOperationScope {
+public:
+    explicit DiagUiOperationScope(const char* name)
+        : id_(DiagnosticsLogger::instance().beginUiOperation(name)) {}
+    ~DiagUiOperationScope() { if (id_) DiagnosticsLogger::instance().endUiOperation(id_); }
+    DiagUiOperationScope(const DiagUiOperationScope&) = delete;
+    DiagUiOperationScope& operator=(const DiagUiOperationScope&) = delete;
+private:
+    uint64_t id_;
+};

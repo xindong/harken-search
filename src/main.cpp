@@ -11972,6 +11972,7 @@ static void StopIdleAssetBackfill(AppState& state, bool completed, bool interrup
 }
 
 static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
+    DiagUiOperationScope phase("UI.IdleAssetBackfill");
     const auto now = std::chrono::steady_clock::now();
     const auto cancelPendingCheck = [&state] {
         if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
@@ -12214,6 +12215,7 @@ static void MaybeStartAdaptiveMiniWaveformFormatUpgrade(AppState& state) {
 }
 
 static void PumpWaveformRebuild(AppState& state) {
+    DiagUiOperationScope phase("UI.WaveformRebuild");
     if (!state.waveformRebuildActive) return;
     if (state.waveformRebuildCancel) {
         aura::waveform_rebuild::DatabaseAdaptiveMiniFormatStampPort stampPort(
@@ -45994,6 +45996,7 @@ void RenderUI(AppState& state) {
     state.waveformWorker.setThrottleMode(shouldThrottleWaveformWorker);
     PumpScanWaveformBackfillQueue(state);
     {
+        DiagUiOperationScope waveformPhase("UI.WaveformResults");
         std::vector<WaveformResult> wfResults;
         state.waveformWorker.pollResults(wfResults, 50);  // 每帧限流 50，防止掉帧
         for (auto& res : wfResults) {

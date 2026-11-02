@@ -1,6 +1,7 @@
 #include "CoverKeyCachePersistenceWorkflow.h"
 
 #include "CoverModule.h"
+#include "DiagnosticsLogger.h"
 
 #include <cstdint>
 #include <string>
@@ -17,6 +18,7 @@ uint64_t g_lastPropagationTick = 0;
 }  // namespace
 
 void PumpPersistence(PersistenceContext context) {
+    DiagUiOperationScope phase("UI.CoverKeyPersistence");
     if (!context.persistenceEnabled || !context.database.isOpen()) return;
 
     static std::vector<CoverModule::CoverKeyCacheUpdate> moduleUpdates;
@@ -44,6 +46,7 @@ void PumpPersistence(PersistenceContext context) {
             g_pendingUpdates.push_back(std::move(persisted));
         }
         if (!g_pendingUpdates.empty()) {
+            DIAG_METRIC("CoverPersistence", "BatchSize", (double)g_pendingUpdates.size());
             context.database.updateCoverKeyCacheBatch(g_pendingUpdates);
             for (const auto& update : g_pendingUpdates) {
                 if (!update.embeddedCoverKey.empty() || !update.folderCoverKey.empty()) {
