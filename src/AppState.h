@@ -18,6 +18,7 @@
 #include <chrono>
 #include <future>
 #include <algorithm>
+#include <utility>
 #include <unordered_map>
 
 // OpenGL types — use typedef to avoid pulling in GL headers (which need
@@ -2002,25 +2003,54 @@ struct AppState {
     }
     std::mutex scanErrorMutex;
     std::vector<std::string> scanErrorMessages_;  // guarded by scanErrorMutex
+    std::vector<int> scanErrorMessageCounts_;      // guarded by scanErrorMutex; aligned with messages
+    HarkenSearch::ScanFailureCategoryCounts scanErrorCategoryCounts_{}; // guarded by scanErrorMutex
+    int scanUnreachableCount_ = 0; // guarded by scanErrorMutex; independent of displayed details
     void clearScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         scanErrorMessages_.clear();
+        scanErrorMessageCounts_.clear();
+        scanErrorCategoryCounts_.fill(0);
+        scanUnreachableCount_ = 0;
     }
     void addScanError(const std::string& s) {
         if (s.empty()) return;
         std::lock_guard<std::mutex> lk(scanErrorMutex);
-        if (scanErrorMessages_.size() < 32) scanErrorMessages_.push_back(s);
+        ++scanErrorCategoryCounts_[static_cast<size_t>(HarkenSearch::ClassifyScanFailure(s))];
+        if (s.find("Scan_NetworkLibraryUnreachable") != std::string::npos) ++scanUnreachableCount_;
+        if (scanErrorMessages_.size() < 32) {
+            scanErrorMessages_.push_back(s);
+            scanErrorMessageCounts_.push_back(1);
+        }
     }
-    void addScanErrors(const std::vector<std::string>& messages) {
+    void addScanErrors(const std::vector<std::string>& messages, const std::vector<int>& counts,
+                       const HarkenSearch::ScanFailureCategoryCounts& categoryCounts, int unreachableCount) {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
-        for (const auto& s : messages) {
+        scanUnreachableCount_ += std::max(0, unreachableCount);
+        for (size_t i = 0; i < categoryCounts.size(); ++i)
+            scanErrorCategoryCounts_[i] += categoryCounts[i];
+        for (size_t i = 0; i < messages.size(); ++i) {
             if (scanErrorMessages_.size() >= 32) break;
-            if (!s.empty()) scanErrorMessages_.push_back(s);
+            if (messages[i].empty()) continue;
+            scanErrorMessages_.push_back(messages[i]);
+            scanErrorMessageCounts_.push_back(i < counts.size() ? counts[i] : 1);
         }
     }
     std::vector<std::string> getScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         return scanErrorMessages_;
+    }
+    std::pair<std::vector<std::string>, std::vector<int>> getScanErrorSnapshot() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return {scanErrorMessages_, scanErrorMessageCounts_};
+    }
+    HarkenSearch::ScanFailureCategoryCounts getScanErrorCategoryCounts() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return scanErrorCategoryCounts_;
+    }
+    int getScanUnreachableCount() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return scanUnreachableCount_;
     }
     std::string lastScannedPath;
     std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.

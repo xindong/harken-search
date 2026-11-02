@@ -66,6 +66,7 @@
     {"id":"ScanUi_FailedSave","type":"ui","zh":"保存失败","en":"Save failed","ja":"保存失敗"},
     {"id":"ScanUi_FailedOther","type":"ui","zh":"其他错误","en":"Other errors","ja":"その他のエラー"},
     {"id":"ScanUi_FailuresTitleFmt","type":"ui","zh":"失败文件（%d）","en":"Failed files (%d)","ja":"失敗したファイル（%d）"},
+    {"id":"ScanUi_GroupedFailureCountFmt","type":"ui","zh":"这一原因影响 %d 个文件；没有逐文件明细。","en":"This reason affects %d files; individual file details are unavailable.","ja":"この原因は %d ファイルに影響しています。ファイルごとの詳細はありません。"},
     {"id":"ScanUi_ViewFailures","type":"ui","zh":"查看失败文件","en":"View failed files","ja":"失敗したファイルを表示"},
     {"id":"ScanUi_ReturnResult","type":"ui","zh":"返回结果","en":"Back to results","ja":"結果に戻る"},
     {"id":"ScanUi_ScanStopped","type":"ui","zh":"扫描已停止","en":"Scan stopped","ja":"スキャンを停止しました"},

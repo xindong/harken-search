@@ -3308,7 +3308,7 @@ static bool BeginFolderScan(
             state.scanRemovedCount = combined.removed;
             state.scanErrorCount = combined.errors;
             state.scanIngestDurationMs = combined.ingestDurationMs;
-            state.addScanErrors(combined.errorMessages);
+            state.addScanErrors(combined.errorMessages, combined.errorMessageCounts, combined.errorCategoryCounts, combined.unreachable);
             if (precomputeWaveforms && !cancelled) {
                 state.scanWorkflowStage.store(
                     HarkenSearch::ScanWorkflowStage::CachingMiniWaveforms,
@@ -7453,16 +7453,8 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"skipped\":" + std::to_string(skipped) + ",";
         result += "\"removed\":" + std::to_string(removed) + ",";
         result += "\"errors\":" + std::to_string(errors) + ",";
-        {
-            int unreachableHint = 0;
-            for (const auto& msg : errorDetails) {
-                if (msg.find("Scan_NetworkLibraryUnreachable") != std::string::npos) {
-                    ++unreachableHint;
-                }
-            }
-            result += "\"unreachable\":" + std::to_string(unreachableHint) + ",";
-        }
-         result += "\"error_details\":[";
+        result += "\"unreachable\":" + std::to_string(state.getScanUnreachableCount()) + ",";
+        result += "\"error_details\":[";
         for (size_t i = 0; i < errorDetails.size(); ++i) {
             if (i > 0) result += ",";
             const std::string shown = (errorDetails[i].find("Scan_NetworkLibraryUnreachable") != std::string::npos)
