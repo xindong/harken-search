@@ -9147,12 +9147,6 @@ static uint64_t SubmitAsyncSearch(AppState& state, const SearchFilter& filter, A
                                   bool skipDeferredCountFollowUp = false) {
     AsyncSearchRequest req;
     req.filter = filter;
-    if (kind == AsyncSearchKind::Refresh) {
-        req.preserveSearchFolderTree = state.searchFolderTree &&
-            state.searchFolderTree->preserveForFolderNavigation(
-                state.preserveSearchFolderTreeForNextRefresh, filter.keyword);
-        state.preserveSearchFolderTreeForNextRefresh = false;
-    }
     req.viewMode = (int)state.viewMode;
     req.playlistId = state.selectedPlaylistId;
     req.limit = limit;
@@ -13799,20 +13793,10 @@ static void ResetPlaylistCoverWallScope(AppState& state) {
 // the search buffer itself (that would loop with the search-change handler).
 static void ClearPathAndCoverFiltersForNewSearch(AppState& state) {
     bool changed = false;
-    state.uiState.pendingFolderPath.clear();
-    state.preserveSearchFolderTreeForNextRefresh = false;
-    state.preservePathFacetsForNextRefresh = false;
-    state.suppressFacetsForNextRefresh = false;
-    const std::string searchRoot = state.folderSearchScope.folderForNewSearch();
-    if (state.selectedFolderPath != searchRoot || state.folderFilterActive != !searchRoot.empty()) {
-        state.selectedFolderPath = searchRoot;
-        state.folderFilterActive = !searchRoot.empty();
+    if (state.folderFilterActive) {
+        state.folderFilterActive = false;
+        state.selectedFolderPath.clear();
         changed = true;
-    }
-    if (TrimCopy(state.searchBuffer).empty() && !state.folderSearchScope.locked()) {
-        state.searchFolderTree.reset();
-        state.folderSearchBuffer[0] = '\0';
-        state.folderTreeScrollTarget.clear();
     }
     if (state.coverFilterActive) {
         ClearSpecificCoverKeyFilter(state);
@@ -13977,12 +13961,6 @@ static void RenderFolderTreeNode(AppState& state,
                                  const std::string& search,
                                  FolderTreeSelectionMode mode,
                                  bool revealSubtree = false) {
-    const bool searchResultTreeActive = state.viewMode == ViewMode::Database &&
-        mode == FolderTreeSelectionMode::DatabaseFilter &&
-        state.searchFolderTree && state.searchFolderTree->active() &&
-        state.searchBuffer[0] != '\0';
-    if (searchResultTreeActive && !state.searchFolderTree->contains(folder.path)) return;
-
     // Use the precomputed folderSearchHits set for constant-time membership.
     // 杜绝调用 FolderOrChildMatchesSearch 这种每帧递归的"性能黑洞"
     if (!search.empty() && !revealSubtree) {
@@ -14028,14 +14006,7 @@ static void RenderFolderTreeNode(AppState& state,
                              ImGuiTreeNodeFlags_SpanAvailWidth |
                              ImGuiTreeNodeFlags_NoTreePushOnOpen;
     if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
-    // Initialize nodes lazily: descendants hidden under collapsed categories
-    // must also start collapsed when the user first reveals them later.
-    const bool initializeSearchFolder = searchResultTreeActive && search.empty() &&
-        state.initializedSearchFolderPaths.insert(HarkenSearch::CanonicalFolderPath(folder.path)).second;
-    if (initializeSearchFolder) {
-        ImGui::SetNextItemOpen(aura::search::ShouldOpenSearchFolderInitially(folder.path));
-    }
-    else if (state.folderTreeCollapseAll && !shouldAutoOpen) ImGui::SetNextItemOpen(false);
+    if (state.folderTreeCollapseAll && !shouldAutoOpen) ImGui::SetNextItemOpen(false);
     else if (shouldAutoOpen) ImGui::SetNextItemOpen(true);
 
     // 3. 复用静态缓冲，杜绝字符串分配
@@ -14418,8 +14389,6 @@ static std::string GetRandomSamplingStatus(const AppState& state) {
 static void ClearAllFiltersForShowAll(AppState& state) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
-    state.folderSearchScope.unlock();
-    state.preserveSearchFolderTreeForNextRefresh = false;
     state.searchBuffer[0] = '\0';
     state.folderFilterActive = false;
     state.selectedFolderPath.clear();
@@ -15808,10 +15777,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                             if (!(state.folderFilterActive && state.selectedFolderPath == canonPathFacet)) {
                                 state.folderFilterActive = true;
                                 state.selectedFolderPath = canonPathFacet;
-                                const bool browsingSearchResults = state.searchFolderTree && state.searchFolderTree->active() &&
-                                    !TrimCopy(state.searchBuffer).empty();
-                                state.preserveSearchFolderTreeForNextRefresh = browsingSearchResults;
-                                if (!browsingSearchResults) ClearSpecificCoverKeyFilter(state);
+                                ClearSpecificCoverKeyFilter(state);
                                 state.suppressFacetsForNextRefresh = true;
                                 state.preservePathFacetsForNextRefresh = true;
                                 RefreshSearchResults(state, true);
@@ -15981,14 +15947,6 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 ClearPlaylistFolderFilter(state);
             }
         }
-        state.expandSearchResultFolders = state.searchFolderTree != state.lastRenderedSearchFolderTree;
-        if (state.expandSearchResultFolders) {
-            state.initializedSearchFolderPaths.clear();
-            if (state.searchFolderTree && state.searchFolderTree->active() && folderSearch.empty()) {
-                state.folderTreeScrollTarget.clear();
-            }
-        }
-        state.lastRenderedSearchFolderTree = state.searchFolderTree;
         for (const auto& folder : activeFolderHierarchy.subfolders) {
             if (playlistScopedFolderTree) {
                 RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter);
@@ -15996,7 +15954,6 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter);
             }
         }
-        state.expandSearchResultFolders = false;
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
         }
             });
@@ -37378,15 +37335,7 @@ void RenderUI(AppState& state) {
             state.folderFilterActive = true;
             // T2.6: pending folder 入口 canonical
             state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
-            const bool browsingSearchResults = state.searchFolderTree && state.searchFolderTree->active() &&
-                !TrimCopy(state.searchBuffer).empty();
-            state.preserveSearchFolderTreeForNextRefresh = browsingSearchResults;
-            if (browsingSearchResults) {
-                state.preservePathFacetsForNextRefresh = true;
-                state.suppressFacetsForNextRefresh = true;
-            } else {
-                ClearSpecificCoverKeyFilter(state);
-            }
+            ClearSpecificCoverKeyFilter(state);
             state.viewMode = ViewMode::Database;
             state.preferDeferredCountForNextRefresh = true;
 
@@ -38715,7 +38664,6 @@ void RenderUI(AppState& state) {
             const ImVec4 searchButtonHover = uiWithAlpha(uiMix(ThemeColors::current().searchButtonBG, kToolbarSelected, 0.18f), 0.98f);
             ImGui::InvisibleButton("##SearchExecute", ImVec2(iconHitW, iconHitH));
             const bool searchButtonHovered = ImGui::IsItemHovered();
-            const bool searchExecuteActive = ImGui::IsItemActive();
             const bool searchButtonClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
             const ImVec2 iconMin = ImGui::GetItemRectMin();
             const ImVec2 iconMax = ImGui::GetItemRectMax();
@@ -38746,46 +38694,11 @@ void RenderUI(AppState& state) {
                     ? L(Search_PreciseOn)
                     : L(Search_PreciseOff));
             }
-            ImGui::SameLine(0, 3.0f);
-            const bool folderScopeLocked = state.folderSearchScope.locked();
-            const bool canLockFolder = state.viewMode == ViewMode::Database &&
-                TrimCopy(state.searchBuffer).empty() && state.folderFilterActive && !state.selectedFolderPath.empty();
-            ImGui::BeginDisabled(!folderScopeLocked && !canLockFolder);
-            ImGui::InvisibleButton("##FolderSearchScopeLock", ImVec2(26.0f, iconHitH));
-            const bool scopeHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-            const bool scopeClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-            const auto scopeMin = ImGui::GetItemRectMin();
-            const auto scopeMax = ImGui::GetItemRectMax();
-            const ImVec2 scopeCenter((scopeMin.x + scopeMax.x) * 0.5f, (scopeMin.y + scopeMax.y) * 0.5f);
-            const ImU32 scopeColor = ImGui::GetColorU32(folderScopeLocked ? kToolbarAccent :
-                uiWithAlpha(kThemeTextStrong, canLockFolder ? 0.82f : 0.40f));
-            if (folderScopeLocked || scopeHovered) {
-                dl->AddRectFilled(scopeMin, scopeMax,
-                    ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, folderScopeLocked ? 0.16f : 0.07f)), 5.0f);
-            }
-            dl->AddRect(ImVec2(scopeCenter.x - 5.5f, scopeCenter.y - 0.5f),
-                        ImVec2(scopeCenter.x + 5.5f, scopeCenter.y + 7.0f), scopeColor, 2.0f, 0, 1.6f);
-            dl->AddBezierCubic(ImVec2(scopeCenter.x - 3.8f, scopeCenter.y - 0.5f),
-                              ImVec2(scopeCenter.x - 3.8f, scopeCenter.y - 10.0f),
-                              ImVec2(scopeCenter.x + (folderScopeLocked ? 3.8f : 7.0f), scopeCenter.y - 10.0f),
-                              ImVec2(scopeCenter.x + (folderScopeLocked ? 3.8f : 7.0f), scopeCenter.y - (folderScopeLocked ? 0.5f : 4.0f)),
-                              scopeColor, 1.6f);
-            dl->AddCircleFilled(ImVec2(scopeCenter.x, scopeCenter.y + 3.0f), 1.2f, scopeColor, 8);
-            if (scopeClicked) {
-                if (folderScopeLocked) state.folderSearchScope.unlock();
-                else state.folderSearchScope.lock(state.selectedFolderPath, true);
-                state.syncToTab();
-            }
-            ImGui::EndDisabled();
-            if (scopeHovered) {
-                if (folderScopeLocked) ImGui::SetTooltip(L(Search_FolderScopeLocked), state.folderSearchScope.lockedPath.c_str());
-                else ImGui::SetTooltip("%s", canLockFolder ? L(Search_FolderScopeUnlocked) : L(Search_FolderScopeUnavailable));
-            }
             ImGui::SameLine(0, 6.0f);
             ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, searchGroupTopY + (kCapsuleH - ImGui::GetFrameHeight()) * 0.5f));
 
             // 2. 交互判定
-            bool searchActive = searchExecuteActive || (ImGui::GetActiveID() == ImGui::GetID("##SearchBar"));
+            bool searchActive = ImGui::IsItemActive() || (ImGui::GetActiveID() == ImGui::GetID("##SearchBar"));
             int colorPushes = 0;
 
             static bool lastSearchRealtime = true;

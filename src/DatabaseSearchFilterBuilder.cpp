@@ -14,9 +14,6 @@ SearchFilter BuildCurrentDbFilter(const AppState& state) {
     filter.folderPath = state.folderFilterActive
         ? aura::database::NormalizeFolderPathForDb(state.selectedFolderPath)
         : "";
-    if (!filter.keyword.empty() && state.folderSearchScope.locked()) {
-        filter.folderPath = state.folderSearchScope.folderForResultView(filter.folderPath);
-    }
     if (!state.artistFilterAlternates.empty()) {
         filter.artists = state.artistFilterAlternates;
     } else {

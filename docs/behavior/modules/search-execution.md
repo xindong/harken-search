@@ -30,20 +30,6 @@
 - When 执行以下操作：Aris builds SQL and fetches result count, pages, and facets
 - Then 应得到以下结果：result count equals the number of rows available through the paged list, and filters applied in list SQL also appear identically in count and facet SQL
 
-- Given 已满足以下前置条件：the database search contains a non-empty keyword
-- When 执行以下操作：the complete result set is returned
-- Then 应得到以下结果：the sidebar folder tree keeps only directories containing matching files and their ancestors, opens only the drive/library parent levels initially and leaves category folders and deeper matches collapsed for manual expansion, and does not use paged rows or the limited Related Paths facets as its source
-- Given 已满足以下前置条件：the keyword is cleared or the search has no hits
-- When 执行以下操作：the sidebar renders
-- Then 应得到以下结果：clearing restores the complete tree, while a non-empty zero-hit search displays no unrelated folders
-
-- Given 已满足以下前置条件：a keyword search has completed and the user clicks a matching folder
-- When 执行以下操作：the file list switches to the selected directory's matching rows
-- Then 应得到以下结果：the complete search tree and original search scope remain unchanged, and another keyword searches globally unless the scope lock is enabled
-- Given 已满足以下前置条件：the search field is empty and a database folder is selected
-- When 执行以下操作：the user locks the folder scope, searches, then unlocks, clears the field and presses Enter
-- Then 应得到以下结果：locked searches stay within the original locked folder and descendants; unlocking plus empty Enter restores the global folder tree
-
 ### Edge Cases
 
 - Given 已满足以下前置条件：a query uses normalized genre or instrument fields

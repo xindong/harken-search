@@ -15732,27 +15732,6 @@
     {
       "id": "Dock_UxDropBottom", "type": "ui",
       "zh": "松手放到下方 · Esc 取消", "en": "Release to dock below · Esc cancels", "ja": "離すと下に配置 · Esc でキャンセル"
-    },
-    {
-      "id": "Search_FolderScopeLocked",
-      "type": "ui",
-      "zh": "搜索范围已锁定：%s\n点击解锁；解锁后清空搜索框并按回车，返回全局目录。",
-      "en": "Search scope locked: %s\nClick to unlock. Clear the search and press Enter to return to the global tree.",
-      "ja": "検索範囲を固定中：%s\nクリックで解除。検索欄を空にして Enter を押すと全体のツリーに戻ります。"
-    },
-    {
-      "id": "Search_FolderScopeUnlocked",
-      "type": "ui",
-      "zh": "搜索范围未锁定\n点击锁定当前文件夹，后续搜索仅限此文件夹及子文件夹。",
-      "en": "Search scope unlocked\nClick to restrict future searches to the selected folder and its subfolders.",
-      "ja": "検索範囲は未固定\nクリックすると選択フォルダーとその配下に検索を限定します。"
-    },
-    {
-      "id": "Search_FolderScopeUnavailable",
-      "type": "ui",
-      "zh": "搜索范围未锁定\n先清空搜索框并选择文件夹，再点击此锁。",
-      "en": "Search scope unlocked\nClear the search and select a folder before locking.",
-      "ja": "検索範囲は未固定\n検索欄を空にしてフォルダーを選択してから固定してください。"
     }
   ]
 }

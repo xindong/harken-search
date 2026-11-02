@@ -1012,8 +1012,6 @@ public:
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
     std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);
-    // Complete matching directories, without page/facet sampling limits.
-    std::vector<std::string> getMatchingFolderPaths(const SearchFilter& filter);
     bool persistCoverFacetCache(const SearchFilter& filter,
                                 int limit,
                                 const std::vector<CoverFacetEntry>& entries);

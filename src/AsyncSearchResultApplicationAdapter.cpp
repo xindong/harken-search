@@ -96,9 +96,6 @@ void AsyncSearchResultApplicationAdapter::apply() {
     playlistPreparationAdapter.apply();
 
     if (dispatch == AsyncSearchResultDispatch::Refresh) {
-        if (result_.success && result_.viewMode == 1 && result_.searchFolderTree) {
-            state_.searchFolderTree = std::move(result_.searchFolderTree);
-        }
         AsyncSearchRefreshResultCompositionAdapter
             refreshCompositionAdapter(
                 state_,

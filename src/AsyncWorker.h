@@ -29,7 +29,6 @@
 // shutdown. Main/UI callers enqueue requests and consume copied results without
 // blocking beyond the documented handoff; worker callbacks do not borrow queue
 // storage after return.
-#include "SearchResultFolderTree.h"
 #include "Database.h"      // For SearchFilter, AudioRecord (used by value in AsyncSearchRequest)
 #include "BackfillQueue.h"
 
@@ -173,7 +172,6 @@ enum class AsyncSearchKind : int {
 };
 
 struct AsyncSearchRequest {
-    bool preserveSearchFolderTree = false;
     uint64_t requestId = 0;       // 单调递增 ID，用于丢弃过时的结果
     SearchFilter filter;
     int viewMode = 0;             // ViewMode enum cast to int
@@ -206,7 +204,6 @@ struct AsyncSearchRequest {
 };
 
 struct AsyncSearchResult {
-    std::shared_ptr<const aura::search::SearchResultFolderTreeSnapshot> searchFolderTree;
     uint64_t requestId = 0;
     AsyncSearchKind kind = AsyncSearchKind::Refresh;
     SearchFilter filter;

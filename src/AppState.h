@@ -39,8 +39,6 @@ typedef unsigned int GLuint;
 #include "SpectrogramMath.h"
 #include "WaveformPresentationPolicy.h"
 #include "FolderTreePathModePolicy.h"
-#include "SearchResultFolderTree.h"
-#include "FolderSearchScope.h"
 #include "AIEngine.h"
 #include "NamingScript.h"
 #include "BatchRenamePolicy.h"
@@ -478,7 +476,6 @@ struct ViewStateSnapshot {
     ViewMode viewMode = ViewMode::Database;
     int browserScope = (int)BrowserScope::CurrentDir;
     bool folderFilterActive = false;
-    aura::search::FolderSearchScope folderSearchScope;
     std::string selectedFolderPath;
     bool coverFilterActive = false;
     std::string coverFilterPath;
@@ -593,7 +590,6 @@ struct ListTab {
     bool focusSearchBar = false;
     std::string selectedFolderPath;
     bool folderFilterActive = false;
-    aura::search::FolderSearchScope folderSearchScope;
     bool coverFilterActive = false;
     std::string coverFilterPath;
     int coverFilterIndex = 0;
@@ -630,7 +626,6 @@ struct ListTab {
     bool loadingMore = false;
     std::vector<Database::CoverFacetEntry> coverFacets;
     std::vector<Database::PathFacetEntry> pathFacets;
-    std::shared_ptr<const aura::search::SearchResultFolderTreeSnapshot> searchFolderTree;
     bool facetsSnapshotValid = false;
     uint64_t facetsSyncGen = 0;  // generation of last synced facets (避免重复深拷贝)
     CoverWallTabSnapshot coverWallSnapshot;
@@ -2424,7 +2419,6 @@ struct AppState {
     bool showRemoveFolderDbConfirm = false;
     std::string selectedFolderPath;
     bool folderFilterActive = false;
-    aura::search::FolderSearchScope folderSearchScope;
     char folderSearchBuffer[128] = "";
     std::unordered_set<std::string> folderSearchDirectHits;  // terminal matches: stop expansion here
     std::unordered_set<std::string> folderSearchExpandPaths; // ancestor path that should auto-open
@@ -3019,11 +3013,6 @@ struct AppState {
     // 当前筛选结果对应的 Facet（封面/路径）
     std::vector<Database::CoverFacetEntry> currentCoverFacets;
     std::vector<Database::PathFacetEntry> currentPathFacets;
-    std::shared_ptr<const aura::search::SearchResultFolderTreeSnapshot> searchFolderTree;
-    std::shared_ptr<const aura::search::SearchResultFolderTreeSnapshot> lastRenderedSearchFolderTree;
-    bool expandSearchResultFolders = false;
-    bool preserveSearchFolderTreeForNextRefresh = false;
-    std::unordered_set<std::string> initializedSearchFolderPaths;
 
     // 主波形 detail 延迟请求：停 120–200ms 后再请求，切文件则取消前一次
     std::string pendingDetailFilePath;

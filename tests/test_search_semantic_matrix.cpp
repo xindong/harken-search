@@ -1,6 +1,4 @@
 #include "Database.h"
-#include "SearchResultFolderTree.h"
-#include "FolderSearchScope.h"
 
 #include <filesystem>
 #include <fstream>
@@ -361,82 +359,6 @@ int main() {
                "matrix/explainability-tooltip-wrap: tooltip snippet keeps wrap-aware highlight painting");
         expect(inlineHighlightBlock.find("SameLine(0, 0)") == std::string::npos,
                "matrix/explainability-tooltip-wrap: tooltip snippet no longer uses SameLine split rendering");
-    }
-
-    {
-        SearchFilter filter;
-        expect(db.addFile(makeRec(R"(C:\SFX\Magic)", "treeunique_hit.wav", "", "")), "tree/search: fixture inserted");
-        filter.keyword = "treeunique";
-        const auto paths = db.getMatchingFolderPaths(filter);
-        const auto snapshot = aura::search::BuildSearchResultFolderTreeSnapshot(filter.keyword, paths);
-        expect(snapshot->active(), "tree/search: keyword activates folder pruning");
-        expect(snapshot->preserveForFolderNavigation(true, "treeunique"), "tree/navigation: selecting a result folder retains the complete search tree");
-        expect(!snapshot->preserveForFolderNavigation(true, "changed"), "tree/navigation: a new keyword cannot retain a stale tree");
-        expect(!snapshot->preserveForFolderNavigation(false, "treeunique"), "tree/navigation: explicit searches rebuild their tree");
-        expect(snapshot->contains("C:"), "tree/search: actual sidebar drive node remains visible");
-        bool visibleLeafReached = false;
-        const auto hierarchy = db.getFolderHierarchy();
-        std::function<void(const FolderInfo&)> visit = [&](const FolderInfo& folder) {
-            if (!snapshot->contains(folder.path)) return;
-            if (HarkenSearch::CanonicalFolderPath(folder.path) == R"(c:\sfx\magic)") visibleLeafReached = true;
-            for (const auto& child : folder.subfolders) visit(child);
-        };
-        for (const auto& root : hierarchy.subfolders) visit(root);
-        expect(visibleLeafReached, "tree/integration: matched leaf is reachable through actual database hierarchy");
-        expect(snapshot->contains(R"(C:\)"), "tree/search: drive ancestor remains visible");
-        expect(snapshot->contains(R"(C:\SFX)"), "tree/search: matching parent remains visible");
-        expect(!snapshot->contains(R"(C:\Unrelated)"), "tree/search: unrelated folder is hidden");
-
-        const auto exact = aura::search::BuildSearchResultFolderTreeSnapshot(
-            "hit", {"L:/Sound Libraries/Magic/Hit", R"(l:\sound libraries\Music\Win)"});
-        expect(aura::search::ShouldOpenSearchFolderInitially("L:"), "tree/expand: drive opens initially");
-        expect(aura::search::ShouldOpenSearchFolderInitially(R"(L:\Sound Libraries)"), "tree/expand: library parent opens initially");
-        expect(!aura::search::ShouldOpenSearchFolderInitially(R"(L:\Sound Libraries\Magic)"), "tree/expand: category stays collapsed");
-        expect(!aura::search::ShouldOpenSearchFolderInitially(R"(L:\Sound Libraries\Magic\Hit)"), "tree/expand: deeper matches stay collapsed");
-        expect(exact->contains(R"(L:\Sound Libraries\Magic\Hit)"), "tree/path: separators and ASCII case normalize");
-        expect(exact->contains(R"(l:\sound libraries\magic)"), "tree/path: all parent levels are included");
-        expect(!exact->contains(R"(l:\sound libraries\magic\hit\unmatched)"), "tree/path: direct hits do not reveal unmatched descendants");
-        expect(!exact->contains(R"(l:\sound libraries\magic\hit2)"), "tree/path: sibling prefixes are not mistaken for ancestors");
-
-        filter.keyword = "no_such_folder_tree_result_98765";
-        const auto empty = aura::search::BuildSearchResultFolderTreeSnapshot(filter.keyword, db.getMatchingFolderPaths(filter));
-        expect(empty->active() && !empty->contains(R"(C:\)"), "tree/empty: zero hits show no unrelated folders");
-        const auto cleared = aura::search::BuildSearchResultFolderTreeSnapshot("   ", {});
-        expect(!cleared->active() && cleared->contains(R"(C:\Anything)"), "tree/clear: clearing query restores the full tree");
-
-        bool inserted = true;
-        for (int i = 0; i < 325; ++i) {
-            inserted = db.addFile(makeRec(R"(C:\TreeCoverage\Dir)" + std::to_string(i),
-                "treecoverage_" + std::to_string(i) + ".wav", "", "")) && inserted;
-        }
-        expect(inserted, "tree/coverage: many-folder fixture is inserted");
-        filter.keyword = "treecoverage";
-        const auto allPaths = db.getMatchingFolderPaths(filter);
-        expect(allPaths.size() == 325, "tree/coverage: directory matches exceed the 300-facet UI limit");
-        const auto firstPage = db.searchFiles(filter, 3, 0);
-        expect(firstPage.size() == 3 && allPaths.size() > firstPage.size(), "tree/coverage: pruning covers all pages rather than only visible rows");
-        filter.folderPath = R"(c:\treecoverage\dir324)";
-        const auto scoped = db.getMatchingFolderPaths(filter);
-        expect(scoped.size() == 1, "tree/scope: selected folder constrains matching directory query");
-    }
-
-    {
-        aura::search::FolderSearchScope scope;
-        expect(!scope.locked() && scope.folderForNewSearch().empty(), "scope/default: browsing folders does not restrict a new search");
-        expect(!scope.lock(R"(L:\Sound Libraries\Magic)", false), "scope/lock: active search cannot silently become folder scope");
-        expect(scope.lock(R"(L:\Sound Libraries\Magic)", true), "scope/lock: empty search and selected folder can be locked");
-        expect(scope.locked(), "scope/lock: locked UI state is explicit");
-        expect(scope.folderForNewSearch() == R"(l:\sound libraries\magic)", "scope/search: later searches use the locked folder");
-        const auto selectedChild = R"(l:\sound libraries\magic\spells)";
-        expect(scope.folderForResultView(selectedChild) == selectedChild, "scope/results: clicking a child only selects a result view");
-        expect(scope.folderForNewSearch() == R"(l:\sound libraries\magic)", "scope/results: child selection does not replace locked scope");
-        expect(scope.folderForResultView(R"(l:\other)") == scope.folderForNewSearch(), "scope/results: locked searches cannot escape their root");
-        auto otherTabScope = scope;
-        scope.unlock();
-        expect(!scope.locked() && scope.folderForNewSearch().empty(), "scope/unlock: empty Enter returns to global search");
-        expect(otherTabScope.locked(), "scope/tabs: unlocking one tab does not alter another tab");
-        expect(!scope.lock("", true), "scope/lock: no selected directory cannot lock");
-        expect(!scope.lock("   ", true), "scope/lock: blank directory cannot lock");
     }
 
     db.close();

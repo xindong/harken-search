@@ -1584,13 +1584,6 @@ void SearchWorker::workerThread() {
                         (long long)result.totalCount,
                         result.hasMore ? 1 : 0);
                 }
-                if (req.viewMode == 1 && req.kind == AsyncSearchKind::Refresh &&
-                    !req.preserveSearchFolderTree && !isRequestStale()) {
-                    std::vector<std::string> matchingFolders;
-                    if (!req.filter.keyword.empty()) matchingFolders = m_db->getMatchingFolderPaths(req.filter);
-                    result.searchFolderTree = aura::search::BuildSearchResultFolderTreeSnapshot(
-                        req.filter.keyword, matchingFolders);
-                }
                 result.success = true;
             } catch (...) {
                 result.success = false;

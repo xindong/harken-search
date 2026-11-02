@@ -558,8 +558,6 @@ void AppState::syncFromTab() {
     }
 
 // 轻量级标量 / 小字符串：始终同步（开销 < 1μs）
-    searchFolderTree = tab.searchFolderTree;
-    folderSearchScope = tab.folderSearchScope;
     selectedResultIndex = tab.selectedResultIndex;
     viewMode = tab.viewMode;
     if (tab.viewMode == ViewMode::Browser) {
@@ -639,8 +637,6 @@ void AppState::syncToTab() {
     tab.lastClickedIndex = lastClickedIndex;
     tab.findSameFilenameQuery = findSameFilenameQuery;
     tab.findSameFilenameActive = findSameFilenameActive;
-    tab.searchFolderTree = searchFolderTree;
-    tab.folderSearchScope = folderSearchScope;
     tab.folderFilterActive = folderFilterActive;
     tab.selectedFolderPath = selectedFolderPath;
     tab.coverFilterActive = coverFilterActive;
@@ -1167,7 +1163,6 @@ ViewStateSnapshot AppState::captureViewState() const {
     snap.viewMode = viewMode;
     snap.browserScope = (int)fileBrowser.getScope();
     snap.folderFilterActive = folderFilterActive;
-    snap.folderSearchScope = folderSearchScope;
     snap.selectedFolderPath = selectedFolderPath;
     snap.coverFilterActive = coverFilterActive;
     snap.coverFilterPath = coverFilterPath;
@@ -1209,7 +1204,6 @@ void AppState::restoreViewState(const ViewStateSnapshot& snap) {
         fileBrowser.setScope(static_cast<BrowserScope>(snap.browserScope));
     }
     folderFilterActive = snap.folderFilterActive;
-    folderSearchScope = snap.folderSearchScope;
     selectedFolderPath = snap.selectedFolderPath;
     coverFilterActive = snap.coverFilterActive;
     coverFilterPath = snap.coverFilterPath;

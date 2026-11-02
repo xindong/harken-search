@@ -1,5 +1,4 @@
 #include "Database.h"
-#include <stdexcept>
 // i18n-anchor (F1, RQ-20260911-04): m_lastError/outError/heartbeatMsg feeders.
 // Display sites (reverse map): getLastError -> main.cpp 10484 switchError /
 // 31884 newDbError, AsyncSearchRefreshCompletionStateAdapter, BackfillWorkerPool
@@ -18940,37 +18939,6 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
     }
 
     return results;
-}
-
-std::vector<std::string> Database::getMatchingFolderPaths(const SearchFilter& filter) {
-    std::vector<std::string> paths;
-    if (!m_db) return paths;
-    const BuiltSearchQuery bq = buildSearchWhere(filter);
-    if (bq.parseError) return paths;
-    const std::string coverClause = bq.coverKeySubquery.empty() ? std::string()
-        : " AND af.id IN (" + bq.coverKeySubquery + ")";
-    const std::string sql = "SELECT DISTINCT af.folder_path " + bq.fromClause + " "
-        + bq.whereClause + coverClause
-        + " AND af.folder_path IS NOT NULL AND af.folder_path <> ''";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        m_lastError = sqlite3_errmsg(m_db);
-        throw std::runtime_error(m_lastError);
-    }
-    BindSearchQuery(stmt, bq);
-    int nextBind = static_cast<int>(bq.bindValues.size()) + 1;
-    for (const auto& value : bq.coverKeyBindValues) {
-        sqlite3_bind_text(stmt, nextBind++, value.c_str(), -1, SQLITE_TRANSIENT);
-    }
-    int stepResult;
-    while ((stepResult = sqlite3_step(stmt)) == SQLITE_ROW) paths.push_back(safeGetText(stmt, 0));
-    const std::string error = stepResult == SQLITE_DONE ? std::string() : sqlite3_errmsg(m_db);
-    sqlite3_finalize(stmt);
-    if (stepResult != SQLITE_DONE) {
-        m_lastError = error;
-        throw std::runtime_error(error);
-    }
-    return paths;
 }
 
 std::vector<Database::PathFacetEntry> Database::getPathFacets(const SearchFilter& filter, int limit) {
