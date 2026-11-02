@@ -14,6 +14,9 @@ from qa_info_family_themes import resize_similar
 def run(args):
     import win32con, win32event, win32gui, win32process
     exe,root,out=args.exe.resolve(),args.isolation_root.resolve(),args.output.resolve()
+    library=(args.library_db or root/'library/main.db').resolve()
+    if not library.is_relative_to(root) or not library.is_file():
+        raise ValueError(f'QA library must be an existing file inside the isolation root: {library}')
     out.mkdir(parents=True,exist_ok=False)
     manifest=json.loads((root/'real-audio-manifest.json').read_text(encoding='utf-8'))
     # The disposable profile must not auto-switch back to its day/night custom
@@ -58,9 +61,13 @@ def run(args):
         wait_state(driver,lambda s:s['main_ui_ready'] and not s['db_switch_in_progress'],'Ready',60)
         win32gui.SetWindowPos(identity['hwnd'],0,40,40,1400,900,win32con.SWP_NOACTIVATE|win32con.SWP_NOZORDER)
         current=driver.command({'cmd':'get_state'})
-        library=root/'library/main.db'
+        switched=None
         if not current['db_path'] or Path(current['db_path']).resolve()!=library.resolve():
-            driver.command({'cmd':'info_edit_input','action':'open_existing_db','text':str(library)})
+            if current['db_path']:
+                switched=driver.command({'cmd':'switch_db','path':str(library)})
+                assert switched.get('started') or switched.get('skipped'),switched
+            else:
+                driver.command({'cmd':'info_edit_input','action':'open_existing_db','text':str(library)})
             current=wait_state(driver,lambda s:bool(s['db_path']) and Path(s['db_path']).resolve()==library.resolve() and not s['db_switch_in_progress'],'Open isolated real library',60)
         if current['result_count']<len(manifest['files']):
             driver.command({'cmd':'scan_folder','path':str(root/'audio'),'cache_waveforms':False,'build_similarity_index':False,'worker_threads':2})
@@ -68,7 +75,14 @@ def run(args):
             report['scan']=scan;assert scan['errors']==0,scan
             driver.command({'cmd':'scan_acknowledge_complete'})
         driver.command({'cmd':'search','text':''})
-        wait_state(driver,lambda s:s['result_count']==len(manifest['files']),'Scanned real sounds',60)
+        current=wait_state(driver,lambda s:s['result_count']==len(manifest['files']),'Scanned real sounds',60)
+        if args.check_db_only:
+            assert switched and switched.get('started'),switched
+            assert current['total_count']==len(manifest['files']),current
+            report['scope']='db-switch-only'
+            report['db_switch']={'receipt':switched,'path':current['db_path'],'total_count':current['total_count'],'result_count':current['result_count']}
+            report['passed']=True;save();print('DB switch QA passed',flush=True)
+            return
         driver.command({'cmd':'similar_index','action':'open','floating':True,'width':640,'height':640,'language':0})
         driver.command({'cmd':'select_row','row':0})
         until(state,lambda s:s['reference_id']>0)
@@ -185,5 +199,5 @@ def run(args):
             lines=settings.read_text(encoding='utf-8-sig').splitlines()
             settings.write_text('\n'.join('volume=1.0' if line.startswith('volume=') else line for line in lines)+'\n',encoding='utf-8')
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--library-db',type=Path);parser.add_argument('--check-db-only',action='store_true');parser.add_argument('--output',type=Path,required=True)
     run(parser.parse_args())
