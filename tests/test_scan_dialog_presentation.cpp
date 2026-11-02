@@ -207,6 +207,8 @@ int main(int argc, char** argv) {
         std::vector<int>(32, 1)) == 500, "capped log still reports missing file details");
     Check(ScanFailureRowLabel("Database write failed during scan: forced failure", "Save failed", 500) ==
         "Save failed (500)", "grouped row displays represented file count");
+    Check(ScanFailureRowLabel("Database write failed during scan: forced failure", "Save failed", 0) ==
+        "Save failed (0)", "diagnostic row shows that it represents zero failed files");
     Check(ClassifyScanFailure("Unexpected failure") == ScanFailureCategory::Other, "unclassified remains other");
     Check(ScanFailureSubject("Failed to read audio metadata: X:/音效/door.wav (bad tag)") == "door.wav", "failure row exposes filename");
     Check(ScanFailureSubject("Database write failed during scan").empty(), "no invented filename");

@@ -225,7 +225,7 @@ inline std::string ScanFailureSubject(const std::string& error) {
 inline std::string ScanFailureRowLabel(const std::string& error, const std::string& categoryLabel, int represented) {
     const auto subject = ScanFailureSubject(error);
     auto row = subject.empty() ? categoryLabel : subject + " · " + categoryLabel;
-    if (represented > 1) row += " (" + std::to_string(represented) + ")";
+    if (represented == 0 || represented > 1) row += " (" + std::to_string(represented) + ")";
     return row;
 }
 inline ScanFailureCategoryCounts BuildScanFailureSummary(const std::vector<std::string>& errors, int total,

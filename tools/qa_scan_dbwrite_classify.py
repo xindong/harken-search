@@ -25,7 +25,26 @@ ABORT_MESSAGE = 'Scan aborted after database write failure; queued files were no
 INPUT_COUNT = 500
 
 
-def running_card_packages():
+def package_uses_root(image, root):
+    import win32api
+
+    try:
+        translations = win32api.GetFileVersionInfo(str(image), r'\VarFileInfo\Translation') or ()
+        separator = chr(92)
+        original_names = [win32api.GetFileVersionInfo(
+            str(image), f'{separator}StringFileInfo{separator}{language:04x}{codepage:04x}'
+                        f'{separator}OriginalFilename') for language, codepage in translations]
+        if not any(isinstance(name, str) and name.lower() == 'harkensearch.exe'
+                   for name in original_names):
+            return False
+        # The preview root is compiled into the EXE. This also identifies
+        # copies or renamed builds outside the card's package directory.
+        return root.as_posix().lower().encode('utf-8') in image.read_bytes().lower()
+    except (OSError, ValueError):
+        return False
+
+
+def running_card_packages(root):
     import pywintypes
     import win32api
     import win32con
@@ -40,7 +59,7 @@ def running_card_packages():
             continue
         try:
             image = Path(win32process.GetModuleFileNameEx(handle, 0)).resolve()
-            if image.name.lower() == 'harkensearch.exe' and inside(image, CARD_ROOT):
+            if package_uses_root(image, root):
                 active.append(pid)
         except (OSError, pywintypes.error):
             continue
@@ -80,12 +99,12 @@ def run(args):
         handle.flush()
     try:
         require(not (runtime / 'qa_cmd.json').exists(), '加锁后发现未处理的 QA 命令')
-        require(not running_card_packages(), '本卡 QA 包仍有运行中的进程，拒绝共用隔离目录')
+        require(not running_card_packages(root), '本卡 QA 包仍有运行中的进程，拒绝共用隔离目录')
         driver = Driver(runtime, out)
         desktop = PrivateDesktop()
         process, pid = desktop.start(exe)
         process_exited = False
-        require(pid in running_card_packages(), '无法从进程列表确认本卡测试包')
+        require(pid in running_card_packages(root), '无法从进程列表确认本卡测试包')
         identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
         require(identity['pid'] == pid and path_key(identity['exe_path']) == path_key(exe)
                 and path_key(identity['isolation_root']) == path_key(root), '运行包身份与隔离目录不符')

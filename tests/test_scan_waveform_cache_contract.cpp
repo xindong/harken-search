@@ -2934,6 +2934,12 @@ static int testScanStatsKeepCategoriesWhenDetailsAreCapped() {
     check(first.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 32 &&
           first.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
           "scan stats retain categories beyond the detail cap", failures);
+    ScanStats diagnostic;
+    diagnostic.addDiagnostic("Database write failed during scan: forced failure");
+    first.mergeFrom(diagnostic);
+    check(first.errorMessages.back().find("Database write failed during scan") != std::string::npos &&
+          first.errorMessageCounts.back() == 0 && first.errors == 532,
+          "later folder write diagnostic stays visible when earlier details fill the cap", failures);
     return failures;
 }
 
@@ -2993,6 +2999,47 @@ static int testScanWriteFailureKeepsQueuedTerminalReasons() {
           stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 1,
           "queued terminal results keep their empty-file reason", failures);
     check(db.getFileCount() == 0, "failed transaction leaves no inserted files", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testScanWriteFailureDrainsQueuedTerminalReasons() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("write_failure_queued_terminal");
+    const fs::path dbPath = root / "write_failure_queued_terminal.db";
+    for (int i = 0; i < 10; ++i) {
+        writeSilentMonoWav(root / fs::u8path("a_valid_" + std::to_string(i) + ".wav"));
+        std::ofstream(root / fs::u8path("z_empty_" + std::to_string(i) + ".wav"),
+                      std::ios::binary);
+    }
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
+                  "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
+          "queued-terminal fixture aborts database writes", failures);
+    bool delayedAfterFirstResult = false;
+    auto holdWriter = [&](int current, int total, const std::string&, bool dataCommitted) {
+        if (!delayedAfterFirstResult && current == 1 && total == 20 && !dataCommitted) {
+            delayedAfterFirstResult = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    };
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
+                                               holdWriter, nullptr, 4, false);
+    check(delayedAfterFirstResult, "writer paused after consuming its first result", failures);
+    check(stats.total == 20 && stats.failedFiles == 20 && stats.errors == 20,
+          "write abort accounts every queued file exactly once", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 10 &&
+          stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 10,
+          "queued empty results retain their reason after writer flush fails", failures);
+    check(db.getFileCount() == 0, "queued-terminal failed transaction leaves no inserted files", failures);
     db.close();
     removeDbArtifacts(dbPath);
     std::error_code ec;
@@ -4199,6 +4246,7 @@ int main(int argc, char** argv) {
     failures += testScanStatsKeepCategoriesWhenDetailsAreCapped();
     failures += testScanWriteFailureDoesNotRecountTerminalFailure();
     failures += testScanWriteFailureKeepsQueuedTerminalReasons();
+    failures += testScanWriteFailureDrainsQueuedTerminalReasons();
     failures += testScanWriteFailurePreservesDiagnosticWhenEveryFileAlreadyFailed();
     std::cout << "-- testScanBatchRetriesWhenDatabaseIsTemporarilyLocked\n";
     failures += testScanBatchRetriesWhenDatabaseIsTemporarilyLocked();

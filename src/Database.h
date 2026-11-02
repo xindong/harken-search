@@ -263,10 +263,15 @@ struct ScanStats {
         waveformPendingFixedDone += other.waveformPendingFixedDone;
         waveformLongDetailSkipped += other.waveformLongDetailSkipped;
         for (size_t i = 0; i < other.errorMessages.size(); ++i) {
-            if (errorMessages.size() >= 32) break;
             if (other.errorMessages[i].empty()) continue;
+            const int count = i < other.errorMessageCounts.size() ? other.errorMessageCounts[i] : 1;
+            if (count == 0) {
+                addDiagnostic(other.errorMessages[i]);
+                continue;
+            }
+            if (errorMessages.size() >= 32) continue;
             errorMessages.push_back(other.errorMessages[i]);
-            errorMessageCounts.push_back(i < other.errorMessageCounts.size() ? other.errorMessageCounts[i] : 1);
+            errorMessageCounts.push_back(count);
         }
     }
 };
