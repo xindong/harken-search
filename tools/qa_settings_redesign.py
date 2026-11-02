@@ -40,6 +40,9 @@ def run(args):
             command(cmd='theme_schedule',action='pointer',phase=phase,x=x,y=y);settle()
     def click(id,fraction=.5):
         a,b,c,d=find(id)['bounds'];pointer(a+(c-a)*fraction,(b+d)/2)
+    def hover(id):
+        a,b,c,d=find(id)['bounds'];ox,oy=win32gui.ClientToScreen(identity['hwnd'],(0,0))
+        command(cmd='theme_schedule',action='pointer',phase='hover',x=(a+c)/2-ox,y=(b+d)/2-oy);settle()
     def key(name):
         command(cmd='settings_ui',action='key',key=name,down=True);settle()
         command(cmd='settings_ui',action='key',key=name,down=False);settle()
@@ -58,6 +61,35 @@ def run(args):
             a,b,c,d=observed['bounds'];box=tuple(round(n) for n in (a-ox,b-oy,c-ox,d-oy))
             with Image.open(path) as source:source.crop(box).save(out/(name+'-crop.png'))
             report.setdefault('screenshots',[]).append({'file':path.name,'crop':name+'-crop.png','bounds':box,'frame':observed['frame']})
+    def surface_check(name):
+        from PIL import Image
+        observed=settle();screenshot(name)
+        image=Image.open(out/(name+'-crop.png')).convert('RGB')
+        wx,wy,_,_=observed['bounds'];rows=[];errors=[]
+        for id in ('nav-4','nav-5'):
+            item=find(id);a,b,c,d=[round(v) for v in item['bounds']]
+            a-=round(wx);c-=round(wx);b-=round(wy);d-=round(wy)
+            background=image.getpixel((c-4,(b+d)//2))
+            ink=[]
+            for y in range(b,d):
+                for x in range(a,min(c-10,a+160)):
+                    if max(abs(image.getpixel((x,y))[k]-background[k]) for k in range(3))>70:
+                        ink.append(y)
+            assert ink,(id,'no readable navigation text')
+            center_error=abs((min(ink)+max(ink)+1)/2-(b+d)/2)
+            corners=[image.getpixel((x,y)) for x in (a+1,c-2) for y in (b+1,d-2)]
+            fill_error=max(abs(color[k]-background[k]) for color in corners for k in range(3))
+            rows.append({'id':id,'bounds':[a,b,c,d],'inkY':[min(ink),max(ink)+1],
+                         'centerError':center_error,'fillError':fill_error,'background':background})
+            if center_error>3:errors.append(id+' text is not vertically centered')
+            if fill_error>2:errors.append(id+' highlight does not cover its hit rectangle')
+        search=find('search')['bounds'];y=round(search[3]-wy+24)
+        outer=image.getpixel((round(search[0]-wx-8),y))
+        body=image.getpixel((round(search[0]-wx+200),y))
+        seam=max(abs(outer[k]-body[k]) for k in range(3))
+        if seam>2:errors.append('body background differs from its surrounding surface')
+        check(name,rows=rows,outerBackground=outer,bodyBackground=body,seamDifference=seam,errors=errors)
+        assert not errors,errors
     try:
         process,pid=desktop.start(exe)
         identity=driver.command({'cmd':'magic_eq_identity'},timeout=60)
@@ -82,6 +114,33 @@ def run(args):
         if args.expected_volume is not None:assert abs(state()['live_volume']-args.expected_volume)<.001
         if args.smoke:
             check('native settings open',state=state())
+            return
+        if args.surfaces:
+            for font,option in ((14,4),(24,9)):
+                query('system font');click('result-systemFont');click('systemFont');click('option-'+str(option))
+                if state()['pending']:click('apply')
+                assert state()['live_font']==font
+                for theme in range(5):
+                    command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+                    if state()['pending']:click('revert')
+                    click('nav-0');click('stock-'+str(0 if theme==4 else 4))
+                    if state()['pending']:click('apply')
+                    click('stock-'+str(theme));assert state()['pending']>0
+                    click('nav-4')
+                    for width,height in ((1120,800),(880,600)):
+                        command(cmd='settings_ui',action='resize',width=width,height=height);settle()
+                        for id in ('nav-0','nav-8','search','close','apply'):find(id)
+                        a,b,c,d=find('nav-5')['bounds']
+                        for x,y in ((a+2,b+2),(c-3,d-3)):
+                            pointer(x,y);assert state()['page']==5
+                            click('nav-4')
+                        hover('nav-5')
+                        surface_check(f'surface-t{theme}-font{max(font,18)}-{width}x{height}')
+            click('revert')
+            command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+            query('system font');click('result-systemFont');click('systemFont');click('option-4')
+            if state()['pending']:click('apply')
+            click('nav-0');click('done');assert not settle()['open']
             return
         initial=state()['live_volume']
         click('volume',.25);edited=settle();assert edited['pending']>0 and edited['live_volume']==initial
@@ -169,5 +228,5 @@ def run(args):
         desktop.close();(out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--expected-volume',type=float)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float)
     run(parser.parse_args())

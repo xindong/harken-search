@@ -162,22 +162,28 @@
         ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx); ImGui::TextUnformatted(L(Dlg_Settings)); su::Observe("settings-title"); ImGui::PopFont();
         ImGui::SetCursorPos(ImVec2(12,headerH+8));
         ImGui::BeginChild("SettingsNavigation",ImVec2(navW-24,winSize.y-headerH-65),false,ImGuiWindowFlags_NoBackground);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,4));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));
+        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign,ImVec2(0,.5f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ThemeColors::popupSelectionHoveredBG(preview));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,ThemeColors::popupSelectionActiveBG(preview));
+        const float navigationRowH=std::max(36.f,ImGui::GetTextLineHeight()+16.f);
         for (int i=0;i<=8;++i) {
 #if !AURA_BUILD_DIAGNOSTICS
             if (i==8) continue;
 #endif
             if (i==0 || i==5 || i==7) {
-                if (i) ImGui::Dummy(ImVec2(0,12));
+                if (i) ImGui::Dummy(ImVec2(0,8));
                 ImGui::TextDisabled("%s",i==0?text(u8"日常使用","EVERYDAY",u8"日常使用"):i==5?text(u8"工作方式","WORKFLOW",u8"作業環境"):text(u8"维护","MAINTENANCE",u8"メンテナンス"));
+                ImGui::Dummy(ImVec2(0,4));
             }
             const auto page=static_cast<su::Page>(i);
             ImGui::PushID(i);
-            if (ImGui::Selectable(su::PageLabel(page),editor.page==page,0,ImVec2(0,34))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();}
+            // Keep the painted row, text alignment and hit rectangle together.
+            if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();}
             su::Observe(("nav-"+std::to_string(i)).c_str());
             ImGui::PopID();
         }
-        ImGui::PopStyleVar();ImGui::EndChild();
+        ImGui::PopStyleColor(2);ImGui::PopStyleVar(2);ImGui::EndChild();
         ImGui::SetCursorPos(ImVec2(24,winSize.y-36)); ImGui::TextDisabled("Harken Search");
         ImGui::SetCursorPos(ImVec2(contentX,18));
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
@@ -193,7 +199,9 @@
         ImGui::GetWindowDrawList()->AddLine(ImVec2(xOrigin.x+xSize-inset,xOrigin.y+inset),ImVec2(xOrigin.x+inset,xOrigin.y+xSize-inset),xColor,1.7f);
         if (!editor.recording && !editor.hadChildPopup && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetCurrentContext()->OpenPopupStack.Size==ImGui::GetCurrentContext()->BeginPopupStack.Size && ImGui::IsKeyPressed(ImGuiKey_Escape)) requestClose();
         ImGui::SetCursorPos(ImVec2(contentX,headerH));
-        ImGui::BeginChild("SettingsBody",ImVec2(contentW,winSize.y-headerH-footerH),false);
+        // The modal already paints this surface. Painting its translucent
+        // background again makes a dark rectangle during theme previews.
+        ImGui::BeginChild("SettingsBody",ImVec2(contentW,winSize.y-headerH-footerH),false,ImGuiWindowFlags_NoBackground);
         if(editor.previousPage!=editor.page || editor.previousSearching!=(editor.query[0]!=0))ImGui::SetScrollY(0);
         editor.previousPage=editor.page;editor.previousSearching=editor.query[0]!=0;
         auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
