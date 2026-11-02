@@ -34596,7 +34596,7 @@ void RenderUI(AppState& state) {
                 const ThemeSwatch kThemeSwatches[] = {
                     { AppTheme::Dark,      L(Set_ThemeDark),      0xff0f141b, 0xff6f98c1, true  },
                     { AppTheme::RoseCedar, L(Set_ThemeRoseCedar), 0xfffdf3f6, 0xffe8b4c8, true  },
-                    { AppTheme::LapisBlue, L(Set_ThemeLapisBlue), 0xff1b3049, 0xff9cbddd, true  },
+                    { AppTheme::LapisBlue, L(Set_ThemeLapisBlue), 0xff243850, 0xff9cbddd, true  },
                     { AppTheme::Ocean,     L(Set_ThemeOcean),     0xff141516, 0xff38a8be, false },
                     { AppTheme::JadeMist,  L(Set_ThemeJadeMist),  0xfffdfbf7, 0xff246e68, false },
                 };
