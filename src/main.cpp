@@ -56,6 +56,10 @@
 #undef CopyFile
 #endif
 
+#ifdef __APPLE__
+#include "platform/settings_file.h"
+#endif
+
 #include "AudioEngine.h"
 #include "CoverBrowseSurfaceState.h"
 #include "FileBrowser.h"
@@ -606,6 +610,11 @@ static std::unordered_map<std::string, std::string> LoadKeyValueFile(const std::
 }
 
 static bool SaveAppSettingsKeyValueFile(const std::string& pathUtf8, const std::vector<std::pair<std::string, std::string>>& items) {
+#ifdef __APPLE__
+    if (!Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(pathUtf8)) return false;
+    return Platform::FileSystem::SaveSettingsKeyValues(pathUtf8, items).status ==
+           Platform::FileSystem::DurableFileOpStatus::Success;
+#else
     Platform::FileSystem::StreamWriter writer;
     if (!writer.Open(pathUtf8, false, true)) return false;
     bool written = writer.Write("# Aris settings (auto-generated)\n");
@@ -616,6 +625,7 @@ static bool SaveAppSettingsKeyValueFile(const std::string& pathUtf8, const std::
         written = writer.Write("\n") && written;
     }
     return written;
+#endif
 }
 
 // Helper: 在 modal popup 内部调用，按 ESC 时关闭当前弹窗（文本输入激活时跳过）

@@ -742,6 +742,9 @@ elseif(APPLE)
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/settings_file_macos.cpp
         src/platform/app_entry_macos.mm
         src/platform/main_stubs_macos.cpp
     )
