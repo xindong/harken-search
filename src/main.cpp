@@ -6300,6 +6300,7 @@ static void InitDefaultColumnPresets(AppState& state) {
 }
 
 bool TrySaveAppSettings(const AppState& state) {
+    DevToolsFramePhaseScope phase("RenderUI.SaveSettings");
     if (g_appSettingsPathUtf8.empty()) {
         g_siliconFlowApiKeyStorageError.clear();
         return true;
@@ -15503,6 +15504,7 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
 // SECTION 8 - Sidebar Panel
 
 static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
+    DevToolsFramePhaseScope phase("RenderUI.Sidebar");
     ImGui::PushID(idScope);
 
     // Layout reservations:
@@ -34096,6 +34098,7 @@ void RenderUI(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().dialogPanelBG);
     if (BeginTransientScrollbarPopupModal(L(Dlg_Settings), nullptr,
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        DevToolsFramePhaseScope settingsPhase("RenderUI.Settings");
         {
         s_settingsDialogWasOpen = true;
         const ImVec2 currentSettingsDialogSize = ImGui::GetWindowSize();
@@ -36559,6 +36562,7 @@ void RenderUI(AppState& state) {
                     ImGui::Separator();
 
                     if (aura::ui::ActionButton(L(Set_DiagExportJSON), ImVec2(180, 0))) {
+                        DevToolsFramePhaseScope phase("RenderUI.DiagnosticExport");
                         // Export to exe directory
                         std::string exportPath = GetExeDirUtf8() + "\\aura_diagnostics.json";
                         if (diag.exportJson(exportPath)) {
@@ -39661,6 +39665,7 @@ void RenderUI(AppState& state) {
             if (lastWord != state.searchSuggestLastQueryNorm) {
                 state.searchSuggestLastQueryNorm = lastWord;
                 if (!lastWord.empty()) {
+                    DevToolsFramePhaseScope phase("RenderUI.SearchSuggestions");
                     state.searchSuggestCandidates = state.database.getSearchSuggestions(lastWord, 10);
                 } else {
                     state.searchSuggestCandidates.clear();
@@ -42990,6 +42995,7 @@ void RenderUI(AppState& state) {
             adjustedFileTableOuterSize.x = -(kResultsTableOuterBorder * 2.0f);
         }
         if (BeginTransientScrollbarTable("FileTableV6", totalColumns, tableFlags, adjustedFileTableOuterSize, resultsTableInnerWidth)) {
+            DevToolsFramePhaseScope resultsPhase("RenderUI.ResultsTable");
             // The scrollable table owns a later regular draw list than the
             // surrounding CenterFileList child. Anchor the frame there so it
             // sits above headers/scrollbars but remains below popup windows.

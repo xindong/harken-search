@@ -2571,3 +2571,15 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestLocalizationLinkContract core)
 endif()
+
+# UI cover identity discovery admission and stale-result lifecycle.
+add_executable(TestCoverIdentityRefresh EXCLUDE_FROM_ALL tests/test_cover_identity_refresh.cpp)
+target_include_directories(TestCoverIdentityRefresh PRIVATE src)
+add_test(NAME TestCoverIdentityRefresh COMMAND TestCoverIdentityRefresh)
+aura_set_test_labels(TestCoverIdentityRefresh core ui)
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME TestCoverIdentityUiBoundary
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cover_identity_ui_boundary.py")
+    aura_set_test_labels(TestCoverIdentityUiBoundary core ui)
+endif()
