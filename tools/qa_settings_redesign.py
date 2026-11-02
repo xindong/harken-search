@@ -208,7 +208,7 @@ def run(args):
         assert state()['recording'];click('nav-0');assert not state()['recording']
         query('hotkey');click('result-hotkey');click('hotkey-record');assert state()['recording']
         click('search');assert not state()['recording'];key('Escape');assert state()['prompt'];click('discard')
-        key('F9');settle();assert state()['open']
+        command(cmd='ordinary_button_window',module='settings',action='open');settle();assert state()['open']
         check('leaving hotkey recording by navigation or search keeps Escape usable')
         click('nav-0');number('volume',21);
         if state()['pending']:click('apply')
