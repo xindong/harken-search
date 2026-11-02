@@ -1491,6 +1491,7 @@ elseif(APPLE)
         "-framework CoreFoundation"
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
+        ixwebsocket                    # Shared WAAPI source needs its headers and library.
         # macOS builds omit Whisper/aubio until compatible libraries are supplied.
     )
 else()

@@ -5847,6 +5847,7 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
+if(WIN32)
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
     src/ReaperBridgeClient.cpp
@@ -5884,6 +5885,7 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+endif()
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".
