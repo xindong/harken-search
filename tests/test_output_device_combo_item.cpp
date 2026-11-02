@@ -2,8 +2,19 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 int main() {
+    struct Device { std::string name; };
+    const std::vector<Device> duplicates{{"Speakers"},{"Speakers"},{"Headphones"}};
+    if (ResolveOutputDeviceSelection(duplicates,1,"Speakers") != 1 ||
+        ResolveOutputDeviceSelection(duplicates,0,"Headphones") != 2 ||
+        ResolveOutputDeviceSelection(duplicates,4,"Speakers") != -2 ||
+        ResolveOutputDeviceSelection(duplicates,0,"Disconnected") != -2 ||
+        ResolveOutputDeviceSelection(duplicates,-1,"") != -1) {
+        std::printf("FAIL: staged output choice must survive re-enumeration without guessing among duplicate names\n");
+        return 1;
+    }
     const OutputDeviceComboItem a = MakeOutputDeviceComboItem(0, "Speakers", true, " (Default)");
     const OutputDeviceComboItem b = MakeOutputDeviceComboItem(1, "Speakers", false, " (Default)");
 

@@ -46,6 +46,7 @@
 #endif
 
 #include "AppState.h"
+#include "SettingsDialogState.h"
 #include "FileInfoPanel.h"
 #include "Version.h"
 #include "RelinkWorkflow.h"
@@ -4762,6 +4763,43 @@ static void PollQaCommandFile(AppState& state) {
                 }
             }
         }
+    } else if (cmd == "settings_ui") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            namespace su = harken::settings;
+            const auto action = getStr(raw,"action");
+            if (action == "fail_save_once") su::failSaveOnce = true;
+            if (action == "key") {
+                const auto name=getStr(raw,"key");
+                const bool down=getBool(raw,"down",false);
+                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
+                if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
+            }
+            if (action == "resize") {
+                if(auto* window=ImGui::FindWindowByName("###HarkenSettings")) ImGui::SetWindowSize(window,ImVec2((float)std::clamp(getInt(raw,"width",1000),640,1500),(float)std::clamp(getInt(raw,"height",760),480,1100)),ImGuiCond_Always);
+            }
+            const auto& observation=su::observation;
+            const auto& editor=su::SettingsEditor();
+            auto rect=[](const ImVec4& r){return std::array<float,4>{r.x,r.y,r.z,r.w};};
+            auto items=nlohmann::json::array();
+            for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled}});
+            result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
+                {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
+                {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},
+                {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
+                {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"draft_monitor",editor.app.Value().monitorLayout},{"live_monitor",state.settings.monitorLayout},
+                {"draft_day",editor.runtime.Value().day},{"draft_night",editor.runtime.Value().night},
+                {"schedule",(int)editor.app.Value().themeScheduleMode},{"tool",editor.action},{"recording",editor.recording},
+                {"error",su::SettingsEditor().error},{"imgui_errors",ImGui::GetCurrentContext()->ErrorCountCurrentFrame},
+                {"imgui_log",ImGui::GetCurrentContext()->DebugLogBuf.c_str()},
+                {"bounds",rect(observation.bounds)},{"items",items}}).dump();
+        }
+#else
+        result=R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||

@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.16)
 project(HarkenSearch VERSION 1.0.43 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp)
+target_include_directories(TestPreferenceDraft PRIVATE src)
+target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestPreferenceDraft PRIVATE /utf-8 /UNDEBUG)
+endif()
+add_test(NAME PreferenceDraft COMMAND TestPreferenceDraft)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
