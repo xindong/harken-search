@@ -116,7 +116,10 @@ def run(args):
         for id in ('nav-0','search','device','volume','done'):assert find(id)['font_pixels']>=18
         for id in ('settings-title','page-title'):assert find(id)['font_pixels']>=24
         report['typography']={'bodyMinimum':18,'titleMinimum':24,'savedGlobalFont':state()['live_font']}
-        if args.expected_volume is not None:assert abs(state()['live_volume']-args.expected_volume)<.001
+        if args.expected_volume is not None:
+            assert abs(state()['live_volume']-args.expected_volume)<.001
+            assert abs(state()['engine_volume']-args.expected_volume)<.001
+        if args.expected_row_height is not None:assert state()['live_row_height']==args.expected_row_height
         if args.smoke:
             check('native settings open',state=state())
             return
@@ -147,7 +150,7 @@ def run(args):
             if state()['pending']:click('apply')
             click('nav-0');click('done');assert not settle()['open']
             return
-        initial=state()['live_volume']
+        initial=state()['live_volume'];initial_engine=state()['engine_volume']
         click('volume',.25);edited=settle();assert edited['pending']>0 and edited['live_volume']==initial
         draft=edited['draft_volume'];assert abs(draft-initial)>.01
         click('nav-2');assert abs(settle()['draft_volume']-draft)<.0001
@@ -156,8 +159,10 @@ def run(args):
         click('nav-0');click('volume',.8 if initial<.6 else .2)
         command(cmd='settings_ui',action='fail_save_once');click('apply')
         failed=settle();assert failed['pending']>0 and failed['error'] and failed['live_volume']==initial
+        assert abs(failed['engine_volume']-initial_engine)<.001
         screenshot('02-save-failure');click('apply');saved=settle()
         assert saved['pending']==0 and not saved['error'] and saved['live_volume']!=initial
+        assert abs(saved['engine_volume']-saved['live_volume'])<.001
         check('failed save keeps draft; retry applies',volume=saved['live_volume'])
         click('volume',.6);click('close');assert settle()['prompt'];screenshot('03-unsaved-close')
         click('keep-editing');assert state()['open'] and state()['pending']>0
@@ -221,6 +226,10 @@ def run(args):
         click('apply');assert abs(state()['live_volume']-.21)<.001
         assert state()['live_fft']==state()['default_fft']
         check('reset applies subsequent baseline-valued edits and canonical runtime defaults')
+        query('pitch range');click('result-pitchRange');number('pitchRange',-1)
+        assert state()['draft_pitch_range']==1
+        number('pitchRange',99);assert state()['draft_pitch_range']==48
+        click('revert');check('typed pitch range stays within valid bounds')
         click('nav-0')
         for index in range(5):
             click('stock-'+str(index))
@@ -235,9 +244,19 @@ def run(args):
         assert state()['live_font']==24
         assert find('search')['font_pixels']>=24 and find('done')['font_pixels']>=24
         screenshot('08-large-font');find('search');find('close');find('done')
+        click('nav-0');click('volume',.8)
+        command(cmd='settings_ui',action='resize',width=880,height=600);settle()
+        command(cmd='settings_ui',action='layout_restore_error');settle()
+        assert find('save-error')['bounds'][3]+8<=min(find('apply')['bounds'][1],find('revert')['bounds'][1])
+        screenshot('09-wrapped-save-error');click('revert')
+        command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+        check('long restore error fits above its buttons at 24 px in a small window')
         query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
         assert state()['live_font']==14
         check('24 px reading font keeps search, close and footer usable; restored 14 px')
+        query('row height');click('result-rowHeight');number('rowHeight',40);click('apply')
+        assert state()['live_row_height']==40
+        check('explicit row height is applied for restart verification')
         report['final_volume']=state()['live_volume']
         click('done');assert not settle()['open']
     except Exception:
@@ -250,14 +269,21 @@ def run(args):
             try:
                 if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:command(cmd='info_edit_input',action='exit')
                 assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
-                report['exit_code']=win32process.GetExitCodeProcess(process);process.Close()
+                report['exit_code']=win32process.GetExitCodeProcess(process)
             except Exception:report['exit_error']=traceback.format_exc()
+            finally:
+                try:
+                    if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+                        win32process.TerminateProcess(process,1);report['forced_termination']=True
+                        win32event.WaitForSingleObject(process,5000)
+                except Exception:report['termination_error']=traceback.format_exc()
+                finally:process.Close()
         try:desktop.close()
-        except Exception:report['exit_error']=traceback.format_exc()
+        except Exception:report['desktop_error']=traceback.format_exc()
         (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-        if not report.get('error') and (report.get('exit_error') or report.get('exit_code')!=0):
+        if not report.get('error') and (report.get('exit_error') or report.get('termination_error') or report.get('desktop_error') or report.get('exit_code')!=0):
             raise RuntimeError('Native QA process did not exit cleanly; see report.json')
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int)
     run(parser.parse_args())

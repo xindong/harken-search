@@ -11,6 +11,7 @@
         if (!editor.ChangedCount()) return true;
         const auto oldSettings=su::CaptureSettings(state);
         const auto oldRuntime=su::CaptureRuntime(state);
+        const float oldEngineVolume=state.audioEngine.getVolume();
         auto next=editor.app.MergeInto(oldSettings,editor.resetAll);
         const auto nextRuntime=editor.runtime.MergeInto(oldRuntime,editor.resetAll);
         // Device identity is checked again at Apply, since a USB device can
@@ -31,6 +32,7 @@
             const int resolved=ResolveOutputDeviceIdentity(editor.devices,next.audioOutputDeviceIndex,next.audioOutputDeviceName,editor.deviceIdentity);
             if (resolved<-1) { editor.error=L(SetUX_OutputDevicesChangedChooseADeviceAgain); return false; }
             next.audioOutputDeviceIndex=resolved;
+            next.audioOutputDeviceName=resolved<0?std::string{}:editor.devices[resolved].name;
             if (!state.audioEngine.switchOutputDevice(resolved) || state.audioEngine.getCurrentOutputDeviceIndex()!=resolved) {
                 editor.error=restoreOutput()?L(SetUX_CouldNotSwitchOutputDeviceYourChangesAreKept):L(SetUX_OutputRestoreFailed);
                 return false;
@@ -54,6 +56,9 @@
         state.settings.syncFromListeningMode();
         su::WriteRuntime(state,nextRuntime);
         schedule::SetMode(state,nextMode);
+        const bool volumeApplied=saved && !next.loudnessNormEnabled &&
+            (editor.resetAll || next.defaultVolume!=oldSettings.defaultVolume || next.loudnessNormEnabled!=oldSettings.loudnessNormEnabled);
+        if(volumeApplied)state.audioEngine.setVolume(next.defaultVolume);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
         if (su::failSaveOnce) { su::failSaveOnce=false; saved=false; }
 #endif
@@ -68,6 +73,7 @@
             schedule::SetMode(state,oldSettings.themeScheduleMode);
             su::WriteRuntime(state,oldRuntime);
             const bool outputRestored=!deviceChanged || restoreOutput();
+            if(volumeApplied)state.audioEngine.setVolume(oldEngineVolume);
             editor.error=restored ? L(SetUX_SaveFailedChangesAreKeptCheckTheSettingsFolderAndRetry)
                 : L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder);
             if (!outputRestored) editor.error += std::string(" ")+L(SetUX_OutputRestoreFailed);
@@ -153,8 +159,9 @@
         state.settings.settingsDialogWidth=winSize.x; state.settings.settingsDialogHeight=winSize.y;
         float navTextW=0;for(int i=0;i<=8;++i)navTextW=std::max(navTextW,ImGui::CalcTextSize(su::PageLabel((su::Page)i)).x);
         const float navW=std::min(winSize.x*.34f,std::max(212.f,navTextW+32.f));
-        const float headerH=std::max(68.f,ImGui::GetFrameHeight()+30.f),footerH=editor.error.empty()?72.f:106.f;
         const float contentX=navW+28.f,contentW=winSize.x-contentX-28.f;
+        const float errorHeight=editor.error.empty()?0.f:ImGui::CalcTextSize(editor.error.c_str(),nullptr,false,contentW).y;
+        const float headerH=std::max(68.f,ImGui::GetFrameHeight()+30.f),footerH=editor.error.empty()?72.f:std::max(106.f,errorHeight+82.f);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
         su::observation.open=true; su::observation.page=(int)editor.page; su::observation.pending=editor.ChangedCount();
         su::observation.draftVolume=draft.defaultVolume; su::observation.draftRealtime=draft.searchRealtime; su::observation.draftTheme=(int)draft.theme;
@@ -291,7 +298,7 @@
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-footerH));ImGui::Separator();
         const float buttonsW=editor.ChangedCount()?320.f:100.f;
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-50));
-        if(!editor.error.empty()){ImGui::SetCursorPosY(winSize.y-footerH+10);ImGui::PushTextWrapPos(winSize.x-28);ImGui::TextWrapped("%s",editor.error.c_str());ImGui::PopTextWrapPos();}
+        if(!editor.error.empty()){ImGui::SetCursorPosY(winSize.y-footerH+10);ImGui::PushTextWrapPos(winSize.x-28);ImGui::TextWrapped("%s",editor.error.c_str());su::Observe("save-error");ImGui::PopTextWrapPos();}
         else if(editor.ChangedCount())ImGui::Text(L(SetUX_DChangesPending),(int)editor.ChangedCount());
         else ImGui::TextDisabled("%s",L(SetUX_NoPendingChanges));
         ImGui::SetCursorPos(ImVec2(winSize.x-buttonsW-28,winSize.y-56));

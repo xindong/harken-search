@@ -95,7 +95,7 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
             state.settings.customBgColor=defaults.customBgColor;state.settings.customTextColor=defaults.customTextColor;
             state.settings.customAccentColor=defaults.customAccentColor;state.settings.customWaveformColor=defaults.customWaveformColor;state.settings.customVolumeColor=defaults.customVolumeColor;changed=true;
         }
-        if(changed){state.settings.theme=AppTheme::Custom;state.settings.useCustomColors=true;schedule::OnManualThemeSelected(state);ThemeColors::deactivateCustomTheme();ThemeColors::markPendingUiChromeResync();MarkSettingsDirty(state);editor.Reset(state);}
+        if(changed){if(state.settings.theme==AppTheme::Custom)state.settings.theme=AppTheme::Dark;state.settings.useCustomColors=true;schedule::OnManualThemeSelected(state);ThemeColors::deactivateCustomTheme();ThemeColors::markPendingUiChromeResync();MarkSettingsDirty(state);editor.Reset(state);}
     }
     if(!editor.error.empty())ImGui::TextWrapped("%s",editor.error.c_str());
     ImGui::EndChild();

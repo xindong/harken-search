@@ -5423,7 +5423,7 @@ void LoadAppSettings(AppState& state) {
     }
     state.settings.rowHeight = ParseInt(kv["rowHeight"], state.settings.rowHeight);
     state.settings.listDensity = static_cast<ListDensity>(ParseInt(kv["listDensity"], (int)state.settings.listDensity));
-    state.settings.rowHeight = state.settings.getEffectiveRowHeight(); // sync from density
+    state.settings.rowHeight = state.settings.getEffectiveRowHeight(); // legacy density or explicit custom height
     state.settings.settingsDialogWidth = std::clamp(
         ParseFloat(kv["settingsDialogWidth"], state.settings.settingsDialogWidth),
         820.0f, 1600.0f);

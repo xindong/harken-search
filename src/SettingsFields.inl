@@ -1,4 +1,5 @@
 // Every row edits the shared draft used by both Common and its full category.
+if(id=="pitch"||id=="pitchRange")draft.pitchRange=std::clamp(std::isfinite(draft.pitchRange)?draft.pitchRange:24.f,1.f,48.f);
 if(id=="device") {
     const char* label=draft.audioOutputDeviceIndex<0?L(Set_SystemDefault):draft.audioOutputDeviceName.c_str();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
@@ -52,7 +53,7 @@ else if(id=="systemFont"||id=="listFont") {
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(value-kFontSteps[i])<abs(value-kFontSteps[n]))n=i;
     if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
 }
-else if(id=="rowHeight")ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px");
+else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);
 else if(id=="waveMode") {if(combo(draft.waveformDisplayMode,{L(Set_ModeVolume2),L(Set_ModeLoudness2),L(Set_ModeSpectrum2)})&&draft.waveformDisplayMode==2)runtime.spectrum=true;}
 else if(id=="waveStyle") {int n=draft.waveformStyle==3?1:0;if(combo(n,{L(Set_StyleRMS2),L(Set_StyleSolid)}))draft.waveformStyle=n==1?3:2;}
@@ -68,7 +69,7 @@ else if(id=="fft") {
     const int sizes[]{512,1024,2048,4096,8192,16384};int n=0;for(int i=0;i<6;++i)if(sizes[i]==runtime.fft)n=i;
     ImGui::BeginDisabled(!runtime.spectrum);if(combo(n,{"512","1024","2048","4096","8192","16384"}))runtime.fft=sizes[n];su::Observe("fft-control");ImGui::EndDisabled();
 }
-else if(id=="spectrumBlend") {ImGui::BeginDisabled(!runtime.spectrum);ImGui::SliderFloat("##value",&runtime.blend,0,1,"%.2f");ImGui::EndDisabled();}
+else if(id=="spectrumBlend") {ImGui::BeginDisabled(!runtime.spectrum);ImGui::SliderFloat("##value",&runtime.blend,0,1,"%.2f",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="spectrumSplit") {ImGui::BeginDisabled(!runtime.spectrum);ImGui::Checkbox("##value",&runtime.split);ImGui::EndDisabled();}
 else if(id=="ripple")ImGui::Checkbox("##value",&draft.showClickRipple);
 else if(id=="milliseconds")ImGui::Checkbox("##value",&draft.showMilliseconds);
@@ -76,26 +77,26 @@ else if(id=="frames")ImGui::Checkbox("##value",&draft.showFrameNumber);
 else if(id=="frameRate") {ImGui::BeginDisabled(!draft.showFrameNumber);if(ImGui::InputFloat("##value",&draft.defaultFrameRate,0,0,"%.2f"))draft.defaultFrameRate=std::clamp(draft.defaultFrameRate,1.f,120.f);ImGui::EndDisabled();}
 else if(id=="resetSize") actionButton(L(Set_ResetDefaultSize),"reset-size");
 else if(id=="listening") {int n=(int)draft.listeningMode;if(combo(n,{L(Set_PreviewBrowse),L(Set_PreviewContinuous)}))draft.listeningMode=(ListeningMode)n;}
-else if(id=="volume") {float value=draft.defaultVolume*100;if(ImGui::SliderFloat("##value",&value,0,120,"%.0f%%"))draft.defaultVolume=value/100;}
+else if(id=="volume") {float value=draft.defaultVolume*100;if(ImGui::SliderFloat("##value",&value,0,120,"%.0f%%",ImGuiSliderFlags_AlwaysClamp))draft.defaultVolume=value/100;}
 else if(id=="normalize")ImGui::Checkbox("##value",&draft.loudnessNormEnabled);
 else if(id=="target") {
     ImGui::BeginDisabled(!draft.loudnessNormEnabled);
     const float values[]{-23,-16,-14};int preset=3;for(int i=0;i<3;++i)if(std::abs(draft.loudnessNormTargetLUFS-values[i])<.1f)preset=i;
     if(combo(preset,{"-23 LUFS (EBU R128)","-16 LUFS (Podcast)","-14 LUFS (Streaming)",L(Set_ThemeCustom)}))draft.loudnessNormTargetLUFS=preset<3?values[preset]:-18.f;
-    if(preset==3){ImGui::SetNextItemWidth(controlW-2);ImGui::SliderFloat("##target",&draft.loudnessNormTargetLUFS,-40,-6,"%.1f LUFS");}
+    if(preset==3){ImGui::SetNextItemWidth(controlW-2);ImGui::SliderFloat("##target",&draft.loudnessNormTargetLUFS,-40,-6,"%.1f LUFS",ImGuiSliderFlags_AlwaysClamp);}
     ImGui::EndDisabled();
 }
 else if(id=="fade")ImGui::Checkbox("##value",&draft.fadeInOutEnabled);
-else if(id=="fadeMs") {ImGui::BeginDisabled(!draft.fadeInOutEnabled);ImGui::SliderInt("##value",&draft.fadeInOutMs,2,50,"%d ms");ImGui::EndDisabled();}
+else if(id=="fadeMs") {ImGui::BeginDisabled(!draft.fadeInOutEnabled);ImGui::SliderInt("##value",&draft.fadeInOutMs,2,50,"%d ms",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="period") {const int values[]{5,10,20,50};int n=1;for(int i=0;i<4;++i)if(values[i]==draft.audioPeriodSizeMs)n=i;if(combo(n,{"5 ms","10 ms","20 ms","50 ms"}))draft.audioPeriodSizeMs=values[n];ImGui::TextDisabled("%s",L(SetUX_AfterRestart));}
 else if(id=="skipSilence")ImGui::Checkbox("##value",&draft.skipLeadingSilence);
-else if(id=="silenceThreshold") {ImGui::BeginDisabled(!draft.skipLeadingSilence);ImGui::SliderFloat("##value",&draft.silenceThresholdDb,-80,-24,"%.1f dB");ImGui::EndDisabled();}
-else if(id=="pitch")ImGui::SliderFloat("##value",&draft.defaultPitch,-draft.pitchRange,draft.pitchRange,"%.1f st");
-else if(id=="pitchRange") {if(ImGui::SliderFloat("##value",&draft.pitchRange,1,48,"%.0f st"))draft.defaultPitch=std::clamp(draft.defaultPitch,-draft.pitchRange,draft.pitchRange);}
+else if(id=="silenceThreshold") {ImGui::BeginDisabled(!draft.skipLeadingSilence);ImGui::SliderFloat("##value",&draft.silenceThresholdDb,-80,-24,"%.1f dB",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
+else if(id=="pitch")ImGui::SliderFloat("##value",&draft.defaultPitch,-draft.pitchRange,draft.pitchRange,"%.1f st",ImGuiSliderFlags_AlwaysClamp);
+else if(id=="pitchRange") {if(ImGui::SliderFloat("##value",&draft.pitchRange,1,48,"%.0f st",ImGuiSliderFlags_AlwaysClamp)){draft.pitchRange=std::clamp(std::isfinite(draft.pitchRange)?draft.pitchRange:24.f,1.f,48.f);draft.defaultPitch=std::clamp(draft.defaultPitch,-draft.pitchRange,draft.pitchRange);}}
 else if(id=="monitor")combo(draft.monitorLayout,{L(Set_MonitorLayoutAuto),L(Set_MonitorLayoutStereo),L(Set_MonitorLayout51),L(Set_MonitorLayout71),L(Set_MonitorLayout712),L(Set_MonitorLayout714),L(Set_MonitorLayoutBinaural)});
 else if(id=="downmix")combo(draft.downmixMode,{L(Set_DownmixAuto),L(Set_DownmixAlways),L(Set_DownmixNative)});
-else if(id=="center") {ImGui::BeginDisabled(draft.downmixMode==2);ImGui::SliderFloat("##value",&draft.downmixCenterDb,-12,0,"%.1f dB");ImGui::EndDisabled();}
-else if(id=="surround") {ImGui::BeginDisabled(draft.downmixMode==2);ImGui::SliderFloat("##value",&draft.downmixSurroundDb,-12,0,"%.1f dB");ImGui::EndDisabled();}
+else if(id=="center") {ImGui::BeginDisabled(draft.downmixMode==2);ImGui::SliderFloat("##value",&draft.downmixCenterDb,-12,0,"%.1f dB",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
+else if(id=="surround") {ImGui::BeginDisabled(draft.downmixMode==2);ImGui::SliderFloat("##value",&draft.downmixSurroundDb,-12,0,"%.1f dB",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="binaural")ImGui::Checkbox("##value",&draft.binauralMonitor);
 else if(id=="deviceInfo") {ImGui::TextWrapped("%s",state.audioEngine.getCurrentOutputDeviceName().c_str());ImGui::TextWrapped("%s",L(Main_ChannelCapPendingNote));}
 else if(id=="searchMode") {int n=draft.searchRealtime?0:1;if(combo(n,{L(Set_RealtimeSearch),L(Set_EnterSearch)}))draft.searchRealtime=n==0;}
@@ -109,10 +110,10 @@ else if(id=="perf") {
         if(draft.memoryProfile==2){draft.fpsLimit=0;draft.thumbnailMaxResolution=512;draft.threadLimit=-1;}
     }
 }
-else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto));
+else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto),ImGuiSliderFlags_AlwaysClamp);
 else if(id=="startupScan")ImGui::Checkbox("##value",&draft.autoReconcileOnStartup);
 else if(id=="backfill")ImGui::Checkbox("##value",&draft.idleAssetBackfillEnabled);
-else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,L(SetUX_DMin));ImGui::EndDisabled();}
+else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,L(SetUX_DMin),ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="database") {ImGui::TextWrapped("%s",state.currentDbPathUtf8.c_str());if(aura::ui::SmallActionButton(L(Set_OpenDBFolder)))Platform::OpenInFileManager(state.currentDbPathUtf8);}
 else if(id=="maintenance")actionButton(L(SetUX_MaintenanceTools),"maintenance");
 else if(id=="fps") {ImGui::BeginDisabled(draft.memoryProfile!=3);const int values[]{0,30,60,120,144};int n=0;for(int i=0;i<5;++i)if(draft.fpsLimit==values[i])n=i;if(combo(n,{L(Set_FPSNoLimit),"30 FPS","60 FPS","120 FPS","144 FPS"}))draft.fpsLimit=values[n];ImGui::EndDisabled();}
@@ -139,7 +140,7 @@ else if(id=="hotkey") {
 }
 else if(id=="shortcuts")actionButton(L(SetUX_EditShortcuts),"shortcuts");
 else if(id=="hideDrag")ImGui::Checkbox("##value",&draft.hideWindowOnDrag);
-else if(id=="dragDelay") {ImGui::BeginDisabled(!draft.hideWindowOnDrag);ImGui::SliderInt("##value",&draft.hideWindowOnDragDelayMs,100,2000,"%d ms");ImGui::EndDisabled();}
+else if(id=="dragDelay") {ImGui::BeginDisabled(!draft.hideWindowOnDrag);ImGui::SliderInt("##value",&draft.hideWindowOnDragDelayMs,100,2000,"%d ms",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="pauseDrag")ImGui::Checkbox("##value",&draft.pausePlaybackOnDragStart);
 else if(id=="treePath") {int n=(int)draft.folderTreePathMode;if(combo(n,{L(Set_FolderTreePathAbsolute),L(Set_FolderTreePathPilot)}))draft.folderTreePathMode=(aura::folder_tree::PathMode)n;}
 else if(id=="shell")actionButton(L(Set_ShellIntegration),"shell");
