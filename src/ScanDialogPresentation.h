@@ -2,6 +2,7 @@
 
 #include "ScanWorkflow.h"
 #include <array>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,9 @@ struct ScanDialogInput {
     ScanStopDisposition stopDisposition = ScanStopDisposition::None;
     bool fatalFailure = false;
     int reportedErrors = 0;
+    // Streaming discovery reports only files seen so far, not a final total.
+    // Fixed-size operations (currently missing-record cleanup) opt in.
+    bool ingestionTotalKnown = false;
 };
 struct ScanDialogView {
     ScanDialogSurface surface = ScanDialogSurface::Setup;
@@ -60,6 +64,7 @@ struct ScanDialogMetricsSnapshot {
     std::int64_t elapsedMs = 0;
     double filesPerSecond = 0.;
     bool speedKnown = false;
+    bool waitingForProgress = false;
 };
 
 // UI-thread sampler: no worker/database changes. Poll even when the popup is
@@ -87,25 +92,47 @@ public:
             }
             value_.speedKnown = false;
             value_.filesPerSecond = 0.;
+            value_.waitingForProgress = false;
             return value_;
         }
         value_.elapsedMs = Elapsed(now);
         const bool measurable = view.phase == ScanDialogPhase::Ingesting ||
             view.phase == ScanDialogPhase::Waveforms;
         if (!measurable || !sampling_ || phase_ != view.phase ||
-            view.current < lastCount_ || now < lastSampleAt_) {
+            view.current < lastCount_ || now < lastObservedAt_ ||
+            now - lastObservedAt_ >= kRateWindowMs) {
             value_.speedKnown = false;
             value_.filesPerSecond = 0.;
+            value_.waitingForProgress = false;
             sampling_ = measurable;
             phase_ = view.phase;
             lastCount_ = view.current;
             lastSampleAt_ = now;
-        } else if (now - lastSampleAt_ >= 250) {
-            value_.filesPerSecond = 1000. * (view.current - lastCount_) / (now - lastSampleAt_);
-            value_.speedKnown = true;
+            lastAdvanceAt_ = now;
+            samples_.clear();
+            if (measurable) samples_.push_back({now, view.current});
+        } else {
+            if (view.current > lastCount_) lastAdvanceAt_ = now;
             lastCount_ = view.current;
-            lastSampleAt_ = now;
+            if (now - lastSampleAt_ >= 250) {
+                samples_.push_back({now, view.current});
+                // Keep one boundary sample. At most about 14 samples are held,
+                // independent of scan duration and UI frame rate.
+                while (samples_.size() > 2 && samples_[1].at <= now - kRateWindowMs)
+                    samples_.pop_front();
+                const auto span = now - samples_.front().at;
+                const int delta = view.current - samples_.front().count;
+                value_.speedKnown = span > 0 && delta > 0;
+                value_.filesPerSecond = value_.speedKnown ? 1000. * delta / span : 0.;
+                lastSampleAt_ = now;
+            }
+            value_.waitingForProgress = now - lastAdvanceAt_ >= kRateWindowMs;
+            if (value_.waitingForProgress) {
+                value_.speedKnown = false;
+                value_.filesPerSecond = 0.;
+            }
         }
+        lastObservedAt_ = now;
         return value_;
     }
 private:
@@ -113,9 +140,13 @@ private:
         return startedAt_ > 0 ? std::max<std::int64_t>(0, now - startedAt_) : 0;
     }
     ScanDialogMetricsSnapshot value_;
+    static constexpr std::int64_t kRateWindowMs = 3000;
+    struct RateSample { std::int64_t at; int count; };
+    std::deque<RateSample> samples_;
     bool initialized_ = false, sampling_ = false, resultLatched_ = false;
     std::uint64_t task_ = 0;
     std::int64_t startedAt_ = 0, lastSampleAt_ = 0;
+    std::int64_t lastObservedAt_ = 0, lastAdvanceAt_ = 0;
     int lastCount_ = 0;
     ScanDialogPhase phase_ = ScanDialogPhase::Setup;
 };
@@ -152,7 +183,8 @@ inline ScanDialogView BuildScanDialogView(const ScanDialogInput& input) {
                 view.total = counts.discovered;
                 view.phase = snapshot.stage == ScanWorkflowStage::Ingesting
                     ? ScanDialogPhase::Ingesting : ScanDialogPhase::Counting;
-                view.progressKnown = view.phase == ScanDialogPhase::Ingesting && view.total > 0;
+                view.progressKnown = view.phase == ScanDialogPhase::Ingesting &&
+                    input.ingestionTotalKnown && view.total > 0;
             }
         }
         if (view.progressKnown) view.fraction = float(view.current) / float(view.total);

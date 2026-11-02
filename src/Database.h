@@ -1127,7 +1127,10 @@ public:
                               const std::string& backfillDbPathSnapshot = {},
                               int64_t backfillDbGenerationSnapshot = 0,
                               int64_t scanForegroundSessionId = 0,
-                              const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition = nullptr);
+                              const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition = nullptr,
+                              // Synchronous notification after enumeration/ingest, before
+                              // post-processing. Never retained or called from another thread.
+                              std::function<void()> onFinalizing = nullptr);
     void beginScanRollbackSession();
     bool rollbackActiveScanSession(aura::BackfillQueue* backfillQueue);
     void discardScanRollbackSession();
