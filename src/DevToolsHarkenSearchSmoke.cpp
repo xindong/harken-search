@@ -41,18 +41,25 @@ struct GalleryState {
 GalleryState& State() {
     static GalleryState s = [] {
         GalleryState initial;
+#ifdef _WIN32
         char* section = nullptr;
         size_t sectionLen = 0;
         if (_dupenv_s(&section, &sectionLen, "AURO_UI_GALLERY_SECTION") == 0 &&
             section && section[0]) {
+#else
+        const char* section = std::getenv("AURO_UI_GALLERY_SECTION");
+        if (section && section[0]) {
+#endif
             const int parsed = std::atoi(section);
             if (parsed >= 0 && parsed <= 8) {
                 initial.section = parsed;
             }
         }
+#ifdef _WIN32
         if (section) {
             std::free(section);
         }
+#endif
         return initial;
     }();
     return s;
