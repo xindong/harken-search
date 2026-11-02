@@ -21,6 +21,7 @@ struct Runtime {
     std::array<std::optional<AppTheme>, 2> builtinThemes;
     std::array<std::string, 2> warnings;
     std::optional<Period> applied;
+    std::optional<ManualAppearance> manualAppearance;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     int qaMinute = -1;
 #endif
@@ -76,14 +77,32 @@ void Initialize(const std::string& path) {
 }
 bool Ready() { return g_runtime.ready; }
 bool ControlsTheme(const AppState& state) { return Ready() && state.settings.themeScheduleMode != Mode::Off; }
+std::optional<ManualAppearance> ManualAppearanceForSettings(const AppState& state) {
+    return ControlsTheme(state) ? g_runtime.manualAppearance : std::nullopt;
+}
 std::optional<Period> SelectedPeriod(const AppState& state) {
     return ResolvePeriod(state.settings.themeScheduleMode, ReadPeriod());
 }
 void SetMode(AppState& state, Mode mode) {
+    const bool wasControlling = ControlsTheme(state);
+    if (mode != Mode::Off && !wasControlling)
+        g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
     state.settings.themeScheduleMode = mode;
+    if (mode == Mode::Off && wasControlling) {
+        if (g_runtime.manualAppearance) {
+            state.settings.theme = g_runtime.manualAppearance->theme;
+            state.settings.useCustomColors = g_runtime.manualAppearance->useCustomColors;
+        }
+        g_runtime.manualAppearance.reset();
+        g_runtime.applied.reset();
+        ThemeColors::deactivateCustomTheme();
+        ThemeColors::markPendingUiChromeResync();
+    }
     Invalidate();
 }
 void OnManualThemeSelected(AppState& state) {
+    if (ControlsTheme(state))
+        g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
     SetMode(state, ModeAfterManualTheme(state.settings.themeScheduleMode));
 }
 void Invalidate() { g_runtime.dirty = true; }
@@ -100,6 +119,8 @@ void Tick(AppState& state, bool force) {
         g_runtime.applied.reset();
         return;
     }
+    if (!g_runtime.manualAppearance)
+        g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
     const auto builtin = g_runtime.builtinThemes[Index(*wanted)];
     const auto selectedTheme = builtin.value_or(AppTheme::Custom);
     if (!ShouldApply({*wanted, g_runtime.applied,

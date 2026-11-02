@@ -30,6 +30,7 @@ def run(args):
     report = dict(exe=str(exe), sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),
                   started_at=datetime.now(timezone.utc).isoformat(), checks=[], exit_codes=[])
     profiles = root/'profile/Local/HarkenSearch'
+    settings_file = profiles/'settings.ini'
     day_file, night_file = profiles/'theme_schedule_day.json', profiles/'theme_schedule_night.json'
     def command(**payload): return driver.command(payload)
     def check(name, **details):
@@ -152,6 +153,10 @@ def run(args):
         return value
     def draft(key,value): command(cmd='theme_schedule',action='draft_color',key=key,rgba=value); settle()
     def snapshot(path): return (path.read_bytes(),path.stat().st_mtime_ns) if path.exists() else None
+    def saved_setting(key):
+        values = dict(line.split('=',1) for line in settings_file.read_text(encoding='utf-8').splitlines()
+                      if '=' in line and not line.startswith(('#',';')))
+        return values[key]
     def open_selector(day):
         index=0 if day else 1
         click_rect(settle()['ui']['selector_buttons'][index])
@@ -174,7 +179,22 @@ def run(args):
         return wait(lambda s:s['editor_open'] and s['editor_period']==(0 if day else 1),'palette editor opens from selector')
     try:
         initial=start(480)
-        assert initial['period']=='day' and initial['active_bg']==initial['day_bg'],initial
+        assert initial['period']=='day' and initial['mode']==0,initial
+        # A scheduled palette is temporary. It must not replace the saved
+        # manual theme, and switching the checkbox off restores that theme.
+        settings(); automatic(False); click_stock(2); close_settings()
+        assert state()['theme']==2 and saved_setting('theme')=='2',state()
+        settings(); automatic(True); choose(True,1); choose(False,0); close_settings()
+        clock(480)
+        assert saved_setting('theme')=='2',('day changed manual theme',saved_setting('theme'))
+        clock(960)
+        assert saved_setting('theme')=='2',('night changed manual theme',saved_setting('theme'))
+        settings(); automatic(False); value=settle()
+        assert value['mode']==0 and value['theme']==2,value
+        assert value['active_bg']!=value['night_bg'],value
+        close_settings(); stop(); value=start(960)
+        assert value['mode']==0 and value['theme']==2 and saved_setting('theme')=='2',value
+        check('scheduled-theme-preserves-and-restores-manual-default',state=value)
         settings(); automatic(False)
         # This is the first RED assertion on the old package: its five ordinary
         # themes are collapsed, and its day/night cards remain visible.
@@ -231,6 +251,7 @@ def run(args):
         assert len(colors)==113
         assert all(abs(a-b)<1e-6 for a,b in zip(colors['toolbarAccent'],[.2,.42,.64,1])),colors['toolbarAccent']
         assert state()['ui']['selector_presets'][0]==7,'edited palette must say custom'
+        assert saved_setting('theme')=='10','saving day palette changed manual theme'
         check('day-edit-saves-exact-rgba-and-keeps-night',state=state())
         open_editor(True); draft('toolbarAccent',[.9,.1,.2,1]); click('取消修改')
         wait(lambda s:not s['editor_open'],'cancel closes')
@@ -254,6 +275,7 @@ def run(args):
         colors=json.loads(night_saved[0])['colors']
         assert all(abs(a-b)<1e-6 for a,b in zip(colors['toolbarAccent'],[.65,.42,.86,1])),colors['toolbarAccent']
         assert all(abs(a-b)<1e-6 for a,b in zip(colors['mainWindowBG'],[.94,.94,.94,1]))
+        assert saved_setting('theme')=='10','saving night palette changed manual theme'
         check('light-night-edit-saves-exact-rgba-and-keeps-day',state=state())
         for minute in (479,480,959,960,0,1439,480):
             value=clock(minute); assert_groups(True)
@@ -280,24 +302,26 @@ def run(args):
             assert (snapshot(day_file),snapshot(night_file))==before_files,'unsaved draft changed saved palette'
             settings(); assert_groups(True)
             check('exit-during-'+('day' if day else 'night')+'-preview-keeps-saved-palette',state=value)
-        # Compatibility: unchecking freezes the current palette until an ordinary
-        # theme is chosen; neither the clock nor a restart may override that.
+        # The manual theme chosen through set_theme above is Jade Mist. Turning
+        # the checkbox off must restore it across clock changes and restart.
         for day in (True,False):
+            automatic(False); click_stock(10)
             automatic(True); clock(480 if day else 960); automatic(False)
             value=assert_groups(False)
+            assert value['mode']==0 and value['theme']==10,value
             before=(value['active_bg'],value['active_accent'])
             command(cmd='theme_schedule',action='clock',minute=960 if day else 480); settle()
             assert (state()['active_bg'],state()['active_accent'])==before
             close_settings(); stop()
             value=start(960 if day else 480)
-            assert value['mode']!=1 and (value['active_bg'],value['active_accent'])==before,value
+            assert value['mode']==0 and value['theme']==10 and (value['active_bg'],value['active_accent'])==before,value
             settings(); assert_groups(False)
             click('恢复默认主题'); value=settle()
             assert value['mode']==0 and value['theme']==0,('default theme was overridden',value)
             close_settings(); stop(); value=start(960 if day else 480)
             assert value['mode']==0 and value['theme']==0,value
             settings(); assert_groups(False)
-            check(('day' if day else 'night')+'-unchecked-freeze-and-restore-default-survive-restart',state=value)
+            check(('day' if day else 'night')+'-unchecked-restores-manual-theme-across-restart',state=value)
         # Leave this independently isolated experience profile in the simple
         # manual layout with the original five themes visible.
         click_stock(2); capture(driver,out/'settings-manual-final.png')
