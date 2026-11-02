@@ -340,7 +340,8 @@ enum class ListeningMode {
 enum class ListDensity {
     Compact     = 0,  // 20px rows, no mini waveform
     Normal      = 1,  // 28px rows (default)
-    Comfortable = 2   // 36px rows
+    Comfortable = 2,  // 36px rows
+    Custom      = 3   // explicit height chosen in settings
 };
 
 enum class SortColumn {
@@ -889,6 +890,7 @@ struct AppSettings {
             case ListDensity::Compact:     densityPx = 20; break;
             case ListDensity::Normal:      densityPx = 28; break;
             case ListDensity::Comfortable: densityPx = 36; break;
+            case ListDensity::Custom:      return std::clamp(rowHeight,16,100);
         }
         return ComputeReadingRowHeight(densityPx, readingFontSize, kListRowPaddingY);
     }

@@ -2,8 +2,29 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 int main() {
+    struct IdentifiedDevice { std::string name; std::vector<uint8_t> deviceIdBlob; };
+    const std::vector<IdentifiedDevice> refreshed{{"Speakers",{2}},{"Speakers",{3}}};
+    const std::vector<uint8_t> removedChoice{1};
+    for(int retry=0;retry<2;++retry) {
+        if(ResolveOutputDeviceIdentity(refreshed,0,"Speakers",removedChoice)!=-2) return 1;
+    }
+    const std::vector<IdentifiedDevice> reordered{{"B",{2}},{"A",{1}}};
+    if(ResolveOutputDeviceIdentity(reordered,0,"A",{1})!=1 ||
+       ResolveOutputDeviceIdentity(reordered,1,"B",{2})!=0 ||
+       ResolveOutputDeviceIdentity(reordered,-1,"",{})!=-1) return 1;
+    struct Device { std::string name; };
+    const std::vector<Device> duplicates{{"Speakers"},{"Speakers"},{"Headphones"}};
+    if (ResolveOutputDeviceSelection(duplicates,1,"Speakers") != 1 ||
+        ResolveOutputDeviceSelection(duplicates,0,"Headphones") != 2 ||
+        ResolveOutputDeviceSelection(duplicates,4,"Speakers") != -2 ||
+        ResolveOutputDeviceSelection(duplicates,0,"Disconnected") != -2 ||
+        ResolveOutputDeviceSelection(duplicates,-1,"") != -1) {
+        std::printf("FAIL: staged output choice must survive re-enumeration without guessing among duplicate names\n");
+        return 1;
+    }
     const OutputDeviceComboItem a = MakeOutputDeviceComboItem(0, "Speakers", true, " (Default)");
     const OutputDeviceComboItem b = MakeOutputDeviceComboItem(1, "Speakers", false, " (Default)");
 
