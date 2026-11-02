@@ -51,6 +51,7 @@ def run(args):
         return result
     def click(bounds):
         assert win32process.GetWindowThreadProcessId(report['identity']['hwnd'])[1]==report['identity']['pid']
+        audit(driver,driver.command({'cmd':'get_state'})['theme'])
         x,y=(bounds[0]+bounds[2])/2,(bounds[1]+bounds[3])/2
         for phase in ('hover','down','up'):
             driver.command({'cmd':'similar_index','action':'pointer','phase':phase,'x':x,'y':y});time.sleep(.08)
@@ -74,6 +75,12 @@ def run(args):
             scan=until(lambda:driver.command({'cmd':'scan_status'}),lambda s:not s['scanning'],600)
             report['scan']=scan;assert scan['errors']==0,scan
             driver.command({'cmd':'scan_acknowledge_complete'})
+            if 'info.qaScanCancel' in driver.command({'cmd':'info_page_state'})['zones']:
+                for phase in ('hover','down','up'):
+                    driver.command({'cmd':'info_page_pointer','key':'info.qaScanCancel','phase':phase})
+                    time.sleep(.12)
+                until(lambda:driver.command({'cmd':'info_page_state'}),lambda s:'info.qaScanCancel' not in s['zones'],10)
+        assert 'info.qaScanCancel' not in driver.command({'cmd':'info_page_state'})['zones'], 'Scan dialog blocks Similar Sounds controls'
         driver.command({'cmd':'search','text':''})
         current=wait_state(driver,lambda s:s['result_count']==len(manifest['files']),'Scanned real sounds',60)
         if args.check_db_only:
