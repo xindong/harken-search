@@ -188,6 +188,8 @@ public:
         const std::string& relativePath,
         // true creates exclusively; false opens an existing directory only.
         // Recovery must never materialize a missing namespace while rebinding.
+        // Install-root creation is allowed only under a durable journal lease,
+        // during preparation of parents for verified CreateNew inventory.
         bool requireNew,
         WindowsFilesystemHandle& outputHandle,
         WindowsFileIdentity& outputIdentity) = 0;
@@ -451,6 +453,9 @@ struct WindowsBootstrapJournalItemRecord {
 };
 
 struct WindowsBootstrapJournalRecord {
+    // 9 remains readable/writable for historical transactions. 10 has the
+    // same wire layout and additionally permits unbound CreateNew parents
+    // before file mutation; they must be bound durably before publication.
     std::uint32_t schemaVersion = 9;
     std::uint64_t generation = 0;
     std::string transactionId;
@@ -739,6 +744,8 @@ enum class WindowsBootstrapFilesystemNativeTestFailurePoint {
     RemoveDirectoryAfterMarkBeforeRebind,
     RemoveDirectoryAfterRebindBeforeDirectoryFlush,
     RemoveDirectoryAfterDirectoryFlushBeforeFinalRebind,
+    InstallDirectoryBeforeCreate,
+    InstallDirectoryAfterCreateBeforeObservation,
     // Retained as a source-compatible alias for earlier focused tests.  The
     // adapter no longer exposes a delete/rename gap; this point now fires
     // before the single atomic replace operation.

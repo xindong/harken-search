@@ -271,6 +271,7 @@ struct WindowsBootstrapFilesystemPort::State {
     std::string updaterOwnedBase;
     std::string invocationIdentity;
     std::uint64_t journalGeneration = 0;
+    std::uint32_t journalSchemaVersion = 9;
     bool begun = false;
     bool initialJournalDurable = false;
     bool backupDirectoryStarted = false;
@@ -695,6 +696,7 @@ struct WindowsBootstrapFilesystemPort::State {
 
     std::vector<std::uint8_t> serialize() const {
         WindowsBootstrapJournalRecord record;
+        record.schemaVersion = journalSchemaVersion;
         record.generation = journalGeneration;
         record.transactionId = journal.transactionId;
         record.deploymentMode = plan.identity.deploymentMode;
@@ -1099,13 +1101,27 @@ WindowsBootstrapFilesystemResult WindowsBootstrapFilesystemPort::Begin(
             }
         }
 
+        bool missingInstallParent = false;
         for (const std::string& parent : parentPaths(journalItem.relativePath)) {
+            if (reservedInstallPaths.count(insensitiveRelativePath(parent)) != 0U) {
+                return result(WindowsBootstrapFilesystemStatus::UnexpectedEntryType);
+            }
+            if (missingInstallParent) continue;
             WindowsFilesystemObservation parentObservation;
             observed = backend_.ObserveNoFollow(state.installRoot, parent,
                                                 parentObservation);
             if (!observed.ok()) return result(observationFailure(observed), observed);
             if (parentObservation.kind == WindowsFilesystemEntryKind::ReparsePoint) {
                 return result(WindowsBootstrapFilesystemStatus::ReparsePointRejected);
+            }
+            if (parentObservation.kind == WindowsFilesystemEntryKind::Missing &&
+                item.classification == JournalItemClass::CreateNew) {
+                // Admission remains read-only. Schema 10 records this signed
+                // new item's parent as unbound until durable preparation.
+                missingInstallParent = true;
+                item.installParentIdentity = {};
+                state.journalSchemaVersion = 10;
+                continue;
             }
             if (parentObservation.kind != WindowsFilesystemEntryKind::Directory ||
                 !parentObservation.identity.valid) {
@@ -1561,6 +1577,7 @@ WindowsBootstrapFilesystemPort::BeginRecoveryInternal(
     state.healthTokenConsumed = durable.healthTokenConsumed;
     state.committedApplicationRelaunchPending =
         durable.committedApplicationRelaunchPending;
+    state.journalSchemaVersion = durable.schemaVersion;
     state.previousFailureCount = durable.previousFailureCount;
     state.failureRecordedForTransaction =
         durable.failureRecordedForTransaction;
@@ -2122,7 +2139,11 @@ WindowsBootstrapFilesystemPort::BeginRecoveryInternal(
 
     recovery.disposition =
         WindowsBootstrapRecoveryDisposition::ContinueForward;
-    if (!state.backupDirectoryComplete) {
+    if (!state.backupDirectoryComplete ||
+        std::any_of(state.items.begin(), state.items.end(), [](const ItemState& item) {
+            return item.classification == JournalItemClass::CreateNew &&
+                   !item.installParentIdentity.valid;
+        })) {
         recovery.intents.push_back(
             {BootstrapIntentKind::PersistJournal, {}, 0, "prepared"});
     }
@@ -2202,7 +2223,8 @@ WindowsBootstrapFilesystemResult WindowsBootstrapFilesystemPort::Apply(
             if (!persisted.ok()) return persisted;
             state.initialJournalDurable = true;
         }
-        if (!state.backupDirectoryComplete) {
+        const bool preparingBackup = !state.backupDirectoryComplete;
+        if (preparingBackup) {
             WindowsBootstrapFilesystemResult persisted;
             const bool requireNewDirectory = true;
             if (!state.backupDirectoryStarted) {
@@ -2234,8 +2256,55 @@ WindowsBootstrapFilesystemResult WindowsBootstrapFilesystemPort::Apply(
             state.backupDirectoryComplete = true;
             persisted = state.persist("backup-directory-complete");
             if (!persisted.ok()) return persisted;
-            return {};
         }
+        if (intent.reason == "prepared") {
+            for (ItemState& item : state.items) {
+                if (item.installParentIdentity.valid) continue;
+                if (item.classification != JournalItemClass::CreateNew ||
+                    item.replacementStarted || item.replacementComplete) {
+                    return result(WindowsBootstrapFilesystemStatus::InvalidJournal);
+                }
+                WindowsFileIdentity parentIdentity;
+                for (const std::string& parent : parentPaths(item.relativePath)) {
+                    WindowsFilesystemObservation observation;
+                    const auto observedParent = state.backend.ObserveNoFollow(
+                        state.installRoot, parent, observation);
+                    if (!observedParent.ok()) {
+                        return result(observationFailure(observedParent), observedParent);
+                    }
+                    if (observation.kind == WindowsFilesystemEntryKind::Missing) {
+                        WindowsFilesystemHandle directory = 0;
+                        const auto mutation = state.mutateWithJournalLease([&] {
+                            return state.backend.OpenOrCreateDirectoryNoFollow(
+                                state.installRoot, parent, true, directory, parentIdentity);
+                        });
+                        if (directory != 0) state.backend.CloseFilesystemHandle(directory);
+                        if (!mutation.mutationInvoked || !mutation.backendResult.ok() ||
+                            !parentIdentity.valid) {
+                            return state.blockAfterStarted(mutation.backendResult,
+                                WindowsBootstrapFilesystemStatus::PartialDurableState, true);
+                        }
+                    } else if (observation.kind == WindowsFilesystemEntryKind::ReparsePoint) {
+                        return result(WindowsBootstrapFilesystemStatus::ReparsePointRejected);
+                    } else if (observation.kind != WindowsFilesystemEntryKind::Directory ||
+                               !observation.identity.valid) {
+                        return result(WindowsBootstrapFilesystemStatus::UnexpectedEntryType);
+                    } else {
+                        parentIdentity = observation.identity;
+                    }
+                }
+                if (!parentIdentity.valid) {
+                    return result(WindowsBootstrapFilesystemStatus::InvalidJournal);
+                }
+                // Bind the final parent before file publication. Empty
+                // directories are reusable infrastructure, never recursively
+                // removed during rollback or assumed to belong to this run.
+                item.installParentIdentity = parentIdentity;
+                const auto bound = state.persist("install-parent-bound");
+                if (!bound.ok()) return bound;
+            }
+        }
+        if (preparingBackup) return {};
         if (intent.reason == "rolling-back") {
             state.rollbackDurable = true;
             state.updateRollbackComplete();
@@ -2437,6 +2506,12 @@ WindowsBootstrapFilesystemResult WindowsBootstrapFilesystemPort::Apply(
         }
         if (item->replacementComplete) return {};
         if (!state.allBackupsComplete()) {
+            return result(WindowsBootstrapFilesystemStatus::InvalidIntentOrder);
+        }
+        if (std::any_of(state.items.begin(), state.items.end(), [](const ItemState& entry) {
+                return entry.classification == JournalItemClass::CreateNew &&
+                       !entry.installParentIdentity.valid;
+            })) {
             return result(WindowsBootstrapFilesystemStatus::InvalidIntentOrder);
         }
         item->replacementStarted = true;
