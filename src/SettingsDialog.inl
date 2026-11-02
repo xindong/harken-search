@@ -13,6 +13,7 @@
         const auto oldRuntime=su::CaptureRuntime(state);
         const float oldEngineVolume=state.audioEngine.getVolume();
         auto next=editor.app.MergeInto(oldSettings,editor.resetAll);
+        next.rowHeight=next.getEffectiveRowHeight();
         const auto nextRuntime=editor.runtime.MergeInto(oldRuntime,editor.resetAll);
         // Device identity is checked again at Apply, since a USB device can
         // disappear or reorder while the settings dialog is open.

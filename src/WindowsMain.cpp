@@ -4792,6 +4792,7 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"effective_row_height",state.settings.getEffectiveRowHeight()},{"live_scan_threads",state.scanWorkerThreads},
                 {"draft_monitor",editor.app.Value().monitorLayout},{"live_monitor",state.settings.monitorLayout},
                 {"draft_day",editor.runtime.Value().day},{"draft_night",editor.runtime.Value().night},
                 {"draft_fft",editor.runtime.Value().fft},{"live_fft",state.spectrogramFFTSize},{"default_fft",GetReadableSpectrogramPreset().fftSize},

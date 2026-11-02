@@ -5871,6 +5871,7 @@ void LoadAppSettings(AppState& state) {
     state.spectrogramBlend = ParseFloat(kv["spectrogramBlend"], state.spectrogramBlend);
     state.spectrogramFFTSize = ParseInt(kv["spectrogramFFTSize"], state.spectrogramFFTSize);
     state.spectrogramSplit = ParseBool(kv["spectrogramSplit"], state.spectrogramSplit);
+    state.scanWorkerThreads = std::clamp(ParseInt(kv["scanWorkerThreads"], state.scanWorkerThreads), 0, 64);
     const int spectrogramPresetVersion = ParseInt(kv["spectrogramReadablePresetVersion"], 0);
     if (ShouldApplyReadableSpectrogramPresetMigration(
             spectrogramPresetVersion,
@@ -6537,6 +6538,7 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"spectrogramBlend", std::to_string(state.spectrogramBlend)});
     items.push_back({"spectrogramFFTSize", std::to_string(state.spectrogramFFTSize)});
     items.push_back({"spectrogramSplit", state.spectrogramSplit ? "1" : "0"});
+    items.push_back({"scanWorkerThreads", std::to_string(state.scanWorkerThreads)});
     items.push_back({"spectrogramReadablePresetVersion", std::to_string(GetReadableSpectrogramPresetVersion())});
 
     // File type visibility filters

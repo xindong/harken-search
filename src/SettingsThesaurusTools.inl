@@ -67,12 +67,12 @@
                 }
 
                 ImGui::Text("%s", L(Set_ThesQuickAdd));
-                ImGui::SetNextItemWidth(250);
+                const float ruleInputWidth=std::max(1.f,(ImGui::GetContentRegionAvail().x-ImGui::GetStyle().ItemSpacing.x)*.5f);
+                ImGui::SetNextItemWidth(ruleInputWidth);
                 HintAwareInputTextWithHint("##trig", L(Set_ThesTrigger), trigBuf, sizeof(trigBuf));
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(300);
+                ImGui::SetNextItemWidth(ruleInputWidth);
                 HintAwareInputTextWithHint("##rel", L(Set_ThesExpand), relBuf, sizeof(relBuf));
-                ImGui::SameLine();
                 // BUG-20260912-02 并案: the edit-mode Cancel (L(Cancel)) shares the
                 // footer's permanent Cancel text in the same Dlg_Settings window layer;
                 // salt the whole add/edit control group. No copy changes.
@@ -92,7 +92,7 @@
                     }
                 } else {
                     // Edit mode: "Save Changes" + "Cancel"
-                    if (aura::ui::ActionButton(L(Set_ThesSaveEditBtn), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
+                    if (aura::ui::ActionButton(L(Set_ThesSaveEditBtn), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                         ThesaurusGroup g;
                         g.triggers = SplitThesaurusWords(trigBuf);
                         g.related = SplitThesaurusWords(relBuf);
@@ -105,12 +105,14 @@
                             s_editingIndex = -1;
                         }
                     }
+                    su::Observe("thesaurus-save");
                     ImGui::SameLine();
-                    if (aura::ui::ActionButton(L(Cancel), ImVec2(60, 0), aura::ui::ButtonVariant::Quiet)) {
+                    if (aura::ui::ActionButton(L(Cancel), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                         memset(trigBuf, 0, sizeof(trigBuf));
                         memset(relBuf, 0, sizeof(relBuf));
                         s_editingIndex = -1;
                     }
+                    su::Observe("thesaurus-cancel");
                 }
                 ImGui::PopID();  // BUG-20260912-02 并案
 
@@ -160,6 +162,7 @@
                             std::snprintf(relBuf,  sizeof(relBuf),  "%s", r.c_str());
                             s_editingIndex = i;
                         }
+                        if(i==0)su::Observe("thesaurus-edit-first");
                         ImGui::SameLine();
                         if (aura::ui::ActionButton(L(Delete), ImVec2(-FLT_MIN, 0), aura::ui::ButtonVariant::Danger)) {
                             g_userThesaurus.erase(g_userThesaurus.begin() + i);

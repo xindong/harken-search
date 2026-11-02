@@ -13,7 +13,7 @@ def run(args):
     exe=args.exe.resolve();root=args.isolation_root.resolve();out=args.output.resolve()
     out.mkdir(parents=True,exist_ok=False)
     runtime=root/'profile/runtime';runtime.mkdir(parents=True,exist_ok=True)
-    driver=Driver(runtime,out);desktop=PrivateDesktop();process=None
+    driver=Driver(runtime,out);desktop=PrivateDesktop();process=None;identity_verified=False
     report={'exe':str(exe),'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'checks':[]}
     def command(**payload):return driver.command(payload)
     def state():return command(cmd='settings_ui')
@@ -100,6 +100,7 @@ def run(args):
         identity=driver.command({'cmd':'magic_eq_identity'},timeout=60)
         assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe
         assert Path(identity['isolation_root']).resolve()==root
+        identity_verified=True
         report['identity']=identity
         origin=win32gui.ClientToScreen(identity['hwnd'],(0,0))
         current=wait_state(driver,lambda x:x['main_ui_ready'] and x['total_count']>0,'real library startup',90)
@@ -120,6 +121,7 @@ def run(args):
             assert abs(state()['live_volume']-args.expected_volume)<.001
             assert abs(state()['engine_volume']-args.expected_volume)<.001
         if args.expected_row_height is not None:assert state()['live_row_height']==args.expected_row_height
+        if args.expected_scan_threads is not None:assert state()['live_scan_threads']==args.expected_scan_threads
         if args.smoke:
             check('native settings open',state=state())
             return
@@ -150,6 +152,11 @@ def run(args):
             if state()['pending']:click('apply')
             click('nav-0');click('done');assert not settle()['open']
             return
+        query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
+        assert state()['live_row_height']==state()['effective_row_height']
+        query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
+        assert state()['live_row_height']==state()['effective_row_height']
+        click('nav-0');check('system font changes recompute live density row height')
         initial=state()['live_volume'];initial_engine=state()['engine_volume']
         click('volume',.25);edited=settle();assert edited['pending']>0 and edited['live_volume']==initial
         draft=edited['draft_volume'];assert abs(draft-initial)>.01
@@ -202,7 +209,8 @@ def run(args):
         check('day and night offer all five themes; selections persist and schedule can be disabled')
         click('nav-0');click('volume',.45);query('thesaurus');click('result-dictionary');click('dictionary')
         assert state()['prompt'];click('discard');assert state()['tool']=='dictionary'
-        screenshot('07-thesaurus');click('tool-close');assert state()['open'] and not state()['pending']
+        click('thesaurus-edit-first');find('thesaurus-save');find('thesaurus-cancel');screenshot('07-thesaurus')
+        click('thesaurus-cancel');click('tool-close');assert state()['open'] and not state()['pending']
         check('specialty tool resolves pending changes and returns to settings')
         query('day');assert not any(i['id'] in ('result-day','result-night') for i in state()['items'])
         assert any(i['id']=='result-automatic' for i in state()['items'])
@@ -257,17 +265,23 @@ def run(args):
         query('row height');click('result-rowHeight');number('rowHeight',40);click('apply')
         assert state()['live_row_height']==40
         check('explicit row height is applied for restart verification')
+        query('threads');click('result-threads');number('threads',4);click('apply')
+        assert state()['live_scan_threads']==4
+        check('scan thread preference is applied for restart verification')
         report['final_volume']=state()['live_volume']
         click('done');assert not settle()['open']
     except Exception:
         report['error']=traceback.format_exc();print(report['error'],flush=True)
-        try:screenshot('failure')
+        try:
+            if identity_verified:screenshot('failure')
         except Exception:pass
         raise
     finally:
         if process is not None:
             try:
-                if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:command(cmd='info_edit_input',action='exit')
+                if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+                    if identity_verified:command(cmd='info_edit_input',action='exit')
+                    else:win32process.TerminateProcess(process,1);report['forced_termination']=True
                 assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
                 report['exit_code']=win32process.GetExitCodeProcess(process)
             except Exception:report['exit_error']=traceback.format_exc()
@@ -285,5 +299,5 @@ def run(args):
             raise RuntimeError('Native QA process did not exit cleanly; see report.json')
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int);parser.add_argument('--expected-scan-threads',type=int)
     run(parser.parse_args())
