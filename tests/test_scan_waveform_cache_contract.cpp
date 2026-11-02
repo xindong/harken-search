@@ -16,12 +16,16 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
+
+extern std::atomic<int> g_scanCommitIntervalOverrideMs;
+extern std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
 
 static fs::path makeTempRoot(const std::string& name) {
     fs::path root = fs::temp_directory_path() / ("aura_waveform_scan_contract_" + name);
@@ -2937,9 +2941,26 @@ static int testScanStatsKeepCategoriesWhenDetailsAreCapped() {
     ScanStats diagnostic;
     diagnostic.addDiagnostic("Database write failed during scan: forced failure");
     first.mergeFrom(diagnostic);
-    check(first.errorMessages.back().find("Database write failed during scan") != std::string::npos &&
-          first.errorMessageCounts.back() == 0 && first.errors == 532,
-          "later folder write diagnostic stays visible when earlier details fill the cap", failures);
+    bool hasGroupedWriteCause = false;
+    bool hasZeroCountDiagnostic = false;
+    for (size_t i = 0; i < first.errorMessages.size(); ++i) {
+        if (first.errorMessages[i].find("Database write failed during scan") == std::string::npos)
+            continue;
+        hasGroupedWriteCause |= first.errorMessageCounts[i] == 500;
+        hasZeroCountDiagnostic |= first.errorMessageCounts[i] == 0;
+    }
+    check(hasGroupedWriteCause && hasZeroCountDiagnostic && first.errors == 532,
+          "grouped write cause and later zero-count diagnostic survive the detail cap", failures);
+    ScanStats direct;
+    for (int i = 0; i < 32; ++i) direct.addError("No audio samples: X:/empty.wav");
+    direct.addError("Database write failed during scan: forced failure", 500);
+    bool directWriteCauseVisible = false;
+    for (size_t i = 0; i < direct.errorMessages.size(); ++i) {
+        directWriteCauseVisible |= direct.errorMessages[i].find("Database write failed during scan") != std::string::npos &&
+                                   direct.errorMessageCounts[i] == 500;
+    }
+    check(directWriteCauseVisible && direct.errorMessages.size() == 32 && direct.errors == 532,
+          "late grouped write cause survives direct insertion at the detail cap", failures);
     return failures;
 }
 
@@ -3024,16 +3045,19 @@ static int testScanWriteFailureDrainsQueuedTerminalReasons() {
     check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
                   "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
           "queued-terminal fixture aborts database writes", failures);
-    bool delayedAfterFirstResult = false;
-    auto holdWriter = [&](int current, int total, const std::string&, bool dataCommitted) {
-        if (!delayedAfterFirstResult && current == 1 && total == 20 && !dataCommitted) {
-            delayedAfterFirstResult = true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
+    bool queuedBarrierReached = false;
+    g_scanCommitIntervalOverrideMs.store(0);
+    g_scanBeforeFlushHook = [&](const std::atomic<int>& produced, int total, int consumed) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (produced.load() < total && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        queuedBarrierReached = total == 20 && consumed == 1 && produced.load() == 20;
     };
     const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
-                                               holdWriter, nullptr, 4, false);
-    check(delayedAfterFirstResult, "writer paused after consuming its first result", failures);
+                                               nullptr, nullptr, 4, false);
+    g_scanBeforeFlushHook = {};
+    g_scanCommitIntervalOverrideMs.store(-1);
+    check(queuedBarrierReached, "flush barrier held 19 produced results in the queue", failures);
     check(stats.total == 20 && stats.failedFiles == 20 && stats.errors == 20,
           "write abort accounts every queued file exactly once", failures);
     check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 10 &&

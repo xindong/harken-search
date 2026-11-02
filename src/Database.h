@@ -220,26 +220,44 @@ struct ScanStats {
     std::vector<int> errorMessageCounts;
     HarkenSearch::ScanFailureCategoryCounts errorCategoryCounts{};
 
+    void recordErrorDetail(std::string message, int count) {
+        if (message.empty()) return;
+        if (errorMessages.size() < 32) {
+            errorMessages.push_back(std::move(message));
+            errorMessageCounts.push_back(count);
+            return;
+        }
+        if (HarkenSearch::ClassifyScanFailure(message) != HarkenSearch::ScanFailureCategory::Save)
+            return;
+        size_t replacement = errorMessages.size();
+        for (size_t i = 0; i < errorMessages.size(); ++i) {
+            if (HarkenSearch::ClassifyScanFailure(errorMessages[i]) != HarkenSearch::ScanFailureCategory::Save)
+                replacement = i;
+        }
+        if (replacement == errorMessages.size()) {
+            if (count > 0) replacement = errorMessages.size() - 1;
+            else {
+                for (size_t i = 0; i < errorMessageCounts.size(); ++i) {
+                    if (errorMessageCounts[i] <= 1) replacement = i;
+                }
+            }
+        }
+        if (replacement < errorMessages.size()) {
+            errorMessages[replacement] = std::move(message);
+            errorMessageCounts[replacement] = count;
+        }
+    }
+
     void addError(std::string message = {}, int count = 1) {
         if (count <= 0) return;
         errors += count;
         errorCategoryCounts[static_cast<size_t>(HarkenSearch::ClassifyScanFailure(message))] += count;
-        if (!message.empty() && errorMessages.size() < 32) {
-            errorMessages.push_back(std::move(message));
-            errorMessageCounts.push_back(count);
-        }
+        recordErrorDetail(std::move(message), count);
     }
 
     void addDiagnostic(std::string message) {
-        if (message.empty()) return;
         // Keep a fatal write cause visible without counting an already failed file again.
-        if (errorMessages.size() >= 32) {
-            errorMessages.back() = std::move(message);
-            errorMessageCounts.back() = 0;
-        } else {
-            errorMessages.push_back(std::move(message));
-            errorMessageCounts.push_back(0);
-        }
+        recordErrorDetail(std::move(message), 0);
     }
 
     void mergeFrom(const ScanStats& other) {
@@ -265,13 +283,7 @@ struct ScanStats {
         for (size_t i = 0; i < other.errorMessages.size(); ++i) {
             if (other.errorMessages[i].empty()) continue;
             const int count = i < other.errorMessageCounts.size() ? other.errorMessageCounts[i] : 1;
-            if (count == 0) {
-                addDiagnostic(other.errorMessages[i]);
-                continue;
-            }
-            if (errorMessages.size() >= 32) continue;
-            errorMessages.push_back(other.errorMessages[i]);
-            errorMessageCounts.push_back(count);
+            recordErrorDetail(other.errorMessages[i], count);
         }
     }
 };
