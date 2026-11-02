@@ -617,7 +617,8 @@ void AppState::syncFromTab() {
 void AppState::syncToTab() {
     if (listTabs.empty()) return;
     ListTab& tab = currentTab();
-    if (tab.isLocked && !tab.explicitRefreshPending) return;
+    if (tab.isLocked && (!tab.explicitRefreshPending ||
+        tab.explicitRefreshQueryGeneration != filterQueryGeneration)) return;
 
     // The active tab does not retain a duplicate of the live result sets.
 

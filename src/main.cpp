@@ -14535,6 +14535,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
     if (!state.listTabs.empty() && state.currentTab().isLocked) {
         state.currentTab().explicitRefreshPending = true;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
     }
     state.searchBuffer[0] = '\0';
     if (state.viewMode == ViewMode::Database) {
@@ -41768,6 +41769,9 @@ void RenderUI(AppState& state) {
         }
         if (state.needsTabResultsRefresh) {
             state.needsTabResultsRefresh = false;
+            if (!state.listTabs.empty() && state.currentTab().explicitRefreshPending) {
+                state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+            }
             RefreshSearchResults(state, true);
         }
 
