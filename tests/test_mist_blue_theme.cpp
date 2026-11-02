@@ -3,12 +3,18 @@
 #include "BuiltinThemeScheme.h"
 #include "ui/TransportContrast.h"
 #include "ui/MistBlueChrome.h"
+#include <cmath>
 #include <cstdio>
 int main() {
     using namespace TransportContrast;
     auto s=MakeBuiltinScheme(AppTheme::LapisBlue);
     int failures=0;
     auto check=[&](bool ok,const char* name){std::printf("%s %s\n",ok?"PASS":"FAIL",name);failures+=!ok;};
+    auto channel=[](float c){return static_cast<int>(std::round(c*255.f));};
+    check(channel(s.mainWindowBG.x)==36 && channel(s.mainWindowBG.y)==56 && channel(s.mainWindowBG.z)==80,
+          "approved softened navy canvas");
+    check(channel(s.resultsBG.x)==36 && channel(s.resultsBG.y)==56 && channel(s.resultsBG.z)==80,
+          "results canvas matches softened navy");
     check(s.filterBrowserBG.x>.98f && s.filterBrowserBG.y>.98f && s.filterBrowserBG.z>.98f,"white filter panel");
     for(auto bg:{s.resultsBG,s.metadataPanelBG,s.waveformBG,s.transportBarBG}) {
         check(Luminance(bg)>.015 && Luminance(bg)<.08 && bg.z-bg.x>.10,"deep navy surfaces avoid pale gray");
