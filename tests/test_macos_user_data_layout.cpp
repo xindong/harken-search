@@ -1,4 +1,5 @@
 #include "platform/harken_user_data_layout.h"
+#include "platform/database_paths.inl"
 
 #include <cstdlib>
 #include <chrono>
@@ -29,6 +30,8 @@ int main() {
         require(!first.readOnly && first.noticeUtf8.empty(), "fresh data layout is writable");
         require(data::WideToUtf8Path(first.canonicalRoot) == (root / "profile" / "Application Support" / "HarkenSearch").string(), "settings root stays in QA profile");
         require(fs::is_directory(data::WideToUtf8Path(first.activeDatabaseDir)), "database directory is created");
+        require(Platform::DatabasePaths::GetDefaultDbDirWide() == first.activeDatabaseDir,
+                "new-library UI uses the same isolated database directory");
         require(first.activeDatabaseFile.empty(), "fresh launch does not invent a library");
         std::ofstream(data::WideToUtf8Path(first.activeSettingsDir) + "/retained.ini") << "library=中文素材库";
         data::ResetLayoutCacheForTests();
@@ -57,6 +60,8 @@ int main() {
         const auto unwritable = data::EnsureLayout();
         fs::permissions(settingsRoot, originalPermissions);
         require(unwritable.readOnly && !unwritable.noticeUtf8.empty(), "unwritable existing profile is reported as read-only");
+        require(Platform::DatabasePaths::GetDefaultDbDirWide().empty(),
+                "unwritable data directory does not fall back to the app bundle");
         std::cout << "Evidence retained at " << root << '\n';
         return 0;
     } catch (const std::exception& error) {

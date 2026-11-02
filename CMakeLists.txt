@@ -386,8 +386,11 @@ else()
 endif()
 
 # Application source files
-# main.cpp is Windows-only (13K LOC); macOS uses app_entry_macos.mm
+# Both native entries share main.cpp and AppRuntime; platform hosts own windows.
 set(APP_SOURCES
+    src/UiFonts.cpp
+    src/UiInteraction.cpp
+    src/AppRuntime.cpp
     ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
     ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
     ${AURO_SEARCH_TEXT_GB2312_SOURCE}
@@ -754,8 +757,9 @@ elseif(APPLE)
         src/platform/macos_file_io.cpp
         src/platform/harken_user_data_layout_macos.mm
         src/platform/settings_file_macos.cpp
+        src/platform/ui_diagnostics_macos.mm
         src/platform/app_entry_macos.mm
-        src/platform/main_stubs_macos.cpp
+        src/main.cpp
     )
     # whisper.cpp and aubio are not available on macOS; use no-op stubs.
     list(REMOVE_ITEM APP_SOURCES src/AIEngine.cpp src/BpmDetector.cpp src/KeyDetector.cpp)
@@ -2599,3 +2603,9 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestLocalizationLinkContract core)
 endif()
+
+# Fixed edit buffers and UI scheduling state must behave identically in both hosts.
+add_executable(TestUiPortableServices EXCLUDE_FROM_ALL
+    tests/test_ui_portable_services.cpp src/UiInteraction.cpp)
+target_include_directories(TestUiPortableServices PRIVATE src thirdparty/imgui)
+add_test(NAME TestUiPortableServices COMMAND TestUiPortableServices)

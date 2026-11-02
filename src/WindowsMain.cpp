@@ -3,6 +3,7 @@
 // Platform code extracted from main.cpp.
 
 #include "WindowsMain.h"
+#include "AppRuntime.h"
 #include "DefaultAudioPlayerAssociation.h"
 #include "CoverBrowseSurfaceState.h"
 #include "PathUtils.h"  // Canonical folder filtering.
@@ -228,39 +229,6 @@ std::string ResolveCanonicalHarkenSearchDatabasePathUtf8(const std::string& path
 
 static void SyncDiagnosticFileEnabledFromSettings();
 
-static bool ResolveStartupDatabaseSelectionForMount(
-    const AppState& state,
-    std::string& outDbPathUtf8,
-    AppState::StartupDatabaseSetupReason& outReason) {
-    outDbPathUtf8.clear();
-    outReason = AppState::StartupDatabaseSetupReason::None;
-
-    const std::string currentDbPathUtf8 =
-        ResolveCanonicalHarkenSearchDatabasePathUtf8(state.currentDbPathUtf8);
-    if (IsDatabaseLibrarySelectable(
-            ClassifyDatabaseLibraryPath(currentDbPathUtf8))) {
-        outDbPathUtf8 = currentDbPathUtf8;
-        return true;
-    }
-
-    for (const auto& recentPathRaw : state.recentDbPathsUtf8) {
-        const std::string recentDbPathUtf8 =
-            ResolveCanonicalHarkenSearchDatabasePathUtf8(recentPathRaw);
-        if (IsDatabaseLibrarySelectable(
-                ClassifyDatabaseLibraryPath(recentDbPathUtf8))) {
-            outDbPathUtf8 = recentDbPathUtf8;
-            return true;
-        }
-    }
-
-    const bool hasKnownDatabasePath =
-        !currentDbPathUtf8.empty() || !state.recentDbPathsUtf8.empty();
-    outReason = hasKnownDatabasePath
-        ? AppState::StartupDatabaseSetupReason::MissingConfiguredDatabase
-        : AppState::StartupDatabaseSetupReason::FirstRunNoDatabase;
-    return false;
-}
-
 static std::string GetHarkenSearchRuntimeRootUtf8() {
     char* runtimeRoot = nullptr;
     size_t runtimeRootLen = 0;
@@ -401,9 +369,9 @@ extern PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
 // Startup entry transition (file scope for main.cpp extern / spatial interpolation)
 
-bool startupEntryTransitionActive = false;
-std::chrono::steady_clock::time_point startupEntryTransitionStart = std::chrono::steady_clock::now();
-extern const float kStartupEntryTransitionMs = 760.0f;
+extern bool startupEntryTransitionActive;
+extern std::chrono::steady_clock::time_point startupEntryTransitionStart;
+extern const float kStartupEntryTransitionMs;
 static constexpr float kStartupTransitionTimeoutMs = 3000.0f;
 
 // Cover prefetch (progressive, avoids empty covers on large libraries)
@@ -1374,15 +1342,12 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept {
 }
 bool g_hideWindowOnDrag = true;
 UINT g_hideWindowOnDragDelayMs = 400;
-int g_suppressImGuiDragTooltipFrames = 0;
 WINDOWPLACEMENT g_savedPlacementForDragHide = { sizeof(WINDOWPLACEMENT) };
 bool g_savedPlacementForDragHideValid = false;
 bool g_savedWasMaximizedForDragHide = false;
 WINDOWPLACEMENT g_savedPlacementForTrayMinimize = { sizeof(WINDOWPLACEMENT) };
 bool g_savedPlacementForTrayMinimizeValid = false;
 bool g_savedWasMaximizedForTrayMinimize = false;
-static std::atomic<ULONGLONG> g_lastUiLeftClickTickMs{0};
-static std::atomic<bool> g_coverWallPriorityMode{false};
 
 // 全局唤醒键 toggle 隐藏时保存的窗口状态
 static WINDOWPLACEMENT g_savedPlacementForHotkeyHide = { sizeof(WINDOWPLACEMENT) };
@@ -1404,26 +1369,6 @@ static const UINT TRAY_CMD_TOGGLE_SHOW = 0x1101;
 static const UINT TRAY_CMD_EXIT = 0x1102;
 static const UINT AURO_WM_SHOW_MANAGER = WM_APP + 0x42;
 static UINT WM_TASKBARCREATED = 0; // 动态注册的 TaskbarCreated 消息ID
-
-void MarkUiLeftClickNow() {
-    g_lastUiLeftClickTickMs.store(
-        Platform::MonotonicMilliseconds(), std::memory_order_relaxed);
-}
-
-bool IsRapidUiClickBurstActive() {
-    const ULONGLONG lastTick = g_lastUiLeftClickTickMs.load(std::memory_order_relaxed);
-    if (lastTick == 0) return false;
-    const ULONGLONG now = Platform::MonotonicMilliseconds();
-    return now >= lastTick && (now - lastTick) <= 320;
-}
-
-void SetCoverWallPriorityMode(bool enabled) {
-    g_coverWallPriorityMode.store(enabled, std::memory_order_relaxed);
-}
-
-bool IsCoverWallPriorityMode() {
-    return g_coverWallPriorityMode.load(std::memory_order_relaxed);
-}
 
 enum class CoverPhysicalTaskType {
     AssignEmbed = 1,
@@ -8173,268 +8118,6 @@ void ApplyShowManagerGlobalHotkey(const AppSettings& settings) {
     }
 }
 
-// Font Loading
-
-// Chrome group: built at the fixed kChromeFontPx. These remain the ImGui default
-// font, so any call site that does not opt into a ReadingTextScope renders chrome.
-static ImFont* g_uiFontRegular = nullptr;
-static ImFont* g_uiFontEmphasis = nullptr;
-static ImFont* g_uiFontMono = nullptr;
-static ImFont* g_uiMeterFont = nullptr;  // F-018: 10px ASCII-only, for narrow meter bars
-
-// Reading group: built at the user's readingFontSize. Returned by the GetUIFont*()
-// accessors only while g_inReadingScope is true (see ReadingTextScope).
-static ImFont* g_readingRegular = nullptr;
-static ImFont* g_readingEmphasis = nullptr;
-static ImFont* g_readingMono = nullptr;
-static ImFont* g_uiListFont = nullptr;   // reading-sized; the file-list body font
-
-// True while rendering a reading surface. Flipped by ReadingTextScope.
-// File-local: every reader (accessors) and writer (the scope ctors/dtors)
-// lives in this TU, so it stays static to prevent callers from bypassing
-// the RAII save/restore by poking the flag directly.
-static bool g_inReadingScope = false;
-
-static ImFont* AddFontFromCandidates(ImGuiIO& io,
-                                     const char* const* candidates,
-                                     int candidateCount,
-                                     float fontPixelSize,
-                                     const ImFontConfig& config,
-                                     const ImWchar* ranges) {
-    for (int i = 0; i < candidateCount; ++i) {
-        const char* path = candidates[i];
-        if (!path || !PathExistsUtf8(path)) continue;
-        ImFont* f = io.Fonts->AddFontFromFileTTF(path, fontPixelSize, &config, ranges);
-        if (f) return f;
-    }
-    return nullptr;
-}
-
-void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize) {
-    const char* uiRegularLatinBase[] = {
-        "C:\\Windows\\Fonts\\SegoeUIVF.ttf", // Segoe UI Variable (Win11, closer to WebUI style)
-        "C:\\Windows\\Fonts\\segoeui.ttf",   // Segoe UI fallback
-    };
-    const char* uiRegularCjkMerge[] = {
-        "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei UI - rounded and modern CJK
-        "C:\\Windows\\Fonts\\msyhbd.ttc", // Bold fallback
-        "C:\\Windows\\Fonts\\Deng.ttf",   // DengXian fallback (modern sans)
-        "C:\\Windows\\Fonts\\Dengb.ttf",  // DengXian Bold fallback
-        "C:\\Windows\\Fonts\\simhei.ttf", // Legacy fallback only
-        "C:\\Windows\\Fonts\\simsun.ttc", // Legacy fallback only
-    };
-    const char* uiEmphasisLatinBase[] = {
-        "C:\\Windows\\Fonts\\SegoeUIVF.ttf", // Keep family tone consistent when semibold is unavailable
-        "C:\\Windows\\Fonts\\seguisb.ttf",
-        "C:\\Windows\\Fonts\\segoeuib.ttf",
-    };
-    const char* uiEmphasisCjkMerge[] = {
-        "C:\\Windows\\Fonts\\msyhbd.ttc",
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\Dengb.ttf",
-        "C:\\Windows\\Fonts\\Deng.ttf",
-        "C:\\Windows\\Fonts\\simhei.ttf", // Legacy fallback only
-    };
-    const char* monoPaths[] = {
-        "C:\\Windows\\Fonts\\CascadiaMono.ttf",
-        "C:\\Windows\\Fonts\\consola.ttf",
-        "C:\\Windows\\Fonts\\consolab.ttf",
-    };
-
-    ImFontConfig uiConfig;
-    uiConfig.MergeMode = false;
-    uiConfig.OversampleH = 3;
-    uiConfig.OversampleV = 2;
-    uiConfig.PixelSnapH = true;
-    // Slightly brighten rasterization to match WebUI's softer/younger text feeling on dark backgrounds.
-    uiConfig.RasterizerMultiply = 1.03f;
-
-    // Extended Latin glyph range: default + symbols used in UI (stars, arrows, checkmarks, etc.)
-    // Segoe UI on Windows 10/11 contains all these glyphs natively.
-    static const ImWchar kExtendedLatinRanges[] = {
-        0x0020, 0x00FF,  // Basic Latin + Latin-1 Supplement (same as GetGlyphRangesDefault)
-        0x2000, 0x206F,  // General Punctuation (—, –, ", etc.)
-        0x2100, 0x214F,  // Letterlike Symbols
-        0x2190, 0x21FF,  // Arrows (→, ←, ↔, ↕, etc.)
-        0x2200, 0x22FF,  // Mathematical Operators (⊞, ±, etc.)
-        0x2300, 0x23FF,  // Miscellaneous Technical
-        0x2500, 0x25FF,  // Box Drawing + Block Elements + Geometric Shapes (●, ○, ▶, etc.)
-        0x2600, 0x26FF,  // Miscellaneous Symbols
-        0x2700, 0x27FF,  // Dingbats (✓, ✗, ⟳, etc.)
-        0x2800, 0x28FF,  // Braille Patterns (progress spinners)
-        0,
-    };
-
-    // Base Latin/UI glyphs first (Segoe-like modern look), then merge Chinese glyphs
-    // to reduce CJK/Latin mismatch while keeping Chinese coverage complete.
-    // Build a {regular, emphasis, mono} triplet at a given pixel size. Reuses the
-    // candidate arrays declared above. Lucide icons are merged into the regular
-    // face so icon buttons resolve glyphs at this size.
-    auto buildTriplet = [&](float px,
-                            ImFont** outRegular,
-                            ImFont** outEmphasis,
-                            ImFont** outMono) {
-        // Regular: Latin base + CJK merge.
-        *outRegular = AddFontFromCandidates(
-            io, uiRegularLatinBase,
-            (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-            px, uiConfig, kExtendedLatinRanges);
-        if (!*outRegular) {
-            *outRegular = AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, uiConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outRegular) *outRegular = io.Fonts->AddFontDefault();
-        } else {
-            ImFontConfig mergeCjk = uiConfig;
-            mergeCjk.MergeMode = true;
-            mergeCjk.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, mergeCjk, io.Fonts->GetGlyphRangesChineseFull());
-        }
-        // Merge Lucide icons into THIS regular face at THIS size.
-        aura::ui::MergeLucideFont(io.Fonts, px);
-
-        // Emphasis: semibold Latin base + CJK merge.
-        ImFontConfig emphasisConfig = uiConfig;
-        *outEmphasis = AddFontFromCandidates(
-            io, uiEmphasisLatinBase,
-            (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
-            px, emphasisConfig, kExtendedLatinRanges);
-        if (!*outEmphasis) {
-            *outEmphasis = AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, emphasisConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outEmphasis) *outEmphasis = *outRegular;
-        } else {
-            ImFontConfig mergeCjkEmphasis = emphasisConfig;
-            mergeCjkEmphasis.MergeMode = true;
-            mergeCjkEmphasis.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, mergeCjkEmphasis, io.Fonts->GetGlyphRangesChineseFull());
-        }
-
-        // Mono: +1px optical compensation.
-        ImFontConfig monoConfig;
-        monoConfig.MergeMode = false;
-        monoConfig.OversampleH = 2;
-        monoConfig.OversampleV = 1;
-        monoConfig.PixelSnapH = true;
-        *outMono = AddFontFromCandidates(
-            io, monoPaths,
-            (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
-            px + 1.0f, monoConfig, kExtendedLatinRanges);
-        if (!*outMono) *outMono = *outRegular;
-    };
-
-    buildTriplet(chromePixelSize, &g_uiFontRegular, &g_uiFontEmphasis, &g_uiFontMono);
-    buildTriplet(readingPixelSize, &g_readingRegular, &g_readingEmphasis, &g_readingMono);
-
-    // Dedicated list font (independent from system font size).
-    float listPx = listPixelSize;
-    ImFontConfig listConfig = uiConfig;
-    listConfig.MergeMode = false;
-    g_uiListFont = AddFontFromCandidates(
-        io,
-        uiRegularLatinBase,
-        (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-        listPx,
-        listConfig,
-        kExtendedLatinRanges);
-    if (!g_uiListFont) {
-        g_uiListFont = AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            listConfig,
-            io.Fonts->GetGlyphRangesChineseFull());
-    } else {
-        ImFontConfig mergeCjkList = listConfig;
-        mergeCjkList.MergeMode = true;
-        mergeCjkList.RasterizerMultiply = 1.08f;
-        (void)AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            mergeCjkList,
-            io.Fonts->GetGlyphRangesChineseFull());
-    }
-    if (!g_uiListFont) g_uiListFont = g_uiFontRegular;
-
-    // F-018: Small ASCII-only font for Loudness Meter numeric readouts / channel labels
-    // when barW is narrow. No CJK merge needed — meter labels are L/R/C/LFE/Lss/W/Y/Z etc.
-    {
-        ImFontConfig meterConfig;
-        meterConfig.MergeMode = false;
-        meterConfig.OversampleH = 2;
-        meterConfig.OversampleV = 2;
-        meterConfig.PixelSnapH = true;
-        g_uiMeterFont = AddFontFromCandidates(
-            io,
-            uiRegularLatinBase,
-            (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-            10.0f,
-            meterConfig,
-            kExtendedLatinRanges);
-        if (!g_uiMeterFont) g_uiMeterFont = g_uiFontRegular;
-    }
-
-    // F-045: Lucide icons are merged per-triplet inside buildTriplet (into each
-    // regular face at its own size), so both chrome and reading regulars carry
-    // icons; the meter face deliberately does not.
-
-    io.FontDefault = g_uiFontRegular;
-}
-
-ImFont* GetUIFontRegular() {
-    if (g_inReadingScope && g_readingRegular) return g_readingRegular;
-    return g_uiFontRegular;
-}
-
-ImFont* GetUIFontEmphasis() {
-    if (g_inReadingScope) return g_readingEmphasis ? g_readingEmphasis : g_readingRegular;
-    return g_uiFontEmphasis ? g_uiFontEmphasis : g_uiFontRegular;
-}
-
-ImFont* GetUIFontMono() {
-    if (g_inReadingScope) return g_readingMono ? g_readingMono : g_readingRegular;
-    return g_uiFontMono ? g_uiFontMono : g_uiFontRegular;
-}
-
-ImFont* GetUIListFont() {
-    // Reading-sized fallback (not chrome) so the list keeps reading metrics.
-    return g_uiListFont ? g_uiListFont : g_readingRegular;
-}
-
-ImFont* GetUIMeterFont() {
-    return g_uiMeterFont ? g_uiMeterFont : g_uiFontRegular;
-}
-
-ReadingTextScope::ReadingTextScope() : prev(g_inReadingScope) {
-    g_inReadingScope = true;
-    ImGui::PushFont(g_readingRegular ? g_readingRegular : g_uiFontRegular);
-}
-ReadingTextScope::~ReadingTextScope() {
-    ImGui::PopFont();
-    g_inReadingScope = prev;
-}
-
-ChromeTextScope::ChromeTextScope() : prev(g_inReadingScope) {
-    g_inReadingScope = false;
-    ImGui::PushFont(g_uiFontRegular);
-}
-ChromeTextScope::~ChromeTextScope() {
-    ImGui::PopFont();
-    g_inReadingScope = prev;
-}
-
 // UI Scaling (Scheme B): rebuild fonts + scale style sizes (debounced)
 
 static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx) {
@@ -8505,14 +8188,6 @@ static void ApplyThemeAndScaleForSettings(const AppState& state, float scale) {
     ImGuiStyle& style = ImGui::GetStyle();
     style.ScaleAllSizes(scale);
     ThemeColors::discardPendingUiChromeResync();
-}
-
-static ImVec4 GetThemeClearColor() {
-    const ImVec4 bg = ThemeColors::current().mainWindowBG;
-    if (bg.w > 0.0f) {
-        return bg;
-    }
-    return ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
 }
 
 static ImVec4 GetHybridSeamClearColor() {
@@ -12715,22 +12390,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
     state.integrityCheckFailed = g_integrityCheckFailed;
     if (g_integrityCheckFailed) ProductEdition::setIntegrityCheckFailed();
-    AppendDiagLogLine(L"STARTUP: before LoadAudioSettingsEarly");
-    LoadAudioSettingsEarly(state);
-    AppendDiagLogLine(L"STARTUP: after LoadAudioSettingsEarly");
-    AppendDiagLogLine(L"STARTUP: before audioEngine.initialize");
-    if (!state.audioEngine.initialize(state.settings.audioPeriodSizeMs)) {
-        AppendDiagLogLine(L"STARTUP: audioEngine.initialize failed");
+    if (!InitializeAppSettingsAndAudio(state)) {
         Platform::ShowMessageBox(hwnd, Lw(MB_AudioInitFail).c_str(), Lw(MB_Title_Error).c_str(), MB_OK);
         OleUninitialize();
         Platform::UninitThreadCom();
         return 1;
     }
-    AppendDiagLogLine(L"STARTUP: after audioEngine.initialize");
-    AppendDiagLogLine(L"STARTUP: before LoadAppSettings");
-    LoadAppSettings(state);
-    harken::theme_schedule::Initialize(g_appSettingsPathUtf8);
-    AppendDiagLogLine(L"STARTUP: after LoadAppSettings");
 
 // F-035: Crash sentinel — detect previous abnormal exit
     {
@@ -13569,72 +13234,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             // 如需恢复，回滚此处并恢复 ThemeMascot.cpp 中的 Lottie 覆盖逻辑
         }
 
-        // Deferred search refresh after DB switch — runs one frame after
-        // ResetDatabaseState so the synchronous SQL query doesn't stack
-        // onto the same frame. Must be checked BEFORE Pump so that the
-        // flag set by Pump on frame N is consumed on frame N+1.
-        DevTools_BeginFramePhase("PreRender.DbSwitchRefresh");
-        if (state.dbSwitchNeedsRefresh) {
-            state.dbSwitchNeedsRefresh = false;
-            RefreshSearchResults(state, true);
-        }
-        DevTools_EndFramePhase();
-        // 异步切库：轮询后台 open 结果，避免大库 open 卡死主线程
-        DevTools_BeginFramePhase("PreRender.AsyncPumps");
-        PumpDatabaseSwitchIfPending(state);
-        PumpInitRandomSamplingPoolIfPending(state);
-
-        // Complete pending audio loads before dependent UI updates.
-        if (state.audioEngine.pumpLoadFileIfPending()) {
-            state.lastSelectionOrLoadTime = ImGui::GetTime();  // 切歌完成，封面墙预算短时降级
-            // 新文件加载成功，清除旧的错误提示
-            state.loadErrorToast.clear();
-            state.loadErrorToastUntil = 0.0;
-            ScheduleDeferredWaveformDetail(state, state.audioEngine.getLoadedFilePath(), AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
-            // 如果有之前在 Mini 波形上预设的跳转点，现在执行它！
-            OnAudioLoadPumped(state);
-            // Start playback AFTER silence-skip so the sound begins at the
-            // correct position — avoids a visible waveform cursor jump.
-            state.audioEngine.playIfLoadReady();
-            static aura::playback::PlayStatsGate s_playStatsGate;
-            static std::uint64_t s_playStatsLoadToken = 0;
-            aura::playback::RecordSuccessfulPlayStats(
-                state.database,
-                s_playStatsGate,
-                aura::playback::PlayStatsEvent{
-                    true,
-                    state.audioEngine.isPlaying(),
-                    state.currentFileId,
-                    ++s_playStatsLoadToken});
-        } else {
-            std::string loadErr = state.audioEngine.getLastLoadError();
-            if (!loadErr.empty()) {
-                const std::string failedPath = state.pendingAudioTargetPath;
-                state.clearPendingAudioTarget();
-                const bool missingOnDisk = !failedPath.empty() &&
-                    Platform::FileSystem::ProbePath(failedPath) ==
-                        Platform::FileSystem::PathStatus::Missing;
-                if (missingOnDisk) {
-                    AudioRecord missingRecord;
-                    missingRecord.filePath = failedPath;
-                    missingRecord.fileName = PathToUtf8(Utf8ToPath(failedPath).filename());
-                    for (const auto& candidate : state.searchResults) {
-                        if (candidate.filePath == failedPath) {
-                            missingRecord = candidate;
-                            break;
-                        }
-                    }
-                    aura::ui::EvaluateRelinkForRecord(state, missingRecord);
-                } else {
-                    state.loadErrorToast = std::move(loadErr);
-                    state.loadErrorToastUntil = ImGui::GetTime() + 5.0;
-                }
-            }
-        }
-        // Pump detail requests outside RenderUI so WebUI mode follows the same path.
-        PumpDeferredWaveformDetail(state);
-        // 跳过开头无声：加载完成时波形常未就绪，每帧尝试直至主波形或 mini 缓存有数据再 seek
-        MaybeSkipLeadingSilence(state);
+        PumpAppDatabaseAndAudio(state);
         if (state.dbSwitchJustCompleted) {
             state.dbSwitchJustCompleted = false;
             std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -13647,7 +13247,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 title = titleBuf;
             }            SetWindowTextW(hwnd, title.c_str());
         }
-        DevTools_EndFramePhase();
 
 
         const bool scanPopupOpen = ImGui::IsPopupOpen(L(Dlg_ScanFolder));
@@ -14549,44 +14148,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     // Cleanup
     logShutdownStage("Begin");
-    logShutdownStage("BatchFeatureThreadJoinBegin");
-    state.batchFeatureCancelRequested.store(true);
-    logShutdownStage("DatabaseSwitchThreadJoinBegin");
-    WaitForDatabaseSwitchThread();
-    logShutdownStage("DatabaseSwitchThreadJoinEnd");
-    if (state.batchFeatureThread.joinable()) {
-        state.batchFeatureThread.join();
-    }
-    logShutdownStage("BatchFeatureThreadJoinEnd");
-    state.requestCancelScanTask();
-    logShutdownStage("ScanThreadJoinBegin");
-    if (state.scanThread.joinable()) {
-        state.scanThread.join();
-    }
-    logShutdownStage("ScanThreadJoinEnd");
-    logShutdownStage("RetiredScanThreadsJoinBegin");
-    state.joinRetiredScanThreads();
-    logShutdownStage("RetiredScanThreadsJoinEnd");
-    logShutdownStage("DawSendThreadJoinBegin");
-    if (state.dawSendThread.joinable()) {
-        state.dawSendThread.join();
-    }
-    logShutdownStage("DawSendThreadJoinEnd");
-
-    // Stop worker threads before releasing shared state.
-    ShutdownSelectedWaveformRebuild();
-    logShutdownStage("WaveformWorkerStopBegin");
-    state.waveformWorker.stop();
-    logShutdownStage("WaveformWorkerStopEnd");
-    logShutdownStage("SearchWorkerStopBegin");
-    state.searchWorker.stop();
-    logShutdownStage("SearchWorkerStopEnd");
-    logShutdownStage("BackfillWorkerPoolStopBegin");
-    aura::GlobalBackfillWorkerPool().stop();
-    logShutdownStage("BackfillWorkerPoolStopEnd");
-    logShutdownStage("FileSystemWatcherStopBegin");
-    state.database.stopFileSystemWatcher();
-    logShutdownStage("FileSystemWatcherStopEnd");
+    StopAppRuntimeWorkers(state, logShutdownStage);
     logShutdownStage("CoverTaskThreadJoinBegin");
     g_coverTaskStop.store(true);
     g_coverTaskCv.notify_all();
@@ -14595,46 +14157,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
     logShutdownStage("CoverTaskThreadJoinEnd");
 
-    logShutdownStage("RelinkWorkflowShutdownBegin");
-    aura::ui::ShutdownRelinkWorkflow(state);
-    auto JoinRelinkThreadWithTimeout = [](std::thread& worker) {
-        if (!worker.joinable()) {
-            return;
-        }
-        void* handle = reinterpret_cast<void*>(worker.native_handle());
-        if (Platform::WaitForNativeThreadHandle(
-                handle, static_cast<uint32_t>(aura::ui::kRelinkShutdownJoinTimeoutMs))) {
-            worker.join();
-            return;
-        }
-        worker.detach();
-    };
-    JoinRelinkThreadWithTimeout(state.relinkBannerSearchThread);
-    JoinRelinkThreadWithTimeout(state.relinkToolSearchThread);
-    for (auto& worker : state.retiredRelinkSearchThreads) {
-        JoinRelinkThreadWithTimeout(worker);
-    }
-    state.retiredRelinkSearchThreads.clear();
-    logShutdownStage("RelinkWorkflowShutdownEnd");
-
-    logShutdownStage("BackfillQueueClosingBegin");
-    state.backfillQueue.onDbClosing(state.backfillDbGeneration);
-    logShutdownStage("BackfillQueueClosingEnd");
-    logShutdownStage("DatabaseCloseBegin");
-    state.database.close();
-    logShutdownStage("DatabaseCloseEnd");
-    logShutdownStage("AudioEngineShutdownBegin");
-    state.audioEngine.shutdown();
-    logShutdownStage("AudioEngineShutdownEnd");
-
-    logShutdownStage("CoverCacheShutdownBegin");
-    CoverModule::ShutdownCoverWallPrecache();
-    CoverModule::ClearAllCoverCaches();
-    logShutdownStage("CoverCacheShutdownEnd");
-
-    logShutdownStage("SettingsSaveBegin");
-    SaveAppSettings(state);
-    logShutdownStage("SettingsSaveEnd");
+    StopAppRelinkWorkers(state, logShutdownStage);
+    CloseAppRuntimeResources(state, logShutdownStage);
 
 // F-035: Remove crash sentinel on clean exit
     {

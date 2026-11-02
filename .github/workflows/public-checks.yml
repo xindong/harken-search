@@ -58,10 +58,11 @@ jobs:
           TestUpdateCheckHttpsTransport TestUpdaterBaseVolume TestBootstrapExitExplanation
           TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput
           TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
+          TestUiPortableServices TestDatabaseSwitchWorkerRuntime TestDatabaseSwitchBlockingOperation
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
-          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^LibraryStatisticsWorker$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle)$"
+          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^LibraryStatisticsWorker$|^TestUiPortableServices$|^TestDatabaseSwitch(WorkerRuntime|BlockingOperation)$|^TestSettingsImportDialogBoundary$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle)$"
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
