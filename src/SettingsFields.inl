@@ -30,7 +30,7 @@ else if(id=="theme") {
         if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",su::StockLabel(i));ImGui::PopID();
     }
     ImGui::TextDisabled("%s",su::StockLabel(current));
-    if(draft.themeScheduleMode!=schedule::Mode::Off)ImGui::TextDisabled("%s",text(u8"日夜模式关闭后使用","Used when schedule is off",u8"自動切替がオフのとき使用"));
+    if(draft.themeScheduleMode!=schedule::Mode::Off)ImGui::TextDisabled("%s",L(SetUX_UsedWhenScheduleIsOff));
 }
 else if(id=="automatic") {bool value=draft.themeScheduleMode!=schedule::Mode::Off;if(ImGui::Checkbox("##value",&value))draft.themeScheduleMode=value?schedule::Mode::Automatic:schedule::Mode::Off;}
 else if(id=="day") {themedSelector(runtime.day);su::Observe("day-combo");if(aura::ui::SmallActionButton(L(ThemeSchedule_EditPalette)))requestAction("day-editor");}
@@ -39,7 +39,7 @@ else if(id=="themeEditor") {
 #if AURA_BUILD_DIAGNOSTICS
     if(ProductEdition::hasFeature("theme_editor"))actionButton(L(Set_EditTheme),"theme-editor");
 #endif
-    actionButton(text(u8"自定义颜色…","Custom colors…",u8"カスタムカラー…"),"custom-colors");
+    actionButton(L(SetUX_CustomColors),"custom-colors");
     if(!draft.customThemeName.empty()){
         ImGui::TextWrapped("%s",draft.customThemeName.c_str());
         if(aura::ui::SmallActionButton(L(Main_ApplyCustomBtn))){draft.theme=AppTheme::Custom;draft.useCustomColors=false;}
@@ -86,7 +86,7 @@ else if(id=="target") {
 }
 else if(id=="fade")ImGui::Checkbox("##value",&draft.fadeInOutEnabled);
 else if(id=="fadeMs") {ImGui::BeginDisabled(!draft.fadeInOutEnabled);ImGui::SliderInt("##value",&draft.fadeInOutMs,2,50,"%d ms");ImGui::EndDisabled();}
-else if(id=="period") {const int values[]{5,10,20,50};int n=1;for(int i=0;i<4;++i)if(values[i]==draft.audioPeriodSizeMs)n=i;if(combo(n,{"5 ms","10 ms","20 ms","50 ms"}))draft.audioPeriodSizeMs=values[n];ImGui::TextDisabled("%s",text(u8"重启后生效","After restart",u8"再起動後に適用"));}
+else if(id=="period") {const int values[]{5,10,20,50};int n=1;for(int i=0;i<4;++i)if(values[i]==draft.audioPeriodSizeMs)n=i;if(combo(n,{"5 ms","10 ms","20 ms","50 ms"}))draft.audioPeriodSizeMs=values[n];ImGui::TextDisabled("%s",L(SetUX_AfterRestart));}
 else if(id=="skipSilence")ImGui::Checkbox("##value",&draft.skipLeadingSilence);
 else if(id=="silenceThreshold") {ImGui::BeginDisabled(!draft.skipLeadingSilence);ImGui::SliderFloat("##value",&draft.silenceThresholdDb,-80,-24,"%.1f dB");ImGui::EndDisabled();}
 else if(id=="pitch")ImGui::SliderFloat("##value",&draft.defaultPitch,-draft.pitchRange,draft.pitchRange,"%.1f st");
@@ -100,7 +100,7 @@ else if(id=="deviceInfo") {ImGui::TextWrapped("%s",state.audioEngine.getCurrentO
 else if(id=="searchMode") {int n=draft.searchRealtime?0:1;if(combo(n,{L(Set_RealtimeSearch),L(Set_EnterSearch)}))draft.searchRealtime=n==0;}
 else if(id=="suggest")combo(draft.suggestSourceMode,{L(Set_SuggestAll),L(Set_SuggestFilenameOnly),L(Set_SuggestKeywordOnly)});
 else if(id=="renameTab")ImGui::Checkbox("##value",&draft.autoRenameTabBySearch);
-else if(id=="dictionary")actionButton(text(u8"编辑词库…","Edit thesaurus…",u8"辞書を編集…"),"dictionary");
+else if(id=="dictionary")actionButton(L(SetUX_EditThesaurus),"dictionary");
 else if(id=="perf") {
     if(combo(draft.memoryProfile,{L(Set_PerfEco),L(Set_PerfBalanced),L(Set_PerfHigh),L(Set_ThemeCustom)})){
         if(draft.memoryProfile==0){draft.fpsLimit=30;draft.thumbnailMaxResolution=256;draft.threadLimit=1;}
@@ -108,12 +108,12 @@ else if(id=="perf") {
         if(draft.memoryProfile==2){draft.fpsLimit=0;draft.thumbnailMaxResolution=512;draft.threadLimit=-1;}
     }
 }
-else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,text(u8"%d（0 = 自动）","%d (0 = auto)",u8"%d（0 = 自動）"));
+else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto));
 else if(id=="startupScan")ImGui::Checkbox("##value",&draft.autoReconcileOnStartup);
 else if(id=="backfill")ImGui::Checkbox("##value",&draft.idleAssetBackfillEnabled);
-else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,text(u8"%d 分钟","%d min",u8"%d 分"));ImGui::EndDisabled();}
+else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,L(SetUX_DMin));ImGui::EndDisabled();}
 else if(id=="database") {ImGui::TextWrapped("%s",state.currentDbPathUtf8.c_str());if(aura::ui::SmallActionButton(L(Set_OpenDBFolder)))Platform::OpenInFileManager(state.currentDbPathUtf8);}
-else if(id=="maintenance")actionButton(text(u8"打开维护工具…","Maintenance tools…",u8"メンテナンスツール…"),"maintenance");
+else if(id=="maintenance")actionButton(L(SetUX_MaintenanceTools),"maintenance");
 else if(id=="fps") {ImGui::BeginDisabled(draft.memoryProfile!=3);const int values[]{0,30,60,120,144};int n=0;for(int i=0;i<5;++i)if(draft.fpsLimit==values[i])n=i;if(combo(n,{L(Set_FPSNoLimit),"30 FPS","60 FPS","120 FPS","144 FPS"}))draft.fpsLimit=values[n];ImGui::EndDisabled();}
 else if(id=="thumb") {ImGui::BeginDisabled(draft.memoryProfile!=3);int n=draft.thumbnailMaxResolution<=128?0:draft.thumbnailMaxResolution<=256?1:2;if(combo(n,{"128 px","256 px","512 px"}))draft.thumbnailMaxResolution=128<<n;ImGui::EndDisabled();}
 else if(id=="remember")ImGui::Checkbox("##value",&draft.rememberLastFolder);
@@ -135,14 +135,14 @@ else if(id=="hotkey") {
     ImGui::EndDisabled();
     if(!g_showManagerHotkeyRegisterOk&&state.settings.enableShowManagerHotkey)ImGui::TextWrapped("%s",L(Set_HotkeyConflict));
 }
-else if(id=="shortcuts")actionButton(text(u8"编辑快捷键…","Edit shortcuts…",u8"ショートカットを編集…"),"shortcuts");
+else if(id=="shortcuts")actionButton(L(SetUX_EditShortcuts),"shortcuts");
 else if(id=="hideDrag")ImGui::Checkbox("##value",&draft.hideWindowOnDrag);
 else if(id=="dragDelay") {ImGui::BeginDisabled(!draft.hideWindowOnDrag);ImGui::SliderInt("##value",&draft.hideWindowOnDragDelayMs,100,2000,"%d ms");ImGui::EndDisabled();}
 else if(id=="pauseDrag")ImGui::Checkbox("##value",&draft.pausePlaybackOnDragStart);
 else if(id=="treePath") {int n=(int)draft.folderTreePathMode;if(combo(n,{L(Set_FolderTreePathAbsolute),L(Set_FolderTreePathPilot)}))draft.folderTreePathMode=(aura::folder_tree::PathMode)n;}
 else if(id=="shell")actionButton(L(Set_ShellIntegration),"shell");
 else if(id=="username")stringInput(draft.userName);
-else if(id=="avatar")actionButton(text(u8"编辑头像…","Edit avatar…",u8"アバターを編集…"),"avatar");
+else if(id=="avatar")actionButton(L(SetUX_EditAvatar),"avatar");
 else if(id=="exportPath") {stringInput(draft.defaultExportPath);if(aura::ui::SmallActionButton(L(Browse))){auto folder=OpenFolderDialog(g_hwnd);if(!folder.empty())draft.defaultExportPath=folder;}}
 else if(id=="suffix")ImGui::Checkbox("##value",&draft.keepHarkenSearchOutputProcessingSuffix);
 else if(id=="export")actionButton(L(Set_ExportSettings),"export");
@@ -151,4 +151,4 @@ else if(id=="resetTheme") {if(aura::ui::ActionButton(L(Set_RestoreDefaultTheme))
 else if(id=="resetAll")actionButton(L(Set_ResetAllDefaults),"reset-all");
 else if(id=="logging")ImGui::Checkbox("##value",&draft.diagnosticMode);
 else if(id=="overlay") {ImGui::BeginDisabled(!draft.diagnosticMode);ImGui::Checkbox("##value",&draft.showDiagnosticOverlay);ImGui::EndDisabled();}
-else if(id=="diagnosticTools")actionButton(text(u8"打开日志工具…","Log tools…",u8"ログツール…"),"diagnostics");
+else if(id=="diagnosticTools")actionButton(L(SetUX_LogTools),"diagnostics");

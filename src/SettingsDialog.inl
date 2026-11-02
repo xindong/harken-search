@@ -6,7 +6,6 @@
     auto& editor=su::SettingsEditor();
     auto& draft=editor.app.Value();
     auto& runtime=editor.runtime.Value();
-    const auto text=su::Text;
     auto apply=[&]() -> bool {
         editor.error.clear();
         if (!editor.ChangedCount()) return true;
@@ -26,11 +25,11 @@
                     const auto found=std::find_if(devices.begin(),devices.end(),[&](const auto& device){return device.deviceIdBlob==identity;});
                     resolved=found==devices.end()?-2:static_cast<int>(found-devices.begin());
                 }
-                if (resolved<0) { editor.error=text(u8"输出设备已变化，请重新选择。","Output devices changed. Choose a device again.",u8"出力デバイスが変更されました。選択し直してください。"); editor.devices=std::move(devices); return false; }
+                if (resolved<0) { editor.error=L(SetUX_OutputDevicesChangedChooseADeviceAgain); editor.devices=std::move(devices); return false; }
                 next.audioOutputDeviceIndex=resolved;
             }
             if (!state.audioEngine.switchOutputDevice(next.audioOutputDeviceIndex)) {
-                editor.error=text(u8"无法切换输出设备，修改已保留。","Could not switch output device. Your changes are kept.",u8"出力デバイスを切り替えられません。変更は保持されています。"); return false;
+                editor.error=L(SetUX_CouldNotSwitchOutputDeviceYourChangesAreKept); return false;
             }
         }
         const bool deviceChanged=next.audioOutputDeviceIndex!=oldSettings.audioOutputDeviceIndex || next.audioOutputDeviceName!=oldSettings.audioOutputDeviceName;
@@ -66,8 +65,8 @@
             schedule::SetMode(state,oldSettings.themeScheduleMode);
             su::WriteRuntime(state,oldRuntime);
             if (deviceChanged) state.audioEngine.switchOutputDevice(oldSettings.audioOutputDeviceIndex);
-            editor.error=restored ? text(u8"保存失败，修改仍保留；请检查设置目录是否可写后重试。","Save failed. Changes are kept; check the settings folder and retry.",u8"保存できません。変更は保持されています。設定フォルダーを確認して再試行してください。")
-                : text(u8"保存失败，日夜主题文件未能全部恢复。请检查设置目录后重试。","Save failed and some palette files could not be restored. Check the settings folder.",u8"保存に失敗し、一部のテーマファイルを復元できませんでした。設定フォルダーを確認してください。");
+            editor.error=restored ? L(SetUX_SaveFailedChangesAreKeptCheckTheSettingsFolderAndRetry)
+                : L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder);
             return false;
         }
         g_currentLanguage=state.settings.language;
@@ -173,7 +172,7 @@
 #endif
             if (i==0 || i==5 || i==7) {
                 if (i) ImGui::Dummy(ImVec2(0,8));
-                ImGui::TextDisabled("%s",i==0?text(u8"日常使用","EVERYDAY",u8"日常使用"):i==5?text(u8"工作方式","WORKFLOW",u8"作業環境"):text(u8"维护","MAINTENANCE",u8"メンテナンス"));
+                ImGui::TextDisabled("%s",i==0?L(SetUX_EVERYDAY):i==5?L(SetUX_WORKFLOW):L(SetUX_MAINTENANCE));
                 ImGui::Dummy(ImVec2(0,4));
             }
             const auto page=static_cast<su::Page>(i);
@@ -187,7 +186,7 @@
         ImGui::SetCursorPos(ImVec2(contentX,18));
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(contentW-52);
-        ImGui::InputTextWithHint("##settings-search",text(u8"搜索设置…  Ctrl+K","Search settings…  Ctrl+K",u8"設定を検索…  Ctrl+K"),editor.query,sizeof(editor.query)); su::Observe("search");
+        ImGui::InputTextWithHint("##settings-search",L(SetUX_SearchSettingsCtrlK),editor.query,sizeof(editor.query)); su::Observe("search");
         ImGui::SameLine();
         // Borderless close glyph, including hovered and pressed states.
         const auto xOrigin=ImGui::GetCursorScreenPos();
@@ -253,9 +252,9 @@
         const bool searching=editor.query[0]!=0;
         if(searching){
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,10));
-            ImGui::TextDisabled("%s",text(u8"搜索结果","SEARCH RESULTS",u8"検索結果"));
+            ImGui::TextDisabled("%s",L(SetUX_SEARCHRESULTS));
             const auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0);
-            if(results.empty()) ImGui::TextWrapped("%s",text(u8"没有找到设置，试试“音量”“字体”或“快捷键”。","No settings found. Try volume, font, or shortcut.",u8"設定が見つかりません。音量、フォント、ショートカットなどを検索してください。"));
+            if(results.empty()) ImGui::TextWrapped("%s",L(SetUX_NoSettingsFoundTryVolumeFontOrShortcut));
             for(const auto* entry:results){
                 ImGui::PushID(entry->id.c_str());
                 const std::string label=std::string(entry->Label((int)g_currentLanguage))+"  >  "+su::PageLabel(entry->page);
@@ -264,13 +263,13 @@
             }
             ImGui::PopStyleVar();
         }else{
-            ImGui::TextDisabled("%s",text(u8"偏好设置","PREFERENCES",u8"環境設定"));
+            ImGui::TextDisabled("%s",L(SetUX_PREFERENCES));
             ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(su::PageLabel(editor.page));su::Observe("page-title");ImGui::PopFont();ImGui::Dummy(ImVec2(0,8));
             if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
-                    {text(u8"试听","Listening",u8"試聴"),{"device","volume","normalize"}},
-                    {text(u8"界面","Interface",u8"画面"),{"theme","systemFont"}},
-                    {text(u8"使用习惯","Your workflow",u8"使い方"),{"searchMode","remember","closeAction"}}}){
+                    {L(SetUX_Listening),{"device","volume","normalize"}},
+                    {L(SetUX_Interface),{"theme","systemFont"}},
+                    {L(SetUX_YourWorkflow),{"searchMode","remember","closeAction"}}}){
                     heading(group.first);for(const auto& id:group.second){const auto it=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==id;});if(it!=su::Catalog().end())drawEntry(*it);}
                 }
             }else{
@@ -278,7 +277,7 @@
                 for(int group=1;group<=6;++group){
                     const bool has=std::any_of(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.page==editor.page && e.group==group;});if(!has)continue;
                     if(!editor.focusId.empty()){const auto target=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==editor.focusId;});if(target!=su::Catalog().end()&&target->group==group)ImGui::SetNextItemOpen(true);}
-                    const char* label=group==1?text(u8"波形、频谱与计量","Waveform, spectrum & meters",u8"波形・スペクトル・メーター"):group==2?text(u8"显示细节","Display details",u8"表示の詳細"):group==3?text(u8"高级音频设置","Advanced audio",u8"オーディオの詳細"):group==4?text(u8"声道与监听","Channels & monitoring",u8"チャンネルとモニター"):group==5?text(u8"自定义性能","Custom performance",u8"カスタム性能"):text(u8"拖拽与系统集成","Drag & system integration",u8"ドラッグとシステム統合");
+                    const char* label=group==1?L(SetUX_WaveformSpectrumMeters):group==2?L(SetUX_DisplayDetails):group==3?L(SetUX_AdvancedAudio):group==4?L(SetUX_ChannelsMonitoring):group==5?L(SetUX_CustomPerformance):L(SetUX_DragSystemIntegration);
                     if(ImGui::CollapsingHeader(label))for(const auto& entry:su::Catalog())if(entry.page==editor.page && entry.group==group)drawEntry(entry);
                 }
             }
@@ -288,25 +287,25 @@
         const float buttonsW=editor.ChangedCount()?320.f:100.f;
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-50));
         if(!editor.error.empty()){ImGui::SetCursorPosY(winSize.y-footerH+10);ImGui::PushTextWrapPos(winSize.x-28);ImGui::TextWrapped("%s",editor.error.c_str());ImGui::PopTextWrapPos();}
-        else if(editor.ChangedCount())ImGui::Text(text(u8"%d 项更改尚未应用","%d changes pending",u8"未適用の変更：%d"),(int)editor.ChangedCount());
-        else ImGui::TextDisabled("%s",text(u8"没有待应用的更改","No pending changes",u8"未適用の変更はありません"));
+        else if(editor.ChangedCount())ImGui::Text(L(SetUX_DChangesPending),(int)editor.ChangedCount());
+        else ImGui::TextDisabled("%s",L(SetUX_NoPendingChanges));
         ImGui::SetCursorPos(ImVec2(winSize.x-buttonsW-28,winSize.y-56));
         if(editor.ChangedCount()){
-            if(aura::ui::ActionButton(text(u8"撤销修改","Revert",u8"元に戻す"),ImVec2(140,38),aura::ui::ButtonVariant::Quiet))editor.Reset(state);su::Observe("revert");
+            if(aura::ui::ActionButton(L(SetUX_Revert),ImVec2(140,38),aura::ui::ButtonVariant::Quiet))editor.Reset(state);su::Observe("revert");
             ImGui::SameLine();
-            if(aura::ui::ActionButton(text(u8"应用更改","Apply",u8"適用"),ImVec2(168,38),aura::ui::ButtonVariant::PrimarySearch))apply();su::Observe("apply");
-        }else{if(aura::ui::ActionButton(text(u8"完成","Done",u8"完了"),ImVec2(100,38)))requestClose();su::Observe("done");}
+            if(aura::ui::ActionButton(L(SetUX_Apply),ImVec2(168,38),aura::ui::ButtonVariant::PrimarySearch))apply();su::Observe("apply");
+        }else{if(aura::ui::ActionButton(L(Done),ImVec2(100,38)))requestClose();su::Observe("done");}
         if(editor.closePrompt)ImGui::OpenPopup("###SettingsUnsaved");
         ImGui::SetNextWindowSize(ImVec2(520,0),ImGuiCond_Appearing);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(24,24));
         if(ImGui::BeginPopupModal("###SettingsUnsaved",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoTitleBar)){
-            ImGui::TextUnformatted(text(u8"还有未应用的更改","Unapplied changes",u8"未適用の変更があります"));
-            ImGui::TextWrapped("%s",editor.closeAfterPrompt?text(u8"关闭前，选择应用或放弃这些修改。","Apply or discard your changes before closing.",u8"閉じる前に変更を適用するか破棄してください。"):
-                text(u8"这个入口有独立的保存方式。先处理当前设置修改，再继续。","This tool saves separately. Apply or discard the current changes first.",u8"このツールは別に保存します。先に現在の変更を処理してください。"));
+            ImGui::TextUnformatted(L(SetUX_UnappliedChanges));
+            ImGui::TextWrapped("%s",editor.closeAfterPrompt?L(SetUX_ApplyOrDiscardYourChangesBeforeClosing):
+                L(SetUX_ThisToolSavesSeparatelyApplyOrDiscardTheCurrentChangesFirst));
             if(!editor.error.empty())ImGui::TextWrapped("%s",editor.error.c_str());
-            if(aura::ui::ActionButton(text(u8"继续修改","Keep editing",u8"編集を続ける"))){editor.closePrompt=false;editor.action.clear();ImGui::CloseCurrentPopup();}su::Observe("keep-editing");
-            if(aura::ui::ActionButton(editor.closeAfterPrompt?text(u8"放弃并关闭","Discard & close",u8"破棄して閉じる"):text(u8"放弃并继续","Discard & continue",u8"破棄して続ける"))){editor.Reset(state);editor.closePrompt=false;ImGui::CloseCurrentPopup();if(editor.closeAfterPrompt)editor.open=false;}su::Observe("discard");
-            if(aura::ui::ActionButton(editor.closeAfterPrompt?text(u8"应用并关闭","Apply & close",u8"適用して閉じる"):text(u8"应用并继续","Apply & continue",u8"適用して続ける"),ImVec2(0,0),aura::ui::ButtonVariant::PrimarySearch))if(apply()){editor.closePrompt=false;ImGui::CloseCurrentPopup();if(editor.closeAfterPrompt)editor.open=false;}su::Observe("apply-close");
+            if(aura::ui::ActionButton(L(SetUX_KeepEditing))){editor.closePrompt=false;editor.action.clear();ImGui::CloseCurrentPopup();}su::Observe("keep-editing");
+            if(aura::ui::ActionButton(editor.closeAfterPrompt?L(SetUX_DiscardClose):L(SetUX_DiscardContinue))){editor.Reset(state);editor.closePrompt=false;ImGui::CloseCurrentPopup();if(editor.closeAfterPrompt)editor.open=false;}su::Observe("discard");
+            if(aura::ui::ActionButton(editor.closeAfterPrompt?L(SetUX_ApplyClose):L(SetUX_ApplyContinue),ImVec2(0,0),aura::ui::ButtonVariant::PrimarySearch))if(apply()){editor.closePrompt=false;ImGui::CloseCurrentPopup();if(editor.closeAfterPrompt)editor.open=false;}su::Observe("apply-close");
             ImGui::EndPopup();
         }
         ImGui::PopStyleVar();

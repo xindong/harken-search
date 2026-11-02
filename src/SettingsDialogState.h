@@ -9,20 +9,17 @@
 #include "ThemeSchedulePaletteCodec.h"
 
 namespace harken::settings {
-inline const char* Text(const char* zh, const char* en, const char* ja) {
-    return g_currentLanguage == AppLanguage::English ? en : g_currentLanguage == AppLanguage::Japanese ? ja : zh;
-}
 inline const char* PageLabel(Page page) {
     switch (page) {
-    case Page::Common: return Text(u8"常用设置", "Common", u8"よく使う設定");
-    case Page::Appearance: return Text(u8"外观与显示", "Appearance", u8"外観と表示");
-    case Page::Audio: return Text(u8"音频与播放", "Audio & playback", u8"オーディオと再生");
-    case Page::Search: return Text(u8"搜索与词库", "Search & thesaurus", u8"検索と辞書");
-    case Page::Library: return Text(u8"素材库与扫描", "Library & scanning", u8"ライブラリとスキャン");
-    case Page::Interaction: return Text(u8"操作与快捷键", "Controls & shortcuts", u8"操作とショートカット");
-    case Page::Personal: return Text(u8"个人与导出", "Profile & export", u8"プロフィールと出力");
-    case Page::Backup: return Text(u8"备份与恢复", "Backup & restore", u8"バックアップと復元");
-    case Page::Diagnostics: return Text(u8"诊断与日志", "Diagnostics & logs", u8"診断とログ");
+    case Page::Common: return L(SetUX_Common);
+    case Page::Appearance: return L(SetUX_Appearance);
+    case Page::Audio: return L(SetUX_AudioPlayback);
+    case Page::Search: return L(SetUX_SearchThesaurus);
+    case Page::Library: return L(SetUX_LibraryScanning);
+    case Page::Interaction: return L(SetUX_ControlsShortcuts);
+    case Page::Personal: return L(SetUX_ProfileExport);
+    case Page::Backup: return L(SetUX_BackupRestore);
+    case Page::Diagnostics: return L(SetUX_DiagnosticsLogs);
     }
     return "";
 }

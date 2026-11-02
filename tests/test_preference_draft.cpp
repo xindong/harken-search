@@ -7,8 +7,12 @@ struct Preferences { int volume = 80; bool realtime = true; std::string device =
 
 int main() {
     using namespace harken::settings;
+    g_currentLanguage = AppLanguage::Japanese;
     const auto volume = Search("  VOLUME  ", false);
     assert(std::any_of(volume.begin(), volume.end(), [](auto entry) { return entry->id == "volume"; }));
+    assert(g_currentLanguage == AppLanguage::Japanese);
+    assert(std::string(GetLocalizedString(LStr::Menu_File, AppLanguage::English)) == "File");
+    assert(std::string(GetLocalizedString(static_cast<LStr>(-1), AppLanguage::Chinese)) == "???");
     assert(!Search(u8"静音 阈值", false).empty());
     assert(Search("this-does-not-exist", true).empty());
     assert(Search(u8"诊断", false).empty());

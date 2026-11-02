@@ -27,6 +27,8 @@ extern AppLanguage g_currentLanguage;
 
 // Get localized string by ID
 const char* GetLocalizedString(LStr id);
+// Explicit-language lookup for multilingual indexes; does not change UI language.
+const char* GetLocalizedString(LStr id, AppLanguage language);
 const char* GetMagicEQModeLabel(bool enabled, int mode);
 const char* GetMagicEQFrequencyLabel(float lowHz, float highHz);
 

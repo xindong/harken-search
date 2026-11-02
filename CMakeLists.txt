@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(HarkenSearch VERSION 1.0.43 LANGUAGES C CXX)
 
 enable_testing()
-add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp)
+add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)
 target_include_directories(TestPreferenceDraft PRIVATE src)
 target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
 if(MSVC)
