@@ -73,6 +73,15 @@ inline void ApplyDockCommitToPanel(
     ApplyDockCommitToPanel(panel, side, side, incoming);
 }
 
+// The results home is rendered by the workspace shell, outside DockLayout.
+// Both a committed home drop and Reset Layout must remove a previous leaf
+// and its floating record, without changing any other module.
+inline void RestoreSearchResultsHome(DockLayout& layout, bool& floating) {
+    if (layout.Find("search-results")) layout.Detach("search-results");
+    layout.RemoveFloat("search-results");
+    floating = false;
+}
+
 inline bool BeginDockPanelFloat(
     DockLayout& layout,
     std::string_view moduleId,

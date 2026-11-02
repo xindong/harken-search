@@ -15749,6 +15749,14 @@
       "ja": "スペースが不足しています。離すとフロートのままになります。別の辺を選ぶか、対象を広げてください。"
     },
     {
+      "id": "Dock_ResultsHomeHint", "type": "ui",
+      "zh": "将「全部文件」拖回这里", "en": "Drag All Files back here", "ja": "「すべてのファイル」をここに戻す"
+    },
+    {
+      "id": "Dock_ResultsHomeDrop", "type": "ui",
+      "zh": "松开，恢复全部文件", "en": "Release to restore All Files", "ja": "離してすべてのファイルを元に戻す"
+    },
+    {
       "id": "Dock_UxDropLeft", "type": "ui",
       "zh": "松手放到左侧 · Esc 取消", "en": "Release to dock left · Esc cancels", "ja": "離すと左に配置 · Esc でキャンセル"
     },

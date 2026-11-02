@@ -16,7 +16,7 @@ struct DockRect {
     float height = 0.0f;
 };
 
-enum class DockHitKind { None, Main, Parent, Module };
+enum class DockHitKind { None, Main, Parent, Module, ResultsHome };
 inline constexpr float kDockBandSplitterHeight = 6.0f;
 
 struct DockHit {
@@ -42,6 +42,9 @@ struct DockCenterDropTarget {
     bool enabled = false;
     float preferredRootExtent = 0.0f;
     float preferredVerticalExtent = 0.0f;
+    // Only the results module can return to the shell-owned center surface.
+    // Other modules retain the existing edge-only docking targets.
+    bool restoreSearchResults = false;
 };
 
 struct DockModuleTarget {
@@ -657,6 +660,14 @@ inline DockHit HitDockTarget(
     const DockCenterDropTarget* centerDrop = nullptr) {
     DockHit miss;
     if (work.width <= 0.0f || work.height <= 0.0f || snapDistance <= 0.0f) return miss;
+    if (centerDrop && centerDrop->enabled && centerDrop->restoreSearchResults &&
+        centerDrop->rect.width > 1.0f && centerDrop->rect.height > 1.0f &&
+        RectsOverlap(panel, centerDrop->rect)) {
+        DockHit hit;
+        hit.kind = DockHitKind::ResultsHome;
+        hit.hitRect = hit.resultRect = centerDrop->rect;
+        return hit;
+    }
     const float strip = std::min(snapDistance, std::min(work.width, work.height));
     for (int i = 0; i < moduleCount; ++i) {
         const DockRect& box = modules[i].rect;
@@ -1169,6 +1180,16 @@ inline DockDropPlan PlanReadableDockDrop(
     DockDropPlan plan;
     if (hit.kind == DockHitKind::None || incoming.empty() ||
         hit.targetModuleId == incoming) return plan;
+    if (hit.kind == DockHitKind::ResultsHome) {
+        if (incoming != "search-results" || hit.resultRect.width <= 1.0f ||
+            hit.resultRect.height <= 1.0f) return plan;
+        // The shell already owns this rectangle. Do not insert a side leaf
+        // or reserve another center minimum beneath the returning list.
+        plan.accepted = true;
+        plan.hit = hit;
+        plan.slots = requested;
+        return plan;
+    }
     DockLayout candidate = layout;
     if (candidate.Find(incoming)) candidate.Detach(incoming);
     candidate.RemoveFloat(incoming);
