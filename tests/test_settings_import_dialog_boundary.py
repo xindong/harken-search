@@ -56,7 +56,7 @@ for forbidden_policy in (
     assert forbidden_policy not in WIN32
 assert 'return "";' in PORTABLE
 
-qualified_call = "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd)"
+qualified_call = "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(MainUiOwnerWindow())"
 assert MAIN.count(qualified_call) == 1
 button = MAIN.index("aura::ui::ActionButton(L(Set_ImportSettings)")
 tooltip = MAIN.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
