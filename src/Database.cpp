@@ -14701,6 +14701,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 stats.addError(message, failedCount);
                 stats.failedFiles += failedCount;
                 failedWriteResultsInBatch += failedCount;
+            } else {
+                stats.addDiagnostic(message);
             }
             writeBuffer.clear();
         };
@@ -15169,7 +15171,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
 
             if (batchOk && commitTransaction()) {
-                committedWritesInBatch += (int)writeBuffer.size();
+                committedWritesInBatch += (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                    [](const WorkResult& result) { return !result.scanTerminalFailure; });
                 stats.added += batchAdded;
                 stats.updated += batchUpdated;
                 stats.ingested += batchAdded + batchUpdated;
@@ -15380,6 +15383,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (flushFailed) {
+            // Workers have stopped; classify results never consumed by the writer
+            // before grouping the remaining unimported files as write failures.
+            while (!resultQ.empty()) {
+                WorkResult queued = std::move(resultQ.front());
+                resultQ.pop();
+                if (!queued.scanTerminalFailure && queued.ok) continue;
+                const std::string message = queued.errorMessage.empty()
+                    ? ("Failed to scan file: " + queued.record.filePath)
+                    : queued.errorMessage;
+                stats.addError(message);
+                ++stats.failedFiles;
+                ++failedScanResultsInBatch;
+            }
             const int accountedInBatch =
                 committedWritesInBatch + failedScanResultsInBatch + failedWriteResultsInBatch;
             const int unaccountedInBatch = (int)batch.size() - accountedInBatch;

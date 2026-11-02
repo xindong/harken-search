@@ -25,6 +25,30 @@ ABORT_MESSAGE = 'Scan aborted after database write failure; queued files were no
 INPUT_COUNT = 500
 
 
+def running_card_packages():
+    import pywintypes
+    import win32api
+    import win32con
+    import win32process
+
+    active = []
+    for pid in win32process.EnumProcesses():
+        try:
+            handle = win32api.OpenProcess(
+                win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+        except (OSError, pywintypes.error):
+            continue
+        try:
+            image = Path(win32process.GetModuleFileNameEx(handle, 0)).resolve()
+            if image.name.lower() == 'harkensearch.exe' and inside(image, CARD_ROOT):
+                active.append(pid)
+        except (OSError, pywintypes.error):
+            continue
+        finally:
+            handle.Close()
+    return active
+
+
 def run(args):
     import win32con
     import win32event
@@ -55,10 +79,13 @@ def run(args):
         handle.write(owner)
         handle.flush()
     try:
+        require(not (runtime / 'qa_cmd.json').exists(), '加锁后发现未处理的 QA 命令')
+        require(not running_card_packages(), '本卡 QA 包仍有运行中的进程，拒绝共用隔离目录')
         driver = Driver(runtime, out)
         desktop = PrivateDesktop()
         process, pid = desktop.start(exe)
         process_exited = False
+        require(pid in running_card_packages(), '无法从进程列表确认本卡测试包')
         identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
         require(identity['pid'] == pid and path_key(identity['exe_path']) == path_key(exe)
                 and path_key(identity['isolation_root']) == path_key(root), '运行包身份与隔离目录不符')
@@ -163,7 +190,7 @@ def run(args):
                 process.Close()
             if desktop is not None:
                 desktop.close()
-            if process_exited:
+            if process_exited and (not failure_fixture_installed or report.get('failure_fixture_removed')):
                 require(os.path.samestat(lock_identity, lock.stat(follow_symlinks=False))
                         and lock.read_text(encoding='utf-8') == owner, '锁归属变化，拒绝清理')
                 lock.unlink()

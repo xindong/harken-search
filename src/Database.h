@@ -230,6 +230,18 @@ struct ScanStats {
         }
     }
 
+    void addDiagnostic(std::string message) {
+        if (message.empty()) return;
+        // Keep a fatal write cause visible without counting an already failed file again.
+        if (errorMessages.size() >= 32) {
+            errorMessages.back() = std::move(message);
+            errorMessageCounts.back() = 0;
+        } else {
+            errorMessages.push_back(std::move(message));
+            errorMessageCounts.push_back(0);
+        }
+    }
+
     void mergeFrom(const ScanStats& other) {
         total += other.total;
         added += other.added;
