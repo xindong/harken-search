@@ -8,7 +8,7 @@
 **Priority:** P0
 **Owner:** Engineering / QA
 **Created:** 2026-07-14
-**Last Updated:** 2026-07-14
+**Last Updated:** 2026-11-02
 
 ## Product Behavior
 
@@ -47,6 +47,33 @@
 - Given PAL 运行在主线程、后台线程或实时音频回调
 - When 执行对应能力
 - Then 主线程不突破 16ms 预算，实时回调不分配、不阻塞、不访问数据库或文件系统
+
+### macOS Data and Settings
+
+The approved macOS port adds a native data backend without changing the Windows
+layout or settings fields. Normal data resolves under the user's
+`Library/Application Support/HarkenSearch`; resolving this path does not create
+or migrate a library. The app must explicitly check `EnsureLayout().readOnly`
+before startup writes. There is no implicit import of Windows or legacy data.
+
+Preview builds require an explicit compiled isolation root. Relative paths,
+parent escapes, sibling-prefix matches and symbolic-link ancestry are rejected.
+Enabling isolation without a compiled root fails closed, with no fallback to
+daily data. Editable settings and thesaurus files live outside the app bundle.
+
+Mac settings retain the existing UTF-8 key/value format. Saving writes a private
+same-directory temporary file, flushes it, atomically replaces the target, then
+flushes the directory. Failures before replacement preserve the old settings. A
+failure after replacement reports unconfirmed durability; it must not be reported
+as a successful save or as proof the old file still exists. Failed temporary
+files are retained for diagnosis. These I/O calls must not run in audio callbacks.
+
+`TestMacUserDataLayout`, `TestMacUserDataRoots`, `TestMacDurableSettings`,
+`TestPlatformDurableFileOpsCopy` and `TestPlatformDurableFileOpsReplaceDelete`
+exercise the real Mac backends, including a real file-size-limit write failure.
+They do not prove application initialization, UI restoration or user acceptance;
+those require the real application workflow. Set `HARKEN_MAC_TEST_ROOT` and the
+test process's `TMPDIR` to the card's isolated QA directory.
 
 ## Interface Binding
 
