@@ -52,7 +52,7 @@ assert MAIN.count(qualified_call) == 1
 assert "static std::string OpenAvatarImageFileDialogUtf8(HWND owner)" not in MAIN
 assert MAIN.count("OpenAvatarImageFileDialogUtf8(") == 1
 
-button = MAIN.index("ImGui::Button(L(Set_AvatarChangeLabelZh))")
+button = MAIN.index("aura::ui::ActionButton(L(Set_AvatarChangeLabelZh))")
 call = MAIN.index(qualified_call, button)
 empty_check = MAIN.index("if (!selected.empty())", call)
 clear = MAIN.index("s_cropPixels.clear();", empty_check)

@@ -35,6 +35,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -55,8 +56,10 @@ using aris::update::TransferAppendIntent;
 using aris::update::ResumeMetadataIntent;
 using aris::update::ResumeMetadataObservation;
 using aris::update::ResumeMetadataStatus;
+using aris::update::UpdateDownloadManager;
 using aris::update::UpdatePersistenceError;
 using aris::update::UpdatePersistenceResult;
+using aris::update::UpdateVersionDirectoryListing;
 
 constexpr ULONG kFileDirectoryFile = 0x00000001;
 constexpr ULONG kFileWriteThrough = 0x00000002;
@@ -70,6 +73,12 @@ constexpr NTSTATUS kStatusObjectNameNotFound =
     static_cast<NTSTATUS>(0xC0000034L);
 constexpr NTSTATUS kStatusObjectPathNotFound =
     static_cast<NTSTATUS>(0xC000003AL);
+constexpr NTSTATUS kStatusNoMoreFiles = static_cast<NTSTATUS>(0x80000006L);
+constexpr NTSTATUS kStatusBufferOverflow = static_cast<NTSTATUS>(0x80000005L);
+constexpr NTSTATUS kStatusNotADirectory = static_cast<NTSTATUS>(0xC0000103L);
+
+constexpr ULONG kMaximumRetentionDepth = 4;
+constexpr std::size_t kMaximumRetentionEntriesPerDirectory = 4096;
 
 class ScopedHandle {
 public:
@@ -149,10 +158,14 @@ using NtCreateFileFunction = NTSTATUS(NTAPI*)(
     PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
 using NtSetInformationFileFunction = NTSTATUS(NTAPI*)(
     HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+using NtQueryDirectoryFileFunction = NTSTATUS(NTAPI*)(
+    HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK, PVOID, ULONG,
+    FILE_INFORMATION_CLASS, BOOLEAN, PUNICODE_STRING, BOOLEAN);
 
 struct NativeFunctions {
     NtCreateFileFunction createFile = nullptr;
     NtSetInformationFileFunction setInformationFile = nullptr;
+    NtQueryDirectoryFileFunction queryDirectoryFile = nullptr;
 };
 
 const NativeFunctions& NativeApi() {
@@ -164,6 +177,8 @@ const NativeFunctions& NativeApi() {
             GetProcAddress(ntdll, "NtCreateFile"));
         result.setInformationFile = reinterpret_cast<NtSetInformationFileFunction>(
             GetProcAddress(ntdll, "NtSetInformationFile"));
+        result.queryDirectoryFile = reinterpret_cast<NtQueryDirectoryFileFunction>(
+            GetProcAddress(ntdll, "NtQueryDirectoryFile"));
         return result;
     }();
     return functions;
@@ -176,8 +191,20 @@ struct NativeFileRenameInformation {
     WCHAR fileName[1]{};
 };
 
+// FileNamesInformation (class 12) is the stable enumeration reply: names
+// only, with the kind of each entry classified afterwards through the same
+// non-following relative-open guards used by every other port operation.
+struct NativeFileNameInformation {
+    ULONG nextEntryOffset = 0;
+    ULONG fileIndex = 0;
+    ULONG fileNameLength = 0;
+    WCHAR fileName[1]{};
+};
+
 constexpr FILE_INFORMATION_CLASS kFileRenameInformation =
     static_cast<FILE_INFORMATION_CLASS>(10);
+constexpr FILE_INFORMATION_CLASS kFileNamesInformation =
+    static_cast<FILE_INFORMATION_CLASS>(12);
 
 std::string NormalizeSeparators(std::string value) {
     std::replace(value.begin(), value.end(), '\\', '/');
@@ -757,6 +784,40 @@ public:
         return result;
     }
 
+    UpdateVersionDirectoryListing ObserveVersionDirectories() override {
+        UpdateVersionDirectoryListing listing;
+        std::vector<std::string> names;
+        std::uint32_t systemError = 0;
+        if (!ListImmediateNames(trustedRoot_.get(), names, systemError)) {
+            listing.systemError = systemError;
+            return listing;
+        }
+        listing.ok = true;
+        for (const auto& name : names) {
+            if (!IsSafeSegment(name)) continue;
+            if (ProbeEntryUnder(trustedRoot_.get(), name) !=
+                RetentionEntryKind::Directory) {
+                continue;
+            }
+            listing.directoryNames.push_back(name);
+        }
+        std::sort(listing.directoryNames.begin(), listing.directoryNames.end());
+        listing.directoryNames.erase(
+            std::unique(listing.directoryNames.begin(),
+                        listing.directoryNames.end()),
+            listing.directoryNames.end());
+        return listing;
+    }
+
+    UpdatePersistenceResult DeleteVersionDirectory(
+        const std::string& directoryName) override {
+        if (!IsSafeSegment(directoryName) ||
+            !UpdateDownloadManager::IsVersionDirectoryName(directoryName)) {
+            return Failure(UpdatePersistenceError::InvalidIntent);
+        }
+        return DeleteVersionDirectoryTree(directoryName);
+    }
+
     UpdatePersistenceResult AppendTransferChunk(
         const TransferAppendIntent& intent) {
         if (!IsSafeRelativePath(intent.partPath) ||
@@ -846,6 +907,207 @@ public:
     }
 
 private:
+    static bool ListImmediateNames(HANDLE directory,
+                                   std::vector<std::string>& names,
+                                   std::uint32_t& systemError) {
+        const auto& native = NativeApi();
+        if (!native.queryDirectoryFile) {
+            systemError = ERROR_PROC_NOT_FOUND;
+            return false;
+        }
+        std::vector<WCHAR> buffer(8192U);
+        IO_STATUS_BLOCK io{};
+        BOOLEAN restartScan = TRUE;
+        for (;;) {
+            const NTSTATUS status = native.queryDirectoryFile(
+                directory, nullptr, nullptr, nullptr, &io, buffer.data(),
+                static_cast<ULONG>(buffer.size() * sizeof(WCHAR)),
+                kFileNamesInformation, FALSE, nullptr, restartScan);
+            restartScan = FALSE;
+            if (status == kStatusNoMoreFiles) return true;
+            // STATUS_BUFFER_OVERFLOW only means the reply needed two calls.
+            if (status < 0 && status != kStatusBufferOverflow) {
+                systemError = static_cast<std::uint32_t>(status);
+                return false;
+            }
+            ULONG offset = 0;
+            for (;;) {
+                const auto* info =
+                    reinterpret_cast<const NativeFileNameInformation*>(
+                        reinterpret_cast<const BYTE*>(buffer.data()) + offset);
+                const std::wstring_view name(
+                    info->fileName, info->fileNameLength / sizeof(WCHAR));
+                if (name != L"." && name != L"..") {
+                    names.push_back(
+                        Platform::TextEncoding::WideToUtf8Strict(name));
+                    if (names.size() > kMaximumRetentionEntriesPerDirectory) {
+                        systemError = ERROR_BUFFER_OVERFLOW;
+                        return false;
+                    }
+                }
+                if (info->nextEntryOffset == 0) break;
+                offset += info->nextEntryOffset;
+            }
+        }
+    }
+
+    enum class RetentionEntryKind {
+        Missing,
+        Directory,
+        RegularFile,
+        Rejected,
+    };
+
+    // Classify one child through a non-following relative open against the
+    // caller-held parent handle, so a path swap cannot re-point the probe at a
+    // different object.  Reparse points never classify as deletable.
+    RetentionEntryKind ProbeEntryUnder(HANDLE parent, const std::string& name) const {
+        if (!IsSafeSegment(name)) return RetentionEntryKind::Rejected;
+        auto directory = OpenRelative(
+            parent, name, FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            kFileOpen, kFileDirectoryFile);
+        if (directory.ok()) {
+            return IsSafeDirectoryHandle(directory.handle.get())
+                       ? RetentionEntryKind::Directory
+                       : RetentionEntryKind::Rejected;
+        }
+        if (!directory.missing() && directory.status != kStatusNotADirectory) {
+            return RetentionEntryKind::Rejected;
+        }
+        auto file = OpenRelative(
+            parent, name, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            kFileOpen, kFileNonDirectoryFile);
+        if (file.ok()) {
+            return IsSafeRegularFileHandle(file.handle.get())
+                       ? RetentionEntryKind::RegularFile
+                       : RetentionEntryKind::Rejected;
+        }
+        if (file.missing()) return RetentionEntryKind::Missing;
+        return RetentionEntryKind::Rejected;
+    }
+
+    static bool MarkFileForDeletion(HANDLE file) {
+        FILE_DISPOSITION_INFO disposition{};
+        disposition.DeleteFile = TRUE;
+        return SetFileInformationByHandle(file, FileDispositionInfo,
+                                         &disposition,
+                                         sizeof(disposition)) != FALSE;
+    }
+
+    static bool MarkDirectoryForDeletion(HANDLE directory) {
+        FILE_DISPOSITION_INFO_EX disposition{};
+        disposition.Flags = FILE_DISPOSITION_FLAG_DELETE |
+                            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
+        return SetFileInformationByHandle(directory, FileDispositionInfoEx,
+                                         &disposition,
+                                         sizeof(disposition)) != FALSE;
+    }
+
+    // Remove every child of one already-pinned directory handle.  All opens,
+    // probes and deletions go through this held handle, never through a
+    // re-opened root-relative path, so a concurrent rename+replace of the
+    // walked directory cannot redirect the walk onto a retained package.
+    // The walk handle is opened without share-delete, which also blocks other
+    // processes from renaming or deleting the directory while it is drained.
+    // Reparse points and unexpected entries abort the whole tree; retention
+    // is best-effort and retries next update.
+    UpdatePersistenceResult DrainPinnedDirectory(
+        HANDLE directory, std::size_t depth, std::size_t& removed) const {
+        if (depth > kMaximumRetentionDepth) {
+            return Failure(UpdatePersistenceError::InvalidIntent,
+                           ERROR_INVALID_PARAMETER, removed);
+        }
+        std::vector<std::string> children;
+        std::uint32_t systemError = 0;
+        if (!ListImmediateNames(directory, children, systemError)) {
+            return Failure(UpdatePersistenceError::DeleteFailed, systemError, removed);
+        }
+        for (const auto& childName : children) {
+            const auto kind = ProbeEntryUnder(directory, childName);
+            if (kind == RetentionEntryKind::Missing) continue;
+            if (kind == RetentionEntryKind::Rejected) {
+                return Failure(UpdatePersistenceError::InvalidIntent,
+                               ERROR_REPARSE_TAG_INVALID, removed);
+            }
+            if (kind == RetentionEntryKind::RegularFile) {
+                auto file = OpenRelative(
+                    directory, childName, DELETE | FILE_READ_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    kFileOpen, kFileNonDirectoryFile);
+                if (!file.ok()) {
+                    if (file.missing()) continue;
+                    return Failure(UpdatePersistenceError::DeleteFailed,
+                                   static_cast<std::uint32_t>(file.status), removed);
+                }
+                if (!IsSafeRegularFileHandle(file.handle.get()) ||
+                    !MarkFileForDeletion(file.handle.get())) {
+                    return Failure(UpdatePersistenceError::DeleteFailed,
+                                   GetLastError(), removed);
+                }
+                ++removed;
+                continue;
+            }
+            auto child = OpenRelative(
+                directory, childName,
+                DELETE | FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                kFileOpen, kFileDirectoryFile, FILE_ATTRIBUTE_DIRECTORY);
+            if (!child.ok()) {
+                if (child.missing()) continue;
+                return Failure(UpdatePersistenceError::DeleteFailed,
+                               static_cast<std::uint32_t>(child.status), removed);
+            }
+            if (!IsSafeDirectoryHandle(child.handle.get())) {
+                return Failure(UpdatePersistenceError::InvalidIntent,
+                               ERROR_REPARSE_TAG_INVALID, removed);
+            }
+            const auto drained = DrainPinnedDirectory(child.handle.get(), depth + 1U, removed);
+            if (!drained.ok()) return drained;
+            if (!MarkDirectoryForDeletion(child.handle.get())) {
+                return Failure(UpdatePersistenceError::DeleteFailed,
+                               GetLastError(), removed);
+            }
+        }
+        return Failure(UpdatePersistenceError::None, 0, removed);
+    }
+
+    UpdatePersistenceResult DeleteVersionDirectoryTree(
+        const std::string& directoryName) const {
+        std::size_t removed = 0;
+        // Pinned first: everything below walks through this single handle.
+        // Share mode excludes FILE_SHARE_DELETE, so while we walk this
+        // directory nobody can rename or replace it.
+        auto top = OpenRelative(
+            trustedRoot_.get(), directoryName,
+            DELETE | FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            kFileOpen, kFileDirectoryFile, FILE_ATTRIBUTE_DIRECTORY);
+        if (!top.ok()) {
+            if (top.missing()) {
+                return Failure(UpdatePersistenceError::None, 0, 1);
+            }
+            if (top.status == kStatusNotADirectory) {
+                return Failure(UpdatePersistenceError::InvalidIntent,
+                               ERROR_REPARSE_TAG_INVALID, removed);
+            }
+            return Failure(UpdatePersistenceError::OpenFailed,
+                           static_cast<std::uint32_t>(top.status), removed);
+        }
+        if (!IsSafeDirectoryHandle(top.handle.get())) {
+            return Failure(UpdatePersistenceError::InvalidIntent,
+                           ERROR_REPARSE_TAG_INVALID, removed);
+        }
+        const auto drained = DrainPinnedDirectory(top.handle.get(), 1U, removed);
+        if (!drained.ok()) return drained;
+        if (!MarkDirectoryForDeletion(top.handle.get())) {
+            return Failure(UpdatePersistenceError::DeleteFailed,
+                           GetLastError(), removed);
+        }
+        return Failure(UpdatePersistenceError::None, 0, 1);
+    }
+
     bool ValidateStoreIntent(const StoreIntent& intent) const {
         if (!IsSafeRelativePath(intent.path)) return false;
         switch (intent.kind) {

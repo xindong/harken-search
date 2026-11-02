@@ -610,6 +610,7 @@ int RunHarkenSearchBootstrapEntrypoint(
                         BootstrapExitCode::AuthorityRejected, "");
         return static_cast<int>(BootstrapExitCode::AuthorityRejected);
     }
+    if (options.progress) options.progress->SetTargetVersion(plan.version);
 
     WindowsBootstrapFilesystemTrustedRootPolicy trustedRoots;
     trustedRoots.updaterOwnedBase = plan.invocation.updaterOwnedBase;
@@ -643,7 +644,7 @@ int RunHarkenSearchBootstrapEntrypoint(
     roots.invocationIdentity = plan.invocation.invocationIdentity;
     WindowsBootstrapFilesystemDriver filesystemDriver(filesystem);
     BootstrapApplicationDependencies dependencies{
-        *process, *health, filesystemDriver, terminalCleanup.get()};
+        *process, *health, filesystemDriver, terminalCleanup.get(), options.progress};
     BootstrapApplicationOptions applicationOptions;
     applicationOptions.oldProcessWaitMs = options.oldProcessWaitMs;
     applicationOptions.healthWaitMs = options.healthWaitMs;

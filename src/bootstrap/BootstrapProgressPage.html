@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Harken Search 更新</title><style>
+:root{font-family:"Microsoft YaHei","PingFang SC",sans-serif;font-synthesis:none;color-scheme:light;color:#34413b;background:#eef0ed;--ease:cubic-bezier(.22,1,.36,1)}
+*{box-sizing:border-box}body{margin:0;min-height:100svh}button,select,textarea{font:inherit}button,select,summary{-webkit-tap-highlight-color:transparent}button{cursor:pointer}button:disabled{cursor:default}button:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid #bf6a36;outline-offset:4px}[hidden]{display:none!important}button:active:not(:disabled){transform:translateY(1px)}a{color:inherit;text-underline-offset:4px}
+.page{width:min(100%,700px);margin:auto;padding:56px 24px 28px}.stage{display:grid;place-items:center;min-height:430px;padding:24px 0}.updater{--surface:#f8faf9;--text:#263c32;--muted:#556c60;--line:#cad6ce;--track:#dce3de;--accent:#b2683e;--primary:#294b3d;--on-primary:#f4f8f5;--error:#a54827;--success:#4a7960;color:var(--text);background:var(--surface);width:min(100%,560px);border:1px solid var(--line);border-radius:10px;box-shadow:0 20px 48px -28px #203e3050;overflow:hidden;color-scheme:light}
+.updater[data-theme="navy"]{--surface:#132235;--text:#edf2f6;--muted:#a8b7c7;--line:#35475a;--track:#35465a;--accent:#f0a071;--primary:#edf2f5;--on-primary:#172638;--error:#ffc19d;--success:#a9ceb9;color-scheme:dark}
+.window-head{display:flex;align-items:center;justify-content:space-between;padding:26px 30px 17px;gap:18px}.brand{display:flex;align-items:center;gap:9px;min-width:0}.brand-icon{width:24px;height:24px;object-fit:contain}.wordmark{width:174px;height:auto;max-width:100%;display:block}.wordmark-white{display:none}.updater[data-theme="navy"] .wordmark-white{display:block}.updater[data-theme="navy"] .wordmark-black{display:none}.target-version{font-size:12px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.content{padding:14px 30px 18px;min-height:120px}.status-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.status-row h1{font-size:23px;font-weight:500;line-height:1.5;margin:0;letter-spacing:.015em}.file-count{font-size:12px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}.hint{font-size:13px;line-height:1.8;color:var(--muted);margin:8px 0 0}.progress{height:3px;background:var(--track);border-radius:2px;overflow:hidden;position:relative;margin-top:22px}.fill,.runner{position:absolute;inset:0;background:var(--accent);transform-origin:left}.fill{transform:scaleX(0);transition:transform .2s var(--ease)}.runner{display:none}.updater[data-busy="true"] .progress[data-kind="waiting"] .runner{display:block;animation:travel 1.65s var(--ease) infinite}.updater[data-mode="complete"] .fill{background:var(--success)}.updater[data-mode="failed"] h1{color:var(--error)}.updater[data-paused="true"] .runner{animation-play-state:paused}
+.footer{padding:0 30px 20px;display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:64px}.details-toggle{border:0;background:none;color:var(--muted);display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:8px 0;font-size:12px}.details-toggle svg{width:12px;height:12px;transition:transform .2s var(--ease)}.details-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}.actions{display:flex;gap:9px;align-items:center}.btn{border:1px solid transparent;border-radius:5px;min-height:40px;padding:0 17px;background:transparent;color:var(--muted);font-size:12px;transition:opacity .12s var(--ease)}.btn.primary{color:var(--on-primary);background:var(--primary);min-width:104px}.btn.primary:hover{opacity:.88}.btn.secondary:hover{color:var(--text)}
+.details-panel{border-top:1px solid var(--line);padding:18px 30px 23px;font-size:12px;line-height:1.8;color:var(--muted)}.details-panel dl{display:grid;grid-template-columns:64px 1fr;gap:7px 12px;margin:0}.details-panel dd{margin:0;overflow-wrap:anywhere}.copy{border:0;background:none;padding:10px 0 0;min-height:44px;color:var(--text);font-size:12px;text-decoration:underline;text-underline-offset:4px}.copy-buffer{margin-top:10px;width:100%;min-height:104px;border:1px solid var(--line);border-radius:4px;color:var(--text);background:var(--surface);padding:8px;resize:vertical;font-size:12px}
+@keyframes travel{0%{transform:translateX(-105%) scaleX(.4)}100%{transform:translateX(105%) scaleX(.4)}}
+@media(max-width:600px){.page{padding:32px 18px 24px}.stage{min-height:340px;padding:26px 0}.window-head{padding:23px 24px 17px}.content{padding:14px 24px 19px}.footer{padding:0 24px 20px}.details-panel{padding:18px 24px}.brand-icon{width:21px;height:21px}.wordmark{width:155px}.target-version{font-size:11px}.status-row h1{font-size:22px}.btn{min-height:44px}.file-count{font-size:11px}}
+@media(max-width:380px){.page{padding-left:14px;padding-right:14px}.window-head{padding-left:21px;padding-right:21px;gap:12px}.content{padding-left:21px;padding-right:21px}.footer{padding-left:21px;padding-right:21px}.wordmark{width:143px}.brand{gap:7px}.status-row h1{font-size:21px}.file-count{font-size:10px}.hint{font-size:12px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}.updater[data-busy="true"] .progress[data-kind="waiting"] .runner{transform:scaleX(.4);opacity:.7}}
+
+html,body{background:var(--surface,#f8faf9);overflow:auto}body{min-height:100vh}.updater{width:100%;min-height:100vh;border:0;border-radius:0;box-shadow:none}.window-head{padding-top:27px}.content{min-height:118px}.footer{padding-bottom:18px}#error-code{font-size:12px;color:var(--muted)}.details-panel{padding-top:13px}.updater[data-reduced="true"] *{animation:none!important;transition:none!important}.updater[data-reduced="true"] .runner{transform:scaleX(.4);opacity:.7}
+@media(prefers-color-scheme:dark){.updater{--surface:#132235;--text:#edf2f6;--muted:#a8b7c7;--line:#35475a;--track:#35465a;--accent:#f0a071;--primary:#edf2f5;--on-primary:#172638;--error:#ffc19d;--success:#a9ceb9;color-scheme:dark}.wordmark-white{display:block}.wordmark-black{display:none}}
+</style></head><body>
+<section class="updater" id="updater" data-mode="working" data-busy="true" aria-label="Harken Search 更新">
+<header class="window-head"><div class="brand"><img class="brand-icon" src="@SEARCH_ICON@" alt=""><img class="wordmark wordmark-black" src="@WORDMARK_BLACK@" alt="Harken Search"><img class="wordmark wordmark-white" src="@WORDMARK_WHITE@" alt="Harken Search"></div><span class="target-version" id="version"></span></header>
+<div class="content"><div class="status-row"><h1 id="phase-title" role="status" aria-live="polite">正在检查文件…</h1><span class="file-count" id="file-count" hidden></span></div><p class="hint" id="hint" hidden></p><div class="progress" id="progress" data-kind="waiting" role="progressbar" aria-label="当前步骤进度" aria-valuetext="正在检查文件…"><div class="fill" id="fill"></div><div class="runner"></div></div></div>
+<footer class="footer" id="failure-actions" hidden><span id="error-code"></span><button class="btn primary" id="close">关闭</button></footer>
+</section><script>(()=>{'use strict';
+const $=id=>document.getElementById(id);
+const send=message=>window.chrome?.webview?.postMessage(message);
+let terminal=false;
+function render(state){
+ if(!state||typeof state.phase!=='string'||typeof state.busy!=='boolean'||terminal)return;
+ terminal=state.mode==='complete'||(state.mode==='failed'&&state.exitCode!==0);
+ $('updater').dataset.mode=state.mode;$('updater').dataset.busy=String(state.busy);$('updater').dataset.reduced=String(state.reducedMotion);
+ $('phase-title').textContent=state.title;$('version').textContent=state.version?'v'+state.version:'';
+ $('hint').textContent=state.hint;$('hint').hidden=!state.hint;
+ $('failure-actions').hidden=state.mode!=='failed'||!terminal;
+ $('error-code').textContent=state.exitCode?'错误码 '+state.exitCode:'';
+ const counted=state.phase==='ReplacingFiles'&&state.totalFiles>0;
+ $('file-count').hidden=!counted;$('file-count').textContent=counted?state.completedFiles+' / '+state.totalFiles+' 个':'';
+ $('progress').hidden=state.mode==='failed';$('progress').dataset.kind=counted||state.mode==='complete'?'files':'waiting';
+ $('fill').style.transform='scaleX('+(state.progress??0)+')';
+ ['aria-valuemin','aria-valuemax','aria-valuenow'].forEach(a=>$('progress').removeAttribute(a));
+ if(counted){$('progress').setAttribute('aria-valuemin','0');$('progress').setAttribute('aria-valuemax',state.totalFiles);$('progress').setAttribute('aria-valuenow',state.completedFiles)}
+ $('progress').setAttribute('aria-valuetext',counted?'已替换 '+state.completedFiles+' 个文件，共 '+state.totalFiles+' 个':state.title);
+}
+$('close').addEventListener('click',()=>{if(terminal)send('close')});
+window.chrome?.webview?.addEventListener('message',event=>render(event.data));
+send('ready');
+})();</script></body></html>

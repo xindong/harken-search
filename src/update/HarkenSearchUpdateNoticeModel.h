@@ -51,6 +51,10 @@ void SyncHarkenSearchCandidateReleaseNotes(ReleaseNotesUiState& notes,
     std::string_view version, std::string_view json, bool readFailed);
 const ReleaseNotesEntry* SelectHarkenSearchReleaseNotes(const ReleaseNotesUiState& notes,
     std::string_view version, bool candidate);
+// Display-only selection for the installed-version panel: exact record first,
+// otherwise the newest bundled record so contributors and content stay visible.
+const ReleaseNotesEntry* SelectHarkenSearchLocalDisplayReleaseNotes(
+    const ReleaseNotesUiState& notes, std::string_view version);
 std::vector<const ReleaseNotesEntry*> BuildHarkenSearchReleaseNotesHistory(
     const ReleaseNotesUiState& notes, std::string_view installedVersion);
 

@@ -14,6 +14,7 @@
 #include "CoverWallSelectionKey.h"
 #include "CoverReplacementFoundation.h"
 #include "MetadataReader.h"
+#include "Id3CommentText.h"
 #include "platform/database_audio_probe.h"
 #include "TagVocabularyMapper.h"
 #include "SearchQuery.h"
@@ -1292,6 +1293,17 @@ bool Database::requireFts5() {
     return true;
 }
 
+static bool ReplaceSearchIndexTriggers(sqlite3* db, const char* sql, std::string* error) {
+    // Multiple database connections can initialize simultaneously. Keep each
+    // DROP/CREATE group atomic, including rollback if one CREATE fails. A
+    // savepoint also preserves any transaction owned by the caller.
+    if (!execSqlite(db, "SAVEPOINT harken_fts_trigger_refresh;", error)) return false;
+    if (execSqlite(db, sql, error) &&
+        execSqlite(db, "RELEASE harken_fts_trigger_refresh;", error)) return true;
+    execSqlite(db, "ROLLBACK TO harken_fts_trigger_refresh; RELEASE harken_fts_trigger_refresh;", nullptr);
+    return false;
+}
+
 bool Database::ensureFtsSchema() {
     if (!m_db) return false;
     if (!requireFts5()) return false;
@@ -1381,7 +1393,7 @@ bool Database::ensureFtsSchema() {
             VALUES (new.id, new.file_name, new.file_path, new.folder_path, new.title, new.artist, new.album, new.description, new.keywords, new.category, new.search_data);
         END;
     )";
-    if (!execSqlite(m_db, trig, &err)) {
+    if (!ReplaceSearchIndexTriggers(m_db, trig, &err)) {
         m_lastError = FormatDbError(L(Db_FtsTriggerFailFmt), err.c_str());
         return false;
     }
@@ -1477,7 +1489,7 @@ bool Database::ensureFtsSchema() {
             VALUES (new.id, new.file_name, new.folder_path);
         END;
     )";
-    if (!execSqlite(m_db, trigramTriggers, &err)) {
+    if (!ReplaceSearchIndexTriggers(m_db, trigramTriggers, &err)) {
         m_lastError = FormatDbError(L(Db_TrigramTriggerFailFmt), err.c_str());
         return false;
     }
@@ -5053,7 +5065,28 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
         case ColId::Title:                  r.title = safeGetText(stmt, i); break;
         case ColId::Artist:                 r.artist = safeGetText(stmt, i); break;
         case ColId::Album:                  r.album = safeGetText(stmt, i); break;
-        case ColId::Description:            r.description = safeGetText(stmt, i); break;
+        case ColId::Description: {
+            const auto* bytes = sqlite3_column_blob(stmt, i);
+            const int byteCount = sqlite3_column_bytes(stmt, i);
+            if (bytes && byteCount > 0) {
+                const auto recovered = Id3CommentText::RecoverStoredLegacy(
+                    std::string_view(reinterpret_cast<const char*>(bytes),
+                                     static_cast<size_t>(byteCount)));
+                if (recovered) {
+                    r.databaseListDescriptionOverride = *recovered;
+                    r.databaseListDescriptionNeedsSource = true;
+                }
+            }
+            const auto* utf8 = sqlite3_column_text(stmt, i);
+            const int utf8Count = sqlite3_column_bytes(stmt, i);
+            if (utf8 && utf8Count > 0 &&
+                Id3CommentText::LooksLikeConvertedLegacy(
+                    std::string_view(reinterpret_cast<const char*>(utf8),
+                                     static_cast<size_t>(utf8Count))))
+                r.databaseListDescriptionNeedsSource = true;
+            r.description = safeGetText(stmt, i);
+            break;
+        }
         case ColId::Category:               r.category = safeGetText(stmt, i); break;
         case ColId::Keywords:               r.keywords = safeGetText(stmt, i); break;
         case ColId::Rating:                 r.rating = sqlite3_column_int(stmt, i); break;
@@ -11590,7 +11623,12 @@ int64_t Database::countFilesEligibleForPersistentDetailCache() {
     return count;
 }
 
-bool Database::updateFilePath(const std::string& oldPath, const std::string& newPath, const std::string& newFileName) {
+bool Database::updateFilePath(
+    const std::string& oldPath,
+    const std::string& newPath,
+    const std::string& newFileName,
+    RelinkPathUpdateStatus* relinkResult) {
+    if (relinkResult) *relinkResult = RelinkPathUpdateStatus::Failed;
     if (!m_db || oldPath.empty() || newPath.empty()) return false;
 
     std::string finalName = newFileName;
@@ -11633,8 +11671,26 @@ bool Database::updateFilePath(const std::string& oldPath, const std::string& new
     sqlite3_bind_text(stmt, 4, finalName.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 5, oldPath.c_str(), -1, SQLITE_TRANSIENT);
 
-    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
-    if (!ok) m_lastError = sqlite3_errmsg(m_db);
+    const int stepResult = sqlite3_step(stmt);
+    const int changedRows = stepResult == SQLITE_DONE ? sqlite3_changes(m_db) : 0;
+    const bool updatedOneRow = stepResult == SQLITE_DONE && changedRows == 1;
+    // Preserve legacy behavior for existing callers; relink requests provide
+    // the result pointer and must prove that exactly one source row changed.
+    const bool ok = stepResult == SQLITE_DONE && (!relinkResult || updatedOneRow);
+    if (relinkResult) {
+        if (updatedOneRow) {
+            *relinkResult = RelinkPathUpdateStatus::Updated;
+        } else if (stepResult == SQLITE_DONE) {
+            *relinkResult = RelinkPathUpdateStatus::SourceChanged;
+        } else if ((stepResult & 0xff) == SQLITE_CONSTRAINT) {
+            *relinkResult = RelinkPathUpdateStatus::PathConflict;
+        }
+    }
+    if (!ok) {
+        m_lastError = stepResult == SQLITE_DONE
+            ? "No file path row matched for update."
+            : sqlite3_errmsg(m_db);
+    }
     sqlite3_finalize(stmt);
     if (ok) {
         std::vector<std::string> changedPaths;
@@ -11794,18 +11850,53 @@ std::vector<std::pair<Database::RelinkCandidate, std::vector<std::string>>>
 Database::findRelinkCandidates(const std::vector<std::string>& searchRoots,
                                 std::atomic<bool>* cancelFlag)
 {
+    auto detailed = findRelinkCandidatesDetailed(searchRoots, cancelFlag);
+    std::vector<std::pair<RelinkCandidate, std::vector<std::string>>> results;
+    results.reserve(detailed.candidates.size());
+    for (auto& [candidate, matches] : detailed.candidates) {
+        std::vector<std::string> paths;
+        paths.reserve(matches.size());
+        for (auto& match : matches) paths.push_back(std::move(match.path));
+        results.emplace_back(std::move(candidate), std::move(paths));
+    }
+    return results;
+}
+
+Database::RelinkSearchResult Database::findRelinkCandidatesDetailed(
+    const std::vector<std::string>& searchRoots,
+    std::atomic<bool>* cancelFlag,
+    std::atomic<uint64_t>* scannedEntries)
+{
+    RelinkSearchResult report;
+    if (scannedEntries) scannedEntries->store(0, std::memory_order_release);
+
+    auto isCancelled = [&]() {
+        return cancelFlag && cancelFlag->load(std::memory_order_acquire);
+    };
+
     // Open a dedicated read-only connection for background thread safety.
     sqlite3* roDb = nullptr;
     if (!m_mainDbPath.empty()) {
-        sqlite3_open_v2(m_mainDbPath.c_str(), &roDb,
-                        SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nullptr);
-        if (roDb) {
-            sqlite3_busy_timeout(roDb, 5000);
+        const int openResult = sqlite3_open_v2(
+            m_mainDbPath.c_str(),
+            &roDb,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+            nullptr);
+        if (openResult != SQLITE_OK) {
+            report.status = RelinkSearchStatus::Failed;
+            report.errorMessage = roDb ? sqlite3_errmsg(roDb) : "Database could not be opened.";
+            if (roDb) sqlite3_close(roDb);
+            return report;
         }
+        sqlite3_busy_timeout(roDb, 5000);
     }
     // Fall back to m_db (main-thread use only) if no path available.
     sqlite3* db = roDb ? roDb : m_db;
-    if (!db) return {};
+    if (!db) {
+        report.status = RelinkSearchStatus::Failed;
+        report.errorMessage = "Database is unavailable.";
+        return report;
+    }
 
     // Step A: load orphaned records whose paths no longer exist on disk.
     const char* orphanSql =
@@ -11813,13 +11904,22 @@ Database::findRelinkCandidates(const std::vector<std::string>& searchRoots,
         "FROM audio_files";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, orphanSql, -1, &stmt, nullptr) != SQLITE_OK) {
+        report.status = RelinkSearchStatus::Failed;
+        report.errorMessage = sqlite3_errmsg(db);
         if (roDb) sqlite3_close(roDb);
-        return {};
+        return report;
     }
 
     std::vector<RelinkCandidate> orphans;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (cancelFlag && cancelFlag->load()) break;
+    int stepResult = SQLITE_OK;
+    while (!isCancelled()) {
+        stepResult = sqlite3_step(stmt);
+        if (stepResult == SQLITE_DONE) break;
+        if (stepResult != SQLITE_ROW) {
+            report.status = RelinkSearchStatus::Failed;
+            report.errorMessage = sqlite3_errmsg(db);
+            break;
+        }
         auto* rawPath = sqlite3_column_text(stmt, 1);
         if (!rawPath) continue;
         std::string dbPath = reinterpret_cast<const char*>(rawPath);
@@ -11841,11 +11941,24 @@ Database::findRelinkCandidates(const std::vector<std::string>& searchRoots,
     sqlite3_finalize(stmt);
     if (roDb) sqlite3_close(roDb);
 
-    if (orphans.empty()) return {};
+    if (report.status == RelinkSearchStatus::Failed) return report;
+    if (isCancelled()) {
+        report.status = RelinkSearchStatus::Cancelled;
+        return report;
+    }
+    if (stepResult != SQLITE_DONE) {
+        report.status = RelinkSearchStatus::Failed;
+        report.errorMessage = "Database search did not complete.";
+        return report;
+    }
+    if (orphans.empty()) {
+        report.status = RelinkSearchStatus::Completed;
+        return report;
+    }
 
-    std::vector<std::pair<RelinkCandidate, std::vector<std::string>>> results(orphans.size());
+    report.candidates.resize(orphans.size());
     for (size_t i = 0; i < orphans.size(); ++i)
-        results[i].first = orphans[i];
+        report.candidates[i].first = orphans[i];
 
     // Step B: build an O(1) map keyed by file name and size.
     using NameSizeKey = std::pair<std::string, int64_t>;
@@ -11862,17 +11975,38 @@ Database::findRelinkCandidates(const std::vector<std::string>& searchRoots,
     }
 
     // Step C: walk search roots, filter audio files, and probe the map in O(1).
+    size_t openedRoots = 0;
+    uint64_t entriesScanned = 0;
+    auto recordFailedRoot = [&](const std::string& root) {
+        if (std::find(report.failedRoots.begin(), report.failedRoots.end(), root) ==
+            report.failedRoots.end()) {
+            report.failedRoots.push_back(root);
+        }
+    };
     for (const auto& root : searchRoots) {
-        if (cancelFlag && cancelFlag->load()) break;
+        if (isCancelled()) break;
         try {
             Platform::FileSystem::DirectoryIterator iterator;
-            if (!iterator.Open(root, true, true)) continue;
+            if (!iterator.Open(root, true, true)) {
+                recordFailedRoot(root);
+                continue;
+            }
+            ++openedRoots;
             Platform::FileSystem::DirectoryEntry entry;
             while (true) {
-                if (cancelFlag && cancelFlag->load()) break;
-                const auto status = iterator.Next(entry);
+                if (isCancelled()) break;
+                std::string readError;
+                const auto status = iterator.Next(entry, &readError);
                 if (status == Platform::FileSystem::DirectoryReadStatus::End) break;
-                if (status == Platform::FileSystem::DirectoryReadStatus::Error) continue;
+                if (status == Platform::FileSystem::DirectoryReadStatus::Error) {
+                    recordFailedRoot(root);
+                    if (report.errorMessage.empty()) report.errorMessage = std::move(readError);
+                    continue;
+                }
+                ++entriesScanned;
+                if (scannedEntries) {
+                    scannedEntries->store(entriesScanned, std::memory_order_release);
+                }
                 if (!entry.isRegularFile) continue;
                 const auto nativePath = Utf8ToPath(entry.pathUtf8);
                 auto ext = nativePath.extension().string();
@@ -11888,14 +12022,31 @@ Database::findRelinkCandidates(const std::vector<std::string>& searchRoots,
                 if (it != nameSizeIndex.end()) {
                     const std::string& fullPath = entry.pathUtf8;
                     for (size_t idx : it->second) {
-                        results[idx].second.push_back(fullPath);
+                        report.candidates[idx].second.push_back(
+                            {fullPath, RelinkMatchReason::ExactFileNameAndSize});
                     }
                 }
             }
-        } catch (...) {}
+        } catch (const std::exception& error) {
+            recordFailedRoot(root);
+            if (report.errorMessage.empty()) report.errorMessage = error.what();
+        } catch (...) {
+            recordFailedRoot(root);
+            if (report.errorMessage.empty()) report.errorMessage = "File search failed.";
+        }
     }
 
-    return results;
+    report.scannedEntries = entriesScanned;
+    if (isCancelled()) {
+        report.status = RelinkSearchStatus::Cancelled;
+    } else if (!report.failedRoots.empty()) {
+        report.status = openedRoots == 0
+            ? RelinkSearchStatus::Failed
+            : RelinkSearchStatus::PartialFailure;
+    } else {
+        report.status = RelinkSearchStatus::Completed;
+    }
+    return report;
 }
 
 void Database::mergeLibraryRoots(const std::vector<std::string>& roots) {
@@ -13209,9 +13360,18 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         : " AND af.id IN (" + bq.coverKeySubquery + ")";
     const std::string sql =
         "WITH search_candidates AS ("
-        " SELECT af.id AS id, af.folder_cover_key AS folder_cover_key, af.embedded_cover_key AS embedded_cover_key "
+        " SELECT af.id AS id, af.file_path AS file_path, af.folder_path AS folder_path,"
+        " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
+        " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
-        ") SELECT sc.folder_cover_key, sc.embedded_cover_key"
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path,"
+        " CASE WHEN sc.folder_cover_key LIKE 'E|%' THEN COALESCE("
+        " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
+        " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
+        " (SELECT source.file_path FROM audio_files source"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key AND source.embedded_cover_key <> ''"
+        " ORDER BY source.id LIMIT 1), '')"
+        " ELSE sc.folder_cover_src_path END"
         " FROM playlist_items pi"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE pi.playlist_id = ?";
@@ -13227,6 +13387,9 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         AudioRecord record;
         record.folderCoverKey = safeGetText(stmt, 0);
         record.embeddedCoverKey = safeGetText(stmt, 1);
+        record.filePath = safeGetText(stmt, 2);
+        record.folderPath = safeGetText(stmt, 3);
+        record.folderCoverSrcPath = safeGetText(stmt, 4);
         results.push_back(std::move(record));
     }
     sqlite3_finalize(stmt);
@@ -13483,16 +13646,27 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         : " AND af.id IN (" + bq.coverKeySubquery + ")";
     const std::string sql =
         "WITH search_candidates AS ("
-        " SELECT af.id AS id, af.folder_cover_key AS folder_cover_key, af.embedded_cover_key AS embedded_cover_key "
+        " SELECT af.id AS id, af.file_path AS file_path, af.folder_path AS folder_path,"
+        " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
+        " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
         "), ranked AS ("
-        " SELECT sc.id AS id, sc.folder_cover_key AS folder_cover_key, sc.embedded_cover_key AS embedded_cover_key"
+        " SELECT sc.id AS id, sc.file_path AS file_path, sc.folder_path AS folder_path,"
+        " sc.folder_cover_key AS folder_cover_key, sc.folder_cover_src_path AS folder_cover_src_path,"
+        " sc.embedded_cover_key AS embedded_cover_key"
         " FROM playlist_items pi"
         " JOIN playlists p ON p.id = pi.playlist_id"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE p.parent_id = ?"
         " GROUP BY sc.id"
-        ") SELECT folder_cover_key, embedded_cover_key FROM ranked";
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path,"
+        " CASE WHEN sc.folder_cover_key LIKE 'E|%' THEN COALESCE("
+        " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
+        " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
+        " (SELECT source.file_path FROM audio_files source"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key AND source.embedded_cover_key <> ''"
+        " ORDER BY source.id LIMIT 1), '')"
+        " ELSE sc.folder_cover_src_path END FROM ranked sc";
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
@@ -13505,6 +13679,9 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         AudioRecord record;
         record.folderCoverKey = safeGetText(stmt, 0);
         record.embeddedCoverKey = safeGetText(stmt, 1);
+        record.filePath = safeGetText(stmt, 2);
+        record.folderPath = safeGetText(stmt, 3);
+        record.folderCoverSrcPath = safeGetText(stmt, 4);
         results.push_back(std::move(record));
     }
     sqlite3_finalize(stmt);

@@ -88,22 +88,19 @@ inline CoverWallGridMetrics CalculateCoverWallGridMetrics(
     float requestedThumbSizePx,
     float gapPx = 4.0f,
     float minPx = kMinThumbSizePx,
-    float maxPx = kMaxThumbSizePx,
-    int maxColumns = 8) {
+    float maxPx = kMaxThumbSizePx) {
     const float safeWidth = std::max(1.0f, availableWidthPx);
     const float safeGap = std::max(0.0f, gapPx);
     const float effectiveMaxPx = ResolveThumbSizeSliderMaxPx(safeWidth, minPx, maxPx);
     const float requested = ClampThumbSize(requestedThumbSizePx, minPx, effectiveMaxPx);
-    const int safeMaxColumns = std::max(1, maxColumns);
-
     int columns = static_cast<int>((safeWidth + safeGap) / (requested + safeGap));
-    columns = std::clamp(columns, 1, safeMaxColumns);
+    columns = std::max(1, columns);
 
     float fittedThumb = (safeWidth - safeGap * static_cast<float>(columns - 1)) /
                         static_cast<float>(columns);
     if (fittedThumb < minPx && columns > 1) {
         columns = static_cast<int>((safeWidth + safeGap) / (minPx + safeGap));
-        columns = std::clamp(columns, 1, safeMaxColumns);
+        columns = std::max(1, columns);
         fittedThumb = (safeWidth - safeGap * static_cast<float>(columns - 1)) /
                       static_cast<float>(columns);
     }

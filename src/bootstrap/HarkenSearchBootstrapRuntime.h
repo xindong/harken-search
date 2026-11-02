@@ -1,5 +1,7 @@
 #pragma once
 
+#include "bootstrap/BootstrapProgress.h"
+
 #include "bootstrap/HarkenSearchBootstrapAdmission.h"
 #include "bootstrap/WindowsBootstrapFilesystem.h"
 
@@ -445,6 +447,7 @@ struct BootstrapApplicationDependencies {
     BootstrapHealthPort& health;
     BootstrapFilesystemDriver& filesystem;
     BootstrapTerminalCleanupPort* terminalCleanup = nullptr;
+    BootstrapProgressSink* progress = nullptr;
 };
 
 struct BootstrapApplicationOptions {

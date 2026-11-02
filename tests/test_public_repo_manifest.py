@@ -391,6 +391,7 @@ AUDIT_INTERNAL_GLOBS = (
 
 # 新增排除必须写进本表并附理由，禁止只改 tools/public_repo_manifest.EXCLUDED_GLOBS。
 EXPLICIT_SAME_FAMILY_EXCLUSION_GLOBS: tuple[tuple[str, str], ...] = (
+    ("tests/test_local_agent_docs.py", "Development-method contracts depend on repository-local documents outside the product export."),
     ("tools/aris_design_review_server.py", "Private design review needs unpublished design data."),
     ("tools/start_aris_design_review.ps1", "Launcher for the private design review server."),
     ("tests/test_aris_design_review_server.py", "Tests require the private design review data."),
@@ -511,6 +512,7 @@ PUBLIC_INTERNAL_FEATURE_ALLOWLIST = {
     ("scripts/package_local_update_demo.ps1", "127.0.0.1"): "本地更新演示绑定本机回环",
     ("scripts/package_local_update_demo.ps1", "provenance"): "演示包 provenance 校验",
     ("scripts/qa_probe_cover_browse_surface.py", "harness"): "QA 探针注释中的测试 harness 词",
+    ("tools/qa_update_notice_panel.py", "harness"): "更新面板 QA 工具注释中的隔离驱动接缝描述",
     ("scripts/qa_probe_cover_browse_surface.py", "openclaw"): "QA 探针注释中的已退役路径名",
     ("scripts/qa_probe_cover_replacement_integration.py", "harness"): "QA 探针注释中的测试 harness 词",
     ("scripts/qa_probe_cover_replacement_integration.py", "openclaw"): "QA 探针注释中的已退役路径名",

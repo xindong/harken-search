@@ -39,7 +39,7 @@ class ScanQuickStartContract(unittest.TestCase):
         quick_end = MAIN.index("if (!quickAutoStarted", quick_start)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN[quick_start:quick_end])
         self.assertNotIn("startScanForFolders(state.pendingScanFolders, true)", MAIN[quick_start:quick_end])
-        manual_start = MAIN.index("if (ImGui::Button(L(Scan_StartScan)")
+        manual_start = MAIN.index("if (aura::ui::ActionButton(L(Scan_StartScan)")
         manual_end = MAIN.index("} else if (!quickAutoStarted)", manual_start)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN[manual_start:manual_end])
         self.assertIn("startScanForFolders({ folder }, false)", MAIN[manual_end:])
@@ -52,9 +52,9 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertNotIn("state.scanDialogAutoStart = false;", MAIN[start:end])
 
     def test_manual_and_drag_flows_remain_confirmed(self):
-        self.assertIn("if (ImGui::Button(L(Scan_StartScan)", MAIN)
+        self.assertIn("if (aura::ui::ActionButton(L(Scan_StartScan)", MAIN)
         self.assertIn("startScanForFolders(state.pendingScanFolders, false)", MAIN)
-        self.assertIn("ImGui::Button(L(Cancel)", MAIN)
+        self.assertIn("aura::ui::ActionButton(L(Cancel)", MAIN)
         self.assertIn("state.pendingScanFolders.clear();", MAIN)
         self.assertIn("state.showScanDialog = true;", MAIN)
         self.assertIn("g_appState->scanDialogAutoStart = false;", WINDOWS_MAIN)
@@ -105,9 +105,24 @@ class ScanQuickStartContract(unittest.TestCase):
         summary_condition = MAIN[summary_start:summary_end]
         self.assertIn("state.scanCompletionReadyAtMs.load(std::memory_order_acquire) > 0", summary_condition)
         self.assertNotIn("state.scanCompletionPendingFiles.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("state.scanCompletionMiniUnresolved.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("state.scanCompletionCoverUnresolved.load(std::memory_order_acquire) == 0", summary_condition)
-        self.assertIn("state.scanCompletionMetadataUnresolved.load(std::memory_order_acquire) == 0", summary_condition)
+        self.assertIn("AreScanCompletionCountersReady(", summary_condition)
+        self.assertIn("!state.settings.cacheWaveformsOnScan", summary_condition)
+
+    def test_fast_completion_skips_redundant_queue_rebuild_and_honors_pause(self):
+        resume_start = MAIN.index("const bool resumeBackground =")
+        resume_end = MAIN.index("// Full scans retain their foreground", resume_start)
+        resume = MAIN[resume_start:resume_end]
+        self.assertIn("ShouldRebuildScanBackfillQueue", resume)
+        self.assertIn("state.isScanTaskCancelled(scanGeneration, scanCancelToken)", resume)
+        self.assertIn("finishInterruptedScanSession(paused);", resume)
+        self.assertLess(resume.index("finishInterruptedScanSession(paused);"),
+                        resume.index("scanDb.discardScanRollbackSession();"))
+
+    def test_isolated_qa_can_exercise_native_right_click_and_pause_path(self):
+        self.assertIn('cmd == "qa_rightclick_scan"', WINDOWS_MAIN)
+        self.assertIn('PrepareQuickScanDialogForPath(state, path, true)', WINDOWS_MAIN)
+        self.assertIn('cmd == "qa_scan_pause_keep"', WINDOWS_MAIN)
+        self.assertIn('state.requestPauseScanTask();', WINDOWS_MAIN)
 
     def test_pending_errors_and_cancelled_summaries_remain_visible(self):
         self.assertIn("BuildScanCompletionPendingLabel(state)", MAIN)
@@ -126,7 +141,7 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertNotIn("state.needsDatabaseRefresh = true;", summary_header)
 
     def test_done_acknowledgement_clears_quick_completion_intent(self):
-        done_start = MAIN.index("if (ImGui::Button(L(Done), ImVec2(100, 0)))")
+        done_start = MAIN.index("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0)))")
         done_end = MAIN.index("ImGui::EndDisabled();", done_start)
         self.assertIn("state.scanDialogAutoStart = false;", MAIN[done_start:done_end])
 

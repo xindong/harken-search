@@ -243,7 +243,7 @@
       "license_expression": "LicenseRef-Microsoft-WebView2",
       "purpose": "WebView2 装载器",
       "distributed": true,
-      "load_mode": "动态 DLL；完整 Runtime 由用户安装",
+      "load_mode": "主程序使用动态 DLL；独立更新器静态链接 Loader；完整 Runtime 由用户安装",
       "license_files": ["LICENSES/WebView2-LICENSE.txt"],
       "notice_files": ["LICENSES/WebView2-NOTICE.txt", "THIRD_PARTY_NOTICES.md", "thirdparty/BINARY_PROVENANCE.md"],
       "risk_classification": "high",
@@ -251,10 +251,10 @@
       "manual_approval_required": true,
       "approval_reference": "RQ-20260817-OSS-COMPLIANCE: WebView2 redistribution review",
       "cmake_markers": ["thirdparty/webview2"],
-      "distribution_paths": ["WebView2Loader.dll"],
+      "distribution_paths": ["WebView2Loader.dll", "HarkenSearchBootstrap.exe"],
       "distribution_obligation": {
         "copyleft": false,
-        "link_mode": "dynamic",
+        "link_mode": "static",
         "commercial_restriction": true,
         "source_offer_required": false
       }

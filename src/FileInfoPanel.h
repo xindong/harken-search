@@ -46,7 +46,8 @@ void RenderFileInfoPanelTabContents(
     float panelWidth,
     const FileInfoPanelChrome& chrome);
 float FileInfoPageActionsWidth(AppState& state, float availableWidth);
-void RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth);
+// Returns true when the Similar Sounds window shortcut is activated.
+bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth);
 void RenderFileInfoPanelContent(AppState& state, float panelWidth);
 int PushFileInfoShellStyle(const ThemeColorScheme& tcs);
 

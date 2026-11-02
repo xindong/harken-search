@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "entry_commit": "1f1a4f148f1527aaa57f5690f133e71f6be4646d",
+  "environment": {
+    "machine": "anonymized-reference-host",
+    "compiler": "MSVC 19.44.35222",
+    "build_configuration": "Public diagnostics Debug x64"
+  },
+  "metrics": {
+    "audio_device_callback_budget": {
+      "status": "measured", "name": "Audio device callback p95", "metric": "callback_execution.p95_ms", "unit": "ms",
+      "rounds": [
+        {"value": 0.001, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6AudioDeviceProbe/round-01-stdout.txt"},
+        {"value": 0.001, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6AudioDeviceProbe/round-02-stdout.txt"},
+        {"value": 0.001, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6AudioDeviceProbe/round-03-stdout.txt"},
+        {"value": 0.0009, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6AudioDeviceProbe/round-04-stdout.txt"},
+        {"value": 0.001, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6AudioDeviceProbe/round-05-stdout.txt"}
+      ],
+      "statistics": {"median": 0.001, "p95": 0.001, "max": 0.001},
+      "noise_budget": {"derived_from_rounds": 5, "estimator": "population", "standard_deviation": 0.00004, "coefficient_of_variation": 0.04},
+      "limit": {"direction": "upper", "value": 0.001120}
+    },
+    "file_watcher_delivery": {
+      "status": "measured", "name": "File watcher delivery p95", "metric": "delivery.p95_ms", "unit": "ms",
+      "rounds": [
+        {"value": 0.1935, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6FileWatcherProbe/round-01-stdout.txt"},
+        {"value": 0.246, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6FileWatcherProbe/round-02-stdout.txt"},
+        {"value": 0.2016, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6FileWatcherProbe/round-03-stdout.txt"},
+        {"value": 0.2112, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6FileWatcherProbe/round-04-stdout.txt"},
+        {"value": 0.2117, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6FileWatcherProbe/round-05-stdout.txt"}
+      ],
+      "statistics": {"median": 0.2112, "p95": 0.246, "max": 0.246},
+      "noise_budget": {"derived_from_rounds": 5, "estimator": "population", "standard_deviation": 0.01791055554693935, "coefficient_of_variation": 0.0848037667942204},
+      "limit": {"direction": "upper", "value": 0.264932}
+    },
+    "playback_load_seek": {
+      "status": "measured", "name": "Playback load/seek", "metric": "value_ms", "unit": "ms",
+      "rounds": [
+        {"value": 2.4399, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6PlaybackLoadSeekProbe/round-01-stdout.txt"},
+        {"value": 2.4208, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6PlaybackLoadSeekProbe/round-02-stdout.txt"},
+        {"value": 2.5149, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6PlaybackLoadSeekProbe/round-03-stdout.txt"},
+        {"value": 2.3654, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6PlaybackLoadSeekProbe/round-04-stdout.txt"},
+        {"value": 2.0723, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6PlaybackLoadSeekProbe/round-05-stdout.txt"}
+      ],
+      "statistics": {"median": 2.4208, "p95": 2.5149, "max": 2.5149},
+      "noise_budget": {"derived_from_rounds": 5, "estimator": "population", "standard_deviation": 0.15286577903507384, "coefficient_of_variation": 0.06314680231124994},
+      "limit": {"direction": "upper", "value": 2.879398}
+    },
+    "scan_terminal_throughput": {
+      "status": "measured", "name": "Scan terminal throughput", "metric": "value_files_per_second", "unit": "files_per_second",
+      "rounds": [
+        {"value": 98.04058056, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6ScanTerminalThroughputProbe/round-01-stdout.txt"},
+        {"value": 122.2632144, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6ScanTerminalThroughputProbe/round-02-stdout.txt"},
+        {"value": 125.6292297, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6ScanTerminalThroughputProbe/round-03-stdout.txt"},
+        {"value": 121.4049859, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6ScanTerminalThroughputProbe/round-04-stdout.txt"},
+        {"value": 123.0751811, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6ScanTerminalThroughputProbe/round-05-stdout.txt"}
+      ],
+      "statistics": {"median": 122.2632144, "p95": 125.6292297, "max": 125.6292297},
+      "noise_budget": {"derived_from_rounds": 5, "estimator": "population", "standard_deviation": 10.120037686935722, "coefficient_of_variation": 0.08277254721789584},
+      "limit": {"direction": "lower", "value": 91.903101}
+    },
+    "main_thread_frame_budget": {
+      "status": "measured", "name": "Main-thread frame budget", "metric": "busy_cpu_work_p95_ms", "unit": "ms",
+      "rounds": [
+        {"value": 3.4459, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6MainThreadFrameBudgetProbe/round-01-evidence/result.json"},
+        {"value": 3.2092, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6MainThreadFrameBudgetProbe/round-02-evidence/result.json"},
+        {"value": 3.3413, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6MainThreadFrameBudgetProbe/round-03-evidence/result.json"},
+        {"value": 3.4424, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6MainThreadFrameBudgetProbe/round-04-evidence/result.json"},
+        {"value": 3.5685, "raw_evidence": "historical-evidence/five-probe-r3/TestStage6MainThreadFrameBudgetProbe/round-05-evidence/result.json"}
+      ],
+      "statistics": {"median": 3.4424, "p95": 3.5685, "max": 3.5685},
+      "noise_budget": {"derived_from_rounds": 5, "estimator": "population", "standard_deviation": 0.12011368947792747, "coefficient_of_variation": 0.03489242664359966},
+      "product_gate": {"direction": "upper", "value": 16.000000},
+      "empirical_baseline_limit": {"direction": "upper", "value": 3.802742}
+    }
+  }
+}

@@ -77,6 +77,16 @@ switch_region = MAIN.split("void WaitForDatabaseSwitchThread()", 1)[1].split(
     "bool BeginSwitchDatabase", 1
 )[0]
 
+# Windows replacement cannot rename a library while either statistics reader
+# still owns a SQLite handle. Cancellation alone does not release that handle.
+worker_region = switch_region.split("g_databaseSwitchWorkerRuntime.Start(", 1)[1]
+for reader in ("featureStatistics", "idleStatistics"):
+    drain = f"{reader}->CancelAndWait()"
+    assert drain in worker_region, f"{reader} must release its connection on the switch worker before replacement"
+    assert worker_region.index(drain) < worker_region.index("RunBlockingDatabaseSwitchOperation(")
+assert "CancelAndWait()" not in switch_region.split("g_databaseSwitchWorkerRuntime.Start(", 1)[0], \
+    "waiting for statistics must not block the UI thread"
+
 operation_order = (
     "SwitchDatabaseWorkerStage: stage=stop_batch_features",
     "environment.JoinBatchFeatures()",

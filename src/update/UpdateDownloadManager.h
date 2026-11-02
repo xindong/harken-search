@@ -150,6 +150,17 @@ struct DownloadCleanupDecision {
     std::vector<DownloadCleanupIntent> intents;
 };
 
+// @stage7-contract
+// Retention policy input: first-level directory names directly under the
+// updater-owned download root ("<version>/..." staging layout). Only strict
+// numeric semver names are version packages; everything else stays.
+struct UpdateVersionRetentionPlan {
+    // Version directory names to remove, oldest first.
+    std::vector<std::string> pruneVersions;
+    // False when currentVersion is unusable and nothing may be pruned.
+    bool ok = false;
+};
+
 class UpdateDownloadManager {
 public:
     static DownloadStagingPathsResult BuildStagingPaths(
@@ -179,6 +190,15 @@ public:
     static DownloadCleanupDecision FinalizeChecksum(
         const DownloadRequest& request,
         const std::string& actualSha256);
+
+    // Keep the running version's package, keep at most one previous package,
+    // and never touch pending packages (newer than the running version) or
+    // non-version names such as staging/transaction/quarantine prefixes.
+    static UpdateVersionRetentionPlan PlanVersionRetention(
+        const std::vector<std::string>& topLevelDirectoryNames,
+        const std::string& currentVersion);
+
+    static bool IsVersionDirectoryName(const std::string& name);
 };
 
 }  // namespace aris::update

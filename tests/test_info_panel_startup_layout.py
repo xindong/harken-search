@@ -78,6 +78,15 @@ int main() {
     AppState pagesReopened; Load(pagesReopened, Save(repaired));
     check(pagesReopened.settings.infoPages.visibleMask == 9 && pagesReopened.settings.infoPages.selected == 3, "page visibility and selection survive real settings roundtrip");
     check(missing.settings.infoPages.visibleMask == 15 && missing.settings.infoPages.selected == 1, "legacy settings default to artwork and all available pages");
+    check(Save(missing)["infoShowSimilarSounds"] == "1", "legacy settings keep the Similar Sounds shortcut visible");
+    Values shortcutSettings = Save(repaired);
+    shortcutSettings["infoShowSimilarSounds"] = "0";
+    AppState hiddenShortcut; Load(hiddenShortcut, shortcutSettings);
+    check(Save(hiddenShortcut)["infoShowSimilarSounds"] == "0", "hidden Similar Sounds shortcut survives real settings roundtrip");
+    check(hiddenShortcut.settings.infoPages.visibleMask == 9 && hiddenShortcut.settings.infoPages.selected == 3, "hiding shortcut preserves page visibility and selection");
+    shortcutSettings["infoShowSimilarSounds"] = "1";
+    AppState restoredShortcut; Load(restoredShortcut, shortcutSettings);
+    check(Save(restoredShortcut)["infoShowSimilarSounds"] == "1", "restored Similar Sounds shortcut survives real settings roundtrip");
     repaired.panelFileInfo.dockSide = DockSide::Left;
     AppState deliberatelyLeft; Load(deliberatelyLeft, Save(repaired));
     check(deliberatelyLeft.panelFileInfo.dockSide == DockSide::Left, "later intentional left dock survives reopen");

@@ -92,9 +92,11 @@ void AppState::performGlobalMemoryGC()
 {
 }
 
+#ifndef AURO_TEST_REAL_ASYNC_WORKER
 void WaveformWorker::cancelAllPending()
 {
 }
+#endif
 
 namespace CoverModule {
 

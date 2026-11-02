@@ -21,6 +21,7 @@ void DiagnosticsLogger::logAction(const char*, const char*) {}
 void DiagnosticsLogger::logPerformance(const char*, const char*, double) {}
 void DiagnosticsLogger::logMetric(const char*, const char*, double) {}
 void DiagnosticsLogger::logSystem(const char*, const char*) {}
+bool DiagnosticsLogger::logSystemAt(const char*, const char*, int64_t) { return false; }
 bool DiagnosticsLogger::exportJson(const std::string&) const { return false; }
 std::string DiagnosticsLogger::exportJsonString() const { return {}; }
 size_t DiagnosticsLogger::entryCount() const { return 0; }

@@ -135,13 +135,16 @@ int main() {
           "Startup diagnostics include explicit no-database onboarding marker");
     check(windowsMain.find("ResolveStartupDatabaseSelectionForMount") != std::string::npos,
           "Startup source includes guarded database selection instead of unconditional default fallback");
-    check(mainSource.find("RenderNoDatabaseSetupEmptyState(state)") != std::string::npos,
-          "Main results surface renders the no-database empty state");
+    check(mainSource.find("const bool requireDatabaseSetup = state.startupNeedsDatabaseSetup &&") != std::string::npos &&
+              mainSource.find("(state.dbSwitchInProgress || !state.database.isOpen())") != std::string::npos &&
+              mainSource.find("ImGui::OpenPopup(L(Dlg_NewDB));") != std::string::npos &&
+              mainSource.find("RenderNoDatabaseSetupEmptyState(") == std::string::npos,
+          "First-library setup reuses one new-database modal, without a second empty-state panel");
     check(mainSource.find("state.startupNeedsDatabaseSetup && !state.database.isOpen()") != std::string::npos,
           "No-database empty state is gated by explicit startup state");
-    check(mainSource.find("ImGui::Button(L(File_NewDB), actionButtonSize)") != std::string::npos &&
-              mainSource.find("state.showNewDbDialog = true;") != std::string::npos,
-          "No-database empty state reuses the existing new-database CTA");
+    check(mainSource.find("DatabaseSetupButton(createLabel, ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Create)") != std::string::npos &&
+              mainSource.find("SwitchDatabase(state, fullPath, true, &newDbError, newDbCacheMode, confirmOverwrite, deferredStart)") != std::string::npos,
+          "First-library setup creates the named database through the guarded switch flow");
     check(mainSource.find("OpenDatabaseAndRestart(state, openPath);") != std::string::npos ||
               mainSource.find("SwitchDatabase(state, openPath);") != std::string::npos,
           "No-database empty state opens the selected database through the guarded open/switch flow");

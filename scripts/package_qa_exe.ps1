@@ -276,9 +276,24 @@ try {
             "HarkenSearchProToolsBridge.exe",
             "WebView2Loader.dll", "reaper_harken.dll", "lucide.ttf",
             "splash_beta.png", "harken_thesaurus.json", "LICENSE",
+            "aris_release_notes.json",
             "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.md",
             "BINARY_PROVENANCE.md", "PRIVACY.md", "AI_FEATURE_DISCLOSURE.md"
         )
+        # The QA notice panel reads aris_release_notes.json next to the exe; bundle it
+        # from the canonical release history so local-version notes stay truthful.
+        $qaNotesVersion = (& python -B -c "import sys; sys.path.insert(0, sys.argv[1]); from tools.pack_engine import read_current_version; print(read_current_version())" $Root).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $qaNotesVersion) {
+            throw "Unable to read the current version for QA release notes"
+        }
+        $notesPrep = & python -B (Join-Path $Root "tools/pack_engine.py") --prepare-release-notes `
+            --version $qaNotesVersion --release-dir $binDir 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "QA release notes preparation failed: $notesPrep"
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $binDir "aris_release_notes.json") -PathType Leaf)) {
+            throw "QA release notes file was not prepared next to the build"
+        }
         foreach ($name in $runtimeFileAllowlist) {
             $source = Join-Path $binDir $name
             if (Test-Path -LiteralPath $source -PathType Leaf) {

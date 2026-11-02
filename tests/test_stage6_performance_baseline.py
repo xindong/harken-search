@@ -158,9 +158,11 @@ class Stage6PerformanceBaselineTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8"); manifest = json.loads(text)
         self.assertEqual([], baseline.validate_manifest(manifest))
+        self.assertEqual("anonymized-reference-host", manifest["environment"]["machine"])
+        self.assertNotIn(".local/", text)
         for name, values in VALUES.items():
             self.assertEqual(values, [item["value"] for item in manifest["metrics"][name]["rounds"]])
-            self.assertTrue(all(item["raw_evidence"].startswith(".local/stage6-entry-performance-five-probe-r3/")
+            self.assertTrue(all(item["raw_evidence"].startswith("historical-evidence/five-probe-r3/")
                                 for item in manifest["metrics"][name]["rounds"]))
         self.assertNotIn("five-probe-r1", text); self.assertNotIn("five-probe-r2", text)
         for literal in ("0.001120", "0.264932", "2.879398", "91.903101", "3.802742", "16.000000"):

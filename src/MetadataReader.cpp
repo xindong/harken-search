@@ -2,6 +2,7 @@
 #include "platform/filesystem.h"
 #include "platform/metadata_legacy_tag_content.h"
 #include "platform/text_encoding.h"
+#include "Id3CommentText.h"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -256,6 +257,14 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
         uint8_t encoding = tagData[pos];
         size_t textStart = pos + 1;
         size_t textLen = frameSize - 1;
+        std::string id(frameId);
+        if (id == "COMM") {
+            metadata.comment = trimString(Id3CommentText::Decode(
+                encoding, std::string_view(
+                    reinterpret_cast<const char*>(tagData.data() + textStart), textLen)));
+            pos += frameSize;
+            continue;
+        }
 
         if (encoding == 3) {
             // UTF-8 — already in our canonical form, copy as-is.
@@ -287,7 +296,6 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
         content = trimString(content);
 
         // Map frame ID to metadata field
-        std::string id(frameId);
         if (id == "TIT2" || id == "TT2") {
             metadata.title = content;
         } else if (id == "TPE1" || id == "TP1") {
@@ -304,8 +312,6 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
             try { metadata.disc = std::stoi(content); } catch (...) {}
         } else if (id == "TCON" || id == "TCO") {
             metadata.genre = content;
-        } else if (id == "COMM" || id == "COM") {
-            metadata.comment = content;
         } else if (id == "TXXX" || id == "TXX") {
             // User-defined text frame: <encoding><description>\0<value>
             // 'content' already has the encoding byte stripped and text decoded.

@@ -223,6 +223,7 @@ def build_release_dir(tmp_path: Path) -> Path:
         with (release_dir / "LICENSES" / "README.md").open("a", encoding="utf-8") as handle:
             handle.write(f"- `{file_name}`\n")
     for name, payload in {
+        "HarkenSearchBootstrap.exe": b"MZ-bootstrap-fixture",
         "WebView2Loader.dll": b"webview2-loader",
         "rlottie.dll": b"rlottie-core",
         "rlottie-image-loader.dll": b"rlottie-image-loader",

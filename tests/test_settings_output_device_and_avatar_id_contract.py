@@ -58,11 +58,11 @@ def test_avatar_picker_buttons_keep_copy_but_use_distinct_ids() -> None:
     assert "##settings-avatar-picker-open-small" in MAIN
     first = MAIN.index("##settings-avatar-picker-open")
     second = MAIN.index("##settings-avatar-picker-open-small")
-    first_stmt = MAIN[max(0, first - 220) : MAIN.find(";", MAIN.find("ImGui::Button(", first)) + 1]
-    second_stmt = MAIN[max(0, second - 220) : MAIN.find(";", MAIN.find("ImGui::SmallButton(", second)) + 1]
+    first_stmt = MAIN[max(0, first - 220) : MAIN.find(";", MAIN.find("aura::ui::ActionButton(", first)) + 1]
+    second_stmt = MAIN[max(0, second - 220) : MAIN.find(";", MAIN.find("aura::ui::SmallActionButton(", second)) + 1]
     assert "L(Set_AvatarPickerOpenLabelZh)" in first_stmt
     assert "L(Set_AvatarPickerOpenLabelZh)" in second_stmt
-    assert "ImGui::Button(" in first_stmt
-    assert "ImGui::SmallButton(" in second_stmt
+    assert "aura::ui::ActionButton(" in first_stmt
+    assert "aura::ui::SmallActionButton(" in second_stmt
     assert "(std::string(L(Set_AvatarPickerOpenLabelZh)) + \"##settings-avatar-picker-open\").c_str()" not in first_stmt
     assert "(std::string(L(Set_AvatarPickerOpenLabelZh)) + \"##settings-avatar-picker-open-small\").c_str()" not in second_stmt

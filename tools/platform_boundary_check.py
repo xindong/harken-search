@@ -833,7 +833,74 @@ APPROVED_BOOTSTRAP_EXIT_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
     "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp|native-symbol|CoTaskMemFree|201d0bb7065d19b7|1",
 })
 
+# Exact Windows updater UI calls independently reviewed on 2026-10-29.
+BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_EVIDENCE = "docs/architecture/bootstrap-progress-native-audit.md"
+BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-include|windows.h|d395cd89463e8f58|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-include|objbase.h|cd73b8c775fbde36|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|MultiByteToWideChar|c68e9c5432d1c4ec|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|MultiByteToWideChar|42128e961dd0e76a|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetCurrentThreadId|14c26801c82dd79d|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|CreateEventW|d8a16b06cf30572d|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|CloseHandle|909ef616472bca95|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|ba7734b086741e0f|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|WaitForSingleObject|e9a68ec0c20b7356|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|73bbbcef2e3ea6f9|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|642672de4b128013|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetEnvironmentVariableW|d00269b1db891625|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|c01d21e1596790f8|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|014abf309af03e1c|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|filesystem-io|std::ofstream|37fdc8f35b485421|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|WideCharToMultiByte|2a2281027e482bbf|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|WideCharToMultiByte|9f5ee37047b0a62f|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|filesystem-io|std::ofstream|87c4b24b2d50f33b|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|ShowWindow|cf4584c070c6d23f|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|ShowWindow|f3cde9e55e38592d|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|aa819b70ba039371|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|dd99fb19e0820a08|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|ShowWindow|bf1a6068d11c41b6|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|SetEvent|488bfd035a60446b|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|CoInitializeEx|581a963ecc451f71|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|ShowWindow|d05e31e981016cc7|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|ShowWindow|1598f1290d28d994|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|SetEvent|7df14c6d067e2178|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|SetEvent|7df14c6d067e2178|2',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|CoUninitialize|a54dd9fe1ff88231|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|b451c7a15c321416|1',
+    'src/bootstrap/WindowsBootstrapProgress.cpp|native-symbol|GetTickCount64|ef776053567162bc|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-include|WebView2.h|b2137ebe9b764182|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-include|wrl.h|9a6f80392d3201fd|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-include|shlobj.h|2d3e62b5423f2cb0|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-include|shlwapi.h|71cee191199b1510|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|MultiByteToWideChar|f1a7fe8b1551ed93|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|MultiByteToWideChar|55b1ab4bfecb6a6a|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|IsWindow|10c35cbd47c1d695|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|SHGetKnownFolderPath|42428b53b56e47c0|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|CoTaskMemFree|021f0cee7174197a|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|GetCurrentProcessId|f006b35fa5f0d07d|1',
+    'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|CoTaskMemFree|2f6f35dbc21206c2|1',
+    'src/bootstrap/WindowsBootstrapWebView.h|native-include|windows.h|d395cd89463e8f58|1',
+})
+
 PLATFORM_ADAPTER_PROFILES = {
+    'src/bootstrap/WindowsBootstrapProgress.cpp': (
+        "BOOTSTRAP-PROGRESS", BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_EVIDENCE,
+        frozenset({"native-include", "native-symbol", "filesystem-io"}),
+        frozenset(fingerprint for fingerprint in BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_FINGERPRINTS
+                  if fingerprint.startswith('src/bootstrap/WindowsBootstrapProgress.cpp|')),
+    ),
+    'src/bootstrap/WindowsBootstrapWebView.cpp': (
+        "BOOTSTRAP-PROGRESS", BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_EVIDENCE,
+        frozenset({"native-include", "native-symbol", "filesystem-io"}),
+        frozenset(fingerprint for fingerprint in BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_FINGERPRINTS
+                  if fingerprint.startswith('src/bootstrap/WindowsBootstrapWebView.cpp|')),
+    ),
+    'src/bootstrap/WindowsBootstrapWebView.h': (
+        "BOOTSTRAP-PROGRESS", BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_EVIDENCE,
+        frozenset({"native-include", "native-symbol", "filesystem-io"}),
+        frozenset(fingerprint for fingerprint in BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_FINGERPRINTS
+                  if fingerprint.startswith('src/bootstrap/WindowsBootstrapWebView.h|')),
+    ),
     PLATFORM_ADAPTER_PATH: (
         PLATFORM_ADAPTER_OWNER,
         PLATFORM_ADAPTER_EVIDENCE,

@@ -148,3 +148,15 @@ def test_update_payload_replaces_old_notes_and_preserves_readable_history(tmp_pa
     delivered = installed / pack_engine.RELEASE_NOTES_FILENAME
     assert delivered.read_bytes() == notes.read_bytes()
     assert json.loads(delivered.read_text(encoding="utf-8")) == document
+
+
+def test_qa_exe_package_bundles_current_release_notes():
+    script = (ROOT / "scripts/package_qa_exe.ps1").read_text(encoding="utf-8")
+    assert '"aris_release_notes.json",' in script
+    assert "--prepare-release-notes" in script
+    assert 'QA release notes preparation failed' in script
+    allowlist_start = script.index("$runtimeFileAllowlist = @(")
+    allowlist_end = script.index(")", allowlist_start)
+    assert script.index('"aris_release_notes.json",') < allowlist_end
+    assert script.index("--prepare-release-notes") < allowlist_start or \
+        script.index("--prepare-release-notes") > allowlist_end

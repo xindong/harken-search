@@ -88,6 +88,16 @@ const ReleaseNotesEntry* SelectHarkenSearchReleaseNotes(const ReleaseNotesUiStat
     }
     return FindHarkenSearchReleaseNotes(notes.releases, version);
 }
+const ReleaseNotesEntry* SelectHarkenSearchLocalDisplayReleaseNotes(
+    const ReleaseNotesUiState& notes, std::string_view version) {
+    if (const auto* exact = FindHarkenSearchReleaseNotes(notes.releases, version))
+        return exact;
+    // The bundled history is validated newest first; falling back to the top
+    // entry keeps the latest update content and contributors visible instead
+    // of an empty panel when the installed version has no record of its own.
+    if (notes.releases.empty()) return nullptr;
+    return &notes.releases.front();
+}
 std::vector<const ReleaseNotesEntry*> BuildHarkenSearchReleaseNotesHistory(
     const ReleaseNotesUiState& notes, std::string_view installedVersion) {
     std::vector<const ReleaseNotesEntry*> result;

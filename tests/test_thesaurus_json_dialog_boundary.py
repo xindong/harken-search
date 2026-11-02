@@ -59,8 +59,8 @@ qualified_call = (
     "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
 )
 assert MAIN.count(qualified_call) == 1
-merge_button = MAIN.index("ImGui::Button(L(Set_ThesMerge)")
-reset_button = MAIN.index("ImGui::Button(L(Set_ThesResetDefault)", merge_button)
+merge_button = MAIN.index("aura::ui::ActionButton(L(Set_ThesMerge)")
+reset_button = MAIN.index("aura::ui::ActionButton(L(Set_ThesResetDefault)", merge_button)
 merge_body = MAIN[merge_button:reset_button]
 assert "OPENFILENAMEW" not in merge_body
 assert "GetOpenFileNameW" not in merge_body

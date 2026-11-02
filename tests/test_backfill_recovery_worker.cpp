@@ -644,7 +644,7 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
               "L(Main_FailedFmt)",
               "L(Main_MiniCacheProgressFmt)",
               "if (scanCompleteSummaryActive)",
-              "if (ImGui::Button(L(Done), ImVec2(btnW, 30)))",
+        "if (aura::ui::ActionButton(L(Done), ImVec2(btnW, 30)))",
               "state.clearScanWorkflowState();",
           }),
           "completed scan summary exposes five truthful counts and waits for the Done button",

@@ -139,6 +139,9 @@ public:
     bool Flush();
     std::int64_t Tell() const;
     void Close();
+    // Closes and flushes pending bytes, reporting write/close failure. False if
+    // no stream is open; the handle is released even when closing fails.
+    bool CloseChecked();
     bool IsOpen() const;
 
 private:

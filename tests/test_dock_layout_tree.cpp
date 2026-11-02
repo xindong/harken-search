@@ -681,7 +681,32 @@ int main() {
         if (std::fabs(committed.y - 80.0f) > 0.5f) return fail(224);
     }
 
-    // Diagnostic/regression: Info top + SimilarSounds bottom in the Right
+    // Tall portrait workspaces must preserve resized bands beyond the old 320px cap.
+    for (const auto side : {DockSide::Top, DockSide::Bottom}) {
+        DockLayout portrait;
+        portrait.InsertModule("info", side, .5f);
+        auto largeHeight = [](std::string_view) { return 780.0f; };
+        const auto expanded = ResolveDockBandReserve(portrait, largeHeight, 220, 1, 1500, 740);
+        const float extent = side == DockSide::Top ? expanded.top : expanded.bottom;
+        if (extent != 780 || expanded.floatTop || expanded.floatBottom) return fail(720);
+        const auto small = ResolveDockBandReserve(portrait, largeHeight, 220, 1, 700, 740);
+        const float reduced = side == DockSide::Top ? small.top : small.bottom;
+        if (reduced < 180 || reduced + 6 + 200 > 700.01f) return fail(721);
+        const auto restored = ResolveDockBandReserve(portrait, largeHeight, 220, 1, 1500, 740);
+        if ((side == DockSide::Top ? restored.top : restored.bottom) != 780) return fail(722);
+    }
+    {
+        DockLayout both;
+        both.InsertModule("info", DockSide::Top, .5f);
+        both.InsertModule("similar-sounds", DockSide::Bottom, .5f);
+        auto largeHeights = [](std::string_view id) { return id == "info" ? 600.0f : 650.0f; };
+        const auto expanded = ResolveDockBandReserve(both, largeHeights, 220, 1, 1600, 740);
+        if (expanded.top != 600 || expanded.bottom != 650) return fail(723);
+        const auto small = ResolveDockBandReserve(both, largeHeights, 220, 1, 700, 740);
+        if (small.top < 180 || small.bottom < 220 || small.floatTop || small.floatBottom ||
+            small.top + small.bottom + 12 + 200 > 700.01f) return fail(724);
+    }
+
     // Saved layouts must fit again after the viewport shrinks.
     {
         DockLayout bands;
@@ -932,6 +957,30 @@ int main() {
         float resizedWidth = 300.0f;
         if (!DragRightDockOuterGrip(resizedWidth, -60.0f, 150.0f, 600.0f) ||
             resizedWidth != 360.0f) return fail(307);
+    }
+
+    // Swapping Filter and Info must retain both outer column seams, including
+    // a lone leaf with no leaf-to-leaf splitter. The hit box fills the gap.
+    {
+        DockLayout swapped;
+        swapped.InsertModule("info", DockSide::Left, .5f);
+        swapped.InsertModule("filter", DockSide::Right, .5f);
+        DockRootSlots slots{};
+        slots.left = {0, 80, 360, 720};
+        slots.right = {1240, 80, 360, 720};
+        const auto frame = BuildDockFrameGeometry(swapped, {0, 0, 1600, 1000}, 80, 40, slots);
+        const auto left = PlanDockColumnOuterGrip(frame, DockSide::Left);
+        const auto right = PlanDockColumnOuterGrip(frame, DockSide::Right);
+        if (!left.visible || !right.visible || left.firstId != "info" ||
+            right.secondId != "filter") return fail(725);
+        if (left.rect.x != 360 || left.rect.width != 12 ||
+            right.rect.x != 1228 || right.rect.width != 12) return fail(726);
+        float leftWidth = 360, rightWidth = 360;
+        DragRightDockOuterGrip(leftWidth, -60, 300, 600);
+        DragRightDockOuterGrip(rightWidth, -40, 280, 600);
+        if (leftWidth != 420 || rightWidth != 400) return fail(727);
+        const auto empty = PlanDockColumnOuterGrip(DockFrameGeometry{}, DockSide::Left);
+        if (empty.visible || PlanDockColumnOuterGrip(frame, DockSide::Top).visible) return fail(728);
     }
 
     if (ShouldEvaluateFloatingDockZone(false, false, false)) return fail(2703);

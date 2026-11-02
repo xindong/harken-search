@@ -63,12 +63,12 @@ class ScanPauseResumeContract(unittest.TestCase):
         active_start = MAIN.index("const bool showBackgroundContinueButton")
         active_end = MAIN.index("if (state.scanCancelRequested.load())", active_start)
         active_block = MAIN[active_start:active_end]
-        self.assertIn('ImGui::Button(L(Main_StopBtn)', active_block)
-        self.assertNotIn('ImGui::Button(L(Main_PauseKeepBtn)', active_block)
+        self.assertIn('aura::ui::ActionButton(L(Main_StopBtn)', active_block)
+        self.assertNotIn('aura::ui::ActionButton(L(Main_PauseKeepBtn)', active_block)
         self.assertIn('ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str())', active_block)
-        self.assertIn('ImGui::Button(L(Main_PauseKeepBtn), ImVec2(btnW, 30))', MAIN)
+        self.assertIn('aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(btnW, 30))', MAIN)
         self.assertIn('ImGui::SameLine(0, gap)', MAIN)
-        self.assertIn('ImGui::Button(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))', MAIN)
+        self.assertIn('aura::ui::ActionButton(L(Main_CancelRollbackBtn), ImVec2(btnW, 30))', MAIN)
         self.assertEqual(LOCALIZED["Main_StopBtn"]["zh"], "停止…")
         self.assertEqual(LOCALIZED["Scan_StopScan"]["zh"], "停止扫描")
 
@@ -79,7 +79,15 @@ class ScanPauseResumeContract(unittest.TestCase):
         finish_end = MAIN.index("};", rollback_start)
         self.assertNotIn("zeroCancelledSummary();", MAIN[finish_start:rollback_start])
         self.assertIn("zeroCancelledSummary();", MAIN[rollback_start:finish_end])
-        self.assertEqual(MAIN.count("finishInterruptedScanSession(paused);"), 2)
+        resume_start = MAIN.index("const bool resumeBackground =")
+        resume_end = MAIN.index("// Full scans retain their foreground", resume_start)
+        self.assertEqual(MAIN[:resume_start].count("finishInterruptedScanSession(paused);"), 2)
+        resume = MAIN[resume_start:resume_end]
+        before_queue, after_queue = resume.split("const auto queueSnapshot =", 1)
+        self.assertEqual(before_queue.count("finishInterruptedScanSession(paused);"), 1)
+        self.assertEqual(after_queue.count("finishInterruptedScanSession(paused);"), 1)
+        self.assertLess(after_queue.index("finishInterruptedScanSession(paused);"),
+                        after_queue.index("scanDb.discardScanRollbackSession();"))
 
     def test_full_scan_timeout_cannot_publish_false_completion(self):
         wait_start = MAIN.index("constexpr int64_t kCompletionWaitTimeoutMs")

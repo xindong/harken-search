@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bootstrap/HarkenSearchBootstrapAdmission.h"
+#include "bootstrap/BootstrapProgress.h"
 
 #include <cstdint>
 
@@ -19,6 +20,7 @@ struct BootstrapEntrypointOptions {
     std::uint32_t oldProcessWaitMs = 60'000U;
     std::uint32_t healthWaitMs = 120'000U;
     std::uint32_t previousFailureCount = 0U;
+    BootstrapProgressSink* progress = nullptr;
 };
 
 enum class BootstrapExitCode : int {

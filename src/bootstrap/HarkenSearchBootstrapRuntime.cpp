@@ -26,6 +26,14 @@ std::string WindowsBootstrapFilesystemDriver::RecoveredHealthPhase() const {
 
 namespace {
 
+void reportProgress(const BootstrapApplicationDependencies& dependencies,
+                    BootstrapProgressPhase phase, std::size_t completed = 0,
+                    std::size_t total = 0) noexcept {
+    if (dependencies.progress != nullptr) {
+        dependencies.progress->Report({phase, completed, total});
+    }
+}
+
 void testDiagnostic(const char* message) {
 #ifdef ARIS_BOOTSTRAP_TEST_DIAGNOSTICS
     std::fputs(message, stderr);
@@ -922,6 +930,7 @@ BootstrapApplicationResult launchHealthAndCommit(
         return applyRollback(plan, dependencies, &child, std::string(reason),
                              state, changed);
     };
+    reportProgress(dependencies, BootstrapProgressPhase::Restarting);
     testDiagnostic("runtime:health-prepare\n");
     const TransactionState preChildState = transaction.state;
     const std::optional<BootstrapExecutableExpectation> expectedImage =
@@ -978,6 +987,7 @@ BootstrapApplicationResult launchHealthAndCommit(
         return fail("updated-child-resume-failed", preChildState, mutated);
     }
 
+    reportProgress(dependencies, BootstrapProgressPhase::CheckingStartup);
     const BootstrapHealthResult health = dependencies.health.Await(
         child, plan.healthToken, plan.version, plan.buildId, options.healthWaitMs);
     if (health.status != BootstrapHealthStatus::Accepted) {
@@ -1008,6 +1018,7 @@ BootstrapApplicationResult launchHealthAndCommit(
                     transaction.state, true);
     }
     bool commitPublished = false;
+    reportProgress(dependencies, BootstrapProgressPhase::Finalizing);
     for (const BootstrapIntent& intent : transaction.intents) {
         if (!isFilesystemIntent(intent.kind)) continue;
         const WindowsBootstrapFilesystemResult applied =
@@ -1137,7 +1148,7 @@ bool BootstrapParentImageMatchesUpdaterBase(
            !updaterOwnedBase.empty();
 }
 
-BootstrapApplicationResult RunBootstrapApplication(
+static BootstrapApplicationResult runBootstrapApplicationCore(
     const BootstrapAdmission& admission,
     const WindowsBootstrapFilesystemRoots& roots,
     BootstrapApplicationDependencies dependencies,
@@ -1540,6 +1551,7 @@ BootstrapApplicationResult RunBootstrapApplication(
                                      std::move(recoveryTransaction), true, true);
     }
 
+    reportProgress(dependencies, BootstrapProgressPhase::WaitingForExit);
     if (!plan.invocation.oldProcess.valid ||
         plan.invocation.oldProcess.processId != plan.oldProcessId) {
         return {BootstrapApplicationStatus::OldProcessRejected,
@@ -1573,6 +1585,7 @@ BootstrapApplicationResult RunBootstrapApplication(
         }
     }
     testDiagnostic("runtime:old-exited\n");
+    reportProgress(dependencies, BootstrapProgressPhase::PreparingFiles);
 
     const WindowsBootstrapFilesystemResult begun = dependencies.filesystem.Begin(
         plan, journal, roots);
@@ -1619,6 +1632,12 @@ BootstrapApplicationResult RunBootstrapApplication(
     BootstrapOwnedProcess child;
 
     const std::vector<BootstrapIntent> operationIntents = transaction.intents;
+    const auto replacementCount = static_cast<std::size_t>(std::count_if(
+        operationIntents.begin(), operationIntents.end(), [](const BootstrapIntent& intent) {
+            return intent.kind == BootstrapIntentKind::ReplaceInventoryItem ||
+                   intent.kind == BootstrapIntentKind::RemoveInstalledItem;
+        }));
+    std::size_t replacementsDone = 0;
     for (const BootstrapIntent& intent : operationIntents) {
         if (intent.kind == BootstrapIntentKind::LaunchUpdatedChild ||
             intent.kind == BootstrapIntentKind::WaitForOldProcessExit ||
@@ -1628,6 +1647,11 @@ BootstrapApplicationResult RunBootstrapApplication(
             continue;
         }
         testDiagnostic("runtime:filesystem-apply\n");
+        if (intent.kind == BootstrapIntentKind::ReplaceInventoryItem ||
+            intent.kind == BootstrapIntentKind::RemoveInstalledItem) {
+            reportProgress(dependencies, BootstrapProgressPhase::ReplacingFiles,
+                           replacementsDone, replacementCount);
+        }
         const WindowsBootstrapFilesystemResult applied =
             applyFilesystemIntentWithBoundedRetry(
                 dependencies.filesystem, intent);
@@ -1709,12 +1733,26 @@ BootstrapApplicationResult RunBootstrapApplication(
             }
             transaction = recorded.transaction;
             mutated = true;
+            ++replacementsDone;
+            reportProgress(dependencies, BootstrapProgressPhase::ReplacingFiles,
+                           replacementsDone, replacementCount);
         }
     }
 
     return launchHealthAndCommit(plan, transaction.state.journal,
                                  dependencies, options,
                                  std::move(transaction), mutated, false);
+}
+
+BootstrapApplicationResult RunBootstrapApplication(
+    const BootstrapAdmission& admission,
+    const WindowsBootstrapFilesystemRoots& roots,
+    BootstrapApplicationDependencies dependencies,
+    const BootstrapApplicationOptions& options) {
+    auto result = runBootstrapApplicationCore(admission, roots, dependencies, options);
+    reportProgress(dependencies, result.ok() ? BootstrapProgressPhase::Completed
+                                           : BootstrapProgressPhase::Failed);
+    return result;
 }
 
 }  // namespace aris::bootstrap

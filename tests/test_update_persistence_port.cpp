@@ -4,7 +4,20 @@
 #include "update/UpdatePersistencePort.h"
 #include "update/UpdateHttpTransport.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#include <winioctl.h>
+#endif
+
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -509,7 +522,196 @@ void test_transport_append_intent_uses_trusted_relative_sink() {
           "queued old-generation effects cannot land after re-admission");
 }
 
+void test_retention_listing_and_removal_stay_scoped_to_version_trees() {
+    Fixture fixture;
+    check(fixture.write("1.0.21/staging/pkg.zip", "old"), "old package staged");
+    check(fixture.write("1.0.22/staging/pkg.zip", "prev"), "previous package staged");
+    check(fixture.write("1.0.23/staging/pkg.zip", "current"), "current package staged");
+    check(fixture.write("staging/shared.bin", "keep"), "shared staging written");
+    check(fixture.write("quarantine/x.zip", "keep"), "quarantine written");
+
+    const auto listing = fixture.port->ObserveVersionDirectories();
+    check(listing.ok, "retention listing reads the update root");
+    check(listing.directoryNames == std::vector<std::string>(
+              {"1.0.21", "1.0.22", "1.0.23", "quarantine", "staging"}),
+          "listing is sorted and exposes names, never absolute roots");
+
+    const auto plan = aris::update::UpdateDownloadManager::PlanVersionRetention(
+        listing.directoryNames, "1.0.23");
+    check(plan.ok && plan.pruneVersions == std::vector<std::string>({"1.0.21"}),
+          "real listing feeds the same keep-current-and-previous decision");
+
+    for (const auto& version : plan.pruneVersions) {
+        const auto removed = fixture.port->DeleteVersionDirectory(version);
+        check(removed.ok() && removed.completedIntents == 1,
+              "one listed version tree is removed through the port");
+    }
+    check(!Platform::FileSystem::Exists(join(fixture.root, "1.0.21")),
+          "pruned tree including nested staging is gone from disk");
+    check(Platform::FileSystem::Exists(join(fixture.root, "1.0.22/staging/pkg.zip")) &&
+              Platform::FileSystem::Exists(join(fixture.root, "1.0.23/staging/pkg.zip")),
+          "previous and running packages survive the prune");
+    check(Platform::FileSystem::Exists(join(fixture.root, "staging/shared.bin")) &&
+              Platform::FileSystem::Exists(join(fixture.root, "quarantine/x.zip")),
+          "non-version directories are never pruned");
+
+    const auto rejected = fixture.port->DeleteVersionDirectory("staging");
+    check(!rejected.ok(), "non-semver names are rejected before any effect");
+    const auto forged = fixture.port->DeleteVersionDirectory("../1.0.22");
+    check(!forged.ok(), "traversal names are rejected before any effect");
+
+    const auto requeued = fixture.port->DeleteVersionDirectory("1.0.21");
+    check(requeued.ok(), "a second prune of the same version stays idempotent");
+}
+
 }  // namespace
+
+#ifdef _WIN32
+namespace {
+
+std::wstring toWide(const std::string& value) {
+    const int length = MultiByteToWideChar(CP_UTF8, 0, value.c_str(),
+                                           static_cast<int>(value.size()), nullptr, 0);
+    std::wstring result(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.c_str(),
+                        static_cast<int>(value.size()), result.data(), length);
+    return result;
+}
+
+// The SDK headers expose the mount-point reparse control codes but not the
+// on-disk buffer shape, so mirror the documented layout locally.
+struct TestMountPointReparseBuffer {
+    ULONG reparseTag;
+    USHORT reparseDataLength;
+    USHORT reserved;
+    USHORT substituteNameOffset;
+    USHORT substituteNameLength;
+    USHORT printNameOffset;
+    USHORT printNameLength;
+    WCHAR pathBuffer[1];
+};
+
+// Creates a real NTFS mount-point junction without elevation, so the test
+// exercises the actual reparse rejection path instead of a mock.  Returns
+// false when the environment forbids junction creation; callers then report
+// the boundary as untested rather than faking a pass.
+bool tryCreateJunction(const std::string& linkUtf8, const std::string& targetUtf8) {
+    const std::wstring link = toWide(linkUtf8);
+    std::wstring target = toWide(targetUtf8);
+    std::replace(target.begin(), target.end(), L'/', L'\\');
+    if (!CreateDirectoryW(link.c_str(), nullptr)) {
+        std::fprintf(stderr, "NOTE: junction mkdir error=%lu\n", GetLastError());
+        return false;
+    }
+    const HANDLE linkHandle = CreateFileW(
+        link.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (linkHandle == INVALID_HANDLE_VALUE) {
+        std::fprintf(stderr, "NOTE: junction open error=%lu\n", GetLastError());
+        return false;
+    }
+    const std::wstring substitute = L"\\??\\" + target;
+    const USHORT bodyLength = static_cast<USHORT>(
+        8U + (substitute.size() + 1U) * sizeof(WCHAR) +
+        (target.size() + 1U) * sizeof(WCHAR));
+    std::vector<BYTE> buffer(
+        sizeof(TestMountPointReparseBuffer) +
+            (substitute.size() + target.size() + 2U) * sizeof(WCHAR),
+        0);
+    auto* data = reinterpret_cast<TestMountPointReparseBuffer*>(buffer.data());
+    data->reparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+    data->reparseDataLength = bodyLength;
+    data->substituteNameOffset = 0;
+    data->substituteNameLength =
+        static_cast<USHORT>(substitute.size() * sizeof(WCHAR));
+    data->printNameOffset =
+        static_cast<USHORT>((substitute.size() + 1U) * sizeof(WCHAR));
+    data->printNameLength = static_cast<USHORT>(target.size() * sizeof(WCHAR));
+    auto* path = data->pathBuffer;
+    std::copy(substitute.begin(), substitute.end(), path);
+    path[substitute.size()] = L'\0';
+    std::copy(target.begin(), target.end(), path + substitute.size() + 1U);
+    path[substitute.size() + 1U + target.size()] = L'\0';
+    DWORD returned = 0;
+    // The driver expects the generic 8-byte reparse header plus exactly
+    // ReparseDataLength bytes; the in-struct PathBuffer offset is larger.
+    const DWORD inputCount = static_cast<DWORD>(
+        sizeof(ULONG) + sizeof(USHORT) * 2U + bodyLength);
+    const bool ok = DeviceIoControl(
+        linkHandle, FSCTL_SET_REPARSE_POINT, data, inputCount,
+        nullptr, 0, &returned, nullptr) != FALSE;
+    if (!ok) std::fprintf(stderr, "NOTE: junction set error=%lu\n", GetLastError());
+    CloseHandle(linkHandle);
+    return ok;
+}
+
+void test_retention_boundaries_refuse_reparse_depth_and_entry_limits() {
+    // 1) Reparse point: a junction inside a pruned version tree points at a
+    //    retained package outside the tree; the walk must abort and the
+    //    external target must stay byte-identical.
+    {
+        Fixture fixture;
+        check(fixture.write("1.0.30/staging/pkg.zip", "old"), "prunable package staged");
+        check(fixture.write("1.0.31/staging/keep.zip", "retain"), "retained package staged");
+        std::string ignored;
+        Platform::FileSystem::RemoveAll(join(fixture.root, "1.0.30/staging"), &ignored);
+        Platform::FileSystem::EnsureDirectoryExists(join(fixture.root, "1.0.30"));
+        const bool junctionCreated = tryCreateJunction(
+            join(fixture.root, "1.0.30/link"), join(fixture.root, "1.0.31"));
+        if (!junctionCreated) {
+            std::fprintf(stderr, "NOTE: reparse boundary untested (junction creation denied here)\n");
+        } else {
+            const auto listing = fixture.port->ObserveVersionDirectories();
+            check(listing.ok, "listing still succeeds with a child junction present");
+            const auto removed = fixture.port->DeleteVersionDirectory("1.0.30");
+            check(!removed.ok(), "a child reparse point aborts the whole version tree");
+            check(Platform::FileSystem::Exists(join(fixture.root, "1.0.31/staging/keep.zip")),
+                  "the junction target package outside the pruned tree is untouched");
+            check(Platform::FileSystem::Exists(join(fixture.root, "1.0.30")),
+                  "the aborted version tree itself stays for the next retry");
+        }
+    }
+    // 2) Depth: exactly the deepest accepted tree deletes; one level more
+    //    refuses before deleting anything.
+    {
+        Fixture fixture;
+        check(fixture.write("1.0.40/a/b/c/pkg.bin", "within depth"), "deep retained layout staged");
+        const auto withinDepth = fixture.port->DeleteVersionDirectory("1.0.40");
+        check(withinDepth.ok(), "four nested levels stay inside the depth bound");
+        check(!Platform::FileSystem::Exists(join(fixture.root, "1.0.40")),
+              "the in-bound depth tree was fully removed");
+        check(fixture.write("1.0.41/a/b/c/d/blocker.bin", "beyond depth"), "over-deep layout staged");
+        const auto beyondDepth = fixture.port->DeleteVersionDirectory("1.0.41");
+        check(!beyondDepth.ok(), "the fifth nested level exceeds the depth bound");
+        check(Platform::FileSystem::Exists(join(fixture.root, "1.0.41/a/b/c/d/blocker.bin")),
+              "the over-deep tree is left intact for the next retry");
+    }
+    // 3) Entry bound: a directory one entry past the cap aborts instead of
+    //    silently skipping the overflow entries.
+    {
+        Fixture fixture;
+        bool staged = true;
+        std::string previous;
+        for (int index = 0; index < 4200 && staged; ++index) {
+            const std::string name =
+                "1.0.50/staging/" + std::to_string(index) + ".bin";
+            staged = fixture.write(name, "x");
+            previous = name;
+        }
+        check(staged, "over-cap directory staged");
+        if (staged) {
+            const auto overCap = fixture.port->DeleteVersionDirectory("1.0.50");
+            check(!overCap.ok(), "more entries than the bound aborts the removal");
+            check(Platform::FileSystem::Exists(join(fixture.root, "1.0.50")),
+                  "the over-cap tree is left intact for the next retry");
+            static_cast<void>(previous);
+        }
+    }
+}
+
+}  // namespace
+#endif
 
 int main() {
     test_atomic_temp_write_and_replace_is_ordered_and_durable();
@@ -519,5 +721,9 @@ int main() {
     test_platform_failures_stop_the_plan_and_propagate_error();
     test_manager_intents_compose_without_root_prefix_adaptation();
     test_transport_append_intent_uses_trusted_relative_sink();
+    test_retention_listing_and_removal_stay_scoped_to_version_trees();
+#ifdef _WIN32
+    test_retention_boundaries_refuse_reparse_depth_and_entry_limits();
+#endif
     return failures == 0 ? 0 : 1;
 }

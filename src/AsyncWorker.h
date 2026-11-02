@@ -175,6 +175,7 @@ struct AsyncSearchRequest {
     uint64_t requestId = 0;       // 单调递增 ID，用于丢弃过时的结果
     SearchFilter filter;
     int viewMode = 0;             // ViewMode enum cast to int
+    bool allowDatabaseListSourceDescription = false;
     int64_t playlistId = -1;
     int limit = 500;
     int offset = 0;

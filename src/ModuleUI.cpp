@@ -9,6 +9,7 @@
 #include "AppState.h"
 #include "Database.h"
 #include "imgui.h"
+#include "HarkenSearchWidgets.h"
 
 #include "UCSCategory.h"
 #include "UndoSystem.h"
@@ -338,7 +339,7 @@ void RenderUCSBrowserContent(AppState& state) {
         auto selectedRecords = state.getSelectedRecords();
         ImGui::BeginDisabled(selectedRecords.empty() || state.ucsBrowserSelectedIdx < 0
                              || state.ucsBrowserSelectedIdx >= (int)results.size());
-        if (ImGui::Button(L(ModuleUI_ApplyCategoryBtn))) {
+        if (aura::ui::ActionButton(L(ModuleUI_ApplyCategoryBtn), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             const auto* entry = results[state.ucsBrowserSelectedIdx];
             std::string catValue = entry->category;
             if (!entry->subCategory.empty()) catValue += " - " + entry->subCategory;
@@ -448,24 +449,24 @@ void RenderUCSBrowserContent(AppState& state) {
                 RefreshSearchResults(state, false);
             };
 
-            if (ImGui::Button(L(ModuleUI_OverwriteAll), ImVec2(120, 0))) {
+            if (aura::ui::ActionButton(L(ModuleUI_OverwriteAll), ImVec2(120, 0))) {
                 applyUcs(0);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(ModuleUI_FillBlankOnly), ImVec2(120, 0))) {
+            if (aura::ui::ActionButton(L(ModuleUI_FillBlankOnly), ImVec2(120, 0))) {
                 applyUcs(1);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button(L(ModuleUI_AppendSuffix), ImVec2(100, 0))) {
+            if (aura::ui::ActionButton(L(ModuleUI_AppendSuffix), ImVec2(100, 0))) {
                 applyUcs(2);
                 ImGui::CloseCurrentPopup();
             }
             if (HoveredForHelp())
                 HarkenSearch::SetTooltip(L(ModuleUI_CategoryAppendTip));
             ImGui::SameLine();
-            if (ImGui::Button(L(ModuleUI_Cancel), ImVec2(80, 0))) {
+            if (aura::ui::ActionButton(L(ModuleUI_Cancel), ImVec2(80, 0), aura::ui::ButtonVariant::Quiet)) {
                 s_ucsApplyMsg.clear();
                 ImGui::CloseCurrentPopup();
             }
@@ -523,7 +524,7 @@ void RenderTagBrowserContent(AppState& state) {
 
     // 清除所有过滤器按钮
     if (TagSystemManager::hasAnyFacetFilter()) {
-        if (ImGui::Button(L(ModuleUI_ClearAllFilters))) {
+        if (aura::ui::ActionButton(L(ModuleUI_ClearAllFilters))) {
             TagSystemManager::clearAllFacets();
         }
         ImGui::SameLine();
@@ -679,7 +680,7 @@ static void RenderEmbedDialog(AppState& state) {
 
     // 执行按钮
     ImGui::BeginDisabled(selected.empty());
-    if (ImGui::Button(L(ModuleUI_RunEmbed), ImVec2(160, 35))) {
+    if (aura::ui::ActionButton(L(ModuleUI_RunEmbed), ImVec2(160, 35), aura::ui::ButtonVariant::PrimarySearch)) {
         s_embedSuccessCount = 0;
         s_embedFailCount = 0;
         if (state.database.beginTransaction()) {
@@ -794,7 +795,7 @@ static void RenderNamingDialog(AppState& state) {
         PersistNamingDialogState(state);
     }
     ImGui::TextDisabled("%s", L(Module_NamingSyntax));
-    if (ImGui::Button(L(ModuleUI_SavePreset))) {
+    if (aura::ui::ActionButton(L(ModuleUI_SavePreset))) {
         const char* currentPresetName =
             (state.namingPresetIndex >= 0 && state.namingPresetIndex < (int)presets.size())
                 ? presets[state.namingPresetIndex].name.c_str()
@@ -809,7 +810,7 @@ static void RenderNamingDialog(AppState& state) {
         state.namingPresetIndex < (int)presets.size() &&
         IsCustomNamingPresetName(state, presets[state.namingPresetIndex].name);
     ImGui::BeginDisabled(!canDeletePreset);
-    if (ImGui::Button(L(ModuleUI_DeletePreset))) {
+    if (aura::ui::ActionButton(L(ModuleUI_DeletePreset), ImVec2(0, 0), aura::ui::ButtonVariant::Danger)) {
         const std::string presetName = presets[state.namingPresetIndex].name;
         state.settings.namingCustomPresets.erase(
             std::remove_if(state.settings.namingCustomPresets.begin(),
@@ -834,7 +835,7 @@ static void RenderNamingDialog(AppState& state) {
         if (!s_namingPresetMsg.empty()) {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", s_namingPresetMsg.c_str());
         }
-        if (ImGui::Button(L(ModuleUI_Save), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(ModuleUI_Save), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             std::string presetName = s_namingPresetNameBuffer;
             const size_t firstNonSpace = presetName.find_first_not_of(' ');
             if (firstNonSpace == std::string::npos) {
@@ -874,7 +875,7 @@ static void RenderNamingDialog(AppState& state) {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button(L(ModuleUI_Cancel), ImVec2(100, 0))) {
+        if (aura::ui::ActionButton(L(ModuleUI_Cancel), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
             s_namingPresetMsg.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -938,7 +939,7 @@ static void RenderNamingDialog(AppState& state) {
     ImGui::EndChild();
 
     ImGui::BeginDisabled(selected.empty());
-    if (ImGui::Button(L(ModuleUI_RunRename), ImVec2(140, 30))) {
+    if (aura::ui::ActionButton(L(ModuleUI_RunRename), ImVec2(140, 30), aura::ui::ButtonVariant::PrimarySearch)) {
         s_namingSuccessCount = 0;
         s_namingFailCount = 0;
 
@@ -1023,7 +1024,7 @@ void RenderTransferDialogContent(AppState& state) {
     ImGui::SetNextItemWidth(-80);
     ImGui::InputText("##TransferDest", state.transferDestFolder, sizeof(state.transferDestFolder));
     ImGui::SameLine();
-    if (ImGui::Button(L(ModuleUI_TransferBrowseBtn))) {
+    if (aura::ui::ActionButton(L(ModuleUI_TransferBrowseBtn))) {
 #ifdef _WIN32
         std::string folder = Platform::BrowseFolderDialogModern(
             HarkenSearch::UiHost::MainWindowOwner(), L(Folder_PickAudioFolder));
@@ -1139,7 +1140,7 @@ void RenderTransferDialogContent(AppState& state) {
 
     // 执行传输
    ImGui::BeginDisabled(selected.empty() || strlen(state.transferDestFolder) == 0);
-   if (ImGui::Button(L(ModuleUI_TransferStart), ImVec2(140, 35))) {
+   if (aura::ui::ActionButton(L(ModuleUI_TransferStart), ImVec2(140, 35), aura::ui::ButtonVariant::PrimaryTransfer)) {
         if (Platform::FileSystem::IsNetworkPath(state.transferDestFolder)) {
             ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", L(Write_BlockedNetworkLibrary));
         } else {
@@ -1286,7 +1287,7 @@ void RenderWorkflowDialogContent(AppState& state) {
     }
 
     ImGui::SameLine();
-    if (ImGui::Button(L(ModuleUI_Save))) {
+    if (aura::ui::ActionButton(L(ModuleUI_Save), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
         WorkflowEngine::addWorkflow(s_currentWorkflow);
     }
 
@@ -1422,7 +1423,7 @@ void RenderWorkflowDialogContent(AppState& state) {
     ImGui::SameLine();
 
     ImGui::BeginDisabled(selected.empty() || s_currentWorkflow.nodes.empty());
-    if (ImGui::Button(L(ModuleUI_PreviewResult), ImVec2(120, 30))) {
+    if (aura::ui::ActionButton(L(ModuleUI_PreviewResult), ImVec2(120, 30))) {
         s_workflowPreviewChanges.clear();
         s_workflowPreviewError.clear();
         s_showWorkflowPreview = true;
@@ -1440,7 +1441,7 @@ void RenderWorkflowDialogContent(AppState& state) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button(L(ModuleUI_RunWorkflow), ImVec2(120, 30))) {
+    if (aura::ui::ActionButton(L(ModuleUI_RunWorkflow), ImVec2(120, 30), aura::ui::ButtonVariant::PrimarySearch)) {
         s_workflowExecSuccess = 0;
         s_workflowExecFail = 0;
 
@@ -1603,7 +1604,7 @@ void RenderWorkflowDialogContent(AppState& state) {
             }
         }
         ImGui::Separator();
-        if (ImGui::Button(L(ModuleUI_Close), ImVec2(120, 0))) {
+        if (aura::ui::ActionButton(L(ModuleUI_Close), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1718,7 +1719,7 @@ static void RenderFieldManager(AppState& state) {
 void RenderModuleDialogs(AppState& state) {
     RenderEmbedDialog(state);
     RenderNamingDialog(state);
-    if (ProductEdition::hasFeature("theme_editor")) {
+    if (state.themeScheduleEditorPeriod >= 0 || ProductEdition::hasFeature("theme_editor")) {
         RenderThemeEditor(state);
     }
     RenderFieldManager(state);
