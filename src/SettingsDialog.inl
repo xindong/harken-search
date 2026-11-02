@@ -184,7 +184,6 @@
             ImGui::PopID();
         }
         ImGui::PopStyleColor(2);ImGui::PopStyleVar(2);ImGui::EndChild();
-        ImGui::SetCursorPos(ImVec2(24,winSize.y-36)); ImGui::TextDisabled("Harken Search");
         ImGui::SetCursorPos(ImVec2(contentX,18));
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(contentW-52);
