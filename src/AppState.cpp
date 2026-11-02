@@ -1606,3 +1606,7 @@ std::string AppState::TransferStatusText() const {
     }
     return buf;
 }
+
+// ODR definitions for constants passed by reference to standard algorithms.
+const int AppState::RANDOM_PAGE_SIZE;
+const int AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS;
