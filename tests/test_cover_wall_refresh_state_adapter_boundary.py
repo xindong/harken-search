@@ -83,7 +83,7 @@ def test_menu_refresh_uses_the_same_explicit_cover_retry_as_f5_and_toolbar():
     menu_end = MAIN.index("ImGui::EndMenu();", menu_start)
     menu_refresh = MAIN[menu_start:menu_end]
 
-    assert "ClearAllFiltersForShowAll(state);" not in menu_refresh
+    assert "ClearAllFiltersForShowAll(state);" in menu_refresh
     assert "ClearSpecificCoverKeyFilter(state);" not in menu_refresh
     assert "aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);" in menu_refresh
     assert "state.suppressFacetsForNextRefresh = true;" in menu_refresh
@@ -103,8 +103,16 @@ def test_database_refresh_invalidates_the_cover_wall_before_reloading_all_entrie
     )
 
     for scope in refresh_scopes:
+        assert "ClearAllFiltersForShowAll(state);" in scope
+        assert scope.index("ClearAllFiltersForShowAll(state);") < scope.index(
+            "aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);"
+        )
         assert "aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);" in scope
         assert "aura::cover_wall::RequestDisplayRefreshForExplicitRetry(state);" not in scope
+
+    automatic_start = MAIN.index("if (state.needsTabResultsRefresh)")
+    automatic_refresh = MAIN[automatic_start : automatic_start + 180]
+    assert "ClearAllFiltersForShowAll(state);" not in automatic_refresh
 
     source = SOURCE_PATH.read_text(encoding="utf-8")
     retry_body_start = source.index("void RequestDisplayRefreshForExplicitRetry(AppState& state)")

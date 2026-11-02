@@ -13,6 +13,8 @@ import re
 import subprocess
 import sys
 import time
+import uuid
+import wave
 
 from qa_folder_shortcuts import Driver
 
@@ -201,11 +203,6 @@ def run(exe, root, output, mode):
 
         state = search(query)
         assert state["cover_filter"]["active"] and state["result_count"] > 0
-        click("refresh")
-        state = until("refresh kept filters", lambda s: s["search_text"] == query and
-                      s["cover_filter"]["active"] and s["result_count"] > 0)
-        record("refresh-keeps-cover-keyword", state)
-
         # The deferred folder-tree path is exercised with an isolated path. It
         # should yield an empty intersection without discarding cover/keyword.
         isolated_folder = root / "folder-filter-empty"
@@ -241,11 +238,6 @@ def run(exe, root, output, mode):
         state = until("three filters", lambda s: s["folder_filter"]["active"] and
                       s["cover_filter"]["active"] and s["search_text"] == query and s["result_count"] > 0)
         record("folder-cover-keyword-intersection", state)
-        click("refresh")
-        state = until("refresh three filters", lambda s: s["folder_filter"]["active"] and
-                      s["cover_filter"]["active"] and s["search_text"] == query and s["result_count"] > 0)
-        record("refresh-keeps-three-filters", state)
-
         driver.command({"cmd": "folder_search_sidebar", "section": 2})
         click("cover_mode_selector")
         click("cover_mode_option_1")
@@ -262,11 +254,6 @@ def run(exe, root, output, mode):
                 state["cover_filter"]["active"] and state["folder_filter"]["active"] and
                 state["result_count"] > 0)
         record("format-kept-after-real-search", state)
-        click("refresh")
-        state = until("format kept after refresh", lambda s: s["metadata_filters"]["format"] == "WAV" and
-                      s["cover_filter"]["mode"] == "has" and s["cover_filter"]["active"] and
-                      s["folder_filter"]["active"] and s["search_text"] == query and s["result_count"] > 0)
-        record("format-kept-after-refresh", state)
         click("chip_cover_key")
         state = until("remove cover key with cover mode", lambda s:
                       not s["cover_filter"]["active"] and s["cover_filter"]["mode"] == "has" and
@@ -292,6 +279,18 @@ def run(exe, root, output, mode):
                 state["qa_filter_extras"]["genre_count"] == 1 and
                 state["qa_filter_extras"]["instrument_count"] == 1 and
                 not state["qa_filter_extras"]["all_file_types"])
+        click("refresh")
+        state = until("manual refresh resets all filters", lambda s: s["search_text"] == "" and
+                      not s["folder_filter"]["active"] and not s["cover_filter"]["active"] and
+                      s["cover_filter"]["mode"] == "all" and s["metadata_filters"]["format"] == "" and
+                      s["qa_filter_extras"]["key"] == "" and
+                      s["qa_filter_extras"]["genre_count"] == 0 and
+                      s["qa_filter_extras"]["instrument_count"] == 0 and
+                      s["qa_filter_extras"]["all_file_types"] and s["total_count"] >= 11000)
+        assert state["tabs"]["active_name"] == "全部文件", state["tabs"]
+        record("manual-refresh-resets-all", state)
+
+        driver.command({"cmd": "folder_search_seed_extra_filters", "enabled": True})
         click("clear_all")
         state = until("explicit clear all", lambda s: s["search_text"] == "" and
                       not s["folder_filter"]["active"] and not s["cover_filter"]["active"] and
@@ -301,7 +300,54 @@ def run(exe, root, output, mode):
                       s["qa_filter_extras"]["instrument_count"] == 0 and
                       s["qa_filter_extras"]["all_file_types"] and s["total_count"] >= 11000)
         record("explicit-clear-all", state)
-        print("PASS: " + mode + " cover/keyword/folder/mode intersections, chip removals, refresh, clear all")
+
+        # A completed full scan may refresh results, but only the later manual
+        # click should clear the user's active filters.
+        fixture = root / ("refresh-full-scan-fixture-" + uuid.uuid4().hex[:8])
+        fixture.mkdir(exist_ok=True)
+        for index in range(2):
+            sample = fixture / f"refresh-sample-{index}.wav"
+            if not sample.exists():
+                with wave.open(str(sample), "wb") as sound:
+                    sound.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                    sound.writeframes(bytes(16000 * 2))
+        search(query)
+        driver.command({"cmd": "set_folder_filter", "path": actual_folder})
+        state = until("filters before full scan", lambda s: s["search_text"] == query and
+                      s["folder_filter"]["active"] and s["result_count"] > 0)
+        record("before-full-scan", state)
+        previous_scan = driver.command({"cmd": "scan_status"})["scan_started_at_ms"]
+        driver.command({"cmd": "qa_rightclick_scan", "path": str(fixture), "cache_waveforms": True})
+        deadline = time.monotonic() + 120
+        while True:
+            scan = driver.command({"cmd": "scan_status"})
+            if scan["scan_started_at_ms"] != previous_scan and not scan["scanning"]:
+                assert scan["scan_workflow_stage"] == "completed", scan
+                assert (scan["scan_strategy"] == "full" and scan["added"] == 2 and
+                        scan["errors"] == 0 and scan["mini_waveforms_completed"] == 2), scan
+                break
+            assert time.monotonic() < deadline, ("full scan did not complete", scan)
+            time.sleep(.1)
+        driver.command({"cmd": "open_scan_dialog"})
+        driver.command({"cmd": "info_page_state"})
+        for phase in ("hover", "down", "up"):
+            driver.command({"cmd": "info_page_pointer", "key": "info.qaScanDone", "phase": phase})
+        state = until("scan completion kept filters", lambda s: s["search_text"] == query and
+                      s["folder_filter"]["active"] and
+                      Path(s["folder_filter"]["path"]).resolve() == fixture.resolve())
+        record("full-scan-kept-filters-before-click", state)
+        cases[-1]["full_scan"] = scan
+        click("refresh")
+        state = until("manual refresh after full scan", lambda s: s["search_text"] == "" and
+                      not s["folder_filter"]["active"] and s["tabs"]["active_name"] == "全部文件" and
+                      s["total_count"] >= 11000)
+        record("manual-refresh-after-full-scan", state)
+        full_total = state["total_count"]
+        click("refresh")
+        state = until("repeat manual refresh", lambda s: s["search_text"] == "" and
+                      not s["folder_filter"]["active"] and s["tabs"]["active_name"] == "全部文件" and
+                      s["total_count"] == full_total)
+        record("repeat-manual-refresh", state)
     except Exception as exc:
         failure = repr(exc)
         raise
@@ -309,15 +355,18 @@ def run(exe, root, output, mode):
         if hwnd and win32gui.IsWindow(hwnd):
             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
         try:
-            process.wait(timeout=15)
+            exit_code = process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.terminate()
-            process.wait(timeout=10)
+            exit_code = process.wait(timeout=10)
         report = {"exe": str(exe), "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
-                  "mode": mode, "cases": cases, "failure": failure,
+                  "mode": mode, "cases": cases, "failure": failure, "exit_code": exit_code,
                   "input": "native ImGui cover click and RenderUI keyword submission"}
         (output / "result.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        if failure is None:
+            assert exit_code == 0, f"native package exited with {exit_code}"
+    print("PASS: " + mode + " filter independence, manual reset, and full-scan refresh")
 
 
 if __name__ == "__main__":

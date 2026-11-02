@@ -1615,6 +1615,9 @@ static void ProcessKeybindings(AppState& state) {
             // View
             if (IsShortcutPressedSnapshot(ShortcutAction::Refresh, ks)) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state);
+                }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
@@ -14531,6 +14534,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
     state.searchBuffer[0] = '\0';
+    AutoRenameTabBySearch(state, "");
     state.folderFilterActive = false;
     state.selectedFolderPath.clear();
     state.coverFilterActive = false;
@@ -38045,6 +38049,9 @@ void RenderUI(AppState& state) {
             // Refresh
             if (ImGui::MenuItem(L(Refresh), GetShortcutString(ShortcutAction::Refresh).c_str())) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state);
+                }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
@@ -39609,6 +39616,9 @@ void RenderUI(AppState& state) {
             }
             if (navClicked[4]) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state);
+                }
                 if (state.viewMode == ViewMode::Database ||
                     IsPlaylistSystemView(state.viewMode)) {
                     if (state.viewMode == ViewMode::Database) {
