@@ -1077,9 +1077,7 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
     parkLiveResultsInCurrentTab();
     syncToTab();
     if (currentTab().explicitRefreshPending) {
-        const bool refreshStillPending = pendingSearchRequestId != 0 || pendingFacetRequestId != 0;
-        currentTab().dataUnloaded = refreshStillPending;
-        if (!refreshStillPending) currentTab().explicitRefreshPending = false;
+        currentTab().dataUnloaded = true;
     }
     activeTabIndex = tabIndex;
     pendingTabSelectionIndex = tabIndex;
@@ -1104,9 +1102,7 @@ int AppState::createAndActivateNewDatabaseTab(double activationTimeSeconds) {
         parkLiveResultsInCurrentTab();
         syncToTab();
         if (currentTab().explicitRefreshPending) {
-            const bool refreshStillPending = pendingSearchRequestId != 0 || pendingFacetRequestId != 0;
-            currentTab().dataUnloaded = refreshStillPending;
-            if (!refreshStillPending) currentTab().explicitRefreshPending = false;
+            currentTab().dataUnloaded = true;
         }
     }
 

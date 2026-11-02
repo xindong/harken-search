@@ -984,7 +984,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
 
 // Forward declarations (used by ProcessKeybindings)
 static void RevealFileInExplorer(const std::string& filePathUtf8);
-static void ClearAllFiltersForShowAll(AppState& state);
+static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh = false);
 static bool
 SwitchDatabase(AppState& state,
                const std::string& newDbPathUtf8,
@@ -1616,7 +1616,7 @@ static void ProcessKeybindings(AppState& state) {
             if (IsShortcutPressedSnapshot(ShortcutAction::Refresh, ks)) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
-                    ClearAllFiltersForShowAll(state);
+                    ClearAllFiltersForShowAll(state, true);
                 }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
@@ -14530,10 +14530,10 @@ static std::string GetRandomSamplingStatus(const AppState& state) {
 }
 
 // Helper: 清除所有筛选条件并刷新 (= Show All)
-static void ClearAllFiltersForShowAll(AppState& state) {
+static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
-    if (!state.listTabs.empty() && state.currentTab().isLocked) {
+    if (explicitRefresh && !state.listTabs.empty() && state.currentTab().isLocked) {
         state.currentTab().explicitRefreshPending = true;
         state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration;
     }
@@ -14577,7 +14577,7 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.sameFolderScanDone = false;
     state.sameFolderScanPath.clear();
 
-    if (!state.listTabs.empty() && state.currentTab().isLocked) {
+    if (explicitRefresh && !state.listTabs.empty() && state.currentTab().isLocked) {
         // Save the reset filters before an async result can be superseded.
         // Keep the snapshot reloadable until this Refresh actually settles.
         state.syncToTab();
@@ -38066,7 +38066,7 @@ void RenderUI(AppState& state) {
             if (ImGui::MenuItem(L(Refresh), GetShortcutString(ShortcutAction::Refresh).c_str())) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
-                    ClearAllFiltersForShowAll(state);
+                    ClearAllFiltersForShowAll(state, true);
                 }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
@@ -39633,7 +39633,7 @@ void RenderUI(AppState& state) {
             if (navClicked[4]) {
                 state.fileBrowser.refresh();
                 if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
-                    ClearAllFiltersForShowAll(state);
+                    ClearAllFiltersForShowAll(state, true);
                 }
                 if (state.viewMode == ViewMode::Database ||
                     IsPlaylistSystemView(state.viewMode)) {

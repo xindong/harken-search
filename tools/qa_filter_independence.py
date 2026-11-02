@@ -457,6 +457,28 @@ def run(exe, root, output, mode):
         record("locked-tab-refresh-superseded", state)
         assert state["metadata_filters"]["format"] == "", "superseded locked refresh restored old WAV filter"
         assert state["total_count"] == full_total, "superseded locked refresh did not restore full list"
+        driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        until("second supersede switch away", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = state_ready()
+        record("locked-tab-refresh-superseded-second-return", state)
+        assert state["metadata_filters"]["format"] == "", "second return restored old locked-tab filter"
+        assert state["total_count"] == full_total, "second return restored stale locked-tab count"
+
+        # Clear All is a separate action: it must not grant Refresh's locked-tab override.
+        driver.command({"cmd": "set_tab_lock", "locked": False})
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        state = until("locked Clear All baseline", lambda s: s["metadata_filters"]["format"] == "WAV")
+        wav_total = state["total_count"]
+        driver.command({"cmd": "set_tab_lock", "locked": True})
+        click("clear_all")
+        driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        until("Clear All switch away", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = state_ready()
+        record("locked-tab-clear-all-return", state)
+        assert state["metadata_filters"]["format"] == "WAV", "Clear All changed locked-tab saved filters"
+        assert state["total_count"] == wav_total, "Clear All changed locked-tab saved count"
     except Exception as exc:
         failure = repr(exc)
         raise
