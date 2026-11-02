@@ -26569,6 +26569,15 @@ static void CancelDockTitleGesture() {
     }
 }
 
+static void RestoreSearchResultsHome() {
+    if (g_dockTitleGesture.Owns("search-results")) CancelDockTitleGesture();
+    aura::ui::dock::RestoreSearchResultsHome(g_dockLayout, g_searchResultsDockPanel.floating);
+    g_searchResultsDockPanel.visible = true;
+    g_searchResultsDockPanel.wasDragging = false;
+    if (g_dockRestoreFloatingModule == "search-results") g_dockRestoreFloatingModule.clear();
+    ++g_dockGeometryRevision;
+}
+
 static bool UpdateFloatingPanelGeometry(
     AppState::PanelState& panel, const ImVec2& pos, const ImVec2& size) {
     return aura::ui::dock::UpdateFloatingDockPanelGeometry(
@@ -38131,6 +38140,7 @@ void RenderUI(AppState& state) {
                 ImGui::MenuItem(L(View_WaveformPanel), nullptr, &state.panelWaveform.visible);
                 ImGui::Separator();
                 if (ImGui::MenuItem(L(View_ResetLayout))) {
+                    RestoreSearchResultsHome();
                     state.panelSidebar = AppState::PanelState();
                     state.panelSidebar.dockedWidth = 250.0f;
                     state.panelFileInfo = AppState::PanelState();
@@ -41003,6 +41013,9 @@ void RenderUI(AppState& state) {
     if (rightDockSlotRequired) centerWidth -= rightDockColumnWidth + splitterWidth;
     // Ensure minimum center width
     if (centerWidth < 200.0f) centerWidth = 200.0f;
+    const ImVec2 resultsHomePos = ImGui::GetCursorScreenPos();
+    const aura::ui::dock::DockRect resultsHomeRect{
+        resultsHomePos.x, resultsHomePos.y, centerWidth, availHeight};
     auto renderResultsSurface = [&](float surfaceWidth, float surfaceHeight) {
     // Center list: results* tokens (always valid — synced by ApplyTheme)
     const auto& centerResultsTheme = ThemeColors::current();
@@ -46337,6 +46350,16 @@ void RenderUI(AppState& state) {
     };
     if (!g_searchResultsDockPanel.floating && !g_dockLayout.Find("search-results")) {
         renderResultsSurface(centerWidth, availHeight);
+    } else {
+        ImGui::Dummy(ImVec2(centerWidth, availHeight));
+        if (!g_dockTitleGesture.Owns("search-results")) {
+            const char* hint = L(Dock_ResultsHomeHint);
+            const ImVec2 textSize = ImGui::CalcTextSize(hint);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(resultsHomeRect.x + (resultsHomeRect.width - textSize.x) * .5f,
+                       resultsHomeRect.y + (resultsHomeRect.height - textSize.y) * .5f),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
+        }
     }
 
     // Right Column - File Info with title bar
@@ -51418,22 +51441,15 @@ void RenderUI(AppState& state) {
         (void)winSize;
         const ImVec2 pointer = ImGui::GetMousePos();
         const aura::ui::dock::DockSide rememberedSide = rememberedDockSideForModule(draggingId);
-        const aura::ui::dock::DockRect centerSurface{
-                mainWork.x + (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f),
-                dockContentTop,
-                std::max(1.0f, mainWork.width -
-                    (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
-                    (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f)),
-                std::max(1.0f, availHeight)
-        };
         const aura::ui::dock::DockCenterDropTarget centerDrop{
-            centerSurface,
+            resultsHomeRect,
             rememberedSide,
             true,
             rememberedSide == aura::ui::dock::DockSide::Top || rememberedSide == aura::ui::dock::DockSide::Bottom
                 ? std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
                 : rememberedDockExtentForModule(draggingId, rememberedSide),
-            std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight)
+            std::max(dockSavedHeight(draggingId), aura::ui::dock::kDockBandMinHeight),
+            std::strcmp(draggingId, "search-results") == 0 && g_dockTitleGesture.FromFloating()
         };
         const auto hit = aura::ui::dock::HitDockTarget(
             {pointer.x - 0.5f, pointer.y - 0.5f, 1.0f, 1.0f},
@@ -51494,14 +51510,18 @@ void RenderUI(AppState& state) {
             overlay->AddRect(
                 ImVec2(box.x, box.y), ImVec2(box.x + box.width, box.y + box.height),
                 IM_COL32(90, 170, 240, 220), 0.0f, 0, 1.5f);
-            const char* hint = hit.side == aura::ui::dock::DockSide::Left ? L(Dock_UxDropLeft) :
+            const bool resultsHome = hit.kind == aura::ui::dock::DockHitKind::ResultsHome;
+            const char* hint = resultsHome ? L(Dock_ResultsHomeDrop) :
+                hit.side == aura::ui::dock::DockSide::Left ? L(Dock_UxDropLeft) :
                 hit.side == aura::ui::dock::DockSide::Right ? L(Dock_UxDropRight) :
                 hit.side == aura::ui::dock::DockSide::Top ? L(Dock_UxDropTop) : L(Dock_UxDropBottom);
             const ImVec2 textSize = ImGui::CalcTextSize(hint);
             const ImVec2 at(box.x + (box.width - textSize.x) * .5f, box.y + (box.height - textSize.y) * .5f);
-            overlay->AddRectFilled(ImVec2(at.x - 10, at.y - 6),
-                ImVec2(at.x + textSize.x + 10, at.y + textSize.y + 6),
-                ImGui::GetColorU32(workspaceDockTitleSurface), 4.0f);
+            if (!resultsHome) {
+                overlay->AddRectFilled(ImVec2(at.x - 10, at.y - 6),
+                    ImVec2(at.x + textSize.x + 10, at.y + textSize.y + 6),
+                    ImGui::GetColorU32(workspaceDockTitleSurface), 4.0f);
+            }
             overlay->AddText(at, kTitleText, hint);
         }
         (void)g_dockDrag.Preview();
@@ -51590,6 +51610,8 @@ void RenderUI(AppState& state) {
             panel.floating = true;
         } else {
             g_dockDrag.CommitOnMouseUp();
+            if (commitHit.kind == aura::ui::dock::DockHitKind::ResultsHome)
+                RestoreSearchResultsHome();
         }
         ++g_dockGeometryRevision;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
