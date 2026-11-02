@@ -71,7 +71,7 @@ def test_about_shows_brand_and_cindy_artwork():
     assert "aura::ui::LoadPackagedAsset" in block
     assert "assets/icons/brand/harken@2x.png" in block
     assert "harken-search-menu-wordmark" in block
-    assert "assets/icons/contributors/cindy.png" in block
+    assert "assets/icons/brand/cindy.png" in block
 
 
 def test_about_uses_confirmed_brand_and_two_reading_pages():
@@ -99,12 +99,12 @@ def test_about_embeds_the_packaged_legal_documents():
 
 
 def test_contributor_and_brand_assets_exist_and_ship():
-    assert (ROOT / "assets/icons/contributors/cindy.png").is_file()
+    assert (ROOT / "assets/icons/brand/cindy.png").is_file()
     assert (ROOT / "assets/icons/brand/harken.png").is_file()
     assert (ROOT / "assets/logos/brand/harken-search-wordmark-white.png").is_file()
     assert (ROOT / "assets/logos/brand/harken-search-wordmark-black.png").is_file()
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-    assert "assets/icons/contributors" in cmake
+    assert "assets/icons/brand" in cmake
 
 
 def test_ledger_entries_complete_for_about():

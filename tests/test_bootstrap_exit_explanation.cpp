@@ -195,6 +195,8 @@ int main(int argc, char** argv) {
               "filesystem rejection names the file preparation stage");
         check(e.message.find(u8"\u8bf7\u5b8c\u5168\u9000\u51fa") == std::string::npos,
               "filesystem rejection no longer gives the misleading quit advice");
+        check(e.message.find(u8"不是文件被占用") == std::string::npos,
+              "a filesystem error code alone cannot exclude sharing conflicts");
     }
 
     if (g_failures == 0) std::printf("all bootstrap exit explanations pass\n");

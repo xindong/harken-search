@@ -30652,7 +30652,7 @@ void RenderUI(AppState& state) {
                 ImGui::Dummy(ImVec2(0.0f, 12.0f));
                 ImGui::Separator();
                 ImGui::Dummy(ImVec2(0.0f, 14.0f));
-                const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/contributors/cindy.png");
+                const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/brand/cindy.png");
                 if (cindyLogo.glId != 0 && cindyLogo.h > 0) {
                     ImGui::Image((ImTextureID)(intptr_t)cindyLogo.glId, ImVec2(96.0f, 96.0f));
                     ImGui::SameLine(0.0f, 18.0f);

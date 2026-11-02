@@ -89,15 +89,14 @@ BootstrapExitExplanation ExplainBootstrapExit(int exitCode) {
             exitCode);
         return explanation;
 
-    // Filesystem rejections are not "files in use": the old application has
-    // already exited by the time this fires.  Quitting again cannot help, so
-    // the honest message names the stage; the exact status is in the stage
-    // failure record (bootstrap-last-failure.txt) for support.
+    // The old application has exited, but this code covers several native
+    // failures. Name the stage without guessing or ruling out a cause; the
+    // exact status is in bootstrap-last-failure.txt for support.
     case BootstrapExitCode::FilesystemRejected:
         explanation.outcome = BootstrapExitOutcome::Retryable;
         explanation.message = WithCode(
-            u8"更新未能完成：更新器在准备文件阶段被安全拒绝，当前版本未被改动。"
-            u8"这不是文件被占用，无需重装。请把这个错误码发给我们。",
+            u8"更新未能完成：准备文件阶段遇到问题，当前版本未被改动。"
+            u8"请把这个错误码发给我们。",
             exitCode);
         return explanation;
 
