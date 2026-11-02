@@ -10023,13 +10023,6 @@ bool PumpOneAsyncSearchResult(AppState& state) {
                 appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
                 kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
                 BuildAsyncSearchResultApplicationEffects());
-            if (!appState.listTabs.empty() &&
-                appState.currentTab().explicitRefreshPending &&
-                appState.pendingSearchRequestId == 0 &&
-                appState.pendingFacetRequestId == 0) {
-                appState.syncToTab();
-                appState.currentTab().explicitRefreshPending = false;
-            }
         });
 }
 

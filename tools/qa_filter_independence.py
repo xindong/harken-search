@@ -77,12 +77,16 @@ def run(exe, root, output, mode):
         raw = runtime / ("frame-" + uuid.uuid4().hex + ".ppm")
         driver.command({"cmd": "capture_preview_frame", "path": str(raw)})
         deadline = time.monotonic() + 15
-        while not raw.is_file():
-            assert time.monotonic() < deadline, "native frame capture did not arrive"
-            time.sleep(.1)
-        with Image.open(raw) as captured:
-            image = captured.convert("RGB")
-        raw.unlink()
+        while True:
+            try:
+                with Image.open(raw) as captured:
+                    captured.load()  # The renderer publishes the path before the pixels finish writing.
+                    image = captured.convert("RGB")
+                raw.unlink()
+                break
+            except (FileNotFoundError, OSError, PermissionError):
+                assert time.monotonic() < deadline, "native frame capture did not finish"
+                time.sleep(.1)
         assert len(image.getcolors(image.width * image.height) or []) > 16, "native frame is blank"
         path = output / (name + ".png")
         image.save(path)
@@ -408,11 +412,17 @@ def run(exe, root, output, mode):
         click("refresh")
         state = until("locked-tab refresh", lambda s: s["metadata_filters"]["format"] == "" and
                       s["total_count"] == full_total and s["tabs"]["active_locked"])
+        assert not state["tabs"]["explicit_refresh_pending"], "locked tab stayed writable after Refresh settled"
         record("locked-tab-refresh", state)
         locked_index = state["tabs"]["active_index"]
-        new_tab = driver.command({"cmd": "new_tab"})
-        assert new_tab["ok"] and new_tab["tab_index"] != locked_index
-        until("switch to new tab", lambda s: s["tabs"]["active_index"] == new_tab["tab_index"])
+        if state["tabs"]["count"] > 1:
+            other_index = 0 if locked_index != 0 else 1
+            driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        else:
+            new_tab = driver.command({"cmd": "new_tab"})
+            assert new_tab["ok"] and new_tab["tab_index"] != locked_index
+            other_index = new_tab["tab_index"]
+        until("switch away from locked tab", lambda s: s["tabs"]["active_index"] == other_index)
         driver.command({"cmd": "activate_tab", "tab_index": locked_index})
         state = until("return to locked tab", lambda s: s["tabs"]["active_index"] == locked_index)
         record("locked-tab-return-after-refresh", state)

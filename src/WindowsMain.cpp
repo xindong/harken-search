@@ -5309,6 +5309,7 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_name\":\"" + jsonEscape(activeTab ? activeTab->name : std::string()) + "\",";
         result += "\"count\":" + std::to_string((int)state.listTabs.size()) + ",";
         result += "\"active_locked\":" + std::string((activeTab && activeTab->isLocked) ? "true" : "false") + ",";
+        result += "\"explicit_refresh_pending\":" + std::string((activeTab && activeTab->explicitRefreshPending) ? "true" : "false") + ",";
         result += "\"search_results_snapshot_valid\":" + std::string((activeTab && activeTab->searchResultsSnapshotValid) ? "true" : "false") + ",";
         result += "\"facets_snapshot_valid\":" + std::string((activeTab && activeTab->facetsSnapshotValid) ? "true" : "false") + ",";
         result += "\"cover_wall_snapshot_valid\":" + std::string((activeTab && activeTab->coverWallSnapshot.valid) ? "true" : "false") + "},";
