@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <cstdint>
 #include <vector>
 
 // -1 is the system default; -2 means the staged choice is no longer
@@ -15,6 +16,17 @@ int ResolveOutputDeviceSelection(const std::vector<Device>& devices, int index, 
         found = i;
     }
     return found;
+}
+
+// A staged choice owns its identity independently of refreshed combo rows.
+template<class Device>
+int ResolveOutputDeviceIdentity(const std::vector<Device>& devices, int index,
+                                const std::string& name, const std::vector<uint8_t>& identity) {
+    if (index < 0) return -1;
+    if (identity.empty()) return ResolveOutputDeviceSelection(devices,index,name);
+    for (int i=0;i<static_cast<int>(devices.size());++i)
+        if (devices[i].deviceIdBlob==identity) return i;
+    return -2;
 }
 
 struct OutputDeviceComboItem {

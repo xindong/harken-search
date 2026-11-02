@@ -1,11 +1,20 @@
 #include "PreferenceDraft.h"
 #include "SettingsCatalog.h"
 #include <cassert>
+#include <cstdio>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 #include <string>
 
 struct Preferences { int volume = 80; bool realtime = true; std::string device = "system"; int windowWidth = 900; };
 
 int main() {
+#ifdef _MSC_VER
+    _set_error_mode(_OUT_TO_STDERR);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
     using namespace harken::settings;
     g_currentLanguage = AppLanguage::Japanese;
     const auto volume = Search("  VOLUME  ", false);
@@ -17,6 +26,11 @@ int main() {
     assert(Search("this-does-not-exist", true).empty());
     assert(Search(u8"诊断", false).empty());
     assert(!Search(u8"诊断", true).empty());
+    const auto available = Search("theme", true, false, false);
+    assert(!available.empty());
+    assert(std::none_of(available.begin(), available.end(), [](auto e) { return e->id == "day" || e->id == "night"; }));
+    const auto visibleLufs = Search("LUFS", true, false, false);
+    assert(std::none_of(visibleLufs.begin(), visibleLufs.end(), [](auto e) { return e->id == "showLufs"; }));
     for (const auto& entry : Catalog()) {
         assert(!entry.id.empty() && !entry.zh.empty() && !entry.en.empty() && !entry.ja.empty());
         auto hits = Search(entry.zh, true);
@@ -47,4 +61,12 @@ int main() {
     edit.Value().realtime = false;
     edit.Begin(live);
     assert(edit.Value().realtime);
+    live.volume = 42;
+    edit.Begin(live);
+    edit.Value() = Preferences{};
+    edit.Value().volume = 42;
+    // Reset, then return one value to its opening value: keep the displayed edit.
+    if (edit.MergeInto(Preferences{}, true).volume != 42) {
+        std::fprintf(stderr, "reset discarded a subsequent edit\n"); return 1;
+    }
 }

@@ -31,7 +31,8 @@ public:
         for (const auto& field : fields_) if (!field.equal(baseline_, draft_)) ++count;
         return count;
     }
-    T MergeInto(const T& latest) const {
+    T MergeInto(const T& latest, bool replaceAll = false) const {
+        if (replaceAll) return draft_;
         T result = latest;
         for (const auto& field : fields_)
             if (!field.equal(baseline_, draft_)) field.copy(result, draft_);

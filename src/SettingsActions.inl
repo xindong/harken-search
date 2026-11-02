@@ -45,8 +45,12 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
         ImGui::TextWrapped("%s",L(SetUX_ResetPreferencesToDefaultsWhileKeepingTheInterfaceLanguageLibrariesAndAudioFilesAreKeptApplyTheChangesAfterwards));
         if(aura::ui::ActionButton(L(Set_ConfirmReset),ImVec2(0,0),aura::ui::ButtonVariant::Danger)){
             const auto language=draft.language;draft=AppSettings{};draft.language=language;editor.resetAll=true;
+            const auto preset=GetReadableSpectrogramPreset();
+            runtime.spectrum=true;runtime.fft=preset.fftSize;runtime.blend=preset.blend;runtime.split=preset.split;runtime.threads=0;
+            editor.deviceIdentity.clear();editor.deviceEdited=true;
             editor.action="reset-ready";
         }
+        su::Observe("reset-confirm");
     } else if(editor.action=="reset-ready") {
         ImGui::TextWrapped("%s",L(SetUX_DefaultsAreStagedCloseThisWindowThenApplyToSave));
     } else if(editor.action=="reset-size") {

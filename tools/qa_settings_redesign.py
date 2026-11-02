@@ -53,6 +53,11 @@ def run(args):
         command(cmd='settings_ui',action='key',key='Ctrl',down=False);settle()
         command(cmd='info_edit_input',action='text',text=value);settle()
     def check(name,**details):report['checks'].append({'case':name,**details});print(name,flush=True)
+    def number(id,value):
+        command(cmd='settings_ui',action='key',key='Ctrl',down=True);settle()
+        click(id)
+        command(cmd='settings_ui',action='key',key='Ctrl',down=False);settle()
+        command(cmd='info_edit_input',action='text',text=str(value));settle();key('Enter')
     def screenshot(name):
         from PIL import Image
         observed=settle();path=out/(name+'.png');capture(driver,path)
@@ -194,6 +199,28 @@ def run(args):
         assert state()['prompt'];click('discard');assert state()['tool']=='dictionary'
         screenshot('07-thesaurus');click('tool-close');assert state()['open'] and not state()['pending']
         check('specialty tool resolves pending changes and returns to settings')
+        query('day');assert not any(i['id'] in ('result-day','result-night') for i in state()['items'])
+        assert any(i['id']=='result-automatic' for i in state()['items'])
+        check('search omits unavailable schedule rows and retains its enable control')
+        click('nav-0');click('volume',.45);query('hotkey');click('result-hotkey')
+        if find('hotkey-record')['disabled']:click('hotkeyEnabled')
+        click('hotkey-record')
+        assert state()['recording'];click('nav-0');assert not state()['recording']
+        query('hotkey');click('result-hotkey');click('hotkey-record');assert state()['recording']
+        click('search');assert not state()['recording'];key('Escape');assert state()['prompt'];click('discard')
+        key('F9');settle();assert state()['open']
+        check('leaving hotkey recording by navigation or search keeps Escape usable')
+        click('nav-0');number('volume',21);
+        if state()['pending']:click('apply')
+        query('FFT');click('result-fft')
+        if find('fft-control')['disabled']:click('spectrumEnabled')
+        click('fft');click('option-1');click('apply');assert state()['live_fft']==1024
+        query('reset all');click('result-resetAll');click('resetAll');click('reset-confirm');click('tool-close')
+        query('volume');click('result-volume');number('volume',21)
+        assert abs(state()['draft_volume']-.21)<.001
+        click('apply');assert abs(state()['live_volume']-.21)<.001
+        assert state()['live_fft']==state()['default_fft']
+        check('reset applies subsequent baseline-valued edits and canonical runtime defaults')
         click('nav-0')
         for index in range(5):
             click('stock-'+str(index))
@@ -225,7 +252,11 @@ def run(args):
                 assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
                 report['exit_code']=win32process.GetExitCodeProcess(process);process.Close()
             except Exception:report['exit_error']=traceback.format_exc()
-        desktop.close();(out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+        try:desktop.close()
+        except Exception:report['exit_error']=traceback.format_exc()
+        (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+        if not report.get('error') and (report.get('exit_error') or report.get('exit_code')!=0):
+            raise RuntimeError('Native QA process did not exit cleanly; see report.json')
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float)

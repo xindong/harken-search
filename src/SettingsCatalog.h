@@ -106,14 +106,19 @@ inline std::string FoldAscii(std::string value) {
     for (char& c : value) if (static_cast<unsigned char>(c) < 128) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return value;
 }
-inline std::vector<const Entry*> Search(const std::string& query, bool diagnostics) {
+inline bool Available(const Entry& entry, bool diagnostics, bool schedule, bool lufs) {
+    return (diagnostics || entry.page != Page::Diagnostics) &&
+           (schedule || (entry.id != "day" && entry.id != "night")) &&
+           (lufs || entry.id != "showLufs");
+}
+inline std::vector<const Entry*> Search(const std::string& query, bool diagnostics, bool schedule = true, bool lufs = true) {
     std::istringstream stream(FoldAscii(query));
     std::vector<std::string> tokens;
     for (std::string token; stream >> token;) tokens.push_back(token);
     std::vector<const Entry*> results;
     if (tokens.empty()) return results;
     for (const auto& entry : Catalog()) {
-        if (!diagnostics && entry.page == Page::Diagnostics) continue;
+        if (!Available(entry, diagnostics, schedule, lufs)) continue;
         const auto haystack = FoldAscii(entry.zh + " " + entry.en + " " + entry.ja + " " + entry.keywords);
         if (std::all_of(tokens.begin(), tokens.end(), [&](const auto& token) { return haystack.find(token) != std::string::npos; })) results.push_back(&entry);
     }

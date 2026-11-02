@@ -6656,14 +6656,18 @@ bool AudioEngine::switchOutputDevice(int deviceIndex) {
                 m_engine = nullptr;
                 m_isInitialized = false;
                 m_outputDeviceIndex = -1;
+                m_outputDeviceIdBlob.clear();
                 m_outputDeviceName = "Default";
                 return false;
             }
             m_outputDeviceIndex = -1;
+            m_outputDeviceIdBlob.clear();
             m_outputDeviceName = "Default";
             m_isInitialized = true;
         } else {
             m_outputDeviceIndex = deviceIndex;
+            m_outputDeviceIdBlob = (deviceIndex >= 0 && deviceIndex < (int)m_cachedDevices.size())
+                ? m_cachedDevices[deviceIndex].deviceIdBlob : std::vector<uint8_t>{};
             m_outputDeviceName = (deviceIndex >= 0 && deviceIndex < (int)m_cachedDevices.size())
                 ? m_cachedDevices[deviceIndex].name : "Default";
             m_isInitialized = true;

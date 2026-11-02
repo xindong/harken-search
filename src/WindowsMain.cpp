@@ -4792,6 +4792,7 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
                 {"draft_monitor",editor.app.Value().monitorLayout},{"live_monitor",state.settings.monitorLayout},
                 {"draft_day",editor.runtime.Value().day},{"draft_night",editor.runtime.Value().night},
+                {"draft_fft",editor.runtime.Value().fft},{"live_fft",state.spectrogramFFTSize},{"default_fft",GetReadableSpectrogramPreset().fftSize},
                 {"schedule",(int)editor.app.Value().themeScheduleMode},{"tool",editor.action},{"recording",editor.recording},
                 {"error",su::SettingsEditor().error},{"imgui_errors",ImGui::GetCurrentContext()->ErrorCountCurrentFrame},
                 {"imgui_log",ImGui::GetCurrentContext()->DebugLogBuf.c_str()},

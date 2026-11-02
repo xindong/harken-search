@@ -3,11 +3,12 @@ if(id=="device") {
     const char* label=draft.audioOutputDeviceIndex<0?L(Set_SystemDefault):draft.audioOutputDeviceName.c_str();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
     if(ImGui::BeginCombo("##value",label)) {
-        if(ImGui::Selectable(L(Set_SystemDefault),draft.audioOutputDeviceIndex<0)){draft.audioOutputDeviceIndex=-1;draft.audioOutputDeviceName.clear();}
+        if(ImGui::Selectable(L(Set_SystemDefault),draft.audioOutputDeviceIndex<0)){draft.audioOutputDeviceIndex=-1;draft.audioOutputDeviceName.clear();editor.deviceIdentity.clear();editor.deviceEdited=true;}
         su::Observe("device-default");
         for(int i=0;i<(int)editor.devices.size();++i){
             const auto item=MakeOutputDeviceComboItem(i,editor.devices[i].name,editor.devices[i].isDefault,L(Set_OutputDeviceDefaultSuffix));
-            if(ImGui::Selectable(item.selectableId.c_str(),draft.audioOutputDeviceIndex==i)){draft.audioOutputDeviceIndex=i;draft.audioOutputDeviceName=editor.devices[i].name;}
+            const bool selected=draft.audioOutputDeviceIndex>=0 && (editor.deviceIdentity.empty()?draft.audioOutputDeviceIndex==i&&draft.audioOutputDeviceName==editor.devices[i].name:editor.deviceIdentity==editor.devices[i].deviceIdBlob);
+            if(ImGui::Selectable(item.selectableId.c_str(),selected)){draft.audioOutputDeviceIndex=i;draft.audioOutputDeviceName=editor.devices[i].name;editor.deviceIdentity=editor.devices[i].deviceIdBlob;editor.deviceEdited=true;}
             su::Observe(("device-option-"+std::to_string(i)).c_str());
         }
         if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
@@ -120,10 +121,11 @@ else if(id=="remember")ImGui::Checkbox("##value",&draft.rememberLastFolder);
 else if(id=="closeAction")combo(draft.closeButtonAction,{L(Set_CloseAsk),L(Set_CloseMinimize),L(Set_CloseDirect)});
 else if(id=="guided")ImGui::Checkbox("##value",&draft.showGuidedMode);
 else if(id=="confirm") {bool value=!draft.suppressConfirmDialogs;if(ImGui::Checkbox("##value",&value))draft.suppressConfirmDialogs=!value;}
-else if(id=="hotkeyEnabled")ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);
+else if(id=="hotkeyEnabled") {ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);if(!draft.enableShowManagerHotkey)editor.recording=false;}
 else if(id=="hotkey") {
     ImGui::BeginDisabled(!draft.enableShowManagerHotkey);
     if(aura::ui::ActionButton(editor.recording?L(Set_ListeningKeys):draft.showManagerHotkey.toString().c_str())){editor.recording=true;ImGui::ClearActiveID();}
+    su::Observe("hotkey-record");
     if(editor.recording){
         if(ImGui::IsKeyPressed(ImGuiKey_Escape))editor.recording=false;
         else for(int k=ImGuiKey_NamedKey_BEGIN;k<ImGuiKey_NamedKey_END;++k){auto key=(ImGuiKey)k;

@@ -87,8 +87,10 @@ struct Editor {
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
     std::vector<OutputDeviceInfo> devices;
-    void Reset(const AppState& state) { app.Begin(CaptureSettings(state)); runtime.Begin(CaptureRuntime(state)); error.clear(); recording=false; resetAll=false; }
-    size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+(resetAll ? 1 : 0); }
+    std::vector<uint8_t> deviceIdentity, baselineDeviceIdentity;
+    bool deviceEdited=false;
+    void Reset(const AppState& state) { app.Begin(CaptureSettings(state)); runtime.Begin(CaptureRuntime(state)); deviceIdentity=state.audioEngine.getCurrentOutputDeviceId(); baselineDeviceIdentity=deviceIdentity; deviceEdited=false; error.clear(); recording=false; resetAll=false; }
+    size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+(resetAll ? 1 : 0)+(deviceEdited&&deviceIdentity!=baselineDeviceIdentity ? 1 : 0); }
 };
 inline Editor& SettingsEditor() { static Editor editor; return editor; }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION

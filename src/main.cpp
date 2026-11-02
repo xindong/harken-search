@@ -135,6 +135,7 @@
 #include "OutputDeviceComboItem.h"
 #include "AppState.h"
 #include "SettingsDialogState.h"
+#include "SettingsFileWriter.h"
 #include "SettingsMigration.h"
 #include "TagCloudContext.h"
 #include "frontend/AppStateAuditionFrontendAdapter.h"
@@ -607,16 +608,7 @@ static std::unordered_map<std::string, std::string> LoadKeyValueFile(const std::
 }
 
 static bool SaveAppSettingsKeyValueFile(const std::string& pathUtf8, const std::vector<std::pair<std::string, std::string>>& items) {
-    Platform::FileSystem::StreamWriter writer;
-    if (!writer.Open(pathUtf8, false, true)) return false;
-    bool written = writer.Write("# Aris settings (auto-generated)\n");
-    for (const auto& it : items) {
-        written = writer.Write(it.first) && written;
-        written = writer.Write("=") && written;
-        written = writer.Write(it.second) && written;
-        written = writer.Write("\n") && written;
-    }
-    return written;
+    return harken::settings::SaveKeyValueFile(pathUtf8,items);
 }
 
 // Helper: 在 modal popup 内部调用，按 ESC 时关闭当前弹窗（文本输入激活时跳过）

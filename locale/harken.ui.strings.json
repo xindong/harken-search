@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id":"SetUX_OutputRestoreFailed","type":"ui","zh":"未能恢复原输出设备，请重新选择。修改仍保留。","en":"Could not restore the previous output device. Select a device again; your changes are kept.","ja":"元の出力デバイスを復元できません。選択し直してください。変更は保持されています。"},
     {"id":"SetUX_Theme","type":"ui","zh":"界面主题","en":"Interface theme","ja":"画面テーマ"},
     {"id":"SetUX_Day","type":"ui","zh":"白天主题 · 08:00–16:00","en":"Day theme · 08:00–16:00","ja":"昼のテーマ · 08:00–16:00"},
     {"id":"SetUX_Night","type":"ui","zh":"黑夜主题 · 16:00–08:00","en":"Night theme · 16:00–08:00","ja":"夜のテーマ · 16:00–08:00"},

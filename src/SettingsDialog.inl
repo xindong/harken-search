@@ -11,28 +11,31 @@
         if (!editor.ChangedCount()) return true;
         const auto oldSettings=su::CaptureSettings(state);
         const auto oldRuntime=su::CaptureRuntime(state);
-        auto next=editor.app.MergeInto(editor.resetAll ? AppSettings{} : oldSettings);
-        if (editor.resetAll) next.language=draft.language;
-        const auto nextRuntime=editor.runtime.MergeInto(oldRuntime);
+        auto next=editor.app.MergeInto(oldSettings,editor.resetAll);
+        const auto nextRuntime=editor.runtime.MergeInto(oldRuntime,editor.resetAll);
         // Device identity is checked again at Apply, since a USB device can
         // disappear or reorder while the settings dialog is open.
-        if (next.audioOutputDeviceIndex!=oldSettings.audioOutputDeviceIndex || next.audioOutputDeviceName!=oldSettings.audioOutputDeviceName) {
-            if (next.audioOutputDeviceIndex>=0) {
-                auto devices=state.audioEngine.enumerateOutputDevices();
-                int resolved=ResolveOutputDeviceSelection(devices,next.audioOutputDeviceIndex,next.audioOutputDeviceName);
-                if(next.audioOutputDeviceIndex<(int)editor.devices.size() && !editor.devices[next.audioOutputDeviceIndex].deviceIdBlob.empty()) {
-                    const auto& identity=editor.devices[next.audioOutputDeviceIndex].deviceIdBlob;
-                    const auto found=std::find_if(devices.begin(),devices.end(),[&](const auto& device){return device.deviceIdBlob==identity;});
-                    resolved=found==devices.end()?-2:static_cast<int>(found-devices.begin());
-                }
-                if (resolved<0) { editor.error=L(SetUX_OutputDevicesChangedChooseADeviceAgain); editor.devices=std::move(devices); return false; }
-                next.audioOutputDeviceIndex=resolved;
-            }
-            if (!state.audioEngine.switchOutputDevice(next.audioOutputDeviceIndex)) {
-                editor.error=L(SetUX_CouldNotSwitchOutputDeviceYourChangesAreKept); return false;
+        const auto previousDeviceId=state.audioEngine.getCurrentOutputDeviceId();
+        const int previousDeviceIndex=state.audioEngine.getCurrentOutputDeviceIndex();
+        const auto previousDeviceName=state.audioEngine.getCurrentOutputDeviceName();
+        auto restoreOutput=[&]() {
+            const int index=ResolveOutputDeviceIdentity(editor.devices,previousDeviceIndex,previousDeviceName,previousDeviceId);
+            const bool ok=index>=-1 && state.audioEngine.switchOutputDevice(index) && state.audioEngine.getCurrentOutputDeviceIndex()==index;
+            state.settings.audioOutputDeviceIndex=state.audioEngine.getCurrentOutputDeviceIndex();
+            state.settings.audioOutputDeviceName=state.settings.audioOutputDeviceIndex<0?std::string{}:state.audioEngine.getCurrentOutputDeviceName();
+            return ok;
+        };
+        const bool deviceChanged=editor.deviceEdited || next.audioOutputDeviceIndex!=oldSettings.audioOutputDeviceIndex || next.audioOutputDeviceName!=oldSettings.audioOutputDeviceName;
+        if (deviceChanged) {
+            editor.devices=state.audioEngine.enumerateOutputDevices();
+            const int resolved=ResolveOutputDeviceIdentity(editor.devices,next.audioOutputDeviceIndex,next.audioOutputDeviceName,editor.deviceIdentity);
+            if (resolved<-1) { editor.error=L(SetUX_OutputDevicesChangedChooseADeviceAgain); return false; }
+            next.audioOutputDeviceIndex=resolved;
+            if (!state.audioEngine.switchOutputDevice(resolved) || state.audioEngine.getCurrentOutputDeviceIndex()!=resolved) {
+                editor.error=restoreOutput()?L(SetUX_CouldNotSwitchOutputDeviceYourChangesAreKept):L(SetUX_OutputRestoreFailed);
+                return false;
             }
         }
-        const bool deviceChanged=next.audioOutputDeviceIndex!=oldSettings.audioOutputDeviceIndex || next.audioOutputDeviceName!=oldSettings.audioOutputDeviceName;
         const auto previousDay=schedule::Palette(schedule::Period::Day);
         const auto previousNight=schedule::Palette(schedule::Period::Night);
         bool dayWritten=false,nightWritten=false;
@@ -64,9 +67,10 @@
             state.settings=oldSettings; state.settings.themeScheduleMode=schedule::Mode::Off;
             schedule::SetMode(state,oldSettings.themeScheduleMode);
             su::WriteRuntime(state,oldRuntime);
-            if (deviceChanged) state.audioEngine.switchOutputDevice(oldSettings.audioOutputDeviceIndex);
+            const bool outputRestored=!deviceChanged || restoreOutput();
             editor.error=restored ? L(SetUX_SaveFailedChangesAreKeptCheckTheSettingsFolderAndRetry)
                 : L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder);
+            if (!outputRestored) editor.error += std::string(" ")+L(SetUX_OutputRestoreFailed);
             return false;
         }
         g_currentLanguage=state.settings.language;
@@ -187,6 +191,7 @@
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(contentW-52);
         ImGui::InputTextWithHint("##settings-search",L(SetUX_SearchSettingsCtrlK),editor.query,sizeof(editor.query)); su::Observe("search");
+        if(ImGui::IsItemActive())editor.recording=false;
         ImGui::SameLine();
         // Borderless close glyph, including hovered and pressed states.
         const auto xOrigin=ImGui::GetCursorScreenPos();
@@ -195,6 +200,7 @@
         const float inset=xSize*.33f; const ImU32 xColor=ImGui::GetColorU32(ImGui::IsItemHovered()?ImGuiCol_Text:ImGuiCol_TextDisabled);
         ImGui::GetWindowDrawList()->AddLine(ImVec2(xOrigin.x+inset,xOrigin.y+inset),ImVec2(xOrigin.x+xSize-inset,xOrigin.y+xSize-inset),xColor,1.7f);
         ImGui::GetWindowDrawList()->AddLine(ImVec2(xOrigin.x+xSize-inset,xOrigin.y+inset),ImVec2(xOrigin.x+inset,xOrigin.y+xSize-inset),xColor,1.7f);
+        if (editor.page!=su::Page::Interaction || editor.query[0] || !draft.enableShowManagerHotkey) editor.recording=false;
         if (!editor.recording && !editor.hadChildPopup && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetCurrentContext()->OpenPopupStack.Size==ImGui::GetCurrentContext()->BeginPopupStack.Size && ImGui::IsKeyPressed(ImGuiKey_Escape)) requestClose();
         ImGui::SetCursorPos(ImVec2(contentX,headerH));
         // The modal already paints this surface. Painting its translucent
@@ -227,8 +233,7 @@
         };
         auto drawEntry=[&](const su::Entry& entry){
             const auto& id=entry.id;
-            if (id=="showLufs" && !kEnableLufsUiAndDetection) return;
-            if ((id=="day" || id=="night") && draft.themeScheduleMode==schedule::Mode::Off) return;
+            if (!su::Available(entry,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection)) return;
             const float rowY=ImGui::GetCursorPosY(), rowX=ImGui::GetCursorPosX();
             ImGui::PushID(id.c_str());
             if(editor.focusId==id){ImGui::SetScrollHereY(.25f);editor.focusId.clear();}
@@ -253,7 +258,7 @@
         if(searching){
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,10));
             ImGui::TextDisabled("%s",L(SetUX_SEARCHRESULTS));
-            const auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0);
+            const auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection);
             if(results.empty()) ImGui::TextWrapped("%s",L(SetUX_NoSettingsFoundTryVolumeFontOrShortcut));
             for(const auto* entry:results){
                 ImGui::PushID(entry->id.c_str());
