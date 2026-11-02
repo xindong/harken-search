@@ -49,6 +49,10 @@ int main() {
     }
 
     AppSettings settings;
+    if (settings.themeScheduleMode != harken::theme_schedule::Mode::Off) {
+        std::printf("FAIL: day/night theme mode should be off by default\n");
+        return 1;
+    }
     if (settings.autoReconcileOnStartup) {
         std::printf("FAIL: startup reconcile should be opt-in by default\n");
         return 1;

@@ -109,10 +109,7 @@ bool RenderSettings(AppState& state) {
 #endif
     bool automatic = state.settings.themeScheduleMode == Mode::Automatic;
     if (aura::ui::Checkbox(L(ThemeSchedule_Automatic), &automatic)) {
-        // Turning off keeps the displayed palette stable until an ordinary
-        // theme is selected. Existing saved fixed modes stay compatible.
-        SetMode(state, automatic ? Mode::Automatic
-            : (CurrentPeriod() == Period::Day ? Mode::FixedDay : Mode::FixedNight));
+        SetMode(state, automatic ? Mode::Automatic : Mode::Off);
 #ifdef _WIN32
         SaveAppSettings(state);
 #endif

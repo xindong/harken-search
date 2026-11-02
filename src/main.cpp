@@ -6359,7 +6359,11 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterWidth", std::to_string(state.settings.meterWidth)});
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
-    const auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    if (const auto manual = harken::theme_schedule::ManualAppearanceForSettings(state)) {
+        savedAppearance.theme = manual->theme;
+        savedAppearance.useCustomColors = manual->useCustomColors;
+    }
     items.push_back({"theme", std::to_string((int)savedAppearance.theme)});
     items.push_back({"themeScheduleMode", std::to_string((int)state.settings.themeScheduleMode)});
     items.push_back({"language", std::to_string((int)state.settings.language)});

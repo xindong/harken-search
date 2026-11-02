@@ -865,7 +865,7 @@ struct AppSettings {
     float meterWidth = 68.0f;  // Loudness meter width (px); user-draggable, clamp [40, 300]
     MeterChannelLayout meterChannelLayout = MeterChannelLayout::SMPTE;  // Channel naming preset for N>2
     AppTheme theme = AppTheme::Dark;
-    harken::theme_schedule::Mode themeScheduleMode = harken::theme_schedule::Mode::Automatic;
+    harken::theme_schedule::Mode themeScheduleMode = harken::theme_schedule::Mode::Off;
     AppLanguage language = AppLanguage::Chinese;
 
     // Custom colors (legacy simple custom)
