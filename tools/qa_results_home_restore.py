@@ -37,6 +37,12 @@ def run(args):
     def cmd(**payload):
         return driver.command(payload)
 
+    def verified_identity():
+        identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
+        assert identity['pid'] == pid and Path(identity['exe_path']).resolve() == exe, identity
+        assert Path(identity['isolation_root']).resolve() == root, identity
+        return identity
+
     def settled(predicate=lambda s: True):
         first = cmd(cmd='dock_state')
         deadline = time.monotonic() + 12
@@ -165,9 +171,7 @@ def run(args):
 
     try:
         process, pid = desktop.start(exe)
-        identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
-        assert identity['pid'] == pid and Path(identity['exe_path']).resolve() == exe, identity
-        assert Path(identity['isolation_root']).resolve() == root, identity
+        identity = verified_identity()
         report['identity'] = identity
         time.sleep(2)
         wait_state(driver, lambda s: s['main_ui_ready'], 'main UI', timeout=90)
@@ -261,15 +265,14 @@ def run(args):
             record('playing-returned', returned)
             cmd(cmd='pause')
         if args.restart:
+            verified_identity()
             cmd(cmd='info_edit_input', action='exit')
             assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
             assert win32process.GetExitCodeProcess(process) == 0
             process.Close()
             process = None
             process, pid = desktop.start(exe)
-            identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
-            assert identity['pid'] == pid and Path(identity['exe_path']).resolve() == exe, identity
-            assert Path(identity['isolation_root']).resolve() == root, identity
+            identity = verified_identity()
             report['restart_identity'] = identity
             wait_state(driver, lambda s: s['main_ui_ready'] and not s['db_switch_in_progress'], 'Restart ready', timeout=90)
             hwnd = identity['hwnd']
@@ -293,6 +296,7 @@ def run(args):
 
         def stop_process():
             if win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
+                verified_identity()
                 cmd(cmd='info_edit_input', action='exit')
                 assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0, 'QA process did not exit'
             report['process_exit_code'] = win32process.GetExitCodeProcess(process)
