@@ -17,6 +17,7 @@ import uuid
 
 from qa_required_library_setup import PrivateDesktop, capture
 from qa_scan_dialog_simple import Smoke, inside, make_wavs, path_key, require, save_json, sha256, utc_now
+from qa_scan_speed import contains_root_literal, ensure_root_idle
 from qa_transport_themes import Driver
 
 
@@ -76,6 +77,7 @@ def run(args):
     exe, root, out = args.exe.resolve(), args.isolation_root.resolve(), args.output.resolve()
     require(exe.is_file() and inside(exe, CARD_ROOT) and inside(root, CARD_ROOT)
             and inside(out, CARD_ROOT), '包、隔离目录和输出必须属于本卡 QA 目录')
+    require(contains_root_literal(exe, root), '测试包未编入指定隔离目录，拒绝启动')
     require(not out.exists(), '输出目录已存在，拒绝覆盖旧证据')
     runtime = root / 'profile/runtime'
     require(not (runtime / 'qa_cmd.json').exists()
@@ -99,6 +101,7 @@ def run(args):
         handle.flush()
     try:
         require(not (runtime / 'qa_cmd.json').exists(), '加锁后发现未处理的 QA 命令')
+        ensure_root_idle(exe, root)
         require(not running_card_packages(root), '本卡 QA 包仍有运行中的进程，拒绝共用隔离目录')
         driver = Driver(runtime, out)
         desktop = PrivateDesktop()
@@ -209,7 +212,10 @@ def run(args):
                 process.Close()
             if desktop is not None:
                 desktop.close()
-            if process_exited and (not failure_fixture_installed or report.get('failure_fixture_removed')):
+            pending_command = runtime / 'qa_cmd.json'
+            if pending_command.exists():
+                report.update(status='failed', pending_qa_command=str(pending_command))
+            if process_exited and (not failure_fixture_installed or report.get('failure_fixture_removed')) and not pending_command.exists():
                 require(os.path.samestat(lock_identity, lock.stat(follow_symlinks=False))
                         and lock.read_text(encoding='utf-8') == owner, '锁归属变化，拒绝清理')
                 lock.unlink()

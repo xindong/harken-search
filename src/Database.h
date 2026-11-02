@@ -227,19 +227,33 @@ struct ScanStats {
             errorMessageCounts.push_back(count);
             return;
         }
-        if (HarkenSearch::ClassifyScanFailure(message) != HarkenSearch::ScanFailureCategory::Save)
+        const auto priority = [](const std::string& detail) {
+            if (detail.find("Scan_NetworkLibraryUnreachable") != std::string::npos) return 3;
+            if (detail.rfind("Database write failed during scan:", 0) == 0) return 2;
+            if (HarkenSearch::ClassifyScanFailure(detail) == HarkenSearch::ScanFailureCategory::Save)
+                return 1;
+            return 0;
+        };
+        const int incomingPriority = priority(message);
+        if (incomingPriority == 0)
             return;
-        size_t replacement = errorMessages.size();
-        for (size_t i = 0; i < errorMessages.size(); ++i) {
-            if (HarkenSearch::ClassifyScanFailure(errorMessages[i]) != HarkenSearch::ScanFailureCategory::Save)
-                replacement = i;
+        size_t networkDetails = 0;
+        size_t writeCauses = 0;
+        for (const auto& detail : errorMessages) {
+            networkDetails += priority(detail) == 3;
+            writeCauses += priority(detail) == 2;
         }
-        if (replacement == errorMessages.size()) {
-            if (count > 0) replacement = errorMessages.size() - 1;
-            else {
-                for (size_t i = 0; i < errorMessageCounts.size(); ++i) {
-                    if (errorMessageCounts[i] <= 1) replacement = i;
-                }
+        size_t replacement = errorMessages.size();
+        int replacementPriority = incomingPriority + 1;
+        for (size_t i = 0; i < errorMessages.size(); ++i) {
+            const int currentPriority = priority(errorMessages[i]);
+            // The result view reads these signals from the bounded detail list.
+            if ((currentPriority == 3 && networkDetails == 1) ||
+                (currentPriority == 2 && writeCauses == 1))
+                continue;
+            if (currentPriority <= incomingPriority && currentPriority < replacementPriority) {
+                replacement = i;
+                replacementPriority = currentPriority;
             }
         }
         if (replacement < errorMessages.size()) {

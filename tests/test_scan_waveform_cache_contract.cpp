@@ -2961,6 +2961,29 @@ static int testScanStatsKeepCategoriesWhenDetailsAreCapped() {
     }
     check(directWriteCauseVisible && direct.errorMessages.size() == 32 && direct.errors == 532,
           "late grouped write cause survives direct insertion at the detail cap", failures);
+    ScanStats network;
+    for (int i = 0; i < 31; ++i) network.addError("No audio samples: X:/empty.wav");
+    network.addError("Scan_NetworkLibraryUnreachable");
+    network.addError("Database write failed during scan: forced failure", 500);
+    bool networkVisible = false;
+    bool networkWriteVisible = false;
+    for (size_t i = 0; i < network.errorMessages.size(); ++i) {
+        networkVisible |= network.errorMessages[i] == "Scan_NetworkLibraryUnreachable";
+        networkWriteVisible |= network.errorMessages[i].find("Database write failed during scan") != std::string::npos;
+    }
+    check(networkVisible && networkWriteVisible && network.errorMessages.size() == 32 &&
+          network.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
+          "late write failure keeps the network signal at the detail cap", failures);
+    ScanStats allSave;
+    for (int i = 0; i < 32; ++i) allSave.addError("Failed to seed scan target");
+    allSave.addError("Database write failed during scan: forced failure", 500);
+    allSave.addError("Scan aborted after database write failure; queued files were not imported.", 400);
+    bool specificCauseVisible = false;
+    for (size_t i = 0; i < allSave.errorMessages.size(); ++i)
+        specificCauseVisible |= allSave.errorMessages[i].find("Database write failed during scan") != std::string::npos &&
+                                allSave.errorMessageCounts[i] == 500;
+    check(specificCauseVisible && allSave.errorMessages.size() == 32 && allSave.errors == 932,
+          "generic save failures cannot displace a specific write cause", failures);
     return failures;
 }
 
