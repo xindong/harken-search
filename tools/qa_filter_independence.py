@@ -36,7 +36,7 @@ def all_results(driver):
 def run(exe, root, output, mode):
     import win32con
     import win32gui
-    from PIL import ImageGrab
+    from PIL import Image
 
     exe, root, output = exe.resolve(), root.resolve(), output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -74,9 +74,16 @@ def run(exe, root, output, mode):
         raise TimeoutError("native query did not settle")
 
     def screenshot(name):
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-        image = ImageGrab.grab(window=hwnd)
-        assert len(image.getcolors(image.width * image.height) or []) > 16
+        raw = runtime / ("frame-" + uuid.uuid4().hex + ".ppm")
+        driver.command({"cmd": "capture_preview_frame", "path": str(raw)})
+        deadline = time.monotonic() + 15
+        while not raw.is_file():
+            assert time.monotonic() < deadline, "native frame capture did not arrive"
+            time.sleep(.1)
+        with Image.open(raw) as captured:
+            image = captured.convert("RGB")
+        raw.unlink()
+        assert len(image.getcolors(image.width * image.height) or []) > 16, "native frame is blank"
         path = output / (name + ".png")
         image.save(path)
         return str(path)
@@ -162,7 +169,7 @@ def run(exe, root, output, mode):
             assert time.monotonic() < deadline, "ActualLibrary baseline did not settle"
             time.sleep(.2)
         record("actual-library-before", state)
-        with ImageGrab.grab(window=hwnd) as visible_window:
+        with Image.open(output / "actual-library-before.png") as visible_window:
             visible_width = visible_window.width
         deadline = time.monotonic() + 20
         while state["window_width"] != visible_width:
@@ -392,6 +399,26 @@ def run(exe, root, output, mode):
                       not s["folder_filter"]["active"] and s["tabs"]["active_name"] == "全部文件" and
                       s["total_count"] == full_total)
         record("repeat-manual-refresh", state)
+
+        # A locked tab still needs its saved filters to match the refreshed list
+        # when the user switches away and returns.
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        until("locked-tab filter baseline", lambda s: s["metadata_filters"]["format"] == "WAV")
+        driver.command({"cmd": "set_tab_lock", "locked": True})
+        click("refresh")
+        state = until("locked-tab refresh", lambda s: s["metadata_filters"]["format"] == "" and
+                      s["total_count"] == full_total and s["tabs"]["active_locked"])
+        record("locked-tab-refresh", state)
+        locked_index = state["tabs"]["active_index"]
+        new_tab = driver.command({"cmd": "new_tab"})
+        assert new_tab["ok"] and new_tab["tab_index"] != locked_index
+        until("switch to new tab", lambda s: s["tabs"]["active_index"] == new_tab["tab_index"])
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = until("return to locked tab", lambda s: s["tabs"]["active_index"] == locked_index)
+        record("locked-tab-return-after-refresh", state)
+        assert state["tabs"]["active_locked"], "manual refresh removed the tab lock"
+        assert state["metadata_filters"]["format"] == "", "locked tab restored stale filters after Refresh"
+        assert state["total_count"] == full_total, "locked tab did not keep the refreshed full list"
     except Exception as exc:
         failure = repr(exc)
         raise

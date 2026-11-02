@@ -10023,6 +10023,13 @@ bool PumpOneAsyncSearchResult(AppState& state) {
                 appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
                 kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
                 BuildAsyncSearchResultApplicationEffects());
+            if (!appState.listTabs.empty() &&
+                appState.currentTab().explicitRefreshPending &&
+                appState.pendingSearchRequestId == 0 &&
+                appState.pendingFacetRequestId == 0) {
+                appState.syncToTab();
+                appState.currentTab().explicitRefreshPending = false;
+            }
         });
 }
 
@@ -14533,6 +14540,9 @@ static std::string GetRandomSamplingStatus(const AppState& state) {
 static void ClearAllFiltersForShowAll(AppState& state) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
+    if (!state.listTabs.empty() && state.currentTab().isLocked) {
+        state.currentTab().explicitRefreshPending = true;
+    }
     state.searchBuffer[0] = '\0';
     if (state.viewMode == ViewMode::Database) {
         state.activeSmartCollection = SmartCollection::None;

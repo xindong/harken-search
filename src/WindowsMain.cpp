@@ -5308,6 +5308,7 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_id\":" + std::to_string(activeTab ? activeTab->id : -1) + ",";
         result += "\"active_name\":\"" + jsonEscape(activeTab ? activeTab->name : std::string()) + "\",";
         result += "\"count\":" + std::to_string((int)state.listTabs.size()) + ",";
+        result += "\"active_locked\":" + std::string((activeTab && activeTab->isLocked) ? "true" : "false") + ",";
         result += "\"search_results_snapshot_valid\":" + std::string((activeTab && activeTab->searchResultsSnapshotValid) ? "true" : "false") + ",";
         result += "\"facets_snapshot_valid\":" + std::string((activeTab && activeTab->facetsSnapshotValid) ? "true" : "false") + ",";
         result += "\"cover_wall_snapshot_valid\":" + std::string((activeTab && activeTab->coverWallSnapshot.valid) ? "true" : "false") + "},";
@@ -5491,6 +5492,21 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"ready_to_work_cover_first_screen_pending\":" + std::string(readyToWork.coverFirstScreenPending ? "true" : "false") + ",";
         result += "\"ready_to_work_main_wave_pending\":" + std::string(readyToWork.mainWavePending ? "true" : "false");
         result += "}";
+
+    } else if (cmd == "set_tab_lock") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            state.activeTabIndex < 0 || state.activeTabIndex >= (int)state.listTabs.size()) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else {
+            const bool locked = getBool(raw, "locked", true);
+            state.listTabs[(size_t)state.activeTabIndex].isLocked = locked;
+            result = "{\"ok\":true,\"cmd\":\"set_tab_lock\",\"locked\":" +
+                std::string(locked ? "true" : "false") + "}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "new_tab") {
         int newIdx = state.createAndActivateNewDatabaseTab(-1.0);
