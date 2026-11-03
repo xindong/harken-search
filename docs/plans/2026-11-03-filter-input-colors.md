@@ -46,6 +46,12 @@
 - 新 head 的复审摘要随后指出浮动面板测试可能在程序关闭超时或异常退出时仍报成功。现只在两项界面检查通过、程序正常退出且退出码为 0 时写 pass；超时强制退出或异常码写 incomplete 并让命令失败。v17 原包重新完成遮挡误点与层级两项操作，程序退出码均为 0、无超时，结果已写在 final-v3-overlap/result.json 和 final-v3-zorder/result.json。
 - 随后复审摘要再次指出主验收脚本遇到中断时可能漏记失败：原脚本只捕获 Exception，KeyboardInterrupt 等中断不在其中，虽停止执行剩余检查，最终仍可能凭正常退出码写 pass。现把中断也记录为失败后原样抛出；同一 v17 实际包再次完成 31 项操作、退出码 0，记录在 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence30/result.json。产品代码和程序包字节没有变化。
 
+## 最新 QA 整合与验收继承（2026-11-03）
+
+- 合入前发现 origin/qa/current 已更新到 7b53610fc77123aa6f97352a354dfb128422a930；这是另一张更新器卡的改动。本卡在独立目录接入后，仅 tools/run_public_checks.py 的测试清单发生文本冲突，保留两张卡各自的测试项；未改本卡筛选产品代码。
+- 基于整合源码重建隔离 Release 实际包 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v18/HarkenSearch.exe，SHA-256 为 7d5a532990c86df813da1b17aaa93b2cb030c8d595398bb02b40560580ebb92e。D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence31/result.json 记录 31 项实际包操作通过、退出码 0；final-v18-overlap/result.json 与 final-v18-zorder/result.json 均为 pass、程序退出码 0、无超时。
+- 将 v17 与 v18 的艺术家、专辑、分类展开和已选坏标签专辑四张真实截图在筛选区域 (0,40)-(850,650) 逐像素比较，尺寸相同且该区域完全一致。用户已确认的本卡界面没有改变，故按 Cuevi 简化流程保留 v17 的前端确认；v18 的整合结果另行核验通过。公开检查 310 passed、1 skipped，C++ 名单模型 CTest 与定向 Python 11 项通过。
+
 ## 需求与范围
 
 用户先要求左侧筛选器的「艺术家」「专辑」「分类」三个输入框与相邻控件协调；随后追加三个字段的列表交互。三个框的位置、尺寸、间距、标签、主动刷新重置和已保存主题设置保持原样。配色只调整背景、边框、输入文字、提示文字及已有悬停、聚焦状态。
