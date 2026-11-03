@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse,hashlib,json,time,traceback
 from PIL import Image
 from qa_required_library_setup import PrivateDesktop,capture,wait_state
-from qa_transport_themes import Driver
+from qa_fresh_result_driver import FreshResultDriver as Driver
 
 def require_saved_palette(profile,period):
     path=profile/('theme_schedule_'+period+'.json')
@@ -147,6 +147,28 @@ def run(args):
             return actual
         schedule(1140);open_settings()
         if schedule()['mode']==0:click('automatic');click('apply')
+        if args.presets_only:
+            original_files=snapshot_files();original_colors=json.loads(original_files['theme_schedule_night.json'])['colors']
+            original_hex=''.join(f'{round(v*255):02X}' for v in original_colors['mainWindowBG'])
+            for index in range(5):
+                choose_night(index)
+                if state()['pending']:click('apply')
+                baseline=snapshot_files();expected=schedule()['night_bg']
+                click('night-editor');assert schedule()['editor_period']==1 and schedule()['active_bg']==expected
+                editor_item('mainWindowBG');editor_shot('preset-editor-'+str(index))
+                button('取消修改');settle()
+                assert snapshot_files()==baseline and schedule()['active_bg']==expected
+                assert snapshot_files()['theme_schedule_day.json']==original_files['theme_schedule_day.json']
+                check('night preset '+str(index)+' opens its own editor and cancels without saving')
+                open_settings()
+            open_editor();pick(original_hex,'restore-custom');button('保存配色');settle()
+            baseline=snapshot_files();schedule(540);open_editor();pick('705030FF','daytime-edit-night')
+            assert schedule()['period']=='day' and schedule()['editor_period']==1
+            button('取消修改');settle()
+            assert schedule()['active_bg']==schedule()['day_bg'] and snapshot_files()==baseline
+            check('editing night during the day cancels back to the active day palette without changing either file')
+            if state()['open']:click('done')
+            schedule(-1);stop();report['passed']=True;return
         original=schedule();original_files=snapshot_files();manual_theme=state()['draft_theme']
         assert original_files.get('theme_schedule_day.json') and original_files.get('theme_schedule_night.json')
         shot('01-night-entry');open_editor();editor_shot('02-editor-open')
@@ -223,4 +245,4 @@ def run(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--exe',type=Path,required=True);p.add_argument('--isolation-root',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--layout-only',action='store_true');run(p.parse_args())
+    p.add_argument('--layout-only',action='store_true');p.add_argument('--presets-only',action='store_true');run(p.parse_args())

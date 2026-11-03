@@ -13,3 +13,5 @@
 新增编辑器观察信息只在 AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION 构建中编译，只读返回已渲染控件、取色器和窗口边界，不执行编辑动作。
 
 本机证据位于 D:/Harken-QA/TASK-20261103-SETCHK-006/。native-entry-before 为旧包缺失入口的失败证据；native-editor-full 首轮脚本Escape连同编辑器关闭导致断言失败，改为实际点击编辑器空白处关闭取色器后，native-editor-full-r2 完整通过。失败记录保留，不当作产品已通过。用户审核前不合QA。
+
+完整运行16项通过；补充五种夜间预设及白天编辑夜间后取消共6项通过，见 native-editor-presets-r3/report.json。两次早期补测在诊断结果读取中超时，失败记录保留。Windows 文件实验确认读旧结果文件会阻止原子替换；测试端 FreshResultDriver 在发出下一条命令前把上一结果移入本次输出目录，避免轮询旧文件阻挡写入，不改变共享产品诊断实现。对应测试 tools/test_qa_fresh_result_driver.py 验证发命令前旧结果已移开且字节保留。补测使用此驱动后完成，不能据此声称其他所有诊断超时都已解决。
