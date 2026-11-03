@@ -15,6 +15,7 @@
 #include "WindowsMain.h"
 #include "BuildConfig.h"
 #include "platform/filesystem.h"
+#include "platform/theme_custom_file.h"
 #include "platform/theme_json_dialogs.h"
 #include "imgui.h"
 #include "HarkenSearchWidgets.h"
@@ -250,8 +251,8 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
-    const std::string filePath = GetExeDirUtf8() + "\\theme_custom.json";
-    if (!ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
+    const std::string filePath = Platform::ThemeFiles::CustomThemePathUtf8();
+    if (filePath.empty() || !ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
         statusMsg = L(TE_AppliedWriteFail);
         return false;
     }

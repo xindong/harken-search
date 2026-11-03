@@ -100,8 +100,21 @@
         if (nextRuntime.spectrum && (oldRuntime.fft!=nextRuntime.fft || !oldRuntime.spectrum)) state.spectrogramNeedsUpdate=true;
         if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors) {
             ThemeColors::deactivateCustomTheme();
+#ifdef __APPLE__
+            ApplyTheme(state.settings.theme);
+            if (state.settings.useCustomColors) ApplyCustomColors(state.settings);
+#endif
             if (state.settings.theme==AppTheme::Custom && !state.settings.customThemeName.empty()) {
-                ThemeColors::loadAndApplyThemeFile(GetExeDirUtf8()+"\\theme_custom.json",nullptr,false,"SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
+                const std::string filePath = Platform::ThemeFiles::CustomThemePathUtf8();
+                if (!filePath.empty()) {
+                    ThemeColors::loadAndApplyThemeFile(filePath,nullptr,
+#ifdef __APPLE__
+                        true,
+#else
+                        false,
+#endif
+                        "SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
+                }
             }
             ThemeColors::markPendingUiChromeResync();
         }

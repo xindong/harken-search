@@ -8,7 +8,7 @@
 **Priority:** P1
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-09-17
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -49,6 +49,9 @@
 - Given Mac 用户在主题编辑器导出当前草稿
 - When 用户在系统保存面板确认一个 JSON 路径
 - Then 剪贴板仍包含主题 JSON，文件保存相同主题；取消只保留剪贴板内容，写入失败不得报告文件保存成功
+- Given Mac 用户在主题编辑器保存普通自定义主题
+- When 正常退出并重新打开应用，或在设置中切回自定义主题
+- Then `theme_custom.json` 保存在 Harken Search 用户设置目录，并从同一路径恢复配色；Windows 仍使用原应用目录文件
 
 ### Edge Cases
 
@@ -64,6 +67,9 @@
 - Given 已满足以下前置条件：a built-in stock theme uses token chrome on toolbar/transport surfaces
 - When 执行以下操作：the stock theme is applied without using the custom-theme flag
 - Then 应得到以下结果：toolbar and transport token chrome remains selected by explicit stock-theme identity instead of depending on `ThemeColors::customized()`.
+- Given Mac 用户设置目录只读、不安全或超出隔离测试根
+- When 保存普通自定义主题
+- Then 保存失败且不切换到新主题，不改写应用包或日常目录
 
 ### Failure / Recovery
 
@@ -92,6 +98,7 @@
 | startup diagnostics | diagnostics | QA protocol | Runtime state decisions are visible |
 | Mac settings backup export | UI | SettingsActions and Mac settings export dialog | Uses a user-selected UTF-8 path, keeps cancel side-effect free and preserves the Windows branch |
 | Mac theme JSON export | UI | ThemeEditor and Mac theme save dialog | Saves the draft through the shared serializer to the selected UTF-8 path; cancel leaves the clipboard copy available |
+| Mac custom theme file | UI | ThemeEditor, SettingsDialog and Cocoa startup | Resolves the same user settings file for save, switch and reopen; fails closed on an unsafe directory |
 
 ## Graphify Binding
 
@@ -114,11 +121,13 @@
 | TEST-STARTUP-WELCOME | source-contract | `TestStartupReconciliation` | welcome entry replaces the legacy login form and continues into loading | active |
 | TEST-THEME-PERSISTENCE | source-contract | source scan + `TestThemeColors` | stock theme application does not set `ThemeColors::customized()`, stock token chrome is keyed by stock theme identity, and custom theme name is written/read by settings IO | active |
 | TEST-MAC-THEME-EXPORT | platform-contract | `TestThemeJsonExportMacBoundary` + `TestThemeColors` | Mac save panel boundary and shared JSON serializer are checked separately | active |
+| TEST-MAC-CUSTOM-THEME-PATH | integration | `TestMacUserDataLayout` + isolated Cocoa product restart | path, unsafe/read-only failure, loaded colors and normal exit are checked in a separate QA profile | active |
 
 ## Missing Coverage
 
 - Mac 保存面板的正向人工点选与导出文件回读仍需实际界面验收；原生面板取消、应用重开和源码边界测试不能代替它。
 - Mac 主题编辑器导出的正向界面点选和文件回读也需使用本卡实际包确认；面板探针不能代替用户验收。
+- Mac 自定义主题在编辑器中的真实点选与设置切换仍需实际界面验证；隔离配置注入的重启测试只证明产品读取和绘制，不证明点选流程。
 - Source-contract coverage now asserts the first-run no-database startup branch and CTA hook; full GUI smoke for perceived onboarding clarity remains human-only.
 - Welcome-entry visual polish and screenshot proof remain human-only even when source-contract coverage is green.
 - Residual gap: migration from older settings payloads is not yet asserted with fixture upgrades.

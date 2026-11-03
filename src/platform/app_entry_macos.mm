@@ -27,6 +27,7 @@
 #include "../WorkerThreadPolicy.h"
 #include "../Utils.h"
 #include "harken_user_data_layout.h"
+#include "theme_custom_file.h"
 #include "macos_qa_bridge.h"
 #include "filesystem.h"
 #include "system.h"
@@ -153,6 +154,10 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     LoadChineseFont(io, 14.0f, state->settings.readingFontSize, state->settings.readingFontSize);
     ApplyTheme(state->settings.theme);
     if (state->settings.useCustomColors) ApplyCustomColors(state->settings);
+    if (state->settings.theme == AppTheme::Custom && !state->settings.customThemeName.empty()) {
+        const auto themePath = Platform::ThemeFiles::CustomThemePathUtf8();
+        if (!themePath.empty()) ThemeColors::loadAndApplyThemeFile(themePath);
+    }
     harken::theme_schedule::Tick(*state, true);
     osxReady = ImGui_ImplOSX_Init(self.glView);
     rendererReady = ImGui_ImplOpenGL3_Init("#version 150");
@@ -177,6 +182,9 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         snapshot << "settings=" << g_appSettingsPathUtf8 << "\n"
                  << "default_library_directory=" << GetDefaultDbDirUtf8() << "\n"
                  << "reading_font=" << state->settings.readingFontSize << "\n"
+                 << "theme=" << static_cast<int>(state->settings.theme) << "\n"
+                 << "theme_customized=" << ThemeColors::customized() << "\n"
+                 << "theme_bg_red=" << ThemeColors::current().mainWindowBG.x << "\n"
                  << "needs_database=" << state->startupNeedsDatabaseSetup << "\n";
     }
     if (qaSmoke || qaControl) [self.window orderBack:nil];

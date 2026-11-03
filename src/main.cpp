@@ -126,6 +126,7 @@
 #include "DevToolsModule.h"
 #include "GMPanel.h"
 #include "Utils.h"
+#include "platform/theme_custom_file.h"
 #include "platform/avatar_image_file_dialog.h"
 #include "platform/database_file_dialog.h"
 #include "platform/executable_file_dialog.h"
