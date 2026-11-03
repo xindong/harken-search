@@ -82,22 +82,39 @@
         }
         g_currentLanguage=state.settings.language;
         g_miniWaveformRmsBodyStyle=state.settings.miniWaveformRmsBodyStyle;
+#ifdef _WIN32
         g_hideWindowOnDrag=state.settings.hideWindowOnDrag;
         g_hideWindowOnDragDelayMs=static_cast<UINT>(state.settings.hideWindowOnDragDelayMs);
+#endif
         state.audioEngine.setFadeInOutEnabled(state.settings.fadeInOutEnabled);
         state.audioEngine.setFadeInOutMs(state.settings.fadeInOutMs);
         state.database.setSettings(&state.settings);
         if (oldSettings.folderTreePathMode!=state.settings.folderTreePathMode) StartDeferredSidebarBootstrap(state,true,false);
+#ifdef _WIN32
         if (oldSettings.enableShowManagerHotkey!=state.settings.enableShowManagerHotkey ||
             oldSettings.showManagerHotkey.toString()!=state.settings.showManagerHotkey.toString()) ApplyShowManagerGlobalHotkey(state.settings);
+#endif
         if (oldSettings.idleAssetBackfillEnabled!=state.settings.idleAssetBackfillEnabled || oldSettings.idleAssetBackfillDelayMinutes!=state.settings.idleAssetBackfillDelayMinutes) {
             state.lastInputTime=std::chrono::steady_clock::now(); ScheduleNextIdleAssetBackfillCheck(state,state.lastInputTime);
         }
         if (nextRuntime.spectrum && (oldRuntime.fft!=nextRuntime.fft || !oldRuntime.spectrum)) state.spectrogramNeedsUpdate=true;
         if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors) {
             ThemeColors::deactivateCustomTheme();
+#ifdef __APPLE__
+            ApplyTheme(state.settings.theme);
+            if (state.settings.useCustomColors) ApplyCustomColors(state.settings);
+#endif
             if (state.settings.theme==AppTheme::Custom && !state.settings.customThemeName.empty()) {
-                ThemeColors::loadAndApplyThemeFile(GetExeDirUtf8()+"\\theme_custom.json",nullptr,false,"SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
+                const std::string filePath = Platform::ThemeFiles::CustomThemePathUtf8();
+                if (!filePath.empty()) {
+                    ThemeColors::loadAndApplyThemeFile(filePath,nullptr,
+#ifdef __APPLE__
+                        true,
+#else
+                        false,
+#endif
+                        "SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
+                }
             }
             ThemeColors::markPendingUiChromeResync();
         }
