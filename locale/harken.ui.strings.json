@@ -5603,13 +5603,6 @@
       "ja": "  artist:composer        → Artist フィールド"
     },
     {
-      "id": "Search_Querying",
-      "type": "ui",
-      "zh": "查询中...",
-      "en": "Querying...",
-      "ja": "照信中..."
-    },
-    {
       "id": "Scan_QuickScan",
       "type": "ui",
       "zh": "扫描此文件夹",
@@ -8611,13 +8604,6 @@
       "zh": "[骰子] 打乱当前列表\n点击: 打乱并从头播放",
       "en": "[Dice] Shuffle current list\nClick: Shuffle and play from top",
       "ja": "[ダイス] 現在リストをシャッフル\nクリック: シャッフルして先頭から再生"
-    },
-    {
-      "id": "Main_QueryingProgress",
-      "type": "ui",
-      "zh": "查询中...",
-      "en": "Querying...",
-      "ja": "照信中..."
     },
     {
       "id": "Main_ColPresetDialHint",
