@@ -5156,7 +5156,8 @@ aura_set_test_labels(TestExportRegionPreserve core)
 
 add_executable(TestRegionExportPathSafety EXCLUDE_FROM_ALL
     tests/test_region_export_path_safety.cpp
-    src/platform/filesystem_std.cpp)
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE})
 target_include_directories(TestRegionExportPathSafety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(TestRegionExportPathSafety PRIVATE cxx_std_17)
 if(MSVC)
