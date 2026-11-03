@@ -3940,7 +3940,7 @@ void AudioEngine::setMagicEQ(const MagicEQSettings& settings) {
     next.mode = next.mode == MagicEQMode::Notch ? MagicEQMode::Notch : MagicEQMode::Pass;
     if (!std::isfinite(next.centerFreq)) next.centerFreq = 1000.0f;
     if (!std::isfinite(next.halfWidthPercent)) next.halfWidthPercent = 10.0f;
-    if (!std::isfinite(next.widgetWidth)) next.widgetWidth = 180.0f;
+    if (!std::isfinite(next.widgetWidth)) next.widgetWidth = CenterSenseDsp::kDefaultMagicEQWidgetWidth;
     next.halfWidthPercent = std::clamp(next.halfWidthPercent, 1.0f, 50.0f);
     next.centerFreq = std::clamp(next.centerFreq, 20.0f, 20000.0f);
     const float centerPercent = CenterSenseDsp::magicEQFrequencyToPercent(next.centerFreq);

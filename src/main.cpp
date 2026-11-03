@@ -25204,7 +25204,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     struct DragState {
         DragPart part = DragPart::None;
         float startX = 0.0f, startY = 0.0f;
-        float startWidth = 180.0f;
+        float startWidth = CenterSenseDsp::kDefaultMagicEQWidgetWidth;
         float startCenterPercent = 50.0f, startHalfWidthPercent = 10.0f;
         float startLowPercent = 40.0f, startHighPercent = 60.0f;
     };
