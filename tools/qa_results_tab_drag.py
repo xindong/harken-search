@@ -48,6 +48,10 @@ def run(args):
         raise AssertionError(snap)
 
     def record(name, snap):
+        displayed = snap['results_tabs']
+        assert [t['rect']['x'] for t in displayed] == sorted(t['rect']['x'] for t in displayed), snap
+        if not snap['input']['down']:
+            assert [t['id'] for t in displayed] == snap['results_tab_model_order'], snap
         screenshot = out / (name + '.png')
         capture(driver, screenshot)
         report['cases'].append(dict(name=name, state=snap, screenshot=str(screenshot)))
@@ -105,126 +109,144 @@ def run(args):
         command(cmd='dock_setup')
         snap = settled()
         home = dict(snap['panels']['search-results'])
-        tabs = snap.get('results_tabs', [])
-        # Older builds registered the final tab itself as the panel title. This
-        # fallback reproduces the original bug without adding a new input path.
-        tab_part = 'tab:' + str(tabs[-1]['id']) if tabs else 'title'
-        held = press(tab_part)
-        assert not held['panels']['search-results']['floating'], (
-            'Holding a result tab must not float the results panel', held)
-        assert held['owner'] != 'search-results', held
-        record('01-hold-tab-stays-docked', held)
-        assert len(tabs) >= 3, 'Need rendered tab observations to verify actual sorting'
-        moved_id = tabs[-1]['id']
-        target = tabs[0]['rect']
-        command(cmd='dock_pointer', phase='move',
-                x=target['x'] + 3, y=target['y'] + target['h'] / 2)
-        snap = settled()
-        snap = release()
-        assert [t['id'] for t in snap['results_tabs']][0] == moved_id, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        assert not snap['panels']['search-results']['floating'], snap
-        record('02-tab-reordered-selection-preserved', snap)
-        order = [t['id'] for t in snap['results_tabs']]
-        other_id = order[1]
-        press('tab:' + str(other_id))
-        snap = release()
-        assert snap['active_tab_id'] == other_id, snap
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        press('tab:' + str(moved_id))
-        snap = release()
-        assert snap['active_tab_id'] == moved_id, snap
-        record('02b-switch-tabs-keeps-order', snap)
-        command(cmd='dock_pointer', phase='hover', module='search-results', part='blank')
-        settled()
-        command(cmd='dock_pointer', phase='down', module='search-results', part='blank')
-        time.sleep(.08)
-        snap = release()
-        assert not snap['panels']['search-results']['floating'], snap
-        record('02c-short-blank-click-stays-docked', snap)
-        held = press('blank')
-        assert held['panels']['search-results']['floating'], held
-        assert [t['id'] for t in held['results_tabs']] == order, held
-        record('03-hold-blank-floats-panel', held)
-        command(cmd='dock_pointer', phase='move',
-                x=held['input']['x'] + 100, y=held['input']['y'] + 60)
-        moved = settled()
-        assert moved['panels']['search-results']['floating'], moved
-        assert moved['panels']['search-results']['y'] > held['panels']['search-results']['y'] + 20, moved
-        assert [t['id'] for t in moved['results_tabs']] == order, moved
-        record('03b-blank-drag-moves-floating-panel', moved)
-        command(cmd='dock_pointer', phase='escape')
-        snap = settled(lambda s: not s['panels']['search-results']['floating'])
-        release()
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        record('04-escape-restores-panel-and-order', snap)
-
-        def reorder_last():
-            tabs = settled()['results_tabs']
-            selected = tabs[-1]['id']
-            target = tabs[0]['rect']
-            press('tab:' + str(selected))
+        if args.long_label_only:
+            tabs = snap['results_tabs']
+            assert any(len(t['name'].encode('utf-8')) >= 256 for t in tabs), 'Need a long-name settings fixture'
+            assert len(tabs) >= 3, snap
+            moved_id = tabs[-1]['id']
+            target = tabs[-2]['rect']
+            assert home['x'] < target['x'] < home['x'] + home['w'] - target['w'], snap
+            order = [t['id'] for t in tabs]
+            order.insert(len(order) - 2, order.pop())
+            press('tab:' + str(moved_id))
             command(cmd='dock_pointer', phase='move',
                     x=target['x'] + 3, y=target['y'] + target['h'] / 2)
             snap = release()
-            assert snap['results_tabs'][0]['id'] == selected, snap
-            assert snap['active_tab_id'] == selected, snap
-            return snap, selected
-
-        def return_home():
-            press('title')
+            assert [t['id'] for t in snap['results_tabs']] == order, (
+                'Long labels must allow neighboring tabs to reorder', snap)
+            assert snap['active_tab_id'] == moved_id, snap
+            record('00-long-label-reorder-saves-order', snap)
+        else:
+            tabs = snap.get('results_tabs', [])
+            # Older builds registered the final tab itself as the panel title. This
+            # fallback reproduces the original bug without adding a new input path.
+            tab_part = 'tab:' + str(tabs[-1]['id']) if tabs else 'title'
+            held = press(tab_part)
+            assert not held['panels']['search-results']['floating'], (
+                'Holding a result tab must not float the results panel', held)
+            assert held['owner'] != 'search-results', held
+            record('01-hold-tab-stays-docked', held)
+            assert len(tabs) >= 3, 'Need rendered tab observations to verify actual sorting'
+            moved_id = tabs[-1]['id']
+            target = tabs[0]['rect']
             command(cmd='dock_pointer', phase='move',
-                    x=home['x'] + home['w'] / 2, y=home['y'] + home['h'] / 2)
-            settled(lambda s: s['dragging'] and s['preview_kind'] == 4)
+                    x=target['x'] + 3, y=target['y'] + target['h'] / 2)
+            snap = settled()
+            snap = release()
+            assert [t['id'] for t in snap['results_tabs']][0] == moved_id, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            assert not snap['panels']['search-results']['floating'], snap
+            record('02-tab-reordered-selection-preserved', snap)
+            order = [t['id'] for t in snap['results_tabs']]
+            other_id = order[1]
+            press('tab:' + str(other_id))
+            snap = release()
+            assert snap['active_tab_id'] == other_id, snap
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            press('tab:' + str(moved_id))
+            snap = release()
+            assert snap['active_tab_id'] == moved_id, snap
+            record('02b-switch-tabs-keeps-order', snap)
+            command(cmd='dock_pointer', phase='hover', module='search-results', part='blank')
+            settled()
+            command(cmd='dock_pointer', phase='down', module='search-results', part='blank')
+            time.sleep(.08)
+            snap = release()
+            assert not snap['panels']['search-results']['floating'], snap
+            record('02c-short-blank-click-stays-docked', snap)
+            held = press('blank')
+            assert held['panels']['search-results']['floating'], held
+            assert [t['id'] for t in held['results_tabs']] == order, held
+            record('03-hold-blank-floats-panel', held)
+            command(cmd='dock_pointer', phase='move',
+                    x=held['input']['x'] + 100, y=held['input']['y'] + 60)
+            moved = settled()
+            assert moved['panels']['search-results']['floating'], moved
+            assert moved['panels']['search-results']['y'] > held['panels']['search-results']['y'] + 20, moved
+            assert [t['id'] for t in moved['results_tabs']] == order, moved
+            record('03b-blank-drag-moves-floating-panel', moved)
+            command(cmd='dock_pointer', phase='escape')
+            snap = settled(lambda s: not s['panels']['search-results']['floating'])
             release()
-            return settled(lambda s: not s['panels']['search-results']['floating'])
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            record('04-escape-restores-panel-and-order', snap)
 
-        # Each host owns a different ImGui tab bar. Revisit cached hosts after
-        # sorting elsewhere to ensure stale visual state cannot overwrite data.
-        press('blank')
-        release()
-        snap, moved_id = reorder_last()
-        assert snap['panels']['search-results']['floating'], snap
-        order = [t['id'] for t in snap['results_tabs']]
-        record('04b-sort-while-floating', snap)
-        snap = return_home()
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        record('04c-return-home-keeps-order', snap)
-        snap, moved_id = reorder_last()
-        order = [t['id'] for t in snap['results_tabs']]
-        record('04d-sort-after-return', snap)
-        press('blank')
-        snap = release()
-        assert snap['panels']['search-results']['floating'], snap
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        record('04e-float-again-keeps-order', snap)
-        snap = return_home()
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        record('04f-return-again-keeps-order', snap)
-        press('blank')
-        release()
-        previous_count = len(order)
-        command(cmd='new_tab')
-        settled(lambda s: len(s['results_tabs']) == previous_count + 1)
-        snap, moved_id = reorder_last()
-        order = [t['id'] for t in snap['results_tabs']]
-        record('04g-create-and-reorder-while-floating', snap)
-        snap = return_home()
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        record('04h-return-home-with-new-tab', snap)
-        press('blank')
-        snap = release()
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        record('04i-refloat-with-new-tab', snap)
-        snap = return_home()
-        assert [t['id'] for t in snap['results_tabs']] == order, snap
-        assert snap['active_tab_id'] == moved_id, snap
-        record('04j-return-again-with-new-tab', snap)
+            def reorder_last():
+                tabs = settled()['results_tabs']
+                selected = tabs[-1]['id']
+                target = tabs[0]['rect']
+                press('tab:' + str(selected))
+                command(cmd='dock_pointer', phase='move',
+                        x=target['x'] + 3, y=target['y'] + target['h'] / 2)
+                snap = release()
+                assert snap['results_tabs'][0]['id'] == selected, snap
+                assert snap['active_tab_id'] == selected, snap
+                return snap, selected
+
+            def return_home():
+                press('title')
+                command(cmd='dock_pointer', phase='move',
+                        x=home['x'] + home['w'] / 2, y=home['y'] + home['h'] / 2)
+                settled(lambda s: s['dragging'] and s['preview_kind'] == 4)
+                release()
+                return settled(lambda s: not s['panels']['search-results']['floating'])
+
+            # Each host owns a different ImGui tab bar. Revisit cached hosts after
+            # sorting elsewhere to ensure stale visual state cannot overwrite data.
+            press('blank')
+            release()
+            snap, moved_id = reorder_last()
+            assert snap['panels']['search-results']['floating'], snap
+            order = [t['id'] for t in snap['results_tabs']]
+            record('04b-sort-while-floating', snap)
+            snap = return_home()
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            record('04c-return-home-keeps-order', snap)
+            snap, moved_id = reorder_last()
+            order = [t['id'] for t in snap['results_tabs']]
+            record('04d-sort-after-return', snap)
+            press('blank')
+            snap = release()
+            assert snap['panels']['search-results']['floating'], snap
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            record('04e-float-again-keeps-order', snap)
+            snap = return_home()
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            record('04f-return-again-keeps-order', snap)
+            press('blank')
+            release()
+            previous_count = len(order)
+            command(cmd='new_tab')
+            settled(lambda s: len(s['results_tabs']) == previous_count + 1)
+            snap, moved_id = reorder_last()
+            order = [t['id'] for t in snap['results_tabs']]
+            record('04g-create-and-reorder-while-floating', snap)
+            snap = return_home()
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            record('04h-return-home-with-new-tab', snap)
+            press('blank')
+            snap = release()
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            record('04i-refloat-with-new-tab', snap)
+            snap = return_home()
+            assert [t['id'] for t in snap['results_tabs']] == order, snap
+            assert snap['active_tab_id'] == moved_id, snap
+            record('04j-return-again-with-new-tab', snap)
         # Persisted settings must describe the displayed order and selection.
         command(cmd='info_edit_input', action='exit')
         assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
@@ -275,4 +297,6 @@ if __name__ == '__main__':
     parser.add_argument('--isolation-root', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scan-dir', type=Path)
+    parser.add_argument('--long-label-only', action='store_true',
+                        help='Check a preseeded isolated long-label fixture and restart persistence')
     raise SystemExit(run(parser.parse_args()))

@@ -26293,15 +26293,24 @@ std::string GetDockQaState() {
         return nlohmann::json{{"x", r.Min.x}, {"y", r.Min.y}, {"w", r.GetWidth()}, {"h", r.GetHeight()}};
     };
     out["results_tabs"] = nlohmann::json::array();
+    out["results_tab_model_order"] = nlohmann::json::array();
     if (g_appState) {
         const auto& state = *g_appState;
         if (state.activeTabIndex >= 0 && state.activeTabIndex < (int)state.listTabs.size())
             out["active_tab_id"] = state.listTabs[state.activeTabIndex].id;
+        std::vector<const ListTab*> displayedTabs;
         for (const auto& tab : state.listTabs) {
+            out["results_tab_model_order"].push_back(tab.id);
             const auto found = g_resultsTabQaRects.find(tab.id);
             if (found == g_resultsTabQaRects.end() || found->second.second + 1 < ImGui::GetFrameCount()) continue;
-            out["results_tabs"].push_back({{"id", tab.id}, {"name", tab.name},
-                {"rect", rectJson(found->second.first)}});
+            displayedTabs.push_back(&tab);
+        }
+        std::sort(displayedTabs.begin(), displayedTabs.end(), [](const ListTab* a, const ListTab* b) {
+            return g_resultsTabQaRects.at(a->id).first.Min.x < g_resultsTabQaRects.at(b->id).first.Min.x;
+        });
+        for (const ListTab* tab : displayedTabs) {
+            out["results_tabs"].push_back({{"id", tab->id}, {"name", tab->name},
+                {"rect", rectJson(g_resultsTabQaRects.at(tab->id).first)}});
         }
     }
     for (const auto& [module, entry] : g_dockQaPanels) {
@@ -38598,7 +38607,6 @@ void RenderUI(AppState& state) {
                 const char* tabName = visibleTabName.empty()
                     ? L(Misc_AllFiles)
                     : visibleTabName.c_str();
-                char label[256];
                 const bool isActiveTab = (ti == state.activeTabIndex);
                 const int64_t tabSnapshotCount = tab.totalFileCount >= 0
                     ? tab.totalFileCount
@@ -38611,8 +38619,8 @@ void RenderUI(AppState& state) {
                         ? (int64_t)state.loadedCount
                         : (int64_t)state.searchResults.size());
                 const int64_t displayCount = std::max<int64_t>(0, isActiveTab ? liveCount : tabSnapshotCount);
-                snprintf(label, sizeof(label), "%s%s (%lld)###Tab%d",
-                         prefix, tabName, (long long)displayCount, tab.id);
+                const std::string label = std::string(prefix) + tabName + " (" +
+                    std::to_string(displayCount) + ")###Tab" + std::to_string(tab.id);
 
                 // Tab color palette
                 static const ImU32 kTabPalette[8] = {
@@ -38627,7 +38635,7 @@ void RenderUI(AppState& state) {
                 if (state.pendingTabSelectionIndex == ti) {
                     tabFlags |= ImGuiTabItemFlags_SetSelected;
                 }
-                bool tabOpen = ImGui::BeginTabItem(label, state.listTabs.size() > 1 ? &isOpen : nullptr, tabFlags);
+                bool tabOpen = ImGui::BeginTabItem(label.c_str(), state.listTabs.size() > 1 ? &isOpen : nullptr, tabFlags);
                 if (ImGuiTabItem* renderedTab = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetItemID()))
                     resultsTabOrder.emplace_back(tab.id, ImGui::TabBarGetTabOrder(resultsTabBar, renderedTab));
                 {
