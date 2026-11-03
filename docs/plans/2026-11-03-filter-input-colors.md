@@ -139,3 +139,10 @@
 - 三个字段在结果栏的筛选标签及其完整文字提示也使用整理后的显示名称；筛选运算、清除操作仍使用原始数据库值，不改数据。
 - 对用户截图中的专辑原值（尾部含 `0x1A`）用实际包点选，输入框和结果标签均显示 `Robot Monster Vocalizations Vol. 3`，仍准确筛出 1 个 OGG 文件。`evidence13/result.json` 共 27 项实际操作检查通过，退出码 0；对应真实截图为 `evidence13/album-damaged-selected-input.png`。
 - 最终修订包：`D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v5/HarkenSearch.exe`，SHA-256 `7bf768d4496971b9cdee494d21b2e0e51777aef3cee6f03b7172e77c4cbc8c20`。相关定向测试 67 项与 C++ 名单模型测试通过，普通及隔离 Release 构建通过。待用户再次确认实际包，不合入 QA。
+
+## 双侧栏复核与最新 QA 整合（2026-11-04）
+
+- PR #83 的独立复审指出：停靠侧栏与浮动侧栏同时显示时，三个名称筛选器共用弹层状态和窗口名，可能互相关闭。现按侧栏身份分别保存弹层状态，并给弹层窗口独立名称。没有改变已选筛选值或数据库内容。
+- 隔离实包同时显示两个侧栏，点击停靠侧艺术家输入框后，停靠侧弹层保持打开、浮动侧弹层没有误打开；截图为 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/final-v24-duplicate/dual-sidebar-docked-picker.png。浮动弹层层级和点重叠位置取消的两项实包检查也通过，三个场景的程序退出码均为 0。
+- 接入 origin/qa/current 的 1b54b0f0abdf00cb8fda3c56d6c857abd571cb5b 后重建 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v24/HarkenSearch.exe，SHA-256 为 d17a9309f88bb859fdcfeb25969e4da4dd01c1ed7b1bf64b4a0252026c2db859。evidence42/result.json 记录 33 项实包操作通过、退出码 0；定向 Python 11 项及 C++ 名单模型 CTest 通过。
+- evidence42/pixel-compare-v17-v24.json 比较用户已确认的 v17 与当前 v24 四张关键实包截图，筛选区域 (0,40)-(850,650) 逐像素相同。代码审查、远端必需检查与 QA 合入仍以最终 PR head 和实时回执为准。
