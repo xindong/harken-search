@@ -12,6 +12,7 @@ REQUIRED = {
     ".github/workflows/qa-exe.yml",
     ".github/workflows/package-update.yml",
     ".github/workflows/settings-scroll-regression.yml",
+    ".github/workflows/pr-merge-notify.yml",
 }
 
 
