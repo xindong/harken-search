@@ -18,8 +18,8 @@
 
 ## 中文语义
 
-**用户承诺：** 无论首次启动、正常启动还是最近库丢失，Aris 都能进入可理解、可操作的安全状态，不会偷偷清理用户数据或启动昂贵后台工作。
-**核心流程：** 用户启动 Aris；应用加载设置、edition flag 和最近库列表；缺失库以明确的受保护状态显示，用户再决定是否重连、移除或重新扫描。
+**用户承诺：** 无论首次启动、正常启动还是最近库丢失，Aris 都能进入可理解、可操作的安全状态，不会偷偷清理用户数据或启动昂贵后台工作。Mac 用户导出设置时可以自行选择备份位置；取消不改变设置。
+**核心流程：** 用户启动 Aris；应用加载设置、edition flag 和最近库列表；缺失库以明确的受保护状态显示，用户再决定是否重连、移除或重新扫描。Mac 导出设置时先选目标，确认后保存并复制当前配置，取消直接返回。
 **非目标：** 这份契约不定义完整安装器、自动更新流程或跨版本迁移之外的产品授权策略。
 
 ## BDD Scenarios
@@ -38,6 +38,13 @@
 - Given 已满足以下前置条件：Browser mode stores user workflow state such as recursive child-audio scope
 - When 执行以下操作：settings are saved and restored on the next launch
 - Then 应得到以下结果：Aris restores that scope truthfully instead of silently resetting to current-directory mode
+
+- Given Mac 用户在设置中选择导出备份
+- When 用户在系统保存面板确认一个可写目标
+- Then 当前设置先保存到原设置文件，再复制到用户选定的 ini 文件，并显示实际位置；Windows 原有导出目标保持不变
+- Given Mac 用户在系统保存面板取消
+- When 面板返回空路径
+- Then 不保存或复制文件，也不报告一次新的导出失败
 
 ### Edge Cases
 
@@ -79,6 +86,7 @@
 | product edition flags | API | tests | Edition-gated defaults remain stable |
 | settings encryption | API | tests | Sensitive settings are protected |
 | startup diagnostics | diagnostics | QA protocol | Runtime state decisions are visible |
+| Mac settings backup export | UI | SettingsActions and Mac settings export dialog | Uses a user-selected UTF-8 path, keeps cancel side-effect free and preserves the Windows branch |
 
 ## Graphify Binding
 
@@ -103,6 +111,7 @@
 
 ## Missing Coverage
 
+- Mac 保存面板的正向人工点选与导出文件回读仍需实际界面验收；原生面板取消、应用重开和源码边界测试不能代替它。
 - Source-contract coverage now asserts the first-run no-database startup branch and CTA hook; full GUI smoke for perceived onboarding clarity remains human-only.
 - Welcome-entry visual polish and screenshot proof remain human-only even when source-contract coverage is green.
 - Residual gap: migration from older settings payloads is not yet asserted with fixture upgrades.

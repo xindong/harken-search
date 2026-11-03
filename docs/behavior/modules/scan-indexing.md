@@ -108,7 +108,7 @@
 | `watcherRescanWorkerThread()` | worker | rg/source scan | Runs reconcile scans with cancellation guard |
 | `precomputeWorkerThread()` | worker | rg/source scan | Hands durable derived work off after scan |
 | `Scan.*` | diagnostics | QA protocol | Runtime scan integrity evidence |
-| `PumpAppScanRefresh()` | host lifecycle | `src/AppRuntime.cpp` | Windows and macOS consume committed batches and final refresh through the same service; retain the owned scan thread until it can be joined |
+| `PumpAppScanRefresh()` | API | `src/AppRuntime.cpp` | Windows and macOS consume committed batches and final refresh through the same service; retain the owned scan thread until it can be joined |
 
 ## Graphify Binding
 

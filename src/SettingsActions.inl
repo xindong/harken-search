@@ -68,10 +68,17 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
     } else if(editor.action=="export") {
         ImGui::TextWrapped("%s",L(Set_ExportSettingsHint));
         if(aura::ui::ActionButton(L(Set_ExportSettings))) {
+#if defined(__APPLE__)
+            editor.error.clear();
+            const std::string destination=Platform::SettingsDialogs::SaveSettingsExportFileDialogUtf8(MainUiOwnerWindow());
+#else
             const std::string destination=GetExeDirUtf8()+"\\aris_settings_export.ini";
-            if(TrySaveAppSettings(state)&&Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)){
-                Platform::OpenInFileManager(destination);editor.error=destination;
-            } else editor.error=L(SetUX_ExportFailedCheckTheDestinationFolder);
+#endif
+            if(!destination.empty()) {
+                if(TrySaveAppSettings(state)&&Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)){
+                    Platform::OpenInFileManager(destination);editor.error=destination;
+                } else editor.error=L(SetUX_ExportFailedCheckTheDestinationFolder);
+            }
         }
     } else if(editor.action=="import") {
         ImGui::TextWrapped("%s",L(SetUX_ImportReplacesYourSavedConfigurationExportABackupFirst));
