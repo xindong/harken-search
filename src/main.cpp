@@ -8321,6 +8321,7 @@ static void PushSidebarMetadataInputColors() {
 
 template <typename LoadItemsFn, typename OnSelectFn>
 static void DrawSidebarMetadataPickerField(
+    const char* idScope,
     const char* suffix,
     const char* inputId,
     const char* hint,
@@ -8360,8 +8361,11 @@ static void DrawSidebarMetadataPickerField(
     auto recordRect = [&](const std::string& part, const ImVec2& min, const ImVec2& max) {
         if (!qaState) return;
         const ImVec2 origin = ImGui::GetMainViewport()->Pos;
-        qaState->qaFilterUiRects[std::string("metadata_") + suffix + "_" + part] = ImVec4(
+        const ImVec4 rect(
             min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+        qaState->qaFilterUiRects[std::string("metadata_") + suffix + "_" + part] = rect;
+        if (part == "input" || part == "popup")
+            qaState->qaFilterUiRects[std::string("metadata_") + idScope + "_" + suffix + "_" + part] = rect;
     };
     recordRect("input", inputMin, inputMax);
 #else
@@ -8433,7 +8437,7 @@ static void DrawSidebarMetadataPickerField(
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
     char panelId[96];
-    snprintf(panelId, sizeof(panelId), "##SidebarMetadataPicker_%s", suffix);
+    snprintf(panelId, sizeof(panelId), "##SidebarMetadataPicker_%s_%s", idScope, suffix);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoFocusOnAppearing;
@@ -16690,28 +16694,31 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
         // Artist, album and category share one transactional name picker.
         // Their text is only a list query until a row is selected.
-        static SidebarMetadataPickerUiState artistPicker;
+        static std::unordered_map<std::string, SidebarMetadataPickerUiState> artistPickers;
+        auto& artistPicker = artistPickers[idScope];
         drawSidebarFilterLabel(L(Filter_Artist));
         DrawSidebarMetadataPickerField(
-            "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
+            idScope, "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
             state.artistFilterBuffer,
             state.currentDbPathUtf8, artistPicker, &state,
             [&]() { return state.database.getUniqueArtists(std::numeric_limits<int>::max()); },
             [&]() { state.artistFilterAlternates.clear(); applyMetaFilters(); });
 
-        static SidebarMetadataPickerUiState albumPicker;
+        static std::unordered_map<std::string, SidebarMetadataPickerUiState> albumPickers;
+        auto& albumPicker = albumPickers[idScope];
         drawSidebarFilterLabel(L(Filter_Album));
         DrawSidebarMetadataPickerField(
-            "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
+            idScope, "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
             state.albumFilterBuffer,
             state.currentDbPathUtf8, albumPicker, &state,
             [&]() { return state.database.getUniqueAlbums(std::numeric_limits<int>::max()); },
             [&]() { applyMetaFilters(); });
 
-        static SidebarMetadataPickerUiState categoryPicker;
+        static std::unordered_map<std::string, SidebarMetadataPickerUiState> categoryPickers;
+        auto& categoryPicker = categoryPickers[idScope];
         drawSidebarFilterLabel(L(Filter_CategoryLabel));
         DrawSidebarMetadataPickerField(
-            "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
+            idScope, "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
             state.categoryFilterBuffer,
             state.currentDbPathUtf8, categoryPicker, &state,
             [&]() { return state.database.getUniqueCategories(std::numeric_limits<int>::max()); },

@@ -27,9 +27,12 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
 
     settings = root / "profile/Local/HarkenSearch/settings.ini"
     backup = settings.read_bytes()
+    imgui_ini = settings.with_name("imgui.ini")
+    imgui_backup = imgui_ini.read_bytes() if imgui_ini.exists() else None
     text = backup.decode("utf-8")
     for key, value in {
-        "panelSidebar_visible": "1", "panelSidebar_floating": "1",
+        "panelSidebar_visible": "1", "panelSidebar_floating": "0" if scenario == "duplicate" else "1",
+        "folderBrowserDetached": "1" if scenario == "duplicate" else "0",
         "panelSidebar_floatX": "100", "panelSidebar_floatY": "65",
         "panelSidebar_floatW": "480", "panelSidebar_floatH": "500",
         "activeSidebarSection": "2", "showMetadataFilter": "1",
@@ -43,6 +46,12 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
     exit_code = None
     try:
         settings.write_text(text, encoding="utf-8")
+        if scenario == "duplicate" and imgui_backup is not None:
+            layout = imgui_backup.decode("utf-8")
+            layout, count = re.subn(r"(\[Window\]\[筛选器\]\r?\n)Pos=[^\r\n]+",
+                                    r"\g<1>Pos=370,70", layout, count=1)
+            assert count == 1, "detached sidebar window position unavailable"
+            imgui_ini.write_text(layout, encoding="utf-8")
         output.mkdir(parents=True, exist_ok=True)
         driver = Driver(root / "profile/runtime", output)
         desktop = PrivateDesktop()
@@ -71,7 +80,11 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
                 time.sleep(.1)
                 continue
             dock = driver.command({"cmd": "dock_state"})
-            if state.get("main_ui_ready") and dock.get("panels", {}).get("filter", {}).get("floating"):
+            rects = state.get("qa_filter_ui_rects", {})
+            dual_ready = all(key in rects for key in (
+                "metadata_LeftSidebar_Artist_input", "metadata_FloatSidebar_Artist_input"))
+            if state.get("main_ui_ready") and (dual_ready if scenario == "duplicate" else
+                                                 dock.get("panels", {}).get("filter", {}).get("floating")):
                 break
             time.sleep(.1)
         else:
@@ -95,12 +108,27 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
             time.sleep(.09)
             driver.command({"cmd": "folder_search_pointer", "phase": "up", "x": x, "y": y})
             time.sleep(.2)
-        arrow = state["qa_filter_ui_rects"]["metadata_Artist_arrow"]
-        click((arrow[0] + arrow[2]) / 2, (arrow[1] + arrow[3]) / 2)
-        state = driver.command({"cmd": "get_state"})
-        dock = driver.command({"cmd": "dock_state"})
-        rects = state["qa_filter_ui_rects"]
-        assert "metadata_Artist_popup" in rects
+        if scenario == "duplicate":
+            rects = state["qa_filter_ui_rects"]
+            field = rects["metadata_LeftSidebar_Artist_input"]
+            click(field[0] + 12, (field[1] + field[3]) / 2)
+            after = driver.command({"cmd": "get_state"})
+            debug_dock = driver.command({"cmd": "dock_state"})
+            result = {"scenario": scenario,
+                      "docked_input": field,
+                      "detached_input": rects["metadata_FloatSidebar_Artist_input"],
+                      "docked_popup_open": "metadata_LeftSidebar_Artist_popup" in after["qa_filter_ui_rects"],
+                      "detached_popup_open": "metadata_FloatSidebar_Artist_popup" in after["qa_filter_ui_rects"],
+                      "pointer_windows": debug_dock.get("input", {}).get("windows_at_pointer", []),
+                      "clicked": [field[0] + 12, (field[1] + field[3]) / 2]}
+            result["screenshot"] = str(capture(driver, output, "dual-sidebar-docked-picker"))
+        else:
+            arrow = state["qa_filter_ui_rects"]["metadata_Artist_arrow"]
+            click((arrow[0] + arrow[2]) / 2, (arrow[1] + arrow[3]) / 2)
+            state = driver.command({"cmd": "get_state"})
+            dock = driver.command({"cmd": "dock_state"})
+            rects = state["qa_filter_ui_rects"]
+            assert "metadata_Artist_popup" in rects
         if scenario == "overlap":
             album = rects["metadata_Album_input"]
             first = rects["metadata_Artist_item_0"]
@@ -113,7 +141,7 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
                       "metadata_Album_popup" in after["qa_filter_ui_rects"],
                       "artist_popup_open": "metadata_Artist_popup" in after["qa_filter_ui_rects"],
                       "selected_artist": after["metadata_filters"]["artist"]}
-        else:
+        elif scenario == "zorder":
             field = rects["metadata_Artist_input"]
             click((field[0] + field[2]) / 2, (field[1] + field[3]) / 2)
             after = driver.command({"cmd": "get_state"})
@@ -129,15 +157,17 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
                       "popup_rect": after["qa_filter_ui_rects"].get("metadata_Artist_popup"),
                       "windows_at_pointer": windows_at_pointer}
             popup_rank = next((i for i, name in enumerate(windows_at_pointer)
-                               if name == "##SidebarMetadataPicker_Artist"), -1)
+                               if name == "##SidebarMetadataPicker_FloatSidebar_Artist"), -1)
             sidebar_rank = next((i for i, name in enumerate(windows_at_pointer)
                                  if name.endswith("##FloatingSidebar")), -1)
             result["popup_above_sidebar"] = popup_rank > sidebar_rank >= 0
         result["exe_sha256"] = hashlib.sha256(exe.read_bytes()).hexdigest()
         if scenario == "overlap":
             assert not result["album_popup_open"], result
-        else:
+        elif scenario == "zorder":
             assert result["artist_popup_open"] and result["popup_above_sidebar"], result
+        else:
+            assert result["docked_popup_open"] and not result["detached_popup_open"], result
         completed = True
     finally:
         try:
@@ -154,6 +184,8 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
                 desktop.close()
         finally:
             settings.write_bytes(backup)
+            if imgui_backup is not None:
+                imgui_ini.write_bytes(imgui_backup)
         if result is not None:
             result.update(exit_code=exit_code, shutdown_timed_out=shutdown_timed_out,
                           status="pass" if completed and exit_code == 0 and not shutdown_timed_out else "incomplete")
@@ -168,6 +200,6 @@ if __name__ == "__main__":
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scenario", choices=["overlap", "zorder"], required=True)
+    parser.add_argument("--scenario", choices=["overlap", "zorder", "duplicate"], required=True)
     args = parser.parse_args()
     run(args.exe.resolve(), args.root.resolve(), args.output.resolve(), args.scenario)
