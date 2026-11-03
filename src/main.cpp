@@ -39144,6 +39144,14 @@ void RenderUI(AppState& state) {
                     else
                         blankLeft = resultsAddTabRect.Max.x;
                 }
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+                // Tab targets still need panel geometry when no empty shelf remains.
+                const ImRect blankRect(ImVec2(blankLeft, resultsTabShelf.Min.y),
+                    ImVec2(std::max(blankLeft, blankRight), resultsTabShelf.Max.y));
+                RecordDockQaPanel("search-results", g_searchResultsDockPanel, s_centerPanelMin,
+                    ImVec2(s_centerPanelMax.x - s_centerPanelMin.x, s_centerPanelMax.y - s_centerPanelMin.y),
+                    blankRect, blankRect);
+#endif
                 if (blankRight > blankLeft && resultsTabShelf.GetHeight() > 0.0f) {
                     ImGui::SetCursorScreenPos(ImVec2(blankLeft, resultsTabShelf.Min.y));
                     ImGui::InvisibleButton("##ResultsShelfDrag",
