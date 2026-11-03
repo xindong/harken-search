@@ -6,6 +6,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = (
+    "tests/test_slack_notification_workflow.py",
+    "scripts/tests/test_slack_notify.py",
     "tests/test_public_workflow_closure.py",
     "tests/test_inner_source_gates_entry.py",
     "tests/test_public_repository_rules.py",

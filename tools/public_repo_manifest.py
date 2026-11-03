@@ -54,8 +54,6 @@ EXCLUDED_GLOBS = (
     "tools/database_switch_acceptance.py",
     "tools/database_switch_busy_acceptance.py",
     "tools/verify_cuevi_feedback_e2e.py",
-    "scripts/slack_notify*",
-    "scripts/tests/test_slack_notify.py",
     "tests/test_cuevi_*",
     "tests/test_daily_self_review*",
     "tests/test_qa_provenance_manifest.py",
@@ -126,6 +124,7 @@ PUBLIC_GITHUB_PATHS = (
     ".github/workflows/qa-exe.yml",
     ".github/workflows/package-update.yml",
     ".github/workflows/settings-scroll-regression.yml",
+    ".github/workflows/pr-merge-notify.yml",
 )
 
 PUBLIC_DOCS_PREFIXES = (
