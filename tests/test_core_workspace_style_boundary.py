@@ -557,8 +557,14 @@ def test_three_metadata_pickers_use_the_sidebar_input_surface_in_every_theme():
     assert "const bool useLapisBlueMetadataSearchSurface = state.settings.theme == AppTheme::LapisBlue;" in metadata
     for input_id in ("##ArtistFilter", "##AlbumFilter", "##CategoryFilter"):
         assert f'"{input_id}"' in metadata
-    assert "DrawUnifiedSearchInput(inputId, hint, visible.data()," in main
-    assert "ImGuiInputTextFlags_AutoSelectAll, fieldWidth, true)" in main
+    picker_input = between(main, "static void DrawSidebarMetadataPickerField(", "const ImVec2 inputMin")
+    assert "PushSidebarMetadataInputColors();" in picker_input
+    assert "inputOptions.inputFlags = ImGuiInputTextFlags_AutoSelectAll;" in picker_input
+    assert "inputOptions.width = fieldWidth;" in picker_input
+    assert "inputOptions.inheritContextColors = true;" in picker_input
+    assert "aura::ui::TextInput(inputId, &visible, inputOptions)" in picker_input
+    assert picker_input.index("PushSidebarMetadataInputColors();") < picker_input.index("aura::ui::TextInput(")
+    assert "ImGui::PopStyleColor(6);" in picker_input
 
     key_call = metadata[metadata.index('DrawUnifiedSearchInput("##KeyFilter"') :][:320]
     assert "useLapisBlueMetadataSearchSurface" in key_call
