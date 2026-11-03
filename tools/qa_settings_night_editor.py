@@ -245,4 +245,4 @@ def run(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--exe',type=Path,required=True);p.add_argument('--isolation-root',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--layout-only',action='store_true');p.add_argument('--presets-only',action='store_true');run(p.parse_args())
+    p.add_argument('--presets-only',action='store_true');run(p.parse_args())
