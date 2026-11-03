@@ -38,12 +38,12 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
         text, count = re.subn(pattern, key + "=" + value, text, flags=re.M)
         if not count:
             text += chr(10) + key + "=" + value
-    settings.write_text(text, encoding="utf-8")
-    output.mkdir(parents=True, exist_ok=True)
-    driver = Driver(root / "profile/runtime", output)
-    desktop = PrivateDesktop()
-    process = hwnd = None
+    desktop = process = hwnd = None
     try:
+        settings.write_text(text, encoding="utf-8")
+        output.mkdir(parents=True, exist_ok=True)
+        driver = Driver(root / "profile/runtime", output)
+        desktop = PrivateDesktop()
         startup = win32process.STARTUPINFO()
         startup.lpDesktop = "WinSta0" + chr(92) + desktop.name
         startup.dwFlags = win32con.STARTF_USESHOWWINDOW
@@ -139,15 +139,18 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
         else:
             assert result["artist_popup_open"] and result["popup_above_sidebar"], result
     finally:
-        if hwnd and win32gui.IsWindow(hwnd):
-            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-        if process:
-            if win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_TIMEOUT:
-                win32api.TerminateProcess(process, 1)
-                win32event.WaitForSingleObject(process, 5000)
-            process.Close()
-        desktop.close()
-        settings.write_bytes(backup)
+        try:
+            if hwnd and win32gui.IsWindow(hwnd):
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            if process:
+                if win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_TIMEOUT:
+                    win32api.TerminateProcess(process, 1)
+                    win32event.WaitForSingleObject(process, 5000)
+                process.Close()
+            if desktop:
+                desktop.close()
+        finally:
+            settings.write_bytes(backup)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # 筛选器三个输入框配色与列表交互：设计及验收记录
 
 卡片：OPT-20261103-FILTER-INPUT-COLORS
-状态：用户明确要求归档本卡。PR #83 新一轮复审的三处问题已修正，已接入最新 QA 并完成整合包复验；当前版本仍待用户看过真实截图后确认，再核对远端检查与 QA 合入。
+状态：用户已在 v17 实际截图和统一验收页交付后明确要求走收尾流程；PR #83 第三轮复审提出的两处检查问题已修正，正在核对最新远端检查与 QA 合入。
 代码基线：2026-11-03 开工前将本卡分支快进到 origin/qa/current a4e7334。
 独立目录：E:/tmp/harken-OPT-20261103-FILTER-INPUT-COLORS；分支 opt/OPT-20261103-FILTER-INPUT-COLORS。
 
@@ -36,6 +36,13 @@
 - D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence29/result.json：真实素材库隔离副本上 31 项操作通过、退出码 0，包含超过 1023 字节的原始分类名称。D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/final-overlap/result.json 和 final-zorder/result.json：浮动筛选器遮挡误点与名单前后顺序均通过、退出码均为 0；final-zorder/floating-query-after-arrow.png 为实际运行截图。
 - 定向 Python 检查 9 项通过、46 项未选择；C++ 名单模型测试通过；Debug 与隔离 Release 构建通过；仓库 Inner Source Gates 为 299 passed、1 skipped，发布合规检查通过。统一验收页 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/验收入口.html 内嵌 12 张来自该整合包的真实截图。
 - 用户此前的“走收尾流程”“归档这张 Harken 任务卡”发生在第二轮修正和 v17 实际包之前。按本项目界面验收规则，仍需用户看过当前版本并明确确认；此前不写验收通过、不合入或归档。
+
+## v17 确认后的第三轮复审（2026-11-03）
+
+- 用户在 v17 的实际截图和统一验收页交付后回复原句“走收尾流程”，确认当前界面及合入收尾方向；该回执已写进本卡 Cuevi 阶段信息。v17 的产品源代码和实际包没有在这轮复审中修改。
+- 当前 head 的独立复审指出两处真实缺口：新增的 C++ 名单模型及 Python 契约测试未进入远端必需检查；浮动面板隔离测试在建立私有桌面前若初始化失败，可能留下临时设置。两个回归先失败、修正后通过。
+- 远端必需检查已加入 C++ 测试目标、CTest 选择和 Python 契约测试；隔离测试把设置写入和资源建立全部纳入恢复保护。新的两种初始化失败回归均通过，浮动面板两项实际包操作再次通过，使用的仍是 v17 原包且 SHA-256 为 62f2f8f5d35d810d77b2c231ee0fe0b90016a9e74e60fa355b0cd359d7e4d6e0。
+- 本机等同远端的公开检查为 308 passed、1 skipped，CTest 名单模型通过。仍须以 PR #83 新 head 的远端回执和独立复审为准，再核对最新 QA 并合入；合入前不写已完成或归档。
 
 ## 需求与范围
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,3 +66,11 @@ def test_metadata_picker_stays_above_floating_sidebar_without_stealing_input_foc
     widget = MAIN.split("static void DrawSidebarMetadataPickerField", 1)[1].split(
         "// Renders [optional search field]", 1)[0]
     assert "ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());" in widget
+
+
+def test_picker_contract_and_cpp_model_run_in_required_public_checks():
+    public_checks = (ROOT / "tools/run_public_checks.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/public-checks.yml").read_text(encoding="utf-8")
+    assert '"tests/test_sidebar_metadata_picker_contract.py"' in public_checks
+    assert "TestSidebarMetadataPicker" in workflow
+    assert re.search(r'-R\s+"[^"\n]*SidebarMetadataPicker', workflow)
