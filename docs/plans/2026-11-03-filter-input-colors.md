@@ -1,7 +1,7 @@
 # 筛选器三个输入框配色与列表交互：设计及验收记录
 
 卡片：OPT-20261103-FILTER-INPUT-COLORS
-状态：用户查看实际包截图并提出修订后，已明确要求走收尾流程；PR #83 的独立审查意见已在本卡分支修正，等待更新版检查和 QA 合入。
+状态：用户查看实际包截图并提出修订后，已明确要求走收尾流程；PR #83 的独立审查意见已在本卡分支修正，已接入最新 QA 并完成新实际包复验，等待远端检查和 QA 合入。
 代码基线：2026-11-03 开工前将本卡分支快进到 origin/qa/current a4e7334。
 独立目录：E:/tmp/harken-OPT-20261103-FILTER-INPUT-COLORS；分支 opt/OPT-20261103-FILTER-INPUT-COLORS。
 
@@ -20,6 +20,13 @@
 - 审查还指出狭窄窗口的弹层可能盖住输入框、首字母 O 会同时修改音频出点，以及右键点空白后旧查询词可能重新打开弹层。分别加入布局测试和隔离实际包操作，保留 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence18-red/result.json 与 evidence22-red/result.json 的失败事实；修正后均通过。
 - 当前修订隔离包位于 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v13/HarkenSearch.exe，SHA-256 为 27574a7ba2fc855bf24afb2812858baeadf7011aacb4003058916fcaf2b83b50。D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence23/result.json：30 项实际操作通过、退出码 0；包含右键取消、新增艺术家重新展开可选、首字母 O 不改播放出点。QA 操作只作用于隔离素材库副本，测试后恢复临时修改的标签。
 - 新增隔离 QA 按键通道仅在 ARIS_PREVIEW_ISOLATION 构建启用，普通产品仍保持非前台窗口不响应快捷键。完整修订提交与远端检查以 PR #83 最新 head 为准。
+
+## 最新 QA 基线复验（2026-11-03）
+
+- 已将 origin/qa/current 33c1b6c3dd391fa25c785f6463d8aa2d7d632a31 整合到本卡分支，整合提交为 16579ac60f3e51fd8866d47a38d58ee80e971a0e；原修正提交为 119bafc。两条新提交均保留 Signed-off-by 与 Cindy 辅助开发说明。
+- 基于整合后的源码重新构建隔离 Release 实际包：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v14/HarkenSearch.exe，SHA-256 为 8d617c6be7b159fbd76f47478b8f3ce446e6740fc71bb24d486d292f0c336c62。
+- D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence24/result.json 记录真实素材库副本上的 30 项操作，状态 pass、退出码 0；实际截图同目录。扫描新增名称后重开名单、右键点空白收起、首字母 O 不误改播放出点，均包含在内。
+- QA 合入和看板完成以 PR #83 当前远端检查、独立审查回复及两边 QA 版本核对为准；本次隔离包仅供验收，不作为公开发布包。
 
 ## 需求与范围
 
