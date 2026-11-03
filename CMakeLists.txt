@@ -364,7 +364,11 @@ else()
     set(AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE src/platform/metadata_legacy_tag_content_std.cpp)
     set(AURO_SEARCH_TEXT_GB2312_SOURCE src/platform/search_text_gb2312_std.cpp)
     set(AURO_THEME_JSON_DIALOGS_SOURCE src/platform/theme_json_dialogs_std.cpp)
-    set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_std.cpp)
+    if(APPLE)
+        set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_macos.mm)
+    else()
+        set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_std.cpp)
+    endif()
     set(AURO_EXECUTABLE_FILE_DIALOG_SOURCE src/platform/executable_file_dialog_std.cpp)
     set(AURO_AVATAR_IMAGE_FILE_DIALOG_SOURCE src/platform/avatar_image_file_dialog_std.cpp)
     set(AURO_REAPER_FILE_LIST_DIALOG_SOURCE src/platform/reaper_file_list_dialog_std.cpp)
@@ -749,6 +753,7 @@ elseif(APPLE)
         src/platform/harken_user_data_layout_macos.mm
         src/platform/settings_file_macos.cpp
         src/platform/ui_diagnostics_macos.mm
+        src/platform/macos_qa_bridge.cpp
         src/platform/app_entry_macos.mm
         src/main.cpp
     )

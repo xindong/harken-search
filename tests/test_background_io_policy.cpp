@@ -1427,6 +1427,9 @@ void TestQaScanCompletionRefreshesDatabaseViewContract() {
 
     std::ostringstream buffer;
     buffer << input.rdbuf();
+    std::ifstream runtime(sourcePath.parent_path() / "AppRuntime.cpp");
+    Check(runtime.good(), "shared scan refresh source can be opened");
+    buffer << runtime.rdbuf();
     const std::string source = buffer.str();
 
     const size_t refreshBlock = source.find("if (state.needsDatabaseRefresh && !scanPopupOpen)");
@@ -1665,7 +1668,7 @@ void TestFilterChipQueryRemovalSuppressesRealtimeAutoClearContract() {
           "BDD: query chip removal still uses RemoveSearchQueryChipFromText");
     if (anchorPos == std::string::npos) return;
 
-    const size_t windowEnd = source.find("strncpy_s(state.searchBuffer", anchorPos);
+    const size_t windowEnd = source.find("CopyUiText(state.searchBuffer", anchorPos);
     Check(windowEnd != std::string::npos,
           "BDD: query chip removal still rewrites searchBuffer directly");
     if (windowEnd == std::string::npos) return;

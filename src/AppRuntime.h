@@ -11,6 +11,7 @@ using ShutdownStageLogger = void (*)(const char*);
 // stop them before closing the database/audio and before destroying GL/ImGui.
 bool InitializeAppSettingsAndAudio(AppState& state);
 void PumpAppDatabaseAndAudio(AppState& state);
+void PumpAppScanRefresh(AppState& state, bool scanPopupOpen);
 void StopAppRuntimeWorkers(AppState& state, ShutdownStageLogger logStage);
 void StopAppRelinkWorkers(AppState& state, ShutdownStageLogger logStage);
 bool CloseAppRuntimeResources(AppState& state, ShutdownStageLogger logStage);
