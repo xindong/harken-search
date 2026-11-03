@@ -440,10 +440,10 @@ def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict
     ):
         return None
     pulls = run.get("pull_requests") or []
-    if len(pulls) != 1 or not isinstance(pulls[0], dict):
+    if not isinstance(pulls, list) or not pulls:
         return None
-    number = pulls[0].get("number")
-    if type(number) is not int or number <= 0:
+    numbers = [pull.get("number") for pull in pulls if isinstance(pull, dict)]
+    if len(numbers) != len(pulls) or any(type(number) is not int or number <= 0 for number in numbers):
         return None
     token = env.get("GITHUB_TOKEN", "")
     if not token:
@@ -463,36 +463,43 @@ def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict
         if len(merge_steps) != 1:
             return None
         started_at, completed_at = merge_steps[0].get("started_at"), merge_steps[0].get("completed_at")
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/pulls/{number}",
-        headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
-                 "X-GitHub-Api-Version": "2022-11-28"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            pull = json.loads(response.read().decode("utf-8", "replace"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
-        raise SystemExit(f"auto-merge lookup failed: {type(exc).__name__}") from None
-    if not isinstance(pull, dict):
-        raise SystemExit("auto-merge lookup failed: invalid-response")
-    if (
-        pull.get("merged") is not True
-        or _login(pull.get("merged_by")) != "github-actions[bot]"
-        or pull.get("number") != number
-        or pull.get("html_url") != f"https://github.com/{repo}/pull/{number}"
-    ):
-        return None
     try:
         started = datetime.fromisoformat(started_at)
         completed = datetime.fromisoformat(completed_at)
-        merged = datetime.fromisoformat(pull["merged_at"])
-        if any(value.tzinfo is None for value in (started, completed, merged)):
+        if started.tzinfo is None or completed.tzinfo is None or started > completed:
             return None
-        if not started <= merged <= completed:
-            return None
-    except (KeyError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return None
-    return {"pull_request": pull}
+    candidates = []
+    # A single source branch may have separate QA and main PRs. GitHub lists
+    # both on the run; select the actual merge rather than rejecting the run.
+    for number in dict.fromkeys(numbers):
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/pulls/{number}",
+            headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                     "X-GitHub-Api-Version": "2022-11-28"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                pull = json.loads(response.read().decode("utf-8", "replace"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            raise SystemExit(f"auto-merge lookup failed: {type(exc).__name__}") from None
+        if not isinstance(pull, dict):
+            raise SystemExit("auto-merge lookup failed: invalid-response")
+        if (
+            pull.get("merged") is not True
+            or _login(pull.get("merged_by")) != "github-actions[bot]"
+            or pull.get("number") != number
+            or pull.get("html_url") != f"https://github.com/{repo}/pull/{number}"
+        ):
+            continue
+        try:
+            merged = datetime.fromisoformat(pull["merged_at"])
+            if merged.tzinfo is not None and started <= merged <= completed:
+                candidates.append(pull)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return {"pull_request": candidates[0]} if len(candidates) == 1 else None
 
 
 def collect_event(env: dict[str, str], payload: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -335,6 +335,9 @@ class AutoMergeNoticeTest(unittest.TestCase):
         def respond(request, **_kwargs):
             if "/actions/runs/" in request.full_url:
                 return Response(jobs or {"total_count": 0, "jobs": []})
+            if isinstance(pull, list):
+                number = int(request.full_url.rsplit("/", 1)[1])
+                return Response(next(item for item in pull if item["number"] == number))
             return Response(pull)
         env = {"EVENT_NAME": "workflow_run", "GITHUB_REPOSITORY": "xindong/harken-search",
                "GITHUB_TOKEN": "test-github-token", "SLACK_BOT_TOKEN": "test-slack-token", "SLACK_CHANNEL": "C000000001"}
@@ -377,6 +380,31 @@ class AutoMergeNoticeTest(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertEqual(posted.call_count, expected)
                 self.assertIn("/actions/runs/999/attempts/2/jobs", fetch.call_args_list[0].args[0].full_url)
+
+    def test_shared_branch_qa_and_main_prs_announce_only_the_actual_merge(self):
+        for merged_number in (72, 77):
+            with self.subTest(merged_number=merged_number):
+                payload = self.payload()
+                payload["workflow_run"]["pull_requests"] = [{"number": 72}, {"number": 77}]
+                pulls = [dict(self.pull(), number=number, merged=number == merged_number,
+                              html_url=f"https://github.com/xindong/harken-search/pull/{number}")
+                         for number in (72, 77)]
+                code, posted, fetch, _ = self.run_event(payload, pulls)
+                self.assertEqual(code, 0)
+                posted.assert_called_once()
+                self.assertIn(f"PR #{merged_number} 已合并", posted.call_args.args[2])
+                self.assertEqual(fetch.call_count, 2)
+
+    def test_shared_branch_previously_merged_sibling_is_not_reannounced(self):
+        payload = self.payload()
+        payload["workflow_run"]["pull_requests"] = [{"number": 72}, {"number": 77}]
+        previous = dict(self.pull(), merged_at="2026-11-03T01:59:59Z")
+        current = dict(self.pull(), number=77, html_url="https://github.com/xindong/harken-search/pull/77")
+        code, posted, _, _ = self.run_event(payload, [previous, current])
+        self.assertEqual(code, 0)
+        posted.assert_called_once()
+        self.assertIn("PR #77 已合并", posted.call_args.args[2])
+        self.assertNotIn("PR #72", posted.call_args.args[2])
 
     def test_manual_unmerged_or_old_merges_are_not_reannounced(self):
         for field, value in (("merged_by", {"login": "example-maintainer"}), ("merged", False),
