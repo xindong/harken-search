@@ -1016,7 +1016,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
 
 // Forward declarations (used by ProcessKeybindings)
 static void RevealFileInExplorer(const std::string& filePathUtf8);
-static void ClearAllFiltersForShowAll(AppState& state);
+static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh = false);
 static bool
 SwitchDatabase(AppState& state,
                const std::string& newDbPathUtf8,
@@ -1651,6 +1651,9 @@ static void ProcessKeybindings(AppState& state) {
             // View
             if (IsShortcutPressedSnapshot(ShortcutAction::Refresh, ks)) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state, true);
+                }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
@@ -14626,10 +14629,20 @@ static std::string GetRandomSamplingStatus(const AppState& state) {
 }
 
 // Helper: 清除所有筛选条件并刷新 (= Show All)
-static void ClearAllFiltersForShowAll(AppState& state) {
+static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
+    if (explicitRefresh && !state.listTabs.empty() && state.currentTab().isLocked) {
+        state.currentTab().explicitRefreshPending = true;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration;
+    }
     state.searchBuffer[0] = '\0';
+    if (state.viewMode == ViewMode::Database) {
+        state.activeSmartCollection = SmartCollection::None;
+        state.activeUserCollectionIdx = -1;
+    }
+    AutoRenameTabBySearch(state, "");
+    state.uiState.pendingFolderPath.clear();
     state.folderFilterActive = false;
     state.selectedFolderPath.clear();
     state.coverFilterActive = false;
@@ -14663,6 +14676,13 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.sameFolderScanDone = false;
     state.sameFolderScanPath.clear();
 
+    if (explicitRefresh && !state.listTabs.empty() && state.currentTab().isLocked) {
+        // Save the reset filters before an async result can be superseded.
+        // Keep the snapshot reloadable until this Refresh actually settles.
+        state.syncToTab();
+        state.currentTab().dataUnloaded = true;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+    }
     aura::cover_wall::RequestDisplayRefresh(state);
 }
 
@@ -22137,6 +22157,11 @@ static void RefreshScanCompletionState(AppState& state) {
     state.scanCompletionMiniUnresolved.store(effectiveMiniUnresolved, std::memory_order_release);
     state.scanCompletionCoverUnresolved.store(counts.coverUnresolved, std::memory_order_release);
     state.scanCompletionMetadataUnresolved.store(counts.metadataUnresolved, std::memory_order_release);
+    // The last worker may finish after the Windows frame refresh. Publish its
+    // count before clearing the gate, which disables subsequent refreshes.
+    state.setScanMiniWaveformProgress(
+        waveformCompletionRequired ? counts.miniTerminal : 0,
+        waveformCompletionRequired ? counts.total : 0);
     state.scanCompletionCoversPending.store(coversPending, std::memory_order_release);
     state.scanCompletionWaveformsPending.store(waveformsPending, std::memory_order_release);
 
@@ -25288,7 +25313,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     struct DragState {
         DragPart part = DragPart::None;
         float startX = 0.0f, startY = 0.0f;
-        float startWidth = 180.0f;
+        float startWidth = CenterSenseDsp::kDefaultMagicEQWidgetWidth;
         float startCenterPercent = 50.0f, startHalfWidthPercent = 10.0f;
         float startLowPercent = 40.0f, startHighPercent = 60.0f;
     };
@@ -31030,6 +31055,46 @@ void RenderUI(AppState& state) {
                     urlLine(L(Main_AboutCindyDownloadLine), "https://cindy.app");
                     ImGui::EndTable();
                 }
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const auto wecomQr = aura::ui::LoadPackagedAsset(
+                    "assets/icons/community/wecom-qr.png");
+                const auto feishuQr = aura::ui::LoadPackagedAsset(
+                    "assets/icons/community/feishu-qr.png");
+                const float qrSize = (std::min)(220.0f,
+                    (contentW - 24.0f) * 0.5f);
+                if (BeginTransientScrollbarTable("##AboutCommunityQr", 2,
+                        ImGuiTableFlags_SizingStretchSame)) {
+                    ImGui::TableNextRow();
+                    const auto drawCommunityQrCell = [qrSize](
+                            const char* label, const auto& qr) {
+                        const float cellX = ImGui::GetCursorPosX();
+                        const float cellW = ImGui::GetContentRegionAvail().x;
+                        const float labelW = ImGui::CalcTextSize(label).x;
+                        ImGui::SetCursorPosX(cellX +
+                            (std::max)(0.0f, (cellW - labelW) * 0.5f));
+                        ImGui::TextDisabled("%s", label);
+                        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+                        if (qr.glId != 0 && qr.w > 0 && qr.h > 0) {
+                            ImGui::SetCursorPosX(cellX +
+                                (std::max)(0.0f, (cellW - qrSize) * 0.5f));
+                            ImGui::Image((ImTextureID)(intptr_t)qr.glId,
+                                ImVec2(qrSize, qrSize));
+                        }
+                    };
+                    ImGui::TableSetColumnIndex(0);
+                    drawCommunityQrCell(L(Main_AboutWeComQrLabel), wecomQr);
+                    ImGui::TableSetColumnIndex(1);
+                    drawCommunityQrCell(L(Main_AboutFeishuQrLabel), feishuQr);
+                    ImGui::EndTable();
+                }
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const char* communityNote = L(Main_AboutCommunityNote);
+                const float noteWidth = ImGui::CalcTextSize(communityNote).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                    (std::max)(0.0f, (contentW - noteWidth) * 0.5f));
+                ImGui::TextWrapped("%s", communityNote);
             } else {
                 ImGui::TextUnformatted(L(Main_AboutLegalTab));
                 ImGui::TextDisabled("%s", L(Main_AboutLegalPrompt));
@@ -35452,6 +35517,9 @@ void RenderUI(AppState& state) {
             // Refresh
             if (ImGui::MenuItem(L(Refresh), GetShortcutString(ShortcutAction::Refresh).c_str())) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state, true);
+                }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
@@ -37017,6 +37085,9 @@ void RenderUI(AppState& state) {
             }
             if (navClicked[4]) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state, true);
+                }
                 if (state.viewMode == ViewMode::Database ||
                     IsPlaylistSystemView(state.viewMode)) {
                     if (state.viewMode == ViewMode::Database) {
@@ -39161,6 +39232,9 @@ void RenderUI(AppState& state) {
         }
         if (state.needsTabResultsRefresh) {
             state.needsTabResultsRefresh = false;
+            if (!state.listTabs.empty() && state.currentTab().explicitRefreshPending) {
+                state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+            }
             RefreshSearchResults(state, true);
         }
 
@@ -45409,6 +45483,10 @@ void RenderUI(AppState& state) {
 
             {
                 MagicEQSettings magicEQ = state.audioEngine.getMagicEQ();
+                const float magicEqPreferredWidth = magicEQ.widgetWidth;
+                const float trailingMinimumWidth = 260.0f;
+                const float magicEqAvailableWidth = std::max(120.0f, barOrigin.x + barW - kBarPadX - curX - trailingMinimumWidth);
+                magicEQ.widgetWidth = std::clamp(std::min(magicEqPreferredWidth, magicEqAvailableWidth), 120.0f, 1600.0f);
                 const auto magicEqFileInfo = state.audioEngine.getFileInfo();
                 const uint32_t magicEqFileRate = magicEqFileInfo.sampleRate;
                 const uint32_t magicEqEngineRate = state.audioEngine.getEngineSampleRate();
@@ -45427,6 +45505,7 @@ void RenderUI(AppState& state) {
                                    saveMagicEQSettings, transportBarBg,
                                    state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized()))
                     state.audioEngine.setMagicEQ(magicEQ);
+                magicEQ.widgetWidth = magicEqPreferredWidth;
                 if (saveMagicEQSettings) SaveAppSettings(state);
                 ThemeInspector::RegisterZone(
                     magicEQPos, ImVec2(magicEQPos.x + magicEQ.widgetWidth, magicEQPos.y + 32.0f),
@@ -49664,9 +49743,12 @@ void RenderUI(AppState& state) {
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
-        if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) {
+        static bool activeOuterGrips[2]{};
+        const bool modalBlocksGrips = ImGui::GetTopMostPopupModal() != nullptr;
+        if (modalBlocksGrips || !ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) {
             activeGripId.clear();
             activeGripDistanceSq = std::numeric_limits<float>::max();
+            activeOuterGrips[0] = activeOuterGrips[1] = false;
         }
         const auto gripHitDistanceSq = [](const aura::ui::dock::AdjacentLeafGrip& grip, const ImVec2& mouse) {
             const float minX = grip.rect.x;
@@ -49678,6 +49760,7 @@ void RenderUI(AppState& state) {
             return dx * dx + dy * dy;
         };
         for (int i = 0; i < adjacentCount; ++i) {
+            if (modalBlocksGrips) break;
             const auto& grip = adjacentGrips[i];
             char gripId[64];
             std::snprintf(gripId, sizeof(gripId), "##DockSplitGrip-%s-%s", grip.firstId.c_str(), grip.secondId.c_str());
@@ -49756,6 +49839,7 @@ void RenderUI(AppState& state) {
             ImGui::End();
         }
         for (int column = 0; column < 2; ++column) {
+            if (modalBlocksGrips) break;
             const bool left = column == 0;
             const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
             const auto& grip = left ? leftOuterGrip : rightOuterGrip;
@@ -49778,9 +49862,7 @@ void RenderUI(AppState& state) {
                 const bool pointerHit = ImGui::IsMouseHoveringRect(
                     ImVec2(grip.rect.x, grip.rect.y),
                     ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                static bool activeOuterGrips[2]{};
                 bool& activeRightOuterGrip = activeOuterGrips[column];
-                if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) activeRightOuterGrip = false;
                 if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
                     activeRightOuterGrip = true;
                 const bool hovered = ImGui::IsItemHovered() || pointerHit || activeRightOuterGrip;

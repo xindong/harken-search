@@ -5199,6 +5199,9 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"path\":\"" + jsonEscape(state.coverFilterPath) + "\",";
         result += "\"mode\":\"" + jsonEscape(coverFilterValue(state.coverFilterIndex)) + "\"},";
 #if ARIS_PREVIEW_ISOLATION
+        result += "\"qa_collection\":{";
+        result += "\"smart\":" + std::to_string(static_cast<int>(state.activeSmartCollection)) + ",";
+        result += "\"user_index\":" + std::to_string(state.activeUserCollectionIdx) + "},";
         result += "\"qa_filter_ui_rects\":{";
         bool firstQaFilterRect = true;
         for (const auto& [key, rect] : state.qaFilterUiRects) {
@@ -5292,6 +5295,8 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_id\":" + std::to_string(activeTab ? activeTab->id : -1) + ",";
         result += "\"active_name\":\"" + jsonEscape(activeTab ? activeTab->name : std::string()) + "\",";
         result += "\"count\":" + std::to_string((int)state.listTabs.size()) + ",";
+        result += "\"active_locked\":" + std::string((activeTab && activeTab->isLocked) ? "true" : "false") + ",";
+        result += "\"explicit_refresh_pending\":" + std::string((activeTab && activeTab->explicitRefreshPending) ? "true" : "false") + ",";
         result += "\"search_results_snapshot_valid\":" + std::string((activeTab && activeTab->searchResultsSnapshotValid) ? "true" : "false") + ",";
         result += "\"facets_snapshot_valid\":" + std::string((activeTab && activeTab->facetsSnapshotValid) ? "true" : "false") + ",";
         result += "\"cover_wall_snapshot_valid\":" + std::string((activeTab && activeTab->coverWallSnapshot.valid) ? "true" : "false") + "},";
@@ -5475,6 +5480,21 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"ready_to_work_cover_first_screen_pending\":" + std::string(readyToWork.coverFirstScreenPending ? "true" : "false") + ",";
         result += "\"ready_to_work_main_wave_pending\":" + std::string(readyToWork.mainWavePending ? "true" : "false");
         result += "}";
+
+    } else if (cmd == "set_tab_lock") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            state.activeTabIndex < 0 || state.activeTabIndex >= (int)state.listTabs.size()) {
+            result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else {
+            const bool locked = getBool(raw, "locked", true);
+            state.listTabs[(size_t)state.activeTabIndex].isLocked = locked;
+            result = "{\"ok\":true,\"cmd\":\"set_tab_lock\",\"locked\":" +
+                std::string(locked ? "true" : "false") + "}";
+        }
+#else
+        result = "{\"ok\":false,\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "new_tab") {
         int newIdx = state.createAndActivateNewDatabaseTab(-1.0);
@@ -5731,6 +5751,40 @@ static void PollQaCommandFile(AppState& state) {
         result = "{\"ok\":false,\"error\":\"preview only\"}";
 #endif
 
+    } else if (cmd == "folder_search_collection") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string kind = getStr(raw, "kind");
+        if (!MagicEqQaIsolationReady() ||
+            GetHarkenSearchHarnessLaneKindUtf8() != "folder-search" ||
+            (kind != "recently_played" && kind != "user")) {
+            result = R"({"ok":false,"error":"invalid_folder_search_collection"})";
+        } else {
+            state.viewMode = ViewMode::Database;
+            state.settings.activeSidebarSection = 0;
+            if (kind == "recently_played") {
+                state.activeSmartCollection = SmartCollection::RecentlyPlayed;
+                state.activeUserCollectionIdx = -1;
+            } else {
+                AppState::UserSmartCollection collection;
+                strncpy_s(collection.name, sizeof(collection.name), "__qa_refresh_collection__", _TRUNCATE);
+                AppState::CollectionRule rule;
+                rule.field = static_cast<int>(AppState::CRuleField::Artist);
+                rule.condition = static_cast<int>(AppState::CRuleCond::Equals);
+                strncpy_s(rule.value, sizeof(rule.value), "__qa_no_artist__", _TRUNCATE);
+                collection.rules.push_back(rule);
+                state.userCollections.push_back(collection);
+                state.activeSmartCollection = SmartCollection::None;
+                state.activeUserCollectionIdx = static_cast<int>(state.userCollections.size()) - 1;
+            }
+            cancelPendingSearchForQaMutation();
+            RefreshSearchResults(state, true);
+            state.syncToTab();
+            result = R"({"ok":true,"cmd":"folder_search_collection"})";
+        }
+#else
+        result = R"({"ok":false,"error":"preview only"})";
+#endif
+
     } else if (cmd == "folder_search_sidebar") {
 #if ARIS_PREVIEW_ISOLATION
         const int section = getInt(raw, "section", -1);
@@ -5812,7 +5866,9 @@ static void PollQaCommandFile(AppState& state) {
         } else if (!path.empty()) {
             // The next RenderUI frame applies the same deferred folder-tree path.
             state.uiState.pendingFolderPath = path;
-            state.uiState.pendingFolderTime = ImGui::GetTime() - 0.2;
+            const bool deferForRefresh = getBool(raw, "defer_for_refresh", false);
+            // Extend the QA window so the refresh can deterministically run first.
+            state.uiState.pendingFolderTime = ImGui::GetTime() + (deferForRefresh ? 0.2 : -0.2);
             result = "{\"ok\":true,\"cmd\":\"queue_folder_tree_selection\"}";
         } else {
             result = "{\"ok\":false,\"error\":\"path missing\"}";

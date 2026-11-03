@@ -8304,6 +8304,27 @@
       "ja": "ダウンロード"
     },
     {
+      "id": "Main_AboutWeComQrLabel",
+      "type": "ui",
+      "zh": "企业微信",
+      "en": "WeCom",
+      "ja": "WeCom"
+    },
+    {
+      "id": "Main_AboutFeishuQrLabel",
+      "type": "ui",
+      "zh": "飞书",
+      "en": "Feishu",
+      "ja": "Feishu"
+    },
+    {
+      "id": "Main_AboutCommunityNote",
+      "type": "ui",
+      "zh": "欢迎加入社群，交流使用体验与功能建议。",
+      "en": "Join the Harken community to share feedback and ideas.",
+      "ja": "Harken コミュニティで使用感や機能のアイデアを共有しましょう。"
+    },
+    {
       "id": "Main_CleanDiskDiagBtn",
       "type": "ui",
       "zh": "清理磁盘诊断日志",

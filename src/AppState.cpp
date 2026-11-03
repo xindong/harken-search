@@ -626,7 +626,8 @@ void AppState::syncFromTab() {
 void AppState::syncToTab() {
     if (listTabs.empty()) return;
     ListTab& tab = currentTab();
-    if (tab.isLocked) return;
+    if (tab.isLocked && (!tab.explicitRefreshPending ||
+        tab.explicitRefreshQueryGeneration != filterQueryGeneration)) return;
 
     // The active tab does not retain a duplicate of the live result sets.
 
@@ -1084,6 +1085,9 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
     saveCoverWallDisplaySnapshotForTab(activeTabIndex);
     parkLiveResultsInCurrentTab();
     syncToTab();
+    if (currentTab().explicitRefreshPending) {
+        currentTab().dataUnloaded = true;
+    }
     activeTabIndex = tabIndex;
     pendingTabSelectionIndex = tabIndex;
     syncFromTab();
@@ -1106,6 +1110,9 @@ int AppState::createAndActivateNewDatabaseTab(double activationTimeSeconds) {
         saveCoverWallDisplaySnapshotForTab(oldTabIndex);
         parkLiveResultsInCurrentTab();
         syncToTab();
+        if (currentTab().explicitRefreshPending) {
+            currentTab().dataUnloaded = true;
+        }
     }
 
     const int newIdx = createNewTab(u8"全部文件");

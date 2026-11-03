@@ -1367,7 +1367,7 @@ void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
         refreshAdapterSource, "void ForceCoverWallReload(AppState& state)");
     const std::string displayBody = ExtractFunctionBody(
         refreshAdapterSource, "void RequestDisplayRefresh(AppState& state)");
-    const std::string showAllBody = ExtractFunctionBody(source, "static void ClearAllFiltersForShowAll(AppState& state)");
+    const std::string showAllBody = ExtractFunctionBody(source, "static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh)");
 
     Check(!forceBody.empty(),
           "BDD: Database-content cover-wall invalidation entrypoint is inspectable");
