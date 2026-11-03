@@ -1,7 +1,7 @@
 # 筛选器三个输入框配色与列表交互：设计及验收记录
 
 卡片：OPT-20261103-FILTER-INPUT-COLORS
-状态：用户已在 v17 实际截图和统一验收页交付后明确要求走收尾流程；v19 已完成长名称显示修复和隔离实际包复验，正在核对远端检查与 QA 合入。
+状态：用户已在 v17 实际截图和统一验收页交付后明确要求走收尾流程；v20 已完成最新 QA 整合与隔离实际包复验，正在核对远端检查与 QA 合入。
 代码基线：2026-11-03 开工前将本卡分支快进到 origin/qa/current a4e7334。
 独立目录：E:/tmp/harken-OPT-20261103-FILTER-INPUT-COLORS；分支 opt/OPT-20261103-FILTER-INPUT-COLORS。
 
@@ -58,6 +58,7 @@
 - 输入控件保留普通名称的栈内缓冲区；遇到超长值时才按实际字节数扩容，避免截断多字节汉字。仅隔离 QA 包暴露当前三个筛选输入框实际收到的文字，用于检查显示路径，不改正式包的数据接口。
 - 修复包 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v19/HarkenSearch.exe，SHA-256 为 b5b4443db5a3f85b59c0e860e7a66f8489c801df22292d2efe05ad75c8337134。evidence35/result.json：32 项实际包操作通过、退出码 0，超长分类名 1120 个 UTF-8 字节完整进入输入框；final-v19-overlap/result.json 和 final-v19-zorder/result.json 均通过、退出码 0、无关闭超时。
 - v18 与 v19 的艺术家、专辑、分类展开及坏标签专辑四张实际截图，在筛选区域 (0,40)-(850,650) 尺寸一致、逐像素相同。用户已确认的普通界面保持原样；超长名称末尾字符的显示完整性由实际输入控件检查覆盖。定向 Python 11 项、C++ 名单模型 CTest 及公开检查 310 passed、1 skipped。
+- 合入前 origin/qa/current 又更新到 631d5ef84597e95f7ddf1547f2637f410862519e，变更只涉及另一张卡的白天配色设置页及其检查，本卡已整合。整合包 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v20/HarkenSearch.exe，SHA-256 为 161a9d7f13294a99a8b22ac16c33f273f75871231667115c491dd559a937a5d4。evidence36/result.json：32 项实际操作通过、退出码 0、长名称 1120 字节完整；final-v20-overlap/result.json 和 final-v20-zorder/result.json 通过、正常退出。v19 与 v20 的上述四张筛选截图逐像素相同；定向 Python 11 项和 C++ 名单模型 CTest 通过。远端必需检查以 PR #83 最新 head 为准。
 
 ## 需求与范围
 
