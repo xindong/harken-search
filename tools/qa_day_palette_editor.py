@@ -16,9 +16,17 @@ from qa_required_library_setup import PrivateDesktop, capture, wait_state
 from qa_transport_themes import Driver
 
 
+def validate_package(exe, root, receipt):
+    evidence = json.loads(receipt.read_text(encoding="utf-8-sig"))
+    assert Path(evidence["exePath"]).resolve() == exe.resolve(), "Package executable differs from its receipt"
+    assert Path(evidence["isolationRoot"]).resolve() == root.resolve(), "Package isolation root differs from its receipt"
+    assert hashlib.sha256(exe.read_bytes()).hexdigest() == evidence["exeSha256"], "Executable digest differs from its receipt"
+
+
 def run(args):
     import win32con, win32event, win32gui, win32process
     exe, root, out = args.exe.resolve(), args.isolation_root.resolve(), args.output.resolve()
+    validate_package(exe, root, args.receipt.resolve())
     assert exe.is_file() and (root / "profile/Local/HarkenSearch/settings.ini").is_file()
     out.mkdir(parents=True, exist_ok=False)
     runtime = root / "profile/runtime"
@@ -27,7 +35,9 @@ def run(args):
     desktop = PrivateDesktop()
     process = None
     identity = {}
+    identity_verified = False
     profile = root / "profile/Local/HarkenSearch"
+    assert profile.resolve() != (Path(os.environ["LOCALAPPDATA"])/"HarkenSearch").resolve(), "Use a disposable profile"
     day, night = profile / "theme_schedule_day.json", profile / "theme_schedule_night.json"
     report = {"exe": str(exe), "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
               "startedAt": datetime.now(timezone.utc).isoformat(), "checks": [],
@@ -102,13 +112,19 @@ def run(args):
         return dict(line.split("=",1) for line in (profile/"settings.ini").read_text(encoding="utf-8").splitlines() if "=" in line)
 
     def start(font):
-        nonlocal process, identity
-        values = saved(); values["readingFontSize"] = str(font)
+        nonlocal process, identity, identity_verified
+        identity_verified = False
+        values = saved(); values["readingFontSize"] = str(font); values["language"] = "0"
+        assert Path(values["currentDbPath"]).resolve().is_relative_to(root), "Library must remain inside this isolated root"
         (profile/"settings.ini").write_text("".join(k+"="+v+"\n" for k,v in values.items()), encoding="utf-8")
-        process, pid = desktop.start(exe, environment_overrides={"HARKEN_THEME_QA_MINUTE":"600"})
+        process, pid = desktop.start(exe, environment_overrides={
+            "HARKEN_THEME_QA_MINUTE":"600", "LOCALAPPDATA":str(root/"profile/Local"),
+            "APPDATA":str(root/"profile/Roaming"), "AURA_RUNTIME_ROOT":str(runtime),
+            "TEMP":str(root/"temp"), "TMP":str(root/"temp")})
         identity = driver.command({"cmd":"magic_eq_identity"}, timeout=60)
         assert identity["pid"] == pid and Path(identity["exe_path"]).resolve() == exe
         assert Path(identity["isolation_root"]).resolve() == root
+        identity_verified = True
         state = wait_state(driver, lambda s:s["main_ui_ready"] and s["total_count"] > 0 and not s["db_switch_in_progress"], "populated library", 90)
         assert Path(state["db_path"]).resolve().is_relative_to(root)
         report["library"] = {"path":state["db_path"],"rows":state["total_count"]}
@@ -121,7 +137,7 @@ def run(args):
             return
         forced = False
         try:
-            if win32event.WaitForSingleObject(process,0) == win32con.WAIT_TIMEOUT:
+            if identity_verified and win32event.WaitForSingleObject(process,0) == win32con.WAIT_TIMEOUT:
                 cmd(cmd="info_edit_input", action="exit")
             assert win32event.WaitForSingleObject(process,20000) == win32con.WAIT_OBJECT_0
             assert win32process.GetExitCodeProcess(process) == 0
@@ -157,12 +173,15 @@ def run(args):
         cmd(cmd="theme_schedule", action="draft_color", key="mainWindowBG", rgba=[.12,.21,.31,1]); settle()
         preview = theme(); assert preview["active_bg"] != preview["day_bg"]
         assert preview["imgui_bg"] == preview["active_bg"] and snapshot(day) == before
+        expected_color = "ff1e354f"  # ThemeColors::toARGBHex truncates each 0..255 channel.
+        assert preview["active_bg"] == expected_color, preview
         capture(driver, out/"day-preview-18.png")
         button("保存配色"); wait(theme, lambda s:not s["editor_open"], "save closes editor"); settle()
         stored = snapshot(day); colors = json.loads(stored)["colors"]
         assert all(abs(a-b)<1e-6 for a,b in zip(colors["mainWindowBG"],[.12,.21,.31,1]))
         assert snapshot(night) == night_before and saved()["theme"] == manual_before
-        assert theme()["active_bg"] == theme()["day_bg"]
+        saved_color = theme()
+        assert saved_color["active_bg"] == saved_color["day_bg"] == saved_color["imgui_bg"] == expected_color, saved_color
         check("save-persists-rendered-day-colors-without-changing-night-or-manual")
         settings(); editor()
         cmd(cmd="theme_schedule", action="draft_color", key="mainWindowBG", rgba=[.7,.1,.2,1]); settle()
@@ -173,14 +192,18 @@ def run(args):
         check("cancel-discards-day-preview")
         stop(); start(24)
         assert snapshot(day) == stored and snapshot(night) == night_before
-        assert theme()["active_bg"] == theme()["day_bg"] and saved()["theme"] == manual_before
+        loaded = theme()
+        assert loaded["active_bg"] == loaded["day_bg"] == loaded["imgui_bg"] == expected_color and not loaded["day_warning"], loaded
+        assert saved()["theme"] == manual_before
         check("saved-day-colors-survive-restart")
         settings(); cmd(cmd="settings_ui", action="resize", width=880, height=600); settle()
         find("day-combo"); capture(driver, out/"day-controls-24-small.png")
         editor(); cmd(cmd="theme_schedule", action="draft_color", key="mainWindowBG", rgba=[.8,.2,.1,1]); settle()
         capture(driver, out/"day-preview-24.png"); stop(); start(18)
         assert snapshot(day) == stored and snapshot(night) == night_before
-        assert theme()["active_bg"] == theme()["day_bg"] and saved()["theme"] == manual_before
+        loaded = theme()
+        assert loaded["active_bg"] == loaded["day_bg"] == loaded["imgui_bg"] == expected_color and not loaded["day_warning"], loaded
+        assert saved()["theme"] == manual_before
         check("exit-during-unsaved-preview-keeps-saved-palette")
         settings(); click("automatic"); apply(); settle()
         assert theme()["mode"] == 0 and theme()["theme"] == int(manual_before)
@@ -188,7 +211,9 @@ def run(args):
         report["passed"] = True
     except Exception:
         report["passed"] = False; report["error"] = traceback.format_exc()
-        try: capture(driver, out/"failure.png")
+        try:
+            if identity_verified and process is not None and win32event.WaitForSingleObject(process,0) == win32con.WAIT_TIMEOUT:
+                capture(driver, out/"failure.png")
         except Exception: pass
         raise
     finally:
@@ -205,6 +230,6 @@ def run(args):
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description=__doc__)
-    for name in ("exe","isolation-root","output"):
+    for name in ("exe","isolation-root","output","receipt"):
         parser.add_argument("--"+name,type=Path,required=True)
     run(parser.parse_args())
