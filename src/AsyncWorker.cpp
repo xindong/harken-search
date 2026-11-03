@@ -1648,7 +1648,8 @@ void SearchWorker::workerThread() {
         // Publish rows immediately; count and facets can follow.
 #if ARIS_PREVIEW_ISOLATION
         if (const char* delay = std::getenv("HARKEN_QA_SEARCH_DELAY_MS")) {
-            const int delayMs = std::clamp(std::atoi(delay), 0, 500);
+            // Allow a short actual-window recording of the loading background.
+            const int delayMs = std::clamp(std::atoi(delay), 0, 5000);
             std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
         }
 #endif
