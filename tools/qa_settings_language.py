@@ -95,6 +95,12 @@ def run(args):
         process.Close();process=None
     try:
         start();open_settings()
+        # Resume safely after a previous run stopped with English/Japanese saved.
+        # Establish the starting language through the same real controls instead
+        # of assuming a pristine profile or editing its configuration on disk.
+        if state()['live_language'] != 0:
+            focus_language();choose(0);click('apply');settle();verify_rendered(0)
+            assert saved_language()==0
         for language in (1,2,0):
             original=state()['live_language'];focus_language();choose(language)
             assert state()['draft_language']==language and state()['live_language']==original and state()['rendered_language']==original
