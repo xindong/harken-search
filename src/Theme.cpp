@@ -2177,3 +2177,12 @@ ThemeColorScheme ThemeColors::getDeepNavy() {
     return s;
 }
 
+
+ImVec4 GetThemeClearColor() {
+    const ImVec4 bg = ThemeColors::current().mainWindowBG;
+    if (bg.w > 0.0f) {
+        return bg;
+    }
+    return ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+}
+
