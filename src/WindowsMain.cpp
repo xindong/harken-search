@@ -6559,6 +6559,7 @@ static void PollQaCommandFile(AppState& state) {
                 {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
                 {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
                 {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
+                {"editor_ui",nlohmann::json::parse(ThemeScheduleEditorQaObservation())},
                 {"active_bg",ThemeColors::toARGBHex(ThemeColors::current().mainWindowBG)},
                 {"active_accent",ThemeColors::toARGBHex(ThemeColors::current().toolbarAccent)},
                 {"imgui_bg",ThemeColors::toARGBHex(ImGui::GetStyle().Colors[ImGuiCol_WindowBg])},
