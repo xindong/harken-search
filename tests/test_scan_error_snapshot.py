@@ -12,9 +12,9 @@ def predicate_exe(tmp_path_factory):
     source = (ROOT / 'src/main.cpp').read_text(encoding='utf-8')
     start = source.index('ReadingTextScope readingResult;')
     block = source[start:source.index('const bool rollbackFailed', start)]
-    snapshot = re.search(r'const auto scanErrorSnapshot = state.getScanErrors\(\);', block)
+    snapshot = re.search(r'const auto \[scanErrorSnapshot, scanErrorCounts\] = state.getScanErrorSnapshot\(\);', block)
     any_expr = re.search(r'const bool networkUnreachable = std::any_of\([\s\S]*?\}\);', block).group()
-    count_expr = "const int unreachableHint = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, int(scanErrorSnapshot.size()))[0];"
+    count_expr = "const int unreachableHint = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, int(scanErrorSnapshot.size()), scanErrorCounts)[0];"
     setup = sorted(glob.glob('C:/Program Files/Microsoft Visual Studio/*/*/VC/Auxiliary/Build/vcvars64.bat'))
     assert setup, 'VS C++ toolchain required for checked-iterator regression'
     folder = tmp_path_factory.mktemp('scan-error-snapshot')
@@ -22,6 +22,7 @@ def predicate_exe(tmp_path_factory):
     cpp.write_text('''#include <algorithm>
 #include <vector>
 #include <string>
+#include <utility>
 #include <cstdlib>
 #include <crtdbg.h>
 #define NOMINMAX
@@ -30,7 +31,9 @@ def predicate_exe(tmp_path_factory):
 struct State {
   std::vector<std::string> messages;
   int reads = 0;
-  std::vector<std::string> getScanErrors() { ++reads; return messages; }
+  std::pair<std::vector<std::string>, std::vector<int>> getScanErrorSnapshot() {
+    ++reads; return {messages, std::vector<int>(messages.size(), 1)};
+  }
 };
 int main(int argc, char** argv) {
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);

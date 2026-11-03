@@ -4446,9 +4446,14 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "// Helper:", 1
         )[0]
 
-        self.assertIn("Platform::FileSystem::StreamWriter writer;", body)
-        self.assertIn("writer.Open(pathUtf8, false, true)", body)
+        self.assertIn("harken::settings::SaveKeyValueFile(pathUtf8,items)", body)
+        body = (ROOT / "src" / "SettingsFileWriter.h").read_text(encoding="utf-8")
+        self.assertIn("Platform::FileSystem::StreamWriter", body)
+        self.assertIn("writer.Open(pending, false, true)", body)
         self.assertIn('writer.Write("# Aris settings (auto-generated)\\n");', body)
+        self.assertIn("writer.Flush()", body)
+        self.assertIn("writer.CloseChecked()", body)
+        self.assertIn("Platform::FileSystem::AtomicFileReplace(pathUtf8,pending)", body)
         for write in (
             "writer.Write(it.first)",
             'writer.Write("=")',

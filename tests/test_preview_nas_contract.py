@@ -127,12 +127,13 @@ class NetworkPathContract(unittest.TestCase):
         key = '"Scan_NetworkLibraryUnreachable"'
         self.assertIn("error.find(" + key + ")", MAIN)
         self.assertNotIn("error.find(L(Scan_NetworkLibraryUnreachable))", MAIN)
-        self.assertIn("msg.find(" + key + ")", WINDOWS_MAIN)
+        self.assertIn("state.getScanUnreachableCount()", WINDOWS_MAIN)
+        self.assertIn("errorDetails[i].find(" + key + ")", WINDOWS_MAIN)
         self.assertNotIn("unreachableCopy = L(Scan_NetworkLibraryUnreachable)", WINDOWS_MAIN)
         self.assertIn("L(Scan_NetworkLibraryUnreachable)", MAIN)
         result = MAIN.split("if (BeginTransientScrollbarPopupModal(scanResultPopup", 1)[1].split("// New playlist dialog", 1)[0]
         self.assertIn("L(Main_FailedFmt), scanView.failed", result)
-        self.assertIn("BuildScanFailureSummary(scanErrorSnapshot, scanView.failed)", result)
+        self.assertIn("BuildScanFailureSummary(scanErrorSnapshot, scanView.failed, scanErrorCounts, &scanCategoryCounts)", result)
         self.assertIn("L(ScanUi_FailedPath)", result)
         self.assertIn('error.find("Scan_NetworkLibraryUnreachable")', result)
         self.assertIn("L(Scan_NetworkLibraryUnreachable)", result)

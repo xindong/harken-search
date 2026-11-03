@@ -56,6 +56,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+std::atomic<int> g_scanCommitIntervalOverrideMs{-1};
+std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -14695,11 +14700,14 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         writeBuffer.reserve((size_t)COMMIT_BATCH_SIZE);
 
         auto accountWriteBufferFailure = [&](const std::string& message) {
-            const int failedCount = (int)writeBuffer.size();
+            const int failedCount = (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                [](const WorkResult& result) { return !result.scanTerminalFailure; });
             if (failedCount > 0) {
                 stats.addError(message, failedCount);
                 stats.failedFiles += failedCount;
                 failedWriteResultsInBatch += failedCount;
+            } else {
+                stats.addDiagnostic(message);
             }
             writeBuffer.clear();
         };
@@ -15168,7 +15176,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
 
             if (batchOk && commitTransaction()) {
-                committedWritesInBatch += (int)writeBuffer.size();
+                committedWritesInBatch += (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                    [](const WorkResult& result) { return !result.scanTerminalFailure; });
                 stats.added += batchAdded;
                 stats.updated += batchUpdated;
                 stats.ingested += batchAdded + batchUpdated;
@@ -15276,6 +15285,11 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
         bool flushFailed = false;
         auto lastFlushTime = std::chrono::steady_clock::now();
+        int commitIntervalMs = COMMIT_INTERVAL_MS;
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+        const int testCommitIntervalMs = g_scanCommitIntervalOverrideMs.load();
+        if (testCommitIntervalMs >= 0) commitIntervalMs = testCommitIntervalMs;
+#endif
 
         while (consumed.load() < toConsume) {
             if (isCancelled()) {
@@ -15347,9 +15361,12 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
             bool timeSliceExpired = !writeBuffer.empty() &&
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - lastFlushTime).count() >= COMMIT_INTERVAL_MS;
+                    std::chrono::steady_clock::now() - lastFlushTime).count() >= commitIntervalMs;
 
             if (writeBuffer.size() >= (size_t)COMMIT_BATCH_SIZE || timeSliceExpired) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+                if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
                 if (!flushWriteBuffer()) {
                     flushFailed = true;
                     break;
@@ -15365,6 +15382,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (!flushFailed && !writeBuffer.empty()) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+            if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
             if (!flushWriteBuffer()) {
                 flushFailed = true;
                 DIAG_ACTION_FMT("Scan", "Tail batch flush failed: %s", m_lastError.c_str());
@@ -15379,6 +15399,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (flushFailed) {
+            // Workers have stopped; classify results never consumed by the writer
+            // before grouping the remaining unimported files as write failures.
+            while (!resultQ.empty()) {
+                WorkResult queued = std::move(resultQ.front());
+                resultQ.pop();
+                if (!queued.scanTerminalFailure && queued.ok) continue;
+                const std::string message = queued.errorMessage.empty()
+                    ? ("Failed to scan file: " + queued.record.filePath)
+                    : queued.errorMessage;
+                stats.addError(message);
+                ++stats.failedFiles;
+                ++failedScanResultsInBatch;
+            }
             const int accountedInBatch =
                 committedWritesInBatch + failedScanResultsInBatch + failedWriteResultsInBatch;
             const int unaccountedInBatch = (int)batch.size() - accountedInBatch;

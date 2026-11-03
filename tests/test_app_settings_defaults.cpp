@@ -5,6 +5,17 @@
 #include <vector>
 
 int main() {
+    {
+        AppSettings height;
+        height.rowHeight=40;height.listDensity=ListDensity::Custom;
+        if(height.getEffectiveRowHeight()!=40)return 1;
+        height.rowHeight=1000;if(height.getEffectiveRowHeight()!=100)return 1;
+        height.rowHeight=-1;if(height.getEffectiveRowHeight()!=16)return 1;
+        height.rowHeight=40;height.listDensity=ListDensity::Normal;height.readingFontSize=14;
+        if(height.getEffectiveRowHeight()!=28)return 1;
+        height.listDensity=ListDensity::Compact;height.readingFontSize=24;
+        if(height.getEffectiveRowHeight()!=28)return 1;
+    }
     if (!aura::settings_search::MatchesAllTokens("theme font", "Theme and Font controls")) {
         std::printf("FAIL: ASCII settings search should match across case and separators\n");
         return 1;
@@ -49,6 +60,10 @@ int main() {
     }
 
     AppSettings settings;
+    if (settings.themeScheduleMode != harken::theme_schedule::Mode::Off) {
+        std::printf("FAIL: day/night theme mode should be off by default\n");
+        return 1;
+    }
     if (settings.autoReconcileOnStartup) {
         std::printf("FAIL: startup reconcile should be opt-in by default\n");
         return 1;

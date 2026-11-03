@@ -474,6 +474,10 @@ public:
     bool switchOutputDevice(int deviceIndex);  // -1 = system default
     int getCurrentOutputDeviceIndex() const { return m_outputDeviceIndex; }
     std::string getCurrentOutputDeviceName() const { return m_outputDeviceName; }
+    std::vector<uint8_t> getCurrentOutputDeviceId() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_outputDeviceIdBlob;
+    }
 
 private:
     void enforceMagicEQAvailabilityLocked(); // m_mutex held; publish a visible bypass on unsupported files.
@@ -643,6 +647,7 @@ private:
     // Output device selection
     int m_outputDeviceIndex = -1;           // -1 = system default
     std::string m_outputDeviceName;
+    std::vector<uint8_t> m_outputDeviceIdBlob; // active identity; unaffected by re-enumeration
     std::vector<OutputDeviceInfo> m_cachedDevices;
 
     std::string m_lastExportError;  // 上次 exportRegion 失败原因，供弹窗/日志

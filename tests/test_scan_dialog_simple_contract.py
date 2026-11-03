@@ -148,7 +148,7 @@ def test_stop_choice_preserves_original_actions_and_explicit_continue():
 def test_failure_details_have_a_separate_window():
     assert "##ScanFailureDetails" in SCAN
     assert "L(ScanUi_ViewFailures)" in SCAN
-    assert "state.getScanErrors()" in SCAN
+    assert "state.getScanErrorSnapshot()" in SCAN
 
 
 def test_paused_rescan_keeps_every_selected_folder():
