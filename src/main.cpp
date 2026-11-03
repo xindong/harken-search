@@ -8307,7 +8307,7 @@ static void PushSidebarMetadataInputColors() {
                                (light ? 0.11f : 0.098f) + 0.05f);
     const ImVec4 frame = mix(section, t.filterBrowserButtonBG, 0.40f);
     const ImVec4 text = mix(t.filterBrowserText, t.filterBrowserSelection, 0.03f);
-    const ImVec4 hint = mix(text, frame, 0.38f);
+    const ImVec4 hint = TransportContrast::ForSurface(mix(text, frame, 0.38f), frame, 4.5);
     ImVec4 border = mix(mix(t.filterBrowserOutline, panel, light ? 0.18f : 0.14f),
                         t.filterBrowserSelection, light ? 0.12f : 0.22f);
     border.w = light ? 0.82f : 0.62f;
@@ -8352,6 +8352,12 @@ static void DrawSidebarMetadataPickerField(
     const float arrowWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
     const float fieldWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - arrowWidth);
     PushSidebarMetadataInputColors();
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        qaState->qaMetadataInputColors["frame"] = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
+        qaState->qaMetadataInputColors["hint"] = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    }
+#endif
     const bool changed = DrawUnifiedSearchInput(inputId, hint, visible.data(), visible.size(),
         ImGuiInputTextFlags_AutoSelectAll, fieldWidth, true);
     ImGui::PopStyleColor(6);
@@ -29689,6 +29695,7 @@ void RenderUI(AppState& state) {
     }
 #if ARIS_PREVIEW_ISOLATION
     state.qaFilterUiRects.clear();
+    state.qaMetadataInputColors.clear();
     state.qaMetadataInputText.clear();
     state.qaMetadataDraftQuery.clear();
 #endif

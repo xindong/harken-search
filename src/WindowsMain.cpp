@@ -5291,6 +5291,16 @@ static void PollQaCommandFile(AppState& state) {
                 std::to_string(rect.w) + "]";
         }
         result += "},";
+        result += "\"qa_metadata_input_colors\":{";
+        bool firstQaMetadataColor = true;
+        for (const auto& [key, color] : state.qaMetadataInputColors) {
+            if (!firstQaMetadataColor) result += ",";
+            firstQaMetadataColor = false;
+            result += "\"" + jsonEscape(key) + "\":[" + std::to_string(color.x * 255.0f) + "," +
+                std::to_string(color.y * 255.0f) + "," + std::to_string(color.z * 255.0f) + "," +
+                std::to_string(color.w * 255.0f) + "]";
+        }
+        result += "},";
         result += "\"qa_metadata_input_text\":{";
         bool firstQaMetadataInput = true;
         for (const auto& [key, value] : state.qaMetadataInputText) {

@@ -18,7 +18,7 @@ import uuid
 
 from qa_folder_shortcuts import Driver
 from qa_required_library_setup import PrivateDesktop
-from qa_transport_themes import THEMES
+from qa_transport_themes import THEMES, contrast
 
 
 def capture(driver, output, name):
@@ -287,6 +287,14 @@ def run(args):
         close_outside("Artist")
         for theme, label in THEMES:
             driver.command({"cmd": "set_theme", "theme": theme})
+            current = wait_until("metadata input colors rendered", lambda s:
+                {"frame", "hint"} <= s.get("qa_metadata_input_colors", {}).keys())
+            colors = current["qa_metadata_input_colors"]
+            hint_ratio = contrast([round(channel) for channel in colors["hint"]],
+                                  [round(channel) for channel in colors["frame"]])
+            assert hint_ratio >= 4.5, (label, hint_ratio, colors)
+            checks.append({"name": "metadata-hint-contrast", "theme": theme,
+                           "ratio": hint_ratio, "colors": colors})
             click("metadata_Artist_arrow")
             current, _ = popup("Artist")
             record(f"theme-{theme}-artist-expanded", current)
@@ -384,6 +392,19 @@ def run(args):
             s.get("qa_metadata_draft_query", {}).get("Category") == "Q" + long_raw_category and
             s["metadata_filters"]["category"] == long_raw_category, timeout=5)
         checks.append({"name": "long-category-prefix-edit-complete",
+                       "query_bytes": len(current["qa_metadata_draft_query"]["Category"].encode("utf-8"))})
+        # Keep editing after the active ImGui input has outgrown its original
+        # allocation; a larger caller buffer alone must not corrupt TextA.
+        driver.command({"cmd": "info_edit_input", "text": "X" * 900})
+        current = wait_until("long category first growth stays complete", lambda s:
+            len(s.get("qa_metadata_draft_query", {}).get("Category", "").encode("utf-8")) == 2021 and
+            s["qa_metadata_draft_query"]["Category"].endswith(long_raw_category))
+        driver.command({"cmd": "info_edit_input", "text": "Y" * 200})
+        current = wait_until("long category second growth stays complete", lambda s:
+            len(s.get("qa_metadata_draft_query", {}).get("Category", "").encode("utf-8")) == 2221 and
+            s["qa_metadata_draft_query"]["Category"].endswith(long_raw_category) and
+            s["metadata_filters"]["category"] == long_raw_category, timeout=5)
+        checks.append({"name": "long-category-growth-after-activation",
                        "query_bytes": len(current["qa_metadata_draft_query"]["Category"].encode("utf-8"))})
     except BaseException as exc:
         failure = repr(exc)
