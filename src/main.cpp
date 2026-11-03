@@ -5509,16 +5509,16 @@ void LoadAppSettings(AppState& state) {
         auto itList    = kv.find("listFontSize");
         auto itFont    = kv.find("fontSize");
         state.settings.readingFontSize = ResolveReadingFontSize(
-            itReading != kv.end(), itReading != kv.end() ? ParseInt(itReading->second, 14) : 14,
-            itList    != kv.end(), itList    != kv.end() ? ParseInt(itList->second,    14) : 14,
-            itFont    != kv.end(), itFont    != kv.end() ? ParseInt(itFont->second,    14) : 14,
-            14);
+            itReading != kv.end(), itReading != kv.end() ? ParseInt(itReading->second, kDefaultReadingFontPx) : kDefaultReadingFontPx,
+            itList    != kv.end(), itList    != kv.end() ? ParseInt(itList->second, kDefaultReadingFontPx) : kDefaultReadingFontPx,
+            itFont    != kv.end(), itFont    != kv.end() ? ParseInt(itFont->second, kDefaultReadingFontPx) : kDefaultReadingFontPx,
+            kDefaultReadingFontPx);
         // Chrome is fixed at kChromeFontPx.
         state.settings.fontSize = kChromeFontPx;
-        // List font is independently adjustable (default: same as reading if not saved).
+        // List font is independently adjustable and keeps its own default.
         state.settings.listFontSize = itList != kv.end()
-            ? std::clamp(ParseInt(itList->second, 14), 10, 24)
-            : state.settings.readingFontSize;
+            ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, 24)
+            : kDefaultListFontPx;
     }
     state.settings.rowHeight = ParseInt(kv["rowHeight"], state.settings.rowHeight);
     state.settings.listDensity = static_cast<ListDensity>(ParseInt(kv["listDensity"], (int)state.settings.listDensity));

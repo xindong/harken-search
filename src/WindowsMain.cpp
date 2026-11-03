@@ -4689,6 +4689,7 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
                 {"effective_row_height",state.settings.getEffectiveRowHeight()},{"live_scan_threads",state.scanWorkerThreads},
                 {"draft_monitor",editor.app.Value().monitorLayout},{"live_monitor",state.settings.monitorLayout},
                 {"draft_day",editor.runtime.Value().day},{"draft_night",editor.runtime.Value().night},
@@ -12351,7 +12352,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
 
     // Load a baseline font first; actual size will be applied after settings are loaded (Scheme B).
-    LoadChineseFont(io, (float)kChromeFontPx, 16.0f, 16.0f);
+    LoadChineseFont(io, (float)kChromeFontPx, (float)kDefaultReadingFontPx, (float)kDefaultListFontPx);
 
     ImGui::StyleColorsDark();
     ApplyTheme(AppTheme::Dark);

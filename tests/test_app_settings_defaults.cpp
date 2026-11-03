@@ -60,6 +60,18 @@ int main() {
     }
 
     AppSettings settings;
+    if (settings.readingFontSize != 16 || settings.listFontSize != 18) {
+        std::printf("FAIL: new system/list font defaults should be 16/18, got %d/%d\n",
+                    settings.readingFontSize, settings.listFontSize);
+        return 1;
+    }
+    if (kChromeFontPx != 14 ||
+        ResolveReadingFontSize(true, 22, true, 20, true, 13, 16) != 22 ||
+        ResolveReadingFontSize(false, 0, true, 20, true, 13, 16) != 20 ||
+        ResolveReadingFontSize(false, 0, false, 0, false, 0, 16) != 16) {
+        std::printf("FAIL: saved font priority or fixed control font changed\n");
+        return 1;
+    }
     if (settings.themeScheduleMode != harken::theme_schedule::Mode::Off) {
         std::printf("FAIL: day/night theme mode should be off by default\n");
         return 1;

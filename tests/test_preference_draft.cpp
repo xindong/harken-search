@@ -28,13 +28,22 @@ int main() {
     assert(!Search(u8"诊断", true).empty());
     const auto available = Search("theme", true, false, false);
     assert(!available.empty());
+    const auto& entries = Catalog();
+    const auto theme = std::find_if(entries.begin(), entries.end(), [](const auto& e) { return e.id == "theme"; });
+    const auto automatic = std::find_if(entries.begin(), entries.end(), [](const auto& e) { return e.id == "automatic"; });
+    assert(theme != entries.end() && automatic != entries.end());
+    assert(Available(*theme, true, false, true));
+    assert(!Available(*theme, true, true, true));
+    assert(Available(*automatic, true, false, true) && Available(*automatic, true, true, true));
+    const auto scheduledSearch = Search("theme", true, true);
+    assert(std::none_of(scheduledSearch.begin(), scheduledSearch.end(), [](auto e) { return e->id == "theme"; }));
     assert(std::none_of(available.begin(), available.end(), [](auto e) { return e->id == "day" || e->id == "night"; }));
     const auto visibleLufs = Search("LUFS", true, false, false);
     assert(std::none_of(visibleLufs.begin(), visibleLufs.end(), [](auto e) { return e->id == "showLufs"; }));
     for (const auto& entry : Catalog()) {
         assert(!entry.id.empty() && !entry.zh.empty() && !entry.en.empty() && !entry.ja.empty());
         auto hits = Search(entry.zh, true);
-        assert(std::find(hits.begin(), hits.end(), &entry) != hits.end());
+        assert((std::find(hits.begin(), hits.end(), &entry) != hits.end()) == Available(entry, true, true, true));
     }
     Preferences live;
     PreferenceDraft<Preferences> edit({Field(&Preferences::volume), Field(&Preferences::realtime), Field(&Preferences::device)});
