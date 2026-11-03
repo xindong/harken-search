@@ -168,7 +168,7 @@ bool PathExistsUtf8(const std::string& pathUtf8) {
 }
 
 std::string GetExeDirUtf8() {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     return Platform::GetExeDir();
 #else
     return ".";
@@ -177,8 +177,13 @@ std::string GetExeDirUtf8() {
 
 std::wstring GetDefaultDbDirWide() {
     const std::wstring platformDir = Platform::DatabasePaths::GetDefaultDbDirWide();
+#ifdef __APPLE__
+    // A failed data layout must never redirect a new library into the app bundle.
+    return platformDir;
+#else
     if (!platformDir.empty()) return platformDir;
     return Utf8ToWide(GetExeDirUtf8());
+#endif
 }
 
 std::string GetDefaultDbDirUtf8() {
@@ -194,7 +199,13 @@ std::string GetDefaultDbPathUtf8() {
     }
     return BuildDatabasePackageMainPathUtf8(GetDefaultDbDirUtf8() + "\\Auro.db");
 #else
+#ifdef __APPLE__
+    const auto directory = GetDefaultDbDirUtf8();
+    if (directory.empty()) return {};
+    return BuildDatabasePackageMainPathUtf8((fs::u8path(directory) / "Harken Search").u8string());
+#else
     return BuildDatabasePackageMainPathUtf8(GetExeDirUtf8() + "/Auro.db");
+#endif
 #endif
 }
 

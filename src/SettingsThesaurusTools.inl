@@ -23,7 +23,7 @@
                 if (aura::ui::ActionButton(L(Set_ThesMerge), ImVec2(160, 30))) {
                     #if defined(_WIN32) || defined(__APPLE__)
                     const std::string importPath =
-                        Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd);
+                        Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(MainUiOwnerWindow());
                     if (!importPath.empty()) {
                         std::string json;
                         if (Platform::FileSystem::ReadFileText(importPath, json)) {

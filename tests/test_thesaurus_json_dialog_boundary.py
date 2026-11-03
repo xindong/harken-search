@@ -65,7 +65,7 @@ assert "NSModalResponseOK" in MACOS
 assert "src/platform/thesaurus_json_dialog_macos.mm" in CMAKE
 
 qualified_call = (
-    "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
+    "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(MainUiOwnerWindow())"
 )
 assert MAIN.count(qualified_call) == 1
 merge_button = MAIN.index("aura::ui::ActionButton(L(Set_ThesMerge)")
