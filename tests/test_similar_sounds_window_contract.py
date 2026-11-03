@@ -281,12 +281,17 @@ assert "state.visibleFilePaths.insert(row.filePath)" in cache_miss
 assert cache_miss.index("state.visibleFilePaths.insert(row.filePath)") < \
     cache_miss.index("state.addPendingWaveform(row.filePath, true)")
 
-# Decode completion uses the frame's cross-window visibility set. Checking
-# only central searchResults would discard successful Similar Sounds decodes.
+# Decode completion uses the frame's cross-window visibility set. Both hosts
+# must call the shared pump; checking only central searchResults would discard
+# successful Similar Sounds decodes.
 windows_main = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
-visibility_start = windows_main.index("bool isStillVisiblePageItem")
-visibility_end = windows_main.index("const bool isLoadedFileResult", visibility_start)
-completion_visibility = windows_main[visibility_start:visibility_end]
+mac_entry = (ROOT / "src" / "platform" / "app_entry_macos.mm").read_text(encoding="utf-8")
+frame_services = (ROOT / "src" / "AppFrameServices.cpp").read_text(encoding="utf-8")
+assert "PumpAppWaveforms(state, isMouseIdle, waveformFrameOptions)" in windows_main
+assert "PumpAppWaveforms(*state, isMouseIdle)" in mac_entry
+visibility_start = frame_services.index("bool isStillVisiblePageItem")
+visibility_end = frame_services.index("const bool isLoadedFileResult", visibility_start)
+completion_visibility = frame_services[visibility_start:visibility_end]
 assert "state.visibleFilePaths.find(result.filePath)" in completion_visibility
 assert "state.searchResults" in completion_visibility
 

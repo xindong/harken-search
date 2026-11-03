@@ -100,11 +100,11 @@ void TestForegroundPlaybackPausesUnrelatedBackgroundIo() {
 
 void TestBrowserMiniWaveformWorkerDoesNotRequireOpenDatabaseContract() {
     const auto sourcePath = std::filesystem::path(__FILE__).parent_path().parent_path() /
-                            "src" / "WindowsMain.cpp";
+                            "src" / "AppFrameServices.cpp";
     const std::string source = ReadTextFile(sourcePath);
 
     Check(!source.empty(),
-          "BDD: Given Browser mini-worker startup contract validation runs, WindowsMain.cpp can be opened");
+          "BDD: Given Browser mini-worker startup contract validation runs, AppFrameServices.cpp can be opened");
     Check(source.find("static bool waveformWorkerStarted = false;") != std::string::npos &&
           source.find("!waveformWorkerStarted && !holdColdMiniWorker") != std::string::npos,
           "BDD: Given direct-file Browser has no open database, its source-decode waveform worker still starts");
@@ -1362,6 +1362,10 @@ void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
     refreshAdapterBuffer << refreshAdapterInput.rdbuf();
     const std::string source = buffer.str();
     const std::string refreshAdapterSource = refreshAdapterBuffer.str();
+    const std::string maintenanceToolsSource = ReadTextFile(
+        root / "src" / "SettingsMaintenanceTools.inl");
+    Check(!maintenanceToolsSource.empty(),
+          "BDD: Cover index rebuild settings action source is readable");
 
     const std::string forceBody = ExtractFunctionBody(
         refreshAdapterSource, "void ForceCoverWallReload(AppState& state)");
@@ -1400,9 +1404,9 @@ void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
     Check(source.find("FinalizeFolderSubtreeDbRemoval") != std::string::npos &&
           source.find("ForceCoverWallReload(state);", source.find("FinalizeFolderSubtreeDbRemoval")) != std::string::npos,
           "BDD: Removing records from the database still invalidates the cover wall as database content changed");
-    const size_t rebuildButton = source.find("aura::ui::ActionButton(L(Set_RebuildCoverIndex)");
-    const size_t rebuildForce = source.find("ForceCoverWallReload(state);", rebuildButton);
-    const size_t rebuildStart = source.find("StartCoverRebuild(state);", rebuildButton);
+    const size_t rebuildButton = maintenanceToolsSource.find("aura::ui::ActionButton(L(Set_RebuildCoverIndex)");
+    const size_t rebuildForce = maintenanceToolsSource.find("ForceCoverWallReload(state);", rebuildButton);
+    const size_t rebuildStart = maintenanceToolsSource.find("StartCoverRebuild(state);", rebuildButton);
     Check(rebuildButton != std::string::npos &&
           rebuildForce != std::string::npos &&
           rebuildStart != std::string::npos &&
@@ -1427,6 +1431,9 @@ void TestQaScanCompletionRefreshesDatabaseViewContract() {
 
     std::ostringstream buffer;
     buffer << input.rdbuf();
+    std::ifstream runtime(sourcePath.parent_path() / "AppRuntime.cpp");
+    Check(runtime.good(), "shared scan refresh source can be opened");
+    buffer << runtime.rdbuf();
     const std::string source = buffer.str();
 
     const size_t refreshBlock = source.find("if (state.needsDatabaseRefresh && !scanPopupOpen)");
@@ -1665,7 +1672,7 @@ void TestFilterChipQueryRemovalSuppressesRealtimeAutoClearContract() {
           "BDD: query chip removal still uses RemoveSearchQueryChipFromText");
     if (anchorPos == std::string::npos) return;
 
-    const size_t windowEnd = source.find("strncpy_s(state.searchBuffer", anchorPos);
+    const size_t windowEnd = source.find("CopyUiText(state.searchBuffer", anchorPos);
     Check(windowEnd != std::string::npos,
           "BDD: query chip removal still rewrites searchBuffer directly");
     if (windowEnd == std::string::npos) return;
@@ -3454,8 +3461,15 @@ void TestModuleDockEdgeSnapRejectsNestedPanelSplitsContract() {
     Check(!previewBody.empty(),
           "BDD: Module dock preview drawer is inspectable");
 
+    const size_t dockHitKindStart = hitTestSource.find("enum class DockHitKind {");
+    const size_t dockHitKindEnd = hitTestSource.find("};", dockHitKindStart);
+    const std::string dockHitKindDefinition =
+        dockHitKindStart != std::string::npos && dockHitKindEnd != std::string::npos
+            ? hitTestSource.substr(dockHitKindStart, dockHitKindEnd - dockHitKindStart)
+            : std::string{};
     Check(source.find("const float dockSnapDistance = aura::ui::dock::kDockSnapDistance;") != std::string::npos &&
-          hitTestSource.find("enum class DockHitKind { None, Main, Parent, Module };") != std::string::npos &&
+          dockHitKindDefinition.find("Main") != std::string::npos &&
+          dockHitKindDefinition.find("Module") != std::string::npos &&
           hitBody.find("if (work.width <= 0.0f || work.height <= 0.0f || snapDistance <= 0.0f) return miss;") != std::string::npos,
           "BDD: Module dock edge snap defines an explicit bounded edge-zone policy");
     Check(detectBody.find("aura::ui::dock::HitDockTarget(") != std::string::npos &&

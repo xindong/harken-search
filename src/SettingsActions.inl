@@ -76,7 +76,7 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
     } else if(editor.action=="import") {
         ImGui::TextWrapped("%s",L(SetUX_ImportReplacesYourSavedConfigurationExportABackupFirst));
         if(aura::ui::ActionButton(L(Set_ImportSettings))) {
-            const auto path=Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd);
+            const auto path=Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(MainUiOwnerWindow());
             if(!path.empty()) {
                 std::string contents;
                 if(!Platform::FileSystem::ReadFileText(path,contents)||contents.find('=')==std::string::npos)editor.error=L(SetUX_NotAReadableSettingsFile);

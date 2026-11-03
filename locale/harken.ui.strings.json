@@ -69,6 +69,9 @@
     {"id":"SetUX_ImportReplacesYourSavedConfigurationExportABackupFirst","type":"ui","zh":"导入将替换当前保存的配置。建议先导出一份备份。","en":"Import replaces your saved configuration. Export a backup first.","ja":"読み込むと保存済みの設定を置き換えます。先にバックアップしてください。"},
     {"id":"SetUX_NotAReadableSettingsFile","type":"ui","zh":"无法读取有效的设置文件。","en":"Not a readable settings file.","ja":"有効な設定ファイルを読み込めません。"},
     {"id":"SetUX_ImportFailedCheckTheSettingsFolder","type":"ui","zh":"导入失败，请检查设置目录。","en":"Import failed. Check the settings folder.","ja":"読み込みに失敗しました。設定フォルダーを確認してください。"},
+    {"id":"Mac_ExternalDragUnavailable","type":"ui","zh":"当前测试版尚不支持外部文件拖放，请使用导出功能。","en":"External file dragging is not available on macOS yet. Use Export.","ja":"macOS では外部へのファイルドラッグは未対応です。エクスポートを使用してください。"},
+    {"id":"Mac_GlobalHotkeyUnavailable","type":"ui","zh":"当前测试版尚不支持全局唤醒快捷键。","en":"The global activation shortcut is not available on macOS yet.","ja":"macOS のグローバル起動ショートカットは未対応です。"},
+
     {"id":"ScanUi_SpeedFmt","type":"ui","zh":"速度 %.1f 文件/秒","en":"Speed %.1f files/s","ja":"速度 %.1f ファイル/秒"},
     {"id":"ScanUi_SpeedPending","type":"ui","zh":"速度 —","en":"Speed —","ja":"速度 —"},
     {"id":"ScanUi_NoNewProgress","type":"ui","zh":"速度 — · 暂无新增进度","en":"Speed — · No new progress","ja":"速度 — · 進捗更新なし"},
