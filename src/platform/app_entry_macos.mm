@@ -10,6 +10,7 @@
 #include "imgui_impl_osx.h"
 #include "imgui_impl_opengl3.h"
 #include "../AppRuntime.h"
+#include "../AppFrameServices.h"
 #include "../AppMainServices.h"
 #include "../UIRenderer.h"
 #include "../UiFonts.h"
@@ -230,6 +231,14 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     RenderInfoMetadataLeavePrompt(*state);
     FlushSettingsDirty(*state);
     ProcessPendingProductModeToggle(*state);
+    PumpAppContinuousPlayback(*state);
+    const bool isMouseIdle = std::chrono::steady_clock::now() - state->lastMouseMoveTime >
+        std::chrono::milliseconds(500);
+    PumpAppWaveforms(*state, isMouseIdle);
+    const bool contextMenuHeavyFreeze = ImGui::IsPopupOpen("RowContextMenu") ||
+        ImGui::IsPopupOpen("##PlaylistSidebarContext");
+    PumpAppCoverTextureUploads(*state, contextMenuHeavyFreeze, isMouseIdle);
+    PumpAppBackgroundStatus(*state, isMouseIdle);
     ImGui::Render();
     const NSRect pixels = [self.glView convertRectToBacking:self.glView.bounds];
     glViewport(0, 0, static_cast<int>(pixels.size.width), static_cast<int>(pixels.size.height));
@@ -248,6 +257,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
             applicationExitCode = 4; RecordStage("QaReplyFailed");
         }
     }
+    FlushDeferredMiniWaveTextureDeletes();
     [self.glView.openGLContext flushBuffer];
     if (qaControl && qaRequest.close) {
         RecordStage("NormalCloseRequested");

@@ -395,6 +395,7 @@ set(APP_SOURCES
     src/UiFonts.cpp
     src/UiInteraction.cpp
     src/AppRuntime.cpp
+    src/AppFrameServices.cpp
     ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
     ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
     ${AURO_SEARCH_TEXT_GB2312_SOURCE}
