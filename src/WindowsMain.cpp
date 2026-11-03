@@ -4792,12 +4792,16 @@ static void PollQaCommandFile(AppState& state) {
             auto rect=[](const ImVec4& r){return std::array<float,4>{r.x,r.y,r.z,r.w};};
             auto items=nlohmann::json::array();
             for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled},{"font_pixels",item.fontPixels}});
+            auto texts=nlohmann::json::array();
+            for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
                 {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"draft_language",(int)editor.app.Value().language},{"live_language",(int)state.settings.language},
+                {"rendered_language",(int)g_currentLanguage},{"rendered_texts",texts},
                 {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
                 {"effective_row_height",state.settings.getEffectiveRowHeight()},{"live_scan_threads",state.scanWorkerThreads},
                 {"draft_monitor",editor.app.Value().monitorLayout},{"live_monitor",state.settings.monitorLayout},

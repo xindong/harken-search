@@ -96,13 +96,19 @@ inline Editor& SettingsEditor() { static Editor editor; return editor; }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
 struct Observation {
     struct Item { std::string id; ImVec4 bounds, clip; bool disabled=false; float fontPixels=0; };
+    struct Text { std::string id, text; ImVec4 bounds,clip; };
     int frame=0; bool open=false, prompt=false; int page=0; size_t pending=0;
     float draftVolume=0; bool draftRealtime=false; int draftTheme=0;
     ImVec4 bounds{};
     std::vector<Item> items;
+    std::vector<Text> texts;
 };
 inline Observation observation;
 inline bool failSaveOnce=false;
+inline void ObserveText(const char* id,const char* text,ImVec2 pos,ImVec4 clip,ImFont* font,float size) {
+    const auto extent=font->CalcTextSizeA(size,FLT_MAX,0.f,text);
+    observation.texts.push_back({id,text,{pos.x,pos.y,pos.x+extent.x,pos.y+extent.y},clip});
+}
 inline void Observe(const char* id) {
     const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
     const auto ca=ImGui::GetWindowDrawList()->GetClipRectMin(),cb=ImGui::GetWindowDrawList()->GetClipRectMax();
@@ -110,5 +116,6 @@ inline void Observe(const char* id) {
 }
 #else
 inline void Observe(const char*) {}
+inline void ObserveText(const char*,const char*,ImVec2,ImVec4,ImFont*,float) {}
 #endif
 }
