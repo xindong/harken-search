@@ -49,6 +49,7 @@ def run(args):
     def query(value):
         click('search')
         command(cmd='settings_ui',action='key',key='Ctrl',down=True);settle()
+        key('K')
         key('A')
         command(cmd='settings_ui',action='key',key='Ctrl',down=False);settle()
         command(cmd='info_edit_input',action='text',text=value);settle()
@@ -82,7 +83,8 @@ def run(args):
                         ink.append(y)
             assert ink,(id,'no readable navigation text')
             center_error=abs((min(ink)+max(ink)+1)/2-(b+d)/2)
-            corners=[image.getpixel((x,y)) for x in (a+1,c-2) for y in (b+1,d-2)]
+            # Sample inside the six-pixel curve; edge hit checks stay separate.
+            corners=[image.getpixel((x,y)) for x in (a+8,c-9) for y in (b+2,d-3)]
             fill_error=max(abs(color[k]-background[k]) for color in corners for k in range(3))
             rows.append({'id':id,'bounds':[a,b,c,d],'inkY':[min(ink),max(ink)+1],
                          'centerError':center_error,'fillError':fill_error,'background':background})
@@ -113,8 +115,15 @@ def run(args):
         command(cmd='dock_pointer',phase='focus')
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
-        assert state()['open'];screenshot('01-common')
-        for id in ('nav-0','search','device','volume','done'):assert find(id)['font_pixels']>=18
+        assert state()['open'];screenshot('01-appearance')
+        if args.navigation_review:
+            from qa_settings_navigation_selection import verify_review_regressions
+            verify_review_regressions(locals());click('done');return
+        if args.navigation_selection:
+            from qa_settings_navigation_selection import verify
+            verify(locals(),args);return
+        click('nav-2')
+        for id in ('nav-2','search','device','volume','done'):assert find(id)['font_pixels']>=18
         for id in ('settings-title','page-title'):assert find(id)['font_pixels']>=24
         report['typography']={'bodyMinimum':18,'titleMinimum':24,'savedGlobalFont':state()['live_font']}
         if args.expected_volume is not None:
@@ -133,13 +142,13 @@ def run(args):
                 for theme in range(5):
                     command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
                     if state()['pending']:click('revert')
-                    click('nav-0');click('stock-'+str(0 if theme==4 else 4))
+                    click('nav-1');click('stock-'+str(0 if theme==4 else 4))
                     if state()['pending']:click('apply')
                     click('stock-'+str(theme));assert state()['pending']>0
                     click('nav-4')
                     for width,height in ((1120,800),(880,600)):
                         command(cmd='settings_ui',action='resize',width=width,height=height);settle()
-                        for id in ('nav-0','nav-8','search','close','apply'):find(id)
+                        for id in ('nav-2','nav-8','search','close','apply'):find(id)
                         a,b,c,d=find('nav-5')['bounds']
                         for x,y in ((a+2,b+2),(c-3,d-3)):
                             pointer(x,y);assert state()['page']==5
@@ -150,20 +159,20 @@ def run(args):
             command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
             query('system font');click('result-systemFont');click('systemFont');click('option-4')
             if state()['pending']:click('apply')
-            click('nav-0');click('done');assert not settle()['open']
+            click('nav-2');click('done');assert not settle()['open']
             return
         query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
         assert state()['live_row_height']==state()['effective_row_height']
         query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
         assert state()['live_row_height']==state()['effective_row_height']
-        click('nav-0');check('system font changes recompute live density row height')
+        click('nav-2');check('system font changes recompute live density row height')
         initial=state()['live_volume'];initial_engine=state()['engine_volume']
         click('volume',.25);edited=settle();assert edited['pending']>0 and edited['live_volume']==initial
         draft=edited['draft_volume'];assert abs(draft-initial)>.01
         click('nav-2');assert abs(settle()['draft_volume']-draft)<.0001
         click('revert');assert state()['pending']==0 and state()['live_volume']==initial
         check('draft shared across Common and Audio; revert writes nothing')
-        click('nav-0');click('volume',.8 if initial<.6 else .2)
+        click('nav-2');click('volume',.8 if initial<.6 else .2)
         command(cmd='settings_ui',action='fail_save_once');click('apply')
         failed=settle();assert failed['pending']>0 and failed['error'] and failed['live_volume']==initial
         assert abs(failed['engine_volume']-initial_engine)<.001
@@ -177,7 +186,7 @@ def run(args):
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
         assert state()['pending']==0 and state()['live_volume']==saved['live_volume']
         check('close offers keep editing or discard; reopen preserves applied value')
-        for i in range(9):
+        for i in range(1,9):
             click('nav-'+str(i));assert state()['page']==i
             screenshot('page-'+str(i))
         check('all nine categories render')
@@ -189,9 +198,10 @@ def run(args):
         click('option-'+str(choice));assert state()['draft_monitor']==choice
         click('apply');assert state()['live_monitor']==choice
         check('channel monitor dropdown remains selectable inside scrolling page')
-        click('nav-0');click('device');find('device-default');key('Escape')
+        click('nav-2');click('device');find('device-default');key('Escape')
         assert state()['open'] and not state()['prompt']
         assert not any(item['id']=='device-default' for item in state()['items'])
+        click('nav-3')
         click('searchMode');click('option-1' if state()['draft_realtime'] else 'option-0')
         key('Escape');assert state()['prompt'];click('apply-close');assert not settle()['open']
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
@@ -207,7 +217,7 @@ def run(args):
         screenshot('06-day-night');click('automatic');click('apply')
         assert state()['schedule']==0
         check('day and night offer all five themes; selections persist and schedule can be disabled')
-        click('nav-0');click('volume',.45);query('thesaurus');click('result-dictionary');click('dictionary')
+        click('nav-2');click('volume',.45);query('thesaurus');click('result-dictionary');click('dictionary')
         assert state()['prompt'];click('discard');assert state()['tool']=='dictionary'
         click('thesaurus-edit-first');find('thesaurus-save');find('thesaurus-cancel');screenshot('07-thesaurus')
         click('thesaurus-cancel');click('tool-close');assert state()['open'] and not state()['pending']
@@ -215,15 +225,15 @@ def run(args):
         query('day');assert not any(i['id'] in ('result-day','result-night') for i in state()['items'])
         assert any(i['id']=='result-automatic' for i in state()['items'])
         check('search omits unavailable schedule rows and retains its enable control')
-        click('nav-0');click('volume',.45);query('hotkey');click('result-hotkey')
+        click('nav-2');click('volume',.45);query('hotkey');click('result-hotkey')
         if find('hotkey-record')['disabled']:click('hotkeyEnabled')
         click('hotkey-record')
-        assert state()['recording'];click('nav-0');assert not state()['recording']
+        assert state()['recording'];click('nav-2');assert not state()['recording']
         query('hotkey');click('result-hotkey');click('hotkey-record');assert state()['recording']
         click('search');assert not state()['recording'];key('Escape');assert state()['prompt'];click('discard')
         command(cmd='ordinary_button_window',module='settings',action='open');settle();assert state()['open']
         check('leaving hotkey recording by navigation or search keeps Escape usable')
-        click('nav-0');number('volume',21);
+        click('nav-2');number('volume',21);
         if state()['pending']:click('apply')
         query('FFT');click('result-fft')
         if find('fft-control')['disabled']:click('spectrumEnabled')
@@ -238,21 +248,21 @@ def run(args):
         assert state()['draft_pitch_range']==1
         number('pitchRange',99);assert state()['draft_pitch_range']==48
         click('revert');check('typed pitch range stays within valid bounds')
-        click('nav-0')
+        click('nav-1')
         for index in range(5):
             click('stock-'+str(index))
             if state()['pending']:click('apply')
             screenshot('theme-'+str(index))
         check('five native themes')
         command(cmd='settings_ui',action='resize',width=880,height=600);settle();screenshot('05-small-window')
-        for id in ('search','close','done','nav-0','nav-8'):find(id)
+        for id in ('search','close','done','nav-2','nav-8'):find(id)
         check('small-window navigation and footer remain accessible')
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
         query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
         assert state()['live_font']==24
         assert find('search')['font_pixels']>=24 and find('done')['font_pixels']>=24
         screenshot('08-large-font');find('search');find('close');find('done')
-        click('nav-0');click('volume',.8)
+        click('nav-2');click('volume',.8)
         command(cmd='settings_ui',action='resize',width=880,height=600);settle()
         command(cmd='settings_ui',action='layout_restore_error');settle()
         assert find('save-error')['bounds'][3]+8<=min(find('apply')['bounds'][1],find('revert')['bounds'][1])
@@ -299,5 +309,5 @@ def run(args):
             raise RuntimeError('Native QA process did not exit cleanly; see report.json')
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int);parser.add_argument('--expected-scan-threads',type=int)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--navigation-review',action='store_true');parser.add_argument('--navigation-selection',action='store_true');parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int);parser.add_argument('--expected-scan-threads',type=int)
     run(parser.parse_args())

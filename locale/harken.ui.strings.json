@@ -25,9 +25,6 @@
     {"id":"SetUX_CouldNotSwitchOutputDeviceYourChangesAreKept","type":"ui","zh":"无法切换输出设备，修改已保留。","en":"Could not switch output device. Your changes are kept.","ja":"出力デバイスを切り替えられません。変更は保持されています。"},
     {"id":"SetUX_SaveFailedChangesAreKeptCheckTheSettingsFolderAndRetry","type":"ui","zh":"保存失败，修改仍保留；请检查设置目录是否可写后重试。","en":"Save failed. Changes are kept; check the settings folder and retry.","ja":"保存できません。変更は保持されています。設定フォルダーを確認して再試行してください。"},
     {"id":"SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder","type":"ui","zh":"保存失败，日夜主题文件未能全部恢复。请检查设置目录后重试。","en":"Save failed and some palette files could not be restored. Check the settings folder.","ja":"保存に失敗し、一部のテーマファイルを復元できませんでした。設定フォルダーを確認してください。"},
-    {"id":"SetUX_EVERYDAY","type":"ui","zh":"日常使用","en":"EVERYDAY","ja":"日常使用"},
-    {"id":"SetUX_WORKFLOW","type":"ui","zh":"工作方式","en":"WORKFLOW","ja":"作業環境"},
-    {"id":"SetUX_MAINTENANCE","type":"ui","zh":"维护","en":"MAINTENANCE","ja":"メンテナンス"},
     {"id":"SetUX_SearchSettingsCtrlK","type":"ui","zh":"搜索设置…  Ctrl+K","en":"Search settings…  Ctrl+K","ja":"設定を検索…  Ctrl+K"},
     {"id":"SetUX_SEARCHRESULTS","type":"ui","zh":"搜索结果","en":"SEARCH RESULTS","ja":"検索結果"},
     {"id":"SetUX_NoSettingsFoundTryVolumeFontOrShortcut","type":"ui","zh":"没有找到设置，试试“音量”“字体”或“快捷键”。","en":"No settings found. Try volume, font, or shortcut.","ja":"設定が見つかりません。音量、フォント、ショートカットなどを検索してください。"},
@@ -5606,13 +5603,6 @@
       "ja": "  artist:composer        → Artist フィールド"
     },
     {
-      "id": "Search_Querying",
-      "type": "ui",
-      "zh": "查询中...",
-      "en": "Querying...",
-      "ja": "照信中..."
-    },
-    {
       "id": "Scan_QuickScan",
       "type": "ui",
       "zh": "扫描此文件夹",
@@ -8614,13 +8604,6 @@
       "zh": "[骰子] 打乱当前列表\n点击: 打乱并从头播放",
       "en": "[Dice] Shuffle current list\nClick: Shuffle and play from top",
       "ja": "[ダイス] 現在リストをシャッフル\nクリック: シャッフルして先頭から再生"
-    },
-    {
-      "id": "Main_QueryingProgress",
-      "type": "ui",
-      "zh": "查询中...",
-      "en": "Querying...",
-      "ja": "照信中..."
     },
     {
       "id": "Main_ColPresetDialHint",
