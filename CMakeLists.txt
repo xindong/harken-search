@@ -373,7 +373,11 @@ else()
     set(AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE src/platform/metadata_legacy_tag_content_std.cpp)
     set(AURO_SEARCH_TEXT_GB2312_SOURCE src/platform/search_text_gb2312_std.cpp)
     set(AURO_THEME_JSON_DIALOGS_SOURCE src/platform/theme_json_dialogs_std.cpp)
-    set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_std.cpp)
+    if(APPLE)
+        set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_macos.mm)
+    else()
+        set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_std.cpp)
+    endif()
     set(AURO_EXECUTABLE_FILE_DIALOG_SOURCE src/platform/executable_file_dialog_std.cpp)
     set(AURO_AVATAR_IMAGE_FILE_DIALOG_SOURCE src/platform/avatar_image_file_dialog_std.cpp)
     set(AURO_REAPER_FILE_LIST_DIALOG_SOURCE src/platform/reaper_file_list_dialog_std.cpp)
@@ -386,8 +390,12 @@ else()
 endif()
 
 # Application source files
-# main.cpp is Windows-only (13K LOC); macOS uses app_entry_macos.mm
+# Both native entries share main.cpp and AppRuntime; platform hosts own windows.
 set(APP_SOURCES
+    src/UiFonts.cpp
+    src/UiInteraction.cpp
+    src/AppRuntime.cpp
+    src/AppFrameServices.cpp
     ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
     ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
     ${AURO_SEARCH_TEXT_GB2312_SOURCE}
@@ -737,6 +745,7 @@ elseif(APPLE)
     set(AURO_THREAD_ID_SOURCE src/platform/thread_id_std.cpp)
     list(APPEND APP_SOURCES
         src/platform/image_codec_macos.mm
+        src/platform/settings_export_dialog_macos.mm
         src/platform/platform_macos.mm
         src/platform/system_macos.mm
         ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
@@ -751,8 +760,13 @@ elseif(APPLE)
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/settings_file_macos.cpp
+        src/platform/ui_diagnostics_macos.mm
+        src/platform/macos_qa_bridge.cpp
         src/platform/app_entry_macos.mm
-        src/platform/main_stubs_macos.cpp
+        src/main.cpp
     )
     # whisper.cpp and aubio are not available on macOS; use no-op stubs.
     list(REMOVE_ITEM APP_SOURCES src/AIEngine.cpp src/BpmDetector.cpp src/KeyDetector.cpp)
@@ -1491,6 +1505,7 @@ elseif(APPLE)
         "-framework CoreFoundation"
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
+        ixwebsocket                    # Shared WAAPI source needs its headers and library.
         # macOS builds omit Whisper/aubio until compatible libraries are supplied.
     )
 else()
@@ -2599,3 +2614,9 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestLocalizationLinkContract core)
 endif()
+
+# Fixed edit buffers and UI scheduling state must behave identically in both hosts.
+add_executable(TestUiPortableServices EXCLUDE_FROM_ALL
+    tests/test_ui_portable_services.cpp src/UiInteraction.cpp)
+target_include_directories(TestUiPortableServices PRIVATE src thirdparty/imgui)
+add_test(NAME TestUiPortableServices COMMAND TestUiPortableServices)

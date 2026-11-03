@@ -344,3 +344,6 @@ private:
 
 // Load Chinese font (SimHei or embedded font)
 void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize);
+
+// Native window clear color follows the active product palette.
+ImVec4 GetThemeClearColor();
