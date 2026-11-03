@@ -41,6 +41,19 @@ int main() {
                 "failure stops animation");
         require(json["title"] == u8"程序尚未退出" && json["exitCode"] == 21,
                 "exit timeout must remain actionable");
+        state.exitCode = 30;
+        state.lastActive = BootstrapProgressPhase::PreparingFiles;
+        json = view(state);
+        require(json["hint"].get<std::string>().find(u8"不是文件被占用") == std::string::npos,
+                "file preparation errors must not guess the native cause");
+        require(json["hint"].get<std::string>().find(u8"更新文件") != std::string::npos,
+                "filesystem failures must describe the update without inferring its stage");
+        for (const auto phase : {BootstrapProgressPhase::PreparingFiles, BootstrapProgressPhase::ReplacingFiles, BootstrapProgressPhase::Finalizing}) {
+            state.lastActive = phase;
+            json = view(state);
+            require(json["hint"].get<std::string>().find(u8"未被改动") == std::string::npos,
+                    "filesystem rejection must not promise unchanged files after a partial replacement");
+        }
         state.exitCode = 50;
         state.lastActive = BootstrapProgressPhase::CheckingStartup;
         json = view(state);

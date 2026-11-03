@@ -52,7 +52,9 @@ RELEASE_NOTES_FILENAME = "aris_release_notes.json"
 # Files that are always included regardless of feature selection
 ALWAYS_INCLUDE = ["HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll"]
 RUNTIME_INCLUDE = ["lucide.ttf", "splash_beta.png", "harken_thesaurus.json"]
-RUNTIME_DIRS = ["assets"]
+# Select the current runtime trees explicitly. An incremental build may still
+# contain obsolete contributors/community copies beside these destinations.
+RUNTIME_DIRS = ["assets/icons/brand", "assets/logos/brand", "assets/avatars"]
 
 # Optional directories bundled when AI features are enabled
 AI_FEATURE_IDS = {"ai_engine", "ai_tags"}
