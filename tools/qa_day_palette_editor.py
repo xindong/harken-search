@@ -32,6 +32,17 @@ def validate_package(exe, root, receipt):
     assert compiled_root.lower() in binary.lower(), "Executable does not embed this preview isolation root"
 
 
+def main_background_pixels(image, rgb):
+    # The native root paints its left 4px gutter with mainWindowBG. Sample
+    # only the middle half of that gutter, outside centered settings/editor
+    # windows, color swatches, the toolbar and the waveform footer.
+    bounds = [0,image.height//4,4,image.height*3//4]
+    region = image.convert("RGB").crop(bounds)
+    count = sum(n for n,color in region.getcolors(region.width*region.height) if color == rgb)
+    assert count == region.width*region.height, ("Main-window background differs",rgb,bounds,count)
+    return dict(bounds=bounds,matchingPixels=count)
+
+
 def run(args):
     import win32con, win32event, win32gui, win32process
     exe, root, out = args.exe.resolve(), args.isolation_root.resolve(), args.output.resolve()
@@ -127,13 +138,15 @@ def run(args):
         deadline = time.monotonic()+6
         while True:
             capture(driver, out/(name+".png"))
-            with Image.open(out/(name+".png")) as im:
-                count = sum(n for n,color in im.convert("RGB").getcolors(im.width*im.height) if color == rgb)
-            if count > 128 or time.monotonic() >= deadline:
+            try:
+                with Image.open(out/(name+".png")) as im:
+                    proof = main_background_pixels(im,rgb)
                 break
-            time.sleep(.08)  # Wait for the existing modal dimming animation.
-        assert count > 128, (name,"expected background missing from actual frame",rgb,count)
-        report.setdefault("pixelChecks",[]).append(dict(name=name,rgb=rgb,matchingPixels=count))
+            except AssertionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.08)  # Wait for the existing modal dimming animation.
+        report.setdefault("pixelChecks",[]).append(dict(name=name,rgb=rgb,**proof))
 
     def saved():
         return dict(line.split("=",1) for line in (profile/"settings.ini").read_text(encoding="utf-8").splitlines() if "=" in line)
