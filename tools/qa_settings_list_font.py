@@ -104,13 +104,25 @@ def run(args):
         choose_theme(0);apply();click('nav-1')
         if args.row_height_only:
             original_row=state()['live_row_height']
-            choose_row_height(16);apply();assert state()['live_row_height']==16
-            for size in (10,18,24):
-                choose_list(size);apply();v=verify_fonts(size)
-                assert v['live_row_height']==16 and v['drawn_list_row_height']>=size+4,v
-                click('done');shot('row16-list'+str(size));open_settings()
-                check(f'configured 16px row with list {size}px: actual row expands to fit filename text',drawn_font=v['drawn_list_font_pixels'],line_height=v['drawn_list_line_height'],row_height=v['drawn_list_row_height'])
-            choose_row_height(original_row);apply();choose_list(18);apply();click('done');stop();report['passed']=True
+            try:
+                choose_row_height(16);apply();assert state()['live_row_height']==16
+                if args.inject_row_failure:raise AssertionError('injected failure after saving 16px row')
+                for size in (10,18,24):
+                    choose_list(size);apply();v=verify_fonts(size)
+                    assert v['live_row_height']==16 and v['drawn_list_row_height']>=size+4,v
+                    click('done');shot('row16-list'+str(size));open_settings()
+                    check(f'configured 16px row with list {size}px: actual row expands to fit filename text',drawn_font=v['drawn_list_font_pixels'],line_height=v['drawn_list_line_height'],row_height=v['drawn_list_row_height'])
+            finally:
+                try:
+                    open_settings()
+                    if state()['pending']:click('revert')
+                    choose_row_height(original_row);apply();choose_list(18);apply()
+                    assert saved('rowHeight')==original_row
+                    report['rowHeightRestored']=True
+                except Exception:
+                    report['rowHeightRestoreError']=traceback.format_exc()
+                    raise
+            click('done');stop();report['passed']=True
             return
         verify_fonts(18);shot('01-before-18')
         choose_list(24)
@@ -168,5 +180,5 @@ def run(args):
         desktop.close();(out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--exe',type=Path,required=True);p.add_argument('--isolation-root',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--row-height-only',action='store_true')
+    p=argparse.ArgumentParser();p.add_argument('--exe',type=Path,required=True);p.add_argument('--isolation-root',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--row-height-only',action='store_true');p.add_argument('--inject-row-failure',action='store_true')
     run(p.parse_args())
