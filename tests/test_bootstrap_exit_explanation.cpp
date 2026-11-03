@@ -197,6 +197,8 @@ int main(int argc, char** argv) {
               "filesystem rejection no longer gives the misleading quit advice");
         check(e.message.find(u8"不是文件被占用") == std::string::npos,
               "a filesystem error code alone cannot exclude sharing conflicts");
+        check(e.message.find(u8"未被改动") == std::string::npos,
+              "filesystem rejection can follow a successful replacement and must not promise unchanged files");
     }
 
     if (g_failures == 0) std::printf("all bootstrap exit explanations pass\n");
