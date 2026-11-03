@@ -388,6 +388,10 @@ static void checkScanDialogPrecomputeControlContract() {
         "../../src/WindowsMain.cpp",
     });
     check(!windowsMain.empty(), "WindowsMain.cpp source is readable for scan cache progress contract");
+    const std::string sharedFrame = readFirstExistingTextFile({
+        "src/AppFrameServices.cpp", "../src/AppFrameServices.cpp", "../../src/AppFrameServices.cpp",
+    });
+    check(!sharedFrame.empty(), "Shared frame services are readable for mini waveform contract");
     const size_t runtimeForegroundReset =
         windowsMain.find("scanDb.resetScanForegroundCompletionSession(static_cast<int64_t>(scanGeneration))");
     const size_t runtimeScanDirectory =
@@ -521,18 +525,18 @@ static void checkScanDialogPrecomputeControlContract() {
           "BDD: Runtime scan mini-cache backfill starts with the computed backfill worker count");
     check(windowsMain.find("ScanForegroundWaveformDrain: scoped=%d") != std::string::npos,
           "BDD: Runtime scan path reports requested mini waveform cache as foreground completion work");
-    check(windowsMain.find("VisibleCacheMissPromotedToDecode: path=%s") != std::string::npos,
+    check(sharedFrame.find("VisibleCacheMissPromotedToDecode: path=%s") != std::string::npos,
           "BDD: Runtime visible-row cache miss is promoted to source decode instead of permanent blank mini waveform");
-    check(windowsMain.find("state.postSearchMiniWaveThrottleFrames > 0 && !scanForegroundWaveformDrainActive") != std::string::npos &&
-              windowsMain.find("submitBudget = (std::min)(submitBudget, 1);") != std::string::npos,
+    check(sharedFrame.find("state.postSearchMiniWaveThrottleFrames > 0 && !scanForegroundWaveformDrainActive") != std::string::npos &&
+              sharedFrame.find("submitBudget = (std::min)(submitBudget, 1);") != std::string::npos,
           "BDD: Runtime search-result mini-wave fill is briefly throttled so text results can paint before decode catch-up");
-    check(windowsMain.find("visibleDecodePromotionsThisFrame < visibleDecodePromotionBudget") != std::string::npos &&
-              windowsMain.find("++visibleDecodePromotionsThisFrame;") != std::string::npos,
+    check(sharedFrame.find("visibleDecodePromotionsThisFrame < visibleDecodePromotionBudget") != std::string::npos &&
+              sharedFrame.find("++visibleDecodePromotionsThisFrame;") != std::string::npos,
           "BDD: Runtime visible-row cache-miss decode promotion is per-frame bounded after search refresh");
-    check(windowsMain.find("result.errorCode == \"mini_cache_miss_no_decode\"") != std::string::npos &&
-              windowsMain.find("state.waveformMiniCacheMiss.erase(result.filePath);") != std::string::npos,
+    check(sharedFrame.find("result.errorCode == \"mini_cache_miss_no_decode\"") != std::string::npos &&
+              sharedFrame.find("state.waveformMiniCacheMiss.erase(result.filePath);") != std::string::npos,
           "BDD: Runtime visible-row cache miss does not poison waveformMiniCacheMiss before retrying decode");
-    check(windowsMain.find("state.addPendingWaveform(result.filePath, true);") != std::string::npos,
+    check(sharedFrame.find("state.addPendingWaveform(result.filePath, true);") != std::string::npos,
           "BDD: Runtime visible-row cache miss remains retryable when decode promotion is already queued");
     check(windowsMain.find("state.waveformMiniCacheMiss.insert(result.filePath);") == std::string::npos,
           "BDD: Runtime visible-row cache miss never writes a permanent miss throttle");

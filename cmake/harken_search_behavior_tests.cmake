@@ -1415,6 +1415,9 @@ if(WIN32)
     target_link_libraries(TestWmaDecodeSupport PRIVATE
         mfplat mfreadwrite mfuuid
     )
+elseif(APPLE)
+    target_link_libraries(TestWmaDecodeSupport PRIVATE
+        "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 target_include_directories(TestWmaDecodeSupport PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1773,6 +1776,9 @@ if(WIN32)
         src/platform/text_encoding_win32.cpp)
     target_link_libraries(TestDatabaseAudioProbeIntegration PRIVATE
         mfplat mfreadwrite mfuuid)
+elseif(APPLE)
+    target_link_libraries(TestDatabaseAudioProbeIntegration PRIVATE
+        "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 target_include_directories(TestDatabaseAudioProbeIntegration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -1789,14 +1795,21 @@ foreach(_source IN ITEMS database_audio_probe_scripted_backend.cpp
 endforeach()
 if(WIN32)
     set(_auro_database_probe_selected_mf media_foundation_audio_win32.cpp)
-    set(_auro_database_probe_unselected_mf media_foundation_audio_unsupported.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_unsupported.cpp)
+    set(_auro_database_probe_unselected_mf_2 audio_toolbox_audio_macos.cpp)
+elseif(APPLE)
+    set(_auro_database_probe_selected_mf audio_toolbox_audio_macos.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_2 media_foundation_audio_unsupported.cpp)
 else()
     set(_auro_database_probe_selected_mf media_foundation_audio_unsupported.cpp)
-    set(_auro_database_probe_unselected_mf media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_2 audio_toolbox_audio_macos.cpp)
 endif()
 foreach(_target IN ITEMS TestDatabaseAudioProbeIntegration HarkenSearch)
     _auro_assert_source_count(${_target} ${_auro_database_probe_selected_mf} 1)
-    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf} 0)
+    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf_1} 0)
+    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf_2} 0)
 endforeach()
 foreach(_definition IN ITEMS AURO_DATABASE_AUDIO_PROBE_TESTING
         AURO_DATABASE_AUDIO_PROBE_TEST_WIN32 AURO_DATABASE_AUDIO_PROBE_TEST_STD)
@@ -1812,6 +1825,11 @@ if(WIN32)
     if(NOT "${_auro_database_probe_integration_links}" STREQUAL "mfplat;mfreadwrite;mfuuid")
         message(FATAL_ERROR "TestDatabaseAudioProbeIntegration: unexpected links: ${_auro_database_probe_integration_links}")
     endif()
+elseif(APPLE)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration database_audio_probe_path_utf8_adapter.cpp 0)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_win32.cpp 0)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_std.cpp 0)
+    _auro_assert_link_library_count(TestDatabaseAudioProbeIntegration 2)
 else()
     _auro_assert_source_count(TestDatabaseAudioProbeIntegration database_audio_probe_path_utf8_adapter.cpp 0)
     _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_win32.cpp 0)
@@ -4665,6 +4683,7 @@ if(WIN32)
 elseif(APPLE)
     target_sources(TestPlatformDurableFileOpsCopy PRIVATE
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
     )
 endif()
 if(MSVC)
@@ -4692,6 +4711,7 @@ if(WIN32)
 elseif(APPLE)
     target_sources(TestPlatformDurableFileOpsReplaceDelete PRIVATE
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
     )
 endif()
 if(MSVC)
@@ -4703,6 +4723,50 @@ if(MSVC)
 endif()
 add_test(NAME TestPlatformDurableFileOpsReplaceDelete COMMAND TestPlatformDurableFileOpsReplaceDelete)
 aura_set_test_labels(TestPlatformDurableFileOpsReplaceDelete core)
+
+if(APPLE)
+    set(HARKEN_MAC_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/Testing/macos-data" CACHE PATH
+        "Isolated macOS data/settings test evidence directory")
+    add_executable(TestMacUserDataLayout EXCLUDE_FROM_ALL
+        tests/test_macos_user_data_layout.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_include_directories(TestMacUserDataLayout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacUserDataLayout PRIVATE cxx_std_17)
+    # Override any app-level preview root: tests must never mutate its profile.
+    target_compile_options(TestMacUserDataLayout PRIVATE
+        -UARIS_PREVIEW_ISOLATION -DARIS_PREVIEW_ISOLATION=1
+        -UARIS_PREVIEW_ISOLATION_ROOT_UTF8
+        "-DARIS_PREVIEW_ISOLATION_ROOT_UTF8=\"${HARKEN_MAC_TEST_ROOT}/layout\"")
+    target_link_libraries(TestMacUserDataLayout PRIVATE "-framework Foundation")
+    add_test(NAME TestMacUserDataLayout COMMAND TestMacUserDataLayout)
+    aura_set_test_labels(TestMacUserDataLayout core)
+
+    add_executable(TestMacUserDataRoots EXCLUDE_FROM_ALL
+        tests/test_macos_user_data_roots.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_include_directories(TestMacUserDataRoots PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacUserDataRoots PRIVATE cxx_std_17)
+    target_compile_options(TestMacUserDataRoots PRIVATE
+        -UARIS_PREVIEW_ISOLATION -UARIS_PREVIEW_ISOLATION_ROOT_UTF8)
+    target_link_libraries(TestMacUserDataRoots PRIVATE "-framework Foundation")
+    add_test(NAME TestMacUserDataRoots COMMAND TestMacUserDataRoots)
+    aura_set_test_labels(TestMacUserDataRoots core)
+
+    add_executable(TestMacDurableSettings EXCLUDE_FROM_ALL
+        tests/test_macos_durable_settings.cpp
+        src/platform/durable_file_ops_macos.cpp
+        src/platform/settings_file_macos.cpp
+        src/platform/macos_file_io.cpp
+    )
+    target_include_directories(TestMacDurableSettings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacDurableSettings PRIVATE cxx_std_17)
+    add_test(NAME TestMacDurableSettings COMMAND TestMacDurableSettings "${HARKEN_MAC_TEST_ROOT}/settings")
+    aura_set_test_labels(TestMacDurableSettings core)
+endif()
 
 add_executable(TestMetadataFields EXCLUDE_FROM_ALL
     tests/test_metadata_fields.cpp
@@ -5847,6 +5911,7 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
+if(WIN32)
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
     src/ReaperBridgeClient.cpp
@@ -5884,6 +5949,7 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+endif()
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".
@@ -6187,7 +6253,9 @@ target_include_directories(TestThemeColors PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
 )
-target_link_libraries(TestThemeColors PRIVATE advapi32)
+if(WIN32)
+    target_link_libraries(TestThemeColors PRIVATE advapi32)
+endif()
 if(MSVC)
     target_compile_options(TestThemeColors PRIVATE /W3 /utf-8)
     set_target_properties(TestThemeColors PROPERTIES
@@ -6197,6 +6265,11 @@ if(MSVC)
 endif()
 add_test(NAME TestThemeColors COMMAND TestThemeColors)
 aura_set_test_labels(TestThemeColors nightly)
+if(APPLE)
+    add_test(NAME TestThemeJsonExportMacBoundary
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_export_macos_boundary.py)
+    aura_set_test_labels(TestThemeJsonExportMacBoundary platform)
+endif()
 
 add_executable(TestCoreWorkspaceStyle EXCLUDE_FROM_ALL
     tests/test_core_workspace_style.cpp
@@ -6545,6 +6618,10 @@ foreach(_auro_waveform_text_target IN LISTS AURO_WAVEFORM_TEXT_ENCODING_TARGETS)
         target_sources(${_auro_waveform_text_target} PRIVATE
             src/platform/text_encoding_std.cpp
         )
+        if(APPLE)
+            target_link_libraries(${_auro_waveform_text_target} PRIVATE
+                "-framework AudioToolbox" "-framework CoreFoundation")
+        endif()
     endif()
 endforeach()
 
@@ -7374,6 +7451,22 @@ aura_set_test_labels(TestRelinkWorkflowLifecycle ui)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     aura_set_test_labels(TestSettingsImportDialogBoundary platform stage4)
+
+    add_custom_target(TestThemeJsonImportMacBoundary
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_import_macos_boundary.py"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+    )
+    add_test(
+        NAME TestThemeJsonImportMacBoundary
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_import_macos_boundary.py"
+    )
+    set_tests_properties(TestThemeJsonImportMacBoundary PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    aura_set_test_labels(TestThemeJsonImportMacBoundary platform stage4)
 
     add_custom_target(TestCoverImageImportDialogBoundary
         COMMAND ${Python3_EXECUTABLE}
