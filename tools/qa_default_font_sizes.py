@@ -132,7 +132,17 @@ def main(args: argparse.Namespace) -> int:
 
     def start(reading, listing, *, create=False):
         nonlocal process, identity
-        process, pid = desktop.start(exe)
+        process, pid = desktop.start(exe, environment_overrides={
+            'LOCALAPPDATA': str(root / 'profile/Local'),
+            'APPDATA': str(root / 'profile/Roaming'),
+            'AURA_RUNTIME_ROOT': str(runtime),
+            'TEMP': str(root / 'temp'), 'TMP': str(root / 'temp'),
+        })
+        report['startup_pid'] = pid
+        startup_status = win32event.WaitForSingleObject(process, 1000)
+        if startup_status == win32con.WAIT_OBJECT_0:
+            raise RuntimeError(f'test package exited during startup: '
+                               f'{win32process.GetExitCodeProcess(process)}')
         identity = command(cmd='magic_eq_identity')
         assert identity['pid'] == pid and Path(identity['exe_path']).resolve() == exe
         assert Path(identity['isolation_root']).resolve() == root
@@ -159,8 +169,23 @@ def main(args: argparse.Namespace) -> int:
         assert settings()['open']
         assert_fonts('loaded font preferences', reading, listing)
 
-    def stop():
+    def cleanup_process():
         nonlocal process, identity
+        if process is None:
+            return
+        status = win32event.WaitForSingleObject(process, 0)
+        if status == win32con.WAIT_TIMEOUT:
+            win32process.TerminateProcess(process, 1)
+            if win32event.WaitForSingleObject(process, 5000) != win32con.WAIT_OBJECT_0:
+                raise RuntimeError('test process did not terminate')
+            report['forced_termination'] = True
+        elif status != win32con.WAIT_OBJECT_0:
+            raise RuntimeError(f'cannot determine test process state: {status}')
+        process.Close()
+        process = None
+        identity = None
+
+    def stop():
         if process is None:
             return
         try:
@@ -169,9 +194,7 @@ def main(args: argparse.Namespace) -> int:
             assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
             assert win32process.GetExitCodeProcess(process) == 0
         finally:
-            process.Close()
-            process = None
-            identity = None
+            cleanup_process()
 
     def set_font(search, item, option):
         query(search)
@@ -229,12 +252,12 @@ def main(args: argparse.Namespace) -> int:
         if process is not None:
             try:
                 if identity is not None:
-                    driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
-                if win32event.WaitForSingleObject(process, 15000) != win32con.WAIT_OBJECT_0:
-                    win32process.TerminateProcess(process, 1)
-                    win32event.WaitForSingleObject(process, 5000)
-                    report['forced_termination'] = True
-                process.Close()
+                    try:
+                        driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
+                    except Exception:
+                        report['exit_command_error'] = traceback.format_exc()
+                win32event.WaitForSingleObject(process, 15000)
+                cleanup_process()
             except Exception:
                 report['cleanup_error'] = traceback.format_exc()
         try:

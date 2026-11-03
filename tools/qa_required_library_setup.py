@@ -41,7 +41,7 @@ class PrivateDesktop:
         if not self.user32.SetThreadDesktop(self.handle):
             raise ctypes.WinError(ctypes.get_last_error())
 
-    def start(self, exe, extra=()):
+    def start(self, exe, extra=(), environment_overrides=None):
         import win32con
         import win32process
         startup = win32process.STARTUPINFO()
@@ -50,6 +50,7 @@ class PrivateDesktop:
         startup.wShowWindow = win32con.SW_HIDE
         environment = dict(os.environ, AURA_HARNESS_MULTI_INSTANCE='1',
             AURA_HARNESS_LANE_KIND='functional', AURA_DISABLE_SINGLE_INSTANCE='1')
+        environment.update(environment_overrides or {})
         process, thread, pid, _ = win32process.CreateProcess(str(exe),
             subprocess.list2cmdline([str(exe), *extra]), None, None, False,
             win32con.CREATE_UNICODE_ENVIRONMENT, environment, str(exe.parent), startup)
