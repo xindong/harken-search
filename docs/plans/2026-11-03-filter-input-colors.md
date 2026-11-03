@@ -1,7 +1,7 @@
 # 筛选器三个输入框配色与列表交互：设计及验收记录
 
 卡片：OPT-20261103-FILTER-INPUT-COLORS
-状态：用户查看实际包截图并提出修订后，已明确要求走收尾流程；PR #83 的独立审查意见已在本卡分支修正，已接入最新 QA 并完成新实际包复验，等待远端检查和 QA 合入。
+状态：用户明确要求归档本卡。PR #83 新一轮复审的三处问题已修正，已接入最新 QA 并完成整合包复验；当前版本仍待用户看过真实截图后确认，再核对远端检查与 QA 合入。
 代码基线：2026-11-03 开工前将本卡分支快进到 origin/qa/current a4e7334。
 独立目录：E:/tmp/harken-OPT-20261103-FILTER-INPUT-COLORS；分支 opt/OPT-20261103-FILTER-INPUT-COLORS。
 
@@ -27,6 +27,15 @@
 - 基于整合后的源码重新构建隔离 Release 实际包：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v14/HarkenSearch.exe，SHA-256 为 8d617c6be7b159fbd76f47478b8f3ce446e6740fc71bb24d486d292f0c336c62。
 - D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence24/result.json 记录真实素材库副本上的 30 项操作，状态 pass、退出码 0；实际截图同目录。扫描新增名称后重开名单、右键点空白收起、首字母 O 不误改播放出点，均包含在内。
 - QA 合入和看板完成以 PR #83 当前远端检查、独立审查回复及两边 QA 版本核对为准；本次隔离包仅供验收，不作为公开发布包。
+
+## 第二轮独立复审与整合包复验（2026-11-03）
+
+- PR #83 对 v14 指出三处可复现问题：超过 1023 字节的分类原始值被截断；窄窗口中名单遮盖的输入框仍会误响应点击；在浮动筛选器中点击原输入框后，名单会被筛选器盖住。先用旧实际包复现并留存失败记录，再分别修正。
+- 三类已应用筛选值改为完整字符串，显示仍经过清理，精确筛选仍使用数据库原值。重叠点击只认真正被点击的输入框；编辑浮动筛选器时把名单窗口提到前方且保留输入焦点。新增超长原始分类与浮动筛选器隔离桌面复验。
+- 修正提交 7d4ed3a，接入 origin/qa/current 237374e97728093fdbd7baf987af8425ac8f9df1 后整合提交 50eb82c。整合后的隔离实际包：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v17/HarkenSearch.exe；SHA-256 为 62f2f8f5d35d810d77b2c231ee0fe0b90016a9e74e60fa355b0cd359d7e4d6e0。
+- D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence29/result.json：真实素材库隔离副本上 31 项操作通过、退出码 0，包含超过 1023 字节的原始分类名称。D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/final-overlap/result.json 和 final-zorder/result.json：浮动筛选器遮挡误点与名单前后顺序均通过、退出码均为 0；final-zorder/floating-query-after-arrow.png 为实际运行截图。
+- 定向 Python 检查 9 项通过、46 项未选择；C++ 名单模型测试通过；Debug 与隔离 Release 构建通过；仓库 Inner Source Gates 为 299 passed、1 skipped，发布合规检查通过。统一验收页 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/验收入口.html 内嵌 12 张来自该整合包的真实截图。
+- 用户此前的“走收尾流程”“归档这张 Harken 任务卡”发生在第二轮修正和 v17 实际包之前。按本项目界面验收规则，仍需用户看过当前版本并明确确认；此前不写验收通过、不合入或归档。
 
 ## 需求与范围
 
