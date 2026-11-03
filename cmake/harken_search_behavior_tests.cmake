@@ -6235,7 +6235,9 @@ target_include_directories(TestThemeColors PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
 )
-target_link_libraries(TestThemeColors PRIVATE advapi32)
+if(WIN32)
+    target_link_libraries(TestThemeColors PRIVATE advapi32)
+endif()
 if(MSVC)
     target_compile_options(TestThemeColors PRIVATE /W3 /utf-8)
     set_target_properties(TestThemeColors PROPERTIES
@@ -6245,6 +6247,11 @@ if(MSVC)
 endif()
 add_test(NAME TestThemeColors COMMAND TestThemeColors)
 aura_set_test_labels(TestThemeColors nightly)
+if(APPLE)
+    add_test(NAME TestThemeJsonExportMacBoundary
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_export_macos_boundary.py)
+    aura_set_test_labels(TestThemeJsonExportMacBoundary platform)
+endif()
 
 add_executable(TestCoreWorkspaceStyle EXCLUDE_FROM_ALL
     tests/test_core_workspace_style.cpp

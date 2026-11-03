@@ -390,6 +390,9 @@ else()
 endif()
 
 # Application source files
+if(APPLE)
+    list(APPEND AURO_THEME_JSON_DIALOGS_SOURCE src/platform/theme_json_dialogs_macos.mm)
+endif()
 # Both native entries share main.cpp and AppRuntime; platform hosts own windows.
 set(APP_SOURCES
     src/UiFonts.cpp

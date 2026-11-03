@@ -46,6 +46,10 @@
 - When 面板返回空路径
 - Then 不保存或复制文件，也不报告一次新的导出失败
 
+- Given Mac 用户在主题编辑器导出当前草稿
+- When 用户在系统保存面板确认一个 JSON 路径
+- Then 剪贴板仍包含主题 JSON，文件保存相同主题；取消只保留剪贴板内容，写入失败不得报告文件保存成功
+
 ### Edge Cases
 
 - Given 已满足以下前置条件：no settings file exists because the user has never run Aris before
@@ -87,6 +91,7 @@
 | settings encryption | API | tests | Sensitive settings are protected |
 | startup diagnostics | diagnostics | QA protocol | Runtime state decisions are visible |
 | Mac settings backup export | UI | SettingsActions and Mac settings export dialog | Uses a user-selected UTF-8 path, keeps cancel side-effect free and preserves the Windows branch |
+| Mac theme JSON export | UI | ThemeEditor and Mac theme save dialog | Saves the draft through the shared serializer to the selected UTF-8 path; cancel leaves the clipboard copy available |
 
 ## Graphify Binding
 
@@ -108,10 +113,12 @@
 | DIAG-STARTUP | diagnostics | `TestStartupReconciliation` startup source-contract assertions | startup branch diagnostics markers present | active |
 | TEST-STARTUP-WELCOME | source-contract | `TestStartupReconciliation` | welcome entry replaces the legacy login form and continues into loading | active |
 | TEST-THEME-PERSISTENCE | source-contract | source scan + `TestThemeColors` | stock theme application does not set `ThemeColors::customized()`, stock token chrome is keyed by stock theme identity, and custom theme name is written/read by settings IO | active |
+| TEST-MAC-THEME-EXPORT | platform-contract | `TestThemeJsonExportMacBoundary` + `TestThemeColors` | Mac save panel boundary and shared JSON serializer are checked separately | active |
 
 ## Missing Coverage
 
 - Mac 保存面板的正向人工点选与导出文件回读仍需实际界面验收；原生面板取消、应用重开和源码边界测试不能代替它。
+- Mac 主题编辑器导出的正向界面点选和文件回读也需使用本卡实际包确认；面板探针不能代替用户验收。
 - Source-contract coverage now asserts the first-run no-database startup branch and CTA hook; full GUI smoke for perceived onboarding clarity remains human-only.
 - Welcome-entry visual polish and screenshot proof remain human-only even when source-contract coverage is green.
 - Residual gap: migration from older settings payloads is not yet asserted with fixture upgrades.
