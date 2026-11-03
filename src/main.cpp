@@ -56,6 +56,10 @@
 #undef CopyFile
 #endif
 
+#ifdef __APPLE__
+#include "platform/settings_file.h"
+#endif
+
 #include "AudioEngine.h"
 #include "CoverBrowseSurfaceState.h"
 #include "FileBrowser.h"
@@ -275,7 +279,11 @@ static std::string FeedbackUtcNow() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t time = std::chrono::system_clock::to_time_t(now);
     struct tm utc = {};
+#ifdef _WIN32
     gmtime_s(&utc, &time);
+#else
+    gmtime_r(&time, &utc);
+#endif
     char buffer[32] = {};
     std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
     return buffer;
@@ -299,6 +307,8 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 
 #include "WindowsMain.h"
 #include "UIRenderer.h"
+#include "UiHostServices.h"
+#include "UiTextBuffer.h"
 #include "ModuleUI.h"
 #include "DiagnosticsLogger.h"
 #include "UserActionLog.h"
@@ -351,6 +361,23 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include <regex>
 #include <chrono>
 #include <stdexcept>
+
+static auto MainUiOwnerWindow() {
+#ifdef _WIN32
+    return g_hwnd;
+#else
+    return HarkenSearch::UiHost::MainWindowOwner();
+#endif
+}
+
+static void RequestMainUiExit(const wchar_t* reason) {
+#ifdef _WIN32
+    RequestHarkenSearchExit(g_hwnd, reason);
+#else
+    (void)reason;
+    Platform::RequestWindowClose(MainUiOwnerWindow());
+#endif
+}
 
 // Persistent UI/app state (simple key=value file)
 std::string g_imguiIniPathUtf8;
@@ -479,6 +506,7 @@ static std::string TrimLine(const std::string& s) {
     return s.substr(a, b - a);
 }
 
+#ifdef _WIN32
 static bool ParseBool(const std::string& v, bool defVal) {
     std::string s = v;
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
@@ -494,6 +522,8 @@ static int ParseInt(const std::string& v, int defVal) {
 static float ParseFloat(const std::string& v, float defVal) {
     try { return std::stof(v); } catch (...) { return defVal; }
 }
+
+#endif
 
 static bool LooksLikeUtf8AsAnsiMojibake(const std::string& value) {
     if (value.empty()) return false;
@@ -589,6 +619,7 @@ static std::string SanitizeTabNameFromSettings(const std::string& rawValue) {
 namespace fs = std::filesystem;
 static fs::path Utf8ToPathMain(const std::string& str);
 
+#ifdef _WIN32
 static std::unordered_map<std::string, std::string> LoadKeyValueFile(const std::string& pathUtf8) {
     std::unordered_map<std::string, std::string> kv;
     std::string contents;
@@ -608,8 +639,16 @@ static std::unordered_map<std::string, std::string> LoadKeyValueFile(const std::
     return kv;
 }
 
+#endif
+
 static bool SaveAppSettingsKeyValueFile(const std::string& pathUtf8, const std::vector<std::pair<std::string, std::string>>& items) {
+#ifdef __APPLE__
+    if (!Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(pathUtf8)) return false;
+    return Platform::FileSystem::SaveSettingsKeyValues(pathUtf8, items).status ==
+           Platform::FileSystem::DurableFileOpStatus::Success;
+#else
     return harken::settings::SaveKeyValueFile(pathUtf8,items);
+#endif
 }
 
 // Helper: 在 modal popup 内部调用，按 ESC 时关闭当前弹窗（文本输入激活时跳过）
@@ -1100,10 +1139,10 @@ static bool CopyCoverToClipboard(AppState& state, const std::string& audioFilePa
     return false;
 }
 
-static void ShowCoverClipboardMessage(const wchar_t* text, UINT icon = MB_ICONINFORMATION) {
+static void ShowCoverClipboardMessage(const wchar_t* text, unsigned int icon = Platform::MessageBoxFlags::Information) {
 
-    if (g_hwnd) {
-        Platform::ShowMessageBox(g_hwnd, text, Lw(MB_CoverOpTitle).c_str(), MB_OK | icon);    }
+    if (MainUiOwnerWindow()) {
+        Platform::ShowMessageBox(MainUiOwnerWindow(), text, Lw(MB_CoverOpTitle).c_str(), Platform::MessageBoxFlags::Ok | icon);    }
 }
 
 // Menu item with stable hover styling.
@@ -1209,7 +1248,11 @@ static void ProcessKeybindings(AppState& state) {
     // Keyboard play/stop intentionally retains its origin-specific region and
     // rewind policy during the overnight control-plane proof.
     // Level 0: 系统级 - 非前台窗口一律不响应
-    if (g_hwnd == nullptr || GetForegroundWindow() != g_hwnd) return;
+#ifdef _WIN32
+    if (MainUiOwnerWindow() == nullptr || GetForegroundWindow() != MainUiOwnerWindow()) return;
+#else
+    if (!MainUiOwnerWindow() || ImGui::GetIO().AppFocusLost) return;
+#endif
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -1377,7 +1420,7 @@ static void ProcessKeybindings(AppState& state) {
 
         if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
             if (!canUseDbSelection) {
-                ShowCoverClipboardMessage(Lw(CoverClip_CopyNoView).c_str(), MB_ICONWARNING);
+                ShowCoverClipboardMessage(Lw(CoverClip_CopyNoView).c_str(), Platform::MessageBoxFlags::Warning);
             } else {
                 int idx = state.selectedResultIndex;
                 if (idx < 0 || idx >= (int)state.searchResults.size()) {
@@ -1387,21 +1430,21 @@ static void ProcessKeybindings(AppState& state) {
                 if (idx >= 0 && idx < (int)state.searchResults.size()) {
                     const auto& rec = state.searchResults[idx];
                     if (CopyCoverToClipboard(state, rec.filePath, rec.folderPath)) {
-                        ShowCoverClipboardMessage(Lw(CoverClip_Copied).c_str(), MB_ICONINFORMATION);
+                        ShowCoverClipboardMessage(Lw(CoverClip_Copied).c_str(), Platform::MessageBoxFlags::Information);
                     } else {
-                        ShowCoverClipboardMessage(Lw(CoverClip_CopyFail).c_str(), MB_ICONWARNING);
+                        ShowCoverClipboardMessage(Lw(CoverClip_CopyFail).c_str(), Platform::MessageBoxFlags::Warning);
                     }
                 } else {
-                    ShowCoverClipboardMessage(Lw(CoverClip_CopySelect).c_str(), MB_ICONWARNING);
+                    ShowCoverClipboardMessage(Lw(CoverClip_CopySelect).c_str(), Platform::MessageBoxFlags::Warning);
                 }
             }
         }
 
         if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
             if (!canUseDbSelection) {
-                ShowCoverClipboardMessage(Lw(CoverClip_PasteNoView).c_str(), MB_ICONWARNING);
+                ShowCoverClipboardMessage(Lw(CoverClip_PasteNoView).c_str(), Platform::MessageBoxFlags::Warning);
             } else if (!state.hasCoverClipboard()) {
-                ShowCoverClipboardMessage(Lw(CoverClip_NoPasteData).c_str(), MB_ICONWARNING);
+                ShowCoverClipboardMessage(Lw(CoverClip_NoPasteData).c_str(), Platform::MessageBoxFlags::Warning);
             } else {
                 std::vector<std::string> targets;
                 if (!state.selectedIndicesSet.empty()) {
@@ -1418,7 +1461,7 @@ static void ProcessKeybindings(AppState& state) {
                 if (!targets.empty()) {
                     StartCoverBatchPaste(state, targets);
                 } else {
-                    ShowCoverClipboardMessage(Lw(CoverClip_PasteSelect).c_str(), MB_ICONWARNING);
+                    ShowCoverClipboardMessage(Lw(CoverClip_PasteSelect).c_str(), Platform::MessageBoxFlags::Warning);
                 }
             }
         }
@@ -1564,7 +1607,7 @@ static void ProcessKeybindings(AppState& state) {
                     state.showEditFilenameDialog = true;
                     state.editFilenameRecordId = record.id;
                     state.editFilenameOriginalPath = record.filePath;
-                    strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer), record.fileName.c_str(), _TRUNCATE);
+                    CopyUiText(state.editFilenameBuffer, sizeof(state.editFilenameBuffer), record.fileName.c_str());
                 }
             }
             if (IsShortcutPressedSnapshot(ShortcutAction::RevealInExplorer, ks)) {
@@ -1661,7 +1704,7 @@ static void ProcessKeybindings(AppState& state) {
             if (!io.WantTextInput &&
                 io.KeyCtrl && !io.KeyShift && !io.KeyAlt &&
                 ImGui::IsKeyPressed(ImGuiKey_O, false)) {
-                std::string p = Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(g_hwnd);
+                std::string p = Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(MainUiOwnerWindow());
                 if (!p.empty()) {
                     SwitchDatabase(state, p);
                 }
@@ -1857,12 +1900,15 @@ static std::string SaveDatabaseFileDialogUtf8(HWND owner) {
 
 #endif
 
+#ifdef _WIN32
 static std::string TrimCopy(std::string s) {
     auto isSpace = [](unsigned char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
     while (!s.empty() && isSpace((unsigned char)s.front())) s.erase(s.begin());
     while (!s.empty() && isSpace((unsigned char)s.back())) s.pop_back();
     return s;
 }
+
+#endif
 
 static void AutoRenameTabBySearch(AppState& state, const std::string& searchText) {
     if (!state.settings.autoRenameTabBySearch) return;
@@ -1889,6 +1935,7 @@ static void AutoRenameTabBySearch(AppState& state, const std::string& searchText
     state.listTabs[state.activeTabIndex].name = displayName.empty() ? L(Misc_AllFiles) : displayName;
 }
 
+#ifdef _WIN32
 static std::string SanitizeWindowsName(std::string name) {
     const std::string invalid = "<>:\"/\\|?*";
     for (char& c : name) {
@@ -1900,14 +1947,19 @@ static std::string SanitizeWindowsName(std::string name) {
     return name;
 }
 
+#endif
+
 // FolderRenameOp → AppState.h
 
 // OpenGL function loading (minimal)
+#ifdef _WIN32
 typedef BOOL(WINAPI* PFNWGLSWAPINTERVALEXTPROC)(int interval);
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = nullptr;
 
+#endif
+
 // Global window handle for dialogs (defined in WindowsMain.cpp)
-// extern HWND g_hwnd; -- see WindowsMain.h
+//  -- see WindowsMain.h
 
 // Global setting for drag behavior (defined in WindowsMain.cpp)
 // extern bool g_hideWindowOnDrag; -- see WindowsMain.h
@@ -2802,6 +2854,7 @@ bool PitchKnob(const char* label, float* value, float minVal, float maxVal, floa
 #define WM_COPYGLOBALDATA 0x0049
 #endif
 
+#ifdef _WIN32
 // Drag & Drop Support (IDropSource implementation)
 
 class DropSource : public IDropSource {
@@ -2959,6 +3012,8 @@ public:
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
 };
 
+#endif // _WIN32 native OLE objects
+
 // Drag operation guard to prevent multiple triggers
 static bool g_isDragging = false;
 static bool g_dragInitiated = false;  // Track if drag was initiated for current mouse press
@@ -3017,6 +3072,7 @@ void ResetDragState() {
     // g_dragCompleted stays true until next mouse click to prevent selection after drag
 }
 
+#ifdef _WIN32
 // Drag ghost window for visual feedback
 static HWND g_dragGhostWindow = nullptr;
 static std::wstring g_dragGhostText;
@@ -3122,8 +3178,8 @@ static LRESULT CALLBACK DragGhostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
         if (wParam == DRAG_GHOST_TIMER_HIDE_MAIN) {
             // One-shot: minimize main window after a short delay (confirm drag)
             KillTimer(hwnd, DRAG_GHOST_TIMER_HIDE_MAIN);
-            if (!g_mainWindowHiddenForDrag && g_isDragging && g_hideWindowOnDrag && g_hwnd) {
-                MinimizeWindowNoAnimation(g_hwnd);
+            if (!g_mainWindowHiddenForDrag && g_isDragging && g_hideWindowOnDrag && MainUiOwnerWindow()) {
+                MinimizeWindowNoAnimation(MainUiOwnerWindow());
                 g_mainWindowHiddenForDrag = true;
             }
             return 0;
@@ -3254,10 +3310,10 @@ void StartFileDrag(const std::vector<std::string>& files) {
         g_dragInitiated = true;
         g_suppressImGuiDragTooltipFrames = 120;  // Suppress ImGui drag tooltip for ~2 seconds after OLE drag
 
-        if (shouldHideWindow && g_hwnd) {
+        if (shouldHideWindow && MainUiOwnerWindow()) {
             // Save complete window state (position, size, maximized/minimized state)
-            GetWindowPlacement(g_hwnd, &savedPlacement);
-            g_savedWasMaximizedForDragHide = (IsZoomed(g_hwnd) != 0);
+            GetWindowPlacement(MainUiOwnerWindow(), &savedPlacement);
+            g_savedWasMaximizedForDragHide = (IsZoomed(MainUiOwnerWindow()) != 0);
             // Preserve restore-to-maximized state when dragging from a maximized title bar.
             // 这样即使 Windows Aero Snap 在拖动期间解除了最大化，恢复时仍能回到全屏
             if (g_savedWasMaximizedForDragHide) {
@@ -3293,7 +3349,7 @@ void StartFileDrag(const std::vector<std::string>& files) {
         CreateDragGhostWindow(ghostText);
 
         // Hide main window after a short delay to avoid accidental triggers
-        if (shouldHideWindow && g_hwnd && g_dragGhostWindow) {
+        if (shouldHideWindow && MainUiOwnerWindow() && g_dragGhostWindow) {
             SetTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_HIDE_MAIN, g_hideWindowOnDragDelayMs, nullptr);
         }
 
@@ -3320,8 +3376,8 @@ void StartFileDrag(const std::vector<std::string>& files) {
         // Drag result: if dropped successfully, keep window hidden so user can start editing in DAW.
         // If cancelled/no drop, restore window (if it was hidden).
         const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
-        AppendDiagLogF(L"StartFileDrag: dropSucceeded=%d shouldHide=%d g_hwnd=%p",
-                       (int)dropSucceeded, (int)shouldHideWindow, (void*)g_hwnd);
+        AppendDiagLogF(L"StartFileDrag: dropSucceeded=%d shouldHide=%d MainUiOwnerWindow()=%p",
+                       (int)dropSucceeded, (int)shouldHideWindow, (void*)MainUiOwnerWindow());
 
         // Find the drop target window (the window under cursor, likely DAW)
         HWND dropTargetWnd = nullptr;
@@ -3337,7 +3393,7 @@ void StartFileDrag(const std::vector<std::string>& files) {
             AppendDiagLogF(L"StartFileDrag: 拖放目标窗口=%p", (void*)dropTargetWnd);
         }
 
-        if (shouldHideWindow && g_hwnd) {
+        if (shouldHideWindow && MainUiOwnerWindow()) {
             if (dropSucceeded) {
                 // Minimize our window while preserving maximized state for later restore.
                 // Use the savedPlacement (captured before drag) so that rcNormalPosition
@@ -3348,23 +3404,23 @@ void StartFileDrag(const std::vector<std::string>& files) {
                     wp.flags |= WPF_RESTORETOMAXIMIZED;
                 }
                 wp.showCmd = SW_SHOWMINNOACTIVE;
-                SetWindowPlacement(g_hwnd, &wp);
+                SetWindowPlacement(MainUiOwnerWindow(), &wp);
 
                 // Then activate the drop target window (DAW)
-                if (dropTargetWnd && dropTargetWnd != g_hwnd) {
+                if (dropTargetWnd && dropTargetWnd != MainUiOwnerWindow()) {
                     Platform::WindowSetForeground(dropTargetWnd);
                     AppendDiagLogF(L"StartFileDrag: 已激活拖放目标窗口=%p", (void*)dropTargetWnd);
                 }
 
                 AppendDiagLogLine(L"StartFileDrag: 窗口已最小化，正在添加托盘图标");
-                EnsureTrayIconAdded(g_hwnd);
+                EnsureTrayIconAdded(MainUiOwnerWindow());
                 if (g_appState) {
-                    MaybeShowTrayMinimizeHint(*g_appState, g_hwnd);
+                    MaybeShowTrayMinimizeHint(*g_appState, MainUiOwnerWindow());
                 }
                 g_mainWindowHiddenForDrag = true;
             } else if (g_mainWindowHiddenForDrag) {
-                SetWindowPlacement(g_hwnd, &savedPlacement);
-                Platform::WindowShow(g_hwnd, savedPlacement.showCmd);
+                SetWindowPlacement(MainUiOwnerWindow(), &savedPlacement);
+                Platform::WindowShow(MainUiOwnerWindow(), savedPlacement.showCmd);
             }
         }
 
@@ -3373,13 +3429,24 @@ void StartFileDrag(const std::vector<std::string>& files) {
         // Keep g_dragInitiated set until mouse release.
     } catch (...) {
         AppendDiagLogLine(L"StartFileDrag: exception caught, drag aborted");
-        if (shouldHideWindow && g_hwnd && g_mainWindowHiddenForDrag) {
-            SetWindowPlacement(g_hwnd, &savedPlacement);
-            Platform::WindowShow(g_hwnd, savedPlacement.showCmd);
+        if (shouldHideWindow && MainUiOwnerWindow() && g_mainWindowHiddenForDrag) {
+            SetWindowPlacement(MainUiOwnerWindow(), &savedPlacement);
+            Platform::WindowShow(MainUiOwnerWindow(), savedPlacement.showCmd);
         }
         finalizeDragState(false);
     }
 }
+
+#else
+void StartFileDrag(const std::vector<std::string>& files) {
+    if (files.empty() || g_dragInitiated) return;
+    g_dragInitiated = true;
+    Platform::ShowMessageBox(MainUiOwnerWindow(),
+        Lw(Mac_ExternalDragUnavailable).c_str(), Lw(MB_Title_Aris).c_str(),
+        Platform::MessageBoxFlags::Information);
+    AppendDiagLogLine(L"External file drag is unsupported in this macOS build");
+}
+#endif
 
 // Drag temp files (cleaned up FIFO to avoid unbounded growth)
 static std::vector<std::string> g_tempDragFiles;
@@ -3436,16 +3503,21 @@ static std::string CreateTempAliasForFile(const std::string& originalPathUtf8, c
     std::wstring wSrc = Utf8ToWide(originalPathUtf8);
     std::wstring wDst = Utf8ToWide(dstUtf8);
 
+#ifdef _WIN32
     // Try hardlink first (fast, no extra disk) - only works on same volume.
     if (CreateHardLinkW(wDst.c_str(), wSrc.c_str(), nullptr) == 0) {
         // Fallback to copy
         Platform::FileSystem::CopyFile(originalPathUtf8, dstUtf8, false);
     }
 
+#else
+    if (!Platform::FileSystem::CopyFile(originalPathUtf8, dstUtf8, false)) return {};
+#endif
     TrackTempDragFile(dstUtf8);
     return dstUtf8;
 }
 
+#ifdef _WIN32
 static void SplitFileNameUtf8(const std::string& pathUtf8, std::string& outStem, std::string& outExtWithDot) {
     try {
         fs::path p(Utf8ToWide(pathUtf8));
@@ -3459,6 +3531,8 @@ static void SplitFileNameUtf8(const std::string& pathUtf8, std::string& outStem,
     outStem = SanitizeWindowsName(outStem);
     if (outExtWithDot.empty()) outExtWithDot = ".wav";
 }
+
+#endif
 
 // Forward declaration — defined below after helper functions
 static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
@@ -3483,13 +3557,15 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
         StartFileDrag(files);
     } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
-        extern HWND g_hwnd;
-        if (g_hwnd) {
-            ReleaseCapture();
+
+        if (MainUiOwnerWindow()) {
+            #ifdef _WIN32
+    ReleaseCapture();
+#endif
             const std::string msg = error.empty()
                 ? L(Misc_DragFailed)
                 : error;
-            Platform::ShowMessageBox(g_hwnd, Utf8ToWide(msg).c_str(), Lw(MB_DragFailTitle).c_str(), MB_OK | MB_ICONERROR);
+            Platform::ShowMessageBox(MainUiOwnerWindow(), Utf8ToWide(msg).c_str(), Lw(MB_DragFailTitle).c_str(), Platform::MessageBoxFlags::Ok | Platform::MessageBoxFlags::Error);
         }
     }
 }
@@ -4192,6 +4268,9 @@ static bool IsProToolsLaunchTarget(const DawTarget& target);
 static std::wstring FindInstalledSteinbergExecutable(const DawTarget& target);
 
 DawCapability GetDawCapability(const DawTarget& dt) {
+#ifndef _WIN32
+    return DawCapability::Unavailable;
+#endif
     if (IsReaperNamedPipeTarget(dt)) {
         const auto cached = ReaperBridgeUiStatusForTarget(dt);
         if (!cached.has_value()) return DawCapability::Unconfigured;
@@ -4626,6 +4705,7 @@ static std::wstring EnsureWideDirExists(const std::wstring& dir) {
     return WideFileExists(dir) ? dir : L"";
 }
 
+#ifdef _WIN32
 static std::wstring FindInstalledSteinbergExecutable(const DawTarget& target) {
     if (!IsSteinbergLaunchTarget(target)) return L"";
 
@@ -4751,6 +4831,14 @@ static bool EnsureReaperExtensionInstalled(const DawTarget& target, std::string&
         " — restart REAPER to activate";
     return true;
 }
+
+#else
+static std::wstring FindInstalledSteinbergExecutable(const DawTarget&) { return {}; }
+static bool EnsureReaperExtensionInstalled(const DawTarget&, std::string& outMsg) {
+    outMsg = "macOS：音频工作站连接不在本测试版支持范围内。";
+    return false;
+}
+#endif
 
 static bool IsNonBlockingReaperInstallFailure(const std::string& msg) {
     return msg.find("REAPER is using it") != std::string::npos;
@@ -5030,6 +5118,10 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
                           bool keepHarkenSearchProcessingSuffix = true,
                           HarkenSearch::DawBridge::InstallStatus* outBridge = nullptr,
                           bool* outBridgeKeyed = nullptr) {
+#ifndef _WIN32
+    outStatus = "macOS：音频工作站连接不在本测试版支持范围内。";
+    return false;
+#endif
     if (files.empty()) return false;
     const char* name = target.name.c_str();
 
@@ -5208,8 +5300,8 @@ static void OpenTransferDialogForRecords(AppState& state, const std::vector<Audi
     state.transferTotalCount = (int)records.size();
     ApplyDefaultTransferSettingsToDialog(state);
     if (state.transferDestFolder[0] == '\0' && !state.settings.defaultExportPath.empty()) {
-        strncpy_s(state.transferDestFolder, sizeof(state.transferDestFolder),
-            state.settings.defaultExportPath.c_str(), _TRUNCATE);
+        CopyUiText(state.transferDestFolder, sizeof(state.transferDestFolder),
+            state.settings.defaultExportPath.c_str());
     }
     state.showTransferDialog = true;
 }
@@ -5246,7 +5338,11 @@ static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& rec
 
 // Folder Dialog
 
+#ifdef _WIN32
 std::string OpenFolderDialog(HWND hwnd) {
+#else
+std::string OpenFolderDialog(void* hwnd) {
+#endif
     return Platform::BrowseFolderDialogModern(hwnd, u8"选择音频文件夹");
 }
 
@@ -5513,7 +5609,9 @@ void LoadAppSettings(AppState& state) {
     state.settings.showMilliseconds = ParseBool(kv["showMilliseconds"], state.settings.showMilliseconds);
     state.settings.showFrameNumber = ParseBool(kv["showFrameNumber"], state.settings.showFrameNumber);
     state.settings.hideWindowOnDrag = ParseBool(kv["hideWindowOnDrag"], state.settings.hideWindowOnDrag);
+#ifdef _WIN32
     g_hideWindowOnDrag = state.settings.hideWindowOnDrag;  // Sync global
+#endif
     state.settings.pausePlaybackOnDragStart = ParseBool(kv["pausePlaybackOnDragStart"], state.settings.pausePlaybackOnDragStart);
     {
         const int rawMode = ParseInt(kv["folderTreePathMode"], static_cast<int>(state.settings.folderTreePathMode));
@@ -5524,7 +5622,9 @@ void LoadAppSettings(AppState& state) {
     state.settings.hideWindowOnDragDelayMs = ParseInt(kv["hideWindowOnDragDelayMs"], state.settings.hideWindowOnDragDelayMs);
     if (state.settings.hideWindowOnDragDelayMs < 100) state.settings.hideWindowOnDragDelayMs = 100;
     if (state.settings.hideWindowOnDragDelayMs > 2000) state.settings.hideWindowOnDragDelayMs = 2000;
+#ifdef _WIN32
     g_hideWindowOnDragDelayMs = (UINT)state.settings.hideWindowOnDragDelayMs;
+#endif
     state.settings.showFileExtension = ParseBool(kv["showFileExtension"], state.settings.showFileExtension);
     state.settings.tabRandomColor = ParseBool(kv["tabRandomColor"], state.settings.tabRandomColor);
     state.settings.showGuidedMode = ParseBool(kv["showGuidedMode"], state.settings.showGuidedMode);
@@ -7163,7 +7263,7 @@ static bool StartSingleChannelExport(AppState& state, const AudioRecord& record,
 
     std::string destDir = state.settings.defaultExportPath;
     if (destDir.empty()) {
-        destDir = OpenFolderDialog(g_hwnd);
+        destDir = OpenFolderDialog(MainUiOwnerWindow());
         if (destDir.empty()) return false;
         state.settings.defaultExportPath = destDir;
         MarkSettingsDirty(state);
@@ -7518,19 +7618,19 @@ float ParseTimecode(const char* str) {
     int h = 0, m = 0, s = 0, f = 0;
 
     // Try HH:MM:SS.FF format first
-    if (sscanf_s(str, "%d:%d:%d.%d", &h, &m, &s, &f) == 4) {
+    if (std::sscanf(str, "%d:%d:%d.%d", &h, &m, &s, &f) == 4) {
         result = h * 3600.0f + m * 60.0f + s + f / 100.0f;
     }
     // Try HH:MM:SS format
-    else if (sscanf_s(str, "%d:%d:%d", &h, &m, &s) == 3) {
+    else if (std::sscanf(str, "%d:%d:%d", &h, &m, &s) == 3) {
         result = h * 3600.0f + m * 60.0f + s;
     }
     // Try MM:SS.FF format
-    else if (sscanf_s(str, "%d:%d.%d", &m, &s, &f) == 3) {
+    else if (std::sscanf(str, "%d:%d.%d", &m, &s, &f) == 3) {
         result = m * 60.0f + s + f / 100.0f;
     }
     // Try MM:SS format
-    else if (sscanf_s(str, "%d:%d", &m, &s) == 2) {
+    else if (std::sscanf(str, "%d:%d", &m, &s) == 2) {
         result = m * 60.0f + s;
     }
     // Try decimal seconds
@@ -8140,7 +8240,7 @@ static inline bool IsSuggestSep(char c) {
     }
 }
 
-static std::string NormalizeSuggestText(const std::string& s) {
+std::string NormalizeSuggestText(const std::string& s) {
     std::string out;
     out.reserve(s.size());
     bool prevSpace = true;
@@ -8625,7 +8725,7 @@ static constexpr int64_t kCoverWallFolderDiscoveryMaxFiles = 50000;
 
 // Helper: Refresh search results with pagination support
 // Forward declarations (used by RefreshSearchResults)
-static void ApplyFiltersAndRefresh(AppState& state);
+void ApplyFiltersAndRefresh(AppState& state);
 // FilterResultsByFileType declared in WindowsMain.h (non-static)
 
 
@@ -10386,7 +10486,7 @@ static void LoadAllResultsUnderCurrentFilter(AppState& state) {
 }
 
 // Helper: Load more results (for infinite scroll)
-static void LoadMoreResults(AppState& state) {
+void LoadMoreResults(AppState& state) {
     if (state.loadingMore) return;
     if (state.asyncSearchInProgress) return;
 
@@ -13542,7 +13642,7 @@ static void ShowBrowserCurrentPathContextMenu(AppState& state,
             SyncBrowserPathBuffer(state);
         }
         if (ImGui::MenuItem(L(Filter_OpenFolder))) {
-            std::string folder = OpenFolderDialog(g_hwnd);
+            std::string folder = OpenFolderDialog(MainUiOwnerWindow());
             if (!folder.empty()) {
                 NavigateBrowserToFolder(state, folder, state.fileBrowser.getScope());
             }
@@ -14651,7 +14751,7 @@ void ActivatePlaylistView(AppState& state,
     state.syncToTab();
 }
 
-static void ApplyFiltersAndRefresh(AppState& state) {
+void ApplyFiltersAndRefresh(AppState& state) {
     RefreshSearchResults(state, true);
 }
 
@@ -15110,9 +15210,9 @@ static void PumpReaperFileListImportResult(AppState& state) {
     }
 
     state.scanSummaryToastUntil = ImGui::GetTime() + 10.0;
-    Platform::ShowMessageBox(g_hwnd,
+    Platform::ShowMessageBox(MainUiOwnerWindow(),
                 Utf8ToWide(FormatReaperImportResultMessage(result, playlistName, success)).c_str(),
-                Lw(MB_ReaperImportTitle).c_str(),                MB_OK | (success ? MB_ICONINFORMATION : MB_ICONWARNING));
+                Lw(MB_ReaperImportTitle).c_str(),                Platform::MessageBoxFlags::Ok | (success ? Platform::MessageBoxFlags::Information : Platform::MessageBoxFlags::Warning));
 }
 #endif
 
@@ -15634,7 +15734,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             if (aura::ui::SmallActionButton(L(Main_AddColumnBtn))) {
                 // Create an empty collection and open the editor for it
                 AppState::UserSmartCollection newCol;
-                strncpy_s(newCol.name, L(Col_NewDefault), _TRUNCATE);
+                CopyUiText(newCol.name, L(Col_NewDefault));
                 state.userCollections.push_back(std::move(newCol));
                 state.activeUserCollectionIdx = (int)state.userCollections.size() - 1;
                 state.activeSmartCollection   = SmartCollection::None;
@@ -16347,7 +16447,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         }
                         currentSearch += tag.first + " "; // 追加标签并跟一个空格方便继续输入
 
-                        strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), currentSearch.c_str(), _TRUNCATE);
+                        CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), currentSearch.c_str());
 
                         state.viewMode = ViewMode::Database;
                         state.clearPendingWaveforms();
@@ -16532,7 +16632,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 },
                 [&](int idx) {
                     const auto& g = artistGroups[(size_t)idx];
-                    strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), g.display.c_str(), _TRUNCATE);
+                    CopyUiText(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), g.display.c_str());
                     state.artistFilterAlternates = g.members;
                     applyMetaFilters();
                 },
@@ -16583,7 +16683,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 "Album", albumList, albumListFilter, sizeof(albumListFilter),
                 [&]() { state.albumFilterBuffer[0] = '\0'; applyMetaFilters(); },
                 [&](int, const std::string& v) {
-                    strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), v.c_str(), _TRUNCATE);
+                    CopyUiText(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), v.c_str());
                     applyMetaFilters();
                 },
                 true,
@@ -16629,7 +16729,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 "Category", categoryList, categoryListFilter, sizeof(categoryListFilter),
                 [&]() { state.categoryFilterBuffer[0] = '\0'; applyMetaFilters(); },
                 [&](int, const std::string& v) {
-                    strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), v.c_str(), _TRUNCATE);
+                    CopyUiText(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), v.c_str());
                     applyMetaFilters();
                 },
                 true,
@@ -16784,7 +16884,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                     if (active) {
                         state.keyFilterBuffer[0] = '\0';
                     } else {
-                        strncpy_s(state.keyFilterBuffer, camelotCodes[ci], _TRUNCATE);
+                        CopyUiText(state.keyFilterBuffer, camelotCodes[ci]);
                     }
                     applyMetaFilters();
                 }
@@ -17620,9 +17720,9 @@ static void BeginInfoMetadataEdit(AppState& state, const AudioRecord& record) {
     state.infoEditSelectionId=record.id;
     state.infoEditDatabasePath=state.database.getMainDbPath();
     state.infoEditVisibleMask=state.settings.infoPages.visibleMask;
-    strncpy_s(state.metadataDescBuffer,sizeof(state.metadataDescBuffer),state.metadataBatchMode?"":record.description.c_str(),_TRUNCATE);
-    strncpy_s(state.metadataKeywordsBuffer,sizeof(state.metadataKeywordsBuffer),state.metadataBatchMode?"":record.keywords.c_str(),_TRUNCATE);
-    strncpy_s(state.metadataCategoryBuffer,sizeof(state.metadataCategoryBuffer),state.metadataBatchMode?"":record.category.c_str(),_TRUNCATE);
+    CopyUiText(state.metadataDescBuffer,sizeof(state.metadataDescBuffer),state.metadataBatchMode?"":record.description.c_str());
+    CopyUiText(state.metadataKeywordsBuffer,sizeof(state.metadataKeywordsBuffer),state.metadataBatchMode?"":record.keywords.c_str());
+    CopyUiText(state.metadataCategoryBuffer,sizeof(state.metadataCategoryBuffer),state.metadataBatchMode?"":record.category.c_str());
     state.infoEditSession.Begin(CurrentInfoEditValues(state));
     state.infoEditError.clear();
     state.infoEditAfterLeave={};
@@ -20200,7 +20300,11 @@ void RenderFileInfoPanelTabContents(
                     // Format time
                     time_t ts = (time_t)item.timestamp;
                     struct tm tm_info = {};
-                    localtime_s(&tm_info, &ts);
+                    #ifdef _WIN32
+    localtime_s(&tm_info, &ts);
+#else
+    localtime_r(&ts, &tm_info);
+#endif
                     char timeBuf[32];
                     strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &tm_info);
 
@@ -28209,8 +28313,13 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
             const float wheelH = io.MouseWheelH;
             // When the user clicks WebUI controls (WebView2), keyboard focus may move away from the ImGui host.
             // In that case ImGui's modifier flags may not update, but we still want Ctrl/Shift wheel zoom to work.
+#ifdef _WIN32
             const bool ctrlDown = io.KeyCtrl || ((::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
             const bool shiftDown = io.KeyShift || ((::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+#else
+            const bool ctrlDown = io.KeyCtrl || io.KeySuper;
+            const bool shiftDown = io.KeyShift;
+#endif
 
             bool plainTab = ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !ctrlDown && !io.KeyAlt;
             if (plainTab && waveformValid && state.audioEngine.isLoaded()) {
@@ -29994,14 +30103,18 @@ void RenderUI(AppState& state) {
                 SaveAppSettings(state);
             }
             if (sel == 1) {
-                if (g_hwnd) {
-                    MinimizeWindowNoAnimation(g_hwnd);
-                    EnsureTrayIconAdded(g_hwnd);
-                    MaybeShowTrayMinimizeHint(state, g_hwnd);
+                if (MainUiOwnerWindow()) {
+#ifdef _WIN32
+                    MinimizeWindowNoAnimation(MainUiOwnerWindow());
+                    EnsureTrayIconAdded(MainUiOwnerWindow());
+                    MaybeShowTrayMinimizeHint(state, MainUiOwnerWindow());
+#else
+                    Platform::WindowShow(MainUiOwnerWindow(), 2);
+#endif
                 }
             } else {
-                if (g_hwnd) {
-                    RequestHarkenSearchExit(g_hwnd, L"close-choice-exit");
+                if (MainUiOwnerWindow()) {
+                    RequestMainUiExit(L"close-choice-exit");
                 }
             }
             ImGui::CloseCurrentPopup();
@@ -30031,7 +30144,7 @@ void RenderUI(AppState& state) {
         ImGui::InputText("##RenameRoot", state.folderRenameRoot, sizeof(state.folderRenameRoot));
         ImGui::SameLine();
         if (aura::ui::ActionButton(L(Browse))) {
-            std::string folder = OpenFolderDialog(g_hwnd);
+            std::string folder = OpenFolderDialog(MainUiOwnerWindow());
             if (!folder.empty()) {
                 snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s", folder.c_str());
             }
@@ -30243,9 +30356,9 @@ void RenderUI(AppState& state) {
         ImGui::InputText("##TransferDest", state.transferDestFolder, sizeof(state.transferDestFolder));
         ImGui::SameLine();
         if (aura::ui::ActionButton(L(Main_TransferBrowseBtn2))) {
-            std::string folder = OpenFolderDialog(g_hwnd);
+            std::string folder = OpenFolderDialog(MainUiOwnerWindow());
             if (!folder.empty()) {
-                strncpy_s(state.transferDestFolder, sizeof(state.transferDestFolder), folder.c_str(), _TRUNCATE);
+                CopyUiText(state.transferDestFolder, sizeof(state.transferDestFolder), folder.c_str());
                 state.settings.defaultExportPath = folder;
                 MarkSettingsDirty(state);
             }
@@ -31781,6 +31894,7 @@ void RenderUI(AppState& state) {
         StartFilePlayerDeferredDbWarmup(state);
     }
 
+#ifdef _WIN32
     // F-034: one-time prompt to set Aris as default audio player (shown once after warmup)
     if (!state.settings.defaultPlayerPrompted &&
         !state.filePlayerFastPathActive &&
@@ -31808,6 +31922,10 @@ void RenderUI(AppState& state) {
         }
         ImGui::EndPopup();
     }
+
+#else
+// Default audio association is configured in Finder on macOS.
+#endif
 
     // Scan folder dialog
     if (state.showScanDialog && !state.pendingScanFolders.empty() &&
@@ -32910,7 +33028,7 @@ void RenderUI(AppState& state) {
                         startScanForFolders(state.pendingScanFolders, false);
                         state.pendingScanFolders.clear();
                     } else {
-                        const auto folder = OpenFolderDialog(g_hwnd);
+                        const auto folder = OpenFolderDialog(MainUiOwnerWindow());
                         if (!folder.empty()) startScanForFolders({folder}, false);
                     }
                 }
@@ -33463,7 +33581,7 @@ void RenderUI(AppState& state) {
         ImGui::BeginDisabled(!canReconnectSelection);
             if (aura::ui::ActionButton(L(Main_ReconnectBtn), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
                 std::string reconnectPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
-                    g_hwnd,
+                    MainUiOwnerWindow(),
                     GetDefaultDbDirWide());
                 if (!reconnectPath.empty() && PathExistsUtf8(reconnectPath)) {
                     std::string oldPath = state.dbManagerSelectedPath;
@@ -33668,7 +33786,7 @@ void RenderUI(AppState& state) {
             ImGui::TextWrapped("%s", dbDir.c_str());
         }
         if (aura::ui::ActionButton(L(Main_ChooseStorageLocation), ImVec2(140, 0))) {
-            std::string folder = OpenFolderDialog(g_hwnd);
+            std::string folder = OpenFolderDialog(MainUiOwnerWindow());
             if (!folder.empty()) {
                 if (Platform::FileSystem::IsNetworkPath(folder)) {
                     newDbError = L(Db_RejectNetworkPath);
@@ -33693,7 +33811,7 @@ void RenderUI(AppState& state) {
             std::string ext = fullName.substr(fullName.size() - 3);
             if (ext != ".db") fullName += ".db";
         }
-        std::string fullPath = BuildDatabasePackageMainPathUtf8(dbDir + "\\" + fullName);
+        std::string fullPath = BuildDatabasePackageMainPathUtf8(PathToUtf8(Utf8ToPath(dbDir) / Utf8ToPath(fullName)));
         if (requireDatabaseSetup) {
             ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.hintColor);
             ImGui::TextWrapped("%s %s", L(Meta_FullPath), fullPath.c_str());
@@ -33784,7 +33902,7 @@ void RenderUI(AppState& state) {
             if (openExistingClicked) {
                 if (openPath.empty()) {
                     openPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
-                        g_hwnd, GetDefaultDbDirWide());
+                        MainUiOwnerWindow(), GetDefaultDbDirWide());
                 }
                 if (!openPath.empty() && SwitchDatabase(state, openPath, false, &newDbError)) {
                     newDbError.clear();
@@ -33793,7 +33911,7 @@ void RenderUI(AppState& state) {
             }
             ImGui::SameLine();
             if (DatabaseSetupButton(L(File_Exit), ImVec2(72.0f, 32), setupPalette, DatabaseSetupAction::Exit)) {
-                RequestHarkenSearchExit(g_hwnd, L"first-library-setup-exit");
+                RequestMainUiExit(L"first-library-setup-exit");
             }
         } else if (aura::ui::ActionButton(L(Cancel), ImVec2(120, 32), aura::ui::ButtonVariant::Quiet)) {
             newDbError.clear();
@@ -33943,7 +34061,7 @@ void RenderUI(AppState& state) {
             DawTarget& selected = state.settings.dawTargets[state.selectedDAWIndex];
             if (s_dawDetailsIndex != state.selectedDAWIndex) {
                 s_dawDetailsIndex = state.selectedDAWIndex;
-                strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str(), _TRUNCATE);
+                CopyUiText(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str());
             }
 
             ImGui::Separator();
@@ -33974,19 +34092,19 @@ void RenderUI(AppState& state) {
                     }
                 } else if (!ImGui::IsItemActive() &&
                            selected.exePath != std::string(s_dawExePathBuf)) {
-                    strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf),
-                              selected.exePath.c_str(), _TRUNCATE);
+                    CopyUiText(s_dawExePathBuf, sizeof(s_dawExePathBuf),
+                              selected.exePath.c_str());
                 }
                 const bool pathCommitted = ImGui::IsItemDeactivatedAfterEdit();
                 ImGui::SameLine();
                 if (aura::ui::ActionButton(L(Main_BrowseReaperPath), ImVec2(90, 0))) {
-                    const std::string picked = OpenFolderDialog(g_hwnd);
+                    const std::string picked = OpenFolderDialog(MainUiOwnerWindow());
                     if (!picked.empty()) {
                         const std::string oldReaperCacheKey = ReaperBridgeUiCacheKey(selected);
                         EraseReaperBridgeUiStatus(oldReaperCacheKey);
                         selected.exePath = picked;
-                        strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf),
-                                  selected.exePath.c_str(), _TRUNCATE);
+                        CopyUiText(s_dawExePathBuf, sizeof(s_dawExePathBuf),
+                                  selected.exePath.c_str());
                         requestReaperStatusRefresh();
                     }
                 }
@@ -34073,12 +34191,12 @@ void RenderUI(AppState& state) {
                 if (aura::ui::ActionButton(L(Main_DawBrowseBtn), ImVec2(80, 0))) {
                     std::wstring title = L"Select " + Utf8ToWide(selected.name) + L" executable";
                     std::string picked = Platform::ExecutableDialogs::OpenExecutableFileDialogUtf8(
-                        g_hwnd,
+                        MainUiOwnerWindow(),
                         title,
                         Utf8ToWide(selected.exePath));
                     if (!picked.empty()) {
                         selected.exePath = picked;
-                        strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str(), _TRUNCATE);
+                        CopyUiText(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str());
                     }
                 }
                 ImGui::SameLine();
@@ -34899,7 +35017,7 @@ void RenderUI(AppState& state) {
     if (state.showCoverImportDialog) {
         // Open file dialog to select image
         const std::string imagePath =
-            Platform::CoverDialogs::OpenCoverImageImportFileDialogUtf8(g_hwnd);
+            Platform::CoverDialogs::OpenCoverImageImportFileDialogUtf8(MainUiOwnerWindow());
         if (!imagePath.empty()) {
 
             if (state.coverImportDeferredApply) {
@@ -35200,7 +35318,7 @@ void RenderUI(AppState& state) {
         if (ImGui::BeginMenu(L(Menu_File))) {
             { ChromeTextScope _readingMenuFile; // menu dropdowns share the chrome face.
             if (ImGui::MenuItem(L(File_OpenFolder), "Ctrl+O")) {
-                std::string folder = OpenFolderDialog(g_hwnd);
+                std::string folder = OpenFolderDialog(MainUiOwnerWindow());
                 if (!folder.empty()) {
                     state.fileBrowser.navigateTo(folder);
                     state.viewMode = ViewMode::Browser;
@@ -35289,7 +35407,7 @@ void RenderUI(AppState& state) {
 
                 if (ImGui::MenuItem(L(File_OpenDB))) {
                     std::string openPath = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
-                        g_hwnd,
+                        MainUiOwnerWindow(),
                         GetDefaultDbDirWide());
                     if (!openPath.empty()) {
                         // 新数据库 → 重启程序走 splash 加载
@@ -35350,10 +35468,10 @@ void RenderUI(AppState& state) {
 
             ImGui::Separator();
             if (ImGui::MenuItem(L(File_Exit), "Alt+F4")) {
-                if (g_hwnd) {
-                    RequestHarkenSearchExit(g_hwnd, L"file-menu-exit");
+                if (MainUiOwnerWindow()) {
+                    RequestMainUiExit(L"file-menu-exit");
                 } else {
-                    PostQuitMessage(0);
+                    RequestMainUiExit(L"file-menu-exit-no-window");
                 }
             }
             }
@@ -35388,7 +35506,7 @@ void RenderUI(AppState& state) {
                     state.showEditFilenameDialog = true;
                     state.editFilenameRecordId = record.id;
                     state.editFilenameOriginalPath = record.filePath;
-                    strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer), record.fileName.c_str(), _TRUNCATE);
+                    CopyUiText(state.editFilenameBuffer, sizeof(state.editFilenameBuffer), record.fileName.c_str());
                 }
             }
 
@@ -35620,7 +35738,7 @@ void RenderUI(AppState& state) {
 #ifdef _WIN32
             if (ImGui::MenuItem(L(File_OpenDB), "Ctrl+O")) {
                 std::string p = Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8(
-                    g_hwnd,
+                    MainUiOwnerWindow(),
                     GetDefaultDbDirWide());
                 if (!p.empty()) {
                     // 新数据库 → 重启程序走 splash 加载
@@ -35670,7 +35788,7 @@ void RenderUI(AppState& state) {
             ImGui::BeginDisabled(state.isScanning.load());
             if (ImGui::MenuItem(L(Main_ImportReaperList))) {
                 std::string importPath =
-                    Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(g_hwnd);
+                    Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(MainUiOwnerWindow());
                 if (!importPath.empty()) {
                     state.playlists = state.database.getAllPlaylists();
                     std::string baseName = "Reaper Import";
@@ -36481,7 +36599,7 @@ void RenderUI(AppState& state) {
 
             if (state.searchSuggestRequestFocus) {
                 if (!state.searchSuggestPendingText.empty()) {
-                    strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), state.searchSuggestPendingText.c_str(), _TRUNCATE);
+                    CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), state.searchSuggestPendingText.c_str());
                     state.searchSuggestPendingText.clear();
                     ImGui::ClearActiveID();
                 }
@@ -37191,7 +37309,7 @@ void RenderUI(AppState& state) {
             else
                 buf += ins;
 
-            strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), buf.c_str(), _TRUNCATE);
+            CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), buf.c_str());
             state.searchSuggestPendingText = buf;
             state.searchSuggestRequestFocus = true;
             state.searchSuggestSelected = -1;
@@ -37240,7 +37358,7 @@ void RenderUI(AppState& state) {
             // Append value after the field: already in buffer
             std::string buf(state.searchBuffer);
             buf += SearchCommands::QuoteFieldValueForInsert(val);
-            strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), buf.c_str(), _TRUNCATE);
+            CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), buf.c_str());
             state.searchSuggestPendingText = buf;
             state.searchSuggestRequestFocus = true;
             state.searchSuggestSelected = -1;
@@ -37401,7 +37519,7 @@ void RenderUI(AppState& state) {
             std::string textToSearch = currentSearch;
             if (forceCommit && !state.searchSuggestPendingText.empty()) {
                 textToSearch = state.searchSuggestPendingText;
-                strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), textToSearch.c_str(), _TRUNCATE);
+                CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), textToSearch.c_str());
                 state.searchSuggestPendingText.clear();
                 ImGui::ClearActiveID(); // 释放焦点避免锁死
                 state.searchSuggestRequestFocus = true; // 下一帧重新夺回光标焦点
@@ -37432,21 +37550,21 @@ void RenderUI(AppState& state) {
             }
             state.syncToTab();
             AutoRenameTabBySearch(state, textToSearch);
-            strncpy_s(lastProcessedBuffer, sizeof(lastProcessedBuffer), state.searchBuffer, _TRUNCATE);
+            CopyUiText(lastProcessedBuffer, sizeof(lastProcessedBuffer), state.searchBuffer);
             if (state.settings.productMode == ProductMode::Music)
                 state.albumGrid.needsReload = true;
             DIAG_ACTION("Search", "Immediate Commit via Enter");
         } else if (state.suppressNextRealtimeSearchCommit) {
             state.suppressNextRealtimeSearchCommit = false;
             state.searchDebounce.reset();
-            strncpy_s(lastProcessedBuffer, sizeof(lastProcessedBuffer), state.searchBuffer, _TRUNCATE);
+            CopyUiText(lastProcessedBuffer, sizeof(lastProcessedBuffer), state.searchBuffer);
         } else if (state.settings.searchRealtime) {
             // 实时模式：文本变化才触发防抖
             if (typedChanged && std::strcmp(state.searchBuffer, lastProcessedBuffer) != 0) {
                 g_lastScrollOrInputTime = ImGui::GetTime();
                 state.searchDebounce.trigger();
                 state.filterQueryState = FilterQueryState::Debouncing;
-                strncpy_s(lastProcessedBuffer, sizeof(lastProcessedBuffer), state.searchBuffer, _TRUNCATE);
+                CopyUiText(lastProcessedBuffer, sizeof(lastProcessedBuffer), state.searchBuffer);
             }
         }
 // 防抖定时器触发：延迟过后执行搜索
@@ -38714,7 +38832,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::BeginPopupContextItem()) {
                     if (ImGui::MenuItem(L(Tab_RenameTab2))) {
                         renamingTabIndex = ti;
-                        strncpy_s(renameBuffer, sizeof(renameBuffer), tab.name.c_str(), _TRUNCATE);
+                        CopyUiText(renameBuffer, sizeof(renameBuffer), tab.name.c_str());
                     }
                     if (ImGui::MenuItem(L(Tab_DupWorkspace))) {
                         state.saveCoverWallDisplaySnapshotForTab(state.activeTabIndex);
@@ -39605,7 +39723,7 @@ void RenderUI(AppState& state) {
             ShowBrowserCurrentPathContextMenu(state, currentPath, canNavigateUp);
             ImGui::SameLine();
             if (aura::ui::ActionButton(L(Open))) {
-                std::string folder = OpenFolderDialog(g_hwnd);
+                std::string folder = OpenFolderDialog(MainUiOwnerWindow());
                 if (!folder.empty()) {
                     std::snprintf(state.browserPathBuffer, sizeof(state.browserPathBuffer), "%s", folder.c_str());
                     pathEnter = true;
@@ -40264,7 +40382,7 @@ void RenderUI(AppState& state) {
                             // immediate refresh, but stop realtime debounce from treating it as
                             // a brand-new typed search and auto-clearing cover/path filters.
                             state.suppressNextRealtimeSearchCommit = true;
-                            strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), rebuilt.c_str(), _TRUNCATE);
+                            CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), rebuilt.c_str());
                         } else {
                         switch (activeFilters[i].type) {
                             case FilterChipType::Keyword: {
@@ -40287,7 +40405,7 @@ void RenderUI(AppState& state) {
                                     if (!rebuilt.empty()) rebuilt += ' ';
                                     rebuilt += bufToks[j++];
                                 }
-                                strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), rebuilt.c_str(), _TRUNCATE);
+                                CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), rebuilt.c_str());
                                 break;
                             }
                             case FilterChipType::ExcludeKeyword: {
@@ -40313,7 +40431,7 @@ void RenderUI(AppState& state) {
                                     if (!rebuilt.empty()) rebuilt += ' ';
                                     rebuilt += bufToks[j++];
                                 }
-                                strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), rebuilt.c_str(), _TRUNCATE);
+                                CopyUiText(state.searchBuffer, sizeof(state.searchBuffer), rebuilt.c_str());
                                 break;
                             }
                             case FilterChipType::Folder:
@@ -41169,8 +41287,8 @@ void RenderUI(AppState& state) {
                                 state.showEditFilenameDialog = true;
                                 state.editFilenameRecordId = indexed.id;
                                 state.editFilenameOriginalPath = entry.fullPath;
-                                strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
-                                          entry.name.c_str(), _TRUNCATE);
+                                CopyUiText(state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
+                                          entry.name.c_str());
                             }
                             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
                             if (ImGui::MenuItem(L(Ctx_DeleteFromFS), "Shift+Del")) {
@@ -41665,7 +41783,11 @@ void RenderUI(AppState& state) {
                             time_t t = (time_t)metaIt->second.dateAdded;
                             struct tm tmBuf;
                             char dateText[16] = "";
-                            localtime_s(&tmBuf, &t);
+                            #ifdef _WIN32
+    localtime_s(&tmBuf, &t);
+#else
+    localtime_r(&t, &tmBuf);
+#endif
                             strftime(dateText, sizeof(dateText), "%Y-%m-%d", &tmBuf);
                             ImGui::Text("%s", dateText);
                             ImGui::PopStyleColor();
@@ -42456,7 +42578,7 @@ void RenderUI(AppState& state) {
                             state.showEditFilenameDialog = true;
                             state.editFilenameRecordId = record.id;
                             state.editFilenameOriginalPath = record.filePath;
-                            strncpy_s(state.editFilenameBuffer, record.fileName.c_str(), _TRUNCATE);
+                            CopyUiText(state.editFilenameBuffer, record.fileName.c_str());
                         }
                         if (ImGui::MenuItem(L(Ctx_BatchRename), GetShortcutString(ShortcutAction::BatchRename).c_str())) {
                             state.showBatchRenameDialog = true;
@@ -42495,7 +42617,7 @@ void RenderUI(AppState& state) {
                             }
                             if (!isMulti && ImGui::MenuItem(L(Ctx_CopyCover), "Ctrl+Shift+C")) {
                                 if (!CopyCoverToClipboard(state, record.filePath, record.folderPath)) {
-                                    ShowCoverClipboardMessage(Lw(CoverClip_CopyFail).c_str(), MB_ICONWARNING);
+                                    ShowCoverClipboardMessage(Lw(CoverClip_CopyFail).c_str(), Platform::MessageBoxFlags::Warning);
                                 }
                             }
                             std::string pasteLabel = isMulti
@@ -42503,14 +42625,14 @@ void RenderUI(AppState& state) {
                                 : L(Ctx_PasteCover);
                             if (ImGui::MenuItem(pasteLabel.c_str(), "Ctrl+Shift+V", false, true)) {
                                 if (!state.hasCoverClipboard()) {
-                                    ShowCoverClipboardMessage(Lw(CoverClip_NoPasteData).c_str(), MB_ICONWARNING);
+                                    ShowCoverClipboardMessage(Lw(CoverClip_NoPasteData).c_str(), Platform::MessageBoxFlags::Warning);
                                 } else {
                                     std::vector<std::string> targets;
                                     for (const auto& r : selectedRecords) targets.push_back(r.filePath);
                                     if (!targets.empty()) {
                                         StartCoverBatchPaste(state, targets);
                                     } else {
-                                        ShowCoverClipboardMessage(Lw(CoverClip_PasteSelect).c_str(), MB_ICONWARNING);
+                                        ShowCoverClipboardMessage(Lw(CoverClip_PasteSelect).c_str(), Platform::MessageBoxFlags::Warning);
                                     }
                                 }
                             }
@@ -43277,7 +43399,11 @@ void RenderUI(AppState& state) {
                             if (dayKey != s_lastDateVal) {
                                 time_t t = (time_t)record.dateAdded;
                                 struct tm tmBuf;
-                                localtime_s(&tmBuf, &t);
+                                #ifdef _WIN32
+    localtime_s(&tmBuf, &t);
+#else
+    localtime_r(&t, &tmBuf);
+#endif
                                 strftime(s_lastDateStr, sizeof(s_lastDateStr), "%Y-%m-%d", &tmBuf);
                                 s_lastDateVal = dayKey;
                             }
@@ -45870,17 +45996,17 @@ void RenderUI(AppState& state) {
             ImGui::PopStyleColor();
             if (exportRegionClicked) {
                 const std::string outputPath =
-                    Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(g_hwnd);
+                    Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(MainUiOwnerWindow());
                 if (!outputPath.empty()) {
                     const auto processingSnapshot = state.audioEngine.captureTransferProcessingSnapshot();
                     if (!state.audioEngine.exportRegion(outputPath, state.uiState.regionFadeInNorm,
                                                        state.uiState.regionFadeOutNorm, nullptr,
                                                        &processingSnapshot)) {
-                        if (g_hwnd) {
+                        if (MainUiOwnerWindow()) {
                             const std::string msg = state.audioEngine.getLastExportError().empty()
                                 ? u8"导出失败。"
                                 : state.audioEngine.getLastExportError();
-                            Platform::ShowMessageBox(g_hwnd, Utf8ToWide(msg).c_str(), Lw(MB_ExportRegionTitle).c_str(), MB_OK | MB_ICONERROR);
+                            Platform::ShowMessageBox(MainUiOwnerWindow(), Utf8ToWide(msg).c_str(), Lw(MB_ExportRegionTitle).c_str(), Platform::MessageBoxFlags::Ok | Platform::MessageBoxFlags::Error);
                         }
                     }
                 }
@@ -50271,7 +50397,11 @@ void RenderUI(AppState& state) {
                     // Format time
                     time_t timestamp = (time_t)entry.timestamp;
                     struct tm tm_info = {};
-                    localtime_s(&tm_info, &timestamp);
+                    #ifdef _WIN32
+    localtime_s(&tm_info, &timestamp);
+#else
+    localtime_r(&timestamp, &tm_info);
+#endif
                     char timeBuffer[32];
                     strftime(timeBuffer, sizeof(timeBuffer), "%H:%M:%S", &tm_info);
 
