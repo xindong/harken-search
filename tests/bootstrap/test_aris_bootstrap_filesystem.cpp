@@ -11461,6 +11461,26 @@ void test_native_missing_install_parents_publish_and_rollback() {
         // and finish the same transaction without any pre-created fixture path.
         port.reset();
         backend.reset();
+        if (scenario == 3U) {
+            WindowsBootstrapFilesystemNativeTestHooks flushHooks;
+            flushHooks.accessDeniedFailurePoint =
+                WindowsBootstrapFilesystemNativeTestFailurePoint::InstallDirectoryBeforeFlush;
+            backend = createAuthorizedNativeBackend(installPath, stagingPath, transactionPath, flushHooks);
+            check(backend != nullptr, "unflushed-parent recovery backend is authorized");
+            if (!backend) return;
+            port = std::make_unique<WindowsBootstrapFilesystemPort>(*backend);
+            const auto unflushed = port->BeginRecovery(*validated.plan, *journal.journal, trusted);
+            check(unflushed.filesystem.ok() && !unflushed.intents.empty(),
+                  "interrupted directory creation retains a recovery preparation intent");
+            if (!unflushed.filesystem.ok() || unflushed.intents.empty()) return;
+            check(!port->Apply(unflushed.intents.front()).ok(),
+                  "reused unbound parent must flush before its binding is published");
+            check(!std::filesystem::exists(installPath / "assets/icons") &&
+                      !std::filesystem::exists(installPath / asset) &&
+                      readNativeFixtureFile(installPath / "HarkenSearch.exe") == "old-native",
+                  "failed flush of the reused parent prevents deeper directory and payload publication");
+            port.reset(); backend.reset();
+        }
         backend = createAuthorizedNativeBackend(installPath, stagingPath, transactionPath);
         check(backend != nullptr, "restart reopens the authorized roots");
         if (!backend) return;

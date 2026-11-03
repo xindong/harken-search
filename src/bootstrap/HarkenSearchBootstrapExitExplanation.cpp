@@ -95,7 +95,7 @@ BootstrapExitExplanation ExplainBootstrapExit(int exitCode) {
     case BootstrapExitCode::FilesystemRejected:
         explanation.outcome = BootstrapExitOutcome::Retryable;
         explanation.message = WithCode(
-            u8"更新未能完成：准备文件阶段或替换文件阶段遇到问题。"
+            u8"更新未能完成：更新文件时遇到问题。"
             u8"请把这个错误码发给我们。",
             exitCode);
         return explanation;

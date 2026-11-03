@@ -191,8 +191,9 @@ int main(int argc, char** argv) {
               "filesystem rejection never demands a reinstall");
         check(e.message.find(std::to_string(code)) != std::string::npos,
               "filesystem rejection still carries the raw code");
-        check(e.message.find(u8"\u51c6\u5907\u6587\u4ef6\u9636\u6bb5") != std::string::npos,
-              "filesystem rejection names the file preparation stage");
+        check(e.message.find(u8"准备文件阶段") == std::string::npos &&
+                  e.message.find(u8"更新文件") != std::string::npos,
+              "filesystem rejection must not infer preparation from a shared exit code");
         check(e.message.find(u8"\u8bf7\u5b8c\u5168\u9000\u51fa") == std::string::npos,
               "filesystem rejection no longer gives the misleading quit advice");
         check(e.message.find(u8"不是文件被占用") == std::string::npos,

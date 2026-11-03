@@ -746,6 +746,7 @@ enum class WindowsBootstrapFilesystemNativeTestFailurePoint {
     RemoveDirectoryAfterDirectoryFlushBeforeFinalRebind,
     InstallDirectoryBeforeCreate,
     InstallDirectoryAfterCreateBeforeObservation,
+    InstallDirectoryBeforeFlush,
     // Retained as a source-compatible alias for earlier focused tests.  The
     // adapter no longer exposes a delete/rename gap; this point now fires
     // before the single atomic replace operation.

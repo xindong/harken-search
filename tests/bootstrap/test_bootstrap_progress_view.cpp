@@ -46,9 +46,9 @@ int main() {
         json = view(state);
         require(json["hint"].get<std::string>().find(u8"不是文件被占用") == std::string::npos,
                 "file preparation errors must not guess the native cause");
-        require(json["hint"].get<std::string>().find(u8"文件准备") != std::string::npos,
-                "file preparation errors must name the failed stage");
-        for (const auto phase : {BootstrapProgressPhase::PreparingFiles, BootstrapProgressPhase::ReplacingFiles}) {
+        require(json["hint"].get<std::string>().find(u8"更新文件") != std::string::npos,
+                "filesystem failures must describe the update without inferring its stage");
+        for (const auto phase : {BootstrapProgressPhase::PreparingFiles, BootstrapProgressPhase::ReplacingFiles, BootstrapProgressPhase::Finalizing}) {
             state.lastActive = phase;
             json = view(state);
             require(json["hint"].get<std::string>().find(u8"未被改动") == std::string::npos,

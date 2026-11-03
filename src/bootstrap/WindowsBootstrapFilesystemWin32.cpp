@@ -3161,7 +3161,14 @@ public:
                                ERROR_DIRECTORY));
         }
 
-        if (created) {
+        // A reused install directory can have been created immediately before
+        // an interruption. Complete both flushes before publishing its binding.
+        if (created || parentRole == WindowsFilesystemRootRole::Install) {
+            if (parentRole == WindowsFilesystemRootRole::Install) {
+                const auto beforeFlush = FailureAtTestPoint(
+                    WindowsBootstrapFilesystemNativeTestFailurePoint::InstallDirectoryBeforeFlush);
+                if (!beforeFlush.ok()) return afterCreateFailure(beforeFlush);
+            }
             const WindowsFilesystemBackendResult childFlushed =
                 FlushDirectory(opened.handle.get());
             const WindowsFilesystemBackendResult parentFlushed =

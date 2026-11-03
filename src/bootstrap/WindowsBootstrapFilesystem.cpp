@@ -2290,7 +2290,20 @@ WindowsBootstrapFilesystemResult WindowsBootstrapFilesystemPort::Apply(
                                !observation.identity.valid) {
                         return result(WindowsBootstrapFilesystemStatus::UnexpectedEntryType);
                     } else {
-                        parentIdentity = observation.identity;
+                        WindowsFilesystemHandle directory = 0;
+                        const auto mutation = state.mutateWithJournalLease([&] {
+                            return state.backend.OpenOrCreateDirectoryNoFollow(
+                                state.installRoot, parent, false, directory, parentIdentity);
+                        });
+                        if (directory != 0) state.backend.CloseFilesystemHandle(directory);
+                        if (!mutation.mutationInvoked || !mutation.backendResult.ok() ||
+                            !parentIdentity.valid) {
+                            return state.blockAfterStarted(mutation.backendResult,
+                                WindowsBootstrapFilesystemStatus::PartialDurableState, true);
+                        }
+                        if (parentIdentity != observation.identity) {
+                            return result(WindowsBootstrapFilesystemStatus::IdentityMismatch);
+                        }
                     }
                 }
                 if (!parentIdentity.valid) {
