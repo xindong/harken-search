@@ -263,13 +263,16 @@ assert "workflow.Invalidate()" in batch_transition
 
 # The main-thread start path also invalidates synchronously, so a very short
 # batch cannot finish before the renderer samples its rising edge.
-batch_start = main[main.index("state.batchFeatureExtracting.store(true)") - 600:
-                   main.index("state.batchFeatureExtracting.store(true)") + 500]
+batch_start = main[main.index("void StartBatchFeatureExtraction(AppState& state"):
+                   main.index("state.batchFeatureThread = std::thread",
+                              main.index("void StartBatchFeatureExtraction(AppState& state"))]
 for required in (
     "aura::ui::InvalidateSimilarSoundsWindow(state)",
     "state.batchFeatureExtracting.store(true)",
 ):
     assert required in batch_start
+assert batch_start.index("InvalidateSimilarSoundsWindow(state)") < batch_start.index(
+    "state.batchFeatureExtracting.store(true)")
 
 space_start = window.index("ImGui::IsKeyPressed(ImGuiKey_Space, false)")
 space_end = window.index("ImGui::PopStyleColor(3)", space_start)

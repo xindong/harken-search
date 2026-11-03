@@ -70,7 +70,7 @@ class NetworkUnreachableDeleteContract(unittest.TestCase):
         self.assertIn("return stats;", entry)
 
     def test_scan_stats_can_report_unreachable_count(self) -> None:
-        stats = self.database_h.split("struct ScanStats {", 1)[1].split("};", 1)[0]
+        stats = self.database_h.split("struct ScanStats {", 1)[1].split("\n};", 1)[0]
         self.assertIn("unreachable", stats)
         merge = stats.split("void mergeFrom", 1)[1]
         self.assertIn("unreachable", merge)

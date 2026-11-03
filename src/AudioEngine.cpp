@@ -3940,7 +3940,7 @@ void AudioEngine::setMagicEQ(const MagicEQSettings& settings) {
     next.mode = next.mode == MagicEQMode::Notch ? MagicEQMode::Notch : MagicEQMode::Pass;
     if (!std::isfinite(next.centerFreq)) next.centerFreq = 1000.0f;
     if (!std::isfinite(next.halfWidthPercent)) next.halfWidthPercent = 10.0f;
-    if (!std::isfinite(next.widgetWidth)) next.widgetWidth = 180.0f;
+    if (!std::isfinite(next.widgetWidth)) next.widgetWidth = CenterSenseDsp::kDefaultMagicEQWidgetWidth;
     next.halfWidthPercent = std::clamp(next.halfWidthPercent, 1.0f, 50.0f);
     next.centerFreq = std::clamp(next.centerFreq, 20.0f, 20000.0f);
     const float centerPercent = CenterSenseDsp::magicEQFrequencyToPercent(next.centerFreq);
@@ -6656,14 +6656,18 @@ bool AudioEngine::switchOutputDevice(int deviceIndex) {
                 m_engine = nullptr;
                 m_isInitialized = false;
                 m_outputDeviceIndex = -1;
+                m_outputDeviceIdBlob.clear();
                 m_outputDeviceName = "Default";
                 return false;
             }
             m_outputDeviceIndex = -1;
+            m_outputDeviceIdBlob.clear();
             m_outputDeviceName = "Default";
             m_isInitialized = true;
         } else {
             m_outputDeviceIndex = deviceIndex;
+            m_outputDeviceIdBlob = (deviceIndex >= 0 && deviceIndex < (int)m_cachedDevices.size())
+                ? m_cachedDevices[deviceIndex].deviceIdBlob : std::vector<uint8_t>{};
             m_outputDeviceName = (deviceIndex >= 0 && deviceIndex < (int)m_cachedDevices.size())
                 ? m_cachedDevices[deviceIndex].name : "Default";
             m_isInitialized = true;

@@ -35,9 +35,13 @@ static_assert(
     "generated ja table must match LStr");
 
 const char* GetLocalizedString(LStr id) {
+    return GetLocalizedString(id, g_currentLanguage);
+}
+
+const char* GetLocalizedString(LStr id, AppLanguage language) {
     int idx = (int)id;
     if (idx < 0 || idx >= (int)LStr::_Count) return "???";
-    switch (g_currentLanguage) {
+    switch (language) {
     case AppLanguage::Chinese:  return g_strings_zh[idx];
     case AppLanguage::Japanese: {
         const char* ja = g_strings_ja[idx];

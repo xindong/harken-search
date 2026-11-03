@@ -10,7 +10,7 @@ assert HEADER_PATH.is_file()
 assert WIN32_PATH.is_file()
 assert PORTABLE_PATH.is_file()
 
-MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+MAIN = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
 HEADER = HEADER_PATH.read_text(encoding="utf-8")
 WIN32 = WIN32_PATH.read_text(encoding="utf-8")
 PORTABLE = PORTABLE_PATH.read_text(encoding="utf-8")
@@ -59,20 +59,18 @@ assert 'return "";' in PORTABLE
 qualified_call = "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd)"
 assert MAIN.count(qualified_call) == 1
 button = MAIN.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-tooltip = MAIN.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
+tooltip = MAIN.index('else if(editor.action=="custom-colors")', button)
 body = MAIN[button:tooltip]
 assert "OPENFILENAMEW" not in body
 assert "GetOpenFileNameW" not in body
 call = MAIN.index(qualified_call, button, tooltip)
-empty_check = MAIN.index("if (!importPath.empty())", call, tooltip)
-destination = MAIN.index(
-    "std::string dstPath = g_appSettingsPathUtf8;", empty_check, tooltip
-)
+empty_check = MAIN.index("if(!path.empty())", call, tooltip)
+validation = MAIN.index("Platform::FileSystem::ReadFileText(path,contents)", empty_check, tooltip)
 copy = MAIN.index(
-    "Platform::FileSystem::CopyFile(importPath, dstPath, true)", destination, tooltip
+    "Platform::FileSystem::CopyFile(path,g_appSettingsPathUtf8,true)", validation, tooltip
 )
 reload = MAIN.index("LoadAppSettings(state);", copy, tooltip)
-assert button < call < empty_check < destination < copy < reload < tooltip
+assert button < call < empty_check < validation < copy < reload < tooltip
 
 assert "AURO_SETTINGS_IMPORT_DIALOG_SOURCE" in CMAKE
 assert CMAKE.count("${AURO_SETTINGS_IMPORT_DIALOG_SOURCE}") == 1

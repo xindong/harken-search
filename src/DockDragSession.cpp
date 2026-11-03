@@ -27,11 +27,11 @@ DockHit DockDragSession::CommitOnMouseUp() {
     } else {
         if (layout_.Find(moduleId_)) layout_.Detach(moduleId_);
         layout_.RemoveFloat(moduleId_);
-        bool inserted = false;
+        bool inserted = preview_.kind == DockHitKind::ResultsHome && moduleId_ == "search-results";
         if (preview_.kind == DockHitKind::Module && !preview_.targetModuleId.empty() &&
             preview_.targetModuleId != moduleId_) {
             inserted = layout_.InsertAdjacent(preview_.targetModuleId, moduleId_, preview_.side, kDockIncomingShare);
-        } else {
+        } else if (preview_.kind != DockHitKind::ResultsHome) {
             inserted = layout_.InsertModule(moduleId_, preview_.side, kDockIncomingShare);
         }
         if (!inserted) layout_.EnsureFloat(moduleId_);

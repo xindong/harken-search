@@ -10085,6 +10085,29 @@
       "reviewer": "Cindy GPT-6 Astra QA integration review",
       "reason": "Repeatable manual About-window QA utility; lack of a product importer is expected. Retain the runtime evidence entrypoint.",
       "rollback": "git restore --source=HEAD -- tools/qa_about_window.py"
+    },
+    {
+      "id": "S2-691C877B82",
+      "path": "tools/qa_full_scan_completion.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E4",
+          "source": "isolated native scan regression",
+          "detail": "Drives the real scan dialog and Done button on a private desktop; verifies interrupted fast scans, restart, full-cache pause and repeat scans against persisted mini waveform blobs."
+        }
+      ],
+      "contract_refs": [
+        "tests/test_scan_waveform_cache_contract.cpp"
+      ],
+      "dynamic_lookup_checked": true,
+      "compatibility_checked": true,
+      "reviewer": "Cindy GPT-6 Astra scan regression review",
+      "reason": "Repeatable manual QA entrypoint for the mini-cache rescan bug. Invoked by CLI against an explicitly isolated package; it is not imported by the product.",
+      "rollback": "git restore --source=HEAD -- tools/qa_full_scan_completion.py"
     }
   ]
 }

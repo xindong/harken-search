@@ -95,29 +95,13 @@ def test_required_sites_use_explicit_ids() -> None:
     assert scan_contract_sites(ROOT) == []
 
 
-def test_settings_matched_section_titles_are_dead_code() -> None:
-    main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-    dead = main.index("if (false && !settingsQuickSearch.empty())")
-    search_matches = main[main.index("std::vector<const SettingsSearchEntry*> matchedSettingsEntries;") :
-                          main.index("aura::ui::BeginSettingsSearchHighlight")]
-    dead_end = main.index("ImGui::Separator();", dead)
-    dead_region = main[dead:dead_end]
-    assert "matchedSectionTitles[i]" in dead_region
-    assert "ImGui::Selectable" not in dead_region
-    assert "ImGui::Checkbox" not in dead_region
-    assert "ImGui::MenuItem" not in dead_region
-    leftover = 0
-    start = 0
-    while True:
-        idx = main.find("matchedSectionTitles", start)
-        if idx < 0:
-            break
-        leftover += 0 if dead <= idx < dead_end else 1
-        start = idx + 1
-    assert leftover == 0
-    assert "matchedSettingsEntries.push_back(&entry)" in search_matches
-    assert "activeSettingsSearchEntry = matchedSettingsEntries[(size_t)settingsSearchCursor]" in search_matches
-    assert "selectedNavMatches.push_back(entry)" in search_matches
+def test_settings_search_has_stable_entry_ids():
+    main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+    search = (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8")
+    assert "matchedSectionTitles" not in main
+    assert "matchedSettingsEntries" not in main
+    assert 'ImGui::PushID(entry->id.c_str())' in search
+    assert 'editor.focusId=entry->id' in search
 
 
 def test_real_fixed_enum_loops_are_not_flagged() -> None:

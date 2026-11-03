@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.16)
 project(HarkenSearch VERSION 1.0.43 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)
+target_include_directories(TestPreferenceDraft PRIVATE src)
+target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestPreferenceDraft PRIVATE /utf-8 /UNDEBUG)
+else()
+    target_compile_options(TestPreferenceDraft PRIVATE -UNDEBUG)
+endif()
+add_test(NAME PreferenceDraft COMMAND TestPreferenceDraft)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -946,6 +955,21 @@ endif()
 add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
     "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
 
+add_executable(TestSettingsFileAtomicSave EXCLUDE_FROM_ALL
+    tests/test_settings_file_atomic_save.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestSettingsFileAtomicSave PRIVATE src/platform/filesystem_win32.cpp
+        src/platform/text_encoding_win32.cpp src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestSettingsFileAtomicSave PRIVATE shlwapi)
+endif()
+target_include_directories(TestSettingsFileAtomicSave PRIVATE src)
+target_compile_features(TestSettingsFileAtomicSave PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSettingsFileAtomicSave PRIVATE /utf-8)
+endif()
+add_test(NAME SettingsFileAtomicSave COMMAND TestSettingsFileAtomicSave
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/settings-file-atomic-save")
+
 add_executable(TestUpdateNoticeContent EXCLUDE_FROM_ALL
     tests/test_update_notice_content.cpp
     src/update/HarkenSearchUpdateNoticeModel.cpp
@@ -1615,6 +1639,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors")
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors"
             "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/contributors"
         COMMENT "Copying contributor icons...")
+endif()
+
+# Community QR codes shown on the About page ship beside the executable.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/community"
+        COMMENT "Copying community QR codes...")
 endif()
 
 # Copy brand logo lockups next to HarkenSearch.exe. These are larger wordmark assets

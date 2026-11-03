@@ -1,5 +1,6 @@
 #include "Database.h"
 #include "SimilarityQueryService.h"
+#include "platform/harken_user_data_layout.h"
 #include "sqlite3.h"
 
 #include <chrono>
@@ -478,7 +479,10 @@ void Run(const fs::path& root) {
 int main() {
     const std::string unique = std::to_string(
         std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    const fs::path root = fs::temp_directory_path() / ("aris_similarity_query_service_" + unique);
+    const fs::path temporaryBase = Platform::HarkenUserData::PreviewIsolationActive()
+        ? fs::u8path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "Testing"
+        : fs::temp_directory_path();
+    const fs::path root = temporaryBase / ("harken_similarity_query_service_" + unique);
     std::error_code ec;
     fs::create_directories(root, ec);
     Check(!ec, "temporary fixture directory is created");

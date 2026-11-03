@@ -3,21 +3,27 @@
 #include "BuiltinThemeScheme.h"
 #include "ui/TransportContrast.h"
 #include "ui/MistBlueChrome.h"
+#include <cmath>
 #include <cstdio>
 int main() {
     using namespace TransportContrast;
     auto s=MakeBuiltinScheme(AppTheme::LapisBlue);
     int failures=0;
     auto check=[&](bool ok,const char* name){std::printf("%s %s\n",ok?"PASS":"FAIL",name);failures+=!ok;};
+    auto channel=[](float c){return static_cast<int>(std::round(c*255.f));};
+    check(channel(s.mainWindowBG.x)==36 && channel(s.mainWindowBG.y)==56 && channel(s.mainWindowBG.z)==80,
+          "approved softened navy canvas");
+    check(channel(s.resultsBG.x)==36 && channel(s.resultsBG.y)==56 && channel(s.resultsBG.z)==80,
+          "results canvas matches softened navy");
     check(s.filterBrowserBG.x>.98f && s.filterBrowserBG.y>.98f && s.filterBrowserBG.z>.98f,"white filter panel");
     for(auto bg:{s.resultsBG,s.metadataPanelBG,s.waveformBG,s.transportBarBG}) {
-        check(Luminance(bg)>.035 && Luminance(bg)<.13 && bg.z-bg.x>.08,"navy major surface close to original");
+        check(Luminance(bg)>.015 && Luminance(bg)<.08 && bg.z-bg.x>.10,"deep navy surfaces avoid pale gray");
         check(Ratio(s.interfaceText,bg)>=4.5,"readable shared text on blue surfaces");
         check(Ratio(bg,s.resultsBG)<1.6,"gentle panel-to-panel contrast");
     }
     // Approved toolbar/dialog reference: darker foundations, visibly raised controls.
-    check(Luminance(s.toolbarBG)>.025 && s.toolbarBG.z-s.toolbarBG.x>.08,"toolbar retains navy hue");
-    check(Ratio(s.menuBarBG,s.toolbarBG)>=1.15,"menu distinct from toolbar");
+    check(Luminance(s.toolbarBG)>.01 && Luminance(s.toolbarBG)<.04 && s.toolbarBG.z-s.toolbarBG.x>.10,"toolbar stays deep navy");
+    check(Ratio(s.menuBarBG,s.toolbarBG)>=1.12,"menu distinct from toolbar");
     check(Ratio(s.frameBgBase,s.dialogBG)>=1.4,"dialog controls raised above body");
     check(Ratio(s.historyCapsuleBG,s.toolbarBG)>=1.4,"search surface above toolbar");
     check(Ratio(s.modeCapsuleActiveBG,s.modeCapsuleBG)>=1.7,"selected navigation above ordinary shell");

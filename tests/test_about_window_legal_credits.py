@@ -145,3 +145,31 @@ def test_retired_update_center_strings_have_no_remaining_reference():
     text = _main()
     for retired in ("Main_UpdateCenterMovedNote", "Main_OpenUpdateCenterBtn"):
         assert not re.search(r"\b" + retired + r"\b", text), retired
+
+def test_about_shows_both_community_qrs_and_simple_invite_note():
+    block = _about_block()
+    keys = (
+        "Main_AboutWeComQrLabel",
+        "Main_AboutFeishuQrLabel",
+        "Main_AboutCommunityNote",
+    )
+    for key in keys:
+        assert f"L({key})" in block, key
+
+    assets = (
+        "assets/icons/community/wecom-qr.png",
+        "assets/icons/community/feishu-qr.png",
+    )
+    for relative in assets:
+        assert relative in block, relative
+        assert (ROOT / relative).is_file(), relative
+
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "assets/icons/community" in cmake
+
+    entries = _ledger_entries()
+    assert entries["Main_AboutCommunityNote"]["zh"] == "欢迎加入社群，交流使用体验与功能建议。"
+    for key in keys:
+        entry = entries[key]
+        for lang in ("zh", "en", "ja"):
+            assert entry[lang].strip(), (key, lang)
