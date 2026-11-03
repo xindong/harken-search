@@ -4931,7 +4931,7 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"error\":\"invalid_preview_layout\"}";
         } else if (action != "open" && action != "close" && action != "start" &&
                    action != "cancel" && action != "find" && action != "state" &&
-                   action != "pointer" && action != "configure") {
+                   action != "pointer" && action != "configure" && action != "recheck") {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
@@ -4953,7 +4953,8 @@ static void PollQaCommandFile(AppState& state) {
             const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();
             const auto controls = ThemeInspector::CopyLatestSnapshot();
             for (const auto& zone : controls.zones) {
-                if ((zone.key == "similar.options.deep" || zone.key.rfind("similar.result.wave.",0)==0) && controls.frameNumber + 2 >= static_cast<uint64_t>(ImGui::GetFrameCount()) &&
+                if ((zone.key == "similar.options.deep" || zone.key.rfind("similar.result.wave.",0)==0 ||
+                     zone.key.rfind("similar.index.",0)==0) && controls.frameNumber + 2 >= static_cast<uint64_t>(ImGui::GetFrameCount()) &&
                     x >= zone.minX && x < zone.maxX && y >= zone.minY && y < zone.maxY) hit = true;
             }
             if (!hit || !fresh || s_magicEqQaPointer.pending ||
@@ -4987,6 +4988,8 @@ static void PollQaCommandFile(AppState& state) {
                 aura::ui::InvalidateSimilarSoundsWindow(state);
             } else if (action == "start") {
                 StartBatchFeatureExtraction(state);
+            } else if (action == "recheck") {
+                StartBatchFeatureExtraction(state, true);
             } else if (action == "cancel") {
                 state.batchFeatureCancelRequested.store(true);
             } else if (action == "configure") {
@@ -5016,7 +5019,8 @@ static void PollQaCommandFile(AppState& state) {
                 {"candidates",snapshot.stats.candidates},{"detailed_comparisons",snapshot.stats.detailedComparisons}};
             nlohmann::json controlBounds = nlohmann::json::object();
             for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
-                if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
+                if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0 ||
+                    zone.key.rfind("similar.index.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
             }
             nlohmann::json batchSummary;
             {

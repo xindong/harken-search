@@ -44,7 +44,7 @@ void RenderUI(AppState& state);
 
 // Similar Sounds index controls; UI-thread only, reuses the app-owned batch task.
 void DrawSimilarityIndexPanel(AppState& state);
-void StartBatchFeatureExtraction(AppState& state);
+void StartBatchFeatureExtraction(AppState& state, bool recheckAll = false);
 
 // File Operations (implemented in main.cpp)
 

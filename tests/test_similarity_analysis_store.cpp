@@ -39,6 +39,16 @@ int main() {
         "same-count content replacement invalidates caches");
     auto coverage = store.Coverage();
     check(coverage.total == 2 && coverage.acoustic == 1 && coverage.semantic == 1, "partial coverage is explicit");
+    std::vector<SimilarityFile> pending;
+    check(store.PendingFiles(pending,true) && pending.size()==1 && pending[0].id==2,
+        "pending selection excludes complete acoustic and semantic records");
+    sqlite3_exec(db,"UPDATE harken_similarity_v2 SET model_version='old-model' WHERE file_id=1",nullptr,nullptr,nullptr);
+    check(store.PendingFiles(pending,true) && pending.size()==2 && store.PendingFiles(pending,false) && pending.size()==1,
+        "an obsolete semantic model is pending only when semantic analysis is available");
+    check(store.Publish(entry), "restores complete current analysis after model-version check");
+    sqlite3_exec(db,"UPDATE harken_similarity_v2 SET summary=X'00' WHERE file_id=1",nullptr,nullptr,nullptr);
+    check(store.PendingFiles(pending,false) && pending.size()==2, "malformed acoustic records are included in pending work");
+    check(store.Publish(entry), "restores complete analysis after malformed-record check");
     sqlite3_stmt* statement = nullptr;
     sqlite3_prepare_v2(db, "SELECT hex(audio_features),features_version FROM audio_files WHERE id=1", -1, &statement,nullptr);
     check(sqlite3_step(statement) == SQLITE_ROW && std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement,0))) == "1234" && sqlite3_column_int(statement,1) == 1,

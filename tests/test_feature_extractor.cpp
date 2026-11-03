@@ -114,7 +114,7 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
     const std::string windowsHeader =
         ReadTextFile(repoRoot / "src" / "WindowsMain.h");
     const size_t surfaceStart = mainSource.find(
-        "void StartBatchFeatureExtraction(AppState& state)");
+        "void StartBatchFeatureExtraction(AppState& state, bool recheckAll)");
     const size_t surfaceEnd = mainSource.find(
         "void RenderUI(AppState& state)", surfaceStart);
     const std::string helper =
@@ -136,7 +136,7 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
           "batch start resets cancellation before marking the controller busy");
     Check(surface.find("batchFeatureCancelRequested.store(true)") != std::string::npos,
           "cancel action requests cancellation without clearing busy state");
-    Check(surface.find("batchFeatureThread = std::thread([&state, databasePath, modelDirectory]") != std::string::npos &&
+    Check(surface.find("batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll]") != std::string::npos &&
               surface.find("}).detach()") == std::string::npos,
           "batch controller is owned as a joinable thread");
     Check(surface.find("batchFeatureThread.joinable()") != std::string::npos,

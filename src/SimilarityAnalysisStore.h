@@ -33,6 +33,8 @@ public:
     bool Open(const std::string& databasePath, const FeatureExtractionCancelCheck& cancel = {});
     void Close();
     bool Files(std::vector<SimilarityFile>& files);
+    // Select work from stored coverage without opening already indexed audio.
+    bool PendingFiles(std::vector<SimilarityFile>& files, bool requireSemantic);
     bool GetFile(int64_t id, SimilarityFile& file);
     bool Publish(const SimilarityAnalysisEntry& entry);
     bool Load(int64_t id, SimilarityAnalysisEntry& entry, bool detailed = true);

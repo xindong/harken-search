@@ -111,13 +111,15 @@ try:
     unchanged=all(after["rows"].get(k)==v for k,v in before["rows"].items())
     report["checks"].append({"case":"rescan-preserves-analysis-records","before":before["indexed"],"after":after["indexed"],"unchanged":unchanged,"passed":unchanged});save()
     assert unchanged,"Rescan invalidated completed similarity records"
+    coverage=state()
+    expected_pending=coverage["total"]-min(coverage["indexed"],coverage["semantic_indexed"])
     cmd(cmd="similar_index",action="start")
-    resumed=until(state,lambda s:s.get("reused",0)>=before["indexed"] or not s["running"],"resumed_analysis",interval=1)
-    assert resumed["reused"]>=before["indexed"],resumed
+    resumed=until(state,lambda s:s.get("batch_total",0)>0 or not s["running"],"resumed_analysis",interval=1)
+    assert resumed["batch_total"]==expected_pending and resumed["reused"]==0,resumed
     report["resume_checkpoint"]=resumed
     resumed_db=snapshot("resume-checkpoint")
     assert all(resumed_db["rows"].get(k)==v for k,v in before["rows"].items()),"Resumed batch rewrote previously completed records"
-    report["checks"].append({"case":"resume-reuses-previously-completed-analysis","reused":resumed["reused"],"previously_completed":before["indexed"],"newly_analyzed":resumed["analyzed"],"passed":True});save()
+    report["checks"].append({"case":"resume-excludes-previously-completed-analysis","pending":expected_pending,"previously_completed":before["indexed"],"newly_analyzed":resumed["analyzed"],"passed":True});save()
     capture(driver,out/"resumed-analysis.png")
     emit("resume-verified-continuing-full-analysis",report["checks"][-1])
     final=until(state,lambda s:not s["running"],"full_analysis",interval=3)

@@ -187,8 +187,13 @@ assert 'similar.index.start' in index_panel
 assert 'similar.index.cancel' in index_panel
 
 # Batch progress must expose the two work classes separately. The progress
-# denominator covers cache verification for the whole library, while only
-# the saved count represents newly analyzed files.
+# denominator covers the selected work list, while only the saved count
+# represents newly analyzed files. Supplementing selects pending files;
+# the explicit recheck button preserves full content verification.
+assert "if (pending > 0) StartBatchFeatureExtraction(state);" in index_panel
+assert "else StartBatchFeatureExtraction(state, true);" in index_panel
+assert "recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll" in main
+assert "HarkenSearch::SimilarityIndexScope::PendingOnly" in main
 app_state = (ROOT / "src" / "AppState.h").read_text(encoding="utf-8")
 assert "batchFeatureSkipped" in app_state
 assert "batchFeatureSaved" in app_state

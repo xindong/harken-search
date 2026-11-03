@@ -2,6 +2,7 @@
 #include "SimilarityAnalysisStore.h"
 #include <functional>
 namespace HarkenSearch {
+enum class SimilarityIndexScope { PendingOnly, ValidateAll };
 enum class SimilarityIndexFailure { Unreadable, Silent, AudioChanged, ModelFailed, SaveFailed };
 struct SimilarityIndexIssue { SimilarityFile file; SimilarityIndexFailure reason; };
 struct SimilarityIndexProgress { int completed = 0, total = 0, saved = 0, skipped = 0, failed = 0; };
@@ -16,5 +17,6 @@ bool AnalyzeSimilarityEntry(const SimilarityFile& file, AudioEmbeddingService* m
                             const FeatureExtractionCancelCheck& cancel = {});
 SimilarityIndexResult BuildSimilarityIndex(const std::string& databasePath, const std::string& modelDirectory,
     const FeatureExtractionCancelCheck& cancel = {},
-    const std::function<void(const SimilarityIndexProgress&)>& progress = {});
+    const std::function<void(const SimilarityIndexProgress&)>& progress = {},
+    SimilarityIndexScope scope = SimilarityIndexScope::PendingOnly);
 } // namespace HarkenSearch

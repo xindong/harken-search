@@ -29100,7 +29100,7 @@ static bool ClampFloatingPanelToViewport(
     return changed;
 }
 
-void StartBatchFeatureExtraction(AppState& state) {
+void StartBatchFeatureExtraction(AppState& state, bool recheckAll) {
     if (state.batchFeatureExtracting.load() || state.dbSwitchInProgress) return;
     if (state.batchFeatureThread.joinable()) state.batchFeatureThread.join();
     aura::ui::InvalidateSimilarSoundsWindow(state);
@@ -29117,7 +29117,7 @@ void StartBatchFeatureExtraction(AppState& state) {
     const std::string databasePath = state.currentDbPathUtf8;
     const std::string modelDirectory = GetExeDirUtf8() + "/models/clap";
     state.batchFeatureExtracting.store(true);
-    state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory]() {
+    state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll]() {
         HarkenSearch::SimilarityIndexResult result;
         try {
             result = HarkenSearch::BuildSimilarityIndex(databasePath, modelDirectory,
@@ -29127,7 +29127,8 @@ void StartBatchFeatureExtraction(AppState& state) {
                     state.batchFeatureProgress.store(progress.completed);
                     state.batchFeatureSkipped.store(progress.skipped);
                     state.batchFeatureSaved.store(progress.saved);
-                });
+                }, recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll
+                              : HarkenSearch::SimilarityIndexScope::PendingOnly);
         } catch (const std::exception& error) { result.error = error.what(); }
           catch (...) { result.error = "analysis_failed"; }
         const bool complete = result.ok && !result.cancelled && result.progress.failed == 0 && result.modelError.empty();
@@ -29221,7 +29222,8 @@ void DrawSimilarityIndexPanel(AppState& state) {
             if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
             else snprintf(label, sizeof(label), "%s", L(Similar_Recheck));
             if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
-                StartBatchFeatureExtraction(state);
+                if (pending > 0) StartBatchFeatureExtraction(state);
+                else StartBatchFeatureExtraction(state, true);
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
@@ -29240,6 +29242,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
             if (aura::ui::ActionButton(L(Similar_AnalysisReport), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
                 state.showSimilarAnalysisReport = true;
             }
+            ThemeInspector::RegisterLastItem("similar.index.report");
         }
     }
     ImGui::EndDisabled();

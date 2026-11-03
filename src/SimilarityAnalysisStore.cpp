@@ -114,6 +114,22 @@ bool SimilarityAnalysisStore::GetFile(int64_t id, SimilarityFile& file) {
     if (sqlite3_step(s.get()) != SQLITE_ROW) return false;
     file = File(s.get()); return true;
 }
+bool SimilarityAnalysisStore::PendingFiles(std::vector<SimilarityFile>& files, bool requireSemantic) {
+    files.clear();
+    auto s = Prepare(database_,
+        "SELECT f.id,f.file_path,f.file_name,f.format,f.duration,a.file_bytes,a.modified,a.fingerprint,"
+        "a.summary,a.embedding,a.model_version,a.version FROM audio_files f "
+        "LEFT JOIN harken_similarity_v2 a ON a.file_id=f.id AND a.file_path=f.file_path ORDER BY f.id");
+    if (!s) return false;
+    int rc = SQLITE_OK;
+    while ((rc = sqlite3_step(s.get())) == SQLITE_ROW) {
+        if (cancel_ && cancel_()) { files.clear(); return false; }
+        SimilarityAnalysisEntry entry;
+        if (sqlite3_column_int(s.get(),11) != 2 || !Row(s.get(),entry,false) ||
+            (requireSemantic && !entry.hasSemantic)) files.push_back(File(s.get()));
+    }
+    return rc == SQLITE_DONE;
+}
 bool SimilarityAnalysisStore::Publish(const SimilarityAnalysisEntry& e) {
     SimilarityFile current;
     if (!database_ || (cancel_ && cancel_()) || !GetFile(e.file.id,current) || current.path != e.file.path ||

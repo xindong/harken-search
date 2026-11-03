@@ -23,16 +23,19 @@ bool AnalyzeSimilarityEntry(const SimilarityFile& file, AudioEmbeddingService* m
     out = std::move(entry); return true;
 }
 SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::string& modelDirectory,
-    const FeatureExtractionCancelCheck& cancel, const std::function<void(const SimilarityIndexProgress&)>& progress) {
+    const FeatureExtractionCancelCheck& cancel, const std::function<void(const SimilarityIndexProgress&)>& progress,
+    SimilarityIndexScope scope) {
     SimilarityIndexResult result;
     auto cancelled = [&] { return cancel && cancel(); };
     if (cancelled()) { result.cancelled = true; return result; }
     SimilarityAnalysisStore store;
     if (!store.Open(path,cancel)) { result.error = store.Error(); result.cancelled = cancelled(); return result; }
-    std::vector<SimilarityFile> files;
-    if (!store.Files(files)) { result.error = "library_read_failed"; result.cancelled = cancelled(); return result; }
-    result.progress.total = int(files.size()); if (progress) progress(result.progress);
     AudioEmbeddingService model; model.Load(modelDirectory,result.modelError);
+    std::vector<SimilarityFile> files;
+    const bool selected = scope == SimilarityIndexScope::ValidateAll
+        ? store.Files(files) : store.PendingFiles(files,model.IsReady());
+    if (!selected) { result.error = "library_read_failed"; result.cancelled = cancelled(); return result; }
+    result.progress.total = int(files.size()); if (progress) progress(result.progress);
     for (const auto& file : files) {
         if (cancelled()) { result.cancelled = true; return result; }
         SimilarityAnalysisEntry previous;
