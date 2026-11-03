@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "../src/SearchQuery.h"
+#include "../src/Utils.h"
 
 static int passCount = 0;
 static int failCount = 0;
@@ -229,6 +230,8 @@ int main() {
 
     // --- 22. Single CJK chars are FTS-only, not trigram terms ---
     {
+        CHECK(InjectCJKSpaces(u8"嘈杂序列") == u8"嘈 杂 序 列 ",
+              "CJK query is split into single-character FTS tokens");
         auto r = ParseSearchQueryToFts5(u8"嘈杂序列");
         CHECK(r.ok, "CJK sequence query parses OK");
         CHECK(r.nameContains.empty(),

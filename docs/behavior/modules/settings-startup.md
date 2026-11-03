@@ -8,7 +8,7 @@
 **Priority:** P1
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-09-17
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -18,8 +18,8 @@
 
 ## 中文语义
 
-**用户承诺：** 无论首次启动、正常启动还是最近库丢失，Aris 都能进入可理解、可操作的安全状态，不会偷偷清理用户数据或启动昂贵后台工作。
-**核心流程：** 用户启动 Aris；应用加载设置、edition flag 和最近库列表；缺失库以明确的受保护状态显示，用户再决定是否重连、移除或重新扫描。
+**用户承诺：** 无论首次启动、正常启动还是最近库丢失，Aris 都能进入可理解、可操作的安全状态，不会偷偷清理用户数据或启动昂贵后台工作。Mac 用户导出设置时可以自行选择备份位置；取消不改变设置。Mac 导入主题 JSON 时可以选取文件，取消不改当前主题。
+**核心流程：** 用户启动 Aris；应用加载设置、edition flag 和最近库列表；缺失库以明确的受保护状态显示，用户再决定是否重连、移除或重新扫描。Mac 导出设置时先选目标，确认后保存并复制当前配置，取消直接返回。主题编辑器导入 JSON 后沿用现有预览或新建主题流程。
 **非目标：** 这份契约不定义完整安装器、自动更新流程或跨版本迁移之外的产品授权策略。
 
 ## BDD Scenarios
@@ -38,6 +38,26 @@
 - Given 已满足以下前置条件：Browser mode stores user workflow state such as recursive child-audio scope
 - When 执行以下操作：settings are saved and restored on the next launch
 - Then 应得到以下结果：Aris restores that scope truthfully instead of silently resetting to current-directory mode
+- Given Mac 用户设置目录中有一份自定义词库
+- When 设置页显示词库位置并执行“重置为默认”
+- Then 显示实际 harken_thesaurus.json 路径，只重置该用户文件；重开后仍为内置规则，Windows 程序目录与旧词库迁移行为不变
+
+- Given Mac 用户在设置中选择导出备份
+- When 用户在系统保存面板确认一个可写目标
+- Then 当前设置先保存到原设置文件，再复制到用户选定的 ini 文件，并显示实际位置；Windows 原有导出目标保持不变
+- Given Mac 用户在系统保存面板取消
+- When 面板返回空路径
+- Then 不保存或复制文件，也不报告一次新的导出失败
+- Given Mac 用户在主题编辑器选择导入 JSON 或导入并创建主题
+- When 系统文件面板返回可读取的主题 JSON
+- Then 沿用现有主题解析、预览或创建流程；取消时不改主题，读取失败显示原有失败提示；无有效主题字段的内容仍需另卡验证
+
+- Given Mac 用户在主题编辑器导出当前草稿
+- When 用户在系统保存面板确认一个 JSON 路径
+- Then 剪贴板仍包含主题 JSON，文件保存相同主题；取消只保留剪贴板内容，写入失败不得报告文件保存成功
+- Given Mac 用户在主题编辑器保存普通自定义主题
+- When 正常退出并重新打开应用，或在设置中切回自定义主题
+- Then `theme_custom.json` 保存在 Harken Search 用户设置目录，并从同一路径恢复配色；Windows 仍使用原应用目录文件
 
 ### Edge Cases
 
@@ -53,12 +73,18 @@
 - Given 已满足以下前置条件：a built-in stock theme uses token chrome on toolbar/transport surfaces
 - When 执行以下操作：the stock theme is applied without using the custom-theme flag
 - Then 应得到以下结果：toolbar and transport token chrome remains selected by explicit stock-theme identity instead of depending on `ThemeColors::customized()`.
+- Given Mac 用户设置目录只读、不安全或超出隔离测试根
+- When 保存普通自定义主题
+- Then 保存失败且不切换到新主题，不改写应用包或日常目录
 
 ### Failure / Recovery
 
 - Given 已满足以下前置条件：settings are missing, encrypted values fail, or a DB path is unavailable
 - When 执行以下操作：startup loads configuration
 - Then 应得到以下结果：Aris falls back safely without silent destructive cleanup
+- Given Mac 词库保存目录只读或不可用
+- When 用户执行词库“重置为默认”
+- Then 保留失败状态并显示与用户设置目录相关的提示，不把程序包目录当成词库位置
 
 ### Non-Functional
 
@@ -79,6 +105,11 @@
 | product edition flags | API | tests | Edition-gated defaults remain stable |
 | settings encryption | API | tests | Sensitive settings are protected |
 | startup diagnostics | diagnostics | QA protocol | Runtime state decisions are visible |
+| Mac 词库位置与重置 | UI | SettingsThesaurusTools.inl, main.cpp | 页面、重置和持久化都指向 activePath；Windows 旧逻辑保留 |
+| Mac settings backup export | UI | SettingsActions and Mac settings export dialog | Uses a user-selected UTF-8 path, keeps cancel side-effect free and preserves the Windows branch |
+| Mac theme JSON export | UI | ThemeEditor and Mac theme save dialog | Saves the draft through the shared serializer to the selected UTF-8 path; cancel leaves the clipboard copy available |
+| Mac custom theme file | UI | ThemeEditor, SettingsDialog and Cocoa startup | Resolves the same user settings file for save, switch and reopen; fails closed on an unsafe directory |
+| `OpenThemeJsonFileDialogUtf8()` | API | src/platform/theme_json_dialogs_macos.mm | Mac returns a selected UTF-8 file path to the existing theme import actions; cancel returns empty |
 
 ## Graphify Binding
 
@@ -100,9 +131,17 @@
 | DIAG-STARTUP | diagnostics | `TestStartupReconciliation` startup source-contract assertions | startup branch diagnostics markers present | active |
 | TEST-STARTUP-WELCOME | source-contract | `TestStartupReconciliation` | welcome entry replaces the legacy login form and continues into loading | active |
 | TEST-THEME-PERSISTENCE | source-contract | source scan + `TestThemeColors` | stock theme application does not set `ThemeColors::customized()`, stock token chrome is keyed by stock theme identity, and custom theme name is written/read by settings IO | active |
+| TEST-MAC-THEME-EXPORT | platform-contract | `TestThemeJsonExportMacBoundary` + `TestThemeColors` | Mac save panel boundary and shared JSON serializer are checked separately | active |
+| TEST-MAC-CUSTOM-THEME-PATH | integration | `TestMacUserDataLayout` + isolated Cocoa product restart | path, unsafe/read-only failure, loaded colors and normal exit are checked in a separate QA profile | active |
+| TEST-MAC-THEME-IMPORT | source-contract / runtime | `tests/test_theme_json_import_macos_boundary.py` and isolated Mac chooser probe | Both import buttons reach the native chooser; cancel and selected UTF-8 path behave correctly | active |
 
 ## Missing Coverage
 
+- Mac 词库重置的源码绑定由 test_thesaurus_json_dialog_boundary.py 检查；隔离实际应用由 macos_thesaurus_reset_smoke.py 验证重置文件与重开。正向文件面板点选和用户界面确认仍需单独验收。
+
+- Mac 保存面板的正向人工点选与导出文件回读仍需实际界面验收；原生面板取消、应用重开和源码边界测试不能代替它。
+- Mac 主题编辑器导出的正向界面点选和文件回读也需使用本卡实际包确认；面板探针不能代替用户验收。
+- Mac 自定义主题在编辑器中的真实点选与设置切换仍需实际界面验证；隔离配置注入的重启测试只证明产品读取和绘制，不证明点选流程。
 - Source-contract coverage now asserts the first-run no-database startup branch and CTA hook; full GUI smoke for perceived onboarding clarity remains human-only.
 - Welcome-entry visual polish and screenshot proof remain human-only even when source-contract coverage is green.
 - Residual gap: migration from older settings payloads is not yet asserted with fixture upgrades.
