@@ -657,6 +657,9 @@ struct ListTab {
 
     // 工作空间锁定：为 true 时 syncToTab 跳过，防止搜索/切目录覆盖本页结果
     bool isLocked = false;
+    // An explicit Refresh may replace a locked page's saved filters and results.
+    bool explicitRefreshPending = false;
+    uint64_t explicitRefreshQueryGeneration = 0;
     // 上次被激活时间（ImGui::GetTime()），用于非活动标签页内存卸载
     double lastActivatedAt = 0.0;
     // 已被 performGlobalMemoryGC 卸载数据，切回时需重跑查询

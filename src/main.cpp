@@ -977,7 +977,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
 
 // Forward declarations (used by ProcessKeybindings)
 static void RevealFileInExplorer(const std::string& filePathUtf8);
-static void ClearAllFiltersForShowAll(AppState& state);
+static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh = false);
 static bool
 SwitchDatabase(AppState& state,
                const std::string& newDbPathUtf8,
@@ -1608,6 +1608,9 @@ static void ProcessKeybindings(AppState& state) {
             // View
             if (IsShortcutPressedSnapshot(ShortcutAction::Refresh, ks)) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state, true);
+                }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
@@ -14526,10 +14529,20 @@ static std::string GetRandomSamplingStatus(const AppState& state) {
 }
 
 // Helper: 清除所有筛选条件并刷新 (= Show All)
-static void ClearAllFiltersForShowAll(AppState& state) {
+static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
         DIAG_ACTION("Filter", "ClearAllFilters (ShowAll)");
         UA_LOG(UACategory::Filter, "ClearAll (ShowAll)");
+    if (explicitRefresh && !state.listTabs.empty() && state.currentTab().isLocked) {
+        state.currentTab().explicitRefreshPending = true;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration;
+    }
     state.searchBuffer[0] = '\0';
+    if (state.viewMode == ViewMode::Database) {
+        state.activeSmartCollection = SmartCollection::None;
+        state.activeUserCollectionIdx = -1;
+    }
+    AutoRenameTabBySearch(state, "");
+    state.uiState.pendingFolderPath.clear();
     state.folderFilterActive = false;
     state.selectedFolderPath.clear();
     state.coverFilterActive = false;
@@ -14563,6 +14576,13 @@ static void ClearAllFiltersForShowAll(AppState& state) {
     state.sameFolderScanDone = false;
     state.sameFolderScanPath.clear();
 
+    if (explicitRefresh && !state.listTabs.empty() && state.currentTab().isLocked) {
+        // Save the reset filters before an async result can be superseded.
+        // Keep the snapshot reloadable until this Refresh actually settles.
+        state.syncToTab();
+        state.currentTab().dataUnloaded = true;
+        state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+    }
     aura::cover_wall::RequestDisplayRefresh(state);
 }
 
@@ -35334,6 +35354,9 @@ void RenderUI(AppState& state) {
             // Refresh
             if (ImGui::MenuItem(L(Refresh), GetShortcutString(ShortcutAction::Refresh).c_str())) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state, true);
+                }
                 if (state.viewMode == ViewMode::Database) {
                     aura::cover_wall::RequestDatabaseRefreshForExplicitRetry(state);
                     state.suppressFacetsForNextRefresh = true;
@@ -36899,6 +36922,9 @@ void RenderUI(AppState& state) {
             }
             if (navClicked[4]) {
                 state.fileBrowser.refresh();
+                if (state.viewMode == ViewMode::Database || IsPlaylistSystemView(state.viewMode)) {
+                    ClearAllFiltersForShowAll(state, true);
+                }
                 if (state.viewMode == ViewMode::Database ||
                     IsPlaylistSystemView(state.viewMode)) {
                     if (state.viewMode == ViewMode::Database) {
@@ -39043,6 +39069,9 @@ void RenderUI(AppState& state) {
         }
         if (state.needsTabResultsRefresh) {
             state.needsTabResultsRefresh = false;
+            if (!state.listTabs.empty() && state.currentTab().explicitRefreshPending) {
+                state.currentTab().explicitRefreshQueryGeneration = state.filterQueryGeneration + 1;
+            }
             RefreshSearchResults(state, true);
         }
 
