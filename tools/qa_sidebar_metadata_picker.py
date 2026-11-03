@@ -406,6 +406,30 @@ def run(args):
             s["metadata_filters"]["category"] == long_raw_category, timeout=5)
         checks.append({"name": "long-category-growth-after-activation",
                        "query_bytes": len(current["qa_metadata_draft_query"]["Category"].encode("utf-8"))})
+        extra = "P" * 1022 + "界"
+        driver.command({"cmd": "info_edit_input", "text": extra})
+        full_query = "Q" + "X" * 900 + "Y" * 200 + extra + long_raw_category
+        current = wait_until("long category insertion remains valid UTF-8", lambda s:
+            s.get("qa_metadata_draft_query", {}).get("Category") == full_query and
+            s.get("qa_metadata_input_text", {}).get("Category") == full_query and
+            s["metadata_filters"]["category"] == long_raw_category, timeout=5)
+        checks.append({"name": "long-category-insert-past-adapter-capacity",
+                       "query_bytes": len(full_query.encode("utf-8"))})
+
+        close_outside("Category")
+        click("metadata_Category_input")
+        wait_until("long category reopens for undo", lambda s:
+            s.get("qa_metadata_input_text", {}).get("Category") == long_raw_category)
+        driver.command({"cmd": "info_edit_input", "action": "delete_prefix_200"})
+        wait_until("long category shrinks below inline capacity", lambda s:
+            s.get("qa_metadata_draft_query", {}).get("Category") == long_raw_category[200:])
+        driver.command({"cmd": "info_edit_input", "action": "undo_text"})
+        current = wait_until("undo restores full long category", lambda s:
+            s.get("qa_metadata_draft_query", {}).get("Category") == long_raw_category and
+            s.get("qa_metadata_input_text", {}).get("Category") == long_raw_category and
+            s["metadata_filters"]["category"] == long_raw_category, timeout=5)
+        checks.append({"name": "long-category-shrink-undo-restores-all",
+                       "query_bytes": len(long_raw_category.encode("utf-8"))})
     except BaseException as exc:
         failure = repr(exc)
         raise

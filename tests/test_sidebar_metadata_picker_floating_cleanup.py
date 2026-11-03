@@ -37,3 +37,22 @@ def test_floating_picker_restores_profile_when_private_desktop_fails(tmp_path: P
         floating.run(tmp_path / "unused.exe", tmp_path, tmp_path / "output", "zorder")
 
     assert settings.read_bytes() == original
+@pytest.mark.skipif(sys.platform != "win32", reason="requires private Windows desktop")
+@pytest.mark.parametrize("scenario", ["overlap", "zorder"])
+def test_floating_picker_removes_new_layout_file_after_failure(tmp_path: Path, monkeypatch, scenario: str):
+    settings = tmp_path / "profile/Local/HarkenSearch/settings.ini"
+    settings.parent.mkdir(parents=True)
+    original = b"panelSidebar_floating=0" + bytes([10])
+    settings.write_bytes(original)
+    layout = settings.with_name("imgui.ini")
+
+    def fail_after_layout_creation():
+        layout.write_bytes(b"[Window][QA]" + bytes([10]))
+        raise RuntimeError("desktop unavailable after layout creation")
+
+    monkeypatch.setattr(floating, "PrivateDesktop", fail_after_layout_creation)
+    with pytest.raises(RuntimeError, match="desktop unavailable after layout creation"):
+        floating.run(tmp_path / "unused.exe", tmp_path, tmp_path / "output", scenario)
+
+    assert settings.read_bytes() == original
+    assert not layout.exists()

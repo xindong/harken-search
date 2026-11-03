@@ -409,7 +409,8 @@ bool TextInput(const char* label, std::string* value,
     std::vector<char> longBuffer;
     char* buf = inlineBuffer;
     size_t capacity = sizeof(inlineBuffer);
-    if (value->size() >= capacity) {
+    // Undo can restore a long value after this active input shrinks below 1024.
+    if (value->size() >= capacity || ImGui::GetActiveID() == ImGui::GetID("##in")) {
         longBuffer.resize(value->size() + sizeof(inlineBuffer));
         buf = longBuffer.data();
         capacity = longBuffer.size();

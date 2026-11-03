@@ -191,7 +191,7 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
             settings.write_bytes(backup)
             if imgui_backup is not None:
                 imgui_ini.write_bytes(imgui_backup)
-            elif scenario in ("duplicate", "float_detached") and imgui_ini.exists():
+            elif imgui_ini.exists():
                 imgui_ini.unlink()
         if result is not None:
             result.update(exit_code=exit_code, shutdown_timed_out=shutdown_timed_out,

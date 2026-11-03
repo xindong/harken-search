@@ -4461,6 +4461,19 @@ static void PollQaCommandFile(AppState& state) {
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
                 else if (getStr(raw,"action")=="home_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,true);
                 else if (getStr(raw,"action")=="home_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,false);
+                else if (getStr(raw,"action")=="delete_prefix_200" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID()) {
+                    // Exercise vendored ImGui's real text edit path on the active input.
+                    auto& input = ImGui::GetCurrentContext()->InputTextState;
+                    input.OnKeyPressed(0x200006); // STB_TEXTEDIT_K_TEXTSTART
+                    for (int i = 0; i < 200; ++i)
+                        input.OnKeyPressed(0x200001 | 0x400000); // RIGHT | SHIFT
+                    input.OnKeyPressed(0x200008); // STB_TEXTEDIT_K_DELETE
+                }
+                else if (getStr(raw,"action")=="undo_text" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID())
+                    // Vendored ImGui's STB_TEXTEDIT_K_UNDO; exercise the real undo engine.
+                    ImGui::GetCurrentContext()->InputTextState.OnKeyPressed(0x20000A);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
                 result=R"({"ok":true})";
             } else if (cmd == "info_page_layout") {

@@ -8341,13 +8341,7 @@ static void DrawSidebarMetadataPickerField(
     }
     ui.draft.Sync(applied);
 
-    const std::string displayed = ui.draft.InputDisplayText(L(Filter_DamagedMetadataName));
-    // Match the shared TextInput's editing headroom so changed text survives
-    // the char-buffer adapter without clipping a UTF-8 suffix.
-    std::vector<char> visible(displayed.size() + 1024);
-    const size_t count = displayed.size();
-    if (count != 0) std::memcpy(visible.data(), displayed.data(), count);
-    visible[count] = '\0';
+    std::string visible = ui.draft.InputDisplayText(L(Filter_DamagedMetadataName));
 
     const float arrowWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
     const float fieldWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - arrowWidth);
@@ -8358,8 +8352,12 @@ static void DrawSidebarMetadataPickerField(
         qaState->qaMetadataInputColors["hint"] = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
     }
 #endif
-    const bool changed = DrawUnifiedSearchInput(inputId, hint, visible.data(), visible.size(),
-        ImGuiInputTextFlags_AutoSelectAll, fieldWidth, true);
+    aura::ui::TextInputOptions inputOptions;
+    inputOptions.placeholder = hint;
+    inputOptions.inputFlags = ImGuiInputTextFlags_AutoSelectAll;
+    inputOptions.width = fieldWidth;
+    inputOptions.inheritContextColors = true;
+    const bool changed = aura::ui::TextInput(inputId, &visible, inputOptions);
     ImGui::PopStyleColor(6);
     const ImVec2 inputMin = ImGui::GetItemRectMin();
     const ImVec2 inputMax = ImGui::GetItemRectMax();
@@ -8390,7 +8388,7 @@ static void DrawSidebarMetadataPickerField(
     const bool wasOpen = ui.draft.IsOpen();
     if (inputClicked && !wasOpen) ui.draft.Open();
     if (changed) {
-        ui.draft.Edit(visible.data());
+        ui.draft.Edit(visible);
         ui.highlightedIndex = -1;
     }
 #if ARIS_PREVIEW_ISOLATION

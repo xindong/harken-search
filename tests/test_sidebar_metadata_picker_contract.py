@@ -21,7 +21,8 @@ def test_metadata_picker_does_not_apply_draft_or_group_artists():
         "// Renders [optional search field]", 1)[0]
     assert "DrawSidebarFilterPopupBodyGrouped(" not in metadata
     assert "artistFilterAlternates = g.members" not in metadata
-    assert "ui.draft.Edit(visible.data())" in widget
+    assert "aura::ui::TextInput(inputId, &visible, inputOptions)" in widget
+    assert "ui.draft.Edit(visible)" in widget
     assert "ui.draft.Select(applied)" in widget
     assert "ui.draft.Cancel()" in widget
 
