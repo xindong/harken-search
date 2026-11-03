@@ -3878,6 +3878,23 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
     return true;
 }
 
+void StartAudioFileDrag(AppState& state, const std::string& filePath) {
+    if (filePath.empty() || g_isDragging || g_dragInitiated) return;
+    std::vector<std::string> files;
+    std::string error;
+    if (BuildTransferPayloadForPaths(
+            state.audioEngine, {filePath}, true,
+            state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+            state.settings.keepHarkenSearchOutputProcessingSuffix,
+            files, error) && !files.empty()) {
+        ImGui::ClearActiveID();
+        StartFileDrag(files);
+    } else {
+        state.loadErrorToast = error.empty() ? L(Misc_DragFailed) : error;
+        state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
+    }
+}
+
 static std::vector<std::string> BuildBrowserTransferSourcePaths(const AppState& state,
                                                                 const std::vector<FileEntry>& entries,
                                                                 int anchorEntryIndex) {

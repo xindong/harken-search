@@ -46,6 +46,10 @@ void RenderUI(AppState& state);
 void DrawSimilarityIndexPanel(AppState& state);
 void StartBatchFeatureExtraction(AppState& state, bool recheckAll = false);
 
+// Drag one explicit result path using the main list's processing-aware transfer.
+// UI-thread only; does not change the main selection or Similar Sounds reference.
+void StartAudioFileDrag(AppState& state, const std::string& filePath);
+
 // File Operations (implemented in main.cpp)
 
 // Sort search results

@@ -4956,18 +4956,19 @@ static void PollQaCommandFile(AppState& state) {
             const auto controls = ThemeInspector::CopyLatestSnapshot();
             for (const auto& zone : controls.zones) {
                 if ((zone.key == "similar.options.deep" || zone.key.rfind("similar.result.wave.",0)==0 ||
+                     zone.key.rfind("similar.result.file.",0)==0 ||
                      zone.key.rfind("similar.index.",0)==0) && controls.frameNumber + 2 >= static_cast<uint64_t>(ImGui::GetFrameCount()) &&
                     x >= zone.minX && x < zone.maxX && y >= zone.minY && y < zone.maxY) hit = true;
             }
             if (!hit || !fresh || s_magicEqQaPointer.pending ||
-                (phase != "hover" && phase != "down" && phase != "up") ||
+                (phase != "hover" && phase != "down" && phase != "up" && phase != "move") ||
                 ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
-                (phase == "up" && !s_magicEqQaPointer.held)) {
+                ((phase == "up" || phase == "move") && !s_magicEqQaPointer.held)) {
                 result = R"({"ok":false,"error":"invalid_similar_control_pointer"})";
             } else {
                 s_magicEqQaPointer.active = true;
-                s_magicEqQaPointer.pending = phase != "hover";
-                s_magicEqQaPointer.held = phase == "down";
+                s_magicEqQaPointer.pending = phase == "down" || phase == "up";
+                s_magicEqQaPointer.held = phase == "down" || phase == "move";
                 s_magicEqQaPointer.x = x;
                 s_magicEqQaPointer.y = y;
                 s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
@@ -5020,6 +5021,7 @@ static void PollQaCommandFile(AppState& state) {
             nlohmann::json controlBounds = nlohmann::json::object();
             for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
                 if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0 ||
+                    zone.key.rfind("similar.result.file.",0)==0 ||
                     zone.key.rfind("similar.index.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
             }
             nlohmann::json batchSummary;

@@ -293,6 +293,20 @@ static void DrawSimilarSoundsResultsTable(
                     }
                 }
             }
+            if (ThemeInspector::IsCollecting()) {
+                const ImVec2 rowMin = ImGui::GetItemRectMin();
+                const ImVec2 rowMax = ImGui::GetItemRectMax();
+                const ImRect fileCell = ImGui::TableGetCellBgRect(ImGui::GetCurrentTable(), 0);
+                ThemeInspector::RegisterZone(ImVec2(std::max(rowMin.x, fileCell.Min.x), rowMin.y),
+                    ImVec2(std::min(rowMax.x, fileCell.Max.x), rowMax.y),
+                    ("similar.result.file." + std::to_string(index)).c_str());
+            }
+            // Keep waveform scrubbing on its own active item below. A filename
+            // drag transfers this result, regardless of the main list selection.
+            if (ImGui::IsItemActive() &&
+                ImGui::IsMouseDragging(ImGuiMouseButton_Left, 10.0f)) {
+                StartAudioFileDrag(state, row.filePath);
+            }
             ImGui::TableSetColumnIndex(1);
             const bool loadedThis = state.audioEngine.isLoaded() &&
                 state.audioEngine.getLoadedFilePath() == row.filePath;
