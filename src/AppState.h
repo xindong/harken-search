@@ -1654,6 +1654,7 @@ struct AppState {
     std::string pendingDbOldPath;
     bool dbSwitchJustCompleted = false;
     bool dbSwitchNeedsRefresh = false;  // deferred RefreshSearchResults after switch
+    bool dbSwitchAwaitingResults = false;  // UI background until the new library's first page is ready
     int dbSwitchSettleFramesRemaining = 0;  // keep post-switch frames input-responsive
 
     // 启动暖机帧：进入主界面后前 N 帧做轻量绘制，避免首帧 6s+ 卡顿（由 WindowsMain 写入，RenderUI 读取）
