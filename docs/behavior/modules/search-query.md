@@ -49,9 +49,9 @@
 
 ### Failure / Recovery
 
-- Given the user opens the thesaurus merge chooser on macOS
-- When the user cancels the chooser
-- Then the existing thesaurus remains unchanged; selecting a readable JSON file instead appends and saves its parsed rules
+- Given 用户在 Mac 设置页打开词库合并文件选择器
+- When 用户取消选择
+- Then 现有词库保持不变；若选择可读取的 JSON，则追加并保存解析出的规则
 
 - Given 已满足以下前置条件：the query is malformed or operator-only
 - When 执行以下操作：Aris parses it
@@ -71,7 +71,7 @@
 | `BuildSearchQueryChips()` | API | Graphify | Produces removable visible query chips |
 | `RemoveSearchQueryChipFromText()` | API | source scan | Removes only the selected chip source token |
 | Search box / active chips | UI | product semantics | Displays and edits query intent without semantic drift |
-| Thesaurus merge button and macOS JSON chooser | UI / API | `src/SettingsThesaurusTools.inl`, `src/platform/thesaurus_json_dialog_macos.mm` | Selects a file and reuses the shared merge path; empty selection is a no-op |
+| `OpenThesaurusJsonFileDialogUtf8()` | API | src/platform/thesaurus_json_dialog_macos.mm | Selects a file and reuses the shared merge path; empty selection is a no-op |
 | `SearchQueryResult::*` | API | source scan | Carries FTS, trigram, path, tag, color, and exclude lanes |
 
 ## Graphify Binding
