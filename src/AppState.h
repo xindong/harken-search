@@ -246,6 +246,8 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
+inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultListFontPx = 18;
 
 // Reading-list rows: extra vertical px added to the reading font height before
 // comparing against the density floor. Matches the existing list cell padding.
@@ -861,8 +863,8 @@ struct AppSettings {
     bool trayMinimizeHintShown = false;
     int rowHeight = 28;
     int fontSize = 13;
-    int listFontSize = 13;
-    int readingFontSize = 14;   // unified reading-surface font size (replaces listFontSize for reading)
+    int listFontSize = kDefaultListFontPx;
+    int readingFontSize = kDefaultReadingFontPx;   // unified reading-surface font size (replaces listFontSize for reading)
     float settingsDialogWidth = 860.0f;
     float settingsDialogHeight = 560.0f;
     float waveformPanelHeight = 200.0f;
