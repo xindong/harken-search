@@ -12,15 +12,24 @@ import json
 import os
 import time
 import traceback
+from PIL import Image
 from qa_required_library_setup import PrivateDesktop, capture, wait_state
+from qa_settings_day_theme import require_saved_palette
 from qa_transport_themes import Driver
 
 
 def validate_package(exe, root, receipt):
+    if not __debug__:
+        raise RuntimeError("Optimized Python is unsupported: acceptance checks must remain enabled")
     evidence = json.loads(receipt.read_text(encoding="utf-8-sig"))
     assert Path(evidence["exePath"]).resolve() == exe.resolve(), "Package executable differs from its receipt"
     assert Path(evidence["isolationRoot"]).resolve() == root.resolve(), "Package isolation root differs from its receipt"
-    assert hashlib.sha256(exe.read_bytes()).hexdigest() == evidence["exeSha256"], "Executable digest differs from its receipt"
+    binary = exe.read_bytes()
+    assert hashlib.sha256(binary).hexdigest() == evidence["exeSha256"], "Executable digest differs from its receipt"
+    # harken_user_data_layout.cpp embeds this exact NUL-terminated UTF-8 root.
+    # Check the executable itself, so a mistyped receipt cannot redirect it.
+    compiled_root = (root.resolve().as_posix().rstrip("/")+chr(0)).encode("utf-8")
+    assert compiled_root.lower() in binary.lower(), "Executable does not embed this preview isolation root"
 
 
 def run(args):
@@ -98,6 +107,9 @@ def run(args):
     def settings():
         cmd(cmd="ordinary_button_window", module="settings", action="open"); settle()
         assert ui()["open"]
+        cmd(cmd="settings_ui", action="resize", width=880, height=600); settle()
+        a,b,c,d = ui()["bounds"]
+        assert abs(c-a-880) <= 1 and abs(d-b-600) <= 1, ui()["bounds"]
 
     def apply():
         if ui()["pending"]:
@@ -107,6 +119,21 @@ def run(args):
 
     def snapshot(path):
         return path.read_bytes() if path.exists() else None
+
+    def pixels(name, rgba):
+        if ui()["open"] and not theme()["editor_open"]:
+            click("done"); settle()
+        rgb = tuple(int(channel*255+.5) for channel in rgba[:3])
+        deadline = time.monotonic()+6
+        while True:
+            capture(driver, out/(name+".png"))
+            with Image.open(out/(name+".png")) as im:
+                count = sum(n for n,color in im.convert("RGB").getcolors(im.width*im.height) if color == rgb)
+            if count > 128 or time.monotonic() >= deadline:
+                break
+            time.sleep(.08)  # Wait for the existing modal dimming animation.
+        assert count > 128, (name,"expected background missing from actual frame",rgb,count)
+        report.setdefault("pixelChecks",[]).append(dict(name=name,rgb=rgb,matchingPixels=count))
 
     def saved():
         return dict(line.split("=",1) for line in (profile/"settings.ini").read_text(encoding="utf-8").splitlines() if "=" in line)
@@ -157,10 +184,14 @@ def run(args):
         return wait(theme, lambda s:s["editor_open"] and s["editor_period"] == 0, "day editor opened through real button")
 
     try:
+        night_before = require_saved_palette(profile,"night")
+        night_colors = json.loads(night_before)["colors"]["mainWindowBG"]
+        expected_night = "".join(f"{int(channel*255):02x}" for channel in (night_colors[3],*night_colors[:3]))
         start(18); settings()
         if ui()["schedule"] == 0:
             click("automatic"); apply()
-        night_before = snapshot(night); manual_before = saved()["theme"]
+        assert not theme()["night_warning"] and theme()["night_bg"] == expected_night, theme()
+        manual_before = saved()["theme"]
         for index, builtin in enumerate((0,10,2,1,3)):
             click("day-combo")
             assert {x["id"] for x in ui()["items"] if x["id"].startswith("theme-option-")} == {"theme-option-"+str(i) for i in range(5)}
@@ -175,13 +206,14 @@ def run(args):
         assert preview["imgui_bg"] == preview["active_bg"] and snapshot(day) == before
         expected_color = "ff1e354f"  # ThemeColors::toARGBHex truncates each 0..255 channel.
         assert preview["active_bg"] == expected_color, preview
-        capture(driver, out/"day-preview-18.png")
+        pixels("day-preview-18",[.12,.21,.31,1])
         button("保存配色"); wait(theme, lambda s:not s["editor_open"], "save closes editor"); settle()
         stored = snapshot(day); colors = json.loads(stored)["colors"]
         assert all(abs(a-b)<1e-6 for a,b in zip(colors["mainWindowBG"],[.12,.21,.31,1]))
         assert snapshot(night) == night_before and saved()["theme"] == manual_before
         saved_color = theme()
         assert saved_color["active_bg"] == saved_color["day_bg"] == saved_color["imgui_bg"] == expected_color, saved_color
+        pixels("day-saved-18",[.12,.21,.31,1])
         check("save-persists-rendered-day-colors-without-changing-night-or-manual")
         settings(); editor()
         cmd(cmd="theme_schedule", action="draft_color", key="mainWindowBG", rgba=[.7,.1,.2,1]); settle()
@@ -189,14 +221,16 @@ def run(args):
         assert snapshot(day) == stored and snapshot(night) == night_before
         canceled = theme()
         assert canceled["active_bg"] == canceled["day_bg"] and canceled["imgui_bg"] == canceled["day_bg"], canceled
+        pixels("day-cancel-restored-18",[.12,.21,.31,1])
         check("cancel-discards-day-preview")
         stop(); start(24)
         assert snapshot(day) == stored and snapshot(night) == night_before
         loaded = theme()
         assert loaded["active_bg"] == loaded["day_bg"] == loaded["imgui_bg"] == expected_color and not loaded["day_warning"], loaded
         assert saved()["theme"] == manual_before
+        pixels("day-restarted-24",[.12,.21,.31,1])
         check("saved-day-colors-survive-restart")
-        settings(); cmd(cmd="settings_ui", action="resize", width=880, height=600); settle()
+        settings()
         find("day-combo"); capture(driver, out/"day-controls-24-small.png")
         editor(); cmd(cmd="theme_schedule", action="draft_color", key="mainWindowBG", rgba=[.8,.2,.1,1]); settle()
         capture(driver, out/"day-preview-24.png"); stop(); start(18)
@@ -204,6 +238,7 @@ def run(args):
         loaded = theme()
         assert loaded["active_bg"] == loaded["day_bg"] == loaded["imgui_bg"] == expected_color and not loaded["day_warning"], loaded
         assert saved()["theme"] == manual_before
+        pixels("day-unsaved-exit-restarted-18",[.12,.21,.31,1])
         check("exit-during-unsaved-preview-keeps-saved-palette")
         settings(); click("automatic"); apply(); settle()
         assert theme()["mode"] == 0 and theme()["theme"] == int(manual_before)
