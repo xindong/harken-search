@@ -30946,9 +30946,9 @@ void RenderUI(AppState& state) {
                 ImGui::Separator();
                 ImGui::Dummy(ImVec2(0.0f, 8.0f));
                 const auto wecomQr = aura::ui::LoadPackagedAsset(
-                    "assets/icons/community/wecom-qr.png");
+                    "assets/icons/brand/wecom-qr.png");
                 const auto feishuQr = aura::ui::LoadPackagedAsset(
-                    "assets/icons/community/feishu-qr.png");
+                    "assets/icons/brand/feishu-qr.png");
                 const float qrSize = (std::min)(220.0f,
                     (contentW - 24.0f) * 0.5f);
                 if (BeginTransientScrollbarTable("##AboutCommunityQr", 2,

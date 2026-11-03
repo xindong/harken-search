@@ -157,15 +157,17 @@ def test_about_shows_both_community_qrs_and_simple_invite_note():
         assert f"L({key})" in block, key
 
     assets = (
-        "assets/icons/community/wecom-qr.png",
-        "assets/icons/community/feishu-qr.png",
+        "assets/icons/brand/wecom-qr.png",
+        "assets/icons/brand/feishu-qr.png",
     )
     for relative in assets:
         assert relative in block, relative
-        assert (ROOT / relative).is_file(), relative
+        source = ROOT / "assets/icons/community" / Path(relative).name
+        assert source.is_file(), source
 
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "assets/icons/community" in cmake
+    assert '"$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/brand"' in cmake
 
     entries = _ledger_entries()
     assert entries["Main_AboutCommunityNote"]["zh"] == "欢迎加入社群，交流使用体验与功能建议。"

@@ -1632,12 +1632,13 @@ endif()
 # About contributor icons share the existing brand directory so old updaters
 # never need to create a new destination parent directory.
 
-# Community QR codes shown on the About page ship beside the executable.
+# Community QR codes also use the existing brand destination: the first fixed
+# package must still be installable by the unmodified 1.0.42 updater.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community")
     add_custom_command(TARGET HarkenSearch POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community"
-            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/community"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/brand"
         COMMENT "Copying community QR codes...")
 endif()
 
