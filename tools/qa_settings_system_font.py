@@ -129,6 +129,7 @@ def run(args):
                     cmd(cmd='settings_ui',action='resize',width=width,height=height);settle();verify_fonts(size)
                     bounds=state()['bounds'];assert abs(bounds[2]-bounds[0]-width)<2 and abs(bounds[3]-bounds[1]-height)<2
                     for nav in range(1,9):item('nav-'+str(nav))
+                    item('close')
                     choose_font(size);click('systemFont');settle()
                     # Observe the actual selected popup item. Offscreen items
                     # are not treated as clickable hit boxes.
