@@ -104,6 +104,7 @@ def run(args):
             command(cmd='new_tab')
         command(cmd='dock_setup')
         snap = settled()
+        home = dict(snap['panels']['search-results'])
         tabs = snap.get('results_tabs', [])
         # Older builds registered the final tab itself as the panel title. This
         # fallback reproduces the original bug without adding a new input path.
@@ -157,6 +158,52 @@ def run(args):
         release()
         assert [t['id'] for t in snap['results_tabs']] == order, snap
         record('04-escape-restores-panel-and-order', snap)
+
+        def reorder_last():
+            tabs = settled()['results_tabs']
+            selected = tabs[-1]['id']
+            target = tabs[0]['rect']
+            press('tab:' + str(selected))
+            command(cmd='dock_pointer', phase='move',
+                    x=target['x'] + 3, y=target['y'] + target['h'] / 2)
+            snap = release()
+            assert snap['results_tabs'][0]['id'] == selected, snap
+            assert snap['active_tab_id'] == selected, snap
+            return snap, selected
+
+        def return_home():
+            press('title')
+            command(cmd='dock_pointer', phase='move',
+                    x=home['x'] + home['w'] / 2, y=home['y'] + home['h'] / 2)
+            settled(lambda s: s['dragging'] and s['preview_kind'] == 4)
+            release()
+            return settled(lambda s: not s['panels']['search-results']['floating'])
+
+        # Each host owns a different ImGui tab bar. Revisit cached hosts after
+        # sorting elsewhere to ensure stale visual state cannot overwrite data.
+        press('blank')
+        release()
+        snap, moved_id = reorder_last()
+        assert snap['panels']['search-results']['floating'], snap
+        order = [t['id'] for t in snap['results_tabs']]
+        record('04b-sort-while-floating', snap)
+        snap = return_home()
+        assert [t['id'] for t in snap['results_tabs']] == order, snap
+        assert snap['active_tab_id'] == moved_id, snap
+        record('04c-return-home-keeps-order', snap)
+        snap, moved_id = reorder_last()
+        order = [t['id'] for t in snap['results_tabs']]
+        record('04d-sort-after-return', snap)
+        press('blank')
+        snap = release()
+        assert snap['panels']['search-results']['floating'], snap
+        assert [t['id'] for t in snap['results_tabs']] == order, snap
+        assert snap['active_tab_id'] == moved_id, snap
+        record('04e-float-again-keeps-order', snap)
+        snap = return_home()
+        assert [t['id'] for t in snap['results_tabs']] == order, snap
+        assert snap['active_tab_id'] == moved_id, snap
+        record('04f-return-again-keeps-order', snap)
         # Persisted settings must describe the displayed order and selection.
         command(cmd='info_edit_input', action='exit')
         assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0
@@ -174,8 +221,7 @@ def run(args):
         assert [t['id'] for t in snap['results_tabs']] == order, snap
         assert snap['active_tab_id'] == moved_id, snap
         record('05-restart-keeps-order-and-selection', snap)
-        report['result'] = 'passed'
-        return 0
+        report['result'] = 'pending_shutdown'
     except Exception as error:
         report['result'] = 'failed'
         report['error'] = repr(error)
@@ -186,14 +232,20 @@ def run(args):
             except Exception as capture_error:
                 report['capture_error'] = repr(capture_error)
         print(type(error).__name__ + ': ' + str(error), flush=True)
-        return 1
     finally:
         if process is not None:
             report['exit_code'], report['shutdown_error'] = shutdown_preview(
                 process, driver, verified, win32con, win32event, win32process)
+        if report.get('result') == 'pending_shutdown':
+            if report.get('exit_code') == 0 and not report.get('shutdown_error'):
+                report['result'] = 'passed'
+            else:
+                report['result'] = 'failed'
+                report['error'] = 'The restarted QA process did not shut down cleanly'
         desktop.close()
         (out / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2),
                                        encoding='utf-8')
+    return 0 if report.get('result') == 'passed' else 1
 
 
 if __name__ == '__main__':

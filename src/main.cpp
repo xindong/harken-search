@@ -38547,10 +38547,33 @@ void RenderUI(AppState& state) {
         ImRect resultsTabShelf;
         ImRect resultsAddTabRect;
         std::vector<std::pair<int, int>> resultsTabOrder;
+        bool resultsTabHostChanged = false;
         // Tabs own selection and sorting. Only the unused shelf starts a panel drag.
         if (ImGui::BeginTabBar("##ListTabBar", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs |
                                  ImGuiTabBarFlags_FittingPolicyScroll)) {
             ImGuiTabBar* resultsTabBar = ImGui::GetCurrentTabBar();
+            static ImGuiID lastResultsTabBarId = 0;
+            resultsTabHostChanged = lastResultsTabBarId != resultsTabBar->ID;
+            lastResultsTabBarId = resultsTabBar->ID;
+            if (resultsTabHostChanged) {
+                // Home, floating and docked hosts cache separate ImGui bars.
+                // Restore the application order before laying out a returning bar.
+                resultsTabBar->ReorderRequestTabId = 0;
+                for (int ti = 0; ti < (int)state.listTabs.size(); ++ti) {
+                    char stableLabel[32];
+                    snprintf(stableLabel, sizeof(stableLabel), "###Tab%d", state.listTabs[ti].id);
+                    ImGuiTabItem* cached = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetID(stableLabel));
+                    if (!cached) continue;
+                    const int offset = ti - ImGui::TabBarGetTabOrder(resultsTabBar, cached);
+                    if (offset != 0) {
+                        ImGui::TabBarQueueReorder(resultsTabBar, cached, offset);
+                        ImGui::TabBarProcessReorder(resultsTabBar);
+                        resultsTabBar->ReorderRequestTabId = 0;
+                    }
+                }
+                if (state.pendingTabSelectionIndex < 0)
+                    state.pendingTabSelectionIndex = state.activeTabIndex;
+            }
             if (state.pendingTabSelectionIndex < 0 ||
                 state.pendingTabSelectionIndex >= (int)state.listTabs.size()) {
                 state.pendingTabSelectionIndex = -1;
@@ -39117,7 +39140,8 @@ void RenderUI(AppState& state) {
 
         // ImGui maintains display order independently. Commit it to the saved
         // workspaces after release, preserving every index by stable tab ID.
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && resultsTabOrder.size() == state.listTabs.size()) {
+        if (!resultsTabHostChanged && !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+            resultsTabOrder.size() == state.listTabs.size()) {
             std::sort(resultsTabOrder.begin(), resultsTabOrder.end(),
                 [](const auto& a, const auto& b) { return a.second < b.second; });
             bool changed = false;
