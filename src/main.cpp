@@ -8367,6 +8367,12 @@ static void DrawSidebarMetadataPickerField(
 #endif
     const bool inputActive = ImGui::IsItemActive();
     if (inputActive) ui.inputTextId = ImGui::GetCurrentContext()->InputTextState.ID;
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState && inputActive) {
+        const ImGuiInputTextState& input = ImGui::GetCurrentContext()->InputTextState;
+        qaState->qaMetadataInputText[suffix] = input.TextA.Data ? input.TextA.Data : "";
+    }
+#endif
     const bool inputClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
     const bool wasOpen = ui.draft.IsOpen();
@@ -29670,6 +29676,7 @@ void RenderUI(AppState& state) {
     }
 #if ARIS_PREVIEW_ISOLATION
     state.qaFilterUiRects.clear();
+    state.qaMetadataInputText.clear();
 #endif
     if (HarkenSearch::ShouldConsumePendingPostScanSimilarityIndex(
             state.pendingPostScanSimilarityIndex.load(std::memory_order_acquire),

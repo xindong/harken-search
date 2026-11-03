@@ -5274,6 +5274,14 @@ static void PollQaCommandFile(AppState& state) {
                 std::to_string(rect.w) + "]";
         }
         result += "},";
+        result += "\"qa_metadata_input_text\":{";
+        bool firstQaMetadataInput = true;
+        for (const auto& [key, value] : state.qaMetadataInputText) {
+            if (!firstQaMetadataInput) result += ",";
+            firstQaMetadataInput = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
+        }
+        result += "},";
 #endif
         result += "\"metadata_filters\":{";
         result += "\"artist\":\"" + jsonEscape(state.artistFilterBuffer) + "\",";

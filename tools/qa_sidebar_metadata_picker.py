@@ -371,6 +371,11 @@ def run(args):
             s["metadata_filters"]["category"] == long_raw_category and
             s["search_ready"] and s["result_count"] > 0, timeout=5)
         record("long-raw-category-selected", current)
+        click("metadata_Category_input")
+        current = wait_until("long category input stays complete", lambda s:
+            s.get("qa_metadata_input_text", {}).get("Category") == long_raw_category)
+        checks.append({"name": "long-raw-category-input-complete",
+                       "input_bytes": len(current["qa_metadata_input_text"]["Category"].encode("utf-8"))})
     except BaseException as exc:
         failure = repr(exc)
         raise
