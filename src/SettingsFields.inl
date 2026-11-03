@@ -35,7 +35,7 @@ else if(id=="theme") {
     if(draft.themeScheduleMode!=schedule::Mode::Off)ImGui::TextDisabled("%s",L(SetUX_UsedWhenScheduleIsOff));
 }
 else if(id=="automatic") {bool value=draft.themeScheduleMode!=schedule::Mode::Off;if(ImGui::Checkbox("##value",&value))draft.themeScheduleMode=value?schedule::Mode::Automatic:schedule::Mode::Off;}
-else if(id=="day") {themedSelector(runtime.day);su::Observe("day-combo");}
+else if(id=="day") {themedSelector(runtime.day,"day-editor");su::Observe("day-combo");}
 else if(id=="night") {themedSelector(runtime.night);su::Observe("night-combo");}
 else if(id=="themeEditor") {
 #if AURA_BUILD_DIAGNOSTICS

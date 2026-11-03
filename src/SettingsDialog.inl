@@ -249,10 +249,17 @@
             return changed;
         };
         auto stringInput=[&](std::string& value){char buffer[2048]{};std::snprintf(buffer,sizeof(buffer),"%s",value.c_str());if(ImGui::InputText("##value",buffer,sizeof(buffer)))value=buffer;};
-        auto themedSelector=[&](int& value){
+        auto themedSelector=[&](int& value,const char* editAction=nullptr){
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
             if(ImGui::BeginCombo("##value",su::StockLabel(value))){
                 for(int i=0;i<5;++i){if(ImGui::Selectable(su::StockLabel(i),value==i))value=i;su::Observe(("theme-option-"+std::to_string(i)).c_str());}
+#if AURA_BUILD_DIAGNOSTICS
+                if(editAction && ProductEdition::hasFeature("theme_editor")){
+                    ImGui::Separator();
+                    if(ImGui::MenuItem(L(ThemeSchedule_EditPalette)))requestAction(editAction);
+                    su::Observe(editAction);
+                }
+#endif
                 if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
                 ImGui::EndCombo();
             }
