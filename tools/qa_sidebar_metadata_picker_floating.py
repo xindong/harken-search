@@ -38,7 +38,9 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
         text, count = re.subn(pattern, key + "=" + value, text, flags=re.M)
         if not count:
             text += chr(10) + key + "=" + value
-    desktop = process = hwnd = None
+    desktop = process = hwnd = result = None
+    completed = shutdown_timed_out = False
+    exit_code = None
     try:
         settings.write_text(text, encoding="utf-8")
         output.mkdir(parents=True, exist_ok=True)
@@ -132,25 +134,33 @@ def run(exe: Path, root: Path, output: Path, scenario: str) -> None:
                                  if name.endswith("##FloatingSidebar")), -1)
             result["popup_above_sidebar"] = popup_rank > sidebar_rank >= 0
         result["exe_sha256"] = hashlib.sha256(exe.read_bytes()).hexdigest()
-        (output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps(result, ensure_ascii=False))
         if scenario == "overlap":
             assert not result["album_popup_open"], result
         else:
             assert result["artist_popup_open"] and result["popup_above_sidebar"], result
+        completed = True
     finally:
         try:
             if hwnd and win32gui.IsWindow(hwnd):
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
             if process:
                 if win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_TIMEOUT:
+                    shutdown_timed_out = True
                     win32api.TerminateProcess(process, 1)
                     win32event.WaitForSingleObject(process, 5000)
+                exit_code = win32process.GetExitCodeProcess(process)
                 process.Close()
             if desktop:
                 desktop.close()
         finally:
             settings.write_bytes(backup)
+        if result is not None:
+            result.update(exit_code=exit_code, shutdown_timed_out=shutdown_timed_out,
+                          status="pass" if completed and exit_code == 0 and not shutdown_timed_out else "incomplete")
+            (output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(json.dumps(result, ensure_ascii=False))
+        if completed and (exit_code != 0 or shutdown_timed_out):
+            raise RuntimeError(f"application did not close cleanly: exit_code={exit_code}, timeout={shutdown_timed_out}")
 
 
 if __name__ == "__main__":
