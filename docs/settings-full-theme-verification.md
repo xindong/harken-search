@@ -15,3 +15,5 @@
 本机实际包、完整运行结果、失败历史和真实截图位于 D:/Harken-QA/TASK-20261103-SETCHK-007/。前两轮探测使用了错误的控件观察编号，随后改为实际按钮审计；另一次脚本错误把普通主题文件当成日夜配色的嵌套格式。原生文件窗口首次探测读取控件编号1148失败，本机实际为1001，证据均保留。以上测试准备问题与两项实际产品问题分别记录，不能把早期失败标成通过。
 
 最终运行结果及包SHA以本卡 native-full-final-v2/report.json、native-preview-final-v2/report.json 和 package-identity.json 为准。用户确认之前不合QA。
+
+合并审查补充：实际只读 theme_custom.json 复现保存失败仍替换恢复基线；含嵌套同名颜色的 JSON 复现顶层校验后仍被原文读取覆盖。对应 review-edges-red、review-import-red 保留失败证据。保存成功后才更新恢复基线及配置；导入只把同一次解析中已校验的顶层颜色交给旧读取器，并以完整导出字段清单覆盖未在编辑器展示的八种 Wwise 颜色。其他加载入口不变。导入创建失败不再显示创建成功。部分主题的6/8位颜色改为两个不同于当前背景的值，同时核对草稿、实际背景和真实像素，避免拒绝导入也能通过。review-edges-green-r2 为四项真实边界检查；review-full-green 与 review-preview-green 为修复后完整回归。

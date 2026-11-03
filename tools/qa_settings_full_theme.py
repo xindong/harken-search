@@ -145,6 +145,56 @@ def run(args):
             actual=schedule()['editor_ui']['draft_bg']
             assert actual.lower()=='ff'+hexvalue[:6].lower(),(actual,hexvalue)
             return actual
+        if args.review_edges:
+            from qa_owned_theme_dialog import start_file_dialog_worker
+            schedule(-1);open_editor();original=schedule()['active_bg']
+            custom=exe.parent/'theme_custom.json'
+            before=custom.read_bytes() if custom.exists() else None
+            if not args.import_only:
+                pick('61372BFF','save-failure-draft')
+                import os,stat
+                if not custom.exists():custom.write_text('{}',encoding='utf-8')
+                mode=custom.stat().st_mode
+                os.chmod(custom,stat.S_IREAD)
+                try:
+                    button('保存为新主题');settle()
+                    a,b,c,d=editor_item('theme-name')['bounds'];pointer(c+15,(b+d)/2);settle()
+                    editor_shot('save-failure-preview-off')
+                    assert schedule()['active_bg']==original,'Failed save replaced the restore baseline'
+                    check('a real read-only theme file does not replace the saved restore baseline')
+                finally:
+                    os.chmod(custom,mode)
+                    if before is None:custom.unlink()
+                    else:custom.write_bytes(before)
+                ea,eb,ec,ed=schedule()['editor_ui']['bounds'];pointer(ec-14,eb+13);settle()
+                assert schedule()['active_bg']==original
+                open_editor()
+            if not schedule()['editor_ui']['live_preview']:
+                a,b,c,d=editor_item('theme-name')['bounds'];pointer(c+15,(b+d)/2);settle()
+            for index,document in enumerate((
+                {'mainWindowBG':'ff45634a','extra':{'mainWindowBG':'xyz'}},
+                {'wwiseConnectOk':'ff00ff00'},
+                {'mainWindowBG':'ff45634a','wwiseConnectOk':'xyz'},
+            )):
+                target=out/f'edge-import-{index}.json';target.write_text(json.dumps(document),encoding='utf-8')
+                prior=schedule()['active_bg']
+                thread,result=start_file_dialog_worker(desktop,identity['pid'],target,out/f'edge-dialog-{index}.json')
+                button('导入 JSON');thread.join(20);assert not thread.is_alive() and result.get('passed'),result
+                settle();editor_shot(f'edge-import-{index}')
+                actual=schedule()['editor_ui']
+                if index==0:
+                    assert actual['draft_bg']=='ff45634a' and schedule()['active_bg']=='ff45634a','Nested metadata overwrote the validated top-level color'
+                    check('nested metadata cannot overwrite a validated top-level color')
+                elif index==1:
+                    assert actual['draft_wwise_ok']=='ff00ff00','Valid Wwise-only palette was rejected'
+                    check('a valid Wwise-only partial palette remains importable')
+                else:
+                    assert schedule()['active_bg']==prior and actual['draft_wwise_ok']=='ff00ff00','Invalid Wwise color bypassed validation'
+                    check('invalid Wwise colors are rejected without changing the draft')
+                assert (custom.read_bytes() if custom.exists() else None)==before
+            ea,eb,ec,ed=schedule()['editor_ui']['bounds'];pointer(ec-14,eb+13);settle()
+            assert schedule()['active_bg']==original
+            stop();report['passed']=True;return
         if args.preview_only:
             schedule(-1);open_editor();original=schedule()['active_bg']
             color=pick('253F59FF','preview-on')
@@ -215,10 +265,12 @@ def run(args):
             file_action('导入 JSON',invalid,f'14-invalid-import-{index}')
             assert schedule()['active_bg']==color and custom.read_bytes()==saved
             check(f'invalid import {index} preserves live colors and the saved theme')
-        for index,value in enumerate(('30485f','ff30485f')):
+        for index,value in enumerate(('47612b','ff49366a')):
             legacy=out/f'partial-theme-{index}.json';legacy.write_text(json.dumps({'mainWindowBG':value}),encoding='utf-8')
             file_action('导入 JSON',legacy,f'14-partial-import-{index}')
-            assert schedule()['active_bg']==color and custom.read_bytes()==saved
+            expected='ff'+value[-6:]
+            assert schedule()['active_bg']==expected and schedule()['editor_ui']['draft_bg']==expected and custom.read_bytes()==saved
+            check_pixels(f'14-partial-import-{index}-pixels',expected)
             check(f'valid partial theme with {len(value)} digit color remains importable without saving')
         created=out/'Imported full theme.json';new_palette=json.loads(saved);new_palette['mainWindowBG']='ff294f49'
         created.write_text(json.dumps(new_palette),encoding='utf-8')
@@ -279,4 +331,4 @@ def run(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--exe',type=Path,required=True);p.add_argument('--isolation-root',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--preview-only',action='store_true');run(p.parse_args())
+    p.add_argument('--preview-only',action='store_true');p.add_argument('--review-edges',action='store_true');p.add_argument('--import-only',action='store_true');run(p.parse_args())
