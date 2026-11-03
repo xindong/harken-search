@@ -62,7 +62,7 @@ jobs:
           TestScanWaveformCacheContract TestScanPauseResume TestSearchSemanticMatrix
           TestSearchWorkspace TestPlaylistFolderTree TestSubPlaylists
           TestBackgroundIoPolicy TestScanWorkflowState TestScanDialogPresentation TestCoverDiscovery
-          TestRegionExportPathSafety
+          TestRegionExportPathSafety TestThemeColors
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
@@ -72,6 +72,8 @@ jobs:
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
       - name: Run region export source safety test
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestRegionExportPathSafety$"
+      - name: Run theme JSON import regression
+        run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestThemeColors$"
       - name: Retain test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

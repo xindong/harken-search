@@ -82,6 +82,9 @@
 - Given 已满足以下前置条件：settings are missing, encrypted values fail, or a DB path is unavailable
 - When 执行以下操作：startup loads configuration
 - Then 应得到以下结果：Aris falls back safely without silent destructive cleanup
+- Given 已选中的自定义主题文件语法错误、没有受支持的顶层颜色字段，或颜色值格式错误
+- When 启动或设置切换时读取该主题文件
+- Then 解析失败且不改变传入的颜色或改写文件；启动使用安全回退，不把坏文件标成已加载的自定义主题。有效的旧版部分主题仍可加载。
 - Given Mac 词库保存目录只读或不可用
 - When 用户执行词库“重置为默认”
 - Then 保留失败状态并显示与用户设置目录相关的提示，不把程序包目录当成词库位置
