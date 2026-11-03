@@ -62,6 +62,7 @@ jobs:
           TestScanWaveformCacheContract TestScanPauseResume TestSearchSemanticMatrix
           TestSearchWorkspace TestPlaylistFolderTree TestSubPlaylists
           TestBackgroundIoPolicy TestScanWorkflowState TestScanDialogPresentation TestCoverDiscovery
+          TestRegionExportPathSafety
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
@@ -69,6 +70,8 @@ jobs:
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
+      - name: Run region export source safety test
+        run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestRegionExportPathSafety$"
       - name: Retain test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

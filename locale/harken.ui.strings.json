@@ -13977,6 +13977,13 @@
       "ja": "未ロードまたはパスが空"
     },
     {
+      "id": "Ex_OutputEqualsSource",
+      "type": "ui",
+      "zh": "导出目标不能是源音频文件。",
+      "en": "Export destination cannot be the source audio file.",
+      "ja": "書き出し先を元の音声ファイルにはできません。"
+    },
+    {
       "id": "Ex_DecoderMaybe",
       "type": "ui",
       "zh": "解码器初始化失败(文件损坏或占用?)",

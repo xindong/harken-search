@@ -21,6 +21,7 @@ namespace HarkenSearch::MacQa {
 namespace {
 using Json = nlohmann::json;
 bool thesaurusPageRequested = false;
+Json lastRegionExport;
 std::filesystem::path Root() {
     return std::filesystem::u8path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "runtime";
 }
@@ -45,6 +46,7 @@ Request Poll(AppState& state) {
         const auto id = command.value("id", 0LL);
         if (id <= lastId || id > 1000000000) return request;
         request.id = lastId = id;
+        lastRegionExport = nullptr;
         const auto action = command.value("action", std::string{});
         request.capture = command.value("capture", false);
         if (action == "create") {
@@ -209,6 +211,35 @@ Request Poll(AppState& state) {
             const float volume = command.at("value").get<float>();
             if (!std::isfinite(volume) || volume < 0 || volume > 1) throw std::runtime_error("invalid_volume");
             aris::frontend::AppStateAuditionFrontendAdapter(state).setVolume(volume);
+        } else if (action == "region_set") {
+            if (!state.audioEngine.isLoaded()) throw std::runtime_error("audio_not_loaded");
+            RequireQaPath(state.audioEngine.getLoadedFilePath());
+            const float start = command.at("start").get<float>();
+            const float end = command.at("end").get<float>();
+            const float fadeIn = command.value("fade_in", 0.0f);
+            const float fadeOut = command.value("fade_out", 0.0f);
+            if (!std::isfinite(start) || !std::isfinite(end) || start < 0 || end > 1 ||
+                end - start < 0.01f || !std::isfinite(fadeIn) || !std::isfinite(fadeOut) ||
+                fadeIn < 0 || fadeOut < 0 || fadeIn > 1 || fadeOut > 1 || fadeIn + fadeOut > 1)
+                throw std::runtime_error("invalid_region");
+            state.audioEngine.setOutPoint(end);
+            state.audioEngine.setInPoint(start);
+            state.uiState.regionFadeInNorm = fadeIn;
+            state.uiState.regionFadeOutNorm = fadeOut;
+            state.audioEngine.setRegionFadeNorms(fadeIn, fadeOut);
+        } else if (action == "region_export") {
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            if (!state.audioEngine.isLoaded()) throw std::runtime_error("audio_not_loaded");
+            RequireQaPath(state.audioEngine.getLoadedFilePath());
+            ExportRegionInfo info;
+            const auto snapshot = state.audioEngine.captureTransferProcessingSnapshot();
+            const bool ok = state.audioEngine.exportRegion(path, state.uiState.regionFadeInNorm,
+                state.uiState.regionFadeOutNorm, &info, &snapshot);
+            lastRegionExport = {{"ok", ok}, {"path", path},
+                {"error", state.audioEngine.getLastExportError()},
+                {"start_frame", info.regionStartFrame}, {"frames_written", info.framesWritten},
+                {"total_frames", info.totalFrames}, {"sample_rate", info.sampleRate},
+                {"channels", info.channels}};
         } else if (action == "stop") state.audioEngine.stop();
         else if (action == "close") request.close = true;
         else if (action != "snapshot") throw std::runtime_error("unknown_action");
@@ -265,6 +296,9 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
+            {"region",{{"start",state.audioEngine.getInPoint()},{"end",state.audioEngine.getOutPoint()},
+                {"fade_in",state.uiState.regionFadeInNorm},{"fade_out",state.uiState.regionFadeOutNorm}}},
+            {"region_export",lastRegionExport},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},
             {"playlists",playlists},{"view_mode",static_cast<int>(state.viewMode)},
             {"selected_playlist_id",state.selectedPlaylistId},

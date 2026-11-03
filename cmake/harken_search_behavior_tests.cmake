@@ -5154,6 +5154,17 @@ endif()
 add_test(NAME TestExportRegionPreserve COMMAND TestExportRegionPreserve)
 aura_set_test_labels(TestExportRegionPreserve core)
 
+add_executable(TestRegionExportPathSafety EXCLUDE_FROM_ALL
+    tests/test_region_export_path_safety.cpp
+    src/platform/filesystem_std.cpp)
+target_include_directories(TestRegionExportPathSafety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(TestRegionExportPathSafety PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestRegionExportPathSafety PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestRegionExportPathSafety COMMAND TestRegionExportPathSafety)
+aura_set_test_labels(TestRegionExportPathSafety core)
+
 # Waveform region editor: pure helper tests (fade clamp, trim refine window)
 
 add_executable(TestVoiceDeliveryAcceptance EXCLUDE_FROM_ALL
