@@ -10,6 +10,7 @@ data and mechanically sanitized before it can reach Slack.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 import re
@@ -51,6 +52,11 @@ SECRET_RE = re.compile(
     r"|AKIA[A-Z0-9]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
     r"|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})"
 )
+PEM_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN (?P<label>(?:[A-Z0-9]+ )*PRIVATE KEY)-----.*?"
+    r"(?:-----END (?P=label)-----|$)",
+    re.S,
+)
 SLACK_ID_RE = re.compile(r"^U[A-Z0-9]{8,}$")
 TITLE_LIMIT = 160
 DIGEST_LIMIT = 420
@@ -91,7 +97,7 @@ def parse_scope_labels(body: str) -> list[str]:
     found: list[str] = []
     text = body or ""
     explicit = re.search(
-        r"(?:Primary module domain|主模块|模块域|模块)\s*[:：]\s*([^\n]+)",
+        r"(?:Primary module domain(?: and secondary reviewers)?|主模块|模块域|模块)\s*[:：]\s*([^\n]+)",
         text,
         re.I,
     )
@@ -147,7 +153,7 @@ def fallback_digest(source: str) -> str:
 
 
 def redact_secrets(text: str) -> str:
-    return SECRET_RE.sub("[redacted-secret]", text or "")
+    return SECRET_RE.sub("[redacted-secret]", PEM_PRIVATE_KEY_RE.sub("[redacted-secret]", text or ""))
 
 
 def sanitize_plain(text: str, limit: int) -> str:
@@ -385,9 +391,67 @@ def _login(node: Any) -> str:
     return ""
 
 
-def collect_event(env: dict[str, str]) -> dict[str, Any]:
+def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Recover an instant GITHUB_TOKEN merge without replaying human/old merges."""
+    run = payload.get("workflow_run") or {}
+    repo = env.get("GITHUB_REPOSITORY", "")
+    if (
+        not isinstance(run, dict)
+        or not repo
+        or run.get("name") != "Enable PR Auto-merge"
+        or run.get("path") != ".github/workflows/auto-merge.yml"
+        or run.get("event") != "pull_request_target"
+        or run.get("conclusion") != "success"
+        or run.get("run_attempt") != 1
+        or (run.get("head_repository") or {}).get("full_name") != repo
+        or (payload.get("repository") or {}).get("full_name") != repo
+    ):
+        return None
+    pulls = run.get("pull_requests") or []
+    if len(pulls) != 1 or not isinstance(pulls[0], dict):
+        return None
+    number = pulls[0].get("number")
+    if type(number) is not int or number <= 0:
+        return None
+    token = env.get("GITHUB_TOKEN", "")
+    if not token:
+        raise SystemExit("missing GitHub token for auto-merge lookup")
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/pulls/{number}",
+        headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                 "X-GitHub-Api-Version": "2022-11-28"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            pull = json.loads(response.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        raise SystemExit(f"auto-merge lookup failed: {type(exc).__name__}") from None
+    if not isinstance(pull, dict):
+        raise SystemExit("auto-merge lookup failed: invalid-response")
+    if (
+        pull.get("merged") is not True
+        or _login(pull.get("merged_by")) != "github-actions[bot]"
+        or pull.get("number") != number
+        or pull.get("html_url") != f"https://github.com/{repo}/pull/{number}"
+    ):
+        return None
+    try:
+        started = datetime.fromisoformat(run["run_started_at"])
+        completed = datetime.fromisoformat(run["updated_at"])
+        merged = datetime.fromisoformat(pull["merged_at"])
+        if any(value.tzinfo is None for value in (started, completed, merged)):
+            return None
+        if not started <= merged <= completed:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"pull_request": pull}
+
+
+def collect_event(env: dict[str, str], payload: dict[str, Any] | None = None) -> dict[str, Any]:
     mapping = load_slack_map(env.get("GH_SLACK_MAP", ""))
-    payload = load_event_payload(env.get("GITHUB_EVENT_PATH", ""))
+    if payload is None:
+        payload = load_event_payload(env.get("GITHUB_EVENT_PATH", ""))
     event_name = env.get("EVENT_NAME") or env.get("GITHUB_EVENT_NAME") or ""
     if event_name == "issues" or (payload.get("issue") and not payload.get("pull_request")):
         issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
@@ -463,7 +527,13 @@ def collect_event(env: dict[str, str]) -> dict[str, Any]:
 def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> int:
     args = parse_args(argv)
     runtime = env if env is not None else os.environ
-    event = collect_event(dict(runtime))
+    payload = None
+    if (runtime.get("EVENT_NAME") or runtime.get("GITHUB_EVENT_NAME")) == "workflow_run":
+        payload = workflow_merge_payload(dict(runtime), load_event_payload(runtime.get("GITHUB_EVENT_PATH", "")))
+        if payload is None:
+            print("No new instant bot merge from this workflow; no notification sent.")
+            return 0
+    event = collect_event(dict(runtime), payload)
     if not event["number"] or not event["url"] or not event["title"]:
         print("missing number, url, or title", file=sys.stderr)
         return 1

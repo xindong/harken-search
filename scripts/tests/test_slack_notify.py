@@ -44,6 +44,31 @@ class SlackNotifyTest(unittest.TestCase):
         self.assertNotIn("Venus", prompt)
         self.assertNotIn("2 到 3 句", prompt)
 
+    def test_current_pr_template_module_field_is_supported(self) -> None:
+        template = (Path(__file__).resolve().parents[2] / ".github/pull_request_template.md").read_text(encoding="utf-8")
+        body = template.replace("Primary module domain and secondary reviewers:", "Primary module domain and secondary reviewers: Search / UI")
+        self.assertEqual(MODULE.parse_scope_labels(body), ["搜索", "界面"])
+
+    def test_complete_private_key_blocks_are_fully_redacted(self) -> None:
+        for kind in ("PRIVATE KEY", "EC PRIVATE KEY", "RSA PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "OPENSSH PRIVATE KEY"):
+            with self.subTest(kind=kind):
+                body = "TEST_PRIVATE_MATERIAL"
+                block = f"prefix\n-----BEGIN {kind}-----\n{body}\n-----END {kind}-----\nsuffix"
+                clean = MODULE.sanitize_plain(block, 400)
+                self.assertNotIn(body, clean)
+                self.assertNotIn("PRIVATE KEY", clean)
+                self.assertIn("[redacted-secret]", clean)
+                self.assertIn("prefix", clean)
+                self.assertIn("suffix", clean)
+
+    def test_unterminated_private_key_is_redacted_to_end(self) -> None:
+        kind = "EC PRIVATE KEY"
+        block = f"prefix\n-----BEGIN {kind}-----\nTEST_PRIVATE_MATERIAL"
+        clean = MODULE.sanitize_plain(block, 400)
+        self.assertNotIn("TEST_PRIVATE_MATERIAL", clean)
+        self.assertIn("[redacted-secret]", clean)
+        self.assertIn("prefix", clean)
+
     def test_parse_checked_product_scopes_only(self) -> None:
         labels = MODULE.parse_scope_labels(PR_BODY)
         self.assertEqual(labels, ["搜索", "界面"])
@@ -276,6 +301,67 @@ class SlackNotifyTest(unittest.TestCase):
         self.assertEqual(code, 0)
         posted.assert_not_called()
         self.assertIn("📌 *新 issue #40：", buf.getvalue())
+
+
+class AutoMergeNoticeTest(unittest.TestCase):
+    def payload(self):
+        return {"repository": {"full_name": "xindong/harken-search"}, "workflow_run": {
+            "name": "Enable PR Auto-merge", "event": "pull_request_target", "conclusion": "success",
+            "path": ".github/workflows/auto-merge.yml", "run_attempt": 1,
+            "run_started_at": "2026-11-03T02:00:00Z", "updated_at": "2026-11-03T02:01:00Z",
+            "head_repository": {"full_name": "xindong/harken-search"}, "pull_requests": [{"number": 72}]}}
+
+    def pull(self):
+        return {"number": 72, "merged": True, "merged_at": "2026-11-03T02:00:30Z",
+                "merged_by": {"login": "github-actions[bot]"}, "title": "迁入通知",
+                "html_url": "https://github.com/xindong/harken-search/pull/72", "body": "合并后显示通知。",
+                "base": {"repo": {"full_name": "xindong/harken-search"}}, "user": {"login": "example-author"}}
+
+    def run_event(self, payload, pull):
+        class Response:
+            def read(self):
+                return json.dumps(pull).encode("utf-8")
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+        env = {"EVENT_NAME": "workflow_run", "GITHUB_REPOSITORY": "xindong/harken-search",
+               "GITHUB_TOKEN": "test-github-token", "SLACK_BOT_TOKEN": "test-slack-token", "SLACK_CHANNEL": "C000000001"}
+        output = io.StringIO()
+        with mock.patch.object(MODULE, "load_event_payload", return_value=payload), \
+             mock.patch.object(MODULE.urllib.request, "urlopen", return_value=Response()) as fetch, \
+             mock.patch.object(MODULE, "post_slack") as posted, mock.patch("sys.stdout", output):
+            code = MODULE.main([], env=env)
+        return code, posted, fetch, output.getvalue()
+
+    def test_successful_instant_bot_merge_posts_the_real_pr_once(self):
+        code, posted, fetch, _ = self.run_event(self.payload(), self.pull())
+        self.assertEqual(code, 0)
+        posted.assert_called_once()
+        self.assertIn("PR #72 已合并", posted.call_args.args[2])
+        self.assertIn("xindong/harken-search/pull/72", posted.call_args.args[2])
+        self.assertEqual(fetch.call_args.args[0].full_url, "https://api.github.com/repos/xindong/harken-search/pulls/72")
+
+    def test_replayed_failed_or_unrelated_workflows_never_fetch_or_send(self):
+        for field, value in (("run_attempt", 2), ("conclusion", "failure"), ("name", "Unrelated"),
+                             ("event", "pull_request"), ("head_repository", {"full_name": "outside/fork"})):
+            with self.subTest(field=field):
+                payload = self.payload()
+                payload["workflow_run"][field] = value
+                code, posted, fetch, _ = self.run_event(payload, self.pull())
+                self.assertEqual(code, 0)
+                posted.assert_not_called()
+                fetch.assert_not_called()
+
+    def test_manual_unmerged_or_old_merges_are_not_reannounced(self):
+        for field, value in (("merged_by", {"login": "example-maintainer"}), ("merged", False),
+                             ("merged_at", "2026-11-03T01:59:59Z"), ("merged_at", "2026-11-03T02:01:01Z")):
+            with self.subTest(field=field):
+                pull = self.pull()
+                pull[field] = value
+                code, posted, _fetch, _ = self.run_event(self.payload(), pull)
+                self.assertEqual(code, 0)
+                posted.assert_not_called()
 
 
 if __name__ == "__main__":

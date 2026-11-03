@@ -32,11 +32,17 @@ class SlackNotificationWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["on"]["issues"]["types"], ["opened"])
         self.assertNotIn("pull_request", workflow["on"])
         notify = workflow["jobs"]["notify"]
-        self.assertEqual(notify["if"], "github.event_name == 'issues' || github.event.pull_request.merged == true")
+        self.assertIn("github.event.pull_request.merged == true", notify["if"])
         checkout = notify["steps"][0]
         self.assertEqual(checkout["with"]["ref"], "${{ github.event.repository.default_branch }}")
         self.assertEqual(checkout["with"]["persist-credentials"], "false")
         self.assertEqual(set(workflow["permissions"].values()), {"read"})
+
+    def test_auto_merge_workflow_completion_has_a_notification_entry(self):
+        workflow = self.workflow()
+        self.assertEqual(workflow["on"]["workflow_run"], {"workflows": ["Enable PR Auto-merge"], "types": ["completed"]})
+        self.assertIn("github.event_name == 'workflow_run'", workflow["jobs"]["notify"]["if"])
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow["jobs"]["notify"]["if"])
 
     def test_missing_configuration_skips_post_with_visible_summary(self):
         notify = self.workflow()["jobs"]["notify"]

@@ -5,6 +5,9 @@ on:
     types: [closed]
   issues:
     types: [opened]
+  workflow_run:
+    workflows: [Enable PR Auto-merge]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +16,9 @@ permissions:
 
 jobs:
   notify:
-    if: github.event_name == 'issues' || github.event.pull_request.merged == true
+    if: >-
+      github.event_name == 'issues' || github.event.pull_request.merged == true ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
