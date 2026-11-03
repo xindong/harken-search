@@ -8,7 +8,7 @@
 **Priority:** P1
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -41,6 +41,9 @@
 
 ### Failure / Recovery
 
+- Given 已选中某个具体播放列表并正常退出
+- When 重开已保存的素材库或切换素材库，旧列表 ID 被清除
+- Then 标签页不能恢复成“播放列表模式但未选中列表”；应显示素材库结果，原列表层级和成员仍保存在原素材库中
 - Given 已满足以下前置条件：a playlist operation conflicts with an invalid parent or missing file
 - When 执行以下操作：the operation is applied
 - Then 应得到以下结果：it fails safely without orphaning children or duplicating file entries
@@ -80,6 +83,8 @@
 | TEST-PLAYLIST-FOLDER-TREE | unit/integration | `TestPlaylistFolderTree` | folder hierarchy passes | active |
 | TEST-SET-PLAYLIST-PARENT | unit | `TestSetPlaylistParent` | parent updates pass | active |
 | TEST-PLAYLIST-QUICKBAR | UI model | `TestPlaylistQuickBarMotion` | quickbar motion behavior passes | active |
+| TEST-MAC-PLAYLIST-REOPEN | real app | `tools/macos_playlist_smoke.py` (CV-1E4C7A90) | 独立库的列表/子列表、重复加入、无效父级、范围搜索与退出重开一致 | Mac candidate; user UI acceptance pending |
+| TEST-PLAYLIST-RESET-TAB | unit + real app | `TestSearchWorkspace` and CV-1E4C7A90 real app | 清除具体列表 ID 后不能恢复无效 Playlist 标签页 | candidate; CI result tracked in card |
 | DIAG-PLAYLIST-PARENT | diagnostics | `TestSetPlaylistParent` diagnostics assertions | parent success/reject events observed | active |
 
 ## Missing Coverage

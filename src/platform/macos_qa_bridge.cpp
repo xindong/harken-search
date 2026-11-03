@@ -14,6 +14,9 @@
 #include <algorithm>
 #include <cmath>
 
+// The production playlist sidebar uses this action to enter a list or folder.
+void ActivatePlaylistView(AppState&, int64_t, bool, bool, int64_t);
+
 namespace HarkenSearch::MacQa {
 namespace {
 using Json = nlohmann::json;
@@ -94,6 +97,55 @@ Request Poll(AppState& state) {
                 state.coverFilterIndex = mode;
             }
             ApplyFiltersAndRefresh(state);
+        } else if (action == "playlist_create") {
+            if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
+            const auto name = command.at("name").get<std::string>();
+            if (name.empty() || name.size() >= sizeof(state.playlistNameBuffer))
+                throw std::runtime_error("invalid_playlist_name");
+            const bool folder = command.value("folder", false);
+            const int64_t parentId = command.value("parent_id", int64_t{-1});
+            if (folder && parentId > 0) throw std::runtime_error("nested_folder_not_supported");
+            state.playlists = state.database.getAllPlaylists();
+            for (const auto& playlist : state.playlists) {
+                if (playlist.name == name) throw std::runtime_error("duplicate_playlist_name");
+            }
+            const int64_t id = parentId > 0
+                ? state.database.createSubPlaylist(parentId, name)
+                : state.database.createPlaylist(name);
+            if (id <= 0 || (folder && !state.database.markAsFolder(id)))
+                throw std::runtime_error("playlist_create_failed");
+            state.playlists = state.database.getAllPlaylists();
+        } else if (action == "playlist_add") {
+            if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            const int64_t id = command.at("playlist_id").get<int64_t>();
+            const auto row = state.database.getFileByPath(path);
+            if (id <= 0 || row.id <= 0 || !state.database.addToPlaylist(id, row.id))
+                throw std::runtime_error("playlist_add_failed");
+            state.playlists = state.database.getAllPlaylists();
+            if (state.viewMode == ViewMode::Playlist) RefreshSearchResults(state, true);
+        } else if (action == "playlist_set_parent") {
+            if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
+            const int64_t id = command.at("playlist_id").get<int64_t>();
+            const int64_t parentId = command.at("parent_id").get<int64_t>();
+            const bool changed = state.database.setPlaylistParent(id, parentId);
+            if (changed == command.value("expect_rejected", false))
+                throw std::runtime_error("playlist_parent_unexpected_result");
+            state.playlists = state.database.getAllPlaylists();
+        } else if (action == "playlist_view") {
+            if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
+            const int64_t id = command.at("playlist_id").get<int64_t>();
+            state.playlists = state.database.getAllPlaylists();
+            const auto found = std::find_if(state.playlists.begin(), state.playlists.end(),
+                [id](const Playlist& playlist) { return playlist.id == id; });
+            if (found == state.playlists.end()) throw std::runtime_error("playlist_not_found");
+            ActivatePlaylistView(state, id, found->is_folder, true, -1);
+        } else if (action == "playlist_library") {
+            if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
+            state.selectedPlaylistId = -1;
+            state.playlistAggregatedView = false;
+            state.viewMode = ViewMode::Database;
+            RefreshSearchResults(state, true);
         } else if (action == "tag") {
             const auto name = command.at("file_name").get<std::string>();
             const auto tags = command.at("tags").get<std::vector<std::string>>();
@@ -157,6 +209,12 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"mini_peaks",miniPeaks},
                 {"folder_cover",row.folderCoverKey},{"embedded_cover",row.embeddedCoverKey}});
         }
+        Json playlists = Json::array();
+        for (const auto& playlist : state.playlists) {
+            playlists.push_back({{"id",playlist.id},{"name",playlist.name},
+                {"parent_id",playlist.parent_id},{"folder",playlist.is_folder},
+                {"file_count",playlist.fileCount}});
+        }
         const auto scan = state.getScanWorkflowSnapshot();
         const auto wave = state.audioEngine.getWaveformData();
         const auto outputProbe = state.audioEngine.getQaOutputProbe();
@@ -181,6 +239,9 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},
+            {"playlists",playlists},{"view_mode",static_cast<int>(state.viewMode)},
+            {"selected_playlist_id",state.selectedPlaylistId},
+            {"playlist_aggregated",state.playlistAggregatedView},
             {"filters",{{"text",state.searchBuffer},{"folder",state.selectedFolderPath},
                 {"folder_active",state.folderFilterActive},{"cover_mode",state.coverFilterIndex}}},
             {"scan",{{"active",state.isScanning.load()},{"pending",state.scanCompletionPending.load()},
