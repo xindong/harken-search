@@ -1237,10 +1237,10 @@ DurableRecoveryAdmissionResult AdmitDurableBootstrapRecovery(
     static_cast<void>(expectedTransactionRoot);
     static_cast<void>(testVerifier);
     DurableRecoveryAdmissionResult result;
-    if (record.schemaVersion != 9U || record.packagePlanBytes.empty() ||
+    if ((record.schemaVersion != 9U && record.schemaVersion != 10U) || record.packagePlanBytes.empty() ||
         record.packageSignatureHex.empty()) {
         result.status = DurableRecoveryAdmissionStatus::MissingPackageAuthority;
-        result.diagnostic = "schema-9 signed package reference";
+        result.diagnostic = "schema-9/10 signed package reference";
         return result;
     }
     result.status = DurableRecoveryAdmissionStatus::FreshHandoffRequired;
@@ -1257,10 +1257,10 @@ DurableRecoveryAdmissionResult AdmitAuthenticatedBootstrapRecovery(
     const std::string& expectedTransactionRoot,
     const PackageSignatureVerifier testVerifier) {
     DurableRecoveryAdmissionResult result;
-    if (record.schemaVersion != 9U || record.packagePlanBytes.empty() ||
+    if ((record.schemaVersion != 9U && record.schemaVersion != 10U) || record.packagePlanBytes.empty() ||
         record.packageSignatureHex.empty()) {
         result.status = DurableRecoveryAdmissionStatus::MissingPackageAuthority;
-        result.diagnostic = "schema-9 signed package reference";
+        result.diagnostic = "schema-9/10 signed package reference";
         return result;
     }
     if (!submittedAuthority.ok() ||

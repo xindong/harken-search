@@ -30,6 +30,7 @@ TESTS = (
     "tests/test_build_update_manifest.py",
     "tests/test_update_product_composition.py",
     "tests/test_sidebar_metadata_picker_contract.py",
+    "tests/test_update_legacy_asset_layout.py",
 )
 
 
