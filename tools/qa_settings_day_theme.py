@@ -5,6 +5,25 @@ from PIL import Image
 from qa_required_library_setup import PrivateDesktop,capture,wait_state
 from qa_transport_themes import Driver
 
+def require_saved_palette(profile,period):
+    path=profile/('theme_schedule_'+period+'.json')
+    assert path.is_file(),'Prepare an existing saved '+period+' palette before verification'
+    data=path.read_bytes();assert data
+    json.loads(data)
+    return data
+
+def stop_owned_process(process,identity_verified,send_exit):
+    import win32con,win32event,win32process
+    if identity_verified:
+        send_exit()
+        assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
+        assert win32process.GetExitCodeProcess(process)==0
+    else:
+        if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+            win32process.TerminateProcess(process,1)
+            assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
+    process.Close()
+
 def run(args):
     import win32con,win32event,win32process,win32gui
     exe=args.exe.resolve();root=args.isolation_root.resolve();out=args.output.resolve()
@@ -13,7 +32,7 @@ def run(args):
     (root/'profile/runtime').mkdir(parents=True,exist_ok=True)
     driver=Driver(root/'profile/runtime',out);desktop=PrivateDesktop()
     report={'exe':str(exe),'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'checks':[]}
-    process=None;identity=None
+    process=None;identity=None;identity_verified=False
     def cmd(**p):return driver.command(p)
     def state():return cmd(cmd='settings_ui')
     def settle():
@@ -57,19 +76,19 @@ def run(args):
         assert count>128,(name,'scheduled background missing from actual rendered frame',expected,count)
         return count
     def start():
-        nonlocal process,identity
+        nonlocal process,identity,identity_verified
+        identity_verified=False
         process,pid=desktop.start(exe)
         identity=cmd(cmd='magic_eq_identity')
         assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe and Path(identity['isolation_root']).resolve()==root
+        identity_verified=True
         ready=wait_state(driver,lambda v:v['main_ui_ready'] and v['total_count']>0,'real library ready',90)
         report.setdefault('launches',[]).append(dict(pid=pid,count=ready['total_count'],database=ready['db_path']))
     def stop():
         nonlocal process
         if process is None:return
-        cmd(cmd='info_edit_input',action='tray_exit')
-        assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
-        code=win32process.GetExitCodeProcess(process);assert code==0,code
-        process.Close();process=None
+        stop_owned_process(process,identity_verified,lambda:cmd(cmd='info_edit_input',action='tray_exit'))
+        process=None
     try:
         start()
         if args.layout_only:
@@ -98,11 +117,12 @@ def run(args):
             cmd(cmd='settings_ui',action='resize',width=1120,height=800);settle()
             query('system font');click('result-systemFont');click('systemFont');click('option-6');click('apply')
             click('done');schedule(-1);stop();report['passed']=True;return
+        require_saved_palette(profile,'night')
         manual=schedule();assert manual['mode']==0
         manual_bg=manual['active_bg'];schedule(540);open_settings()
         assert not any(x['id']=='day-combo' for x in state()['items'])
         click('automatic');click('apply');assert schedule()['mode']==1
-        night=schedule()['night_bg'];night_file=snapshot_files().get('theme_schedule_night.json')
+        night=schedule()['night_bg'];night_file=require_saved_palette(profile,'night')
         check('day choice becomes available after enabling the existing schedule')
         colors=[]
         for index in range(5):
@@ -142,7 +162,8 @@ def run(args):
         schedule(-1);stop();report['passed']=True
     except Exception:
         report['error']=traceback.format_exc();print(report['error'],flush=True)
-        try:shot('failure')
+        try:
+            if identity_verified:shot('failure')
         except Exception:pass
         raise
     finally:
