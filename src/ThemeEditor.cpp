@@ -769,11 +769,15 @@ void RenderThemeEditor(AppState& state) {
 
     // Import
     if (aura::ui::ActionButton(L(ThemeEditor_ImportJson), ImVec2(100, 0))) {
+#if defined(_WIN32) || defined(__APPLE__)
+        std::string suggestedPath = g_ed.lastImportPath;
 #ifdef _WIN32
-        const std::string suggestedPath = g_ed.lastImportPath.empty()
-            ? (GetExeDirUtf8() + "\\theme_export.json")
-            : g_ed.lastImportPath;
-        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(g_hwnd, suggestedPath);
+        if (suggestedPath.empty()) suggestedPath = GetExeDirUtf8() + "\\theme_export.json";
+        void* ownerWindow = g_hwnd;
+#else
+        void* ownerWindow = nullptr;
+#endif
+        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(ownerWindow, suggestedPath);
         if (!filePath.empty()) {
             const AppTheme startTheme = state.settings.theme;
             ThemeColorScheme imported = g_ed.draft;
@@ -797,11 +801,15 @@ void RenderThemeEditor(AppState& state) {
     ImGui::SameLine();
 
     if (aura::ui::ActionButton(L(ThemeEditor_ImportCreateTheme), ImVec2(148, 0), aura::ui::ButtonVariant::PrimarySearch)) {
+#if defined(_WIN32) || defined(__APPLE__)
+        std::string suggestedPath = g_ed.lastImportPath;
 #ifdef _WIN32
-        const std::string suggestedPath = g_ed.lastImportPath.empty()
-            ? (GetExeDirUtf8() + "\\theme_export.json")
-            : g_ed.lastImportPath;
-        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(g_hwnd, suggestedPath);
+        if (suggestedPath.empty()) suggestedPath = GetExeDirUtf8() + "\\theme_export.json";
+        void* ownerWindow = g_hwnd;
+#else
+        void* ownerWindow = nullptr;
+#endif
+        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(ownerWindow, suggestedPath);
         if (!filePath.empty()) {
             const AppTheme startTheme = state.settings.theme;
             ThemeColorScheme imported = g_ed.draft;

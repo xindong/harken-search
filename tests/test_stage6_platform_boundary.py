@@ -2032,8 +2032,9 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             self.assertIn(token, win32)
         self.assertGreaterEqual(standard.count('return "";'), 2)
         self.assertIn('#include "platform/theme_json_dialogs.h"', source)
-        self.assertIn("Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(g_hwnd,", source)
+        self.assertIn("Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(ownerWindow,", source)
         self.assertIn("void* ownerWindow = g_hwnd;", source)
+        self.assertIn("void* ownerWindow = nullptr;", source)
         self.assertIn("Platform::ThemeDialogs::SaveThemeJsonFileDialogUtf8(ownerWindow,", source)
 
     def test_user_action_timeline_export_uses_filesystem_pal(self) -> None:
