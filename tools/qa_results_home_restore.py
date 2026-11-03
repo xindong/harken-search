@@ -57,7 +57,21 @@ def run(args):
     def record(name, state):
         path = out / (name + '.png')
         capture(driver, path)
-        report['cases'].append({'name': name, 'state': state, 'screenshot': str(path)})
+        owned_windows = []
+        def collect(hwnd, _):
+            _, owner = win32process.GetWindowThreadProcessId(hwnd)
+            if owner == pid:
+                owned_windows.append({'hwnd': hwnd, 'title': win32gui.GetWindowText(hwnd),
+                                      'visible': bool(win32gui.IsWindowVisible(hwnd))})
+        win32gui.EnumWindows(collect, None)
+        results_windows = [window for window in owned_windows
+                           if window['visible'] and window['title'] == '全部文件']
+        if '-floating-' in name or '-cancel-return' in name:
+            assert len(results_windows) == 1, (name, owned_windows)
+        if '-04-returned-' in name:
+            assert not results_windows, (name, owned_windows)
+        report['cases'].append({'name': name, 'state': state, 'screenshot': str(path),
+                                'owned_windows': owned_windows})
         (out / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         print(json.dumps({'case': name, 'panel': state['panels']['search-results'],
                           'layout': state['layout']}, ensure_ascii=False), flush=True)
