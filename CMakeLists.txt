@@ -386,6 +386,10 @@ else()
 endif()
 
 # Application source files
+if(APPLE)
+    set(AURO_THESAURUS_JSON_DIALOG_SOURCE src/platform/thesaurus_json_dialog_macos.mm)
+endif()
+
 # main.cpp is Windows-only (13K LOC); macOS uses app_entry_macos.mm
 set(APP_SOURCES
     ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
