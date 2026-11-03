@@ -204,6 +204,27 @@ def run(args):
         assert [t['id'] for t in snap['results_tabs']] == order, snap
         assert snap['active_tab_id'] == moved_id, snap
         record('04f-return-again-keeps-order', snap)
+        press('blank')
+        release()
+        previous_count = len(order)
+        command(cmd='new_tab')
+        settled(lambda s: len(s['results_tabs']) == previous_count + 1)
+        snap, moved_id = reorder_last()
+        order = [t['id'] for t in snap['results_tabs']]
+        record('04g-create-and-reorder-while-floating', snap)
+        snap = return_home()
+        assert [t['id'] for t in snap['results_tabs']] == order, snap
+        assert snap['active_tab_id'] == moved_id, snap
+        record('04h-return-home-with-new-tab', snap)
+        press('blank')
+        snap = release()
+        assert [t['id'] for t in snap['results_tabs']] == order, snap
+        assert snap['active_tab_id'] == moved_id, snap
+        record('04i-refloat-with-new-tab', snap)
+        snap = return_home()
+        assert [t['id'] for t in snap['results_tabs']] == order, snap
+        assert snap['active_tab_id'] == moved_id, snap
+        record('04j-return-again-with-new-tab', snap)
         # Persisted settings must describe the displayed order and selection.
         command(cmd='info_edit_input', action='exit')
         assert win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0

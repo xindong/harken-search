@@ -38547,30 +38547,39 @@ void RenderUI(AppState& state) {
         ImRect resultsTabShelf;
         ImRect resultsAddTabRect;
         std::vector<std::pair<int, int>> resultsTabOrder;
-        bool resultsTabHostChanged = false;
+        bool resultsTabOrderRestoring = false;
         // Tabs own selection and sorting. Only the unused shelf starts a panel drag.
         if (ImGui::BeginTabBar("##ListTabBar", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs |
                                  ImGuiTabBarFlags_FittingPolicyScroll)) {
             ImGuiTabBar* resultsTabBar = ImGui::GetCurrentTabBar();
             static ImGuiID lastResultsTabBarId = 0;
-            resultsTabHostChanged = lastResultsTabBarId != resultsTabBar->ID;
+            static bool resultsTabRestorePending = false;
+            resultsTabRestorePending |= lastResultsTabBarId != resultsTabBar->ID;
             lastResultsTabBarId = resultsTabBar->ID;
-            if (resultsTabHostChanged) {
+            resultsTabOrderRestoring = resultsTabRestorePending;
+            if (resultsTabOrderRestoring) {
                 // Home, floating and docked hosts cache separate ImGui bars.
                 // Restore the application order before laying out a returning bar.
                 resultsTabBar->ReorderRequestTabId = 0;
+                bool allTabsRestored = true;
                 for (int ti = 0; ti < (int)state.listTabs.size(); ++ti) {
                     char stableLabel[32];
                     snprintf(stableLabel, sizeof(stableLabel), "###Tab%d", state.listTabs[ti].id);
                     ImGuiTabItem* cached = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetID(stableLabel));
-                    if (!cached) continue;
+                    if (!cached) {
+                        allTabsRestored = false;
+                        continue;
+                    }
                     const int offset = ti - ImGui::TabBarGetTabOrder(resultsTabBar, cached);
                     if (offset != 0) {
                         ImGui::TabBarQueueReorder(resultsTabBar, cached, offset);
-                        ImGui::TabBarProcessReorder(resultsTabBar);
+                        allTabsRestored &= ImGui::TabBarProcessReorder(resultsTabBar);
                         resultsTabBar->ReorderRequestTabId = 0;
                     }
                 }
+                // Newly created tabs register below. Keep model writeback blocked
+                // until a later frame can restore every current stable ID.
+                resultsTabRestorePending = !allTabsRestored;
                 if (state.pendingTabSelectionIndex < 0)
                     state.pendingTabSelectionIndex = state.activeTabIndex;
             }
@@ -39140,7 +39149,7 @@ void RenderUI(AppState& state) {
 
         // ImGui maintains display order independently. Commit it to the saved
         // workspaces after release, preserving every index by stable tab ID.
-        if (!resultsTabHostChanged && !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+        if (!resultsTabOrderRestoring && !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
             resultsTabOrder.size() == state.listTabs.size()) {
             std::sort(resultsTabOrder.begin(), resultsTabOrder.end(),
                 [](const auto& a, const auto& b) { return a.second < b.second; });
