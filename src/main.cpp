@@ -22053,6 +22053,11 @@ static void RefreshScanCompletionState(AppState& state) {
     state.scanCompletionMiniUnresolved.store(effectiveMiniUnresolved, std::memory_order_release);
     state.scanCompletionCoverUnresolved.store(counts.coverUnresolved, std::memory_order_release);
     state.scanCompletionMetadataUnresolved.store(counts.metadataUnresolved, std::memory_order_release);
+    // The last worker may finish after the Windows frame refresh. Publish its
+    // count before clearing the gate, which disables subsequent refreshes.
+    state.setScanMiniWaveformProgress(
+        waveformCompletionRequired ? counts.miniTerminal : 0,
+        waveformCompletionRequired ? counts.total : 0);
     state.scanCompletionCoversPending.store(coversPending, std::memory_order_release);
     state.scanCompletionWaveformsPending.store(waveformsPending, std::memory_order_release);
 
