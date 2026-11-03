@@ -16,13 +16,14 @@ class SettingsBodyScrollHeightSourceContractTests(unittest.TestCase):
         text = HEADER.read_text(encoding="utf-8")
         self.assertIn("ShouldUpdateSettingsBodyContentHeight", text)
 
-    def test_settings_dialog_uses_extracted_height_policy(self) -> None:
-        self.assertIn('#include "SettingsBodyScrollHeight.h"', MAIN)
-        self.assertIn("ShouldUpdateSettingsBodyContentHeight", MAIN)
-        self.assertNotIn(
-            "nearScrollBottom && measuredBodyH + 2.0f < s_settingsBodyContentH",
-            MAIN,
-        )
+    def test_settings_dialog_uses_native_scroll_ownership(self) -> None:
+        # Native child scrolling replaces the old manually measured body.
+        # Retain the pure legacy height-policy tests for historical callers.
+        shell=(ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8")
+        self.assertIn('ImGui::BeginChild("SettingsBody"', shell)
+        self.assertIn('winSize.y-headerH-footerH', shell)
+        self.assertNotIn('s_settingsBodyContentH', shell)
+
 
     def test_cpp_behavior_test_is_wired(self) -> None:
         self.assertTrue(CPP_TEST.is_file())

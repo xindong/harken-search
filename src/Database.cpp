@@ -56,6 +56,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+std::atomic<int> g_scanCommitIntervalOverrideMs{-1};
+std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -14063,7 +14068,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                                    const std::string& backfillDbPathSnapshot,
                                    int64_t backfillDbGenerationSnapshot,
                                    int64_t scanForegroundSessionId,
-                                   const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition) {
+                                   const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition,
+                                   std::function<void()> onFinalizing) {
     ScanStats stats;
     fs::path dir = Utf8ToPath(dirPath);
     auto markCancelledAndReturn = [&]() -> ScanStats {
@@ -14283,16 +14289,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     ? 0
                     : sqlite3_column_int(skipStmts.hasMiniSidecar, 0);
                 const int channels = std::max(1, sqlite3_column_int(skipStmts.hasMiniSidecar, 1));
+                sqlite3_reset(skipStmts.hasMiniSidecar);
                 return bytes == kScanMiniPeaks * channels * (int)sizeof(float);
             }
+            sqlite3_reset(skipStmts.hasMiniSidecar);
         }
         if (skipStmts.hasMiniLegacy) {
             sqlite3_reset(skipStmts.hasMiniLegacy);
             sqlite3_bind_text(skipStmts.hasMiniLegacy, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(skipStmts.hasMiniLegacy) == SQLITE_ROW &&
-                sqlite3_column_type(skipStmts.hasMiniLegacy, 0) != SQLITE_NULL) {
-                return sqlite3_column_int(skipStmts.hasMiniLegacy, 0) == kScanMiniPeaks * (int)sizeof(float);
-            }
+            const bool usable = sqlite3_step(skipStmts.hasMiniLegacy) == SQLITE_ROW &&
+                sqlite3_column_type(skipStmts.hasMiniLegacy, 0) != SQLITE_NULL &&
+                sqlite3_column_int(skipStmts.hasMiniLegacy, 0) == kScanMiniPeaks * (int)sizeof(float);
+            sqlite3_reset(skipStmts.hasMiniLegacy);
+            return usable;
         }
         return false;
     };
@@ -14691,11 +14700,14 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         writeBuffer.reserve((size_t)COMMIT_BATCH_SIZE);
 
         auto accountWriteBufferFailure = [&](const std::string& message) {
-            const int failedCount = (int)writeBuffer.size();
+            const int failedCount = (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                [](const WorkResult& result) { return !result.scanTerminalFailure; });
             if (failedCount > 0) {
                 stats.addError(message, failedCount);
                 stats.failedFiles += failedCount;
                 failedWriteResultsInBatch += failedCount;
+            } else {
+                stats.addDiagnostic(message);
             }
             writeBuffer.clear();
         };
@@ -15164,7 +15176,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
 
             if (batchOk && commitTransaction()) {
-                committedWritesInBatch += (int)writeBuffer.size();
+                committedWritesInBatch += (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                    [](const WorkResult& result) { return !result.scanTerminalFailure; });
                 stats.added += batchAdded;
                 stats.updated += batchUpdated;
                 stats.ingested += batchAdded + batchUpdated;
@@ -15272,6 +15285,11 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
         bool flushFailed = false;
         auto lastFlushTime = std::chrono::steady_clock::now();
+        int commitIntervalMs = COMMIT_INTERVAL_MS;
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+        const int testCommitIntervalMs = g_scanCommitIntervalOverrideMs.load();
+        if (testCommitIntervalMs >= 0) commitIntervalMs = testCommitIntervalMs;
+#endif
 
         while (consumed.load() < toConsume) {
             if (isCancelled()) {
@@ -15343,9 +15361,12 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
             bool timeSliceExpired = !writeBuffer.empty() &&
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - lastFlushTime).count() >= COMMIT_INTERVAL_MS;
+                    std::chrono::steady_clock::now() - lastFlushTime).count() >= commitIntervalMs;
 
             if (writeBuffer.size() >= (size_t)COMMIT_BATCH_SIZE || timeSliceExpired) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+                if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
                 if (!flushWriteBuffer()) {
                     flushFailed = true;
                     break;
@@ -15361,6 +15382,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (!flushFailed && !writeBuffer.empty()) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+            if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
             if (!flushWriteBuffer()) {
                 flushFailed = true;
                 DIAG_ACTION_FMT("Scan", "Tail batch flush failed: %s", m_lastError.c_str());
@@ -15375,6 +15399,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (flushFailed) {
+            // Workers have stopped; classify results never consumed by the writer
+            // before grouping the remaining unimported files as write failures.
+            while (!resultQ.empty()) {
+                WorkResult queued = std::move(resultQ.front());
+                resultQ.pop();
+                if (!queued.scanTerminalFailure && queued.ok) continue;
+                const std::string message = queued.errorMessage.empty()
+                    ? ("Failed to scan file: " + queued.record.filePath)
+                    : queued.errorMessage;
+                stats.addError(message);
+                ++stats.failedFiles;
+                ++failedScanResultsInBatch;
+            }
             const int accountedInBatch =
                 committedWritesInBatch + failedScanResultsInBatch + failedWriteResultsInBatch;
             const int unaccountedInBatch = (int)batch.size() - accountedInBatch;
@@ -15469,6 +15506,10 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 wi.existingCoverSuppressed = sqlite3_column_int(stmtExists, 5) != 0;
                 wi.existingDurationSeconds = (float)sqlite3_column_double(stmtExists, 6);
             }
+            // A SELECT left on SQLITE_ROW pins its WAL snapshot. Release it
+            // before any write or worker callback, otherwise a concurrent cache
+            // commit makes the scan's completion writes fail with BUSY_SNAPSHOT.
+            sqlite3_reset(stmtExists);
         } else {
             exists = fileExists(wi.filePath);
         }
@@ -15586,6 +15627,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                         state.cacheKey   = safeGetText(skipStmts.wfState, 4);
                         hasState = true;
                     }
+                    sqlite3_reset(skipStmts.wfState);
                 } else {
                     hasState = getWaveformCacheStateByPath(wi.filePath, state);
                 }
@@ -15903,6 +15945,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     }
     const bool wasCancelled = false; // 能执行到这里说明未取消，后续后处理可安全使用
 
+    // Finalization is a stage, not extra files added to the denominator.
+    // The callback is synchronous; callers retain their generation/cancel gates.
+    if (onFinalizing) onFinalizing();
     // Update callback once at end to ensure UI has latest counts.
     if (callback) {
         callback(completed.load(), stats.total,
@@ -15912,20 +15957,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
     // Count files whose persisted state actually changed.
     const int actualChangesCount = stats.added + stats.updated + stats.removed;
-    const int postBase = (std::max)(completed.load(), stats.total);
-    int postStageCount = 1; 
-    if (removeMissing) postStageCount++;
-    if (!scanCoverDeltas.empty()) postStageCount++;
-    if (completeImport && enqueueExtraction) postStageCount += 2;
-    postStageCount++; 
-    int postStageIdx = 0;
-
     auto reportPostStage = [&](const std::string& msg) {
-        postStageIdx++;
         if (!callback) return;
-        int cur = postBase + postStageIdx;
-        int tot = postBase + postStageCount;
-        callback(cur, tot, msg, true);
+        callback(completed.load(), stats.total, msg, true);
     };
 
     // Optional: remove missing files under this folder（先读完路径再验盘，避免长事务占锁）
@@ -15957,7 +15991,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
             checked++;
             if (callback && (checked % 500) == 0) {
-                callback(postBase + postStageIdx, postBase + postStageCount,
+                callback(completed.load(), stats.total,
                          std::string(L(ScanPost_CleanMissing)) + " (" + std::to_string(checked) + ")", true);
             }
         }
@@ -16001,7 +16035,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
            }
        }
         if (stats.unreachable > 0 && callback) {
-            callback(postBase + postStageIdx, postBase + postStageCount,
+            callback(completed.load(), stats.total,
                      std::string("Scan_NetworkLibraryUnreachable"), true);
         }
     }
@@ -16021,7 +16055,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (callback) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now - lastReport >= std::chrono::milliseconds(500)) {
-                    callback(postBase + postStageIdx, postBase + postStageCount,
+                    callback(completed.load(), stats.total,
                              std::string(L(ScanPost_FullWaveCache)) + " (" + std::to_string(depth) + ")", true);
                     lastReport = now;
                 }
@@ -16048,7 +16082,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (repaired <= 0) break;
             repairedTotal += repaired;
             if (callback) {
-                callback(postBase + postStageIdx, postBase + postStageCount,
+                callback(completed.load(), stats.total,
                          std::string(L(ScanPost_CoverThumb)) + " (" + std::to_string(repairedTotal) + ")", true);
             }
         }
@@ -16071,7 +16105,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     if (!fatalScanError && (!wasCancelled || hasCommittedChanges) && needsHeavyPostProcess) {
         // Mark foreground scanning complete before background maintenance begins.
         if (callback) {
-            callback(postBase + postStageCount, postBase + postStageCount, u8"扫描完毕！正在后台静默优化索引...", true);
+            callback(completed.load(), stats.total, u8"扫描完毕！正在后台静默优化索引...", true);
         }
 
         if (m_postProcessThread.joinable()) {
@@ -16128,7 +16162,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     } else {
         // Scans below 50 files can skip global reordering and close immediately.
         if (callback) {
-            callback(postBase + postStageCount, postBase + postStageCount,
+            callback(completed.load(), stats.total,
                      fatalScanError ? std::string(L(ScanFatalDbStop)) : std::string(L(ScanDone)),
                      true);
         }

@@ -9,7 +9,8 @@ enum class Period { Day, Night };
 enum class Mode { Off = 0, Automatic = 1, FixedDay = 2, FixedNight = 3 };
 
 constexpr Mode ModeFromSetting(int value) {
-    return value >= 0 && value <= 3 ? static_cast<Mode>(value) : Mode::Off;
+    // Older unchecked UI saved a fixed palette. It is now an actual off state.
+    return value == static_cast<int>(Mode::Automatic) ? Mode::Automatic : Mode::Off;
 }
 
 constexpr std::optional<Period> ResolvePeriod(Mode mode, std::optional<Period> clock) {

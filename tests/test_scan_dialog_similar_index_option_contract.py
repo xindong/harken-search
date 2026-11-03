@@ -76,7 +76,7 @@ def test_post_scan_similarity_index_waits_instead_of_dropping_busy_or_switch() -
     ]
 
 
-def test_post_scan_similarity_index_uses_small_status_line_not_window() -> None:
+def test_post_scan_similarity_has_its_own_progress_and_result_surfaces() -> None:
     start = MAIN.index("void StartBatchFeatureExtraction(AppState& state)")
     helper = MAIN[start : MAIN.index("void RenderUI(AppState& state)")]
     assert "OpenSimilarSoundsWindow" not in helper
@@ -87,9 +87,12 @@ def test_post_scan_similarity_index_uses_small_status_line_not_window() -> None:
     ]
     assert "正在建立相似数据库索引" not in dialog
     assert "相似音效索引后台自动运行中" not in dialog
-    assert "L(Scan_SimIndexRunningBg)" in dialog
-    assert "L(Main_SimIndexBuildingFmt)" in dialog
-    assert "Main_SimIndexBuildingFmt" in LEDGER_IDS
+    assert "L(Main_SimIndexBuildingFmt)" not in dialog
+    assert "##ScanSimilarityProgress" in helper
+    assert "##ScanSimilarityResult" in helper
+    assert "L(ScanUi_ImportComplete)" in helper
+    assert "result.succeeded" in helper
+    assert "L(ScanUi_ViewResult)" in MAIN
     consume = MAIN[
         MAIN.index("void RenderUI(AppState& state)") : MAIN.index(
             "ReleaseInScopeDragPauseLatchIfIdle()",
@@ -97,6 +100,8 @@ def test_post_scan_similarity_index_uses_small_status_line_not_window() -> None:
         )
     ]
     assert "showPostScanSimilarityIndexNotice = true" in consume
+    assert "scanSimilarityOwned = true" in consume
+    assert "showScanSimilarityDialog = true" in consume
     assert "bool showPostScanSimilarityIndexNotice = false;" in APP_STATE
     render_ui = MAIN[MAIN.index("void RenderUI(AppState& state)") :]
     assert "L(Scan_SimIndexRunningBg)" in render_ui

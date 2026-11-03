@@ -13,6 +13,8 @@ import re
 import subprocess
 import sys
 import time
+import uuid
+import wave
 
 from qa_folder_shortcuts import Driver
 
@@ -34,7 +36,7 @@ def all_results(driver):
 def run(exe, root, output, mode):
     import win32con
     import win32gui
-    from PIL import ImageGrab
+    from PIL import Image
 
     exe, root, output = exe.resolve(), root.resolve(), output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -56,7 +58,7 @@ def run(exe, root, output, mode):
     startup.wShowWindow = win32con.SW_SHOWNOACTIVATE
     process = subprocess.Popen([str(exe)], cwd=exe.parent, startupinfo=startup, env=dict(
         os.environ, AURA_HARNESS_MULTI_INSTANCE="1", AURA_HARNESS_LANE_KIND="folder-search",
-        AURA_DISABLE_SINGLE_INSTANCE="1"))
+        AURA_DISABLE_SINGLE_INSTANCE="1", HARKEN_QA_SEARCH_DELAY_MS="500"))
     hwnd = None
     cases = []
     failure = None
@@ -72,9 +74,20 @@ def run(exe, root, output, mode):
         raise TimeoutError("native query did not settle")
 
     def screenshot(name):
-        win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-        image = ImageGrab.grab(window=hwnd)
-        assert len(image.getcolors(image.width * image.height) or []) > 16
+        raw = runtime / ("frame-" + uuid.uuid4().hex + ".ppm")
+        driver.command({"cmd": "capture_preview_frame", "path": str(raw)})
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                with Image.open(raw) as captured:
+                    captured.load()  # The renderer publishes the path before the pixels finish writing.
+                    image = captured.convert("RGB")
+                raw.unlink()
+                break
+            except (FileNotFoundError, OSError, PermissionError):
+                assert time.monotonic() < deadline, "native frame capture did not finish"
+                time.sleep(.1)
+        assert len(image.getcolors(image.width * image.height) or []) > 16, "native frame is blank"
         path = output / (name + ".png")
         image.save(path)
         return str(path)
@@ -160,7 +173,7 @@ def run(exe, root, output, mode):
             assert time.monotonic() < deadline, "ActualLibrary baseline did not settle"
             time.sleep(.2)
         record("actual-library-before", state)
-        with ImageGrab.grab(window=hwnd) as visible_window:
+        with Image.open(output / "actual-library-before.png") as visible_window:
             visible_width = visible_window.width
         deadline = time.monotonic() + 20
         while state["window_width"] != visible_width:
@@ -201,11 +214,6 @@ def run(exe, root, output, mode):
 
         state = search(query)
         assert state["cover_filter"]["active"] and state["result_count"] > 0
-        click("refresh")
-        state = until("refresh kept filters", lambda s: s["search_text"] == query and
-                      s["cover_filter"]["active"] and s["result_count"] > 0)
-        record("refresh-keeps-cover-keyword", state)
-
         # The deferred folder-tree path is exercised with an isolated path. It
         # should yield an empty intersection without discarding cover/keyword.
         isolated_folder = root / "folder-filter-empty"
@@ -241,11 +249,6 @@ def run(exe, root, output, mode):
         state = until("three filters", lambda s: s["folder_filter"]["active"] and
                       s["cover_filter"]["active"] and s["search_text"] == query and s["result_count"] > 0)
         record("folder-cover-keyword-intersection", state)
-        click("refresh")
-        state = until("refresh three filters", lambda s: s["folder_filter"]["active"] and
-                      s["cover_filter"]["active"] and s["search_text"] == query and s["result_count"] > 0)
-        record("refresh-keeps-three-filters", state)
-
         driver.command({"cmd": "folder_search_sidebar", "section": 2})
         click("cover_mode_selector")
         click("cover_mode_option_1")
@@ -262,11 +265,6 @@ def run(exe, root, output, mode):
                 state["cover_filter"]["active"] and state["folder_filter"]["active"] and
                 state["result_count"] > 0)
         record("format-kept-after-real-search", state)
-        click("refresh")
-        state = until("format kept after refresh", lambda s: s["metadata_filters"]["format"] == "WAV" and
-                      s["cover_filter"]["mode"] == "has" and s["cover_filter"]["active"] and
-                      s["folder_filter"]["active"] and s["search_text"] == query and s["result_count"] > 0)
-        record("format-kept-after-refresh", state)
         click("chip_cover_key")
         state = until("remove cover key with cover mode", lambda s:
                       not s["cover_filter"]["active"] and s["cover_filter"]["mode"] == "has" and
@@ -292,6 +290,18 @@ def run(exe, root, output, mode):
                 state["qa_filter_extras"]["genre_count"] == 1 and
                 state["qa_filter_extras"]["instrument_count"] == 1 and
                 not state["qa_filter_extras"]["all_file_types"])
+        click("refresh")
+        state = until("manual refresh resets all filters", lambda s: s["search_text"] == "" and
+                      not s["folder_filter"]["active"] and not s["cover_filter"]["active"] and
+                      s["cover_filter"]["mode"] == "all" and s["metadata_filters"]["format"] == "" and
+                      s["qa_filter_extras"]["key"] == "" and
+                      s["qa_filter_extras"]["genre_count"] == 0 and
+                      s["qa_filter_extras"]["instrument_count"] == 0 and
+                      s["qa_filter_extras"]["all_file_types"] and s["total_count"] >= 11000)
+        assert state["tabs"]["active_name"] == "全部文件", state["tabs"]
+        record("manual-refresh-resets-all", state)
+
+        driver.command({"cmd": "folder_search_seed_extra_filters", "enabled": True})
         click("clear_all")
         state = until("explicit clear all", lambda s: s["search_text"] == "" and
                       not s["folder_filter"]["active"] and not s["cover_filter"]["active"] and
@@ -301,7 +311,174 @@ def run(exe, root, output, mode):
                       s["qa_filter_extras"]["instrument_count"] == 0 and
                       s["qa_filter_extras"]["all_file_types"] and s["total_count"] >= 11000)
         record("explicit-clear-all", state)
-        print("PASS: " + mode + " cover/keyword/folder/mode intersections, chip removals, refresh, clear all")
+
+        full_total = state["total_count"]
+        driver.command({"cmd": "folder_search_collection", "kind": "recently_played"})
+        state = until("recently played collection", lambda s:
+                      s["qa_collection"]["smart"] == 2 and s["total_count"] < full_total)
+        record("recently-played-before-refresh", state)
+        click("refresh")
+        state = until("refresh exits recently played", lambda s:
+                      s["qa_collection"] == {"smart": 0, "user_index": -1} and
+                      s["total_count"] == full_total and s["tabs"]["active_name"] == "全部文件")
+        record("refresh-exits-recently-played", state)
+
+        driver.command({"cmd": "folder_search_collection", "kind": "user"})
+        state = until("user collection", lambda s:
+                      s["qa_collection"]["user_index"] >= 0 and s["total_count"] == 0)
+        record("user-collection-before-refresh", state)
+        click("refresh")
+        state = until("refresh exits user collection", lambda s:
+                      s["qa_collection"] == {"smart": 0, "user_index": -1} and
+                      s["total_count"] == full_total and s["tabs"]["active_name"] == "全部文件")
+        record("refresh-exits-user-collection", state)
+
+        # Click Refresh before a folder's deferred selection applies.
+        # The product debounce is 150 ms; the QA command extends this window
+        # for stable event ordering without changing the selection logic.
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        state = until("format before queued folder", lambda s: s["metadata_filters"]["format"] == "WAV")
+        rect = state["qa_filter_ui_rects"]["refresh"]
+        x, y = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+        started = time.monotonic()
+        driver.command({"cmd": "queue_folder_tree_selection", "path": str(isolated_folder),
+                        "defer_for_refresh": True})
+        driver.command({"cmd": "folder_search_pointer", "phase": "down", "x": x, "y": y})
+        time.sleep(.015)
+        driver.command({"cmd": "folder_search_pointer", "phase": "up", "x": x, "y": y})
+        elapsed_ms = (time.monotonic() - started) * 1000
+        assert elapsed_ms < 300, f"refresh missed the queued-folder window: {elapsed_ms:.1f} ms"
+        time.sleep(.55)
+        state = state_ready()
+        record("refresh-cancels-queued-folder", state)
+        cases[-1]["queued_refresh_elapsed_ms"] = elapsed_ms
+        assert state["metadata_filters"]["format"] == "", "Refresh did not clear the active format filter"
+        assert not state["folder_filter"]["active"], "queued folder filter reapplied after Refresh"
+        assert state["total_count"] == full_total, "Refresh did not restore all files"
+
+        # A completed full scan may refresh results, but only the later manual
+        # click should clear the user's active filters.
+        fixture = root / ("refresh-full-scan-fixture-" + uuid.uuid4().hex[:8])
+        fixture.mkdir(exist_ok=True)
+        for index in range(2):
+            sample = fixture / f"refresh-sample-{index}.wav"
+            if not sample.exists():
+                with wave.open(str(sample), "wb") as sound:
+                    sound.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                    sound.writeframes(bytes(16000 * 2))
+        search(query)
+        driver.command({"cmd": "set_folder_filter", "path": actual_folder})
+        state = until("filters before full scan", lambda s: s["search_text"] == query and
+                      s["folder_filter"]["active"] and s["result_count"] > 0)
+        record("before-full-scan", state)
+        previous_scan = driver.command({"cmd": "scan_status"})["scan_started_at_ms"]
+        driver.command({"cmd": "qa_rightclick_scan", "path": str(fixture), "cache_waveforms": True})
+        deadline = time.monotonic() + 120
+        while True:
+            scan = driver.command({"cmd": "scan_status"})
+            if scan["scan_started_at_ms"] != previous_scan and not scan["scanning"]:
+                assert scan["scan_workflow_stage"] == "completed", scan
+                assert (scan["scan_strategy"] == "full" and scan["added"] == 2 and
+                        scan["errors"] == 0 and scan["mini_waveforms_completed"] == 2), scan
+                break
+            assert time.monotonic() < deadline, ("full scan did not complete", scan)
+            time.sleep(.1)
+        driver.command({"cmd": "open_scan_dialog"})
+        driver.command({"cmd": "info_page_state"})
+        for phase in ("hover", "down", "up"):
+            driver.command({"cmd": "info_page_pointer", "key": "info.qaScanDone", "phase": phase})
+        state = until("scan completion kept filters", lambda s: s["search_text"] == query and
+                      s["folder_filter"]["active"] and
+                      Path(s["folder_filter"]["path"]).resolve() == fixture.resolve())
+        record("full-scan-kept-filters-before-click", state)
+        cases[-1]["full_scan"] = scan
+        click("refresh")
+        state = until("manual refresh after full scan", lambda s: s["search_text"] == "" and
+                      not s["folder_filter"]["active"] and s["tabs"]["active_name"] == "全部文件" and
+                      s["total_count"] >= 11000)
+        record("manual-refresh-after-full-scan", state)
+        full_total = state["total_count"]
+        click("refresh")
+        state = until("repeat manual refresh", lambda s: s["search_text"] == "" and
+                      not s["folder_filter"]["active"] and s["tabs"]["active_name"] == "全部文件" and
+                      s["total_count"] == full_total)
+        record("repeat-manual-refresh", state)
+
+        # A locked tab still needs its saved filters to match the refreshed list
+        # when the user switches away and returns.
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        until("locked-tab filter baseline", lambda s: s["metadata_filters"]["format"] == "WAV")
+        driver.command({"cmd": "set_tab_lock", "locked": True})
+        click("refresh")
+        state = until("locked-tab refresh", lambda s: s["metadata_filters"]["format"] == "" and
+                      s["total_count"] == full_total and s["tabs"]["active_locked"])
+        assert not state["tabs"]["explicit_refresh_pending"], "locked tab stayed writable after Refresh settled"
+        record("locked-tab-refresh", state)
+        locked_index = state["tabs"]["active_index"]
+        if state["tabs"]["count"] > 1:
+            other_index = 0 if locked_index != 0 else 1
+            driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        else:
+            new_tab = driver.command({"cmd": "new_tab"})
+            assert new_tab["ok"] and new_tab["tab_index"] != locked_index
+            other_index = new_tab["tab_index"]
+        until("switch away from locked tab", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = until("return to locked tab", lambda s: s["tabs"]["active_index"] == locked_index)
+        record("locked-tab-return-after-refresh", state)
+        assert state["tabs"]["active_locked"], "manual refresh removed the tab lock"
+        assert state["metadata_filters"]["format"] == "", "locked tab restored stale filters after Refresh"
+        assert state["total_count"] == full_total, "locked tab did not keep the refreshed full list"
+
+        # Supersede a locked tab's explicit Refresh before its query completes.
+        # Returning to the tab must rebuild the saved reset view, not old WAV filters.
+        driver.command({"cmd": "set_tab_lock", "locked": False})
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        until("supersede baseline", lambda s: s["metadata_filters"]["format"] == "WAV")
+        driver.command({"cmd": "set_tab_lock", "locked": True})
+        rect = state_ready()["qa_filter_ui_rects"]["refresh"]
+        x, y = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
+        driver.command({"cmd": "folder_search_pointer", "phase": "down", "x": x, "y": y})
+        time.sleep(.08)
+        driver.command({"cmd": "folder_search_pointer", "phase": "up", "x": x, "y": y})
+        deadline = time.monotonic() + 3
+        while True:
+            mid = driver.command({"cmd": "get_state"})
+            if mid["tabs"]["explicit_refresh_pending"] and mid["pending_search_request_id"]:
+                break
+            assert time.monotonic() < deadline, "could not observe pending locked-tab Refresh"
+            time.sleep(.01)
+        driver.command({"cmd": "set_metadata_filter", "format": "MP3"})
+        state_ready()
+        driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        until("supersede switch away", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = state_ready()
+        record("locked-tab-refresh-superseded", state)
+        assert state["metadata_filters"]["format"] == "", "superseded locked refresh restored old WAV filter"
+        assert state["total_count"] == full_total, "superseded locked refresh did not restore full list"
+        driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        until("second supersede switch away", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = state_ready()
+        record("locked-tab-refresh-superseded-second-return", state)
+        assert state["metadata_filters"]["format"] == "", "second return restored old locked-tab filter"
+        assert state["total_count"] == full_total, "second return restored stale locked-tab count"
+
+        # Clear All is a separate action: it must not grant Refresh's locked-tab override.
+        driver.command({"cmd": "set_tab_lock", "locked": False})
+        driver.command({"cmd": "set_metadata_filter", "format": "WAV"})
+        state = until("locked Clear All baseline", lambda s: s["metadata_filters"]["format"] == "WAV")
+        wav_total = state["total_count"]
+        driver.command({"cmd": "set_tab_lock", "locked": True})
+        click("clear_all")
+        driver.command({"cmd": "activate_tab", "tab_index": other_index})
+        until("Clear All switch away", lambda s: s["tabs"]["active_index"] == other_index)
+        driver.command({"cmd": "activate_tab", "tab_index": locked_index})
+        state = state_ready()
+        record("locked-tab-clear-all-return", state)
+        assert state["metadata_filters"]["format"] == "WAV", "Clear All changed locked-tab saved filters"
+        assert state["total_count"] == wav_total, "Clear All changed locked-tab saved count"
     except Exception as exc:
         failure = repr(exc)
         raise
@@ -309,15 +486,18 @@ def run(exe, root, output, mode):
         if hwnd and win32gui.IsWindow(hwnd):
             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
         try:
-            process.wait(timeout=15)
+            exit_code = process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.terminate()
-            process.wait(timeout=10)
+            exit_code = process.wait(timeout=10)
         report = {"exe": str(exe), "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
-                  "mode": mode, "cases": cases, "failure": failure,
+                  "mode": mode, "cases": cases, "failure": failure, "exit_code": exit_code,
                   "input": "native ImGui cover click and RenderUI keyword submission"}
         (output / "result.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        if failure is None:
+            assert exit_code == 0, f"native package exited with {exit_code}"
+    print("PASS: " + mode + " filter independence, manual reset, and full-scan refresh")
 
 
 if __name__ == "__main__":
