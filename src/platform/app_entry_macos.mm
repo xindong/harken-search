@@ -26,6 +26,7 @@
 #include "../WorkerThreadPolicy.h"
 #include "../Utils.h"
 #include "harken_user_data_layout.h"
+#include "macos_qa_bridge.h"
 #include "filesystem.h"
 #include "system.h"
 #include <algorithm>
@@ -39,6 +40,7 @@ extern std::string g_appSettingsPathUtf8;
 namespace {
 NSWindow* mainWindow = nil;
 bool qaSmoke = false;
+bool qaControl = false;
 int applicationExitCode = 0;
 std::ofstream runtimeLog;
 void RecordStage(const char* stage) {
@@ -100,7 +102,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     const auto settingsDir = std::filesystem::path(Platform::HarkenUserData::WideToUtf8Path(layout.activeSettingsDir));
     g_appSettingsPathUtf8 = (settingsDir / "settings.ini").string();
     g_imguiIniPathUtf8 = (settingsDir / "imgui.ini").string();
-    if (qaSmoke) {
+    if (qaSmoke || qaControl) {
         const auto output = QaOutput();
         if (!Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(output.string()) ||
             !Platform::FileSystem::EnsureDirectoryExists(output.string())) {
@@ -169,14 +171,14 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         state->startupDatabaseSetupReason = reason;
     }
     RecordStage("ProductInitialized");
-    if (qaSmoke) {
+    if (qaSmoke || qaControl) {
         std::ofstream snapshot(QaOutput() / "startup.txt", std::ios::app);
         snapshot << "settings=" << g_appSettingsPathUtf8 << "\n"
                  << "default_library_directory=" << GetDefaultDbDirUtf8() << "\n"
                  << "reading_font=" << state->settings.readingFontSize << "\n"
                  << "needs_database=" << state->startupNeedsDatabaseSetup << "\n";
     }
-    if (qaSmoke) [self.window orderBack:nil];
+    if (qaSmoke || qaControl) [self.window orderBack:nil];
     else [self.window makeKeyAndOrderFront:nil];
     self.renderTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self
         selector:@selector(renderFrame) userInfo:nil repeats:YES];
@@ -186,9 +188,16 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     const int width = static_cast<int>(pixels.size.width), height = static_cast<int>(pixels.size.height);
     if (width < 1 || height < 1 || width > 16384 || height > 16384) return NO;
     std::vector<unsigned char> raw(static_cast<size_t>(width) * height * 4);
+    // Keep earlier renderer errors separate from the framebuffer read result.
+    for (GLenum prior = glGetError(); prior != GL_NO_ERROR; prior = glGetError())
+        fprintf(stderr, "Mac renderer error before capture: 0x%x\n", prior);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, raw.data());
-    if (glGetError() != GL_NO_ERROR) return NO;
+    const GLenum readError = glGetError();
+    if (readError != GL_NO_ERROR) {
+        fprintf(stderr, "Mac framebuffer read failed: 0x%x\n", readError);
+        return NO;
+    }
     NSBitmapImageRep* bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nil pixelsWide:width pixelsHigh:height
         bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
         bytesPerRow:width * 4 bitsPerPixel:32];
@@ -209,7 +218,9 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     ++frameCount;
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) MarkUiLeftClickNow();
     if (g_suppressImGuiDragTooltipFrames > 0) --g_suppressImGuiDragTooltipFrames;
+    const auto qaRequest = qaControl ? HarkenSearch::MacQa::Poll(*state) : HarkenSearch::MacQa::Request{};
     PumpAppDatabaseAndAudio(*state);
+    PumpAppScanRefresh(*state, ImGui::IsPopupOpen(L(Dlg_ScanFolder)));
     state->visibleFilePaths.clear();
     state->warmupFramesRemaining = std::max(0, 4 - frameCount);
     if (state->dbSwitchSettleFramesRemaining > 0) --state->dbSwitchSettleFramesRemaining;
@@ -231,7 +242,18 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         if ([self captureFrame]) RecordStage("ScreenshotSaved");
         else { applicationExitCode = 2; RecordStage("ScreenshotFailed"); }
     }
+    if (qaControl && qaRequest.id) {
+        const bool captured = qaRequest.capture && [self captureFrame];
+        if (!HarkenSearch::MacQa::Reply(*state, qaRequest, captured)) {
+            applicationExitCode = 4; RecordStage("QaReplyFailed");
+        }
+    }
     [self.glView.openGLContext flushBuffer];
+    if (qaControl && qaRequest.close) {
+        RecordStage("NormalCloseRequested");
+        Platform::RequestWindowClose((__bridge void*)self.window);
+        return;
+    }
     if (qaSmoke && frameCount == 100) {
         RecordStage("NormalCloseRequested");
         Platform::RequestWindowClose((__bridge void*)self.window);
@@ -285,6 +307,7 @@ int main(int argc, const char* argv[]) {
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         for (int i = 1; i < argc; ++i) {
             if (std::strcmp(argv[i], "--mac-qa-smoke") == 0) qaSmoke = true;
+            if (std::strcmp(argv[i], "--mac-qa-control") == 0) qaControl = true;
         }
 #endif
         NSApplication* app = NSApplication.sharedApplication;

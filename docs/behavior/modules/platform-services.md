@@ -77,6 +77,13 @@ test process's `TMPDIR` to the card's isolated QA directory.
 
 ## Interface Binding
 
+The macOS database picker now uses a single-file Cocoa open panel with the
+existing localized title and optional initial directory. Cancel returns an empty
+path. The shared UI still owns database mounting and error presentation. The
+diagnostic Mac command bridge is available only in non-beta diagnostic preview
+builds with a compiled isolation root; scan/open paths must remain under that
+root. It is not a production automation or remote-control API.
+
 | Interface / Entry | Kind | Source | Expected behavior |
 | --- | --- | --- | --- |
 | `Platform::*` | API | design + Graphify | 按能力隐藏系统、文件、图像和音频平台类型 |

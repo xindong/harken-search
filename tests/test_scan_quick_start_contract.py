@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
 WINDOWS_MAIN = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+RUNTIME = (ROOT / "src/AppRuntime.cpp").read_text(encoding="utf-8")
 HELPER = (ROOT / "src/FolderTreeContextActions.h").read_text(encoding="utf-8")
 APP = (ROOT / "src/AppState.h").read_text(encoding="utf-8")
 REAPER_IMPORT = (ROOT / "src/ReaperFileListImportWorkflow.cpp").read_text(encoding="utf-8")
@@ -148,10 +149,11 @@ class ScanQuickStartContract(unittest.TestCase):
         self.assertIn("if (state.isScanning.load() || state.scanCompletionPending.load()) return;", RESET)
 
     def test_progressive_refresh_keeps_existing_safe_gate(self):
-        self.assertIn("state.scanDataCommitted.load()", WINDOWS_MAIN)
-        self.assertIn("state.isScanning.load() && !scanPopupOpen", WINDOWS_MAIN)
-        self.assertIn("RefreshSearchResults(state, false)", WINDOWS_MAIN)
-        self.assertIn("state.needsDatabaseRefresh", WINDOWS_MAIN)
+        self.assertIn("PumpAppScanRefresh(state,", WINDOWS_MAIN)
+        self.assertIn("state.scanDataCommitted.load()", RUNTIME)
+        self.assertIn("state.isScanning.load() && !scanPopupOpen", RUNTIME)
+        self.assertIn("RefreshSearchResults(state, false)", RUNTIME)
+        self.assertIn("state.needsDatabaseRefresh", RUNTIME)
 
     def test_ctest_registration_is_source_only(self):
         self.assertIn("TestScanQuickStartContract", CMake)

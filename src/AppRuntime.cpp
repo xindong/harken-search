@@ -10,6 +10,9 @@
 #include "BackfillWorkerPool.h"
 #include "CoverModule.h"
 #include "Utils.h"
+#include "PathUtils.h"
+#include <filesystem>
+namespace fs = std::filesystem;
 std::string ResolveCanonicalHarkenSearchDatabasePathUtf8(const std::string&);
 #include "platform/system.h"
 #include "platform/filesystem.h"
@@ -228,4 +231,118 @@ bool ResolveStartupDatabaseSelectionForMount(
         ? AppState::StartupDatabaseSetupReason::MissingConfiguredDatabase
         : AppState::StartupDatabaseSetupReason::FirstRunNoDatabase;
     return false;
+}
+
+void PumpAppScanRefresh(AppState& state, bool scanPopupOpen) {
+
+    // Check if database needs refresh during scan (渐进式更新)
+    DevTools_BeginFramePhase("PreRender.ScanRefresh");
+    if (state.scanDataCommitted.load()) {
+        state.scanDataCommitted = false;
+
+        // During scan, refresh list incrementally to show newly committed data.
+        if (state.viewMode == ViewMode::Database && state.isScanning.load() && !scanPopupOpen) {
+            // 如果有活跃的搜索/筛选条件，不覆盖 totalFileCount
+            // 避免扫描期间覆盖用户的搜索结果总数（由 RefreshSearchResults 正确计算）
+            // 性能：getFileCount() 大库时耗时可观，节流为每 2 秒最多一次（规范 §11）
+            bool hasActiveFilters = (state.searchBuffer[0] != '\0') ||
+                state.folderFilterActive || state.coverFilterActive;
+            if (!hasActiveFilters) {
+                static double s_lastScanGetFileCountTime = 0.0;
+                double nowSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (s_lastScanGetFileCountTime == 0.0 || nowSeconds - s_lastScanGetFileCountTime >= 2.0) {
+                    state.totalFileCount = state.database.getFileCount();
+                    s_lastScanGetFileCountTime = nowSeconds;
+                }
+            }
+
+            // 节流阀 (Throttling) - 防止刷新过快导致闪烁
+            // Heavy list refresh is throttled.
+            const double REFRESH_THROTTLE_INTERVAL = 1.0;
+            auto now = std::chrono::steady_clock::now();
+            auto nowSeconds = std::chrono::duration<double>(now.time_since_epoch()).count();
+            double timeSinceLastRefresh = (state.lastIncrementalRefreshTime == 0.0) ?
+                REFRESH_THROTTLE_INTERVAL : (nowSeconds - state.lastIncrementalRefreshTime);
+
+            // 如果当前在第一页（显示前PAGE_SIZE个结果），刷新以显示新添加的文件
+            // 这样用户可以看到列表在不断填充，体验更好
+            if ((state.loadedCount <= AppState::PAGE_SIZE || state.loadedCount == 0) &&
+                timeSinceLastRefresh >= REFRESH_THROTTLE_INTERVAL) {
+                // Refresh the first page so the data source includes the new file; ImGui updates visible rows itself.
+                RefreshSearchResults(state, false); // keep pagination state, refresh data source
+                state.lastIncrementalRefreshTime = nowSeconds;
+            }
+            // 如果用户不在第一页，只更新总数，不刷新列表（避免丢失滚动位置）
+            // 用户可以通过滚动到顶部或等待扫描完成来查看新数据
+
+            // 同步到当前标签页
+            if (!state.listTabs.empty()) {
+                state.currentTab().searchResults = state.searchResults;
+                state.currentTab().totalFileCount = state.totalFileCount;
+                state.currentTab().loadedCount = state.loadedCount;
+                state.currentTab().hasMoreResults = state.hasMoreResults;
+            }
+        }
+    }
+    DevTools_EndFramePhase();
+
+    // Refresh database-backed rows after scanning completes.
+    DevTools_BeginFramePhase("PreRender.DatabaseRefresh");
+    if (state.needsDatabaseRefresh && !scanPopupOpen) {
+        state.needsDatabaseRefresh = false;
+        state.invalidateCoverWallAfterDatabaseContentChange();
+
+        if (state.scanThread.joinable() && !state.isScanning.load(std::memory_order_acquire)) {
+            state.scanThread.join();
+        }
+
+        // scanDirectoryEx commits before returning, so no second commit is needed here.
+        // Rebuild folder_index (write op), then use a fresh read-only
+        // connection via deferred bootstrap to avoid stale WAL snapshot
+        // missing library roots written by the scan thread.
+        state.database.rebuildFolderIndex();
+        StartDeferredSidebarBootstrap(state, true, false);
+
+        // Auto-filter to scanned path and load first page.
+        if (state.autoFilterToScannedPath && !state.lastScannedPath.empty()) {
+            state.autoFilterToScannedPath = false;
+            // Scan auto-filter paths are canonical in both fallback branches.
+            try {
+                fs::path p = Utf8ToPath(state.lastScannedPath);
+                state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(PathToUtf8(p));
+            } catch (...) {
+                state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.lastScannedPath);
+            }
+            state.folderFilterActive = true;
+        }
+
+        // QA/UI scan completion is a database-content transition. Normalize
+        // back to Database before refreshing so a scan started from another
+        // view cannot leave the DB populated while the visible list reports
+        // zero rows.
+        state.viewMode = ViewMode::Database;
+
+        // Reset pagination and query the database; repaint alone would retain stale rows.
+        state.searchResults.clear();
+        state.bumpSearchResultsGen();
+        state.loadedCount = 0;
+        RefreshSearchResults(state, true); // true = 重置分页并重新查询数据库
+        if (state.scanTotal.load() > 0 &&
+            !state.isScanning.load(std::memory_order_acquire)) {
+            state.dbSwitchSettleFramesRemaining =
+                (std::max)(state.dbSwitchSettleFramesRemaining, 120);
+        }
+
+        // 同步到当前标签页
+        if (!state.listTabs.empty()) {
+            state.currentTab().searchResults = state.searchResults;
+            state.currentTab().totalFileCount = state.totalFileCount;
+            state.currentTab().loadedCount = state.loadedCount;
+            state.currentTab().hasMoreResults = state.hasMoreResults;
+            state.currentTab().selectedFolderPath = state.selectedFolderPath;
+            state.currentTab().folderFilterActive = state.folderFilterActive;
+        }
+    }
+    DevTools_EndFramePhase();
+
 }

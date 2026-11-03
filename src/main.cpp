@@ -33654,7 +33654,7 @@ void RenderUI(AppState& state) {
             std::string ext = fullName.substr(fullName.size() - 3);
             if (ext != ".db") fullName += ".db";
         }
-        std::string fullPath = BuildDatabasePackageMainPathUtf8(dbDir + "\\" + fullName);
+        std::string fullPath = BuildDatabasePackageMainPathUtf8(PathToUtf8(Utf8ToPath(dbDir) / Utf8ToPath(fullName)));
         if (requireDatabaseSetup) {
             ImGui::PushStyleColor(ImGuiCol_Text, setupPalette.hintColor);
             ImGui::TextWrapped("%s %s", L(Meta_FullPath), fullPath.c_str());
