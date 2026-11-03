@@ -371,7 +371,7 @@ def run(args):
             s["metadata_filters"]["category"] == long_raw_category and
             s["search_ready"] and s["result_count"] > 0, timeout=5)
         record("long-raw-category-selected", current)
-    except Exception as exc:
+    except BaseException as exc:
         failure = repr(exc)
         raise
     finally:
