@@ -50511,7 +50511,7 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
 
-            RenderSidebarPanelContent(state, "FloatSidebar");
+            RenderSidebarPanelContent(state, "DetachedSidebar");
         }
         ImGui::End();
         ImGui::PopStyleVar(4);
