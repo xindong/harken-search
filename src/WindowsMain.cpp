@@ -4783,6 +4783,12 @@ static void PollQaCommandFile(AppState& state) {
             }
             const auto& observation=su::observation;
             const auto& editor=su::SettingsEditor();
+            const auto& palette=ThemeColors::current();
+            auto color=[](const ImVec4& c){return ThemeColors::toARGBHex(c);};
+            auto colorPopups=nlohmann::json::array();
+            for(const auto* w:ImGui::GetCurrentContext()->Windows)
+                if(w->WasActive && (w->Flags&ImGuiWindowFlags_Popup))
+                    colorPopups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}}});
             auto rect=[](const ImVec4& r){return std::array<float,4>{r.x,r.y,r.z,r.w};};
             auto items=nlohmann::json::array();
             for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled},{"font_pixels",item.fontPixels}});
@@ -4803,6 +4809,11 @@ static void PollQaCommandFile(AppState& state) {
                 {"draft_fft",editor.runtime.Value().fft},{"live_fft",state.spectrogramFFTSize},{"default_fft",GetReadableSpectrogramPreset().fftSize},
                 {"schedule",(int)editor.app.Value().themeScheduleMode},{"tool",editor.action},{"recording",editor.recording},
                 {"error",su::SettingsEditor().error},{"imgui_errors",ImGui::GetCurrentContext()->ErrorCountCurrentFrame},
+                {"color_popups",colorPopups},{"custom_enabled",state.settings.useCustomColors},
+                {"custom_colors",{{"bg",color(state.settings.customBgColor)},{"text",color(state.settings.customTextColor)},
+                    {"accent",color(state.settings.customAccentColor)},{"waveform",color(state.settings.customWaveformColor)},{"volume",color(state.settings.customVolumeColor)}}},
+                {"rendered_colors",{{"bg",color(palette.mainWindowBG)},{"text",color(palette.resultsText)},
+                    {"accent",color(palette.resultsSelection)},{"waveform",color(palette.waveformColor)},{"volume",color(palette.volumeColor)}}},
                 {"imgui_log",ImGui::GetCurrentContext()->DebugLogBuf.c_str()},
                 {"bounds",rect(observation.bounds)},{"items",items}}).dump();
         }
@@ -6564,6 +6575,7 @@ static void PollQaCommandFile(AppState& state) {
                 {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
                 {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
                 {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
+                {"editor_ui",nlohmann::json::parse(ThemeScheduleEditorQaObservation())},
                 {"active_bg",ThemeColors::toARGBHex(ThemeColors::current().mainWindowBG)},
                 {"active_accent",ThemeColors::toARGBHex(ThemeColors::current().toolbarAccent)},
                 {"imgui_bg",ThemeColors::toARGBHex(ImGui::GetStyle().Colors[ImGuiCol_WindowBg])},
