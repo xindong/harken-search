@@ -23,7 +23,7 @@ void LoadBrandIconsOnce();
 void DrawBrandIcon(BrandIcon icon, float size);
 void LoadBrandWordmarksOnce();
 // Loads (and caches) a PNG shipped relative to the executable, e.g.
-// "assets/icons/contributors/cindy.png". Returns glId==0 when the file or
+// "assets/icons/brand/cindy.png". Returns glId==0 when the file or
 // decoding is unavailable; callers must keep a text fallback. The texture is
 // process-owned and released at shutdown.
 struct PackagedAssetTex {

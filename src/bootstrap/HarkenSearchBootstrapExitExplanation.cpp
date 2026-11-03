@@ -73,20 +73,30 @@ BootstrapExitExplanation ExplainBootstrapExit(int exitCode) {
             exitCode);
         return explanation;
 
-    // Nothing was replaced.  Usually a stray Aris process, a locked file, or a
-    // transient admission failure -- retrying genuinely works.
+    // Nothing was replaced.  A stray process or a transient admission
+    // failure -- retrying genuinely works.
     case BootstrapExitCode::InvocationRejected:
     case BootstrapExitCode::AuthorityRejected:
     case BootstrapExitCode::AdmissionRejected:
     case BootstrapExitCode::OldProcessRejected:
     case BootstrapExitCode::OldProcessTimedOut:
-    case BootstrapExitCode::FilesystemRejected:
     case BootstrapExitCode::LaunchRejected:
     case BootstrapExitCode::HealthRejected:
         explanation.outcome = BootstrapExitOutcome::Retryable;
         explanation.message = WithCode(
             u8"更新未能完成，当前版本未被改动。"
             u8"请完全退出 Harken Search（包括托盘图标）后再试一次。",
+            exitCode);
+        return explanation;
+
+    // The old application has exited, but this code covers several native
+    // failures before or during replacement. Do not promise unchanged files; the
+    // exact status is in bootstrap-last-failure.txt for support.
+    case BootstrapExitCode::FilesystemRejected:
+        explanation.outcome = BootstrapExitOutcome::Retryable;
+        explanation.message = WithCode(
+            u8"更新未能完成：更新文件时遇到问题。"
+            u8"请把这个错误码发给我们。",
             exitCode);
         return explanation;
 

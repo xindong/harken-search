@@ -418,6 +418,22 @@ void test_schema_seven_recovery_requires_reinstall_without_migration() {
           "schema seven is not migrated or guessed into deployment identity authority");
 }
 
+void test_schema_ten_recovery_keeps_authenticated_handoff_required() {
+    auto fixture = recoveryFixture();
+    check(fixture.valid, "schema-ten recovery fixture is valid");
+    if (!fixture.valid) return;
+    fixture.record.schemaVersion = 10U;
+    check(admitAuthenticatedRecovery(
+              fixture, authenticatedChannel(fixture, fixture.invocation)).ok(),
+          "schema-ten directory transactions accept the exact fresh authenticated handoff");
+    const auto marker = aris::bootstrap::AdmitDurableBootstrapRecovery(
+        fixture.record, fixture.trust, fixture.record.parentProcessIdentity,
+        fixture.record.updaterOwnedBase, fixture.record.stagingRoot,
+        fixture.record.transactionRoot, AcceptFixtureSignature);
+    check(marker.status == aris::bootstrap::DurableRecoveryAdmissionStatus::FreshHandoffRequired,
+          "schema-ten journals alone never authorize recovery mutations");
+}
+
 void test_recovery_rehydrates_signed_removal_with_backup_authority() {
     const RecoveryFixture fixture = recoveryFixture(packageWithSignedRemoval());
     check(fixture.valid, "signed-removal recovery fixture is valid");
@@ -630,6 +646,7 @@ int main() {
     test_recovery_requires_fresh_full_authenticated_handoff();
     test_recovery_accepts_new_parent_lifetime_for_exact_same_image();
     test_schema_seven_recovery_requires_reinstall_without_migration();
+    test_schema_ten_recovery_keeps_authenticated_handoff_required();
     test_recovery_rehydrates_signed_removal_with_backup_authority();
     test_recovery_rejects_fresh_package_or_digest_substitution();
     test_recovery_rejects_dynamic_invocation_binding_substitution();
