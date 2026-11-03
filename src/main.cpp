@@ -49612,9 +49612,12 @@ void RenderUI(AppState& state) {
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
-        if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) {
+        static bool activeOuterGrips[2]{};
+        const bool modalBlocksGrips = ImGui::GetTopMostPopupModal() != nullptr;
+        if (modalBlocksGrips || !ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) {
             activeGripId.clear();
             activeGripDistanceSq = std::numeric_limits<float>::max();
+            activeOuterGrips[0] = activeOuterGrips[1] = false;
         }
         const auto gripHitDistanceSq = [](const aura::ui::dock::AdjacentLeafGrip& grip, const ImVec2& mouse) {
             const float minX = grip.rect.x;
@@ -49626,6 +49629,7 @@ void RenderUI(AppState& state) {
             return dx * dx + dy * dy;
         };
         for (int i = 0; i < adjacentCount; ++i) {
+            if (modalBlocksGrips) break;
             const auto& grip = adjacentGrips[i];
             char gripId[64];
             std::snprintf(gripId, sizeof(gripId), "##DockSplitGrip-%s-%s", grip.firstId.c_str(), grip.secondId.c_str());
@@ -49704,6 +49708,7 @@ void RenderUI(AppState& state) {
             ImGui::End();
         }
         for (int column = 0; column < 2; ++column) {
+            if (modalBlocksGrips) break;
             const bool left = column == 0;
             const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
             const auto& grip = left ? leftOuterGrip : rightOuterGrip;
@@ -49726,9 +49731,7 @@ void RenderUI(AppState& state) {
                 const bool pointerHit = ImGui::IsMouseHoveringRect(
                     ImVec2(grip.rect.x, grip.rect.y),
                     ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                static bool activeOuterGrips[2]{};
                 bool& activeRightOuterGrip = activeOuterGrips[column];
-                if (!ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) activeRightOuterGrip = false;
                 if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
                     activeRightOuterGrip = true;
                 const bool hovered = ImGui::IsItemHovered() || pointerHit || activeRightOuterGrip;
