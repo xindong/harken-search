@@ -5203,6 +5203,7 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"pending_db_path\":\"" + jsonEscape(state.pendingDbPath) + "\",";
         result += "\"recent_db_paths\":" + recentDbPathsJson + ",";
         result += "\"db_switch_in_progress\":" + std::string(state.dbSwitchInProgress ? "true" : "false") + ",";
+        result += "\"db_switch_background_active\":" + std::string(state.dbSwitchAwaitingResults ? "true" : "false") + ",";
         result += "\"db_switch_just_completed\":" + std::string(state.dbSwitchJustCompleted ? "true" : "false") + ",";
         result += "\"db_switch_settle_frames\":" + std::to_string(state.dbSwitchSettleFramesRemaining) + ",";
         result += "\"pending_search_request_id\":" + std::to_string((unsigned long long)state.pendingSearchRequestId) + ",";

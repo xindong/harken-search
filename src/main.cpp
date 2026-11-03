@@ -10807,6 +10807,7 @@ static bool SwitchDatabase(AppState& state,
     state.pendingDbPath = effectiveDbPathUtf8;
     state.pendingDbOldPath = state.currentDbPathUtf8;
     state.dbSwitchInProgress = true;
+    state.dbSwitchAwaitingResults = true;
     if (state.featureIndexStatistics) state.featureIndexStatistics->SetDatabase("", -1);
     if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
     state.idleAssetStatisticsPending = false;
@@ -26241,6 +26242,7 @@ struct DockQaPanelSnapshot {
     std::string windowName;
 };
 static std::map<std::string, DockQaPanelSnapshot> g_dockQaPanels;
+static std::map<int, std::pair<ImRect, int>> g_resultsTabQaRects;
 
 static void RecordDockQaPanel(const char* module, AppState::PanelState& panel,
                               ImVec2 pos, ImVec2 size, ImRect title, ImRect label) {
@@ -26291,6 +26293,27 @@ std::string GetDockQaState() {
     const auto rectJson = [](const ImRect& r) {
         return nlohmann::json{{"x", r.Min.x}, {"y", r.Min.y}, {"w", r.GetWidth()}, {"h", r.GetHeight()}};
     };
+    out["results_tabs"] = nlohmann::json::array();
+    out["results_tab_model_order"] = nlohmann::json::array();
+    if (g_appState) {
+        const auto& state = *g_appState;
+        if (state.activeTabIndex >= 0 && state.activeTabIndex < (int)state.listTabs.size())
+            out["active_tab_id"] = state.listTabs[state.activeTabIndex].id;
+        std::vector<const ListTab*> displayedTabs;
+        for (const auto& tab : state.listTabs) {
+            out["results_tab_model_order"].push_back(tab.id);
+            const auto found = g_resultsTabQaRects.find(tab.id);
+            if (found == g_resultsTabQaRects.end() || found->second.second + 1 < ImGui::GetFrameCount()) continue;
+            displayedTabs.push_back(&tab);
+        }
+        std::sort(displayedTabs.begin(), displayedTabs.end(), [](const ListTab* a, const ListTab* b) {
+            return g_resultsTabQaRects.at(a->id).first.Min.x < g_resultsTabQaRects.at(b->id).first.Min.x;
+        });
+        for (const ListTab* tab : displayedTabs) {
+            out["results_tabs"].push_back({{"id", tab->id}, {"name", tab->name},
+                {"rect", rectJson(g_resultsTabQaRects.at(tab->id).first)}});
+        }
+    }
     for (const auto& [module, entry] : g_dockQaPanels) {
         if (!entry.panel || !entry.panel->visible || entry.frame + 1 < ImGui::GetFrameCount()) continue;
         const auto& r = entry.window;
@@ -26313,10 +26336,18 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
     const auto& e = found->second;
     if (!e.panel || !e.panel->visible || e.frame + 1 < ImGui::GetFrameCount()) return false;
     ImRect r = e.label;
-    if (part == "blank") {
-        if (!e.panel->floating) return false;
-        r = ImRect(ImVec2(e.label.Max.x + 2.0f, e.title.Min.y),
-            ImVec2(e.title.Max.x - e.title.GetHeight() - 4.0f, e.title.Max.y));
+    if (module == "search-results" && part.rfind("tab:", 0) == 0) {
+        const auto tab = g_resultsTabQaRects.find(std::atoi(part.c_str() + 4));
+        if (tab == g_resultsTabQaRects.end() || tab->second.second + 1 < ImGui::GetFrameCount()) return false;
+        r = tab->second.first;
+    } else if (part == "blank") {
+        if (!e.panel->floating) {
+            if (module != "search-results") return false;
+            r = e.title;
+        } else {
+            r = ImRect(ImVec2(e.label.Max.x + 2.0f, e.title.Min.y),
+                ImVec2(e.title.Max.x - e.title.GetHeight() - 4.0f, e.title.Max.y));
+        }
     } else if (part == "body") {
         r = ImRect(ImVec2(e.window.x + 8.0f, e.title.Max.y + 8.0f),
             ImVec2(e.window.x + e.window.width - 8.0f, e.window.y + e.window.height - 8.0f));
@@ -29505,7 +29536,67 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
 }
 
+static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& bounds) {
+    if (bounds.GetWidth() <= 0.0f || bounds.GetHeight() <= 0.0f) return;
+
+    // A small, smoothly shaded mesh uses the existing ImGui renderer on every
+    // platform. No extra graphics context, shader, texture or loading window.
+    const auto& theme = ThemeColors::current();
+    const ImVec4 base = theme.resultsBG;
+    const ImVec4 ink(
+        theme.resultsText.x * 0.78f + theme.controlAccent.x * 0.22f,
+        theme.resultsText.y * 0.78f + theme.controlAccent.y * 0.22f,
+        theme.resultsText.z * 0.78f + theme.controlAccent.z * 0.22f, 1.0f);
+    const float time = static_cast<float>(std::fmod(ImGui::GetTime(), 3600.0));
+    constexpr int columns = 48, rows = 32;
+    constexpr int stride = columns + 1;
+    drawList->PushClipRect(bounds.Min, bounds.Max, false);
+    drawList->PrimReserve(columns * rows * 6, stride * (rows + 1));
+    const ImDrawIdx start = static_cast<ImDrawIdx>(drawList->_VtxCurrentIdx);
+    const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+    for (int y = 0; y <= rows; ++y) {
+        const float v = static_cast<float>(y) / rows;
+        for (int x = 0; x <= columns; ++x) {
+            const float u = static_cast<float>(x) / columns;
+            const float warp = std::sin(v * 3.2f - time * 0.45f) * 1.15f +
+                std::sin(u * 3.6f + time * 0.28f) * 0.50f;
+            const float swell = 0.5f + 0.5f *
+                std::sin(u * 5.5f + v * 2.0f + warp - time * 0.50f);
+            const float undertow = 0.5f + 0.5f *
+                std::sin(u * 3.0f - v * 4.0f + time * 0.32f);
+            // Fade into the panel edges rather than introducing a new frame.
+            const float edge = std::sin(u * 3.14159265f) * std::sin(v * 3.14159265f);
+            const float amount = edge *
+                (0.012f + 0.105f * (swell * swell * 0.75f + undertow * 0.25f));
+            const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                base.x + (ink.x - base.x) * amount,
+                base.y + (ink.y - base.y) * amount,
+                base.z + (ink.z - base.z) * amount, 1.0f));
+            drawList->PrimWriteVtx(ImVec2(
+                bounds.Min.x + u * bounds.GetWidth(),
+                bounds.Min.y + v * bounds.GetHeight()), uv, color);
+        }
+    }
+    for (int y = 0; y < rows; ++y) {
+        for (int x = 0; x < columns; ++x) {
+            const ImDrawIdx a = static_cast<ImDrawIdx>(start + y * stride + x);
+            const ImDrawIdx b = static_cast<ImDrawIdx>(a + 1);
+            const ImDrawIdx c = static_cast<ImDrawIdx>(a + stride);
+            const ImDrawIdx d = static_cast<ImDrawIdx>(c + 1);
+            drawList->PrimWriteIdx(a); drawList->PrimWriteIdx(b); drawList->PrimWriteIdx(c);
+            drawList->PrimWriteIdx(b); drawList->PrimWriteIdx(d); drawList->PrimWriteIdx(c);
+        }
+    }
+    drawList->PopClipRect();
+}
+
 void RenderUI(AppState& state) {
+    // Follow only the initial page, not counts, facets or the frame-settle budget.
+    if (state.dbSwitchAwaitingResults && !state.dbSwitchInProgress &&
+        !state.dbSwitchNeedsRefresh &&
+        (!state.database.isOpen() || state.pendingSearchRequestId == 0)) {
+        state.dbSwitchAwaitingResults = false;
+    }
     if (state.featureIndexStatistics &&
         (!state.panelSimilarSounds.visible || state.dbSwitchInProgress || !state.database.isOpen())) {
         state.featureIndexStatistics->SetDatabase("", -1);
@@ -30908,7 +30999,7 @@ void RenderUI(AppState& state) {
                 ImGui::Dummy(ImVec2(0.0f, 12.0f));
                 ImGui::Separator();
                 ImGui::Dummy(ImVec2(0.0f, 14.0f));
-                const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/contributors/cindy.png");
+                const auto cindyLogo = aura::ui::LoadPackagedAsset("assets/icons/brand/cindy.png");
                 if (cindyLogo.glId != 0 && cindyLogo.h > 0) {
                     ImGui::Image((ImTextureID)(intptr_t)cindyLogo.glId, ImVec2(96.0f, 96.0f));
                     ImGui::SameLine(0.0f, 18.0f);
@@ -30946,9 +31037,9 @@ void RenderUI(AppState& state) {
                 ImGui::Separator();
                 ImGui::Dummy(ImVec2(0.0f, 8.0f));
                 const auto wecomQr = aura::ui::LoadPackagedAsset(
-                    "assets/icons/community/wecom-qr.png");
+                    "assets/icons/brand/wecom-qr.png");
                 const auto feishuQr = aura::ui::LoadPackagedAsset(
-                    "assets/icons/community/feishu-qr.png");
+                    "assets/icons/brand/feishu-qr.png");
                 const float qrSize = (std::min)(220.0f,
                     (contentW - 24.0f) * 0.5f);
                 if (BeginTransientScrollbarTable("##AboutCommunityQr", 2,
@@ -36084,32 +36175,6 @@ void RenderUI(AppState& state) {
         const ImVec4 kToolbarSearchBorder = kUseLapisBlueSearchChrome
             ? uiWithAlpha(toolbarTheme.chromeBorder, 1.0f)
             : uiWithAlpha(uiMix(kToolbarSearchCue, uiColors[ImGuiCol_Border], 0.18f), 0.34f);
-        auto drawToolbarGlassTag = [&](const char* text, float anchorY, const ImVec4& tint, const ImVec4& textColor) {
-            ImDrawList* chipDl = ImGui::GetWindowDrawList();
-            ImVec2 cursor = ImGui::GetCursorScreenPos();
-            ImVec2 ts = ImGui::CalcTextSize(text);
-            const float capsuleTrackH = 34.0f;
-            const float chipH = 22.0f;
-            const float chipPadX = 8.0f;
-            const float chipPadY = 3.0f;
-            ImVec2 chipMin(cursor.x, anchorY + (capsuleTrackH - chipH) * 0.5f);
-            ImVec2 chipMax(chipMin.x + ts.x + chipPadX * 2.0f, chipMin.y + chipH);
-            const ImVec4 chipFill = uiWithAlpha(uiMix(toolbarTheme.toolbarBG, tint, 0.10f), 0.78f);
-            const ImVec4 chipFillTop = uiWithAlpha(uiMix(tint, kThemeTextStrong, 0.18f), 0.10f);
-            const ImVec4 chipEdge = uiWithAlpha(uiMix(tint, uiColors[ImGuiCol_Border], 0.20f), 0.30f);
-            chipDl->AddRectFilled(chipMin, chipMax, ImGui::GetColorU32(chipFill), 11.0f);
-            chipDl->AddRectFilledMultiColor(
-                ImVec2(chipMin.x + 1.0f, chipMin.y + 1.0f),
-                ImVec2(chipMax.x - 1.0f, chipMin.y + chipH * 0.55f),
-                ImGui::GetColorU32(chipFillTop),
-                ImGui::GetColorU32(chipFillTop),
-                ImGui::GetColorU32(uiWithAlpha(tint, 0.0f)),
-                ImGui::GetColorU32(uiWithAlpha(tint, 0.0f)));
-            chipDl->AddRect(chipMin, chipMax, ImGui::GetColorU32(chipEdge), 11.0f, 0, 1.0f);
-            chipDl->AddText(ImVec2(chipMin.x + chipPadX, chipMin.y + chipPadY), ImGui::GetColorU32(textColor), text);
-            ImGui::SetCursorScreenPos(chipMin);
-            ImGui::Dummy(ImVec2(chipMax.x - chipMin.x, chipH));
-        };
         auto drawToolbarChromeShell = [&](ImDrawList* shellDl,
                                            const ImVec2& shellMin,
                                            const ImVec2& shellMax,
@@ -36572,20 +36637,6 @@ void RenderUI(AppState& state) {
         const float kSearchModeHintReserve = layoutCompactWidth ? 0.0f : 56.0f;
         const float kToolbarNavGap = layoutCompactWidth ? 8.0f : 95.0f;
         float navCapsuleScreenX = searchRectMax.x + kToolbarNavGap + kSearchModeHintReserve;
-
-        // 状态文字 (自然绘制，由于后方强制设定了坐标，这里的文字宽窄不再产生任何推力)
-        ImGui::SameLine(0, 10);
-        ImGui::SetCursorPosY(capsuleBaseY);
-        const bool scanOwnsToolbarStatus =
-            state.isScanning.load(std::memory_order_acquire) ||
-            state.scanCompletionPending.load(std::memory_order_acquire);
-        if (!scanOwnsToolbarStatus) {
-            if (state.searchDebounce.isPending()) {
-                drawToolbarGlassTag("...", ImGui::GetWindowPos().y + kToolbarCenterY, uiMix(kToolbarAccent, toolbarTheme.toolbarBG, 0.38f), uiWithAlpha(kThemeTextStrong, 0.98f));
-            } else if (state.filterQueryState == FilterQueryState::Running) {
-                drawToolbarGlassTag(L(Search_Querying), ImGui::GetWindowPos().y + kToolbarCenterY, uiMix(kToolbarAccent, toolbarTheme.toolbarBG, 0.30f), uiWithAlpha(kThemeTextStrong, 0.98f));
-            }
-        }
 
         // 恢复 Y 坐标基准
         ImGui::SetCursorPosY(capsuleBaseY);
@@ -37429,20 +37480,9 @@ void RenderUI(AppState& state) {
             state.lastClickedIndex = -1;
         }
 
-        // 物理隔离：状态区固定 75px 占位，无文字时 Dummy 占坑，导航条位置绝对静止
+        // Preserve toolbar spacing; library-switch feedback belongs in the results background.
         ImGui::SameLine(0, 10);
-        ImGui::BeginGroup();
-        {
-            const float kStatusFixedWidth = 75.0f;
-            if (state.searchDebounce.isPending()) {
-                ImGui::TextDisabled("...");
-            } else if (state.filterQueryState == FilterQueryState::Running) {
-                ImGui::TextDisabled(L(Main_QueryingProgress));
-            } else {
-                ImGui::Dummy(ImVec2(kStatusFixedWidth, 1.0f));
-            }
-        }
-        ImGui::EndGroup();
+        ImGui::Dummy(ImVec2(75.0f, 1.0f));
 
 // F-034: Column view preset dial (single open-source surface)
         if (showPresetDial && toolbarFlow.valid && toolbarFlow.presetDial.visible) {
@@ -38522,10 +38562,46 @@ void RenderUI(AppState& state) {
                     1.0f);
             }
         }
-        // The custom long-press drag owns the tab gesture so ImGui cannot
-        // reorder the tab before it becomes a Dock drag session.
-        if (ImGui::BeginTabBar("##ListTabBar", ImGuiTabBarFlags_AutoSelectNewTabs |
+        float resultsTabsRight = ImGui::GetCursorScreenPos().x;
+        ImRect resultsTabShelf;
+        ImRect resultsAddTabRect;
+        std::vector<std::pair<int, int>> resultsTabOrder;
+        bool resultsTabOrderRestoring = false;
+        // Tabs own selection and sorting. Only the unused shelf starts a panel drag.
+        if (ImGui::BeginTabBar("##ListTabBar", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs |
                                  ImGuiTabBarFlags_FittingPolicyScroll)) {
+            ImGuiTabBar* resultsTabBar = ImGui::GetCurrentTabBar();
+            static ImGuiID lastResultsTabBarId = 0;
+            static bool resultsTabRestorePending = false;
+            resultsTabRestorePending |= lastResultsTabBarId != resultsTabBar->ID;
+            lastResultsTabBarId = resultsTabBar->ID;
+            resultsTabOrderRestoring = resultsTabRestorePending;
+            if (resultsTabOrderRestoring) {
+                // Home, floating and docked hosts cache separate ImGui bars.
+                // Restore the application order before laying out a returning bar.
+                resultsTabBar->ReorderRequestTabId = 0;
+                bool allTabsRestored = true;
+                for (int ti = 0; ti < (int)state.listTabs.size(); ++ti) {
+                    char stableLabel[32];
+                    snprintf(stableLabel, sizeof(stableLabel), "###Tab%d", state.listTabs[ti].id);
+                    ImGuiTabItem* cached = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetID(stableLabel));
+                    if (!cached) {
+                        allTabsRestored = false;
+                        continue;
+                    }
+                    const int offset = ti - ImGui::TabBarGetTabOrder(resultsTabBar, cached);
+                    if (offset != 0) {
+                        ImGui::TabBarQueueReorder(resultsTabBar, cached, offset);
+                        allTabsRestored &= ImGui::TabBarProcessReorder(resultsTabBar);
+                        resultsTabBar->ReorderRequestTabId = 0;
+                    }
+                }
+                // Newly created tabs register below. Keep model writeback blocked
+                // until a later frame can restore every current stable ID.
+                resultsTabRestorePending = !allTabsRestored;
+                if (state.pendingTabSelectionIndex < 0)
+                    state.pendingTabSelectionIndex = state.activeTabIndex;
+            }
             if (state.pendingTabSelectionIndex < 0 ||
                 state.pendingTabSelectionIndex >= (int)state.listTabs.size()) {
                 state.pendingTabSelectionIndex = -1;
@@ -38541,7 +38617,6 @@ void RenderUI(AppState& state) {
                 const char* tabName = visibleTabName.empty()
                     ? L(Misc_AllFiles)
                     : visibleTabName.c_str();
-                char label[256];
                 const bool isActiveTab = (ti == state.activeTabIndex);
                 const int64_t tabSnapshotCount = tab.totalFileCount >= 0
                     ? tab.totalFileCount
@@ -38554,8 +38629,8 @@ void RenderUI(AppState& state) {
                         ? (int64_t)state.loadedCount
                         : (int64_t)state.searchResults.size());
                 const int64_t displayCount = std::max<int64_t>(0, isActiveTab ? liveCount : tabSnapshotCount);
-                snprintf(label, sizeof(label), "%s%s (%lld)###Tab%d",
-                         prefix, tabName, (long long)displayCount, tab.id);
+                const std::string label = std::string(prefix) + tabName + " (" +
+                    std::to_string(displayCount) + ")###Tab" + std::to_string(tab.id);
 
                 // Tab color palette
                 static const ImU32 kTabPalette[8] = {
@@ -38570,7 +38645,9 @@ void RenderUI(AppState& state) {
                 if (state.pendingTabSelectionIndex == ti) {
                     tabFlags |= ImGuiTabItemFlags_SetSelected;
                 }
-                bool tabOpen = ImGui::BeginTabItem(label, state.listTabs.size() > 1 ? &isOpen : nullptr, tabFlags);
+                bool tabOpen = ImGui::BeginTabItem(label.c_str(), state.listTabs.size() > 1 ? &isOpen : nullptr, tabFlags);
+                if (ImGuiTabItem* renderedTab = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetItemID()))
+                    resultsTabOrder.emplace_back(tab.id, ImGui::TabBarGetTabOrder(resultsTabBar, renderedTab));
                 {
                     const std::string annotationTabKey = "workspace.tab." + std::to_string(tab.id);
                     ThemeInspector::RegisterLastItem(annotationTabKey.c_str(), tabName, "src/main.cpp:44378");
@@ -38594,6 +38671,10 @@ void RenderUI(AppState& state) {
                     ImDrawList* tabDl = ImGui::GetWindowDrawList();
                     ImVec2 tMin = ImGui::GetItemRectMin();
                     ImVec2 tMax = ImGui::GetItemRectMax();
+                    resultsTabsRight = std::max(resultsTabsRight, tMax.x);
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+                    g_resultsTabQaRects[tab.id] = {ImRect(tMin, tMax), ImGui::GetFrameCount()};
+#endif
                     if (tMax.x > tMin.x && tMax.y > tMin.y) {
                         const bool tabHovered = ImGui::IsItemHovered();
                         const float tabAlpha = tabOpen ? 0.18f : (tabHovered ? 0.08f : 0.0f);
@@ -38615,14 +38696,6 @@ void RenderUI(AppState& state) {
                                 ImVec2(tMax.x - 0.5f, tMax.y - 1.5f),
                                 ImGui::GetColorU32(uiWithAlpha(uiMix(resultsTheme.resultsSelection, resultsTheme.resultsOutline, 0.14f), tabOpen ? 0.36f : 0.12f)),
                                 5.0f, 0, 1.0f);
-                        }
-                        if (!g_searchResultsDockPanel.floating && !g_dockLayout.Find("search-results")) {
-                            const ImVec2 resultsPos = s_centerPanelMin;
-                            const ImVec2 resultsSize(
-                                s_centerPanelMax.x - s_centerPanelMin.x,
-                                s_centerPanelMax.y - s_centerPanelMin.y);
-                            beginDockedPanelDrag("search-results", g_searchResultsDockPanel,
-                                resultsPos, resultsSize);
                         }
                     }
                 }
@@ -38694,7 +38767,9 @@ void RenderUI(AppState& state) {
 
 // Music Mode: Album Grid Tab (F-033)
             if (state.settings.productMode == ProductMode::Music) {
-                if (ImGui::BeginTabItem(L(Main_AlbumTabLabel))) {
+                const bool albumOpen = ImGui::BeginTabItem(L(Main_AlbumTabLabel));
+                resultsTabsRight = std::max(resultsTabsRight, ImGui::GetItemRectMax().x);
+                if (albumOpen) {
                     if (state.albumGrid.showTrackList && state.albumGrid.selectedIdx >= 0
                         && state.albumGrid.selectedIdx < (int)state.albumGrid.albums.size()) {
 // Track-list mode: slim breadcrumb only; normal file list renders below
@@ -39027,6 +39102,8 @@ void RenderUI(AppState& state) {
             if (ImGui::TabItemButton(" + ", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
                 state.createAndActivateNewDatabaseTab(ImGui::GetTime());
             }
+            resultsAddTabRect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            resultsTabShelf = resultsTabBar->BarRect;
             if (HoveredForHelp()) HarkenSearch::SetTooltip(L(Main_NewTabTip));
             ImGui::EndTabBar();
         }
@@ -39065,6 +39142,70 @@ void RenderUI(AppState& state) {
 
             if (tpClk) ImGui::OpenPopup("##TabPresets");
             if (tpHov) HarkenSearch::SetTooltip(L(Main_TabPresetTip));
+
+            if (!g_searchResultsDockPanel.floating && !g_dockLayout.Find("search-results")) {
+                float blankLeft = std::max(resultsTabShelf.Min.x, resultsTabsRight);
+                float blankRight = std::min(resultsTabShelf.Max.x, tpMin.x);
+                // The add button may sit beside the tabs or at the trailing edge.
+                // Use the larger free interval, never cover either button.
+                if (resultsAddTabRect.Max.x > blankLeft && resultsAddTabRect.Min.x < blankRight) {
+                    if (resultsAddTabRect.Min.x - blankLeft >= blankRight - resultsAddTabRect.Max.x)
+                        blankRight = resultsAddTabRect.Min.x;
+                    else
+                        blankLeft = resultsAddTabRect.Max.x;
+                }
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+                // Tab targets still need panel geometry when no empty shelf remains.
+                const ImRect blankRect(ImVec2(blankLeft, resultsTabShelf.Min.y),
+                    ImVec2(std::max(blankLeft, blankRight), resultsTabShelf.Max.y));
+                RecordDockQaPanel("search-results", g_searchResultsDockPanel, s_centerPanelMin,
+                    ImVec2(s_centerPanelMax.x - s_centerPanelMin.x, s_centerPanelMax.y - s_centerPanelMin.y),
+                    blankRect, blankRect);
+#endif
+                if (blankRight > blankLeft && resultsTabShelf.GetHeight() > 0.0f) {
+                    ImGui::SetCursorScreenPos(ImVec2(blankLeft, resultsTabShelf.Min.y));
+                    ImGui::InvisibleButton("##ResultsShelfDrag",
+                        ImVec2(blankRight - blankLeft, resultsTabShelf.GetHeight()));
+                    beginDockedPanelDrag("search-results", g_searchResultsDockPanel, s_centerPanelMin,
+                        ImVec2(s_centerPanelMax.x - s_centerPanelMin.x, s_centerPanelMax.y - s_centerPanelMin.y));
+                    ImGui::SetCursorScreenPos(tpSavedCursor);
+                }
+            }
+        }
+
+        // ImGui maintains display order independently. Commit it to the saved
+        // workspaces after release, preserving every index by stable tab ID.
+        if (!resultsTabOrderRestoring && !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+            resultsTabOrder.size() == state.listTabs.size()) {
+            std::sort(resultsTabOrder.begin(), resultsTabOrder.end(),
+                [](const auto& a, const auto& b) { return a.second < b.second; });
+            bool changed = false;
+            for (size_t i = 0; i < resultsTabOrder.size(); ++i)
+                changed |= resultsTabOrder[i].first != state.listTabs[i].id;
+            if (changed) {
+                const auto idAt = [&](int index) {
+                    return index >= 0 && index < (int)state.listTabs.size() ? state.listTabs[index].id : -1;
+                };
+                const int activeId = idAt(state.activeTabIndex);
+                const int pendingId = idAt(state.pendingTabSelectionIndex);
+                const int closingId = idAt(tabToClose);
+                const int renamingId = idAt(renamingTabIndex);
+                for (size_t i = 0; i < resultsTabOrder.size(); ++i) {
+                    auto found = std::find_if(state.listTabs.begin() + i, state.listTabs.end(),
+                        [&](const ListTab& tab) { return tab.id == resultsTabOrder[i].first; });
+                    if (found != state.listTabs.end()) std::rotate(state.listTabs.begin() + i, found, found + 1);
+                }
+                const auto indexOf = [&](int id) {
+                    for (int i = 0; i < (int)state.listTabs.size(); ++i)
+                        if (state.listTabs[i].id == id) return i;
+                    return -1;
+                };
+                state.activeTabIndex = indexOf(activeId);
+                state.pendingTabSelectionIndex = indexOf(pendingId);
+                tabToClose = indexOf(closingId);
+                renamingTabIndex = indexOf(renamingId);
+                SaveAppSettings(state);
+            }
         }
 
         if (listTabFont) ImGui::PopFont();
@@ -40607,6 +40748,7 @@ void RenderUI(AppState& state) {
             ImGui::PopStyleColor();
             ImGui::PopFont();
             }
+            const float librarySwitchBodyTop = ImGui::GetCurrentTable()->RowPosY2;
 
             const bool isResultsWaveColumnVisible =
                 (ImGui::TableGetColumnFlags(1) & ImGuiTableColumnFlags_IsEnabled) != 0;
@@ -43355,7 +43497,13 @@ void RenderUI(AppState& state) {
             // Capture table bounding box right before EndTable so
             // GetItemRectMax() returns the full table rect, not some stale
             // inner item's rect.
+            ImRect librarySwitchBounds = ImGui::GetCurrentTable()->InnerClipRect;
+            librarySwitchBounds.Min.y = std::max(librarySwitchBounds.Min.y, librarySwitchBodyTop);
+            ImDrawList* librarySwitchDrawList = ImGui::GetWindowDrawList();
             ImGui::EndTable();
+            if (state.dbSwitchAwaitingResults) {
+                DrawLibrarySwitchBackground(librarySwitchDrawList, librarySwitchBounds);
+            }
         }
         if (listFont) ImGui::PopFont();
         ImGui::PopStyleVar();

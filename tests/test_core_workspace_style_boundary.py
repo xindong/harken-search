@@ -390,7 +390,7 @@ def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
     toolbar_search = between(
         main,
         "const bool kUseLapisBlueSearchChrome",
-        "auto drawToolbarGlassTag",
+        "auto drawToolbarChromeShell",
     )
 
     assert "kUseLapisBlueSearchChrome" in main

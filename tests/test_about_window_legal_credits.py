@@ -71,7 +71,7 @@ def test_about_shows_brand_and_cindy_artwork():
     assert "aura::ui::LoadPackagedAsset" in block
     assert "assets/icons/brand/harken@2x.png" in block
     assert "harken-search-menu-wordmark" in block
-    assert "assets/icons/contributors/cindy.png" in block
+    assert "assets/icons/brand/cindy.png" in block
 
 
 def test_about_uses_confirmed_brand_and_two_reading_pages():
@@ -99,12 +99,12 @@ def test_about_embeds_the_packaged_legal_documents():
 
 
 def test_contributor_and_brand_assets_exist_and_ship():
-    assert (ROOT / "assets/icons/contributors/cindy.png").is_file()
+    assert (ROOT / "assets/icons/brand/cindy.png").is_file()
     assert (ROOT / "assets/icons/brand/harken.png").is_file()
     assert (ROOT / "assets/logos/brand/harken-search-wordmark-white.png").is_file()
     assert (ROOT / "assets/logos/brand/harken-search-wordmark-black.png").is_file()
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-    assert "assets/icons/contributors" in cmake
+    assert "assets/icons/brand" in cmake
 
 
 def test_ledger_entries_complete_for_about():
@@ -157,15 +157,17 @@ def test_about_shows_both_community_qrs_and_simple_invite_note():
         assert f"L({key})" in block, key
 
     assets = (
-        "assets/icons/community/wecom-qr.png",
-        "assets/icons/community/feishu-qr.png",
+        "assets/icons/brand/wecom-qr.png",
+        "assets/icons/brand/feishu-qr.png",
     )
     for relative in assets:
         assert relative in block, relative
-        assert (ROOT / relative).is_file(), relative
+        source = ROOT / "assets/icons/community" / Path(relative).name
+        assert source.is_file(), source
 
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "assets/icons/community" in cmake
+    assert '"$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/brand"' in cmake
 
     entries = _ledger_entries()
     assert entries["Main_AboutCommunityNote"]["zh"] == "欢迎加入社群，交流使用体验与功能建议。"

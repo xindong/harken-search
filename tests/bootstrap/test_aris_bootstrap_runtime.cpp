@@ -539,6 +539,62 @@ void test_filesystem_begin_failure_after_old_exit_relaunches_exact_untouched_app
           "Begin rejection validates the old path, FileId, and content snapshot without opening health IPC");
 }
 
+void test_forward_only_begin_failure_carries_exact_status_detail() {
+    const auto admission = fixtureAdmission();
+    WindowsBootstrapFilesystemRoots roots{
+        admission.plan->invocation.stagingRoot,
+        admission.plan->invocation.transactionRoot,
+        admission.plan->invocation.updaterOwnedBase,
+        admission.plan->invocation.invocationIdentity};
+    ProcessFake process;
+    HealthFake health;
+    FilesystemFake filesystem;
+    filesystem.beginResult = {
+        WindowsBootstrapFilesystemStatus::JournalCollision};
+
+    BootstrapApplicationOptions forwardOnly;
+    forwardOnly.forwardOnly = true;
+
+    const auto result = RunBootstrapApplication(
+        admission, roots, {process, health, filesystem}, forwardOnly);
+
+    check(result.status == BootstrapApplicationStatus::FilesystemRejected &&
+              result.reason == "filesystem-begin-failed" && !result.mutated,
+          "forward-only Begin rejection keeps the typed reason");
+    check(result.detail.find("begin-status=") == 0 &&
+              result.detail.find("(JournalCollision)") != std::string::npos &&
+              result.detail.find("native=") != std::string::npos,
+          "forward-only Begin rejection carries the exact status in the failure detail");
+}
+
+void test_filesystem_status_names_are_complete() {
+    bool allNamed = true;
+    for (int i = 0;
+         i <= static_cast<int>(WindowsBootstrapFilesystemStatus::BackendFailure);
+         ++i) {
+        const auto status = static_cast<WindowsBootstrapFilesystemStatus>(i);
+        const char* name = WindowsBootstrapFilesystemStatusName(status);
+        if (name == nullptr || std::string(name).empty() ||
+            std::string(name) == std::string("Unknown")) {
+            allNamed = false;
+        }
+    }
+    check(allNamed, "every filesystem status enumerator has a stable name");
+    bool allBackendNamed = true;
+    for (int i = 0;
+         i <= static_cast<int>(WindowsFilesystemBackendStatus::IoFailure);
+         ++i) {
+        const auto status = static_cast<WindowsFilesystemBackendStatus>(i);
+        const char* name = WindowsFilesystemBackendStatusName(status);
+        if (name == nullptr || std::string(name).empty() ||
+            std::string(name) == std::string("Unknown")) {
+            allBackendNamed = false;
+        }
+    }
+    check(allBackendNamed,
+          "every backend status enumerator has a stable name");
+}
+
 void test_failure_count_binding_failure_after_old_exit_relaunches_exact_untouched_application() {
     const auto admission = fixtureAdmission();
     WindowsBootstrapFilesystemRoots roots{
@@ -2109,6 +2165,8 @@ int main() {
     test_signed_removal_flows_through_runtime_before_health_commit();
     test_authenticated_failure_count_is_bound_before_durable_publication();
     test_filesystem_begin_failure_after_old_exit_relaunches_exact_untouched_application();
+    test_forward_only_begin_failure_carries_exact_status_detail();
+    test_filesystem_status_names_are_complete();
     test_failure_count_binding_failure_after_old_exit_relaunches_exact_untouched_application();
     test_child_ownership_is_released_only_after_commit_publication();
     test_child_ownership_prepare_failure_rolls_back_with_handle();

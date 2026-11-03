@@ -3095,14 +3095,17 @@ public:
         const WindowsFilesystemBackendResult parentValidated =
             RevalidateBoundRoot(parent);
         if (!parentValidated.ok()) return parentValidated;
-        if (parentRole != WindowsFilesystemRootRole::Transaction) {
+        if (parentRole != WindowsFilesystemRootRole::Transaction &&
+            parentRole != WindowsFilesystemRootRole::Install) {
             return InvalidRole();
         }
         const WindowsFilesystemBackendResult authorized =
-            RequireAuthorizedMutation(parent,
-                                      WindowsFilesystemRootRole::Transaction);
+            RequireAuthorizedMutation(parent, parentRole);
         if (!authorized.ok()) return authorized;
-        if (!HasJournalLeaseForRoot(parent)) return MissingJournalLease();
+        if (parentRole == WindowsFilesystemRootRole::Transaction
+                ? !HasJournalLeaseForRoot(parent) : journalLeases_.empty()) {
+            return MissingJournalLease();
+        }
 
         std::wstring widePath;
         if (!RelativePathToWide(relativePath, widePath)) return InvalidRelativePath();
@@ -3113,8 +3116,9 @@ public:
 
         const WindowsFilesystemBackendResult beforeCreate =
             FailureAtTestPoint(
-                WindowsBootstrapFilesystemNativeTestFailurePoint::
-                    BackupDirectoryBeforeCreate);
+                parentRole == WindowsFilesystemRootRole::Install
+                    ? WindowsBootstrapFilesystemNativeTestFailurePoint::InstallDirectoryBeforeCreate
+                    : WindowsBootstrapFilesystemNativeTestFailurePoint::BackupDirectoryBeforeCreate);
         if (!beforeCreate.ok()) return beforeCreate;
 
         NativeOpenResult opened = OpenRelativeWide(
@@ -3134,8 +3138,9 @@ public:
         if (created) {
             const WindowsFilesystemBackendResult afterCreateObservation =
                 FailureAtTestPoint(
-                    WindowsBootstrapFilesystemNativeTestFailurePoint::
-                        BackupDirectoryAfterCreateBeforeObservation);
+                    parentRole == WindowsFilesystemRootRole::Install
+                        ? WindowsBootstrapFilesystemNativeTestFailurePoint::InstallDirectoryAfterCreateBeforeObservation
+                        : WindowsBootstrapFilesystemNativeTestFailurePoint::BackupDirectoryAfterCreateBeforeObservation);
             if (!afterCreateObservation.ok()) {
                 return MakePartialDurable(afterCreateObservation);
             }
@@ -3156,7 +3161,14 @@ public:
                                ERROR_DIRECTORY));
         }
 
-        if (created) {
+        // A reused install directory can have been created immediately before
+        // an interruption. Complete both flushes before publishing its binding.
+        if (created || parentRole == WindowsFilesystemRootRole::Install) {
+            if (parentRole == WindowsFilesystemRootRole::Install) {
+                const auto beforeFlush = FailureAtTestPoint(
+                    WindowsBootstrapFilesystemNativeTestFailurePoint::InstallDirectoryBeforeFlush);
+                if (!beforeFlush.ok()) return afterCreateFailure(beforeFlush);
+            }
             const WindowsFilesystemBackendResult childFlushed =
                 FlushDirectory(opened.handle.get());
             const WindowsFilesystemBackendResult parentFlushed =
@@ -3198,7 +3210,8 @@ public:
                                ERROR_INVALID_DATA));
         }
         HandleBinding binding;
-        binding.role = WindowsFilesystemRootRole::Backup;
+        binding.role = parentRole == WindowsFilesystemRootRole::Install
+            ? WindowsFilesystemRootRole::Install : WindowsFilesystemRootRole::Backup;
         binding.identity = observation.identity;
         binding.finalPath = std::move(finalPath);
         binding.rootPin = std::move(rootPin.handle);
