@@ -6870,18 +6870,18 @@ static void PollQaCommandFile(AppState& state) {
         std::string appliedKind;
         std::string appliedValue;
         if (!artist.empty()) {
-            strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
+            state.artistFilterBuffer = artist;
             state.artistFilterAlternates.clear();
             appliedKind = "artist";
             appliedValue = artist;
         }
         if (!album.empty()) {
-            strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
+            state.albumFilterBuffer = album;
             appliedKind = "album";
             appliedValue = album;
         }
         if (!category.empty()) {
-            strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            state.categoryFilterBuffer = category;
             appliedKind = "category";
             appliedValue = category;
         }
@@ -6903,10 +6903,10 @@ static void PollQaCommandFile(AppState& state) {
         }
 
     } else if (cmd == "clear_metadata_filter") {
-        state.artistFilterBuffer[0] = '\0';
+        state.artistFilterBuffer.clear();
         state.artistFilterAlternates.clear();
-        state.albumFilterBuffer[0] = '\0';
-        state.categoryFilterBuffer[0] = '\0';
+        state.albumFilterBuffer.clear();
+        state.categoryFilterBuffer.clear();
         state.formatFilterIndex = 0;
         cancelPendingSearchForQaMutation();
         state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
@@ -7323,14 +7323,14 @@ static void PollQaCommandFile(AppState& state) {
         }
         {
             DiagScopedTimer qaMetadataTimer("Filter", "metadataApply");
-            state.artistFilterBuffer[0] = '\0';
+            state.artistFilterBuffer.clear();
             state.artistFilterAlternates.clear();
-            state.albumFilterBuffer[0] = '\0';
-            state.categoryFilterBuffer[0] = '\0';
+            state.albumFilterBuffer.clear();
+            state.categoryFilterBuffer.clear();
             state.formatFilterIndex = 0;
-            if (!artist.empty()) strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
-            if (!album.empty()) strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
-            if (!category.empty()) strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            if (!artist.empty()) state.artistFilterBuffer = artist;
+            if (!album.empty()) state.albumFilterBuffer = album;
+            if (!category.empty()) state.categoryFilterBuffer = category;
             if (!format.empty()) state.formatFilterIndex = formatFilterIndexFromValue(format);
             DIAG_ACTION("Filter", "MetadataApply:stacked");
         }

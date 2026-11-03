@@ -8325,15 +8325,13 @@ static void DrawSidebarMetadataPickerField(
     const char* inputId,
     const char* hint,
     const char* tooltip,
-    char* applied,
-    size_t appliedSize,
+    std::string& applied,
     const std::string& databasePath,
     SidebarMetadataPickerUiState& ui,
     AppState* qaState,
     LoadItemsFn&& loadItems,
     OnSelectFn&& onSelect)
 {
-    if (!applied || appliedSize == 0 || appliedSize > 1024) return;
     if (ui.databasePath != databasePath) {
         ui.databasePath = databasePath;
         ui.names.Reload({});
@@ -8342,16 +8340,16 @@ static void DrawSidebarMetadataPickerField(
     }
     ui.draft.Sync(applied);
 
-    std::vector<char> visible(appliedSize);
     const std::string displayed = ui.draft.InputDisplayText(L(Filter_DamagedMetadataName));
-    const size_t count = std::min(displayed.size(), appliedSize - 1);
+    std::vector<char> visible(std::max<size_t>(1024, displayed.size() + 1));
+    const size_t count = displayed.size();
     if (count != 0) std::memcpy(visible.data(), displayed.data(), count);
     visible[count] = '\0';
 
     const float arrowWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
     const float fieldWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - arrowWidth);
     PushSidebarMetadataInputColors();
-    const bool changed = DrawUnifiedSearchInput(inputId, hint, visible.data(), appliedSize,
+    const bool changed = DrawUnifiedSearchInput(inputId, hint, visible.data(), visible.size(),
         ImGuiInputTextFlags_AutoSelectAll, fieldWidth, true);
     ImGui::PopStyleColor(6);
     const ImVec2 inputMin = ImGui::GetItemRectMin();
@@ -8369,8 +8367,7 @@ static void DrawSidebarMetadataPickerField(
 #endif
     const bool inputActive = ImGui::IsItemActive();
     if (inputActive) ui.inputTextId = ImGui::GetCurrentContext()->InputTextState.ID;
-    const bool inputClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-        ImGui::IsMouseHoveringRect(inputMin, inputMax);
+    const bool inputClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
     const bool wasOpen = ui.draft.IsOpen();
     if (inputClicked && !wasOpen) ui.draft.Open();
@@ -8429,6 +8426,8 @@ static void DrawSidebarMetadataPickerField(
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoFocusOnAppearing;
     const bool panelVisible = BeginTransientScrollbarWindow(panelId, nullptr, flags);
+    if (panelVisible && (inputClicked || (changed && !wasOpen)))
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
     bool panelHovered = false;
     if (panelVisible) {
 #if ARIS_PREVIEW_ISOLATION
@@ -8437,9 +8436,7 @@ static void DrawSidebarMetadataPickerField(
                    ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
 #endif
         auto selectValue = [&](std::string_view name) {
-            const size_t length = std::min(name.size(), appliedSize - 1);
-            if (length != 0) std::memcpy(applied, name.data(), length);
-            applied[length] = '\0';
+            applied.assign(name);
             ui.draft.Select(applied);
             ui.highlightedIndex = -1;
             onSelect();
@@ -14812,10 +14809,10 @@ static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
     state.coverFilterMatchPaths.clear();
     state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
     state.coverFilterIndex = 0;
-    state.categoryFilterBuffer[0] = '\0';
-    state.artistFilterBuffer[0] = '\0';
+    state.categoryFilterBuffer.clear();
+    state.artistFilterBuffer.clear();
     state.artistFilterAlternates.clear();
-    state.albumFilterBuffer[0] = '\0';
+    state.albumFilterBuffer.clear();
     state.formatFilterIndex = 0;
     state.channelFilterIndex = 0;
     state.sampleRateFilterIndex = 0;
@@ -16684,7 +16681,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         drawSidebarFilterLabel(L(Filter_Artist));
         DrawSidebarMetadataPickerField(
             "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
-            state.artistFilterBuffer, sizeof(state.artistFilterBuffer),
+            state.artistFilterBuffer,
             state.currentDbPathUtf8, artistPicker, &state,
             [&]() { return state.database.getUniqueArtists(std::numeric_limits<int>::max()); },
             [&]() { state.artistFilterAlternates.clear(); applyMetaFilters(); });
@@ -16693,7 +16690,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         drawSidebarFilterLabel(L(Filter_Album));
         DrawSidebarMetadataPickerField(
             "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
-            state.albumFilterBuffer, sizeof(state.albumFilterBuffer),
+            state.albumFilterBuffer,
             state.currentDbPathUtf8, albumPicker, &state,
             [&]() { return state.database.getUniqueAlbums(std::numeric_limits<int>::max()); },
             [&]() { applyMetaFilters(); });
@@ -16702,7 +16699,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         drawSidebarFilterLabel(L(Filter_CategoryLabel));
         DrawSidebarMetadataPickerField(
             "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
-            state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer),
+            state.categoryFilterBuffer,
             state.currentDbPathUtf8, categoryPicker, &state,
             [&]() { return state.database.getUniqueCategories(std::numeric_limits<int>::max()); },
             [&]() { applyMetaFilters(); });
@@ -39957,15 +39954,15 @@ void RenderUI(AppState& state) {
             }
 
             // Check metadata filters
-            if (state.categoryFilterBuffer[0] != '\0') {
+            if (!state.categoryFilterBuffer.empty()) {
                 activeFilters.push_back({FilterChipType::Category, u8"分类: " +
                     harken::sidebar::PickerDisplayName(state.categoryFilterBuffer, L(Filter_DamagedMetadataName))});
             }
-            if (state.artistFilterBuffer[0] != '\0') {
+            if (!state.artistFilterBuffer.empty()) {
                 activeFilters.push_back({FilterChipType::Artist, u8"艺术家: " +
                     harken::sidebar::PickerDisplayName(state.artistFilterBuffer, L(Filter_DamagedMetadataName))});
             }
-            if (state.albumFilterBuffer[0] != '\0') {
+            if (!state.albumFilterBuffer.empty()) {
                 activeFilters.push_back({FilterChipType::Album, u8"专辑: " +
                     harken::sidebar::PickerDisplayName(state.albumFilterBuffer, L(Filter_DamagedMetadataName))});
             }
@@ -40286,14 +40283,14 @@ void RenderUI(AppState& state) {
                                 state.coverFilterIndex = 0;
                                 break;
                             case FilterChipType::Category:
-                                state.categoryFilterBuffer[0] = '\0';
+                                state.categoryFilterBuffer.clear();
                                 break;
                             case FilterChipType::Artist:
-                                state.artistFilterBuffer[0] = '\0';
+                                state.artistFilterBuffer.clear();
                                 state.artistFilterAlternates.clear();
                                 break;
                             case FilterChipType::Album:
-                                state.albumFilterBuffer[0] = '\0';
+                                state.albumFilterBuffer.clear();
                                 break;
                             case FilterChipType::Format:
                                 state.formatFilterIndex = 0;

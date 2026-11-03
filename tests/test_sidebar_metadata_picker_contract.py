@@ -27,10 +27,11 @@ def test_metadata_picker_does_not_apply_draft_or_group_artists():
 
 def test_metadata_picker_can_apply_full_long_names_from_library():
     for field in ("artist", "album", "category"):
-        assert f"char {field}FilterBuffer[1024]" in APP_STATE
+        assert f"std::string {field}FilterBuffer" in APP_STATE
     widget = MAIN.split("static void DrawSidebarMetadataPickerField", 1)[1].split(
         "// Renders [optional search field]", 1)[0]
-    assert "std::vector<char> visible(appliedSize)" in widget
+    assert "applied.assign(name)" in widget
+    assert "std::min(name.size(), appliedSize" not in widget
     assert "ImVec2(ImGui::GetContentRegionAvail().x, 0.0f)" in widget
 
 
@@ -52,3 +53,15 @@ def test_metadata_picker_input_uses_clean_display_label():
 def test_metadata_filter_chips_use_clean_display_labels():
     for field in ("category", "artist", "album"):
         assert f"PickerDisplayName(state.{field}FilterBuffer" in MAIN
+
+
+def test_metadata_picker_input_click_respects_covering_list_window():
+    widget = MAIN.split("static void DrawSidebarMetadataPickerField", 1)[1].split(
+        "// Renders [optional search field]", 1)[0]
+    assert "const bool inputClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);" in widget
+
+
+def test_metadata_picker_stays_above_floating_sidebar_without_stealing_input_focus():
+    widget = MAIN.split("static void DrawSidebarMetadataPickerField", 1)[1].split(
+        "// Renders [optional search field]", 1)[0]
+    assert "ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());" in widget

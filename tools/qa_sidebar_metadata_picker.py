@@ -83,6 +83,7 @@ def run(args):
     process = hwnd = None
     checks, failure = [], None
     mutated_artist_row = None
+    mutated_category_row = None
 
     def state():
         return driver.command({"cmd": "get_state"})
@@ -346,6 +347,30 @@ def run(args):
         current = wait_until("new artist can be selected", lambda s:
             s["metadata_filters"]["artist"] == fresh_artist)
         record("artist-added-after-first-open", current)
+
+        # A selected database value must survive well beyond the old 1024-byte UI buffer.
+        driver.command({"cmd": "clear_metadata_filter"})
+        long_raw_category = "QA Long Category " + "A" * 1100 + "界"
+        with sqlite3.connect(actual_db) as database:
+            mutated_category_row = database.execute(
+                "SELECT id, category FROM audio_files WHERE category IS NOT NULL AND category <> '' LIMIT 1"
+            ).fetchone()
+            assert mutated_category_row is not None
+            database.execute("UPDATE audio_files SET category = ? WHERE id = ?",
+                             (long_raw_category, mutated_category_row[0]))
+            long_raw_index = [row[0] for row in database.execute(
+                "SELECT DISTINCT category FROM audio_files WHERE category IS NOT NULL "
+                "AND category <> '' ORDER BY category COLLATE NOCASE")].index(long_raw_category)
+        click("metadata_Category_input")
+        popup("Category")
+        driver.command({"cmd": "info_edit_input", "text": "QA Long Category"})
+        wait_until("long raw category option", lambda s:
+            f"metadata_Category_item_{long_raw_index}" in s.get("qa_filter_ui_rects", {}))
+        click(f"metadata_Category_item_{long_raw_index}")
+        current = wait_until("long raw category exact filter", lambda s:
+            s["metadata_filters"]["category"] == long_raw_category and
+            s["search_ready"] and s["result_count"] > 0, timeout=5)
+        record("long-raw-category-selected", current)
     except Exception as exc:
         failure = repr(exc)
         raise
@@ -363,6 +388,10 @@ def run(args):
             with sqlite3.connect(actual_db) as database:
                 database.execute("UPDATE audio_files SET artist = ? WHERE id = ?",
                                  (mutated_artist_row[1], mutated_artist_row[0]))
+        if mutated_category_row is not None:
+            with sqlite3.connect(actual_db) as database:
+                database.execute("UPDATE audio_files SET category = ? WHERE id = ?",
+                                 (mutated_category_row[1], mutated_category_row[0]))
         desktop.close()
         report = {"status": "pass" if failure is None and exit_code == 0 else "incomplete",
                   "failure": failure, "exit_code": exit_code, "exe": str(exe),

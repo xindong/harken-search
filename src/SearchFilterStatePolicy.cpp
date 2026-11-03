@@ -6,10 +6,10 @@ namespace aura::search {
 
 bool HasAdvancedDbFilters(const AppState& state) {
     if (state.searchBuffer[0] != '\0') return true;
-    if (state.artistFilterBuffer[0] != '\0') return true;
+    if (!state.artistFilterBuffer.empty()) return true;
     if (!state.artistFilterAlternates.empty()) return true;
-    if (state.albumFilterBuffer[0] != '\0') return true;
-    if (state.categoryFilterBuffer[0] != '\0') return true;
+    if (!state.albumFilterBuffer.empty()) return true;
+    if (!state.categoryFilterBuffer.empty()) return true;
     if (state.formatFilterIndex != 0) return true;
     if (state.channelFilterIndex != 0) return true;
     if (state.sampleRateFilterIndex != 0) return true;
