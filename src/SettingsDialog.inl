@@ -82,14 +82,18 @@
         }
         g_currentLanguage=state.settings.language;
         g_miniWaveformRmsBodyStyle=state.settings.miniWaveformRmsBodyStyle;
+#ifdef _WIN32
         g_hideWindowOnDrag=state.settings.hideWindowOnDrag;
         g_hideWindowOnDragDelayMs=static_cast<UINT>(state.settings.hideWindowOnDragDelayMs);
+#endif
         state.audioEngine.setFadeInOutEnabled(state.settings.fadeInOutEnabled);
         state.audioEngine.setFadeInOutMs(state.settings.fadeInOutMs);
         state.database.setSettings(&state.settings);
         if (oldSettings.folderTreePathMode!=state.settings.folderTreePathMode) StartDeferredSidebarBootstrap(state,true,false);
+#ifdef _WIN32
         if (oldSettings.enableShowManagerHotkey!=state.settings.enableShowManagerHotkey ||
             oldSettings.showManagerHotkey.toString()!=state.settings.showManagerHotkey.toString()) ApplyShowManagerGlobalHotkey(state.settings);
+#endif
         if (oldSettings.idleAssetBackfillEnabled!=state.settings.idleAssetBackfillEnabled || oldSettings.idleAssetBackfillDelayMinutes!=state.settings.idleAssetBackfillDelayMinutes) {
             state.lastInputTime=std::chrono::steady_clock::now(); ScheduleNextIdleAssetBackfillCheck(state,state.lastInputTime);
         }

@@ -33,6 +33,9 @@ inline std::wstring GetDefaultDbDirWide() {
     }
     CreateDirectoryW(layout.activeDatabaseDir.c_str(), nullptr);
     return layout.activeDatabaseDir;
+#elif defined(__APPLE__)
+    const auto layout = HarkenUserData::EnsureLayout();
+    return layout.readOnly ? std::wstring{} : layout.activeDatabaseDir;
 #endif
     return {};
 }

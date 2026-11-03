@@ -18,6 +18,7 @@ class Stage6MainThreadFrameBudgetProbeContract(unittest.TestCase):
         cls.source = read_optional("src/FrameBudgetDiagnostics.cpp")
         cls.unit = read_optional("tests/test_frame_budget_diagnostics.cpp")
         cls.windows = read_optional("src/WindowsMain.cpp")
+        cls.frame = read_optional("src/AppFrameServices.cpp")
         cls.main = read_optional("src/main.cpp")
         cls.floating_layout = read_optional("src/FloatingPanelLayout.h")
         cls.app_state = read_optional("src/AppState.h")
@@ -118,11 +119,11 @@ class Stage6MainThreadFrameBudgetProbeContract(unittest.TestCase):
             self.windows,
             "release builds must retain a no-op QA poll symbol",
         )
-        waveform_start = self.windows.find("const std::string loadedWaveformPath")
-        waveform_block = self.windows[waveform_start:self.windows.find("if (!foregroundWaveformRebuild", waveform_start)]
+        waveform_start = self.frame.find("const std::string loadedWaveformPath")
+        waveform_block = self.frame[waveform_start:self.frame.find("if (!foregroundWaveformRebuild", waveform_start)]
         self.assertRegex(
             waveform_block,
-            r"#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA[\s\S]*miniCaptureState[\s\S]*#endif",
+            r"#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA[\s\S]*options.seedVisibleRequest[\s\S]*#endif",
             "cold-mini diagnostics state must be guarded in release builds",
         )
         self.assertNotIn(
@@ -238,11 +239,16 @@ class Stage6MainThreadFrameBudgetProbeContract(unittest.TestCase):
         )
         self.assertRegex(
             self.windows,
-            r"BusyWarmup[\s\S]*BusyCapture[\s\S]*miniIo\.playing\s*=\s*false"
+            r"waveformFrameOptions.ignorePlaybackForCapture = s_frameBudgetColdMini.armed &&"
+            r"[\s\S]*BusyWarmup[\s\S]*BusyCapture[\s\S]*PumpAppWaveforms",
+        )
+        self.assertRegex(
+            self.frame,
+            r"if \(options.ignorePlaybackForCapture\) miniIo.playing = false;"
             r"[\s\S]*ResolveMiniWaveformWorkerDecision\(miniIo\)",
             "busy capture must override only the copied mini policy context",
         )
-        self.assert_tokens(self.windows, (
+        self.assert_tokens(self.windows + self.frame, (
             "listSubmitted", "listSuccessfulConsumed", "submitVisibleCacheRequest",
             "isCurrentListPath", "isLoadedFileResult", "observeMiniActivity",
             "RestoreFrameBudgetColdMini", "GlobalBackfillWorkerPool().start",
@@ -256,10 +262,17 @@ class Stage6MainThreadFrameBudgetProbeContract(unittest.TestCase):
         )
         self.assertRegex(
             self.windows,
+            r"waveformFrameOptions.seedVisibleRequest =\s*"
+            r"miniCaptureState == aura::diagnostics::FrameCaptureState::BusyCapture && !s_frameBudgetColdMini.seedSubmitted;"
+            r"[\s\S]*PumpAppWaveforms\(state, isMouseIdle, waveformFrameOptions\)"
+            r"[\s\S]*if \(seededMini\) s_frameBudgetColdMini.seedSubmitted = true;",
+        )
+        self.assertRegex(
+            self.frame,
             r"s_miniListWasForegroundBlocked = miniDecision\.cancelQueuedListWork;"
-            r"[\s\S]*?miniCaptureState == aura::diagnostics::FrameCaptureState::BusyCapture"
-            r"[\s\S]*?submitBudget > 0[\s\S]*?!s_frameBudgetColdMini\.seedSubmitted"
-            r"[\s\S]*?filePath == loadedWaveformPath[\s\S]*?submitVisibleRequest",
+            r"[\s\S]*?options.seedVisibleRequest && submitBudget > 0"
+            r"[\s\S]*?filePath == loadedWaveformPath[\s\S]*?submitVisibleRequest"
+            r"[\s\S]*?seedSubmitted = true;",
             "seed must run after cancellation only in counted BusyCapture with positive budget",
         )
         self.assertEqual(self.windows.count("RestoreFrameBudgetColdMini(state)"), 1)
