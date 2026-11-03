@@ -2528,6 +2528,7 @@ struct AppState {
 #if ARIS_PREVIEW_ISOLATION
     // Client-space rectangles from the last RenderUI frame for native QA clicks.
     std::map<std::string, ImVec4> qaFilterUiRects;
+    bool qaAllowBackgroundKeybinding = false;
 #endif
 
     // Naming convention filter

@@ -94,6 +94,29 @@ int main() {
                albumDraft.Committed() == damagedAlbum,
                "closing without selection restores the readable applied label")) return 1;
 
+    MetadataPickerNameList list;
+    list.Reload({"Adele", "Boris\x1a", "New Artist"});
+    if (!Check(list.MatchingIndices("", "Unreadable name") == std::vector<int>{0, 1, 2} &&
+               list.DisplayName(1) == "Boris",
+               "the list keeps raw values but prepares readable labels once")) return 1;
+    const size_t firstBuild = list.MatchBuildCount();
+    list.MatchingIndices("", "Unreadable name");
+    if (!Check(list.MatchBuildCount() == firstBuild,
+               "an unchanged open list must not scan every name again each frame")) return 1;
+    if (!Check(list.MatchingIndices("bor", "Unreadable name") == std::vector<int>{1} &&
+               list.MatchBuildCount() == firstBuild + 1,
+               "editing the query rebuilds only the match list")) return 1;
+    list.Reload({"Adele", "Fresh Artist"});
+    if (!Check(list.MatchingIndices("fresh", "Unreadable name") == std::vector<int>{1},
+               "reopening after a library change shows newly loaded names")) return 1;
+    list.Reload({"\x1a"});
+    list.MatchingIndices("", "Unreadable name");
+    if (!Check(list.DisplayName(0) == "Unreadable name",
+               "an unreadable name uses the current language label")) return 1;
+    list.MatchingIndices("", "Unknown name");
+    if (!Check(list.DisplayName(0) == "Unknown name",
+               "changing the language refreshes prepared labels")) return 1;
+
     const SidebarPickerRect work{0.0f, 0.0f, 1280.0f, 900.0f};
     const SidebarPickerRect artistField{60.0f, 43.0f, 180.0f, 30.0f};
     const SidebarPickerRect tall = ComputePopupLayout(artistField, work);
@@ -103,9 +126,20 @@ int main() {
 
     const SidebarPickerRect shortWork{0.0f, 0.0f, 420.0f, 360.0f};
     const SidebarPickerRect shortList = ComputePopupLayout(artistField, shortWork);
+    const auto overlaps = [](const SidebarPickerRect& a, const SidebarPickerRect& b) {
+        return a.x < b.x + b.width && b.x < a.x + a.width &&
+               a.y < b.y + b.height && b.y < a.y + a.height;
+    };
     if (!Check(shortList.x >= 6.0f && shortList.x + shortList.width <= 414.0f &&
-               shortList.y + shortList.height <= 354.0f,
-               "a narrow short viewport must keep the list on screen")) return 1;
+               shortList.y + shortList.height <= 354.0f &&
+               !overlaps(shortList, artistField),
+               "a narrow short viewport must keep the list on screen and leave input accessible")) return 1;
+
+    const SidebarPickerRect bottomField{60.0f, 300.0f, 180.0f, 30.0f};
+    const SidebarPickerRect aboveList = ComputePopupLayout(bottomField, shortWork);
+    if (!Check(!overlaps(aboveList, bottomField) &&
+               aboveList.y + aboveList.height <= bottomField.y - 8.0f,
+               "a narrow list near the bottom must open above its input")) return 1;
 
     const SidebarPickerRect rightField{900.0f, 130.0f, 180.0f, 30.0f};
     const SidebarPickerRect leftList = ComputePopupLayout(rightField, work);

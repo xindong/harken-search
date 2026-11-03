@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace harken::sidebar {
@@ -123,6 +124,55 @@ inline std::string PickerDisplayName(std::string_view raw, std::string_view unre
     return label;
 }
 
+// Database values stay intact for selection; labels and query matches are
+// rebuilt only when the list, search text, or unreadable-name translation changes.
+class MetadataPickerNameList {
+public:
+    void Reload(std::vector<std::string> names) {
+        names_ = std::move(names);
+        labelsValid_ = false;
+        matchesValid_ = false;
+    }
+
+    const std::vector<std::string>& RawNames() const { return names_; }
+
+    const std::vector<int>& MatchingIndices(std::string_view query, std::string_view unreadable) {
+        if (!labelsValid_ || std::string_view(unreadable_) != unreadable) {
+            labels_.clear();
+            labels_.reserve(names_.size());
+            for (const auto& name : names_) labels_.push_back(PickerDisplayName(name, unreadable));
+            unreadable_.assign(unreadable);
+            labelsValid_ = true;
+            matchesValid_ = false;
+        }
+        if (!matchesValid_ || std::string_view(query_) != query) {
+            matchingIndices_.clear();
+            matchingIndices_.reserve(names_.size());
+            for (size_t i = 0; i < names_.size(); ++i) {
+                if (NameContains(names_[i], query) || NameContains(labels_[i], query))
+                    matchingIndices_.push_back(static_cast<int>(i));
+            }
+            query_.assign(query);
+            matchesValid_ = true;
+            ++matchBuildCount_;
+        }
+        return matchingIndices_;
+    }
+
+    const std::string& DisplayName(size_t index) const { return labels_.at(index); }
+    size_t MatchBuildCount() const { return matchBuildCount_; }
+
+private:
+    std::vector<std::string> names_;
+    std::vector<std::string> labels_;
+    std::vector<int> matchingIndices_;
+    std::string query_;
+    std::string unreadable_;
+    bool labelsValid_ = false;
+    bool matchesValid_ = false;
+    size_t matchBuildCount_ = 0;
+};
+
 inline std::string MetadataPickerDraft::InputDisplayText(std::string_view unreadable) const {
     if (queryActive_ || input_.empty()) return input_;
     return PickerDisplayName(input_, unreadable);
@@ -168,6 +218,7 @@ inline SidebarPickerRect ComputePopupLayout(
 
     float x;
     float width;
+    bool belowOrAbove = false;
     if (rightSpace >= sideMinimum) {
         width = std::min(desiredWidth, rightSpace);
         x = anchorRight + spacing;
@@ -177,10 +228,20 @@ inline SidebarPickerRect ComputePopupLayout(
     } else {
         width = desiredWidth;
         x = std::clamp(anchorRight + spacing, left, std::max(left, right - width));
+        belowOrAbove = true;
     }
 
     const float top = work.y + margin;
     const float bottom = work.y + std::max(0.0f, work.height) - margin;
+    if (belowOrAbove) {
+        const float belowTop = std::clamp(anchor.y + anchor.height + spacing, top, bottom);
+        const float aboveBottom = std::clamp(anchor.y - spacing, top, bottom);
+        const float belowHeight = bottom - belowTop;
+        const float aboveHeight = aboveBottom - top;
+        if (belowHeight >= aboveHeight)
+            return {x, belowTop, width, std::max(1.0f, belowHeight)};
+        return {x, top, width, std::max(1.0f, aboveHeight)};
+    }
     const float latestTop = std::max(top, std::min(work.y + 44.0f, bottom - 80.0f));
     const float y = std::clamp(anchor.y, top, latestTop);
     return {x, y, width, std::max(1.0f, bottom - y)};

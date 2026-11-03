@@ -1199,6 +1199,8 @@ static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& rec
 
 namespace {
 bool g_searchBarFocusedForShortcuts = false;
+ImGuiKey g_sidebarPickerInitialKey = ImGuiKey_None;
+int g_sidebarPickerInitialFrame = -1;
 }
 
 // SECTION 2 - Keybindings and Shortcuts
@@ -1209,8 +1211,13 @@ static void ProcessKeybindings(AppState& state) {
     // AUDITION_NATIVE_EXCEPTION: keyboard-transport
     // Keyboard play/stop intentionally retains its origin-specific region and
     // rewind policy during the overnight control-plane proof.
-    // Level 0: 系统级 - 非前台窗口一律不响应
-    if (g_hwnd == nullptr || GetForegroundWindow() != g_hwnd) return;
+    // Level 0: 系统级 - 非前台窗口不响应；隔离 QA 可显式模拟前台按键。
+    if (g_hwnd == nullptr) return;
+#if ARIS_PREVIEW_ISOLATION
+    if (GetForegroundWindow() != g_hwnd && !state.qaAllowBackgroundKeybinding) return;
+#else
+    if (GetForegroundWindow() != g_hwnd) return;
+#endif
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -1252,7 +1259,9 @@ static void ProcessKeybindings(AppState& state) {
         pushUnique(ImGuiKey_RightArrow);
 
         for (int i = 0; i < ks.keyCount; ++i) {
-            ks.justPressed[i] = ImGui::IsKeyPressed(ks.keys[i], false);
+            const bool usedByPicker = g_sidebarPickerInitialFrame == ImGui::GetFrameCount() &&
+                g_sidebarPickerInitialKey == ks.keys[i];
+            ks.justPressed[i] = !usedByPicker && ImGui::IsKeyPressed(ks.keys[i], false);
         }
 
         ks.keyCtrl = io.KeyCtrl;
@@ -8276,9 +8285,9 @@ static bool DrawUnifiedSearchInput(
 
 struct SidebarMetadataPickerUiState {
     harken::sidebar::MetadataPickerDraft draft;
-    std::vector<std::string> items;
+    harken::sidebar::MetadataPickerNameList names;
     std::string databasePath;
-    bool loaded = false;
+    ImGuiID inputTextId = 0;
     int highlightedIndex = -1;
 };
 
@@ -8327,8 +8336,7 @@ static void DrawSidebarMetadataPickerField(
     if (!applied || appliedSize == 0 || appliedSize > 1024) return;
     if (ui.databasePath != databasePath) {
         ui.databasePath = databasePath;
-        ui.items.clear();
-        ui.loaded = false;
+        ui.names.Reload({});
         ui.highlightedIndex = -1;
         ui.draft.Cancel();
     }
@@ -8360,6 +8368,7 @@ static void DrawSidebarMetadataPickerField(
     (void)qaState;
 #endif
     const bool inputActive = ImGui::IsItemActive();
+    if (inputActive) ui.inputTextId = ImGui::GetCurrentContext()->InputTextState.ID;
     const bool inputClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
         ImGui::IsMouseHoveringRect(inputMin, inputMax);
 
@@ -8390,9 +8399,8 @@ static void DrawSidebarMetadataPickerField(
     }
     if (!ui.draft.IsOpen()) return;
 
-    if (!ui.loaded || (ui.items.empty() && !wasOpen)) {
-        ui.items = loadItems();
-        ui.loaded = true;
+    if (!wasOpen) {
+        ui.names.Reload(loadItems());
     }
 
     const ImGuiViewport* viewport = ImGui::GetWindowViewport();
@@ -8448,7 +8456,10 @@ static void DrawSidebarMetadataPickerField(
             !io.KeyCtrl && !io.KeyAlt && !io.KeySuper) {
             for (int letter = 0; letter < 26; ++letter) {
                 if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_A + letter), false)) {
-                    pendingJump = harken::sidebar::FirstInitialIndex(ui.items, static_cast<char>('A' + letter));
+                    g_sidebarPickerInitialKey = static_cast<ImGuiKey>(ImGuiKey_A + letter);
+                    g_sidebarPickerInitialFrame = ImGui::GetFrameCount();
+                    pendingJump = harken::sidebar::FirstInitialIndex(
+                        ui.names.RawNames(), static_cast<char>('A' + letter));
                     if (pendingJump >= 0) {
                         ui.draft.ResetQuery();
                         ui.highlightedIndex = pendingJump;
@@ -8459,15 +8470,8 @@ static void DrawSidebarMetadataPickerField(
         }
 
         BeginTransientScrollbarChild("##MetadataNameList", ImVec2(0.0f, 0.0f), false);
-        std::vector<int> visibleIndices;
-        visibleIndices.reserve(ui.items.size());
-        for (int i = 0; i < static_cast<int>(ui.items.size()); ++i) {
-            const std::string& name = ui.items[static_cast<size_t>(i)];
-            const std::string label = harken::sidebar::PickerDisplayName(
-                name, L(Filter_DamagedMetadataName));
-            if (harken::sidebar::NameContains(name, ui.draft.Query()) ||
-                harken::sidebar::NameContains(label, ui.draft.Query())) visibleIndices.push_back(i);
-        }
+        const auto& visibleIndices = ui.names.MatchingIndices(
+            ui.draft.Query(), L(Filter_DamagedMetadataName));
         if (!visibleIndices.empty()) {
             ImGuiListClipper clipper;
             clipper.Begin(static_cast<int>(visibleIndices.size()));
@@ -8480,9 +8484,8 @@ static void DrawSidebarMetadataPickerField(
             while (!picked && clipper.Step()) {
                 for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
                     const int i = visibleIndices[static_cast<size_t>(row)];
-                    const std::string& name = ui.items[static_cast<size_t>(i)];
-                    const std::string label = harken::sidebar::PickerDisplayName(
-                        name, L(Filter_DamagedMetadataName));
+                    const std::string& name = ui.names.RawNames()[static_cast<size_t>(i)];
+                    const std::string& label = ui.names.DisplayName(static_cast<size_t>(i));
                     ImGui::PushID(i);
                     picked = ImGui::Selectable(label.c_str(), i == ui.highlightedIndex,
                         0, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
@@ -8517,6 +8520,12 @@ static void DrawSidebarMetadataPickerField(
         !panelHovered && !overField) {
         ui.draft.Cancel();
         ui.highlightedIndex = -1;
+        // Cancel the active edit and its pending deactivation write-back.
+        ImGuiContext& context = *ImGui::GetCurrentContext();
+        if (ui.inputTextId != 0 && context.ActiveId == ui.inputTextId)
+            ImGui::ClearActiveID();
+        if (ui.inputTextId != 0 && context.InputTextDeactivatedState.ID == ui.inputTextId)
+            context.InputTextDeactivatedState.ID = 0;
     }
     if (ui.draft.IsOpen() && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         ui.draft.Cancel();

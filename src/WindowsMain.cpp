@@ -4771,11 +4771,12 @@ static void PollQaCommandFile(AppState& state) {
             namespace su = harken::settings;
             const auto action = getStr(raw,"action");
             if (action == "fail_save_once") su::failSaveOnce = true;
+            if (action == "shortcut_test_background") state.qaAllowBackgroundKeybinding = getBool(raw,"enabled",false);
             if (action == "layout_restore_error") su::SettingsEditor().error=std::string(L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder))+" "+L(SetUX_OutputRestoreFailed);
             if (action == "key") {
                 const auto name=getStr(raw,"key");
                 const bool down=getBool(raw,"down",false);
-                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
+                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
             if (action == "resize") {
@@ -5159,6 +5160,10 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"current_file\":\"" + jsonEscape(currentFile) + "\",";
         result += "\"audio_loaded\":" + std::string(audioLoaded ? "true" : "false") + ",";
         result += "\"playback_position\":" + std::to_string(playbackPosition) + ",";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"region_in\":" + std::to_string(state.audioEngine.getInPoint()) + ",";
+        result += "\"region_out\":" + std::to_string(state.audioEngine.getOutPoint()) + ",";
+#endif
         result += "\"audio_total_frames\":" + std::to_string((unsigned long long)audioInfo.totalFrames) + ",";
         result += "\"audio_duration\":" + std::to_string(audioInfo.durationSeconds) + ",";
         result += "\"selected_row\":" + std::to_string(selectedRow) + ",";

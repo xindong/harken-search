@@ -82,6 +82,7 @@ def run(args):
     desktop = PrivateDesktop()
     process = hwnd = None
     checks, failure = [], None
+    mutated_artist_row = None
 
     def state():
         return driver.command({"cmd": "get_state"})
@@ -121,6 +122,18 @@ def run(args):
         pointer(x, min(rect[1] + 100, current["window_height"] - 20))
         return wait_until("outside closes " + field,
             lambda s: f"metadata_{field}_popup" not in s.get("qa_filter_ui_rects", {}))
+
+    def right_click_outside(field):
+        current, rect = popup(field)
+        x = int(rect[2] + 25 if rect[2] + 25 < current["window_width"] else rect[0] - 25)
+        y = int(min(rect[1] + 100, current["window_height"] - 20))
+        position = (y << 16) | x
+        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, position)
+        win32gui.PostMessage(hwnd, win32con.WM_RBUTTONDOWN, win32con.MK_RBUTTON, position)
+        time.sleep(.09)
+        win32gui.PostMessage(hwnd, win32con.WM_RBUTTONUP, 0, position)
+        time.sleep(.25)
+        return state()
 
     def record(name, current):
         shot = capture(driver, output, name)
@@ -227,6 +240,16 @@ def run(args):
         checks.append({"name": "outside-cancels-draft", "filters": current["metadata_filters"]})
         click("metadata_Artist_input")
         popup("Artist")
+        driver.command({"cmd": "info_edit_input", "text": "zzq9__right_click"})
+        current = right_click_outside("Artist")
+        assert f"metadata_Artist_popup" not in current["qa_filter_ui_rects"]
+        time.sleep(.25)
+        current = state()
+        assert f"metadata_Artist_popup" not in current["qa_filter_ui_rects"]
+        assert current["metadata_filters"]["artist"] == applied_artist
+        record("artist-right-click-outside-restored", current)
+        click("metadata_Artist_input")
+        popup("Artist")
         driver.command({"cmd": "info_edit_input", "text": "sound"})
         current = wait_until("positive name search", lambda s:
             any(k.startswith("metadata_Artist_item_")
@@ -246,6 +269,20 @@ def run(args):
             current = wait_until("K initial jump", lambda s:
                 f"metadata_Artist_item_{k_index}" in s.get("qa_filter_ui_rects", {}))
             record("artist-K-jump", current)
+        close_outside("Artist")
+        driver.command({"cmd": "transport_audit_setup", "scenario": "selection"})
+        driver.command({"cmd": "settings_ui", "action": "shortcut_test_background", "enabled": True})
+        wait_until("shortcut test setup", lambda s: abs(s["region_out"] - .8) < .001)
+        click("metadata_Artist_arrow")
+        popup("Artist")
+        driver.command({"cmd": "settings_ui", "action": "key", "key": "O", "down": True})
+        time.sleep(.12)
+        driver.command({"cmd": "settings_ui", "action": "key", "key": "O", "down": False})
+        current = state()
+        assert abs(current["region_out"] - .8) < .001, current["region_out"]
+        checks.append({"name": "initial-jump-does-not-set-out-point",
+                       "region_out": current["region_out"]})
+        driver.command({"cmd": "settings_ui", "action": "shortcut_test_background", "enabled": False})
         close_outside("Artist")
         for theme, label in THEMES:
             driver.command({"cmd": "set_theme", "theme": theme})
@@ -287,6 +324,28 @@ def run(args):
         assert chip[2] - chip[0] <= 260, chip
         assert chip[2] <= current["window_width"], chip
         record("long-category-selected", current)
+
+        # A library may gain a name after this picker was already opened.
+        fresh_artist = "ZZQ Fresh Artist 20261103"
+        with sqlite3.connect(actual_db) as database:
+            mutated_artist_row = database.execute(
+                "SELECT id, artist FROM audio_files WHERE artist IS NOT NULL AND artist <> '' LIMIT 1"
+            ).fetchone()
+            assert mutated_artist_row is not None
+            database.execute("UPDATE audio_files SET artist = ? WHERE id = ?",
+                             (fresh_artist, mutated_artist_row[0]))
+            fresh_index = [row[0] for row in database.execute(
+                "SELECT DISTINCT artist FROM audio_files WHERE artist IS NOT NULL "
+                "AND artist <> '' ORDER BY artist COLLATE NOCASE")].index(fresh_artist)
+        click("metadata_Artist_input")
+        popup("Artist")
+        driver.command({"cmd": "info_edit_input", "text": fresh_artist})
+        wait_until("new artist appears after reopening", lambda s:
+            f"metadata_Artist_item_{fresh_index}" in s.get("qa_filter_ui_rects", {}), timeout=5)
+        click(f"metadata_Artist_item_{fresh_index}")
+        current = wait_until("new artist can be selected", lambda s:
+            s["metadata_filters"]["artist"] == fresh_artist)
+        record("artist-added-after-first-open", current)
     except Exception as exc:
         failure = repr(exc)
         raise
@@ -300,6 +359,10 @@ def run(args):
                 win32event.WaitForSingleObject(process, 5000)
             exit_code = win32process.GetExitCodeProcess(process)
             process.Close()
+        if mutated_artist_row is not None:
+            with sqlite3.connect(actual_db) as database:
+                database.execute("UPDATE audio_files SET artist = ? WHERE id = ?",
+                                 (mutated_artist_row[1], mutated_artist_row[0]))
         desktop.close()
         report = {"status": "pass" if failure is None and exit_code == 0 else "incomplete",
                   "failure": failure, "exit_code": exit_code, "exe": str(exe),
