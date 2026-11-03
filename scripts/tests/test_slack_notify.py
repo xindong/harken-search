@@ -34,6 +34,11 @@ PR_BODY = """# Pull request
 
 
 class SlackNotifyTest(unittest.TestCase):
+    def test_enterprise_slack_member_ids_are_preserved(self) -> None:
+        mapping = MODULE.load_slack_map(json.dumps({"member": "W000000001", "bot": "B000000001"}))
+        self.assertEqual(mapping, {"member": "W000000001"})
+        self.assertEqual(MODULE.mention_for("member", mapping), "<@W000000001>")
+
     def test_digest_prompt_asks_for_reader_facing_change(self) -> None:
         prompt = MODULE.digest_system("已合并的 PR")
         self.assertIn("读者会碰到什么变化", prompt)
@@ -307,7 +312,7 @@ class AutoMergeNoticeTest(unittest.TestCase):
     def payload(self):
         return {"repository": {"full_name": "xindong/harken-search"}, "workflow_run": {
             "name": "Enable PR Auto-merge", "event": "pull_request_target", "conclusion": "success",
-            "path": ".github/workflows/auto-merge.yml", "run_attempt": 1,
+            "path": ".github/workflows/auto-merge.yml", "run_attempt": 1, "id": 999,
             "run_started_at": "2026-11-03T02:00:00Z", "updated_at": "2026-11-03T02:01:00Z",
             "head_repository": {"full_name": "xindong/harken-search"}, "pull_requests": [{"number": 72}]}}
 
@@ -317,19 +322,25 @@ class AutoMergeNoticeTest(unittest.TestCase):
                 "html_url": "https://github.com/xindong/harken-search/pull/72", "body": "合并后显示通知。",
                 "base": {"repo": {"full_name": "xindong/harken-search"}}, "user": {"login": "example-author"}}
 
-    def run_event(self, payload, pull):
+    def run_event(self, payload, pull, jobs=None):
         class Response:
+            def __init__(self, body):
+                self.body = body
             def read(self):
-                return json.dumps(pull).encode("utf-8")
+                return json.dumps(self.body).encode("utf-8")
             def __enter__(self):
                 return self
             def __exit__(self, *_args):
                 return False
+        def respond(request, **_kwargs):
+            if "/actions/runs/" in request.full_url:
+                return Response(jobs or {"total_count": 0, "jobs": []})
+            return Response(pull)
         env = {"EVENT_NAME": "workflow_run", "GITHUB_REPOSITORY": "xindong/harken-search",
                "GITHUB_TOKEN": "test-github-token", "SLACK_BOT_TOKEN": "test-slack-token", "SLACK_CHANNEL": "C000000001"}
         output = io.StringIO()
         with mock.patch.object(MODULE, "load_event_payload", return_value=payload), \
-             mock.patch.object(MODULE.urllib.request, "urlopen", return_value=Response()) as fetch, \
+             mock.patch.object(MODULE.urllib.request, "urlopen", side_effect=respond) as fetch, \
              mock.patch.object(MODULE, "post_slack") as posted, mock.patch("sys.stdout", output):
             code = MODULE.main([], env=env)
         return code, posted, fetch, output.getvalue()
@@ -342,8 +353,8 @@ class AutoMergeNoticeTest(unittest.TestCase):
         self.assertIn("xindong/harken-search/pull/72", posted.call_args.args[2])
         self.assertEqual(fetch.call_args.args[0].full_url, "https://api.github.com/repos/xindong/harken-search/pulls/72")
 
-    def test_replayed_failed_or_unrelated_workflows_never_fetch_or_send(self):
-        for field, value in (("run_attempt", 2), ("conclusion", "failure"), ("name", "Unrelated"),
+    def test_invalid_failed_or_unrelated_workflows_never_fetch_or_send(self):
+        for field, value in (("run_attempt", 0), ("conclusion", "failure"), ("name", "Unrelated"),
                              ("event", "pull_request"), ("head_repository", {"full_name": "outside/fork"})):
             with self.subTest(field=field):
                 payload = self.payload()
@@ -352,6 +363,20 @@ class AutoMergeNoticeTest(unittest.TestCase):
                 self.assertEqual(code, 0)
                 posted.assert_not_called()
                 fetch.assert_not_called()
+
+    def test_upstream_rerun_announces_only_a_merge_inside_the_new_merge_step(self):
+        jobs = {"total_count": 1, "jobs": [{"name": "enable-auto-merge", "steps": [{
+            "name": "Queue merge after required checks", "conclusion": "success",
+            "started_at": "2026-11-03T02:10:00Z", "completed_at": "2026-11-03T02:11:00Z"}]}]}
+        for merged_at, expected in (("2026-11-03T02:10:30Z", 1), ("2026-11-03T02:00:30Z", 0)):
+            with self.subTest(merged_at=merged_at):
+                payload, pull = self.payload(), self.pull()
+                payload["workflow_run"].update(run_attempt=2, updated_at="2026-11-03T02:11:00Z")
+                pull["merged_at"] = merged_at
+                code, posted, fetch, _ = self.run_event(payload, pull, jobs)
+                self.assertEqual(code, 0)
+                self.assertEqual(posted.call_count, expected)
+                self.assertIn("/actions/runs/999/attempts/2/jobs", fetch.call_args_list[0].args[0].full_url)
 
     def test_manual_unmerged_or_old_merges_are_not_reannounced(self):
         for field, value in (("merged_by", {"login": "example-maintainer"}), ("merged", False),
@@ -362,6 +387,82 @@ class AutoMergeNoticeTest(unittest.TestCase):
                 code, posted, _fetch, _ = self.run_event(self.payload(), pull)
                 self.assertEqual(code, 0)
                 posted.assert_not_called()
+
+
+class NotificationRetryTest(unittest.TestCase):
+    def env(self, **values):
+        return {
+            "EVENT_NAME": "pull_request_target", "GITHUB_REPOSITORY": "xindong/harken-search",
+            "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_TOKEN": "test-github-token",
+            "SLACK_BOT_TOKEN": "test-slack-token", "SLACK_CHANNEL": "C000000001",
+            "PR_NUMBER": "77", "PR_TITLE": "通知测试", "PR_AUTHOR": "example-author",
+            "PR_MERGED_BY": "example-maintainer", "PR_URL": "https://github.com/xindong/harken-search/pull/77",
+            **values,
+        }
+
+    def response(self, conclusion, *, job_name="notify", total_count=1):
+        payload = {"total_count": total_count, "jobs": [{"name": job_name, "steps": [
+            {"name": "Post notice to Slack", "conclusion": conclusion}]}]}
+        return self.json_response(payload)
+
+    def json_response(self, payload):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        return response
+
+    def test_successful_notification_rerun_does_not_post_again(self):
+        for event in ("pull_request_target", "issues", "workflow_run"):
+            with self.subTest(event=event), \
+                 mock.patch.object(MODULE.urllib.request, "urlopen", return_value=self.response("success")) as fetch, \
+                 mock.patch.object(MODULE, "post_slack") as post, mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(MODULE.main([], self.env(EVENT_NAME=event)), 0)
+                post.assert_not_called()
+                self.assertIn("/actions/runs/123/attempts/1/jobs", fetch.call_args.args[0].full_url)
+
+    def test_failed_or_unreached_send_can_be_retried(self):
+        for conclusion in ("failure", "cancelled", "skipped", None):
+            with self.subTest(conclusion=conclusion), \
+                 mock.patch.object(MODULE.urllib.request, "urlopen", return_value=self.response(conclusion)) as fetch, \
+                 mock.patch.object(MODULE, "post_slack") as post:
+                self.assertEqual(MODULE.main([], self.env()), 0)
+                fetch.assert_called_once()
+                post.assert_called_once()
+
+    def test_prior_success_is_found_on_later_pages_and_attempts(self):
+        empty = self.json_response({"total_count": 0, "jobs": []})
+        other = self.response("success", job_name="preview", total_count=2)
+        sent = self.response("success", total_count=2)
+        with mock.patch.object(MODULE.urllib.request, "urlopen", side_effect=[empty, other, sent]) as fetch, \
+             mock.patch.object(MODULE, "post_slack") as post, mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(MODULE.main([], self.env(GITHUB_RUN_ATTEMPT="3")), 0)
+        post.assert_not_called()
+        self.assertEqual(fetch.call_count, 3)
+        self.assertIn("/attempts/2/jobs?per_page=100&page=2", fetch.call_args.args[0].full_url)
+
+    def test_rerun_fails_without_sending_if_history_cannot_be_checked(self):
+        with mock.patch.object(MODULE.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")), \
+             mock.patch.object(MODULE, "post_slack") as post:
+            with self.assertRaisesRegex(SystemExit, "notification history lookup failed"):
+                MODULE.main([], self.env())
+        post.assert_not_called()
+
+    def test_first_attempt_for_qa_and_main_posts_without_history_lookup(self):
+        for branch in ("qa/current", "main"):
+            payload = {"action": "closed", "pull_request": {"merged": True, "base": {"ref": branch}}}
+            with self.subTest(branch=branch), mock.patch.object(MODULE, "load_event_payload", return_value=payload), \
+                 mock.patch.object(MODULE.urllib.request, "urlopen") as fetch, \
+                 mock.patch.object(MODULE, "post_slack") as post:
+                self.assertEqual(MODULE.main([], self.env(GITHUB_RUN_ATTEMPT="1")), 0)
+                fetch.assert_not_called()
+                post.assert_called_once()
+
+    def test_dry_run_never_reads_history_or_posts(self):
+        with mock.patch.object(MODULE.urllib.request, "urlopen") as fetch, \
+             mock.patch.object(MODULE, "post_slack") as post, mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(MODULE.main(["--dry-run"], self.env()), 0)
+        fetch.assert_not_called()
+        post.assert_not_called()
 
 
 if __name__ == "__main__":

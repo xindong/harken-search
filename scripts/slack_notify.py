@@ -18,7 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Iterator
 
 
 SCOPE_LABELS = (
@@ -54,10 +54,10 @@ SECRET_RE = re.compile(
 )
 PEM_PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN (?P<label>(?:[A-Z0-9]+ )*PRIVATE KEY)-----.*?"
-    r"(?:-----END (?P=label)-----|$)",
+    r"(?:-----END (?P=label)-----|\Z)",
     re.S,
 )
-SLACK_ID_RE = re.compile(r"^U[A-Z0-9]{8,}$")
+SLACK_ID_RE = re.compile(r"^[UW][A-Z0-9]{8,}$")
 TITLE_LIMIT = 160
 DIGEST_LIMIT = 420
 BODY_LIMIT = 4000
@@ -391,6 +391,37 @@ def _login(node: Any) -> str:
     return ""
 
 
+def workflow_jobs(repo: str, run_id: str, attempt: int, token: str) -> Iterator[dict[str, Any]]:
+    if attempt < 1 or not run_id.isdigit() or not token or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
+        raise SystemExit("notification history lookup failed: missing-or-invalid-run-identity")
+    page, seen = 1, 0
+    while True:
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}",
+            headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                     "X-GitHub-Api-Version": "2022-11-28"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                data = json.loads(response.read().decode("utf-8", "replace"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            raise SystemExit(f"notification history lookup failed: {type(exc).__name__}") from None
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        total = data.get("total_count") if isinstance(data, dict) else None
+        if not isinstance(jobs, list) or type(total) is not int or total < 0:
+            raise SystemExit("notification history lookup failed: invalid-response")
+        for job in jobs:
+            if not isinstance(job, dict):
+                raise SystemExit("notification history lookup failed: invalid-job")
+            yield job
+        seen += len(jobs)
+        if seen >= total:
+            return
+        if not jobs:
+            raise SystemExit("notification history lookup failed: incomplete-response")
+        page += 1
+
+
 def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict[str, Any] | None:
     """Recover an instant GITHUB_TOKEN merge without replaying human/old merges."""
     run = payload.get("workflow_run") or {}
@@ -402,7 +433,8 @@ def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict
         or run.get("path") != ".github/workflows/auto-merge.yml"
         or run.get("event") != "pull_request_target"
         or run.get("conclusion") != "success"
-        or run.get("run_attempt") != 1
+        or type(run.get("run_attempt")) is not int
+        or run["run_attempt"] < 1
         or (run.get("head_repository") or {}).get("full_name") != repo
         or (payload.get("repository") or {}).get("full_name") != repo
     ):
@@ -416,6 +448,21 @@ def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict
     token = env.get("GITHUB_TOKEN", "")
     if not token:
         raise SystemExit("missing GitHub token for auto-merge lookup")
+    started_at, completed_at = run.get("run_started_at"), run.get("updated_at")
+    if run["run_attempt"] > 1:
+        # A rerun can perform a first merge. Use that attempt's actual merge
+        # step, since the workflow's initial start time can include an old merge.
+        merge_steps = [
+            step
+            for job in workflow_jobs(repo, str(run.get("id", "")), run["run_attempt"], token)
+            if job.get("name") == "enable-auto-merge"
+            for step in (job.get("steps") or [])
+            if isinstance(step, dict) and step.get("name") == "Queue merge after required checks"
+            and step.get("conclusion") == "success"
+        ]
+        if len(merge_steps) != 1:
+            return None
+        started_at, completed_at = merge_steps[0].get("started_at"), merge_steps[0].get("completed_at")
     request = urllib.request.Request(
         f"https://api.github.com/repos/{repo}/pulls/{number}",
         headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
@@ -436,8 +483,8 @@ def workflow_merge_payload(env: dict[str, str], payload: dict[str, Any]) -> dict
     ):
         return None
     try:
-        started = datetime.fromisoformat(run["run_started_at"])
-        completed = datetime.fromisoformat(run["updated_at"])
+        started = datetime.fromisoformat(started_at)
+        completed = datetime.fromisoformat(completed_at)
         merged = datetime.fromisoformat(pull["merged_at"])
         if any(value.tzinfo is None for value in (started, completed, merged)):
             return None
@@ -524,9 +571,34 @@ def collect_event(env: dict[str, str], payload: dict[str, Any] | None = None) ->
     }
 
 
+def sent_in_previous_attempt(env: dict[str, str]) -> bool:
+    """Skip a successful send on rerun, but allow retrying a failed send."""
+    try:
+        attempt = int(env.get("GITHUB_RUN_ATTEMPT", "1"))
+    except ValueError:
+        raise SystemExit("notification history lookup failed: invalid-run-attempt") from None
+    if attempt == 1:
+        return False
+    if attempt < 1:
+        raise SystemExit("notification history lookup failed: invalid-run-attempt")
+    repo, run_id, token = (env.get(key, "") for key in
+                           ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_TOKEN"))
+    for previous in range(1, attempt):
+        for job in workflow_jobs(repo, run_id, previous, token):
+            if job.get("name") == "notify" and any(
+                isinstance(step, dict) and step.get("name") == "Post notice to Slack"
+                and step.get("conclusion") == "success" for step in (job.get("steps") or [])
+            ):
+                return True
+    return False
+
+
 def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> int:
     args = parse_args(argv)
     runtime = env if env is not None else os.environ
+    if not args.dry_run and sent_in_previous_attempt(dict(runtime)):
+        print("A previous attempt already sent this notification; no duplicate sent.")
+        return 0
     payload = None
     if (runtime.get("EVENT_NAME") or runtime.get("GITHUB_EVENT_NAME")) == "workflow_run":
         payload = workflow_merge_payload(dict(runtime), load_event_payload(runtime.get("GITHUB_EVENT_PATH", "")))

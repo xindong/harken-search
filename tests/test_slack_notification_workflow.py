@@ -29,6 +29,8 @@ class SlackNotificationWorkflowTests(unittest.TestCase):
     def test_original_events_only_run_trusted_default_branch_code(self):
         workflow = self.workflow()
         self.assertEqual(workflow["on"]["pull_request_target"]["types"], ["closed"])
+        self.assertNotIn("branches", workflow["on"]["pull_request_target"])
+        self.assertNotIn("branches-ignore", workflow["on"]["pull_request_target"])
         self.assertEqual(workflow["on"]["issues"]["types"], ["opened"])
         self.assertNotIn("pull_request", workflow["on"])
         notify = workflow["jobs"]["notify"]
@@ -37,6 +39,7 @@ class SlackNotificationWorkflowTests(unittest.TestCase):
         self.assertEqual(checkout["with"]["ref"], "${{ github.event.repository.default_branch }}")
         self.assertEqual(checkout["with"]["persist-credentials"], "false")
         self.assertEqual(set(workflow["permissions"].values()), {"read"})
+        self.assertEqual(workflow["permissions"].get("actions"), "read")
 
     def test_auto_merge_workflow_completion_has_a_notification_entry(self):
         workflow = self.workflow()
