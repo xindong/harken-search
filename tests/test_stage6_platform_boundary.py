@@ -2420,7 +2420,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/avatar_image_file_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsAvatarTools.inl").read_text(encoding="utf-8")
+        self.assertIn(
+            '#include "SettingsAvatarTools.inl"',
+            (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8"),
+        )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenAvatarImageFileDialogUtf8(void* ownerWindow);", header)
@@ -2581,7 +2585,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/settings_import_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
+        self.assertIn(
+            '#include "SettingsActions.inl"',
+            (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8"),
+        )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenSettingsImportFileDialogUtf8(void* ownerWindow);", header)
@@ -2609,7 +2617,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertEqual(1, main.count(qualified_call))
         button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-        tooltip = main.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
+        tooltip = main.index('else if(editor.action=="custom-colors")', button)
         body = main[button:tooltip]
         self.assertNotIn("OPENFILENAMEW", body)
         self.assertNotIn("GetOpenFileNameW", body)
