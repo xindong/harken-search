@@ -369,7 +369,11 @@ if(WIN32)
     set(AURO_AUDIO_FILE_DIALOG_SOURCE src/platform/audio_file_dialog_win32.cpp)
     set(AURO_PROTOOLS_PATH_ENCODING_SOURCE src/platform/pro_tools_path_encoding_win32.cpp)
 else()
-    set(AURO_MEDIA_FOUNDATION_AUDIO_SOURCE src/platform/media_foundation_audio_unsupported.cpp)
+    if(APPLE)
+        set(AURO_MEDIA_FOUNDATION_AUDIO_SOURCE src/platform/audio_toolbox_audio_macos.cpp)
+    else()
+        set(AURO_MEDIA_FOUNDATION_AUDIO_SOURCE src/platform/media_foundation_audio_unsupported.cpp)
+    endif()
     set(AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE src/platform/metadata_legacy_tag_content_std.cpp)
     set(AURO_SEARCH_TEXT_GB2312_SOURCE src/platform/search_text_gb2312_std.cpp)
     set(AURO_THEME_JSON_DIALOGS_SOURCE src/platform/theme_json_dialogs_std.cpp)
@@ -1502,6 +1506,7 @@ elseif(APPLE)
         "-framework ImageIO"           # Image encode/decode
         "-framework IOKit"             # Machine UUID
         "-framework CoreFoundation"
+        "-framework AudioToolbox"     # Native M4A probe and decode.
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
         ixwebsocket                    # Shared WAAPI source needs its headers and library.

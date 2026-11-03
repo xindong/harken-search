@@ -1415,6 +1415,9 @@ if(WIN32)
     target_link_libraries(TestWmaDecodeSupport PRIVATE
         mfplat mfreadwrite mfuuid
     )
+elseif(APPLE)
+    target_link_libraries(TestWmaDecodeSupport PRIVATE
+        "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 target_include_directories(TestWmaDecodeSupport PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1773,6 +1776,9 @@ if(WIN32)
         src/platform/text_encoding_win32.cpp)
     target_link_libraries(TestDatabaseAudioProbeIntegration PRIVATE
         mfplat mfreadwrite mfuuid)
+elseif(APPLE)
+    target_link_libraries(TestDatabaseAudioProbeIntegration PRIVATE
+        "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 target_include_directories(TestDatabaseAudioProbeIntegration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -1789,14 +1795,21 @@ foreach(_source IN ITEMS database_audio_probe_scripted_backend.cpp
 endforeach()
 if(WIN32)
     set(_auro_database_probe_selected_mf media_foundation_audio_win32.cpp)
-    set(_auro_database_probe_unselected_mf media_foundation_audio_unsupported.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_unsupported.cpp)
+    set(_auro_database_probe_unselected_mf_2 audio_toolbox_audio_macos.cpp)
+elseif(APPLE)
+    set(_auro_database_probe_selected_mf audio_toolbox_audio_macos.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_2 media_foundation_audio_unsupported.cpp)
 else()
     set(_auro_database_probe_selected_mf media_foundation_audio_unsupported.cpp)
-    set(_auro_database_probe_unselected_mf media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_2 audio_toolbox_audio_macos.cpp)
 endif()
 foreach(_target IN ITEMS TestDatabaseAudioProbeIntegration HarkenSearch)
     _auro_assert_source_count(${_target} ${_auro_database_probe_selected_mf} 1)
-    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf} 0)
+    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf_1} 0)
+    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf_2} 0)
 endforeach()
 foreach(_definition IN ITEMS AURO_DATABASE_AUDIO_PROBE_TESTING
         AURO_DATABASE_AUDIO_PROBE_TEST_WIN32 AURO_DATABASE_AUDIO_PROBE_TEST_STD)
@@ -1812,6 +1825,11 @@ if(WIN32)
     if(NOT "${_auro_database_probe_integration_links}" STREQUAL "mfplat;mfreadwrite;mfuuid")
         message(FATAL_ERROR "TestDatabaseAudioProbeIntegration: unexpected links: ${_auro_database_probe_integration_links}")
     endif()
+elseif(APPLE)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration database_audio_probe_path_utf8_adapter.cpp 0)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_win32.cpp 0)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_std.cpp 0)
+    _auro_assert_link_library_count(TestDatabaseAudioProbeIntegration 2)
 else()
     _auro_assert_source_count(TestDatabaseAudioProbeIntegration database_audio_probe_path_utf8_adapter.cpp 0)
     _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_win32.cpp 0)
@@ -6593,6 +6611,10 @@ foreach(_auro_waveform_text_target IN LISTS AURO_WAVEFORM_TEXT_ENCODING_TARGETS)
         target_sources(${_auro_waveform_text_target} PRIVATE
             src/platform/text_encoding_std.cpp
         )
+        if(APPLE)
+            target_link_libraries(${_auro_waveform_text_target} PRIVATE
+                "-framework AudioToolbox" "-framework CoreFoundation")
+        endif()
     endif()
 endforeach()
 
