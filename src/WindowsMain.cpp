@@ -4800,6 +4800,8 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
+                {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"draft_language",(int)editor.app.Value().language},{"live_language",(int)state.settings.language},
                 {"rendered_language",(int)g_currentLanguage},{"rendered_texts",texts},
                 {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
