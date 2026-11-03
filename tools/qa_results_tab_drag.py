@@ -163,10 +163,12 @@ def run(args):
         assert win32process.GetExitCodeProcess(process) == 0
         process.Close()
         process = None
+        verified = False
         process, pid = desktop.start(exe)
         identity = command(cmd='magic_eq_identity')
         assert identity['pid'] == pid and Path(identity['exe_path']).resolve() == exe, identity
         assert Path(identity['isolation_root']).resolve() == root, identity
+        verified = True
         wait_state(driver, lambda s: s['main_ui_ready'], 'reopened main UI', 60)
         snap = settled(lambda s: len(s.get('results_tabs', [])) >= len(order))
         assert [t['id'] for t in snap['results_tabs']] == order, snap
