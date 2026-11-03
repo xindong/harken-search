@@ -9,8 +9,16 @@ def require_saved_palette(profile,period):
     path=profile/('theme_schedule_'+period+'.json')
     assert path.is_file(),'Prepare an existing saved '+period+' palette before verification'
     data=path.read_bytes();assert data
-    json.loads(data)
+    value=json.loads(data)
+    assert isinstance(value,dict) and isinstance(value.get('colors'),dict) and value['colors'],'Saved palette has no colors'
     return data
+
+def require_loaded_palette(state,period):
+    assert not state[period+'_warning'],state[period+'_warning']
+
+def require_window_size(bounds,width,height):
+    a,b,c,d=bounds
+    assert abs(c-a-width)<=1 and abs(d-b-height)<=1,(bounds,width,height)
 
 def stop_owned_process(process,identity_verified,send_exit):
     import win32con,win32event,win32process
@@ -108,6 +116,7 @@ def run(args):
                 click('nav-1')
                 for width,height in ((1120,800),(880,600)):
                     cmd(cmd='settings_ui',action='resize',width=width,height=height);settle()
+                    require_window_size(state()['bounds'],width,height)
                     find('night-combo');find('day-combo');click('night-combo')
                     for index in range(5):find('theme-option-'+str(index))
                     shot(f'layout-{font}-{width}x{height}-options');key('Escape')
@@ -118,7 +127,7 @@ def run(args):
             query('system font');click('result-systemFont');click('systemFont');click('option-6');click('apply')
             click('done');schedule(-1);stop();report['passed']=True;return
         require_saved_palette(profile,'day')
-        manual=schedule();assert manual['mode']==0
+        manual=schedule();require_loaded_palette(manual,'day');assert manual['mode']==0
         manual_bg=manual['active_bg'];schedule(1140);open_settings()
         assert not any(x['id']=='night-combo' for x in state()['items'])
         click('automatic');click('apply');assert schedule()['mode']==1
@@ -155,6 +164,7 @@ def run(args):
         check('schedule off restores the original manual theme without replacing either saved palette')
         open_settings();click('automatic');click('apply');click('done');stop()
         start();observed=schedule(1140);assert observed['mode']==1 and observed['active_bg']==night and observed['day_bg']==day
+        require_loaded_palette(observed,'day')
         assert snapshot_files()==saved
         check_pixels('restart-night-retained',night);open_settings();assert state()['draft_night']==1
         shot('restart-night-controls');click('done')
