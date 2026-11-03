@@ -2422,6 +2422,10 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             encoding="utf-8"
         )
         main = (ROOT / "src/SettingsAvatarTools.inl").read_text(encoding="utf-8")
+        self.assertIn(
+            '#include "SettingsAvatarTools.inl"',
+            (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8"),
+        )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenAvatarImageFileDialogUtf8(void* ownerWindow);", header)
@@ -2583,6 +2587,10 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             encoding="utf-8"
         )
         main = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
+        self.assertIn(
+            '#include "SettingsActions.inl"',
+            (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8"),
+        )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenSettingsImportFileDialogUtf8(void* ownerWindow);", header)
