@@ -13,13 +13,15 @@ namespace CenterSenseDsp {
 enum class MagicEQMode : int { Pass = 0, Notch = 1 };
 enum class MagicEQSteepness : int { Soft = 0, Steep = 1, VerySteep = 2, Brickwall = 3 };
 
+inline constexpr float kDefaultMagicEQWidgetWidth = 520.0f;
+
 struct MagicEQSettings {
     bool enabled = false;
     MagicEQMode mode = MagicEQMode::Pass;
     MagicEQSteepness steepness = MagicEQSteepness::Steep;
     float centerFreq = 1000.0f;
     float halfWidthPercent = 10.0f;
-    float widgetWidth = 180.0f;
+    float widgetWidth = kDefaultMagicEQWidgetWidth;
     // Control-thread status only; deliberately absent from the audio snapshot.
     bool invalidInput = false;
 };

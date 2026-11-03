@@ -25209,7 +25209,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     struct DragState {
         DragPart part = DragPart::None;
         float startX = 0.0f, startY = 0.0f;
-        float startWidth = 180.0f;
+        float startWidth = CenterSenseDsp::kDefaultMagicEQWidgetWidth;
         float startCenterPercent = 50.0f, startHalfWidthPercent = 10.0f;
         float startLowPercent = 40.0f, startHighPercent = 60.0f;
     };
@@ -45357,6 +45357,10 @@ void RenderUI(AppState& state) {
 
             {
                 MagicEQSettings magicEQ = state.audioEngine.getMagicEQ();
+                const float magicEqPreferredWidth = magicEQ.widgetWidth;
+                const float trailingMinimumWidth = 260.0f;
+                const float magicEqAvailableWidth = std::max(120.0f, barOrigin.x + barW - kBarPadX - curX - trailingMinimumWidth);
+                magicEQ.widgetWidth = std::clamp(std::min(magicEqPreferredWidth, magicEqAvailableWidth), 120.0f, 1600.0f);
                 const auto magicEqFileInfo = state.audioEngine.getFileInfo();
                 const uint32_t magicEqFileRate = magicEqFileInfo.sampleRate;
                 const uint32_t magicEqEngineRate = state.audioEngine.getEngineSampleRate();
@@ -45375,6 +45379,7 @@ void RenderUI(AppState& state) {
                                    saveMagicEQSettings, transportBarBg,
                                    state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized()))
                     state.audioEngine.setMagicEQ(magicEQ);
+                magicEQ.widgetWidth = magicEqPreferredWidth;
                 if (saveMagicEQSettings) SaveAppSettings(state);
                 ThemeInspector::RegisterZone(
                     magicEQPos, ImVec2(magicEQPos.x + magicEQ.widgetWidth, magicEQPos.y + 32.0f),
