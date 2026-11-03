@@ -4459,6 +4459,8 @@ static void PollQaCommandFile(AppState& state) {
                     state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
+                else if (getStr(raw,"action")=="home_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,true);
+                else if (getStr(raw,"action")=="home_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,false);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
                 result=R"({"ok":true})";
             } else if (cmd == "info_page_layout") {
@@ -5279,6 +5281,14 @@ static void PollQaCommandFile(AppState& state) {
         for (const auto& [key, value] : state.qaMetadataInputText) {
             if (!firstQaMetadataInput) result += ",";
             firstQaMetadataInput = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
+        }
+        result += "},";
+        result += "\"qa_metadata_draft_query\":{";
+        bool firstQaMetadataDraft = true;
+        for (const auto& [key, value] : state.qaMetadataDraftQuery) {
+            if (!firstQaMetadataDraft) result += ",";
+            firstQaMetadataDraft = false;
             result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
         }
         result += "},";

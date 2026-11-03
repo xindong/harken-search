@@ -8341,7 +8341,9 @@ static void DrawSidebarMetadataPickerField(
     ui.draft.Sync(applied);
 
     const std::string displayed = ui.draft.InputDisplayText(L(Filter_DamagedMetadataName));
-    std::vector<char> visible(std::max<size_t>(1024, displayed.size() + 1));
+    // Match the shared TextInput's editing headroom so changed text survives
+    // the char-buffer adapter without clipping a UTF-8 suffix.
+    std::vector<char> visible(displayed.size() + 1024);
     const size_t count = displayed.size();
     if (count != 0) std::memcpy(visible.data(), displayed.data(), count);
     visible[count] = '\0';
@@ -8381,6 +8383,10 @@ static void DrawSidebarMetadataPickerField(
         ui.draft.Edit(visible.data());
         ui.highlightedIndex = -1;
     }
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState && inputActive)
+        qaState->qaMetadataDraftQuery[suffix] = std::string(ui.draft.Query());
+#endif
 
     ImGui::SameLine();
     char arrowId[80];
@@ -29677,6 +29683,7 @@ void RenderUI(AppState& state) {
 #if ARIS_PREVIEW_ISOLATION
     state.qaFilterUiRects.clear();
     state.qaMetadataInputText.clear();
+    state.qaMetadataDraftQuery.clear();
 #endif
     if (HarkenSearch::ShouldConsumePendingPostScanSimilarityIndex(
             state.pendingPostScanSimilarityIndex.load(std::memory_order_acquire),

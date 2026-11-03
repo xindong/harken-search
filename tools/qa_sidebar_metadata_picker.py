@@ -376,6 +376,15 @@ def run(args):
             s.get("qa_metadata_input_text", {}).get("Category") == long_raw_category)
         checks.append({"name": "long-raw-category-input-complete",
                        "input_bytes": len(current["qa_metadata_input_text"]["Category"].encode("utf-8"))})
+        driver.command({"cmd": "info_edit_input", "action": "home_down"})
+        time.sleep(.12)
+        driver.command({"cmd": "info_edit_input", "action": "home_up"})
+        driver.command({"cmd": "info_edit_input", "text": "Q"})
+        current = wait_until("long category query edit stays complete", lambda s:
+            s.get("qa_metadata_draft_query", {}).get("Category") == "Q" + long_raw_category and
+            s["metadata_filters"]["category"] == long_raw_category, timeout=5)
+        checks.append({"name": "long-category-prefix-edit-complete",
+                       "query_bytes": len(current["qa_metadata_draft_query"]["Category"].encode("utf-8"))})
     except BaseException as exc:
         failure = repr(exc)
         raise
