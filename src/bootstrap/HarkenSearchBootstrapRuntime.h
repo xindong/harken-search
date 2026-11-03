@@ -437,7 +437,7 @@ struct BootstrapApplicationResult {
     bool mutated = false;
     // Short ASCII cause token for the failure record (status/backend/native
     // names, no paths, no user data).  Empty unless a stage filled it.
-    std::string detail;
+    std::string detail{};
 
     bool ok() const noexcept {
         return status == BootstrapApplicationStatus::Completed ||
