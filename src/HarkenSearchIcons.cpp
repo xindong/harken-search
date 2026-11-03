@@ -15,6 +15,8 @@
 
 #ifdef _WIN32
   #include "../thirdparty/imgui/backends/imgui_impl_opengl3_loader.h"
+#elif defined(__APPLE__)
+  #include <OpenGL/gl3.h>
 #endif
 
 namespace aura::ui {
