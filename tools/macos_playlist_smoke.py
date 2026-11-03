@@ -18,6 +18,17 @@ def playlist(snapshot, title):
     return matches[0]
 
 
+def capture_matching(app, predicate, label):
+    # A count reply can precede a follow-up search refresh. Verify the same
+    # frame that produced the screenshot instead of trusting an earlier poll.
+    for _ in range(10):
+        frame = app.command(capture=True)
+        if predicate(frame):
+            return frame
+        app.wait(predicate, label)
+    raise AssertionError(f'{label}: no settled captured frame')
+
+
 def run(binary, root, output):
     output.mkdir(parents=True, exist_ok=False)
     app = App(binary, root, output)
@@ -59,7 +70,8 @@ def run(binary, root, output):
         selected = app.wait(lambda s: not s['search_pending'] and s['selected_playlist_id'] == child['id']
                             and s['count'] == 2 and names(s) == ['war gun.wav', '风声.wav'], 'child members')
         assert not selected['playlist_aggregated']
-        frame = app.command(capture=True)
+        frame = capture_matching(app, lambda s: not s['search_pending'] and s['selected_playlist_id'] == child['id']
+                                 and s['count'] == 2 and names(s) == ['war gun.wav', '风声.wav'], 'child captured frame')
         report['checks'].append({'step': 'child members', 'names': names(selected), 'screenshot': f'{frame["id"]:04d}.png'})
         app.command('filter', text='war')
         scoped = app.wait(lambda s: not s['search_pending'] and s['selected_playlist_id'] == child['id']
@@ -69,7 +81,8 @@ def run(binary, root, output):
         app.command('filter', text='', folder=str(source / 'Archive'))
         folder_scoped = app.wait(lambda s: not s['search_pending'] and s['selected_playlist_id'] == child['id']
                                  and s['count'] == 1 and names(s) == ['风声.wav'], 'child scoped folder')
-        frame = app.command(capture=True)
+        frame = capture_matching(app, lambda s: not s['search_pending'] and s['selected_playlist_id'] == child['id']
+                                 and s['count'] == 1 and names(s) == ['风声.wav'], 'folder captured frame')
         report['checks'].append({'step': 'child scoped folder', 'names': names(folder_scoped),
                                  'screenshot': f'{frame["id"]:04d}.png'})
         app.command('filter', folder='')
@@ -77,7 +90,8 @@ def run(binary, root, output):
         aggregate = app.wait(lambda s: not s['search_pending'] and s['selected_playlist_id'] == folder['id']
                              and s['playlist_aggregated'] and s['count'] == 2
                              and names(s) == ['war gun.wav', '风声.wav'], 'folder aggregate')
-        frame = app.command(capture=True)
+        frame = capture_matching(app, lambda s: not s['search_pending'] and s['selected_playlist_id'] == folder['id']
+                                 and s['count'] == 2 and names(s) == ['war gun.wav', '风声.wav'], 'aggregate captured frame')
         report['checks'].append({'step': 'folder aggregate', 'names': names(aggregate), 'screenshot': f'{frame["id"]:04d}.png'})
         app.command('playlist_view', playlist_id=other['id'])
         separate = app.wait(lambda s: not s['search_pending'] and s['selected_playlist_id'] == other['id']
@@ -99,7 +113,8 @@ def run(binary, root, output):
         app.command('playlist_view', playlist_id=folder['id'])
         after = app.wait(lambda s: not s['search_pending'] and s['playlist_aggregated']
                          and s['count'] == 2 and names(s) == ['war gun.wav', '风声.wav'], 'aggregate after reopen')
-        frame = app.command(capture=True)
+        frame = capture_matching(app, lambda s: not s['search_pending'] and s['selected_playlist_id'] == folder['id']
+                                 and s['count'] == 2 and names(s) == ['war gun.wav', '风声.wav'], 'reopen captured frame')
         report['checks'].append({'step': 'reopen aggregate', 'names': names(after),
                                  'screenshot': 'reopen/' + f'{frame["id"]:04d}.png'})
         assert all((source / name).is_file() for name in ['Cinematic/war gun.wav', 'Archive/风声.wav', 'Archive/war rifle.wav'])
