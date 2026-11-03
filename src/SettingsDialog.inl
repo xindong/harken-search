@@ -211,6 +211,7 @@
             const ImVec2 labelPos(rowMin.x+24,rowMin.y+(navigationRowH-ImGui::GetTextLineHeight())*.5f);
             const ImVec4 labelClip(rowMin.x+24,rowMin.y,rowMax.x-12,rowMax.y);
             navDraw->AddText(selected?GetUIFontEmphasis():ImGui::GetFont(),ImGui::GetFontSize(),labelPos,ImGui::GetColorU32(preview.interfaceText),su::PageLabel(page),nullptr,0,&labelClip);
+            su::ObserveText(("nav-text-"+std::to_string((int)page)).c_str(),su::PageLabel(page),labelPos,labelClip,selected?GetUIFontEmphasis():ImGui::GetFont(),ImGui::GetFontSize());
             ImGui::PopID();
         }
         ImGui::PopStyleColor(4);ImGui::PopStyleVar(2);ImGui::EndChild();
