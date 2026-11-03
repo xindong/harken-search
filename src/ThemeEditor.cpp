@@ -18,6 +18,20 @@
 #include "platform/theme_json_dialogs.h"
 #include "imgui.h"
 #include "HarkenSearchWidgets.h"
+#include "nlohmann_json.hpp"
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+#include "imgui_internal.h"
+#include "nlohmann_json.hpp"
+static nlohmann::json s_editorQaItems=nlohmann::json::array();
+static ImVec4 s_editorQaBounds{};
+static void ObserveEditorItem(const char* id) {
+    const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
+    const auto ca=ImGui::GetWindowDrawList()->GetClipRectMin(),cb=ImGui::GetWindowDrawList()->GetClipRectMax();
+    s_editorQaItems.push_back({{"id",id},{"bounds",{a.x,a.y,b.x,b.y}},{"clip",{ca.x,ca.y,cb.x,cb.y}}});
+}
+#else
+static void ObserveEditorItem(const char*) {}
+#endif
 
 #include <vector>
 #include <string>
@@ -189,6 +203,26 @@ static void SetThemeNameFromPathUtf8(const std::string& pathUtf8) {
     std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", themeName.c_str());
 }
 
+static bool IsEditorThemeFileValid(const std::string& pathUtf8) {
+    std::string text;
+    if (!Platform::FileSystem::ReadFileText(pathUtf8, text)) return false;
+    const auto document = nlohmann::json::parse(text, nullptr, false);
+    if (!document.is_object()) return false;
+    size_t count = 0;
+    const auto* fields = GetThemeEditorItems(count);
+    bool hasColor = false;
+    for (size_t i = 0; i < count; ++i) {
+        const auto value = document.find(fields[i].key);
+        if (value == document.end()) continue;
+        if (!value->is_string()) return false;
+        const auto color = value->get<std::string>();
+        if ((color.size() != 6 && color.size() != 8) || color.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+            return false;
+        hasColor = true;
+    }
+    return hasColor;
+}
+
 static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     if (g_ed.schedulePeriod >= 0) {
         const auto period = g_ed.schedulePeriod == 0 ? harken::theme_schedule::Period::Day : harken::theme_schedule::Period::Night;
@@ -214,6 +248,7 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     state.settings.customThemeName = g_ed.themeName;
     state.settings.useCustomColors = false;
     g_ed.openTheme = AppTheme::Custom;
+    g_ed.openCustomized = true;
     g_ed.openUseCustomColors = false;
     g_ed.openCustomThemeName = g_ed.themeName;
     g_ed.openSnapshot = g_ed.draft;
@@ -272,6 +307,7 @@ static bool DrawColorItem(const ThemeEditorItem& item) {
     bool changed = ImGui::ColorEdit4(
         "##color", (float*)&v,
         ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+    ObserveEditorItem(item.key);
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(4);
 
@@ -404,9 +440,22 @@ bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value) 
     return false;
 }
 std::string ThemeScheduleEditorQaStatus() { return g_ed.exportMsg; }
+std::string ThemeScheduleEditorQaObservation() {
+    auto popups=nlohmann::json::array();
+    for(const auto* w:ImGui::GetCurrentContext()->Windows)
+        if(w->WasActive && (w->Flags&ImGuiWindowFlags_Popup))
+            popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}}});
+    const auto r=s_editorQaBounds;
+    return nlohmann::json({{"frame",ImGui::GetFrameCount()},{"items",s_editorQaItems},{"popups",popups},
+        {"bounds",{r.x,r.y,r.z,r.w}},{"live_preview",g_ed.livePreview},
+        {"draft_bg",ThemeColors::toARGBHex(g_ed.draft.mainWindowBG)}}).dump();
+}
 #endif
 
 void RenderThemeEditor(AppState& state) {
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+    s_editorQaItems=nlohmann::json::array();
+#endif
 // Closed → revert if not saved
     if (!state.showThemeEditor) {
         if (g_ed.wasOpen) {
@@ -417,7 +466,7 @@ void RenderThemeEditor(AppState& state) {
                 harken::theme_schedule::Invalidate();
                 state.themeScheduleEditorPeriod = -1;
                 state.showSettingsDialog = true;
-            } else if (!g_ed.savedThisSession) {
+            } else {
                 state.settings.theme = g_ed.openTheme;
                 state.settings.useCustomColors = g_ed.openUseCustomColors;
                 state.settings.customThemeName = g_ed.openCustomThemeName;
@@ -503,6 +552,10 @@ void RenderThemeEditor(AppState& state) {
         ImGui::PopStyleColor(5);
         return;
     }
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+    const auto qaPos=ImGui::GetWindowPos(),qaSize=ImGui::GetWindowSize();
+    s_editorQaBounds={qaPos.x,qaPos.y,qaPos.x+qaSize.x,qaPos.y+qaSize.y};
+#endif
     if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape))
         state.showThemeEditor = false;
 
@@ -543,6 +596,7 @@ void RenderThemeEditor(AppState& state) {
                 }
             }
         }
+        ObserveEditorItem("live-preview");
         ImGui::Separator();
         ImGui::TextUnformatted(L(Module_ColorPreset));
         const AppTheme seeds[] = {AppTheme::RoseCedar, AppTheme::JadeMist, AppTheme::Dark, AppTheme::Ocean, AppTheme::LapisBlue};
@@ -564,8 +618,12 @@ void RenderThemeEditor(AppState& state) {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220);
     ImGui::InputText("##ThemeName", g_ed.themeName, sizeof(g_ed.themeName));
+    ObserveEditorItem("theme-name");
     ImGui::SameLine();
-    ImGui::Checkbox(L(ThemeEditor_LivePreview), &g_ed.livePreview);
+    if (ImGui::Checkbox(L(ThemeEditor_LivePreview), &g_ed.livePreview)) {
+        if (g_ed.livePreview) ApplyDraftToLive(state);
+        else RestoreOpenAppearance(state);
+    }
 
     static int presetIdx = 0;
     ImGui::Text("%s", L(Module_ColorPreset));
@@ -580,11 +638,13 @@ void RenderThemeEditor(AppState& state) {
                 presetIdx = i;
                 LoadPresetToDraft(i);
             }
+            ObserveEditorItem(("preset-option-" + std::to_string(i)).c_str());
             if (sel) ImGui::SetItemDefaultFocus();
             ImGui::PopID();
         }
         ImGui::EndCombo();
     }
+    ObserveEditorItem("preset-combo");
 
     }
     ImGui::SameLine();
@@ -704,7 +764,7 @@ void RenderThemeEditor(AppState& state) {
         if (!filePath.empty()) {
             const AppTheme startTheme = state.settings.theme;
             ThemeColorScheme imported = g_ed.draft;
-            if (ThemeColors::loadAndApplyThemeFile(
+            if (IsEditorThemeFileValid(filePath) && ThemeColors::loadAndApplyThemeFile(
                     filePath,
                     &imported,
                     true,
@@ -739,7 +799,7 @@ void RenderThemeEditor(AppState& state) {
         if (!filePath.empty()) {
             const AppTheme startTheme = state.settings.theme;
             ThemeColorScheme imported = g_ed.draft;
-            if (ThemeColors::loadAndApplyThemeFile(
+            if (IsEditorThemeFileValid(filePath) && ThemeColors::loadAndApplyThemeFile(
                     filePath,
                     &imported,
                     true,

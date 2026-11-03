@@ -658,7 +658,9 @@ int RunHarkenSearchBootstrapEntrypoint(
     const BootstrapApplicationResult result = RunBootstrapApplication(
         *admission, roots, dependencies, applicationOptions);
     const int mapped = static_cast<int>(mapResult(result));
-    ARIS_DEMO_STAGE("application", mapped, result.reason.c_str());
+    std::string stageExtra = result.reason;
+    if (!result.detail.empty()) stageExtra += ";" + result.detail;
+    ARIS_DEMO_STAGE("application", mapped, stageExtra.c_str());
     return mapped;
 }
 

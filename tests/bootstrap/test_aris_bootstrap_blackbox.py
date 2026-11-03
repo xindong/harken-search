@@ -41,6 +41,8 @@ class Case:
     pre_mutation_marker: str | None = None
     max_elapsed_seconds: float | None = None
     inventory_relative_path: str | None = None
+    new_inventory_files: tuple[str, ...] = ()
+    install_parent_is_file: bool = False
     removals: tuple[str, ...] = ()
 
 
@@ -147,6 +149,22 @@ def _run_case(
                     "sha256": "b" * 64,
                 }
             )
+        new_payloads = {path: f"new-asset:{path}".encode() for path in case.new_inventory_files}
+        for relative_path, asset_bytes in new_payloads.items():
+            staged_asset = staging / relative_path
+            staged_asset.parent.mkdir(parents=True, exist_ok=True)
+            staged_asset.write_bytes(asset_bytes)
+            package["inventory"].append(
+                {
+                    "byte_size": len(asset_bytes),
+                    "relative_path": relative_path,
+                    "sha256": hashlib.sha256(asset_bytes).hexdigest(),
+                }
+            )
+            if (install / relative_path).parent.exists():
+                raise AssertionError("new-directory test must start without install parents")
+        if case.install_parent_is_file:
+            (install / "assets").write_bytes(b"existing-file-must-not-be-overwritten")
         package_bytes = json.dumps(package, separators=(",", ":"), ensure_ascii=False)
         signing_key = SigningKey(
             bytes.fromhex(
@@ -276,6 +294,16 @@ def _run_case(
                         "Bootstrap mutated user data outside the install "
                         f"payload; helper stderr={completed.stderr!r}"
                     )
+                elif new_payloads and case.expected_install == "new" and any(
+                    not (install / relative_path).is_file()
+                    or (install / relative_path).read_bytes() != asset_bytes
+                    for relative_path, asset_bytes in new_payloads.items()
+                ):
+                    diagnostic = "new nested inventory was not installed with its signed bytes"
+                elif case.install_parent_is_file and (install / "assets").read_bytes() != (
+                    b"existing-file-must-not-be-overwritten"
+                ):
+                    diagnostic = "directory preparation overwrote an existing file"
                 elif case.pre_mutation_rejection and (
                     (
                         case.pre_mutation_marker is not None
@@ -372,6 +400,18 @@ def main() -> int:
 
     cases = (
         Case("happy", 0, expected_install="new"),
+        Case(
+            "new-nested-directories", 0, expected_install="new",
+            new_inventory_files=(
+                "assets/icons/new-contributors/cindy.png",
+                "assets/icons/new-contributors/second.png",
+                "docs/new-section/readme.txt",
+            ),
+        ),
+        Case(
+            "new-directory-parent-file", 30, install_parent_is_file=True,
+            new_inventory_files=("assets/icons/new-contributors/cindy.png",),
+        ),
         Case("channel-consumed", 0, mode="channel-consumed", expected_install="new"),
         Case(
             "legacy-one-way-channel",
