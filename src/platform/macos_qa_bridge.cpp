@@ -17,6 +17,7 @@
 namespace HarkenSearch::MacQa {
 namespace {
 using Json = nlohmann::json;
+bool thesaurusPageRequested = false;
 std::filesystem::path Root() {
     return std::filesystem::u8path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "runtime";
 }
@@ -74,6 +75,11 @@ Request Poll(AppState& state) {
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
             state.settings.readingFontSize = size;
             MarkSettingsDirty(state);
+        } else if (action == "reset_thesaurus") {
+            if (!ResetMacThesaurusToDefaults()) throw std::runtime_error("thesaurus_reset_failed");
+        } else if (action == "show_thesaurus") {
+            state.showSettingsDialog = true;
+            thesaurusPageRequested = true;
         } else if (action == "filter") {
             if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
             if (command.contains("text")) CopyUiText(state.searchBuffer, command.at("text").get<std::string>().c_str());
@@ -131,6 +137,11 @@ Request Poll(AppState& state) {
     } catch (const std::exception& error) { request.error = error.what(); }
 #endif
     return request;
+}
+bool ConsumeThesaurusPageRequest() {
+    const bool requested = thesaurusPageRequested;
+    thesaurusPageRequested = false;
+    return requested;
 }
 bool Reply(const AppState& state, const Request& request, bool captured) {
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA

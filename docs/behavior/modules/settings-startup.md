@@ -38,6 +38,9 @@
 - Given 已满足以下前置条件：Browser mode stores user workflow state such as recursive child-audio scope
 - When 执行以下操作：settings are saved and restored on the next launch
 - Then 应得到以下结果：Aris restores that scope truthfully instead of silently resetting to current-directory mode
+- Given Mac 用户设置目录中有一份自定义词库
+- When 设置页显示词库位置并执行“重置为默认”
+- Then 显示实际 harken_thesaurus.json 路径，只重置该用户文件；重开后仍为内置规则，Windows 程序目录与旧词库迁移行为不变
 
 - Given Mac 用户在设置中选择导出备份
 - When 用户在系统保存面板确认一个可写目标
@@ -79,6 +82,9 @@
 - Given 已满足以下前置条件：settings are missing, encrypted values fail, or a DB path is unavailable
 - When 执行以下操作：startup loads configuration
 - Then 应得到以下结果：Aris falls back safely without silent destructive cleanup
+- Given Mac 词库保存目录只读或不可用
+- When 用户执行词库“重置为默认”
+- Then 保留失败状态并显示与用户设置目录相关的提示，不把程序包目录当成词库位置
 
 ### Non-Functional
 
@@ -99,6 +105,7 @@
 | product edition flags | API | tests | Edition-gated defaults remain stable |
 | settings encryption | API | tests | Sensitive settings are protected |
 | startup diagnostics | diagnostics | QA protocol | Runtime state decisions are visible |
+| Mac 词库位置与重置 | UI | SettingsThesaurusTools.inl, main.cpp | 页面、重置和持久化都指向 activePath；Windows 旧逻辑保留 |
 | Mac settings backup export | UI | SettingsActions and Mac settings export dialog | Uses a user-selected UTF-8 path, keeps cancel side-effect free and preserves the Windows branch |
 | Mac theme JSON export | UI | ThemeEditor and Mac theme save dialog | Saves the draft through the shared serializer to the selected UTF-8 path; cancel leaves the clipboard copy available |
 | Mac custom theme file | UI | ThemeEditor, SettingsDialog and Cocoa startup | Resolves the same user settings file for save, switch and reopen; fails closed on an unsafe directory |
@@ -129,6 +136,8 @@
 | TEST-MAC-THEME-IMPORT | source-contract / runtime | `tests/test_theme_json_import_macos_boundary.py` and isolated Mac chooser probe | Both import buttons reach the native chooser; cancel and selected UTF-8 path behave correctly | active |
 
 ## Missing Coverage
+
+- Mac 词库重置的源码绑定由 test_thesaurus_json_dialog_boundary.py 检查；隔离实际应用由 macos_thesaurus_reset_smoke.py 验证重置文件与重开。正向文件面板点选和用户界面确认仍需单独验收。
 
 - Mac 保存面板的正向人工点选与导出文件回读仍需实际界面验收；原生面板取消、应用重开和源码边界测试不能代替它。
 - Mac 主题编辑器导出的正向界面点选和文件回读也需使用本卡实际包确认；面板探针不能代替用户验收。

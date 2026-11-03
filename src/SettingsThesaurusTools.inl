@@ -6,10 +6,20 @@
                 ImGui::TextColored(COLOR_ACCENT, L(Set_ThesaurusTitle));
                 aura::ui::NotifySettingsSearchLabeledItem(L(Set_ThesaurusTitle), aura::ui::SettingsSearchLabelKind::Text);
                 std::string thesaurusPath = Platform::HarkenUserData::WideToUtf8Path(Platform::HarkenUserData::EnsureThesaurusFileUtf8(GetExeDirUtf8()).activePath);
+#if defined(__APPLE__)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped(L(Set_ThesMacPath), thesaurusPath.c_str());
+                ImGui::PopStyleColor();
+#else
                 ImGui::TextDisabled(L(Set_ThesPath), GetExeDirUtf8().c_str());
+#endif
                 if (!PathExistsUtf8(thesaurusPath)) {
                     ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.2f, 1.0f), L(Set_ThesaurusNotReady));
+#if defined(__APPLE__)
+                    ImGui::TextWrapped("%s", L(Set_ThesMacNotWritable));
+#else
                     ImGui::TextWrapped("%s", L(Set_ThesNotWritable));
+#endif
                 }
                 ImGui::Separator();
                 ImGui::Spacing();
@@ -38,6 +48,10 @@
                 }
                 ImGui::SameLine();
                 if (aura::ui::ActionButton(L(Set_ThesResetDefault), ImVec2(100, 30))) {
+#if defined(__APPLE__)
+                    if (ResetMacThesaurusToDefaults()) editor.error.clear();
+                    else editor.error = L(Set_ThesMacNotWritable);
+#else
                     g_userThesaurusLoaded = false;
                     {
                         const std::string exe = GetExeDirUtf8();
@@ -48,6 +62,7 @@
                         Platform::HarkenUserData::ResetThesaurusCacheForTests();
                     }
                     LoadThesaurusJson();
+#endif
                 }
 
                 ImGui::Spacing();

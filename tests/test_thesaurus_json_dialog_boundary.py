@@ -111,3 +111,14 @@ assert (
     '"tests/test_thesaurus_json_dialog_boundary.py"'
     in STAGE7
 )
+
+# The Mac settings page must show the active user file and reset that same
+# file; Windows keeps its existing executable-directory migration behavior.
+SETTINGS = (ROOT / "src/SettingsThesaurusTools.inl").read_text(encoding="utf-8")
+RESET = SETTINGS.split("if (aura::ui::ActionButton(L(Set_ThesResetDefault)", 1)[1].split(
+    "ImGui::Spacing();", 1
+)[0]
+assert "ImGui::TextWrapped(L(Set_ThesMacPath), thesaurusPath.c_str())" in SETTINGS
+assert "#if defined(__APPLE__)" in RESET
+assert "ResetMacThesaurusToDefaults()" in RESET
+assert "#else" in RESET and "LegacyArisThesaurusFileName" in RESET

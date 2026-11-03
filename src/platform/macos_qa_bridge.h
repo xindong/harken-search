@@ -10,4 +10,5 @@ namespace HarkenSearch::MacQa {
 struct Request { long long id = 0; bool capture = false; bool close = false; std::string error; };
 Request Poll(AppState& state);
 bool Reply(const AppState& state, const Request& request, bool captured);
+bool ConsumeThesaurusPageRequest();
 }

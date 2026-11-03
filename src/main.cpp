@@ -58,6 +58,7 @@
 
 #ifdef __APPLE__
 #include "platform/settings_file.h"
+#include "platform/macos_qa_bridge.h"
 #endif
 
 #include "AudioEngine.h"
@@ -14918,6 +14919,20 @@ static void LoadThesaurusJson() {
     }
     g_userThesaurusLoaded = true;
 }
+
+#if defined(__APPLE__)
+bool ResetMacThesaurusToDefaults() {
+    const auto file = Platform::HarkenUserData::EnsureThesaurusFileUtf8(GetExeDirUtf8());
+    const std::string path = Platform::HarkenUserData::WideToUtf8Path(file.activePath);
+    if (file.readOnly || path.empty() ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) return false;
+    if (Platform::FileSystem::Exists(path) && !Platform::FileSystem::RemoveFile(path)) return false;
+    g_userThesaurusLoaded = false;
+    Platform::HarkenUserData::ResetThesaurusCacheForTests();
+    LoadThesaurusJson();
+    return g_userThesaurusLoaded && PathExistsUtf8(path);
+}
+#endif
 
 static std::vector<std::string> SplitThesaurusWords(std::string text) {
     size_t pos;
