@@ -11,6 +11,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import time
@@ -43,10 +44,27 @@ def visible_grip_rows(path: Path, info: dict, settings_bounds=None) -> list[int]
         return rows
 
 
+def shutdown_preview(process, driver, identity_verified, win32con, win32event, win32process):
+    # The shared QA queue is safe to use only after checking this process's identity.
+    shutdown_error = None
+    try:
+        if (win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT
+                and identity_verified):
+            try:
+                driver.command({'cmd': 'info_edit_input', 'action': 'exit'}, timeout=8)
+            except Exception as error:
+                shutdown_error = f'{type(error).__name__}: {error}'
+        if win32event.WaitForSingleObject(process, 15000) != win32con.WAIT_OBJECT_0:
+            win32process.TerminateProcess(process, 1)
+            win32event.WaitForSingleObject(process, 5000)
+        return win32process.GetExitCodeProcess(process), shutdown_error
+    finally:
+        process.Close()
+
+
 def main(args) -> int:
     import win32con
     import win32event
-    import win32gui
     import win32process
 
     exe, root, out = args.exe.resolve(), args.isolation_root.resolve(), args.output.resolve()
@@ -58,6 +76,7 @@ def main(args) -> int:
     driver = Driver(runtime, out)
     desktop = PrivateDesktop()
     process = None
+    identity_verified = False
     report = {
         'exe': str(exe), 'exe_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
         'isolation_root': str(root), 'started_at': datetime.now(timezone.utc).isoformat(),
@@ -81,10 +100,8 @@ def main(args) -> int:
         if (identity['pid'] != pid or Path(identity['exe_path']).resolve() != exe or
                 Path(identity['isolation_root']).resolve() != root):
             raise AssertionError(f'Wrong app or profile: {identity}')
+        identity_verified = True
         report['identity'] = identity
-        win32gui.ShowWindow(identity['hwnd'], win32con.SW_RESTORE)
-        win32gui.SetWindowPos(identity['hwnd'], 0, 40, 40, 1400, 900,
-                             win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
         state = wait_state(driver, lambda s: s['main_ui_ready'], 'main UI', 60)
         if not state['db_path']:
             wait_state(driver, lambda s: s['new_db_dialog_open'], 'first library dialog', 15)
@@ -138,23 +155,36 @@ def main(args) -> int:
             if time.monotonic() > deadline:
                 raise TimeoutError('Settings did not close for repositioning')
             time.sleep(.08)
+        settled_dock()
         driver.command({'cmd': 'ordinary_button_window', 'module': 'settings', 'action': 'open'})
         deadline = time.monotonic() + 8
         while True:
             settings = driver.command({'cmd': 'settings_ui'})
-            if settings['open'] and settings['bounds'][0] == 720:
+            if settings['open'] and settings['bounds'][2] - settings['bounds'][0] == 1120:
                 break
             if time.monotonic() > deadline:
-                raise TimeoutError(f'Settings did not center at 1120 px: {settings["bounds"]}')
+                raise TimeoutError(f'Settings did not reopen at 1120 px: {settings["bounds"]}')
             time.sleep(.08)
-        driver.command({'cmd': 'settings_ui', 'action': 'resize', 'width': 2000, 'height': 800})
+        grip_x = round(info['x'] + info['w'] / 2)
+        gap = round(min(9, max(5, info['w'] * .018)))
+        grip_y = round(info['y'] + info['h']) - 25
+        required_width = math.ceil(grip_x + gap + 7 - settings['bounds'][0])
+        if required_width > 1500:
+            raise AssertionError(f'Settings cannot cover dock grip at this viewport: '
+                                 f'{settings["bounds"]}, grip x={grip_x}')
+        driver.command({'cmd': 'settings_ui', 'action': 'resize',
+                        'width': max(1120, required_width), 'height': 800})
         deadline = time.monotonic() + 8
         while True:
             settings = driver.command({'cmd': 'settings_ui'})
-            if settings['open'] and settings['bounds'][0] <= 720 and settings['bounds'][2] >= 2220:
+            bounds = settings['bounds']
+            if (settings['open'] and bounds[0] + 20 < grip_x and
+                    grip_x + gap + 3 < bounds[2] - 3 and
+                    bounds[1] + 20 < grip_y < bounds[3] - 20):
                 break
             if time.monotonic() > deadline:
-                raise TimeoutError(f'Settings did not overlap dock grip: {settings["bounds"]}')
+                raise TimeoutError(f'Settings did not overlap dock grip: {bounds}, '
+                                   f'grip x={grip_x}, y={grip_y}')
             time.sleep(.08)
         after = driver.command({'cmd': 'dock_state'})
         if after['input']['modal'] != '###HarkenSettings':
@@ -221,17 +251,23 @@ def main(args) -> int:
         report['result'] = f'ERROR: {type(exc).__name__}: {exc}'
         raise
     finally:
+        cleanup_errors = []
         if process is not None:
             try:
-                if win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
-                    driver.command({'cmd': 'info_edit_input', 'action': 'exit'}, timeout=8)
-                if win32event.WaitForSingleObject(process, 15000) != win32con.WAIT_OBJECT_0:
-                    win32process.TerminateProcess(process, 1)
-                    win32event.WaitForSingleObject(process, 5000)
-                report['app_exit_code'] = win32process.GetExitCodeProcess(process)
-            finally:
-                process.Close()
-        desktop.close()
+                report['app_exit_code'], shutdown_error = shutdown_preview(
+                    process, driver, identity_verified, win32con, win32event, win32process)
+                if shutdown_error:
+                    cleanup_errors.append(f'Queue shutdown failed: {shutdown_error}')
+            except Exception as error:
+                cleanup_errors.append(f'Process cleanup failed: {type(error).__name__}: {error}')
+        try:
+            desktop.close()
+        except Exception as error:
+            cleanup_errors.append(f'Desktop cleanup failed: {type(error).__name__}: {error}')
+        if cleanup_errors:
+            report['cleanup_errors'] = cleanup_errors
+            report['result'] = 'ERROR: ' + '; '.join(cleanup_errors)
+            result = 2
         report['test_exit_code'] = result
         (out / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2),
                                          encoding='utf-8')
