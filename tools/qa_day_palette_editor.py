@@ -119,11 +119,21 @@ def run(args):
         nonlocal process
         if process is None:
             return
-        if win32event.WaitForSingleObject(process,0) == win32con.WAIT_TIMEOUT:
-            cmd(cmd="info_edit_input", action="exit")
-        assert win32event.WaitForSingleObject(process,20000) == win32con.WAIT_OBJECT_0
-        assert win32process.GetExitCodeProcess(process) == 0
-        process.Close(); process = None
+        forced = False
+        try:
+            if win32event.WaitForSingleObject(process,0) == win32con.WAIT_TIMEOUT:
+                cmd(cmd="info_edit_input", action="exit")
+            assert win32event.WaitForSingleObject(process,20000) == win32con.WAIT_OBJECT_0
+            assert win32process.GetExitCodeProcess(process) == 0
+        finally:
+            try:
+                if win32event.WaitForSingleObject(process,0) == win32con.WAIT_TIMEOUT:
+                    forced = True
+                    win32process.TerminateProcess(process,1)
+                    assert win32event.WaitForSingleObject(process,5000) == win32con.WAIT_OBJECT_0
+                report.setdefault("shutdowns",[]).append({"forced":forced,"exitCode":win32process.GetExitCodeProcess(process)})
+            finally:
+                process.Close(); process = None
 
     def editor():
         click("day-combo")
@@ -158,6 +168,8 @@ def run(args):
         cmd(cmd="theme_schedule", action="draft_color", key="mainWindowBG", rgba=[.7,.1,.2,1]); settle()
         button("取消修改"); wait(theme, lambda s:not s["editor_open"], "cancel closes editor"); settle()
         assert snapshot(day) == stored and snapshot(night) == night_before
+        canceled = theme()
+        assert canceled["active_bg"] == canceled["day_bg"] and canceled["imgui_bg"] == canceled["day_bg"], canceled
         check("cancel-discards-day-preview")
         stop(); start(24)
         assert snapshot(day) == stored and snapshot(night) == night_before
@@ -181,6 +193,9 @@ def run(args):
         raise
     finally:
         try: stop()
+        except Exception:
+            report["passed"] = False; report["shutdownError"] = traceback.format_exc()
+            raise
         finally:
             desktop.close()
             report["finishedAt"] = datetime.now(timezone.utc).isoformat()
