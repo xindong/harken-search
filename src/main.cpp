@@ -5357,7 +5357,6 @@ void LoadAppSettings(AppState& state) {
     (void)RemoveKeyValueFileEntry(g_appSettingsPathUtf8, "siliconFlowApiKey");
     (void)RemoveKeyValueFileEntry(g_appSettingsPathUtf8, "siliconFlowApiKeyPendingClear");
     if (kv.empty()) return;
-    state.similarSoundsMode = static_cast<HarkenSearch::SimilarityMode>(std::clamp(ParseInt(kv["similarMode"], 0), 0, 1));
     state.similarSoundsDeep = ParseBool(kv["similarDeep"], false);
     state.similarSoundsPreset = static_cast<SimilarityPreset>(std::clamp(ParseInt(kv["similarPreset"], 0), 0, 4));
 
@@ -6309,7 +6308,6 @@ bool TrySaveAppSettings(const AppState& state) {
         return true;
     }
     std::vector<std::pair<std::string, std::string>> items;
-    items.push_back({"similarMode", std::to_string(static_cast<int>(state.similarSoundsMode))});
     items.push_back({"similarDeep", state.similarSoundsDeep ? "1" : "0"});
     items.push_back({"similarPreset", std::to_string(static_cast<int>(state.similarSoundsPreset))});
     const auto sanitizeSavedTabName = [](const ListTab& tab) {

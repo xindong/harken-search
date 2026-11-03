@@ -73,15 +73,14 @@ static bool DrawSimilarSoundsActionRow(
         (snapshot.batchNumber > 0 ? L(Similar_NextBatch) : L(Similar_Find)));
     const float height = std::max(ImGui::GetFrameHeight(), aura::ui::metrics::kHeightMd);
     const float available = ImGui::GetContentRegionAvail().x;
-    const float modeWidth = std::max(112.0f, std::max(ImGui::CalcTextSize(L(Similar_ModePerceptual)).x, ImGui::CalcTextSize(L(Similar_ModeSubstitute)).x) + 28.0f);
     constexpr float comboWidth = 132.0f;
     const float deepWidth = ImGui::CalcTextSize(L(Similar_DeepThink)).x + 52.0f;
     const float actionWidth = ImGui::CalcTextSize(actionLabel).x + 28.0f;
-    const bool stacked = available < modeWidth + comboWidth + deepWidth + actionWidth + 3*kItemGap;
-    const float widths[] = {modeWidth, deepWidth, comboWidth, actionWidth};
-    ImVec2 positions[4];
+    const bool stacked = available < comboWidth + deepWidth + actionWidth + 2*kItemGap;
+    const float widths[] = {deepWidth, comboWidth, actionWidth};
+    ImVec2 positions[3];
     float nextX = 0; int optionRow = 0;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 3; ++i) {
         if (nextX > 0 && ((stacked && i == 2) || nextX + widths[i] > available)) {
             ++optionRow; nextX = 0;
         }
@@ -105,20 +104,12 @@ static bool DrawSimilarSoundsActionRow(
         ImVec2 currentNameSize = ImGui::CalcTextSize(currentName);
         ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), ImVec2(textMin.x,textMin.y+ImGui::GetStyle().FramePadding.y),
             textMax,textMax.x,currentName,nullptr,&currentNameSize);
-        ImGui::SetCursorPos(ImVec2(rowX+positions[0].x,rowY+positions[0].y));
-        const char* modes[] = {L(Similar_ModePerceptual),L(Similar_ModeSubstitute)};
-        int mode = static_cast<int>(state.similarSoundsMode);
-        ImGui::SetNextItemWidth(modeWidth);
-        if (aura::ui::Combo("##SimilarMode", &mode, modes, 2, aura::ui::ComboVariant::Flat)) {
-            state.similarSoundsMode = static_cast<HarkenSearch::SimilarityMode>(mode); changed = true;
-        }
-        ThemeInspector::RegisterLastItem("similar.options.mode");
-        ImGui::SetCursorPos(ImVec2(rowX+positions[1].x,rowY+positions[1].y+(height-18)*0.5f));
+        ImGui::SetCursorPos(ImVec2(rowX+positions[0].x,rowY+positions[0].y+(height-18)*0.5f));
         const ImVec2 deepMin = ImGui::GetCursorScreenPos();
         if (aura::ui::Toggle(L(Similar_DeepThink), &state.similarSoundsDeep)) changed = true;
         ThemeInspector::RegisterZone(deepMin, ImVec2(deepMin.x + 36, deepMin.y + 18), "similar.options.deep");
         if (ImGui::IsItemHovered()) aura::ui::Tooltip(L(Similar_DeepHint));
-        ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
+        ImGui::SetCursorPos(ImVec2(rowX+positions[1].x,rowY+positions[1].y));
         const char* presets[] = {L(Similar_PresetBalanced),L(Similar_PresetTimbre),L(Similar_PresetRhythm),L(Similar_PresetPitch),L(Similar_PresetSpectral)};
         int preset = static_cast<int>(state.similarSoundsPreset);
         ImGui::SetNextItemWidth(comboWidth);
@@ -130,7 +121,7 @@ static bool DrawSimilarSoundsActionRow(
             workflow.Invalidate(); state.similarSoundsSelectedRow = -1;
             state.settingsDirty = true; state.settingsDirtyAt = ImGui::GetTime();
         }
-        ImGui::SetCursorPos(ImVec2(rowX+positions[3].x,rowY+positions[3].y));
+        ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
         aura::ui::ButtonOptions options;
         options.variant = aura::ui::ButtonVariant::PrimarySearch;
         options.disabled = indexing || !hasReference;
@@ -141,7 +132,7 @@ static bool DrawSimilarSoundsActionRow(
         } else if (aura::ui::Button(actionLabel, options)) {
             state.similarSoundsSelectedRow = -1;
             HarkenSearch::SimilarityOptions searchOptions;
-            searchOptions.mode = state.similarSoundsMode; searchOptions.deep = state.similarSoundsDeep; searchOptions.preset = state.similarSoundsPreset;
+            searchOptions.mode = HarkenSearch::SimilarityMode::Substitute; searchOptions.deep = state.similarSoundsDeep; searchOptions.preset = state.similarSoundsPreset;
             searchRequested = workflow.RequestSearch(searchOptions, 50);
         }
     }

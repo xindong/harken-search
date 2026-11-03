@@ -1,9 +1,9 @@
-"""Real dual-mode similarity QA on a private desktop and an isolated library.
+"""Real fixed-substitute similarity QA on a private desktop and an isolated library.
 Requires a prepared real-audio-manifest.json under --isolation-root.
 Never sends input to the user's desktop, reads another app, or edits source media.
 """
 from __future__ import annotations
-import argparse, hashlib, json, time
+import argparse, hashlib, json, time, sqlite3
 from pathlib import Path
 from PIL import Image
 from qa_required_library_setup import PrivateDesktop, capture, wait_state
@@ -22,12 +22,15 @@ def run(args):
     # The disposable profile must not auto-switch back to its day/night custom
     # palette while this suite measures each of the five stock themes.
     settings=root/'profile/Local/HarkenSearch/settings.ini'
-    if settings.exists():
-        lines=settings.read_text(encoding='utf-8-sig').splitlines()
-        lines=[('themeScheduleMode=0' if line.startswith('themeScheduleMode=') else 'volume=0.0' if line.startswith('volume=') else line) for line in lines]
-        settings.write_text('\n'.join(lines)+'\n',encoding='utf-8')
+    settings.parent.mkdir(parents=True,exist_ok=True)
+    lines=settings.read_text(encoding='utf-8-sig').splitlines() if settings.exists() else []
+    lines=[line for line in lines if not line.startswith(('themeScheduleMode=','volume=','similarMode='))]
+    lines+=['themeScheduleMode=0','volume=0.0','similarMode=0']
+    settings.write_text('\n'.join(lines)+'\n',encoding='utf-8')
+    (out/'legacy-settings-before.ini').write_text(settings.read_text(encoding='utf-8'),encoding='utf-8')
     driver=Driver(root/'profile/runtime',out)
     desktop=PrivateDesktop(); process=None; report={'exe':str(exe),'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'checks':[],'queries':[],'captures':[],'passed':False}
+    report['legacy_saved_mode_fixture']={'path':str(settings),'similarMode':0,'themeScheduleMode':0}
     def save(): (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     def state(): return driver.command({'cmd':'similar_index','action':'state'})
     def until(probe,predicate,timeout=60):
@@ -70,6 +73,10 @@ def run(args):
             else:
                 driver.command({'cmd':'info_edit_input','action':'open_existing_db','text':str(library)})
             current=wait_state(driver,lambda s:bool(s['db_path']) and Path(s['db_path']).resolve()==library.resolve() and not s['db_switch_in_progress'],'Open isolated real library',60)
+        with sqlite3.connect(library.as_uri()+'?mode=ro',uri=True) as connection:
+            existing_count=connection.execute('SELECT COUNT(*) FROM audio_files').fetchone()[0]
+        if existing_count>=len(manifest['files']):
+            current=wait_state(driver,lambda s:s['result_count']==len(manifest['files']),'Existing library list refreshed',60)
         if current['result_count']<len(manifest['files']):
             driver.command({'cmd':'scan_folder','path':str(root/'audio'),'cache_waveforms':False,'build_similarity_index':False,'worker_threads':2})
             scan=until(lambda:driver.command({'cmd':'scan_status'}),lambda s:not s['scanning'],600)
@@ -94,7 +101,9 @@ def run(args):
         driver.command({'cmd':'select_row','row':0})
         until(state,lambda s:s['reference_id']>0)
         before=state();print('index-before',before['indexed'],before['semantic_indexed'],before['total'],flush=True)
-        if before['semantic_indexed']<before['total']:
+        assert before['mode']==1 and 'similar.options.mode' not in before['controls'],before
+        report['initial_coverage']={'indexed':before['indexed'],'semantic_indexed':before['semantic_indexed'],'total':before['total']}
+        if not args.skip_indexing and before['semantic_indexed']<before['total']:
             driver.command({'cmd':'similar_index','action':'start'})
             until(state,lambda s:s['progress']>=2 or not s['running'],120)
             driver.command({'cmd':'similar_index','action':'cancel'})
@@ -107,26 +116,22 @@ def run(args):
             assert indexed['indexed']==indexed['total'] and indexed['semantic_indexed']==indexed['total'],indexed
         print('Index ready',state()['indexed'],flush=True)
         baseline=driver.command({'cmd':'get_state'})
-        for mode in (0,1):
+        for mode in (1,):
             for deep in (False,True):
                 configure(mode,deep);assert state()['rows']==0
                 result=find();report['queries'].append({'mode':mode,'deep':deep,'result':result});save()
-                expected=0.4 if mode else 0
+                expected=0.4
                 assert all(abs(row['weights'][0]-expected)<1e-6 for row in result['matches'])
                 after=driver.command({'cmd':'get_state'})
                 assert after['selected_file_id']==baseline['selected_file_id'] and after['result_count']==baseline['result_count']
-        report['checks'].append({'case':'four-real-query-combinations-and-main-selection','passed':True})
-        configure(0,False);find()
+        report['checks'].append({'case':'fixed-substitute-normal-and-deep-queries-and-main-selection','passed':True})
+        configure(1,False);find()
         driver.command({'cmd':'set_theme','theme':0})
         current=audit(driver,0)
-        mode=next(c for c in current['checks'] if 'SimilarActionRow' in c['window'] and c['label']=='听感接近')
-        click(mode['bounds'])
-        popup=audit(driver,0)
-        option=next(c for c in popup['checks'] if c['window'].startswith('##Combo_') and c['label']=='同类替代')
-        click(option['bounds']);assert state()['mode']==1 and state()['rows']==0
+        assert not any(c['label'] in ('听感接近','同类替代') for c in current['checks']),current
         current=until(state,lambda s:'similar.options.deep' in s['controls'])
         click(current['controls']['similar.options.deep']);assert state()['deep'] and state()['rows']==0
-        report['checks'].append({'case':'actual-mode-and-deep-controls','passed':True});save()
+        report['checks'].append({'case':'mode-switch-and-label-removed-actual-depth-toggle-works','passed':True});save()
         found=find()
         wave=until(state,lambda s:'similar.result.wave.0' in s['controls'])['controls']['similar.result.wave.0']
         click(wave)
@@ -144,24 +149,12 @@ def run(args):
         after=driver.command({'cmd':'get_state'})
         assert after['selected_file_id']==baseline['selected_file_id'] and after['result_count']==baseline['result_count']
         report['checks'].append({'case':'actual-next-batch-after-audition-keeps-reference-and-does-not-repeat','first':found,'second':next_result});save()
-        # The small real corpus may exhaust the tighter same-type/deep query
-        # in one page. Also exercise a real multi-page perceptual query.
-        configure(0,False);first=find()
-        click(until(state,lambda s:'similar.result.wave.0' in s['controls'])['controls']['similar.result.wave.0'])
-        driver.command({'cmd':'stop'})
-        controls=audit(driver,0)
-        button=next(c for c in controls['checks'] if 'SimilarActionRow' in c['window'] and c['label']=='换一批')
-        click(button['bounds']);second=until(state,lambda s:s['status'] in (3,4),180)
-        assert second['status']==3 and second['rows']>0,second
-        assert second['reference_id']==first['reference_id'],(first,second)
-        assert not ({r['fingerprint'] for r in first['matches']} & {r['fingerprint'] for r in second['matches']}),(first,second)
-        assert second['batch_number']==2 and second['query_stats']['detailed_comparisons']==0,second
-        report['checks'].append({'case':'actual-perceptual-second-page-has-new-content','first':first,'second':second});save()
         for theme,name in THEMES:
             driver.command({'cmd':'set_theme','theme':theme})
-            for width in (640,420):
+            for width in (640,320):
                 resize_similar(driver,width);observations=audit(driver,theme)
                 controls=[c for c in observations['checks'] if 'SimilarActionRow' in c['window']]
+                assert not any(c['label'] in ('听感接近','同类替代') for c in controls),controls
                 for c in controls:
                     b,clip=c['bounds'],c['clip']
                     assert b[0]>=clip[0]-1 and b[1]>=clip[1]-1 and b[2]<=clip[2]+1 and b[3]<=clip[3]+1,c
@@ -174,7 +167,7 @@ def run(args):
                     assert bounds[0]>=0 and bounds[1]>=0 and bounds[2]<=full.width and bounds[3]<=full.height,(bounds,full.size)
                     full.crop(bounds).save(out/f'panel-{theme}-{width}.png')
                 report['captures'].append({'theme':theme,'name':name,'width':width,'image':str(image),'panel':panel,'controls':controls});save()
-        configure(0,False);driver.command({'cmd':'similar_index','action':'find'});configure(1,True)
+        configure(1,False);driver.command({'cmd':'similar_index','action':'find'});configure(1,True)
         time.sleep(.5);assert state()['rows']==0 and state()['status']==1
         report['checks'].append({'case':'changed-options-discard-old-results','passed':True})
         driver.command({'cmd':'similar_index','action':'close'});driver.command({'cmd':'similar_index','action':'open','width':640,'height':640})
@@ -190,7 +183,7 @@ def run(args):
         assert restarted['pid']==pid and Path(restarted['exe_path']).resolve()==exe
         wait_state(driver,lambda s:s['main_ui_ready'] and not s['db_switch_in_progress'],'Restarted profile',60)
         persisted=state();assert persisted['mode']==1 and persisted['deep'] and persisted['preset']==2,persisted
-        report['checks'].append({'case':'mode-depth-preset-persist-after-restart','passed':True})
+        report['checks'].append({'case':'fixed-substitute-depth-preset-after-restart','passed':True})
         report['passed']=True;save();print('Native QA passed',flush=True)
     except Exception as error:
         report['error']=repr(error);save();raise
@@ -206,5 +199,5 @@ def run(args):
             lines=settings.read_text(encoding='utf-8-sig').splitlines()
             settings.write_text('\n'.join('volume=1.0' if line.startswith('volume=') else line for line in lines)+'\n',encoding='utf-8')
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--library-db',type=Path);parser.add_argument('--check-db-only',action='store_true');parser.add_argument('--output',type=Path,required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--library-db',type=Path);parser.add_argument('--check-db-only',action='store_true');parser.add_argument('--skip-indexing',action='store_true');parser.add_argument('--output',type=Path,required=True)
     run(parser.parse_args())

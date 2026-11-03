@@ -4935,6 +4935,8 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
+        } else if (action == "configure" && getInt(raw,"mode",1) != 1) {
+            result = "{\"ok\":false,\"error\":\"unsupported_similarity_mode\"}";
         } else if (action == "pointer") {
 #if AURA_BUILD_DIAGNOSTICS
             // App-owned input only over freshly observed Similar Sounds controls.
@@ -4993,10 +4995,8 @@ static void PollQaCommandFile(AppState& state) {
             } else if (action == "cancel") {
                 state.batchFeatureCancelRequested.store(true);
             } else if (action == "configure") {
-                const int mode = getInt(raw, "mode", static_cast<int>(state.similarSoundsMode));
                 const int preset = getInt(raw, "preset", static_cast<int>(state.similarSoundsPreset));
-                if (mode >= 0 && mode <= 1 && preset >= 0 && preset <= 4) {
-                    state.similarSoundsMode = static_cast<HarkenSearch::SimilarityMode>(mode);
+                if (preset >= 0 && preset <= 4) {
                     state.similarSoundsDeep = getBool(raw, "deep", state.similarSoundsDeep);
                     state.similarSoundsPreset = static_cast<SimilarityPreset>(preset);
                     if (state.similarSoundsWorkflow) state.similarSoundsWorkflow->Invalidate();
@@ -5006,7 +5006,7 @@ static void PollQaCommandFile(AppState& state) {
             } else if (action == "find" && state.similarSoundsWorkflow &&
                        !state.batchFeatureExtracting.load()) {
                 HarkenSearch::SimilarityOptions options;
-                options.mode = state.similarSoundsMode; options.deep = state.similarSoundsDeep; options.preset = state.similarSoundsPreset;
+                options.mode = HarkenSearch::SimilarityMode::Substitute; options.deep = state.similarSoundsDeep; options.preset = state.similarSoundsPreset;
                 state.similarSoundsWorkflow->RequestSearch(options, 50);
             }
             const auto snapshot = state.similarSoundsWorkflow
@@ -5043,7 +5043,7 @@ static void PollQaCommandFile(AppState& state) {
                 ",\"completion_notice\":" + (completionNotice ? "true" : "false") +
                 ",\"indexed\":" + std::to_string(indexed) +
                 ",\"semantic_indexed\":" + std::to_string(counts.semanticIndexed) +
-                ",\"mode\":" + std::to_string(static_cast<int>(state.similarSoundsMode)) +
+                ",\"mode\":" + std::to_string(static_cast<int>(HarkenSearch::SimilarityMode::Substitute)) +
                 ",\"deep\":" + (state.similarSoundsDeep ? "true" : "false") +
                 ",\"status\":" + std::to_string(static_cast<int>(snapshot.status)) +
                 ",\"error\":" + std::to_string(static_cast<int>(snapshot.error)) +

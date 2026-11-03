@@ -132,7 +132,7 @@ try:
     assert not final["batch_summary"]["cancelled"] and not final["batch_summary"]["error"] and not final["batch_summary"]["model_error"],final
     report["full_coverage"]=final["indexed"]==final["total"] and final["semantic_indexed"]==final["total"]
     if final["batch_summary"]["failed"]:report["uncovered"]="Some source files failed analysis; see batch_summary and command log."
-    for mode in (0,1):
+    for mode in (1,):
         for deep in (False,True):
             cmd(cmd="similar_index",action="configure",mode=mode,deep=deep)
             cmd(cmd="similar_index",action="find")

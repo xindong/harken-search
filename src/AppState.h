@@ -3074,7 +3074,6 @@ struct AppState {
     std::unique_ptr<HarkenSearch::SimilarityWorkflow> similarSoundsWorkflow;
     aura::ui::StandaloneWindowState similarSoundsWindow;
     SimilarityPreset similarSoundsPreset = SimilarityPreset::Balanced;
-    HarkenSearch::SimilarityMode similarSoundsMode = HarkenSearch::SimilarityMode::Perceptual;
     bool similarSoundsDeep = false;
     int similarSoundsSelectedRow = -1;
     int64_t similarSoundsObservedSelectionId = -1;
