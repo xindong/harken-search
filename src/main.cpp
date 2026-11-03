@@ -29108,6 +29108,8 @@ void StartBatchFeatureExtraction(AppState& state) {
     state.batchFeatureCompletionNotice.store(false);
     state.batchFeatureProgress.store(0);
     state.batchFeatureTotal.store(0);
+    state.batchFeatureSkipped.store(0);
+    state.batchFeatureSaved.store(0);
     {
         std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
         state.batchFeatureResult = {};
@@ -29123,6 +29125,8 @@ void StartBatchFeatureExtraction(AppState& state) {
                 [&state](const HarkenSearch::SimilarityIndexProgress& progress) {
                     state.batchFeatureTotal.store(progress.total);
                     state.batchFeatureProgress.store(progress.completed);
+                    state.batchFeatureSkipped.store(progress.skipped);
+                    state.batchFeatureSaved.store(progress.saved);
                 });
         } catch (const std::exception& error) { result.error = error.what(); }
           catch (...) { result.error = "analysis_failed"; }
@@ -29183,9 +29187,12 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (extracting) {
         const int progress = state.batchFeatureProgress.load();
         const int total = std::max(state.batchFeatureTotal.load(), 1);
+        const int reused = state.batchFeatureSkipped.load();
+        const int saved = state.batchFeatureSaved.load();
         const float fraction = std::clamp(static_cast<float>(progress) / total, 0.0f, 1.0f);
         char progressLabel[48];
         snprintf(progressLabel, sizeof(progressLabel), "%d / %d", progress, total);
+        ImGui::Text(L(Main_SimIndexBuildingFmt), progress, total, reused, saved);
         DrawUnifiedProgressBar(fraction, ImVec2(-1, 18), progressLabel, true);
         ThemeInspector::RegisterLastItem("similar.index.progress");
         if (sharedSimilarStyle) {
@@ -31656,7 +31663,9 @@ void RenderUI(AppState& state) {
                     scanDialogAccentSoft,
                     L(Main_SimIndexBuildingFmt),
                     state.batchFeatureProgress.load(),
-                    std::max(state.batchFeatureTotal.load(), 1));
+                    std::max(state.batchFeatureTotal.load(), 1),
+                    state.batchFeatureSkipped.load(),
+                    state.batchFeatureSaved.load());
             }
             if (state.showPostScanSimilarityIndexNotice) {
                 ImGui::Spacing();

@@ -10482,9 +10482,9 @@
     {
       "id": "Main_SimIndexBuildingFmt",
       "type": "ui",
-      "zh": "正在建立相似数据库索引：%d / %d",
-      "en": "Building similarity index: %d / %d",
-      "ja": "類似データベースインデックス構築中：%d / %d"
+      "zh": "正在核对并解析相似特征：%d / %d（已复用 %d，已解析 %d）",
+      "en": "Checking and analyzing similarity features: %d / %d (reused %d, analyzed %d)",
+      "ja": "類似特徴を確認・解析中：%d / %d（再利用 %d、解析 %d）"
     },
     {
       "id": "Main_ScanFolderHint",

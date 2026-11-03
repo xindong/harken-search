@@ -71,3 +71,13 @@
 上轮命令记录显示，QA 脚本在切库后的结果数暂为 0 时触发扫描；`scan_folder` 会打开“扫描文件夹”模态窗口，而 `scan_acknowledge_complete` 不会关闭它。真实隔离程序的短复现证明：窗口打开时点击相似音效模式不会显示下拉选项；点击该窗口的“取消”后，下拉选项正常出现。另一次原脚本复现证明，切换模式后直接使用较早的控件快照点击“深度思考”会被 QA 接口以 `invalid_similar_control_pointer` 拒绝。
 
 最小修正只在本卡 `tools/qa_similar_deep.py`：扫描后关闭由扫描打开的窗口，并在每次受限点击前刷新实际控件快照。未修改产品代码或实际 EXE。相同 EXE、隔离 146 条库的完整本卡脚本退出码 0，报告 8 项交互检查、4 种模式与深度组合及五主题宽窄窗口 10 张真实截图；独立模态窗口短复现也退出码 0。报告与截图在 `D:/Harken-QA/REQ-20261101-SIMILAR-DEEP/recheck-20261103/`。技术复验不代表听感质量或用户界面验收通过；仍需用户对实际包截图和试听明确确认。
+
+## 2026-11-03 批量分析进度口径复核
+
+用户实际测试包显示库里有 31,768 条音效、27,492 条已有相似分析，按钮只提示还差 4,276 条；点击后进度却显示从 `142 / 31,768` 开始。上方数字和按钮缺口由 `LibraryStatisticsWorker::MakeFeatureIndexCountHandler(true)` 统计，真正入口是 `StartBatchFeatureExtraction -> BuildSimilarityIndex`。
+
+`BuildSimilarityIndex` 会遍历全部文件来核对缓存指纹。已有记录的大小和 SHA-256 相同且模型版本完整时只计入 `progress.skipped`，不会调用 `AnalyzeSimilarityEntry`；只有缺失、无效、模型不完整或内容变化才解析并保存。原界面只显示 `progress.completed / progress.total`，这个数字代表已经核对过多少文件，所以造成了从头解析的错觉。全文件 SHA-256 仍保留，用来识别大小和时间戳都没变但内容变化的音效。
+
+实际库只读观察中，分析记录从 27,492 增到 30,028 时 revision 从 59,272 增到 61,808，增量完全一致；之后连续 6 次、每次间隔 2 秒都停在 30,032 和 revision 61,812，没有看到已有记录被重新发布。修复后两个面板显示已核对、已复用、已解析三项数字，隔离 QA 的 `similar_index` 回执增加 `reused`、`analyzed`、`progress` 和 `progress_total`。记录见 `D:/Harken-QA/REQ-20261101-SIMILAR-DEEP/recheck-20261103/similar-index-progress-root-cause.json`。
+
+验证：`TestSimilarityIndexer`、相似音效窗口契约、扫描入口契约、本地化检查和 Release 构建均退出码 0。

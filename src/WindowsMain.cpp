@@ -5024,6 +5024,10 @@ static void PollQaCommandFile(AppState& state) {
                 const auto& report=state.batchFeatureResult;
                 batchSummary={{"saved",report.progress.saved},{"skipped",report.progress.skipped},{"failed",report.progress.failed},{"cancelled",report.cancelled},{"error",report.error},{"model_error",report.modelError}};
             }
+            batchSummary["progress"] = state.batchFeatureProgress.load();
+            batchSummary["progress_total"] = state.batchFeatureTotal.load();
+            batchSummary["reused"] = state.batchFeatureSkipped.load();
+            batchSummary["analyzed"] = state.batchFeatureSaved.load();
             const bool completionNotice = state.panelSimilarSounds.visible &&
                 !state.batchFeatureExtracting.load() &&
                 !state.batchFeatureCancelRequested.load() && total > 0 && indexed == total &&
@@ -5048,6 +5052,8 @@ static void PollQaCommandFile(AppState& state) {
                 ",\"total\":" + std::to_string(total) +
                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
+                ",\"reused\":" + std::to_string(state.batchFeatureSkipped.load()) +
+                ",\"analyzed\":" + std::to_string(state.batchFeatureSaved.load()) +
                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
                 ",\"preset\":" + std::to_string(static_cast<int>(state.similarSoundsPreset)) +
                 ",\"open_popups\":" + std::to_string(ImGui::GetCurrentContext()->OpenPopupStack.Size) +

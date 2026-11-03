@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -184,6 +185,22 @@ assert "PreviewIsolationRootUtf8()" in qa_index
 assert "state.batchFeatureCancelRequested.store(true)" in qa_index
 assert 'similar.index.start' in index_panel
 assert 'similar.index.cancel' in index_panel
+
+# Batch progress must expose the two work classes separately. The progress
+# denominator covers cache verification for the whole library, while only
+# the saved count represents newly analyzed files.
+app_state = (ROOT / "src" / "AppState.h").read_text(encoding="utf-8")
+assert "batchFeatureSkipped" in app_state
+assert "batchFeatureSaved" in app_state
+assert "state.batchFeatureSkipped.store(progress.skipped)" in main
+assert "state.batchFeatureSaved.store(progress.saved)" in main
+assert "state.batchFeatureSkipped.load()" in index_panel
+assert "state.batchFeatureSaved.load()" in index_panel
+assert "L(Main_SimIndexBuildingFmt)" in index_panel
+ledger = json.loads((ROOT / "locale" / "harken.ui.strings.json").read_text(encoding="utf-8"))
+progress_copy = next(item for item in ledger["entries"] if item["id"] == "Main_SimIndexBuildingFmt")
+assert progress_copy["zh"].count("%d") == 4
+assert progress_copy["en"].count("%d") == 4
 
 # Closing the standalone window is a result-lifecycle boundary. Minimize keeps
 # the workflow alive, but an explicit close must invalidate rows so reopening

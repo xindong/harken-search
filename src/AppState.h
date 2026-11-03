@@ -3086,6 +3086,8 @@ struct AppState {
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
+    std::atomic<int>  batchFeatureSkipped{0};
+    std::atomic<int>  batchFeatureSaved{0};
     std::thread batchFeatureThread;
     std::mutex batchFeatureResultMutex;
     HarkenSearch::SimilarityIndexResult batchFeatureResult;
