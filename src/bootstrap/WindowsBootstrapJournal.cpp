@@ -15,7 +15,12 @@ namespace {
 
 constexpr std::array<std::uint8_t, 11> kMagic = {
     {'A', 'R', 'I', 'S', 'B', 'O', 'O', 'T', 'F', 'S', '2'}};
-constexpr std::uint32_t kSchemaVersion = 9;
+constexpr std::uint32_t kSchemaVersion = 10;
+constexpr std::uint32_t kLegacySchemaVersion = 9;
+
+bool supportedSchema(const std::uint32_t version) {
+    return version == kLegacySchemaVersion || version == kSchemaVersion;
+}
 constexpr std::size_t kMaximumJournalBytes = 4U * 1024U * 1024U;
 constexpr std::size_t kMaximumFieldBytes = 64U * 1024U;
 constexpr std::size_t kMaximumPackagePlanBytes = 1024U * 1024U;
@@ -737,7 +742,8 @@ bool validMetadata(const WindowsFileMetadataSnapshot& value) {
                                    labelLength);
 }
 
-bool validItem(const WindowsBootstrapJournalItemRecord& item) {
+bool validItem(const WindowsBootstrapJournalItemRecord& item,
+               const std::uint32_t schemaVersion) {
     if (!safeRelativePath(item.relativePath)) return false;
     const auto identityRequired = [](const WindowsFileIdentity& value) {
         return value.valid;
@@ -817,9 +823,15 @@ bool validItem(const WindowsBootstrapJournalItemRecord& item) {
          item.preparedMetadata.valid || item.replacementPrepared)) {
         return false;
     }
+    // Schema 10 may defer a new nested file's parent binding until directory
+    // preparation. Never admit an unbound parent after file mutation starts.
+    const bool pendingParent = schemaVersion >= 10U && createNew &&
+        item.relativePath.find('/') != std::string::npos &&
+        !item.replacementStarted && !item.replacementPrepared &&
+        !item.replacementComplete && !item.removeNewStarted && !item.removeNewComplete;
     if (createNew &&
         (!identityRequired(item.stagingIdentity) ||
-         !identityRequired(item.installParentIdentity) ||
+         (!identityRequired(item.installParentIdentity) && !pendingParent) ||
          item.originalIdentity.valid || item.backupIdentity.valid ||
          item.backupContent.valid || item.rollbackMetadata.valid ||
          item.backupStarted || item.backupComplete)) {
@@ -1296,7 +1308,8 @@ int journalSlotIndex(const WindowsBootstrapJournalCandidate& candidate) {
     return -1;
 }
 
-bool readItem(Reader& reader, WindowsBootstrapJournalItemRecord& item) {
+bool readItem(Reader& reader, WindowsBootstrapJournalItemRecord& item,
+              const std::uint32_t schemaVersion) {
     std::uint32_t classification = 0;
     if (!reader.takeString(item.relativePath, kMaximumPathBytes, false) ||
         !reader.takeString(item.backupRelativePath, kMaximumPathBytes) ||
@@ -1336,7 +1349,7 @@ bool readItem(Reader& reader, WindowsBootstrapJournalItemRecord& item) {
         return false;
     }
     item.classification = static_cast<JournalItemClass>(classification);
-    return validItem(item);
+    return validItem(item, schemaVersion);
 }
 
 void appendRecordBody(std::vector<std::uint8_t>& body,
@@ -1406,7 +1419,7 @@ void appendRecordBody(std::vector<std::uint8_t>& body,
 
 std::vector<std::uint8_t> EncodeWindowsBootstrapJournal(
     const WindowsBootstrapJournalRecord& record) {
-    if (record.schemaVersion != kSchemaVersion || record.generation == 0U ||
+    if (!supportedSchema(record.schemaVersion) || record.generation == 0U ||
         record.items.size() > kMaximumItems || !safeIdentifier(record.transactionId, 128U) ||
         !safeIdentifier(record.installationId, 128U) ||
         !safeAbsoluteRoot(record.targetRoot) ||
@@ -1441,7 +1454,7 @@ std::vector<std::uint8_t> EncodeWindowsBootstrapJournal(
     durable.healthToken.clear();
     if (!strictAuthorityFields(durable)) return {};
     for (const auto& item : record.items) {
-        if (!validItem(item)) return {};
+        if (!validItem(item, record.schemaVersion)) return {};
     }
     if (!validRecordState(record, false) || !validAuxiliaryNames(record)) return {};
     std::vector<std::uint8_t> output;
@@ -1496,8 +1509,8 @@ WindowsBootstrapJournalDecodeResult DecodeWindowsBootstrapJournal(
     std::uint64_t generation = 0;
     std::uint32_t bodyLength = 0;
     if (!header.takeU32(version) || !header.takeU64(generation) ||
-        !header.takeU32(bodyLength) || version != kSchemaVersion || generation == 0U) {
-        return failure(version == kSchemaVersion
+        !header.takeU32(bodyLength) || !supportedSchema(version) || generation == 0U) {
+        return failure(supportedSchema(version)
                            ? WindowsBootstrapJournalDecodeStatus::InvalidField
                            : WindowsBootstrapJournalDecodeStatus::UnsupportedVersion,
                        1U);
@@ -1648,7 +1661,7 @@ WindowsBootstrapJournalDecodeResult DecodeWindowsBootstrapJournal(
     std::set<std::string> paths;
     for (std::uint32_t index = 0; index < itemCount; ++index) {
         WindowsBootstrapJournalItemRecord item;
-        if (!readItem(reader, item)) {
+        if (!readItem(reader, item, version)) {
             return failure(WindowsBootstrapJournalDecodeStatus::InvalidItem, index);
         }
         std::string folded = item.relativePath;

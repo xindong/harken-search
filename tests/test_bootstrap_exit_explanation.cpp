@@ -178,6 +178,30 @@ int main(int argc, char** argv) {
     check(!unknown.requiresReinstall && !unknown.message.empty(),
           "an unrecognised code does not default to demanding a reinstall");
 
+    // Error 30 used to tell users to quit the application and retry, but the
+    // old application has always fully exited by the time the filesystem
+    // stage rejects.  The message must name the real stage and must not
+    // repeat the misleading quit-and-retry advice.
+    {
+        const int code = static_cast<int>(BootstrapExitCode::FilesystemRejected);
+        const auto e = ExplainBootstrapExit(code);
+        check(e.outcome == BootstrapExitOutcome::Retryable,
+              "filesystem rejection stays retryable");
+        check(!e.requiresReinstall,
+              "filesystem rejection never demands a reinstall");
+        check(e.message.find(std::to_string(code)) != std::string::npos,
+              "filesystem rejection still carries the raw code");
+        check(e.message.find(u8"准备文件阶段") == std::string::npos &&
+                  e.message.find(u8"更新文件") != std::string::npos,
+              "filesystem rejection must not infer preparation from a shared exit code");
+        check(e.message.find(u8"\u8bf7\u5b8c\u5168\u9000\u51fa") == std::string::npos,
+              "filesystem rejection no longer gives the misleading quit advice");
+        check(e.message.find(u8"不是文件被占用") == std::string::npos,
+              "a filesystem error code alone cannot exclude sharing conflicts");
+        check(e.message.find(u8"未被改动") == std::string::npos,
+              "filesystem rejection can follow a successful replacement and must not promise unchanged files");
+    }
+
     if (g_failures == 0) std::printf("all bootstrap exit explanations pass\n");
     return g_failures == 0 ? 0 : 1;
 }
