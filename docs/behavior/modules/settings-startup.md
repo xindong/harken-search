@@ -18,8 +18,8 @@
 
 ## 中文语义
 
-**用户承诺：** 无论首次启动、正常启动还是最近库丢失，Aris 都能进入可理解、可操作的安全状态，不会偷偷清理用户数据或启动昂贵后台工作。Mac 用户导出设置时可以自行选择备份位置；取消不改变设置。
-**核心流程：** 用户启动 Aris；应用加载设置、edition flag 和最近库列表；缺失库以明确的受保护状态显示，用户再决定是否重连、移除或重新扫描。Mac 导出设置时先选目标，确认后保存并复制当前配置，取消直接返回。
+**用户承诺：** 无论首次启动、正常启动还是最近库丢失，Aris 都能进入可理解、可操作的安全状态，不会偷偷清理用户数据或启动昂贵后台工作。Mac 用户导出设置时可以自行选择备份位置；取消不改变设置。Mac 导入主题 JSON 时可以选取文件，取消不改当前主题。
+**核心流程：** 用户启动 Aris；应用加载设置、edition flag 和最近库列表；缺失库以明确的受保护状态显示，用户再决定是否重连、移除或重新扫描。Mac 导出设置时先选目标，确认后保存并复制当前配置，取消直接返回。主题编辑器导入 JSON 后沿用现有预览或新建主题流程。
 **非目标：** 这份契约不定义完整安装器、自动更新流程或跨版本迁移之外的产品授权策略。
 
 ## BDD Scenarios
@@ -45,6 +45,9 @@
 - Given Mac 用户在系统保存面板取消
 - When 面板返回空路径
 - Then 不保存或复制文件，也不报告一次新的导出失败
+- Given Mac 用户在主题编辑器选择导入 JSON 或导入并创建主题
+- When 系统文件面板返回可读取的主题 JSON
+- Then 沿用现有主题解析、预览或创建流程；取消时不改主题，读取失败显示原有失败提示；无有效主题字段的内容仍需另卡验证
 
 ### Edge Cases
 
@@ -87,6 +90,7 @@
 | settings encryption | API | tests | Sensitive settings are protected |
 | startup diagnostics | diagnostics | QA protocol | Runtime state decisions are visible |
 | Mac settings backup export | UI | SettingsActions and Mac settings export dialog | Uses a user-selected UTF-8 path, keeps cancel side-effect free and preserves the Windows branch |
+| `OpenThemeJsonFileDialogUtf8()` | API | src/platform/theme_json_dialogs_macos.mm | Mac returns a selected UTF-8 file path to the existing theme import actions; cancel returns empty |
 
 ## Graphify Binding
 
@@ -108,6 +112,7 @@
 | DIAG-STARTUP | diagnostics | `TestStartupReconciliation` startup source-contract assertions | startup branch diagnostics markers present | active |
 | TEST-STARTUP-WELCOME | source-contract | `TestStartupReconciliation` | welcome entry replaces the legacy login form and continues into loading | active |
 | TEST-THEME-PERSISTENCE | source-contract | source scan + `TestThemeColors` | stock theme application does not set `ThemeColors::customized()`, stock token chrome is keyed by stock theme identity, and custom theme name is written/read by settings IO | active |
+| TEST-MAC-THEME-IMPORT | source-contract / runtime | `tests/test_theme_json_import_macos_boundary.py` and isolated Mac chooser probe | Both import buttons reach the native chooser; cancel and selected UTF-8 path behave correctly | active |
 
 ## Missing Coverage
 

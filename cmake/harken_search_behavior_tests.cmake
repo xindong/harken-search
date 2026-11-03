@@ -6235,7 +6235,9 @@ target_include_directories(TestThemeColors PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
 )
-target_link_libraries(TestThemeColors PRIVATE advapi32)
+if(WIN32)
+    target_link_libraries(TestThemeColors PRIVATE advapi32)
+endif()
 if(MSVC)
     target_compile_options(TestThemeColors PRIVATE /W3 /utf-8)
     set_target_properties(TestThemeColors PROPERTIES
@@ -7422,6 +7424,22 @@ aura_set_test_labels(TestRelinkWorkflowLifecycle ui)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     aura_set_test_labels(TestSettingsImportDialogBoundary platform stage4)
+
+    add_custom_target(TestThemeJsonImportMacBoundary
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_import_macos_boundary.py"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+    )
+    add_test(
+        NAME TestThemeJsonImportMacBoundary
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_import_macos_boundary.py"
+    )
+    set_tests_properties(TestThemeJsonImportMacBoundary PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    aura_set_test_labels(TestThemeJsonImportMacBoundary platform stage4)
 
     add_custom_target(TestCoverImageImportDialogBoundary
         COMMAND ${Python3_EXECUTABLE}
