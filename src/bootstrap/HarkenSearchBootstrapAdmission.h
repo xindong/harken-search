@@ -13,6 +13,7 @@ namespace aris::bootstrap {
 
 struct WindowsBootstrapJournalRecord;
 struct BootstrapChannelResult;
+struct HarkenSearchPackagePolicyResult;
 
 // This is the immutable package-side contract.  It is intentionally separate
 // from SignedInstallPlan: roots, process identities and health capabilities

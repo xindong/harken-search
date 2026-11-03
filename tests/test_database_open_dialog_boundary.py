@@ -44,7 +44,7 @@ assert 'Lw(Dlg_FilterArisDb)' in initial_body
 assert PORTABLE.count('return "";') == 2
 assert "OpenDatabaseFileDialogWithInitialDirectoryUtf8" in PORTABLE
 
-legacy_call = "Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(g_hwnd)"
+legacy_call = "Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(MainUiOwnerWindow())"
 initial_call = "Platform::DatabaseDialogs::OpenDatabaseFileDialogWithInitialDirectoryUtf8("
 assert MAIN.count(legacy_call) == 1
 assert MAIN.count(initial_call) == 4  # Setup owns the single first-library entry.
