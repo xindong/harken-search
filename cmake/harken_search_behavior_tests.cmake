@@ -6314,6 +6314,7 @@ aura_set_test_labels(TestScanDialogPresentation core)
 if(Python3_Interpreter_FOUND)
     add_test(NAME TestScanDialogSimpleContract COMMAND ${Python3_EXECUTABLE} -m pytest -q
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_dialog_simple_contract.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_completion_refresh_runtime.py
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qa_scan_dialog_driver.py)
     aura_set_test_labels(TestScanDialogSimpleContract core)
 endif()

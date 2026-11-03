@@ -92,6 +92,47 @@ void testMiniWaveformDebtBlocksCompleted() {
           "fast scan may complete only when background mini continuation is explicit");
 }
 
+void testLastMiniCompletionBetweenRefreshes() {
+    auto snapshot = completedSnapshot();
+    snapshot.discovered = snapshot.processed = 42681;
+    snapshot.succeeded = 42537;
+    snapshot.skipped = 144;
+    snapshot.miniWaveformsTotal = 42681;
+    snapshot.miniWaveformsCompleted = 42680;
+    snapshot.foregroundTasksDrained = false;
+    check(!HarkenSearch::CanEnterCompleted(snapshot),
+          "one required mini still pending cannot complete");
+
+    // The next reader observes an empty ledger after the final worker finishes.
+    snapshot.foregroundTasksDrained = true;
+    check(!HarkenSearch::CanEnterCompleted(snapshot),
+          "clearing the pending flag alone cannot repair a stale mini count");
+    snapshot.miniWaveformsCompleted = 42681;
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::None, false) ==
+              HarkenSearch::ScanWorkflowStage::Completed,
+          "publishing the final ledger count allows normal completion");
+
+    snapshot.foregroundTasksDrained = false;
+    check(!HarkenSearch::CanEnterCompleted(snapshot),
+          "finished mini count does not hide remaining cover or metadata work");
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::PauseKeepCommitted, false) ==
+              HarkenSearch::ScanWorkflowStage::Paused,
+          "last-mini synchronization preserves pause semantics");
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::CancelRollback, false) ==
+              HarkenSearch::ScanWorkflowStage::Cancelled,
+          "last-mini synchronization preserves rollback semantics");
+
+    snapshot.miniWaveformsRequired = false;
+    snapshot.miniWaveformsContinueInBackground = true;
+    snapshot.miniWaveformsCompleted = snapshot.miniWaveformsTotal = 0;
+    snapshot.foregroundTasksDrained = true;
+    check(HarkenSearch::CanEnterCompleted(snapshot),
+          "fast mode does not wait for optional mini counts");
+}
+
 void testFastModeReleasesOptionalCompletionDebtImmediately() {
     check(HarkenSearch::ShouldReleaseFastScanCompletionGate(
               /*discovered=*/2258,
@@ -242,6 +283,7 @@ int main() {
     testSkippedFilesRemainACompletePartition();
     testFailedFilesDoNotPreventNonFatalCompletion();
     testMiniWaveformDebtBlocksCompleted();
+    testLastMiniCompletionBetweenRefreshes();
     testFastModeReleasesOptionalCompletionDebtImmediately();
     testFastCompletionDoesNotWaitForOptionalCovers();
     testFastCompletionPreservesPopulatedBackgroundQueue();
