@@ -156,6 +156,32 @@ Request Poll(AppState& state) {
                 found = true; break;
             }
             if (!found) throw std::runtime_error("row_not_found");
+        } else if (action == "metadata_patch") {
+            if (!state.database.isOpen()) throw std::runtime_error("library_not_open");
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            const auto row = state.database.getFileByPath(path);
+            if (row.id <= 0) throw std::runtime_error("row_not_found");
+            if (!std::filesystem::is_regular_file(std::filesystem::u8path(path)))
+                throw std::runtime_error("source_file_missing");
+            const auto& fields = command.at("fields");
+            if (!fields.is_object() || fields.empty() || fields.size() > 3)
+                throw std::runtime_error("invalid_metadata_fields");
+            MetadataEditPatch patch;
+            for (auto it = fields.begin(); it != fields.end(); ++it) {
+                if (it.key() != "description" && it.key() != "keywords" && it.key() != "category")
+                    throw std::runtime_error("unsupported_metadata_field");
+                const auto value = it.value().get<std::string>();
+                if (value.size() > 4096) throw std::runtime_error("metadata_value_too_long");
+                patch.set(it.key(), value);
+            }
+            const auto result = state.database.applyMetadataPatchBatch({row.id}, patch);
+            if (result.success != 1 || result.failed != 0)
+                throw std::runtime_error("metadata_patch_failed");
+            state.database.invalidateFacetQueryCache();
+            RefreshSearchResults(state, false);
+        } else if (action == "info_metadata_tab") {
+            state.settings.infoPages.selected = 0;
+            MarkSettingsDirty(state);
         } else if (action == "select") {
             const int index = command.at("index").get<int>();
             if (index < 0 || index >= static_cast<int>(state.searchResults.size()) || state.dbSwitchInProgress)
@@ -205,6 +231,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             const auto mini = state.waveformCache.find(row.filePath);
             const size_t miniPeaks = mini == state.waveformCache.end() ? 0 : mini->second.peaks.size();
             rows.push_back({{"id",row.id},{"name",row.fileName},{"path",row.filePath},
+                {"description",row.description},{"keywords",row.keywords},{"category",row.category},
                 {"duration",row.durationSeconds},{"sample_rate",row.sampleRate},{"channels",row.channels},
                 {"mini_peaks",miniPeaks},
                 {"folder_cover",row.folderCoverKey},{"embedded_cover",row.embeddedCoverKey}});
