@@ -3253,6 +3253,12 @@ struct AppState {
         int   listVisibleRows = 0;
         int   listScrollTopRow = 0;
         int   playingRowIndex = -1;
+#if ARIS_PREVIEW_ISOLATION
+        int listTextFrame = -1;
+        float listTextFontPixels = 0, listTextLineHeight = 0;
+        float listTextRowHeight = 0;
+        std::string listTextSample;
+#endif
     } qaRegions;
 };
 

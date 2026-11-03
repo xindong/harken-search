@@ -41981,6 +41981,17 @@ void RenderUI(AppState& state) {
                             nameColAvailW,
                             fixedRowHeight,
                             wrapFileName);
+#if ARIS_PREVIEW_ISOLATION
+                        // Observe the font bound at the actual filename draw site.
+                        if (state.qaRegions.listTextFrame != ImGui::GetFrameCount()) {
+                            auto& qr = state.qaRegions;
+                            qr.listTextFrame = ImGui::GetFrameCount();
+                            qr.listTextFontPixels = ImGui::GetFontSize();
+                            qr.listTextLineHeight = nameLineH;
+                            qr.listTextRowHeight = fixedRowHeight;
+                            qr.listTextSample = dynamicDisplayName;
+                        }
+#endif
                     }
                     if (rowSelectClicked) {
                         state.listRipple.pos = ImGui::GetIO().MousePos;
