@@ -2512,10 +2512,10 @@ struct AppState {
     std::vector<std::string> folderSearchTokens;      // 搜索词按空格拆分的 token 列表（小写）
 
     // Metadata filters
-    char artistFilterBuffer[128] = "";
+    char artistFilterBuffer[1024] = "";
     std::vector<std::string> artistFilterAlternates;
-    char albumFilterBuffer[128] = "";
-    char categoryFilterBuffer[128] = "";
+    char albumFilterBuffer[1024] = "";
+    char categoryFilterBuffer[1024] = "";
     int formatFilterIndex = 0;
     int channelFilterIndex = 0;
     float minDurationFilter = 0.0f;

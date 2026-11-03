@@ -1,0 +1,91 @@
+# 筛选器三个输入框配色与列表交互：设计及验收记录
+
+卡片：OPT-20261103-FILTER-INPUT-COLORS
+状态：用户查看实际包截图并提出修订后，已明确要求走收尾流程；本卡在最新 QA 基线上完成技术复核，等待独立 PR 审查和 QA 合入。
+代码基线：2026-11-03 开工前将本卡分支快进到 origin/qa/current a4e7334。
+独立目录：E:/tmp/harken-OPT-20261103-FILTER-INPUT-COLORS；分支 opt/OPT-20261103-FILTER-INPUT-COLORS。
+
+## 收尾复核（2026-11-03）
+
+- 用户在确认修订方向和实际截图后回复“走收尾流程”；记录的是这次界面确认，不代替代码审查或 QA 合入。
+- 已整合 origin/qa/current d2d3be8145be5d3142f7cf426fca650bcc519f2e；整理提交签署前后的整合源码树一致。公开提交按仓库要求保留 Signed-off-by 和 Cindy 辅助开发说明。
+- 整合后的隔离 Release 实际包位于 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v6/HarkenSearch.exe，SHA-256 为 b2a613fe873a5dc461136772a90921654339c86e61dc138e6a94cf5fd8d8dd62。
+- D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence14/result.json 记录真实素材库副本上的 27 项界面操作，状态 pass、退出码 0；其中坏标签专辑仍准确筛出 1 个文件，输入框及结果标签显示清楚。实际截图在同目录。
+- 整合后定向 Python 检查 7 项、C++ 名单模型测试通过；Debug 和隔离 Release 构建通过。仓库 Inner Source Gates 为 299 passed、1 skipped，发布合规检查通过。
+
+## 需求与范围
+
+用户先要求左侧筛选器的「艺术家」「专辑」「分类」三个输入框与相邻控件协调；随后追加三个字段的列表交互。三个框的位置、尺寸、间距、标签、主动刷新重置和已保存主题设置保持原样。配色只调整背景、边框、输入文字、提示文字及已有悬停、聚焦状态。
+
+追加交互的用户选择：点输入框或箭头均展开完整可滚动名单；艺术家逐个显示，不再把相近名称合为一行；在原输入框输入时按名称包含匹配名单，选择名称后才应用筛选；列表获得焦点后按字母跳到该字母的首项，完整名单仍保留；点空白处收起，未选则不改变已应用筛选。专辑与分类使用同一规则。名称搜索不含拼音匹配或错字容忍。用户进一步要求侧面弹层尽量加宽、加高，打开时直接显示更多艺术家，并在第一轮加高预览后要求“再长，尽量长一些”。已确认的最新预览保留约 560 像素宽，弹层高度优先用满窗口可用空间，仅留少量边距；高窗口示意首屏约 26 位，矮窗口按可用高度收缩，名单继续可滚动。首屏数量取决于实际窗口高度，不固定为 26。
+
+原始证据是用户截图 cindy-media://blobs/03ea590414caafffeca173600f6346908ddae2085d6cfe5fddd2ce4ca2569240.png。截图里三个框是深蓝底，旁边下拉框是浅色；截图所用主题尚未通过实际运行包核实，不能仅凭截图宣称所有主题现状相同。
+
+## 模块设计
+
+| 模块 | 当前实现 | 提案与边界 | 独立核验 |
+| --- | --- | --- | --- |
+| 左侧元数据输入 | src/main.cpp 的三个过滤输入共用 DrawUnifiedSearchInput | 三个调用处使用同一组侧栏主题色；不改全局输入控件默认色 | 三框普通、悬停、聚焦逐一比对 |
+| 配色来源 | src/HarkenSearchWidgets.cpp 的 TextInput 在继承上下文颜色时使用窗口通用色；海军蓝主题的侧栏为浅色，通用输入底色仍深 | 仅在该侧栏局部使用已有 filterBrowser 系列配色：普通态接近相邻下拉框，悬停略提亮，聚焦用清晰边线；文字随主题选色，避免固定浅底或深底 | 五个内置主题分别检查提示文字和输入文字可读性、边框及状态区分 |
+| 列表打开与收起 | 目前只有箭头按钮打开现有弹层；弹层由 ImGui 管理关闭 | 输入框和箭头均可打开同一弹层；点空白处关闭且不提交临时查询 | 三个字段逐项检查打开、切换、空白关闭、已应用值恢复 |
+| 名单查询与选择 | 现有弹层另有搜索框，超过 10 项才显示；艺术家把相近名称分组 | 原输入框承担名单包含搜索；查询词与已应用筛选分开；艺术家逐个显示，点选后才提交 | 空词、无结果、名称中段匹配、同名与大量名单逐项检查 |
+| 首字母跳转 | 现有弹层无此功能 | 列表获得焦点后按字母滚到首个同字母项；在输入框编辑时仍正常输入查询词 | A/Z、无对应项、大小写、中文名称和滚动位置检查 |
+| 弹层尺寸 | 现有弹层偏窄，列表首屏数量少 | 侧面弹层宽约 560 像素，高度优先用满窗口可用空间并留少量边距；高窗口示意约 26 位，较矮窗口自动缩短，始终保持可见和可滚动 | 大小窗口分别检查边界、首屏数量和滚动 |
+| 提案预览 | 用户原截图 287×559 | 颜色图与交互图均为静态提案，不是实际运行截图；用户已同意按最新版进入实现 | 实际包运行后重新截图验收 |
+
+现有通用 TextInput 还服务其他页面，实施时不修改全局默认色。若局部复用现有样式无法覆盖三态，则仅为这三个调用建立小范围颜色作用域；不新增控件体系。
+
+## 颜色提案（方向已确认）
+
+- 普通态：浅蓝灰背景与细边线，参考截图中相邻「格式」下拉框；提示文字改为清晰的深蓝灰。
+- 悬停：保留浅色背景，边线稍明显，不移动或放大控件。
+- 聚焦：浅色背景、清晰蓝色边线和深色输入文字；不增加文字背板。
+- 预览只覆盖用户截图所示的浅色侧栏。五主题的实际颜色必须从各自内置主题读取，不能把这张图的像素值写死到全部主题。
+
+预览文件：
+
+- 原图副本：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-before-user.png
+- 普通态局部改色：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-proposal-normal.png
+- 三态颜色草案：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-proposal-states.png
+- 展开位置提案：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-interaction-placement.png
+- 四步交互分镜：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-interaction-steps.png
+- 加宽加高后的位置提案：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-interaction-placement-v2.png
+- 加宽加高后的名单近景：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-interaction-list-v2.png
+- 尽量用满高窗口的位置提案：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-interaction-tall-v3.png
+- 高窗口约 26 位名单近景：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS-preview/filter-inputs-interaction-tall-list-v3.png
+
+## 实施与验收顺序
+
+1. 已先运行失败检查，再实现三个输入框的局部主题配色、独立的临时搜索词、完整名单、字母跳转和尽量用满可用高度的侧面弹层。三个字段共用同一组件逻辑，列表只绘制可见行。
+2. 已用本卡独立包和实际素材库，在私有桌面完成艺术家、专辑、分类的展开与选中、正反例搜索、点空白恢复、K 跳转、五主题、矮窗口、清除筛选、长分类名点选及结果栏标签限宽。输入由程序内隔离测试通道发送，不占用用户鼠标。
+3. 已交付真实运行截图和隔离测试包。用户对实际包明确确认前，不记前端验收通过，不合并 QA，也不完成或归档卡片。
+
+## 本轮实现和证据（2026-11-03）
+
+- 组件及名单规则：src/SidebarMetadataPicker.h、src/main.cpp；三个输入框的临时搜索词与已应用筛选分开，点击输入或箭头打开，点击空白或 Escape 收起。
+- 长名称与结果栏：src/AppState.h 将三个字段的名称缓冲区扩到 1024 字节；结果栏仅缩短过长的显示文字，完整名称仍用于筛选，悬停可看完整文字。
+- 独立检查：tests/test_sidebar_metadata_picker.cpp、tests/test_sidebar_metadata_picker_contract.py；实际包回放：tools/qa_sidebar_metadata_picker.py。当前测试库的非空艺术家 124、专辑 215、分类 319 个；最长分类名超过旧输入框 127 字节上限，已在实际包中点选并筛出 1 条文件。
+- 本卡测试包：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package/HarkenSearch.exe；固定隔离数据：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/data/。包 SHA-256：8d9bf7546b3cb7dd17a89c4a06bfd96642beaa545e43cc9a3a3419a50b8f0e6d。
+- 最终运行记录：D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence9/result.json；退出码 0，24 项检查通过。真实截图同目录下的 artist-expanded.png、album-expanded.png、category-expanded.png、artist-search-matches.png、artist-K-jump.png、artist-short-window.png、long-category-selected.png 和 theme-*-artist-expanded.png。
+- 定向测试 64 项通过，C++ 名单模型测试通过；独立 Release 构建及隔离 Release 构建通过。整份旧的 tests/test_core_workspace_style_boundary.py 尚有 3 项不相关的基线断言失败：两项要求仓库基线本来就没有的固定海军蓝色值，一项要求不存在 ImGui::Begin，但基线已有 ScanDropNotice。没有为本卡改写这些断言。
+- 未覆盖：用户亲自查看及操作本卡包、浮动筛选面板跨显示器的人工体验。验收与 QA 合入仍待后续。
+
+没有数据库结构、音频读取、素材查询算法或已保存主题设置变更。回退方式是撤销本卡局部样式和列表交互提交并重建测试包；预览文件本身不会进入程序包。
+
+## 用户截图反馈修订（2026-11-03）
+
+用户在实际包截图中指出名单里的乱码和弹层内外两层边框。核对隔离测试库和原始 WAV/OGG 文件后，乱码对应素材标签中已有的控制字节及损坏字符；例如艺术家字段可见连续 `0x1A`，原始 WAV 标签亦含同样字节。当前数据库的原值不能据此猜出完整人名。
+
+- 名单只整理显示文字：遇到控制字节截去后面的错误尾巴，连续损坏字符以省略号标明，完全无法识别的名称显示本地化提示。点选仍使用数据库原值，避免改变筛选结果；未修改素材文件或数据库。无法从现有标签确定的字符没有猜填。
+- 弹层保留一个外边框；滚动名单的内部边框和分隔线已去掉。顶部“全部”固定可点，名单独立滚动；展开时不再叠加箭头提示。一次完全单层滚动试验使“全部”滚出短窗口，实际包检查发现后已修正。
+- 新增显示清理和单层视觉检查；最终隔离运行记录在 `D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/evidence11/result.json`，退出码 0，26 项检查通过，包括坏标签名称的真实运行截图。
+- 修订包为 `D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v3/HarkenSearch.exe`，SHA-256 `69dcb82f697fc20e83c17b3e4b6d94741d09d51ca23bce511d44117c70e652e2`。原包保留作版本对照。仍待用户确认本次实际包，Cuevi 不记通过、不合入 QA。
+
+## 已选名称的显示修订（2026-11-03）
+
+用户继续指出，选中 `Robot Monster Vocalizations Vol. 3` 后，专辑输入框还显示了原始标签的坏尾字节。追查发现名单使用了清理后的显示文字，但输入框和结果栏的筛选标签仍直接显示数据库原值。
+
+- 三个字段的输入框在非编辑状态显示整理后的名称；输入查询时仍显示用户正在输入的内容，清空查询不会变成“原始名称无法识别”。空白处取消后恢复整理后的已选名称。
+- 三个字段在结果栏的筛选标签及其完整文字提示也使用整理后的显示名称；筛选运算、清除操作仍使用原始数据库值，不改数据。
+- 对用户截图中的专辑原值（尾部含 `0x1A`）用实际包点选，输入框和结果标签均显示 `Robot Monster Vocalizations Vol. 3`，仍准确筛出 1 个 OGG 文件。`evidence13/result.json` 共 27 项实际操作检查通过，退出码 0；对应真实截图为 `evidence13/album-damaged-selected-input.png`。
+- 最终修订包：`D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v5/HarkenSearch.exe`，SHA-256 `7bf768d4496971b9cdee494d21b2e0e51777aef3cee6f03b7172e77c4cbc8c20`。相关定向测试 67 项与 C++ 名单模型测试通过，普通及隔离 Release 构建通过。待用户再次确认实际包，不合入 QA。
