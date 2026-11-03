@@ -1,6 +1,22 @@
 """Observe navigation paint, ink, hit targets and keyboard input on the actual EXE."""
 from PIL import Image
 
+def verify_review_regressions(ctx):
+    state,settle,click,hover,key,command,find,check=(ctx[n] for n in ('state','settle','click','hover','key','command','find','check'))
+    click('nav-2')
+    command(cmd='settings_ui',action='key',key='Ctrl',down=True);settle()
+    key('K')
+    command(cmd='settings_ui',action='key',key='Ctrl',down=False);settle()
+    command(cmd='info_edit_input',action='text',text='system font');settle()
+    assert find('result-systemFont')
+    check('Ctrl+K focuses search from a category without clicking the search field')
+    for page in range(1,9):
+        click('nav-'+str(page));assert state()['page']==page
+    click('nav-3');find('searchMode')
+    check('remaining categories and search-mode route are reachable')
+    click('nav-4');hover('nav-5')
+    ctx['surface_check']('rounded-navigation-surface')
+
 def verify(ctx,args):
     state,settle,query,click,hover,key,command,screenshot,check,pointer,find=(ctx[n] for n in ('state','settle','query','click','hover','key','command','screenshot','check','pointer','find'))
     native_state=state
@@ -59,8 +75,7 @@ def verify(ctx,args):
     check('both row edges select the matching category')
     # Arrow-key focus traversal is globally disabled by the existing Windows
     # host. Do not assert unsupported traversal or enable it across the app.
-    query('system font');assert find('result-systemFont')
-    check('existing Ctrl+K search shortcut works; arrow traversal is disabled by host')
+    verify_review_regressions(ctx)
     click('nav-1');command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
     query('system font');click('result-systemFont');click('systemFont');click('option-6')
     if state()['pending']:click('apply')

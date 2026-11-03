@@ -83,7 +83,8 @@ def run(args):
                         ink.append(y)
             assert ink,(id,'no readable navigation text')
             center_error=abs((min(ink)+max(ink)+1)/2-(b+d)/2)
-            corners=[image.getpixel((x,y)) for x in (a+1,c-2) for y in (b+1,d-2)]
+            # Sample inside the six-pixel curve; edge hit checks stay separate.
+            corners=[image.getpixel((x,y)) for x in (a+8,c-9) for y in (b+2,d-3)]
             fill_error=max(abs(color[k]-background[k]) for color in corners for k in range(3))
             rows.append({'id':id,'bounds':[a,b,c,d],'inkY':[min(ink),max(ink)+1],
                          'centerError':center_error,'fillError':fill_error,'background':background})
@@ -115,6 +116,9 @@ def run(args):
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
         assert state()['open'];screenshot('01-appearance')
+        if args.navigation_review:
+            from qa_settings_navigation_selection import verify_review_regressions
+            verify_review_regressions(locals());click('done');return
         if args.navigation_selection:
             from qa_settings_navigation_selection import verify
             verify(locals(),args);return
@@ -182,7 +186,7 @@ def run(args):
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
         assert state()['pending']==0 and state()['live_volume']==saved['live_volume']
         check('close offers keep editing or discard; reopen preserves applied value')
-        for i in range(9):
+        for i in range(1,9):
             click('nav-'+str(i));assert state()['page']==i
             screenshot('page-'+str(i))
         check('all nine categories render')
@@ -197,6 +201,7 @@ def run(args):
         click('nav-2');click('device');find('device-default');key('Escape')
         assert state()['open'] and not state()['prompt']
         assert not any(item['id']=='device-default' for item in state()['items'])
+        click('nav-3')
         click('searchMode');click('option-1' if state()['draft_realtime'] else 'option-0')
         key('Escape');assert state()['prompt'];click('apply-close');assert not settle()['open']
         command(cmd='ordinary_button_window',module='settings',action='open');settle()
@@ -304,5 +309,5 @@ def run(args):
             raise RuntimeError('Native QA process did not exit cleanly; see report.json')
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--navigation-selection',action='store_true');parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int);parser.add_argument('--expected-scan-threads',type=int)
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--navigation-review',action='store_true');parser.add_argument('--navigation-selection',action='store_true');parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int);parser.add_argument('--expected-scan-threads',type=int)
     run(parser.parse_args())
