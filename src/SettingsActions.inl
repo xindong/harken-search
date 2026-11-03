@@ -56,7 +56,7 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
     } else if(editor.action=="reset-size") {
         ImGui::TextWrapped("%s",L(Set_ResetDefaultSizeHint));
         if(aura::ui::ActionButton(L(Set_ResetDefaultSize))) {
-            state.settings.rowHeight=28;state.settings.readingFontSize=14;state.settings.fontSize=kChromeFontPx;state.settings.listFontSize=14;
+            state.settings.rowHeight=28;state.settings.readingFontSize=kDefaultReadingFontPx;state.settings.fontSize=kChromeFontPx;state.settings.listFontSize=kDefaultListFontPx;
             state.settings.miniWaveformRmsBodyStyle=false;g_miniWaveformRmsBodyStyle=false;state.settings.waveformStyle=DefaultMainWaveformStyle();
             state.settings.rowHeight=state.settings.getEffectiveRowHeight();state.settings.waveformPanelHeight=200;
             state.panelSidebar.dockedWidth=250;state.panelSidebar.floatW=300;state.panelSidebar.floatH=400;
@@ -64,6 +64,7 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
             state.panelWaveform.dockedHeight=200;state.panelWaveform.floatW=300;state.panelWaveform.floatH=400;
             MarkSettingsDirty(state);editor.Reset(state);
         }
+        su::Observe("reset-size-confirm");
     } else if(editor.action=="export") {
         ImGui::TextWrapped("%s",L(Set_ExportSettingsHint));
         if(aura::ui::ActionButton(L(Set_ExportSettings))) {
