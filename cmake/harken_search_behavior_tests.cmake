@@ -7140,6 +7140,8 @@ target_include_directories(TestSimilarityAnalysisStore PRIVATE src ${SQLITE_DIR}
 if(WIN32)
     target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_win32.cpp)
     target_link_libraries(TestSimilarityAnalysisStore PRIVATE bcrypt)
+else()
+    target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_macos.cpp)
 endif()
 if(MSVC)
     target_compile_options(TestSimilarityAnalysisStore PRIVATE /W3 /utf-8)

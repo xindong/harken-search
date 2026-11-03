@@ -162,6 +162,12 @@ finally:
                 win32gui.EnumWindows(close_own_window,None)
         if win32event.WaitForSingleObject(process,30000)==win32con.WAIT_OBJECT_0:
             report["exit_code"]=win32process.GetExitCodeProcess(process);process.Close()
+            if report["exit_code"] != 0:
+                report["exit_error"]=f"QA process exited abnormally: {report['exit_code']}"
         else:report["exit_error"]="QA process did not exit within 30 seconds"
     if desktop:desktop.close()
+    if report.get("exit_error"):
+        report["passed"]=False
+        emit("failed", {"error":report["exit_error"]})
+        raise RuntimeError(report["exit_error"])
     save()

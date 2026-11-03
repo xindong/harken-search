@@ -29321,6 +29321,16 @@ void DrawSimilarityIndexPanel(AppState& state) {
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
+            if (pending > 0) {
+                // A permanently failing file must not prevent checking already
+                // analyzed files for source changes. Supplementing stays the
+                // primary action and never traverses the completed analyses.
+                if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
+                    StartBatchFeatureExtraction(state, true);
+                    wasExtracting = true;
+                }
+                ThemeInspector::RegisterLastItem("similar.index.recheck");
+            }
         }
         if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {

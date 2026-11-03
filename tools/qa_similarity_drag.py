@@ -222,6 +222,7 @@ def main():
             if settings.exists():
                 lines = settings.read_text(encoding="utf-8-sig").splitlines()
                 settings.write_text("\n".join(old_volume if line.startswith("volume=") else line for line in lines) + "\n", encoding="utf-8")
+            assert report.get("exit_code", 0) == 0, f"Own QA process exited abnormally: {report['exit_code']}"
         except Exception:
             report["passed"] = False
             report["cleanup_error"] = traceback.format_exc()

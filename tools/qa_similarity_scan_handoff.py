@@ -80,6 +80,12 @@ def main():
         command(cmd='switch_db', path=str(original))
         ui.wait(lambda s: not s['db_switch_in_progress'] and s['db_path'] and
                 Path(s['db_path']).resolve() == original, 'restore original library', 60, lambda: command(cmd='get_state'))
+        cleared_scan = command(cmd='scan_dialog_ui', action='state')['similarity']
+        assert not cleared_scan['available'] and cleared_scan['total'] == 0, cleared_scan
+        cleared_report = command(cmd='similar_index', action='state')
+        assert cleared_report['batch_summary']['failed'] == 0 and cleared_report['batch_total'] == 0, cleared_report
+        report['cleared_after_switch'] = {'scan': cleared_scan, 'analysis': cleared_report['batch_summary']}
+        report['checks'].append({'case': 'old-library-reports-cleared-after-switch', 'passed': True})
         after = snapshot(original); report['original_after'] = after
         assert before == after, 'The original library changed during the isolated scan handoff check'
         report['checks'].append({'case': 'original-library-and-analysis-preserved', 'passed': True})

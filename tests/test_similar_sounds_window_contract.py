@@ -192,6 +192,8 @@ assert 'similar.index.cancel' in index_panel
 # the explicit recheck button preserves full content verification.
 assert "if (pending > 0) StartBatchFeatureExtraction(state);" in index_panel
 assert "else StartBatchFeatureExtraction(state, true);" in index_panel
+assert 'ThemeInspector::RegisterLastItem("similar.index.recheck")' in index_panel, \
+    "a permanent pending failure must not hide full content validation"
 assert "recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll" in main
 assert "HarkenSearch::SimilarityIndexScope::PendingOnly" in main
 app_state = (ROOT / "src" / "AppState.h").read_text(encoding="utf-8")

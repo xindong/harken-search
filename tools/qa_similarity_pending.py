@@ -1,4 +1,4 @@
-"""Verify the real Similar Sounds button processes only pending files.
+"""Verify the real Similar Sounds button processes only all-failing pending files.
 
 Uses an existing isolated library and a pinned package receipt. Original media
 is read-only; the app runs on a private desktop without switching user input.
@@ -50,6 +50,8 @@ def main():
     parser.add_argument("--expected-pending", type=int, required=True)
     parser.add_argument("--expected-failures", type=int, default=0)
     args = parser.parse_args()
+    if args.expected_pending <= 0 or args.expected_failures != args.expected_pending:
+        parser.error("This repeatability check requires an all-failing pending fixture: expected-pending > 0 and expected-failures == expected-pending")
     package = json.loads(args.package_receipt.read_text(encoding="utf-8"))
     exe, root, database = (Path(package[key]).resolve() for key in ("exe", "root", "database"))
     assert database.is_relative_to(root) and database.is_file()
@@ -146,10 +148,26 @@ def main():
             report["after"] = after
             capture(driver, output/("after-attempt-"+str(attempt)+".png"))
             save()
+        # Even a permanent pending failure must leave explicit source-content
+        # validation available. This click is separate from supplementing.
+        click("similar.index.recheck")
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            rechecked = state()
+            if not rechecked["running"] and rechecked["batch_total"] == before["files"]:
+                break
+            time.sleep(.1)
+        else:
+            raise TimeoutError("explicit full recheck did not finish")
+        assert rechecked["reused"] == len(before["rows"]) and rechecked["analyzed"] == 0, rechecked
+        assert rechecked["batch_summary"]["failed"] == args.expected_failures, rechecked
+        assert snapshot(database) == before, "Explicit validation changed unchanged analysis or segments"
+        report["explicit_recheck"] = rechecked
+        capture(driver, output/"after-explicit-recheck.png")
         click("similar.index.report")
         time.sleep(.3)
         capture(driver, output/"analysis-report.png")
-        report["checks"] = ["real-button-selected-only-pending-files-twice", "completed-records-and-segments-unchanged", "source-failures-reported-without-false-success"]
+        report["checks"] = ["real-button-selected-only-pending-files-twice", "completed-records-and-segments-unchanged", "source-failures-reported-without-false-success", "explicit-full-validation-still-available-with-pending-failure"]
         report["passed"] = True
     except BaseException as error:
         report["error"] = repr(error)

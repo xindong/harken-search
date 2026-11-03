@@ -73,3 +73,15 @@ for retained in (
     assert retained in reset_body, retained
 
 print("PASS: database session scan state reset boundary contracts")
+
+# The switch worker joins old analysis before ResetDatabaseState is called.
+# Both user-facing report surfaces must therefore be cleared at this boundary.
+for cleared in (
+    "state.batchFeatureResults.Clear()",
+    "state.batchFeatureResult = {}",
+    "state.showSimilarAnalysisReport = false",
+    "state.showScanSimilarityDialog = false",
+    "state.batchFeatureCompletionNotice.store(false)",
+):
+    assert cleared in SOURCE, f"old-library analysis report survives switch: {cleared}"
+assert "state.batchFeatureResultMutex" in SOURCE

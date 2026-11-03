@@ -31,6 +31,7 @@ def run(args):
     driver=Driver(root/'profile/runtime',out)
     desktop=PrivateDesktop(); process=None; report={'exe':str(exe),'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'checks':[],'queries':[],'captures':[],'passed':False}
     report['legacy_saved_mode_fixture']={'path':str(settings),'similarMode':0,'themeScheduleMode':0}
+    identity_verified=False
     def save(): (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     def state(): return driver.command({'cmd':'similar_index','action':'state'})
     def until(probe,predicate,timeout=60):
@@ -62,6 +63,7 @@ def run(args):
         process,pid=desktop.start(exe)
         identity=driver.command({'cmd':'magic_eq_identity'},timeout=60);report['identity']=identity
         assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe and Path(identity['isolation_root']).resolve()==root,identity
+        identity_verified=True
         wait_state(driver,lambda s:s['main_ui_ready'] and not s['db_switch_in_progress'],'Ready',60)
         win32gui.SetWindowPos(identity['hwnd'],0,40,40,1400,900,win32con.SWP_NOACTIVATE|win32con.SWP_NOZORDER)
         current=driver.command({'cmd':'get_state'})
@@ -178,9 +180,11 @@ def run(args):
         assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
         assert win32process.GetExitCodeProcess(process)==0
         process.Close();process=None
+        identity_verified=False
         process,pid=desktop.start(exe)
         restarted=driver.command({'cmd':'magic_eq_identity'},timeout=60);report['identity']=restarted
-        assert restarted['pid']==pid and Path(restarted['exe_path']).resolve()==exe
+        assert restarted['pid']==pid and Path(restarted['exe_path']).resolve()==exe and Path(restarted['isolation_root']).resolve()==root
+        identity_verified=True
         wait_state(driver,lambda s:s['main_ui_ready'] and not s['db_switch_in_progress'],'Restarted profile',60)
         persisted=state();assert persisted['mode']==1 and persisted['deep'] and persisted['preset']==2,persisted
         report['checks'].append({'case':'fixed-substitute-depth-preset-after-restart','passed':True})
@@ -188,16 +192,31 @@ def run(args):
     except Exception as error:
         report['error']=repr(error);save();raise
     finally:
-        if process is not None:
-            if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
-                try: driver.command({'cmd':'info_edit_input','action':'exit'})
-                except Exception: win32gui.PostMessage(report.get('identity',{}).get('hwnd',0),win32con.WM_CLOSE,0,0)
-            if win32event.WaitForSingleObject(process,15000)!=win32con.WAIT_OBJECT_0: raise RuntimeError('Isolated QA process did not exit')
-            report['exit_code']=win32process.GetExitCodeProcess(process);process.Close();save()
-        desktop.close()
-        if settings.exists():
-            lines=settings.read_text(encoding='utf-8-sig').splitlines()
-            settings.write_text('\n'.join('volume=1.0' if line.startswith('volume=') else line for line in lines)+'\n',encoding='utf-8')
+        try:
+            if process is not None:
+                if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+                    if identity_verified:
+                        try: driver.command({'cmd':'info_edit_input','action':'exit'})
+                        except Exception: win32gui.PostMessage(report['identity']['hwnd'],win32con.WM_CLOSE,0,0)
+                    else:
+                        def close_own_window(hwnd,_):
+                            if win32process.GetWindowThreadProcessId(hwnd)[1]==pid:
+                                win32gui.PostMessage(hwnd,win32con.WM_CLOSE,0,0)
+                        win32gui.EnumWindows(close_own_window,None)
+                if win32event.WaitForSingleObject(process,15000)!=win32con.WAIT_OBJECT_0:
+                    raise RuntimeError('Isolated QA process did not exit')
+                report['exit_code']=win32process.GetExitCodeProcess(process);process.Close()
+                if report['exit_code']!=0:
+                    raise RuntimeError(f"Isolated QA process exited abnormally: {report['exit_code']}")
+        except BaseException as error:
+            report['passed']=False;report['exit_error']=repr(error)
+            raise
+        finally:
+            desktop.close()
+            if settings.exists():
+                lines=settings.read_text(encoding='utf-8-sig').splitlines()
+                settings.write_text('\n'.join('volume=1.0' if line.startswith('volume=') else line for line in lines)+'\n',encoding='utf-8')
+            save()
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--library-db',type=Path);parser.add_argument('--check-db-only',action='store_true');parser.add_argument('--skip-indexing',action='store_true');parser.add_argument('--output',type=Path,required=True)
     run(parser.parse_args())

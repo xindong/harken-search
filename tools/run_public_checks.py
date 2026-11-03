@@ -18,6 +18,7 @@ TESTS = (
     "tests/test_close_glyph_measurement.py",
     "tests/test_qa_full_scan_completion_cleanup.py",
     "tests/test_qa_settings_cleanup.py",
+    "tests/test_similarity_qa_shutdown.py",
     "tests/test_public_manual_packaging.py",
     "tests/test_export_public_repository.py",
     "tests/test_public_repo_manifest.py",
