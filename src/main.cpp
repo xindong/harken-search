@@ -26242,6 +26242,7 @@ struct DockQaPanelSnapshot {
     std::string windowName;
 };
 static std::map<std::string, DockQaPanelSnapshot> g_dockQaPanels;
+static std::map<int, std::pair<ImRect, int>> g_resultsTabQaRects;
 
 static void RecordDockQaPanel(const char* module, AppState::PanelState& panel,
                               ImVec2 pos, ImVec2 size, ImRect title, ImRect label) {
@@ -26292,6 +26293,27 @@ std::string GetDockQaState() {
     const auto rectJson = [](const ImRect& r) {
         return nlohmann::json{{"x", r.Min.x}, {"y", r.Min.y}, {"w", r.GetWidth()}, {"h", r.GetHeight()}};
     };
+    out["results_tabs"] = nlohmann::json::array();
+    out["results_tab_model_order"] = nlohmann::json::array();
+    if (g_appState) {
+        const auto& state = *g_appState;
+        if (state.activeTabIndex >= 0 && state.activeTabIndex < (int)state.listTabs.size())
+            out["active_tab_id"] = state.listTabs[state.activeTabIndex].id;
+        std::vector<const ListTab*> displayedTabs;
+        for (const auto& tab : state.listTabs) {
+            out["results_tab_model_order"].push_back(tab.id);
+            const auto found = g_resultsTabQaRects.find(tab.id);
+            if (found == g_resultsTabQaRects.end() || found->second.second + 1 < ImGui::GetFrameCount()) continue;
+            displayedTabs.push_back(&tab);
+        }
+        std::sort(displayedTabs.begin(), displayedTabs.end(), [](const ListTab* a, const ListTab* b) {
+            return g_resultsTabQaRects.at(a->id).first.Min.x < g_resultsTabQaRects.at(b->id).first.Min.x;
+        });
+        for (const ListTab* tab : displayedTabs) {
+            out["results_tabs"].push_back({{"id", tab->id}, {"name", tab->name},
+                {"rect", rectJson(g_resultsTabQaRects.at(tab->id).first)}});
+        }
+    }
     for (const auto& [module, entry] : g_dockQaPanels) {
         if (!entry.panel || !entry.panel->visible || entry.frame + 1 < ImGui::GetFrameCount()) continue;
         const auto& r = entry.window;
@@ -26314,10 +26336,18 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
     const auto& e = found->second;
     if (!e.panel || !e.panel->visible || e.frame + 1 < ImGui::GetFrameCount()) return false;
     ImRect r = e.label;
-    if (part == "blank") {
-        if (!e.panel->floating) return false;
-        r = ImRect(ImVec2(e.label.Max.x + 2.0f, e.title.Min.y),
-            ImVec2(e.title.Max.x - e.title.GetHeight() - 4.0f, e.title.Max.y));
+    if (module == "search-results" && part.rfind("tab:", 0) == 0) {
+        const auto tab = g_resultsTabQaRects.find(std::atoi(part.c_str() + 4));
+        if (tab == g_resultsTabQaRects.end() || tab->second.second + 1 < ImGui::GetFrameCount()) return false;
+        r = tab->second.first;
+    } else if (part == "blank") {
+        if (!e.panel->floating) {
+            if (module != "search-results") return false;
+            r = e.title;
+        } else {
+            r = ImRect(ImVec2(e.label.Max.x + 2.0f, e.title.Min.y),
+                ImVec2(e.title.Max.x - e.title.GetHeight() - 4.0f, e.title.Max.y));
+        }
     } else if (part == "body") {
         r = ImRect(ImVec2(e.window.x + 8.0f, e.title.Max.y + 8.0f),
             ImVec2(e.window.x + e.window.width - 8.0f, e.window.y + e.window.height - 8.0f));
@@ -38532,10 +38562,46 @@ void RenderUI(AppState& state) {
                     1.0f);
             }
         }
-        // The custom long-press drag owns the tab gesture so ImGui cannot
-        // reorder the tab before it becomes a Dock drag session.
-        if (ImGui::BeginTabBar("##ListTabBar", ImGuiTabBarFlags_AutoSelectNewTabs |
+        float resultsTabsRight = ImGui::GetCursorScreenPos().x;
+        ImRect resultsTabShelf;
+        ImRect resultsAddTabRect;
+        std::vector<std::pair<int, int>> resultsTabOrder;
+        bool resultsTabOrderRestoring = false;
+        // Tabs own selection and sorting. Only the unused shelf starts a panel drag.
+        if (ImGui::BeginTabBar("##ListTabBar", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs |
                                  ImGuiTabBarFlags_FittingPolicyScroll)) {
+            ImGuiTabBar* resultsTabBar = ImGui::GetCurrentTabBar();
+            static ImGuiID lastResultsTabBarId = 0;
+            static bool resultsTabRestorePending = false;
+            resultsTabRestorePending |= lastResultsTabBarId != resultsTabBar->ID;
+            lastResultsTabBarId = resultsTabBar->ID;
+            resultsTabOrderRestoring = resultsTabRestorePending;
+            if (resultsTabOrderRestoring) {
+                // Home, floating and docked hosts cache separate ImGui bars.
+                // Restore the application order before laying out a returning bar.
+                resultsTabBar->ReorderRequestTabId = 0;
+                bool allTabsRestored = true;
+                for (int ti = 0; ti < (int)state.listTabs.size(); ++ti) {
+                    char stableLabel[32];
+                    snprintf(stableLabel, sizeof(stableLabel), "###Tab%d", state.listTabs[ti].id);
+                    ImGuiTabItem* cached = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetID(stableLabel));
+                    if (!cached) {
+                        allTabsRestored = false;
+                        continue;
+                    }
+                    const int offset = ti - ImGui::TabBarGetTabOrder(resultsTabBar, cached);
+                    if (offset != 0) {
+                        ImGui::TabBarQueueReorder(resultsTabBar, cached, offset);
+                        allTabsRestored &= ImGui::TabBarProcessReorder(resultsTabBar);
+                        resultsTabBar->ReorderRequestTabId = 0;
+                    }
+                }
+                // Newly created tabs register below. Keep model writeback blocked
+                // until a later frame can restore every current stable ID.
+                resultsTabRestorePending = !allTabsRestored;
+                if (state.pendingTabSelectionIndex < 0)
+                    state.pendingTabSelectionIndex = state.activeTabIndex;
+            }
             if (state.pendingTabSelectionIndex < 0 ||
                 state.pendingTabSelectionIndex >= (int)state.listTabs.size()) {
                 state.pendingTabSelectionIndex = -1;
@@ -38551,7 +38617,6 @@ void RenderUI(AppState& state) {
                 const char* tabName = visibleTabName.empty()
                     ? L(Misc_AllFiles)
                     : visibleTabName.c_str();
-                char label[256];
                 const bool isActiveTab = (ti == state.activeTabIndex);
                 const int64_t tabSnapshotCount = tab.totalFileCount >= 0
                     ? tab.totalFileCount
@@ -38564,8 +38629,8 @@ void RenderUI(AppState& state) {
                         ? (int64_t)state.loadedCount
                         : (int64_t)state.searchResults.size());
                 const int64_t displayCount = std::max<int64_t>(0, isActiveTab ? liveCount : tabSnapshotCount);
-                snprintf(label, sizeof(label), "%s%s (%lld)###Tab%d",
-                         prefix, tabName, (long long)displayCount, tab.id);
+                const std::string label = std::string(prefix) + tabName + " (" +
+                    std::to_string(displayCount) + ")###Tab" + std::to_string(tab.id);
 
                 // Tab color palette
                 static const ImU32 kTabPalette[8] = {
@@ -38580,7 +38645,9 @@ void RenderUI(AppState& state) {
                 if (state.pendingTabSelectionIndex == ti) {
                     tabFlags |= ImGuiTabItemFlags_SetSelected;
                 }
-                bool tabOpen = ImGui::BeginTabItem(label, state.listTabs.size() > 1 ? &isOpen : nullptr, tabFlags);
+                bool tabOpen = ImGui::BeginTabItem(label.c_str(), state.listTabs.size() > 1 ? &isOpen : nullptr, tabFlags);
+                if (ImGuiTabItem* renderedTab = ImGui::TabBarFindTabByID(resultsTabBar, ImGui::GetItemID()))
+                    resultsTabOrder.emplace_back(tab.id, ImGui::TabBarGetTabOrder(resultsTabBar, renderedTab));
                 {
                     const std::string annotationTabKey = "workspace.tab." + std::to_string(tab.id);
                     ThemeInspector::RegisterLastItem(annotationTabKey.c_str(), tabName, "src/main.cpp:44378");
@@ -38604,6 +38671,10 @@ void RenderUI(AppState& state) {
                     ImDrawList* tabDl = ImGui::GetWindowDrawList();
                     ImVec2 tMin = ImGui::GetItemRectMin();
                     ImVec2 tMax = ImGui::GetItemRectMax();
+                    resultsTabsRight = std::max(resultsTabsRight, tMax.x);
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+                    g_resultsTabQaRects[tab.id] = {ImRect(tMin, tMax), ImGui::GetFrameCount()};
+#endif
                     if (tMax.x > tMin.x && tMax.y > tMin.y) {
                         const bool tabHovered = ImGui::IsItemHovered();
                         const float tabAlpha = tabOpen ? 0.18f : (tabHovered ? 0.08f : 0.0f);
@@ -38625,14 +38696,6 @@ void RenderUI(AppState& state) {
                                 ImVec2(tMax.x - 0.5f, tMax.y - 1.5f),
                                 ImGui::GetColorU32(uiWithAlpha(uiMix(resultsTheme.resultsSelection, resultsTheme.resultsOutline, 0.14f), tabOpen ? 0.36f : 0.12f)),
                                 5.0f, 0, 1.0f);
-                        }
-                        if (!g_searchResultsDockPanel.floating && !g_dockLayout.Find("search-results")) {
-                            const ImVec2 resultsPos = s_centerPanelMin;
-                            const ImVec2 resultsSize(
-                                s_centerPanelMax.x - s_centerPanelMin.x,
-                                s_centerPanelMax.y - s_centerPanelMin.y);
-                            beginDockedPanelDrag("search-results", g_searchResultsDockPanel,
-                                resultsPos, resultsSize);
                         }
                     }
                 }
@@ -38704,7 +38767,9 @@ void RenderUI(AppState& state) {
 
 // Music Mode: Album Grid Tab (F-033)
             if (state.settings.productMode == ProductMode::Music) {
-                if (ImGui::BeginTabItem(L(Main_AlbumTabLabel))) {
+                const bool albumOpen = ImGui::BeginTabItem(L(Main_AlbumTabLabel));
+                resultsTabsRight = std::max(resultsTabsRight, ImGui::GetItemRectMax().x);
+                if (albumOpen) {
                     if (state.albumGrid.showTrackList && state.albumGrid.selectedIdx >= 0
                         && state.albumGrid.selectedIdx < (int)state.albumGrid.albums.size()) {
 // Track-list mode: slim breadcrumb only; normal file list renders below
@@ -39037,6 +39102,8 @@ void RenderUI(AppState& state) {
             if (ImGui::TabItemButton(" + ", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
                 state.createAndActivateNewDatabaseTab(ImGui::GetTime());
             }
+            resultsAddTabRect = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            resultsTabShelf = resultsTabBar->BarRect;
             if (HoveredForHelp()) HarkenSearch::SetTooltip(L(Main_NewTabTip));
             ImGui::EndTabBar();
         }
@@ -39075,6 +39142,70 @@ void RenderUI(AppState& state) {
 
             if (tpClk) ImGui::OpenPopup("##TabPresets");
             if (tpHov) HarkenSearch::SetTooltip(L(Main_TabPresetTip));
+
+            if (!g_searchResultsDockPanel.floating && !g_dockLayout.Find("search-results")) {
+                float blankLeft = std::max(resultsTabShelf.Min.x, resultsTabsRight);
+                float blankRight = std::min(resultsTabShelf.Max.x, tpMin.x);
+                // The add button may sit beside the tabs or at the trailing edge.
+                // Use the larger free interval, never cover either button.
+                if (resultsAddTabRect.Max.x > blankLeft && resultsAddTabRect.Min.x < blankRight) {
+                    if (resultsAddTabRect.Min.x - blankLeft >= blankRight - resultsAddTabRect.Max.x)
+                        blankRight = resultsAddTabRect.Min.x;
+                    else
+                        blankLeft = resultsAddTabRect.Max.x;
+                }
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+                // Tab targets still need panel geometry when no empty shelf remains.
+                const ImRect blankRect(ImVec2(blankLeft, resultsTabShelf.Min.y),
+                    ImVec2(std::max(blankLeft, blankRight), resultsTabShelf.Max.y));
+                RecordDockQaPanel("search-results", g_searchResultsDockPanel, s_centerPanelMin,
+                    ImVec2(s_centerPanelMax.x - s_centerPanelMin.x, s_centerPanelMax.y - s_centerPanelMin.y),
+                    blankRect, blankRect);
+#endif
+                if (blankRight > blankLeft && resultsTabShelf.GetHeight() > 0.0f) {
+                    ImGui::SetCursorScreenPos(ImVec2(blankLeft, resultsTabShelf.Min.y));
+                    ImGui::InvisibleButton("##ResultsShelfDrag",
+                        ImVec2(blankRight - blankLeft, resultsTabShelf.GetHeight()));
+                    beginDockedPanelDrag("search-results", g_searchResultsDockPanel, s_centerPanelMin,
+                        ImVec2(s_centerPanelMax.x - s_centerPanelMin.x, s_centerPanelMax.y - s_centerPanelMin.y));
+                    ImGui::SetCursorScreenPos(tpSavedCursor);
+                }
+            }
+        }
+
+        // ImGui maintains display order independently. Commit it to the saved
+        // workspaces after release, preserving every index by stable tab ID.
+        if (!resultsTabOrderRestoring && !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+            resultsTabOrder.size() == state.listTabs.size()) {
+            std::sort(resultsTabOrder.begin(), resultsTabOrder.end(),
+                [](const auto& a, const auto& b) { return a.second < b.second; });
+            bool changed = false;
+            for (size_t i = 0; i < resultsTabOrder.size(); ++i)
+                changed |= resultsTabOrder[i].first != state.listTabs[i].id;
+            if (changed) {
+                const auto idAt = [&](int index) {
+                    return index >= 0 && index < (int)state.listTabs.size() ? state.listTabs[index].id : -1;
+                };
+                const int activeId = idAt(state.activeTabIndex);
+                const int pendingId = idAt(state.pendingTabSelectionIndex);
+                const int closingId = idAt(tabToClose);
+                const int renamingId = idAt(renamingTabIndex);
+                for (size_t i = 0; i < resultsTabOrder.size(); ++i) {
+                    auto found = std::find_if(state.listTabs.begin() + i, state.listTabs.end(),
+                        [&](const ListTab& tab) { return tab.id == resultsTabOrder[i].first; });
+                    if (found != state.listTabs.end()) std::rotate(state.listTabs.begin() + i, found, found + 1);
+                }
+                const auto indexOf = [&](int id) {
+                    for (int i = 0; i < (int)state.listTabs.size(); ++i)
+                        if (state.listTabs[i].id == id) return i;
+                    return -1;
+                };
+                state.activeTabIndex = indexOf(activeId);
+                state.pendingTabSelectionIndex = indexOf(pendingId);
+                tabToClose = indexOf(closingId);
+                renamingTabIndex = indexOf(renamingId);
+                SaveAppSettings(state);
+            }
         }
 
         if (listTabFont) ImGui::PopFont();
