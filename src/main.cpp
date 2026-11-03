@@ -30942,6 +30942,46 @@ void RenderUI(AppState& state) {
                     urlLine(L(Main_AboutCindyDownloadLine), "https://cindy.app");
                     ImGui::EndTable();
                 }
+                ImGui::Dummy(ImVec2(0.0f, 10.0f));
+                ImGui::Separator();
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const auto wecomQr = aura::ui::LoadPackagedAsset(
+                    "assets/icons/community/wecom-qr.png");
+                const auto feishuQr = aura::ui::LoadPackagedAsset(
+                    "assets/icons/community/feishu-qr.png");
+                const float qrSize = (std::min)(220.0f,
+                    (contentW - 24.0f) * 0.5f);
+                if (BeginTransientScrollbarTable("##AboutCommunityQr", 2,
+                        ImGuiTableFlags_SizingStretchSame)) {
+                    ImGui::TableNextRow();
+                    const auto drawCommunityQrCell = [qrSize](
+                            const char* label, const auto& qr) {
+                        const float cellX = ImGui::GetCursorPosX();
+                        const float cellW = ImGui::GetContentRegionAvail().x;
+                        const float labelW = ImGui::CalcTextSize(label).x;
+                        ImGui::SetCursorPosX(cellX +
+                            (std::max)(0.0f, (cellW - labelW) * 0.5f));
+                        ImGui::TextDisabled("%s", label);
+                        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+                        if (qr.glId != 0 && qr.w > 0 && qr.h > 0) {
+                            ImGui::SetCursorPosX(cellX +
+                                (std::max)(0.0f, (cellW - qrSize) * 0.5f));
+                            ImGui::Image((ImTextureID)(intptr_t)qr.glId,
+                                ImVec2(qrSize, qrSize));
+                        }
+                    };
+                    ImGui::TableSetColumnIndex(0);
+                    drawCommunityQrCell(L(Main_AboutWeComQrLabel), wecomQr);
+                    ImGui::TableSetColumnIndex(1);
+                    drawCommunityQrCell(L(Main_AboutFeishuQrLabel), feishuQr);
+                    ImGui::EndTable();
+                }
+                ImGui::Dummy(ImVec2(0.0f, 8.0f));
+                const char* communityNote = L(Main_AboutCommunityNote);
+                const float noteWidth = ImGui::CalcTextSize(communityNote).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                    (std::max)(0.0f, (contentW - noteWidth) * 0.5f));
+                ImGui::TextWrapped("%s", communityNote);
             } else {
                 ImGui::TextUnformatted(L(Main_AboutLegalTab));
                 ImGui::TextDisabled("%s", L(Main_AboutLegalPrompt));

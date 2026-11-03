@@ -1638,6 +1638,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors")
         COMMENT "Copying contributor icons...")
 endif()
 
+# Community QR codes shown on the About page ship beside the executable.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/community"
+        COMMENT "Copying community QR codes...")
+endif()
+
 # Copy brand logo lockups next to HarkenSearch.exe. These are larger wordmark assets
 # used by splash/about/welcome surfaces and are kept separate from the small
 # 20px/40px toolbar brand icons above.
