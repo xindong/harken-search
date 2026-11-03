@@ -737,6 +737,7 @@ elseif(APPLE)
     set(AURO_THREAD_ID_SOURCE src/platform/thread_id_std.cpp)
     list(APPEND APP_SOURCES
         src/platform/image_codec_macos.mm
+        src/platform/settings_export_dialog_macos.mm
         src/platform/platform_macos.mm
         src/platform/system_macos.mm
         ${AURO_EMERGENCY_FILE_WRITER_SOURCE}

@@ -127,6 +127,7 @@
 #include "platform/executable_file_dialog.h"
 #include "platform/reaper_file_list_dialog.h"
 #include "platform/settings_import_dialog.h"
+#include "platform/settings_export_dialog.h"
 #include "platform/cover_image_import_dialog.h"
 #include "platform/region_wav_export_dialog.h"
 #include "platform/thesaurus_json_dialog.h"
