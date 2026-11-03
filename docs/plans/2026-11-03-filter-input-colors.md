@@ -146,3 +146,10 @@
 - 隔离实包同时显示两个侧栏，点击停靠侧艺术家输入框后，停靠侧弹层保持打开、浮动侧弹层没有误打开；截图为 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/final-v24-duplicate/dual-sidebar-docked-picker.png。浮动弹层层级和点重叠位置取消的两项实包检查也通过，三个场景的程序退出码均为 0。
 - 接入 origin/qa/current 的 1b54b0f0abdf00cb8fda3c56d6c857abd571cb5b 后重建 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v24/HarkenSearch.exe，SHA-256 为 d17a9309f88bb859fdcfeb25969e4da4dd01c1ed7b1bf64b4a0252026c2db859。evidence42/result.json 记录 33 项实包操作通过、退出码 0；定向 Python 11 项及 C++ 名单模型 CTest 通过。
 - evidence42/pixel-compare-v17-v24.json 比较用户已确认的 v17 与当前 v24 四张关键实包截图，筛选区域 (0,40)-(850,650) 逐像素相同。代码审查、远端必需检查与 QA 合入仍以最终 PR head 和实时回执为准。
+
+## 双浮动侧栏复核与最终候选（2026-11-04）
+
+- 最新复审指出现代浮动筛选器与旧式分离侧栏都使用 FloatSidebar 身份。旧 v24 实包在新增双浮动场景中缺少独立侧栏身份，检查失败；仅把旧式分离侧栏改为 DetachedSidebar，保留现代浮动筛选器原有身份。
+- 修复后 v25 实包的双浮动场景通过；另一个停靠侧栏加分离侧栏场景也通过。两种组合中点击所属输入框，所属弹层保持打开，另一侧没有误打开或误关闭，程序均以 0 退出。
+- 本卡继续接入 origin/qa/current bdd3af69f5ba8c8ea33ba780f49eea86de387f36。v26 实际包位于 D:/Harken-QA/OPT-20261103-FILTER-INPUT-COLORS/package-v26/HarkenSearch.exe，SHA-256 为 0daf56227bb9b5d28a733f18d76003404f1838eb55296688dde22da2cc72f459。evidence43/result.json 记录 33 项实包操作通过、退出码 0；双浮动、停靠加分离、弹层层级与重叠点击四个场景全部通过、退出码 0。
+- evidence43/pixel-compare-v17-v26.json 核对四张关键截图的筛选区域，全部逐像素相同；定向 Python 11 项、C++ 名单模型 CTest 与本地公开检查 310 项通过、1 项跳过。远端检查、复审和 QA 合入仍以最新提交与实时回执为准。
