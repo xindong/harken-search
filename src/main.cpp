@@ -5534,7 +5534,7 @@ void LoadAppSettings(AppState& state) {
             state.settingsDirty = true; // Save once under the current key.
         }
     }
-    state.settings.waveformDisplayMode = ParseInt(kv["waveformDisplayMode"], state.settings.waveformDisplayMode);
+    state.settings.waveformDisplayMode = std::clamp(ParseInt(kv["waveformDisplayMode"], state.settings.waveformDisplayMode),0,2);
     state.settings.waveformStyle = NormalizeMainWaveformConfiguredStyle(
         ParseInt(kv["waveformStyle"], state.settings.waveformStyle));
     state.settings.miniWaveformRmsBodyStyle = ParseBool(
@@ -22092,6 +22092,9 @@ static void DrawSpectrogramReadoutOverlay(const ImVec2& rectMin,
                                           const ImVec2& rectMax,
                                           float sampleRate)
 {
+#if ARIS_PREVIEW_ISOLATION
+    if(g_appState)g_appState->qaRegions.spectrumDrawFrame=ImGui::GetFrameCount();
+#endif
     if (rectMax.x <= rectMin.x + 20.0f || rectMax.y <= rectMin.y + 20.0f) {
         return;
     }
@@ -23541,6 +23544,13 @@ void DrawMainWaveform(const WaveformData& waveform, float playbackPos, float wid
                              float waveformAlpha = 1.0f, float volumeScale = 1.0f, bool isReversed = false,
                              int waveformStyle = 0, float regionFadeInNorm = 0.0f,
                              float regionFadeOutNorm = 0.0f, float amplitudeFocusBoost = 1.0f) {
+#if ARIS_PREVIEW_ISOLATION
+    if (g_appState) {
+        auto& qr=g_appState->qaRegions;const auto p=ImGui::GetCursorScreenPos();
+        qr.waveDrawFrame=ImGui::GetFrameCount();qr.waveDrawStyle=waveformStyle;
+        qr.waveDrawBounds={p.x,p.y,p.x+width,p.y+height};
+    }
+#endif
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const uint8_t bgR = (g_waveformBgColor >> 0) & 0xFF;
     const uint8_t bgG = (g_waveformBgColor >> 8) & 0xFF;
@@ -27868,6 +27878,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                 float waveHeight = waveformHeight * (1.0f - splitRatio);
 
                 if (hasSpectrogramTexture && spectHeight > 10.0f) {
+#if ARIS_PREVIEW_ISOLATION
+                    state.qaRegions.spectrumDrawFrame=ImGui::GetFrameCount();
+#endif
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     dl->AddImage((ImTextureID)(intptr_t)state.spectrogramTexture,
                                  waveformPos,
@@ -27934,6 +27947,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     int alpha = (int)(spectAlpha * 255);
                     ImU32 tintCol = IM_COL32(255, 255, 255, alpha);
+#if ARIS_PREVIEW_ISOLATION
+                    state.qaRegions.spectrumDrawFrame=ImGui::GetFrameCount();
+#endif
 // Waveform drawing reserves top 16px for ruler; spectrogram must offset to align with waveform data.
                     const float rulerH = 16.0f;
                     dl->AddImage((ImTextureID)(intptr_t)state.spectrogramTexture,
