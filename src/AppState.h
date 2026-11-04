@@ -3258,6 +3258,7 @@ struct AppState {
         float listTextFontPixels = 0, listTextLineHeight = 0;
         float listTextRowHeight = 0;
         std::string listTextSample;
+        std::vector<float> listRowOrigins, listRowHitHeights;
 #endif
     } qaRegions;
 };
