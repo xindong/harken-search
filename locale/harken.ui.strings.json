@@ -1887,6 +1887,20 @@
       "ja": "絞り込み..."
     },
     {
+      "id": "Filter_NoMatchingNames",
+      "type": "ui",
+      "zh": "没有匹配的名称",
+      "en": "No matching names",
+      "ja": "一致する名前はありません"
+    },
+    {
+      "id": "Filter_DamagedMetadataName",
+      "type": "ui",
+      "zh": "原始名称无法识别",
+      "en": "Unreadable source name",
+      "ja": "元の名前を読み取れません"
+    },
+    {
       "id": "Filter_SelectExistingArtist",
       "type": "ui",
       "zh": "选择已有艺术家",

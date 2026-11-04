@@ -550,17 +550,25 @@ def test_folder_tree_search_preserves_refresh_and_locate_action_width():
     assert main.count("RenderFolderTreeExplorerToolbar(") == 3
 
 
-def test_lapis_metadata_searches_inherit_the_folder_tree_input_surface():
+def test_three_metadata_pickers_use_the_sidebar_input_surface_in_every_theme():
     main = read(MAIN_CPP)
     metadata = between(main, "// Section 2: 元数据过滤", "// Section 3: 播放列表")
 
     assert "const bool useLapisBlueMetadataSearchSurface = state.settings.theme == AppTheme::LapisBlue;" in metadata
-    for input_id in ("##ArtistFilter", "##AlbumFilter", "##CategoryFilter", "##KeyFilter"):
-        call_start = metadata.index(f'DrawUnifiedSearchInput("{input_id}"')
-        call = metadata[call_start : call_start + 320]
-        assert "useLapisBlueMetadataSearchSurface" in call
+    for input_id in ("##ArtistFilter", "##AlbumFilter", "##CategoryFilter"):
+        assert f'"{input_id}"' in metadata
+    picker_input = between(main, "static void DrawSidebarMetadataPickerField(", "const ImVec2 inputMin")
+    assert "PushSidebarMetadataInputColors();" in picker_input
+    assert "inputOptions.inputFlags = ImGuiInputTextFlags_AutoSelectAll;" in picker_input
+    assert "inputOptions.width = fieldWidth;" in picker_input
+    assert "inputOptions.inheritContextColors = true;" in picker_input
+    assert "aura::ui::TextInput(inputId, &visible, inputOptions)" in picker_input
+    assert picker_input.index("PushSidebarMetadataInputColors();") < picker_input.index("aura::ui::TextInput(")
+    assert "ImGui::PopStyleColor(6);" in picker_input
 
-    assert metadata.count("useLapisBlueMetadataSearchSurface") == 5
+    key_call = metadata[metadata.index('DrawUnifiedSearchInput("##KeyFilter"') :][:320]
+    assert "useLapisBlueMetadataSearchSurface" in key_call
+    assert metadata.count("useLapisBlueMetadataSearchSurface") == 2
     assert "ImGuiCol_FrameBg,              leftPanelInput" in main
     assert "ImGuiCol_Border,               leftPanelOutline" in main
     assert "ImGuiCol_Text,                 leftPanelText" in main

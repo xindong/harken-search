@@ -576,10 +576,10 @@ void AppState::syncFromTab() {
     coverFilterActive = tab.coverFilterActive;
     coverFilterPath = tab.coverFilterPath;
     coverFilterIndex = tab.coverFilterIndex;
-    CopyStringToBuffer(artistFilterBuffer, tab.artistFilterText);
+    artistFilterBuffer = tab.artistFilterText;
     artistFilterAlternates = tab.artistFilterAlternates;
-    CopyStringToBuffer(albumFilterBuffer, tab.albumFilterText);
-    CopyStringToBuffer(categoryFilterBuffer, tab.categoryFilterText);
+    albumFilterBuffer = tab.albumFilterText;
+    categoryFilterBuffer = tab.categoryFilterText;
     formatFilterIndex = tab.formatFilterIndex;
     channelFilterIndex = tab.channelFilterIndex;
     minDurationFilter = tab.minDurationFilter;
@@ -696,10 +696,10 @@ static bool AppStateHasActiveDbFilterForCoverWall(const AppState& state) {
     if (state.searchBuffer[0] != '\0') return true;
     if (state.folderFilterActive && !state.selectedFolderPath.empty()) return true;
     if (state.coverFilterActive && !state.coverFilterPath.empty()) return true;
-    if (state.artistFilterBuffer[0] != '\0') return true;
+    if (!state.artistFilterBuffer.empty()) return true;
     if (!state.artistFilterAlternates.empty()) return true;
-    if (state.albumFilterBuffer[0] != '\0') return true;
-    if (state.categoryFilterBuffer[0] != '\0') return true;
+    if (!state.albumFilterBuffer.empty()) return true;
+    if (!state.categoryFilterBuffer.empty()) return true;
     if (state.formatFilterIndex != 0) return true;
     if (state.channelFilterIndex != 0) return true;
     if (state.sampleRateFilterIndex != 0) return true;
