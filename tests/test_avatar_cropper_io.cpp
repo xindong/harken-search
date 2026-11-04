@@ -38,6 +38,11 @@ bool Check(bool condition, const char* message) {
 } // namespace
 
 int main() {
+    auto bounded = InitCropState(800,600);
+    bounded.zoom=100.f; ClampCropState(bounded);
+    if (!Check(bounded.zoom==8.f,"zoom bounded to 8x")) return 1;
+    bounded=InitCropState(1,1); bounded.zoom=8.f; ClampCropState(bounded);
+    if (!Check(ComputeSourceRect(bounded).w==1,"tiny image crop retains one pixel")) return 1;
     TempDirectory temp;
     const std::vector<uint8_t> pixels = {
         255, 0, 0, 255,    0, 255, 0, 128,

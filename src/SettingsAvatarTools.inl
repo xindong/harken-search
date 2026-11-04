@@ -93,6 +93,7 @@
                     static std::vector<uint8_t>       s_cropPixels;
                     static int                        s_cropSrcW = 0, s_cropSrcH = 0;
                     static GLuint                     s_cropPreviewGLTex = 0;
+                    static bool s_cropSaveFailed = false;
 
                     if (state.settings.hasCustomAvatar) {
                         if (s_avatarTexDirty) {
@@ -128,6 +129,7 @@
                             s_cropPixels.clear();
                             if (LoadImageForCrop(selected, s_cropSrcW, s_cropSrcH, s_cropPixels)) {
                                 s_cropState = InitCropState(s_cropSrcW, s_cropSrcH);
+                                s_cropSaveFailed = false;
                                 if (s_cropPreviewGLTex) { glDeleteTextures(1, &s_cropPreviewGLTex); s_cropPreviewGLTex = 0; }
                                 glGenTextures(1, &s_cropPreviewGLTex);
                                 glBindTexture(GL_TEXTURE_2D, s_cropPreviewGLTex);
@@ -139,6 +141,8 @@
                             }
                         }
                     }
+
+                    su::Observe("avatar-change");
 
                     if (state.settings.hasCustomAvatar) {
                         ImGui::SameLine();
@@ -163,62 +167,65 @@
 
                     if (BeginTransientScrollbarPopupModal(L(AvatarCropTitle), nullptr,
                             ImGuiWindowFlags_AlwaysAutoResize)) {
-                        constexpr float kPreviewSize = 256.f;
-
+                        const float available = std::max(180.f, std::min(560.f,ImGui::GetIO().DisplaySize.x-96.f));
+                        const float kPreviewSize = std::min(320.f,available-108.f);
+                        ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+available);
+                        ImGui::TextWrapped("%s",L(AvatarCropHelp));
+                        ImGui::PopTextWrapPos();
+                        ImGui::Spacing();
                         if (s_cropPreviewGLTex != 0 && s_cropSrcW > 0) {
-                            const AvatarSourceRect r = ComputeSourceRect(s_cropState);
-                            const float u0 = (float)r.x / s_cropSrcW;
-                            const float v0 = (float)r.y / s_cropSrcH;
-                            const float u1 = (float)(r.x + r.w) / s_cropSrcW;
-                            const float v1 = (float)(r.y + r.h) / s_cropSrcH;
-
-                            ImGui::Image((ImTextureID)(uintptr_t)s_cropPreviewGLTex,
-                                         {kPreviewSize, kPreviewSize},
-                                         {u0, v0}, {u1, v1});
-
-                            if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-                                const ImVec2 delta = ImGui::GetIO().MouseDelta;
-                                const float scale = (1.0f / s_cropState.zoom) / kPreviewSize;
-                                s_cropState.panX -= delta.x * scale;
-                                s_cropState.panY -= delta.y * scale;
-                                ClampCropState(s_cropState);
+                            const ImVec2 origin=ImGui::GetCursorScreenPos();
+                            ImGui::InvisibleButton("##avatar-crop-canvas",{kPreviewSize,kPreviewSize});
+                            su::Observe("avatar-canvas");
+                            if(ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left,0.f)) {
+                                const auto delta=ImGui::GetIO().MouseDelta;
+                                s_cropState.panX-=delta.x/(s_cropState.zoom*kPreviewSize);
+                                s_cropState.panY-=delta.y/(s_cropState.zoom*kPreviewSize);
                             }
-
-                            if (ImGui::IsItemHovered()) {
-                                const float wheel = ImGui::GetIO().MouseWheel;
-                                if (wheel != 0.0f) {
-                                    s_cropState.zoom = std::max(
-                                        ComputeMinZoom(s_cropSrcW, s_cropSrcH),
-                                        s_cropState.zoom * (1.0f + wheel * 0.1f));
-                                    ClampCropState(s_cropState);
-                                }
+                            if(ImGui::IsItemHovered()) {
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                s_cropState.zoom*=std::pow(1.1f,ImGui::GetIO().MouseWheel);
                             }
+                            ClampCropState(s_cropState);
+                            const auto r=ComputeSourceRect(s_cropState);
+                            const ImVec2 uv0((float)r.x/s_cropSrcW,(float)r.y/s_cropSrcH);
+                            const ImVec2 uv1((float)(r.x+r.w)/s_cropSrcW,(float)(r.y+r.h)/s_cropSrcH);
+                            auto* dl=ImGui::GetWindowDrawList();
+                            const auto tex=(ImTextureID)(uintptr_t)s_cropPreviewGLTex;
+                            dl->AddImage(tex,origin,{origin.x+kPreviewSize,origin.y+kPreviewSize},uv0,uv1);
+                            dl->AddRect(origin,{origin.x+kPreviewSize,origin.y+kPreviewSize},ImGui::GetColorU32(cs.chromeBorder),0,0,1.f);
+                            ImGui::SameLine(0,16);ImGui::BeginGroup();
+                            ImGui::TextUnformatted(L(AvatarCropPreview));
+                            const auto previewPos=ImGui::GetCursorScreenPos();
+                            dl->AddImageRounded(tex,previewPos,{previewPos.x+80,previewPos.y+80},uv0,uv1,IM_COL32_WHITE,40.f);
+                            ImGui::Dummy({80,80});
+                            ImGui::Image(tex,{48,48},uv0,uv1);
+                            ImGui::EndGroup();
+                            ImGui::SetNextItemWidth(kPreviewSize);
+                            if(ImGui::SliderFloat(L(AvatarCropZoom),&s_cropState.zoom,1.f,8.f,"%.1fx",ImGuiSliderFlags_AlwaysClamp))ClampCropState(s_cropState);
+                            su::Observe("avatar-zoom");
+                            if(aura::ui::ActionButton(L(AvatarCropReset)))s_cropState=InitCropState(s_cropSrcW,s_cropSrcH);
+                            su::Observe("avatar-reset");
                         }
+                        if(s_cropSaveFailed){ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+available);ImGui::TextWrapped("%s",L(AvatarCropSaveFailed));ImGui::PopTextWrapPos();su::Observe("avatar-save-error");}
 
-                        if (aura::ui::ActionButton(L(Main_SaveBtn2), ImVec2(0, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-                            const std::string dest = GetCustomAvatarPathUtf8();
-                            if (SaveCroppedAvatarPng(s_cropPixels, s_cropSrcW, s_cropSrcH,
-                                                      s_cropState, dest, 512)) {
+                        auto finishCrop=[&](){
+                            s_cropPixels.clear();
+                            if(s_cropPreviewGLTex){glDeleteTextures(1,&s_cropPreviewGLTex);s_cropPreviewGLTex=0;}
+                            s_cropSrcW=s_cropSrcH=0;s_cropState={};s_cropSaveFailed=false;
+                            ImGui::CloseCurrentPopup();
+                        };
+                        if(aura::ui::ActionButton(L(Main_SaveBtn2),ImVec2(100,0),aura::ui::ButtonVariant::PrimarySearch)) {
+                            const auto dest=GetCustomAvatarPathUtf8();
+                            if(SaveCroppedAvatarPng(s_cropPixels,s_cropSrcW,s_cropSrcH,s_cropState,dest,512)) {
                                 CoverModule::EvictCoverTextureByImagePath(dest);
-                                state.settings.hasCustomAvatar = true;
-                                s_avatarTexDirty = true;
-                                s_avatarTexRetryFrames = 0;
-                                MarkSettingsDirty(state);
-                            }
-                            s_cropPixels.clear();
-                            if (s_cropPreviewGLTex) { glDeleteTextures(1, &s_cropPreviewGLTex); s_cropPreviewGLTex = 0; }
-                            s_cropSrcW = s_cropSrcH = 0;
-                            s_cropState = {};
-                            ImGui::CloseCurrentPopup();
+                                state.settings.hasCustomAvatar=true;s_avatarTexDirty=true;s_avatarTexRetryFrames=0;
+                                MarkSettingsDirty(state);finishCrop();
+                            } else s_cropSaveFailed=true;
                         }
-                        ImGui::SameLine();
-                        if (aura::ui::ActionButton(L(Main_CancelBtn2), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
-                            s_cropPixels.clear();
-                            if (s_cropPreviewGLTex) { glDeleteTextures(1, &s_cropPreviewGLTex); s_cropPreviewGLTex = 0; }
-                            s_cropSrcW = s_cropSrcH = 0;
-                            s_cropState = {};
-                            ImGui::CloseCurrentPopup();
-                        }
+                        su::Observe("avatar-save");ImGui::SameLine();
+                        if(aura::ui::ActionButton(L(Main_CancelBtn2),ImVec2(100,0),aura::ui::ButtonVariant::Quiet))finishCrop();
+                        su::Observe("avatar-cancel");
 
                         ImGui::EndPopup();
                     }

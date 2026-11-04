@@ -5,6 +5,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src" / "AvatarCropperIO.cpp").read_text(encoding="utf-8")
 MAIN = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+MAIN += (ROOT / "src" / "SettingsAvatarTools.inl").read_text(encoding="utf-8")
 CMAKE = (ROOT / "cmake" / "harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
 
 

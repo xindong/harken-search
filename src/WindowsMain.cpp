@@ -6597,9 +6597,9 @@ static void PollQaCommandFile(AppState& state) {
                 if (s_mainUiReady.load(std::memory_order_acquire) &&
                     std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < display.x && y < display.y &&
                     !s_magicEqQaPointer.pending &&
-                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || (phase == "up" && s_magicEqQaPointer.held))) {
+                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || ((phase == "up" || phase == "move") && s_magicEqQaPointer.held))) {
                     const auto* viewport = ImGui::GetMainViewport();
-                    s_magicEqQaPointer = {true, phase != "hover", phase == "down", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
+                    s_magicEqQaPointer = {true, phase != "hover" && phase != "move", phase == "down" || phase == "move", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
                     ok = true;
                 }
             }

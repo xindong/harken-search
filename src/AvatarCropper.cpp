@@ -39,7 +39,8 @@ AvatarSourceRect ComputeSourceRect(const AvatarCropState& crop) {
 }
 
 void ClampCropState(AvatarCropState& crop) {
-    crop.zoom = std::max(ComputeMinZoom(crop.srcW, crop.srcH), crop.zoom);
+    const float maxZoom = static_cast<float>(std::max(1, std::min(8, std::min(crop.srcW,crop.srcH))));
+    crop.zoom = std::clamp(crop.zoom, ComputeMinZoom(crop.srcW, crop.srcH), maxZoom);
     const int   shorter  = std::min(crop.srcW, crop.srcH);
     const float boxPx    = shorter / crop.zoom;
     const float maxPanX  = (crop.srcW - boxPx) / (2.0f * shorter);
