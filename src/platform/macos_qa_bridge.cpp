@@ -428,6 +428,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"wave_peaks",wave ? wave->peaks.size() : 0},{"wave_max",maximum},
                 {"wave_pending",state.audioEngine.isWaveformDetailPending()}}},
             {"database",state.currentDbPathUtf8},{"database_open",state.database.isOpen()},
+            {"database_error",state.database.getLastError()},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},

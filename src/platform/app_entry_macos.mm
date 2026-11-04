@@ -160,11 +160,14 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     state.scanDropFailedCount = 0;
     try {
         if (state.database.fileExists(filePath)) {
-            ++state.scanDropExistingCount;
+            if (state.database.markFileAsManuallyImported(filePath))
+                ++state.scanDropExistingCount;
+            else
+                ++state.scanDropFailedCount;
         } else {
             AudioRecord record;
             if (Database::readAudioRecordMetadataSnapshot(filePath, record) &&
-                state.database.addFile(record)) {
+                state.database.addManuallyImportedFile(record)) {
                 ++state.scanDropImportedCount;
                 RefreshSearchResults(state, true);
             } else {

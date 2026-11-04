@@ -8604,9 +8604,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                                                 record.durationSeconds);
 
                         if (!g_appState->database.fileExists(filePath)) {
-                            if (g_appState->database.addFile(record)) ++g_appState->scanDropImportedCount;
+                            if (g_appState->database.addManuallyImportedFile(record)) ++g_appState->scanDropImportedCount;
                             else ++g_appState->scanDropFailedCount;
-                        } else ++g_appState->scanDropExistingCount;
+                        } else if (g_appState->database.markFileAsManuallyImported(filePath)) {
+                            ++g_appState->scanDropExistingCount;
+                        } else {
+                            ++g_appState->scanDropFailedCount;
+                        }
                     } catch (...) {
                         // Skip bad file and continue importing others.
                         ++g_appState->scanDropFailedCount;

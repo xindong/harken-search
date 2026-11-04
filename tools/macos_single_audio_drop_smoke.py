@@ -62,7 +62,7 @@ def run(binary, root, output):
 
         dropped = app.command('native_audio_drop', path=str(valid))
         assert dropped['native_drop']['accepted'], dropped
-        assert dropped['drop_notice']['imported'] == 1 and dropped['drop_notice']['failed'] == 0
+        assert dropped['drop_notice']['imported'] == 1 and dropped['drop_notice']['failed'] == 0, dropped
         imported = app.wait(lambda value: not value['search_pending'] and
                             any(row['name'] == valid.name for row in value['rows']) and
                             value['audio']['loaded'] and value['audio']['wave_ready'],
