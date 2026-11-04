@@ -53,7 +53,7 @@ for forbidden_policy in ("OFN_NOCHANGEDIR", "lpstrDefExt", "lpstrInitialDir"):
     assert forbidden_policy not in WIN32
 assert 'return "";' in PORTABLE
 
-qualified_call = "Platform::CoverDialogs::OpenCoverImageImportFileDialogUtf8(g_hwnd)"
+qualified_call = "Platform::CoverDialogs::OpenCoverImageImportFileDialogUtf8(MainUiOwnerWindow())"
 assert MAIN.count(qualified_call) == 1
 dialog_start = MAIN.index("// COVER IMPORT DIALOG")
 dialog_end = MAIN.index("// AI 封面生成弹窗", dialog_start)

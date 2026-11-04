@@ -15,6 +15,7 @@
 #include "WindowsMain.h"
 #include "BuildConfig.h"
 #include "platform/filesystem.h"
+#include "platform/theme_custom_file.h"
 #include "platform/theme_json_dialogs.h"
 #include "imgui.h"
 #include "HarkenSearchWidgets.h"
@@ -186,7 +187,11 @@ static std::string BuildThemeJsonSuggestedPathUtf8(const char* fallbackStem) {
     if (stem.empty()) stem = fallbackStem;
     stem = SanitizeWindowsName(stem);
     if (stem.empty()) stem = fallbackStem;
+#ifdef __APPLE__
+    return stem + ".json";
+#else
     return GetExeDirUtf8() + "\\" + stem + ".json";
+#endif
 }
 
 static std::string ThemeNameFromPathUtf8(const std::string& pathUtf8) {
@@ -246,8 +251,8 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
-    const std::string filePath = GetExeDirUtf8() + "\\theme_custom.json";
-    if (!ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
+    const std::string filePath = Platform::ThemeFiles::CustomThemePathUtf8();
+    if (filePath.empty() || !ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
         statusMsg = L(TE_AppliedWriteFail);
         return false;
     }
@@ -764,11 +769,15 @@ void RenderThemeEditor(AppState& state) {
 
     // Import
     if (aura::ui::ActionButton(L(ThemeEditor_ImportJson), ImVec2(100, 0))) {
+#if defined(_WIN32) || defined(__APPLE__)
+        std::string suggestedPath = g_ed.lastImportPath;
 #ifdef _WIN32
-        const std::string suggestedPath = g_ed.lastImportPath.empty()
-            ? (GetExeDirUtf8() + "\\theme_export.json")
-            : g_ed.lastImportPath;
-        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(g_hwnd, suggestedPath);
+        if (suggestedPath.empty()) suggestedPath = GetExeDirUtf8() + "\\theme_export.json";
+        void* ownerWindow = g_hwnd;
+#else
+        void* ownerWindow = nullptr;
+#endif
+        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(ownerWindow, suggestedPath);
         if (!filePath.empty()) {
             const AppTheme startTheme = state.settings.theme;
             ThemeColorScheme imported = g_ed.draft;
@@ -792,11 +801,15 @@ void RenderThemeEditor(AppState& state) {
     ImGui::SameLine();
 
     if (aura::ui::ActionButton(L(ThemeEditor_ImportCreateTheme), ImVec2(148, 0), aura::ui::ButtonVariant::PrimarySearch)) {
+#if defined(_WIN32) || defined(__APPLE__)
+        std::string suggestedPath = g_ed.lastImportPath;
 #ifdef _WIN32
-        const std::string suggestedPath = g_ed.lastImportPath.empty()
-            ? (GetExeDirUtf8() + "\\theme_export.json")
-            : g_ed.lastImportPath;
-        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(g_hwnd, suggestedPath);
+        if (suggestedPath.empty()) suggestedPath = GetExeDirUtf8() + "\\theme_export.json";
+        void* ownerWindow = g_hwnd;
+#else
+        void* ownerWindow = nullptr;
+#endif
+        std::string filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(ownerWindow, suggestedPath);
         if (!filePath.empty()) {
             const AppTheme startTheme = state.settings.theme;
             ThemeColorScheme imported = g_ed.draft;
@@ -828,11 +841,16 @@ void RenderThemeEditor(AppState& state) {
         std::string json = ThemeColors::exportToJSON(g_ed.draft);
         ImGui::SetClipboardText(json.c_str());
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         const std::string suggestedPath = g_ed.lastExportPath.empty()
             ? BuildThemeJsonSuggestedPathUtf8("theme_export")
             : g_ed.lastExportPath;
-        std::string filePath = Platform::ThemeDialogs::SaveThemeJsonFileDialogUtf8(g_hwnd, suggestedPath);
+#ifdef _WIN32
+        void* ownerWindow = g_hwnd;
+#else
+        void* ownerWindow = nullptr;
+#endif
+        std::string filePath = Platform::ThemeDialogs::SaveThemeJsonFileDialogUtf8(ownerWindow, suggestedPath);
         if (!filePath.empty()) {
             if (ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
                 g_ed.lastExportPath = filePath;

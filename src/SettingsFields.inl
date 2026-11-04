@@ -131,8 +131,15 @@ else if(id=="remember")ImGui::Checkbox("##value",&draft.rememberLastFolder);
 else if(id=="closeAction")combo(draft.closeButtonAction,{L(Set_CloseAsk),L(Set_CloseMinimize),L(Set_CloseDirect)});
 else if(id=="guided")ImGui::Checkbox("##value",&draft.showGuidedMode);
 else if(id=="confirm") {bool value=!draft.suppressConfirmDialogs;if(ImGui::Checkbox("##value",&value))draft.suppressConfirmDialogs=!value;}
-else if(id=="hotkeyEnabled") {ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);if(!draft.enableShowManagerHotkey)editor.recording=false;}
+else if(id=="hotkeyEnabled") {
+#ifdef _WIN32
+    ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);if(!draft.enableShowManagerHotkey)editor.recording=false;
+#else
+    ImGui::TextWrapped("%s",L(Mac_GlobalHotkeyUnavailable));
+#endif
+}
 else if(id=="hotkey") {
+#ifdef _WIN32
     ImGui::BeginDisabled(!draft.enableShowManagerHotkey);
     if(aura::ui::ActionButton(editor.recording?L(Set_ListeningKeys):draft.showManagerHotkey.toString().c_str())){editor.recording=true;ImGui::ClearActiveID();}
     su::Observe("hotkey-record");
@@ -146,6 +153,9 @@ else if(id=="hotkey") {
     if(aura::ui::SmallActionButton(L(Set_ClearHotkey2)))draft.showManagerHotkey={ImGuiKey_None,false,false,false};
     ImGui::EndDisabled();
     if(!g_showManagerHotkeyRegisterOk&&state.settings.enableShowManagerHotkey)ImGui::TextWrapped("%s",L(Set_HotkeyConflict));
+#else
+    ImGui::TextWrapped("%s",L(Mac_GlobalHotkeyUnavailable));
+#endif
 }
 else if(id=="shortcuts")actionButton(L(SetUX_EditShortcuts),"shortcuts");
 else if(id=="hideDrag")ImGui::Checkbox("##value",&draft.hideWindowOnDrag);
@@ -155,7 +165,7 @@ else if(id=="treePath") {int n=(int)draft.folderTreePathMode;if(combo(n,{L(Set_F
 else if(id=="shell")actionButton(L(Set_ShellIntegration),"shell");
 else if(id=="username")stringInput(draft.userName);
 else if(id=="avatar")actionButton(L(SetUX_EditAvatar),"avatar");
-else if(id=="exportPath") {stringInput(draft.defaultExportPath);if(aura::ui::SmallActionButton(L(Browse))){auto folder=OpenFolderDialog(g_hwnd);if(!folder.empty())draft.defaultExportPath=folder;}}
+else if(id=="exportPath") {stringInput(draft.defaultExportPath);if(aura::ui::SmallActionButton(L(Browse))){auto folder=OpenFolderDialog(MainUiOwnerWindow());if(!folder.empty())draft.defaultExportPath=folder;}}
 else if(id=="suffix")ImGui::Checkbox("##value",&draft.keepHarkenSearchOutputProcessingSuffix);
 else if(id=="export")actionButton(L(Set_ExportSettings),"export");
 else if(id=="import")actionButton(L(Set_ImportSettings),"import");
