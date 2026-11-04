@@ -40973,10 +40973,14 @@ void RenderUI(AppState& state) {
                         qr.listTextRowHeight = browserRowH;
                         qr.listTextSample = label;
                         qr.listRowOrigins.clear();qr.listRowHitHeights.clear();
+                        qr.listRawNames.clear();qr.listRenderedNames.clear();qr.listRowDirectories.clear();
                     }
                     if (state.qaRegions.listRowOrigins.size() < 8) {
                         state.qaRegions.listRowOrigins.push_back(rowTopLeft.y);
                         state.qaRegions.listRowHitHeights.push_back(ImGui::GetItemRectSize().y);
+                        state.qaRegions.listRawNames.push_back(entry.name);
+                        state.qaRegions.listRenderedNames.push_back(label);
+                        state.qaRegions.listRowDirectories.push_back(entry.isDirectory);
                     }
 #endif
                     const std::string browserRowAnnotationKey =
@@ -42017,10 +42021,14 @@ void RenderUI(AppState& state) {
                             qr.listTextSample = dynamicDisplayName;
                             qr.listRowOrigins.clear();
                             qr.listRowHitHeights.clear();
+                            qr.listRawNames.clear();qr.listRenderedNames.clear();qr.listRowDirectories.clear();
                         }
                         if (state.qaRegions.listRowOrigins.size() < 8) {
                             state.qaRegions.listRowOrigins.push_back(nameTextOrigin.y);
                             state.qaRegions.listRowHitHeights.push_back(ImGui::GetItemRectSize().y);
+                            state.qaRegions.listRawNames.push_back(record.fileName);
+                            state.qaRegions.listRenderedNames.push_back(dynamicDisplayName);
+                            state.qaRegions.listRowDirectories.push_back(false);
                         }
 #endif
                     }
