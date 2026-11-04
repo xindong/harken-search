@@ -9,6 +9,10 @@
 #include "Utils.h"
 #include "harken_user_data_layout.h"
 #include "nlohmann_json.hpp"
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+#include "SettingsDialogState.h"
+#include <OpenGL/gl.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -80,6 +84,30 @@ Request Poll(AppState& state) {
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
             state.settings.readingFontSize = size;
             MarkSettingsDirty(state);
+        } else if (action == "show_settings") {
+            state.showSettingsDialog = true;
+        } else if (action == "settings_focus_wave") {
+            auto& editor = harken::settings::SettingsEditor();
+            if (!editor.open) throw std::runtime_error("settings_not_open");
+            editor.page = harken::settings::Page::Appearance;
+            editor.query[0] = 0;
+            editor.focusId = "waveMode";
+        } else if (action == "settings_fail_save_once") {
+            if (!harken::settings::SettingsEditor().open)
+                throw std::runtime_error("settings_not_open");
+            harken::settings::failSaveOnce = true;
+        } else if (action == "pointer") {
+            const float x = command.at("x").get<float>();
+            const float y = command.at("y").get<float>();
+            const auto phase = command.at("phase").get<std::string>();
+            const auto size = ImGui::GetIO().DisplaySize;
+            if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 ||
+                x >= size.x || y >= size.y) throw std::runtime_error("pointer_out_of_window");
+            if (phase != "hover" && phase != "down" && phase != "up")
+                throw std::runtime_error("invalid_pointer_phase");
+            auto& io = ImGui::GetIO();
+            io.AddMousePosEvent(x, y);
+            if (phase != "hover") io.AddMouseButtonEvent(ImGuiMouseButton_Left, phase == "down");
         } else if (action == "reset_thesaurus") {
             if (!ResetMacThesaurusToDefaults()) throw std::runtime_error("thesaurus_reset_failed");
         } else if (action == "show_thesaurus") {
@@ -278,7 +306,71 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
         const auto outputProbe = state.audioEngine.getQaOutputProbe();
         float maximum = 0;
         if (wave) for (const float peak : wave->peaks) maximum = std::max(maximum, std::abs(peak));
+        const auto& observed = harken::settings::observation;
+        const auto& editor = harken::settings::SettingsEditor();
+        Json settingsItems = Json::array();
+        for (const auto& item : observed.items) {
+            settingsItems.push_back({{"id",item.id},
+                {"bounds",{item.bounds.x,item.bounds.y,item.bounds.z,item.bounds.w}},
+                {"clip",{item.clip.x,item.clip.y,item.clip.z,item.clip.w}},
+                {"disabled",item.disabled}});
+        }
+        Json textureProbe;
+        if (request.capture && state.spectrogramTexture != 0 &&
+            state.spectrogramWidth > 0 && state.spectrogramHeight > 0) {
+            const int width = state.spectrogramWidth, height = state.spectrogramHeight;
+            std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4);
+            GLint previousTexture = 0;
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+            glBindTexture(GL_TEXTURE_2D, state.spectrogramTexture);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+            int brightLeft = 0, brightRight = 0;
+            for (int y = 0; y < height; y += 8) for (int x = 0; x < width; x += 4) {
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 4;
+                const bool bright = std::max({pixels[offset],pixels[offset + 1],pixels[offset + 2]}) > 40;
+                if (bright) (x < width / 2 ? brightLeft : brightRight)++;
+            }
+            textureProbe = {{"bright_left",brightLeft},{"bright_right",brightRight}};
+        }
+        Json spectrumCommands = Json::array();
+        if (const auto* draw = ImGui::GetDrawData(); state.spectrogramTexture != 0 && draw) {
+            for (int list = 0; list < draw->CmdListsCount; ++list) {
+                for (const auto& command : draw->CmdLists[list]->CmdBuffer) {
+                    if (static_cast<GLuint>(command.GetTexID()) == state.spectrogramTexture &&
+                        command.ElemCount > 0)
+                        spectrumCommands.push_back({{"elements",command.ElemCount},
+                            {"clip",{command.ClipRect.x,command.ClipRect.y,
+                                command.ClipRect.z,command.ClipRect.w}}});
+                }
+            }
+        }
         Json value = {{"id",request.id},{"error",request.error},{"captured",captured},
+            {"settings_ui",{{"frame",observed.frame},{"open",observed.open},
+                {"page",observed.page},{"pending",observed.pending},{"prompt",observed.prompt},
+                {"live_wave_mode",state.settings.waveformDisplayMode},
+                {"draft_wave_mode",editor.app.Value().waveformDisplayMode},
+                {"live_wave_style",state.settings.waveformStyle},
+                {"draft_wave_style",editor.app.Value().waveformStyle},
+                {"live_spectrum",state.showSpectrogram},
+                {"draft_spectrum",editor.runtime.Value().spectrum},
+                {"save_error",editor.error},
+                {"items",settingsItems}}},
+            {"wave_ui",{{"frame",ImGui::GetFrameCount()},
+                {"wave_draw_frame",state.qaRegions.waveDrawFrame},
+                {"wave_draw_style",state.qaRegions.waveDrawStyle},
+                {"spectrum_draw_frame",state.qaRegions.spectrumDrawFrame},
+                {"spectrum_texture",state.spectrogramTexture},
+                {"spectrum_width",state.spectrogramWidth},
+                {"spectrum_height",state.spectrogramHeight},
+                {"spectrum_file",state.spectrogramFilePath},
+                {"spectrum_timeline_frames",state.spectrogramTimelineFrames},
+                {"spectrum_sample_rate",state.spectrogramSampleRate},
+                {"spectrum_needs_update",state.spectrogramNeedsUpdate},
+                {"spectrum_split",state.spectrogramSplit},
+                {"spectrum_blend",state.spectrogramBlend},
+                {"spectrum_pixels",textureProbe},
+                {"spectrum_commands",spectrumCommands}}},
             {"audio",{{"loaded",state.audioEngine.isLoaded()},{"pending",state.audioEngine.isLoadFilePending()},
                 {"playing",state.audioEngine.isPlaying()},{"paused",state.audioEngine.isPaused()},
                 {"path",state.audioEngine.getLoadedFilePath()},{"position",state.audioEngine.getPlaybackPosition()},
