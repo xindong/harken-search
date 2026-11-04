@@ -4,6 +4,7 @@
 
 - 来源：差异盘点 CV-AB9FEDDA 确认 Mac 应用包的 CFBundleIconFile 为空；Windows 已使用仓库根目录 HarkenSearch.ico。仓库 assets/icons/source/harken-app-icons/README.md 记录了用户确认的 Search 橙色官方图标及 16–1024 像素原件。
 - 开工基线为 origin/qa/current 5bb7c63aa95f89214b314125ee818d9873cdacaa；独立 clone 与分支 task/CV-5C9E7A21。先合入尚待用户验收的累计 Mac 候选 46a59402，才能测试真实产品应用；不把该候选当作已进入 QA。
+- 图标包首次验证后，qa/current 又合入侧栏筛选 PR #83 和波形模式 PR #98，前进到 6573402。两项修改共用界面与设置代码；本卡需合入后重新构建、启动并针对筛选及波形补测，旧图标包只保留过程证据。
 - 只给 Mac 应用包加原生图标：用现有 Search 透明橙色各尺寸原件生成 .icns，配置 CMake 复制到 Contents/Resources 并在 Info.plist 引用。保留 Windows HarkenSearch.ico、应用内字标和原始 PNG，不调整配色、形状或共用界面。
 
 ## 实施与验证
