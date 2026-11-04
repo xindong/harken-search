@@ -92,10 +92,12 @@
 | TEST-TAG-SYSTEM | unit | `TestTagSystem` | tag behavior passes | active |
 | TEST-TAG-VOCAB | unit | `TestTagVocabularyMapper` | vocabulary mapping passes | active |
 | DIAG-METADATA | diagnostics | temporary evidence in `TestMultiTabSync`: this test drives the `MetadataEditPatch` path and asserts `PatchBatchComplete`, `PatchRejected`, and `PatchManyComplete` metadata diagnostics | patch success/rejection events observed | active |
+| TEST-MAC-METADATA-TAGS | real Mac app / isolated diagnostics | `tools/macos_metadata_tags_smoke.py` | One-file patch, unrelated-field preservation, invalid-input rejection, tag and category search, source WAV hash, and reopen agree | active |
 
 ## Missing Coverage
 
 - Missing proof: full UI flow from metadata editor save to search result refresh is not yet asserted end-to-end.
+- The Mac isolated diagnostic action exercises the shared database patch and real result view; it does not click the metadata editor's Save button or prove that fields below the first Info panel viewport are visible.
 - Missing proof: dedicated `TestMetadataPatchDiagnostics`; `TestMultiTabSync` is accepted as temporary diagnostics evidence only because it currently drives the metadata patch path.
 - Residual gap: field editor UI ergonomics are still human-verified.
 - Suspected stale proof: unsupported-field UX is not yet asserted end-to-end.

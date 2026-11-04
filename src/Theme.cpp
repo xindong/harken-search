@@ -12,12 +12,12 @@
 #include "BuildConfig.h"
 #include "DiagnosticsLogger.h"
 #include "Utils.h"
+#include "nlohmann_json.hpp"
 #include "ui/CoreWorkspaceStyle.h"
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
-#include <regex>
 
 // Color Definitions (Legacy)
 // 注意: 这些全局颜色变量已在 main.cpp 中以 static 方式定义,
@@ -1567,11 +1567,27 @@ std::string ThemeColors::exportToJSON(const ThemeColorScheme& s) {
 }
 
 bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outScheme) {
+    const auto document = nlohmann::json::parse(json, nullptr, false);
+    if (!document.is_object()) return false;
+
+    // Match only supported top-level colors. The old text regex could pick up
+    // nested metadata and reported success even when there was no palette.
+    const auto supported = nlohmann::json::parse(
+        exportToJSON(ThemeColorScheme{}), nullptr, false);
+    if (!supported.is_object()) return false;
     std::unordered_map<std::string, std::string> values;
-    const std::regex pairPattern("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"");
-    for (std::sregex_iterator it(json.begin(), json.end(), pairPattern), end; it != end; ++it) {
-        values[(*it)[1].str()] = (*it)[2].str();
+    for (auto field = supported.begin(); field != supported.end(); ++field) {
+        const auto value = document.find(field.key());
+        if (value == document.end()) continue;
+        if (!value->is_string()) return false;
+        const std::string color = value->get<std::string>();
+        if ((color.size() != 6 && color.size() != 8) ||
+            color.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+            return false;
+        }
+        values.emplace(field.key(), color);
     }
+    if (values.empty()) return false;
 
     auto findValue = [&](const std::string& key) -> std::string {
         auto it = values.find(key);
@@ -2175,5 +2191,14 @@ ThemeColorScheme ThemeColors::getDeepNavy() {
     s.volumeClipColor          = fromARGBHex("ffff3333");
     ApplySemanticThemeDefaults(s);
     return s;
+}
+
+
+ImVec4 GetThemeClearColor() {
+    const ImVec4 bg = ThemeColors::current().mainWindowBG;
+    if (bg.w > 0.0f) {
+        return bg;
+    }
+    return ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
 }
 
