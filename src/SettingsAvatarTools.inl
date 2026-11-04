@@ -1,123 +1,14 @@
-// Existing native specialty UI, hosted by the settings action dialog.
-                auto ResolveSettingsBuiltinAvatarIndex = [&](int explicitIndex) {
-                    if (explicitIndex >= 1 && explicitIndex <= 36) return explicitIndex;
-                    uint32_t h = 2166136261u;
-                    const std::string seed = state.settings.userName.empty() ? std::string("Harken Search") : state.settings.userName;
-                    for (unsigned char c : seed) {
-                        h ^= c;
-                        h *= 16777619u;
-                    }
-                    return 1 + (int)(h % 36u);
-                };
-
-                auto RenderSettingsBuiltinAvatar = [](ImDrawList* dl,
-                                                      ImVec2 center,
-                                                      float radius,
-                                                      int avatarIndex,
-                                                      bool hovered,
-                                                      bool selected) {
-                    const int idx = (std::max)(1, (std::min)(36, avatarIndex));
-                    const float hue = (float)(idx - 1) / 36.0f;
-                    float accentHue = hue + 0.09f;
-                    if (accentHue > 1.0f) accentHue -= 1.0f;
-                    float br = 0.0f, bg = 0.0f, bb = 0.0f;
-                    float ar = 0.0f, ag = 0.0f, ab = 0.0f;
-                    ImGui::ColorConvertHSVtoRGB(hue, 0.50f, hovered ? 0.70f : 0.56f, br, bg, bb);
-                    ImGui::ColorConvertHSVtoRGB(accentHue, 0.34f, hovered ? 0.96f : 0.86f, ar, ag, ab);
-
-                    const ImU32 bgCol = IM_COL32((int)(br * 255), (int)(bg * 255), (int)(bb * 255), 255);
-                    const ImU32 faceCol = IM_COL32((int)(ar * 255), (int)(ag * 255), (int)(ab * 255), 255);
-                    const ImU32 inkCol = IM_COL32(34, 42, 56, 230);
-                    const ImU32 cheekCol = IM_COL32(255, 132, 150, 96);
-                    const ImU32 hiCol = IM_COL32(255, 255, 255, hovered ? 92 : 58);
-
-                    dl->AddCircleFilled(center, radius, bgCol, 48);
-                    dl->AddCircleFilled(ImVec2(center.x - radius * 0.22f, center.y + radius * 0.04f), radius * 0.62f, faceCol, 40);
-                    dl->AddCircleFilled(ImVec2(center.x + radius * 0.18f, center.y + radius * 0.02f), radius * 0.58f, faceCol, 40);
-
-                    const float hairSweep = ((idx % 5) - 2) * radius * 0.08f;
-                    dl->PathClear();
-                    dl->PathArcTo(ImVec2(center.x + hairSweep, center.y - radius * 0.02f), radius * 0.70f, 3.50f, 5.95f, 18);
-                    dl->PathLineTo(ImVec2(center.x + radius * 0.58f, center.y - radius * 0.08f));
-                    dl->PathLineTo(ImVec2(center.x - radius * 0.56f, center.y + radius * 0.02f));
-                    dl->PathFillConvex(IM_COL32(46, 48, 70, 222));
-
-                    const float eyeY = center.y - radius * 0.02f;
-                    const float eyeDx = radius * (0.20f + (idx % 3) * 0.025f);
-                    dl->AddCircleFilled(ImVec2(center.x - eyeDx, eyeY), radius * 0.055f, inkCol, 12);
-                    dl->AddCircleFilled(ImVec2(center.x + eyeDx, eyeY), radius * 0.055f, inkCol, 12);
-                    dl->AddCircleFilled(ImVec2(center.x - radius * 0.34f, center.y + radius * 0.18f), radius * 0.10f, cheekCol, 12);
-                    dl->AddCircleFilled(ImVec2(center.x + radius * 0.34f, center.y + radius * 0.18f), radius * 0.10f, cheekCol, 12);
-                    if ((idx % 2) == 0) {
-                        dl->AddBezierCubic(ImVec2(center.x - radius * 0.16f, center.y + radius * 0.23f),
-                                           ImVec2(center.x - radius * 0.06f, center.y + radius * 0.34f),
-                                           ImVec2(center.x + radius * 0.08f, center.y + radius * 0.34f),
-                                           ImVec2(center.x + radius * 0.18f, center.y + radius * 0.23f),
-                                           inkCol, 1.7f, 16);
-                    } else {
-                        dl->AddLine(ImVec2(center.x - radius * 0.13f, center.y + radius * 0.25f),
-                                    ImVec2(center.x + radius * 0.13f, center.y + radius * 0.25f),
-                                    inkCol, 1.6f);
-                    }
-                    dl->AddCircle(center, radius - 0.8f, hiCol, 48, 1.0f);
-                    if (selected) {
-                        dl->AddCircle(center, radius + 2.0f, IM_COL32(255, 255, 255, 230), 48, 2.2f);
-                    }
-                };
-
                 static int s_pendingBuiltInAvatarIndex = 0;
-
-                auto DrawSettingsAvatarPreview = [&](const CoverModule::TextureHandle& customTex) {
-                    const ImVec2 size(64.0f, 64.0f);
-                    if (state.settings.hasCustomAvatar && customTex.hasTexture) {
-                        ImGui::Image((ImTextureID)(uintptr_t)customTex.textureId, size);
-                        return;
-                    }
-                    const ImVec2 topLeft = ImGui::GetCursorScreenPos();
-                    ImGui::InvisibleButton("##SettingsAvatarActivePreview", size);
-                    const ImVec2 center(topLeft.x + size.x * 0.5f, topLeft.y + size.y * 0.5f);
-                    const int idx = ResolveSettingsBuiltinAvatarIndex(state.settings.diceBearAvatarIndex);
-                    RenderSettingsBuiltinAvatar(ImGui::GetWindowDrawList(), center, size.x * 0.5f - 2.0f, idx,
-                                                ImGui::IsItemHovered(), !state.settings.hasCustomAvatar);
-                    if (state.settings.hasCustomAvatar && !customTex.hasTexture && ImGui::IsItemHovered()) {
-                        aura::ui::Tooltip(L(Avatar_LoadingTooltip));
-                    }
-                };
 
 // Custom avatar
                 {
-                    static CoverModule::TextureHandle s_avatarTex;
-                    static bool                       s_avatarTexDirty = true;
-                    static int                        s_avatarTexRetryFrames = 0;
                     static AvatarCropState            s_cropState;
                     static std::vector<uint8_t>       s_cropPixels;
                     static int                        s_cropSrcW = 0, s_cropSrcH = 0;
                     static GLuint                     s_cropPreviewGLTex = 0;
                     static bool s_cropSaveFailed = false;
 
-                    if (state.settings.hasCustomAvatar) {
-                        if (s_avatarTexDirty) {
-                            s_avatarTex = {};
-                            s_avatarTexRetryFrames = 0;
-                        }
-                        // Existing avatar preview is backed by the same async image texture cache as covers.
-                        // Keep retrying while the settings page is visible; otherwise the first pending frame
-                        // can permanently leave this preview blank until another setting toggles dirty state.
-                        if (s_avatarTexDirty || (!s_avatarTex.hasTexture && s_avatarTexRetryFrames < 240)) {
-                            if (CoverModule::GetCoverTextureFromImagePath(GetCustomAvatarPathUtf8(), s_avatarTex, true)) {
-                                s_avatarTexDirty = false;
-                                s_avatarTexRetryFrames = 0;
-                            } else {
-                                ++s_avatarTexRetryFrames;
-                            }
-                        }
-                    } else {
-                        s_avatarTex = {};
-                        s_avatarTexDirty = false;
-                        s_avatarTexRetryFrames = 0;
-                    }
-
-                    DrawSettingsAvatarPreview(s_avatarTex);
+                    DrawCurrentSettingsAvatar(64.f);
 
                     ImGui::SameLine();
                     ImGui::BeginGroup();
@@ -151,8 +42,7 @@
                             Platform::FileSystem::RemoveFile(avatarPath);
                             CoverModule::EvictCoverTextureByImagePath(avatarPath);
                             state.settings.hasCustomAvatar = false;
-                            s_avatarTexDirty = true;
-                            s_avatarTexRetryFrames = 0;
+                            ++su::avatarImageRevision;
                             MarkSettingsDirty(state);
                         }
                     }
@@ -219,8 +109,15 @@
                             const auto dest=GetCustomAvatarPathUtf8();
                             if(SaveCroppedAvatarPng(s_cropPixels,s_cropSrcW,s_cropSrcH,s_cropState,dest,512)) {
                                 CoverModule::EvictCoverTextureByImagePath(dest);
-                                state.settings.hasCustomAvatar=true;s_avatarTexDirty=true;s_avatarTexRetryFrames=0;
-                                MarkSettingsDirty(state);finishCrop();
+                                const bool previousCustom=state.settings.hasCustomAvatar;
+                                state.settings.hasCustomAvatar=true;
+                                if(TrySaveAppSettings(state)) {
+                                    ++su::avatarImageRevision;
+                                    finishCrop();
+                                } else {
+                                    state.settings.hasCustomAvatar=previousCustom;
+                                    s_cropSaveFailed=true;
+                                }
                             } else s_cropSaveFailed=true;
                         }
                         su::Observe("avatar-save");ImGui::SameLine();
@@ -284,6 +181,7 @@
                         ImGui::Spacing();
                         if (aura::ui::ActionButton(L(Set_AvatarPickerUseLabelZh), ImVec2(130.0f, 0.0f), aura::ui::ButtonVariant::PrimarySearch)) {
                             state.settings.hasCustomAvatar = false;
+                            ++su::avatarImageRevision;
                             state.settings.diceBearAvatarIndex = s_pendingBuiltInAvatarIndex;
                             MarkSettingsDirty(state);
                             ImGui::CloseCurrentPopup();

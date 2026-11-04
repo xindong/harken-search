@@ -154,7 +154,7 @@ else if(id=="pauseDrag")ImGui::Checkbox("##value",&draft.pausePlaybackOnDragStar
 else if(id=="treePath") {int n=(int)draft.folderTreePathMode;if(combo(n,{L(Set_FolderTreePathAbsolute),L(Set_FolderTreePathPilot)}))draft.folderTreePathMode=(aura::folder_tree::PathMode)n;}
 else if(id=="shell")actionButton(L(Set_ShellIntegration),"shell");
 else if(id=="username")stringInput(draft.userName);
-else if(id=="avatar")actionButton(L(SetUX_EditAvatar),"avatar");
+else if(id=="avatar") { DrawCurrentSettingsAvatar(48.f); ImGui::SameLine(0,12); actionButton(L(SetUX_EditAvatar),"avatar"); }
 else if(id=="exportPath") {stringInput(draft.defaultExportPath);if(aura::ui::SmallActionButton(L(Browse))){auto folder=OpenFolderDialog(g_hwnd);if(!folder.empty())draft.defaultExportPath=folder;}}
 else if(id=="suffix")ImGui::Checkbox("##value",&draft.keepHarkenSearchOutputProcessingSuffix);
 else if(id=="export")actionButton(L(Set_ExportSettings),"export");

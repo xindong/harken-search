@@ -10,6 +10,7 @@
     auto& editor=su::SettingsEditor();
     auto& draft=editor.app.Value();
     auto& runtime=editor.runtime.Value();
+#include "SettingsAvatarPreview.inl"
     auto apply=[&]() -> bool {
         editor.error.clear();
         if (!editor.ChangedCount()) return true;

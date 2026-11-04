@@ -10,6 +10,7 @@
 #include "ThemeSchedulePaletteCodec.h"
 
 namespace harken::settings {
+inline unsigned avatarImageRevision=0;
 inline const char* PageLabel(Page page) {
     switch (page) {
     case Page::Common: return L(SetUX_Common);
