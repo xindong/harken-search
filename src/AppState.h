@@ -3259,6 +3259,8 @@ struct AppState {
         float listTextRowHeight = 0;
         std::string listTextSample;
         std::vector<float> listRowOrigins, listRowHitHeights;
+        std::vector<std::string> listRawNames, listRenderedNames;
+        std::vector<bool> listRowDirectories;
 #endif
     } qaRegions;
 };
