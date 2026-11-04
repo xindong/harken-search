@@ -220,8 +220,12 @@ bool Probe(const std::filesystem::path& path, Info& out) {
     if (TryWave(path, out)) {
         return true;
     }
+#if AURO_DATABASE_AUDIO_PROBE_WIN32_POLICY || (defined(__APPLE__) && !defined(AURO_DATABASE_AUDIO_PROBE_TEST_STD))
 #if AURO_DATABASE_AUDIO_PROBE_WIN32_POLICY
     const std::string utf8Path = PathToUtf8(path);
+#else
+    const std::string utf8Path = PathString(path);
+#endif
     const bool isFlac = Detail::IsFlacExtension(utf8Path);
     if (Detail::CanDecodeExtension(utf8Path) && !isFlac) {
         std::string error;

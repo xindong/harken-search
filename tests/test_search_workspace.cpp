@@ -298,6 +298,13 @@ int main() {
     resetState.selectedPlaylistId = 9;
     resetState.playlistAggregatedView = true;
     resetState.viewMode = ViewMode::Playlist;
+    resetState.listTabs.resize(3);
+    resetState.activeTabIndex = 0;
+    resetState.listTabs[0].viewMode = ViewMode::Playlist;
+    resetState.listTabs[0].selectedPlaylistId = 9;
+    resetState.listTabs[0].playlistAggregatedView = true;
+    resetState.listTabs[1].viewMode = ViewMode::Browser;
+    resetState.listTabs[2].viewMode = ViewMode::PlaylistLibrary;
     resetState.findSameFilenameActive = true;
     resetState.randomSampleMode = true;
     resetState.selectedIndicesSet.insert(0);
@@ -320,6 +327,13 @@ int main() {
           "database session reset clears search and folder filters");
     check(resetState.selectedPlaylistId == -1 && resetState.viewMode == ViewMode::Database,
           "database session reset returns to database view");
+    resetState.syncFromTab();
+    check(resetState.viewMode == ViewMode::Database && resetState.selectedPlaylistId == -1 &&
+              !resetState.playlistAggregatedView,
+          "database session reset cannot restore a playlist view without a selected playlist");
+    check(resetState.listTabs[1].viewMode == ViewMode::Browser &&
+              resetState.listTabs[2].viewMode == ViewMode::PlaylistLibrary,
+          "database session reset retains valid browser and all-playlists views");
     check(!resetState.randomSampleMode && resetState.selectedIndicesSet.empty() && !resetState.isDragging,
           "database session reset clears sampling and selection");
     check(resetState.searchSuggestCandidates.empty() && !resetState.asyncSearchInProgress,

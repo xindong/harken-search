@@ -8,7 +8,7 @@
 **Priority:** P0
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -41,6 +41,9 @@
 - Given 已满足以下前置条件：parser lanes include keyword, exclude, path, tag, and facet filters
 - When 执行以下操作：Aris builds list, count, facet, playlist, and chip-visible execution paths
 - Then 应得到以下结果：each lane maps to one explicit SQL where fragment or documented no-op, with no lane silently dropped
+- Given 已选中一个具体播放列表和其中的文件夹
+- When 用户改变该列表的搜索词或文件夹筛选
+- Then 播放列表查询把文件夹条件传给同一数据库筛选器，结果行与数量都按播放列表、关键词和文件夹共同计算
 
 ### Failure / Recovery
 
@@ -91,6 +94,7 @@
 | TEST-BROWSER-SEARCH | integration | `TestBrowserSearch` | browser/search flow passes | active |
 | TEST-FUZZY-SEARCH-PRD | integration | `TestFuzzySearchPrd` | CJK, pinyin, initials, path, and snippet fuzzy-search behavior passes | active |
 | TEST-KEYWORD-ROWS-FIRST | contract | `TestDbSearchFacets` | async keyword refresh excludes keyword from filtered facet warm-start | active |
+| TEST-PLAYLIST-FOLDER-COUNT | real app + integration | `tools/macos_playlist_smoke.py` and `TestSubPlaylists` (CV-1E4C7A90) | Mac 实际结果行与数量一致；Windows 同 SHA 列表查询测试状态见卡片 | candidate; CI result tracked in card |
 | DIAG-DB-SEARCH | diagnostics | `category:"Database.searchFiles"` | duration and event observed | active |
 
 ## Missing Coverage
