@@ -36,6 +36,7 @@
 #include <memory>
 #include <filesystem>
 #include <cstring>
+#include <cstdlib>
 
 extern std::string g_imguiIniPathUtf8;
 extern std::string g_appSettingsPathUtf8;
@@ -55,6 +56,14 @@ void RecordStage(const char* stage) {
 }
 std::filesystem::path QaOutput() {
     return std::filesystem::path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "runtime";
+}
+int SnapMacFontSizePx(int requested) {
+    requested = std::clamp(requested, 10, 24);
+    int closest = kFontSteps[0];
+    for (int step : kFontSteps) {
+        if (std::abs(step - requested) < std::abs(closest - requested)) closest = step;
+    }
+    return closest;
 }
 }
 void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)mainWindow; }
@@ -78,6 +87,8 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     bool settingsLoaded;
     bool closing;
     int frameCount;
+    int loadedReadingFontPx;
+    int loadedListFontPx;
 }
 @property (nonatomic, strong) NSWindow* window;
 @property (nonatomic, strong) HarkenOpenGLView* glView;
@@ -151,7 +162,10 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     state->panelSimilarSounds.visible = false;
     if (!InitializeAppSettingsAndAudio(*state)) { [self failStartup:@"音频设备初始化失败。"]; return; }
     settingsLoaded = true;
-    LoadChineseFont(io, 14.0f, state->settings.readingFontSize, state->settings.readingFontSize);
+    loadedReadingFontPx = SnapMacFontSizePx(state->settings.readingFontSize);
+    loadedListFontPx = SnapMacFontSizePx(state->settings.listFontSize);
+    LoadChineseFont(io, static_cast<float>(kChromeFontPx),
+        static_cast<float>(loadedReadingFontPx), static_cast<float>(loadedListFontPx));
     ApplyTheme(state->settings.theme);
     if (state->settings.useCustomColors) ApplyCustomColors(state->settings);
     if (state->settings.theme == AppTheme::Custom && !state->settings.customThemeName.empty()) {
@@ -221,6 +235,27 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
 - (void)renderFrame {
     if (closing || !state) return;
     [self.glView.openGLContext makeCurrentContext];
+    const int readingPx = SnapMacFontSizePx(state->settings.readingFontSize);
+    const int listPx = SnapMacFontSizePx(state->settings.listFontSize);
+    if (readingPx != loadedReadingFontPx || listPx != loadedListFontPx) {
+        // The atlas and OpenGL texture must be refreshed before ImGui starts a frame.
+        ImGuiIO& io = ImGui::GetIO();
+        io.Fonts->Clear();
+        LoadChineseFont(io, static_cast<float>(kChromeFontPx),
+            static_cast<float>(readingPx), static_cast<float>(listPx));
+        if (!io.Fonts->Build()) {
+            [self failStartup:@"无法更新界面字体。"];
+            return;
+        }
+        ImGui_ImplOpenGL3_DestroyDeviceObjects();
+        if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
+            [self failStartup:@"无法更新界面字体纹理。"];
+            return;
+        }
+        loadedReadingFontPx = readingPx;
+        loadedListFontPx = listPx;
+        RecordStage("FontAtlasRebuilt");
+    }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplOSX_NewFrame(self.glView);
     ImGui::NewFrame();
