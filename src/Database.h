@@ -1559,6 +1559,7 @@ private:
     bool rollbackScanRollbackJournal(const std::string& scopePath,
                                      aura::BackfillQueue* backfillQueue);
     bool m_scanRollbackSessionActive = false;
+    bool m_scanRollbackHasSimilarity = false;
 
 public:
     /// T-297: enqueue a file for waveform pre-extraction. Idempotent —

@@ -1,4 +1,5 @@
 #include "LibraryStatisticsWorker.h"
+#include "AudioEmbeddingService.h"
 #include "platform/thread_id.h"
 #include "sqlite3.h"
 #include <chrono>
@@ -10,7 +11,7 @@ struct ReadOnlyCounter {
     sqlite3* db = nullptr;
     ~ReadOnlyCounter() { if (db) sqlite3_close(db); }
     LibraryStatisticsResult Count(const std::string& requestedPath,
-                             const LibraryStatisticsWorker::CancelCheck& cancel) {
+                             const LibraryStatisticsWorker::CancelCheck& cancel, bool version2) {
         LibraryStatisticsResult result;
         // Open for each request so reopening/replacing the same path cannot keep
         // an old file handle. No sidecars, migrations, schema writes, or UI lock.
@@ -30,11 +31,25 @@ struct ReadOnlyCounter {
         // Same population and feature-version rule as Database::tryGetFeatureIndexCounts.
         const char* sql = "SELECT COUNT(*), COALESCE(SUM(CASE WHEN audio_features IS NOT NULL "
                           "AND features_version >= 1 THEN 1 ELSE 0 END),0) FROM audio_files;";
+        std::string v2Sql;
+        if (version2) {
+            sqlite3_stmt* exists = nullptr;
+            bool hasTable = false;
+            if (sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='harken_similarity_v2'", -1, &exists, nullptr) == SQLITE_OK) {
+                hasTable = sqlite3_step(exists) == SQLITE_ROW;
+            }
+            if (exists) sqlite3_finalize(exists);
+            if (hasTable) {
+                v2Sql = std::string("SELECT COUNT(*),COALESCE(SUM(CASE WHEN a.version=2 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN a.version=2 AND length(a.embedding)=2048 AND a.model_version='") + kSimilarityModelRevision + "' THEN 1 ELSE 0 END),0) FROM audio_files f LEFT JOIN harken_similarity_v2 a ON a.file_id=f.id AND a.file_path=f.file_path";
+            } else v2Sql = "SELECT COUNT(*),0,0 FROM audio_files";
+            sql = v2Sql.c_str();
+        }
         sqlite3_stmt* statement = nullptr;
         if (!cancel() && sqlite3_prepare_v2(db, sql, -1, &statement, nullptr) == SQLITE_OK &&
             sqlite3_step(statement) == SQLITE_ROW) {
             result.total = sqlite3_column_int(statement, 0);
             result.indexed = sqlite3_column_int(statement, 1);
+            if (version2) result.semanticIndexed = sqlite3_column_int(statement, 2);
             result.success = sqlite3_step(statement) == SQLITE_DONE && !cancel();
         }
         if (statement) sqlite3_finalize(statement);
@@ -45,10 +60,10 @@ struct ReadOnlyCounter {
     }
 };
 }
-LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler() {
-    return [](const std::string& path, const auto& cancel) {
+LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler(bool version2) {
+    return [version2](const std::string& path, const auto& cancel) {
         ReadOnlyCounter counter;
-        return counter.Count(path, cancel);
+        return counter.Count(path, cancel, version2);
     };
 }
 LibraryStatisticsWorker::LibraryStatisticsWorker(Handler handler)

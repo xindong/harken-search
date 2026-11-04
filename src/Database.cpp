@@ -13806,7 +13806,7 @@ bool Database::prepareScanRollbackJournal() {
         kRecordColumns +
         " FROM audio_files WHERE 0;";
 
-    const std::vector<std::string> ddl = {
+    std::vector<std::string> ddl = {
         "CREATE TEMP TABLE temp.scan_cancel_touched(file_path TEXT PRIMARY KEY);",
         createAudioSnapshotSql,
         "CREATE UNIQUE INDEX temp.scan_cancel_audio_path ON scan_cancel_audio(file_path);",
@@ -13854,6 +13854,14 @@ bool Database::prepareScanRollbackJournal() {
         ");",
     };
 
+    // Similarity tables are additive and absent from libraries that have never
+    // been analyzed. Preserve their opaque blobs only when the schema exists.
+    m_scanRollbackHasSimilarity = tableExists(m_db, "harken_similarity_v2") &&
+        tableExists(m_db, "harken_similarity_segments_v2");
+    if (m_scanRollbackHasSimilarity) {
+        ddl.push_back("CREATE TEMP TABLE temp.scan_cancel_similarity AS SELECT * FROM harken_similarity_v2 WHERE 0;");
+        ddl.push_back("CREATE TEMP TABLE temp.scan_cancel_similarity_segments AS SELECT * FROM harken_similarity_segments_v2 WHERE 0;");
+    }
     for (const auto& sql : ddl) {
         if (!executeSQL(sql)) {
             clearScanRollbackJournal();
@@ -13868,6 +13876,8 @@ bool Database::prepareScanRollbackJournal() {
 void Database::clearScanRollbackJournal() {
     if (m_db) {
         const std::vector<std::string> dropSql = {
+            "DROP TABLE IF EXISTS temp.scan_cancel_similarity_segments;",
+            "DROP TABLE IF EXISTS temp.scan_cancel_similarity;",
             "DROP TABLE IF EXISTS temp.scan_cancel_current_ids;",
             "DROP TABLE IF EXISTS temp.scan_cancel_waveforms;",
             "DROP TABLE IF EXISTS temp.scan_cancel_backfill_pending;",
@@ -13882,6 +13892,7 @@ void Database::clearScanRollbackJournal() {
         }
     }
     m_scanRollbackSessionActive = false;
+    m_scanRollbackHasSimilarity = false;
 }
 
 bool Database::snapshotPathForScanRollback(const std::string& filePath) {
@@ -13956,6 +13967,15 @@ bool Database::snapshotPathForScanRollback(const std::string& filePath) {
             return false;
         }
     }
+    if (m_scanRollbackHasSimilarity) {
+        for (const char* table : {"harken_similarity_v2", "harken_similarity_segments_v2"}) {
+            const char* snapshot = std::string(table) == "harken_similarity_v2"
+                ? "scan_cancel_similarity" : "scan_cancel_similarity_segments";
+            if (!executeSingleText(std::string("INSERT INTO temp.") + snapshot +
+                    " SELECT * FROM main." + table +
+                    " WHERE file_id IN (SELECT id FROM audio_files WHERE file_path=?);")) return false;
+        }
+    }
 
     return true;
 }
@@ -14028,6 +14048,13 @@ bool Database::rollbackScanRollbackJournal(const std::string& scopePath,
         if (!executeSQL(sql)) {
             return rollbackFailure(sql.c_str());
         }
+    }
+    // Deleting the touched audio rows above fires the similarity cleanup
+    // triggers. Restore analyses first, then segments, in the same transaction.
+    if (m_scanRollbackHasSimilarity &&
+        (!executeSQL("INSERT OR REPLACE INTO harken_similarity_v2 SELECT * FROM temp.scan_cancel_similarity;") ||
+         !executeSQL("INSERT OR REPLACE INTO harken_similarity_segments_v2 SELECT * FROM temp.scan_cancel_similarity_segments;"))) {
+        return rollbackFailure("restore_similarity");
     }
 
     if (!commitTransaction()) {

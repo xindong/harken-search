@@ -54,6 +54,7 @@ enum class MonoSampleRate : std::uint32_t {
     Hz16000 = 16000,
     Hz22050 = 22050,
     Hz44100 = 44100,
+    Hz48000 = 48000,
 };
 struct ReadResult { Status status; FrameCount framesRead; };
 class MonoFloatReader final {
