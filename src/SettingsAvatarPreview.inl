@@ -71,11 +71,15 @@ auto DrawCurrentSettingsAvatar = [&](float size) {
     static unsigned loadedRevision=~0u;
     static std::string loadedPath;
     static bool loadedCustom=false;
+    static double nextReadAttempt=0.0;
     const auto path=GetCustomAvatarPathUtf8();
-    if(loadedRevision!=su::avatarImageRevision || loadedPath!=path || loadedCustom!=state.settings.hasCustomAvatar) {
+    const bool changed=loadedRevision!=su::avatarImageRevision || loadedPath!=path || loadedCustom!=state.settings.hasCustomAvatar;
+    const double now=ImGui::GetTime();
+    if(changed || (state.settings.hasCustomAvatar && !texture && now>=nextReadAttempt)) {
         if(texture){glDeleteTextures(1,&texture);texture=0;}
         loadedRevision=su::avatarImageRevision;loadedPath=path;loadedCustom=state.settings.hasCustomAvatar;
         if(loadedCustom) {
+            nextReadAttempt=now+1.0;
             std::vector<uint8_t> pixels;int w=0,h=0;
             if(LoadImageForCrop(path,w,h,pixels)) {
                 glGenTextures(1,&texture);glBindTexture(GL_TEXTURE_2D,texture);

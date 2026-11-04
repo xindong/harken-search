@@ -107,18 +107,18 @@
                         };
                         if(aura::ui::ActionButton(L(Main_SaveBtn2),ImVec2(100,0),aura::ui::ButtonVariant::PrimarySearch)) {
                             const auto dest=GetCustomAvatarPathUtf8();
-                            if(SaveCroppedAvatarPng(s_cropPixels,s_cropSrcW,s_cropSrcH,s_cropState,dest,512)) {
-                                CoverModule::EvictCoverTextureByImagePath(dest);
-                                const bool previousCustom=state.settings.hasCustomAvatar;
+                            const bool previousCustom=state.settings.hasCustomAvatar;
+                            if(SaveCroppedAvatarWithSettings(s_cropPixels,s_cropSrcW,s_cropSrcH,s_cropState,dest,[&] {
                                 state.settings.hasCustomAvatar=true;
-                                if(TrySaveAppSettings(state)) {
-                                    ++su::avatarImageRevision;
-                                    finishCrop();
-                                } else {
-                                    state.settings.hasCustomAvatar=previousCustom;
-                                    s_cropSaveFailed=true;
-                                }
-                            } else s_cropSaveFailed=true;
+                                return TrySaveAppSettings(state);
+                            },512)) {
+                                CoverModule::EvictCoverTextureByImagePath(dest);
+                                ++su::avatarImageRevision;
+                                finishCrop();
+                            } else {
+                                state.settings.hasCustomAvatar=previousCustom;
+                                s_cropSaveFailed=true;
+                            }
                         }
                         su::Observe("avatar-save");ImGui::SameLine();
                         if(aura::ui::ActionButton(L(Main_CancelBtn2),ImVec2(100,0),aura::ui::ButtonVariant::Quiet))finishCrop();

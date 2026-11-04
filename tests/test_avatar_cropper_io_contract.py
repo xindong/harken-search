@@ -42,7 +42,7 @@ class AvatarCropperIoContractTests(unittest.TestCase):
         self.assertIn("ComputeSourceRect(crop)", SOURCE)
         self.assertIn("stbir_resize_uint8_linear", SOURCE)
         self.assertIn("LoadImageForCrop(selected", MAIN)
-        self.assertIn("SaveCroppedAvatarPng(s_cropPixels", MAIN)
+        self.assertIn("SaveCroppedAvatarWithSettings(s_cropPixels", MAIN)
 
     def test_focused_runtime_target_is_registered(self):
         self.assertIn("add_executable(TestAvatarCropperIO", CMAKE)
