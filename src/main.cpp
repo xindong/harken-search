@@ -29209,6 +29209,7 @@ void StartBatchFeatureExtraction(AppState& state, bool recheckAll) {
     const std::string databasePath = state.currentDbPathUtf8;
     const std::string modelDirectory = GetExeDirUtf8() + "/models/clap";
     state.batchFeatureExtracting.store(true);
+    state.batchFeatureStartGeneration.fetch_add(1);
     state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll]() {
         HarkenSearch::SimilarityIndexResult result;
         try {

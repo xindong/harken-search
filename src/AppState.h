@@ -3138,6 +3138,7 @@ struct AppState {
     std::atomic<bool> batchFeatureExtracting{false};
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
+    std::atomic<uint64_t> batchFeatureStartGeneration{0}; // Advances only when a new batch starts.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
     std::atomic<int>  batchFeatureSkipped{0};

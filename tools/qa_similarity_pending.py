@@ -126,13 +126,15 @@ def main():
         save()
         for attempt in (1, 2):
             started = time.monotonic()
+            generation_before = state()["batch_start_generation"]
             click("similar.index.start")
             deadline = time.monotonic()+300
             observed = []
             while time.monotonic() < deadline:
                 current = state()
-                observed.append({key:current[key] for key in ("running","batch_total","progress","reused","analyzed")})
-                if not current["running"] and current["batch_total"] > 0:
+                observed.append({key:current[key] for key in ("batch_start_generation","running","batch_total","progress","reused","analyzed")})
+                if (current["batch_start_generation"] > generation_before
+                        and not current["running"] and current["batch_total"] > 0):
                     break
                 time.sleep(.1)
             else:
@@ -144,17 +146,21 @@ def main():
             after = snapshot(database)
             assert all(after["rows"].get(key)==value for key,value in before["rows"].items()), "completed analysis was changed"
             assert after["segments_sha256"] == before["segments_sha256"], "completed segments were changed"
-            report["attempts"].append({"number":attempt, "seconds":time.monotonic()-started, "final":current, "observed":observed})
+            report["attempts"].append({"number":attempt, "seconds":time.monotonic()-started,
+                                       "start_generation_before":generation_before, "final":current, "observed":observed})
             report["after"] = after
             capture(driver, output/("after-attempt-"+str(attempt)+".png"))
             save()
         # Even a permanent pending failure must leave explicit source-content
         # validation available. This click is separate from supplementing.
+        generation_before = state()["batch_start_generation"]
+        report["explicit_recheck_start_generation_before"] = generation_before
         click("similar.index.recheck")
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
             rechecked = state()
-            if not rechecked["running"] and rechecked["batch_total"] == before["files"]:
+            if (rechecked["batch_start_generation"] > generation_before
+                    and not rechecked["running"] and rechecked["batch_total"] == before["files"]):
                 break
             time.sleep(.1)
         else:

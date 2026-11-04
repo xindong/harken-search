@@ -5096,6 +5096,7 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":true,\"cmd\":\"similar_index\",\"visible\":" +
                 std::string(state.panelSimilarSounds.visible ? "true" : "false") +
                 ",\"running\":" + (state.batchFeatureExtracting.load() ? "true" : "false") +
+                ",\"batch_start_generation\":" + std::to_string(state.batchFeatureStartGeneration.load()) +
                 ",\"cancel_requested\":" + (state.batchFeatureCancelRequested.load() ? "true" : "false") +
                 ",\"completion_notice\":" + (completionNotice ? "true" : "false") +
                 ",\"indexed\":" + std::to_string(indexed) +
