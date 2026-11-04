@@ -5888,16 +5888,16 @@
     {
       "id": "Similar_ColumnScore",
       "type": "ui",
-      "zh": "相近度",
-      "en": "Similarity",
-      "ja": "類似度"
+      "zh": "匹配分",
+      "en": "Match score",
+      "ja": "一致スコア"
     },
     {
       "id": "Similar_ScoreTooltip",
       "type": "ui",
-      "zh": "基于音色、节奏、音高与频谱特征计算的声学相近度",
-      "en": "Acoustic similarity based on timbre, rhythm, pitch, and spectral features",
-      "ja": "音色・リズム・ピッチ・スペクトル特徴に基づく音響類似度"
+      "zh": "0–100 匹配分，不代表概率。括号内为本次分项权重。",
+      "en": "0–100 match score, not a probability. Parentheses show each active weight.",
+      "ja": "0–100 の一致スコアです。確率ではありません。括弧内は各項目の重みです。"
     },
     {
       "id": "Similar_PresetBalanced",
@@ -9762,6 +9762,13 @@
       "zh": "已可开始工作；迷你波形将按需或后台渐进补齐。",
       "en": "Ready to work; mini waveforms fill on demand or gradually in background.",
       "ja": "作業開始できます。ミニ波形は都度またはバックグラウンドで順次補完します。"
+    },
+    {
+      "id": "Main_SimIndexBuildingFmt",
+      "type": "ui",
+      "zh": "正在核对并解析相似特征：%d / %d（已复用 %d，已解析 %d）",
+      "en": "Checking and analyzing similarity features: %d / %d (reused %d, analyzed %d)",
+      "ja": "類似特徴を確認・解析中：%d / %d（再利用 %d、解析 %d）"
     },
     {
       "id": "Main_DupNameWarn",
@@ -14961,6 +14968,33 @@
       "en": "Night palette could not be read; using Dark. Edit and save it to repair.",
       "ja": "夜の配色を読めないため Dark を使用中です。再編集して保存してください。"
     },
-    {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"}
+    {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"},
+    {"id":"Similar_DeepThink","type":"ui","zh":"深度思考","en":"Deep analysis","ja":"深く分析"},
+    {"id":"Similar_DeepHint","type":"ui","zh":"关闭时快速比较少量候选；开启后扩大范围，细比起落和声音顺序，耗时更长。","en":"Off: quickly compare fewer candidates. On: search more widely and compare dynamics and event order; takes longer.","ja":"オフは少数の候補を素早く比較。オンは範囲を広げ、強弱と音の順序を詳しく比較するため時間がかかります。"},
+    {"id":"Similar_NextBatch","type":"ui","zh":"换一批","en":"Next batch","ja":"次の候補"},
+    {"id":"Similar_NoMoreCandidates","type":"ui","zh":"当前已分析素材中，暂无更多匹配结果。更换参考音效或模式可重新查找。","en":"No more matches in the analyzed sounds. Choose another reference or mode to start again.","ja":"分析済み素材にこれ以上の候補はありません。基準音またはモードを変えると再検索できます。"},
+    {"id":"Similar_DimCategory","type":"ui","zh":"类别动作","en":"Source / action","ja":"音源・動作"},
+    {"id":"Similar_DimTimbre","type":"ui","zh":"音色质感","en":"Timbre / texture","ja":"音色・質感"},
+    {"id":"Similar_DimEnvelope","type":"ui","zh":"起音衰减","en":"Attack / decay","ja":"立ち上がり・減衰"},
+    {"id":"Similar_DimRhythm","type":"ui","zh":"事件节奏","en":"Events / rhythm","ja":"音の数・リズム"},
+    {"id":"Similar_DimPitch","type":"ui","zh":"音高走势","en":"Pitch","ja":"ピッチ"},
+    {"id":"Similar_DimDuration","type":"ui","zh":"有效时长","en":"Active duration","ja":"有効な長さ"},
+    {"id":"Similar_ModelUnavailable","type":"ui","zh":"同类替代所需的声音模型未就绪，请检查本机模型后重试。","en":"The audio model for same-type alternatives is not ready. Check the local model and retry.","ja":"同種の代替に必要な音声モデルが未準備です。ローカルモデルを確認して再試行してください。"},
+    {"id":"Similar_IndexRequired","type":"ui","zh":"还没有足够的已分析素材，请先分析当前库。","en":"Not enough analyzed sounds. Analyze this library first.","ja":"分析済みの素材が不足しています。ライブラリを先に分析してください。"},
+    {"id":"Similar_SearchFailed","type":"ui","zh":"查找未完成，请重新分析后再试。","en":"Search did not complete. Reanalyze and retry.","ja":"検索を完了できませんでした。再分析してお試しください。"},
+    {"id":"Similar_Cancelled","type":"ui","zh":"查找已取消。","en":"Search cancelled.","ja":"検索をキャンセルしました。"},
+    {"id":"Similar_CoverageFmt","type":"ui","zh":"已分析 %d / %d","en":"Analyzed %d / %d","ja":"分析済み %d / %d"},
+    {"id":"Similar_SemanticCoverageFmt","type":"ui","zh":"同类分析 %d / %d","en":"Category analysis %d / %d","ja":"同種分析 %d / %d"},
+    {"id":"Similar_Recheck","type":"ui","zh":"核对全部音频","en":"Check all audio","ja":"すべての音声を確認"},
+    {"id":"Similar_AnalysisReport","type":"ui","zh":"分析结果","en":"Analysis results","ja":"分析結果"},
+    {"id":"Similar_AnalysisSummaryFmt","type":"ui","zh":"完成 %d，沿用 %d，未完成 %d","en":"Analyzed %d, reused %d, incomplete %d","ja":"分析 %d、再利用 %d、未完了 %d"},
+    {"id":"Similar_AnalysisCancelled","type":"ui","zh":"分析已停止，已完成的结果已保留。","en":"Analysis stopped. Completed results are retained.","ja":"分析を停止しました。完了した結果は保存されています。"},
+    {"id":"Similar_AnalysisModelMissing","type":"ui","zh":"声音模型未就绪；已完成的基础特征已保留，同类分析仍未完成。","en":"Audio model not ready. Saved acoustic features are retained; category analysis is incomplete.","ja":"音声モデルが未準備です。基礎特徴は保持されていますが、同種分析は未完了です。"},
+    {"id":"Similar_AnalysisFailed","type":"ui","zh":"分析未完成，请检查素材和保存位置后重试。","en":"Analysis did not complete. Check source files and the save location, then retry.","ja":"分析を完了できませんでした。素材と保存先を確認して再試行してください。"},
+    {"id":"Similar_FailureUnreadable","type":"ui","zh":"无法读取或解码","en":"Cannot read or decode","ja":"読込・デコード不可"},
+    {"id":"Similar_FailureSilent","type":"ui","zh":"没有有效声音","en":"No active sound","ja":"有効な音なし"},
+    {"id":"Similar_FailureChanged","type":"ui","zh":"分析期间文件已改变","en":"File changed during analysis","ja":"分析中にファイルが変更"},
+    {"id":"Similar_FailureModel","type":"ui","zh":"同类分析失败","en":"Category analysis failed","ja":"同種分析に失敗"},
+    {"id":"Similar_FailureSave","type":"ui","zh":"结果未保存","en":"Result not saved","ja":"結果を保存できません"}
   ]
 }

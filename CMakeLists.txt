@@ -936,6 +936,9 @@ add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
     ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
 target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
 target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestLibraryStatisticsWorker PRIVATE /utf-8)
+endif()
 target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
 add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
 set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
@@ -1772,6 +1775,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/docs/legal")
 endif()
 
 # Behavior-module test target wiring for the integrated Aris workflow layer.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_similarity_runtime.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_search_behavior_tests.cmake" OPTIONAL)
 
 # Batch1 pinyin Database behavior test. This target pins isolation ROOT to the

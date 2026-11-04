@@ -2,16 +2,18 @@
 #include <algorithm>
 #include <array>
 #include <mutex>
+#include <numeric>
 #include <string>
 
 namespace HarkenSearch {
-enum class BatchFeatureFailure { Unsupported, Unreadable, Empty, Save };
+enum class BatchFeatureFailure { Unsupported, Unreadable, Empty, Save, Changed, Model };
 struct BatchFeatureResultSnapshot {
     bool available = false, running = false, stopped = false;
     int total = 0, succeeded = 0;
-    std::array<int, 4> failures{};
+    std::array<int, 6> failures{};
     std::string currentFile;
-    int Failed() const { return failures[0] + failures[1] + failures[2] + failures[3]; }
+    std::string error, modelError;
+    int Failed() const { return std::accumulate(failures.begin(), failures.end(), 0); }
     int Processed() const { return succeeded + Failed(); }
     int Remaining() const { return std::max(0, total - Processed()); }
 };
@@ -24,6 +26,9 @@ public:
         snapshot_.total = std::max(0, total);
     }
     void Clear() { std::lock_guard<std::mutex> lock(mutex_); snapshot_ = {}; }
+    void Publish(const BatchFeatureResultSnapshot& snapshot) {
+        std::lock_guard<std::mutex> lock(mutex_); snapshot_ = snapshot;
+    }
     void SetTotal(int total) { std::lock_guard<std::mutex> lock(mutex_); snapshot_.total = std::max(0, total); }
     void SetCurrentFile(const std::string& file) { std::lock_guard<std::mutex> lock(mutex_); snapshot_.currentFile = file; }
     void RecordSuccess() { std::lock_guard<std::mutex> lock(mutex_); ++snapshot_.succeeded; }

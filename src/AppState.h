@@ -213,6 +213,7 @@ namespace HarkenSearch {
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
+#include "SimilarityIndexer.h"
 #include "HarkenSearchWidgets.h"
 #include "UndoSystem.h"
 #include "ProductEdition.h"
@@ -3133,6 +3134,7 @@ struct AppState {
     std::unique_ptr<HarkenSearch::SimilarityWorkflow> similarSoundsWorkflow;
     aura::ui::StandaloneWindowState similarSoundsWindow;
     SimilarityPreset similarSoundsPreset = SimilarityPreset::Balanced;
+    bool similarSoundsDeep = false;
     int similarSoundsSelectedRow = -1;
     int64_t similarSoundsObservedSelectionId = -1;
     std::optional<HarkenSearch::SimilarityReference> similarSoundsLocalReference;
@@ -3141,9 +3143,15 @@ struct AppState {
     std::atomic<bool> batchFeatureExtracting{false};
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
+    std::atomic<uint64_t> batchFeatureStartGeneration{0}; // Advances only when a new batch starts.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
+    std::atomic<int>  batchFeatureSkipped{0};
+    std::atomic<int>  batchFeatureSaved{0};
     std::thread batchFeatureThread;
+    std::mutex batchFeatureResultMutex;
+    HarkenSearch::SimilarityIndexResult batchFeatureResult;
+    bool showSimilarAnalysisReport = false;
     HarkenSearch::BatchFeatureResultState batchFeatureResults;
     bool scanSimilarityOwned = false; // UI-thread-only; post-scan analysis surface.
     bool showScanSimilarityDialog = false;

@@ -6,8 +6,10 @@
 #include "DockNativeCaptionBridge.h"
 #include "imgui_internal.h"
 #include "Localization.h"
-#include "SimilarityQueryService.h"
+#include "SimilarityQueryV2.h"
+#include "Utils.h"
 #include "Theme.h"
+#include "ThemeInspector.h"
 #include "UIRenderer.h"
 #include "ui/TransportContrast.h"
 
@@ -67,96 +69,75 @@ static bool DrawSimilarSoundsActionRow(
     const bool searching = snapshot.status == HarkenSearch::SimilarityWorkflowStatus::Searching;
     const bool indexing = state.batchFeatureExtracting.load();
     const bool hasReference = snapshot.status != HarkenSearch::SimilarityWorkflowStatus::NoSelection;
-    const char* actionLabel = indexing ? L(Similar_Indexing)
-        : (searching ? L(Similar_Searching) : L(Similar_Find));
-    const ThemeColorScheme& theme = ThemeColors::current();
-    const bool sharedPanelStyle = state.settings.theme != AppTheme::Custom &&
-        !state.settings.useCustomColors && !ThemeColors::customized();
-    bool searchRequested = false;
-
-    const float frameHeight = ImGui::GetFrameHeight();
-    const float actionWidth = ImGui::CalcTextSize(actionLabel).x + 20.0f;
+    const char* actionLabel = indexing ? L(Similar_Indexing) : (searching ? L(Similar_Searching) :
+        (snapshot.batchNumber > 0 ? L(Similar_NextBatch) : L(Similar_Find)));
+    const float height = std::max(ImGui::GetFrameHeight(), aura::ui::metrics::kHeightMd);
+    const float available = ImGui::GetContentRegionAvail().x;
     constexpr float comboWidth = 132.0f;
-    const float minimumSingleRowWidth = ImGui::CalcTextSize(L(Similar_CurrentAudio)).x +
-        120.0f + comboWidth + actionWidth + ImGui::GetStyle().ItemSpacing.x * 3.0f;
-    const bool stacked = sharedPanelStyle && ImGui::GetContentRegionAvail().x < minimumSingleRowWidth;
-    const float actionHeight = sharedPanelStyle
-        ? (stacked ? frameHeight + kItemGap : 0.0f) +
-            std::max(frameHeight, aura::ui::metrics::kHeightMd)
-        : 62.0f;
-    if (sharedPanelStyle) ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.metadataPanelBG);
-    if (ImGui::BeginChild("##SimilarActionRow", ImVec2(0.0f, actionHeight), false,
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImGuiStyle& style = ImGui::GetStyle();
-        const float rowX = ImGui::GetCursorPosX();
-        const float rowY = ImGui::GetCursorPosY();
-        if (sharedPanelStyle) ImGui::AlignTextToFramePadding();
-        else ImGui::SetCursorPosY(rowY + (62.0f - frameHeight) * 0.5f);
-        ImGui::PushStyleColor(ImGuiCol_Text, SimilarSecondaryText(state));
-        ImGui::TextUnformatted(L(Similar_CurrentAudio));
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-
-        const float fileWidth = stacked ? ImGui::GetContentRegionAvail().x :
-            std::max(80.0f, ImGui::GetContentRegionAvail().x - comboWidth - actionWidth -
-                style.ItemSpacing.x * 2.0f);
-        const ImVec2 textMin = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("##SimilarCurrentFile", ImVec2(fileWidth, ImGui::GetFrameHeight()));
-        const ImVec2 textMax(textMin.x + fileWidth, textMin.y + ImGui::GetFrameHeight());
-        const char* currentName = L(Similar_NoSelection);
-        if (state.similarSoundsSelectedRow >= 0 &&
-            state.similarSoundsSelectedRow < static_cast<int>(snapshot.rows.size())) {
-            currentName = snapshot.rows[state.similarSoundsSelectedRow].fileName.c_str();
-        } else if (!snapshot.reference.displayName.empty()) {
-            currentName = snapshot.reference.displayName.c_str();
+    const float deepWidth = ImGui::CalcTextSize(L(Similar_DeepThink)).x + 52.0f;
+    const float actionWidth = ImGui::CalcTextSize(actionLabel).x + 28.0f;
+    const bool stacked = available < comboWidth + deepWidth + actionWidth + 2*kItemGap;
+    const float widths[] = {deepWidth, comboWidth, actionWidth};
+    ImVec2 positions[3];
+    float nextX = 0; int optionRow = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (nextX > 0 && ((stacked && i == 2) || nextX + widths[i] > available)) {
+            ++optionRow; nextX = 0;
         }
+        positions[i] = ImVec2(nextX, (optionRow+1)*(height+kItemGap));
+        nextX += widths[i] + kItemGap;
+    }
+    const float actionHeight = (optionRow+2)*height + (optionRow+1)*kItemGap;
+    bool changed = false, searchRequested = false;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().metadataPanelBG);
+    if (ImGui::BeginChild("##SimilarActionRow", ImVec2(0,actionHeight), false,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        const float rowX = ImGui::GetCursorPosX(), rowY = ImGui::GetCursorPosY();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(L(Similar_CurrentAudio)); ImGui::SameLine();
+        const float fileWidth = std::max(20.0f,ImGui::GetContentRegionAvail().x);
+        const ImVec2 textMin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##SimilarCurrentFile", ImVec2(fileWidth,height));
+        const ImVec2 textMax(textMin.x+fileWidth,textMin.y+height);
+        const char* currentName = L(Similar_NoSelection);
+        if (!snapshot.reference.displayName.empty()) currentName = snapshot.reference.displayName.c_str();
         ImVec2 currentNameSize = ImGui::CalcTextSize(currentName);
-        const ImVec2 labelMin(textMin.x, textMin.y + (sharedPanelStyle ? style.FramePadding.y : 0.0f));
-        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), labelMin, textMax,
-            textMax.x, currentName, nullptr, &currentNameSize);
-
-        if (stacked) ImGui::SetCursorPos(ImVec2(rowX, rowY + frameHeight + kItemGap));
-        else ImGui::SameLine();
-        const char* presetLabels[] = {
-            L(Similar_PresetBalanced), L(Similar_PresetTimbre),
-            L(Similar_PresetRhythm), L(Similar_PresetPitch),
-            L(Similar_PresetSpectral)
-        };
+        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), ImVec2(textMin.x,textMin.y+ImGui::GetStyle().FramePadding.y),
+            textMax,textMax.x,currentName,nullptr,&currentNameSize);
+        ImGui::SetCursorPos(ImVec2(rowX+positions[0].x,rowY+positions[0].y+(height-18)*0.5f));
+        const ImVec2 deepMin = ImGui::GetCursorScreenPos();
+        if (aura::ui::Toggle(L(Similar_DeepThink), &state.similarSoundsDeep)) changed = true;
+        ThemeInspector::RegisterZone(deepMin, ImVec2(deepMin.x + 36, deepMin.y + 18), "similar.options.deep");
+        if (ImGui::IsItemHovered()) aura::ui::Tooltip(L(Similar_DeepHint));
+        ImGui::SetCursorPos(ImVec2(rowX+positions[1].x,rowY+positions[1].y));
+        const char* presets[] = {L(Similar_PresetBalanced),L(Similar_PresetTimbre),L(Similar_PresetRhythm),L(Similar_PresetPitch),L(Similar_PresetSpectral)};
         int preset = static_cast<int>(state.similarSoundsPreset);
         ImGui::SetNextItemWidth(comboWidth);
-        if (aura::ui::Combo("##SimilarPreset", &preset, presetLabels,
-                IM_ARRAYSIZE(presetLabels), aura::ui::ComboVariant::Flat)) {
-            state.similarSoundsPreset = static_cast<SimilarityPreset>(preset);
+        if (aura::ui::Combo("##SimilarPreset", &preset, presets, IM_ARRAYSIZE(presets), aura::ui::ComboVariant::Flat)) {
+            state.similarSoundsPreset = static_cast<SimilarityPreset>(preset); changed = true;
         }
-        ImGui::SameLine();
+        ThemeInspector::RegisterLastItem("similar.options.preset");
+        if (changed) {
+            workflow.Invalidate(); state.similarSoundsSelectedRow = -1;
+            state.settingsDirty = true; state.settingsDirtyAt = ImGui::GetTime();
+        }
+        ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
         aura::ui::ButtonOptions options;
         options.variant = aura::ui::ButtonVariant::PrimarySearch;
-        options.disabled = searching || indexing || !hasReference;
-        if (searching || indexing) {
-            if (sharedPanelStyle) ImGui::AlignTextToFramePadding();
-            ImGui::PushStyleColor(ImGuiCol_Text, SimilarSecondaryText(state));
-            ImGui::TextUnformatted(actionLabel);
-            ImGui::PopStyleColor();
-        } else {
-            if (!hasReference) ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 0.9f);
-            if (aura::ui::Button(actionLabel, options)) {
-                if (state.similarSoundsSelectedRow >= 0 &&
-                    state.similarSoundsSelectedRow < static_cast<int>(snapshot.rows.size())) {
-                    const HarkenSearch::SimilarityDisplayRow& selected =
-                        snapshot.rows[state.similarSoundsSelectedRow];
-                    state.similarSoundsLocalReference = HarkenSearch::SimilarityReference{
-                        selected.fileId, selected.filePath, selected.fileName};
-                    workflow.SetReference(state.similarSoundsLocalReference);
-                }
-                state.similarSoundsSelectedRow = -1;
-                searchRequested = workflow.RequestSearch(state.similarSoundsPreset, 50);
+        options.disabled = indexing || !hasReference;
+        if (searching && !changed) {
+            if (aura::ui::ActionButton(L(Cancel), ImVec2(0,height), aura::ui::ButtonVariant::Quiet)) {
+                workflow.CancelSearch(); state.similarSoundsSelectedRow = -1; changed = true;
             }
-            if (!hasReference) ImGui::PopStyleVar();
+        } else if (aura::ui::Button(actionLabel, options)) {
+            state.similarSoundsSelectedRow = -1;
+            HarkenSearch::SimilarityOptions searchOptions;
+            searchOptions.mode = HarkenSearch::SimilarityMode::Substitute; searchOptions.deep = state.similarSoundsDeep; searchOptions.preset = state.similarSoundsPreset;
+            searchRequested = workflow.RequestSearch(searchOptions, 50);
         }
     }
-    ImGui::EndChild();
-    if (sharedPanelStyle) ImGui::PopStyleColor();
-    return searchRequested;
+    ImGui::EndChild(); ImGui::PopStyleColor();
+    return changed || searchRequested;
 }
 
 static const char* SimilarSoundsBodyMessage(
@@ -173,6 +154,11 @@ static const char* SimilarSoundsBodyMessage(
         if (snapshot.error == HarkenSearch::SimilarityWorkflowError::ReferenceUnreadable) {
             return L(Similar_ReadError);
         }
+        if (snapshot.error == HarkenSearch::SimilarityWorkflowError::ModelUnavailable) return L(Similar_ModelUnavailable);
+        if (snapshot.error == HarkenSearch::SimilarityWorkflowError::IndexRequired) return L(Similar_IndexRequired);
+        if (snapshot.error == HarkenSearch::SimilarityWorkflowError::SearchFailed) return L(Similar_SearchFailed);
+        if (snapshot.error == HarkenSearch::SimilarityWorkflowError::Cancelled) return L(Similar_Cancelled);
+        if (snapshot.error == HarkenSearch::SimilarityWorkflowError::NoMoreCandidates) return L(Similar_NoMoreCandidates);
         return L(Similar_NoResults);
     }
     if (snapshot.status != HarkenSearch::SimilarityWorkflowStatus::Searching &&
@@ -243,7 +229,7 @@ static void DrawSimilarSoundsResultsTable(
                 ImGui::CalcTextSize(L(Similar_ColumnFormat)).x, ImGui::CalcTextSize("FLAC").x) : 76.0f);
         ImGui::TableSetupColumn(L(Similar_ColumnScore),
             ImGuiTableColumnFlags_WidthFixed, sharedPanelStyle ? std::max(
-                ImGui::CalcTextSize(L(Similar_ColumnScore)).x, ImGui::CalcTextSize("100%").x) : 88.0f);
+                ImGui::CalcTextSize(L(Similar_ColumnScore)).x, ImGui::CalcTextSize("100.0").x) : 88.0f);
         const LStr headers[] = {
             LStr::Similar_ColumnFileName, LStr::Similar_ColumnWaveform,
             LStr::Similar_ColumnDuration, LStr::Similar_ColumnFormat,
@@ -307,6 +293,20 @@ static void DrawSimilarSoundsResultsTable(
                     }
                 }
             }
+            if (ThemeInspector::IsCollecting()) {
+                const ImVec2 rowMin = ImGui::GetItemRectMin();
+                const ImVec2 rowMax = ImGui::GetItemRectMax();
+                const ImRect fileCell = ImGui::TableGetCellBgRect(ImGui::GetCurrentTable(), 0);
+                ThemeInspector::RegisterZone(ImVec2(std::max(rowMin.x, fileCell.Min.x), rowMin.y),
+                    ImVec2(std::min(rowMax.x, fileCell.Max.x), rowMax.y),
+                    ("similar.result.file." + std::to_string(index)).c_str());
+            }
+            // Keep waveform scrubbing on its own active item below. A filename
+            // drag transfers this result, regardless of the main list selection.
+            if (ImGui::IsItemActive() &&
+                ImGui::IsMouseDragging(ImGuiMouseButton_Left, 10.0f)) {
+                StartAudioFileDrag(state, row.filePath);
+            }
             ImGui::TableSetColumnIndex(1);
             const bool loadedThis = state.audioEngine.isLoaded() &&
                 state.audioEngine.getLoadedFilePath() == row.filePath;
@@ -326,6 +326,8 @@ static void DrawSimilarSoundsResultsTable(
             }
             ImGui::SetCursorScreenPos(waveCellMin);
             ImGui::InvisibleButton("##SimilarWaveHit", ImVec2(waveWidth, waveHeight));
+            if (ThemeInspector::IsCollecting())
+                ThemeInspector::RegisterLastItem(("similar.result.wave." + std::to_string(index)).c_str());
             const bool waveClicked = ImGui::IsItemClicked();
             if (waveClicked) state.similarSoundsSelectedRow = index;
             if (ImGui::IsItemActive() || ImGui::IsItemClicked()) {
@@ -369,7 +371,18 @@ static void DrawSimilarSoundsResultsTable(
             alignRowText();
             const int score = static_cast<int>(
                 std::clamp(row.similarity, 0.0f, 1.0f) * 100.0f + 0.5f);
-            ImGui::Text("%d%%", score);
+            ImGui::Text("%d", score);
+            if (ImGui::IsItemHovered() && row.breakdown.valid) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(L(Similar_ScoreTooltip));
+                const char* dimensions[] = {L(Similar_DimCategory),L(Similar_DimTimbre),L(Similar_DimEnvelope),L(Similar_DimRhythm),L(Similar_DimPitch),L(Similar_DimDuration)};
+                for (size_t dimension = 0; dimension < 6; ++dimension) {
+                    if (row.breakdown.weights[dimension] > 0) {
+                        ImGui::Text("%s  %.0f / 100  (%.0f%%)",dimensions[dimension],100*row.breakdown.parts[dimension],100*row.breakdown.weights[dimension]);
+                    }
+                }
+                ImGui::EndTooltip();
+            }
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -402,7 +415,7 @@ void OpenSimilarSoundsWindow(AppState& state) {
     if (!state.similarSoundsWorkflow) {
         state.similarSoundsWorkflow =
             std::make_unique<HarkenSearch::SimilarityWorkflow>(
-                HarkenSearch::MakeSimilarityQueryHandler(state.similaritySearch));
+                HarkenSearch::MakeSimilarityQueryV2Handler(GetExeDirUtf8() + "/models/clap"));
     }
     state.panelSimilarSounds.visible = true;
     state.panelSimilarSounds.floating = true;
@@ -422,6 +435,35 @@ void InvalidateSimilarSoundsWindow(AppState& state) {
     state.similarSoundsWorkflow->Invalidate();
     state.similarSoundsSelectedRow = -1;
     state.similarSoundsLocalReference.reset();
+}
+
+static void DrawSimilarAnalysisReport(AppState& state) {
+    if (state.showSimilarAnalysisReport) {
+        ImGui::OpenPopup(L(Similar_AnalysisReport));
+        state.showSimilarAnalysisReport = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(660, 380), ImGuiCond_FirstUseEver);
+    bool open = true;
+    if (ImGui::BeginPopupModal(L(Similar_AnalysisReport), &open)) {
+        std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+        const auto& report = state.batchFeatureResult;
+        ImGui::Text(L(Similar_AnalysisSummaryFmt), report.progress.saved, report.progress.skipped, report.progress.failed);
+        if (report.cancelled) ImGui::TextWrapped("%s", L(Similar_AnalysisCancelled));
+        if (!report.modelError.empty()) ImGui::TextWrapped("%s", L(Similar_AnalysisModelMissing));
+        if (!report.error.empty()) ImGui::TextWrapped("%s", L(Similar_AnalysisFailed));
+        if (ImGui::BeginChild("##SimilarAnalysisFailures", ImVec2(0, -42), false)) {
+            const char* reasons[] = {L(Similar_FailureUnreadable), L(Similar_FailureSilent), L(Similar_FailureChanged), L(Similar_FailureModel), L(Similar_FailureSave)};
+            ImGuiListClipper clipper; clipper.Begin(static_cast<int>(report.issues.size()), ImGui::GetTextLineHeightWithSpacing() * 2);
+            while (clipper.Step()) for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
+                const auto& issue = report.issues[index];
+                ImGui::Text("%s: %s", reasons[static_cast<int>(issue.reason)], issue.file.name.c_str());
+                ImGui::TextUnformatted(issue.file.path.c_str());
+            }
+        }
+        ImGui::EndChild();
+        if (aura::ui::ActionButton(L(Close), ImVec2(100, 28), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 static void DrawSimilarSoundsBody(AppState& state, bool windowFocused) {
@@ -486,10 +528,14 @@ static void DrawSimilarSoundsBody(AppState& state, bool windowFocused) {
         ImGui::PushStyleColor(
             ImGuiCol_Text, SimilarSecondaryText(state));
         ImGui::Text("%d", static_cast<int>(snapshot.rows.size()));
+        if (snapshot.totalFiles > 0 && snapshot.indexed < snapshot.totalFiles) {
+            ImGui::SameLine(); ImGui::Text(L(Similar_CoverageFmt),static_cast<int>(snapshot.indexed),static_cast<int>(snapshot.totalFiles));
+        }
         ImGui::PopStyleColor();
     }
     if (!sharedPanelStyle) ImGui::EndChild();
     DrawSimilarSoundsResultsTable(state, snapshot, windowFocused);
+    DrawSimilarAnalysisReport(state);
     if (sharedPanelStyle) {
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
@@ -523,7 +569,7 @@ void RenderSimilarSoundsContent(AppState& state) {
     if (!state.similarSoundsWorkflow) {
         state.similarSoundsWorkflow =
             std::make_unique<HarkenSearch::SimilarityWorkflow>(
-                HarkenSearch::MakeSimilarityQueryHandler(state.similaritySearch));
+                HarkenSearch::MakeSimilarityQueryV2Handler(GetExeDirUtf8() + "/models/clap"));
     }
     PollSimilarSoundsWorkflow(state);
     DrawSimilarSoundsBody(state, ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows));

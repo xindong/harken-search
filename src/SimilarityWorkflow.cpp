@@ -28,6 +28,9 @@ void SimilarityWorkflow::InvalidateLocked() {
     pending_.reset();
     completion_.reset();
     snapshot_.rows.clear();
+    historyToken_.clear(); shownSounds_.clear(); minimumScore_ = 0.0f;
+    snapshot_.batchNumber = 0; snapshot_.stats = {};
+    snapshot_.indexed = snapshot_.totalFiles = snapshot_.staleFiles = 0;
     snapshot_.error = SimilarityWorkflowError::None;
     if (reference_) {
         snapshot_.reference = *reference_;
@@ -57,6 +60,13 @@ void SimilarityWorkflow::SetReference(
 }
 
 bool SimilarityWorkflow::RequestSearch(SimilarityPreset preset, int topK) {
+    SimilarityOptions options; options.preset = preset;
+    return RequestSearchImpl(options, topK, 1);
+}
+bool SimilarityWorkflow::RequestSearch(const SimilarityOptions& options, int topK) {
+    return RequestSearchImpl(options, topK, SimilarityOptions::VERSION);
+}
+bool SimilarityWorkflow::RequestSearchImpl(const SimilarityOptions& options, int topK, int version) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_.load(std::memory_order_acquire) || !reference_) {
@@ -64,15 +74,26 @@ bool SimilarityWorkflow::RequestSearch(SimilarityPreset preset, int topK) {
         }
 
         SimilarityRequest request;
+        if (version == SimilarityOptions::VERSION &&
+            (snapshot_.options.mode != options.mode || snapshot_.options.deep != options.deep || snapshot_.options.preset != options.preset)) {
+            historyToken_.clear(); shownSounds_.clear(); minimumScore_ = 0.0f; snapshot_.batchNumber = 0;
+        }
         request.generation =
             latestGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
         request.databasePath = databasePath_;
         request.reference = *reference_;
-        request.preset = preset;
+        request.preset = options.preset;
+        request.options = options;
+        request.analysisVersion = version;
         request.topK = topK;
+        if (version == SimilarityOptions::VERSION) {
+            request.historyToken = historyToken_; request.shownSounds = shownSounds_; request.minimumScore = minimumScore_;
+        }
         pending_ = std::move(request);
         completion_.reset();
         snapshot_.status = SimilarityWorkflowStatus::Searching;
+        snapshot_.options = options;
+        snapshot_.indexed = snapshot_.totalFiles = snapshot_.staleFiles = 0;
         snapshot_.reference = *reference_;
         snapshot_.rows.clear();
         snapshot_.error = SimilarityWorkflowError::None;
@@ -97,6 +118,17 @@ void SimilarityWorkflow::Poll() {
     snapshot_.reference = *reference_;
     snapshot_.rows = std::move(completion.rows);
     snapshot_.error = completion.error;
+    snapshot_.options = completion.options;
+    snapshot_.indexed = completion.indexed;
+    snapshot_.totalFiles = completion.totalFiles;
+    snapshot_.staleFiles = completion.staleFiles;
+    snapshot_.stats = completion.stats;
+    if (completion.error == SimilarityWorkflowError::None && !completion.historyToken.empty()) {
+        if (historyToken_ != completion.historyToken) { shownSounds_.clear(); snapshot_.batchNumber = 0; }
+        historyToken_ = std::move(completion.historyToken); minimumScore_ = completion.minimumScore;
+        for (const auto& row : snapshot_.rows) shownSounds_.push_back({row.fileId, row.filePath, row.contentFingerprint});
+        if (!snapshot_.rows.empty()) ++snapshot_.batchNumber;
+    }
     snapshot_.status = completion.error == SimilarityWorkflowError::None
         ? SimilarityWorkflowStatus::ResultsReady
         : SimilarityWorkflowStatus::Error;
@@ -105,6 +137,13 @@ void SimilarityWorkflow::Poll() {
 void SimilarityWorkflow::Invalidate() {
     std::lock_guard<std::mutex> lock(mutex_);
     InvalidateLocked();
+}
+
+void SimilarityWorkflow::CancelSearch() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latestGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    pending_.reset(); completion_.reset(); snapshot_.rows.clear(); snapshot_.error = SimilarityWorkflowError::None;
+    snapshot_.status = reference_ ? SimilarityWorkflowStatus::Ready : SimilarityWorkflowStatus::NoSelection;
 }
 
 SimilarityWorkflowSnapshot SimilarityWorkflow::Snapshot() const {
@@ -138,6 +177,7 @@ void SimilarityWorkflow::Run() {
         } catch (...) {
             completion.generation = request->generation;
             completion.reference = request->reference;
+            completion.options = request->options;
             completion.error = SimilarityWorkflowError::SearchFailed;
         }
 

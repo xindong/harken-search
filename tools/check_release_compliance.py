@@ -218,6 +218,9 @@ ALLOWED_POLICY_CATEGORIES = {
 REVIEWED_LICENSE_EXPRESSIONS = {
     "LicenseRef-Inno-Setup": {"permissive"},
     "MIT": {"permissive", "source-only"},
+    # REQ-20261101-SIMILAR-DEEP: pinned CLAP/hnswlib Apache 2.0 texts
+    # retained with attribution and the audio-only conversion notice.
+    "Apache-2.0": {"permissive", "source-only"},
     "MIT-0 OR LicenseRef-Public-Domain": {"permissive"},
     "LicenseRef-Public-Domain": {"permissive"},
     "MIT OR LicenseRef-Public-Domain": {"permissive"},
