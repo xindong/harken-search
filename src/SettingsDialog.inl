@@ -3,6 +3,10 @@
 {
     namespace su = harken::settings;
     namespace schedule = harken::theme_schedule;
+    // Actual main-interface rendering used the draft; editing and Apply must
+    // compare against committed preferences, never the temporary render values.
+    const bool resumeAppearancePreview=su::AppearancePreview().Active();
+    su::EndAppearancePreview(state);
     auto& editor=su::SettingsEditor();
     auto& draft=editor.app.Value();
     auto& runtime=editor.runtime.Value();
@@ -130,8 +134,8 @@
     ImGui::SetNextWindowSize(ImVec2(std::clamp(savedW,minimum.x,maxW),std::clamp(savedH,minimum.y,maxH)),ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(viewport->GetCenter(),ImGuiCond_Appearing,ImVec2(.5f,.5f));
     ImGui::SetNextWindowSizeConstraints(minimum,ImVec2(maxW,maxH));
-    // A local theme preview changes only this settings surface. Runtime and
-    // persisted theme stay untouched until Apply succeeds.
+    // The main interface previews the same draft before this dialog is drawn.
+    // Committed preferences remain unchanged until Apply succeeds.
     const auto preview=(draft.theme!=AppTheme::Custom) ? MakeBuiltinScheme(draft.theme) : ThemeColors::current();
     ImGui::PushStyleColor(ImGuiCol_PopupBg,preview.dialogBG);
     ImGui::PushStyleColor(ImGuiCol_WindowBg,preview.dialogBG);
@@ -153,7 +157,7 @@
         ReadingTextScope reading;
         // Settings is a reading surface with a comfortable minimum. Keep the
         // saved global preference untouched and honor larger chosen sizes.
-        const float settingsBodyPx=std::max(18.f,static_cast<float>(state.settings.readingFontSize));
+        const float settingsBodyPx=std::max(18.f,static_cast<float>(draft.readingFontSize));
         const float settingsTitlePx=settingsBodyPx*(4.f/3.f);
         ImGui::PushFont(GetUIFontRegular(),settingsBodyPx);
         const auto winPos=ImGui::GetWindowPos(),winSize=ImGui::GetWindowSize();
@@ -357,4 +361,7 @@
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(5);ImGui::PopStyleColor(10);
+    // RenderUI continues with the file list and other main panels after this
+    // block. Resume the draft overlay for those draws, then end it after RenderUI.
+    if(resumeAppearancePreview)su::BeginAppearancePreview(state);
 }

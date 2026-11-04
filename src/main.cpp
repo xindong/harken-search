@@ -6309,6 +6309,7 @@ static void InitDefaultColumnPresets(AppState& state) {
 }
 
 bool TrySaveAppSettings(const AppState& state) {
+    const auto persistedAppearance=harken::settings::AppearancePreview().ForPersistence(state.settings);
     if (g_appSettingsPathUtf8.empty()) {
         g_siliconFlowApiKeyStorageError.clear();
         return true;
@@ -6356,10 +6357,10 @@ bool TrySaveAppSettings(const AppState& state) {
 
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
-    items.push_back({"readingFontSize", std::to_string(state.settings.readingFontSize)});
-    items.push_back({"listFontSize", std::to_string(state.settings.listFontSize)});
-    items.push_back({"rowHeight", std::to_string(state.settings.rowHeight)});
-    items.push_back({"listDensity", std::to_string((int)state.settings.listDensity)});
+    items.push_back({"readingFontSize", std::to_string(persistedAppearance.readingFontSize)});
+    items.push_back({"listFontSize", std::to_string(persistedAppearance.listFontSize)});
+    items.push_back({"rowHeight", std::to_string(persistedAppearance.rowHeight)});
+    items.push_back({"listDensity", std::to_string((int)persistedAppearance.listDensity)});
     items.push_back({"settingsDialogWidth", std::to_string(state.settings.settingsDialogWidth)});
     items.push_back({"settingsDialogHeight", std::to_string(state.settings.settingsDialogHeight)});
     items.push_back({"waveformPanelHeight", std::to_string(state.settings.waveformPanelHeight)});
@@ -6368,6 +6369,10 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
     auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    if(harken::settings::AppearancePreview().Active()) {
+        savedAppearance.theme=persistedAppearance.theme;
+        savedAppearance.useCustomColors=persistedAppearance.useCustomColors;
+    }
     if (const auto manual = harken::theme_schedule::ManualAppearanceForSettings(state)) {
         savedAppearance.theme = manual->theme;
         savedAppearance.useCustomColors = manual->useCustomColors;
@@ -29697,6 +29702,12 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
 }
 
 void RenderUI(AppState& state) {
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+    if(harken::settings::savePreviewOnce) {
+        harken::settings::savePreviewOnce=false;
+        harken::settings::previewSaveResult=TrySaveAppSettings(state);
+    }
+#endif
     // Follow only the initial page, not counts, facets or the frame-settle budget.
     if (state.dbSwitchAwaitingResults && !state.dbSwitchInProgress &&
         !state.dbSwitchNeedsRefresh &&

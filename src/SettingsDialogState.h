@@ -3,6 +3,7 @@
 #include "Localization.h"
 #include "imgui_internal.h"
 #include "PreferenceDraft.h"
+#include "PreferencePreview.h"
 #include "SettingsCatalog.h"
 #include "BuiltinThemeScheme.h"
 #include "ThemeSchedule.h"
@@ -51,8 +52,18 @@ inline void WriteRuntime(AppState& state, const RuntimeValues& value) {
     state.spectrogramBlend=value.blend; state.spectrogramSplit=value.split;
     state.scanWorkerThreads=value.threads;
 }
+inline PreferencePreview<AppSettings>& AppearancePreview() {
+    static PreferencePreview<AppSettings> preview{
+        {[](const AppSettings& a,const AppSettings& b){return a.theme==b.theme && a.useCustomColors==b.useCustomColors;},
+         [](AppSettings& a,const AppSettings& b){a.theme=b.theme;a.useCustomColors=b.useCustomColors;}},
+        Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),
+        {[](const AppSettings& a,const AppSettings& b){return a.rowHeight==b.rowHeight && a.listDensity==b.listDensity;},
+         [](AppSettings& a,const AppSettings& b){a.rowHeight=b.rowHeight;a.listDensity=b.listDensity;}}
+    };
+    return preview;
+}
 inline AppSettings CaptureSettings(const AppState& state) {
-    auto settings=state.settings;
+    auto settings=AppearancePreview().ForPersistence(state.settings);
     if (const auto manual=theme_schedule::ManualAppearanceForSettings(state)) {
         settings.theme=manual->theme; settings.useCustomColors=manual->useCustomColors;
     }
@@ -93,7 +104,13 @@ struct Editor {
     size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+(resetAll ? 1 : 0)+(deviceEdited&&deviceIdentity!=baselineDeviceIdentity ? 1 : 0); }
 };
 inline Editor& SettingsEditor() { static Editor editor; return editor; }
+inline void BeginAppearancePreview(AppState& state) {
+    auto& editor=SettingsEditor();
+    if(editor.open)AppearancePreview().Begin(state.settings,editor.app.Baseline(),editor.app.Value());
+}
+inline void EndAppearancePreview(AppState& state) { AppearancePreview().Restore(state.settings); }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+inline bool savePreviewOnce=false, previewSaveResult=false;
 struct Observation {
     struct Item { std::string id; ImVec4 bounds, clip; bool disabled=false; float fontPixels=0; };
     struct Text { std::string id, text; ImVec4 bounds,clip; };
