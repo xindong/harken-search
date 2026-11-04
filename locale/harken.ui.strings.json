@@ -11474,13 +11474,6 @@
       "ja": "現在表示される効果"
     },
     {
-      "id": "Avatar_LoadingTooltip",
-      "type": "ui",
-      "zh": "自定义头像正在加载，暂时显示预制头像",
-      "en": "Custom avatar is loading; a built-in avatar is shown meanwhile",
-      "ja": "カスタムアバターを読み込み中です。一時的にプリセットアバターを表示しています"
-    },
-    {
       "id": "Crash_DlgTitle",
       "zh": "检测到上次异常退出",
       "en": "Abnormal Exit Detected",
