@@ -92,6 +92,12 @@ Request Poll(AppState& state) {
             editor.page = harken::settings::Page::Appearance;
             editor.query[0] = 0;
             editor.focusId = "waveMode";
+        } else if (action == "settings_focus_extension") {
+            auto& editor = harken::settings::SettingsEditor();
+            if (!editor.open) throw std::runtime_error("settings_not_open");
+            editor.page = harken::settings::Page::Appearance;
+            editor.query[0] = 0;
+            editor.focusId = "extension";
         } else if (action == "settings_fail_save_once") {
             if (!harken::settings::SettingsEditor().open)
                 throw std::runtime_error("settings_not_open");
@@ -366,6 +372,8 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"page",observed.page},{"pending",observed.pending},{"prompt",observed.prompt},
                 {"live_wave_mode",state.settings.waveformDisplayMode},
                 {"draft_wave_mode",editor.app.Value().waveformDisplayMode},
+                {"live_extension",state.settings.showFileExtension},
+                {"draft_extension",editor.app.Value().showFileExtension},
                 {"live_wave_style",state.settings.waveformStyle},
                 {"draft_wave_style",editor.app.Value().waveformStyle},
                 {"live_spectrum",state.showSpectrogram},
@@ -387,6 +395,10 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"spectrum_blend",state.spectrogramBlend},
                 {"spectrum_pixels",textureProbe},
                 {"spectrum_commands",spectrumCommands}}},
+            {"list_ui",{{"frame",ImGui::GetFrameCount()},
+                {"draw_frame",state.qaRegions.listTextFrame},
+                {"raw_names",state.qaRegions.listRawNames},
+                {"rendered_names",state.qaRegions.listRenderedNames}}},
             {"audio",{{"loaded",state.audioEngine.isLoaded()},{"pending",state.audioEngine.isLoadFilePending()},
                 {"playing",state.audioEngine.isPlaying()},{"paused",state.audioEngine.isPaused()},
                 {"path",state.audioEngine.getLoadedFilePath()},{"position",state.audioEngine.getPlaybackPosition()},
