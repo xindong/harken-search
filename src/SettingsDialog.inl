@@ -222,7 +222,7 @@
         ImGui::SetCursorPos(ImVec2(contentX,18));
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(contentW-52);
-        ImGui::InputTextWithHint("##settings-search",L(SetUX_SearchSettingsCtrlK),editor.query,sizeof(editor.query)); su::Observe("search");
+        HintAwareInputTextWithHint("##settings-search",L(SetUX_SearchSettingsCtrlK),editor.query,sizeof(editor.query)); su::Observe("search");
         if(ImGui::IsItemActive())editor.recording=false;
         ImGui::SameLine();
         // Borderless close glyph, including hovered and pressed states.
