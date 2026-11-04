@@ -74,7 +74,8 @@ Request Poll(AppState& state) {
             }
             state.scanDialogAutoStart = true;
             state.showScanDialog = true;
-        } else if (action == "native_folder_drop" || action == "native_database_drop") {
+        } else if (action == "native_folder_drop" || action == "native_database_drop" ||
+                   action == "native_audio_drop") {
             if (command.contains("paths"))
                 request.dropPaths = command.at("paths").get<std::vector<std::string>>();
             else request.dropPaths = {command.at("path").get<std::string>()};
@@ -447,6 +448,9 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"filters",{{"text",state.searchBuffer},{"folder",state.selectedFolderPath},
                 {"folder_active",state.folderFilterActive},{"cover_mode",state.coverFilterIndex}}},
             {"native_drop",{{"attempted",request.dropAttempted},{"accepted",request.dropAccepted}}},
+            {"drop_notice",{{"shown",state.showScanDropNotice},
+                {"imported",state.scanDropImportedCount},{"existing",state.scanDropExistingCount},
+                {"failed",state.scanDropFailedCount},{"summary",state.lastDropSummary}}},
             {"scan_dialog",{{"frame",ImGui::GetFrameCount()},
                 {"open",scanButtonRects.contains("scan.dialog.start")},
                 {"auto_start",state.scanDialogAutoStart},{"pending_folders",state.pendingScanFolders},

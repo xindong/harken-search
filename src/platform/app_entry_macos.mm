@@ -72,6 +72,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
 @interface HarkenOpenGLView : NSOpenGLView <NSDraggingDestination>
 - (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls;
 - (BOOL)acceptDatabaseURL:(NSURL*)url;
+- (BOOL)acceptAudioURL:(NSURL*)url;
 @end
 @implementation HarkenOpenGLView
 - (BOOL)acceptsFirstResponder { return YES; }
@@ -101,6 +102,17 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         ![[path.pathExtension lowercaseString] isEqualToString:@"db"]) return nil;
     return path;
 }
+- (NSString*)validatedAudioPath:(NSArray<NSURL*>*)urls {
+    if (urls.count != 1 || !urls.firstObject.isFileURL) return nil;
+    NSString* path = urls.firstObject.path.stringByStandardizingPath;
+    BOOL directory = NO;
+    if (path.length == 0 || ![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] ||
+        directory || !path.UTF8String) return nil;
+    NSString* extension = path.pathExtension.lowercaseString;
+    if (![@[@"wav", @"mp3", @"flac", @"ogg", @"aiff", @"aif", @"m4a", @"wma"]
+            containsObject:extension]) return nil;
+    return path;
+}
 - (NSArray<NSURL*>*)fileURLsFromDraggingInfo:(id<NSDraggingInfo>)sender {
     NSPasteboard* pasteboard = [sender draggingPasteboard];
     NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
@@ -112,6 +124,9 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         return NSDragOperationNone;
     NSArray<NSURL*>* urls = [self fileURLsFromDraggingInfo:sender];
     if ([self validatedDatabasePath:urls] ||
+        (g_appState->database.isOpen() && !g_appState->dbSwitchInProgress &&
+         !g_appState->isScanning.load() && !g_appState->scanCompletionPending.load() &&
+         [self validatedAudioPath:urls]) ||
         (g_appState->database.isOpen() && [self validatedFolderPaths:urls]))
         return NSDragOperationCopy;
     return NSDragOperationNone;
@@ -120,6 +135,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     NSArray<NSURL*>* urls = [self fileURLsFromDraggingInfo:sender];
     if (!urls) return NO;
     if ([self validatedDatabasePath:urls]) return [self acceptDatabaseURL:urls.firstObject];
+    if ([self validatedAudioPath:urls]) return [self acceptAudioURL:urls.firstObject];
     return [self acceptFolderURLs:urls];
 }
 - (BOOL)acceptDatabaseURL:(NSURL*)url {
@@ -129,6 +145,44 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     g_appState->lastDropFirstPath = path.UTF8String;
     g_appState->lastDropTick = Platform::MonotonicMilliseconds();
     g_appState->lastDropSummary = "Drop received: database=1";
+    return YES;
+}
+- (BOOL)acceptAudioURL:(NSURL*)url {
+    if (!g_appState) return NO;
+    AppState& state = *g_appState;
+    if (!state.database.isOpen() || state.dbSwitchInProgress ||
+        state.isScanning.load() || state.scanCompletionPending.load()) return NO;
+    NSString* path = [self validatedAudioPath:@[url]];
+    if (!path) return NO;
+    const std::string filePath(path.UTF8String);
+    state.scanDropImportedCount = 0;
+    state.scanDropExistingCount = 0;
+    state.scanDropFailedCount = 0;
+    try {
+        if (state.database.fileExists(filePath)) {
+            ++state.scanDropExistingCount;
+        } else {
+            AudioRecord record;
+            if (Database::readAudioRecordMetadataSnapshot(filePath, record) &&
+                state.database.addFile(record)) {
+                ++state.scanDropImportedCount;
+                RefreshSearchResults(state, true);
+            } else {
+                ++state.scanDropFailedCount;
+            }
+        }
+    } catch (...) {
+        ++state.scanDropFailedCount;
+    }
+    state.lastDropFirstPath = filePath;
+    state.lastDropTick = Platform::MonotonicMilliseconds();
+    state.lastDropSummary = "Drop received: folders=0, audioFiles=1";
+    state.showScanDropNotice = true;
+    if (state.scanDropImportedCount || state.scanDropExistingCount) {
+        state.audioEngine.loadFileAsync(filePath, true);
+        ScheduleDeferredWaveformDetail(state, filePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
+        ResetWaveformZoom(state);
+    }
     return YES;
 }
 - (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls {

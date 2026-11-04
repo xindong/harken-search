@@ -30,6 +30,7 @@ def run(binary, root, output):
     second = source / '中文目录'
     paths = [first / 'impact.wav', second / '风声.wav']
     loose = source / 'loose.wav'
+    plain = source / 'notes.txt'
 
     def snapshot():
         return app.command()
@@ -51,17 +52,18 @@ def run(binary, root, output):
         for index, path in enumerate(paths):
             wav(path, 1200 + index * 500)
         wav(loose, 700)
+        plain.write_text('not an audio file', encoding='utf-8')
         hashes = {str(path): sha(path) for path in (*paths, loose)}
         assert snapshot()['count'] == 0
 
-        rejected = app.command('native_folder_drop', path=str(loose))
+        rejected = app.command('native_folder_drop', path=str(plain))
         assert rejected['native_drop'] == {'attempted': True, 'accepted': False}
         assert rejected['scan_dialog']['pending_folders'] == []
         mixed = app.command('native_folder_drop', paths=[str(first), str(loose)])
         assert not mixed['native_drop']['accepted'] and mixed['scan_dialog']['pending_folders'] == []
         missing = app.command('native_folder_drop', path=str(source / 'absent'))
         assert not missing['native_drop']['accepted']
-        report['rejected_file_and_mixed'] = True
+        report['rejected_non_audio_and_mixed'] = True
 
         drop = app.command('native_folder_drop', paths=[str(first), str(first), str(second)])
         assert drop['native_drop'] == {'attempted': True, 'accepted': True}, drop
