@@ -59,7 +59,12 @@ else if(id=="systemFont"||id=="listFont") {
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);
-else if(id=="waveMode") {if(combo(draft.waveformDisplayMode,{L(Set_ModeVolume2),L(Set_ModeLoudness2),L(Set_ModeSpectrum2)})&&draft.waveformDisplayMode==2)runtime.spectrum=true;}
+else if(id=="waveMode") {
+    if(combo(draft.waveformDisplayMode,{L(Set_ModeVolume2),L(Set_ModeLoudness2),L(Set_ModeSpectrum2)})) {
+        runtime.spectrum=draft.waveformDisplayMode==2;
+        if(draft.waveformDisplayMode<2)draft.waveformStyle=draft.waveformDisplayMode==1?kWaveformStyleRms:kWaveformStyleSolid;
+    }
+}
 else if(id=="waveStyle") {int n=draft.waveformStyle==3?1:0;if(combo(n,{L(Set_StyleRMS2),L(Set_StyleSolid)}))draft.waveformStyle=n==1?3:2;}
 else if(id=="miniRms")ImGui::Checkbox("##value",&draft.miniWaveformRmsBodyStyle);
 else if(id=="meterLayout") {int n=(int)draft.meterChannelLayout;if(combo(n,{"SMPTE / WAV","Film","Dolby Atmos Bed","Ambisonic AmbiX","1..N"}))draft.meterChannelLayout=(MeterChannelLayout)n;}

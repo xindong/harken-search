@@ -3261,6 +3261,8 @@ struct AppState {
         std::vector<float> listRowOrigins, listRowHitHeights;
         std::vector<std::string> listRawNames, listRenderedNames;
         std::vector<bool> listRowDirectories;
+        int waveDrawFrame=-1, waveDrawStyle=-1, spectrumDrawFrame=-1;
+        ImVec4 waveDrawBounds{};
 #endif
     } qaRegions;
 };
