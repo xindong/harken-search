@@ -108,6 +108,18 @@ Request Poll(AppState& state) {
             auto& io = ImGui::GetIO();
             io.AddMousePosEvent(x, y);
             if (phase != "hover") io.AddMouseButtonEvent(ImGuiMouseButton_Left, phase == "down");
+        } else if (action == "sidebar") {
+            if (command.at("section").get<int>() != 2) throw std::runtime_error("invalid_sidebar_section");
+            state.settings.activeSidebarSection = 2;
+        } else if (action == "wheel") {
+            const float delta = command.at("delta").get<float>();
+            if (!std::isfinite(delta) || std::abs(delta) > 20.0f)
+                throw std::runtime_error("invalid_wheel_delta");
+            ImGui::GetIO().AddMouseWheelEvent(0.0f, delta);
+        } else if (action == "text") {
+            const auto input = command.at("text").get<std::string>();
+            if (input.empty() || input.size() > 512) throw std::runtime_error("invalid_text_input");
+            ImGui::GetIO().AddInputCharactersUTF8(input.c_str());
         } else if (action == "reset_thesaurus") {
             if (!ResetMacThesaurusToDefaults()) throw std::runtime_error("thesaurus_reset_failed");
         } else if (action == "show_thesaurus") {
@@ -315,6 +327,10 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"clip",{item.clip.x,item.clip.y,item.clip.z,item.clip.w}},
                 {"disabled",item.disabled}});
         }
+        Json filterRects = Json::object();
+        for (const auto& [name, rect] : state.qaFilterUiRects)
+            filterRects[name] = {rect.x, rect.y, rect.z, rect.w};
+        const auto display = ImGui::GetIO().DisplaySize;
         Json textureProbe;
         if (request.capture && state.spectrogramTexture != 0 &&
             state.spectrogramWidth > 0 && state.spectrogramHeight > 0) {
@@ -392,6 +408,13 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"fade_in",state.uiState.regionFadeInNorm},{"fade_out",state.uiState.regionFadeOutNorm}}},
             {"region_export",lastRegionExport},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},
+            {"window",{{"width",display.x},{"height",display.y}}},
+            {"active_sidebar_section",state.settings.activeSidebarSection},
+            {"qa_filter_ui_rects",filterRects},
+            {"metadata_filters",{{"artist",state.artistFilterBuffer},
+                {"album",state.albumFilterBuffer},{"category",state.categoryFilterBuffer}}},
+            {"metadata_input_text",state.qaMetadataInputText},
+            {"metadata_draft_query",state.qaMetadataDraftQuery},
             {"playlists",playlists},{"view_mode",static_cast<int>(state.viewMode)},
             {"selected_playlist_id",state.selectedPlaylistId},
             {"playlist_aggregated",state.playlistAggregatedView},
