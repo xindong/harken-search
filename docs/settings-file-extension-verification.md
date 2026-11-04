@@ -1,5 +1,7 @@
 # 设置013：文件名显示后缀
 
+可重复准备：在隔离根的 fixture-library 放置实际音频及六个目标名称：000-audit.multi.part.wav、000-audit.UPPER.WAV、000-audit.中文.wav、000-audit.flac、000-audit.ogg、000-audit.mp3，并创建 000-folder.with.dots 文件夹。各格式须由真实转换得到。使用脚本的 --exe、--isolation-root、--output 参数并加 --prepare-fixture，由软件实际扫描入库；该命令在启动前生成 disk-before.json（相对素材根路径到SHA256的JSON对象）。已有基线先核对，避免覆盖变化；正式核验同样在启动前执行这一步。数据库及浏览器均要求六个目标文件全部出现在实际绘制采样中，目录不计作文件。
+
 本项检查现有开关与真实列表绘制的连接，不改变开关行为。勾选、撤销和保存均操作实际设置控件；选择后点击“应用更改”生效，无需重启。
 
 `tools/qa_settings_file_extension.py` 在私有桌面启动独立包，核对进程、EXE 和隔离数据目录，再读取实际文件名绘制位置记录的原名与显示文字。观测字段只编入 `ARIS_PREVIEW_ISOLATION` 包，不通过测试接口直接改设置。

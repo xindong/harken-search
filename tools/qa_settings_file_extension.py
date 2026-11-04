@@ -87,6 +87,9 @@ def run(args):
         assert saved('showFileExtension')==int(enabled)
         assert v['drawn_list_frame']>=v['current_frame']-3 and len(v['drawn_list_names'])>=3,v
         assert len(v['drawn_list_raw_names'])==len(v['drawn_list_names'])==len(v['drawn_list_directories']),v
+        targets={'000-audit.multi.part.wav','000-audit.UPPER.WAV','000-audit.中文.wav','000-audit.flac','000-audit.ogg','000-audit.mp3'}
+        observed_files={raw for raw,directory in zip(v['drawn_list_raw_names'],v['drawn_list_directories']) if not directory}
+        assert targets.issubset(observed_files),dict(missing=sorted(targets-observed_files),observed=observed_files)
         for raw,rendered,directory in zip(v['drawn_list_raw_names'],v['drawn_list_names'],v['drawn_list_directories']):
             stem=raw.rsplit('.',1)[0] if '.' in raw and raw.rfind('.')>0 else raw
             expected='[DIR] '+raw if directory else raw if enabled else stem
@@ -102,6 +105,11 @@ def run(args):
         lib=root/'fixture-library'
         return {p.relative_to(lib).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in lib.rglob('*') if p.is_file()}
     try:
+        before=manifest();assert before,'Prepare the isolated real-audio fixture before running'
+        baseline=root.parent/'disk-before.json'
+        if baseline.exists():assert json.loads(baseline.read_text('utf-8'))==before,'Fixture differs from recorded disk baseline'
+        else:baseline.write_text(json.dumps(before,ensure_ascii=False,indent=2),encoding='utf-8')
+        report['diskBaseline']=str(baseline)
         start()
         if args.prepare_fixture:
             result=cmd(cmd='scan_folder',path=str(root/'fixture-library'),recursive=False,update_existing=True,remove_missing=False,cache_waveforms=False,build_similarity_index=False,worker_threads=2)
@@ -172,7 +180,7 @@ def run(args):
                     cmd(cmd='settings_ui',action='resize',width=width,height=height);settle()
                     check(f'theme {theme} font {size}px {width}x{height} suffix {enabled}: actual names and visible control fit',**value)
         choose_font(18);apply();choose_list(18);apply();choose_theme(0);apply();extension(True);apply();click('done');stop()
-        before=json.loads((root.parent/'disk-before.json').read_text('utf-8'));after=manifest();assert before==after
+        after=manifest();assert before==after
         report['diskManifest']=after
         check('all 182 real audio paths and SHA256 contents unchanged on disk')
         report['passed']=True
