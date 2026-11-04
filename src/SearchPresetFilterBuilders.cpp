@@ -12,6 +12,7 @@ namespace aura::search {
 SearchFilter BuildCurrentPlaylistSearchFilter(const AppState& state) {
     SearchFilter filter;
     filter.keyword = CompileSearchBufferKeywordForFilter(state.searchBuffer);
+    if (state.folderFilterActive) filter.folderPath = state.selectedFolderPath;
     filter.coverFilter = state.coverFilterIndex;
     if (state.coverFilterActive) filter.specificCoverKey = state.coverFilterPath;
     filter.exactMode = state.searchExactMode;

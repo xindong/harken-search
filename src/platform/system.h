@@ -37,6 +37,12 @@ bool DeleteGenericCredential(const std::string& targetUtf8);
 
 void OpenInFileManager(const std::string& pathUtf8);
 void OpenUrl(const std::string& url);
+namespace MessageBoxFlags {
+constexpr unsigned int Ok = 0;
+constexpr unsigned int Error = 0x10;
+constexpr unsigned int Warning = 0x30;
+constexpr unsigned int Information = 0x40;
+}
 int ShowMessageBox(void* ownerWindow,
                    const wchar_t* message,
                    const wchar_t* title,
