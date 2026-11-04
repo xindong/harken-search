@@ -28,4 +28,5 @@ struct ImVec4;
 // Isolated package only; exercises the same editor draft, undo and live preview.
 bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value);
 std::string ThemeScheduleEditorQaStatus();
+std::string ThemeScheduleEditorQaObservation();
 #endif

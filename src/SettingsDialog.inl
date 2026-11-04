@@ -115,7 +115,7 @@
     };
     if (state.showSettingsDialog) {
         editor.Reset(state); editor.open=true; editor.closePrompt=false; editor.action.clear();
-        editor.page=su::Page::Common; editor.query[0]=0; editor.focusId.clear();
+        editor.page=su::Page::Appearance; editor.query[0]=0; editor.focusId.clear();
         editor.devices=state.audioEngine.enumerateOutputDevices();
         ImGui::OpenPopup("###HarkenSettings"); state.showSettingsDialog=false;
     }
@@ -159,7 +159,7 @@
         const auto winPos=ImGui::GetWindowPos(),winSize=ImGui::GetWindowSize();
         state.settings.settingsDialogWidth=winSize.x; state.settings.settingsDialogHeight=winSize.y;
         float navTextW=0;for(int i=0;i<=8;++i)navTextW=std::max(navTextW,ImGui::CalcTextSize(su::PageLabel((su::Page)i)).x);
-        const float navW=std::min(winSize.x*.34f,std::max(212.f,navTextW+32.f));
+        const float navW=std::min(winSize.x*.34f,std::max(212.f,navTextW+60.f));
         const float contentX=navW+28.f,contentW=winSize.x-contentX-28.f;
         const float errorHeight=editor.error.empty()?0.f:ImGui::CalcTextSize(editor.error.c_str(),nullptr,false,contentW).y;
         const float headerH=std::max(68.f,ImGui::GetFrameHeight()+30.f),footerH=editor.error.empty()?72.f:std::max(106.f,errorHeight+82.f);
@@ -173,28 +173,48 @@
         ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx); ImGui::TextUnformatted(L(Dlg_Settings)); su::Observe("settings-title"); ImGui::PopFont();
         ImGui::SetCursorPos(ImVec2(12,headerH+8));
         ImGui::BeginChild("SettingsNavigation",ImVec2(navW-24,winSize.y-headerH-65),false,ImGuiWindowFlags_NoBackground);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,4));
         ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign,ImVec2(0,.5f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ThemeColors::popupSelectionHoveredBG(preview));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive,ThemeColors::popupSelectionActiveBG(preview));
-        const float navigationRowH=std::max(36.f,ImGui::GetTextLineHeight()+16.f);
-        for (int i=0;i<=8;++i) {
+        // Keep native Selectable focus/activation, then paint the rounded row
+        // and inset label inside exactly the same hit rectangle.
+        ImGui::PushStyleColor(ImGuiCol_Header,ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_Text,ImVec4(0,0,0,0));
+        const float navigationRowH=std::max(44.f,ImGui::GetTextLineHeight()+20.f);
+        auto navTint=[&](float amount){
+            return ImVec4(preview.dialogPanelBG.x+(preview.controlAccent.x-preview.dialogPanelBG.x)*amount,
+                preview.dialogPanelBG.y+(preview.controlAccent.y-preview.dialogPanelBG.y)*amount,
+                preview.dialogPanelBG.z+(preview.controlAccent.z-preview.dialogPanelBG.z)*amount,1.f);
+        };
+        for (int i=1;i<=8;++i) {
 #if !AURA_BUILD_DIAGNOSTICS
             if (i==8) continue;
 #endif
-            if (i==0 || i==5 || i==7) {
-                if (i) ImGui::Dummy(ImVec2(0,8));
-                ImGui::TextDisabled("%s",i==0?L(SetUX_EVERYDAY):i==5?L(SetUX_WORKFLOW):L(SetUX_MAINTENANCE));
-                ImGui::Dummy(ImVec2(0,4));
-            }
             const auto page=static_cast<su::Page>(i);
             ImGui::PushID(i);
             // Keep the painted row, text alignment and hit rectangle together.
             if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();}
             su::Observe(("nav-"+std::to_string(i)).c_str());
+            const auto rowMin=ImGui::GetItemRectMin(),rowMax=ImGui::GetItemRectMax();
+            const bool selected=editor.page==page,hovered=ImGui::IsItemHovered();
+            const bool pressed=hovered&&ImGui::IsItemActive();
+            auto* navDraw=ImGui::GetWindowDrawList();
+            if(selected||hovered)navDraw->AddRectFilled(rowMin,rowMax,ImGui::GetColorU32(navTint(pressed?.20f:selected?.14f:.06f)),6.f);
+            if(selected){
+                const float indicatorH=std::min(20.f,ImGui::GetTextLineHeight());
+                const float indicatorY=(rowMin.y+rowMax.y-indicatorH)*.5f;
+                navDraw->AddRectFilled(ImVec2(rowMin.x+8,indicatorY),ImVec2(rowMin.x+11,indicatorY+indicatorH),ImGui::GetColorU32(preview.controlAccent),1.5f);
+            }
+            if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
+                navDraw->AddRect(rowMin,rowMax,ImGui::GetColorU32(preview.controlAccent),6.f,0,1.f);
+            const ImVec2 labelPos(rowMin.x+24,rowMin.y+(navigationRowH-ImGui::GetTextLineHeight())*.5f);
+            const ImVec4 labelClip(rowMin.x+24,rowMin.y,rowMax.x-12,rowMax.y);
+            navDraw->AddText(selected?GetUIFontEmphasis():ImGui::GetFont(),ImGui::GetFontSize(),labelPos,ImGui::GetColorU32(preview.interfaceText),su::PageLabel(page),nullptr,0,&labelClip);
+            su::ObserveText(("nav-text-"+std::to_string((int)page)).c_str(),su::PageLabel(page),labelPos,labelClip,selected?GetUIFontEmphasis():ImGui::GetFont(),ImGui::GetFontSize());
             ImGui::PopID();
         }
-        ImGui::PopStyleColor(2);ImGui::PopStyleVar(2);ImGui::EndChild();
+        ImGui::PopStyleColor(4);ImGui::PopStyleVar(2);ImGui::EndChild();
         ImGui::SetCursorPos(ImVec2(contentX,18));
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(contentW-52);
@@ -230,10 +250,17 @@
             return changed;
         };
         auto stringInput=[&](std::string& value){char buffer[2048]{};std::snprintf(buffer,sizeof(buffer),"%s",value.c_str());if(ImGui::InputText("##value",buffer,sizeof(buffer)))value=buffer;};
-        auto themedSelector=[&](int& value){
+        auto themedSelector=[&](int& value,const char* editAction=nullptr){
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
             if(ImGui::BeginCombo("##value",su::StockLabel(value))){
                 for(int i=0;i<5;++i){if(ImGui::Selectable(su::StockLabel(i),value==i))value=i;su::Observe(("theme-option-"+std::to_string(i)).c_str());}
+#if AURA_BUILD_DIAGNOSTICS
+                if(editAction && ProductEdition::hasFeature("theme_editor")){
+                    ImGui::Separator();
+                    if(ImGui::MenuItem(L(ThemeSchedule_EditPalette)))requestAction(editAction);
+                    su::Observe(editAction);
+                }
+#endif
                 if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
                 ImGui::EndCombo();
             }

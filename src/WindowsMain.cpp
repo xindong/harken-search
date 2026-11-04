@@ -4459,6 +4459,21 @@ static void PollQaCommandFile(AppState& state) {
                     state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
+                else if (getStr(raw,"action")=="home_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,true);
+                else if (getStr(raw,"action")=="home_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,false);
+                else if (getStr(raw,"action")=="delete_prefix_200" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID()) {
+                    // Exercise vendored ImGui's real text edit path on the active input.
+                    auto& input = ImGui::GetCurrentContext()->InputTextState;
+                    input.OnKeyPressed(0x200006); // STB_TEXTEDIT_K_TEXTSTART
+                    for (int i = 0; i < 200; ++i)
+                        input.OnKeyPressed(0x200001 | 0x400000); // RIGHT | SHIFT
+                    input.OnKeyPressed(0x200008); // STB_TEXTEDIT_K_DELETE
+                }
+                else if (getStr(raw,"action")=="undo_text" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID())
+                    // Vendored ImGui's STB_TEXTEDIT_K_UNDO; exercise the real undo engine.
+                    ImGui::GetCurrentContext()->InputTextState.OnKeyPressed(0x20000A);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
                 result=R"({"ok":true})";
             } else if (cmd == "info_page_layout") {
@@ -4771,11 +4786,12 @@ static void PollQaCommandFile(AppState& state) {
             namespace su = harken::settings;
             const auto action = getStr(raw,"action");
             if (action == "fail_save_once") su::failSaveOnce = true;
+            if (action == "shortcut_test_background") state.qaAllowBackgroundKeybinding = getBool(raw,"enabled",false);
             if (action == "layout_restore_error") su::SettingsEditor().error=std::string(L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder))+" "+L(SetUX_OutputRestoreFailed);
             if (action == "key") {
                 const auto name=getStr(raw,"key");
                 const bool down=getBool(raw,"down",false);
-                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
+                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
             if (action == "resize") {
@@ -4783,15 +4799,39 @@ static void PollQaCommandFile(AppState& state) {
             }
             const auto& observation=su::observation;
             const auto& editor=su::SettingsEditor();
+            const auto& palette=ThemeColors::current();
+            auto color=[](const ImVec4& c){return ThemeColors::toARGBHex(c);};
+            auto colorPopups=nlohmann::json::array();
+            for(const auto* w:ImGui::GetCurrentContext()->Windows)
+                if(w->WasActive && (w->Flags&ImGuiWindowFlags_Popup))
+                    colorPopups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}}});
             auto rect=[](const ImVec4& r){return std::array<float,4>{r.x,r.y,r.z,r.w};};
             auto items=nlohmann::json::array();
             for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled},{"font_pixels",item.fontPixels}});
+            auto texts=nlohmann::json::array();
+            for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
                 {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
+                {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"drawn_list_frame",state.qaRegions.listTextFrame},{"drawn_list_font_pixels",state.qaRegions.listTextFontPixels},
+                {"drawn_list_line_height",state.qaRegions.listTextLineHeight},{"drawn_list_row_height",state.qaRegions.listTextRowHeight},
+                {"drawn_list_sample",state.qaRegions.listTextSample},
+                {"live_extension",state.settings.showFileExtension},{"draft_extension",editor.app.Value().showFileExtension},
+                {"drawn_list_raw_names",state.qaRegions.listRawNames},{"drawn_list_names",state.qaRegions.listRenderedNames},
+                {"drawn_list_directories",state.qaRegions.listRowDirectories},
+                {"live_wave_mode",state.settings.waveformDisplayMode},{"draft_wave_mode",editor.app.Value().waveformDisplayMode},
+                {"live_wave_style",state.settings.waveformStyle},{"live_spectrum",state.showSpectrogram},
+                {"drawn_wave_frame",state.qaRegions.waveDrawFrame},{"drawn_wave_style",state.qaRegions.waveDrawStyle},
+                {"drawn_spectrum_frame",state.qaRegions.spectrumDrawFrame},{"wave_bounds",rect(state.qaRegions.waveDrawBounds)},
+                {"drawn_list_row_origins",state.qaRegions.listRowOrigins},{"drawn_list_hit_heights",state.qaRegions.listRowHitHeights},
+                {"mono_font_pixels",[]{ImGui::PushFont(GetUIFontMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"draft_language",(int)editor.app.Value().language},{"live_language",(int)state.settings.language},
+                {"rendered_language",(int)g_currentLanguage},{"rendered_texts",texts},
                 {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
                 {"effective_row_height",state.settings.getEffectiveRowHeight()},{"live_scan_threads",state.scanWorkerThreads},
                 {"draft_monitor",editor.app.Value().monitorLayout},{"live_monitor",state.settings.monitorLayout},
@@ -4799,6 +4839,11 @@ static void PollQaCommandFile(AppState& state) {
                 {"draft_fft",editor.runtime.Value().fft},{"live_fft",state.spectrogramFFTSize},{"default_fft",GetReadableSpectrogramPreset().fftSize},
                 {"schedule",(int)editor.app.Value().themeScheduleMode},{"tool",editor.action},{"recording",editor.recording},
                 {"error",su::SettingsEditor().error},{"imgui_errors",ImGui::GetCurrentContext()->ErrorCountCurrentFrame},
+                {"color_popups",colorPopups},{"custom_enabled",state.settings.useCustomColors},
+                {"custom_colors",{{"bg",color(state.settings.customBgColor)},{"text",color(state.settings.customTextColor)},
+                    {"accent",color(state.settings.customAccentColor)},{"waveform",color(state.settings.customWaveformColor)},{"volume",color(state.settings.customVolumeColor)}}},
+                {"rendered_colors",{{"bg",color(palette.mainWindowBG)},{"text",color(palette.resultsText)},
+                    {"accent",color(palette.resultsSelection)},{"waveform",color(palette.waveformColor)},{"volume",color(palette.volumeColor)}}},
                 {"imgui_log",ImGui::GetCurrentContext()->DebugLogBuf.c_str()},
                 {"bounds",rect(observation.bounds)},{"items",items}}).dump();
         }
@@ -5216,6 +5261,10 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"current_file\":\"" + jsonEscape(currentFile) + "\",";
         result += "\"audio_loaded\":" + std::string(audioLoaded ? "true" : "false") + ",";
         result += "\"playback_position\":" + std::to_string(playbackPosition) + ",";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"region_in\":" + std::to_string(state.audioEngine.getInPoint()) + ",";
+        result += "\"region_out\":" + std::to_string(state.audioEngine.getOutPoint()) + ",";
+#endif
         result += "\"audio_total_frames\":" + std::to_string((unsigned long long)audioInfo.totalFrames) + ",";
         result += "\"audio_duration\":" + std::to_string(audioInfo.durationSeconds) + ",";
         result += "\"selected_row\":" + std::to_string(selectedRow) + ",";
@@ -5260,6 +5309,7 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"pending_db_path\":\"" + jsonEscape(state.pendingDbPath) + "\",";
         result += "\"recent_db_paths\":" + recentDbPathsJson + ",";
         result += "\"db_switch_in_progress\":" + std::string(state.dbSwitchInProgress ? "true" : "false") + ",";
+        result += "\"db_switch_background_active\":" + std::string(state.dbSwitchAwaitingResults ? "true" : "false") + ",";
         result += "\"db_switch_just_completed\":" + std::string(state.dbSwitchJustCompleted ? "true" : "false") + ",";
         result += "\"db_switch_settle_frames\":" + std::to_string(state.dbSwitchSettleFramesRemaining) + ",";
         result += "\"pending_search_request_id\":" + std::to_string((unsigned long long)state.pendingSearchRequestId) + ",";
@@ -5323,6 +5373,32 @@ static void PollQaCommandFile(AppState& state) {
             result += "\"" + jsonEscape(key) + "\":[" + std::to_string(rect.x) + "," +
                 std::to_string(rect.y) + "," + std::to_string(rect.z) + "," +
                 std::to_string(rect.w) + "]";
+        }
+        result += "},";
+        result += "\"qa_metadata_input_colors\":{";
+        bool firstQaMetadataColor = true;
+        for (const auto& [key, color] : state.qaMetadataInputColors) {
+            if (!firstQaMetadataColor) result += ",";
+            firstQaMetadataColor = false;
+            result += "\"" + jsonEscape(key) + "\":[" + std::to_string(color.x * 255.0f) + "," +
+                std::to_string(color.y * 255.0f) + "," + std::to_string(color.z * 255.0f) + "," +
+                std::to_string(color.w * 255.0f) + "]";
+        }
+        result += "},";
+        result += "\"qa_metadata_input_text\":{";
+        bool firstQaMetadataInput = true;
+        for (const auto& [key, value] : state.qaMetadataInputText) {
+            if (!firstQaMetadataInput) result += ",";
+            firstQaMetadataInput = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
+        }
+        result += "},";
+        result += "\"qa_metadata_draft_query\":{";
+        bool firstQaMetadataDraft = true;
+        for (const auto& [key, value] : state.qaMetadataDraftQuery) {
+            if (!firstQaMetadataDraft) result += ",";
+            firstQaMetadataDraft = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
         }
         result += "},";
 #endif
@@ -6616,6 +6692,7 @@ static void PollQaCommandFile(AppState& state) {
                 {"selected_period",SelectedPeriod(state) ? (*SelectedPeriod(state) == Period::Day ? "day" : "night") : "off"},
                 {"theme",(int)state.settings.theme}, {"editor_open",state.showThemeEditor},
                 {"editor_period",state.themeScheduleEditorPeriod}, {"editor_status",ThemeScheduleEditorQaStatus()},
+                {"editor_ui",nlohmann::json::parse(ThemeScheduleEditorQaObservation())},
                 {"active_bg",ThemeColors::toARGBHex(ThemeColors::current().mainWindowBG)},
                 {"active_accent",ThemeColors::toARGBHex(ThemeColors::current().toolbarAccent)},
                 {"imgui_bg",ThemeColors::toARGBHex(ImGui::GetStyle().Colors[ImGuiCol_WindowBg])},
@@ -6922,18 +6999,18 @@ static void PollQaCommandFile(AppState& state) {
         std::string appliedKind;
         std::string appliedValue;
         if (!artist.empty()) {
-            strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
+            state.artistFilterBuffer = artist;
             state.artistFilterAlternates.clear();
             appliedKind = "artist";
             appliedValue = artist;
         }
         if (!album.empty()) {
-            strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
+            state.albumFilterBuffer = album;
             appliedKind = "album";
             appliedValue = album;
         }
         if (!category.empty()) {
-            strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            state.categoryFilterBuffer = category;
             appliedKind = "category";
             appliedValue = category;
         }
@@ -6955,10 +7032,10 @@ static void PollQaCommandFile(AppState& state) {
         }
 
     } else if (cmd == "clear_metadata_filter") {
-        state.artistFilterBuffer[0] = '\0';
+        state.artistFilterBuffer.clear();
         state.artistFilterAlternates.clear();
-        state.albumFilterBuffer[0] = '\0';
-        state.categoryFilterBuffer[0] = '\0';
+        state.albumFilterBuffer.clear();
+        state.categoryFilterBuffer.clear();
         state.formatFilterIndex = 0;
         cancelPendingSearchForQaMutation();
         state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
@@ -7375,14 +7452,14 @@ static void PollQaCommandFile(AppState& state) {
         }
         {
             DiagScopedTimer qaMetadataTimer("Filter", "metadataApply");
-            state.artistFilterBuffer[0] = '\0';
+            state.artistFilterBuffer.clear();
             state.artistFilterAlternates.clear();
-            state.albumFilterBuffer[0] = '\0';
-            state.categoryFilterBuffer[0] = '\0';
+            state.albumFilterBuffer.clear();
+            state.categoryFilterBuffer.clear();
             state.formatFilterIndex = 0;
-            if (!artist.empty()) strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
-            if (!album.empty()) strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
-            if (!category.empty()) strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            if (!artist.empty()) state.artistFilterBuffer = artist;
+            if (!album.empty()) state.albumFilterBuffer = album;
+            if (!category.empty()) state.categoryFilterBuffer = category;
             if (!format.empty()) state.formatFilterIndex = formatFilterIndexFromValue(format);
             DIAG_ACTION("Filter", "MetadataApply:stacked");
         }

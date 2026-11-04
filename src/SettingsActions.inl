@@ -87,15 +87,21 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
     } else if(editor.action=="custom-colors") {
         bool changed=false;
         changed|=ImGui::ColorEdit3(L(Set_BgColor),(float*)&state.settings.customBgColor,ImGuiColorEditFlags_NoInputs);
+        su::Observe("custom-bg");
         changed|=ImGui::ColorEdit3(L(Set_TextColor),(float*)&state.settings.customTextColor,ImGuiColorEditFlags_NoInputs);
+        su::Observe("custom-text");
         changed|=ImGui::ColorEdit3(L(Set_AccentColor),(float*)&state.settings.customAccentColor,ImGuiColorEditFlags_NoInputs);
+        su::Observe("custom-accent");
         changed|=ImGui::ColorEdit3(L(Set_WaveformColor),(float*)&state.settings.customWaveformColor,ImGuiColorEditFlags_NoInputs);
+        su::Observe("custom-waveform");
         changed|=ImGui::ColorEdit3(L(Set_VolumeColor),(float*)&state.settings.customVolumeColor,ImGuiColorEditFlags_NoInputs);
+        su::Observe("custom-volume");
         if(aura::ui::SmallActionButton(L(Set_ResetColors))){
             const AppSettings defaults;
             state.settings.customBgColor=defaults.customBgColor;state.settings.customTextColor=defaults.customTextColor;
             state.settings.customAccentColor=defaults.customAccentColor;state.settings.customWaveformColor=defaults.customWaveformColor;state.settings.customVolumeColor=defaults.customVolumeColor;changed=true;
         }
+        su::Observe("custom-reset");
         if(changed){if(state.settings.theme==AppTheme::Custom)state.settings.theme=AppTheme::Dark;state.settings.useCustomColors=true;schedule::OnManualThemeSelected(state);ThemeColors::deactivateCustomTheme();ThemeColors::markPendingUiChromeResync();MarkSettingsDirty(state);editor.Reset(state);}
     }
     if(!editor.error.empty())ImGui::TextWrapped("%s",editor.error.c_str());

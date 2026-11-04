@@ -107,7 +107,10 @@ inline std::string FoldAscii(std::string value) {
     return value;
 }
 inline bool Available(const Entry& entry, bool diagnostics, bool schedule, bool lufs) {
-    return (diagnostics || entry.page != Page::Diagnostics) &&
+    // Keep legacy field/translation identities, but expose only the unified mode.
+    return entry.id != "waveStyle" && entry.id != "miniRms" &&
+           (diagnostics || entry.page != Page::Diagnostics) &&
+           (!schedule || entry.id != "theme") &&
            (schedule || (entry.id != "day" && entry.id != "night")) &&
            (lufs || entry.id != "showLufs");
 }
