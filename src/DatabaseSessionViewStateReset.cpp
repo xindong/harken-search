@@ -17,10 +17,10 @@ void ResetDatabaseSessionViewState(AppState& state) {
     state.searchBuffer[0] = '\0';
     state.lastAppliedSearchText.clear();
     state.lastSearchSubmitted.clear();
-    state.artistFilterBuffer[0] = '\0';
+    state.artistFilterBuffer.clear();
     state.artistFilterAlternates.clear();
-    state.albumFilterBuffer[0] = '\0';
-    state.categoryFilterBuffer[0] = '\0';
+    state.albumFilterBuffer.clear();
+    state.categoryFilterBuffer.clear();
     state.formatFilterIndex = 0;
     state.channelFilterIndex = 0;
     state.minDurationFilter = 0.0f;

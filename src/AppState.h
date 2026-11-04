@@ -2513,10 +2513,10 @@ struct AppState {
     std::vector<std::string> folderSearchTokens;      // 搜索词按空格拆分的 token 列表（小写）
 
     // Metadata filters
-    char artistFilterBuffer[128] = "";
+    std::string artistFilterBuffer;
     std::vector<std::string> artistFilterAlternates;
-    char albumFilterBuffer[128] = "";
-    char categoryFilterBuffer[128] = "";
+    std::string albumFilterBuffer;
+    std::string categoryFilterBuffer;
     int formatFilterIndex = 0;
     int channelFilterIndex = 0;
     float minDurationFilter = 0.0f;
@@ -2529,6 +2529,10 @@ struct AppState {
 #if ARIS_PREVIEW_ISOLATION
     // Client-space rectangles from the last RenderUI frame for native QA clicks.
     std::map<std::string, ImVec4> qaFilterUiRects;
+    std::map<std::string, ImVec4> qaMetadataInputColors;
+    std::map<std::string, std::string> qaMetadataInputText;
+    std::map<std::string, std::string> qaMetadataDraftQuery;
+    bool qaAllowBackgroundKeybinding = false;
 #endif
 
     // Naming convention filter
@@ -3261,6 +3265,8 @@ struct AppState {
         std::vector<float> listRowOrigins, listRowHitHeights;
         std::vector<std::string> listRawNames, listRenderedNames;
         std::vector<bool> listRowDirectories;
+        int waveDrawFrame=-1, waveDrawStyle=-1, spectrumDrawFrame=-1;
+        ImVec4 waveDrawBounds{};
 #endif
     } qaRegions;
 };
