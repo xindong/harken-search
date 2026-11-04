@@ -1028,10 +1028,10 @@ struct AppSettings {
     std::string diagnosticListenCategory;  // 空=全部；非空=只记录该 category，避免缓冲爆满
 
     // Performance scheduling settings.
-    int memoryProfile = 1;            // 0=Eco(节能), 1=Balanced(均衡), 2=Ultra(性能), 3=Custom(自定义)
-    int fpsLimit = 60;                // 0=不限制, 30, 60, 120, 144
-    int thumbnailMaxResolution = 256; // 封面缩略图精度：128, 256, 512（默认 256 平衡清晰度与 GPU 内存）
-    int threadLimit = 0;              // 后台线程策略：0=自动, 1=单线程, -1=满载
+    int memoryProfile = 2;            // 默认高性能；0=节能, 1=均衡, 2=高性能, 3=自定义
+    int fpsLimit = 0;                 // 0=不限制, 30, 60, 120, 144
+    int thumbnailMaxResolution = 512; // 封面缩略图精度：128, 256, 512
+    int threadLimit = -1;             // 后台线程策略：0=自动, 1=单线程, -1=满载
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位

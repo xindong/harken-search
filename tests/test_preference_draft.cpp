@@ -1,4 +1,5 @@
 #include "PreferenceDraft.h"
+#include "PreferencePreview.h"
 #include "SettingsCatalog.h"
 #include <cassert>
 #include <cstdio>
@@ -16,6 +17,29 @@ int main() {
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
     using namespace harken::settings;
+    {
+        Preferences committed;
+        auto baseline=committed,draft=baseline;
+        draft.volume=24;
+        draft.realtime=false;
+        PreferencePreview<Preferences> preview{Field(&Preferences::volume),Field(&Preferences::device)};
+        committed.device="scheduled-runtime";
+        preview.Begin(committed,baseline,draft);
+        assert(committed.volume==24 && committed.device=="scheduled-runtime" && committed.realtime);
+        committed.windowWidth=1100;
+        auto persisted=preview.ForPersistence(committed);
+        assert(persisted.volume==80 && persisted.device=="scheduled-runtime" && persisted.windowWidth==1100);
+        preview.Restore(committed);
+        assert(committed.volume==80 && committed.windowWidth==1100 && !preview.Active());
+        preview.Begin(committed,baseline,draft);
+        preview.Begin(committed,baseline,baseline);
+        assert(committed.volume==80 && !preview.Active());
+        draft.device="preview";
+        preview.Begin(committed,baseline,draft);
+        assert(committed.device=="preview");
+        preview.Restore(committed);
+        assert(committed.device=="scheduled-runtime");
+    }
     g_currentLanguage = AppLanguage::Japanese;
     const auto volume = Search("  VOLUME  ", false);
     assert(std::any_of(volume.begin(), volume.end(), [](auto entry) { return entry->id == "volume"; }));

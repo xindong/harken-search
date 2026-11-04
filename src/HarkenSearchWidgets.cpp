@@ -437,7 +437,8 @@ bool TextInput(const char* label, std::string* value,
     }
     DrawFocusRing();
 
-    if (changed) *value = longBuffer.empty() ? buf : longBuffer.data();
+    // EnterReturnsTrue changes the return contract, not the edited buffer.
+    *value = longBuffer.empty() ? buf : longBuffer.data();
     if (opts.maxLength > 0 && (int)value->size() > opts.maxLength) {
         value->resize((size_t)opts.maxLength);
     }

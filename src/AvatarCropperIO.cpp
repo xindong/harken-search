@@ -6,6 +6,7 @@
 #include "AvatarCropper.h"
 #include "platform/filesystem.h"
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -75,4 +76,31 @@ bool SaveCroppedAvatarPng(const std::vector<uint8_t>& srcPixels,
     const bool flushed = writer.Flush();
     writer.Close();
     return encoded && writeOk && flushed;
+}
+
+bool SaveCroppedAvatarWithSettings(const std::vector<uint8_t>& srcPixels,
+                                  int srcW, int srcH, const AvatarCropState& crop,
+                                  const std::string& destPathUtf8,
+                                  const std::function<bool()>& saveSettings,
+                                  int outputSize) {
+    namespace fs = Platform::FileSystem;
+    const auto suffix = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto staged = destPathUtf8 + ".pending-" + suffix;
+    const auto backup = destPathUtf8 + ".backup-" + suffix;
+    const bool hadImage = fs::Exists(destPathUtf8);
+    if (hadImage && !fs::CopyFile(destPathUtf8, backup, false)) return false;
+    if (!SaveCroppedAvatarPng(srcPixels, srcW, srcH, crop, staged, outputSize) ||
+        !fs::AtomicFileReplace(destPathUtf8, staged)) {
+        fs::RemoveFile(staged);
+        if (hadImage) fs::RemoveFile(backup);
+        return false;
+    }
+    if (!saveSettings()) {
+        // Keep the backup if restoration fails so the old bytes remain recoverable.
+        if (hadImage) fs::AtomicFileReplace(destPathUtf8, backup);
+        else fs::RemoveFile(destPathUtf8);
+        return false;
+    }
+    if (hadImage) fs::RemoveFile(backup);
+    return true;
 }

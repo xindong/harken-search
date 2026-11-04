@@ -4788,6 +4788,7 @@ static void PollQaCommandFile(AppState& state) {
             if (action == "fail_save_once") su::failSaveOnce = true;
             if (action == "shortcut_test_background") state.qaAllowBackgroundKeybinding = getBool(raw,"enabled",false);
             if (action == "layout_restore_error") su::SettingsEditor().error=std::string(L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder))+" "+L(SetUX_OutputRestoreFailed);
+            if (action == "save_preview_frame") { su::previewSaveResult=false;su::savePreviewOnce=true; }
             if (action == "key") {
                 const auto name=getStr(raw,"key");
                 const bool down=getBool(raw,"down",false);
@@ -4812,6 +4813,8 @@ static void PollQaCommandFile(AppState& state) {
             for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
+                {"preview_save_result",su::previewSaveResult},
+                {"thesaurus_text_color",color(observation.thesaurusTextColor)},
                 {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
@@ -6651,9 +6654,9 @@ static void PollQaCommandFile(AppState& state) {
                 if (s_mainUiReady.load(std::memory_order_acquire) &&
                     std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < display.x && y < display.y &&
                     !s_magicEqQaPointer.pending &&
-                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || (phase == "up" && s_magicEqQaPointer.held))) {
+                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || ((phase == "up" || phase == "move") && s_magicEqQaPointer.held))) {
                     const auto* viewport = ImGui::GetMainViewport();
-                    s_magicEqQaPointer = {true, phase != "hover", phase == "down", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
+                    s_magicEqQaPointer = {true, phase != "hover" && phase != "move", phase == "down" || phase == "move", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
                     ok = true;
                 }
             }
@@ -13716,6 +13719,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Rebuild fonts before NewFrame so the active OpenGL texture is not destroyed.
         // Scheme B: dynamic UI scale (font rebuild + style scaling, debounced)
         harken::theme_schedule::Tick(state);
+        harken::settings::BeginAppearancePreview(state);
         UpdateImGuiUiScaleSchemeB(state);
 
         // Start ImGui frame
@@ -13999,6 +14003,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 #endif
         DevTools_BeginFramePhase("RenderUI");
         RenderUI(state);
+        harken::settings::EndAppearancePreview(state);
         GuardInfoMetadataContext(state);
         RenderInfoMetadataLeavePrompt(state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA

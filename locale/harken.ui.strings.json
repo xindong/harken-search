@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "AvatarCropHelp", "type": "ui", "zh": "拖动图片调整位置，滚轮或滑杆缩放", "en": "Drag to position. Scroll or use the slider to zoom.", "ja": "画像をドラッグして移動。ホイールかスライダーで拡大。"},
+    {"id": "AvatarCropZoom", "type": "ui", "zh": "缩放", "en": "Zoom", "ja": "拡大"},
+    {"id": "AvatarCropReset", "type": "ui", "zh": "重置", "en": "Reset", "ja": "リセット"},
+    {"id": "AvatarCropPreview", "type": "ui", "zh": "头像预览", "en": "Avatar preview", "ja": "プレビュー"},
+    {"id": "AvatarCropSaveFailed", "type": "ui", "zh": "保存失败，裁剪已保留，请检查头像目录后重试。", "en": "Save failed. Your crop is kept; check the avatar folder and retry.", "ja": "保存できません。切り抜きは保持されています。保存先を確認してください。"},
     {"id":"SetUX_OutputRestoreFailed","type":"ui","zh":"未能恢复原输出设备，请重新选择。修改仍保留。","en":"Could not restore the previous output device. Select a device again; your changes are kept.","ja":"元の出力デバイスを復元できません。選択し直してください。変更は保持されています。"},
     {"id":"SetUX_Theme","type":"ui","zh":"界面主题","en":"Interface theme","ja":"画面テーマ"},
     {"id":"SetUX_Day","type":"ui","zh":"白天主题 · 08:00–16:00","en":"Day theme · 08:00–16:00","ja":"昼のテーマ · 08:00–16:00"},
@@ -11474,13 +11479,6 @@
       "zh": "当前将显示的效果",
       "en": "This is how it will appear",
       "ja": "現在表示される効果"
-    },
-    {
-      "id": "Avatar_LoadingTooltip",
-      "type": "ui",
-      "zh": "自定义头像正在加载，暂时显示预制头像",
-      "en": "Custom avatar is loading; a built-in avatar is shown meanwhile",
-      "ja": "カスタムアバターを読み込み中です。一時的にプリセットアバターを表示しています"
     },
     {
       "id": "Crash_DlgTitle",
