@@ -1081,11 +1081,17 @@ if(WIN32)
         ${RESOURCE_FILES}
     )
 elseif(APPLE)
+    # Finder and Dock use the preserved official Search icon. Keep the Windows
+    # .ico and the application's in-window brand assets unchanged.
+    set(HARKEN_MACOS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/HarkenSearch.icns")
+    set_source_files_properties("${HARKEN_MACOS_ICON}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
     add_executable(HarkenSearch MACOSX_BUNDLE
         ${APP_SOURCES}
         ${IMGUI_SOURCES}
         ${SQLITE_SOURCES}
+        "${HARKEN_MACOS_ICON}"
     )
+    set_target_properties(HarkenSearch PROPERTIES MACOSX_BUNDLE_ICON_FILE "HarkenSearch.icns")
 else()
     add_executable(HarkenSearch
         ${APP_SOURCES}
