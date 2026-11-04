@@ -71,6 +71,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
 
 @interface HarkenOpenGLView : NSOpenGLView <NSDraggingDestination>
 - (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls;
+- (BOOL)acceptDatabaseURL:(NSURL*)url;
 @end
 @implementation HarkenOpenGLView
 - (BOOL)acceptsFirstResponder { return YES; }
@@ -91,20 +92,44 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     }
     return paths;
 }
-- (NSArray<NSURL*>*)folderURLsFromDraggingInfo:(id<NSDraggingInfo>)sender {
+- (NSString*)validatedDatabasePath:(NSArray<NSURL*>*)urls {
+    if (urls.count != 1 || !urls.firstObject.isFileURL) return nil;
+    NSString* path = urls.firstObject.path.stringByStandardizingPath;
+    BOOL directory = NO;
+    if (path.length == 0 || ![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] ||
+        directory || !path.UTF8String ||
+        ![[path.pathExtension lowercaseString] isEqualToString:@"db"]) return nil;
+    return path;
+}
+- (NSArray<NSURL*>*)fileURLsFromDraggingInfo:(id<NSDraggingInfo>)sender {
     NSPasteboard* pasteboard = [sender draggingPasteboard];
     NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
         options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-    return [self validatedFolderPaths:urls] ? urls : nil;
+    return urls.count > 0 && urls.count <= 20000 ? urls : nil;
 }
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    if (!g_appState || !g_appState->database.isOpen() ||
-        !([sender draggingSourceOperationMask] & NSDragOperationCopy)) return NSDragOperationNone;
-    return [self folderURLsFromDraggingInfo:sender] ? NSDragOperationCopy : NSDragOperationNone;
+    if (!g_appState || !([sender draggingSourceOperationMask] & NSDragOperationCopy))
+        return NSDragOperationNone;
+    NSArray<NSURL*>* urls = [self fileURLsFromDraggingInfo:sender];
+    if ([self validatedDatabasePath:urls] ||
+        (g_appState->database.isOpen() && [self validatedFolderPaths:urls]))
+        return NSDragOperationCopy;
+    return NSDragOperationNone;
 }
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
-    NSArray<NSURL*>* urls = [self folderURLsFromDraggingInfo:sender];
-    return urls && [self acceptFolderURLs:urls];
+    NSArray<NSURL*>* urls = [self fileURLsFromDraggingInfo:sender];
+    if (!urls) return NO;
+    if ([self validatedDatabasePath:urls]) return [self acceptDatabaseURL:urls.firstObject];
+    return [self acceptFolderURLs:urls];
+}
+- (BOOL)acceptDatabaseURL:(NSURL*)url {
+    if (!g_appState) return NO;
+    NSString* path = [self validatedDatabasePath:@[url]];
+    if (!path || !BeginSwitchDatabase(*g_appState, path.UTF8String)) return NO;
+    g_appState->lastDropFirstPath = path.UTF8String;
+    g_appState->lastDropTick = Platform::MonotonicMilliseconds();
+    g_appState->lastDropSummary = "Drop received: database=1";
+    return YES;
 }
 - (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls {
     if (!g_appState || !g_appState->database.isOpen()) return NO;

@@ -74,7 +74,7 @@ Request Poll(AppState& state) {
             }
             state.scanDialogAutoStart = true;
             state.showScanDialog = true;
-        } else if (action == "native_folder_drop") {
+        } else if (action == "native_folder_drop" || action == "native_database_drop") {
             if (command.contains("paths"))
                 request.dropPaths = command.at("paths").get<std::vector<std::string>>();
             else request.dropPaths = {command.at("path").get<std::string>()};
