@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "SearchQuery.h"
 #include "UiTextBuffer.h"
+#include "ThemeInspector.h"
 #include "Utils.h"
 #include "harken_user_data_layout.h"
 #include "nlohmann_json.hpp"
@@ -73,6 +74,14 @@ Request Poll(AppState& state) {
             }
             state.scanDialogAutoStart = true;
             state.showScanDialog = true;
+        } else if (action == "native_folder_drop") {
+            if (command.contains("paths"))
+                request.dropPaths = command.at("paths").get<std::vector<std::string>>();
+            else request.dropPaths = {command.at("path").get<std::string>()};
+            if (request.dropPaths.empty() || request.dropPaths.size() > 16)
+                throw std::runtime_error("invalid_drop_count");
+            for (const auto& path : request.dropPaths) RequireQaPath(path);
+            request.dropAttempted = true;
         } else if (action == "cancel_scan") {
             if (!state.isScanning.load()) throw std::runtime_error("scan_not_active");
             state.requestCancelScanTask();
@@ -336,6 +345,11 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
         Json filterRects = Json::object();
         for (const auto& [name, rect] : state.qaFilterUiRects)
             filterRects[name] = {rect.x, rect.y, rect.z, rect.w};
+        Json scanButtonRects = Json::object();
+        for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
+            if (zone.key == "scan.dialog.start" || zone.key == "scan.dialog.cancel")
+                scanButtonRects[zone.key] = {zone.minX, zone.minY, zone.maxX, zone.maxY};
+        }
         const auto display = ImGui::GetIO().DisplaySize;
         Json textureProbe;
         if (request.capture && state.spectrogramTexture != 0 &&
@@ -432,6 +446,12 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"playlist_aggregated",state.playlistAggregatedView},
             {"filters",{{"text",state.searchBuffer},{"folder",state.selectedFolderPath},
                 {"folder_active",state.folderFilterActive},{"cover_mode",state.coverFilterIndex}}},
+            {"native_drop",{{"attempted",request.dropAttempted},{"accepted",request.dropAccepted}}},
+            {"scan_dialog",{{"frame",ImGui::GetFrameCount()},
+                {"open",scanButtonRects.contains("scan.dialog.start")},
+                {"auto_start",state.scanDialogAutoStart},{"pending_folders",state.pendingScanFolders},
+                {"busy_notice",state.showScanBusyNotice},{"ignored_count",state.scanIgnoredDropCount},
+                {"buttons",scanButtonRects}}},
             {"scan",{{"active",state.isScanning.load()},{"pending",state.scanCompletionPending.load()},
                 {"stage",static_cast<int>(scan.stage)},{"generation",state.scanTaskGeneration.load()},{"discovered",scan.discovered},
                 {"processed",scan.processed},{"succeeded",scan.succeeded},{"failed",scan.failed},

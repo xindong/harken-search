@@ -19,6 +19,7 @@
 #include "../FileInfoPanel.h"
 #include "../Theme.h"
 #include "../ThemeSchedule.h"
+#include "../ThemeInspector.h"
 #include "../ModuleUI.h"
 #include "../CoverModule.h"
 #include "../DiagnosticsLogger.h"
@@ -68,16 +69,81 @@ int SnapMacFontSizePx(int requested) {
 }
 void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)mainWindow; }
 
-@interface HarkenOpenGLView : NSOpenGLView
+@interface HarkenOpenGLView : NSOpenGLView <NSDraggingDestination>
+- (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls;
 @end
 @implementation HarkenOpenGLView
 - (BOOL)acceptsFirstResponder { return YES; }
+- (NSArray<NSString*>*)validatedFolderPaths:(NSArray<NSURL*>*)urls {
+    if (urls.count == 0 || urls.count > 20000) return nil;
+    NSMutableArray<NSString*>* paths = [NSMutableArray arrayWithCapacity:urls.count];
+    NSMutableSet<NSString*>* seen = [NSMutableSet setWithCapacity:urls.count];
+    for (NSURL* url in urls) {
+        if (![url isFileURL]) return nil;
+        NSString* path = url.path.stringByStandardizingPath;
+        BOOL directory = NO;
+        if (path.length == 0 || ![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] ||
+            !directory || !path.UTF8String) return nil;
+        if (![seen containsObject:path]) {
+            [seen addObject:path];
+            [paths addObject:path];
+        }
+    }
+    return paths;
+}
+- (NSArray<NSURL*>*)folderURLsFromDraggingInfo:(id<NSDraggingInfo>)sender {
+    NSPasteboard* pasteboard = [sender draggingPasteboard];
+    NSArray<NSURL*>* urls = [pasteboard readObjectsForClasses:@[[NSURL class]]
+        options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    return [self validatedFolderPaths:urls] ? urls : nil;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if (!g_appState || !g_appState->database.isOpen() ||
+        !([sender draggingSourceOperationMask] & NSDragOperationCopy)) return NSDragOperationNone;
+    return [self folderURLsFromDraggingInfo:sender] ? NSDragOperationCopy : NSDragOperationNone;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray<NSURL*>* urls = [self folderURLsFromDraggingInfo:sender];
+    return urls && [self acceptFolderURLs:urls];
+}
+- (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls {
+    if (!g_appState || !g_appState->database.isOpen()) return NO;
+    NSArray<NSString*>* paths = [self validatedFolderPaths:urls];
+    if (!paths) return NO;
+    AppState& state = *g_appState;
+    if (state.isScanning.load() || state.scanCompletionPending.load()) {
+        state.scanDialogAutoStart = false;
+        state.scanIgnoredDropCount = static_cast<int>(paths.count);
+        state.showScanBusyNotice = true;
+        return YES;
+    }
+    state.pendingScanFolders.clear();
+    state.pendingScanFolders.reserve(paths.count);
+    for (NSString* path in paths) state.pendingScanFolders.emplace_back(path.UTF8String);
+    state.lastDropFirstPath = state.pendingScanFolders.front();
+    state.lastDropTick = Platform::MonotonicMilliseconds();
+    state.lastDropSummary = "Drop received: folders=" + std::to_string(state.pendingScanFolders.size()) +
+        ", audioFiles=0, recursive=" + (state.scanRecursive ? "on" : "off");
+    state.scanDialogAutoStart = false;
+    state.showScanDialog = true;
+    return YES;
+}
 - (void)prepareOpenGL {
     [super prepareOpenGL];
     GLint swapInterval = 1;
     [self.openGLContext setValues:&swapInterval forParameter:NSOpenGLContextParameterSwapInterval];
 }
 @end
+
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+@interface HarkenQaDraggingInfo : NSObject
+@property (nonatomic, strong) NSPasteboard* qaPasteboard;
+@end
+@implementation HarkenQaDraggingInfo
+- (NSPasteboard*)draggingPasteboard { return self.qaPasteboard; }
+- (NSDragOperation)draggingSourceOperationMask { return NSDragOperationCopy; }
+@end
+#endif
 
 @interface HarkenAppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate> {
     std::unique_ptr<AppState> state;
@@ -147,6 +213,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     if (!format) { [self failStartup:@"OpenGL 3.2 上下文不可用。"]; return; }
     self.glView = [[HarkenOpenGLView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height) pixelFormat:format];
     self.glView.wantsBestResolutionOpenGLSurface = YES;
+    [self.glView registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
     self.window.contentView = self.glView;
     [self.glView.openGLContext makeCurrentContext];
     if (!self.glView.openGLContext) { [self failStartup:@"无法创建 OpenGL 视图。"]; return; }
@@ -262,14 +329,36 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     ++frameCount;
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) MarkUiLeftClickNow();
     if (g_suppressImGuiDragTooltipFrames > 0) --g_suppressImGuiDragTooltipFrames;
-    const auto qaRequest = qaControl ? HarkenSearch::MacQa::Poll(*state) : HarkenSearch::MacQa::Request{};
+    auto qaRequest = qaControl ? HarkenSearch::MacQa::Poll(*state) : HarkenSearch::MacQa::Request{};
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (qaRequest.dropAttempted && qaRequest.error.empty()) {
+        NSPasteboard* pasteboard = [NSPasteboard pasteboardWithUniqueName];
+        NSMutableArray<NSURL*>* urls = [NSMutableArray arrayWithCapacity:qaRequest.dropPaths.size()];
+        for (const auto& path : qaRequest.dropPaths) {
+            NSString* nativePath = [NSString stringWithUTF8String:path.c_str()];
+            if (nativePath) [urls addObject:[NSURL fileURLWithPath:nativePath]];
+        }
+        HarkenQaDraggingInfo* info = [[HarkenQaDraggingInfo alloc] init];
+        info.qaPasteboard = pasteboard;
+        if (urls.count == qaRequest.dropPaths.size() && [pasteboard writeObjects:urls] &&
+            [self.glView draggingEntered:(id<NSDraggingInfo>)info] == NSDragOperationCopy) {
+            qaRequest.dropAccepted = [self.glView performDragOperation:(id<NSDraggingInfo>)info];
+        }
+        [pasteboard releaseGlobally];
+    }
+#endif
     PumpAppDatabaseAndAudio(*state);
     PumpAppScanRefresh(*state, ImGui::IsPopupOpen(L(Dlg_ScanFolder)));
     state->visibleFilePaths.clear();
     state->warmupFramesRemaining = std::max(0, 4 - frameCount);
     if (state->dbSwitchSettleFramesRemaining > 0) --state->dbSwitchSettleFramesRemaining;
     harken::theme_schedule::Tick(*state);
+    if (qaControl) {
+        ThemeInspector::SetBridgeCollectionEnabled(true);
+        ThemeInspector::BeginFrame();
+    }
     RenderUI(*state);
+    if (qaControl) ThemeInspector::EndFrame();
     GuardInfoMetadataContext(*state);
     RenderInfoMetadataLeavePrompt(*state);
     FlushSettingsDirty(*state);
