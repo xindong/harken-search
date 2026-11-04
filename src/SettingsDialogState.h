@@ -117,6 +117,7 @@ struct Observation {
     int frame=0; bool open=false, prompt=false; int page=0; size_t pending=0;
     float draftVolume=0; bool draftRealtime=false; int draftTheme=0;
     ImVec4 bounds{};
+    ImVec4 thesaurusTextColor{};
     std::vector<Item> items;
     std::vector<Text> texts;
 };
