@@ -77,7 +77,7 @@ def test_post_scan_similarity_index_waits_instead_of_dropping_busy_or_switch() -
 
 
 def test_post_scan_similarity_has_its_own_progress_and_result_surfaces() -> None:
-    start = MAIN.index("void StartBatchFeatureExtraction(AppState& state)")
+    start = MAIN.index("void StartBatchFeatureExtraction(AppState& state, bool recheckAll)")
     helper = MAIN[start : MAIN.index("void RenderUI(AppState& state)")]
     assert "OpenSimilarSoundsWindow" not in helper
     assert "Scan_SimIndexRunningBg" in LEDGER_IDS

@@ -24,6 +24,24 @@ int main() {
     results.Finish(false); s = results.Snapshot();
     CHECK(s.succeeded == 800 && s.failures[3] == 1 && s.Remaining() == 199);
     results.Clear(); CHECK(!results.Snapshot().available);
+    // A newer indexer reports cumulative outcomes; importing them must not
+    // double-count an acoustically saved file whose semantic analysis failed.
+    BatchFeatureResultSnapshot indexed;
+    indexed.available = true; indexed.running = true; indexed.total = 164;
+    indexed.succeeded = 35;
+    indexed.failures[static_cast<size_t>(BatchFeatureFailure::Empty)] = 1;
+    indexed.failures[static_cast<size_t>(BatchFeatureFailure::Model)] = 1;
+    indexed.failures[static_cast<size_t>(BatchFeatureFailure::Changed)] = 1;
+    results.Publish(indexed); s = results.Snapshot();
+    CHECK(s.running && s.Processed() == 38 && s.Remaining() == 126);
+    indexed.running = false; indexed.stopped = true; indexed.error = "library_read_failed";
+    results.Publish(indexed); s = results.Snapshot();
+    CHECK(!s.running && s.stopped && s.succeeded == 35 && s.Failed() == 3);
+    CHECK(s.error == "library_read_failed" && s.Remaining() == 126);
+    CHECK(s.failures[static_cast<size_t>(BatchFeatureFailure::Model)] == 1);
+    CHECK(s.failures[static_cast<size_t>(BatchFeatureFailure::Changed)] == 1);
+    results.Reset(1); s = results.Snapshot();
+    CHECK(s.running && s.total == 1 && s.Processed() == 0 && s.error.empty());
     std::cout << "PASS: real outcomes, cancellation remainder, reset and concurrent result counting\n";
 }
 #else

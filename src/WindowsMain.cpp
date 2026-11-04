@@ -5016,6 +5016,7 @@ static void PollQaCommandFile(AppState& state) {
 #if ARIS_PREVIEW_ISOLATION
         // A repeatable CLI seam for the real window and its app-owned task.
         // Only compile-time pinned preview builds may control these fixtures.
+        s_magicEqQaCollectUntilMs.store(Platform::MonotonicMilliseconds()+5000,std::memory_order_release);
         const std::string action = getStr(raw, "action");
         const bool isolated = !Platform::HarkenUserData::PreviewIsolationRootUtf8().empty() &&
             Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(GetHarkenSearchRuntimeRootUtf8()) &&
@@ -5030,10 +5031,12 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"error\":\"invalid_preview_layout\"}";
         } else if (action != "open" && action != "close" && action != "start" &&
                    action != "cancel" && action != "find" && action != "state" &&
-                   action != "pointer") {
+                   action != "pointer" && action != "configure" && action != "recheck") {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
+        } else if (action == "configure" && getInt(raw,"mode",1) != 1) {
+            result = "{\"ok\":false,\"error\":\"unsupported_similarity_mode\"}";
         } else if (action == "pointer") {
 #if AURA_BUILD_DIAGNOSTICS
             // App-owned input only over freshly observed Similar Sounds controls.
@@ -5050,15 +5053,22 @@ static void PollQaCommandFile(AppState& state) {
                     x >= item.min.x && x < item.max.x && y >= item.min.y && y < item.max.y) hit = true;
             }
             const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();
+            const auto controls = ThemeInspector::CopyLatestSnapshot();
+            for (const auto& zone : controls.zones) {
+                if ((zone.key == "similar.options.deep" || zone.key.rfind("similar.result.wave.",0)==0 ||
+                     zone.key.rfind("similar.result.file.",0)==0 ||
+                     zone.key.rfind("similar.index.",0)==0) && controls.frameNumber + 2 >= static_cast<uint64_t>(ImGui::GetFrameCount()) &&
+                    x >= zone.minX && x < zone.maxX && y >= zone.minY && y < zone.maxY) hit = true;
+            }
             if (!hit || !fresh || s_magicEqQaPointer.pending ||
-                (phase != "hover" && phase != "down" && phase != "up") ||
+                (phase != "hover" && phase != "down" && phase != "up" && phase != "move") ||
                 ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
-                (phase == "up" && !s_magicEqQaPointer.held)) {
+                ((phase == "up" || phase == "move") && !s_magicEqQaPointer.held)) {
                 result = R"({"ok":false,"error":"invalid_similar_control_pointer"})";
             } else {
                 s_magicEqQaPointer.active = true;
-                s_magicEqQaPointer.pending = phase != "hover";
-                s_magicEqQaPointer.held = phase == "down";
+                s_magicEqQaPointer.pending = phase == "down" || phase == "up";
+                s_magicEqQaPointer.held = phase == "down" || phase == "move";
                 s_magicEqQaPointer.x = x;
                 s_magicEqQaPointer.y = y;
                 s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
@@ -5081,16 +5091,49 @@ static void PollQaCommandFile(AppState& state) {
                 aura::ui::InvalidateSimilarSoundsWindow(state);
             } else if (action == "start") {
                 StartBatchFeatureExtraction(state);
+            } else if (action == "recheck") {
+                StartBatchFeatureExtraction(state, true);
             } else if (action == "cancel") {
                 state.batchFeatureCancelRequested.store(true);
+            } else if (action == "configure") {
+                const int preset = getInt(raw, "preset", static_cast<int>(state.similarSoundsPreset));
+                if (preset >= 0 && preset <= 4) {
+                    state.similarSoundsDeep = getBool(raw, "deep", state.similarSoundsDeep);
+                    state.similarSoundsPreset = static_cast<SimilarityPreset>(preset);
+                    if (state.similarSoundsWorkflow) state.similarSoundsWorkflow->Invalidate();
+                    state.similarSoundsSelectedRow = -1;
+                    state.settingsDirty = true; state.settingsDirtyAt = ImGui::GetTime();
+                }
             } else if (action == "find" && state.similarSoundsWorkflow &&
                        !state.batchFeatureExtracting.load()) {
-                state.similarSoundsWorkflow->RequestSearch(state.similarSoundsPreset, 50);
+                HarkenSearch::SimilarityOptions options;
+                options.mode = HarkenSearch::SimilarityMode::Substitute; options.deep = state.similarSoundsDeep; options.preset = state.similarSoundsPreset;
+                state.similarSoundsWorkflow->RequestSearch(options, 50);
             }
             const auto snapshot = state.similarSoundsWorkflow
                 ? state.similarSoundsWorkflow->Snapshot() : HarkenSearch::SimilarityWorkflowSnapshot{};
-            int indexed = 0, total = 0;
-            state.database.tryGetFeatureIndexCounts(indexed, total);
+            const auto counts = HarkenSearch::MakeFeatureIndexCountHandler(true)(state.currentDbPathUtf8, [] { return false; });
+            const int indexed = counts.indexed, total = counts.total;
+            nlohmann::json matches = nlohmann::json::array();
+            for (const auto& row : snapshot.rows) matches.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights},{"fingerprint",row.contentFingerprint}});
+            const nlohmann::json queryStats={{"scanned_files",snapshot.stats.scannedFiles},{"visited_segments",snapshot.stats.visitedSegments},
+                {"candidates",snapshot.stats.candidates},{"detailed_comparisons",snapshot.stats.detailedComparisons}};
+            nlohmann::json controlBounds = nlohmann::json::object();
+            for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
+                if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0 ||
+                    zone.key.rfind("similar.result.file.",0)==0 ||
+                    zone.key.rfind("similar.index.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
+            }
+            nlohmann::json batchSummary;
+            {
+                std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                const auto& report=state.batchFeatureResult;
+                batchSummary={{"saved",report.progress.saved},{"skipped",report.progress.skipped},{"failed",report.progress.failed},{"cancelled",report.cancelled},{"error",report.error},{"model_error",report.modelError}};
+            }
+            batchSummary["progress"] = state.batchFeatureProgress.load();
+            batchSummary["progress_total"] = state.batchFeatureTotal.load();
+            batchSummary["reused"] = state.batchFeatureSkipped.load();
+            batchSummary["analyzed"] = state.batchFeatureSaved.load();
             const bool completionNotice = state.panelSimilarSounds.visible &&
                 !state.batchFeatureExtracting.load() &&
                 !state.batchFeatureCancelRequested.load() && total > 0 && indexed == total &&
@@ -5098,12 +5141,26 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":true,\"cmd\":\"similar_index\",\"visible\":" +
                 std::string(state.panelSimilarSounds.visible ? "true" : "false") +
                 ",\"running\":" + (state.batchFeatureExtracting.load() ? "true" : "false") +
+                ",\"batch_start_generation\":" + std::to_string(state.batchFeatureStartGeneration.load()) +
                 ",\"cancel_requested\":" + (state.batchFeatureCancelRequested.load() ? "true" : "false") +
                 ",\"completion_notice\":" + (completionNotice ? "true" : "false") +
                 ",\"indexed\":" + std::to_string(indexed) +
+                ",\"semantic_indexed\":" + std::to_string(counts.semanticIndexed) +
+                ",\"mode\":" + std::to_string(static_cast<int>(HarkenSearch::SimilarityMode::Substitute)) +
+                ",\"deep\":" + (state.similarSoundsDeep ? "true" : "false") +
+                ",\"status\":" + std::to_string(static_cast<int>(snapshot.status)) +
+                ",\"error\":" + std::to_string(static_cast<int>(snapshot.error)) +
+                ",\"reference_id\":" + std::to_string(snapshot.reference.fileId) +
+                ",\"matches\":" + matches.dump() +
+                ",\"batch_number\":" + std::to_string(snapshot.batchNumber) +
+                ",\"query_stats\":" + queryStats.dump() +
+                ",\"controls\":" + controlBounds.dump() +
+                ",\"batch_summary\":" + batchSummary.dump() +
                 ",\"total\":" + std::to_string(total) +
                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
+                ",\"reused\":" + std::to_string(state.batchFeatureSkipped.load()) +
+                ",\"analyzed\":" + std::to_string(state.batchFeatureSaved.load()) +
                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
                 ",\"preset\":" + std::to_string(static_cast<int>(state.similarSoundsPreset)) +
                 ",\"open_popups\":" + std::to_string(ImGui::GetCurrentContext()->OpenPopupStack.Size) +
