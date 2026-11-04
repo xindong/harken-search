@@ -40628,7 +40628,10 @@ void RenderUI(AppState& state) {
         // Keep list text vertically centered, but cap vertical padding so large row heights
         // do not create oversized visual gaps between adjacent rows.
         const float listFontPx = listFont ? listFont->LegacySize : ImGui::GetFontSize();
-        const float targetRowHeight = (std::max)((float)state.settings.rowHeight, listFontPx + 4.0f);
+        ImFont* numericFont = GetUIFontMono();
+        const float numericFontPx = numericFont ? numericFont->LegacySize : listFontPx;
+        const float minimumTextHeight = (std::max)(listFontPx, numericFontPx);
+        const float targetRowHeight = (std::max)((float)state.settings.rowHeight, minimumTextHeight + 4.0f);
         const float idealListCellPadY = (std::max)(0.0f, floorf((targetRowHeight - listFontPx) * 0.5f));
         const float listCellPadY = (std::min)(idealListCellPadY, 2.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, listCellPadY));
@@ -40989,7 +40992,8 @@ void RenderUI(AppState& state) {
                     }
                 }
 
-                const float browserRowH = floorf(targetRowHeight);
+                // The setting includes cell padding; do not add it twice.
+                const float browserRowH = floorf(targetRowHeight) - listCellPadY * 2.0f;
                 const float actualBrowserRowH = browserRowH + listCellPadY * 2.0f;
 
                 // Auto-scroll to anchor file after DB->Browser jump
@@ -41087,10 +41091,29 @@ void RenderUI(AppState& state) {
                     ImGui::PushID(entryIndex);
                     // Exclude CellPadding so the row stays within the clipper estimate.
                     float browserSelectableHeight = browserRowH;
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(ImGui::GetStyle().ItemSpacing.x, listCellPadY * 2.0f));
                     const bool browserRowClicked = ImGui::Selectable(
                         label.c_str(), isSelected,
                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
                         ImVec2(0, browserSelectableHeight));
+                    ImGui::PopStyleVar();
+#if ARIS_PREVIEW_ISOLATION
+                    // Record visible browser rows at the actual filename widget.
+                    if (state.qaRegions.listTextFrame != ImGui::GetFrameCount()) {
+                        auto& qr = state.qaRegions;
+                        qr.listTextFrame = ImGui::GetFrameCount();
+                        qr.listTextFontPixels = ImGui::GetFontSize();
+                        qr.listTextLineHeight = ImGui::GetTextLineHeight();
+                        qr.listTextRowHeight = browserRowH;
+                        qr.listTextSample = label;
+                        qr.listRowOrigins.clear();qr.listRowHitHeights.clear();
+                    }
+                    if (state.qaRegions.listRowOrigins.size() < 8) {
+                        state.qaRegions.listRowOrigins.push_back(rowTopLeft.y);
+                        state.qaRegions.listRowHitHeights.push_back(ImGui::GetItemRectSize().y);
+                    }
+#endif
                     const std::string browserRowAnnotationKey =
                         "file.row.browser." + std::to_string(HashString64Local(entry.fullPath));
                     ThemeInspector::RegisterLastItem(
@@ -41440,9 +41463,8 @@ void RenderUI(AppState& state) {
                         // Use column available width to fill the column
                         float waveWidth = ImGui::GetContentRegionAvail().x;
                         if (waveWidth < 50.0f) waveWidth = 50.0f;
-                        // 波形高度 = 行高（CellPadding 由表格自动处理上下对称）
-                        float waveHeight = (float)state.settings.rowHeight;
-                        if (waveHeight < 24.0f) waveHeight = 24.0f;
+                        // Fit inside the row's content area, excluding cell padding.
+                        float waveHeight = browserRowH;
 
                         // Check cache for waveform
                         auto cacheIt = state.waveformCache.find(entry.fullPath);
@@ -41836,7 +41858,7 @@ void RenderUI(AppState& state) {
                     if (state.settings.showCoverColumn) {
                         ImGui::TableNextColumn();
                         if (!entry.isDirectory) {
-                            float imgSize = CoverImgSize(state.settings.rowHeight);
+                            float imgSize = CoverImgSize((int)browserRowH);
 
                             // 获取文件所在文件夹路径
                             std::string folderPath;
@@ -41850,7 +41872,7 @@ void RenderUI(AppState& state) {
                                 hasTex = CoverModule::GetFolderCoverTexture(folderPath, coverTex);
                             }
                             if (hasTex && coverTex.hasTexture && imgSize > 0.0f) {
-                                float yOff = std::max(0.0f, ((float)state.settings.rowHeight - imgSize) * 0.5f);
+                                float yOff = std::max(0.0f, (browserRowH - imgSize) * 0.5f);
                                 ImVec2 cursor = ImGui::GetCursorPos();
                                 ImGui::SetCursorPosY(cursor.y + yOff);
                                 ImGui::Image((ImTextureID)(intptr_t)coverTex.textureId, ImVec2(imgSize, imgSize));
@@ -41919,7 +41941,7 @@ void RenderUI(AppState& state) {
             } else {
                 // --- Database mode ---
                 // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动
-                const float fixedRowHeight = floorf(targetRowHeight);
+                const float fixedRowHeight = floorf(targetRowHeight) - listCellPadY * 2.0f;
                 const float actualRowHeight = fixedRowHeight + listCellPadY * 2.0f; // Row height including cell padding.
 
                 {
@@ -42101,9 +42123,12 @@ void RenderUI(AppState& state) {
                     // 若 Selectable 已含 padding 则实际行高 = actualRowHeight + listCellPadY*2，
                     // 与 Clipper 预设的 actualRowHeight 不匹配，导致滚动抖动。---
                     float selectableHeight = fixedRowHeight;
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(ImGui::GetStyle().ItemSpacing.x, listCellPadY * 2.0f));
                     bool rowSelectClicked = ImGui::Selectable(safeLabel.c_str(), isSelected,
                                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
                                         ImVec2(0, selectableHeight));
+                    ImGui::PopStyleVar();
                     const std::uint64_t databaseRowIdentity = record.id > 0
                         ? static_cast<std::uint64_t>(record.id)
                         : HashString64Local(record.filePath);
@@ -42129,6 +42154,12 @@ void RenderUI(AppState& state) {
                             qr.listTextLineHeight = nameLineH;
                             qr.listTextRowHeight = fixedRowHeight;
                             qr.listTextSample = dynamicDisplayName;
+                            qr.listRowOrigins.clear();
+                            qr.listRowHitHeights.clear();
+                        }
+                        if (state.qaRegions.listRowOrigins.size() < 8) {
+                            state.qaRegions.listRowOrigins.push_back(nameTextOrigin.y);
+                            state.qaRegions.listRowHitHeights.push_back(ImGui::GetItemRectSize().y);
                         }
 #endif
                     }
@@ -43113,7 +43144,7 @@ void RenderUI(AppState& state) {
                             waveCursor.x,
                             waveCursor.y,
                             ImGui::GetContentRegionAvail().x,
-                            (float)state.settings.rowHeight,
+                            fixedRowHeight,
                             paddingX);
                         const ImVec2 cellMin(waveLayout.minX, waveLayout.minY);
                         // 确保 cellW 严格等于单元格总宽度（含双倍 Padding）
@@ -43460,7 +43491,7 @@ void RenderUI(AppState& state) {
                     // Cover column (album art indicator)
                     if (state.settings.showCoverColumn) {
                         ImGui::TableNextColumn();
-                        float imgSize = CoverImgSize(state.settings.rowHeight);
+                        float imgSize = CoverImgSize((int)fixedRowHeight);
 
                         CoverModule::TextureHandle coverTex;
                         bool hasTex = false;
@@ -43529,7 +43560,7 @@ void RenderUI(AppState& state) {
                         }
 
                         if (hasTex && coverTex.hasTexture && imgSize > 0.0f) {
-                            float yOff = std::max(0.0f, ((float)state.settings.rowHeight - imgSize) * 0.5f);
+                            float yOff = std::max(0.0f, (fixedRowHeight - imgSize) * 0.5f);
                             ImVec2 cursor = ImGui::GetCursorPos();
                             ImGui::SetCursorPosY(cursor.y + yOff);
                             ImGui::Image((ImTextureID)(intptr_t)coverTex.textureId, ImVec2(imgSize, imgSize));

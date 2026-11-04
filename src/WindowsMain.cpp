@@ -4702,6 +4702,8 @@ static void PollQaCommandFile(AppState& state) {
                 {"drawn_list_frame",state.qaRegions.listTextFrame},{"drawn_list_font_pixels",state.qaRegions.listTextFontPixels},
                 {"drawn_list_line_height",state.qaRegions.listTextLineHeight},{"drawn_list_row_height",state.qaRegions.listTextRowHeight},
                 {"drawn_list_sample",state.qaRegions.listTextSample},
+                {"drawn_list_row_origins",state.qaRegions.listRowOrigins},{"drawn_list_hit_heights",state.qaRegions.listRowHitHeights},
+                {"mono_font_pixels",[]{ImGui::PushFont(GetUIFontMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"draft_language",(int)editor.app.Value().language},{"live_language",(int)state.settings.language},
                 {"rendered_language",(int)g_currentLanguage},{"rendered_texts",texts},
                 {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
