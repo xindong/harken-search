@@ -8280,12 +8280,12 @@ static bool DrawUnifiedSearchInput(
     options.width = width;
     options.inheritContextColors = inheritContextColors;
     const bool changed = aura::ui::TextInput(idLabel, &value, options);
-    if (!changed) return false;
-
+    // EnterReturnsTrue reports submission, not edits. Always synchronize the
+    // live text so realtime search can see it before Enter is pressed.
     if (value.size() >= bufSize) value.resize(bufSize - 1);
     std::memcpy(buf, value.data(), value.size());
     buf[value.size()] = '\0';
-    return true;
+    return changed;
 }
 
 struct SidebarMetadataPickerUiState {
