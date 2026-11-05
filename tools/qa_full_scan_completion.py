@@ -23,13 +23,16 @@ def run(args):
     import win32event
     import win32process
 
+    file_count = getattr(args, "files", 49)
+    if file_count < 1:
+        raise ValueError("--files must be positive")
     exe, root, out = args.exe.resolve(), args.isolation_root.resolve(), args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
     runtime = root / 'profile/runtime'
     runtime.mkdir(parents=True, exist_ok=True)
     fixture = root / ('scan-fixture-' + uuid.uuid4().hex[:8]) / 'zz-target'
     fixture.mkdir(parents=True)
-    for index in range(49):
+    for index in range(file_count):
         rate = 48000
         frames = array('h', (int(15000 * math.sin(2 * math.pi * (220 + index) * n / rate))
                             for n in range(rate)))
@@ -39,7 +42,7 @@ def run(args):
                 sound.writeframes(frames.tobytes())
             sound.writeframes(frames[:int(rate * (args.duration % 1))].tobytes())
     report = {'exe': str(exe), 'sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
-              'fixture': str(fixture), 'cases': [], 'passed': False}
+              'fixture': str(fixture), 'file_count': file_count, 'cases': [], 'passed': False}
     desktop = PrivateDesktop()
     process = None
     driver = Driver(runtime, out)
@@ -83,12 +86,13 @@ def run(args):
         database = Path(state['db_path']).resolve()
         database.relative_to(root)
         report['database'] = str(database)
-        expected_count = 49
+        expected_count = file_count
         if args.interrupt_fast:
+            interrupted_total = file_count + 5000
             tail = fixture.parent / 'tail'
             tail.mkdir()
             for index in range(5000):
-                os.link(fixture / f'voice-{index % 49:02}.wav', tail / f'tail-{index:05}.wav')
+                os.link(fixture / f'voice-{index % file_count:02}.wav', tail / f'tail-{index:05}.wav')
             start_scan(fixture.parent, False)
             until = time.monotonic() + 90
             while True:
@@ -97,12 +101,13 @@ def run(args):
                     admitted = db.execute('SELECT COUNT(*) FROM audio_files').fetchone()[0]
                     target_admitted = db.execute('SELECT COUNT(*) FROM audio_files WHERE file_name LIKE ?',
                                                  ('voice-%',)).fetchone()[0]
-                if status['scanning'] and 49 < admitted < 5049 and target_admitted == 49:
+                if (status['scanning'] and file_count < admitted < interrupted_total
+                        and target_admitted == file_count):
                     report['interrupted_fast'] = status
                     report['admitted_at_pause'] = admitted
                     driver.command({'cmd': 'qa_scan_pause_keep'})
                     break
-                if not status['scanning'] and status['processed'] == 5049:
+                if not status['scanning'] and status['processed'] == interrupted_total:
                     raise AssertionError('Fast scan finished before the target partial state was observed')
                 assert time.monotonic() < until, status
                 time.sleep(.04)
@@ -113,7 +118,7 @@ def run(args):
                 expected_count = db.execute('SELECT COUNT(*) FROM audio_files').fetchone()[0]
                 target_count = db.execute('SELECT COUNT(*) FROM audio_files WHERE file_name LIKE ?',
                                           ('voice-%',)).fetchone()[0]
-            assert target_count == 49 and 49 < expected_count < 5049, (target_count, expected_count)
+            assert (target_count == file_count and file_count < expected_count < interrupted_total), (target_count, expected_count)
             report['kept_after_interrupt'] = expected_count
             if args.restart_after_interruption:
                 driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
@@ -138,7 +143,7 @@ def run(args):
                     report['before_pause'] = status
                     driver.command({'cmd': 'qa_scan_pause_keep'})
                     break
-                if not status['scanning'] and status['processed'] == 49:
+                if not status['scanning'] and status['processed'] == file_count:
                     assert not args.pause_first, 'Full scan ended before pause could be exercised'
                     break
                 assert time.monotonic() < until, status
@@ -146,6 +151,7 @@ def run(args):
             while driver.command({'cmd': 'scan_status'})['scanning']:
                 assert time.monotonic() < until, 'Seed scan did not stop'
                 time.sleep(.04)
+            report['seed_scan'] = status
             dismiss_result()
         for case in ('initial-full', 'repeat-full'):
             observed = []
@@ -165,9 +171,12 @@ def run(args):
             else:
                 capture(driver, out / (case + '-stalled.png'))
                 raise AssertionError(f'{case}: full scan did not complete: {status}')
-            assert status['mini_waveforms_total'] == 49, status
-            assert status['mini_waveforms_completed'] == 49 and status['errors'] == 0, status
+            assert status['mini_waveforms_total'] == file_count, status
+            assert status['mini_waveforms_completed'] == file_count and status['errors'] == 0, status
             assert not status['scan_completion_pending'], status
+            assert status['scan_completion_mini_unresolved'] == 0, status
+            assert status['scan_completion_cover_unresolved'] == 0, status
+            assert status['scan_completion_metadata_unresolved'] == 0, status
             with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as db:
                 count = db.execute('SELECT COUNT(*) FROM audio_files').fetchone()[0]
                 pending = db.execute('SELECT COUNT(*) FROM scan_foreground_completion WHERE mini_state=0').fetchone()[0]
@@ -177,7 +186,7 @@ def run(args):
                                     'ON w.file_id=af.id WHERE af.file_name LIKE ? '
                                     'AND length(w.waveform_data) > 0', ('voice-%',)).fetchone()[0]
             assert count == expected_count and pending == 0, (count, pending)
-            assert cached == 49, f'Only {cached}/49 real mini blobs persisted'
+            assert cached == file_count, f'Only {cached}/{file_count} real mini blobs persisted'
             case_report.update(seconds=round(time.monotonic() - start, 3), count=count,
                                pending=pending, cached=cached)
             driver.command({'cmd': 'open_scan_dialog'})
@@ -226,7 +235,7 @@ def run(args):
         report['passed'] = report['passed'] and report.get('exit_code') == 0
         (out / 'result.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     assert report.get('exit_code') == 0 and 'cleanup_error' not in report, report
-    print('PASS: initial and repeated full scans complete all 49 mini waveforms; clean exit')
+    print(f'PASS: initial and repeated full scans complete all {file_count} mini waveforms; clean exit')
 
 
 if __name__ == '__main__':
@@ -236,6 +245,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--duration', type=float, default=.85)
+    parser.add_argument('--files', type=int, default=49)
     parser.add_argument('--fast-first', action='store_true')
     parser.add_argument('--pause-first', action='store_true')
     parser.add_argument('--interrupt-fast', action='store_true')

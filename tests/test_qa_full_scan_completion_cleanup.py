@@ -85,6 +85,9 @@ def prepare_run(tmp_path, monkeypatch, *, restart=False, complete=False, exit_co
             return {'scanning': self.scanning, 'scan_started_at_ms': self.started, 'processed': 100,
                     'scan_workflow_stage': 'completed', 'mini_waveforms_total': 49,
                     'mini_waveforms_completed': 49, 'errors': 0,
+                    'scan_completion_mini_unresolved': 0,
+                    'scan_completion_cover_unresolved': 0,
+                    'scan_completion_metadata_unresolved': 0,
                     'scan_completion_pending': False, 'total': self.total}
 
     def wait(handle, timeout):

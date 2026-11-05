@@ -1366,11 +1366,84 @@ int testWorkerPoolCompletesCoverAndWaveformPending() {
     return failures;
 }
 
+int testPendingJobsFollowNewScanSession() {
+    int failures = 0;
+    using namespace aura;
+    for (const auto kind : {BackfillJobKind::CoverResolveAndThumb,
+                            BackfillJobKind::WaveformL1Overview,
+                            BackfillJobKind::MetadataRefresh}) {
+        for (const auto oldPriority : {BackfillPriority::IdleBackfill,
+                                      BackfillPriority::RecentScan,
+                                      BackfillPriority::VisibleRow}) {
+            for (int dequeuePath = 0; dequeuePath < 3; ++dequeuePath) {
+                BackfillQueue queue;
+                queue.onDbOpened("pending-scan.db", 17);
+                queue.enqueueFromScan(42, kind, oldPriority, "pending-scan.db", 17, 1);
+                queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan,
+                                      "pending-scan.db", 17, 2);
+                // Generic enqueue must not erase the new foreground owner.
+                queue.enqueue(42, kind, BackfillPriority::IdleBackfill);
+                const auto pending = queue.snapshot();
+                const auto priority = oldPriority == BackfillPriority::VisibleRow
+                    ? oldPriority : BackfillPriority::RecentScan;
+                check(pending.totalEnqueued == 1 &&
+                          pending.byKind[static_cast<int>(kind)] == 1 &&
+                          pending.byPriority[static_cast<int>(priority)] == 1,
+                      "scan takeover preserves one pending job and its priority", failures);
+                BackfillJob job{};
+                const bool dequeued = dequeuePath == 0 ? queue.tryDequeue(job)
+                    : dequeuePath == 1 ? queue.tryDequeueKind(kind, job)
+                                       : queue.dequeue(job);
+                check(dequeued && job.scanSessionId == 2,
+                      "pending old-scan job completes for the new scan session", failures);
+                check(job.kind == kind && job.priority == priority && job.dbGeneration == 17,
+                      "scan takeover preserves kind, priority and database generation", failures);
+                queue.reportOutcome(job, BackfillCompletionOutcome::Success);
+                check(queue.snapshot().done == 1 && queue.snapshot().inFlight == 0 &&
+                          !queue.tryDequeue(job),
+                      "scan takeover executes once without a duplicate heap job", failures);
+                queue.shutdown();
+            }
+        }
+    }
+    return failures;
+}
+
+int testScanTakeoverPreservesInFlightOwnership() {
+    int failures = 0;
+    using namespace aura;
+    BackfillQueue queue;
+    queue.onDbOpened("inflight-scan.db", 18);
+    const auto kind = BackfillJobKind::WaveformL1Overview;
+    queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan, "inflight-scan.db", 18, 1);
+    BackfillJob running{};
+    check(queue.tryDequeue(running), "dequeue old scan job before new scan enqueue", failures);
+    queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan, "inflight-scan.db", 18, 2);
+    BackfillJob retry{};
+    check(!queue.tryDequeue(retry) && queue.snapshot().inFlight == 1,
+          "new scan does not duplicate an in-flight job", failures);
+    queue.reportOutcome(running, BackfillCompletionOutcome::TransientFailure);
+    check(queue.tryDequeue(retry) && retry.scanSessionId == 1,
+          "an in-flight result retains the session that submitted it", failures);
+    queue.reportOutcome(retry, BackfillCompletionOutcome::TransientFailure);
+    queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan, "inflight-scan.db", 18, 2);
+    check(queue.tryDequeue(retry) && retry.scanSessionId == 2,
+          "a requeued pending job can be claimed by the current scan", failures);
+    queue.reportOutcome(retry, BackfillCompletionOutcome::Success);
+    queue.shutdown();
+    return failures;
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     int failures = 0;
     std::cout << "=== Backfill Recovery/Worker Tests ===\n";
+    failures += testPendingJobsFollowNewScanSession();
+    failures += testScanTakeoverPreservesInFlightOwnership();
+    if (argc == 2 && std::string(argv[1]) == "--pending-scan-session") {
+        return failures == 0 ? 0 : 1;
+    }
     std::cout << "-- testRebuildAndRefillRecoverDurablePendingRows\n";
     failures += testRebuildAndRefillRecoverDurablePendingRows();
     std::cout << "-- testDurableRefillRearmsCachedRuntimeEntry\n";

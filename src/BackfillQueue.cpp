@@ -288,7 +288,15 @@ void BackfillQueue::enqueueLocked(int64_t          fileId,
         }
     }
     if (it != m_impl->index.end()) {
-        if (scanSessionId > 0 && it->second.scanSessionId == 0) {
+        // A fast scan may leave jobs queued when the next full scan starts.
+        // Deduplicate the work, but attach pending results to the new scan;
+        // otherwise the worker clears the durable row while only completing
+        // the old ledger, leaving the current scan waiting forever. Jobs
+        // already in flight retain their existing nonzero session identity.
+        // A durable refill must not override an explicit pending scan owner.
+        if (scanSessionId > 0 &&
+            (it->second.scanSessionId == 0 ||
+             (!durablePending && it->second.state == BackfillItemState::Pending))) {
             it->second.scanSessionId = scanSessionId;
         }
         // Already known. Dedup + promote-if-higher policy:
