@@ -30,6 +30,7 @@
 #include "harken_user_data_layout.h"
 #include "theme_custom_file.h"
 #include "macos_qa_bridge.h"
+#include "macos_file_drag.h"
 #include "filesystem.h"
 #include "system.h"
 #include <algorithm>
@@ -69,13 +70,78 @@ int SnapMacFontSizePx(int requested) {
 }
 void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)mainWindow; }
 
-@interface HarkenOpenGLView : NSOpenGLView <NSDraggingDestination>
+@interface HarkenOpenGLView : NSOpenGLView <NSDraggingDestination, NSDraggingSource>
+@property (nonatomic, strong) NSArray<NSDraggingItem*>* pendingFileDragItems;
+@property (nonatomic, assign) BOOL fileDragActive;
 - (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls;
 - (BOOL)acceptDatabaseURL:(NSURL*)url;
 - (BOOL)acceptAudioPaths:(NSArray<NSString*>*)paths;
+- (BOOL)queueFileDragURLs:(NSArray<NSURL*>*)urls;
+- (void)cancelPendingFileDrag;
 @end
 @implementation HarkenOpenGLView
 - (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)queueFileDragURLs:(NSArray<NSURL*>*)urls {
+    if (urls.count == 0 || self.pendingFileDragItems || self.fileDragActive) return NO;
+    NSPoint cursor = [self convertPoint:self.window.mouseLocationOutsideOfEventStream fromView:nil];
+    NSMutableArray<NSDraggingItem*>* items = [NSMutableArray arrayWithCapacity:urls.count];
+    for (NSURL* url in urls) {
+        NSDraggingItem* item = [[NSDraggingItem alloc] initWithPasteboardWriter:url];
+        if (!item) return NO;
+        NSImage* icon = [NSWorkspace.sharedWorkspace iconForFile:url.path];
+        [item setDraggingFrame:NSMakeRect(cursor.x - 24, cursor.y - 24, 48, 48)
+                       contents:icon];
+        [items addObject:item];
+#if !__has_feature(objc_arc)
+        [item release];
+#endif
+    }
+    self.pendingFileDragItems = items;
+    RecordStage("NativeFileDragQueued");
+    return YES;
+}
+- (void)cancelPendingFileDrag {
+    if (!self.pendingFileDragItems) return;
+    self.pendingFileDragItems = nil;
+    Platform::MacFileDrag::CompleteFileDrag(false);
+    RecordStage("NativeFileDragCancelledBeforeStart");
+}
+- (void)mouseDragged:(NSEvent*)event {
+    if (self.pendingFileDragItems && !self.fileDragActive) {
+        self.fileDragActive = YES;
+        NSDraggingSession* session = [self beginDraggingSessionWithItems:self.pendingFileDragItems
+                                                                   event:event source:self];
+        self.pendingFileDragItems = nil;
+        if (!session) {
+            self.fileDragActive = NO;
+            Platform::MacFileDrag::CompleteFileDrag(false);
+            RecordStage("NativeFileDragStartFailed");
+        } else {
+            RecordStage("NativeFileDragStarted");
+        }
+        return;
+    }
+    [super mouseDragged:event];
+}
+- (void)mouseUp:(NSEvent*)event {
+    [self cancelPendingFileDrag];
+    [super mouseUp:event];
+}
+- (NSDragOperation)draggingSession:(NSDraggingSession*)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    (void)session;
+    (void)context;
+    return NSDragOperationCopy;
+}
+- (void)draggingSession:(NSDraggingSession*)session endedAtPoint:(NSPoint)point
+    operation:(NSDragOperation)operation {
+    (void)session;
+    (void)point;
+    self.fileDragActive = NO;
+    const bool copied = (operation & NSDragOperationCopy) != 0;
+    Platform::MacFileDrag::CompleteFileDrag(copied);
+    RecordStage(copied ? "NativeFileDragCopyAccepted" : "NativeFileDragCancelled");
+}
 - (NSArray<NSString*>*)validatedFolderPaths:(NSArray<NSURL*>*)urls {
     if (urls.count == 0 || urls.count > 20000) return nil;
     NSMutableArray<NSString*>* paths = [NSMutableArray arrayWithCapacity:urls.count];
@@ -237,6 +303,40 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     [self.openGLContext setValues:&swapInterval forParameter:NSOpenGLContextParameterSwapInterval];
 }
 @end
+
+namespace Platform::MacFileDrag {
+bool QueueFileDrag(const std::vector<std::string>& paths, std::string& error) {
+    std::vector<PreparedFile> prepared;
+    if (!PrepareFileURLs(paths, prepared, error)) return false;
+    if (!mainWindow || ![mainWindow.contentView isKindOfClass:HarkenOpenGLView.class]) {
+        error = "应用窗口不可用，无法拖出音频";
+        return false;
+    }
+    NSMutableArray<NSURL*>* urls = [NSMutableArray arrayWithCapacity:prepared.size()];
+    for (const auto& file : prepared) {
+        NSString* urlString = [NSString stringWithUTF8String:file.fileUrl.c_str()];
+        NSURL* url = urlString ? [NSURL URLWithString:urlString] : nil;
+        if (!url.isFileURL) {
+            error = "无法生成音频文件拖放地址";
+            return false;
+        }
+        [urls addObject:url];
+    }
+    if (![(HarkenOpenGLView*)mainWindow.contentView queueFileDragURLs:urls]) {
+        error = "上一次拖放尚未结束";
+        return false;
+    }
+    return true;
+}
+size_t PendingFileCount() {
+    if (!mainWindow || ![mainWindow.contentView isKindOfClass:HarkenOpenGLView.class]) return 0;
+    return [(HarkenOpenGLView*)mainWindow.contentView pendingFileDragItems].count;
+}
+void CancelQueuedFileDrag() {
+    if (mainWindow && [mainWindow.contentView isKindOfClass:HarkenOpenGLView.class])
+        [(HarkenOpenGLView*)mainWindow.contentView cancelPendingFileDrag];
+}
+}
 
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 @interface HarkenQaDraggingInfo : NSObject
@@ -507,6 +607,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
 - (void)shutdown {
     if (closing) return;
     closing = true;
+    [self.glView cancelPendingFileDrag];
     [self.renderTimer invalidate];
     self.renderTimer = nil;
     [self.glView.openGLContext makeCurrentContext];

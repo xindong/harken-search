@@ -788,6 +788,7 @@ elseif(APPLE)
         src/platform/settings_file_macos.cpp
         src/platform/ui_diagnostics_macos.mm
         src/platform/macos_qa_bridge.cpp
+        src/platform/macos_file_drag.mm
         src/platform/app_entry_macos.mm
         src/main.cpp
     )

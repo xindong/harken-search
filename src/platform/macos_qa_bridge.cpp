@@ -9,6 +9,7 @@
 #include "ThemeInspector.h"
 #include "Utils.h"
 #include "harken_user_data_layout.h"
+#include "macos_file_drag.h"
 #include "nlohmann_json.hpp"
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 #include "SettingsDialogState.h"
@@ -257,6 +258,18 @@ Request Poll(AppState& state) {
             ScheduleDeferredWaveformDetail(state, row.filePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
             if (play) MarkFilePlayed(state, row.filePath, row.id);
             state.syncToTab();
+        } else if (action == "outbound_drag_probe") {
+            const auto path = command.at("path").get<std::string>();
+            RequireQaPath(path);
+            if (!state.database.isOpen() || !state.database.fileExists(path))
+                throw std::runtime_error("audio_not_in_library");
+            StartAudioFileDrag(state, path);
+        } else if (action == "outbound_region_drag_probe") {
+            if (!state.audioEngine.isLoaded()) throw std::runtime_error("audio_not_loaded");
+            RequireQaPath(state.audioEngine.getLoadedFilePath());
+            StartRegionDrag(state.audioEngine);
+        } else if (action == "outbound_drag_cancel") {
+            Platform::MacFileDrag::CancelQueuedFileDrag();
         } else if (action == "toggle_playback") {
             aris::frontend::AppStateAuditionFrontendAdapter(state).toggleVisibleFooterPlayback();
         } else if (action == "seek") {
@@ -435,6 +448,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"region",{{"start",state.audioEngine.getInPoint()},{"end",state.audioEngine.getOutPoint()},
                 {"fade_in",state.uiState.regionFadeInNorm},{"fade_out",state.uiState.regionFadeOutNorm}}},
             {"region_export",lastRegionExport},
+            {"outbound_drag_pending",Platform::MacFileDrag::PendingFileCount()},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},
             {"window",{{"width",display.x},{"height",display.y}}},
             {"active_sidebar_section",state.settings.activeSidebarSection},

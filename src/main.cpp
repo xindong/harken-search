@@ -59,6 +59,7 @@
 #ifdef __APPLE__
 #include "platform/settings_file.h"
 #include "platform/macos_qa_bridge.h"
+#include "platform/macos_file_drag.h"
 #endif
 
 #include "AudioEngine.h"
@@ -3452,6 +3453,37 @@ void StartFileDrag(const std::vector<std::string>& files) {
     }
 }
 
+#elif defined(__APPLE__)
+namespace Platform::MacFileDrag {
+void CompleteFileDrag(bool copied) {
+    if (ImGui::GetCurrentContext()) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMouseButtonEvent(0, false);
+        io.MouseDown[0] = false;
+    }
+    g_isDragging = false;
+    g_dragCompleted = true; // Prevent the completed gesture from changing selection.
+    ResetDragState();
+    AppendDiagLogF(L"Mac external file drag ended: copy=%d", copied ? 1 : 0);
+}
+}
+
+void StartFileDrag(const std::vector<std::string>& files) {
+    if (files.empty() || g_isDragging || g_dragInitiated) return;
+    std::string error;
+    if (!Platform::MacFileDrag::QueueFileDrag(files, error)) {
+        if (g_appState) {
+            g_appState->loadErrorToast = error.empty() ? L(Misc_DragFailed) : error;
+            g_appState->loadErrorToastUntil = ImGui::GetTime() + 6.0;
+        }
+        AppendDiagLogLine(L"Mac external file drag rejected before native session");
+        return;
+    }
+    MaybePausePlaybackOnInScopeDragStart();
+    g_isDragging = true;
+    g_dragInitiated = true;
+    g_suppressImGuiDragTooltipFrames = 120;
+}
 #else
 void StartFileDrag(const std::vector<std::string>& files) {
     if (files.empty() || g_dragInitiated) return;
@@ -3513,6 +3545,7 @@ static void TrackTempDragFile(const std::string& pathUtf8) {
 // Create a temp "alias" for a file so the DAW sees a different filename (suffix), without altering the original.
 static std::string CreateTempAliasForFile(const std::string& originalPathUtf8, const std::string& desiredFileNameUtf8) {
     std::string dirUtf8 = GetTempDragDirUtf8();
+    if (dirUtf8.empty()) return {};
     std::string dstUtf8 = dirUtf8 + desiredFileNameUtf8;
 
     std::wstring wSrc = Utf8ToWide(originalPathUtf8);
@@ -3764,6 +3797,7 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
         }
 
         std::string tempDir = GetTempDragDirUtf8();
+        if (tempDir.empty()) { outError = "Drag temporary directory unavailable"; return false; }
         std::string finalName = MakeUniqueDragName(tempDir, stem + suffix, ".wav");
         std::string tempFile = tempDir + finalName;
 
@@ -3848,6 +3882,7 @@ static bool ExportFileWithCurrentTransferProcessing(AudioEngine& currentEngine,
     std::string stem, ext;
     SplitFileNameUtf8(sourcePath, stem, ext);
     std::string tempDir = GetTempDragDirUtf8();
+    if (tempDir.empty()) { outError = "Drag temporary directory unavailable"; return false; }
     std::string finalName = MakeUniqueDragName(
         tempDir, stem + BuildTransferSuffix(processingSnapshot, includeRegion, keepHarkenSearchProcessingSuffix), ".wav");
     std::string tempFile = tempDir + finalName;
@@ -3931,7 +3966,9 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
         if (sourcePaths[i].empty()) continue;
 
         std::string normalizedPath = sourcePaths[i];
+#ifdef _WIN32
         std::replace(normalizedPath.begin(), normalizedPath.end(), '/', '\\');
+#endif
 
         const bool isCurrentFile = !currentPath.empty() && currentPath == normalizedPath;
         const bool includeRegionForThisFile = !multiSelect && isCurrentFile && hasRegion;

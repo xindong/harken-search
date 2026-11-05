@@ -4754,6 +4754,15 @@ aura_set_test_labels(TestPlatformDurableFileOpsReplaceDelete core)
 if(APPLE)
     set(HARKEN_MAC_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/Testing/macos-data" CACHE PATH
         "Isolated macOS data/settings test evidence directory")
+    add_executable(TestMacOutboundFileDrag EXCLUDE_FROM_ALL
+        tests/test_macos_outbound_file_drag.mm
+        src/platform/macos_file_drag.mm
+    )
+    target_include_directories(TestMacOutboundFileDrag PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacOutboundFileDrag PRIVATE cxx_std_17)
+    target_link_libraries(TestMacOutboundFileDrag PRIVATE "-framework AppKit")
+    add_test(NAME TestMacOutboundFileDrag COMMAND TestMacOutboundFileDrag "${HARKEN_MAC_TEST_ROOT}/outbound-drag")
+    aura_set_test_labels(TestMacOutboundFileDrag core)
     add_executable(TestMacUserDataLayout EXCLUDE_FROM_ALL
         tests/test_macos_user_data_layout.cpp
         src/platform/harken_user_data_layout_macos.mm
