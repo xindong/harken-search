@@ -14157,7 +14157,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                false,
+                state.settings.theme == AppTheme::LapisBlue,
                 false,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
