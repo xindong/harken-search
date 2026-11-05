@@ -13,6 +13,7 @@ from PIL import Image
 import win32con
 import win32gui
 from qa_folder_shortcuts import Driver, synthetic_audio
+from qa_scan_speed import contains_root_literal
 
 
 def scan(driver, folder):
@@ -50,6 +51,8 @@ def run(args):
     exe, isolation, output = (args.exe.resolve(), args.isolation_root.resolve(),
                               args.output.resolve())
     assert exe.is_file()
+    if not contains_root_literal(exe, isolation):
+        raise ValueError('Executable lacks the exact compiled isolation root; refusing launch')
     output.mkdir(parents=True, exist_ok=True)
     runtime = isolation / 'profile/runtime'
     runtime.mkdir(parents=True, exist_ok=True)
