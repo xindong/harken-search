@@ -78,7 +78,7 @@ inline bool PathIsInsideRoot(const std::string& pathNorm, const std::string& roo
     return sep == '\\' || sep == '/';
 }
 
-inline std::string LongestMatchingLibraryRoot(
+inline std::string OutermostMatchingLibraryRoot(
     const std::string& folderPath,
     const std::vector<std::string>& libraryRoots)
 {
@@ -89,7 +89,7 @@ inline std::string LongestMatchingLibraryRoot(
         const std::string preserved = NormalizeFolderPathPreserved(root);
         const std::string rootNorm = NormalizeFolderPathForCompare(root);
         if (!PathIsInsideRoot(pathNorm, rootNorm)) continue;
-        if (rootNorm.size() > bestNorm.size()) {
+        if (bestNorm.empty() || rootNorm.size() < bestNorm.size()) {
             bestNorm = rootNorm;
             bestPreserved = preserved;
         }
@@ -153,7 +153,7 @@ inline std::vector<FolderTreeLayer> BuildFolderTreeLayers(
 
     size_t start = 0;
     if (mode == PathMode::Pilot) {
-        const std::string matchedRoot = LongestMatchingLibraryRoot(preserved, libraryRoots);
+        const std::string matchedRoot = OutermostMatchingLibraryRoot(preserved, libraryRoots);
         if (!matchedRoot.empty()) {
             const std::vector<std::string> rootParts = SplitFolderPathSegments(matchedRoot);
             if (!rootParts.empty() && rootParts.size() <= parts.size()) {
