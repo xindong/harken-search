@@ -72,7 +72,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
 @interface HarkenOpenGLView : NSOpenGLView <NSDraggingDestination>
 - (BOOL)acceptFolderURLs:(NSArray<NSURL*>*)urls;
 - (BOOL)acceptDatabaseURL:(NSURL*)url;
-- (BOOL)acceptAudioURL:(NSURL*)url;
+- (BOOL)acceptAudioPaths:(NSArray<NSString*>*)paths;
 @end
 @implementation HarkenOpenGLView
 - (BOOL)acceptsFirstResponder { return YES; }
@@ -102,16 +102,28 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         ![[path.pathExtension lowercaseString] isEqualToString:@"db"]) return nil;
     return path;
 }
-- (NSString*)validatedAudioPath:(NSArray<NSURL*>*)urls {
-    if (urls.count != 1 || !urls.firstObject.isFileURL) return nil;
-    NSString* path = urls.firstObject.path.stringByStandardizingPath;
-    BOOL directory = NO;
-    if (path.length == 0 || ![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] ||
-        directory || !path.UTF8String) return nil;
-    NSString* extension = path.pathExtension.lowercaseString;
-    if (![@[@"wav", @"mp3", @"flac", @"ogg", @"aiff", @"aif", @"m4a", @"wma"]
-            containsObject:extension]) return nil;
-    return path;
+- (NSArray<NSString*>*)validatedAudioPaths:(NSArray<NSURL*>*)urls {
+    // Match the Windows direct-file drop bound; larger drops need a separate
+    // confirmed folder-scan flow rather than blocking this Cocoa callback.
+    if (urls.count == 0 || urls.count > 200) return nil;
+    NSMutableArray<NSString*>* paths = [NSMutableArray arrayWithCapacity:urls.count];
+    NSMutableSet<NSString*>* seen = [NSMutableSet setWithCapacity:urls.count];
+    for (NSURL* url in urls) {
+        if (!url.isFileURL) return nil;
+        NSString* path = url.path.stringByStandardizingPath;
+        BOOL directory = NO;
+        if (path.length == 0 ||
+            ![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] ||
+            directory || !path.UTF8String) return nil;
+        NSString* extension = path.pathExtension.lowercaseString;
+        if (![@[@"wav", @"mp3", @"flac", @"ogg", @"aiff", @"aif", @"m4a", @"wma"]
+                containsObject:extension]) return nil;
+        if (![seen containsObject:path]) {
+            [seen addObject:path];
+            [paths addObject:path];
+        }
+    }
+    return paths;
 }
 - (NSArray<NSURL*>*)fileURLsFromDraggingInfo:(id<NSDraggingInfo>)sender {
     NSPasteboard* pasteboard = [sender draggingPasteboard];
@@ -126,7 +138,7 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     if ([self validatedDatabasePath:urls] ||
         (g_appState->database.isOpen() && !g_appState->dbSwitchInProgress &&
          !g_appState->isScanning.load() && !g_appState->scanCompletionPending.load() &&
-         [self validatedAudioPath:urls]) ||
+         [self validatedAudioPaths:urls]) ||
         (g_appState->database.isOpen() && [self validatedFolderPaths:urls]))
         return NSDragOperationCopy;
     return NSDragOperationNone;
@@ -135,7 +147,8 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     NSArray<NSURL*>* urls = [self fileURLsFromDraggingInfo:sender];
     if (!urls) return NO;
     if ([self validatedDatabasePath:urls]) return [self acceptDatabaseURL:urls.firstObject];
-    if ([self validatedAudioPath:urls]) return [self acceptAudioURL:urls.firstObject];
+    NSArray<NSString*>* audioPaths = [self validatedAudioPaths:urls];
+    if (audioPaths) return [self acceptAudioPaths:audioPaths];
     return [self acceptFolderURLs:urls];
 }
 - (BOOL)acceptDatabaseURL:(NSURL*)url {
@@ -147,43 +160,48 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     g_appState->lastDropSummary = "Drop received: database=1";
     return YES;
 }
-- (BOOL)acceptAudioURL:(NSURL*)url {
+- (BOOL)acceptAudioPaths:(NSArray<NSString*>*)paths {
     if (!g_appState) return NO;
     AppState& state = *g_appState;
     if (!state.database.isOpen() || state.dbSwitchInProgress ||
-        state.isScanning.load() || state.scanCompletionPending.load()) return NO;
-    NSString* path = [self validatedAudioPath:@[url]];
-    if (!path) return NO;
-    const std::string filePath(path.UTF8String);
+        state.isScanning.load() || state.scanCompletionPending.load() || paths.count == 0)
+        return NO;
     state.scanDropImportedCount = 0;
     state.scanDropExistingCount = 0;
     state.scanDropFailedCount = 0;
-    try {
-        if (state.database.fileExists(filePath)) {
-            if (state.database.markFileAsManuallyImported(filePath))
-                ++state.scanDropExistingCount;
-            else
-                ++state.scanDropFailedCount;
-        } else {
-            AudioRecord record;
-            if (Database::readAudioRecordMetadataSnapshot(filePath, record) &&
-                state.database.addManuallyImportedFile(record)) {
-                ++state.scanDropImportedCount;
-                RefreshSearchResults(state, true);
+    std::string firstPlayablePath;
+    for (NSString* path in paths) {
+        const std::string filePath(path.UTF8String);
+        try {
+            if (state.database.fileExists(filePath)) {
+                if (state.database.markFileAsManuallyImported(filePath)) {
+                    ++state.scanDropExistingCount;
+                    if (firstPlayablePath.empty()) firstPlayablePath = filePath;
+                } else {
+                    ++state.scanDropFailedCount;
+                }
             } else {
-                ++state.scanDropFailedCount;
+                AudioRecord record;
+                if (Database::readAudioRecordMetadataSnapshot(filePath, record) &&
+                    state.database.addManuallyImportedFile(record)) {
+                    ++state.scanDropImportedCount;
+                    if (firstPlayablePath.empty()) firstPlayablePath = filePath;
+                } else {
+                    ++state.scanDropFailedCount;
+                }
             }
+        } catch (...) {
+            ++state.scanDropFailedCount;
         }
-    } catch (...) {
-        ++state.scanDropFailedCount;
     }
-    state.lastDropFirstPath = filePath;
+    if (state.scanDropImportedCount > 0) RefreshSearchResults(state, true);
+    state.lastDropFirstPath = paths.firstObject.UTF8String;
     state.lastDropTick = Platform::MonotonicMilliseconds();
-    state.lastDropSummary = "Drop received: folders=0, audioFiles=1";
+    state.lastDropSummary = "Drop received: folders=0, audioFiles=" + std::to_string(paths.count);
     state.showScanDropNotice = true;
-    if (state.scanDropImportedCount || state.scanDropExistingCount) {
-        state.audioEngine.loadFileAsync(filePath, true);
-        ScheduleDeferredWaveformDetail(state, filePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
+    if (!firstPlayablePath.empty()) {
+        state.audioEngine.loadFileAsync(firstPlayablePath, true);
+        ScheduleDeferredWaveformDetail(state, firstPlayablePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
         ResetWaveformZoom(state);
     }
     return YES;

@@ -54,7 +54,7 @@ def run(binary, root, output):
                          'AudioDrop-' + output.name in value['database'], 'library open', 60)
         database = state['database']
         assert row_count(database) == 0
-        for paths in ([str(plain)], [str(valid), str(broken)], [str(fixture), str(valid)]):
+        for paths in ([str(plain)], [str(valid), str(plain)], [str(fixture), str(valid)]):
             rejected = app.command('native_audio_drop', paths=paths)
             assert rejected['native_drop'] == {'attempted': True, 'accepted': False}, rejected
             assert row_count(database) == 0
