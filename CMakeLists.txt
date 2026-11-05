@@ -1101,7 +1101,19 @@ elseif(APPLE)
         ${SQLITE_SOURCES}
         "${HARKEN_MACOS_ICON}"
     )
-    set_target_properties(HarkenSearch PROPERTIES MACOSX_BUNDLE_ICON_FILE "HarkenSearch.icns")
+    set_target_properties(HarkenSearch PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE "HarkenSearch.icns"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.xd.harkensearch"
+        MACOSX_BUNDLE_BUNDLE_NAME "Harken Search"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_LONG_VERSION_STRING "Harken Search ${PROJECT_VERSION}"
+        MACOSX_BUNDLE_INFO_STRING "Harken Search ${PROJECT_VERSION}"
+    )
+    add_test(NAME TestMacBundleMetadata
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_macos_bundle_metadata.py"
+            --app "$<TARGET_BUNDLE_DIR:HarkenSearch>" --version "${PROJECT_VERSION}")
+    aura_set_test_labels(TestMacBundleMetadata core)
 else()
     add_executable(HarkenSearch
         ${APP_SOURCES}

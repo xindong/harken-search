@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -182,11 +183,11 @@ std::string CanonicalCoverKey(std::string_view rawKey)
     return std::string();
 }
 
-std::uint64_t ComputePerceptualHash(const unsigned char* data, std::uint64_t size)
+std::uint64_t ComputePerceptualHash(const unsigned char* data, std::size_t size)
 {
     if (!data || size == 0) return 0;
     std::uint64_t h = 1469598103934665603ull;
-    for (std::uint64_t i = 0; i < size; ++i) {
+    for (std::size_t i = 0; i < size; ++i) {
         h ^= static_cast<std::uint64_t>(data[i]);
         h *= 1099511628211ull;
     }

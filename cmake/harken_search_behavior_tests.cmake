@@ -1014,9 +1014,22 @@ target_include_directories(TestScanPauseResume PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+if(WIN32)
+    target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+elseif(APPLE)
+    target_sources(TestScanPauseResume PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_link_libraries(TestScanPauseResume PRIVATE
+        Threads::Threads
+        "-framework Foundation"
+        "-framework CoreServices"
+    )
+endif()
 target_compile_definitions(TestScanPauseResume PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    AURA_BUILD_DIAGNOSTICS=1
     AURA_TEST_SCAN_STALL_SECONDS=0
     AURA_TEST_SCAN_SLOW_WORKER_MS=120
 )
