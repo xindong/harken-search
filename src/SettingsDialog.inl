@@ -282,7 +282,12 @@
             ImGui::AlignTextToFramePadding();
             const char* entryLabel=entry.Label((int)g_currentLanguage);
             aura::ui::BeginSettingsSearchHighlight(editor.highlightId==id?editor.highlightQuery.c_str():"",entryLabel,entry.keywords.c_str());
+            // Keep the settings body readable while the label itself shows the
+            // exact draft reading size, including choices below the 18 px floor.
+            const bool previewSystemFont=id=="systemFont";
+            if(previewSystemFont)ImGui::PushFont(GetUIFontRegular(),static_cast<float>(std::clamp(draft.readingFontSize,10,24)));
             ImGui::PushTextWrapPos(controlX-20);aura::ui::DrawSettingsSearchableLabel(entryLabel);ImGui::PopTextWrapPos();
+            if(previewSystemFont){su::Observe("system-font-preview");ImGui::PopFont();}
             aura::ui::EndSettingsSearchHighlight();
             const float labelBottom=ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(controlX,rowY)); ImGui::SetNextItemWidth(controlW-2);

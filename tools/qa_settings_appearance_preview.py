@@ -116,8 +116,14 @@ def run(args):
         before=state();theme0=before['rendered_colors'];disk=profile.read_bytes()
         shot('00-baseline')
         if args.red:
-            choose_font(24);v=settle();shot('red-font-no-apply')
-            assert v['reading_font_pixels']==24,dict(expected=24,actual=v['reading_font_pixels'],draft=v['draft_font'])
+            for size in fonts:
+                choose_font(size);v=settle()
+                sample=next((i for i in v['items'] if i['id']=='system-font-preview'),None)
+                assert sample is not None and abs(sample['font_pixels']-size)<.1,dict(size=size,sample=sample)
+                assert v['reading_font_pixels']==size and v['live_font']==18,v
+                if size in (10,24):
+                    click('nav-1');settle();shot('font-preview-'+str(size))
+                check('system font label and main reading surface preview '+str(size)+'px without Apply')
             report['passed']=True;return
         for size in fonts:
             choose_font(size);choose_list(size);v=settle()
