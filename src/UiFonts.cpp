@@ -86,6 +86,17 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
     // Slightly brighten rasterization to match WebUI's softer/younger text feeling on dark backgrounds.
     uiConfig.RasterizerMultiply = 1.03f;
 
+    // PingFang's visible CJK ink is smaller than Arial's mixed-case text at
+    // the same nominal ImGui size. Compensate only the merged Mac glyphs;
+    // keep the base line height, Windows sources, and missing-font fallback.
+    auto cjkMergePixelSize = [](float baseSize) {
+#ifdef __APPLE__
+        return baseSize + 2.0f;
+#else
+        return baseSize;
+#endif
+    };
+
     // Extended Latin glyph range: default + symbols used in UI (stars, arrows, checkmarks, etc.)
     // Segoe UI on Windows 10/11 contains all these glyphs natively.
     static const ImWchar kExtendedLatinRanges[] = {
@@ -129,7 +140,7 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
             (void)AddFontFromCandidates(
                 io, uiRegularCjkMerge,
                 (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, mergeCjk, io.Fonts->GetGlyphRangesChineseFull());
+                cjkMergePixelSize(px), mergeCjk, io.Fonts->GetGlyphRangesChineseFull());
         }
         // Merge Lucide icons into THIS regular face at THIS size.
         aura::ui::MergeLucideFont(io.Fonts, px);
@@ -153,7 +164,7 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
             (void)AddFontFromCandidates(
                 io, uiEmphasisCjkMerge,
                 (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, mergeCjkEmphasis, io.Fonts->GetGlyphRangesChineseFull());
+                cjkMergePixelSize(px), mergeCjkEmphasis, io.Fonts->GetGlyphRangesChineseFull());
         }
 
         // Mono: +1px optical compensation.
@@ -199,7 +210,7 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
             io,
             uiRegularCjkMerge,
             (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
+            cjkMergePixelSize(listPx),
             mergeCjkList,
             io.Fonts->GetGlyphRangesChineseFull());
     }

@@ -19,6 +19,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 // The production playlist sidebar uses this action to enter a list or folder.
 void ActivatePlaylistView(AppState&, int64_t, bool, bool, int64_t);
@@ -27,6 +28,7 @@ namespace HarkenSearch::MacQa {
 namespace {
 using Json = nlohmann::json;
 bool thesaurusPageRequested = false;
+std::string browserTreeRootForQa;
 Json lastRegionExport;
 std::filesystem::path Root() {
     return std::filesystem::u8path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "runtime";
@@ -90,6 +92,17 @@ Request Poll(AppState& state) {
         } else if (action == "open") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             if (!BeginSwitchDatabase(state, path)) throw std::runtime_error("library_switch_failed");
+        } else if (action == "browser_folder") {
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            if (!std::filesystem::is_directory(std::filesystem::u8path(path)))
+                throw std::runtime_error("browser_folder_missing");
+            browserTreeRootForQa = path;
+            state.viewMode = ViewMode::Browser;
+            state.settings.activeSidebarSection = 1;
+            state.settings.showFolderTree = true;
+            state.fileBrowser.navigateTo(path);
+            state.fileBrowser.setScope(BrowserScope::CurrentDir);
+            std::snprintf(state.browserPathBuffer, sizeof(state.browserPathBuffer), "%s", path.c_str());
         } else if (action == "settings") {
             const float size = command.at("reading_font").get<float>();
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
@@ -320,6 +333,9 @@ bool ConsumeThesaurusPageRequest() {
     const bool requested = thesaurusPageRequested;
     thesaurusPageRequested = false;
     return requested;
+}
+const std::string& BrowserTreeRootForQa() {
+    return browserTreeRootForQa;
 }
 bool Reply(const AppState& state, const Request& request, bool captured) {
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA

@@ -13878,6 +13878,15 @@ static void RenderBrowserSystemFolderNode(AppState& state,
 }
 
 static void RenderBrowserSystemFolderTree(AppState& state) {
+#ifdef __APPLE__
+    // Only isolated QA control may replace the visible root with its own
+    // synthetic directory. Avoid traversing any real user or mounted volume.
+    const std::string& qaRoot = HarkenSearch::MacQa::BrowserTreeRootForQa();
+    if (!qaRoot.empty()) {
+        RenderBrowserSystemFolderNode(state, qaRoot, "font_tree");
+        return;
+    }
+#endif
     auto& roots = BrowserSystemFolderRoots();
     for (const auto& root : roots) {
         RenderBrowserSystemFolderNode(state, root.first, root.second);

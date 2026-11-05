@@ -20,4 +20,5 @@ struct Request {
 Request Poll(AppState& state);
 bool Reply(const AppState& state, const Request& request, bool captured);
 bool ConsumeThesaurusPageRequest();
+const std::string& BrowserTreeRootForQa();
 }
