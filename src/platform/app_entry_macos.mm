@@ -195,7 +195,10 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         }
     }
     if (state.scanDropImportedCount > 0) RefreshSearchResults(state, true);
-    state.lastDropFirstPath = paths.firstObject.UTF8String;
+    // The notice title reports successful imports first. Do not show a failed
+    // leading file as though it was one of those imports.
+    state.lastDropFirstPath = firstPlayablePath.empty()
+        ? std::string(paths.firstObject.UTF8String) : firstPlayablePath;
     state.lastDropTick = Platform::MonotonicMilliseconds();
     state.lastDropSummary = "Drop received: folders=0, audioFiles=" + std::to_string(paths.count);
     state.showScanDropNotice = true;
