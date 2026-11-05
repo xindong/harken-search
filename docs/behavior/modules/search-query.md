@@ -96,7 +96,7 @@
 
 ## Missing Coverage
 
-- Mac build limitation: TestSearchSemanticMatrix currently links Windows-only system libraries, so the Mac search card uses the real isolated application plus the portable parser tests. The target needs a separate platform-aware test-build fix.
+- TestSearchSemanticMatrix runs on macOS with its database under the preview isolation root (CV-F797C36F); the real isolated app remains the proof for rendered filter composition.
 - Missing proof: automatic `SearchLane` assertion for every major query family; this matches `DIAG-SEARCH-LANE` in TDD / QA Proof.
 - Suspected stale proof: any test that only checks parser output without DB execution pairing.
 - Human-only verification: visual chip edit ergonomics.

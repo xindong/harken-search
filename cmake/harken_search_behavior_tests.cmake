@@ -573,7 +573,6 @@ add_executable(TestSearchSemanticMatrix EXCLUDE_FROM_ALL
     src/WaveformExtractor.cpp
     src/NativeFloatReader.cpp
     src/platform/audio_data_source_miniaudio.cpp
-    src/platform/filesystem_win32.cpp
     src/TimeStretch.cpp
     ${SQLITE_SOURCES}
 )
@@ -584,7 +583,22 @@ target_include_directories(TestSearchSemanticMatrix PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+if(WIN32)
+    target_sources(TestSearchSemanticMatrix PRIVATE src/platform/filesystem_win32.cpp)
+    target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+elseif(APPLE)
+    target_sources(TestSearchSemanticMatrix PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_link_libraries(TestSearchSemanticMatrix PRIVATE
+        Threads::Threads
+        "-framework Foundation"
+        "-framework CoreServices"
+    )
+    # Keep the test-only AudioEngine and audio-playback declarations in sync.
+    target_compile_definitions(TestSearchSemanticMatrix PRIVATE AURA_BUILD_DIAGNOSTICS=0)
+endif()
 target_compile_definitions(TestSearchSemanticMatrix PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestSearchSemanticMatrix PRIVATE /W3 /MP /utf-8)
