@@ -101,14 +101,31 @@ int main() {
         const auto v2Handler = HarkenSearch::MakeFeatureIndexCountHandler(true);
         auto v2 = v2Handler(v2Path, [] { return false; });
         require(v2.success && v2.total == 2 && v2.indexed == 0, "V1-only library must show V2 analysis pending");
+        int availableProbes = 0, unavailableProbes = 0;
+        const auto availableHandler = HarkenSearch::MakeFeatureIndexCountHandler(true, [&] { ++availableProbes; return true; });
+        const auto unavailableHandler = HarkenSearch::MakeFeatureIndexCountHandler(true, [&] { ++unavailableProbes; return false; });
+        require(availableHandler(v2Path, [] { return false; }).pending == 2 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 2,
+            "all files await first analysis regardless of model availability");
         sqlite3_exec(writer, "CREATE TABLE harken_similarity_v2(file_id INTEGER PRIMARY KEY,file_path TEXT,version INTEGER,embedding BLOB,model_version TEXT);",nullptr,nullptr,nullptr);
         const std::string insertV2 = std::string("INSERT INTO harken_similarity_v2 VALUES(1,'a',2,zeroblob(2048),'") + HarkenSearch::kSimilarityModelRevision + "');";
         sqlite3_exec(writer, insertV2.c_str(),nullptr,nullptr,nullptr);
         v2 = v2Handler(v2Path, [] { return false; });
         require(v2.success && v2.total == 2 && v2.indexed == 1 && v2.semanticIndexed == 1, "V2 acoustic and semantic counts must match active model version");
+        require(availableHandler(v2Path, [] { return false; }).pending == 1 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 1,
+            "completed file is removed from the remaining count");
         sqlite3_exec(writer, "UPDATE harken_similarity_v2 SET model_version='old';",nullptr,nullptr,nullptr);
         v2 = v2Handler(v2Path, [] { return false; });
         require(v2.success && v2.indexed == 1 && v2.semanticIndexed == 0, "outdated semantic model cannot appear complete");
+        require(availableHandler(v2Path, [] { return false; }).pending == 2 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 1,
+            "semantic-only work counts when the model is ready, but not when it is unavailable");
+        sqlite3_exec(writer, "INSERT INTO harken_similarity_v2 VALUES(2,'b',2,NULL,'');",nullptr,nullptr,nullptr);
+        require(availableHandler(v2Path, [] { return false; }).pending == 2 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 0 &&
+                availableProbes == 1 && unavailableProbes == 1,
+            "acoustic-complete files do not inflate unavailable-model remainder and probe is cached");
         sqlite3_close(writer);
         // Reproduce the Windows library-replacement boundary with a real SQLite
         // reader. Cancellation is observable before its connection is released.

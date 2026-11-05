@@ -2,6 +2,7 @@
 #include "AudioEmbeddingService.h"
 #include "platform/thread_id.h"
 #include "sqlite3.h"
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -60,10 +61,20 @@ struct ReadOnlyCounter {
     }
 };
 }
-LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler(bool version2) {
-    return [version2](const std::string& path, const auto& cancel) {
+LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler(bool version2,
+                                                              std::function<bool()> semanticAvailable) {
+    return [version2, semanticAvailable = std::move(semanticAvailable),
+            modelReady = std::optional<bool>{}](const std::string& path, const auto& cancel) mutable {
         ReadOnlyCounter counter;
-        return counter.Count(path, cancel, version2);
+        auto result = counter.Count(path, cancel, version2);
+        if (result.success && version2) {
+            // The real indexer selects semantic gaps only when its model can load.
+            // Probe once on this worker thread; never load the model in a UI frame.
+            if (semanticAvailable && !modelReady) modelReady = semanticAvailable();
+            result.pending = std::max(0, result.total -
+                (modelReady.value_or(false) ? result.semanticIndexed : result.indexed));
+        }
+        return result;
     };
 }
 LibraryStatisticsWorker::LibraryStatisticsWorker(Handler handler)
