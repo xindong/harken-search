@@ -978,6 +978,7 @@ struct AppSettings {
     // Sidebar panel visibility
     bool showViewMode = true;
     bool showFolderTree = true;
+    bool showRelatedPaths = true;
     bool showMetadataFilter = true;
     bool showPlaylists = true;
     bool showPlaylistQuickBar = true;
