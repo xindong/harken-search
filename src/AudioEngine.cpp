@@ -4102,6 +4102,7 @@ void AudioEngine::setChannelSolo(int mode) {
 void AudioEngine::setMono(bool mono) {
     std::string path;
     bool shouldReload = false;
+    bool wasReversed = false;
     bool wasPlaying = false;
     float pos = 0.0f;
     float inPt = 0.0f;
@@ -4112,6 +4113,7 @@ void AudioEngine::setMono(bool mono) {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (mono && !m_transportEffectVisibility.mono) return;
         if (m_forceMono == mono) return;
+        wasReversed = m_reverse && m_transportEffectVisibility.reverse;
 
         if (mono) {
             m_panStereo = m_pan;
@@ -4142,6 +4144,9 @@ void AudioEngine::setMono(bool mono) {
         loadFile(path);
         setInPoint(inPt);
         setOutPoint(outPt);
+        // loadFile resets reverse playback. Keep the requested direction when
+        // changing channel count; the selection already uses that timeline.
+        if (wasReversed) (void)setReverse(true);
         seekToPosition(pos);
 
         // 优先直接复用 source detail 即时切显示

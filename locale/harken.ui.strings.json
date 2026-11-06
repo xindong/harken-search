@@ -25,7 +25,7 @@
     {"id":"SetUX_TransportMono","type":"ui","zh":"立体声／单声道","en":"Stereo / mono","ja":"ステレオ／モノラル"},
     {"id":"SetUX_TransportReverse","type":"ui","zh":"反转","en":"Reverse","ja":"逆再生"},
     {"id":"SetUX_TransportPan","type":"ui","zh":"Pan","en":"Pan","ja":"パン"},
-    {"id":"SetUX_TransportSoundstage","type":"ui","zh":"声场（含 BM）","en":"Soundstage (with BM)","ja":"音場（BM を含む）"},
+    {"id":"SetUX_TransportSoundstage","type":"ui","zh":"声场（含低频单声道）","en":"Soundstage (with BM)","ja":"音場（BM を含む）"},
     {"id":"SetUX_TransportEQ","type":"ui","zh":"EQ","en":"EQ","ja":"EQ"},
     {"id":"SetUX_TransportBypassOnApply","type":"ui","zh":"应用后旁通","en":"Bypass on apply","ja":"適用後にバイパス"},
     {"id":"SetUX_TransportBypassed","type":"ui","zh":"已旁通","en":"Bypassed","ja":"バイパス中"},

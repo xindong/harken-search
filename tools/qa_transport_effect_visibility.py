@@ -211,6 +211,23 @@ def run(args):
         record('processing fixture enables reverse, pan, soundstage, BM and EQ', state=active)
 
         open_settings()
+        for control, field in (('transportReverse', 'reverse'),
+                               ('transportPan', 'pan'),
+                               ('transportSoundstage', 'soundstage'),
+                               ('transportEQ', 'eq')):
+            toggle(control)
+            apply()
+            bypassed = effect()
+            assert not bypassed['visibility'][field], bypassed
+            assert export('only-' + field + '-hidden') != active_hash, field
+            toggle(control)
+            apply()
+            assert effect()['effective']['reverse'], field
+            assert export('only-' + field + '-restored') == active_hash, field
+        record('reverse, pan, soundstage and EQ each change exported audio alone')
+        click('done')
+
+        open_settings()
         for control in CONTROLS:
             toggle(control)
         assert all(effect()['visibility'].values()), 'Draft changed live playback'
@@ -301,6 +318,50 @@ def run(args):
         mono_restored = effect()
         assert mono_restored['requested']['mono'] and mono_restored['effective']['mono'], mono_restored
         record('mono is bypassed when hidden and restored when shown')
+
+        cmd(cmd='transport_audit_setup', scenario='mono-reverse')
+        both_active = effect()
+        assert both_active['effective']['mono'] and both_active['effective']['reverse'], both_active
+        both_hash = export('mono-reverse-active')
+        toggle('transportMono')
+        apply()
+        mono_only_hidden = effect()
+        assert not mono_only_hidden['effective']['mono'] and mono_only_hidden['effective']['reverse'], mono_only_hidden
+        toggle('transportMono')
+        apply()
+        assert export('mono-reverse-restored') == both_hash
+        record('hiding only mono preserves active reverse and the restored selection')
+
+        toggle('transportMono')
+        toggle('transportReverse')
+        apply()
+        both_hidden = effect()
+        assert both_hidden['requested']['mono'] and both_hidden['requested']['reverse'], both_hidden
+        assert not both_hidden['effective']['mono'] and not both_hidden['effective']['reverse'], both_hidden
+        toggle('transportMono')
+        toggle('transportReverse')
+        apply()
+        assert export('mono-reverse-both-restored') == both_hash
+        record('hiding mono and reverse together restores both and the selected audio')
+
+        settings_path = root / 'profile/Local/HarkenSearch/settings.ini'
+        assert settings_path.is_file(), settings_path
+        imported = root / 'imports/reverse-hidden.ini'
+        imported.parent.mkdir(parents=True, exist_ok=True)
+        lines = settings_path.read_text(encoding='utf-8').splitlines()
+        for setting_key, value in (('showTransportReverse', '0'),
+                                   ('reverseVisibilityRestore', '1')):
+            lines = [setting_key + '=' + value if line.startswith(setting_key + '=') else line
+                     for line in lines]
+            assert any(line == setting_key + '=' + value for line in lines), setting_key
+        imported.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        cmd(cmd='transport_effect_import', path=str(imported))
+        imported_state = effect()
+        assert imported_state['requested']['reverse'] and not imported_state['effective']['reverse'], imported_state
+        toggle('transportReverse')
+        apply()
+        assert effect()['effective']['reverse'], effect()
+        record('importing a hidden reverse setting bypasses current reverse and restores on show')
         click('done')
         report['passed'] = True
     except Exception:

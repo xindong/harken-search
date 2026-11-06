@@ -5830,6 +5830,17 @@ void LoadAppSettings(AppState& state) {
     transportVisibility.pan = ParseBool(kv["showTransportPan"], true);
     transportVisibility.soundstage = ParseBool(kv["showTransportSoundstage"], true);
     transportVisibility.eq = ParseBool(kv["showTransportEQ"], true);
+    if (!transportVisibility.reverse && state.audioEngine.isReversed()) {
+        // Importing settings into an active player must bypass reverse now.
+        // Keep the selected source interval aligned with the forward timeline.
+        const float in=state.audioEngine.getInPoint(), out=state.audioEngine.getOutPoint();
+        if (state.audioEngine.setReverse(false) &&
+            (in>0.0f || out<1.0f) && in<out) {
+            state.audioEngine.clearInOutPoints();
+            state.audioEngine.setInPoint(1.0f-out);
+            state.audioEngine.setOutPoint(1.0f-in);
+        }
+    }
     state.audioEngine.setTransportEffectVisibility(transportVisibility);
 
     // Audio mode and volume. Hidden mono retains its requested setting while

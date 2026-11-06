@@ -24,6 +24,16 @@
     };
     auto applyEffectVisibility=[&](const TransportEffectVisibility& before,
                                    const TransportEffectVisibility& after) {
+        // Reverse must be bypassed before a mono change reloads the file and
+        // clears its engine flag. Capture its requested state before either.
+        if (before.reverse && !after.reverse) {
+            state.hiddenReverseRestore=state.audioEngine.isReversed() || state.pendingReverseRestore;
+            state.pendingReverseRestore=false;
+            if (state.audioEngine.isReversed() && !setReverseForVisibility(false)) {
+                state.loadErrorToast=L(Player_ReverseFailed);
+                state.loadErrorToastUntil=ImGui::GetTime()+4.0;
+            }
+        }
         state.audioEngine.setTransportEffectVisibility(after);
         if (before.mono && !after.mono) {
             state.hiddenMonoRestore=state.audioEngine.isMono();
@@ -31,16 +41,7 @@
         } else if (!before.mono && after.mono) {
             state.audioEngine.setMono(state.hiddenMonoRestore);
         }
-        if (before.reverse && !after.reverse) {
-            state.hiddenReverseRestore=state.audioEngine.isReversed() || state.pendingReverseRestore;
-            state.pendingReverseRestore=false;
-            if (state.audioEngine.isReversed()) {
-                if (!setReverseForVisibility(false)) {
-                    state.loadErrorToast=L(Player_ReverseFailed);
-                    state.loadErrorToastUntil=ImGui::GetTime()+4.0;
-                }
-            }
-        } else if (!before.reverse && after.reverse && state.hiddenReverseRestore) {
+        if (!before.reverse && after.reverse && state.hiddenReverseRestore) {
             if (!state.audioEngine.isLoaded()) state.pendingReverseRestore=true;
             else if (!setReverseForVisibility(true)) state.pendingReverseRestore=true;
         }
