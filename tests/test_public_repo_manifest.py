@@ -383,8 +383,6 @@ AUDIT_INTERNAL_GLOBS = (
     "tools/daily_self_review*",
     "tools/*daily_self_review*",
     "tools/qa_provenance_manifest.py",
-    "scripts/slack_notify*",
-    "scripts/tests/test_slack_notify.py",
     "tests/test_cuevi_*",
     "tests/website/*",
 )
@@ -479,6 +477,11 @@ SQLITE3_ATTA_FALSE_POSITIVE = {
 
 # (posix path, normalized token) -> reason. Systematic full-scan false positives only.
 PUBLIC_INTERNAL_FEATURE_ALLOWLIST = {
+    (".github/workflows/pr-merge-notify.yml", "slack"): "Optional public notification integration; no private credentials or workspace IDs.",
+    ("scripts/slack_notify.py", "slack"): "Optional public notification integration; no private credentials or workspace IDs.",
+    ("scripts/tests/test_slack_notify.py", "slack"): "Optional public notification integration; no private credentials or workspace IDs.",
+    ("tests/test_slack_notification_workflow.py", "slack"): "Optional public notification integration; no private credentials or workspace IDs.",
+    ("docs/manual/SLACK_NOTIFICATIONS.md", "slack"): "Optional public notification integration; no private credentials or workspace IDs.",
     ("docs/legal/EULA.en.md", "governance"): "Legal text uses governance as a general legal term",
     ("docs/behavior/audition-plugin-chain-module-design.md", "cuevi"): "设计文档关联位置引用 Cuevi 卡片号",
     ("tests/test_preview_isolation_guard.cpp", "e:/xdgit"): "预览隔离守卫测试用 E:/XDGit 本机路径作为越界负例夹具",
@@ -724,7 +727,7 @@ class PublicRepoManifestTests(unittest.TestCase):
         ):
             self.assertIn(path, public)
         self.assertIn(".github/workflows/auto-merge.yml", public)
-        self.assertNotIn(".github/workflows/pr-merge-notify.yml", public)
+        self.assertIn(".github/workflows/pr-merge-notify.yml", public)
 
     def test_legal_facade_notice_security_and_code_of_conduct_ship_in_public_tree(self):
         # RQ-20260911-09: root NOTICE, public GitHub SECURITY.md, and
