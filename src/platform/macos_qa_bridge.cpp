@@ -461,6 +461,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
+            {"info_page_selected",state.settings.infoPages.selected},
             {"region",{{"start",state.audioEngine.getInPoint()},{"end",state.audioEngine.getOutPoint()},
                 {"fade_in",state.uiState.regionFadeInNorm},{"fade_out",state.uiState.regionFadeOutNorm}}},
             {"region_export",lastRegionExport},
