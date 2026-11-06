@@ -247,7 +247,7 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
-inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultReadingFontPx = 18;
 inline constexpr int kDefaultListFontPx = 18;
 
 // Reading-list rows: extra vertical px added to the reading font height before

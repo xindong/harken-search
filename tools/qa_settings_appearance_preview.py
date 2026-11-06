@@ -121,6 +121,8 @@ def run(args):
                 sample=next((i for i in v['items'] if i['id']=='system-font-preview'),None)
                 assert sample is not None and abs(sample['font_pixels']-size)<.1,dict(size=size,sample=sample)
                 assert v['reading_font_pixels']==size and v['live_font']==18,v
+                search=next((i for i in v['items'] if i['id']=='search'),None)
+                assert search is not None and abs(search['font_pixels']-size)<.1,dict(size=size,search=search)
                 if size in (10,24):
                     click('nav-1');settle();shot('font-preview-'+str(size))
                 check('system font label and main reading surface preview '+str(size)+'px without Apply')
