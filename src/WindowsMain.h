@@ -14,6 +14,7 @@
 
 #ifdef _WIN32
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -163,7 +164,7 @@ bool ClearDiagnosticFile();
 // Settings
 void LoadAppSettings(AppState& state);
 void SaveAppSettings(const AppState& state);
-bool TrySaveAppSettings(const AppState& state);
+bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride = std::nullopt);
 // 仅加载音频相关键，供引擎初始化前调用（缓冲周期、输出设备索引）
 void LoadAudioSettingsEarly(AppState& state);
 void PushRecentDbPath(AppState& state, const std::string& pathUtf8);

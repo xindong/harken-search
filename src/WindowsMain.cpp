@@ -4435,6 +4435,42 @@ static void PollQaCommandFile(AppState& state) {
         }
 
 #if ARIS_PREVIEW_ISOLATION
+    } else if (cmd == "transport_effect_state") {
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto visibility = state.settings.transportEffectVisibility;
+            const auto effective = state.audioEngine.captureTransferProcessingSnapshot();
+            const auto requestedEQ = state.audioEngine.getMagicEQUserSettings();
+            std::ostringstream out;
+            out << std::boolalpha
+                << "{\"ok\":true,\"visibility\":{\"mono\":" << visibility.mono
+                << ",\"reverse\":" << visibility.reverse << ",\"pan\":" << visibility.pan
+                << ",\"soundstage\":" << visibility.soundstage << ",\"eq\":" << visibility.eq
+                << "},\"requested\":{\"mono\":" << (visibility.mono ? state.audioEngine.isMono() : state.hiddenMonoRestore)
+                << ",\"reverse\":" << (visibility.reverse ? state.audioEngine.isReversed() || state.pendingReverseRestore : state.hiddenReverseRestore)
+                << ",\"pan\":" << state.audioEngine.getRequestedPan()
+                << ",\"centerSense\":" << state.audioEngine.getCenterSense()
+                << ",\"bassMonoFreq\":" << state.audioEngine.getBassMonoFreq()
+                << ",\"eq\":" << requestedEQ.enabled
+                << "},\"effective\":{\"mono\":" << effective.mono
+                << ",\"reverse\":" << effective.reverse << ",\"pan\":" << effective.pan
+                << ",\"centerSense\":" << effective.centerSense
+                << ",\"bassMonoFreq\":" << effective.bassMonoFreqHz
+                << ",\"eq\":" << effective.magicEQ.enabled << "}}";
+            result = out.str();
+        }
+    } else if (cmd == "transport_effect_export") {
+        const std::string output = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(output)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string input = state.audioEngine.getLoadedFilePath();
+            result = !input.empty() && state.audioEngine.exportFileProcessed(input, output)
+                ? R"({"ok":true,"cmd":"transport_effect_export"})"
+                : R"({"ok":false,"error":"transport_effect_export_failed"})";
+        }
     } else if (cmd == "info_page_state" || cmd == "info_page_pointer" || cmd == "info_page_layout" || cmd == "info_edit_input") {
         // Real ImGui input, restricted to this compile-time isolated QA package.
         // Never moves the operating-system cursor or targets another process.
