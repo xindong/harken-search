@@ -41735,13 +41735,10 @@ void RenderUI(AppState& state) {
                             } else {
                                 g_pendingMiniWaveTextureScheduler.scheduleFrontCoalescedByPath(entry.fullPath, (int)waveWidth, (int)waveHeight);
                                 g_pendingMiniWaveTextureScheduler.trimBackExcess(kMaxPendingMiniWaveTextures);
-                                if (ImGui::GetTime() - g_lastScrollOrInputTime < 0.25) {
-                                    ImGui::Dummy(ImVec2(waveWidth, waveHeight));
-                                    float cy = wavePos.y + waveHeight / 2.0f;
-                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(wavePos.x, cy), ImVec2(wavePos.x + waveWidth, cy), IM_COL32(50, 50, 55, 60));
-                                } else {
-                                    DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, waveWidth, waveHeight);
-                                }
+                                // The data is ready even if its GPU texture was evicted.
+                                // Keep the row visible during scrolling instead of
+                                // flashing back to a placeholder for 250 ms.
+                                DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, waveWidth, waveHeight);
                             }
 
                             // Click to play and seek - works for any file
@@ -43418,13 +43415,9 @@ void RenderUI(AppState& state) {
                             } else {
                                 g_pendingMiniWaveTextureScheduler.scheduleFrontCoalescedByPath(record.filePath, (int)cellW, (int)cellH);
                                 g_pendingMiniWaveTextureScheduler.trimBackExcess(kMaxPendingMiniWaveTextures);
-                                if (ImGui::GetTime() - g_lastScrollOrInputTime < 0.25) {
-                                    ImGui::Dummy(ImVec2(cellW, cellH));
-                                    float cy = cellMin.y + cellH / 2.0f;
-                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(cellMin.x, cy), ImVec2(cellMin.x + cellW, cy), IM_COL32(50, 50, 55, 60));
-                                } else {
-                                    DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, cellW, cellH);
-                                }
+                                // Use the ready CPU waveform while the texture is
+                                // queued, including during rapid scrolling.
+                                DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, cellW, cellH);
                             }
                         } else {
                             MiniWaveTextureEntry retained;
