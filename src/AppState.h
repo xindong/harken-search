@@ -812,6 +812,7 @@ struct AppSettings {
     int audioOutputDeviceIndex = -1;  // -1 = 系统默认
     std::string audioOutputDeviceName; // stable guard for persisted output-device index
     int audioPeriodSizeMs = 10;       // 缓冲周期 (ms)，5/10/20/50，重启后生效
+    TransportEffectVisibility transportEffectVisibility{};
 
     // --- 播放行为层 ---
     PlaybackMode playbackMode = PlaybackMode::SingleClick;
@@ -1596,6 +1597,11 @@ enum class SuggestMode { None, WordSuggest, CmdMenu, ValuePick };
 
 struct AppState {
     AudioEngine audioEngine;
+    // Mono and reverse need a real playback reload to bypass. Keep their
+    // requested state here while their transport controls are hidden.
+    bool hiddenMonoRestore = false;
+    bool hiddenReverseRestore = false;
+    bool pendingReverseRestore = false;
     FileBrowser fileBrowser;
     Database database;
     // AppState owns these workers; shared_ptr keeps unrelated state-only test
