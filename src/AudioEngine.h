@@ -394,6 +394,9 @@ public:
     bool isPaused() const;
     bool isLoaded() const;
     uint32_t getEngineSampleRate() const;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+    Platform::AudioPlayback::OutputProbeSnapshot getQaOutputProbe() const;
+#endif
     float getPlaybackPosition() const;  // 0.0 - 1.0
     float getOutputLatencyInSeconds() const;
     float getCurrentTimeSeconds() const;

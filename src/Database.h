@@ -577,6 +577,10 @@ public:
 
     // File indexing
     bool addFile(const AudioRecord& record);
+    // Explicit user file drops stay in the library when a later scan adds a
+    // different root. The marker is for this file, never its parent folder.
+    bool addManuallyImportedFile(const AudioRecord& record);
+    bool markFileAsManuallyImported(const std::string& filePath);
     bool updateFile(const AudioRecord& record);
     bool probeAudioFileInfo(const std::string& filePath,
                             uint32_t& sampleRate,
@@ -1622,6 +1626,7 @@ public:
     std::unordered_map<std::string, CountMemCacheEntry> m_countMemCache;
     int64_t m_cachedFileCount = -1;
     uint64_t m_cachedFileCountRevision = 0;
+    int64_t m_cachedFileCountDataVersion = -1;
     std::chrono::steady_clock::time_point m_cachedFileCountTime{};
     std::string m_blobsDbPath; // 封面数据库路径（blobs.db）
     std::string m_waveformsDbPath; // 波形数据库路径（waveforms.db）

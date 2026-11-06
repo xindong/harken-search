@@ -6,6 +6,13 @@
 
 Windows 程序和安装器使用根目录 HarkenSearch.ico；工具栏使用 assets/icons/brand/ 内现有名称；官网使用同源 favicon.ico 和 apple-touch-icon.png。横版品牌字标单独维护，不用方形应用图标替换。
 
+macOS Finder/Dock 图标使用同一 Search 橙色 PNG 原件生成的 resources/HarkenSearch.icns，仅打入 Mac 应用包：
+
+    python tools/generate_macos_app_icon.py
+    python tools/generate_macos_app_icon.py --check
+
+生成脚本需要 macOS 自带 iconutil；不会修改 Windows .ico、工具栏图标或官网资源。
+
 在仓库根目录执行（需要 Pillow）：
 
     python tools/generate_harken_app_icons.py

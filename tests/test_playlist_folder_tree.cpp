@@ -114,13 +114,29 @@ int main() {
               fullTree.fileCount == 4,
           "playlist folder tree uses the complete member set, not the loaded page");
 
-    auto fxFiltered = FilterPlaylistRecordsByFolder(records, true, "H:/Sound effect/FX");
+    // Folder comparisons use the host's native path grammar. Keep the Windows
+    // fixture above for tree display, and use POSIX paths for Mac filtering.
+#ifdef _WIN32
+    const auto& filterRecords = records;
+    const std::string filterRoot = "H:/Sound effect/FX";
+#else
+    const std::vector<AudioRecord> nativeRecords = {
+        record(1, "/Volumes/Sound effect/FX/Fire/Scrape_01.wav"),
+        record(2, "/Volumes/Sound effect/FX/Fire/Scrape_02.wav"),
+        record(3, "/Volumes/Sound effect/FX/Whoosh/Whoosh_01.wav"),
+        record(4, "/Volumes/Sound effect/Impacts/Hit_01.wav"),
+    };
+    const auto& filterRecords = nativeRecords;
+    const std::string filterRoot = "/Volumes/Sound effect/FX";
+#endif
+    auto fxFiltered = FilterPlaylistRecordsByFolder(filterRecords, true, filterRoot);
     check(fxFiltered.size() == 3, "playlist sidebar folder filter includes descendants");
-    auto fireFiltered = FilterPlaylistRecordsByFolder(records, true, "H:/Sound effect/FX/Fire");
+    auto fireFiltered = FilterPlaylistRecordsByFolder(filterRecords, true, filterRoot + "/Fire");
     check(fireFiltered.size() == 2, "playlist sidebar folder filter matches selected leaf folder");
-    auto inactiveFiltered = FilterPlaylistRecordsByFolder(records, false, "H:/Sound effect/FX/Fire");
-    check(inactiveFiltered.size() == records.size(), "inactive playlist folder filter keeps all playlist files");
+    auto inactiveFiltered = FilterPlaylistRecordsByFolder(filterRecords, false, filterRoot + "/Fire");
+    check(inactiveFiltered.size() == filterRecords.size(), "inactive playlist folder filter keeps all playlist files");
 
+#ifdef _WIN32
     const std::vector<AudioRecord> longPrefixFolderOnly = {
         record(5, "", "\\\\?\\H:\\Sound effect\\Pseudo"),
     };
@@ -132,6 +148,17 @@ int main() {
         ? childNamed(*longPrefixSound, "pseudo") : nullptr;
     check(longPrefixPseudo != nullptr && longPrefixPseudo->displayName == "Pseudo",
           "folder-only long-path records do not expose the \\\\?\\ prefix in tree labels");
+#else
+    const FolderInfo nativeFolderOnly = BuildPlaylistFolderTreeFromRecords(
+        {record(5, "", "/Volumes/Sound effect/Pseudo")});
+    const FolderInfo* nativeVolume = childNamed(nativeFolderOnly, "Volumes");
+    const FolderInfo* nativeSound = nativeVolume
+        ? childNamed(*nativeVolume, "Sound effect") : nullptr;
+    const FolderInfo* nativePseudo = nativeSound
+        ? childNamed(*nativeSound, "Pseudo") : nullptr;
+    check(nativePseudo != nullptr && nativePseudo->displayName == "Pseudo",
+          "folder-only POSIX records preserve display labels");
+#endif
 
     // Evidence class: conversion stub in tests/playlist_folder_tree_path_conversion_stub.cpp.
     // Not the product Utils.cpp converter.
