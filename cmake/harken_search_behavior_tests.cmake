@@ -7227,6 +7227,9 @@ else()
     target_sources(TestFeatureExtractor PRIVATE
         src/platform/text_encoding_std.cpp
         src/platform/filesystem_std.cpp
+        tests/test_settings_encryption_layout_stub.cpp
+        tests/test_utils_credentials_stub.cpp
+        tests/test_platform_exe_dir_stub.cpp
     )
 endif()
 target_include_directories(TestFeatureExtractor PRIVATE
@@ -7375,10 +7378,6 @@ add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/audio_playback_miniaudio.cpp
-    src/platform/media_foundation_audio_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/emergency_file_writer_win32.cpp
-    src/platform/thread_id_win32.cpp
     ${SQLITE_SOURCES}
 )
 target_include_directories(TestSimilarityQueryService PRIVATE
@@ -7387,9 +7386,7 @@ target_include_directories(TestSimilarityQueryService PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSimilarityQueryService PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm Threads::Threads
-)
+target_link_libraries(TestSimilarityQueryService PRIVATE Threads::Threads)
 target_compile_definitions(TestSimilarityQueryService PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURO_TEST_REAL_SIMILARITY_WORKFLOW=1
@@ -7400,15 +7397,33 @@ if(WIN32)
         src/platform/filesystem_win32.cpp
         src/platform/text_encoding_win32.cpp
         src/platform/search_text_gb2312_win32.cpp
+        src/platform/media_foundation_audio_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/emergency_file_writer_win32.cpp
+        src/platform/thread_id_win32.cpp
     )
     target_link_libraries(TestSimilarityQueryService PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
         mfplat mfreadwrite mfuuid
     )
 else()
     target_sources(TestSimilarityQueryService PRIVATE
         src/platform/text_encoding_std.cpp
         src/platform/search_text_gb2312_std.cpp
+        src/platform/media_foundation_audio_unsupported.cpp
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/emergency_file_writer_std.cpp
+        src/platform/thread_id_std.cpp
     )
+    if(APPLE)
+        target_sources(TestSimilarityQueryService PRIVATE
+            src/platform/harken_user_data_layout_macos.mm
+            src/platform/macos_file_io.cpp
+        )
+        target_link_libraries(TestSimilarityQueryService PRIVATE
+            "-framework Foundation" "-framework CoreServices")
+    endif()
+    target_compile_definitions(TestSimilarityQueryService PRIVATE AURA_BUILD_DIAGNOSTICS=0)
 endif()
 if(MSVC)
     target_compile_options(TestSimilarityQueryService PRIVATE /W3 /MP /utf-8)

@@ -60,6 +60,7 @@ jobs:
           TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
           TestUiPortableServices TestDatabaseSwitchWorkerRuntime TestDatabaseSwitchBlockingOperation
           TestScanWaveformCacheContract TestScanPauseResume TestSearchSemanticMatrix
+          TestSimilaritySearch TestSimilarityQueryService
           TestSearchWorkspace TestPlaylistFolderTree TestSubPlaylists
           TestBackgroundIoPolicy TestScanWorkflowState TestScanDialogPresentation TestCoverDiscovery
           TestRegionExportPathSafety TestThemeColors
@@ -70,6 +71,8 @@ jobs:
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
+      - name: Run similarity portability tests
+        run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestSimilarity(Search|QueryService)$"
       - name: Run region export source safety test
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestRegionExportPathSafety$"
       - name: Run theme JSON import regression
