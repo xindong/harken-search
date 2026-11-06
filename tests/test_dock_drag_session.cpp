@@ -4,6 +4,58 @@
 
 int main() {
     using namespace aura::ui::dock;
+    // Results live in the workspace, not in a fifth/narrow side leaf.
+    {
+        DockLayout layout;
+        layout.InsertModule("filter", DockSide::Left, .24f);
+        layout.InsertModule("info", DockSide::Right, .28f);
+        const DockLayout homeLayout = layout;
+        layout.EnsureFloat("search-results");
+        const DockLayout floatingLayout = layout;
+        const DockRect work{0, 0, 1600, 1000};
+        DockCenterDropTarget center{{262, 64, 1010, 644}, DockSide::Left, true};
+        center.restoreSearchResults = true;
+        DockRootSlots slots{};
+        for (const DockRect probe : {DockRect{767, 74, 1, 1}, DockRect{767, 386, 1, 1}}) {
+            const DockHit hit = HitDockTarget(probe, work, 80, nullptr, 0, &slots, &layout, &center);
+            if (hit.kind != DockHitKind::ResultsHome || !SameDockRect(hit.resultRect, center.rect)) return 330;
+            const auto plan = PlanReadableDockDrop(layout, hit, "search-results", work, 64, 200, slots);
+            if (!plan.accepted || plan.tooSmall || !SameDockRect(plan.hit.resultRect, center.rect)) return 331;
+            if (!layout.Equals(floatingLayout)) return 332;
+            if (PlanReadableDockDrop(layout, hit, "info", work, 64, 200, slots).accepted) return 333;
+            DockDragSession session(layout);
+            if (!session.BeginDrag("search-results")) return 334;
+            session.UpdatePreview(plan.hit);
+            session.Cancel();
+            if (!layout.Equals(floatingLayout)) return 335;
+            if (!session.BeginDrag("search-results")) return 336;
+            session.UpdatePreview(plan.hit);
+            session.CommitOnMouseUp();
+            if (!layout.Equals(homeLayout)) return 337;
+            layout.EnsureFloat("search-results");
+        }
+        center.restoreSearchResults = false;
+        if (HitDockTarget({767, 386, 1, 1}, work, 80, nullptr, 0, &slots, &layout, &center).kind != DockHitKind::None) return 338;
+        center.restoreSearchResults = true;
+        if (HitDockTarget({767, 800, 1, 1}, work, 80, nullptr, 0, &slots, &layout, &center).kind == DockHitKind::ResultsHome) return 339;
+        bool floating = true;
+        RestoreSearchResultsHome(layout, floating);
+        if (floating || !layout.Equals(homeLayout)) return 340;
+        for (auto side : {DockSide::Left, DockSide::Right, DockSide::Top, DockSide::Bottom}) {
+            layout.InsertModule("search-results", side, .5f);
+            RestoreSearchResultsHome(layout, floating);
+            // Compare the rendered regions, not the legacy last-edited root snapshot.
+            if (floating || layout.Find("search-results") || layout.FindFloat("search-results") ||
+                layout.HasEmptySplit() || layout.CountInRootRegion(DockSide::Left) != 1 ||
+                layout.ShallowestModuleInRootRegion(DockSide::Left) != "filter" ||
+                layout.CountInRootRegion(DockSide::Right) != 1 ||
+                layout.ShallowestModuleInRootRegion(DockSide::Right) != "info" ||
+                layout.RegionRoot(DockSide::Top) || layout.RegionRoot(DockSide::Bottom)) return 341;
+        }
+        const DockLayout restored = layout;
+        RestoreSearchResultsHome(layout, floating);
+        if (!layout.Equals(restored)) return 342;
+    }
     for (const char* id : {"filter", "info", "similar-sounds", "search-results",
                           "mod-ucs-browser", "mod-tag-browser", "mod-workflow", "mod-transfer"}) {
         for (DockSide side : {DockSide::Top, DockSide::Bottom}) {

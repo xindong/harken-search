@@ -8,6 +8,37 @@ SCAN = MAIN.split("// Scan folder dialog", 1)[1].split("// New playlist dialog",
 SETUP = SCAN.split("auto startScanForFolders", 1)[0]
 
 
+def test_completion_refresh_runtime_regression_is_registered():
+    cmake = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
+    entry = cmake.split("add_test(NAME TestScanDialogSimpleContract", 1)[1].split("aura_set_test_labels", 1)[0]
+    assert "tests/test_scan_completion_refresh_runtime.py" in entry
+
+
+def test_completion_refresh_publishes_final_mini_count_before_releasing_gate():
+    # The final backfill can finish between the Windows and RenderUI reads.
+    # Either reader may release the gate, after which neither refresh runs.
+    windows = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+    for source, signature, next_function in (
+        (MAIN, "static void RefreshScanCompletionState(AppState& state)",
+         "static void DrawSpectrogramReadoutOverlay"),
+        (windows, "static void RefreshScanCompletionStateForQa(AppState& state)",
+         "static bool BeginFolderScan"),
+    ):
+        refresh = source.split(signature, 1)[1].split(next_function, 1)[0]
+        publish = re.search(
+            r"state\.setScanMiniWaveformProgress\(\s*"
+            r"waveformCompletionRequired \? counts\.miniTerminal : 0,\s*"
+            r"waveformCompletionRequired \? counts\.total : 0\);",
+            refresh,
+        )
+        assert publish is not None, signature + " leaves the last mini count stale"
+        assert refresh.index("getScanForegroundCompletionCounts(scanSessionId)") < publish.start()
+        assert publish.end() < refresh.index("state.scanCompletionWaveformsPending.store(")
+        # Publish progress even when the pending flags have not changed yet.
+        assert publish.end() < refresh.index("if (coversBefore && !coversPending)")
+        assert publish.end() < refresh.index("CommitScanCompletionState")
+
+
 def test_scan_dialog_removes_raw_drag_diagnostics():
     assert "state.lastDropSummary.c_str()" not in SCAN
     assert "L(Main_ClearDragInfoBtn)" not in SCAN
@@ -117,7 +148,7 @@ def test_stop_choice_preserves_original_actions_and_explicit_continue():
 def test_failure_details_have_a_separate_window():
     assert "##ScanFailureDetails" in SCAN
     assert "L(ScanUi_ViewFailures)" in SCAN
-    assert "state.getScanErrors()" in SCAN
+    assert "state.getScanErrorSnapshot()" in SCAN
 
 
 def test_paused_rescan_keeps_every_selected_folder():
@@ -145,11 +176,18 @@ def test_network_details_translate_identifier_with_added_context():
 
 
 def test_similarity_reports_actual_saved_and_failed_results():
-    batch = MAIN.split("void StartBatchFeatureExtraction(AppState& state)", 1)[1].split("void DrawSimilarityIndexPanel", 1)[0]
-    assert "batchFeatureResults.RecordSuccess()" in batch
-    assert "batchFeatureResults.RecordFailure" in batch
-    assert "saved = state.database.saveAudioFeaturesByPath" in batch
-    assert "FeatureExtractionError::Cancelled" in batch
+    batch = MAIN.split("void StartBatchFeatureExtraction(AppState& state, bool recheckAll)", 1)[1].split("void DrawSimilarityIndexPanel", 1)[0]
+    publish = MAIN.split("static void PublishBatchSimilarityOutcome", 1)[1].split("void StartBatchFeatureExtraction", 1)[0]
+    assert "BuildSimilarityIndex" in batch
+    assert "SimilarityIndexScope::PendingOnly" in batch
+    assert "PublishBatchSimilarityOutcome(state, progress)" in batch
+    assert "PublishBatchSimilarityOutcome(state, result.progress, &result)" in batch
+    assert "progress.completed - progress.failed" in publish
+    assert "result->cancelled" in publish
+    assert "result->issues" in publish
+    assert "state.batchFeatureResults.Publish(snapshot)" in publish
+    for reason in ("Silent", "SaveFailed", "AudioChanged", "ModelFailed"):
+        assert "Failure::" + reason in publish
     assert "##ScanSimilarityProgress" in MAIN
     assert "##ScanSimilarityResult" in MAIN
 

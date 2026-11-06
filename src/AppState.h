@@ -18,6 +18,7 @@
 #include <chrono>
 #include <future>
 #include <algorithm>
+#include <utility>
 #include <unordered_map>
 
 // OpenGL types — use typedef to avoid pulling in GL headers (which need
@@ -212,6 +213,7 @@ namespace HarkenSearch {
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
+#include "SimilarityIndexer.h"
 #include "HarkenSearchWidgets.h"
 #include "UndoSystem.h"
 #include "ProductEdition.h"
@@ -245,6 +247,8 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
+inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultListFontPx = 18;
 
 // Reading-list rows: extra vertical px added to the reading font height before
 // comparing against the density floor. Matches the existing list cell padding.
@@ -339,7 +343,8 @@ enum class ListeningMode {
 enum class ListDensity {
     Compact     = 0,  // 20px rows, no mini waveform
     Normal      = 1,  // 28px rows (default)
-    Comfortable = 2   // 36px rows
+    Comfortable = 2,  // 36px rows
+    Custom      = 3   // explicit height chosen in settings
 };
 
 enum class SortColumn {
@@ -655,6 +660,9 @@ struct ListTab {
 
     // 工作空间锁定：为 true 时 syncToTab 跳过，防止搜索/切目录覆盖本页结果
     bool isLocked = false;
+    // An explicit Refresh may replace a locked page's saved filters and results.
+    bool explicitRefreshPending = false;
+    uint64_t explicitRefreshQueryGeneration = 0;
     // 上次被激活时间（ImGui::GetTime()），用于非活动标签页内存卸载
     double lastActivatedAt = 0.0;
     // 已被 performGlobalMemoryGC 卸载数据，切回时需重跑查询
@@ -856,8 +864,8 @@ struct AppSettings {
     bool trayMinimizeHintShown = false;
     int rowHeight = 28;
     int fontSize = 13;
-    int listFontSize = 13;
-    int readingFontSize = 14;   // unified reading-surface font size (replaces listFontSize for reading)
+    int listFontSize = kDefaultListFontPx;
+    int readingFontSize = kDefaultReadingFontPx;   // unified reading-surface font size (replaces listFontSize for reading)
     float settingsDialogWidth = 860.0f;
     float settingsDialogHeight = 560.0f;
     float waveformPanelHeight = 200.0f;
@@ -888,6 +896,7 @@ struct AppSettings {
             case ListDensity::Compact:     densityPx = 20; break;
             case ListDensity::Normal:      densityPx = 28; break;
             case ListDensity::Comfortable: densityPx = 36; break;
+            case ListDensity::Custom:      return std::clamp(rowHeight,16,100);
         }
         return ComputeReadingRowHeight(densityPx, readingFontSize, kListRowPaddingY);
     }
@@ -1019,10 +1028,10 @@ struct AppSettings {
     std::string diagnosticListenCategory;  // 空=全部；非空=只记录该 category，避免缓冲爆满
 
     // Performance scheduling settings.
-    int memoryProfile = 1;            // 0=Eco(节能), 1=Balanced(均衡), 2=Ultra(性能), 3=Custom(自定义)
-    int fpsLimit = 60;                // 0=不限制, 30, 60, 120, 144
-    int thumbnailMaxResolution = 256; // 封面缩略图精度：128, 256, 512（默认 256 平衡清晰度与 GPU 内存）
-    int threadLimit = 0;              // 后台线程策略：0=自动, 1=单线程, -1=满载
+    int memoryProfile = 2;            // 默认高性能；0=节能, 1=均衡, 2=高性能, 3=自定义
+    int fpsLimit = 0;                 // 0=不限制, 30, 60, 120, 144
+    int thumbnailMaxResolution = 512; // 封面缩略图精度：128, 256, 512
+    int threadLimit = -1;             // 后台线程策略：0=自动, 1=单线程, -1=满载
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位
@@ -1646,6 +1655,7 @@ struct AppState {
     std::string pendingDbOldPath;
     bool dbSwitchJustCompleted = false;
     bool dbSwitchNeedsRefresh = false;  // deferred RefreshSearchResults after switch
+    bool dbSwitchAwaitingResults = false;  // UI background until the new library's first page is ready
     int dbSwitchSettleFramesRemaining = 0;  // keep post-switch frames input-responsive
 
     // 启动暖机帧：进入主界面后前 N 帧做轻量绘制，避免首帧 6s+ 卡顿（由 WindowsMain 写入，RenderUI 读取）
@@ -2002,25 +2012,54 @@ struct AppState {
     }
     std::mutex scanErrorMutex;
     std::vector<std::string> scanErrorMessages_;  // guarded by scanErrorMutex
+    std::vector<int> scanErrorMessageCounts_;      // guarded by scanErrorMutex; aligned with messages
+    HarkenSearch::ScanFailureCategoryCounts scanErrorCategoryCounts_{}; // guarded by scanErrorMutex
+    int scanUnreachableCount_ = 0; // guarded by scanErrorMutex; independent of displayed details
     void clearScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         scanErrorMessages_.clear();
+        scanErrorMessageCounts_.clear();
+        scanErrorCategoryCounts_.fill(0);
+        scanUnreachableCount_ = 0;
     }
     void addScanError(const std::string& s) {
         if (s.empty()) return;
         std::lock_guard<std::mutex> lk(scanErrorMutex);
-        if (scanErrorMessages_.size() < 32) scanErrorMessages_.push_back(s);
+        ++scanErrorCategoryCounts_[static_cast<size_t>(HarkenSearch::ClassifyScanFailure(s))];
+        if (s.find("Scan_NetworkLibraryUnreachable") != std::string::npos) ++scanUnreachableCount_;
+        if (scanErrorMessages_.size() < 32) {
+            scanErrorMessages_.push_back(s);
+            scanErrorMessageCounts_.push_back(1);
+        }
     }
-    void addScanErrors(const std::vector<std::string>& messages) {
+    void addScanErrors(const std::vector<std::string>& messages, const std::vector<int>& counts,
+                       const HarkenSearch::ScanFailureCategoryCounts& categoryCounts, int unreachableCount) {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
-        for (const auto& s : messages) {
+        scanUnreachableCount_ += std::max(0, unreachableCount);
+        for (size_t i = 0; i < categoryCounts.size(); ++i)
+            scanErrorCategoryCounts_[i] += categoryCounts[i];
+        for (size_t i = 0; i < messages.size(); ++i) {
             if (scanErrorMessages_.size() >= 32) break;
-            if (!s.empty()) scanErrorMessages_.push_back(s);
+            if (messages[i].empty()) continue;
+            scanErrorMessages_.push_back(messages[i]);
+            scanErrorMessageCounts_.push_back(i < counts.size() ? counts[i] : 1);
         }
     }
     std::vector<std::string> getScanErrors() {
         std::lock_guard<std::mutex> lk(scanErrorMutex);
         return scanErrorMessages_;
+    }
+    std::pair<std::vector<std::string>, std::vector<int>> getScanErrorSnapshot() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return {scanErrorMessages_, scanErrorMessageCounts_};
+    }
+    HarkenSearch::ScanFailureCategoryCounts getScanErrorCategoryCounts() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return scanErrorCategoryCounts_;
+    }
+    int getScanUnreachableCount() {
+        std::lock_guard<std::mutex> lk(scanErrorMutex);
+        return scanUnreachableCount_;
     }
     std::string lastScannedPath;
     std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.
@@ -2475,10 +2514,10 @@ struct AppState {
     std::vector<std::string> folderSearchTokens;      // 搜索词按空格拆分的 token 列表（小写）
 
     // Metadata filters
-    char artistFilterBuffer[128] = "";
+    std::string artistFilterBuffer;
     std::vector<std::string> artistFilterAlternates;
-    char albumFilterBuffer[128] = "";
-    char categoryFilterBuffer[128] = "";
+    std::string albumFilterBuffer;
+    std::string categoryFilterBuffer;
     int formatFilterIndex = 0;
     int channelFilterIndex = 0;
     float minDurationFilter = 0.0f;
@@ -2491,6 +2530,10 @@ struct AppState {
 #if ARIS_PREVIEW_ISOLATION
     // Client-space rectangles from the last RenderUI frame for native QA clicks.
     std::map<std::string, ImVec4> qaFilterUiRects;
+    std::map<std::string, ImVec4> qaMetadataInputColors;
+    std::map<std::string, std::string> qaMetadataInputText;
+    std::map<std::string, std::string> qaMetadataDraftQuery;
+    bool qaAllowBackgroundKeybinding = false;
 #endif
 
     // Naming convention filter
@@ -3091,6 +3134,7 @@ struct AppState {
     std::unique_ptr<HarkenSearch::SimilarityWorkflow> similarSoundsWorkflow;
     aura::ui::StandaloneWindowState similarSoundsWindow;
     SimilarityPreset similarSoundsPreset = SimilarityPreset::Balanced;
+    bool similarSoundsDeep = false;
     int similarSoundsSelectedRow = -1;
     int64_t similarSoundsObservedSelectionId = -1;
     std::optional<HarkenSearch::SimilarityReference> similarSoundsLocalReference;
@@ -3099,9 +3143,15 @@ struct AppState {
     std::atomic<bool> batchFeatureExtracting{false};
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
+    std::atomic<uint64_t> batchFeatureStartGeneration{0}; // Advances only when a new batch starts.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
+    std::atomic<int>  batchFeatureSkipped{0};
+    std::atomic<int>  batchFeatureSaved{0};
     std::thread batchFeatureThread;
+    std::mutex batchFeatureResultMutex;
+    HarkenSearch::SimilarityIndexResult batchFeatureResult;
+    bool showSimilarAnalysisReport = false;
     HarkenSearch::BatchFeatureResultState batchFeatureResults;
     bool scanSimilarityOwned = false; // UI-thread-only; post-scan analysis surface.
     bool showScanSimilarityDialog = false;
@@ -3215,6 +3265,17 @@ struct AppState {
         int   listVisibleRows = 0;
         int   listScrollTopRow = 0;
         int   playingRowIndex = -1;
+#if ARIS_PREVIEW_ISOLATION
+        int listTextFrame = -1;
+        float listTextFontPixels = 0, listTextLineHeight = 0;
+        float listTextRowHeight = 0;
+        std::string listTextSample;
+        std::vector<float> listRowOrigins, listRowHitHeights;
+        std::vector<std::string> listRawNames, listRenderedNames;
+        std::vector<bool> listRowDirectories;
+        int waveDrawFrame=-1, waveDrawStyle=-1, spectrumDrawFrame=-1;
+        ImVec4 waveDrawBounds{};
+#endif
     } qaRegions;
 };
 

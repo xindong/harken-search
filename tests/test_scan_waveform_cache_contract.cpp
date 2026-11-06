@@ -16,12 +16,16 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
+
+extern std::atomic<int> g_scanCommitIntervalOverrideMs;
+extern std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
 
 static fs::path makeTempRoot(const std::string& name) {
     fs::path root = fs::temp_directory_path() / ("aura_waveform_scan_contract_" + name);
@@ -2246,6 +2250,62 @@ static int testRemoveDriveRootSubtreeCleansHiddenIndexedRows() {
     return failures;
 }
 
+static int testPilotFolderHierarchyKeepsNestedRootsTogether() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("pilot_nested_roots");
+    const fs::path dbPath = root / "pilot_nested_roots.db";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    db.mergeLibraryRoots({"H:\\Collection", "H:\\Collection\\8082", "D:\\Other"});
+
+    AudioRecord nested;
+    nested.filePath = "H:\\Collection\\8082\\inside.wav";
+    nested.fileName = "inside.wav";
+    nested.extension = ".wav";
+    nested.format = "WAV";
+    nested.fileSize = 10;
+    nested.sampleRate = 48000;
+    nested.channels = 1;
+    nested.totalFrames = 48000;
+    nested.durationSeconds = 1.0f;
+    check(db.addFile(nested), "nested-root fixture inserts a child audio row", failures);
+
+    AudioRecord independent = nested;
+    independent.filePath = "D:\\Other\\outside.wav";
+    independent.fileName = "outside.wav";
+    check(db.addFile(independent), "nested-root fixture inserts an independent audio row", failures);
+    check(db.rebuildFolderIndex(), "nested-root fixture builds the folder index", failures);
+
+    auto checkTree = [&failures](const FolderInfo& tree, const char* source) {
+        const auto parent = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
+            [](const FolderInfo& folder) { return folder.path == "h:\\collection"; });
+        const auto other = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
+            [](const FolderInfo& folder) { return folder.path == "d:\\other"; });
+        check(tree.subfolders.size() == 2 && parent != tree.subfolders.end() &&
+                  other != tree.subfolders.end(), source, failures);
+        if (parent == tree.subfolders.end()) return;
+        check(parent->subfolders.size() == 1 &&
+                  parent->subfolders[0].path == "h:\\collection\\8082" &&
+                  parent->subfolders[0].fileCount == 1,
+              "nested root is one selectable child with its original count", failures);
+    };
+    checkTree(db.getFolderHierarchy(aura::folder_tree::PathMode::Pilot),
+              "full pilot tree has one parent and one independent top-level root");
+    checkTree(db.getFolderHierarchyFromIndex(aura::folder_tree::PathMode::Pilot),
+              "indexed pilot tree has one parent and one independent top-level root");
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testFolderHierarchyFromIndexRepairsStaleIndex() {
     int failures = 0;
     const fs::path root = makeTempRoot("folder_index_repair");
@@ -2907,8 +2967,242 @@ static int testScanWriteInfrastructureFailureCountsDiscoveredFiles() {
           "forced write failure accounts every discovered file as failed", failures);
     check(stats.failedFiles == stats.total,
           "forced write failure exposes a file-level failure count", failures);
+    int representedFailures = 0;
+    for (int count : stats.errorMessageCounts) representedFailures += count;
+    check(!stats.errorMessages.empty() &&
+          stats.errorMessages.size() == stats.errorMessageCounts.size() &&
+          representedFailures == stats.total,
+          "forced write failure messages represent every failed file", failures);
     check(db.getFileCount() == 0, "forced write failure leaves database empty", failures);
 
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testScanStatsKeepCategoriesWhenDetailsAreCapped() {
+    int failures = 0;
+    ScanStats first;
+    for (int i = 0; i < 32; ++i) first.addError("No audio samples: X:/empty.wav");
+    ScanStats second;
+    second.addError("Database write failed during scan: forced failure", 500);
+    first.mergeFrom(second);
+    check(first.errors == 532 && first.errorMessages.size() == 32,
+          "scan stats retain the file total while detail messages stay capped", failures);
+    check(first.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 32 &&
+          first.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
+          "scan stats retain categories beyond the detail cap", failures);
+    ScanStats diagnostic;
+    diagnostic.addDiagnostic("Database write failed during scan: forced failure");
+    first.mergeFrom(diagnostic);
+    bool hasGroupedWriteCause = false;
+    bool hasZeroCountDiagnostic = false;
+    for (size_t i = 0; i < first.errorMessages.size(); ++i) {
+        if (first.errorMessages[i].find("Database write failed during scan") == std::string::npos)
+            continue;
+        hasGroupedWriteCause |= first.errorMessageCounts[i] == 500;
+        hasZeroCountDiagnostic |= first.errorMessageCounts[i] == 0;
+    }
+    check(hasGroupedWriteCause && hasZeroCountDiagnostic && first.errors == 532,
+          "grouped write cause and later zero-count diagnostic survive the detail cap", failures);
+    ScanStats direct;
+    for (int i = 0; i < 32; ++i) direct.addError("No audio samples: X:/empty.wav");
+    direct.addError("Database write failed during scan: forced failure", 500);
+    bool directWriteCauseVisible = false;
+    for (size_t i = 0; i < direct.errorMessages.size(); ++i) {
+        directWriteCauseVisible |= direct.errorMessages[i].find("Database write failed during scan") != std::string::npos &&
+                                   direct.errorMessageCounts[i] == 500;
+    }
+    check(directWriteCauseVisible && direct.errorMessages.size() == 32 && direct.errors == 532,
+          "late grouped write cause survives direct insertion at the detail cap", failures);
+    ScanStats network;
+    for (int i = 0; i < 31; ++i) network.addError("No audio samples: X:/empty.wav");
+    network.addError("Scan_NetworkLibraryUnreachable");
+    network.addError("Database write failed during scan: forced failure", 500);
+    bool networkVisible = false;
+    bool networkWriteVisible = false;
+    for (size_t i = 0; i < network.errorMessages.size(); ++i) {
+        networkVisible |= network.errorMessages[i] == "Scan_NetworkLibraryUnreachable";
+        networkWriteVisible |= network.errorMessages[i].find("Database write failed during scan") != std::string::npos;
+    }
+    check(networkVisible && networkWriteVisible && network.errorMessages.size() == 32 &&
+          network.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
+          "late write failure keeps the network signal at the detail cap", failures);
+    ScanStats allSave;
+    for (int i = 0; i < 32; ++i) allSave.addError("Failed to seed scan target");
+    allSave.addError("Database write failed during scan: forced failure", 500);
+    allSave.addError("Scan aborted after database write failure; queued files were not imported.", 400);
+    bool specificCauseVisible = false;
+    for (size_t i = 0; i < allSave.errorMessages.size(); ++i)
+        specificCauseVisible |= allSave.errorMessages[i].find("Database write failed during scan") != std::string::npos &&
+                                allSave.errorMessageCounts[i] == 500;
+    check(specificCauseVisible && allSave.errorMessages.size() == 32 && allSave.errors == 932,
+          "generic save failures cannot displace a specific write cause", failures);
+    ScanStats allNetwork;
+    for (int i = 0; i < 32; ++i) {
+        ++allNetwork.unreachable;
+        allNetwork.addError("Scan_NetworkLibraryUnreachable");
+    }
+    allNetwork.addError("Database write failed during scan: forced failure", 500);
+    bool hasNetworkSignal = false;
+    bool hasNetworkWriteCause = false;
+    for (const auto& detail : allNetwork.errorMessages) {
+        hasNetworkSignal |= detail == "Scan_NetworkLibraryUnreachable";
+        hasNetworkWriteCause |= detail.find("Database write failed during scan") != std::string::npos;
+    }
+    check(hasNetworkSignal && hasNetworkWriteCause && allNetwork.errorMessages.size() == 32 &&
+          allNetwork.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Path)] == 32 &&
+          allNetwork.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 500,
+          "full network detail log retains both the network signal and a later write cause", failures);
+    AppState displayed;
+    displayed.addScanErrors(allNetwork.errorMessages, allNetwork.errorMessageCounts,
+                            allNetwork.errorCategoryCounts, allNetwork.unreachable);
+    check(displayed.getScanUnreachableCount() == 32,
+          "network failure count stays complete when a detail is displaced", failures);
+    return failures;
+}
+
+static int testScanWriteFailureDoesNotRecountTerminalFailure() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("write_failure_terminal");
+    const fs::path dbPath = root / "write_failure_terminal.db";
+    std::ofstream(root / "empty.wav", std::ios::binary);
+    writeSilentMonoWav(root / "valid.wav");
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
+                  "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
+          "write-failure fixture is active", failures);
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
+                                               nullptr, nullptr, 1, false);
+    check(stats.total == 2 && stats.failedFiles == 2 && stats.errors == 2,
+          "terminal decode failure is not counted again when the batch write fails", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 1 &&
+          stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 1,
+          "one empty file and one write-failed file keep distinct reasons", failures);
+    check(db.getFileCount() == 0, "failed batch leaves no inserted files", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testScanWriteFailureKeepsQueuedTerminalReasons() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("write_failure_terminal_only");
+    const fs::path dbPath = root / "write_failure_terminal_only.db";
+    for (int i = 0; i < 50; ++i) {
+        std::ofstream(root / fs::u8path("empty_" + std::to_string(i) + ".wav"),
+                      std::ios::binary);
+    }
+    writeSilentMonoWav(root / "valid.wav");
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
+                  "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
+          "mixed fixture aborts database writes", failures);
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
+                                               nullptr, nullptr, 4, false);
+    check(stats.total == 51 && stats.failedFiles == 51 && stats.errors == 51,
+          "fatal write failure counts every discovered file once", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 50 &&
+          stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 1,
+          "queued terminal results keep their empty-file reason", failures);
+    check(db.getFileCount() == 0, "failed transaction leaves no inserted files", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testScanWriteFailureDrainsQueuedTerminalReasons() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("write_failure_queued_terminal");
+    const fs::path dbPath = root / "write_failure_queued_terminal.db";
+    for (int i = 0; i < 10; ++i) {
+        writeSilentMonoWav(root / fs::u8path("a_valid_" + std::to_string(i) + ".wav"));
+        std::ofstream(root / fs::u8path("z_empty_" + std::to_string(i) + ".wav"),
+                      std::ios::binary);
+    }
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
+                  "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
+          "queued-terminal fixture aborts database writes", failures);
+    bool queuedBarrierReached = false;
+    g_scanCommitIntervalOverrideMs.store(0);
+    g_scanBeforeFlushHook = [&](const std::atomic<int>& produced, int total, int consumed) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (produced.load() < total && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        queuedBarrierReached = total == 20 && consumed == 1 && produced.load() == 20;
+    };
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
+                                               nullptr, nullptr, 4, false);
+    g_scanBeforeFlushHook = {};
+    g_scanCommitIntervalOverrideMs.store(-1);
+    check(queuedBarrierReached, "flush barrier held 19 produced results in the queue", failures);
+    check(stats.total == 20 && stats.failedFiles == 20 && stats.errors == 20,
+          "write abort accounts every queued file exactly once", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 10 &&
+          stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 10,
+          "queued empty results retain their reason after writer flush fails", failures);
+    check(db.getFileCount() == 0, "queued-terminal failed transaction leaves no inserted files", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testScanWriteFailurePreservesDiagnosticWhenEveryFileAlreadyFailed() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("write_failure_all_terminal");
+    const fs::path dbPath = root / "write_failure_all_terminal.db";
+    for (int i = 0; i < 3; ++i) {
+        std::ofstream(root / fs::u8path("empty_" + std::to_string(i) + ".wav"),
+                      std::ios::binary);
+    }
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(execSqlite(db.db(), "CREATE TRIGGER qa_abort BEFORE INSERT ON audio_files "
+                  "BEGIN SELECT RAISE(ABORT, 'forced write failure'); END;"),
+          "all-terminal fixture aborts database writes", failures);
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false,
+                                               nullptr, nullptr, 1, false);
+    check(stats.total == 3 && stats.failedFiles == 3 && stats.errors == 3,
+          "all-terminal write failure does not count the same files twice", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Empty)] == 3 &&
+          stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Save)] == 0,
+          "all-terminal write failure preserves the original file reasons", failures);
+    bool hasDiagnostic = false;
+    for (size_t i = 0; i < stats.errorMessages.size(); ++i) {
+        if (stats.errorMessages[i].find("Database write failed during scan") != std::string::npos &&
+            stats.errorMessageCounts[i] == 0) {
+            hasDiagnostic = true;
+        }
+    }
+    check(hasDiagnostic, "write failure cause remains visible without adding a file", failures);
     db.close();
     removeDbArtifacts(dbPath);
     std::error_code ec;
@@ -4062,6 +4356,7 @@ int main(int argc, char** argv) {
     std::cout << "-- testRemoveFolderSubtreeRecoversMalformedFtsIndexes\n";
     failures += testRemoveFolderSubtreeRecoversMalformedFtsIndexes();
     std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
+    failures += testPilotFolderHierarchyKeepsNestedRootsTogether();
     failures += testFolderHierarchyFromIndexRepairsStaleIndex();
     std::cout << "-- testClearWaveformCacheByFolderUsesCanonicalFolderPath\n";
     failures += testClearWaveformCacheByFolderUsesCanonicalFolderPath();
@@ -4073,6 +4368,11 @@ int main(int argc, char** argv) {
     failures += testRemoveSingleFileInvalidatesCountAndFolderIndex();
     std::cout << "-- testScanWriteInfrastructureFailureCountsDiscoveredFiles\n";
     failures += testScanWriteInfrastructureFailureCountsDiscoveredFiles();
+    failures += testScanStatsKeepCategoriesWhenDetailsAreCapped();
+    failures += testScanWriteFailureDoesNotRecountTerminalFailure();
+    failures += testScanWriteFailureKeepsQueuedTerminalReasons();
+    failures += testScanWriteFailureDrainsQueuedTerminalReasons();
+    failures += testScanWriteFailurePreservesDiagnosticWhenEveryFileAlreadyFailed();
     std::cout << "-- testScanBatchRetriesWhenDatabaseIsTemporarilyLocked\n";
     failures += testScanBatchRetriesWhenDatabaseIsTemporarilyLocked();
     std::cout << "-- testScanBatchFailsFastWhenDatabaseLockPersists\n";

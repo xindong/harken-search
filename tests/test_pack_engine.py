@@ -184,6 +184,12 @@ class PackEngineTests(unittest.TestCase):
             assets_dir = release_dir / "assets" / "icons" / "brand"
             assets_dir.mkdir(parents=True)
             (assets_dir / "auro.png").write_bytes(b"png")
+            # Reusing an older build must not reintroduce the obsolete asset
+            # parents that the original 42 updater cannot create.
+            for relative in ("contributors/cindy.png","community/feishu-qr.png","community/wecom-qr.png"):
+                stale=release_dir/"assets/icons"/relative
+                stale.parent.mkdir(parents=True,exist_ok=True)
+                stale.write_bytes(b"stale generated asset")
             for name in ["shared.dll", "codec.dll", "meter.dll", "ai.dll", "ultimate.dll"]:
                 (release_dir / name).write_bytes(name.encode("ascii"))
             models_dir = release_dir / "models"
@@ -223,6 +229,8 @@ class PackEngineTests(unittest.TestCase):
                 self.assertTrue({"lucide.ttf", "splash_beta.png", "harken_thesaurus.json"}.issubset(names))
                 self.assertTrue({"Auro.exe", "Auro.exe.sig", "auro_features.json", "auro_features.sig", "auro_thesaurus.json"}.isdisjoint(names))
                 self.assertIn("assets/icons/brand/auro.png", names)
+                self.assertFalse(any(name.startswith(("assets/icons/contributors/","assets/icons/community/")) for name in names))
+                self.assertTrue((release_dir/"assets/icons/contributors/cindy.png").is_file())
                 self.assertTrue({"shared.dll", "codec.dll", "meter.dll", "ai.dll"}.issubset(names))
                 self.assertIn("models/model.bin", names)
                 self.assertIn("aris_release_notes.json", names)

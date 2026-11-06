@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 // @stage7-contract
 // API contract: crop helpers are pure value math with no I/O/GPU side effects.
@@ -47,3 +48,10 @@ bool SaveCroppedAvatarPng(const std::vector<uint8_t>& srcPixels,
                            const AvatarCropState& crop,
                            const std::string& destPathUtf8,
                            int outputSize = 256);
+
+// Commit the image and settings together; retain the previous image on failure.
+bool SaveCroppedAvatarWithSettings(const std::vector<uint8_t>& srcPixels,
+                                  int srcW, int srcH, const AvatarCropState& crop,
+                                  const std::string& destPathUtf8,
+                                  const std::function<bool()>& saveSettings,
+                                  int outputSize = 256);

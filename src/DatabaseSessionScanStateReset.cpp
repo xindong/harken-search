@@ -26,6 +26,20 @@ void ResetDatabaseSessionScanState(AppState& state) {
     state.clearScanErrors();
     state.lastScannedPath.clear();
     state.autoFilterToScannedPath = false;
+    // The database switch worker has joined the old batch before this reset.
+    state.batchFeatureResults.Clear();
+    {
+        std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+        state.batchFeatureResult = {};
+    }
+    state.batchFeatureProgress.store(0);
+    state.batchFeatureTotal.store(0);
+    state.batchFeatureSkipped.store(0);
+    state.batchFeatureSaved.store(0);
+    state.batchFeatureCompletionNotice.store(false);
+    state.showSimilarAnalysisReport = false;
+    state.showScanSimilarityDialog = false;
+    state.scanSimilarityOwned = false;
 }
 
 } // namespace aura::database_session

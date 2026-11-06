@@ -56,6 +56,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+std::atomic<int> g_scanCommitIntervalOverrideMs{-1};
+std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -13801,7 +13806,7 @@ bool Database::prepareScanRollbackJournal() {
         kRecordColumns +
         " FROM audio_files WHERE 0;";
 
-    const std::vector<std::string> ddl = {
+    std::vector<std::string> ddl = {
         "CREATE TEMP TABLE temp.scan_cancel_touched(file_path TEXT PRIMARY KEY);",
         createAudioSnapshotSql,
         "CREATE UNIQUE INDEX temp.scan_cancel_audio_path ON scan_cancel_audio(file_path);",
@@ -13849,6 +13854,14 @@ bool Database::prepareScanRollbackJournal() {
         ");",
     };
 
+    // Similarity tables are additive and absent from libraries that have never
+    // been analyzed. Preserve their opaque blobs only when the schema exists.
+    m_scanRollbackHasSimilarity = tableExists(m_db, "harken_similarity_v2") &&
+        tableExists(m_db, "harken_similarity_segments_v2");
+    if (m_scanRollbackHasSimilarity) {
+        ddl.push_back("CREATE TEMP TABLE temp.scan_cancel_similarity AS SELECT * FROM harken_similarity_v2 WHERE 0;");
+        ddl.push_back("CREATE TEMP TABLE temp.scan_cancel_similarity_segments AS SELECT * FROM harken_similarity_segments_v2 WHERE 0;");
+    }
     for (const auto& sql : ddl) {
         if (!executeSQL(sql)) {
             clearScanRollbackJournal();
@@ -13863,6 +13876,8 @@ bool Database::prepareScanRollbackJournal() {
 void Database::clearScanRollbackJournal() {
     if (m_db) {
         const std::vector<std::string> dropSql = {
+            "DROP TABLE IF EXISTS temp.scan_cancel_similarity_segments;",
+            "DROP TABLE IF EXISTS temp.scan_cancel_similarity;",
             "DROP TABLE IF EXISTS temp.scan_cancel_current_ids;",
             "DROP TABLE IF EXISTS temp.scan_cancel_waveforms;",
             "DROP TABLE IF EXISTS temp.scan_cancel_backfill_pending;",
@@ -13877,6 +13892,7 @@ void Database::clearScanRollbackJournal() {
         }
     }
     m_scanRollbackSessionActive = false;
+    m_scanRollbackHasSimilarity = false;
 }
 
 bool Database::snapshotPathForScanRollback(const std::string& filePath) {
@@ -13951,6 +13967,15 @@ bool Database::snapshotPathForScanRollback(const std::string& filePath) {
             return false;
         }
     }
+    if (m_scanRollbackHasSimilarity) {
+        for (const char* table : {"harken_similarity_v2", "harken_similarity_segments_v2"}) {
+            const char* snapshot = std::string(table) == "harken_similarity_v2"
+                ? "scan_cancel_similarity" : "scan_cancel_similarity_segments";
+            if (!executeSingleText(std::string("INSERT INTO temp.") + snapshot +
+                    " SELECT * FROM main." + table +
+                    " WHERE file_id IN (SELECT id FROM audio_files WHERE file_path=?);")) return false;
+        }
+    }
 
     return true;
 }
@@ -14023,6 +14048,13 @@ bool Database::rollbackScanRollbackJournal(const std::string& scopePath,
         if (!executeSQL(sql)) {
             return rollbackFailure(sql.c_str());
         }
+    }
+    // Deleting the touched audio rows above fires the similarity cleanup
+    // triggers. Restore analyses first, then segments, in the same transaction.
+    if (m_scanRollbackHasSimilarity &&
+        (!executeSQL("INSERT OR REPLACE INTO harken_similarity_v2 SELECT * FROM temp.scan_cancel_similarity;") ||
+         !executeSQL("INSERT OR REPLACE INTO harken_similarity_segments_v2 SELECT * FROM temp.scan_cancel_similarity_segments;"))) {
+        return rollbackFailure("restore_similarity");
     }
 
     if (!commitTransaction()) {
@@ -14695,11 +14727,14 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         writeBuffer.reserve((size_t)COMMIT_BATCH_SIZE);
 
         auto accountWriteBufferFailure = [&](const std::string& message) {
-            const int failedCount = (int)writeBuffer.size();
+            const int failedCount = (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                [](const WorkResult& result) { return !result.scanTerminalFailure; });
             if (failedCount > 0) {
                 stats.addError(message, failedCount);
                 stats.failedFiles += failedCount;
                 failedWriteResultsInBatch += failedCount;
+            } else {
+                stats.addDiagnostic(message);
             }
             writeBuffer.clear();
         };
@@ -15168,7 +15203,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
 
             if (batchOk && commitTransaction()) {
-                committedWritesInBatch += (int)writeBuffer.size();
+                committedWritesInBatch += (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                    [](const WorkResult& result) { return !result.scanTerminalFailure; });
                 stats.added += batchAdded;
                 stats.updated += batchUpdated;
                 stats.ingested += batchAdded + batchUpdated;
@@ -15276,6 +15312,11 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
         bool flushFailed = false;
         auto lastFlushTime = std::chrono::steady_clock::now();
+        int commitIntervalMs = COMMIT_INTERVAL_MS;
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+        const int testCommitIntervalMs = g_scanCommitIntervalOverrideMs.load();
+        if (testCommitIntervalMs >= 0) commitIntervalMs = testCommitIntervalMs;
+#endif
 
         while (consumed.load() < toConsume) {
             if (isCancelled()) {
@@ -15347,9 +15388,12 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
             bool timeSliceExpired = !writeBuffer.empty() &&
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - lastFlushTime).count() >= COMMIT_INTERVAL_MS;
+                    std::chrono::steady_clock::now() - lastFlushTime).count() >= commitIntervalMs;
 
             if (writeBuffer.size() >= (size_t)COMMIT_BATCH_SIZE || timeSliceExpired) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+                if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
                 if (!flushWriteBuffer()) {
                     flushFailed = true;
                     break;
@@ -15365,6 +15409,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (!flushFailed && !writeBuffer.empty()) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+            if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
             if (!flushWriteBuffer()) {
                 flushFailed = true;
                 DIAG_ACTION_FMT("Scan", "Tail batch flush failed: %s", m_lastError.c_str());
@@ -15379,6 +15426,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (flushFailed) {
+            // Workers have stopped; classify results never consumed by the writer
+            // before grouping the remaining unimported files as write failures.
+            while (!resultQ.empty()) {
+                WorkResult queued = std::move(resultQ.front());
+                resultQ.pop();
+                if (!queued.scanTerminalFailure && queued.ok) continue;
+                const std::string message = queued.errorMessage.empty()
+                    ? ("Failed to scan file: " + queued.record.filePath)
+                    : queued.errorMessage;
+                stats.addError(message);
+                ++stats.failedFiles;
+                ++failedScanResultsInBatch;
+            }
             const int accountedInBatch =
                 committedWritesInBatch + failedScanResultsInBatch + failedWriteResultsInBatch;
             const int unaccountedInBatch = (int)batch.size() - accountedInBatch;

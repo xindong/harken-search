@@ -11,6 +11,7 @@ assert WIN32_PATH.is_file()
 assert PORTABLE_PATH.is_file()
 
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+MAIN += (ROOT / "src/SettingsAvatarTools.inl").read_text(encoding="utf-8")
 HEADER = HEADER_PATH.read_text(encoding="utf-8")
 WIN32 = WIN32_PATH.read_text(encoding="utf-8")
 PORTABLE = PORTABLE_PATH.read_text(encoding="utf-8")

@@ -2,6 +2,22 @@ cmake_minimum_required(VERSION 3.16)
 project(HarkenSearch VERSION 1.0.43 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)
+target_include_directories(TestPreferenceDraft PRIVATE src)
+target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestPreferenceDraft PRIVATE /utf-8 /UNDEBUG)
+else()
+    target_compile_options(TestPreferenceDraft PRIVATE -UNDEBUG)
+endif()
+add_test(NAME PreferenceDraft COMMAND TestPreferenceDraft)
+add_executable(TestSidebarMetadataPicker EXCLUDE_FROM_ALL tests/test_sidebar_metadata_picker.cpp)
+target_include_directories(TestSidebarMetadataPicker PRIVATE src)
+target_compile_features(TestSidebarMetadataPicker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSidebarMetadataPicker PRIVATE /utf-8)
+endif()
+add_test(NAME SidebarMetadataPicker COMMAND TestSidebarMetadataPicker)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -890,6 +906,9 @@ add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
     ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
 target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
 target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestLibraryStatisticsWorker PRIVATE /utf-8)
+endif()
 target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
 add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
 set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
@@ -942,6 +961,21 @@ if(MSVC)
 endif()
 add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
     "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
+
+add_executable(TestSettingsFileAtomicSave EXCLUDE_FROM_ALL
+    tests/test_settings_file_atomic_save.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestSettingsFileAtomicSave PRIVATE src/platform/filesystem_win32.cpp
+        src/platform/text_encoding_win32.cpp src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestSettingsFileAtomicSave PRIVATE shlwapi)
+endif()
+target_include_directories(TestSettingsFileAtomicSave PRIVATE src)
+target_compile_features(TestSettingsFileAtomicSave PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSettingsFileAtomicSave PRIVATE /utf-8)
+endif()
+add_test(NAME SettingsFileAtomicSave COMMAND TestSettingsFileAtomicSave
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/settings-file-atomic-save")
 
 add_executable(TestUpdateNoticeContent EXCLUDE_FROM_ALL
     tests/test_update_notice_content.cpp
@@ -1606,13 +1640,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand")
         COMMENT "Copying brand icons...")
 endif()
 
-# Contributor logos shown in the About dialog ship beside the executable.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors")
+# About contributor icons share the existing brand directory so old updaters
+# never need to create a new destination parent directory.
+
+# Community QR codes also use the existing brand destination: the first fixed
+# package must still be installable by the unmodified 1.0.42 updater.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community")
     add_custom_command(TARGET HarkenSearch POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/contributors"
-            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/contributors"
-        COMMENT "Copying contributor icons...")
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/brand"
+        COMMENT "Copying community QR codes...")
 endif()
 
 # Copy brand logo lockups next to HarkenSearch.exe. These are larger wordmark assets
@@ -1700,6 +1738,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/docs/legal")
 endif()
 
 # Behavior-module test target wiring for the integrated Aris workflow layer.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_similarity_runtime.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_search_behavior_tests.cmake" OPTIONAL)
 
 # Batch1 pinyin Database behavior test. This target pins isolation ROOT to the

@@ -109,7 +109,7 @@
     {
       "fingerprint": "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp|native-symbol|GetModuleFileNameW|94ac65cee4dc3d7d|1",
       "path": "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp",
-      "line": 144,
+      "line": 154,
       "rule": "native-symbol",
       "token": "GetModuleFileNameW",
       "occurrence": 1,
@@ -120,7 +120,7 @@
     {
       "fingerprint": "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp|native-symbol|SHGetKnownFolderPath|6be44be6482d7577|1",
       "path": "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp",
-      "line": 152,
+      "line": 162,
       "rule": "native-symbol",
       "token": "SHGetKnownFolderPath",
       "occurrence": 1,
@@ -131,7 +131,7 @@
     {
       "fingerprint": "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp|native-symbol|CoTaskMemFree|201d0bb7065d19b7|1",
       "path": "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp",
-      "line": 157,
+      "line": 167,
       "rule": "native-symbol",
       "token": "CoTaskMemFree",
       "occurrence": 1,
@@ -1077,7 +1077,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|FlushFileBuffers|4d7135c3119e6a78|1",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 3355,
+      "line": 3368,
       "rule": "native-symbol",
       "token": "FlushFileBuffers",
       "occurrence": 1,
@@ -1088,7 +1088,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|GetLastError|a5fe34004900e804|2",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 3357,
+      "line": 3370,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -1099,7 +1099,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|FlushFileBuffers|78eba01c6e550128|1",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 3726,
+      "line": 3739,
       "rule": "native-symbol",
       "token": "FlushFileBuffers",
       "occurrence": 1,
@@ -1110,7 +1110,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|GetLastError|a5fe34004900e804|3",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 3729,
+      "line": 3742,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -1121,7 +1121,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|FlushFileBuffers|78eba01c6e550128|2",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 3756,
+      "line": 3769,
       "rule": "native-symbol",
       "token": "FlushFileBuffers",
       "occurrence": 2,
@@ -1132,7 +1132,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|GetLastError|a5fe34004900e804|4",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 3759,
+      "line": 3772,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -1143,7 +1143,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|FlushFileBuffers|8eb3d1aedf399654|1",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 4955,
+      "line": 4968,
       "rule": "native-symbol",
       "token": "FlushFileBuffers",
       "occurrence": 1,
@@ -1154,7 +1154,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|GetLastError|a5fe34004900e804|5",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 4957,
+      "line": 4970,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 5,
@@ -1165,7 +1165,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp|native-symbol|CloseHandle|2f761bc03f9d6b94|1",
       "path": "src/bootstrap/WindowsBootstrapFilesystemWin32.cpp",
-      "line": 5864,
+      "line": 5877,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,

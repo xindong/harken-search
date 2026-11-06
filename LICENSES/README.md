@@ -4,6 +4,9 @@ This directory is copied into the public release output and carries verbatim lic
 
 ## Included files
 
+- `ONNX-Runtime-MIT.txt` and `ONNX-Runtime-ThirdPartyNotices.txt` - optional ONNX Runtime 1.20.1 CPU SDK/runtime
+- `hnswlib-Apache-2.0.txt` - optional hnswlib 0.8.0 headers
+- `CLAP-Apache-2.0.txt` - optional pinned LAION CLAP HTSAT unfused audio model, converted to ONNX
 - `Inno-Setup.txt` - Inno Setup installer and Simplified Chinese language messages
 
 - `ImGui-MIT.txt` - Dear ImGui
