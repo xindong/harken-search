@@ -5,6 +5,9 @@ import json
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
 WINDOWS_MAIN = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
+SETTINGS_CATALOG = (ROOT / "src" / "SettingsCatalog.h").read_text(encoding="utf-8")
+SETTINGS_FIELDS = (ROOT / "src" / "SettingsFields.inl").read_text(encoding="utf-8")
+SETTINGS_DIALOG = (ROOT / "src" / "SettingsDialog.inl").read_text(encoding="utf-8")
 APP_STATE = (ROOT / "src" / "AppState.h").read_text(encoding="utf-8")
 LOCALIZED = {
     entry["id"]: entry
@@ -36,7 +39,7 @@ def test_preference_defaults_to_absolute_and_persists():
     assert LOCALIZED["Set_FolderTreePathPilot"]["zh"] == "领航路径"
     assert LOCALIZED["Set_FolderTreePathAbsolute"]["en"] == "Absolute path"
     assert LOCALIZED["Set_FolderTreePathPilot"]["en"] == "Pilot path"
-    assert "L(Set_FolderTreePathMode)" in MAIN
+    assert 'u8"treePath",Page::Interaction,6,LStr::Set_FolderTreePathMode' in SETTINGS_CATALOG
 
 
 def test_database_tree_builders_use_path_mode_policy():
@@ -70,11 +73,27 @@ def test_folder_tree_path_mode_policy_is_built_tested_and_wired():
 
 
 def test_personal_preference_saves_and_rebuilds_database_tree():
-    combo = MAIN[MAIN.index('ImGui::Combo("##FolderTreePathMode"') :]
-    combo = combo[:800]
-    assert "MarkSettingsDirty(state)" in combo
-    assert "StartDeferredSidebarBootstrap(state, true, false)" in combo
-    assert "SaveAppSettings(state)" not in combo
+    field = SETTINGS_FIELDS.split('else if(id=="treePath")', 1)[1].split(
+        'else if(id=="shell")', 1
+    )[0]
+    assert "draft.folderTreePathMode" in field
+    assert "L(Set_FolderTreePathAbsolute)" in field
+    assert "L(Set_FolderTreePathPilot)" in field
+    assert "combo(n," in field
+    assert "SaveAppSettings(state)" not in field
+
+    apply = SETTINGS_DIALOG.split("auto apply=[&]() -> bool {", 1)[1].split(
+        "auto requestClose", 1
+    )[0]
+    assert "state.settings=next;" in apply
+    save = apply.index("if (saved) saved=TrySaveAppSettings(state);")
+    rollback = apply.index("if (!saved)")
+    rebuild = apply.index(
+        "if (oldSettings.folderTreePathMode!=state.settings.folderTreePathMode)"
+    )
+    assert save < rollback < rebuild
+    assert "state.settings=oldSettings;" in apply[rollback:rebuild]
+    assert "StartDeferredSidebarBootstrap(state,true,false);" in apply[rebuild:rebuild + 200]
 
     assert 'items.push_back({"folderTreePathMode"' in MAIN
     assert 'kv["folderTreePathMode"]' in MAIN

@@ -26,6 +26,8 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-ci.txt
       - run: python -m pip install -r requirements-ci.txt
+      - name: Check folder tree path mode wiring
+        run: python -m pytest -q tests/test_folder_tree_path_mode_policy_boundary.py
       - name: Check public source, licenses, localization and update contracts
         run: python tools/run_public_checks.py
       - name: Generate third-party SBOM
