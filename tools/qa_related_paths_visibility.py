@@ -51,6 +51,13 @@ def difference_ratio(first, second):
     return changed / (a.width * a.height)
 
 
+def click_sidebar_menu(driver, x, y):
+    driver.command({'cmd': 'folder_search_pointer', 'phase': 'down', 'x': x, 'y': y})
+    time.sleep(.15)
+    driver.command({'cmd': 'folder_search_pointer', 'phase': 'up', 'x': x, 'y': y})
+    time.sleep(.35)
+
+
 def run(args):
     exe, root, output = (args.exe.resolve(), args.isolation_root.resolve(),
                          args.output.resolve())
@@ -76,16 +83,14 @@ def run(args):
     frames = {}
     identities = []
 
-    for variant in ('visible', 'hidden', 'hidden_restart'):
-        if variant != 'hidden_restart':
-            enabled = variant == 'visible'
-            settings.write_text('\n'.join([
-                'viewMode=1', 'activeSidebarSection=1', 'folderTreePathMode=1',
-                'showWelcomeOnStartup=0', 'defaultPlayerPrompted=1',
-                'closeButtonAction=2', 'sidebarRelatedPathsHeight=104',
-                f'showRelatedPaths={1 if enabled else 0}',
-                f'currentDbPath={db}', '',
-            ]), encoding='utf-8')
+    settings.write_text('\n'.join([
+        'viewMode=1', 'activeSidebarSection=1', 'folderTreePathMode=1',
+        'showWelcomeOnStartup=0', 'defaultPlayerPrompted=1',
+        'closeButtonAction=2', 'sidebarRelatedPathsHeight=104',
+        'showRelatedPaths=1', f'currentDbPath={db}', '',
+    ]), encoding='utf-8')
+
+    for variant in ('visible', 'hidden_restart'):
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = win32con.SW_SHOWNOACTIVATE
@@ -115,6 +120,15 @@ def run(args):
             for mode in ('browser', 'database'):
                 frames[(variant, mode)] = capture(
                     driver, frame_dir, output, mode, variant)
+            if variant == 'visible':
+                driver.command({'cmd': 'set_view_mode', 'mode': 'browser'})
+                time.sleep(.5)
+                # Exercise the actual activity-bar menu, not a prewritten setting.
+                click_sidebar_menu(driver, 34, 575)
+                click_sidebar_menu(driver, 88, 707)
+                for mode in ('browser', 'database'):
+                    frames[('hidden', mode)] = capture(
+                        driver, frame_dir, output, mode, 'hidden')
         finally:
             if hwnd and win32gui.IsWindow(hwnd):
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
@@ -123,8 +137,8 @@ def run(args):
             except subprocess.TimeoutExpired:
                 process.terminate()
                 process.wait(timeout=10)
-        if variant == 'hidden' and 'showRelatedPaths=0' not in settings.read_text(encoding='utf-8'):
-            raise AssertionError('Hidden visibility value was not persisted')
+        if variant == 'visible' and 'showRelatedPaths=0' not in settings.read_text(encoding='utf-8'):
+            raise AssertionError('Menu click did not persist hidden visibility')
 
     ratios = {mode: difference_ratio(frames[('visible', mode)],
                                      frames[('hidden', mode)])
@@ -136,7 +150,7 @@ def run(args):
               'identity': identities, 'show_hide_pixel_ratio': ratios,
               'hidden_restart_pixel_ratio': restart,
               'frames': [str(p) for p in sorted(output.glob('*.png'))],
-              'input': 'isolated native QA commands; no shared mouse input'}
+              'input': 'isolated app-owned ImGui menu pointer; no shared mouse input'}
     (output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2),
                                         encoding='utf-8')
     print('show/hide visual differences:', ratios)
@@ -147,7 +161,7 @@ def run(args):
     for mode, ratio in restart.items():
         if ratio > .02:
             raise AssertionError(f'FAIL: {mode} hidden layout did not survive restart ({ratio:.4f})')
-    print('PASS: both views change layout and hidden state survives restart')
+    print('PASS: native menu hides related paths in both views and state survives restart')
 
 
 if __name__ == '__main__':
@@ -156,3 +170,4 @@ if __name__ == '__main__':
     parser.add_argument('--isolation-root', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     run(parser.parse_args())
+
