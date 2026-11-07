@@ -65,7 +65,11 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-UsePreviousAppDir=no
+; The distinct Harken AppId already separates legacy Aris installs. Reuse the
+; current Harken directory so an upgrade does not create a second installation.
+UsePreviousAppDir=yes
+CloseApplications=no
+RestartApplications=no
 AllowNoIcons=yes
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=no
@@ -96,6 +100,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "Languages\ChineseSimplified.isl"
 
 [CustomMessages]
+english.CurrentInstallBusy=Harken Search or its updater is still running, or files in this installation cannot be replaced. Please fully exit Harken Search (including its tray icon), wait for any update to finish, then retry. No installation files have been changed.
+chinesesimp.CurrentInstallBusy=Harken Search 或更新程序尚未退出，或当前安装文件无法替换。请完全退出 Harken Search（包括托盘图标），等待正在进行的更新结束后重试。本次尚未替换安装文件。
 english.EulaTitle=Installation and Use License Agreement
 chinesesimp.EulaTitle=软件安装及使用许可协议
 english.EulaDescription=Read the agreement below, then select the checkbox to agree.
@@ -344,8 +350,9 @@ begin
   Result := False;
   if not FileExists(FileName) then
     Exit;
-  { GENERIC_READ, 共享模式 0（全部拒绝）, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL }
-  Handle := CreateFileW(FileName, $80000000, 0, 0, 3, $80, 0);
+  { An executable image can still be opened for exclusive READ while running.
+    Probe WRITE access too, without writing any bytes, before replacing it. }
+  Handle := CreateFileW(FileName, $C0000000, 0, 0, 3, $80, 0);
   if Handle = -1 then
     Result := True
   else
@@ -599,6 +606,13 @@ begin
   { 校验不过=拒绝执行旧卸载程序，但不阻断安装；残留文件照常清理，
     卸载入口由新安装写入，旧卸载项留给用户在设置里手动处理。 }
   DeleteLegacyStaleFiles(InstallLocation);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if LegacyProductIsRunning(ExpandConstant('{app}')) then
+    Result := CustomMessage('CurrentInstallBusy');
 end;
 
 function InitializeSetup: Boolean;
