@@ -29429,6 +29429,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     static int cachedIndexed = 0;
     static int cachedSemantic = 0;
     static int cachedTotal = 0;
+    static int cachedPending = 0;
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
     static int64_t cachedDbGeneration = -1;
@@ -29438,6 +29439,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
         cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
         cachedIndexed = cachedTotal = 0;
         cachedSemantic = 0;
+        cachedPending = 0;
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
         lastCountTime = -999.0;
@@ -29450,12 +29452,20 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!state.dbSwitchInProgress && state.database.isOpen()) {
         if (!state.featureIndexStatistics) {
             state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
-                HarkenSearch::MakeFeatureIndexCountHandler(true));
+                HarkenSearch::MakeFeatureIndexCountHandler(true, [] {
+                    HarkenSearch::AudioEmbeddingService model;
+                    std::string error;
+                    model.Load(GetExeDirUtf8() + "/models/clap", error);
+                    return model.IsReady();
+                }));
         }
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; cachedSemantic = result->semanticIndexed; }
+            if (result->success) {
+                cachedIndexed = result->indexed; cachedTotal = result->total;
+                cachedSemantic = result->semanticIndexed; cachedPending = result->pending;
+            }
         }
         if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
@@ -29495,7 +29505,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, cachedTotal - std::min(cachedIndexed, cachedSemantic));
+        const int pending = cachedPending;
         if (cachedTotal > 0) {
             ImGui::Spacing();
             char label[128];
