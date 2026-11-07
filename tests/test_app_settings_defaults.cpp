@@ -60,8 +60,8 @@ int main() {
     }
 
     AppSettings settings;
-    if (settings.readingFontSize != 16 || settings.listFontSize != 18) {
-        std::printf("FAIL: new system/list font defaults should be 16/18, got %d/%d\n",
+    if (settings.readingFontSize != 18 || settings.listFontSize != 18) {
+        std::printf("FAIL: new system/list font defaults should be 18/18, got %d/%d\n",
                     settings.readingFontSize, settings.listFontSize);
         return 1;
     }
