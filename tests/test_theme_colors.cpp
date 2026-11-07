@@ -2,6 +2,7 @@
 #define NOMINMAX
 #endif
 #include "AppState.h"
+#include "BuiltinThemeScheme.h"
 #include "HarkenSearchDesignTokens.generated.h"
 #include "HarkenSearchThemeManager.h"
 #include "DiagnosticsLogger.h"
@@ -1201,6 +1202,28 @@ int main() {
               approxEqual(darkStyle.FramePadding.y, lightStyle.FramePadding.y),
               "theme application keeps style metrics independent from palette choice");
 
+        ThemeColors::deactivateCustomTheme();
+        ImGui::DestroyContext();
+    }
+
+    {
+        ImGui::CreateContext();
+        const ThemeColorScheme seaGlass = MakeBuiltinScheme(AppTheme::JadeMist);
+        ThemeColors::activateCustomScheme(seaGlass);
+        ThemeColors::applyToImGui();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        CHECK(contrastRatio(style.Colors[ImGuiCol_Text], style.Colors[ImGuiCol_TitleBgActive]) >= 4.5f,
+              "Sea Glass modal title remains readable on its active title background");
+        CHECK(contrastRatio(style.Colors[ImGuiCol_Text], style.Colors[ImGuiCol_TitleBg]) >= 4.5f,
+              "Sea Glass modal title remains readable on its inactive title background");
+        CHECK(approxEqual(ThemeColors::current().transportBarBG, seaGlass.transportBarBG),
+              "Sea Glass title fix does not recolor the transport bar");
+
+        const ThemeColorScheme dark = MakeBuiltinScheme(AppTheme::Dark);
+        ThemeColors::activateCustomScheme(dark);
+        ThemeColors::applyToImGui();
+        CHECK(approxEqual(ImGui::GetStyle().Colors[ImGuiCol_TitleBgActive], dark.transportBarBG),
+              "readable dark-theme title keeps its existing background");
         ThemeColors::deactivateCustomTheme();
         ImGui::DestroyContext();
     }

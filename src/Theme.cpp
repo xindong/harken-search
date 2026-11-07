@@ -15,6 +15,7 @@
 #include "nlohmann_json.hpp"
 #include "ui/CoreWorkspaceStyle.h"
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
@@ -65,6 +66,23 @@ static ImVec4 MixThemeColor(const ImVec4& a, const ImVec4& b, float t) {
         a.y + (b.y - a.y) * t,
         a.z + (b.z - a.z) * t,
         a.w + (b.w - a.w) * t);
+}
+
+static float ThemeContrastRatio(const ImVec4& a, const ImVec4& b) {
+    const auto linear = [](float channel) {
+        return channel <= 0.04045f
+            ? channel / 12.92f
+            : std::pow((channel + 0.055f) / 1.055f, 2.4f);
+    };
+    const auto luminance = [&](const ImVec4& color) {
+        return 0.2126f * linear(color.x)
+            + 0.7152f * linear(color.y)
+            + 0.0722f * linear(color.z);
+    };
+    const float aLuma = luminance(a);
+    const float bLuma = luminance(b);
+    return ((std::max)(aLuma, bLuma) + 0.05f)
+        / ((std::min)(aLuma, bLuma) + 0.05f);
 }
 
 static ImVec4 ClampThemeColor(ImVec4 c) {
@@ -602,9 +620,14 @@ void ThemeColors::applyToImGui() {
     colors[ImGuiCol_BorderShadow]         = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 
 // 标题栏
-    // transportBarBG → 标题栏
-    colors[ImGuiCol_TitleBg]              = cs.transportBarBG;
-    colors[ImGuiCol_TitleBgActive]        = cs.transportBarBG;
+    // Most themes can reuse the transport bar. Sea Glass uses dark text on a
+    // dark transport bar, so fall back to its readable dialog panel surface.
+    const float transportTitleContrast = ThemeContrastRatio(cs.interfaceText, cs.transportBarBG);
+    const ImVec4& titleBG = transportTitleContrast < 4.5f
+        && ThemeContrastRatio(cs.interfaceText, cs.dialogPanelBG) > transportTitleContrast
+        ? cs.dialogPanelBG : cs.transportBarBG;
+    colors[ImGuiCol_TitleBg]              = titleBG;
+    colors[ImGuiCol_TitleBgActive]        = titleBG;
 
 // 菜单栏
     // menuBarBG → 菜单栏
