@@ -29498,25 +29498,12 @@ void DrawSimilarityIndexPanel(AppState& state) {
         const int pending = std::max(0, cachedTotal - std::min(cachedIndexed, cachedSemantic));
         if (cachedTotal > 0) {
             ImGui::Spacing();
-            char label[128];
-            if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
-            else snprintf(label, sizeof(label), "%s", L(Similar_Recheck));
-            if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
-                if (pending > 0) StartBatchFeatureExtraction(state);
-                else StartBatchFeatureExtraction(state, true);
+            ImGui::Text(L(Similar_PendingCountFmt), pending);
+            if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
+                StartBatchFeatureExtraction(state, true);
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
-            if (pending > 0) {
-                // A permanently failing file must not prevent checking already
-                // analyzed files for source changes. Supplementing stays the
-                // primary action and never traverses the completed analyses.
-                if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
-                    StartBatchFeatureExtraction(state, true);
-                    wasExtracting = true;
-                }
-                ThemeInspector::RegisterLastItem("similar.index.recheck");
-            }
         }
         if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {
