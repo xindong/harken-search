@@ -4301,20 +4301,21 @@ static void PollQaCommandFile(AppState& state) {
             const std::string scenario = getStr(raw, "scenario");
             if (scenario != "pass" && scenario != "bypass" && scenario != "notch" &&
                 scenario != "processing" && scenario != "mono" && scenario != "spectrum" &&
-                scenario != "overdrive" && scenario != "fill-boundary" && scenario != "selection" && scenario != "wide") {
+                scenario != "overdrive" && scenario != "fill-boundary" && scenario != "selection" &&
+                scenario != "wide" && scenario != "mono-reverse") {
                 result = "{\"ok\":false,\"error\":\"invalid_transport_audit_scenario\"}";
             } else {
                 state.audioEngine.stop();
                 state.settings.productMode = ProductMode::SFX;
                 state.audioEngine.setVolume(scenario == "overdrive" ? 1.07f :
                     (scenario == "fill-boundary" ? .55f : (scenario == "processing" ? .85f : .26f)));
-                state.audioEngine.setMono(scenario == "mono");
+                state.audioEngine.setMono(scenario == "mono" || scenario == "mono-reverse");
                 state.audioEngine.setPan(scenario == "processing" ? .5f : 0);
                 state.audioEngine.setCenterSense(scenario == "processing" ? .6f : 0);
                 state.audioEngine.setBassMonoFreq(scenario == "processing" ? 80.f : 0.f);
-                state.audioEngine.setReverse(scenario == "processing");
-                state.audioEngine.setInPoint(scenario == "selection" ? .2f : 0.f);
-                state.audioEngine.setOutPoint(scenario == "selection" ? .8f : 1.f);
+                state.audioEngine.setReverse(scenario == "processing" || scenario == "mono-reverse");
+                state.audioEngine.setInPoint(scenario == "mono-reverse" ? .12f : (scenario == "selection" ? .2f : 0.f));
+                state.audioEngine.setOutPoint(scenario == "mono-reverse" ? .63f : (scenario == "selection" ? .8f : 1.f));
                 state.showSpectrogram = scenario == "spectrum";
                 state.spectrogramSplit = false;
                 state.spectrogramBlend = .5f;
@@ -4332,6 +4333,56 @@ static void PollQaCommandFile(AppState& state) {
         }
 
 #if ARIS_PREVIEW_ISOLATION
+    } else if (cmd == "transport_effect_state") {
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto visibility = state.settings.transportEffectVisibility;
+            const auto effective = state.audioEngine.captureTransferProcessingSnapshot();
+            const auto requestedEQ = state.audioEngine.getMagicEQUserSettings();
+            std::ostringstream out;
+            out << std::boolalpha
+                << "{\"ok\":true,\"visibility\":{\"mono\":" << visibility.mono
+                << ",\"reverse\":" << visibility.reverse << ",\"pan\":" << visibility.pan
+                << ",\"soundstage\":" << visibility.soundstage << ",\"eq\":" << visibility.eq
+                << "},\"requested\":{\"mono\":" << (visibility.mono ? state.audioEngine.isMono() : state.hiddenMonoRestore)
+                << ",\"reverse\":" << (visibility.reverse ? state.audioEngine.isReversed() || state.pendingReverseRestore : state.hiddenReverseRestore)
+                << ",\"pan\":" << state.audioEngine.getRequestedPan()
+                << ",\"centerSense\":" << state.audioEngine.getCenterSense()
+                << ",\"bassMonoFreq\":" << state.audioEngine.getBassMonoFreq()
+                << ",\"eq\":" << requestedEQ.enabled
+                << "},\"effective\":{\"mono\":" << effective.mono
+                << ",\"reverse\":" << effective.reverse << ",\"pan\":" << effective.pan
+                << ",\"centerSense\":" << effective.centerSense
+                << ",\"bassMonoFreq\":" << effective.bassMonoFreqHz
+                << ",\"eq\":" << effective.magicEQ.enabled << "}}";
+            result = out.str();
+        }
+    } else if (cmd == "transport_effect_export") {
+        const std::string output = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(output)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string input = state.audioEngine.getLoadedFilePath();
+            const auto snapshot = state.audioEngine.captureTransferProcessingSnapshot();
+            result = !input.empty() && state.audioEngine.exportRegion(output, 0.0f, 0.0f, nullptr, &snapshot)
+                ? R"({"ok":true,"cmd":"transport_effect_export"})"
+                : R"({"ok":false,"error":"transport_effect_export_failed"})";
+        }
+    } else if (cmd == "transport_effect_import") {
+        const std::string input = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(input) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(g_appSettingsPathUtf8)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (!Platform::FileSystem::CopyFile(input, g_appSettingsPathUtf8, true)) {
+            result = R"({"ok":false,"error":"transport_effect_import_copy_failed"})";
+        } else {
+            LoadAppSettings(state);
+            harken::settings::SettingsEditor().Reset(state);
+            result = R"({"ok":true,"cmd":"transport_effect_import"})";
+        }
     } else if (cmd == "info_page_state" || cmd == "info_page_pointer" || cmd == "info_page_layout" || cmd == "info_edit_input") {
         // Real ImGui input, restricted to this compile-time isolated QA package.
         // Never moves the operating-system cursor or targets another process.
