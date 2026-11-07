@@ -170,4 +170,3 @@ if __name__ == '__main__':
     parser.add_argument('--isolation-root', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     run(parser.parse_args())
-
