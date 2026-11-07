@@ -231,6 +231,25 @@ bool SimilarityAnalysisStore::Invalidate(int64_t id) {
     auto s = Prepare(database_, "DELETE FROM harken_similarity_v2 WHERE file_id=?");
     if (!s) return false; sqlite3_bind_int64(s.get(),1,id); return sqlite3_step(s.get()) == SQLITE_DONE;
 }
+int64_t SimilarityAnalysisStore::ClearAll() {
+    if (!database_) { error_ = "database_not_open"; return -1; }
+    if (cancel_ && cancel_()) { error_ = "cancelled"; return -1; }
+    if (sqlite3_exec(database_, "BEGIN IMMEDIATE",nullptr,nullptr,nullptr) != SQLITE_OK) {
+        error_ = sqlite3_errmsg(database_); return -1;
+    }
+    auto rollback = [&]() -> int64_t {
+        error_ = sqlite3_errmsg(database_);
+        sqlite3_exec(database_,"ROLLBACK",nullptr,nullptr,nullptr);
+        return -1;
+    };
+    // Delete both tables in one transaction, including any orphan segments.
+    if (sqlite3_exec(database_,"DELETE FROM harken_similarity_segments_v2",nullptr,nullptr,nullptr) != SQLITE_OK ||
+        sqlite3_exec(database_,"DELETE FROM harken_similarity_v2",nullptr,nullptr,nullptr) != SQLITE_OK) return rollback();
+    const int64_t deleted = sqlite3_changes(database_);
+    if ((cancel_ && cancel_()) || sqlite3_exec(database_,"COMMIT",nullptr,nullptr,nullptr) != SQLITE_OK) return rollback();
+    error_.clear();
+    return deleted;
+}
 int64_t SimilarityAnalysisStore::Revision() {
     auto s = Prepare(database_, "SELECT revision FROM harken_similarity_revision WHERE singleton=1");
     return s && sqlite3_step(s.get()) == SQLITE_ROW ? sqlite3_column_int64(s.get(),0) : -1;
