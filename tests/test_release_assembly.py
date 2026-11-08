@@ -64,6 +64,37 @@ def test_complete_release_output_passes(tmp_path: Path):
     assert verify_release_assembly(tmp_path, "a" * 40) == []
 
 
+def test_configured_similarity_dependencies_must_be_staged(tmp_path: Path):
+    release = _complete_release(tmp_path)
+    (release / "THIRD_PARTY_COMPONENTS.json").write_text(
+        json.dumps({"components": [
+            {"name": "ONNX Runtime", "distributed": True},
+            {"name": "LAION CLAP HTSAT unfused audio encoder", "distributed": True},
+        ]}),
+        encoding="utf-8",
+    )
+    issues = verify_release_assembly(release)
+    assert "missing configured similarity file: onnxruntime.dll" in issues
+    assert "missing configured similarity file: models/clap/clap-audio.onnx" in issues
+    assert "missing configured similarity file: models/clap/clap-mel-filters.f64" in issues
+    assert "missing configured similarity file: models/clap/clap-window.f64" in issues
+
+    for relative in (
+        "onnxruntime.dll", "models/clap/clap-audio.onnx",
+        "models/clap/clap-mel-filters.f64", "models/clap/clap-window.f64",
+    ):
+        target = release / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"configured similarity resource")
+    assert verify_release_assembly(release) == []
+
+
+def test_installer_collects_optional_similarity_runtime_and_models():
+    script = (ROOT / "installer/HarkenSearch_Setup.iss").read_text(encoding="utf-8")
+    assert 'Source: "{#SourceDir}\\onnxruntime.dll"; DestDir: "{app}";' in script
+    assert 'Source: "{#SourceDir}\\models\\*"; DestDir: "{app}\\models";' in script
+
+
 def _complete_release(tmp_path: Path) -> Path:
     release = tmp_path / "Release"
     release.mkdir()
