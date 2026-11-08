@@ -1433,6 +1433,58 @@ int testPendingJobsFollowNewScanSession() {
     return failures;
 }
 
+int testDurableRefillKeepsExplicitScanTakeover() {
+    int failures = 0;
+    using namespace aura;
+    const fs::path root = makeTempRoot("durable_refill_scan_takeover");
+    const fs::path dbPath = root / "takeover.db";
+    const fs::path audioPath = root / "takeover.wav";
+    writeSilentMonoWav(audioPath);
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), false, false, false,
+                                               nullptr, nullptr, 1,
+                                               /*completeImport=*/false,
+                                               /*enqueueExtraction=*/false);
+    check(stats.added == 1, "takeover fixture inserts one row", failures);
+    const AudioRecord rec = db.getFileByPath(audioPath.u8string());
+    check(rec.id > 0, "takeover fixture has an audio id", failures);
+    constexpr int64_t oldSession = 9401;
+    constexpr int64_t newSession = 9402;
+    constexpr int64_t generation = 44;
+    check(db.resetScanForegroundCompletionSession(oldSession) &&
+              db.seedScanForegroundCompletionRows(oldSession, {rec.id}, true, false) &&
+              db.markBackfillPending(rec.id, static_cast<int>(BackfillJobKind::WaveformL1Overview)),
+          "old scan leaves a durable pending waveform", failures);
+
+    BackfillQueue queue;
+    queue.onDbOpened(dbPath.u8string(), generation);
+    queue.enqueueFromScan(rec.id, BackfillJobKind::WaveformL1Overview,
+                          BackfillPriority::RecentScan, dbPath.u8string(), generation, oldSession);
+    queue.enqueueFromScan(rec.id, BackfillJobKind::WaveformL1Overview,
+                          BackfillPriority::RecentScan, dbPath.u8string(), generation, newSession);
+    // The persisted row still points at the old scan. Refill must not undo
+    // explicit ownership of the already queued job.
+    queue.refillFromDatabaseIfBelowWaterMark(&db, 2, 2);
+    queue.refillFromDatabaseIfBelowWaterMark(&db, 2, 2);
+    check(queue.snapshot().totalEnqueued == 1,
+          "durable refill does not duplicate a taken-over job", failures);
+    BackfillJob job{};
+    check(queue.tryDequeue(job) && job.scanSessionId == newSession,
+          "durable refill keeps the new scan as pending job owner", failures);
+    queue.reportOutcome(job, BackfillCompletionOutcome::Success);
+    check(queue.snapshot().done == 1 && !queue.tryDequeue(job),
+          "taken-over job completes only once after durable refill", failures);
+    queue.shutdown();
+    db.close();
+    removeDbArtifacts(dbPath);
+    fs::remove_all(root);
+    return failures;
+}
+
 int testScanTakeoverPreservesInFlightOwnership() {
     int failures = 0;
     using namespace aura;
@@ -1464,6 +1516,7 @@ int main(int argc, char** argv) {
     int failures = 0;
     std::cout << "=== Backfill Recovery/Worker Tests ===\n";
     failures += testPendingJobsFollowNewScanSession();
+    failures += testDurableRefillKeepsExplicitScanTakeover();
     failures += testScanTakeoverPreservesInFlightOwnership();
     if (argc == 2 && std::string(argv[1]) == "--pending-scan-session") {
         return failures == 0 ? 0 : 1;

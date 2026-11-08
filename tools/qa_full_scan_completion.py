@@ -151,6 +151,7 @@ def run(args):
             while driver.command({'cmd': 'scan_status'})['scanning']:
                 assert time.monotonic() < until, 'Seed scan did not stop'
                 time.sleep(.04)
+            status = driver.command({'cmd': 'scan_status'})
             report['seed_scan'] = status
             dismiss_result()
         for case in ('initial-full', 'repeat-full'):

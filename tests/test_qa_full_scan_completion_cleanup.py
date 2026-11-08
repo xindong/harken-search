@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import qa_full_scan_completion as qa
 
 
-def prepare_run(tmp_path, monkeypatch, *, restart=False, complete=False, exit_code=0, terminate_error=False,
+def prepare_run(tmp_path, monkeypatch, *, restart=False, complete=False, pause=False, exit_code=0, terminate_error=False,
                 close_error=False, desktop_error=False):
     root = tmp_path / 'isolated'
     root.mkdir()
@@ -75,14 +75,15 @@ def prepare_run(tmp_path, monkeypatch, *, restart=False, complete=False, exit_co
             if not restart and not complete:
                 raise RuntimeError('cleanup transport failed')
             if payload['cmd'] == 'qa_rightclick_scan':
-                self.scanning = not complete
                 self.started += 1
+                self.scanning = (pause and self.started == 1) or not complete
                 self.total = 49
             if payload['cmd'] == 'qa_scan_pause_keep':
                 self.scanning = False
             if payload['cmd'] == 'info_page_pointer' and payload['phase'] == 'up':
                 self.total = 0
             return {'scanning': self.scanning, 'scan_started_at_ms': self.started, 'processed': 100,
+                    'scan_phase': 'waveform_cache' if self.scanning else 'completed',
                     'scan_workflow_stage': 'completed', 'mini_waveforms_total': 49,
                     'mini_waveforms_completed': 49, 'errors': 0,
                     'scan_completion_mini_unresolved': 0,
@@ -113,7 +114,7 @@ def prepare_run(tmp_path, monkeypatch, *, restart=False, complete=False, exit_co
         'db_path': str(database), 'db_switch_in_progress': False})
     args = SimpleNamespace(exe=exe, isolation_root=root, output=tmp_path / 'result',
                            duration=0, timeout=1, interrupt_fast=restart,
-                           restart_after_interruption=restart, fast_first=False, pause_first=False)
+                           restart_after_interruption=restart, fast_first=False, pause_first=pause)
     return args, process, desktop
 
 
@@ -153,4 +154,13 @@ def test_report_tracks_exit_after_completed_scans(tmp_path, monkeypatch, exit_co
     result = json.loads((args.output / 'result.json').read_text(encoding='utf-8'))
     assert len(result['cases']) == 2 and result['exit_code'] == exit_code
     assert result['passed'] is (exit_code == 0)
+    assert desktop.closed and process.close_calls == 1
+
+
+def test_pause_report_records_state_after_scan_stops(tmp_path, monkeypatch):
+    args, process, desktop = prepare_run(tmp_path, monkeypatch, complete=True, pause=True)
+    qa.run(args)
+    result = json.loads((args.output / 'result.json').read_text(encoding='utf-8'))
+    assert result['before_pause']['scanning'] is True
+    assert result['seed_scan']['scanning'] is False
     assert desktop.closed and process.close_calls == 1
