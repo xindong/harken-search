@@ -32214,6 +32214,7 @@ void RenderUI(AppState& state) {
                 ImGui::Spacing();
                 const bool fastScanMode = !state.settings.cacheWaveformsOnScan;
                 if (ImGui::RadioButton(L(Main_FastScanMode), fastScanMode)) state.settings.cacheWaveformsOnScan = false;
+                if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Scan_FastModeHint));
                 if (ImGui::RadioButton(L(Main_FullScanMode), state.settings.cacheWaveformsOnScan)) state.settings.cacheWaveformsOnScan = true;
                 bool automaticThreads = state.scanWorkerThreads == 0;
                 if (ImGui::Checkbox(L(ScanUi_AutoThreads), &automaticThreads)) state.scanWorkerThreads = automaticThreads ? 0 : 4;
@@ -33300,7 +33301,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 20.f, viewport->WorkPos.y + 60.f),
             ImGuiCond_Always, ImVec2(1.f, 0.f));
         ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(360.f, scanDialogWidth), 0.f), ImVec2(scanDialogWidth, scanDialogMaxHeight));
-        if (ImGui::Begin("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+        if (BeginTransientScrollbarWindow("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
             { ReadingTextScope readingDrop;
             char title[128];

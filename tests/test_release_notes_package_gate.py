@@ -100,6 +100,14 @@ def test_direct_installer_compile_rejects_missing_notes_before_compiler(tmp_path
         pack_engine.compile_installer("1.2.3", source)
 
 
+def test_installer_compiler_finds_user_local_install(tmp_path, monkeypatch):
+    compiler = tmp_path / "Programs" / "Inno Setup 6" / "ISCC.exe"
+    compiler.parent.mkdir(parents=True)
+    compiler.write_bytes(b"isolated compiler fixture")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert pack_engine.find_inno_setup_compiler() == compiler
+
+
 def test_prepared_notes_enter_the_actual_update_zip(tmp_path):
     source = tmp_path / "history.json"
     source.write_text(json.dumps(history()), encoding="utf-8")
