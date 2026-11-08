@@ -398,7 +398,9 @@ def prepare_release_notes(
 
 def find_inno_setup_compiler() -> Path:
     """Locate Inno Setup's ISCC.exe."""
-    candidates = [
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    candidates = ([Path(local_app_data) / "Programs" / "Inno Setup 6" / "ISCC.exe"]
+                  if local_app_data else []) + [
         Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
         Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
     ]
