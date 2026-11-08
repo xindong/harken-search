@@ -25,6 +25,22 @@ enum class PitchMode {
 using MagicEQMode = CenterSenseDsp::MagicEQMode;
 using MagicEQSettings = CenterSenseDsp::MagicEQSettings;
 
+// A hidden transport effect retains its requested parameters but contributes
+// nothing to audition or processed export. Existing installations show all five.
+struct TransportEffectVisibility {
+    bool mono = true;
+    bool reverse = true;
+    bool pan = true;
+    bool soundstage = true; // CenterSense and Bass Mono share one control.
+    bool eq = true;
+
+    bool operator==(const TransportEffectVisibility& other) const {
+        return mono == other.mono && reverse == other.reverse && pan == other.pan &&
+               soundstage == other.soundstage && eq == other.eq;
+    }
+    bool operator!=(const TransportEffectVisibility& other) const { return !(*this == other); }
+};
+
 // ma_audio_buffer is a miniaudio typedef and cannot be forward-declared.
 class CenterSenseDataSource;
 struct PcmAudioBufferState;
@@ -270,6 +286,19 @@ public:
         MagicEQSettings magicEQ{};
     };
 
+    friend TransferProcessingSnapshot ApplyTransportEffectVisibility(
+        TransferProcessingSnapshot requested, const TransportEffectVisibility& visibility) {
+        if (!visibility.mono) requested.mono = false;
+        if (!visibility.reverse) requested.reverse = false;
+        if (!visibility.pan) requested.pan = 0.0f;
+        if (!visibility.soundstage) {
+            requested.centerSense = 0.0f;
+            requested.bassMonoFreqHz = 0.0f;
+        }
+        if (!visibility.eq) requested.magicEQ.enabled = false;
+        return requested;
+    }
+
     AudioEngine();
     ~AudioEngine();
 
@@ -306,6 +335,9 @@ public:
     // A zero gain disables ReplayGain adjustment.
     void applyReplayGain(float gainDb, float referenceLevel = -18.0f);
     void setPan(float pan);        // -1.0 (left) to 1.0 (right)
+    float getRequestedPan() const { return m_forceMono ? m_panStereo : m_pan; }
+    void setTransportEffectVisibility(const TransportEffectVisibility& visibility);
+    TransportEffectVisibility getTransportEffectVisibility() const { return m_transportEffectVisibility; }
     void setCenterSense(float k);  // -1 (tighten) to 0 (original) to +1 (widen), stereo field
     float getCenterSense() const { return m_centerSense; }
     void setMagicEQ(const MagicEQSettings& settings);
@@ -576,10 +608,14 @@ private:
     float m_replayGain = 1.0f;  // ReplayGain linear multiplier; applied on top of m_volume
     float m_pan = 0.0f;
     float m_panStereo = 0.0f;     // Remember pan when switching mono on/off
+
+    TransportEffectVisibility m_transportEffectVisibility{};
     float m_centerSense = 0.0f;   // -1 tighten, 0 original, +1 widen (stereo field)
+    float m_centerSenseEffective = 0.0f;
     MagicEQSettings m_magicEQ{};
     CenterSenseDsp::MagicEQSettingsPublisher m_magicEQRealtime;
     float m_bassMonoFreq = 0.0f;  // 0 = off, >0 = cutoff Hz for low-frequency mono collapse
+    float m_bassMonoFreqEffective = 0.0f;
     bool m_forceMono = false;
     int m_channelSolo = 0;
     float m_pitch = 0.0f;  // Semitones

@@ -535,10 +535,12 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
     int failures = 0;
     const std::string nativeSource = readSourceFile("src/main.cpp");
     const std::string qaSource = readSourceFile("src/WindowsMain.cpp");
+    const std::string scanPresentationSource = readSourceFile("src/ScanDialogPresentation.h");
     const std::string drainWorkflowSource =
         readSourceFile("src/ScanWaveformBackfillDrainWorkflow.cpp");
     check(!nativeSource.empty(), "native scan drain source is readable", failures);
     check(!qaSource.empty(), "QA scan drain source is readable", failures);
+    check(!scanPresentationSource.empty(), "scan dialog projection source is readable", failures);
     check(nativeSource.find("stale_in_flight") != std::string::npos &&
               nativeSource.find("markScanForegroundMiniTerminal") != std::string::npos,
           "native stale foreground jobs write terminal state before pending clear", failures);
@@ -606,11 +608,18 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
     check(readSourceFile("src/Database.cpp").find("Failed to queue audio file") != std::string::npos &&
               readSourceFile("src/Database.cpp").find("failed.scanTerminalFailure = true") != std::string::npos,
           "handleAudioPath exceptions are classified as foreground terminal failures", failures);
-    check(nativeSource.find("const bool showBackgroundContinueButton =") != std::string::npos &&
-              nativeSource.find("state.isScanning.load() && !scanForegroundCompletionActive") !=
-                  std::string::npos &&
-              nativeSource.find("if (showBackgroundContinueButton)") != std::string::npos,
-          "native scan dialog cannot hide current-scan foreground completion behind background continue", failures);
+    check(containsAll(nativeSource, {
+              "HarkenSearch::BuildScanDialogView({",
+              "const bool showBackgroundContinueButton = scanView.canBackground;",
+              "if (scanView.canStop)",
+              "if (showBackgroundContinueButton)",
+          }) && containsAll(scanPresentationSource, {
+              "if (input.scanning || input.completionPending)",
+              "view.phase = ScanDialogPhase::Waveforms;",
+              "view.phase = ScanDialogPhase::Finalizing;",
+              "view.canBackground = true;",
+          }),
+          "native scan dialog delegates background action to foreground-aware projection", failures);
     check(containsAll(nativeSource, {
               "state.beginScanWorkflow(state.settings.cacheWaveformsOnScan);",
               "state.scanDiscoveredCount.store(",
@@ -625,30 +634,41 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
           }),
           "native scan path wires every scan workflow transition to truthful runtime data",
           failures);
-    check(nativeSource.find("scanCompleteSummaryActive") != std::string::npos &&
-              nativeSource.find("HarkenSearch::BuildScanProcessingProgress(scanWorkflowSnapshot)") != std::string::npos &&
-              nativeSource.find("scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Completed") != std::string::npos &&
-              nativeSource.find("HarkenSearch::CanEnterCompleted(scanWorkflowSnapshot)") != std::string::npos &&
-              nativeSource.find("L(Main_ScannedProcessedFmt)") != std::string::npos,
-          "native scan dialog uses processed/discovered progress and a guarded completed state", failures);
-    check(nativeSource.find("const bool miniCacheStage =") != std::string::npos &&
-              nativeSource.find("static_cast<float>(scanWorkflowSnapshot.miniWaveformsCompleted)") != std::string::npos &&
-              nativeSource.find("float instant = (speedBasis - lastSampleProgress)") != std::string::npos &&
-              nativeSource.find("speedStr = 0.0f;") != std::string::npos,
-          "native scan dialog speed switches to mini completion only during the mini-cache stage",
-          failures);
     check(containsAll(nativeSource, {
-              "L(Main_FoundFilesFmt)",
-              "L(Main_ImportedFmt)",
-              "L(Main_SkippedDupInvalidFmt)",
-              "L(Main_FailedFmt)",
-              "L(Main_MiniCacheProgressFmt)",
-              "if (scanCompleteSummaryActive)",
-        "if (aura::ui::ActionButton(L(Done), ImVec2(btnW, 30)))",
-              "state.clearScanWorkflowState();",
+              "state.scanProcessedCount.store(",
+              "state.scanDiscoveredCount.store(",
+              "HarkenSearch::BuildScanDialogView({",
+              "if (scanView.progressKnown)",
+              "scanView.current, scanView.total",
+              "scanView.surface == HarkenSearch::ScanDialogSurface::Result",
+          }) && containsAll(scanPresentationSource, {
+              "BuildScanOutcomeCounts(snapshot.discovered, snapshot.processed,",
+              "input.ingestionTotalKnown && view.total > 0",
+              "snapshot.stage == ScanWorkflowStage::Completed && CanEnterCompleted(snapshot)",
           }),
-          "completed scan summary exposes five truthful counts and waits for the Done button",
-          failures);
+          "native scan dialog uses projected file counts and guarded completed result", failures);
+    check(containsAll(nativeSource, {
+              "state.scanUiMetrics.Update(",
+              "DrawScanDialogMetrics(state.scanUiMetrics.Value(), true)",
+          }) && containsAll(scanPresentationSource, {
+              "view.phase = ScanDialogPhase::Waveforms;",
+              "view.current = std::clamp(snapshot.miniWaveformsCompleted, 0, view.total);",
+              "phase_ != view.phase",
+          }),
+          "native scan speed resets when progress switches from files to mini cache", failures);
+    check(containsAll(nativeSource, {
+              "L(ScanUi_ImportedFmt)",
+              "L(Main_FailedFmt)",
+              "L(ScanUi_Statistics)",
+              "L(ScanUi_SkippedFmt)",
+              "if (aura::ui::ActionButton(L(Done), ImVec2(100.f, 32.f)",
+              "ResetScanDialogResult(state);",
+          }) && containsAll(scanPresentationSource, {
+              "view.succeeded = counts.succeeded;",
+              "view.skipped = counts.skipped;",
+              "view.failed = std::max(counts.failed, std::max(0, input.reportedErrors));",
+          }),
+          "completed scan result shows projected outcome counts and waits for Done", failures);
     check(readSourceFile("src/AppState.h").find("scanCompletionDurationMs") != std::string::npos &&
               readSourceFile("src/AppState.h").find("beginScanTiming();") != std::string::npos &&
               nativeSource.find("state.markScanCompletionReadyNow();") != std::string::npos &&
@@ -894,11 +914,15 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
     {
         const std::string mainSource = readSourceFile("src/main.cpp");
         check(containsAll(mainSource, {
-                  "const bool miniCacheStage =",
-                  "static_cast<float>(scanWorkflowSnapshot.miniWaveformsCompleted)",
-                  ": static_cast<float>(curProg);",
+                  "state.scanUiMetrics.Update(",
+                  "DrawScanDialogMetrics(state.scanUiMetrics.Value(), true)",
+              }) && containsAll(scanPresentationSource, {
+                  "view.current = counts.processed;",
+                  "view.current = std::clamp(snapshot.miniWaveformsCompleted, 0, view.total);",
+                  "const bool measurable = view.phase == ScanDialogPhase::Ingesting ||",
+                  "view.phase == ScanDialogPhase::Waveforms;",
               }),
-              "scan dialog speed samples mini progress only while mini cache work is active",
+              "scan dialog speed samples the active file or mini-cache progress only",
               failures);
     }
     {

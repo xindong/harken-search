@@ -2250,6 +2250,62 @@ static int testRemoveDriveRootSubtreeCleansHiddenIndexedRows() {
     return failures;
 }
 
+static int testPilotFolderHierarchyKeepsNestedRootsTogether() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("pilot_nested_roots");
+    const fs::path dbPath = root / "pilot_nested_roots.db";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    db.mergeLibraryRoots({"H:\\Collection", "H:\\Collection\\8082", "D:\\Other"});
+
+    AudioRecord nested;
+    nested.filePath = "H:\\Collection\\8082\\inside.wav";
+    nested.fileName = "inside.wav";
+    nested.extension = ".wav";
+    nested.format = "WAV";
+    nested.fileSize = 10;
+    nested.sampleRate = 48000;
+    nested.channels = 1;
+    nested.totalFrames = 48000;
+    nested.durationSeconds = 1.0f;
+    check(db.addFile(nested), "nested-root fixture inserts a child audio row", failures);
+
+    AudioRecord independent = nested;
+    independent.filePath = "D:\\Other\\outside.wav";
+    independent.fileName = "outside.wav";
+    check(db.addFile(independent), "nested-root fixture inserts an independent audio row", failures);
+    check(db.rebuildFolderIndex(), "nested-root fixture builds the folder index", failures);
+
+    auto checkTree = [&failures](const FolderInfo& tree, const char* source) {
+        const auto parent = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
+            [](const FolderInfo& folder) { return folder.path == "h:\\collection"; });
+        const auto other = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
+            [](const FolderInfo& folder) { return folder.path == "d:\\other"; });
+        check(tree.subfolders.size() == 2 && parent != tree.subfolders.end() &&
+                  other != tree.subfolders.end(), source, failures);
+        if (parent == tree.subfolders.end()) return;
+        check(parent->subfolders.size() == 1 &&
+                  parent->subfolders[0].path == "h:\\collection\\8082" &&
+                  parent->subfolders[0].fileCount == 1,
+              "nested root is one selectable child with its original count", failures);
+    };
+    checkTree(db.getFolderHierarchy(aura::folder_tree::PathMode::Pilot),
+              "full pilot tree has one parent and one independent top-level root");
+    checkTree(db.getFolderHierarchyFromIndex(aura::folder_tree::PathMode::Pilot),
+              "indexed pilot tree has one parent and one independent top-level root");
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testFolderHierarchyFromIndexRepairsStaleIndex() {
     int failures = 0;
     const fs::path root = makeTempRoot("folder_index_repair");
@@ -4300,6 +4356,7 @@ int main(int argc, char** argv) {
     std::cout << "-- testRemoveFolderSubtreeRecoversMalformedFtsIndexes\n";
     failures += testRemoveFolderSubtreeRecoversMalformedFtsIndexes();
     std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
+    failures += testPilotFolderHierarchyKeepsNestedRootsTogether();
     failures += testFolderHierarchyFromIndexRepairsStaleIndex();
     std::cout << "-- testClearWaveformCacheByFolderUsesCanonicalFolderPath\n";
     failures += testClearWaveformCacheByFolderUsesCanonicalFolderPath();
