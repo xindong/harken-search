@@ -5755,6 +5755,7 @@ void LoadAppSettings(AppState& state) {
     // Read sidebar module visibility.
     state.settings.showViewMode = ParseBool(kv["showViewMode"], state.settings.showViewMode);
     state.settings.showFolderTree = ParseBool(kv["showFolderTree"], state.settings.showFolderTree);
+    state.settings.showRelatedPaths = ParseBool(kv["showRelatedPaths"], state.settings.showRelatedPaths);
     state.settings.showMetadataFilter = ParseBool(kv["showMetadataFilter"], state.settings.showMetadataFilter);
     state.settings.showPlaylists = ParseBool(kv["showPlaylists"], state.settings.showPlaylists);
     state.settings.showPlaylistQuickBar = ParseBool(kv["showPlaylistQuickBar"], state.settings.showPlaylistQuickBar);
@@ -6634,6 +6635,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     // Save sidebar module visibility.
     items.push_back({"showViewMode", state.settings.showViewMode ? "1" : "0"});
     items.push_back({"showFolderTree", state.settings.showFolderTree ? "1" : "0"});
+    items.push_back({"showRelatedPaths", state.settings.showRelatedPaths ? "1" : "0"});
     items.push_back({"showMetadataFilter", state.settings.showMetadataFilter ? "1" : "0"});
     items.push_back({"showPlaylists", state.settings.showPlaylists ? "1" : "0"});
     items.push_back({"showPlaylistQuickBar", state.settings.showPlaylistQuickBar ? "1" : "0"});
@@ -14290,6 +14292,10 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
     const ExplorerShellCapabilities browserCaps = browserSource.capabilities;
     RenderExplorerShell(
         [&state, relatedPathsMaxHeight, browserSource, browserCaps, kBrowserRelatedPathsMinHeight]() {
+            if (!state.settings.showRelatedPaths) {
+                ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                return;
+            }
             ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
             if (!g_browserSystemFolderRelatedPath.empty()) {
                 ImGui::SameLine();
@@ -16408,6 +16414,10 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         /// Related paths pane remains stable, but users can resize it against the folder tree.
         RenderExplorerShell(
             [&]() {
+                if (!state.settings.showRelatedPaths) {
+                    ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                    return;
+                }
                 ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
                 RenderRelatedPathsExplorerPane(
                     state,

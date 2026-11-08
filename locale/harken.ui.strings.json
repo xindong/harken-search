@@ -4249,6 +4249,13 @@
       "ja": "関連パス"
     },
     {
+      "id": "Nav_FolderSearch",
+      "type": "ui",
+      "zh": "文件夹搜索",
+      "en": "Folder Search",
+      "ja": "フォルダー検索"
+    },
+    {
       "id": "Nav_NoRelatedPaths",
       "type": "ui",
       "zh": "  (暂无相关路径)",
