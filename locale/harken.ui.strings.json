@@ -8054,13 +8054,6 @@
       "ja": "他 %d 件のエラーは省略されました。"
     },
     {
-      "id": "Main_WaitForegroundImport",
-      "type": "ui",
-      "zh": "等待本次入库前台完成...",
-      "en": "Waiting for this foreground import to finish...",
-      "ja": "今回のフォアグラウンド取り込みの完了を待っています..."
-    },
-    {
       "id": "Main_CreateBtn",
       "type": "ui",
       "zh": "创建",

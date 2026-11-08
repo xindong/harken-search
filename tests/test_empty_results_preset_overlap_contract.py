@@ -19,7 +19,7 @@ def _file_table_surface_block() -> str:
 
 
 def _search_status_block() -> str:
-    start = MAIN.index("// 物理隔离：状态区固定 75px 占位")
+    start = MAIN.index("// Preserve toolbar spacing; library-switch feedback belongs in the results background.")
     end = MAIN.index("// F-034: Column view preset dial", start)
     return MAIN[start:end]
 

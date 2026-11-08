@@ -29,8 +29,11 @@ int g_readCalls = 0;
 bool g_forceReparseDecision = false;
 std::filesystem::path g_forceReparseTarget;
 
-const std::filesystem::path kApprovedRoot{
-    "D:/Aris-QA/test-databases/RQ-20261010-NONDOCK-PREVIEW-original-audio-confirm"};
+#ifndef HARKEN_TEST_APPROVED_ROOT_UTF8
+#error HARKEN_TEST_APPROVED_ROOT_UTF8 must name the isolated test fixture root
+#endif
+const std::filesystem::path kApprovedRoot =
+    std::filesystem::u8path(HARKEN_TEST_APPROVED_ROOT_UTF8);
 
 void Check(bool condition, const char* message) {
     if (condition) {

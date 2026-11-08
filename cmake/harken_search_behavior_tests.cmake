@@ -2640,7 +2640,9 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         AURO_FILESYSTEM_PROBE_PATH_TESTING
+        HARKEN_TEST_APPROVED_ROOT_UTF8="${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm"
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm")
     if(MSVC)
         target_compile_options(TestOriginalAudioWriteConfirmIo PRIVATE /W3 /utf-8)
         set_target_properties(TestOriginalAudioWriteConfirmIo PROPERTIES
@@ -5485,6 +5487,8 @@ if(MSVC)
     )
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
+set_tests_properties(TestDatabaseFeatures PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 aura_set_test_labels(TestDatabaseFeatures db)
 add_test(NAME TestDatabaseFtsTriggerConcurrency COMMAND TestDatabaseFeatures --fts-trigger-concurrency)
 aura_set_test_labels(TestDatabaseFtsTriggerConcurrency db)
