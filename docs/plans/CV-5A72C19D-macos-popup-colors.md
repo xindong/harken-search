@@ -1,6 +1,6 @@
 # CV-5A72C19D · Mac 弹窗输入与配色
 
-正式计划先于产品改动记入 Mac Cuevi 卡；本页为仓库内的当前范围与验证记录。对应独立分支为 fix/CV-5A72C19D，原始 QA 基线为 9642a715，Mac 候选基线为 d77adb26。2026-11-07 已合入最新 qa/current 381ba67（本卡整合提交 aa91d57）；冲突仅涉及 WindowsMain.h 中已迁至 AppMainServices.h 的声明，已将 Windows 新的设置保存参数同步到该共用声明。
+正式计划先于产品改动记入 Mac Cuevi 卡；本页为仓库内的当前范围与验证记录。对应独立分支为 fix/CV-5A72C19D，原始 QA 基线为 9642a715，Mac 候选基线为 d77adb26。2026-11-07 已合入 qa/current 381ba67（本卡整合提交 aa91d57）；冲突仅涉及 WindowsMain.h 中已迁至 AppMainServices.h 的声明，已将 Windows 新的设置保存参数同步到该共用声明。2026-11-08 交付前刷新发现 qa/current 新增 004320b（相关路径显隐），修改了 src/main.cpp 等共用入口；本卡已重新登记负责 Session，先整合该 QA 更新，再对新提交重跑 Mac 构建、隔离弹窗操作和 Windows 同提交 CI，重做测试包与证据。旧 66e22e7 结果只作中间证据。
 
 ## 范围
 
