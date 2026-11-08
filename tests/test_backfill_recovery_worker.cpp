@@ -535,10 +535,12 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
     int failures = 0;
     const std::string nativeSource = readSourceFile("src/main.cpp");
     const std::string qaSource = readSourceFile("src/WindowsMain.cpp");
+    const std::string scanPresentationSource = readSourceFile("src/ScanDialogPresentation.h");
     const std::string drainWorkflowSource =
         readSourceFile("src/ScanWaveformBackfillDrainWorkflow.cpp");
     check(!nativeSource.empty(), "native scan drain source is readable", failures);
     check(!qaSource.empty(), "QA scan drain source is readable", failures);
+    check(!scanPresentationSource.empty(), "scan dialog projection source is readable", failures);
     check(nativeSource.find("stale_in_flight") != std::string::npos &&
               nativeSource.find("markScanForegroundMiniTerminal") != std::string::npos,
           "native stale foreground jobs write terminal state before pending clear", failures);
@@ -606,11 +608,18 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
     check(readSourceFile("src/Database.cpp").find("Failed to queue audio file") != std::string::npos &&
               readSourceFile("src/Database.cpp").find("failed.scanTerminalFailure = true") != std::string::npos,
           "handleAudioPath exceptions are classified as foreground terminal failures", failures);
-    check(nativeSource.find("const bool showBackgroundContinueButton =") != std::string::npos &&
-              nativeSource.find("state.isScanning.load() && !scanForegroundCompletionActive") !=
-                  std::string::npos &&
-              nativeSource.find("if (showBackgroundContinueButton)") != std::string::npos,
-          "native scan dialog cannot hide current-scan foreground completion behind background continue", failures);
+    check(containsAll(nativeSource, {
+              "HarkenSearch::BuildScanDialogView({",
+              "const bool showBackgroundContinueButton = scanView.canBackground;",
+              "if (scanView.canStop)",
+              "if (showBackgroundContinueButton)",
+          }) && containsAll(scanPresentationSource, {
+              "if (input.scanning || input.completionPending)",
+              "view.phase = ScanDialogPhase::Waveforms;",
+              "view.phase = ScanDialogPhase::Finalizing;",
+              "view.canBackground = true;",
+          }),
+          "native scan dialog delegates background action to foreground-aware projection", failures);
     check(containsAll(nativeSource, {
               "state.beginScanWorkflow(state.settings.cacheWaveformsOnScan);",
               "state.scanDiscoveredCount.store(",
@@ -625,30 +634,41 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
           }),
           "native scan path wires every scan workflow transition to truthful runtime data",
           failures);
-    check(nativeSource.find("scanCompleteSummaryActive") != std::string::npos &&
-              nativeSource.find("HarkenSearch::BuildScanProcessingProgress(scanWorkflowSnapshot)") != std::string::npos &&
-              nativeSource.find("scanWorkflowSnapshot.stage == HarkenSearch::ScanWorkflowStage::Completed") != std::string::npos &&
-              nativeSource.find("HarkenSearch::CanEnterCompleted(scanWorkflowSnapshot)") != std::string::npos &&
-              nativeSource.find("L(Main_ScannedProcessedFmt)") != std::string::npos,
-          "native scan dialog uses processed/discovered progress and a guarded completed state", failures);
-    check(nativeSource.find("const bool miniCacheStage =") != std::string::npos &&
-              nativeSource.find("static_cast<float>(scanWorkflowSnapshot.miniWaveformsCompleted)") != std::string::npos &&
-              nativeSource.find("float instant = (speedBasis - lastSampleProgress)") != std::string::npos &&
-              nativeSource.find("speedStr = 0.0f;") != std::string::npos,
-          "native scan dialog speed switches to mini completion only during the mini-cache stage",
-          failures);
     check(containsAll(nativeSource, {
-              "L(Main_FoundFilesFmt)",
-              "L(Main_ImportedFmt)",
-              "L(Main_SkippedDupInvalidFmt)",
-              "L(Main_FailedFmt)",
-              "L(Main_MiniCacheProgressFmt)",
-              "if (scanCompleteSummaryActive)",
-        "if (aura::ui::ActionButton(L(Done), ImVec2(btnW, 30)))",
-              "state.clearScanWorkflowState();",
+              "state.scanProcessedCount.store(",
+              "state.scanDiscoveredCount.store(",
+              "HarkenSearch::BuildScanDialogView({",
+              "if (scanView.progressKnown)",
+              "scanView.current, scanView.total",
+              "scanView.surface == HarkenSearch::ScanDialogSurface::Result",
+          }) && containsAll(scanPresentationSource, {
+              "BuildScanOutcomeCounts(snapshot.discovered, snapshot.processed,",
+              "input.ingestionTotalKnown && view.total > 0",
+              "snapshot.stage == ScanWorkflowStage::Completed && CanEnterCompleted(snapshot)",
           }),
-          "completed scan summary exposes five truthful counts and waits for the Done button",
-          failures);
+          "native scan dialog uses projected file counts and guarded completed result", failures);
+    check(containsAll(nativeSource, {
+              "state.scanUiMetrics.Update(",
+              "DrawScanDialogMetrics(state.scanUiMetrics.Value(), true)",
+          }) && containsAll(scanPresentationSource, {
+              "view.phase = ScanDialogPhase::Waveforms;",
+              "view.current = std::clamp(snapshot.miniWaveformsCompleted, 0, view.total);",
+              "phase_ != view.phase",
+          }),
+          "native scan speed resets when progress switches from files to mini cache", failures);
+    check(containsAll(nativeSource, {
+              "L(ScanUi_ImportedFmt)",
+              "L(Main_FailedFmt)",
+              "L(ScanUi_Statistics)",
+              "L(ScanUi_SkippedFmt)",
+              "if (aura::ui::ActionButton(L(Done), ImVec2(100.f, 32.f)",
+              "ResetScanDialogResult(state);",
+          }) && containsAll(scanPresentationSource, {
+              "view.succeeded = counts.succeeded;",
+              "view.skipped = counts.skipped;",
+              "view.failed = std::max(counts.failed, std::max(0, input.reportedErrors));",
+          }),
+          "completed scan result shows projected outcome counts and waits for Done", failures);
     check(readSourceFile("src/AppState.h").find("scanCompletionDurationMs") != std::string::npos &&
               readSourceFile("src/AppState.h").find("beginScanTiming();") != std::string::npos &&
               nativeSource.find("state.markScanCompletionReadyNow();") != std::string::npos &&
@@ -894,11 +914,15 @@ int testScanDrainDoesNotClearFailedPermanentWithoutForegroundTerminal() {
     {
         const std::string mainSource = readSourceFile("src/main.cpp");
         check(containsAll(mainSource, {
-                  "const bool miniCacheStage =",
-                  "static_cast<float>(scanWorkflowSnapshot.miniWaveformsCompleted)",
-                  ": static_cast<float>(curProg);",
+                  "state.scanUiMetrics.Update(",
+                  "DrawScanDialogMetrics(state.scanUiMetrics.Value(), true)",
+              }) && containsAll(scanPresentationSource, {
+                  "view.current = counts.processed;",
+                  "view.current = std::clamp(snapshot.miniWaveformsCompleted, 0, view.total);",
+                  "const bool measurable = view.phase == ScanDialogPhase::Ingesting ||",
+                  "view.phase == ScanDialogPhase::Waveforms;",
               }),
-              "scan dialog speed samples mini progress only while mini cache work is active",
+              "scan dialog speed samples the active file or mini-cache progress only",
               failures);
     }
     {
@@ -1366,11 +1390,137 @@ int testWorkerPoolCompletesCoverAndWaveformPending() {
     return failures;
 }
 
+int testPendingJobsFollowNewScanSession() {
+    int failures = 0;
+    using namespace aura;
+    for (const auto kind : {BackfillJobKind::CoverResolveAndThumb,
+                            BackfillJobKind::WaveformL1Overview,
+                            BackfillJobKind::MetadataRefresh}) {
+        for (const auto oldPriority : {BackfillPriority::IdleBackfill,
+                                      BackfillPriority::RecentScan,
+                                      BackfillPriority::VisibleRow}) {
+            for (int dequeuePath = 0; dequeuePath < 3; ++dequeuePath) {
+                BackfillQueue queue;
+                queue.onDbOpened("pending-scan.db", 17);
+                queue.enqueueFromScan(42, kind, oldPriority, "pending-scan.db", 17, 1);
+                queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan,
+                                      "pending-scan.db", 17, 2);
+                // Generic enqueue must not erase the new foreground owner.
+                queue.enqueue(42, kind, BackfillPriority::IdleBackfill);
+                const auto pending = queue.snapshot();
+                const auto priority = oldPriority == BackfillPriority::VisibleRow
+                    ? oldPriority : BackfillPriority::RecentScan;
+                check(pending.totalEnqueued == 1 &&
+                          pending.byKind[static_cast<int>(kind)] == 1 &&
+                          pending.byPriority[static_cast<int>(priority)] == 1,
+                      "scan takeover preserves one pending job and its priority", failures);
+                BackfillJob job{};
+                const bool dequeued = dequeuePath == 0 ? queue.tryDequeue(job)
+                    : dequeuePath == 1 ? queue.tryDequeueKind(kind, job)
+                                       : queue.dequeue(job);
+                check(dequeued && job.scanSessionId == 2,
+                      "pending old-scan job completes for the new scan session", failures);
+                check(job.kind == kind && job.priority == priority && job.dbGeneration == 17,
+                      "scan takeover preserves kind, priority and database generation", failures);
+                queue.reportOutcome(job, BackfillCompletionOutcome::Success);
+                check(queue.snapshot().done == 1 && queue.snapshot().inFlight == 0 &&
+                          !queue.tryDequeue(job),
+                      "scan takeover executes once without a duplicate heap job", failures);
+                queue.shutdown();
+            }
+        }
+    }
+    return failures;
+}
+
+int testDurableRefillKeepsExplicitScanTakeover() {
+    int failures = 0;
+    using namespace aura;
+    const fs::path root = makeTempRoot("durable_refill_scan_takeover");
+    const fs::path dbPath = root / "takeover.db";
+    const fs::path audioPath = root / "takeover.wav";
+    writeSilentMonoWav(audioPath);
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), false, false, false,
+                                               nullptr, nullptr, 1,
+                                               /*completeImport=*/false,
+                                               /*enqueueExtraction=*/false);
+    check(stats.added == 1, "takeover fixture inserts one row", failures);
+    const AudioRecord rec = db.getFileByPath(audioPath.u8string());
+    check(rec.id > 0, "takeover fixture has an audio id", failures);
+    constexpr int64_t oldSession = 9401;
+    constexpr int64_t newSession = 9402;
+    constexpr int64_t generation = 44;
+    check(db.resetScanForegroundCompletionSession(oldSession) &&
+              db.seedScanForegroundCompletionRows(oldSession, {rec.id}, true, false) &&
+              db.markBackfillPending(rec.id, static_cast<int>(BackfillJobKind::WaveformL1Overview)),
+          "old scan leaves a durable pending waveform", failures);
+
+    BackfillQueue queue;
+    queue.onDbOpened(dbPath.u8string(), generation);
+    queue.enqueueFromScan(rec.id, BackfillJobKind::WaveformL1Overview,
+                          BackfillPriority::RecentScan, dbPath.u8string(), generation, oldSession);
+    queue.enqueueFromScan(rec.id, BackfillJobKind::WaveformL1Overview,
+                          BackfillPriority::RecentScan, dbPath.u8string(), generation, newSession);
+    // The persisted row still points at the old scan. Refill must not undo
+    // explicit ownership of the already queued job.
+    queue.refillFromDatabaseIfBelowWaterMark(&db, 2, 2);
+    queue.refillFromDatabaseIfBelowWaterMark(&db, 2, 2);
+    check(queue.snapshot().totalEnqueued == 1,
+          "durable refill does not duplicate a taken-over job", failures);
+    BackfillJob job{};
+    check(queue.tryDequeue(job) && job.scanSessionId == newSession,
+          "durable refill keeps the new scan as pending job owner", failures);
+    queue.reportOutcome(job, BackfillCompletionOutcome::Success);
+    check(queue.snapshot().done == 1 && !queue.tryDequeue(job),
+          "taken-over job completes only once after durable refill", failures);
+    queue.shutdown();
+    db.close();
+    removeDbArtifacts(dbPath);
+    fs::remove_all(root);
+    return failures;
+}
+
+int testScanTakeoverPreservesInFlightOwnership() {
+    int failures = 0;
+    using namespace aura;
+    BackfillQueue queue;
+    queue.onDbOpened("inflight-scan.db", 18);
+    const auto kind = BackfillJobKind::WaveformL1Overview;
+    queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan, "inflight-scan.db", 18, 1);
+    BackfillJob running{};
+    check(queue.tryDequeue(running), "dequeue old scan job before new scan enqueue", failures);
+    queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan, "inflight-scan.db", 18, 2);
+    BackfillJob retry{};
+    check(!queue.tryDequeue(retry) && queue.snapshot().inFlight == 1,
+          "new scan does not duplicate an in-flight job", failures);
+    queue.reportOutcome(running, BackfillCompletionOutcome::TransientFailure);
+    check(queue.tryDequeue(retry) && retry.scanSessionId == 1,
+          "an in-flight result retains the session that submitted it", failures);
+    queue.reportOutcome(retry, BackfillCompletionOutcome::TransientFailure);
+    queue.enqueueFromScan(42, kind, BackfillPriority::RecentScan, "inflight-scan.db", 18, 2);
+    check(queue.tryDequeue(retry) && retry.scanSessionId == 2,
+          "a requeued pending job can be claimed by the current scan", failures);
+    queue.reportOutcome(retry, BackfillCompletionOutcome::Success);
+    queue.shutdown();
+    return failures;
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     int failures = 0;
     std::cout << "=== Backfill Recovery/Worker Tests ===\n";
+    failures += testPendingJobsFollowNewScanSession();
+    failures += testDurableRefillKeepsExplicitScanTakeover();
+    failures += testScanTakeoverPreservesInFlightOwnership();
+    if (argc == 2 && std::string(argv[1]) == "--pending-scan-session") {
+        return failures == 0 ? 0 : 1;
+    }
     std::cout << "-- testRebuildAndRefillRecoverDurablePendingRows\n";
     failures += testRebuildAndRefillRecoverDurablePendingRows();
     std::cout << "-- testDurableRefillRearmsCachedRuntimeEntry\n";
