@@ -22,9 +22,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdarg>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 namespace {
 
@@ -1644,6 +1646,13 @@ void SearchWorker::workerThread() {
         }
         totalCountLocal = result.totalCount;
         // Publish rows immediately; count and facets can follow.
+#if ARIS_PREVIEW_ISOLATION
+        if (const char* delay = std::getenv("HARKEN_QA_SEARCH_DELAY_MS")) {
+            // Allow a short actual-window recording of the loading background.
+            const int delayMs = std::clamp(std::atoi(delay), 0, 5000);
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        }
+#endif
         if (req.requestId >= m_latestRequestId.load()) {
             std::lock_guard<std::mutex> lk(m_resultMutex);
             m_completedQueue.push_back(std::move(result));

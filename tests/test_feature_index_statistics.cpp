@@ -1,5 +1,6 @@
 #include <iostream>
 #include "LibraryStatisticsWorker.h"
+#include "AudioEmbeddingService.h"
 #include <atomic>
 #include <chrono>
 #include <stdexcept>
@@ -93,6 +94,21 @@ int main() {
         require(databaseStats.Request(), "empty SQL rejected");
         until([&] { result=databaseStats.Poll(); return result.has_value(); });
         require(result->success && result->total==0 && result->indexed==0, "empty library mismatch");
+        sqlite3_close(writer);
+        const auto v2Path = dbPath + ".v2";
+        sqlite3_open(v2Path.c_str(), &writer);
+        sqlite3_exec(writer, "CREATE TABLE audio_files(id INTEGER PRIMARY KEY,file_path TEXT); INSERT INTO audio_files VALUES(1,'a'),(2,'b');",nullptr,nullptr,nullptr);
+        const auto v2Handler = HarkenSearch::MakeFeatureIndexCountHandler(true);
+        auto v2 = v2Handler(v2Path, [] { return false; });
+        require(v2.success && v2.total == 2 && v2.indexed == 0, "V1-only library must show V2 analysis pending");
+        sqlite3_exec(writer, "CREATE TABLE harken_similarity_v2(file_id INTEGER PRIMARY KEY,file_path TEXT,version INTEGER,embedding BLOB,model_version TEXT);",nullptr,nullptr,nullptr);
+        const std::string insertV2 = std::string("INSERT INTO harken_similarity_v2 VALUES(1,'a',2,zeroblob(2048),'") + HarkenSearch::kSimilarityModelRevision + "');";
+        sqlite3_exec(writer, insertV2.c_str(),nullptr,nullptr,nullptr);
+        v2 = v2Handler(v2Path, [] { return false; });
+        require(v2.success && v2.total == 2 && v2.indexed == 1 && v2.semanticIndexed == 1, "V2 acoustic and semantic counts must match active model version");
+        sqlite3_exec(writer, "UPDATE harken_similarity_v2 SET model_version='old';",nullptr,nullptr,nullptr);
+        v2 = v2Handler(v2Path, [] { return false; });
+        require(v2.success && v2.indexed == 1 && v2.semanticIndexed == 0, "outdated semantic model cannot appear complete");
         sqlite3_close(writer);
         // Reproduce the Windows library-replacement boundary with a real SQLite
         // reader. Cancellation is observable before its connection is released.

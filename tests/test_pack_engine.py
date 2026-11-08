@@ -184,11 +184,28 @@ class PackEngineTests(unittest.TestCase):
             assets_dir = release_dir / "assets" / "icons" / "brand"
             assets_dir.mkdir(parents=True)
             (assets_dir / "auro.png").write_bytes(b"png")
+            # Reusing an older build must not reintroduce the obsolete asset
+            # parents that the original 42 updater cannot create.
+            for relative in ("contributors/cindy.png","community/feishu-qr.png","community/wecom-qr.png"):
+                stale=release_dir/"assets/icons"/relative
+                stale.parent.mkdir(parents=True,exist_ok=True)
+                stale.write_bytes(b"stale generated asset")
             for name in ["shared.dll", "codec.dll", "meter.dll", "ai.dll", "ultimate.dll"]:
                 (release_dir / name).write_bytes(name.encode("ascii"))
+            (release_dir / "onnxruntime.dll").write_bytes(b"onnx-runtime")
+            (release_dir / "THIRD_PARTY_COMPONENTS.json").write_text(
+                json.dumps({"components": [
+                    {"name": "ONNX Runtime", "distributed": True},
+                    {"name": "LAION CLAP HTSAT unfused audio encoder", "distributed": True},
+                ]}), encoding="utf-8",
+            )
             models_dir = release_dir / "models"
             models_dir.mkdir()
             (models_dir / "model.bin").write_bytes(b"model")
+            clap_dir = models_dir / "clap"
+            clap_dir.mkdir()
+            for name in ("clap-audio.onnx", "clap-mel-filters.f64", "clap-window.f64"):
+                (clap_dir / name).write_bytes(name.encode("ascii"))
 
             zip_path = pack_engine.pack(
                 release_dir=release_dir,
@@ -223,8 +240,15 @@ class PackEngineTests(unittest.TestCase):
                 self.assertTrue({"lucide.ttf", "splash_beta.png", "harken_thesaurus.json"}.issubset(names))
                 self.assertTrue({"Auro.exe", "Auro.exe.sig", "auro_features.json", "auro_features.sig", "auro_thesaurus.json"}.isdisjoint(names))
                 self.assertIn("assets/icons/brand/auro.png", names)
+                self.assertFalse(any(name.startswith(("assets/icons/contributors/","assets/icons/community/")) for name in names))
+                self.assertTrue((release_dir/"assets/icons/contributors/cindy.png").is_file())
                 self.assertTrue({"shared.dll", "codec.dll", "meter.dll", "ai.dll"}.issubset(names))
                 self.assertIn("models/model.bin", names)
+                self.assertEqual(zf.read("onnxruntime.dll"), b"onnx-runtime")
+                self.assertTrue({
+                    "models/clap/clap-audio.onnx", "models/clap/clap-mel-filters.f64",
+                    "models/clap/clap-window.f64",
+                }.issubset(names))
                 self.assertIn("aris_release_notes.json", names)
                 self.assertNotIn("ultimate.dll", names)
 
@@ -268,6 +292,33 @@ class PackEngineTests(unittest.TestCase):
                 )
 
             self.assertIn("reaper_harken.dll", str(ctx.exception))
+            self.assertEqual(list(output_dir.glob("*.zip")), [])
+
+    def test_pack_rejects_missing_configured_similarity_runtime_before_zip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "Release"
+            output_dir = root / "dist"
+            release_dir.mkdir()
+            pack_engine.write_release_notes_file(release_dir, {
+                "schema_version": 2,
+                "releases": [{
+                    "version": "2.3.0", "release_date": "2026-10-19",
+                    "headline": "Similarity package test", "contributors": ["Harken Search Team"],
+                    "items": [{"category": "fix", "text": "Keep configured runtime bundled"}],
+                }],
+            })
+            (release_dir / "THIRD_PARTY_COMPONENTS.json").write_text(
+                json.dumps({"components": [
+                    {"name": "ONNX Runtime", "distributed": True},
+                ]}), encoding="utf-8",
+            )
+            with self.assertRaisesRegex(FileNotFoundError, "onnxruntime.dll"):
+                pack_engine.pack(
+                    release_dir=release_dir, output_dir=output_dir, edition="base",
+                    enabled_ids=[], version="2.3.0", secret=b"x" * 32,
+                    manifest=sample_manifest(),
+                )
             self.assertEqual(list(output_dir.glob("*.zip")), [])
 
     def test_publish_surface_uses_aris_product_identity(self):

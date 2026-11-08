@@ -2676,7 +2676,7 @@ bool AudioEngine::loadFile(const std::string& filePath) {
 
     if (useCenterSense) {
         m_centerSenseDataSource = new CenterSenseDataSource();
-        if (!m_centerSenseDataSource->init(Platform::AudioDataSource::BorrowDataSource(*m_decoder), engineSR, &m_centerSense, &m_bassMonoFreq, &m_freqShiftHz, &m_pitchMode, &m_magicEQRealtime)) {
+        if (!m_centerSenseDataSource->init(Platform::AudioDataSource::BorrowDataSource(*m_decoder), engineSR, &m_centerSenseEffective, &m_bassMonoFreqEffective, &m_freqShiftHz, &m_pitchMode, &m_magicEQRealtime)) {
             delete m_centerSenseDataSource;
             m_centerSenseDataSource = nullptr;
             m_decoder.reset();
@@ -2767,7 +2767,7 @@ bool AudioEngine::loadFile(const std::string& filePath) {
     // Solo 或 Mono 模式输出单声道，pan 强制居中
     Platform::AudioPlayback::SetPan(
         m_sound->Borrow(),
-        (m_forceMono || m_channelSolo != 0) ? 0.0f : m_pan);
+        (m_forceMono || m_channelSolo != 0 || !m_transportEffectVisibility.pan) ? 0.0f : m_pan);
 
     {
         float pitchMultiplier = (m_pitchMode == PitchMode::FreqShift) ? 1.0f : std::pow(2.0f, m_pitch / 12.0f);
@@ -2824,7 +2824,7 @@ bool AudioEngine::installDecodedPcmSourceLocked(const AudioFileInfo& fileInfo, s
     m_centerSenseDataSource = new CenterSenseDataSource();
     if (!m_centerSenseDataSource->init(
             Platform::AudioDataSource::BorrowDataSource(state->buffer), sr,
-            &m_centerSense, &m_bassMonoFreq, &m_freqShiftHz, &m_pitchMode,
+            &m_centerSenseEffective, &m_bassMonoFreqEffective, &m_freqShiftHz, &m_pitchMode,
             &m_magicEQRealtime)) {
         delete m_centerSenseDataSource;
         m_centerSenseDataSource = nullptr;
@@ -2862,7 +2862,7 @@ bool AudioEngine::installDecodedPcmSourceLocked(const AudioFileInfo& fileInfo, s
     Platform::AudioPlayback::SetVolume(m_sound->Borrow(), std::max(0.0f, std::min(1.2f, m_volume * m_replayGain)));
     Platform::AudioPlayback::SetPan(
         m_sound->Borrow(),
-        (m_forceMono || m_channelSolo != 0) ? 0.0f : m_pan);
+        (m_forceMono || m_channelSolo != 0 || !m_transportEffectVisibility.pan) ? 0.0f : m_pan);
     {
         float pitchMultiplier = (m_pitchMode == PitchMode::FreqShift) ? 1.0f : std::pow(2.0f, m_pitch / 12.0f);
         Platform::AudioPlayback::SetPitch(
@@ -3284,7 +3284,7 @@ bool AudioEngine::applyLoadFileResult(
 
     if (useCenterSense) {
         m_centerSenseDataSource = new CenterSenseDataSource();
-        if (!m_centerSenseDataSource->init(Platform::AudioDataSource::BorrowDataSource(*m_decoder), fileInfo.sampleRate > 0 ? (unsigned int)fileInfo.sampleRate : 48000u, &m_centerSense, &m_bassMonoFreq, &m_freqShiftHz, &m_pitchMode, &m_magicEQRealtime)) {
+        if (!m_centerSenseDataSource->init(Platform::AudioDataSource::BorrowDataSource(*m_decoder), fileInfo.sampleRate > 0 ? (unsigned int)fileInfo.sampleRate : 48000u, &m_centerSenseEffective, &m_bassMonoFreqEffective, &m_freqShiftHz, &m_pitchMode, &m_magicEQRealtime)) {
             delete m_centerSenseDataSource;
             m_centerSenseDataSource = nullptr;
             m_decoder.reset();
@@ -3326,7 +3326,7 @@ bool AudioEngine::applyLoadFileResult(
     Platform::AudioPlayback::SetVolume(m_sound->Borrow(), std::max(0.0f, std::min(1.2f, m_volume * m_replayGain)));
     Platform::AudioPlayback::SetPan(
         m_sound->Borrow(),
-        (m_forceMono || m_channelSolo != 0) ? 0.0f : m_pan);
+        (m_forceMono || m_channelSolo != 0 || !m_transportEffectVisibility.pan) ? 0.0f : m_pan);
     {
         float pitchMultiplier = (m_pitchMode == PitchMode::FreqShift) ? 1.0f : std::pow(2.0f, m_pitch / 12.0f);
         Platform::AudioPlayback::SetPitch(
@@ -3899,24 +3899,36 @@ void AudioEngine::applyReplayGain(float gainDb, float /*referenceLevel*/) {
 
 void AudioEngine::setPan(float pan) {
     float newPan = std::clamp(pan, -1.0f, 1.0f);
-
-    // 节流：如果变化太小就不更新
-    if (std::abs(newPan - m_pan) < 0.001f) return;
-    
     auto sound = Platform::AudioPlayback::BorrowSound(nullptr);
     float effectivePan = 0.0f;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_pan = newPan;
+        // Mono centers playback while retaining the requested stereo pan.
+        const float requestedPan = m_forceMono ? m_panStereo : m_pan;
+        if (std::abs(newPan - requestedPan) < 0.001f) return;
+        if (m_forceMono) m_panStereo = newPan;
+        else m_pan = newPan;
         sound = m_sound ? m_sound->Borrow() : Platform::AudioPlayback::BorrowSound(nullptr);
-        // Apply pan - solo modes use mono output so pan is effectively centered
-        effectivePan = (m_forceMono || m_channelSolo != 0) ? 0.0f : newPan;
+        effectivePan = (m_forceMono || m_channelSolo != 0 || !m_transportEffectVisibility.pan) ? 0.0f : newPan;
     }
-    
-    if (sound.IsValid()) {
-        Platform::AudioPlayback::SetPan(
-            sound, effectivePan);
+    if (sound.IsValid()) Platform::AudioPlayback::SetPan(sound, effectivePan);
+}
+
+void AudioEngine::setTransportEffectVisibility(const TransportEffectVisibility& visibility) {
+    auto sound = Platform::AudioPlayback::BorrowSound(nullptr);
+    float effectivePan = 0.0f;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_transportEffectVisibility = visibility;
+        m_centerSenseEffective = visibility.soundstage ? m_centerSense : 0.0f;
+        m_bassMonoFreqEffective = visibility.soundstage ? m_bassMonoFreq : 0.0f;
+        MagicEQSettings effectiveEQ = m_magicEQ;
+        if (!visibility.eq) effectiveEQ.enabled = false;
+        m_magicEQRealtime.store(effectiveEQ);
+        sound = m_sound ? m_sound->Borrow() : Platform::AudioPlayback::BorrowSound(nullptr);
+        effectivePan = (m_forceMono || m_channelSolo != 0 || !visibility.pan) ? 0.0f : m_pan;
     }
+    if (sound.IsValid()) Platform::AudioPlayback::SetPan(sound, effectivePan);
 }
 
 void AudioEngine::setCenterSense(float k) {
@@ -3924,7 +3936,7 @@ void AudioEngine::setCenterSense(float k) {
     if (std::abs(newK - m_centerSense) < 0.001f) return;
     std::lock_guard<std::mutex> lock(m_mutex);
     m_centerSense = newK;
-    // Playback chain will read m_centerSense in later tasks; no backend sound call here yet.
+    m_centerSenseEffective = m_transportEffectVisibility.soundstage ? newK : 0.0f;
 }
 
 void AudioEngine::setMagicEQ(const MagicEQSettings& settings) {
@@ -3940,7 +3952,7 @@ void AudioEngine::setMagicEQ(const MagicEQSettings& settings) {
     next.mode = next.mode == MagicEQMode::Notch ? MagicEQMode::Notch : MagicEQMode::Pass;
     if (!std::isfinite(next.centerFreq)) next.centerFreq = 1000.0f;
     if (!std::isfinite(next.halfWidthPercent)) next.halfWidthPercent = 10.0f;
-    if (!std::isfinite(next.widgetWidth)) next.widgetWidth = 180.0f;
+    if (!std::isfinite(next.widgetWidth)) next.widgetWidth = CenterSenseDsp::kDefaultMagicEQWidgetWidth;
     next.halfWidthPercent = std::clamp(next.halfWidthPercent, 1.0f, 50.0f);
     next.centerFreq = std::clamp(next.centerFreq, 20.0f, 20000.0f);
     const float centerPercent = CenterSenseDsp::magicEQFrequencyToPercent(next.centerFreq);
@@ -3979,7 +3991,9 @@ void AudioEngine::enforceMagicEQAvailabilityLocked() {
             m_magicEQUserEnabled = false;
         }
     }
-    m_magicEQRealtime.store(m_magicEQ);
+    MagicEQSettings effectiveEQ = m_magicEQ;
+    if (!m_transportEffectVisibility.eq) effectiveEQ.enabled = false;
+    m_magicEQRealtime.store(effectiveEQ);
 }
 
 MagicEQSettings AudioEngine::getMagicEQ() const {
@@ -4013,7 +4027,7 @@ AudioEngine::TransferProcessingSnapshot AudioEngine::captureTransferProcessingSn
     snapshot.outPoint = m_outPoint;
     snapshot.totalFrames = m_fileInfo.totalFrames;
     snapshot.magicEQ = m_magicEQ;
-    return snapshot;
+    return ApplyTransportEffectVisibility(snapshot, m_transportEffectVisibility);
 }
 
 void AudioEngine::setBassMonoFreq(float hz) {
@@ -4021,6 +4035,7 @@ void AudioEngine::setBassMonoFreq(float hz) {
     if (std::abs(newHz - m_bassMonoFreq) < 0.01f) return;
     std::lock_guard<std::mutex> lock(m_mutex);
     m_bassMonoFreq = newHz;
+    m_bassMonoFreqEffective = m_transportEffectVisibility.soundstage ? newHz : 0.0f;
 }
 
 void AudioEngine::setChannelSolo(int mode) {
@@ -4087,6 +4102,7 @@ void AudioEngine::setChannelSolo(int mode) {
 void AudioEngine::setMono(bool mono) {
     std::string path;
     bool shouldReload = false;
+    bool wasReversed = false;
     bool wasPlaying = false;
     float pos = 0.0f;
     float inPt = 0.0f;
@@ -4095,7 +4111,9 @@ void AudioEngine::setMono(bool mono) {
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (mono && !m_transportEffectVisibility.mono) return;
         if (m_forceMono == mono) return;
+        wasReversed = m_reverse && m_transportEffectVisibility.reverse;
 
         if (mono) {
             m_panStereo = m_pan;
@@ -4126,6 +4144,9 @@ void AudioEngine::setMono(bool mono) {
         loadFile(path);
         setInPoint(inPt);
         setOutPoint(outPt);
+        // loadFile resets reverse playback. Keep the requested direction when
+        // changing channel count; the selection already uses that timeline.
+        if (wasReversed) (void)setReverse(true);
         seekToPosition(pos);
 
         // 优先直接复用 source detail 即时切显示
@@ -4195,6 +4216,7 @@ bool AudioEngine::setReverse(bool reverse) {
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (reverse && !m_transportEffectVisibility.reverse) return false;
         if (reverse == m_reverse) return (m_sound != nullptr);
 
         m_reverse = reverse;
@@ -4358,7 +4380,7 @@ bool AudioEngine::reloadWithReverseState() {
         m_centerSenseDataSource = new CenterSenseDataSource();
         if (!m_centerSenseDataSource->init(
                 Platform::AudioDataSource::BorrowDataSource(*m_decoder), engineSR,
-                &m_centerSense, &m_bassMonoFreq, &m_freqShiftHz, &m_pitchMode,
+                &m_centerSenseEffective, &m_bassMonoFreqEffective, &m_freqShiftHz, &m_pitchMode,
                 &m_magicEQRealtime)) {
             delete m_centerSenseDataSource;
             m_centerSenseDataSource = nullptr;
@@ -4431,7 +4453,7 @@ bool AudioEngine::reloadWithReverseState() {
                 m_centerSenseDataSource = new CenterSenseDataSource();
                 if (!m_centerSenseDataSource->init(
                         Platform::AudioDataSource::BorrowDataSource(audioBuffer->buffer), sampleRate,
-                        &m_centerSense, &m_bassMonoFreq, &m_freqShiftHz, &m_pitchMode,
+                        &m_centerSenseEffective, &m_bassMonoFreqEffective, &m_freqShiftHz, &m_pitchMode,
                         &m_magicEQRealtime)) {
                     delete m_centerSenseDataSource;
                     m_centerSenseDataSource = nullptr;
@@ -4490,7 +4512,7 @@ bool AudioEngine::reloadWithReverseState() {
     // Solo 或 Mono 模式输出单声道，pan 强制居中
     Platform::AudioPlayback::SetPan(
         m_sound->Borrow(),
-        (m_forceMono || m_channelSolo != 0) ? 0.0f : m_pan);
+        (m_forceMono || m_channelSolo != 0 || !m_transportEffectVisibility.pan) ? 0.0f : m_pan);
     {
         float pitchMultiplier = (m_pitchMode == PitchMode::FreqShift) ? 1.0f : std::pow(2.0f, m_pitch / 12.0f);
         Platform::AudioPlayback::SetPitch(
@@ -5148,8 +5170,8 @@ bool AudioEngine::exportRegion(const std::string& outputPath,
 bool AudioEngine::hasAudioAdjustments() const {
     return (std::abs(m_pitch) > 0.01f ||
             std::abs(m_volume - 1.0f) > 0.01f ||
-            std::abs(m_pan) > 0.001f ||
-            std::abs(m_centerSense) > 0.001f ||
+            (m_transportEffectVisibility.pan && std::abs(m_pan) > 0.001f) ||
+            std::abs(m_centerSenseEffective) > 0.001f ||
             m_reverse ||
             m_channelSolo != 0 ||
             m_forceMono);
@@ -6656,14 +6678,18 @@ bool AudioEngine::switchOutputDevice(int deviceIndex) {
                 m_engine = nullptr;
                 m_isInitialized = false;
                 m_outputDeviceIndex = -1;
+                m_outputDeviceIdBlob.clear();
                 m_outputDeviceName = "Default";
                 return false;
             }
             m_outputDeviceIndex = -1;
+            m_outputDeviceIdBlob.clear();
             m_outputDeviceName = "Default";
             m_isInitialized = true;
         } else {
             m_outputDeviceIndex = deviceIndex;
+            m_outputDeviceIdBlob = (deviceIndex >= 0 && deviceIndex < (int)m_cachedDevices.size())
+                ? m_cachedDevices[deviceIndex].deviceIdBlob : std::vector<uint8_t>{};
             m_outputDeviceName = (deviceIndex >= 0 && deviceIndex < (int)m_cachedDevices.size())
                 ? m_cachedDevices[deviceIndex].name : "Default";
             m_isInitialized = true;

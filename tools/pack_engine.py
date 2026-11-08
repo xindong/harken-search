@@ -29,8 +29,10 @@ from pathlib import Path
 
 try:
     from .build_offline_manual import RELATIVE_PDF, stage_manual
+    from .verify_release_assembly import configured_similarity_files
 except ImportError:  # 兼容直接运行 tools/pack_engine.py
     from build_offline_manual import RELATIVE_PDF, stage_manual
+    from verify_release_assembly import configured_similarity_files
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -52,7 +54,9 @@ RELEASE_NOTES_FILENAME = "aris_release_notes.json"
 # Files that are always included regardless of feature selection
 ALWAYS_INCLUDE = ["HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll"]
 RUNTIME_INCLUDE = ["lucide.ttf", "splash_beta.png", "harken_thesaurus.json"]
-RUNTIME_DIRS = ["assets"]
+# Select the current runtime trees explicitly. An incremental build may still
+# contain obsolete contributors/community copies beside these destinations.
+RUNTIME_DIRS = ["assets/icons/brand", "assets/logos/brand", "assets/avatars"]
 
 # Optional directories bundled when AI features are enabled
 AI_FEATURE_IDS = {"ai_engine", "ai_tags"}
@@ -396,7 +400,9 @@ def prepare_release_notes(
 
 def find_inno_setup_compiler() -> Path:
     """Locate Inno Setup's ISCC.exe."""
-    candidates = [
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    candidates = ([Path(local_app_data) / "Programs" / "Inno Setup 6" / "ISCC.exe"]
+                  if local_app_data else []) + [
         Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
         Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
     ]
@@ -646,6 +652,18 @@ def pack(
 
     # --- Collect required DLLs ---
     required_dlls = collect_required_dlls(manifest, filtered_ids)
+    similarity_files = configured_similarity_files(release_dir)
+    missing_similarity = [
+        relative for relative in similarity_files
+        if not (release_dir / relative).is_file()
+        or (release_dir / relative).stat().st_size == 0
+    ]
+    if missing_similarity:
+        raise FileNotFoundError(
+            f"Configured similarity file(s) missing from {release_dir}: {missing_similarity}"
+        )
+    if "onnxruntime.dll" in similarity_files and "onnxruntime.dll" not in required_dlls:
+        required_dlls.append("onnxruntime.dll")
 
     # --- Determine ZIP name ---
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -721,7 +739,9 @@ def pack(
                 missing_files.append(dll)
 
         # models/ directory — include if any AI feature is enabled
-        if any(fid in set(filtered_ids) for fid in AI_FEATURE_IDS):
+        if any(fid in set(filtered_ids) for fid in AI_FEATURE_IDS) or any(
+            relative.startswith("models/") for relative in similarity_files
+        ):
             models_src = release_dir / MODELS_DIR_NAME
             if models_src.exists() and models_src.is_dir():
                 for model_file in sorted(models_src.rglob("*")):

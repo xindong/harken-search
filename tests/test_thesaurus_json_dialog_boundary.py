@@ -11,6 +11,9 @@ assert WIN32_PATH.is_file()
 assert PORTABLE_PATH.is_file()
 
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+SETTINGS_DIALOG = (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8")
+SETTINGS_ACTIONS = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
+SETTINGS_THESAURUS = (ROOT / "src/SettingsThesaurusTools.inl").read_text(encoding="utf-8")
 HEADER = HEADER_PATH.read_text(encoding="utf-8")
 WIN32 = WIN32_PATH.read_text(encoding="utf-8")
 PORTABLE = PORTABLE_PATH.read_text(encoding="utf-8")
@@ -58,25 +61,28 @@ assert 'return "";' in PORTABLE
 qualified_call = (
     "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
 )
-assert MAIN.count(qualified_call) == 1
-merge_button = MAIN.index("aura::ui::ActionButton(L(Set_ThesMerge)")
-reset_button = MAIN.index("aura::ui::ActionButton(L(Set_ThesResetDefault)", merge_button)
-merge_body = MAIN[merge_button:reset_button]
+assert '#include "SettingsDialog.inl"' in MAIN
+assert '#include "SettingsActions.inl"' in SETTINGS_DIALOG
+assert '#include "SettingsThesaurusTools.inl"' in SETTINGS_ACTIONS
+assert SETTINGS_THESAURUS.count(qualified_call) == 1
+merge_button = SETTINGS_THESAURUS.index("aura::ui::ActionButton(L(Set_ThesMerge)")
+reset_button = SETTINGS_THESAURUS.index("aura::ui::ActionButton(L(Set_ThesResetDefault)", merge_button)
+merge_body = SETTINGS_THESAURUS[merge_button:reset_button]
 assert "OPENFILENAMEW" not in merge_body
 assert "GetOpenFileNameW" not in merge_body
 
-guard = MAIN.index("#ifdef _WIN32", merge_button, reset_button)
-call = MAIN.index(qualified_call, guard, reset_button)
-empty_check = MAIN.index("if (!importPath.empty())", call, reset_button)
-json_decl = MAIN.index("std::string json;", empty_check, reset_button)
-read = MAIN.index(
+guard = SETTINGS_THESAURUS.index("#ifdef _WIN32", merge_button, reset_button)
+call = SETTINGS_THESAURUS.index(qualified_call, guard, reset_button)
+empty_check = SETTINGS_THESAURUS.index("if (!importPath.empty())", call, reset_button)
+json_decl = SETTINGS_THESAURUS.index("std::string json;", empty_check, reset_button)
+read = SETTINGS_THESAURUS.index(
     "Platform::FileSystem::ReadFileText(importPath, json)", json_decl, reset_button
 )
-groups = MAIN.index("std::vector<ThesaurusGroup> imported;", read, reset_button)
-parse = MAIN.index("ParseThesaurusJson(json, imported);", groups, reset_button)
-append = MAIN.index("g_userThesaurus.insert(", parse, reset_button)
-save = MAIN.index("SaveThesaurusJson();", append, reset_button)
-guard_end = MAIN.index("#endif", save, reset_button)
+groups = SETTINGS_THESAURUS.index("std::vector<ThesaurusGroup> imported;", read, reset_button)
+parse = SETTINGS_THESAURUS.index("ParseThesaurusJson(json, imported);", groups, reset_button)
+append = SETTINGS_THESAURUS.index("g_userThesaurus.insert(", parse, reset_button)
+save = SETTINGS_THESAURUS.index("SaveThesaurusJson();", append, reset_button)
+guard_end = SETTINGS_THESAURUS.index("#endif", save, reset_button)
 assert (
     merge_button
     < guard

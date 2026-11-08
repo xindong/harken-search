@@ -112,6 +112,20 @@ class LocalizationLedgerContractTests(unittest.TestCase):
         ledger = generate_localization.normalize_ledger(payload)
         generate_localization.check_unreferenced_ids(ledger, used)
 
+    def test_included_cpp_fragment_is_a_live_reference(self) -> None:
+        import generate_localization
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            src = root / "src"
+            src.mkdir()
+            (src / "SettingsDialog.inl").write_text(
+                "L(Set_UILanguage); Lw(Consent_Title); LStr::Set_ThemeDark;\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(generate_localization.collect_used_lstr_ids(root),
+                             ["Consent_Title", "Set_ThemeDark", "Set_UILanguage"])
+
     def test_missing_translation_fails_generator(self) -> None:
         import generate_localization
 

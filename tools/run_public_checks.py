@@ -16,6 +16,10 @@ TESTS = (
     "tests/test_remove_card_directory.py",
     "tests/test_settings_body_scroll_height.py",
     "tests/test_close_glyph_measurement.py",
+    "tests/test_qa_full_scan_completion_cleanup.py",
+    "tests/test_qa_settings_cleanup.py",
+    "tests/test_similarity_qa_shutdown.py",
+    "tests/test_similarity_qa_batch_start.py",
     "tests/test_public_manual_packaging.py",
     "tests/test_export_public_repository.py",
     "tests/test_public_repo_manifest.py",
@@ -27,6 +31,8 @@ TESTS = (
     "tests/test_repository_update_migration.py",
     "tests/test_build_update_manifest.py",
     "tests/test_update_product_composition.py",
+    "tests/test_sidebar_metadata_picker_contract.py",
+    "tests/test_update_legacy_asset_layout.py",
 )
 
 

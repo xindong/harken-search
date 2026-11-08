@@ -123,6 +123,7 @@ def build_repo(tmp_path: Path) -> Path:
                 "installer/Languages/ChineseSimplified.isl",
                 "reaper_extension",
                 "tweetnacl",
+                "cmake/harken_similarity_runtime.cmake",
                 "thirdparty/ixwebsocket/third_party/cli11",
                 "thirdparty/ixwebsocket/third_party/cpp-linenoise",
                 "thirdparty/ixwebsocket/third_party/msgpack11",

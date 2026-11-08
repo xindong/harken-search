@@ -184,6 +184,44 @@ void TestHandlerErrorsArePublished() {
           "BDD: handler exceptions map to search failed");
 }
 
+void TestBatchHistorySurvivesFailureAndCancel() {
+    std::mutex observedMutex;
+    std::vector<HarkenSearch::SimilarityRequest> observed;
+    std::atomic<int> calls{0}; std::atomic<bool> cancellationObserved{false};
+    std::promise<void> enteredPromise,releasePromise;
+    auto entered=enteredPromise.get_future(); auto release=releasePromise.get_future().share();
+    HarkenSearch::SimilarityWorkflow workflow([&](const auto& request,const auto& cancelled) {
+        const int call=++calls;
+        { std::lock_guard<std::mutex> lock(observedMutex); observed.push_back(request); }
+        if(call==2) throw std::runtime_error("transient query failure");
+        if(call==4) { enteredPromise.set_value(); release.wait(); cancellationObserved.store(cancelled()); }
+        auto completion=Complete(request,100+int64_t(request.shownSounds.size()));
+        completion.options=request.options; completion.historyToken="controlled-library-reference";
+        completion.rows.front().contentFingerprint=std::to_string(completion.rows.front().fileId);
+        return completion;
+    });
+    workflow.SetDatabasePath("C:/library/batches.db");
+    workflow.SetReference(HarkenSearch::SimilarityReference{1,"C:/audio/reference.wav","reference.wav"});
+    HarkenSearch::SimilarityOptions options; options.mode=HarkenSearch::SimilarityMode::Substitute;
+    auto run=[&] {
+        workflow.RequestSearch(options,1);
+        return WaitUntil(workflow,[](const auto& snapshot) { return snapshot.status!=HarkenSearch::SimilarityWorkflowStatus::Searching; });
+    };
+    Check(run() && workflow.Snapshot().batchNumber==1,"V2: only a displayed completion advances batch history");
+    Check(run() && workflow.Snapshot().status==HarkenSearch::SimilarityWorkflowStatus::Error,"V2: an exception is visible without consuming a batch");
+    Check(run(),"V2: a failed batch can be retried");
+    { std::lock_guard<std::mutex> lock(observedMutex); Check(observed.size()>=3 && observed[2].shownSounds.size()==1,"V2: retry preserves the shown sounds and selected mode after an exception"); }
+    workflow.RequestSearch(options,1); Check(entered.wait_for(1s)==std::future_status::ready,"V2: another batch can remain in flight");
+    workflow.CancelSearch(); releasePromise.set_value();
+    Check(run(),"V2: a cancelled batch can be retried");
+    { std::lock_guard<std::mutex> lock(observedMutex); Check(observed.size()>=5 && observed[4].shownSounds.size()==2,"V2: cancelled and stale completions never consume unseen results"); }
+    Check(cancellationObserved.load(),"V2: cancelled worker observes its stale generation");
+    options.deep=true; Check(run(),"V2: changing depth starts another search");
+    { std::lock_guard<std::mutex> lock(observedMutex); Check(observed.back().shownSounds.empty(),"V2: changing depth resets the batch history"); }
+    workflow.SetDatabasePath("C:/library/another.db"); Check(run(),"V2: another library starts another search");
+    { std::lock_guard<std::mutex> lock(observedMutex); Check(observed.back().shownSounds.empty(),"V2: changing libraries resets the batch history"); }
+}
+
 void TestDestructorJoinsInFlightHandler() {
     std::promise<void> enteredPromise;
     auto entered = enteredPromise.get_future();
@@ -220,6 +258,7 @@ int main() {
     TestRequestsOwnImmutableInputs();
     TestLatestRequestWinsAndInvalidateClears();
     TestHandlerErrorsArePublished();
+    TestBatchHistorySurvivesFailureAndCancel();
     TestDestructorJoinsInFlightHandler();
     return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
