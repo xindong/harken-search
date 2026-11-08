@@ -675,6 +675,8 @@ Source: "{#SourceDir}\harken_features.sig"; DestDir: "{app}"; Flags: ignoreversi
 
 ; 第三方 DLL（全部用 skipifsourcedoesntexist — packer.py 已按功能裁剪）
 Source: "{#SourceDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceDir}\onnxruntime.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceDir}\models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#SourceDir}\rlottie.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\rlottie-image-loader.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\reaper_harken.dll"; DestDir: "{app}"; Flags: ignoreversion
