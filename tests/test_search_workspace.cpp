@@ -55,6 +55,24 @@ int main() {
     check(!state.settings.autoReconcileOnStartup,
           "startup reconcile is opt-in by default for large-library safety");
 
+    AppState presetCopyState;
+    TabPreset longQueryPreset;
+    longQueryPreset.name = "long query";
+    TabPresetEntry longQueryEntry;
+    longQueryEntry.name = "tab";
+    longQueryEntry.searchBuffer =
+        std::string(sizeof(presetCopyState.searchBuffer) + 8, 'q');
+    longQueryPreset.tabs.push_back(longQueryEntry);
+    presetCopyState.tabPresets.push_back(longQueryPreset);
+    check(presetCopyState.loadTabPreset(0),
+          "loading a tab preset accepts a long search query");
+    check(presetCopyState.listTabs.size() == 1 &&
+              std::string(presetCopyState.listTabs[0].searchBuffer) ==
+                  std::string(sizeof(presetCopyState.listTabs[0].searchBuffer) - 1, 'q') &&
+              presetCopyState.listTabs[0].searchBuffer[
+                  sizeof(presetCopyState.listTabs[0].searchBuffer) - 1] == char{0},
+          "tab preset search query truncates with a terminator");
+
     // An uncommitted edit in the search box must not replace the query that
     // produced a tab's cached results when switching between tabs.
     AppState tabQueryState;

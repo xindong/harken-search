@@ -4,6 +4,7 @@
 #include "AppState.h"
 #include "Localization.h"   // L(id) used by shortcut preset names (knife-B explicit include)
 #include "Utils.h"
+#include "FixedBufferCopy.h"
 
 #include <algorithm>
 #include <cstring>
@@ -14,7 +15,7 @@ namespace {
 
 template <size_t N>
 void CopyStringToBuffer(char (&dst)[N], const std::string& src) {
-    strncpy_s(dst, N, src.c_str(), _TRUNCATE);
+    HarkenSearch::CopyTruncatedCString(dst, src);
 }
 
 bool HasActivePillFilterState(const std::map<std::string, int>& pillState) {
@@ -383,7 +384,7 @@ bool AppState::loadTabPreset(int presetIdx) {
         t.name                    = e.name;
         t.viewMode                = MapLegacyViewMode(e.viewMode);
         t.browserScope            = e.browserScope;
-        strncpy_s(t.searchBuffer, sizeof(t.searchBuffer), e.searchBuffer.c_str(), _TRUNCATE);
+        CopyStringToBuffer(t.searchBuffer, e.searchBuffer);
         t.selectedFolderPath      = e.selectedFolderPath;
         t.folderFilterActive      = e.folderFilterActive;
         t.coverFilterActive       = e.coverFilterActive;
