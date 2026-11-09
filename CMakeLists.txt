@@ -1500,6 +1500,7 @@ if(WIN32)
 elseif(APPLE)
     target_link_libraries(HarkenSearch PRIVATE
         Threads::Threads
+        ixwebsocket                # WAAPI client and its public include directory
         "-framework Cocoa"
         "-framework CoreServices"      # FSEvents
         "-framework OpenGL"
