@@ -358,6 +358,9 @@ void CancelQueuedFileDrag() {
     int frameCount;
     int loadedReadingFontPx;
     int loadedListFontPx;
+    AppTheme loadedTheme;
+    bool loadedUseCustomColors;
+    std::string loadedCustomThemeName;
 }
 @property (nonatomic, strong) NSWindow* window;
 @property (nonatomic, strong) HarkenOpenGLView* glView;
@@ -442,6 +445,9 @@ void CancelQueuedFileDrag() {
         const auto themePath = Platform::ThemeFiles::CustomThemePathUtf8();
         if (!themePath.empty()) ThemeColors::loadAndApplyThemeFile(themePath);
     }
+    loadedTheme = state->settings.theme;
+    loadedUseCustomColors = state->settings.useCustomColors;
+    loadedCustomThemeName = state->settings.customThemeName;
     harken::theme_schedule::Tick(*state, true);
     osxReady = ImGui_ImplOSX_Init(self.glView);
     rendererReady = ImGui_ImplOpenGL3_Init("#version 150");
@@ -525,6 +531,22 @@ void CancelQueuedFileDrag() {
         loadedReadingFontPx = readingPx;
         loadedListFontPx = listPx;
         RecordStage("FontAtlasRebuilt");
+    }
+    if (state->settings.theme != loadedTheme ||
+        state->settings.useCustomColors != loadedUseCustomColors ||
+        state->settings.customThemeName != loadedCustomThemeName) {
+        // Settings changes the semantic palette during RenderUI. The next frame
+        // must also refresh ImGui's popup/input colors, as Windows does.
+        ApplyTheme(state->settings.theme);
+        if (state->settings.useCustomColors) ApplyCustomColors(state->settings);
+        if (state->settings.theme == AppTheme::Custom && !state->settings.customThemeName.empty()) {
+            const auto themePath = Platform::ThemeFiles::CustomThemePathUtf8();
+            if (!themePath.empty()) ThemeColors::loadAndApplyThemeFile(themePath);
+        }
+        loadedTheme = state->settings.theme;
+        loadedUseCustomColors = state->settings.useCustomColors;
+        loadedCustomThemeName = state->settings.customThemeName;
+        RecordStage("ThemeStyleResynced");
     }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplOSX_NewFrame(self.glView);

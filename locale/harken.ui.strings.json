@@ -20,6 +20,16 @@
     {"id":"SetUX_Common","type":"ui","zh":"常用设置","en":"Common","ja":"よく使う設定"},
     {"id":"SetUX_Appearance","type":"ui","zh":"外观与显示","en":"Appearance","ja":"外観と表示"},
     {"id":"SetUX_AudioPlayback","type":"ui","zh":"音频与播放","en":"Audio & playback","ja":"オーディオと再生"},
+    {"id":"SetUX_TransportEffectVisibility","type":"ui","zh":"播放栏效果显示","en":"Playback bar effects","ja":"再生バーのエフェクト表示"},
+    {"id":"SetUX_TransportEffectHint","type":"ui","zh":"应用后，隐藏的效果立即旁通；重新显示会恢复之前的状态和参数。","en":"Hidden effects are bypassed when applied. Showing them again restores their previous state and settings.","ja":"適用後、非表示のエフェクトはバイパスされます。再表示すると以前の状態と設定が戻ります。"},
+    {"id":"SetUX_TransportMono","type":"ui","zh":"立体声／单声道","en":"Stereo / mono","ja":"ステレオ／モノラル"},
+    {"id":"SetUX_TransportReverse","type":"ui","zh":"反转","en":"Reverse","ja":"逆再生"},
+    {"id":"SetUX_TransportPan","type":"ui","zh":"Pan","en":"Pan","ja":"パン"},
+    {"id":"SetUX_TransportSoundstage","type":"ui","zh":"声场（含低频单声道）","en":"Soundstage (with BM)","ja":"音場（BM を含む）"},
+    {"id":"SetUX_TransportEQ","type":"ui","zh":"EQ","en":"EQ","ja":"EQ"},
+    {"id":"SetUX_TransportBypassOnApply","type":"ui","zh":"应用后旁通","en":"Bypass on apply","ja":"適用後にバイパス"},
+    {"id":"SetUX_TransportBypassed","type":"ui","zh":"已旁通","en":"Bypassed","ja":"バイパス中"},
+    {"id":"SetUX_TransportRestoreOnApply","type":"ui","zh":"应用后恢复","en":"Restore on apply","ja":"適用後に復元"},
     {"id":"SetUX_SearchThesaurus","type":"ui","zh":"搜索与词库","en":"Search & thesaurus","ja":"検索と辞書"},
     {"id":"SetUX_LibraryScanning","type":"ui","zh":"素材库与扫描","en":"Library & scanning","ja":"ライブラリとスキャン"},
     {"id":"SetUX_ControlsShortcuts","type":"ui","zh":"操作与快捷键","en":"Controls & shortcuts","ja":"操作とショートカット"},
@@ -4237,6 +4247,13 @@
       "zh": "相关路径",
       "en": "Related Paths",
       "ja": "関連パス"
+    },
+    {
+      "id": "Nav_FolderSearch",
+      "type": "ui",
+      "zh": "文件夹搜索",
+      "en": "Folder Search",
+      "ja": "フォルダー検索"
     },
     {
       "id": "Nav_NoRelatedPaths",

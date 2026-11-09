@@ -1558,7 +1558,8 @@ static void ProcessKeybindings(AppState& state) {
         }
 
         // Execute waveform and channel shortcuts before general actions.
-        if (IsShortcutPressedSnapshot(ShortcutAction::ToggleReverse, ks)) {
+        if (state.settings.transportEffectVisibility.reverse &&
+            IsShortcutPressedSnapshot(ShortcutAction::ToggleReverse, ks)) {
             bool wasReversed = state.audioEngine.isReversed();
             const bool reverseApplied = state.audioEngine.setReverse(!wasReversed);
             const bool nowReversed = state.audioEngine.isReversed();
@@ -1584,7 +1585,8 @@ static void ProcessKeybindings(AppState& state) {
                 }
             }
         }
-        if (IsShortcutPressedSnapshot(ShortcutAction::ToggleMono, ks)) {
+        if (state.settings.transportEffectVisibility.mono &&
+            IsShortcutPressedSnapshot(ShortcutAction::ToggleMono, ks)) {
             state.audioEngine.setMono(!state.audioEngine.isMono());
         }
         if (IsShortcutPressedSnapshot(ShortcutAction::ToggleSoloL, ks)) {
@@ -5753,6 +5755,7 @@ void LoadAppSettings(AppState& state) {
     // Read sidebar module visibility.
     state.settings.showViewMode = ParseBool(kv["showViewMode"], state.settings.showViewMode);
     state.settings.showFolderTree = ParseBool(kv["showFolderTree"], state.settings.showFolderTree);
+    state.settings.showRelatedPaths = ParseBool(kv["showRelatedPaths"], state.settings.showRelatedPaths);
     state.settings.showMetadataFilter = ParseBool(kv["showMetadataFilter"], state.settings.showMetadataFilter);
     state.settings.showPlaylists = ParseBool(kv["showPlaylists"], state.settings.showPlaylists);
     state.settings.showPlaylistQuickBar = ParseBool(kv["showPlaylistQuickBar"], state.settings.showPlaylistQuickBar);
@@ -5962,9 +5965,32 @@ void LoadAppSettings(AppState& state) {
     if (state.settings.audioPeriodSizeMs < 5) state.settings.audioPeriodSizeMs = 5;
     if (state.settings.audioPeriodSizeMs > 100) state.settings.audioPeriodSizeMs = 100;
 
-    // Audio mode and volume
-    bool mono = ParseBool(kv["monoMode"], state.audioEngine.isMono());
-    state.audioEngine.setMono(mono);
+    // Transport visibility defaults to the old all-visible behavior.
+    auto& transportVisibility = state.settings.transportEffectVisibility;
+    transportVisibility.mono = ParseBool(kv["showTransportMono"], true);
+    transportVisibility.reverse = ParseBool(kv["showTransportReverse"], true);
+    transportVisibility.pan = ParseBool(kv["showTransportPan"], true);
+    transportVisibility.soundstage = ParseBool(kv["showTransportSoundstage"], true);
+    transportVisibility.eq = ParseBool(kv["showTransportEQ"], true);
+    if (!transportVisibility.reverse && state.audioEngine.isReversed()) {
+        // Importing settings into an active player must bypass reverse now.
+        // Keep the selected source interval aligned with the forward timeline.
+        const float in=state.audioEngine.getInPoint(), out=state.audioEngine.getOutPoint();
+        if (state.audioEngine.setReverse(false) &&
+            (in>0.0f || out<1.0f) && in<out) {
+            state.audioEngine.clearInOutPoints();
+            state.audioEngine.setInPoint(1.0f-out);
+            state.audioEngine.setOutPoint(1.0f-in);
+        }
+    }
+    state.audioEngine.setTransportEffectVisibility(transportVisibility);
+
+    // Audio mode and volume. Hidden mono retains its requested setting while
+    // playback uses stereo; the next show restores that setting.
+    state.hiddenMonoRestore = ParseBool(kv["monoMode"], state.audioEngine.isMono());
+    state.audioEngine.setMono(transportVisibility.mono && state.hiddenMonoRestore);
+    state.hiddenReverseRestore = ParseBool(kv["reverseVisibilityRestore"], false);
+    state.pendingReverseRestore = transportVisibility.reverse && state.hiddenReverseRestore;
     float volume = ParseFloat(kv["volume"], 1.0f);
     state.audioEngine.setVolume(volume);
     float pan = ParseFloat(kv["pan"], 0.0f);
@@ -6469,7 +6495,7 @@ static void InitDefaultColumnPresets(AppState& state) {
     state.columnPresets = {sfx, music, meta, loud};
 }
 
-bool TrySaveAppSettings(const AppState& state) {
+bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride) {
     const auto persistedAppearance=harken::settings::AppearancePreview().ForPersistence(state.settings);
     if (g_appSettingsPathUtf8.empty()) {
         g_siliconFlowApiKeyStorageError.clear();
@@ -6609,6 +6635,7 @@ bool TrySaveAppSettings(const AppState& state) {
     // Save sidebar module visibility.
     items.push_back({"showViewMode", state.settings.showViewMode ? "1" : "0"});
     items.push_back({"showFolderTree", state.settings.showFolderTree ? "1" : "0"});
+    items.push_back({"showRelatedPaths", state.settings.showRelatedPaths ? "1" : "0"});
     items.push_back({"showMetadataFilter", state.settings.showMetadataFilter ? "1" : "0"});
     items.push_back({"showPlaylists", state.settings.showPlaylists ? "1" : "0"});
     items.push_back({"showPlaylistQuickBar", state.settings.showPlaylistQuickBar ? "1" : "0"});
@@ -6690,9 +6717,17 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"audioPeriodSizeMs", std::to_string(state.settings.audioPeriodSizeMs)});
 
     // Audio mode and volume
-    items.push_back({"monoMode", state.audioEngine.isMono() ? "1" : "0"});
+    const auto& transportVisibility = state.settings.transportEffectVisibility;
+    items.push_back({"showTransportMono", transportVisibility.mono ? "1" : "0"});
+    items.push_back({"showTransportReverse", transportVisibility.reverse ? "1" : "0"});
+    items.push_back({"showTransportPan", transportVisibility.pan ? "1" : "0"});
+    items.push_back({"showTransportSoundstage", transportVisibility.soundstage ? "1" : "0"});
+    items.push_back({"showTransportEQ", transportVisibility.eq ? "1" : "0"});
+    items.push_back({"monoMode", (monoModeOverride.value_or(transportVisibility.mono
+        ? state.audioEngine.isMono() : state.hiddenMonoRestore)) ? "1" : "0"});
+    items.push_back({"reverseVisibilityRestore", (transportVisibility.reverse ? state.pendingReverseRestore : state.hiddenReverseRestore) ? "1" : "0"});
     items.push_back({"volume", std::to_string(state.audioEngine.getVolume())});
-    items.push_back({"pan", std::to_string(state.audioEngine.getPan())});
+    items.push_back({"pan", std::to_string(state.audioEngine.getRequestedPan())});
     items.push_back({"centerSense", std::to_string(state.audioEngine.getCenterSense())});
     items.push_back({"bassMonoFreq", std::to_string(state.audioEngine.getBassMonoFreq())});
     const MagicEQSettings magicEQ = state.audioEngine.getMagicEQUserSettings();
@@ -14257,6 +14292,10 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
     const ExplorerShellCapabilities browserCaps = browserSource.capabilities;
     RenderExplorerShell(
         [&state, relatedPathsMaxHeight, browserSource, browserCaps, kBrowserRelatedPathsMinHeight]() {
+            if (!state.settings.showRelatedPaths) {
+                ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                return;
+            }
             ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
             if (!g_browserSystemFolderRelatedPath.empty()) {
                 ImGui::SameLine();
@@ -16375,6 +16414,10 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         /// Related paths pane remains stable, but users can resize it against the folder tree.
         RenderExplorerShell(
             [&]() {
+                if (!state.settings.showRelatedPaths) {
+                    ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                    return;
+                }
                 ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
                 RenderRelatedPathsExplorerPane(
                     state,
@@ -29924,6 +29967,14 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
 }
 
 void RenderUI(AppState& state) {
+    if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
+        state.audioEngine.isLoaded()) {
+        state.pendingReverseRestore = false;
+        if (!state.audioEngine.setReverse(true)) {
+            state.loadErrorToast = L(Player_ReverseFailed);
+            state.loadErrorToastUntil = ImGui::GetTime() + 4.0;
+        }
+    }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     if(harken::settings::savePreviewOnce) {
         harken::settings::savePreviewOnce=false;
@@ -45616,7 +45667,7 @@ void RenderUI(AppState& state) {
             // Mono/Stereo toggle — Duality dual-circle animation
             // AUDITION_NATIVE_EXCEPTION: mono
             bool isMonoMode = state.audioEngine.isMono();
-            {
+            if (state.settings.transportEffectVisibility.mono) {
                 bool isStereo = !isMonoMode;
                 const float stW = 30.0f, stH = 32.0f;
 
@@ -45669,7 +45720,7 @@ void RenderUI(AppState& state) {
             }
 
             // Reverse toggle — Fibonacci Swoosh 动画
-            {
+            if (state.settings.transportEffectVisibility.reverse) {
                 // AUDITION_BOUNDARY_INTENT: reverse-preserving-region
                 bool isReversed = auditionSnapshot.reversed;
                 const float revW = 36.0f, revH = 32.0f;
@@ -45749,6 +45800,7 @@ void RenderUI(AppState& state) {
             }
 
             // Pan — 半圆弧旋钮 (PanKnob)
+            if (state.settings.transportEffectVisibility.pan) {
             ImGui::BeginDisabled(isMonoMode);
             {
                 const float panW = 52.0f, panH = 32.0f;
@@ -45765,9 +45817,11 @@ void RenderUI(AppState& state) {
                 curX += panW + 10.0f;
             }
             ImGui::EndDisabled();
+            }
 
 // 中心感 — Soundstage 扇形可视化（与 PAN 统一 110×32）.
 
+            if (state.settings.transportEffectVisibility.soundstage) {
             ImGui::BeginDisabled(isMonoMode);
             {
                 const float csW = 52.0f, csH = 32.0f;
@@ -45938,8 +45992,9 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::EndDisabled();
+            }
 
-            {
+            if (state.settings.transportEffectVisibility.eq) {
                 MagicEQSettings magicEQ = state.audioEngine.getMagicEQ();
                 const float magicEqPreferredWidth = magicEQ.widgetWidth;
                 const float trailingMinimumWidth = 260.0f;

@@ -130,14 +130,19 @@ Request Poll(AppState& state) {
             const float x = command.at("x").get<float>();
             const float y = command.at("y").get<float>();
             const auto phase = command.at("phase").get<std::string>();
+            const auto button = command.value("button", std::string("left"));
             const auto size = ImGui::GetIO().DisplaySize;
             if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 ||
                 x >= size.x || y >= size.y) throw std::runtime_error("pointer_out_of_window");
             if (phase != "hover" && phase != "down" && phase != "up")
                 throw std::runtime_error("invalid_pointer_phase");
+            if (button != "left" && button != "right")
+                throw std::runtime_error("invalid_pointer_button");
             auto& io = ImGui::GetIO();
             io.AddMousePosEvent(x, y);
-            if (phase != "hover") io.AddMouseButtonEvent(ImGuiMouseButton_Left, phase == "down");
+            if (phase != "hover")
+                io.AddMouseButtonEvent(button == "right" ? ImGuiMouseButton_Right : ImGuiMouseButton_Left,
+                                       phase == "down");
         } else if (action == "sidebar") {
             if (command.at("section").get<int>() != 2) throw std::runtime_error("invalid_sidebar_section");
             state.settings.activeSidebarSection = 2;
