@@ -8647,3 +8647,14 @@ foreach(_standalone_localized_target IN ITEMS
     target_sources(${_standalone_localized_target} PRIVATE src/Localization.cpp)
     add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)
 endforeach()
+
+if(APPLE)
+    add_executable(TestMacProcessLaunch EXCLUDE_FROM_ALL
+        tests/test_process_launch_macos.cpp
+        src/platform/process_launch_macos.cpp)
+    target_include_directories(TestMacProcessLaunch PRIVATE src)
+    target_compile_features(TestMacProcessLaunch PRIVATE cxx_std_17)
+    add_test(NAME TestMacProcessLaunch COMMAND TestMacProcessLaunch
+        ${CMAKE_CURRENT_BINARY_DIR}/Testing/process-launch)
+    aura_set_test_labels(TestMacProcessLaunch core platform)
+endif()
