@@ -639,6 +639,8 @@ Source: "{#SourceDir}\lucide.ttf"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\splash_beta.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\HarkenSearchProToolsBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
+; App-local Microsoft VC143 CRT and OpenMP runtime for clean Windows installs.
+Source: "{#SourceDir}\*140*.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; 旧卸载器身份校验依赖 signtool：构建时同时提供 /DSignToolPath=<signtool.exe 路径>
 ; 与 /DTrustedSignerSubject=<预期证书主体子串> 才会打包校验工具并启用校验；
