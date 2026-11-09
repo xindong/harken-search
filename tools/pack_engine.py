@@ -52,7 +52,12 @@ GENERATED_INSTALLER_PATH = REPO_ROOT / "installer" / "HarkenSearch_Setup_generat
 RELEASE_NOTES_FILENAME = "aris_release_notes.json"
 
 # Files that are always included regardless of feature selection
-ALWAYS_INCLUDE = ["HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll"]
+ALWAYS_INCLUDE = [
+    "HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll",
+    "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll",
+    "vcomp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcruntime140_threads.dll",
+]
 RUNTIME_INCLUDE = ["lucide.ttf", "splash_beta.png", "harken_thesaurus.json"]
 # Select the current runtime trees explicitly. An incremental build may still
 # contain obsolete contributors/community copies beside these destinations.
