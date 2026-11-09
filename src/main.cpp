@@ -153,6 +153,7 @@
 #include "CoverWallVisibleMirrorAudit.h"
 #include "SimilarSoundsWindow.h"
 #include "SimilarityIndexer.h"
+#include "SimilarityIndexCountState.h"
 #include "RelinkWorkflow.h"
 #include "RecordRemovalWorkflow.h"
 #include "RecordRenameWorkflow.h"
@@ -29426,9 +29427,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
         !state.settings.useCustomColors && !ThemeColors::customized();
     // Full-table counts run on one independent read-only connection. This UI
     // path only submits work and polls values; it never waits for SQLite.
-    static int cachedIndexed = 0;
-    static int cachedSemantic = 0;
-    static int cachedTotal = 0;
+    static SimilarityIndexCountState count;
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
     static int64_t cachedDbGeneration = -1;
@@ -29436,8 +29435,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     const bool extracting = state.batchFeatureExtracting.load();
     if (cachedDbPath != state.currentDbPathUtf8 ||
         cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
-        cachedIndexed = cachedTotal = 0;
-        cachedSemantic = 0;
+        count.Reset();
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
         lastCountTime = -999.0;
@@ -29455,15 +29453,27 @@ void DrawSimilarityIndexPanel(AppState& state) {
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; cachedSemantic = result->semanticIndexed; }
+            count.Complete(result->success, result->indexed,
+                           result->semanticIndexed, result->total);
         }
-        if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
+        if (count.phase() != SimilarityIndexCountState::Phase::Failed &&
+            now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
 
     if (!sharedSimilarStyle) ImGui::Separator();
     ImGui::BeginDisabled(state.dbSwitchInProgress);
-    ImGui::Text(L(Main_IndexedProgressFmt), cachedIndexed, cachedTotal);
-    ImGui::Text(L(Similar_SemanticCoverageFmt), cachedSemantic, cachedTotal);
+    if (state.dbSwitchInProgress) {
+        ImGui::TextUnformatted(L(Similar_StatsSwitching));
+    } else if (!state.database.isOpen()) {
+        ImGui::TextUnformatted(L(Similar_StatsNoDatabase));
+    } else if (count.phase() == SimilarityIndexCountState::Phase::Loading) {
+        ImGui::TextUnformatted(L(Similar_StatsLoading));
+    } else if (count.phase() == SimilarityIndexCountState::Phase::Failed) {
+        ImGui::TextUnformatted(L(Similar_StatsFailed));
+    } else {
+        ImGui::Text(L(Main_IndexedProgressFmt), count.indexed(), count.total());
+        ImGui::Text(L(Similar_SemanticCoverageFmt), count.semanticIndexed(), count.total());
+    }
     ThemeInspector::RegisterLastItem("similar.index.count");
     if (extracting) {
         const int progress = state.batchFeatureProgress.load();
@@ -29495,8 +29505,9 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, cachedTotal - std::min(cachedIndexed, cachedSemantic));
-        if (cachedTotal > 0) {
+        const int pending = std::max(0, count.total() -
+            std::min(count.indexed(), count.semanticIndexed()));
+        if (count.CanStart(state.dbSwitchInProgress, state.database.isOpen())) {
             ImGui::Spacing();
             char label[128];
             if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
@@ -29517,8 +29528,25 @@ void DrawSimilarityIndexPanel(AppState& state) {
                 }
                 ThemeInspector::RegisterLastItem("similar.index.recheck");
             }
+        } else if (count.phase() == SimilarityIndexCountState::Phase::Failed &&
+                   !state.dbSwitchInProgress && state.database.isOpen()) {
+            if (aura::ui::ActionButton(L(Similar_StatsRetry), ImVec2(-1, 35),
+                                       aura::ui::ButtonVariant::PrimarySearch)) {
+                count.Retry();
+                lastCountTime = -999.0;
+            }
+        } else if (count.phase() == SimilarityIndexCountState::Phase::Loading ||
+                   state.dbSwitchInProgress) {
+            ImGui::BeginDisabled();
+            aura::ui::ActionButton(L(Similar_StatsWaitingAction), ImVec2(-1, 35),
+                                   aura::ui::ButtonVariant::PrimarySearch);
+            ImGui::EndDisabled();
+        } else if (count.phase() == SimilarityIndexCountState::Phase::Ready &&
+                   count.total() == 0) {
+            ImGui::TextUnformatted(L(Similar_StatsEmpty));
         }
-        if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
+        if (count.phase() == SimilarityIndexCountState::Phase::Ready &&
+            count.total() > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {
             ImGui::Spacing();
             const ImVec4 success(0.3f, 0.9f, 0.3f, 1.0f);
