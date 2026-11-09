@@ -6171,14 +6171,18 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(1, target.count("src/platform/process_launch_win32.cpp"))
         self.assertIn("AURO_PROCESS_LAUNCH_TESTING=1", target)
 
-    def test_process_launch_pal_has_macos_unsupported_parity(self) -> None:
+    def test_process_launch_pal_has_macos_native_parity(self) -> None:
         path = ROOT / "src" / "platform" / "process_launch_macos.cpp"
         self.assertTrue(path.exists())
         source = path.read_text(encoding="utf-8")
         self.assertIn('#include "process_launch.h"', source)
         self.assertIn("ProcessLaunchResult LaunchProcess(", source)
-        self.assertIn("ProcessLaunchStatus::Unsupported", source)
-        for token in ("CreateProcess", "NSTask", "posix_spawn", "fork(", "system("):
+        self.assertIn("posix_spawn(", source)
+        self.assertIn("posix_spawnp(", source)
+        self.assertIn("ProcessLaunchStatus::Ok", source)
+        self.assertIn("ProcessRunStatus::TimedOut", source)
+        self.assertNotIn("ProcessLaunchStatus::Unsupported", source)
+        for token in ("CreateProcessW(", "CreateProcessA(", "NSTask", "fork(", "system("):
             self.assertNotIn(token, source)
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertEqual(1, cmake.count("src/platform/process_launch_macos.cpp"))
@@ -8257,13 +8261,22 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "std::string GetMachineId()",
             "void OpenInFileManager(const std::string& pathUtf8)",
             "void OpenUrl(const std::string& url)",
-            "bool LaunchProcess(const std::string& exePathUtf8, const std::string& argsUtf8)",
         )
         for definition in definitions:
             self.assertIn(definition, system_source)
             self.assertNotIn(definition, legacy_source)
         cmake_text = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("src/platform/system_macos.mm", cmake_text)
+        launch_definition = (
+            "bool LaunchProcess(const std::string& exePathUtf8, const std::string& argsUtf8)"
+        )
+        launch_source = (ROOT / "src" / "platform" / "process_launch_string_macos.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(launch_definition, launch_source)
+        self.assertNotIn(launch_definition, system_source)
+        self.assertNotIn(launch_definition, legacy_source)
+        self.assertEqual(1, cmake_text.count("src/platform/process_launch_string_macos.cpp"))
 
     def test_macos_系统生命周期与对话框实现归属专用源文件(self) -> None:
         system_source = (ROOT / "src" / "platform" / "system_macos.mm").read_text(
