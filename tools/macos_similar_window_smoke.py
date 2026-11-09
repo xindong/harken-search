@@ -86,10 +86,17 @@ def run(binary: Path, root: Path, output: Path) -> None:
             click(app, file_zone)
             selected_result = app.wait(
                 lambda s: s['similar_ui']['selected_row'] == 0 and
-                          s['audio']['path'] == result['similar_ui']['rows'][0]['path'],
+                          s['audio']['path'] == result['similar_ui']['rows'][0]['path'] and
+                          s['audio']['selected_id'] == result['similar_ui']['rows'][0]['id'] and
+                          s['audio']['playing'] and
+                          s['similar_ui']['reference_id'] == reference_id,
                 'result row audition', 30)
-            assert selected_result['audio']['selected_id'] == reference_id, +                'result selection changed the main list selection'
+            assert selected_result['audio']['output']['device_started'], 'audio output device did not start'
             report['audition'] = selected_result['audio']
+            audible = app.wait(
+                lambda s: s['audio']['output']['nonzero_samples'] > 0,
+                'non-silent result playback', 15)
+            report['audition_output'] = audible['audio']['output']
             app.command(capture=True)
             report['status'] = 'PASS'
         else:
