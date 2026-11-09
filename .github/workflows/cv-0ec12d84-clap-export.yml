@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/cv-0ec12d84-clap-export.yml
       - tools/export_similarity_model.py
+      - tools/split_similarity_model_artifact.py
 
 permissions:
   contents: read
@@ -25,16 +26,59 @@ jobs:
           python -m pip install transformers==4.46.3 onnx==1.17.0 onnxruntime==1.20.1 numpy==1.26.4 scipy==1.14.1 soundfile==0.12.1
       - name: Export and verify pinned audio-only resources
         run: python tools/export_similarity_model.py --output "${{ runner.temp }}/harken-clap"
+      - name: Split verified payload for bounded downloads
+        run: python tools/split_similarity_model_artifact.py --source "${{ runner.temp }}/harken-clap" --output "${{ runner.temp }}/clap-parts"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: cv-0ec12d84-verified-clap
-          path: |
-            ${{ runner.temp }}/harken-clap/clap-audio.onnx
-            ${{ runner.temp }}/harken-clap/clap-mel-filters.f64
-            ${{ runner.temp }}/harken-clap/clap-window.f64
-            ${{ runner.temp }}/harken-clap/parity-audio.f32
-            ${{ runner.temp }}/harken-clap/parity-mel.f32
-            ${{ runner.temp }}/harken-clap/parity-embedding.f32
-            ${{ runner.temp }}/harken-clap/export-report.json
+          name: cv-0ec12d84-clap-manifest
+          path: ${{ runner.temp }}/clap-parts/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-00
+          path: ${{ runner.temp }}/clap-parts/part-00.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-01
+          path: ${{ runner.temp }}/clap-parts/part-01.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-02
+          path: ${{ runner.temp }}/clap-parts/part-02.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-03
+          path: ${{ runner.temp }}/clap-parts/part-03.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-04
+          path: ${{ runner.temp }}/clap-parts/part-04.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-05
+          path: ${{ runner.temp }}/clap-parts/part-05.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-06
+          path: ${{ runner.temp }}/clap-parts/part-06.bin
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cv-0ec12d84-clap-part-07
+          path: ${{ runner.temp }}/clap-parts/part-07.bin
           if-no-files-found: error
           retention-days: 7
