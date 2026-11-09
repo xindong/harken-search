@@ -5,6 +5,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src" / "AvatarCropperIO.cpp").read_text(encoding="utf-8")
 MAIN = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+MAIN += (ROOT / "src" / "SettingsAvatarTools.inl").read_text(encoding="utf-8")
 CMAKE = (ROOT / "cmake" / "harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
 
 
@@ -41,7 +42,7 @@ class AvatarCropperIoContractTests(unittest.TestCase):
         self.assertIn("ComputeSourceRect(crop)", SOURCE)
         self.assertIn("stbir_resize_uint8_linear", SOURCE)
         self.assertIn("LoadImageForCrop(selected", MAIN)
-        self.assertIn("SaveCroppedAvatarPng(s_cropPixels", MAIN)
+        self.assertIn("SaveCroppedAvatarWithSettings(s_cropPixels", MAIN)
 
     def test_focused_runtime_target_is_registered(self):
         self.assertIn("add_executable(TestAvatarCropperIO", CMAKE)

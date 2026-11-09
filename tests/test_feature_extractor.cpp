@@ -114,7 +114,7 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
     const std::string windowsHeader =
         ReadTextFile(repoRoot / "src" / "WindowsMain.h");
     const size_t surfaceStart = mainSource.find(
-        "void StartBatchFeatureExtraction(AppState& state)");
+        "void StartBatchFeatureExtraction(AppState& state, bool recheckAll)");
     const size_t surfaceEnd = mainSource.find(
         "void RenderUI(AppState& state)", surfaceStart);
     const std::string helper =
@@ -136,7 +136,7 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
           "batch start resets cancellation before marking the controller busy");
     Check(surface.find("batchFeatureCancelRequested.store(true)") != std::string::npos,
           "cancel action requests cancellation without clearing busy state");
-    Check(surface.find("batchFeatureThread = std::thread([&state]") != std::string::npos &&
+    Check(surface.find("batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll]") != std::string::npos &&
               surface.find("}).detach()") == std::string::npos,
           "batch controller is owned as a joinable thread");
     Check(surface.find("batchFeatureThread.joinable()") != std::string::npos,
@@ -145,18 +145,19 @@ void TestBatchExtractionUsesIndependentCancellationSignal() {
               std::string::npos,
           "batch restart is disabled while a database switch owns teardown");
     Check(surface.find("while (state.batchFeatureExtracting.load())") == std::string::npos &&
-              surface.find("while (!state.batchFeatureCancelRequested.load())") != std::string::npos,
-          "workers stop from the independent cancellation signal");
+              surface.find("BuildSimilarityIndex(databasePath, modelDirectory,") != std::string::npos,
+          "owned indexing operation receives the independent cancellation callback");
     Check(surface.find("return state.batchFeatureCancelRequested.load()") != std::string::npos,
           "decoder cancellation callback reads the independent signal");
-    Check(surface.find("if (!state.batchFeatureCancelRequested.load())") != std::string::npos,
-          "similarity cache reload is skipped after cancellation");
+    Check(surface.find("result.ok && !result.cancelled") != std::string::npos &&
+              surface.find("state.similaritySearch.loadFromDatabase") == std::string::npos,
+          "cancelled work cannot report completion or reload a shared cache");
 
-    const size_t join = surface.find("for (auto& w : workers) w.join();");
+    const size_t joinedOperation = surface.find("state.batchFeatureResult = std::move(result)");
     const size_t busyClear = surface.find("batchFeatureExtracting.store(false)");
-    Check(join != std::string::npos && busyClear != std::string::npos &&
-              busyClear > join,
-          "busy state clears only after every worker joins");
+    Check(joinedOperation != std::string::npos && busyClear != std::string::npos &&
+              busyClear > joinedOperation,
+          "busy state clears only after the owned indexing operation returns");
     Check(surface.find("batchFeatureExtracting.store(false)", busyClear + 1) ==
               std::string::npos,
           "cancel path does not clear busy state before workers join");

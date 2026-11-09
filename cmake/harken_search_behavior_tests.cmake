@@ -1014,7 +1014,15 @@ target_include_directories(TestScanPauseResume PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+if(WIN32)
+    target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+elseif(APPLE)
+    target_sources(TestScanPauseResume PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp)
+    target_link_libraries(TestScanPauseResume PRIVATE
+        "-framework Foundation" "-framework CoreServices")
+endif()
 target_compile_definitions(TestScanPauseResume PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURA_TEST_SCAN_STALL_SECONDS=0
@@ -2658,7 +2666,9 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         AURO_FILESYSTEM_PROBE_PATH_TESTING
+        HARKEN_TEST_APPROVED_ROOT_UTF8="${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm"
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm")
     if(MSVC)
         target_compile_options(TestOriginalAudioWriteConfirmIo PRIVATE /W3 /utf-8)
         set_target_properties(TestOriginalAudioWriteConfirmIo PROPERTIES
@@ -5549,6 +5559,8 @@ if(MSVC)
     )
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
+set_tests_properties(TestDatabaseFeatures PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 aura_set_test_labels(TestDatabaseFeatures db)
 add_test(NAME TestDatabaseFtsTriggerConcurrency COMMAND TestDatabaseFeatures --fts-trigger-concurrency)
 aura_set_test_labels(TestDatabaseFtsTriggerConcurrency db)
@@ -7129,6 +7141,19 @@ endif()
 add_test(NAME TestSimilaritySearch COMMAND TestSimilaritySearch)
 aura_set_test_labels(TestSimilaritySearch core)
 
+add_executable(TestAcousticSimilarity EXCLUDE_FROM_ALL
+    tests/test_acoustic_similarity.cpp
+    src/AcousticSimilarity.cpp
+    src/FeatureExtractor.cpp
+    tests/audio_file_reader_scripted.cpp
+)
+target_include_directories(TestAcousticSimilarity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestAcousticSimilarity PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestAcousticSimilarity COMMAND TestAcousticSimilarity)
+aura_set_test_labels(TestAcousticSimilarity core)
+
 add_executable(TestSimilarityWorkflow EXCLUDE_FROM_ALL
     tests/test_similarity_workflow.cpp
     src/SimilarityWorkflow.cpp
@@ -7181,6 +7206,109 @@ endif()
 add_test(NAME TestFeatureExtractor COMMAND TestFeatureExtractor)
 aura_set_test_labels(TestFeatureExtractor core)
 
+get_target_property(_acoustic_file_sources TestFeatureExtractor SOURCES)
+list(REMOVE_ITEM _acoustic_file_sources tests/test_feature_extractor.cpp)
+add_executable(TestAcousticSimilarityFile EXCLUDE_FROM_ALL
+    tests/test_acoustic_similarity_file.cpp
+    src/AcousticSimilarity.cpp
+    src/AcousticSimilarityFile.cpp
+    ${_acoustic_file_sources}
+)
+target_include_directories(TestAcousticSimilarityFile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestAcousticSimilarityFile PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestAcousticSimilarityFile COMMAND TestAcousticSimilarityFile)
+aura_set_test_labels(TestAcousticSimilarityFile core)
+
+set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
+add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
+    tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
+    src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
+target_include_directories(TestSimilarityAnalysisStore PRIVATE src ${SQLITE_DIR})
+if(WIN32)
+    target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_win32.cpp)
+    target_link_libraries(TestSimilarityAnalysisStore PRIVATE bcrypt)
+else()
+    target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_macos.cpp)
+endif()
+if(MSVC)
+    target_compile_options(TestSimilarityAnalysisStore PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestSimilarityAnalysisStore COMMAND TestSimilarityAnalysisStore)
+aura_set_test_labels(TestSimilarityAnalysisStore core)
+get_target_property(_similarity_store_sources TestSimilarityAnalysisStore SOURCES)
+list(REMOVE_ITEM _similarity_store_sources tests/test_similarity_analysis_store.cpp)
+add_executable(TestSimilarityIndexer EXCLUDE_FROM_ALL tests/test_similarity_indexer.cpp
+    src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+target_include_directories(TestSimilarityIndexer PRIVATE src ${SQLITE_DIR})
+if(WIN32)
+    target_link_libraries(TestSimilarityIndexer PRIVATE bcrypt)
+endif()
+if(MSVC)
+    target_compile_options(TestSimilarityIndexer PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
+aura_set_test_labels(TestSimilarityIndexer core)
+set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
+set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
+add_executable(TestAudioEmbeddingService EXCLUDE_FROM_ALL
+    tests/test_audio_embedding_service.cpp
+    src/AudioEmbeddingService.cpp
+    src/AcousticSimilarity.cpp src/AcousticSimilarityFile.cpp
+    ${_acoustic_file_sources}
+)
+target_include_directories(TestAudioEmbeddingService PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_sources(TestAudioEmbeddingService PRIVATE src/platform/file_hash_win32.cpp)
+    target_link_libraries(TestAudioEmbeddingService PRIVATE bcrypt)
+else()
+    target_sources(TestAudioEmbeddingService PRIVATE src/platform/file_hash_macos.cpp)
+endif()
+if(MSVC)
+    target_compile_options(TestAudioEmbeddingService PRIVATE /W3 /utf-8)
+endif()
+if(HARKEN_ONNXRUNTIME_ROOT)
+    target_compile_definitions(TestAudioEmbeddingService PRIVATE HARKEN_WITH_ONNX=1)
+    target_include_directories(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_link_libraries(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    add_custom_command(TARGET TestAudioEmbeddingService POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:TestAudioEmbeddingService>)
+endif()
+if(HARKEN_SIMILARITY_MODEL_FIXTURES)
+    add_executable(TestSimilarityQueryV2 EXCLUDE_FROM_ALL tests/test_similarity_query_v2.cpp
+        src/SimilarityQueryV2.cpp src/SimilarityWorkflow.cpp src/SimilarityIndexer.cpp
+        src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+    target_include_directories(TestSimilarityQueryV2 PRIVATE src ${SQLITE_DIR} ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_ONNX=1)
+    target_link_libraries(TestSimilarityQueryV2 PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(HARKEN_HNSWLIB_ROOT)
+        target_include_directories(TestSimilarityQueryV2 PRIVATE ${HARKEN_HNSWLIB_ROOT})
+        target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_HNSW=1)
+    endif()
+    if(MSVC)
+        target_compile_options(TestSimilarityQueryV2 PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME TestSimilarityQueryV2 COMMAND TestSimilarityQueryV2 ${HARKEN_SIMILARITY_MODEL_FIXTURES})
+    aura_set_test_labels(TestSimilarityQueryV2 core model)
+    get_target_property(_similarity_query_sources TestSimilarityQueryV2 SOURCES)
+    list(REMOVE_ITEM _similarity_query_sources tests/test_similarity_query_v2.cpp)
+    add_executable(SimilarityV2Bench EXCLUDE_FROM_ALL tools/similarity_v2_bench.cpp
+        src/SimilaritySearch.cpp tests/test_similarity_search_database_stub.cpp ${_similarity_query_sources})
+    target_include_directories(SimilarityV2Bench PRIVATE src thirdparty ${SQLITE_DIR} ${HARKEN_ONNXRUNTIME_ROOT}/include ${HARKEN_HNSWLIB_ROOT})
+    target_compile_definitions(SimilarityV2Bench PRIVATE HARKEN_WITH_ONNX=1)
+    if(HARKEN_HNSWLIB_ROOT)
+        target_compile_definitions(SimilarityV2Bench PRIVATE HARKEN_WITH_HNSW=1)
+    endif()
+    target_link_libraries(SimilarityV2Bench PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(MSVC)
+        target_compile_options(SimilarityV2Bench PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME TestAudioEmbeddingService COMMAND TestAudioEmbeddingService ${HARKEN_SIMILARITY_MODEL_FIXTURES})
+    aura_set_test_labels(TestAudioEmbeddingService core model)
+endif()
+
 add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     tests/test_similarity_query_service.cpp
     tests/test_database_link_stubs.cpp
@@ -7211,10 +7339,10 @@ add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/audio_playback_miniaudio.cpp
-    src/platform/media_foundation_audio_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/emergency_file_writer_win32.cpp
-    src/platform/thread_id_win32.cpp
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+    ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
     ${SQLITE_SOURCES}
 )
 target_include_directories(TestSimilarityQueryService PRIVATE
@@ -7223,15 +7351,15 @@ target_include_directories(TestSimilarityQueryService PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSimilarityQueryService PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm Threads::Threads
-)
+target_link_libraries(TestSimilarityQueryService PRIVATE Threads::Threads)
 target_compile_definitions(TestSimilarityQueryService PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURO_TEST_REAL_SIMILARITY_WORKFLOW=1
     AURO_TEST_EXTERNAL_PATH_ATTRIBUTES=1
 )
 if(WIN32)
+    target_link_libraries(TestSimilarityQueryService PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
     target_sources(TestSimilarityQueryService PRIVATE
         src/platform/filesystem_win32.cpp
         src/platform/text_encoding_win32.cpp
@@ -7240,6 +7368,14 @@ if(WIN32)
     target_link_libraries(TestSimilarityQueryService PRIVATE
         mfplat mfreadwrite mfuuid
     )
+elseif(APPLE)
+    target_sources(TestSimilarityQueryService PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+        src/platform/text_encoding_std.cpp
+        src/platform/search_text_gb2312_std.cpp)
+    target_link_libraries(TestSimilarityQueryService PRIVATE
+        "-framework Foundation" "-framework CoreServices" "-framework AudioToolbox")
 else()
     target_sources(TestSimilarityQueryService PRIVATE
         src/platform/text_encoding_std.cpp

@@ -4301,20 +4301,21 @@ static void PollQaCommandFile(AppState& state) {
             const std::string scenario = getStr(raw, "scenario");
             if (scenario != "pass" && scenario != "bypass" && scenario != "notch" &&
                 scenario != "processing" && scenario != "mono" && scenario != "spectrum" &&
-                scenario != "overdrive" && scenario != "fill-boundary" && scenario != "selection" && scenario != "wide") {
+                scenario != "overdrive" && scenario != "fill-boundary" && scenario != "selection" &&
+                scenario != "wide" && scenario != "mono-reverse") {
                 result = "{\"ok\":false,\"error\":\"invalid_transport_audit_scenario\"}";
             } else {
                 state.audioEngine.stop();
                 state.settings.productMode = ProductMode::SFX;
                 state.audioEngine.setVolume(scenario == "overdrive" ? 1.07f :
                     (scenario == "fill-boundary" ? .55f : (scenario == "processing" ? .85f : .26f)));
-                state.audioEngine.setMono(scenario == "mono");
+                state.audioEngine.setMono(scenario == "mono" || scenario == "mono-reverse");
                 state.audioEngine.setPan(scenario == "processing" ? .5f : 0);
                 state.audioEngine.setCenterSense(scenario == "processing" ? .6f : 0);
                 state.audioEngine.setBassMonoFreq(scenario == "processing" ? 80.f : 0.f);
-                state.audioEngine.setReverse(scenario == "processing");
-                state.audioEngine.setInPoint(scenario == "selection" ? .2f : 0.f);
-                state.audioEngine.setOutPoint(scenario == "selection" ? .8f : 1.f);
+                state.audioEngine.setReverse(scenario == "processing" || scenario == "mono-reverse");
+                state.audioEngine.setInPoint(scenario == "mono-reverse" ? .12f : (scenario == "selection" ? .2f : 0.f));
+                state.audioEngine.setOutPoint(scenario == "mono-reverse" ? .63f : (scenario == "selection" ? .8f : 1.f));
                 state.showSpectrogram = scenario == "spectrum";
                 state.spectrogramSplit = false;
                 state.spectrogramBlend = .5f;
@@ -4332,6 +4333,56 @@ static void PollQaCommandFile(AppState& state) {
         }
 
 #if ARIS_PREVIEW_ISOLATION
+    } else if (cmd == "transport_effect_state") {
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto visibility = state.settings.transportEffectVisibility;
+            const auto effective = state.audioEngine.captureTransferProcessingSnapshot();
+            const auto requestedEQ = state.audioEngine.getMagicEQUserSettings();
+            std::ostringstream out;
+            out << std::boolalpha
+                << "{\"ok\":true,\"visibility\":{\"mono\":" << visibility.mono
+                << ",\"reverse\":" << visibility.reverse << ",\"pan\":" << visibility.pan
+                << ",\"soundstage\":" << visibility.soundstage << ",\"eq\":" << visibility.eq
+                << "},\"requested\":{\"mono\":" << (visibility.mono ? state.audioEngine.isMono() : state.hiddenMonoRestore)
+                << ",\"reverse\":" << (visibility.reverse ? state.audioEngine.isReversed() || state.pendingReverseRestore : state.hiddenReverseRestore)
+                << ",\"pan\":" << state.audioEngine.getRequestedPan()
+                << ",\"centerSense\":" << state.audioEngine.getCenterSense()
+                << ",\"bassMonoFreq\":" << state.audioEngine.getBassMonoFreq()
+                << ",\"eq\":" << requestedEQ.enabled
+                << "},\"effective\":{\"mono\":" << effective.mono
+                << ",\"reverse\":" << effective.reverse << ",\"pan\":" << effective.pan
+                << ",\"centerSense\":" << effective.centerSense
+                << ",\"bassMonoFreq\":" << effective.bassMonoFreqHz
+                << ",\"eq\":" << effective.magicEQ.enabled << "}}";
+            result = out.str();
+        }
+    } else if (cmd == "transport_effect_export") {
+        const std::string output = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(output)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string input = state.audioEngine.getLoadedFilePath();
+            const auto snapshot = state.audioEngine.captureTransferProcessingSnapshot();
+            result = !input.empty() && state.audioEngine.exportRegion(output, 0.0f, 0.0f, nullptr, &snapshot)
+                ? R"({"ok":true,"cmd":"transport_effect_export"})"
+                : R"({"ok":false,"error":"transport_effect_export_failed"})";
+        }
+    } else if (cmd == "transport_effect_import") {
+        const std::string input = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(input) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(g_appSettingsPathUtf8)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (!Platform::FileSystem::CopyFile(input, g_appSettingsPathUtf8, true)) {
+            result = R"({"ok":false,"error":"transport_effect_import_copy_failed"})";
+        } else {
+            LoadAppSettings(state);
+            harken::settings::SettingsEditor().Reset(state);
+            result = R"({"ok":true,"cmd":"transport_effect_import"})";
+        }
     } else if (cmd == "info_page_state" || cmd == "info_page_pointer" || cmd == "info_page_layout" || cmd == "info_edit_input") {
         // Real ImGui input, restricted to this compile-time isolated QA package.
         // Never moves the operating-system cursor or targets another process.
@@ -4356,6 +4407,21 @@ static void PollQaCommandFile(AppState& state) {
                     state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
+                else if (getStr(raw,"action")=="home_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,true);
+                else if (getStr(raw,"action")=="home_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,false);
+                else if (getStr(raw,"action")=="delete_prefix_200" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID()) {
+                    // Exercise vendored ImGui's real text edit path on the active input.
+                    auto& input = ImGui::GetCurrentContext()->InputTextState;
+                    input.OnKeyPressed(0x200006); // STB_TEXTEDIT_K_TEXTSTART
+                    for (int i = 0; i < 200; ++i)
+                        input.OnKeyPressed(0x200001 | 0x400000); // RIGHT | SHIFT
+                    input.OnKeyPressed(0x200008); // STB_TEXTEDIT_K_DELETE
+                }
+                else if (getStr(raw,"action")=="undo_text" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID())
+                    // Vendored ImGui's STB_TEXTEDIT_K_UNDO; exercise the real undo engine.
+                    ImGui::GetCurrentContext()->InputTextState.OnKeyPressed(0x20000A);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
                 result=R"({"ok":true})";
             } else if (cmd == "info_page_layout") {
@@ -4668,11 +4734,13 @@ static void PollQaCommandFile(AppState& state) {
             namespace su = harken::settings;
             const auto action = getStr(raw,"action");
             if (action == "fail_save_once") su::failSaveOnce = true;
+            if (action == "shortcut_test_background") state.qaAllowBackgroundKeybinding = getBool(raw,"enabled",false);
             if (action == "layout_restore_error") su::SettingsEditor().error=std::string(L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder))+" "+L(SetUX_OutputRestoreFailed);
+            if (action == "save_preview_frame") { su::previewSaveResult=false;su::savePreviewOnce=true; }
             if (action == "key") {
                 const auto name=getStr(raw,"key");
                 const bool down=getBool(raw,"down",false);
-                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
+                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
             if (action == "resize") {
@@ -4693,12 +4761,26 @@ static void PollQaCommandFile(AppState& state) {
             for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
+                {"preview_save_result",su::previewSaveResult},
+                {"thesaurus_text_color",color(observation.thesaurusTextColor)},
                 {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
                 {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
                 {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"drawn_list_frame",state.qaRegions.listTextFrame},{"drawn_list_font_pixels",state.qaRegions.listTextFontPixels},
+                {"drawn_list_line_height",state.qaRegions.listTextLineHeight},{"drawn_list_row_height",state.qaRegions.listTextRowHeight},
+                {"drawn_list_sample",state.qaRegions.listTextSample},
+                {"live_extension",state.settings.showFileExtension},{"draft_extension",editor.app.Value().showFileExtension},
+                {"drawn_list_raw_names",state.qaRegions.listRawNames},{"drawn_list_names",state.qaRegions.listRenderedNames},
+                {"drawn_list_directories",state.qaRegions.listRowDirectories},
+                {"live_wave_mode",state.settings.waveformDisplayMode},{"draft_wave_mode",editor.app.Value().waveformDisplayMode},
+                {"live_wave_style",state.settings.waveformStyle},{"live_spectrum",state.showSpectrogram},
+                {"drawn_wave_frame",state.qaRegions.waveDrawFrame},{"drawn_wave_style",state.qaRegions.waveDrawStyle},
+                {"drawn_spectrum_frame",state.qaRegions.spectrumDrawFrame},{"wave_bounds",rect(state.qaRegions.waveDrawBounds)},
+                {"drawn_list_row_origins",state.qaRegions.listRowOrigins},{"drawn_list_hit_heights",state.qaRegions.listRowHitHeights},
+                {"mono_font_pixels",[]{ImGui::PushFont(GetUIFontMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"draft_language",(int)editor.app.Value().language},{"live_language",(int)state.settings.language},
                 {"rendered_language",(int)g_currentLanguage},{"rendered_texts",texts},
                 {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
@@ -4885,6 +4967,7 @@ static void PollQaCommandFile(AppState& state) {
 #if ARIS_PREVIEW_ISOLATION
         // A repeatable CLI seam for the real window and its app-owned task.
         // Only compile-time pinned preview builds may control these fixtures.
+        s_magicEqQaCollectUntilMs.store(Platform::MonotonicMilliseconds()+5000,std::memory_order_release);
         const std::string action = getStr(raw, "action");
         const bool isolated = !Platform::HarkenUserData::PreviewIsolationRootUtf8().empty() &&
             Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(GetHarkenSearchRuntimeRootUtf8()) &&
@@ -4899,10 +4982,12 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"error\":\"invalid_preview_layout\"}";
         } else if (action != "open" && action != "close" && action != "start" &&
                    action != "cancel" && action != "find" && action != "state" &&
-                   action != "pointer") {
+                   action != "pointer" && action != "configure" && action != "recheck") {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
+        } else if (action == "configure" && getInt(raw,"mode",1) != 1) {
+            result = "{\"ok\":false,\"error\":\"unsupported_similarity_mode\"}";
         } else if (action == "pointer") {
 #if AURA_BUILD_DIAGNOSTICS
             // App-owned input only over freshly observed Similar Sounds controls.
@@ -4919,15 +5004,22 @@ static void PollQaCommandFile(AppState& state) {
                     x >= item.min.x && x < item.max.x && y >= item.min.y && y < item.max.y) hit = true;
             }
             const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();
+            const auto controls = ThemeInspector::CopyLatestSnapshot();
+            for (const auto& zone : controls.zones) {
+                if ((zone.key == "similar.options.deep" || zone.key.rfind("similar.result.wave.",0)==0 ||
+                     zone.key.rfind("similar.result.file.",0)==0 ||
+                     zone.key.rfind("similar.index.",0)==0) && controls.frameNumber + 2 >= static_cast<uint64_t>(ImGui::GetFrameCount()) &&
+                    x >= zone.minX && x < zone.maxX && y >= zone.minY && y < zone.maxY) hit = true;
+            }
             if (!hit || !fresh || s_magicEqQaPointer.pending ||
-                (phase != "hover" && phase != "down" && phase != "up") ||
+                (phase != "hover" && phase != "down" && phase != "up" && phase != "move") ||
                 ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
-                (phase == "up" && !s_magicEqQaPointer.held)) {
+                ((phase == "up" || phase == "move") && !s_magicEqQaPointer.held)) {
                 result = R"({"ok":false,"error":"invalid_similar_control_pointer"})";
             } else {
                 s_magicEqQaPointer.active = true;
-                s_magicEqQaPointer.pending = phase != "hover";
-                s_magicEqQaPointer.held = phase == "down";
+                s_magicEqQaPointer.pending = phase == "down" || phase == "up";
+                s_magicEqQaPointer.held = phase == "down" || phase == "move";
                 s_magicEqQaPointer.x = x;
                 s_magicEqQaPointer.y = y;
                 s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
@@ -4950,16 +5042,49 @@ static void PollQaCommandFile(AppState& state) {
                 aura::ui::InvalidateSimilarSoundsWindow(state);
             } else if (action == "start") {
                 StartBatchFeatureExtraction(state);
+            } else if (action == "recheck") {
+                StartBatchFeatureExtraction(state, true);
             } else if (action == "cancel") {
                 state.batchFeatureCancelRequested.store(true);
+            } else if (action == "configure") {
+                const int preset = getInt(raw, "preset", static_cast<int>(state.similarSoundsPreset));
+                if (preset >= 0 && preset <= 4) {
+                    state.similarSoundsDeep = getBool(raw, "deep", state.similarSoundsDeep);
+                    state.similarSoundsPreset = static_cast<SimilarityPreset>(preset);
+                    if (state.similarSoundsWorkflow) state.similarSoundsWorkflow->Invalidate();
+                    state.similarSoundsSelectedRow = -1;
+                    state.settingsDirty = true; state.settingsDirtyAt = ImGui::GetTime();
+                }
             } else if (action == "find" && state.similarSoundsWorkflow &&
                        !state.batchFeatureExtracting.load()) {
-                state.similarSoundsWorkflow->RequestSearch(state.similarSoundsPreset, 50);
+                HarkenSearch::SimilarityOptions options;
+                options.mode = HarkenSearch::SimilarityMode::Substitute; options.deep = state.similarSoundsDeep; options.preset = state.similarSoundsPreset;
+                state.similarSoundsWorkflow->RequestSearch(options, 50);
             }
             const auto snapshot = state.similarSoundsWorkflow
                 ? state.similarSoundsWorkflow->Snapshot() : HarkenSearch::SimilarityWorkflowSnapshot{};
-            int indexed = 0, total = 0;
-            state.database.tryGetFeatureIndexCounts(indexed, total);
+            const auto counts = HarkenSearch::MakeFeatureIndexCountHandler(true)(state.currentDbPathUtf8, [] { return false; });
+            const int indexed = counts.indexed, total = counts.total;
+            nlohmann::json matches = nlohmann::json::array();
+            for (const auto& row : snapshot.rows) matches.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights},{"fingerprint",row.contentFingerprint}});
+            const nlohmann::json queryStats={{"scanned_files",snapshot.stats.scannedFiles},{"visited_segments",snapshot.stats.visitedSegments},
+                {"candidates",snapshot.stats.candidates},{"detailed_comparisons",snapshot.stats.detailedComparisons}};
+            nlohmann::json controlBounds = nlohmann::json::object();
+            for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
+                if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0 ||
+                    zone.key.rfind("similar.result.file.",0)==0 ||
+                    zone.key.rfind("similar.index.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
+            }
+            nlohmann::json batchSummary;
+            {
+                std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                const auto& report=state.batchFeatureResult;
+                batchSummary={{"saved",report.progress.saved},{"skipped",report.progress.skipped},{"failed",report.progress.failed},{"cancelled",report.cancelled},{"error",report.error},{"model_error",report.modelError}};
+            }
+            batchSummary["progress"] = state.batchFeatureProgress.load();
+            batchSummary["progress_total"] = state.batchFeatureTotal.load();
+            batchSummary["reused"] = state.batchFeatureSkipped.load();
+            batchSummary["analyzed"] = state.batchFeatureSaved.load();
             const bool completionNotice = state.panelSimilarSounds.visible &&
                 !state.batchFeatureExtracting.load() &&
                 !state.batchFeatureCancelRequested.load() && total > 0 && indexed == total &&
@@ -4967,12 +5092,26 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":true,\"cmd\":\"similar_index\",\"visible\":" +
                 std::string(state.panelSimilarSounds.visible ? "true" : "false") +
                 ",\"running\":" + (state.batchFeatureExtracting.load() ? "true" : "false") +
+                ",\"batch_start_generation\":" + std::to_string(state.batchFeatureStartGeneration.load()) +
                 ",\"cancel_requested\":" + (state.batchFeatureCancelRequested.load() ? "true" : "false") +
                 ",\"completion_notice\":" + (completionNotice ? "true" : "false") +
                 ",\"indexed\":" + std::to_string(indexed) +
+                ",\"semantic_indexed\":" + std::to_string(counts.semanticIndexed) +
+                ",\"mode\":" + std::to_string(static_cast<int>(HarkenSearch::SimilarityMode::Substitute)) +
+                ",\"deep\":" + (state.similarSoundsDeep ? "true" : "false") +
+                ",\"status\":" + std::to_string(static_cast<int>(snapshot.status)) +
+                ",\"error\":" + std::to_string(static_cast<int>(snapshot.error)) +
+                ",\"reference_id\":" + std::to_string(snapshot.reference.fileId) +
+                ",\"matches\":" + matches.dump() +
+                ",\"batch_number\":" + std::to_string(snapshot.batchNumber) +
+                ",\"query_stats\":" + queryStats.dump() +
+                ",\"controls\":" + controlBounds.dump() +
+                ",\"batch_summary\":" + batchSummary.dump() +
                 ",\"total\":" + std::to_string(total) +
                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
+                ",\"reused\":" + std::to_string(state.batchFeatureSkipped.load()) +
+                ",\"analyzed\":" + std::to_string(state.batchFeatureSaved.load()) +
                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
                 ",\"preset\":" + std::to_string(static_cast<int>(state.similarSoundsPreset)) +
                 ",\"open_popups\":" + std::to_string(ImGui::GetCurrentContext()->OpenPopupStack.Size) +
@@ -5073,6 +5212,10 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"current_file\":\"" + jsonEscape(currentFile) + "\",";
         result += "\"audio_loaded\":" + std::string(audioLoaded ? "true" : "false") + ",";
         result += "\"playback_position\":" + std::to_string(playbackPosition) + ",";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"region_in\":" + std::to_string(state.audioEngine.getInPoint()) + ",";
+        result += "\"region_out\":" + std::to_string(state.audioEngine.getOutPoint()) + ",";
+#endif
         result += "\"audio_total_frames\":" + std::to_string((unsigned long long)audioInfo.totalFrames) + ",";
         result += "\"audio_duration\":" + std::to_string(audioInfo.durationSeconds) + ",";
         result += "\"selected_row\":" + std::to_string(selectedRow) + ",";
@@ -5181,6 +5324,32 @@ static void PollQaCommandFile(AppState& state) {
             result += "\"" + jsonEscape(key) + "\":[" + std::to_string(rect.x) + "," +
                 std::to_string(rect.y) + "," + std::to_string(rect.z) + "," +
                 std::to_string(rect.w) + "]";
+        }
+        result += "},";
+        result += "\"qa_metadata_input_colors\":{";
+        bool firstQaMetadataColor = true;
+        for (const auto& [key, color] : state.qaMetadataInputColors) {
+            if (!firstQaMetadataColor) result += ",";
+            firstQaMetadataColor = false;
+            result += "\"" + jsonEscape(key) + "\":[" + std::to_string(color.x * 255.0f) + "," +
+                std::to_string(color.y * 255.0f) + "," + std::to_string(color.z * 255.0f) + "," +
+                std::to_string(color.w * 255.0f) + "]";
+        }
+        result += "},";
+        result += "\"qa_metadata_input_text\":{";
+        bool firstQaMetadataInput = true;
+        for (const auto& [key, value] : state.qaMetadataInputText) {
+            if (!firstQaMetadataInput) result += ",";
+            firstQaMetadataInput = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
+        }
+        result += "},";
+        result += "\"qa_metadata_draft_query\":{";
+        bool firstQaMetadataDraft = true;
+        for (const auto& [key, value] : state.qaMetadataDraftQuery) {
+            if (!firstQaMetadataDraft) result += ",";
+            firstQaMetadataDraft = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
         }
         result += "},";
 #endif
@@ -6433,9 +6602,9 @@ static void PollQaCommandFile(AppState& state) {
                 if (s_mainUiReady.load(std::memory_order_acquire) &&
                     std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < display.x && y < display.y &&
                     !s_magicEqQaPointer.pending &&
-                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || (phase == "up" && s_magicEqQaPointer.held))) {
+                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || ((phase == "up" || phase == "move") && s_magicEqQaPointer.held))) {
                     const auto* viewport = ImGui::GetMainViewport();
-                    s_magicEqQaPointer = {true, phase != "hover", phase == "down", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
+                    s_magicEqQaPointer = {true, phase != "hover" && phase != "move", phase == "down" || phase == "move", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
                     ok = true;
                 }
             }
@@ -6781,18 +6950,18 @@ static void PollQaCommandFile(AppState& state) {
         std::string appliedKind;
         std::string appliedValue;
         if (!artist.empty()) {
-            strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
+            state.artistFilterBuffer = artist;
             state.artistFilterAlternates.clear();
             appliedKind = "artist";
             appliedValue = artist;
         }
         if (!album.empty()) {
-            strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
+            state.albumFilterBuffer = album;
             appliedKind = "album";
             appliedValue = album;
         }
         if (!category.empty()) {
-            strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            state.categoryFilterBuffer = category;
             appliedKind = "category";
             appliedValue = category;
         }
@@ -6814,10 +6983,10 @@ static void PollQaCommandFile(AppState& state) {
         }
 
     } else if (cmd == "clear_metadata_filter") {
-        state.artistFilterBuffer[0] = '\0';
+        state.artistFilterBuffer.clear();
         state.artistFilterAlternates.clear();
-        state.albumFilterBuffer[0] = '\0';
-        state.categoryFilterBuffer[0] = '\0';
+        state.albumFilterBuffer.clear();
+        state.categoryFilterBuffer.clear();
         state.formatFilterIndex = 0;
         cancelPendingSearchForQaMutation();
         state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
@@ -7234,14 +7403,14 @@ static void PollQaCommandFile(AppState& state) {
         }
         {
             DiagScopedTimer qaMetadataTimer("Filter", "metadataApply");
-            state.artistFilterBuffer[0] = '\0';
+            state.artistFilterBuffer.clear();
             state.artistFilterAlternates.clear();
-            state.albumFilterBuffer[0] = '\0';
-            state.categoryFilterBuffer[0] = '\0';
+            state.albumFilterBuffer.clear();
+            state.categoryFilterBuffer.clear();
             state.formatFilterIndex = 0;
-            if (!artist.empty()) strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
-            if (!album.empty()) strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
-            if (!category.empty()) strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            if (!artist.empty()) state.artistFilterBuffer = artist;
+            if (!album.empty()) state.albumFilterBuffer = album;
+            if (!category.empty()) state.categoryFilterBuffer = category;
             if (!format.empty()) state.formatFilterIndex = formatFilterIndexFromValue(format);
             DIAG_ACTION("Filter", "MetadataApply:stacked");
         }
@@ -13218,6 +13387,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Rebuild fonts before NewFrame so the active OpenGL texture is not destroyed.
         // Scheme B: dynamic UI scale (font rebuild + style scaling, debounced)
         harken::theme_schedule::Tick(state);
+        harken::settings::BeginAppearancePreview(state);
         UpdateImGuiUiScaleSchemeB(state);
 
         // Start ImGui frame
@@ -13325,6 +13495,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 #endif
         DevTools_BeginFramePhase("RenderUI");
         RenderUI(state);
+        harken::settings::EndAppearancePreview(state);
         GuardInfoMetadataContext(state);
         RenderInfoMetadataLeavePrompt(state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA

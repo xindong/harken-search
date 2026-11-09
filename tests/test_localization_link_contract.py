@@ -39,10 +39,11 @@ class LocalizationLinkContractTests(unittest.TestCase):
         app = re.search(r"set\(APP_SOURCES(.*?)\n\)", root_txt, re.S)
         self.assertIsNotNone(app)
         self.assertNotIn("src/Localization.cpp", app.group(1))
-        self.assertEqual(1, root_txt.count("src/Localization.cpp"),
-                         "expected exactly the auto-pass site in CMakeLists")
-        self.assertEqual(4, ALL_TXT.count("src/Localization.cpp"),
-                         "auto pass, two localization tests and standalone consumer loop")
+        self.assertEqual(2, root_txt.count("src/Localization.cpp"),
+                         "expected the auto-pass site and isolated preference-draft test")
+        self.assertIn("add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)", root_txt)
+        self.assertEqual(5, ALL_TXT.count("src/Localization.cpp"),
+                         "auto pass, preference-draft test, two localization tests and standalone consumer loop")
         for target in ("TestLocalization", "TestMagicEQLocalization"):
             self.assertIn(f"add_dependencies({target} ArisLocalizationGenerated)", tests_txt)
         self.assertIn("add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)", tests_txt)

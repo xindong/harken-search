@@ -140,6 +140,7 @@
 #include "Localization.h"
 #include "OutputDeviceComboItem.h"
 #include "AppState.h"
+#include "SidebarMetadataPicker.h"
 #include "SettingsDialogState.h"
 #include "SettingsFileWriter.h"
 #include "SettingsMigration.h"
@@ -157,6 +158,7 @@
 #include "CoverWallFailureCooldownPolicy.h"
 #include "CoverWallVisibleMirrorAudit.h"
 #include "SimilarSoundsWindow.h"
+#include "SimilarityIndexer.h"
 #include "RelinkWorkflow.h"
 #include "RecordRemovalWorkflow.h"
 #include "RecordRenameWorkflow.h"
@@ -335,6 +337,7 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include <string>
 #include <sstream>
 #include <vector>
+#include <limits>
 #include <set>
 #include <map>
 #include <complex>
@@ -1238,6 +1241,8 @@ static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& rec
 
 namespace {
 bool g_searchBarFocusedForShortcuts = false;
+ImGuiKey g_sidebarPickerInitialKey = ImGuiKey_None;
+int g_sidebarPickerInitialFrame = -1;
 }
 
 // SECTION 2 - Keybindings and Shortcuts
@@ -1248,9 +1253,14 @@ static void ProcessKeybindings(AppState& state) {
     // AUDITION_NATIVE_EXCEPTION: keyboard-transport
     // Keyboard play/stop intentionally retains its origin-specific region and
     // rewind policy during the overnight control-plane proof.
-    // Level 0: 系统级 - 非前台窗口一律不响应
+    // Level 0: shortcuts require the foreground app; isolated QA may explicitly simulate them.
 #ifdef _WIN32
-    if (MainUiOwnerWindow() == nullptr || GetForegroundWindow() != MainUiOwnerWindow()) return;
+    if (MainUiOwnerWindow() == nullptr) return;
+#if ARIS_PREVIEW_ISOLATION
+    if (GetForegroundWindow() != MainUiOwnerWindow() && !state.qaAllowBackgroundKeybinding) return;
+#else
+    if (GetForegroundWindow() != MainUiOwnerWindow()) return;
+#endif
 #else
     if (!MainUiOwnerWindow() || ImGui::GetIO().AppFocusLost) return;
 #endif
@@ -1295,7 +1305,9 @@ static void ProcessKeybindings(AppState& state) {
         pushUnique(ImGuiKey_RightArrow);
 
         for (int i = 0; i < ks.keyCount; ++i) {
-            ks.justPressed[i] = ImGui::IsKeyPressed(ks.keys[i], false);
+            const bool usedByPicker = g_sidebarPickerInitialFrame == ImGui::GetFrameCount() &&
+                g_sidebarPickerInitialKey == ks.keys[i];
+            ks.justPressed[i] = !usedByPicker && ImGui::IsKeyPressed(ks.keys[i], false);
         }
 
         ks.keyCtrl = io.KeyCtrl;
@@ -1543,7 +1555,8 @@ static void ProcessKeybindings(AppState& state) {
         }
 
         // Execute waveform and channel shortcuts before general actions.
-        if (IsShortcutPressedSnapshot(ShortcutAction::ToggleReverse, ks)) {
+        if (state.settings.transportEffectVisibility.reverse &&
+            IsShortcutPressedSnapshot(ShortcutAction::ToggleReverse, ks)) {
             bool wasReversed = state.audioEngine.isReversed();
             const bool reverseApplied = state.audioEngine.setReverse(!wasReversed);
             const bool nowReversed = state.audioEngine.isReversed();
@@ -1569,7 +1582,8 @@ static void ProcessKeybindings(AppState& state) {
                 }
             }
         }
-        if (IsShortcutPressedSnapshot(ShortcutAction::ToggleMono, ks)) {
+        if (state.settings.transportEffectVisibility.mono &&
+            IsShortcutPressedSnapshot(ShortcutAction::ToggleMono, ks)) {
             state.audioEngine.setMono(!state.audioEngine.isMono());
         }
         if (IsShortcutPressedSnapshot(ShortcutAction::ToggleSoloL, ks)) {
@@ -3952,6 +3966,23 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
     return true;
 }
 
+void StartAudioFileDrag(AppState& state, const std::string& filePath) {
+    if (filePath.empty() || g_isDragging || g_dragInitiated) return;
+    std::vector<std::string> files;
+    std::string error;
+    if (BuildTransferPayloadForPaths(
+            state.audioEngine, {filePath}, true,
+            state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+            state.settings.keepHarkenSearchOutputProcessingSuffix,
+            files, error) && !files.empty()) {
+        ImGui::ClearActiveID();
+        StartFileDrag(files);
+    } else {
+        state.loadErrorToast = error.empty() ? L(Misc_DragFailed) : error;
+        state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
+    }
+}
+
 static std::vector<std::string> BuildBrowserTransferSourcePaths(const AppState& state,
                                                                 const std::vector<FileEntry>& entries,
                                                                 int anchorEntryIndex) {
@@ -5451,6 +5482,8 @@ void LoadAppSettings(AppState& state) {
     (void)RemoveKeyValueFileEntry(g_appSettingsPathUtf8, "siliconFlowApiKey");
     (void)RemoveKeyValueFileEntry(g_appSettingsPathUtf8, "siliconFlowApiKeyPendingClear");
     if (kv.empty()) return;
+    state.similarSoundsDeep = ParseBool(kv["similarDeep"], false);
+    state.similarSoundsPreset = static_cast<SimilarityPreset>(std::clamp(ParseInt(kv["similarPreset"], 0), 0, 4));
 
     // Panel states (new unified system)
     auto loadPanel = [&](const std::string& prefix, AppState::PanelState& p) {
@@ -5636,7 +5669,7 @@ void LoadAppSettings(AppState& state) {
             state.settingsDirty = true; // Save once under the current key.
         }
     }
-    state.settings.waveformDisplayMode = ParseInt(kv["waveformDisplayMode"], state.settings.waveformDisplayMode);
+    state.settings.waveformDisplayMode = std::clamp(ParseInt(kv["waveformDisplayMode"], state.settings.waveformDisplayMode),0,2);
     state.settings.waveformStyle = NormalizeMainWaveformConfiguredStyle(
         ParseInt(kv["waveformStyle"], state.settings.waveformStyle));
     state.settings.miniWaveformRmsBodyStyle = ParseBool(
@@ -5683,6 +5716,7 @@ void LoadAppSettings(AppState& state) {
     // Read sidebar module visibility.
     state.settings.showViewMode = ParseBool(kv["showViewMode"], state.settings.showViewMode);
     state.settings.showFolderTree = ParseBool(kv["showFolderTree"], state.settings.showFolderTree);
+    state.settings.showRelatedPaths = ParseBool(kv["showRelatedPaths"], state.settings.showRelatedPaths);
     state.settings.showMetadataFilter = ParseBool(kv["showMetadataFilter"], state.settings.showMetadataFilter);
     state.settings.showPlaylists = ParseBool(kv["showPlaylists"], state.settings.showPlaylists);
     state.settings.showPlaylistQuickBar = ParseBool(kv["showPlaylistQuickBar"], state.settings.showPlaylistQuickBar);
@@ -5892,9 +5926,32 @@ void LoadAppSettings(AppState& state) {
     if (state.settings.audioPeriodSizeMs < 5) state.settings.audioPeriodSizeMs = 5;
     if (state.settings.audioPeriodSizeMs > 100) state.settings.audioPeriodSizeMs = 100;
 
-    // Audio mode and volume
-    bool mono = ParseBool(kv["monoMode"], state.audioEngine.isMono());
-    state.audioEngine.setMono(mono);
+    // Transport visibility defaults to the old all-visible behavior.
+    auto& transportVisibility = state.settings.transportEffectVisibility;
+    transportVisibility.mono = ParseBool(kv["showTransportMono"], true);
+    transportVisibility.reverse = ParseBool(kv["showTransportReverse"], true);
+    transportVisibility.pan = ParseBool(kv["showTransportPan"], true);
+    transportVisibility.soundstage = ParseBool(kv["showTransportSoundstage"], true);
+    transportVisibility.eq = ParseBool(kv["showTransportEQ"], true);
+    if (!transportVisibility.reverse && state.audioEngine.isReversed()) {
+        // Importing settings into an active player must bypass reverse now.
+        // Keep the selected source interval aligned with the forward timeline.
+        const float in=state.audioEngine.getInPoint(), out=state.audioEngine.getOutPoint();
+        if (state.audioEngine.setReverse(false) &&
+            (in>0.0f || out<1.0f) && in<out) {
+            state.audioEngine.clearInOutPoints();
+            state.audioEngine.setInPoint(1.0f-out);
+            state.audioEngine.setOutPoint(1.0f-in);
+        }
+    }
+    state.audioEngine.setTransportEffectVisibility(transportVisibility);
+
+    // Audio mode and volume. Hidden mono retains its requested setting while
+    // playback uses stereo; the next show restores that setting.
+    state.hiddenMonoRestore = ParseBool(kv["monoMode"], state.audioEngine.isMono());
+    state.audioEngine.setMono(transportVisibility.mono && state.hiddenMonoRestore);
+    state.hiddenReverseRestore = ParseBool(kv["reverseVisibilityRestore"], false);
+    state.pendingReverseRestore = transportVisibility.reverse && state.hiddenReverseRestore;
     float volume = ParseFloat(kv["volume"], 1.0f);
     state.audioEngine.setVolume(volume);
     float pan = ParseFloat(kv["pan"], 0.0f);
@@ -6399,12 +6456,15 @@ static void InitDefaultColumnPresets(AppState& state) {
     state.columnPresets = {sfx, music, meta, loud};
 }
 
-bool TrySaveAppSettings(const AppState& state) {
+bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride) {
+    const auto persistedAppearance=harken::settings::AppearancePreview().ForPersistence(state.settings);
     if (g_appSettingsPathUtf8.empty()) {
         g_siliconFlowApiKeyStorageError.clear();
         return true;
     }
     std::vector<std::pair<std::string, std::string>> items;
+    items.push_back({"similarDeep", state.similarSoundsDeep ? "1" : "0"});
+    items.push_back({"similarPreset", std::to_string(static_cast<int>(state.similarSoundsPreset))});
     const auto sanitizeSavedTabName = [](const ListTab& tab) {
         const std::string sanitized = SanitizeTabNameFromSettings(tab.name);
         return sanitized.empty() ? std::string(L(Misc_AllFiles)) : sanitized;
@@ -6447,10 +6507,10 @@ bool TrySaveAppSettings(const AppState& state) {
 
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
-    items.push_back({"readingFontSize", std::to_string(state.settings.readingFontSize)});
-    items.push_back({"listFontSize", std::to_string(state.settings.listFontSize)});
-    items.push_back({"rowHeight", std::to_string(state.settings.rowHeight)});
-    items.push_back({"listDensity", std::to_string((int)state.settings.listDensity)});
+    items.push_back({"readingFontSize", std::to_string(persistedAppearance.readingFontSize)});
+    items.push_back({"listFontSize", std::to_string(persistedAppearance.listFontSize)});
+    items.push_back({"rowHeight", std::to_string(persistedAppearance.rowHeight)});
+    items.push_back({"listDensity", std::to_string((int)persistedAppearance.listDensity)});
     items.push_back({"settingsDialogWidth", std::to_string(state.settings.settingsDialogWidth)});
     items.push_back({"settingsDialogHeight", std::to_string(state.settings.settingsDialogHeight)});
     items.push_back({"waveformPanelHeight", std::to_string(state.settings.waveformPanelHeight)});
@@ -6459,6 +6519,10 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"meterChannelLayout", std::to_string((int)state.settings.meterChannelLayout)});
     // [已移除 WebUI]
     auto savedAppearance = ThemeEditorAppearanceForSettings(state);
+    if(harken::settings::AppearancePreview().Active()) {
+        savedAppearance.theme=persistedAppearance.theme;
+        savedAppearance.useCustomColors=persistedAppearance.useCustomColors;
+    }
     if (const auto manual = harken::theme_schedule::ManualAppearanceForSettings(state)) {
         savedAppearance.theme = manual->theme;
         savedAppearance.useCustomColors = manual->useCustomColors;
@@ -6532,6 +6596,7 @@ bool TrySaveAppSettings(const AppState& state) {
     // Save sidebar module visibility.
     items.push_back({"showViewMode", state.settings.showViewMode ? "1" : "0"});
     items.push_back({"showFolderTree", state.settings.showFolderTree ? "1" : "0"});
+    items.push_back({"showRelatedPaths", state.settings.showRelatedPaths ? "1" : "0"});
     items.push_back({"showMetadataFilter", state.settings.showMetadataFilter ? "1" : "0"});
     items.push_back({"showPlaylists", state.settings.showPlaylists ? "1" : "0"});
     items.push_back({"showPlaylistQuickBar", state.settings.showPlaylistQuickBar ? "1" : "0"});
@@ -6613,9 +6678,17 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"audioPeriodSizeMs", std::to_string(state.settings.audioPeriodSizeMs)});
 
     // Audio mode and volume
-    items.push_back({"monoMode", state.audioEngine.isMono() ? "1" : "0"});
+    const auto& transportVisibility = state.settings.transportEffectVisibility;
+    items.push_back({"showTransportMono", transportVisibility.mono ? "1" : "0"});
+    items.push_back({"showTransportReverse", transportVisibility.reverse ? "1" : "0"});
+    items.push_back({"showTransportPan", transportVisibility.pan ? "1" : "0"});
+    items.push_back({"showTransportSoundstage", transportVisibility.soundstage ? "1" : "0"});
+    items.push_back({"showTransportEQ", transportVisibility.eq ? "1" : "0"});
+    items.push_back({"monoMode", (monoModeOverride.value_or(transportVisibility.mono
+        ? state.audioEngine.isMono() : state.hiddenMonoRestore)) ? "1" : "0"});
+    items.push_back({"reverseVisibilityRestore", (transportVisibility.reverse ? state.pendingReverseRestore : state.hiddenReverseRestore) ? "1" : "0"});
     items.push_back({"volume", std::to_string(state.audioEngine.getVolume())});
-    items.push_back({"pan", std::to_string(state.audioEngine.getPan())});
+    items.push_back({"pan", std::to_string(state.audioEngine.getRequestedPan())});
     items.push_back({"centerSense", std::to_string(state.audioEngine.getCenterSense())});
     items.push_back({"bassMonoFreq", std::to_string(state.audioEngine.getBassMonoFreq())});
     const MagicEQSettings magicEQ = state.audioEngine.getMagicEQUserSettings();
@@ -8366,12 +8439,279 @@ static bool DrawUnifiedSearchInput(
     options.width = width;
     options.inheritContextColors = inheritContextColors;
     const bool changed = aura::ui::TextInput(idLabel, &value, options);
-    if (!changed) return false;
-
+    // EnterReturnsTrue reports submission, not edits. Always synchronize the
+    // live text so realtime search can see it before Enter is pressed.
     if (value.size() >= bufSize) value.resize(bufSize - 1);
     std::memcpy(buf, value.data(), value.size());
     buf[value.size()] = '\0';
-    return true;
+    return changed;
+}
+
+struct SidebarMetadataPickerUiState {
+    harken::sidebar::MetadataPickerDraft draft;
+    harken::sidebar::MetadataPickerNameList names;
+    std::string databasePath;
+    ImGuiID inputTextId = 0;
+    int highlightedIndex = -1;
+};
+
+// Keep these three inputs on the sidebar palette in both docked and floating
+// layouts. The shared TextInput itself remains unchanged for other pages.
+static void PushSidebarMetadataInputColors() {
+    const auto& t = ThemeColors::current();
+    const auto mix = [](const ImVec4& a, const ImVec4& b, float amount) {
+        return ImVec4(a.x + (b.x - a.x) * amount,
+                      a.y + (b.y - a.y) * amount,
+                      a.z + (b.z - a.z) * amount, 1.0f);
+    };
+    const ImVec4 warmWhite(0.988f, 0.978f, 0.952f, 1.0f);
+    const bool light = (t.filterBrowserBG.x + t.filterBrowserBG.y + t.filterBrowserBG.z) > 2.15f;
+    const ImVec4 panel = mix(mix(t.filterBrowserBG, warmWhite, light ? 0.09f : 0.075f), t.mainWindowBG, 0.05f);
+    const ImVec4 section = mix(mix(t.filterBrowserSectionBG, panel, 0.18f), warmWhite,
+                               (light ? 0.11f : 0.098f) + 0.05f);
+    const ImVec4 frame = mix(section, t.filterBrowserButtonBG, 0.40f);
+    const ImVec4 text = mix(t.filterBrowserText, t.filterBrowserSelection, 0.03f);
+    const ImVec4 hint = TransportContrast::ForSurface(mix(text, frame, 0.38f), frame, 4.5);
+    ImVec4 border = mix(mix(t.filterBrowserOutline, panel, light ? 0.18f : 0.14f),
+                        t.filterBrowserSelection, light ? 0.12f : 0.22f);
+    border.w = light ? 0.82f : 0.62f;
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, frame);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, mix(frame, t.filterBrowserSelection, 0.16f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, mix(frame, t.searchButtonBG, 0.24f));
+    ImGui::PushStyleColor(ImGuiCol_Border, border);
+    ImGui::PushStyleColor(ImGuiCol_Text, text);
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, hint);
+}
+
+template <typename LoadItemsFn, typename OnSelectFn>
+static void DrawSidebarMetadataPickerField(
+    const char* idScope,
+    const char* suffix,
+    const char* inputId,
+    const char* hint,
+    const char* tooltip,
+    std::string& applied,
+    const std::string& databasePath,
+    SidebarMetadataPickerUiState& ui,
+    AppState* qaState,
+    LoadItemsFn&& loadItems,
+    OnSelectFn&& onSelect)
+{
+    if (ui.databasePath != databasePath) {
+        ui.databasePath = databasePath;
+        ui.names.Reload({});
+        ui.highlightedIndex = -1;
+        ui.draft.Cancel();
+    }
+    ui.draft.Sync(applied);
+
+    std::string visible = ui.draft.InputDisplayText(L(Filter_DamagedMetadataName));
+
+    const float arrowWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
+    const float fieldWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - arrowWidth);
+    PushSidebarMetadataInputColors();
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        qaState->qaMetadataInputColors["frame"] = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
+        qaState->qaMetadataInputColors["hint"] = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    }
+#endif
+    aura::ui::TextInputOptions inputOptions;
+    inputOptions.placeholder = hint;
+    inputOptions.inputFlags = ImGuiInputTextFlags_AutoSelectAll;
+    inputOptions.width = fieldWidth;
+    inputOptions.inheritContextColors = true;
+    const bool changed = aura::ui::TextInput(inputId, &visible, inputOptions);
+    ImGui::PopStyleColor(6);
+    const ImVec2 inputMin = ImGui::GetItemRectMin();
+    const ImVec2 inputMax = ImGui::GetItemRectMax();
+#if ARIS_PREVIEW_ISOLATION
+    auto recordRect = [&](const std::string& part, const ImVec2& min, const ImVec2& max) {
+        if (!qaState) return;
+        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+        const ImVec4 rect(
+            min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+        qaState->qaFilterUiRects[std::string("metadata_") + suffix + "_" + part] = rect;
+        if (part == "input" || part == "popup")
+            qaState->qaFilterUiRects[std::string("metadata_") + idScope + "_" + suffix + "_" + part] = rect;
+    };
+    recordRect("input", inputMin, inputMax);
+#else
+    (void)qaState;
+#endif
+    const bool inputActive = ImGui::IsItemActive();
+    if (inputActive) ui.inputTextId = ImGui::GetCurrentContext()->InputTextState.ID;
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState && inputActive) {
+        const ImGuiInputTextState& input = ImGui::GetCurrentContext()->InputTextState;
+        qaState->qaMetadataInputText[suffix] = input.TextA.Data ? input.TextA.Data : "";
+    }
+#endif
+    const bool inputClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+
+    const bool wasOpen = ui.draft.IsOpen();
+    if (inputClicked && !wasOpen) ui.draft.Open();
+    if (changed) {
+        ui.draft.Edit(visible);
+        ui.highlightedIndex = -1;
+    }
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState && inputActive)
+        qaState->qaMetadataDraftQuery[suffix] = std::string(ui.draft.Query());
+#endif
+
+    ImGui::SameLine();
+    char arrowId[80];
+    snprintf(arrowId, sizeof(arrowId), "##Pick%s", suffix);
+    const bool arrowClicked = ImGui::ArrowButton(arrowId, ImGuiDir_Down);
+    const float arrowMaxX = ImGui::GetItemRectMax().x;
+#if ARIS_PREVIEW_ISOLATION
+    recordRect("arrow", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+#endif
+    if (HoveredForHelp() && !ui.draft.IsOpen() && !arrowClicked)
+        HarkenSearch::SetTooltip("%s", tooltip);
+    if (arrowClicked) {
+        if (ui.draft.IsOpen()) {
+            ui.draft.Cancel();
+        } else {
+            ui.draft.Open();
+            ui.highlightedIndex = -1;
+        }
+    }
+    if (!ui.draft.IsOpen()) return;
+
+    if (!wasOpen) {
+        ui.names.Reload(loadItems());
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
+    const ImVec2 workPos = viewport ? viewport->WorkPos : ImVec2(0.0f, 0.0f);
+    const ImVec2 workSize = viewport ? viewport->WorkSize : ImGui::GetIO().DisplaySize;
+    const harken::sidebar::SidebarPickerRect anchor{
+        inputMin.x, inputMin.y, arrowMaxX - inputMin.x, inputMax.y - inputMin.y};
+    const harken::sidebar::SidebarPickerRect work{
+        workPos.x, workPos.y, workSize.x, workSize.y};
+    const auto rect = harken::sidebar::ComputePopupLayout(anchor, work);
+    ImGui::SetNextWindowPos(ImVec2(rect.x, rect.y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(rect.width, rect.height), ImGuiCond_Always);
+    if (arrowClicked) ImGui::SetNextWindowFocus();
+
+    const auto& theme = ThemeColors::current();
+    const ImVec4 popupBg(
+        theme.filterBrowserBG.x * 0.90f + theme.mainWindowBG.x * 0.10f,
+        theme.filterBrowserBG.y * 0.90f + theme.mainWindowBG.y * 0.10f,
+        theme.filterBrowserBG.z * 0.90f + theme.mainWindowBG.z * 0.10f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, popupBg);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    char panelId[96];
+    snprintf(panelId, sizeof(panelId), "##SidebarMetadataPicker_%s_%s", idScope, suffix);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoFocusOnAppearing;
+    const bool panelVisible = BeginTransientScrollbarWindow(panelId, nullptr, flags);
+    if (panelVisible && (inputClicked || (changed && !wasOpen)))
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    bool panelHovered = false;
+    if (panelVisible) {
+#if ARIS_PREVIEW_ISOLATION
+        recordRect("popup", ImGui::GetWindowPos(),
+            ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
+                   ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
+#endif
+        auto selectValue = [&](std::string_view name) {
+            applied.assign(name);
+            ui.draft.Select(applied);
+            ui.highlightedIndex = -1;
+            onSelect();
+        };
+        const bool allPicked = ImGui::Selectable(L(Filter_All));
+#if ARIS_PREVIEW_ISOLATION
+        recordRect("all", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+#endif
+        if (allPicked) selectValue("");
+
+        int pendingJump = -1;
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!inputActive && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            !io.KeyCtrl && !io.KeyAlt && !io.KeySuper) {
+            for (int letter = 0; letter < 26; ++letter) {
+                if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_A + letter), false)) {
+                    g_sidebarPickerInitialKey = static_cast<ImGuiKey>(ImGuiKey_A + letter);
+                    g_sidebarPickerInitialFrame = ImGui::GetFrameCount();
+                    pendingJump = harken::sidebar::FirstInitialIndex(
+                        ui.names.RawNames(), static_cast<char>('A' + letter));
+                    if (pendingJump >= 0) {
+                        ui.draft.ResetQuery();
+                        ui.highlightedIndex = pendingJump;
+                    }
+                    break;
+                }
+            }
+        }
+
+        BeginTransientScrollbarChild("##MetadataNameList", ImVec2(0.0f, 0.0f), false);
+        const auto& visibleIndices = ui.names.MatchingIndices(
+            ui.draft.Query(), L(Filter_DamagedMetadataName));
+        if (!visibleIndices.empty()) {
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(visibleIndices.size()));
+            if (pendingJump >= 0) {
+                const auto it = std::lower_bound(visibleIndices.begin(), visibleIndices.end(), pendingJump);
+                if (it != visibleIndices.end() && *it == pendingJump)
+                    clipper.IncludeItemByIndex(static_cast<int>(it - visibleIndices.begin()));
+            }
+            bool picked = false;
+            while (!picked && clipper.Step()) {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                    const int i = visibleIndices[static_cast<size_t>(row)];
+                    const std::string& name = ui.names.RawNames()[static_cast<size_t>(i)];
+                    const std::string& label = ui.names.DisplayName(static_cast<size_t>(i));
+                    ImGui::PushID(i);
+                    picked = ImGui::Selectable(label.c_str(), i == ui.highlightedIndex,
+                        0, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
+#if ARIS_PREVIEW_ISOLATION
+                    recordRect("item_" + std::to_string(i), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+#endif
+                    if (i == pendingJump) ImGui::SetScrollHereY(0.0f);
+                    ImGui::PopID();
+                    if (picked) {
+                        selectValue(name);
+                        break;
+                    }
+                }
+            }
+            clipper.End();
+        } else {
+            ImGui::TextDisabled("%s", L(Filter_NoMatchingNames));
+        }
+        ImGui::EndChild();
+        const ImVec2 panelMin = ImGui::GetWindowPos();
+        const ImVec2 panelSize = ImGui::GetWindowSize();
+        panelHovered = ImGui::IsMouseHoveringRect(panelMin,
+            ImVec2(panelMin.x + panelSize.x, panelMin.y + panelSize.y));
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+
+    const bool overField = ImGui::IsMouseHoveringRect(inputMin, ImVec2(arrowMaxX, inputMax.y));
+    if (ui.draft.IsOpen() &&
+        (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) &&
+        !panelHovered && !overField) {
+        ui.draft.Cancel();
+        ui.highlightedIndex = -1;
+        // Cancel the active edit and its pending deactivation write-back.
+        ImGuiContext& context = *ImGui::GetCurrentContext();
+        if (ui.inputTextId != 0 && context.ActiveId == ui.inputTextId)
+            ImGui::ClearActiveID();
+        if (ui.inputTextId != 0 && context.InputTextDeactivatedState.ID == ui.inputTextId)
+            context.InputTextDeactivatedState.ID = 0;
+    }
+    if (ui.draft.IsOpen() && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ui.draft.Cancel();
+        ui.highlightedIndex = -1;
+    }
 }
 
 // Renders [optional search field][optional synthetic 全部 row][scrollable list].
@@ -13904,6 +14244,10 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
     const ExplorerShellCapabilities browserCaps = browserSource.capabilities;
     RenderExplorerShell(
         [&state, relatedPathsMaxHeight, browserSource, browserCaps, kBrowserRelatedPathsMinHeight]() {
+            if (!state.settings.showRelatedPaths) {
+                ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                return;
+            }
             ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
             if (!g_browserSystemFolderRelatedPath.empty()) {
                 ImGui::SameLine();
@@ -14654,10 +14998,10 @@ static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
     state.coverFilterMatchPaths.clear();
     state.coverWall.pinnedCoverFilterItem = CoverModule::CoverItem{};
     state.coverFilterIndex = 0;
-    state.categoryFilterBuffer[0] = '\0';
-    state.artistFilterBuffer[0] = '\0';
+    state.categoryFilterBuffer.clear();
+    state.artistFilterBuffer.clear();
     state.artistFilterAlternates.clear();
-    state.albumFilterBuffer[0] = '\0';
+    state.albumFilterBuffer.clear();
     state.formatFilterIndex = 0;
     state.channelFilterIndex = 0;
     state.sampleRateFilterIndex = 0;
@@ -16008,6 +16352,10 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         /// Related paths pane remains stable, but users can resize it against the folder tree.
         RenderExplorerShell(
             [&]() {
+                if (!state.settings.showRelatedPaths) {
+                    ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                    return;
+                }
                 ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
                 RenderRelatedPathsExplorerPane(
                     state,
@@ -16516,229 +16864,41 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             state.syncToTab();
         };
 
-        // === Sidebar filter dropdowns (unified: free-text pickers above, enum
-        // pickers below — all share the same popup body via the file-scope
-        // DrawSidebarFilterPopupBody helpers declared near the top of this file).
+        // Name pickers use the side list below; enum pickers keep their shared popup body.
 
-        const float arrowBtnW = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
         const bool useLapisBlueMetadataSearchSurface = state.settings.theme == AppTheme::LapisBlue;
 
-        // --- Artist (free-text + grouped picker) ---
+        // Artist, album and category share one transactional name picker.
+        // Their text is only a list query until a row is selected.
+        static std::unordered_map<std::string, SidebarMetadataPickerUiState> artistPickers;
+        auto& artistPicker = artistPickers[idScope];
         drawSidebarFilterLabel(L(Filter_Artist));
-        ImGui::SetNextItemWidth(-arrowBtnW);
-        bool artistInputChanged = DrawUnifiedSearchInput("##ArtistFilter",
-            L(Filter_InputArtist), state.artistFilterBuffer, sizeof(state.artistFilterBuffer),
-            0, 0.0f, useLapisBlueMetadataSearchSurface);
-        const ImVec2 artistInputMin = ImGui::GetItemRectMin();
-        const ImVec2 artistInputMax = ImGui::GetItemRectMax();
-        bool applyArtist = false;
-        if (artistInputChanged) {
-            g_lastScrollOrInputTime = ImGui::GetTime();
-            state.artistFilterAlternates.clear();
-            // Live artist filtering uses the same 150-millisecond debounce as search.
-            if (state.settings.searchRealtime) {
-                state.searchDebounce.trigger();
-            }
-        }
-        // 兼容回车确认
-        applyArtist = ImGui::IsItemDeactivatedAfterEdit() || (state.settings.searchRealtime && state.searchDebounce.check());
-        ImGui::SameLine();
-        static bool artistNeedReload = false;
-        static char artistListFilter[64] = "";
-        static std::vector<std::string> artistList;
-        static std::string artistListDbPath;
-        struct ArtistGroup {
-            std::string display;
-            std::string norm;
-            std::vector<std::string> members;
-            std::vector<std::string> memberNorms;
-        };
-        static std::vector<ArtistGroup> artistGroups;
-        if (artistListDbPath != state.currentDbPathUtf8) {
-            artistListDbPath = state.currentDbPathUtf8;
-            artistList.clear();
-            artistGroups.clear();
-            artistNeedReload = true;
-        }
-        if (ImGui::ArrowButton("##PickArtist", ImGuiDir_Down)) {
-            ImGui::OpenPopup("##PickArtistPopup");
-            if (artistGroups.empty()) artistNeedReload = true;
-            memset(artistListFilter, 0, sizeof(artistListFilter));
-        }
-        const float artistArrowMaxX = ImGui::GetItemRectMax().x;
-        if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Filter_SelectExistingArtist));
-        // Force popup below the input row with matching width, so picker popups
-        // align with the enum BeginCombo popups (4 below) — all open downward,
-        // same left edge, same width.
-        SetupSidebarPickerPopup(artistInputMin, ImVec2(artistArrowMaxX, artistInputMax.y));
-        if (BeginTransientScrollbarPopup("##PickArtistPopup")) {
-            if (artistNeedReload) {
-                artistList = state.database.getUniqueArtists();
-                artistGroups.clear();
-                const float kArtistGroupThreshold = 0.85f;
-                auto normSimilarity = [](const std::string& a, const std::string& b) -> float {
-                    if (a.empty() || b.empty()) return 0.0f;
-                    if (a == b) return 1.0f;
-                    const std::string* s = &a, * l = &b;
-                    if (s->size() > l->size()) std::swap(s, l);
-                    if (l->find(*s) != std::string::npos && (float)s->size() / (float)l->size() >= 0.8f) return 0.92f;
-                    return 0.0f;
-                };
-                for (const auto& it : artistList) {
-                    std::string norm = NormalizeSuggestText(it);
-                    if (norm.empty()) continue;
-                    bool grouped = false;
-                    for (auto& g : artistGroups) {
-                        if (normSimilarity(norm, g.norm) >= kArtistGroupThreshold) {
-                            g.members.push_back(it);
-                            g.memberNorms.push_back(norm);
-                            if (it.size() < g.display.size()) g.display = it;
-                            grouped = true;
-                            break;
-                        }
-                    }
-                    if (!grouped) {
-                        ArtistGroup g;
-                        g.display = it;
-                        g.norm = norm;
-                        g.members.push_back(it);
-                        g.memberNorms.push_back(norm);
-                        artistGroups.push_back(std::move(g));
-                    }
-                }
-                artistNeedReload = false;
-            }
-            // Build display + match-haystack arrays for the shared popup body.
-            // Haystack concatenates group.norm + all member norms so the single-
-            // needle search inside the helper matches any variant of the group.
-            std::vector<std::string> artistDisplay;
-            std::vector<std::string> artistHaystacks;
-            artistDisplay.reserve(artistGroups.size());
-            artistHaystacks.reserve(artistGroups.size());
-            for (const auto& g : artistGroups) {
-                std::string label = g.display;
-                if (g.members.size() > 1) label += " (" + std::to_string(g.members.size()) + ")";
-                artistDisplay.push_back(std::move(label));
-                std::string hay = g.norm;
-                for (const auto& mn : g.memberNorms) { hay.push_back(' '); hay += mn; }
-                artistHaystacks.push_back(std::move(hay));
-            }
-            DrawSidebarFilterPopupBodyGrouped(
-                "Artist", artistDisplay, artistHaystacks,
-                artistListFilter, sizeof(artistListFilter),
-                [&]() {
-                    state.artistFilterBuffer[0] = '\0';
-                    state.artistFilterAlternates.clear();
-                    applyMetaFilters();
-                },
-                [&](int idx) {
-                    const auto& g = artistGroups[(size_t)idx];
-                    CopyUiText(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), g.display.c_str());
-                    state.artistFilterAlternates = g.members;
-                    applyMetaFilters();
-                },
-                kSidebarFilterSearchThreshold,
-                kSidebarWideFilterListHeight);
-            ImGui::EndPopup();
-        }
-        if (applyArtist) {
-            if (state.artistFilterBuffer[0] == '\0') {
-                state.artistFilterAlternates.clear();
-            }
-            applyMetaFilters();
-        }
+        DrawSidebarMetadataPickerField(
+            idScope, "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
+            state.artistFilterBuffer,
+            state.currentDbPathUtf8, artistPicker, &state,
+            [&]() { return state.database.getUniqueArtists(std::numeric_limits<int>::max()); },
+            [&]() { state.artistFilterAlternates.clear(); applyMetaFilters(); });
 
-        // --- Album (free-text + simple picker) ---
+        static std::unordered_map<std::string, SidebarMetadataPickerUiState> albumPickers;
+        auto& albumPicker = albumPickers[idScope];
         drawSidebarFilterLabel(L(Filter_Album));
-        ImGui::SetNextItemWidth(-arrowBtnW);
-        DrawUnifiedSearchInput("##AlbumFilter",
-            L(Filter_InputAlbum), state.albumFilterBuffer, sizeof(state.albumFilterBuffer),
-            0, 0.0f, useLapisBlueMetadataSearchSurface);
-        const ImVec2 albumInputMin = ImGui::GetItemRectMin();
-        const ImVec2 albumInputMax = ImGui::GetItemRectMax();
-        bool applyAlbum = ImGui::IsItemDeactivatedAfterEdit();
-        ImGui::SameLine();
-        static bool albumNeedReload = false;
-        static char albumListFilter[64] = "";
-        static std::vector<std::string> albumList;
-        static std::string albumListDbPath;
-        if (albumListDbPath != state.currentDbPathUtf8) {
-            albumListDbPath = state.currentDbPathUtf8;
-            albumList.clear();
-            albumNeedReload = true;
-        }
-        if (ImGui::ArrowButton("##PickAlbum", ImGuiDir_Down)) {
-            ImGui::OpenPopup("##PickAlbumPopup");
-            if (albumList.empty()) albumNeedReload = true;
-            memset(albumListFilter, 0, sizeof(albumListFilter));
-        }
-        const float albumArrowMaxX = ImGui::GetItemRectMax().x;
-        if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Filter_SelectExistingAlbum));
-        SetupSidebarPickerPopup(albumInputMin, ImVec2(albumArrowMaxX, albumInputMax.y));
-        if (BeginTransientScrollbarPopup("##PickAlbumPopup")) {
-            if (albumNeedReload) {
-                albumList = state.database.getUniqueAlbums();
-                albumNeedReload = false;
-            }
-            DrawSidebarFilterPopupBody(
-                "Album", albumList, albumListFilter, sizeof(albumListFilter),
-                [&]() { state.albumFilterBuffer[0] = '\0'; applyMetaFilters(); },
-                [&](int, const std::string& v) {
-                    CopyUiText(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), v.c_str());
-                    applyMetaFilters();
-                },
-                true,
-                kSidebarFilterSearchThreshold,
-                kSidebarWideFilterListHeight);
-            ImGui::EndPopup();
-        }
-        if (applyAlbum) applyMetaFilters();
+        DrawSidebarMetadataPickerField(
+            idScope, "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
+            state.albumFilterBuffer,
+            state.currentDbPathUtf8, albumPicker, &state,
+            [&]() { return state.database.getUniqueAlbums(std::numeric_limits<int>::max()); },
+            [&]() { applyMetaFilters(); });
 
-        // --- Category (free-text + simple picker) ---
+        static std::unordered_map<std::string, SidebarMetadataPickerUiState> categoryPickers;
+        auto& categoryPicker = categoryPickers[idScope];
         drawSidebarFilterLabel(L(Filter_CategoryLabel));
-        ImGui::SetNextItemWidth(-arrowBtnW);
-        DrawUnifiedSearchInput("##CategoryFilter",
-            L(Filter_InputCategory), state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer),
-            0, 0.0f, useLapisBlueMetadataSearchSurface);
-        const ImVec2 categoryInputMin = ImGui::GetItemRectMin();
-        const ImVec2 categoryInputMax = ImGui::GetItemRectMax();
-        bool applyCategory = ImGui::IsItemDeactivatedAfterEdit();
-        ImGui::SameLine();
-        static bool categoryNeedReload = false;
-        static char categoryListFilter[64] = "";
-        static std::vector<std::string> categoryList;
-        static std::string categoryListDbPath;
-        if (categoryListDbPath != state.currentDbPathUtf8) {
-            categoryListDbPath = state.currentDbPathUtf8;
-            categoryList.clear();
-            categoryNeedReload = true;
-        }
-        if (ImGui::ArrowButton("##PickCategory", ImGuiDir_Down)) {
-            ImGui::OpenPopup("##PickCategoryPopup");
-            if (categoryList.empty()) categoryNeedReload = true;
-            memset(categoryListFilter, 0, sizeof(categoryListFilter));
-        }
-        const float categoryArrowMaxX = ImGui::GetItemRectMax().x;
-        if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Filter_SelectExistingCategory));
-        SetupSidebarPickerPopup(categoryInputMin, ImVec2(categoryArrowMaxX, categoryInputMax.y));
-        if (BeginTransientScrollbarPopup("##PickCategoryPopup")) {
-            if (categoryNeedReload) {
-                categoryList = state.database.getUniqueCategories();
-                categoryNeedReload = false;
-            }
-            DrawSidebarFilterPopupBody(
-                "Category", categoryList, categoryListFilter, sizeof(categoryListFilter),
-                [&]() { state.categoryFilterBuffer[0] = '\0'; applyMetaFilters(); },
-                [&](int, const std::string& v) {
-                    CopyUiText(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), v.c_str());
-                    applyMetaFilters();
-                },
-                true,
-                kSidebarFilterSearchThreshold,
-                kSidebarWideFilterListHeight);
-            ImGui::EndPopup();
-        }
-        if (applyCategory) applyMetaFilters();
+        DrawSidebarMetadataPickerField(
+            idScope, "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
+            state.categoryFilterBuffer,
+            state.currentDbPathUtf8, categoryPicker, &state,
+            [&]() { return state.database.getUniqueCategories(std::numeric_limits<int>::max()); },
+            [&]() { applyMetaFilters(); });
 
         // --- Enum filters: single combo trigger, unified popup body ---
         drawSidebarFilterLabel(L(Filter_Format));
@@ -22198,6 +22358,9 @@ static void DrawSpectrogramReadoutOverlay(const ImVec2& rectMin,
                                           const ImVec2& rectMax,
                                           float sampleRate)
 {
+#if ARIS_PREVIEW_ISOLATION
+    if(g_appState)g_appState->qaRegions.spectrumDrawFrame=ImGui::GetFrameCount();
+#endif
     if (rectMax.x <= rectMin.x + 20.0f || rectMax.y <= rectMin.y + 20.0f) {
         return;
     }
@@ -23647,6 +23810,13 @@ void DrawMainWaveform(const WaveformData& waveform, float playbackPos, float wid
                              float waveformAlpha = 1.0f, float volumeScale = 1.0f, bool isReversed = false,
                              int waveformStyle = 0, float regionFadeInNorm = 0.0f,
                              float regionFadeOutNorm = 0.0f, float amplitudeFocusBoost = 1.0f) {
+#if ARIS_PREVIEW_ISOLATION
+    if (g_appState) {
+        auto& qr=g_appState->qaRegions;const auto p=ImGui::GetCursorScreenPos();
+        qr.waveDrawFrame=ImGui::GetFrameCount();qr.waveDrawStyle=waveformStyle;
+        qr.waveDrawBounds={p.x,p.y,p.x+width,p.y+height};
+    }
+#endif
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const uint8_t bgR = (g_waveformBgColor >> 0) & 0xFF;
     const uint8_t bgG = (g_waveformBgColor >> 8) & 0xFF;
@@ -27974,6 +28144,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                 float waveHeight = waveformHeight * (1.0f - splitRatio);
 
                 if (hasSpectrogramTexture && spectHeight > 10.0f) {
+#if ARIS_PREVIEW_ISOLATION
+                    state.qaRegions.spectrumDrawFrame=ImGui::GetFrameCount();
+#endif
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     dl->AddImage((ImTextureID)(intptr_t)state.spectrogramTexture,
                                  waveformPos,
@@ -28040,6 +28213,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     int alpha = (int)(spectAlpha * 255);
                     ImU32 tintCol = IM_COL32(255, 255, 255, alpha);
+#if ARIS_PREVIEW_ISOLATION
+                    state.qaRegions.spectrumDrawFrame=ImGui::GetFrameCount();
+#endif
 // Waveform drawing reserves top 16px for ruler; spectrogram must offset to align with waveform data.
                     const float rulerH = 16.0f;
                     dl->AddImage((ImTextureID)(intptr_t)state.spectrogramTexture,
@@ -29280,83 +29456,78 @@ static bool ClampFloatingPanelToViewport(
     return changed;
 }
 
-void StartBatchFeatureExtraction(AppState& state) {
+static void PublishBatchSimilarityOutcome(AppState& state,
+    const HarkenSearch::SimilarityIndexProgress& progress,
+    const HarkenSearch::SimilarityIndexResult* result = nullptr) {
+    HarkenSearch::BatchFeatureResultSnapshot snapshot;
+    snapshot.available = true; snapshot.running = result == nullptr;
+    snapshot.total = progress.total;
+    // A semantic failure may still have saved acoustic features. Count the
+    // file once, using completed/failed rather than saved + failed.
+    snapshot.succeeded = std::max(0, progress.completed - progress.failed);
+    if (result) {
+        snapshot.stopped = result->cancelled;
+        snapshot.error = result->error; snapshot.modelError = result->modelError;
+        for (const auto& issue : result->issues) {
+            using Failure = HarkenSearch::SimilarityIndexFailure;
+            using Batch = HarkenSearch::BatchFeatureFailure;
+            const auto reason = issue.reason == Failure::Silent ? Batch::Empty
+                : issue.reason == Failure::SaveFailed ? Batch::Save
+                : issue.reason == Failure::AudioChanged ? Batch::Changed
+                : issue.reason == Failure::ModelFailed ? Batch::Model : Batch::Unreadable;
+            ++snapshot.failures[static_cast<size_t>(reason)];
+        }
+    } else {
+        // Categories are published with the terminal result. While running,
+        // this aggregate is used only for truthful progress and remainder.
+        snapshot.failures[static_cast<size_t>(HarkenSearch::BatchFeatureFailure::Unreadable)] = progress.failed;
+    }
+    state.batchFeatureResults.Publish(snapshot);
+}
+
+void StartBatchFeatureExtraction(AppState& state, bool recheckAll) {
     if (state.batchFeatureExtracting.load() || state.dbSwitchInProgress) return;
-    if (state.batchFeatureThread.joinable())
-        state.batchFeatureThread.join();
+    if (state.batchFeatureThread.joinable()) state.batchFeatureThread.join();
     aura::ui::InvalidateSimilarSoundsWindow(state);
     state.batchFeatureCancelRequested.store(false);
     state.batchFeatureCompletionNotice.store(false);
-    state.batchFeatureExtracting.store(true);
     state.batchFeatureProgress.store(0);
-    const int pending = state.database.countFilesWithoutFeatures(0);
-    state.batchFeatureTotal.store(pending);
-    state.batchFeatureResults.Reset(pending);
+    state.batchFeatureTotal.store(0);
+    state.batchFeatureSkipped.store(0);
+    state.batchFeatureSaved.store(0);
+    state.batchFeatureResults.Reset(0);
     state.scanSimilarityOwned = false;
     state.showScanSimilarityDialog = false;
-    state.batchFeatureThread = std::thread([&state]() {
-        auto paths = state.database.getFilesWithoutFeatures(0);
-        state.batchFeatureTotal.store((int)paths.size());
-        state.batchFeatureResults.SetTotal(static_cast<int>(paths.size()));
-
-        unsigned int nThreads = std::max(1u,
-            std::min(4u, std::thread::hardware_concurrency()));
-        std::atomic<int> pathIdx{0};
-        std::mutex dbMutex;
-
-        std::vector<std::thread> workers;
-        workers.reserve(nThreads);
-        for (unsigned int t = 0; t < nThreads; ++t) {
-            workers.emplace_back([&]() {
-                while (!state.batchFeatureCancelRequested.load()) {
-                    int i = pathIdx.fetch_add(1);
-                    if (i >= (int)paths.size()) break;
-                    const std::string& path = paths[i];
-                    state.batchFeatureResults.SetCurrentFile(path);
-
-                    const FeatureExtractionResult extracted =
-                        FeatureExtractor::extractFromFileChecked(
-                            path, [&state] {
-                                return state.batchFeatureCancelRequested.load();
-                            });
-                    if (state.batchFeatureCancelRequested.load() || extracted.error == FeatureExtractionError::Cancelled) {
-                        break; // Cancelled work remains unprocessed, not failed or successful.
-                    }
-                    if (!extracted.ok) {
-                        state.batchFeatureResults.RecordFailure(extracted.error == FeatureExtractionError::NoSamples
-                            ? HarkenSearch::BatchFeatureFailure::Empty : HarkenSearch::BatchFeatureFailure::Unreadable);
-                        state.batchFeatureProgress.fetch_add(1);
-                        continue;
-                    }
-                    AudioFeatureVector vec = extracted.features;
-
-                    float lufs = -70.f, mom = -70.f, st = -70.f, tp = -70.f;
-                    AudioRecord rec;
-                    {
-                        std::lock_guard<std::mutex> lk(dbMutex);
-                        state.database.getLoudnessByPath(path, lufs, mom, st, tp);
-                        rec = state.database.getFileByPath(path);
-                    }
-                    float trueRms = vec.features[AudioFeatureVector::ENERGY_OFFSET];
-                    FeatureExtractor::fillGlobalFeatures(vec, lufs, trueRms, rec.durationSeconds, tp);
-                    bool saved = false;
-                    {
-                        std::lock_guard<std::mutex> lk(dbMutex);
-                        saved = state.database.saveAudioFeaturesByPath(path, vec);
-                    }
-                    if (saved) state.batchFeatureResults.RecordSuccess();
-                    else state.batchFeatureResults.RecordFailure(HarkenSearch::BatchFeatureFailure::Save);
-                    state.batchFeatureProgress.fetch_add(1);
-                }
-            });
+    {
+        std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+        state.batchFeatureResult = {};
+    }
+    const std::string databasePath = state.currentDbPathUtf8;
+    const std::string modelDirectory = GetExeDirUtf8() + "/models/clap";
+    state.batchFeatureExtracting.store(true);
+    state.batchFeatureStartGeneration.fetch_add(1);
+    state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll]() {
+        HarkenSearch::SimilarityIndexResult result;
+        try {
+            result = HarkenSearch::BuildSimilarityIndex(databasePath, modelDirectory,
+                [&state] { return state.batchFeatureCancelRequested.load(); },
+                [&state](const HarkenSearch::SimilarityIndexProgress& progress) {
+                    state.batchFeatureTotal.store(progress.total);
+                    state.batchFeatureProgress.store(progress.completed);
+                    state.batchFeatureSkipped.store(progress.skipped);
+                    state.batchFeatureSaved.store(progress.saved);
+                    PublishBatchSimilarityOutcome(state, progress);
+                }, recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll
+                              : HarkenSearch::SimilarityIndexScope::PendingOnly);
+        } catch (const std::exception& error) { result.error = error.what(); }
+          catch (...) { result.error = "analysis_failed"; }
+        const bool complete = result.ok && !result.cancelled && result.progress.failed == 0 && result.modelError.empty();
+        PublishBatchSimilarityOutcome(state, result.progress, &result);
+        {
+            std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+            state.batchFeatureResult = std::move(result);
         }
-        for (auto& w : workers) w.join();
-
-        if (!state.batchFeatureCancelRequested.load()) {
-            state.similaritySearch.loadFeatureCache(state.database);
-            state.batchFeatureCompletionNotice.store(!paths.empty());
-        }
-        state.batchFeatureResults.Finish(state.batchFeatureCancelRequested.load());
+        state.batchFeatureCompletionNotice.store(complete);
         state.batchFeatureExtracting.store(false);
     });
 }
@@ -29367,6 +29538,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     // Full-table counts run on one independent read-only connection. This UI
     // path only submits work and polls values; it never waits for SQLite.
     static int cachedIndexed = 0;
+    static int cachedSemantic = 0;
     static int cachedTotal = 0;
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
@@ -29376,6 +29548,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (cachedDbPath != state.currentDbPathUtf8 ||
         cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
         cachedIndexed = cachedTotal = 0;
+        cachedSemantic = 0;
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
         lastCountTime = -999.0;
@@ -29388,12 +29561,12 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!state.dbSwitchInProgress && state.database.isOpen()) {
         if (!state.featureIndexStatistics) {
             state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
-                HarkenSearch::MakeFeatureIndexCountHandler());
+                HarkenSearch::MakeFeatureIndexCountHandler(true));
         }
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; }
+            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; cachedSemantic = result->semanticIndexed; }
         }
         if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
@@ -29401,13 +29574,17 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!sharedSimilarStyle) ImGui::Separator();
     ImGui::BeginDisabled(state.dbSwitchInProgress);
     ImGui::Text(L(Main_IndexedProgressFmt), cachedIndexed, cachedTotal);
+    ImGui::Text(L(Similar_SemanticCoverageFmt), cachedSemantic, cachedTotal);
     ThemeInspector::RegisterLastItem("similar.index.count");
     if (extracting) {
         const int progress = state.batchFeatureProgress.load();
         const int total = std::max(state.batchFeatureTotal.load(), 1);
+        const int reused = state.batchFeatureSkipped.load();
+        const int saved = state.batchFeatureSaved.load();
         const float fraction = std::clamp(static_cast<float>(progress) / total, 0.0f, 1.0f);
         char progressLabel[48];
         snprintf(progressLabel, sizeof(progressLabel), "%d / %d", progress, total);
+        ImGui::Text(L(Main_SimIndexBuildingFmt), progress, total, reused, saved);
         DrawUnifiedProgressBar(fraction, ImVec2(-1, 18), progressLabel, true);
         ThemeInspector::RegisterLastItem("similar.index.progress");
         if (sharedSimilarStyle) {
@@ -29429,23 +29606,44 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, cachedTotal - cachedIndexed);
-        if (pending > 0) {
+        const int pending = std::max(0, cachedTotal - std::min(cachedIndexed, cachedSemantic));
+        if (cachedTotal > 0) {
             ImGui::Spacing();
             char label[128];
-            snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
+            if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
+            else snprintf(label, sizeof(label), "%s", L(Similar_Recheck));
             if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
-                StartBatchFeatureExtraction(state);
+                if (pending > 0) StartBatchFeatureExtraction(state);
+                else StartBatchFeatureExtraction(state, true);
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
-        } else if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
+            if (pending > 0) {
+                // A permanently failing file must not prevent checking already
+                // analyzed files for source changes. Supplementing stays the
+                // primary action and never traverses the completed analyses.
+                if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
+                    StartBatchFeatureExtraction(state, true);
+                    wasExtracting = true;
+                }
+                ThemeInspector::RegisterLastItem("similar.index.recheck");
+            }
+        }
+        if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {
             ImGui::Spacing();
             const ImVec4 success(0.3f, 0.9f, 0.3f, 1.0f);
             ImGui::TextColored(sharedSimilarStyle ? TransportContrast::ForSurface(
                 success, ThemeColors::current().metadataPanelBG, 6.0) : success, L(Main_IndexAllDone));
             ThemeInspector::RegisterLastItem("similar.index.done");
+        }
+        std::lock_guard<std::mutex> reportLock(state.batchFeatureResultMutex);
+        const auto& report = state.batchFeatureResult;
+        if (report.cancelled || report.progress.failed > 0 || !report.error.empty() || !report.modelError.empty()) {
+            if (aura::ui::ActionButton(L(Similar_AnalysisReport), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
+                state.showSimilarAnalysisReport = true;
+            }
+            ThemeInspector::RegisterLastItem("similar.index.report");
         }
     }
     ImGui::EndDisabled();
@@ -29623,7 +29821,9 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     PlaceScanDialogInMainViewport(resultId, width, maxHeight);
     if (BeginTransientScrollbarPopupModal(resultId, nullptr, flags)) {
         { ReadingTextScope reading;
-        if (DrawScanDialogHeader(result.stopped ? L(ScanUi_AnalysisStopped) : L(ScanUi_AnalysisComplete), true) ||
+        const bool analysisError = !result.error.empty() || !result.modelError.empty();
+        if (DrawScanDialogHeader(result.stopped ? L(ScanUi_AnalysisStopped)
+                : analysisError ? L(Similar_AnalysisFailed) : L(ScanUi_AnalysisComplete), true) ||
             (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape))) {
             state.scanSimilarityOwned = false; ImGui::CloseCurrentPopup();
         }
@@ -29632,9 +29832,12 @@ static void DrawScanSimilarityDialogs(AppState& state) {
         ImGui::PopFont();
         if (result.Failed() > 0) {
             ImGui::Text(L(Main_FailedFmt), result.Failed());
-            const char* labels[] = {L(ScanUi_Unsupported), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty), L(ScanUi_FailedSave)};
+            const char* labels[] = {L(ScanUi_Unsupported), L(ScanUi_FailedRead), L(ScanUi_FailedEmpty),
+                L(ScanUi_FailedSave), L(Similar_FailureChanged), L(Similar_FailureModel)};
             for (size_t i = 0; i < result.failures.size(); ++i) ImGui::Text("%s  %d", labels[i], result.failures[i]);
         }
+        if (!result.error.empty()) ImGui::TextWrapped("%s", L(Similar_AnalysisFailed));
+        if (!result.modelError.empty()) ImGui::TextWrapped("%s", L(Similar_AnalysisModelMissing));
         if (result.Remaining() > 0) ImGui::Text(L(ScanUi_UnprocessedFmt), result.Remaining());
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         if (aura::ui::ActionButton(L(Done), ImVec2(-1.f, 32.f), aura::ui::ButtonVariant::PrimarySearch)) {
@@ -29702,6 +29905,20 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
 }
 
 void RenderUI(AppState& state) {
+    if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
+        state.audioEngine.isLoaded()) {
+        state.pendingReverseRestore = false;
+        if (!state.audioEngine.setReverse(true)) {
+            state.loadErrorToast = L(Player_ReverseFailed);
+            state.loadErrorToastUntil = ImGui::GetTime() + 4.0;
+        }
+    }
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+    if(harken::settings::savePreviewOnce) {
+        harken::settings::savePreviewOnce=false;
+        harken::settings::previewSaveResult=TrySaveAppSettings(state);
+    }
+#endif
     // Follow only the initial page, not counts, facets or the frame-settle budget.
     if (state.dbSwitchAwaitingResults && !state.dbSwitchInProgress &&
         !state.dbSwitchNeedsRefresh &&
@@ -29714,6 +29931,9 @@ void RenderUI(AppState& state) {
     }
 #if ARIS_PREVIEW_ISOLATION
     state.qaFilterUiRects.clear();
+    state.qaMetadataInputColors.clear();
+    state.qaMetadataInputText.clear();
+    state.qaMetadataDraftQuery.clear();
 #endif
     if (HarkenSearch::ShouldConsumePendingPostScanSimilarityIndex(
             state.pendingPostScanSimilarityIndex.load(std::memory_order_acquire),
@@ -32114,6 +32334,7 @@ void RenderUI(AppState& state) {
                 ImGui::Spacing();
                 const bool fastScanMode = !state.settings.cacheWaveformsOnScan;
                 if (ImGui::RadioButton(L(Main_FastScanMode), fastScanMode)) state.settings.cacheWaveformsOnScan = false;
+                if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Scan_FastModeHint));
                 if (ImGui::RadioButton(L(Main_FullScanMode), state.settings.cacheWaveformsOnScan)) state.settings.cacheWaveformsOnScan = true;
                 bool automaticThreads = state.scanWorkerThreads == 0;
                 if (ImGui::Checkbox(L(ScanUi_AutoThreads), &automaticThreads)) state.scanWorkerThreads = automaticThreads ? 0 : 4;
@@ -33200,7 +33421,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 20.f, viewport->WorkPos.y + 60.f),
             ImGuiCond_Always, ImVec2(1.f, 0.f));
         ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(360.f, scanDialogWidth), 0.f), ImVec2(scanDialogWidth, scanDialogMaxHeight));
-        if (ImGui::Begin("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+        if (BeginTransientScrollbarWindow("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
             { ReadingTextScope readingDrop;
             char title[128];
@@ -40148,14 +40369,17 @@ void RenderUI(AppState& state) {
             }
 
             // Check metadata filters
-            if (state.categoryFilterBuffer[0] != '\0') {
-                activeFilters.push_back({FilterChipType::Category, u8"分类: " + std::string(state.categoryFilterBuffer)});
+            if (!state.categoryFilterBuffer.empty()) {
+                activeFilters.push_back({FilterChipType::Category, u8"分类: " +
+                    harken::sidebar::PickerDisplayName(state.categoryFilterBuffer, L(Filter_DamagedMetadataName))});
             }
-            if (state.artistFilterBuffer[0] != '\0') {
-                activeFilters.push_back({FilterChipType::Artist, u8"艺术家: " + std::string(state.artistFilterBuffer)});
+            if (!state.artistFilterBuffer.empty()) {
+                activeFilters.push_back({FilterChipType::Artist, u8"艺术家: " +
+                    harken::sidebar::PickerDisplayName(state.artistFilterBuffer, L(Filter_DamagedMetadataName))});
             }
-            if (state.albumFilterBuffer[0] != '\0') {
-                activeFilters.push_back({FilterChipType::Album, u8"专辑: " + std::string(state.albumFilterBuffer)});
+            if (!state.albumFilterBuffer.empty()) {
+                activeFilters.push_back({FilterChipType::Album, u8"专辑: " +
+                    harken::sidebar::PickerDisplayName(state.albumFilterBuffer, L(Filter_DamagedMetadataName))});
             }
 
             // Check format filter
@@ -40346,12 +40570,32 @@ void RenderUI(AppState& state) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, chipHover);
                     ImGui::PushStyleColor(ImGuiCol_Text, chipText);
                     ImGui::PushID((int)i);
-                    std::string chipLabel = activeFilters[i].label + u8" ×";
+                    const bool metadataNameChip = activeFilters[i].type == FilterChipType::Category ||
+                        activeFilters[i].type == FilterChipType::Artist ||
+                        activeFilters[i].type == FilterChipType::Album;
+                    std::string chipDisplay = activeFilters[i].label;
+                    constexpr float kMetadataChipTextMaxWidth = 220.0f;
+                    if (metadataNameChip &&
+                        ImGui::CalcTextSize(chipDisplay.c_str()).x > kMetadataChipTextMaxWidth) {
+                        size_t end = 0, lastFit = 0;
+                        while (end < chipDisplay.size()) {
+                            const unsigned char lead = static_cast<unsigned char>(chipDisplay[end]);
+                            const size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+                            end = std::min(chipDisplay.size(), end + bytes);
+                            const std::string candidate = chipDisplay.substr(0, end) + u8"…";
+                            if (ImGui::CalcTextSize(candidate.c_str()).x > kMetadataChipTextMaxWidth)
+                                break;
+                            lastFit = end;
+                        }
+                        chipDisplay = chipDisplay.substr(0, lastFit) + u8"…";
+                    }
+                    std::string chipLabel = chipDisplay + u8" ×";
                     bool chipClicked = ImGui::SmallButton(chipLabel.c_str());
 #if ARIS_PREVIEW_ISOLATION
                     const char* qaChipKey = activeFilters[i].type == FilterChipType::CoverKey ? "chip_cover_key" :
                         activeFilters[i].type == FilterChipType::CoverMode ? "chip_cover_mode" :
                         activeFilters[i].type == FilterChipType::Folder ? "chip_folder" :
+                        activeFilters[i].type == FilterChipType::Category ? "chip_category" :
                         activeFilters[i].type == FilterChipType::Keyword ? "chip_keyword" : nullptr;
                     if (qaChipKey) {
                         const ImVec2 origin = ImGui::GetMainViewport()->Pos;
@@ -40363,6 +40607,10 @@ void RenderUI(AppState& state) {
 #endif
                     ImGui::PopID();
                     ImGui::PopStyleColor(3);
+                    if (metadataNameChip && chipDisplay != activeFilters[i].label &&
+                        ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                        HarkenSearch::SetTooltip("%s", activeFilters[i].label.c_str());
+                    }
                     if (activeFilters[i].type == FilterChipType::ExcludeKeyword
                         && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                         HarkenSearch::SetTooltip(L(Main_ExcludeWordTip),
@@ -40450,14 +40698,14 @@ void RenderUI(AppState& state) {
                                 state.coverFilterIndex = 0;
                                 break;
                             case FilterChipType::Category:
-                                state.categoryFilterBuffer[0] = '\0';
+                                state.categoryFilterBuffer.clear();
                                 break;
                             case FilterChipType::Artist:
-                                state.artistFilterBuffer[0] = '\0';
+                                state.artistFilterBuffer.clear();
                                 state.artistFilterAlternates.clear();
                                 break;
                             case FilterChipType::Album:
-                                state.albumFilterBuffer[0] = '\0';
+                                state.albumFilterBuffer.clear();
                                 break;
                             case FilterChipType::Format:
                                 state.formatFilterIndex = 0;
@@ -40613,7 +40861,10 @@ void RenderUI(AppState& state) {
         // Keep list text vertically centered, but cap vertical padding so large row heights
         // do not create oversized visual gaps between adjacent rows.
         const float listFontPx = listFont ? listFont->LegacySize : ImGui::GetFontSize();
-        const float targetRowHeight = (std::max)((float)state.settings.rowHeight, listFontPx + 4.0f);
+        ImFont* numericFont = GetUIFontMono();
+        const float numericFontPx = numericFont ? numericFont->LegacySize : listFontPx;
+        const float minimumTextHeight = (std::max)(listFontPx, numericFontPx);
+        const float targetRowHeight = (std::max)((float)state.settings.rowHeight, minimumTextHeight + 4.0f);
         const float idealListCellPadY = (std::max)(0.0f, floorf((targetRowHeight - listFontPx) * 0.5f));
         const float listCellPadY = (std::min)(idealListCellPadY, 2.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, listCellPadY));
@@ -40974,7 +41225,8 @@ void RenderUI(AppState& state) {
                     }
                 }
 
-                const float browserRowH = floorf(targetRowHeight);
+                // The setting includes cell padding; do not add it twice.
+                const float browserRowH = floorf(targetRowHeight) - listCellPadY * 2.0f;
                 const float actualBrowserRowH = browserRowH + listCellPadY * 2.0f;
 
                 // Auto-scroll to anchor file after DB->Browser jump
@@ -41072,10 +41324,33 @@ void RenderUI(AppState& state) {
                     ImGui::PushID(entryIndex);
                     // Exclude CellPadding so the row stays within the clipper estimate.
                     float browserSelectableHeight = browserRowH;
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(ImGui::GetStyle().ItemSpacing.x, listCellPadY * 2.0f));
                     const bool browserRowClicked = ImGui::Selectable(
                         label.c_str(), isSelected,
                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
                         ImVec2(0, browserSelectableHeight));
+                    ImGui::PopStyleVar();
+#if ARIS_PREVIEW_ISOLATION
+                    // Record visible browser rows at the actual filename widget.
+                    if (state.qaRegions.listTextFrame != ImGui::GetFrameCount()) {
+                        auto& qr = state.qaRegions;
+                        qr.listTextFrame = ImGui::GetFrameCount();
+                        qr.listTextFontPixels = ImGui::GetFontSize();
+                        qr.listTextLineHeight = ImGui::GetTextLineHeight();
+                        qr.listTextRowHeight = browserRowH;
+                        qr.listTextSample = label;
+                        qr.listRowOrigins.clear();qr.listRowHitHeights.clear();
+                        qr.listRawNames.clear();qr.listRenderedNames.clear();qr.listRowDirectories.clear();
+                    }
+                    if (state.qaRegions.listRowOrigins.size() < 8) {
+                        state.qaRegions.listRowOrigins.push_back(rowTopLeft.y);
+                        state.qaRegions.listRowHitHeights.push_back(ImGui::GetItemRectSize().y);
+                        state.qaRegions.listRawNames.push_back(entry.name);
+                        state.qaRegions.listRenderedNames.push_back(label);
+                        state.qaRegions.listRowDirectories.push_back(entry.isDirectory);
+                    }
+#endif
                     const std::string browserRowAnnotationKey =
                         "file.row.browser." + std::to_string(HashString64Local(entry.fullPath));
                     ThemeInspector::RegisterLastItem(
@@ -41425,9 +41700,8 @@ void RenderUI(AppState& state) {
                         // Use column available width to fill the column
                         float waveWidth = ImGui::GetContentRegionAvail().x;
                         if (waveWidth < 50.0f) waveWidth = 50.0f;
-                        // 波形高度 = 行高（CellPadding 由表格自动处理上下对称）
-                        float waveHeight = (float)state.settings.rowHeight;
-                        if (waveHeight < 24.0f) waveHeight = 24.0f;
+                        // Fit inside the row's content area, excluding cell padding.
+                        float waveHeight = browserRowH;
 
                         // Check cache for waveform
                         auto cacheIt = state.waveformCache.find(entry.fullPath);
@@ -41821,7 +42095,7 @@ void RenderUI(AppState& state) {
                     if (state.settings.showCoverColumn) {
                         ImGui::TableNextColumn();
                         if (!entry.isDirectory) {
-                            float imgSize = CoverImgSize(state.settings.rowHeight);
+                            float imgSize = CoverImgSize((int)browserRowH);
 
                             // 获取文件所在文件夹路径
                             std::string folderPath;
@@ -41835,7 +42109,7 @@ void RenderUI(AppState& state) {
                                 hasTex = CoverModule::GetFolderCoverTexture(folderPath, coverTex);
                             }
                             if (hasTex && coverTex.hasTexture && imgSize > 0.0f) {
-                                float yOff = std::max(0.0f, ((float)state.settings.rowHeight - imgSize) * 0.5f);
+                                float yOff = std::max(0.0f, (browserRowH - imgSize) * 0.5f);
                                 ImVec2 cursor = ImGui::GetCursorPos();
                                 ImGui::SetCursorPosY(cursor.y + yOff);
                                 ImGui::Image((ImTextureID)(intptr_t)coverTex.textureId, ImVec2(imgSize, imgSize));
@@ -41904,7 +42178,7 @@ void RenderUI(AppState& state) {
             } else {
                 // --- Database mode ---
                 // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动
-                const float fixedRowHeight = floorf(targetRowHeight);
+                const float fixedRowHeight = floorf(targetRowHeight) - listCellPadY * 2.0f;
                 const float actualRowHeight = fixedRowHeight + listCellPadY * 2.0f; // Row height including cell padding.
 
                 {
@@ -42086,9 +42360,12 @@ void RenderUI(AppState& state) {
                     // 若 Selectable 已含 padding 则实际行高 = actualRowHeight + listCellPadY*2，
                     // 与 Clipper 预设的 actualRowHeight 不匹配，导致滚动抖动。---
                     float selectableHeight = fixedRowHeight;
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(ImGui::GetStyle().ItemSpacing.x, listCellPadY * 2.0f));
                     bool rowSelectClicked = ImGui::Selectable(safeLabel.c_str(), isSelected,
                                         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
                                         ImVec2(0, selectableHeight));
+                    ImGui::PopStyleVar();
                     const std::uint64_t databaseRowIdentity = record.id > 0
                         ? static_cast<std::uint64_t>(record.id)
                         : HashString64Local(record.filePath);
@@ -42105,6 +42382,27 @@ void RenderUI(AppState& state) {
                             nameColAvailW,
                             fixedRowHeight,
                             wrapFileName);
+#if ARIS_PREVIEW_ISOLATION
+                        // Observe the font bound at the actual filename draw site.
+                        if (state.qaRegions.listTextFrame != ImGui::GetFrameCount()) {
+                            auto& qr = state.qaRegions;
+                            qr.listTextFrame = ImGui::GetFrameCount();
+                            qr.listTextFontPixels = ImGui::GetFontSize();
+                            qr.listTextLineHeight = nameLineH;
+                            qr.listTextRowHeight = fixedRowHeight;
+                            qr.listTextSample = dynamicDisplayName;
+                            qr.listRowOrigins.clear();
+                            qr.listRowHitHeights.clear();
+                            qr.listRawNames.clear();qr.listRenderedNames.clear();qr.listRowDirectories.clear();
+                        }
+                        if (state.qaRegions.listRowOrigins.size() < 8) {
+                            state.qaRegions.listRowOrigins.push_back(nameTextOrigin.y);
+                            state.qaRegions.listRowHitHeights.push_back(ImGui::GetItemRectSize().y);
+                            state.qaRegions.listRawNames.push_back(record.fileName);
+                            state.qaRegions.listRenderedNames.push_back(dynamicDisplayName);
+                            state.qaRegions.listRowDirectories.push_back(false);
+                        }
+#endif
                     }
                     if (rowSelectClicked) {
                         state.listRipple.pos = ImGui::GetIO().MousePos;
@@ -43087,7 +43385,7 @@ void RenderUI(AppState& state) {
                             waveCursor.x,
                             waveCursor.y,
                             ImGui::GetContentRegionAvail().x,
-                            (float)state.settings.rowHeight,
+                            fixedRowHeight,
                             paddingX);
                         const ImVec2 cellMin(waveLayout.minX, waveLayout.minY);
                         // 确保 cellW 严格等于单元格总宽度（含双倍 Padding）
@@ -43434,7 +43732,7 @@ void RenderUI(AppState& state) {
                     // Cover column (album art indicator)
                     if (state.settings.showCoverColumn) {
                         ImGui::TableNextColumn();
-                        float imgSize = CoverImgSize(state.settings.rowHeight);
+                        float imgSize = CoverImgSize((int)fixedRowHeight);
 
                         CoverModule::TextureHandle coverTex;
                         bool hasTex = false;
@@ -43503,7 +43801,7 @@ void RenderUI(AppState& state) {
                         }
 
                         if (hasTex && coverTex.hasTexture && imgSize > 0.0f) {
-                            float yOff = std::max(0.0f, ((float)state.settings.rowHeight - imgSize) * 0.5f);
+                            float yOff = std::max(0.0f, (fixedRowHeight - imgSize) * 0.5f);
                             ImVec2 cursor = ImGui::GetCursorPos();
                             ImGui::SetCursorPosY(cursor.y + yOff);
                             ImGui::Image((ImTextureID)(intptr_t)coverTex.textureId, ImVec2(imgSize, imgSize));
@@ -45308,7 +45606,7 @@ void RenderUI(AppState& state) {
             // Mono/Stereo toggle — Duality dual-circle animation
             // AUDITION_NATIVE_EXCEPTION: mono
             bool isMonoMode = state.audioEngine.isMono();
-            {
+            if (state.settings.transportEffectVisibility.mono) {
                 bool isStereo = !isMonoMode;
                 const float stW = 30.0f, stH = 32.0f;
 
@@ -45361,7 +45659,7 @@ void RenderUI(AppState& state) {
             }
 
             // Reverse toggle — Fibonacci Swoosh 动画
-            {
+            if (state.settings.transportEffectVisibility.reverse) {
                 // AUDITION_BOUNDARY_INTENT: reverse-preserving-region
                 bool isReversed = auditionSnapshot.reversed;
                 const float revW = 36.0f, revH = 32.0f;
@@ -45441,6 +45739,7 @@ void RenderUI(AppState& state) {
             }
 
             // Pan — 半圆弧旋钮 (PanKnob)
+            if (state.settings.transportEffectVisibility.pan) {
             ImGui::BeginDisabled(isMonoMode);
             {
                 const float panW = 52.0f, panH = 32.0f;
@@ -45457,9 +45756,11 @@ void RenderUI(AppState& state) {
                 curX += panW + 10.0f;
             }
             ImGui::EndDisabled();
+            }
 
 // 中心感 — Soundstage 扇形可视化（与 PAN 统一 110×32）.
 
+            if (state.settings.transportEffectVisibility.soundstage) {
             ImGui::BeginDisabled(isMonoMode);
             {
                 const float csW = 52.0f, csH = 32.0f;
@@ -45630,8 +45931,9 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::EndDisabled();
+            }
 
-            {
+            if (state.settings.transportEffectVisibility.eq) {
                 MagicEQSettings magicEQ = state.audioEngine.getMagicEQ();
                 const float magicEqPreferredWidth = magicEQ.widgetWidth;
                 const float trailingMinimumWidth = 260.0f;
@@ -50528,7 +50830,7 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
 
-            RenderSidebarPanelContent(state, "FloatSidebar");
+            RenderSidebarPanelContent(state, "DetachedSidebar");
         }
         ImGui::End();
         ImGui::PopStyleVar(4);

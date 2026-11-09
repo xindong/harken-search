@@ -3,12 +3,14 @@
 #include "Localization.h"
 #include "imgui_internal.h"
 #include "PreferenceDraft.h"
+#include "PreferencePreview.h"
 #include "SettingsCatalog.h"
 #include "BuiltinThemeScheme.h"
 #include "ThemeSchedule.h"
 #include "ThemeSchedulePaletteCodec.h"
 
 namespace harken::settings {
+inline unsigned avatarImageRevision=0;
 inline const char* PageLabel(Page page) {
     switch (page) {
     case Page::Common: return L(SetUX_Common);
@@ -51,8 +53,18 @@ inline void WriteRuntime(AppState& state, const RuntimeValues& value) {
     state.spectrogramBlend=value.blend; state.spectrogramSplit=value.split;
     state.scanWorkerThreads=value.threads;
 }
+inline PreferencePreview<AppSettings>& AppearancePreview() {
+    static PreferencePreview<AppSettings> preview{
+        {[](const AppSettings& a,const AppSettings& b){return a.theme==b.theme && a.useCustomColors==b.useCustomColors;},
+         [](AppSettings& a,const AppSettings& b){a.theme=b.theme;a.useCustomColors=b.useCustomColors;}},
+        Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),
+        {[](const AppSettings& a,const AppSettings& b){return a.rowHeight==b.rowHeight && a.listDensity==b.listDensity;},
+         [](AppSettings& a,const AppSettings& b){a.rowHeight=b.rowHeight;a.listDensity=b.listDensity;}}
+    };
+    return preview;
+}
 inline AppSettings CaptureSettings(const AppState& state) {
-    auto settings=state.settings;
+    auto settings=AppearancePreview().ForPersistence(state.settings);
     if (const auto manual=theme_schedule::ManualAppearanceForSettings(state)) {
         settings.theme=manual->theme; settings.useCustomColors=manual->useCustomColors;
     }
@@ -61,7 +73,7 @@ inline AppSettings CaptureSettings(const AppState& state) {
 struct Editor {
     PreferenceDraft<AppSettings> app{
 #define PREF(name) Field(&AppSettings::name)
-        PREF(audioOutputDeviceIndex),PREF(audioOutputDeviceName),PREF(audioPeriodSizeMs),PREF(listeningMode),
+        PREF(audioOutputDeviceIndex),PREF(audioOutputDeviceName),PREF(audioPeriodSizeMs),PREF(transportEffectVisibility),PREF(listeningMode),
         PREF(defaultVolume),PREF(loudnessNormEnabled),PREF(loudnessNormTargetLUFS),PREF(fadeInOutEnabled),PREF(fadeInOutMs),
         PREF(skipLeadingSilence),PREF(silenceThresholdDb),PREF(defaultPitch),PREF(pitchRange),
         PREF(monitorLayout),PREF(downmixMode),PREF(downmixCenterDb),PREF(downmixSurroundDb),PREF(binauralMonitor),
@@ -93,13 +105,20 @@ struct Editor {
     size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+(resetAll ? 1 : 0)+(deviceEdited&&deviceIdentity!=baselineDeviceIdentity ? 1 : 0); }
 };
 inline Editor& SettingsEditor() { static Editor editor; return editor; }
+inline void BeginAppearancePreview(AppState& state) {
+    auto& editor=SettingsEditor();
+    if(editor.open)AppearancePreview().Begin(state.settings,editor.app.Baseline(),editor.app.Value());
+}
+inline void EndAppearancePreview(AppState& state) { AppearancePreview().Restore(state.settings); }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+inline bool savePreviewOnce=false, previewSaveResult=false;
 struct Observation {
     struct Item { std::string id; ImVec4 bounds, clip; bool disabled=false; float fontPixels=0; };
     struct Text { std::string id, text; ImVec4 bounds,clip; };
     int frame=0; bool open=false, prompt=false; int page=0; size_t pending=0;
     float draftVolume=0; bool draftRealtime=false; int draftTheme=0;
     ImVec4 bounds{};
+    ImVec4 thesaurusTextColor{};
     std::vector<Item> items;
     std::vector<Text> texts;
 };

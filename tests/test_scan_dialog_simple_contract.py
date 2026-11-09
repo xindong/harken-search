@@ -94,7 +94,8 @@ def test_advanced_disclosure_contains_original_scan_options():
         assert option in SETUP
     assert "L(ScanUi_AutoThreads)" in SETUP
     assert "L(Scan_FullModeHint)" not in SETUP
-    assert "L(Scan_FastModeHint)" not in SETUP
+    assert 'if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Scan_FastModeHint));' in SETUP
+    assert 'ImGui::TextWrapped("%s", L(Scan_FastModeHint))' not in SETUP
 
 
 def test_progress_does_not_duplicate_numbers_and_preserves_waiting_phase():
@@ -176,11 +177,18 @@ def test_network_details_translate_identifier_with_added_context():
 
 
 def test_similarity_reports_actual_saved_and_failed_results():
-    batch = MAIN.split("void StartBatchFeatureExtraction(AppState& state)", 1)[1].split("void DrawSimilarityIndexPanel", 1)[0]
-    assert "batchFeatureResults.RecordSuccess()" in batch
-    assert "batchFeatureResults.RecordFailure" in batch
-    assert "saved = state.database.saveAudioFeaturesByPath" in batch
-    assert "FeatureExtractionError::Cancelled" in batch
+    batch = MAIN.split("void StartBatchFeatureExtraction(AppState& state, bool recheckAll)", 1)[1].split("void DrawSimilarityIndexPanel", 1)[0]
+    publish = MAIN.split("static void PublishBatchSimilarityOutcome", 1)[1].split("void StartBatchFeatureExtraction", 1)[0]
+    assert "BuildSimilarityIndex" in batch
+    assert "SimilarityIndexScope::PendingOnly" in batch
+    assert "PublishBatchSimilarityOutcome(state, progress)" in batch
+    assert "PublishBatchSimilarityOutcome(state, result.progress, &result)" in batch
+    assert "progress.completed - progress.failed" in publish
+    assert "result->cancelled" in publish
+    assert "result->issues" in publish
+    assert "state.batchFeatureResults.Publish(snapshot)" in publish
+    for reason in ("Silent", "SaveFailed", "AudioChanged", "ModelFailed"):
+        assert "Failure::" + reason in publish
     assert "##ScanSimilarityProgress" in MAIN
     assert "##ScanSimilarityResult" in MAIN
 

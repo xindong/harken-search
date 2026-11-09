@@ -1,5 +1,6 @@
 #include "Database.h"
 #include "SimilarityQueryService.h"
+#include "platform/harken_user_data_layout.h"
 #include "sqlite3.h"
 
 #include <chrono>
@@ -216,21 +217,31 @@ void Run(const fs::path& root) {
         const auto pathIdentityResult = service.Execute(
             RequestFor(firstPath, referenceAlias, 19, 10), [] { return false; });
         int rootCandidateCount = 0;
-        bool containsReferenceIdentity = false;
+        bool containsExactReference = false;
+        bool containsCaseVariantReference = false;
         bool containsOtherDirectorySameName = false;
         for (const auto& row : pathIdentityResult.rows) {
-            containsReferenceIdentity |=
-                row.filePath == a.filePath || row.filePath == referenceAlias.filePath;
+            containsExactReference |= row.filePath == referenceAlias.filePath;
+            containsCaseVariantReference |= row.filePath == a.filePath;
             rootCandidateCount +=
                 row.filePath == b.filePath || row.filePath == candidateAlias.filePath;
             containsOtherDirectorySameName |=
                 row.filePath == sameNameOtherDirectory.filePath;
         }
+#ifdef _WIN32
+        const bool pathIdentityMatchesPlatform =
+            !containsCaseVariantReference && rootCandidateCount == 1;
+#else
+        // POSIX paths keep case: these are distinct database identities even
+        // when a particular volume happens to be case-insensitive.
+        const bool pathIdentityMatchesPlatform =
+            containsCaseVariantReference && rootCandidateCount == 2;
+#endif
         Check(pathIdentityResult.error == HarkenSearch::SimilarityWorkflowError::None &&
-                  !containsReferenceIdentity && rootCandidateCount == 1 &&
+                  !containsExactReference && pathIdentityMatchesPlatform &&
                   containsOtherDirectorySameName,
-              "query service excludes reference aliases, deduplicates full "
-              "paths, and preserves same names in different directories");
+              "query service excludes the reference, applies platform path "
+              "identity, and preserves same names in different directories");
 
         const AudioRecord missing = AddRecord(first, (root / "missing-reference.wav").u8string(), 0.5f);
         const auto unreadable = service.Execute(RequestFor(firstPath, missing, 9, 2), [] { return false; });
@@ -478,7 +489,10 @@ void Run(const fs::path& root) {
 int main() {
     const std::string unique = std::to_string(
         std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    const fs::path root = fs::temp_directory_path() / ("aris_similarity_query_service_" + unique);
+    const fs::path temporaryBase = Platform::HarkenUserData::PreviewIsolationActive()
+        ? fs::u8path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "Testing"
+        : fs::temp_directory_path();
+    const fs::path root = temporaryBase / ("harken_similarity_query_service_" + unique);
     std::error_code ec;
     fs::create_directories(root, ec);
     Check(!ec, "temporary fixture directory is created");

@@ -8,7 +8,7 @@
                 std::string thesaurusPath = Platform::HarkenUserData::WideToUtf8Path(Platform::HarkenUserData::EnsureThesaurusFileUtf8(GetExeDirUtf8()).activePath);
                 ImGui::TextDisabled(L(Set_ThesPath), GetExeDirUtf8().c_str());
                 if (!PathExistsUtf8(thesaurusPath)) {
-                    ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.2f, 1.0f), L(Set_ThesaurusNotReady));
+                    ImGui::TextColored(cs.interfaceText, L(Set_ThesaurusNotReady));
                     ImGui::TextWrapped("%s", L(Set_ThesNotWritable));
                 }
                 ImGui::Separator();
@@ -59,7 +59,7 @@
 
                 // Editing-mode hint banner (only when actively editing)
                 if (s_editingIndex >= 0 && s_editingIndex < (int)g_userThesaurus.size()) {
-                    ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.2f, 1.0f),
+                    ImGui::TextColored(cs.interfaceText,
                                        L(Set_ThesEditingHint), s_editingIndex + 1);
                 } else if (s_editingIndex >= 0) {
                     // Stale index (rule deleted out from under us) — auto-reset.
@@ -119,7 +119,7 @@
                 ImGui::Spacing();
                 ImGui::Text(L(Set_ThesCurrentRules), (int)g_userThesaurus.size());
 
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0,0,0, 0.2f));
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, cs.dialogPanelBG);
                 const float rulesListHeight = 220.0f;
                 BeginTransientScrollbarChild("RulesList", ImVec2(0, rulesListHeight), true);
                 if (BeginTransientScrollbarTable("ThesaurusRulesTable", 2,
@@ -141,7 +141,12 @@
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
                         ImGui::PushTextWrapPos();
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", tStr.c_str());
+                        ImGui::PushFont(GetUIFontEmphasis(),ImGui::GetFontSize());
+                        ImGui::TextColored(cs.interfaceText, "%s", tStr.c_str());
+                        ImGui::PopFont();
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
+                        if(i==0)su::observation.thesaurusTextColor=cs.interfaceText;
+#endif
                         ImGui::SameLine();
                         ImGui::TextDisabled(" => ");
                         ImGui::SameLine();
