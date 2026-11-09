@@ -52,7 +52,10 @@ def main(args):
         window_function(1024, 'hann').astype('<f8').tofile(root / 'clap-window.f64')
     resources = {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in HASHES}
     if resources != HASHES:
-        raise RuntimeError('Exported resources differ from the pinned native deployment hashes; do not silently replace them.')
+        mismatches = {name: {'expected': HASHES[name], 'actual': resources[name]}
+                      for name in HASHES if resources[name] != HASHES[name]}
+        raise RuntimeError('Exported resources differ from the pinned native deployment hashes; '
+                           'do not silently replace them: ' + json.dumps(mismatches, sort_keys=True))
     options = ort.SessionOptions()
     options.intra_op_num_threads = 4
     session = ort.InferenceSession(str(destination), sess_options=options, providers=['CPUExecutionProvider'])

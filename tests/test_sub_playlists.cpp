@@ -1,5 +1,6 @@
 #include "Database.h"
 #include "AppState.h"
+#include "PathUtils.h"
 #include <cstdio>
 #include <cassert>
 #include <filesystem>
@@ -418,7 +419,9 @@ static void test_playlist_scoped_search_filters_before_paging() {
     for (const char* name : {"alpha_plain.wav", "needle_first.wav", "plain_beta.wav", "needle_second.wav"}) {
         AudioRecord r;
         r.fileName = name;
-        r.filePath = std::string("/playlist_scoped/") + name;
+        r.folderPath = std::string(name) == "needle_first.wav"
+            ? "/playlist_scoped/Archive" : "/playlist_scoped/Current";
+        r.filePath = r.folderPath + "/" + name;
         r.extension = ".wav";
         r.keywords = name;
         db.addFile(r);
@@ -439,6 +442,12 @@ static void test_playlist_scoped_search_filters_before_paging() {
            "playlist scoped search first page preserves playlist order");
     EXPECT(second.size() == 1 && second[0].fileName == "needle_second.wav",
            "playlist scoped search second page reaches match beyond first page");
+    filter.folderPath = HarkenSearch::CanonicalFolderPath("/playlist_scoped/Archive");
+    EXPECT(db.searchPlaylistFileCount(playlist, filter) == 1,
+           "playlist scoped count composes keyword and folder filter");
+    auto folderPage = db.searchPlaylistFilesPage(playlist, filter, 10, 0);
+    EXPECT(folderPage.size() == 1 && folderPage[0].fileName == "needle_first.wav",
+           "playlist scoped rows use the same keyword and folder filter");
 
     db.close();
 }

@@ -89,6 +89,9 @@ void ResetDatabaseSessionViewState(AppState& state) {
         tab.selectedResultIndex = -1;
         tab.selectedPlaylistId = -1;
         tab.playlistAggregatedView = false;
+        // A playlist view cannot be restored after its selected ID is cleared.
+        // Browser and all-playlists views remain valid across a DB switch.
+        if (tab.viewMode == ViewMode::Playlist) tab.viewMode = ViewMode::Database;
         tab.selectedFolderPath.clear();
         tab.folderFilterActive = false;
         tab.coverFilterActive = false;

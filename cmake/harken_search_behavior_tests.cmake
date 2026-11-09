@@ -573,7 +573,6 @@ add_executable(TestSearchSemanticMatrix EXCLUDE_FROM_ALL
     src/WaveformExtractor.cpp
     src/NativeFloatReader.cpp
     src/platform/audio_data_source_miniaudio.cpp
-    src/platform/filesystem_win32.cpp
     src/TimeStretch.cpp
     ${SQLITE_SOURCES}
 )
@@ -584,7 +583,22 @@ target_include_directories(TestSearchSemanticMatrix PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+if(WIN32)
+    target_sources(TestSearchSemanticMatrix PRIVATE src/platform/filesystem_win32.cpp)
+    target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+elseif(APPLE)
+    target_sources(TestSearchSemanticMatrix PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_link_libraries(TestSearchSemanticMatrix PRIVATE
+        Threads::Threads
+        "-framework Foundation"
+        "-framework CoreServices"
+    )
+    # Keep the test-only AudioEngine and audio-playback declarations in sync.
+    target_compile_definitions(TestSearchSemanticMatrix PRIVATE AURA_BUILD_DIAGNOSTICS=0)
+endif()
 target_compile_definitions(TestSearchSemanticMatrix PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestSearchSemanticMatrix PRIVATE /W3 /MP /utf-8)
@@ -1014,9 +1028,22 @@ target_include_directories(TestScanPauseResume PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+if(WIN32)
+    target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+elseif(APPLE)
+    target_sources(TestScanPauseResume PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_link_libraries(TestScanPauseResume PRIVATE
+        Threads::Threads
+        "-framework Foundation"
+        "-framework CoreServices"
+    )
+endif()
 target_compile_definitions(TestScanPauseResume PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    AURA_BUILD_DIAGNOSTICS=1
     AURA_TEST_SCAN_STALL_SECONDS=0
     AURA_TEST_SCAN_SLOW_WORKER_MS=120
 )
@@ -1415,6 +1442,9 @@ if(WIN32)
     target_link_libraries(TestWmaDecodeSupport PRIVATE
         mfplat mfreadwrite mfuuid
     )
+elseif(APPLE)
+    target_link_libraries(TestWmaDecodeSupport PRIVATE
+        "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 target_include_directories(TestWmaDecodeSupport PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1773,6 +1803,9 @@ if(WIN32)
         src/platform/text_encoding_win32.cpp)
     target_link_libraries(TestDatabaseAudioProbeIntegration PRIVATE
         mfplat mfreadwrite mfuuid)
+elseif(APPLE)
+    target_link_libraries(TestDatabaseAudioProbeIntegration PRIVATE
+        "-framework AudioToolbox" "-framework CoreFoundation")
 endif()
 target_include_directories(TestDatabaseAudioProbeIntegration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -1789,14 +1822,21 @@ foreach(_source IN ITEMS database_audio_probe_scripted_backend.cpp
 endforeach()
 if(WIN32)
     set(_auro_database_probe_selected_mf media_foundation_audio_win32.cpp)
-    set(_auro_database_probe_unselected_mf media_foundation_audio_unsupported.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_unsupported.cpp)
+    set(_auro_database_probe_unselected_mf_2 audio_toolbox_audio_macos.cpp)
+elseif(APPLE)
+    set(_auro_database_probe_selected_mf audio_toolbox_audio_macos.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_2 media_foundation_audio_unsupported.cpp)
 else()
     set(_auro_database_probe_selected_mf media_foundation_audio_unsupported.cpp)
-    set(_auro_database_probe_unselected_mf media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_1 media_foundation_audio_win32.cpp)
+    set(_auro_database_probe_unselected_mf_2 audio_toolbox_audio_macos.cpp)
 endif()
 foreach(_target IN ITEMS TestDatabaseAudioProbeIntegration HarkenSearch)
     _auro_assert_source_count(${_target} ${_auro_database_probe_selected_mf} 1)
-    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf} 0)
+    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf_1} 0)
+    _auro_assert_source_count(${_target} ${_auro_database_probe_unselected_mf_2} 0)
 endforeach()
 foreach(_definition IN ITEMS AURO_DATABASE_AUDIO_PROBE_TESTING
         AURO_DATABASE_AUDIO_PROBE_TEST_WIN32 AURO_DATABASE_AUDIO_PROBE_TEST_STD)
@@ -1812,6 +1852,11 @@ if(WIN32)
     if(NOT "${_auro_database_probe_integration_links}" STREQUAL "mfplat;mfreadwrite;mfuuid")
         message(FATAL_ERROR "TestDatabaseAudioProbeIntegration: unexpected links: ${_auro_database_probe_integration_links}")
     endif()
+elseif(APPLE)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration database_audio_probe_path_utf8_adapter.cpp 0)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_win32.cpp 0)
+    _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_std.cpp 0)
+    _auro_assert_link_library_count(TestDatabaseAudioProbeIntegration 2)
 else()
     _auro_assert_source_count(TestDatabaseAudioProbeIntegration database_audio_probe_path_utf8_adapter.cpp 0)
     _auro_assert_source_count(TestDatabaseAudioProbeIntegration text_encoding_win32.cpp 0)
@@ -4667,6 +4712,7 @@ if(WIN32)
 elseif(APPLE)
     target_sources(TestPlatformDurableFileOpsCopy PRIVATE
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
     )
 endif()
 if(MSVC)
@@ -4694,6 +4740,7 @@ if(WIN32)
 elseif(APPLE)
     target_sources(TestPlatformDurableFileOpsReplaceDelete PRIVATE
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
     )
 endif()
 if(MSVC)
@@ -4705,6 +4752,59 @@ if(MSVC)
 endif()
 add_test(NAME TestPlatformDurableFileOpsReplaceDelete COMMAND TestPlatformDurableFileOpsReplaceDelete)
 aura_set_test_labels(TestPlatformDurableFileOpsReplaceDelete core)
+
+if(APPLE)
+    set(HARKEN_MAC_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/Testing/macos-data" CACHE PATH
+        "Isolated macOS data/settings test evidence directory")
+    add_executable(TestMacOutboundFileDrag EXCLUDE_FROM_ALL
+        tests/test_macos_outbound_file_drag.mm
+        src/platform/macos_file_drag.mm
+    )
+    target_include_directories(TestMacOutboundFileDrag PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacOutboundFileDrag PRIVATE cxx_std_17)
+    target_link_libraries(TestMacOutboundFileDrag PRIVATE "-framework AppKit")
+    add_test(NAME TestMacOutboundFileDrag COMMAND TestMacOutboundFileDrag "${HARKEN_MAC_TEST_ROOT}/outbound-drag")
+    aura_set_test_labels(TestMacOutboundFileDrag core)
+    add_executable(TestMacUserDataLayout EXCLUDE_FROM_ALL
+        tests/test_macos_user_data_layout.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_include_directories(TestMacUserDataLayout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacUserDataLayout PRIVATE cxx_std_17)
+    # Override any app-level preview root: tests must never mutate its profile.
+    target_compile_options(TestMacUserDataLayout PRIVATE
+        -UARIS_PREVIEW_ISOLATION -DARIS_PREVIEW_ISOLATION=1
+        -UARIS_PREVIEW_ISOLATION_ROOT_UTF8
+        "-DARIS_PREVIEW_ISOLATION_ROOT_UTF8=\"${HARKEN_MAC_TEST_ROOT}/layout\"")
+    target_link_libraries(TestMacUserDataLayout PRIVATE "-framework Foundation")
+    add_test(NAME TestMacUserDataLayout COMMAND TestMacUserDataLayout)
+    aura_set_test_labels(TestMacUserDataLayout core)
+
+    add_executable(TestMacUserDataRoots EXCLUDE_FROM_ALL
+        tests/test_macos_user_data_roots.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_include_directories(TestMacUserDataRoots PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacUserDataRoots PRIVATE cxx_std_17)
+    target_compile_options(TestMacUserDataRoots PRIVATE
+        -UARIS_PREVIEW_ISOLATION -UARIS_PREVIEW_ISOLATION_ROOT_UTF8)
+    target_link_libraries(TestMacUserDataRoots PRIVATE "-framework Foundation")
+    add_test(NAME TestMacUserDataRoots COMMAND TestMacUserDataRoots)
+    aura_set_test_labels(TestMacUserDataRoots core)
+
+    add_executable(TestMacDurableSettings EXCLUDE_FROM_ALL
+        tests/test_macos_durable_settings.cpp
+        src/platform/durable_file_ops_macos.cpp
+        src/platform/settings_file_macos.cpp
+        src/platform/macos_file_io.cpp
+    )
+    target_include_directories(TestMacDurableSettings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacDurableSettings PRIVATE cxx_std_17)
+    add_test(NAME TestMacDurableSettings COMMAND TestMacDurableSettings "${HARKEN_MAC_TEST_ROOT}/settings")
+    aura_set_test_labels(TestMacDurableSettings core)
+endif()
 
 add_executable(TestMetadataFields EXCLUDE_FROM_ALL
     tests/test_metadata_fields.cpp
@@ -5091,6 +5191,18 @@ if(MSVC)
 endif()
 add_test(NAME TestExportRegionPreserve COMMAND TestExportRegionPreserve)
 aura_set_test_labels(TestExportRegionPreserve core)
+
+add_executable(TestRegionExportPathSafety EXCLUDE_FROM_ALL
+    tests/test_region_export_path_safety.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE})
+target_include_directories(TestRegionExportPathSafety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(TestRegionExportPathSafety PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestRegionExportPathSafety PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestRegionExportPathSafety COMMAND TestRegionExportPathSafety)
+aura_set_test_labels(TestRegionExportPathSafety core)
 
 # Waveform region editor: pure helper tests (fade clamp, trim refine window)
 
@@ -5851,6 +5963,7 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
+if(WIN32)
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
     src/ReaperBridgeClient.cpp
@@ -5888,6 +6001,7 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+endif()
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".
@@ -6174,6 +6288,7 @@ aura_set_test_labels(TestTransportBlendInput ui)
 
 add_executable(TestThemeColors EXCLUDE_FROM_ALL
     tests/test_theme_colors.cpp
+    src/BuiltinThemeScheme.cpp
     src/Theme.cpp
     src/ui/CoreWorkspaceStyle.cpp
     src/platform/filesystem_std.cpp
@@ -6191,7 +6306,9 @@ target_include_directories(TestThemeColors PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
 )
-target_link_libraries(TestThemeColors PRIVATE advapi32)
+if(WIN32)
+    target_link_libraries(TestThemeColors PRIVATE advapi32)
+endif()
 if(MSVC)
     target_compile_options(TestThemeColors PRIVATE /W3 /utf-8)
     set_target_properties(TestThemeColors PROPERTIES
@@ -6201,6 +6318,11 @@ if(MSVC)
 endif()
 add_test(NAME TestThemeColors COMMAND TestThemeColors)
 aura_set_test_labels(TestThemeColors nightly)
+if(APPLE)
+    add_test(NAME TestThemeJsonExportMacBoundary
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_export_macos_boundary.py)
+    aura_set_test_labels(TestThemeJsonExportMacBoundary platform)
+endif()
 
 add_executable(TestCoreWorkspaceStyle EXCLUDE_FROM_ALL
     tests/test_core_workspace_style.cpp
@@ -6549,6 +6671,10 @@ foreach(_auro_waveform_text_target IN LISTS AURO_WAVEFORM_TEXT_ENCODING_TARGETS)
         target_sources(${_auro_waveform_text_target} PRIVATE
             src/platform/text_encoding_std.cpp
         )
+        if(APPLE)
+            target_link_libraries(${_auro_waveform_text_target} PRIVATE
+                "-framework AudioToolbox" "-framework CoreFoundation")
+        endif()
     endif()
 endforeach()
 
@@ -7106,6 +7232,9 @@ else()
     target_sources(TestFeatureExtractor PRIVATE
         src/platform/text_encoding_std.cpp
         src/platform/filesystem_std.cpp
+        tests/test_settings_encryption_layout_stub.cpp
+        tests/test_utils_credentials_stub.cpp
+        tests/test_platform_exe_dir_stub.cpp
     )
 endif()
 target_include_directories(TestFeatureExtractor PRIVATE
@@ -7137,6 +7266,21 @@ add_test(NAME TestAcousticSimilarityFile COMMAND TestAcousticSimilarityFile)
 aura_set_test_labels(TestAcousticSimilarityFile core)
 
 set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
+function(harken_link_onnx_test_runtime target)
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:${target}>)
+    elseif(APPLE)
+        target_link_libraries(${target} PRIVATE ${HARKEN_ONNX_LIBRARY})
+        set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "@executable_path")
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.20.1.dylib
+                $<TARGET_FILE_DIR:${target}>/libonnxruntime.1.20.1.dylib)
+    endif()
+endfunction()
 add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
     tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
     src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
@@ -7186,18 +7330,21 @@ endif()
 if(HARKEN_ONNXRUNTIME_ROOT)
     target_compile_definitions(TestAudioEmbeddingService PRIVATE HARKEN_WITH_ONNX=1)
     target_include_directories(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
-    target_link_libraries(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
-    add_custom_command(TARGET TestAudioEmbeddingService POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:TestAudioEmbeddingService>)
+    harken_link_onnx_test_runtime(TestAudioEmbeddingService)
 endif()
 if(HARKEN_SIMILARITY_MODEL_FIXTURES)
+    if(NOT HARKEN_ONNXRUNTIME_ROOT)
+        message(FATAL_ERROR "Similarity model fixtures require the ONNX Runtime SDK")
+    endif()
     add_executable(TestSimilarityQueryV2 EXCLUDE_FROM_ALL tests/test_similarity_query_v2.cpp
         src/SimilarityQueryV2.cpp src/SimilarityWorkflow.cpp src/SimilarityIndexer.cpp
         src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
     target_include_directories(TestSimilarityQueryV2 PRIVATE src ${SQLITE_DIR} ${HARKEN_ONNXRUNTIME_ROOT}/include)
     target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_ONNX=1)
-    target_link_libraries(TestSimilarityQueryV2 PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        target_link_libraries(TestSimilarityQueryV2 PRIVATE bcrypt)
+    endif()
+    harken_link_onnx_test_runtime(TestSimilarityQueryV2)
     if(HARKEN_HNSWLIB_ROOT)
         target_include_directories(TestSimilarityQueryV2 PRIVATE ${HARKEN_HNSWLIB_ROOT})
         target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_HNSW=1)
@@ -7216,7 +7363,10 @@ if(HARKEN_SIMILARITY_MODEL_FIXTURES)
     if(HARKEN_HNSWLIB_ROOT)
         target_compile_definitions(SimilarityV2Bench PRIVATE HARKEN_WITH_HNSW=1)
     endif()
-    target_link_libraries(SimilarityV2Bench PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        target_link_libraries(SimilarityV2Bench PRIVATE bcrypt)
+    endif()
+    harken_link_onnx_test_runtime(SimilarityV2Bench)
     if(MSVC)
         target_compile_options(SimilarityV2Bench PRIVATE /W3 /utf-8)
     endif()
@@ -7254,10 +7404,6 @@ add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/audio_playback_miniaudio.cpp
-    src/platform/media_foundation_audio_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/emergency_file_writer_win32.cpp
-    src/platform/thread_id_win32.cpp
     ${SQLITE_SOURCES}
 )
 target_include_directories(TestSimilarityQueryService PRIVATE
@@ -7266,9 +7412,7 @@ target_include_directories(TestSimilarityQueryService PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSimilarityQueryService PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm Threads::Threads
-)
+target_link_libraries(TestSimilarityQueryService PRIVATE Threads::Threads)
 target_compile_definitions(TestSimilarityQueryService PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURO_TEST_REAL_SIMILARITY_WORKFLOW=1
@@ -7279,15 +7423,33 @@ if(WIN32)
         src/platform/filesystem_win32.cpp
         src/platform/text_encoding_win32.cpp
         src/platform/search_text_gb2312_win32.cpp
+        src/platform/media_foundation_audio_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/emergency_file_writer_win32.cpp
+        src/platform/thread_id_win32.cpp
     )
     target_link_libraries(TestSimilarityQueryService PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
         mfplat mfreadwrite mfuuid
     )
 else()
     target_sources(TestSimilarityQueryService PRIVATE
         src/platform/text_encoding_std.cpp
         src/platform/search_text_gb2312_std.cpp
+        src/platform/media_foundation_audio_unsupported.cpp
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/emergency_file_writer_std.cpp
+        src/platform/thread_id_std.cpp
     )
+    if(APPLE)
+        target_sources(TestSimilarityQueryService PRIVATE
+            src/platform/harken_user_data_layout_macos.mm
+            src/platform/macos_file_io.cpp
+        )
+        target_link_libraries(TestSimilarityQueryService PRIVATE
+            "-framework Foundation" "-framework CoreServices")
+    endif()
+    target_compile_definitions(TestSimilarityQueryService PRIVATE AURA_BUILD_DIAGNOSTICS=0)
 endif()
 if(MSVC)
     target_compile_options(TestSimilarityQueryService PRIVATE /W3 /MP /utf-8)
@@ -7494,6 +7656,22 @@ aura_set_test_labels(TestRelinkWorkflowLifecycle ui)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     aura_set_test_labels(TestSettingsImportDialogBoundary platform stage4)
+
+    add_custom_target(TestThemeJsonImportMacBoundary
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_import_macos_boundary.py"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+    )
+    add_test(
+        NAME TestThemeJsonImportMacBoundary
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_json_import_macos_boundary.py"
+    )
+    set_tests_properties(TestThemeJsonImportMacBoundary PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    aura_set_test_labels(TestThemeJsonImportMacBoundary platform stage4)
 
     add_custom_target(TestCoverImageImportDialogBoundary
         COMMAND ${Python3_EXECUTABLE}
@@ -8469,3 +8647,16 @@ foreach(_standalone_localized_target IN ITEMS
     target_sources(${_standalone_localized_target} PRIVATE src/Localization.cpp)
     add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)
 endforeach()
+
+if(APPLE)
+    add_executable(TestMacProcessLaunch EXCLUDE_FROM_ALL
+        tests/test_process_launch_macos.cpp
+        src/platform/process_launch_macos.cpp
+        src/platform/process_launch_string_macos.cpp
+        src/platform/text_encoding_std.cpp)
+    target_include_directories(TestMacProcessLaunch PRIVATE src)
+    target_compile_features(TestMacProcessLaunch PRIVATE cxx_std_17)
+    add_test(NAME TestMacProcessLaunch COMMAND TestMacProcessLaunch
+        ${CMAKE_CURRENT_BINARY_DIR}/Testing/process-launch)
+    aura_set_test_labels(TestMacProcessLaunch core platform)
+endif()

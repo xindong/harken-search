@@ -8,7 +8,7 @@
 **Priority:** P1
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -48,6 +48,9 @@
 - Given 已满足以下前置条件：destination path, permissions, or processing dependency fails
 - When 执行以下操作：export is attempted
 - Then 应得到以下结果：Aris reports the failure and does not partially overwrite source audio
+- Given 已满足以下前置条件：WAV 选区导出目标是当前源音频，或是指向同一文件的硬链接
+- When 执行以下操作：用户尝试导出选区
+- Then 应得到以下结果：编码器打开目标前拒绝，明确提示目标不能是源文件，源音频字节不变
 
 ### Non-Functional
 
@@ -84,11 +87,13 @@
 | TEST-PROCESSED-EXPORT | integration | `TestProcessedFileExport` | processed output behavior passes | active |
 | TEST-VOICE-DELIVERY | acceptance | `TestVoiceDeliveryAcceptance` | delivery acceptance behavior passes | active |
 | DIAG-EXPORT | diagnostics | `TestProcessedFileExport` + `TestExportRegionPreserve` export lifecycle assertions | start/completion/failure events observed | active |
-
+| TEST-MAC-REGION-EXPORT | real Mac app / isolated diagnostics | tools/macos_region_export_smoke.py | Source-path and hard-link alias rejected; selected WAV frame count and frequency segments verified; source hash unchanged; exit and reopen succeed | active |
+| TEST-REGION-PATH-SAFETY | cross-platform unit | TestRegionExportPathSafety | UTF-8 same path and hard-link alias compare equal; distinct and missing paths do not | active |
 ## Missing Coverage
 
+- Mac 隔离实测通过真实应用的 QA 控制触发同一 AudioEngine 导出路径；未实际点击波形栏“导出”按钮或原生保存对话框，不能据此记界面验收完成。
 - Missing proof: format-conversion acceptance for WAV -> MP3/FLAC and 1000+ file batch export is not yet asserted end-to-end.
-- Residual gap: permission/path-specific failure is not yet asserted with a deterministic fixture.
+- Residual gap: permission-specific failure is not yet asserted with a deterministic fixture; Mac isolated test covers a missing destination parent.
 - Human-only verification: DAW/team handoff ergonomics.
 
 ## Change Gate

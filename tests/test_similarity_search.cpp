@@ -120,24 +120,48 @@ void TestPathIdentityExcludesReferenceAliasesAndDeduplicatesTopK() {
     std::vector<SimilaritySearch::SimilarityFeatureRecord> entries;
 
     auto reference = MakeRecord(10, 0.0f);
+#ifdef _WIN32
     reference.filePath = "C:/Library/Impact.wav";
+#else
+    reference.filePath = "/Library/Impact.wav";
+#endif
     entries.push_back(std::move(reference));
     auto referenceAlias = MakeRecord(11, 0.0f);
+#ifdef _WIN32
     referenceAlias.filePath = "\\\\?\\c:\\library\\impact.wav";
+#else
+    referenceAlias.filePath = "/Library/temp/../Impact.wav";
+#endif
     entries.push_back(std::move(referenceAlias));
 
     auto door = MakeRecord(20, 0.1f);
+#ifdef _WIN32
     door.filePath = "C:/SFX/Door.wav";
+#else
+    door.filePath = "/SFX/Door.wav";
+#endif
     entries.push_back(std::move(door));
     auto doorAlias = MakeRecord(21, 0.1f);
+#ifdef _WIN32
     doorAlias.filePath = "c:\\sfx\\temp\\..\\door.wav";
+#else
+    doorAlias.filePath = "/SFX/temp/../Door.wav";
+#endif
     entries.push_back(std::move(doorAlias));
 
     auto otherDirectorySameName = MakeRecord(30, 0.2f);
+#ifdef _WIN32
     otherDirectorySameName.filePath = "D:/Other/Door.wav";
+#else
+    otherDirectorySameName.filePath = "/Other/Door.wav";
+#endif
     entries.push_back(std::move(otherDirectorySameName));
     auto ambience = MakeRecord(40, 0.3f);
+#ifdef _WIN32
     ambience.filePath = "E:/Ambience/Wind.wav";
+#else
+    ambience.filePath = "/Ambience/Wind.wav";
+#endif
     entries.push_back(std::move(ambience));
 
     search.replaceFeatureCache(std::move(entries));
