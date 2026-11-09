@@ -12,12 +12,13 @@
 #include "BuildConfig.h"
 #include "DiagnosticsLogger.h"
 #include "Utils.h"
+#include "nlohmann_json.hpp"
 #include "ui/CoreWorkspaceStyle.h"
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
-#include <regex>
 
 // Color Definitions (Legacy)
 // 注意: 这些全局颜色变量已在 main.cpp 中以 static 方式定义,
@@ -65,6 +66,23 @@ static ImVec4 MixThemeColor(const ImVec4& a, const ImVec4& b, float t) {
         a.y + (b.y - a.y) * t,
         a.z + (b.z - a.z) * t,
         a.w + (b.w - a.w) * t);
+}
+
+static float ThemeContrastRatio(const ImVec4& a, const ImVec4& b) {
+    const auto linear = [](float channel) {
+        return channel <= 0.04045f
+            ? channel / 12.92f
+            : std::pow((channel + 0.055f) / 1.055f, 2.4f);
+    };
+    const auto luminance = [&](const ImVec4& color) {
+        return 0.2126f * linear(color.x)
+            + 0.7152f * linear(color.y)
+            + 0.0722f * linear(color.z);
+    };
+    const float aLuma = luminance(a);
+    const float bLuma = luminance(b);
+    return ((std::max)(aLuma, bLuma) + 0.05f)
+        / ((std::min)(aLuma, bLuma) + 0.05f);
 }
 
 static ImVec4 ClampThemeColor(ImVec4 c) {
@@ -602,9 +620,14 @@ void ThemeColors::applyToImGui() {
     colors[ImGuiCol_BorderShadow]         = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 
 // 标题栏
-    // transportBarBG → 标题栏
-    colors[ImGuiCol_TitleBg]              = cs.transportBarBG;
-    colors[ImGuiCol_TitleBgActive]        = cs.transportBarBG;
+    // Most themes can reuse the transport bar. Sea Glass uses dark text on a
+    // dark transport bar, so fall back to its readable dialog panel surface.
+    const float transportTitleContrast = ThemeContrastRatio(cs.interfaceText, cs.transportBarBG);
+    const ImVec4& titleBG = transportTitleContrast < 4.5f
+        && ThemeContrastRatio(cs.interfaceText, cs.dialogPanelBG) > transportTitleContrast
+        ? cs.dialogPanelBG : cs.transportBarBG;
+    colors[ImGuiCol_TitleBg]              = titleBG;
+    colors[ImGuiCol_TitleBgActive]        = titleBG;
 
 // 菜单栏
     // menuBarBG → 菜单栏
@@ -1567,11 +1590,27 @@ std::string ThemeColors::exportToJSON(const ThemeColorScheme& s) {
 }
 
 bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outScheme) {
+    const auto document = nlohmann::json::parse(json, nullptr, false);
+    if (!document.is_object()) return false;
+
+    // Match only supported top-level colors. The old text regex could pick up
+    // nested metadata and reported success even when there was no palette.
+    const auto supported = nlohmann::json::parse(
+        exportToJSON(ThemeColorScheme{}), nullptr, false);
+    if (!supported.is_object()) return false;
     std::unordered_map<std::string, std::string> values;
-    const std::regex pairPattern("\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"");
-    for (std::sregex_iterator it(json.begin(), json.end(), pairPattern), end; it != end; ++it) {
-        values[(*it)[1].str()] = (*it)[2].str();
+    for (auto field = supported.begin(); field != supported.end(); ++field) {
+        const auto value = document.find(field.key());
+        if (value == document.end()) continue;
+        if (!value->is_string()) return false;
+        const std::string color = value->get<std::string>();
+        if ((color.size() != 6 && color.size() != 8) ||
+            color.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+            return false;
+        }
+        values.emplace(field.key(), color);
     }
+    if (values.empty()) return false;
 
     auto findValue = [&](const std::string& key) -> std::string {
         auto it = values.find(key);
@@ -2175,5 +2214,14 @@ ThemeColorScheme ThemeColors::getDeepNavy() {
     s.volumeClipColor          = fromARGBHex("ffff3333");
     ApplySemanticThemeDefaults(s);
     return s;
+}
+
+
+ImVec4 GetThemeClearColor() {
+    const ImVec4 bg = ThemeColors::current().mainWindowBG;
+    if (bg.w > 0.0f) {
+        return bg;
+    }
+    return ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
 }
 

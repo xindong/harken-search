@@ -1,6 +1,7 @@
 #ifdef __APPLE__
 
 #include "system.h"
+#include "harken_user_data_layout.h"
 #include "text_encoding.h"
 
 #import <Foundation/Foundation.h>
@@ -9,6 +10,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <pthread/qos.h>
 #include <thread>
 #include <unistd.h>
@@ -129,8 +131,11 @@ bool WriteFileBytes(void* /*fileHandle*/, const void* /*bytes*/, uint32_t /*byte
 void CloseFileHandle(void* /*fileHandle*/) {
 }
 
-bool CanOpenExclusiveWritePath(const std::string& /*pathUtf8*/) {
-    return true;
+bool CanOpenExclusiveWritePath(const std::string& pathUtf8) {
+    if (pathUtf8.empty() || pathUtf8.find('\0') != std::string::npos) return false;
+    std::error_code error;
+    const bool exists = std::filesystem::exists(std::filesystem::u8path(pathUtf8), error);
+    return !error && !exists;
 }
 
 ProcessImagePathResult ReadProcessImagePath(uint32_t /*processId*/) {
@@ -281,35 +286,58 @@ uint32_t LastSystemError() {
 void EnumerateTopLevelWindows(WindowEnumerationCallback, void*) {
 }
 
-void RequestWindowClose(void* /*windowHandle*/) {
+// Borrowed handles below are restricted to this application's live windows.
+// Never message an arbitrary pointer or enumerate other applications.
+static NSWindow* OwnedWindow(void* handle) {
+    if (!handle || ![NSThread isMainThread]) return nil;
+    for (NSWindow* window in [NSApp windows]) {
+        if ((__bridge void*)window == handle) return window;
+    }
+    return nil;
 }
 
-int WindowClassName(void* /*windowHandle*/, char* /*buffer*/, int /*capacity*/) {
-    return 0;
+void RequestWindowClose(void* windowHandle) {
+    NSWindow* window = OwnedWindow(windowHandle);
+    if (window) [window performClose:nil];
 }
 
-uint64_t WindowProcessId(void* /*windowHandle*/) {
-    return 0;
+int WindowClassName(void* windowHandle, char* buffer, int capacity) {
+    NSWindow* window = OwnedWindow(windowHandle);
+    if (!window || !buffer || capacity <= 0) return 0;
+    const char* name = NSStringFromClass([window class]).UTF8String;
+    const size_t length = std::min(strlen(name), static_cast<size_t>(capacity - 1));
+    memcpy(buffer, name, length);
+    buffer[length] = 0;
+    return static_cast<int>(length);
+}
+
+uint64_t WindowProcessId(void* windowHandle) {
+    return OwnedWindow(windowHandle) ? CurrentProcessId() : 0;
 }
 
 uint32_t WindowThreadId(void* /*windowHandle*/) {
-    return 0;
+    return 0; // No Win32 thread ID mapping on macOS.
 }
 
-bool WindowIsValid(void* /*windowHandle*/) {
-    return false;
+bool WindowIsValid(void* windowHandle) { return OwnedWindow(windowHandle) != nil; }
+bool WindowIsVisible(void* windowHandle) { return [OwnedWindow(windowHandle) isVisible]; }
+bool WindowSetForeground(void* windowHandle) {
+    NSWindow* window = OwnedWindow(windowHandle);
+    if (!window) return false;
+    [window makeKeyAndOrderFront:nil];
+    return true;
 }
 
-bool WindowIsVisible(void* /*windowHandle*/) {
-    return false;
-}
-
-bool WindowSetForeground(void* /*windowHandle*/) {
-    return false;
-}
-
-bool WindowShow(void* /*windowHandle*/, int /*command*/) {
-    return false;
+bool WindowShow(void* windowHandle, int command) {
+    NSWindow* window = OwnedWindow(windowHandle);
+    if (!window) return false;
+    if (command == 0) [window orderOut:nil];
+    else if (command == 2 || command == 6 || command == 7) [window miniaturize:nil];
+    else {
+        if ([window isMiniaturized]) [window deminiaturize:nil];
+        [window orderFront:nil];
+    }
+    return true;
 }
 
 ProcessImageLookupResult FindProcessByImageName(
@@ -395,7 +423,7 @@ void NotifyShellAssociationsChanged() {
 }
 RegistryStringResult QueryEffectiveFileAssociation(const std::string& extensionUtf8) {
     RegistryStringResult result;
-    if (extensionUtf8.empty() || extensionUtf8.find(' ') != std::string::npos) {
+    if (extensionUtf8.empty() || extensionUtf8.find('\0') != std::string::npos) {
         result.status = RegistryStringStatus::InvalidArgument;
         return result;
     }
@@ -521,16 +549,9 @@ std::string BrowseFolderDialogModern(void* ownerWindow, const std::string& title
 }
 
 std::string GetAppDataDir() {
-    @autoreleasepool {
-        NSArray* paths = NSSearchPathForDirectoriesInDomains(
-            NSApplicationSupportDirectory, NSUserDomainMask, YES);
-        if ([paths count] > 0) {
-            NSString* appSupport = [paths objectAtIndex:0];
-            NSString* auroDir = [appSupport stringByAppendingPathComponent:@"ArisAudio"];
-            return std::string([auroDir UTF8String]);
-        }
-    }
-    return ".";
+    const auto layout = HarkenUserData::EnsureLayout();
+    if (layout.readOnly) return {};
+    return HarkenUserData::WideToUtf8Path(layout.activeSettingsDir);
 }
 
 UserDataDirectoryResult GetRoamingAppDataDirectory() {
@@ -572,13 +593,21 @@ std::string GetTempDirectory() {
 
 std::string GetTempDragDirectory() {
     @autoreleasepool {
-        NSString* base = NSTemporaryDirectory();
+        NSString* base = nil;
+        if (HarkenUserData::PreviewIsolationActive()) {
+            const auto isolated = (std::filesystem::path(HarkenUserData::PreviewIsolationRootUtf8()) /
+                                   "temp").string();
+            if (!HarkenUserData::PreviewIsolationAllowsDataPathUtf8(isolated)) return {};
+            base = [NSString stringWithUTF8String:isolated.c_str()];
+        } else {
+            base = NSTemporaryDirectory();
+        }
         if (!base) return {};
         NSString* drag = [base stringByAppendingPathComponent:@"Auro_Drag"];
-        [[NSFileManager defaultManager] createDirectoryAtPath:drag
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:drag
                                   withIntermediateDirectories:YES
                                                    attributes:nil
-                                                        error:nil];
+                                                        error:nil]) return {};
         const char* utf8 = [drag UTF8String];
         return utf8 ? std::string(utf8) + "/" : std::string();
     }

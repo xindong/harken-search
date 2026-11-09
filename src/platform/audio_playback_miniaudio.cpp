@@ -6,6 +6,8 @@
 #endif
 
 #include <cstring>
+#include <atomic>
+#include <cmath>
 #include <utility>
 
 namespace Platform::AudioPlayback {
@@ -28,9 +30,50 @@ SoundStorage UseSoundStorage(void* soundStorage) noexcept {
     return SoundStorage(soundStorage);
 }
 
+namespace {
+BackendResult InitializeEngineWithProbe(BorrowedEngine engine, const EngineInitOptions& options,
+                                        void* probe) noexcept;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+// Lifetime is owned by Engine::Impl. The device is stopped and joined by
+// UninitializeEngine before the Impl is destroyed or reused. One audio thread
+// writes lock-free counters; the UI thread only reads. No I/O or allocation in
+// the callback, and the sample buffer is never modified.
+struct OutputProbeState {
+    ma_engine* native = nullptr;
+    std::atomic<std::uint64_t> callbacks{0}, frames{0}, nonzeroSamples{0};
+    std::atomic<float> maxAmplitude{0};
+    void Reset(ma_engine* engine) noexcept {
+        native = engine;
+        callbacks.store(0); frames.store(0); nonzeroSamples.store(0); maxAmplitude.store(0);
+    }
+};
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
+static_assert(std::atomic<float>::is_always_lock_free);
+void ObserveDeviceOutput(void* context, float* samples, ma_uint64 frames) noexcept {
+    auto& probe = *static_cast<OutputProbeState*>(context);
+    const auto channels = ma_engine_get_channels(probe.native);
+    std::uint64_t nonzero = 0;
+    float peak = 0;
+    for (ma_uint64 i = 0; samples && i < frames * channels; ++i) {
+        const float amplitude = std::fabs(samples[i]);
+        if (amplitude > 0.000001f) ++nonzero;
+        if (std::isfinite(amplitude) && amplitude > peak) peak = amplitude;
+    }
+    probe.callbacks.fetch_add(1, std::memory_order_relaxed);
+    probe.frames.fetch_add(frames, std::memory_order_relaxed);
+    probe.nonzeroSamples.fetch_add(nonzero, std::memory_order_relaxed);
+    if (peak > probe.maxAmplitude.load(std::memory_order_relaxed))
+        probe.maxAmplitude.store(peak, std::memory_order_relaxed);
+}
+#endif
+} // namespace
+
 struct Engine::Impl {
     ma_engine* native = nullptr;
     bool initialized = false;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+    OutputProbeState outputProbe;
+#endif
 };
 
 Engine::Engine() noexcept = default;
@@ -52,7 +95,12 @@ BackendResult Engine::Initialize(const EngineInitOptions& options) {
     if (!impl_) impl_ = std::make_unique<Impl>();
     if (impl_->initialized) return {0};
     impl_->native = new ma_engine();
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+    impl_->outputProbe.Reset(impl_->native);
+    const BackendResult result = InitializeEngineWithProbe(BorrowEngine(impl_->native), options, &impl_->outputProbe);
+#else
     const BackendResult result = InitializeEngine(BorrowEngine(impl_->native), options);
+#endif
     if (!result.Succeeded()) {
         delete impl_->native;
         impl_->native = nullptr;
@@ -70,6 +118,26 @@ BorrowedEngine Engine::Borrow() noexcept {
 bool Engine::IsInitialized() const noexcept {
     return impl_ != nullptr && impl_->initialized;
 }
+
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+OutputProbeSnapshot Engine::QueryOutputProbe() const {
+    OutputProbeSnapshot snapshot;
+    if (!IsInitialized()) return snapshot;
+    const auto& probe = impl_->outputProbe;
+    snapshot.callbacks = probe.callbacks.load(std::memory_order_relaxed);
+    snapshot.frames = probe.frames.load(std::memory_order_relaxed);
+    snapshot.nonzeroSamples = probe.nonzeroSamples.load(std::memory_order_relaxed);
+    snapshot.maxAmplitude = probe.maxAmplitude.load(std::memory_order_relaxed);
+    snapshot.channels = ma_engine_get_channels(impl_->native);
+    snapshot.sampleRate = ma_engine_get_sample_rate(impl_->native);
+    if (const auto* device = ma_engine_get_device(impl_->native)) {
+        snapshot.deviceStarted = ma_device_is_started(device) != MA_FALSE;
+        snapshot.deviceName = device->playback.name;
+        if (device->pContext) snapshot.backend = ma_get_backend_name(device->pContext->backend);
+    }
+    return snapshot;
+}
+#endif
 
 BackendResult Engine::StopDevice() noexcept {
     if (!IsInitialized()) return {-1};
@@ -259,7 +327,10 @@ std::vector<OutputDeviceDescriptor> EnumerateOutputDevices(BorrowedEngine engine
     return result;
 }
 
-BackendResult InitializeEngine(BorrowedEngine engine, const EngineInitOptions& options) noexcept {
+namespace {
+BackendResult InitializeEngineWithProbe(BorrowedEngine engine, const EngineInitOptions& options,
+                                        void* probe) noexcept {
+    (void)probe;
     if (!engine.IsValid()) return {-1};
 #ifdef AURO_AUDIO_PLAYBACK_TESTING
     const int result = TestSeam::InitializeEngine(
@@ -272,6 +343,12 @@ BackendResult InitializeEngine(BorrowedEngine engine, const EngineInitOptions& o
     ma_engine_config config = ma_engine_config_init();
     config.channels = options.channels;
     config.sampleRate = options.sampleRate;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+    if (probe) {
+        config.onProcess = ObserveDeviceOutput;
+        config.pProcessUserData = probe;
+    }
+#endif
     if (options.periodSizeMs > 0) {
         config.periodSizeInMilliseconds = options.periodSizeMs;
     }
@@ -289,6 +366,12 @@ BackendResult InitializeEngine(BorrowedEngine engine, const EngineInitOptions& o
         &config, static_cast<ma_engine*>(Detail::Access::Native(engine)));
 #endif
     return {static_cast<int>(result)};
+}
+
+} // namespace
+
+BackendResult InitializeEngine(BorrowedEngine engine, const EngineInitOptions& options) noexcept {
+    return InitializeEngineWithProbe(engine, options, nullptr);
 }
 
 BackendResult StopEngineDevice(BorrowedEngine engine) noexcept {

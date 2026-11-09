@@ -29,6 +29,8 @@ Windows SDK 压缩包 onnxruntime-win-x64-1.20.1.zip 的 SHA-256 为 78d447051e4
 
 已有资源使用 --verify-existing，避免重新导出。工具采用固定 opset 17 / float32，输出与部署哈希不符直接失败。报告记录依赖版本、模型修订、哈希，以及官方 PyTorch 与 ONNX CPU 输出的差异。原生 TestAudioEmbeddingService 再比较真实音频和确定性合成音频的 mel 与向量。原始素材及验证用 PCM 不提交，不随包分发。
 
+2026-11-09 跨平台复现记录：同一固定模型修订、脚本和上述依赖在 Windows Server 2022 / Python 3.12 上导出的三份资源均匹配锁定哈希，合成音频的 PyTorch/ONNX 推理一致性通过；在 Ubuntu 22.04 上 ONNX 模型哈希匹配，但 mel 滤波器与窗函数分别得到 fc6afa944f8a8ff0781ec3ab88be423e864f8c6217116b2c9554c78360168402 和 e4248c9153cf447da143ef3784c14da5a627b656804e5c38ac2e946b9db2044a。当前固定资源须从已验证的 Windows 环境导出；Linux 产物不符时保持失败，不替换产品锁定哈希。此差异尚未定位到具体浮点运算实现。
+
 配置 CMake：HARKEN_ONNXRUNTIME_ROOT 指向 SDK，HARKEN_HNSWLIB_ROOT 指向固定头文件目录，HARKEN_SIMILARITY_MODEL_DIR 指向资源目录。HARKEN_SIMILARITY_MODEL_FIXTURES 另行启用本地模型测试和 SimilarityV2Bench；测试数据不是产品资源。
 
 ## 固定预处理
