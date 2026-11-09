@@ -202,20 +202,6 @@ int ShowMessageBox(void* /*ownerWindow*/,
     }
 }
 
-bool LaunchProcess(const std::string& exePathUtf8, const std::string& argsUtf8) {
-    @autoreleasepool {
-        NSString* path = [NSString stringWithUTF8String:exePathUtf8.c_str()];
-        NSTask* task = [[NSTask alloc] init];
-        [task setExecutableURL:[NSURL fileURLWithPath:path]];
-        if (!argsUtf8.empty()) {
-            NSString* args = [NSString stringWithUTF8String:argsUtf8.c_str()];
-            [task setArguments:[args componentsSeparatedByString:@" "]];
-        }
-        NSError* error = nil;
-        return [task launchAndReturnError:&error];
-    }
-}
-
 uint64_t MonotonicMilliseconds() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<uint64_t>(

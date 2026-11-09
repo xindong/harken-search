@@ -1,4 +1,5 @@
 #include "platform/process_launch.h"
+#include "platform/system.h"
 
 #include <cerrno>
 #include <chrono>
@@ -48,6 +49,12 @@ int main(int argc, char** argv) {
         if (argc != 3) return 93;
         std::ofstream marker(argv[2]); marker << "started";
         return marker ? 0 : 94;
+    }
+    if (argc > 1 && std::string(argv[1]) == "--child-write-args") {
+        if (argc != 5 || std::string(argv[2]) != "two words" ||
+            std::string(argv[3]) != u8"中文") return 100;
+        std::ofstream marker(argv[4]); marker << "quoted arguments preserved";
+        return marker ? 0 : 101;
     }
     if (argc > 1 && std::string(argv[1]) == "--child-fd") {
         if (argc != 4) return 97;
@@ -158,6 +165,25 @@ int main(int argc, char** argv) {
         }
         Check(reaped, "detached child is reaped");
     }
+    const fs::path stringMarker = root / fs::u8path(u8"string API result 中文.txt");
+    const std::string stringArguments =
+        u8"--child-write-args \"two words\" \"中文\" \"" +
+        stringMarker.u8string() + "\"";
+    Check(Platform::LaunchProcess(child.u8string(), stringArguments),
+          "UTF-8 launch starts an executable with spaces and Chinese");
+    for (int attempt = 0; attempt < 200 && !fs::exists(stringMarker); ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::string stringOutput;
+    if (fs::exists(stringMarker)) {
+        std::ifstream markerStream(stringMarker);
+        std::getline(markerStream, stringOutput);
+    }
+    Check(stringOutput == "quoted arguments preserved",
+          "UTF-8 launch keeps quoted spaces, Chinese and destination path");
+    Check(!Platform::LaunchProcess(std::string("\xC3\x28", 2), ""),
+          "UTF-8 launch rejects invalid executable encoding");
+    Check(!Platform::LaunchProcess(child.u8string(), std::string("\xC3\x28", 2)),
+          "UTF-8 launch rejects invalid argument encoding");
     std::printf("Mac process launch checks: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;
 }
