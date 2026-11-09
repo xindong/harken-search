@@ -8649,6 +8649,18 @@ foreach(_standalone_localized_target IN ITEMS
 endforeach()
 
 if(APPLE)
+    add_executable(TestMacProcessDiscovery EXCLUDE_FROM_ALL
+        tests/test_macos_process_discovery.cpp
+        src/platform/process_query_macos.cpp
+        src/platform/text_encoding_ascii.cpp
+        src/platform/text_encoding_std.cpp)
+    target_include_directories(TestMacProcessDiscovery PRIVATE src)
+    target_compile_features(TestMacProcessDiscovery PRIVATE cxx_std_17)
+    add_test(NAME TestMacProcessDiscovery COMMAND TestMacProcessDiscovery
+        ${CMAKE_CURRENT_BINARY_DIR}/Testing/process-discovery)
+    set_tests_properties(TestMacProcessDiscovery PROPERTIES TIMEOUT 30)
+    aura_set_test_labels(TestMacProcessDiscovery core platform)
+
     add_executable(TestMacProcessLaunch EXCLUDE_FROM_ALL
         tests/test_process_launch_macos.cpp
         src/platform/process_launch_macos.cpp

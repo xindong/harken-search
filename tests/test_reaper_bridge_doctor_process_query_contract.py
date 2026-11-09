@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = (ROOT / "src" / "platform" / "system.h").read_text(encoding="utf-8")
 WIN32 = (ROOT / "src" / "platform" / "system_win32.cpp").read_text(encoding="utf-8")
-MACOS = (ROOT / "src" / "platform" / "system_macos.mm").read_text(encoding="utf-8")
+MACOS = (ROOT / "src" / "platform" / "process_query_macos.cpp").read_text(encoding="utf-8")
 DOCTOR = (ROOT / "src" / "ReaperBridgeDoctor.cpp").read_text(encoding="utf-8")
 
 
@@ -55,12 +55,12 @@ class ReaperBridgeDoctorProcessQueryContract(unittest.TestCase):
         self.assertLess(source.index("CloseHandle(snapshot)"),
                         source.index("OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION"))
 
-    def test_macos_is_explicitly_unsupported_without_libproc(self):
+    def test_macos_lookup_uses_read_only_process_paths(self):
         self.assertIn("ProcessImageLookupResult FindProcessByImageName(", MACOS)
-        start = MACOS.find("ProcessImageLookupResult FindProcessByImageName(")
-        source = MACOS[start:] if start != -1 else ""
-        self.assertIn("ProcessImageLookupStatus::Unsupported", source)
-        self.assertNotIn("libproc", source)
+        for token in ("#include <libproc.h>", "proc_listpids(", "proc_pidpath(",
+                      "ProcessImageLookupStatus::NotFound", "ProcessImageLookupStatus::Found"):
+            self.assertIn(token, MACOS)
+        self.assertIn("ProcessTerminationStatus::Unsupported", MACOS)
 
     def test_doctor_delegates_and_keeps_pe_native_scope(self):
         self.assertIn("Platform::FindProcessByImageName", DOCTOR)
