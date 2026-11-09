@@ -13061,6 +13061,10 @@ Database::PlaylistImportResult Database::importReaperFileListToPlaylist(const st
                 if (sqlite3_step(lookupIdStmt) == SQLITE_ROW) {
                     newId = sqlite3_column_int64(lookupIdStmt, 0);
                 }
+                // Do not retain a read snapshot across the next addFile().
+                // Another WAL connection may write between rows; upgrading
+                // that old snapshot then fails immediately with SQLITE_BUSY.
+                sqlite3_reset(lookupIdStmt);
             }
             if (newId <= 0) {
                 ++result.missingFiles;

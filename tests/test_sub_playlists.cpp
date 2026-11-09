@@ -319,6 +319,40 @@ static void test_import_reaper_file_list_utf8_path() {
     db.close();
 }
 
+static void test_import_reaper_file_list_after_concurrent_write() {
+    const auto dbPath = makeTempDbPath("reaper_concurrent_write");
+    Database importer;
+    Database concurrent;
+    EXPECT(importer.open(dbPath) && concurrent.open(dbPath),
+           "FileList concurrent-write test opens two database connections");
+    const auto dir = fs::path(dbPath).parent_path() / "reaper_concurrent_sources";
+    fs::create_directories(dir);
+    const auto listPath = dir / "concurrent.ReaperFileList";
+    {
+        std::ofstream list(listPath, std::ios::binary | std::ios::trunc);
+        for (int i = 0; i < 65; ++i) {
+            const auto audioPath = dir / ("item_" + std::to_string(i) + ".wav");
+            std::ofstream audio(audioPath, std::ios::binary | std::ios::trunc);
+            audio << std::string(256, '\0');
+            list << "FILE \"" << audioPath.u8string() << "\" 256 0 1 0\n";
+        }
+    }
+    bool concurrentWriteSucceeded = false;
+    const auto result = importer.importReaperFileListToPlaylist(
+        listPath.u8string(), "Concurrent FileList",
+        [&](int current, int, const std::string&, bool committed) {
+            if (current == 64 && !committed) {
+                concurrentWriteSucceeded = concurrent.createPlaylist("Unrelated writer", "") > 0;
+            }
+        });
+    EXPECT(concurrentWriteSucceeded, "another WAL connection writes between FileList rows");
+    EXPECT(result.error.empty() && result.failedIndexFiles == 0 &&
+           result.addedFiles == 65 && importer.getPlaylistFileCount(result.playlistId) == 65,
+           "FileList imports every row after an unrelated concurrent write");
+    concurrent.close();
+    importer.close();
+}
+
 static void test_playlist_files_page_preserves_order_and_count() {
     auto path = makeTempDbPath("playlist_page");
     Database db;
@@ -665,6 +699,7 @@ int main() {
     test_move_sub_to_other_parent();
     test_import_reaper_file_list_to_playlist();
     test_import_reaper_file_list_utf8_path();
+    test_import_reaper_file_list_after_concurrent_write();
     test_playlist_files_page_preserves_order_and_count();
     test_aggregated_playlist_files_page_dedups_and_counts();
     test_all_playlist_files_page_dedups_and_counts();
