@@ -298,6 +298,27 @@ static void test_import_reaper_file_list_to_playlist() {
     db.close();
 }
 
+static void test_import_reaper_file_list_utf8_path() {
+    const auto dbPath = makeTempDbPath("reaper_utf8_import");
+    Database db;
+    EXPECT(db.open(dbPath), "UTF-8 FileList test database opens");
+    const auto dir = fs::path(dbPath).parent_path();
+    const auto audioPath = dir / fs::u8path(u8"风声.wav");
+    const auto listPath = dir / "utf8.ReaperFileList";
+    {
+        std::ofstream audio(audioPath, std::ios::binary | std::ios::trunc);
+        audio << std::string(256, '\0');
+        std::ofstream list(listPath, std::ios::binary | std::ios::trunc);
+        list << "FILE \"" << audioPath.u8string() << "\" 256 0 1 0\n";
+    }
+    const auto result = db.importReaperFileListToPlaylist(listPath.u8string(), "UTF-8 import");
+    EXPECT(result.error.empty() && result.failedIndexFiles == 0,
+           "UTF-8 FileList path indexes without failure");
+    EXPECT(result.addedFiles == 1 && db.getPlaylistFileCount(result.playlistId) == 1,
+           "UTF-8 FileList item remains visible in its playlist");
+    db.close();
+}
+
 static void test_playlist_files_page_preserves_order_and_count() {
     auto path = makeTempDbPath("playlist_page");
     Database db;
@@ -643,6 +664,7 @@ int main() {
     test_promote_orphan_with_files();
     test_move_sub_to_other_parent();
     test_import_reaper_file_list_to_playlist();
+    test_import_reaper_file_list_utf8_path();
     test_playlist_files_page_preserves_order_and_count();
     test_aggregated_playlist_files_page_dedups_and_counts();
     test_all_playlist_files_page_dedups_and_counts();

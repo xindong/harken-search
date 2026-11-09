@@ -13042,6 +13042,9 @@ Database::PlaylistImportResult Database::importReaperFileListToPlaylist(const st
             if (!addFile(record)) {
                 ++result.missingFiles;
                 ++result.failedIndexFiles;
+                if (result.indexFailureSamples.size() < kMissingSampleLimit) {
+                    result.indexFailureSamples.push_back(path + ": " + getLastError());
+                }
                 if (result.missingPathSamples.size() < kMissingSampleLimit) {
                     result.missingPathSamples.push_back(path);
                 }
@@ -13062,6 +13065,9 @@ Database::PlaylistImportResult Database::importReaperFileListToPlaylist(const st
             if (newId <= 0) {
                 ++result.missingFiles;
                 ++result.failedIndexFiles;
+                if (result.indexFailureSamples.size() < kMissingSampleLimit) {
+                    result.indexFailureSamples.push_back(path + ": inserted row could not be read back");
+                }
                 if (result.missingPathSamples.size() < kMissingSampleLimit) {
                     result.missingPathSamples.push_back(path);
                 }

@@ -108,6 +108,7 @@
 | `watcherRescanWorkerThread()` | worker | rg/source scan | Runs reconcile scans with cancellation guard |
 | `precomputeWorkerThread()` | worker | rg/source scan | Hands durable derived work off after scan |
 | `Scan.*` | diagnostics | QA protocol | Runtime scan integrity evidence |
+| `PumpAppScanRefresh()` | API | `src/AppRuntime.cpp` | Windows and macOS consume committed batches and final refresh through the same service; retain the owned scan thread until it can be joined |
 
 ## Graphify Binding
 
@@ -132,6 +133,19 @@
 | TEST-MULTI-FOLDER-SCAN-PROGRESS | contract | `TestScanWaveformCacheContract::testMultiFolderScanProgressAggregatesLocalCallbacks` | multi-folder drag scan progress remains aggregate and does not reset to 0 on the next folder | active |
 | TEST-COVER-BACKFILL-WALL-REFRESH | contract | `TestBackgroundIoPolicy::TestDeferredCoverBackfillRefreshesCoverWallAfterStoppedScanContract` | stopped-scan deferred cover backfill refreshes cover wall data cache | active |
 | DIAG-SCAN | diagnostics | `TestImportPrecomputeWaveform`, `Scan.*` | summary/cache report present and no rollback/flush failure | active |
+| MAC-LIBRARY-SMOKE | real isolated app | `tools/macos_library_smoke.py --app <absolute-binary> --root <compiled-isolation-root> --out <new-proof-directory>` | create/open, valid and damaged audio, repeat scan, combined filters, settings/library restart, cancel and exit after committed batches, normal exits and framebuffer captures | automated; user acceptance separate |
+
+The Mac smoke uses the existing UI create/scan intents and shared database-switch
+workflow. Generated WAV files, a cover and one damaged file remain inside the
+compiled preview root. It reads a separate read-only SQLite connection to prove
+a committed prefix exists before cancellation or shutdown, then verifies rollback
+and recovery. This test does not certify playback, waveform rendering, the native
+file picker's interaction, large real libraries or user acceptance.
+
+The shared scanner keeps a terminal failure record for damaged audio. Such a row
+has no decoded audio metadata and is excluded from the successful count; its
+failure reason remains available. Reopening restores the library and persistent
+settings; transient result filters reset, as on Windows.
 
 ## Missing Coverage
 

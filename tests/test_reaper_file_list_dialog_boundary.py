@@ -59,10 +59,18 @@ assert 'return "";' in PORTABLE
 for required in ("NSOpenPanel", "[NSThread isMainThread]", "runModal", "isFileURL", "UTF8String"):
     assert required in MAC
 
-qualified_call = "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(ownerWindow)"
+qualified_call = "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(MainUiOwnerWindow())"
 assert MAIN.count(qualified_call) == 1
 assert "static std::string OpenReaperFileListDialogUtf8(HWND owner)" not in MAIN
 assert MAIN.count("OpenReaperFileListDialogUtf8(") == 1
+assert (
+    "#if defined(_WIN32) || defined(__APPLE__)\n"
+    "static std::string FormatReaperImportResultMessage"
+) in MAIN
+assert MAIN.count(
+    "#if defined(_WIN32) || defined(__APPLE__)\n"
+    "    PumpReaperFileListImportResult(state);"
+) == 2
 
 menu = MAIN.index('ImGui::MenuItem(L(Main_ImportReaperList))')
 guard = MAIN.rfind("#if defined(_WIN32) || defined(__APPLE__)", 0, menu)

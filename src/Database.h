@@ -990,6 +990,7 @@ public:
         int unsupportedFiles = 0;
         int failedIndexFiles = 0;
         std::vector<std::string> missingPathSamples;
+        std::vector<std::string> indexFailureSamples;
         std::string error;
     };
 

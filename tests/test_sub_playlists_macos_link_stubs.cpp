@@ -1,25 +1,16 @@
 #ifdef __APPLE__
 
-#include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <string>
-
-namespace CoverModule {
-// The playlist importer does not exercise cover hashing; satisfy the shared
-// Database link boundary without bringing image decoding into this test.
-std::uint64_t ComputePerceptualHash(const unsigned char* data, std::size_t size) {
-    if (data == nullptr || size == 0) return 0;
-    std::uint64_t hash = 1469598103934665603ull;
-    for (std::size_t i = 0; i < size; ++i) {
-        hash ^= data[i];
-        hash *= 1099511628211ull;
-    }
-    return hash == 0 ? 1 : hash;
-}
-}
+#include "platform/harken_user_data_layout.h"
 
 namespace Platform::HarkenUserData {
+
+Layout EnsureLayout() {
+    Layout layout;
+    layout.readOnly = true;
+    return layout;
+}
 
 bool PreviewIsolationActive() { return true; }
 

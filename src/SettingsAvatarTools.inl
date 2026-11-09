@@ -15,7 +15,7 @@
 
                     if (aura::ui::ActionButton(L(Set_AvatarChangeLabelZh))) {
                         std::string selected =
-                            Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(g_hwnd);
+                            Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(MainUiOwnerWindow());
                         if (!selected.empty()) {
                             s_cropPixels.clear();
                             if (LoadImageForCrop(selected, s_cropSrcW, s_cropSrcH, s_cropPixels)) {

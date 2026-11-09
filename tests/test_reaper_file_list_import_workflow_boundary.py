@@ -29,3 +29,11 @@ def test_reaper_import_workflow_has_no_ui_or_platform_entrypoint_dependency():
     assert '"main.cpp"' not in source
     assert '"WindowsMain.h"' not in source
     assert "ImGui::" not in source
+
+
+def test_reaper_import_reports_its_own_completion_instead_of_resetting_view():
+    source = SOURCE.read_text(encoding="utf-8")
+    assert "state.beginScanWorkflow(false);" in source
+    assert "state.setScanOutcome(" in source
+    assert "state.resolveScanWorkflowTerminalStage(" in source
+    assert "state.needsDatabaseRefresh = !importSucceeded;" in source

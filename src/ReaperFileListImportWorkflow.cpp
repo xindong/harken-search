@@ -43,6 +43,7 @@ void Start(AppState& state, std::string importPath, std::string playlistName) {
     state.showScanDialog = true;
 
     const uint64_t scanGeneration = state.beginNewScanTask();
+    state.beginScanWorkflow(false);
     std::shared_ptr<std::atomic<bool>> scanCancelToken = state.getActiveScanCancelToken();
     const std::string scanDbPath = !state.currentDbPathUtf8.empty()
         ? state.currentDbPathUtf8
@@ -95,10 +96,24 @@ void Start(AppState& state, std::string importPath, std::string playlistName) {
         state.scanIngestedCount = result.indexedFiles + result.addedFiles;
         state.setScanFile(cancelled ? "REAPER import cancelled" : "REAPER import complete");
         state.scanPhase.store(AppState::ScanPhase::Idle);
+        const bool importSucceeded = result.playlistId > 0 && result.error.empty();
+        // The dedicated UI result handler activates and refreshes the new
+        // playlist. A generic scan refresh would switch back to Database and
+        // leave the visible count stale; failures may still have indexed files.
+        state.needsDatabaseRefresh = !importSucceeded;
+        state.setScanOutcome(result.uniqueFiles, result.uniqueFiles,
+                             result.addedFiles, result.missingFiles,
+                             result.failedIndexFiles);
+        state.scanForegroundTasksDrained.store(true, std::memory_order_release);
+        state.markScanCompletionReadyNow();
+        state.resolveScanWorkflowTerminalStage(cancelled,
+                                               !importSucceeded && !cancelled);
         state.isScanning = false;
-        state.needsDatabaseRefresh = true;
         if (!result.error.empty() && result.error != "cancelled") {
             state.addScanError(result.error);
+        }
+        for (const auto& failure : result.indexFailureSamples) {
+            state.addScanError(failure);
         }
         {
             std::lock_guard<std::mutex> lock(state.reaperImportResultMutex);

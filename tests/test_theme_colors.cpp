@@ -793,6 +793,17 @@ int main() {
         ThemeColorScheme roundTrip = ThemeColors::getClassicDark();
         const bool imported = ThemeColors::importFromJSON(json, roundTrip);
         CHECK(imported, "JSON import succeeds");
+        const std::filesystem::path savedPath =
+            std::filesystem::temp_directory_path() / std::filesystem::u8path(u8"harken-theme-导出-test.json");
+        CHECK(ThemeColors::saveThemeToFile(savedPath.u8string(), scheme),
+              "JSON theme export saves a UTF-8 path");
+        ThemeColorScheme reloaded = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::loadThemeFromFile(savedPath.u8string(), reloaded),
+              "saved JSON theme reloads");
+        CHECK(approxEqual(reloaded.menuText, scheme.menuText),
+              "saved JSON keeps the edited theme color");
+        std::error_code removeError;
+        std::filesystem::remove(savedPath, removeError);
         CHECK(approxEqual(roundTrip.menuText, scheme.menuText), "menuText survives round-trip");
         CHECK(approxEqual(roundTrip.frameBgBase, scheme.frameBgBase), "frameBgBase survives round-trip");
         CHECK(approxEqual(roundTrip.chromeBorder, scheme.chromeBorder), "chromeBorder survives round-trip");
