@@ -8757,4 +8757,12 @@ if(APPLE)
     set_tests_properties(TestMacProcessDiscovery PROPERTIES TIMEOUT 30)
     aura_set_test_labels(TestMacProcessDiscovery core platform)
 
+    add_executable(TestMacProcessLaunch EXCLUDE_FROM_ALL
+        tests/test_process_launch_macos.cpp
+        src/platform/process_launch_macos.cpp)
+    target_include_directories(TestMacProcessLaunch PRIVATE src)
+    target_compile_features(TestMacProcessLaunch PRIVATE cxx_std_17)
+    add_test(NAME TestMacProcessLaunch COMMAND TestMacProcessLaunch
+        "${HARKEN_MAC_TEST_ROOT}/process-launch")
+    aura_set_test_labels(TestMacProcessLaunch core platform)
 endif()
