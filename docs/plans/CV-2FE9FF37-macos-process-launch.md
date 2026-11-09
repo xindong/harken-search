@@ -19,3 +19,9 @@
 ## 明确不在本卡范围
 
 不启用 Mac 的 GetDawCapability，不把启动能力当作 REAPER、Pro Tools、Cubase 或 Wwise 直送已可用；这些还需要各自的宿主适配器、发现、IPC 和真实宿主测试。也不安装或启动用户的日常工作站，不改用户素材库、不修改 Windows 进程实现。未取得真实宿主证据时只报告基础能力，不推进工作站功能验收。
+
+## 2026-11-09 平台边界旧断言修复
+
+后续 Mac 进程发现卡 CV-7AC7255C 跑完整 Stage6 平台边界测试时发现 2/440 断言失败：旧断言仍要求本卡已实现的 Mac 进程启动返回 Unsupported，并要求 UTF-8 启动入口位于 system_macos.mm。本次先在本卡分支复现；仅修正 tests/test_stage6_platform_boundary.py 中与本卡启动源码归属直接相关的两处断言，不改产品实现、Windows 平台接口或工作站能力提示。测试应核对 posix_spawn 直接启动且不经 shell、UTF-8 入口归属 process_launch_string_macos.cpp，以及 CMake 对两个源文件的选择。
+
+验证依次为 Mac 完整 Stage6 测试、真实子进程启动测试、完整产品构建与隔离启动退出。测试文件属共用仓库，提交后取得同 SHA Windows 产品构建与所选回归；不把现有旧包或旧 CI 冒充新提交证据。已有 ZIP、截图与失败日志保留，新的包单独命名。此修复不证明 DAW 宿主发送可用，仍待用户验收后才考虑 QA 整合。
