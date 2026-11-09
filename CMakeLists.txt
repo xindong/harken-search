@@ -789,7 +789,7 @@ elseif(APPLE)
         src/platform/file_hash_macos.cpp
         src/platform/hmac_sha256_unsupported.cpp
         src/platform/process_launch_macos.cpp
-        src/platform/process_query_unsupported.cpp
+        src/platform/process_query_macos.cpp
         src/platform/durable_file_ops_macos.cpp
         src/platform/macos_file_io.cpp
         src/platform/harken_user_data_layout_macos.mm

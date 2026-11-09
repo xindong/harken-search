@@ -138,12 +138,6 @@ bool CanOpenExclusiveWritePath(const std::string& pathUtf8) {
     return !error && !exists;
 }
 
-ProcessImagePathResult ReadProcessImagePath(uint32_t /*processId*/) {
-    ProcessImagePathResult result;
-    result.status = ProcessImagePathStatus::Unsupported;
-    return result;
-}
-
 std::string GetMachineId() {
     io_service_t platformExpert = IOServiceGetMatchingService(
         kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"));
@@ -338,14 +332,6 @@ bool WindowShow(void* windowHandle, int command) {
         [window orderFront:nil];
     }
     return true;
-}
-
-ProcessImageLookupResult FindProcessByImageName(
-    const std::string& /*imageNameUtf8*/,
-    const std::string& /*preferredExecutablePathUtf8*/) {
-    ProcessImageLookupResult result;
-    result.status = ProcessImageLookupStatus::Unsupported;
-    return result;
 }
 
 RegisteredExecutablePathResult ReadRegisteredExecutablePath(

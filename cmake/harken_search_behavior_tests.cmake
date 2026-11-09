@@ -8729,3 +8729,18 @@ foreach(_standalone_localized_target IN ITEMS
     target_sources(${_standalone_localized_target} PRIVATE src/Localization.cpp)
     add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)
 endforeach()
+
+if(APPLE)
+    add_executable(TestMacProcessDiscovery EXCLUDE_FROM_ALL
+        tests/test_macos_process_discovery.cpp
+        src/platform/process_query_macos.cpp
+        src/platform/text_encoding_ascii.cpp
+        src/platform/text_encoding_std.cpp)
+    target_include_directories(TestMacProcessDiscovery PRIVATE src)
+    target_compile_features(TestMacProcessDiscovery PRIVATE cxx_std_17)
+    add_test(NAME TestMacProcessDiscovery COMMAND TestMacProcessDiscovery
+        "${HARKEN_MAC_TEST_ROOT}/process-discovery")
+    set_tests_properties(TestMacProcessDiscovery PROPERTIES TIMEOUT 30)
+    aura_set_test_labels(TestMacProcessDiscovery core platform)
+
+endif()
