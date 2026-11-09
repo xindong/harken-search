@@ -7266,6 +7266,21 @@ add_test(NAME TestAcousticSimilarityFile COMMAND TestAcousticSimilarityFile)
 aura_set_test_labels(TestAcousticSimilarityFile core)
 
 set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
+function(harken_link_onnx_test_runtime target)
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:${target}>)
+    elseif(APPLE)
+        target_link_libraries(${target} PRIVATE ${HARKEN_ONNX_LIBRARY})
+        set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "@executable_path")
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.20.1.dylib
+                $<TARGET_FILE_DIR:${target}>/libonnxruntime.1.20.1.dylib)
+    endif()
+endfunction()
 add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
     tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
     src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
@@ -7315,18 +7330,21 @@ endif()
 if(HARKEN_ONNXRUNTIME_ROOT)
     target_compile_definitions(TestAudioEmbeddingService PRIVATE HARKEN_WITH_ONNX=1)
     target_include_directories(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
-    target_link_libraries(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
-    add_custom_command(TARGET TestAudioEmbeddingService POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:TestAudioEmbeddingService>)
+    harken_link_onnx_test_runtime(TestAudioEmbeddingService)
 endif()
 if(HARKEN_SIMILARITY_MODEL_FIXTURES)
+    if(NOT HARKEN_ONNXRUNTIME_ROOT)
+        message(FATAL_ERROR "Similarity model fixtures require the ONNX Runtime SDK")
+    endif()
     add_executable(TestSimilarityQueryV2 EXCLUDE_FROM_ALL tests/test_similarity_query_v2.cpp
         src/SimilarityQueryV2.cpp src/SimilarityWorkflow.cpp src/SimilarityIndexer.cpp
         src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
     target_include_directories(TestSimilarityQueryV2 PRIVATE src ${SQLITE_DIR} ${HARKEN_ONNXRUNTIME_ROOT}/include)
     target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_ONNX=1)
-    target_link_libraries(TestSimilarityQueryV2 PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        target_link_libraries(TestSimilarityQueryV2 PRIVATE bcrypt)
+    endif()
+    harken_link_onnx_test_runtime(TestSimilarityQueryV2)
     if(HARKEN_HNSWLIB_ROOT)
         target_include_directories(TestSimilarityQueryV2 PRIVATE ${HARKEN_HNSWLIB_ROOT})
         target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_HNSW=1)
@@ -7345,7 +7363,10 @@ if(HARKEN_SIMILARITY_MODEL_FIXTURES)
     if(HARKEN_HNSWLIB_ROOT)
         target_compile_definitions(SimilarityV2Bench PRIVATE HARKEN_WITH_HNSW=1)
     endif()
-    target_link_libraries(SimilarityV2Bench PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        target_link_libraries(SimilarityV2Bench PRIVATE bcrypt)
+    endif()
+    harken_link_onnx_test_runtime(SimilarityV2Bench)
     if(MSVC)
         target_compile_options(SimilarityV2Bench PRIVATE /W3 /utf-8)
     endif()
