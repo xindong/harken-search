@@ -1,5 +1,9 @@
 # Mac 与 Windows 全功能差异盘点（CV-AB9FEDDA）
 
+## 2026-11-09 调性检测分类更正
+
+当前 qa/current 的共用 BetaFeatureFlags.h 设定 kExposeMusicModeSwitch=false；设置加载和正式模式切换均不开放音乐模式。调性分析菜单位于音乐模式内，因此 Windows 和 Mac 当前正式可见功能都没有该入口。下方较早盘点提到的 Mac KeyDetectorStub 是底层源码差异，不能当成当前已开放 Windows 功能的上线缺口。CV-7AB7E230 的隔离试验已撤回未提交，卡片按范围不成立取消归档；原始验证与局限记录在 qa/CV-7AB7E230/README.md。今后若 Windows 正式开放音乐模式，再根据当时 QA 重新立卡。
+
 ## 2026-11-09 接续核对
 
 本轮以远端 `qa/current` 的真实提交、已交付 Mac 候选提交和正式 Cuevi 看板回执为准，保留 2026-11-03 的原始盘点作为历史记录。先检查分支包含关系和工作树，再对照核心功能卡的测试状态；区分“最新 QA 内已有”“独立 Mac 候选已验证但待用户验收”“源码确认仍缺失”和“尚未实测”。
