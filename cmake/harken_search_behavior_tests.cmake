@@ -4841,9 +4841,20 @@ target_include_directories(TestSubPlaylists PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSubPlaylists PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
-)
+if(WIN32)
+    target_link_libraries(TestSubPlaylists PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
+    )
+elseif(APPLE)
+    target_link_libraries(TestSubPlaylists PRIVATE
+        "-framework Cocoa" "-framework CoreServices" "-framework OpenGL"
+        "-framework ImageIO" "-framework IOKit" "-framework CoreFoundation"
+        "-framework AudioToolbox" "-framework CoreGraphics"
+    )
+    target_sources(TestSubPlaylists PRIVATE
+        tests/test_sub_playlists_macos_link_stubs.cpp
+    )
+endif()
 target_compile_definitions(TestSubPlaylists PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
 )
@@ -5851,6 +5862,7 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
+if(WIN32)
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
     src/ReaperBridgeClient.cpp
@@ -5888,6 +5900,7 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+endif()
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".

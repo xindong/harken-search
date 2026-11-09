@@ -13,13 +13,13 @@
 ## Product Behavior
 
 **User promise:** Playlists, folders, sub-playlists, and quick actions organize sound assets without losing parent/child or search context.
-**Primary workflow:** User adds files to playlists, nests folders, filters/searches within playlists, and expects hierarchy to remain stable.
+**Primary workflow:** User adds files to playlists, nests folders, filters/searches within playlists, or imports a REAPER FileList, and expects hierarchy to remain stable.
 **Non-goals:** This contract does not define external DAW delivery behavior.
 
 ## 中文语义
 
 **用户承诺：** 用户组织播放列表时，文件不会因为移动、搜索、折叠展开或删除列表而失踪、重复或跑到错误父级。
-**核心流程：** 用户创建播放列表/文件夹、加入文件、嵌套子列表、在播放列表内搜索，再用 quickbar 或右键菜单移动/删除；Aris 保持层级和聚合视图一致。
+**核心流程：** 用户创建播放列表/文件夹、加入文件、嵌套子列表、在播放列表内搜索，或选择 REAPER FileList 导入新列表，再用 quickbar 或右键菜单移动/删除；Aris 保持层级和聚合视图一致。
 **非目标：** 这份契约不定义外部 DAW 交付行为，也不负责导出文件本身。
 
 ## BDD Scenarios
@@ -34,6 +34,13 @@
 - Then 应得到以下结果：results include only files reachable from that playlist/folder hierarchy while preserving the global search semantics for keywords and filters
 
 ### Edge Cases
+
+- Given a REAPER FileList contains repeated rows, relative paths, and missing files
+- When the user imports it into a playlist
+- Then the imported list preserves unique file order and reports missing files without modifying source audio
+- Given REAPER FileList selection is cancelled
+- When the native file panel closes
+- Then no import scan starts and the current library remains unchanged
 
 - Given 已满足以下前置条件：a playlist has nested children or an expanded folder state
 - When 执行以下操作：drag/drop, rename, or parent changes occur
@@ -63,6 +70,7 @@
 | playlist quickbar | UI | tests | Keeps movement/selection stable |
 | aggregated playlist search APIs | DB | Graphify via search execution | Apply search semantics within playlist context |
 | playlist diagnostics | diagnostics | product semantics | Exposes hierarchy apply/reject diagnostics for parent changes |
+| REAPER FileList selection and import | UI/API | platform dialog and shared workflow | Opens a real native picker, then imports only the selected file into a new playlist |
 
 ## Graphify Binding
 
@@ -77,6 +85,7 @@
 | Proof ID | Kind | Artifact / command / event | Pass signal | Status |
 | --- | --- | --- | --- | --- |
 | TEST-SUB-PLAYLISTS | integration | `TestSubPlaylists` | nested playlist behavior passes | active |
+| TEST-REAPER-FILELIST | integration/boundary | `TestSubPlaylists`, `TestReaperFileListDialogBoundary` | import counts/order and platform picker boundary pass | active |
 | TEST-PLAYLIST-FOLDER-TREE | unit/integration | `TestPlaylistFolderTree` | folder hierarchy passes | active |
 | TEST-SET-PLAYLIST-PARENT | unit | `TestSetPlaylistParent` | parent updates pass | active |
 | TEST-PLAYLIST-QUICKBAR | UI model | `TestPlaylistQuickBarMotion` | quickbar motion behavior passes | active |
@@ -87,6 +96,7 @@
 - Missing proof: destructive delete flow with populated playlist/folder is not yet asserted end-to-end.
 - Suspected stale proof: UI-only operations not represented in model tests.
 - Human-only verification: drag/drop ergonomics.
+- Missing proof: Mac actual menu click and selected FileList in a full product package remain pending while the QA Mac entry is still a Demo.
 
 ## Change Gate
 
@@ -100,3 +110,4 @@
 | Date | Decision | Reason | Decider |
 | --- | --- | --- | --- |
 | 2026-06-03 | Added playlist-scoped search and destructive populated-playlist delete to BDD. | Review identified these as user-sensitive flows missing from the contract. | Engineering |
+| 2026-11-09 | Bind REAPER FileList import to the playlist contract on Mac. | The shared importer already exists, but the Mac menu and file picker lacked a usable path. | Cindy |

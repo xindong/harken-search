@@ -4,15 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HEADER_PATH = ROOT / "src/platform/reaper_file_list_dialog.h"
 WIN32_PATH = ROOT / "src/platform/reaper_file_list_dialog_win32.cpp"
+MAC_PATH = ROOT / "src/platform/reaper_file_list_dialog_macos.mm"
 PORTABLE_PATH = ROOT / "src/platform/reaper_file_list_dialog_std.cpp"
 
 assert HEADER_PATH.is_file()
 assert WIN32_PATH.is_file()
+assert MAC_PATH.is_file()
 assert PORTABLE_PATH.is_file()
 
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
 HEADER = HEADER_PATH.read_text(encoding="utf-8")
 WIN32 = WIN32_PATH.read_text(encoding="utf-8")
+MAC = MAC_PATH.read_text(encoding="utf-8")
 PORTABLE = PORTABLE_PATH.read_text(encoding="utf-8")
 CMAKE = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 BEHAVIOR = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
@@ -31,6 +34,7 @@ for forbidden in (
     '#include "AppState.h"',
 ):
     assert forbidden not in WIN32
+    assert forbidden not in MAC
     assert forbidden not in PORTABLE
 
 for required in (
@@ -52,14 +56,16 @@ for required in (
     assert required in WIN32
 assert "OFN_NOCHANGEDIR" not in WIN32
 assert 'return "";' in PORTABLE
+for required in ("NSOpenPanel", "[NSThread isMainThread]", "runModal", "isFileURL", "UTF8String"):
+    assert required in MAC
 
-qualified_call = "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(g_hwnd)"
+qualified_call = "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(ownerWindow)"
 assert MAIN.count(qualified_call) == 1
 assert "static std::string OpenReaperFileListDialogUtf8(HWND owner)" not in MAIN
 assert MAIN.count("OpenReaperFileListDialogUtf8(") == 1
 
 menu = MAIN.index('ImGui::MenuItem(L(Main_ImportReaperList))')
-guard = MAIN.rfind("#ifdef _WIN32", 0, menu)
+guard = MAIN.rfind("#if defined(_WIN32) || defined(__APPLE__)", 0, menu)
 call = MAIN.index(qualified_call, menu)
 empty_check = MAIN.index("if (!importPath.empty())", call)
 snapshot = MAIN.index("state.playlists = state.database.getAllPlaylists();", empty_check)
@@ -74,6 +80,7 @@ assert guard < menu < call < empty_check < snapshot < stem < names < suffix < st
 
 assert "AURO_REAPER_FILE_LIST_DIALOG_SOURCE" in CMAKE
 assert CMAKE.count("${AURO_REAPER_FILE_LIST_DIALOG_SOURCE}") == 1
+assert "src/platform/reaper_file_list_dialog_macos.mm" in CMAKE
 assert "NAME TestReaperFileListDialogBoundary" in BEHAVIOR
 assert "tests/test_reaper_file_list_dialog_boundary.py" in BEHAVIOR
 assert '"src/platform/reaper_file_list_dialog.h"' in RULES

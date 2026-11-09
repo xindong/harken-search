@@ -35886,11 +35886,15 @@ void RenderUI(AppState& state) {
                 state.showPlaylistDialog = true;
                 memset(state.playlistNameBuffer, 0, sizeof(state.playlistNameBuffer));
             }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
             ImGui::BeginDisabled(state.isScanning.load());
             if (ImGui::MenuItem(L(Main_ImportReaperList))) {
+                void* ownerWindow = nullptr;
+#ifdef _WIN32
+                ownerWindow = g_hwnd;
+#endif
                 std::string importPath =
-                    Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(g_hwnd);
+                    Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(ownerWindow);
                 if (!importPath.empty()) {
                     state.playlists = state.database.getAllPlaylists();
                     std::string baseName = "Reaper Import";

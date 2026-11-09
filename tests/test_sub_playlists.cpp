@@ -208,8 +208,16 @@ static void test_import_reaper_file_list_to_playlist() {
     Database db;
     db.open(path);
 
+#ifndef _WIN32
+    const std::string sourceDir = (fs::temp_directory_path() / "auro_sub_playlist_test" / "source").string();
+#endif
+
     AudioRecord r1; r1.filePath = "C:\\Sfx\\whoosh one.wav"; r1.fileName = "whoosh one.wav";
     AudioRecord r2; r2.filePath = "C:\\Sfx\\hits\\impact.wav"; r2.fileName = "impact.wav";
+#ifndef _WIN32
+    r1.filePath = sourceDir + "/whoosh one.wav";
+    r2.filePath = sourceDir + "/hits/impact.wav";
+#endif
     db.addFile(r1);
     db.addFile(r2);
 
@@ -222,6 +230,7 @@ static void test_import_reaper_file_list_to_playlist() {
     }
     {
         std::ofstream out(listPath, std::ios::binary | std::ios::trunc);
+#ifdef _WIN32
         out << "PATH \"C:\\Sfx\"\n";
         out << "FILE \"C:\\Sfx\\whoosh one.wav\" 100 0 1 0\n";
         out << "DATA \"t:whoosh one.wav\" g:Whoosh\n";
@@ -229,6 +238,15 @@ static void test_import_reaper_file_list_to_playlist() {
         out << "FILE \"hits\\impact.wav\" 100 0 1 0\n";
         out << "FILE \"" << diskOnlyPath.string() << "\" 256 0 1 0\n";
         out << "FILE \"C:\\Sfx\\missing.wav\" 100 0 1 0\n";
+#else
+        out << "PATH " << '"' << sourceDir << '"' << std::endl;
+        out << "FILE " << '"' << r1.filePath << '"' << " 100 0 1 0" << std::endl;
+        out << "DATA " << '"' << "t:whoosh one.wav" << '"' << " g:Whoosh" << std::endl;
+        out << "FILE " << '"' << r1.filePath << '"' << " 100 0 1 0" << std::endl;
+        out << "FILE " << '"' << "hits/impact.wav" << '"' << " 100 0 1 0" << std::endl;
+        out << "FILE " << '"' << diskOnlyPath.string() << '"' << " 256 0 1 0" << std::endl;
+        out << "FILE " << '"' << sourceDir + "/missing.wav" << '"' << " 100 0 1 0" << std::endl;
+#endif
     }
 
     int progressCalls = 0;
@@ -263,10 +281,17 @@ static void test_import_reaper_file_list_to_playlist() {
 
     auto files = db.getPlaylistFiles(result.playlistId);
     EXPECT(files.size() == 3, "imported playlist files can be read");
+#ifdef _WIN32
     EXPECT(files.size() == 3 && files[0].filePath == "C:\\Sfx\\whoosh one.wav",
            "Reaper import preserves source order for first match");
     EXPECT(files.size() == 3 && files[1].filePath == "C:\\Sfx\\hits\\impact.wav",
            "Reaper import resolves relative FILE path against PATH row");
+#else
+    EXPECT(files.size() == 3 && files[0].filePath == r1.filePath,
+           "Reaper import preserves source order for first match");
+    EXPECT(files.size() == 3 && files[1].filePath == r2.filePath,
+           "Reaper import resolves relative FILE path against PATH row");
+#endif
     EXPECT(files.size() == 3 && files[2].filePath == diskOnlyPath.string(),
            "Reaper import keeps newly indexed disk file in playlist order");
 

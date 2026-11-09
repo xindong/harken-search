@@ -2465,6 +2465,9 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         win32 = (ROOT / "src/platform/reaper_file_list_dialog_win32.cpp").read_text(
             encoding="utf-8"
         )
+        macos = (ROOT / "src/platform/reaper_file_list_dialog_macos.mm").read_text(
+            encoding="utf-8"
+        )
         portable = (ROOT / "src/platform/reaper_file_list_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
@@ -2485,8 +2488,10 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "TextEncoding::WideToUtf8(std::wstring(szFileName))", win32
         )
         self.assertIn('return "";', portable)
+        self.assertIn("NSOpenPanel", macos)
+        self.assertIn("[NSThread isMainThread]", macos)
         qualified_call = (
-            "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(g_hwnd)"
+            "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(ownerWindow)"
         )
         self.assertEqual(1, main.count(qualified_call))
         self.assertNotIn(
@@ -2495,7 +2500,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         menu = main.index(
             'ImGui::MenuItem(L(Main_ImportReaperList))'
         )
-        guard = main.rfind("#ifdef _WIN32", 0, menu)
+        guard = main.rfind("#if defined(_WIN32) || defined(__APPLE__)", 0, menu)
         call = main.index(qualified_call, menu)
         guard_end = main.index("#endif", call)
         self.assertLess(guard, menu)
@@ -2504,6 +2509,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn(
             "set(AURO_REAPER_FILE_LIST_DIALOG_SOURCE "
             "src/platform/reaper_file_list_dialog_win32.cpp)",
+            cmake,
+        )
+        self.assertIn(
+            "set(AURO_REAPER_FILE_LIST_DIALOG_SOURCE "
+            "src/platform/reaper_file_list_dialog_macos.mm)",
             cmake,
         )
         self.assertIn(
