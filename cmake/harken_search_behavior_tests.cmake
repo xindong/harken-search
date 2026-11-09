@@ -8733,6 +8733,18 @@ foreach(_standalone_localized_target IN ITEMS
 endforeach()
 
 if(APPLE)
+    add_executable(TestMacExecutableDialog EXCLUDE_FROM_ALL
+        tests/test_macos_executable_dialog.mm
+        src/platform/executable_file_dialog_macos.mm
+        src/platform/text_encoding_std.cpp)
+    target_include_directories(TestMacExecutableDialog PRIVATE src)
+    target_compile_features(TestMacExecutableDialog PRIVATE cxx_std_17)
+    target_link_libraries(TestMacExecutableDialog PRIVATE "-framework AppKit")
+    add_test(NAME TestMacExecutableDialog COMMAND TestMacExecutableDialog
+        "${HARKEN_MAC_TEST_ROOT}/executable-dialog")
+    set_tests_properties(TestMacExecutableDialog PROPERTIES TIMEOUT 30)
+    aura_set_test_labels(TestMacExecutableDialog core platform)
+
     add_executable(TestMacProcessDiscovery EXCLUDE_FROM_ALL
         tests/test_macos_process_discovery.cpp
         src/platform/process_query_macos.cpp
