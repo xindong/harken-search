@@ -1,4 +1,5 @@
 #include "CubaseAdapter.h"
+#include "CubaseEnvironment.h"
 
 #include "AppState.h"
 #include "platform/executable_path.h"
@@ -51,16 +52,7 @@ bool CaseInsensitiveContains(const std::string& haystack, const std::string& nee
     return loweredHaystack.find(loweredNeedle) != std::string::npos;
 }
 
-std::string ReadEnvVar(const char* name) {
-    char* env = nullptr;
-    size_t len = 0;
-    if (_dupenv_s(&env, &len, name) != 0 || env == nullptr) {
-        return {};
-    }
-    std::string value(env);
-    std::free(env);
-    return value;
-}
+using Detail::ReadEnvVar;
 
 bool FileExistsUtf8(const std::string& path) {
     if (path.empty()) return false;

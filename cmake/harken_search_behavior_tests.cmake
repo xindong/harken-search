@@ -381,6 +381,23 @@ if(WIN32)
     aura_set_test_labels(TestPlatformEnvironmentVariable core)
 endif()
 
+if(APPLE)
+    add_executable(TestCubaseEnvironmentMac EXCLUDE_FROM_ALL
+        tests/test_cubase_environment_macos.cpp
+        src/platform/system_macos.mm
+        src/platform/text_encoding_std.cpp
+    )
+    target_include_directories(TestCubaseEnvironmentMac PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(TestCubaseEnvironmentMac PRIVATE cxx_std_17)
+    target_link_libraries(TestCubaseEnvironmentMac PRIVATE
+        "-framework Cocoa" "-framework IOKit"
+    )
+    add_test(NAME TestCubaseEnvironmentMac COMMAND TestCubaseEnvironmentMac)
+    aura_set_test_labels(TestCubaseEnvironmentMac core)
+endif()
+
 add_executable(TestAudioEngineEnvironmentPolicy EXCLUDE_FROM_ALL
     tests/test_audio_engine_environment_policy.cpp
 )

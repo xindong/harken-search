@@ -57,11 +57,11 @@ jobs:
           TestUpdateHttpTransport TestUpdateHttpTransportPlatform TestUpdatePersistencePort
           TestUpdateCheckHttpsTransport TestUpdaterBaseVolume TestBootstrapExitExplanation
           TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput TestSidebarMetadataPicker
-          TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults TestFixedBufferCopy TestSearchWorkspace
+          TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults TestFixedBufferCopy TestSearchWorkspace TestCubaseDirectInsertContract TestPlatformEnvironmentVariable
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
-          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^SidebarMetadataPicker$|^LibraryStatisticsWorker$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle|FixedBufferCopy|SearchWorkspace)$"
+          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^SidebarMetadataPicker$|^LibraryStatisticsWorker$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle|FixedBufferCopy|SearchWorkspace|CubaseDirectInsertContract|PlatformEnvironmentVariable)$"
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
