@@ -165,7 +165,9 @@ int main(int argc, char** argv) {
         }
         Check(reaped, "detached child is reaped");
     }
-    const fs::path stringMarker = root / fs::u8path(u8"string API result 中文.txt");
+    const fs::path stringMarker = root / fs::u8path(
+        std::string(u8"string API result 中文-") + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
     const std::string stringArguments =
         u8"--child-write-args \"two words\" \"中文\" \"" +
         stringMarker.u8string() + "\"";
