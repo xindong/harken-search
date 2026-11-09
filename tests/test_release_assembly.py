@@ -26,6 +26,17 @@ def test_missing_release_output_fails_closed(tmp_path: Path):
     assert result.returncode == 1
 
 
+def test_release_requires_app_local_msvc_runtime(tmp_path: Path):
+    issues = verify_release_assembly(tmp_path)
+    for filename in (
+        "msvcp140.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "vcomp140.dll",
+    ):
+        assert f"missing required release file: {filename}" in issues
+
+
 def test_complete_release_output_passes(tmp_path: Path):
     for relative in REQUIRED_FILES:
         target = tmp_path / relative

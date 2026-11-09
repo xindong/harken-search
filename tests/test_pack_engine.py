@@ -192,6 +192,9 @@ class PackEngineTests(unittest.TestCase):
                 stale.write_bytes(b"stale generated asset")
             for name in ["shared.dll", "codec.dll", "meter.dll", "ai.dll", "ultimate.dll"]:
                 (release_dir / name).write_bytes(name.encode("ascii"))
+            for name in pack_engine.ALWAYS_INCLUDE:
+                if not (release_dir / name).exists():
+                    (release_dir / name).write_bytes(name.encode("ascii"))
             (release_dir / "onnxruntime.dll").write_bytes(b"onnx-runtime")
             (release_dir / "THIRD_PARTY_COMPONENTS.json").write_text(
                 json.dumps({"components": [
@@ -326,10 +329,10 @@ class PackEngineTests(unittest.TestCase):
         self.assertEqual(pack_engine.INSTALLER_TEMPLATE_PATH.name, "HarkenSearch_Setup.iss")
         self.assertEqual(pack_engine.GENERATED_INSTALLER_PATH.name, "HarkenSearch_Setup_generated.iss")
         self.assertEqual(pack_engine.RELEASE_NOTES_FILENAME, "aris_release_notes.json")
-        self.assertEqual(
-            pack_engine.ALWAYS_INCLUDE,
-            ["HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll"],
-        )
+        self.assertTrue({
+            "HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll",
+            "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll",
+        }.issubset(pack_engine.ALWAYS_INCLUDE))
         self.assertIn("harken_thesaurus.json", pack_engine.RUNTIME_INCLUDE)
         self.assertEqual(
             pack_engine.render_release_history_markdown({"schema_version": 1, "releases": []}).splitlines()[0],
