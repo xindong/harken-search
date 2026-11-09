@@ -1,5 +1,13 @@
 # Mac 与 Windows 全功能差异盘点（CV-AB9FEDDA）
 
+## 2026-11-10 工作站入口复核计划
+
+本轮继续本卡的只读盘点。以最新 origin/qa/current 和包含该提交的 Mac 候选源码为两个明确版本，分别核对工作站能力判断、实际发送路径、底层 Mac 平台接口，以及独立 Wwise/WAAPI 传输面板；读取正式 Cuevi 卡状态，避免把已有候选当成 QA 已合入功能。只检查 /Applications 是否存在可供实测的宿主，不启动或修改用户的工作站项目。
+
+验证方法：保存 Git 提交包含关系、关键调用路径和本机宿主可用性回执；逐项标注“确认不可用”“源码具备但未实机验证”与“候选待验收”。更新本卡 QA 差异清单和正式 Cuevi 进度。本轮不改产品代码、不生成包，也不把静态核对说成 Mac 或 Windows 功能测试；真正的工作站发送应在后续独立卡用隔离音频、假宿主协议测试和真实宿主分别验证。
+
+实际复核：QA cfdd64eec1e1115612b3286c4c7591fed5c24c11 仍是 Mac Demo；Mac 候选 c320464fe2992e73d7e8dcfbe57a53fab5a6be40 包含该 QA 提交，工作树干净。候选的普通工作站能力和分发显式拒绝非 Windows，REAPER 专用分支依赖仍返回 Unsupported 的 Mac 命名管道。Wwise/WAAPI 面板源码和开关已在候选中，但本机 /Applications 两层未查到宿主，故只列未实测。独立进程启动、进程发现及程序选择卡仍待用户验收；即使它们入 QA，也不等于直送协议已完成。原始回执见 qa/CV-AB9FEDDA/audit-20261110/workstation-parity.json；本轮无新产品测试或构建。
+
 ## 2026-11-09 调性检测分类更正
 
 当前 qa/current 的共用 BetaFeatureFlags.h 设定 kExposeMusicModeSwitch=false；设置加载和正式模式切换均不开放音乐模式。调性分析菜单位于音乐模式内，因此 Windows 和 Mac 当前正式可见功能都没有该入口。下方较早盘点提到的 Mac KeyDetectorStub 是底层源码差异，不能当成当前已开放 Windows 功能的上线缺口。CV-7AB7E230 的隔离试验已撤回未提交，卡片按范围不成立取消归档；原始验证与局限记录在 qa/CV-7AB7E230/README.md。今后若 Windows 正式开放音乐模式，再根据当时 QA 重新立卡。
