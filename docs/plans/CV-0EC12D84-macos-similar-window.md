@@ -12,3 +12,9 @@
 ## 边界
 
 输入只来自 qa/CV-0EC12D84/data/ 的生成音频、数据库和设置；输出为该目录的日志、状态和截图。失败时保留原日志，按实际原因修正测试或本卡范围内产品行为。CLAP/ONNX 模型、深度相似听感、外部 DAW 和对外发布另行评估，不把无模型声学测试称为 Windows 模型版功能齐全。
+
+## 2026-11-09 实测后的下一步
+
+隔离界面已由 Info 按钮真实打开，六条合成音频分析成功；点击“查找相似音效”返回 ModelUnavailable，分析回执为 model_runtime_unavailable。现有 Mac CMake 未配置 HARKEN_ONNXRUNTIME_ROOT 或 HARKEN_SIMILARITY_MODEL_DIR，包内没有 CLAP 资源。固定“同类替代”会主动要求模型，不能以声学索引通过替代查询成功。
+
+先按 docs/similarity-model-build.md 的固定版本、哈希与授权核对 Mac Intel ONNX Runtime SDK 和三份 CLAP 资源来源，再在隔离构建中接入并验证库加载、索引、查找、结果试听；若模型无法取得或核验失败，保留当前明确错误，不改为静默声学降级。正式包和用户验收前还要取得同一最终提交的 Windows 构建与回归。

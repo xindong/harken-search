@@ -5,6 +5,7 @@
 #include "frontend/AppStateAuditionFrontendAdapter.h"
 #include "imgui.h"
 #include "SearchQuery.h"
+#include "SimilarityWorkflow.h"
 #include "UiTextBuffer.h"
 #include "ThemeInspector.h"
 #include "Utils.h"
@@ -381,10 +382,46 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
         for (const auto& [name, rect] : state.qaFilterUiRects)
             filterRects[name] = {rect.x, rect.y, rect.z, rect.w};
         Json scanButtonRects = Json::object();
+        Json similarZones = Json::object();
         for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
             if (zone.key == "scan.dialog.start" || zone.key == "scan.dialog.cancel")
                 scanButtonRects[zone.key] = {zone.minX, zone.minY, zone.maxX, zone.maxY};
+            if (zone.key == "info.similarSounds" || zone.key.rfind("similar.", 0) == 0)
+                similarZones[zone.key] = {zone.minX, zone.minY, zone.maxX, zone.maxY};
         }
+        Json similarRows = Json::array();
+        Json similarUi = {{"visible",state.panelSimilarSounds.visible},
+            {"floating",state.panelSimilarSounds.floating},
+            {"window_open",state.similarSoundsWindow.open},
+            {"selected_row",state.similarSoundsSelectedRow},
+            {"index_running",state.batchFeatureExtracting.load()},
+            {"index_processed",state.batchFeatureProgress.load()},
+            {"index_total",state.batchFeatureTotal.load()},
+            {"index_saved",state.batchFeatureSaved.load()},
+            {"zones",similarZones}};
+        const auto indexReport = state.batchFeatureResults.Snapshot();
+        similarUi["index_report"] = {{"available",indexReport.available},
+            {"running",indexReport.running},{"stopped",indexReport.stopped},
+            {"total",indexReport.total},{"succeeded",indexReport.succeeded},
+            {"failed",indexReport.Failed()},{"error",indexReport.error},
+            {"model_error",indexReport.modelError}};
+        if (state.similarSoundsWorkflow) {
+            const auto snapshot = state.similarSoundsWorkflow->Snapshot();
+            for (const auto& row : snapshot.rows) {
+                if (similarRows.size() >= 50) break;
+                similarRows.push_back({{"id",row.fileId},{"name",row.fileName},
+                    {"path",row.filePath},{"score",row.similarity}});
+            }
+            similarUi["status"] = static_cast<int>(snapshot.status);
+            similarUi["error"] = static_cast<int>(snapshot.error);
+            similarUi["reference_id"] = snapshot.reference.fileId;
+            similarUi["reference_name"] = snapshot.reference.displayName;
+            similarUi["indexed"] = snapshot.indexed;
+            similarUi["total_files"] = snapshot.totalFiles;
+            similarUi["stale_files"] = snapshot.staleFiles;
+            similarUi["batch_number"] = snapshot.batchNumber;
+        }
+        similarUi["rows"] = std::move(similarRows);
         const auto display = ImGui::GetIO().DisplaySize;
         Json textureProbe;
         if (request.capture && state.spectrogramTexture != 0 &&
@@ -473,6 +510,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"outbound_drag_pending",Platform::MacFileDrag::PendingFileCount()},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},
             {"window",{{"width",display.x},{"height",display.y}}},
+            {"similar_ui",similarUi},
             {"active_sidebar_section",state.settings.activeSidebarSection},
             {"qa_filter_ui_rects",filterRects},
             {"metadata_filters",{{"artist",state.artistFilterBuffer},
