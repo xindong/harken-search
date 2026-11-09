@@ -5851,6 +5851,7 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
+if(WIN32)
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
     src/ReaperBridgeClient.cpp
@@ -5888,6 +5889,7 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+endif()
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".
@@ -6811,6 +6813,19 @@ if(WIN32)
     target_compile_features(TestNativeFloatReaderWindowsContract PRIVATE cxx_std_17)
     add_test(NAME TestNativeFloatReaderWindowsContract COMMAND TestNativeFloatReaderWindowsContract)
     aura_set_test_labels(TestNativeFloatReaderWindowsContract audio)
+endif()
+
+if(APPLE)
+    add_executable(TestMacReaperLocalIpc EXCLUDE_FROM_ALL
+        tests/test_mac_reaper_local_ipc.cpp
+        src/ReaperBridgeClient.cpp
+        src/platform/named_pipe_macos.mm
+        src/platform/text_encoding_std.cpp
+    )
+    target_include_directories(TestMacReaperLocalIpc PRIVATE src)
+    target_compile_features(TestMacReaperLocalIpc PRIVATE cxx_std_17)
+    add_test(NAME TestMacReaperLocalIpc COMMAND TestMacReaperLocalIpc)
+    aura_set_test_labels(TestMacReaperLocalIpc daw)
 endif()
 
 if(WIN32)
