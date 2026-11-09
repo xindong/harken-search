@@ -79,6 +79,9 @@ class Stage3StyleGate(unittest.TestCase):
             "tools/stage3_human_style_audit.py",
             "tests/test_stage3_human_style_audit.py",
             "tests/test_stage3_style_gate.py",
+            # The merged-PR notifier intentionally calls its configured model;
+            # it is an integration script, not product-facing delivery copy.
+            "scripts/slack_notify.py",
             "docs/plans/refactor/stage-3-style-register.json",
             "docs/plans/refactor/stage-3-style-register.md",
             "docs/plans/refactor/stage-3-report.md",

@@ -8071,13 +8071,6 @@
       "ja": "他 %d 件のエラーは省略されました。"
     },
     {
-      "id": "Main_WaitForegroundImport",
-      "type": "ui",
-      "zh": "等待本次入库前台完成...",
-      "en": "Waiting for this foreground import to finish...",
-      "ja": "今回のフォアグラウンド取り込みの完了を待っています..."
-    },
-    {
       "id": "Main_CreateBtn",
       "type": "ui",
       "zh": "创建",
@@ -9730,46 +9723,11 @@
       "ja": "全ファイルのインデックス完了！"
     },
     {
-      "id": "Main_FoundFilesFmt",
-      "type": "ui",
-      "zh": "本次发现文件数：%d",
-      "en": "Files found this pass: %d",
-      "ja": "今回の発見ファイル数：%d"
-    },
-    {
-      "id": "Main_ScannedProcessedFmt",
-      "type": "ui",
-      "zh": "已扫描/已处理：%d / %d",
-      "en": "Scanned/processed: %d / %d",
-      "ja": "スキャン済/処理済：%d / %d"
-    },
-    {
-      "id": "Main_ImportedFmt",
-      "type": "ui",
-      "zh": "成功入库：%d",
-      "en": "Imported successfully: %d",
-      "ja": "正常取り込み：%d"
-    },
-    {
-      "id": "Main_SkippedDupInvalidFmt",
-      "type": "ui",
-      "zh": "跳过/重复/无效：%d",
-      "en": "Skipped/duplicate/invalid: %d",
-      "ja": "スキップ/重複/無効：%d"
-    },
-    {
       "id": "Main_FailedFmt",
       "type": "ui",
       "zh": "失败：%d",
       "en": "Failed: %d",
       "ja": "失敗：%d"
-    },
-    {
-      "id": "Main_MiniCacheProgressFmt",
-      "type": "ui",
-      "zh": "迷你波形缓存：%d / %d",
-      "en": "mini waveform cache: %d / %d",
-      "ja": "ミニ波形キャッシュ：%d / %d"
     },
     {
       "id": "Main_TotalElapsedFmt",

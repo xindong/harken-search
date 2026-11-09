@@ -1344,23 +1344,30 @@ void TestEmptyGlobalCoverPreloadDoesNotRequeryEveryFrameContract() {
 void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
     const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
     const auto sourcePath = root / "src" / "main.cpp";
+    const auto settingsMaintenancePath = root / "src" / "SettingsMaintenanceTools.inl";
     const auto refreshAdapterPath =
         root / "src" / "CoverWallRefreshStateAdapter.cpp";
     std::ifstream input(sourcePath);
+    std::ifstream settingsMaintenanceInput(settingsMaintenancePath);
     std::ifstream refreshAdapterInput(refreshAdapterPath);
     Check(input.good(),
           "BDD: Given cover-wall reset entrypoint contract validation runs, src/main.cpp can be opened");
+    Check(settingsMaintenanceInput.good(),
+          "BDD: Settings maintenance controls can be opened for cover rebuild validation");
     Check(refreshAdapterInput.good(),
           "BDD: Given cover-wall reset entrypoint contract validation runs, CoverWallRefreshStateAdapter.cpp can be opened");
-    if (!input.good() || !refreshAdapterInput.good()) {
+    if (!input.good() || !settingsMaintenanceInput.good() || !refreshAdapterInput.good()) {
         return;
     }
 
     std::ostringstream buffer;
+    std::ostringstream settingsMaintenanceBuffer;
     std::ostringstream refreshAdapterBuffer;
     buffer << input.rdbuf();
+    settingsMaintenanceBuffer << settingsMaintenanceInput.rdbuf();
     refreshAdapterBuffer << refreshAdapterInput.rdbuf();
     const std::string source = buffer.str();
+    const std::string settingsMaintenanceSource = settingsMaintenanceBuffer.str();
     const std::string refreshAdapterSource = refreshAdapterBuffer.str();
     const std::string maintenanceToolsSource = ReadTextFile(
         root / "src" / "SettingsMaintenanceTools.inl");

@@ -87,6 +87,7 @@ def case_env(tmp_path, monkeypatch):
             assert payload == {'cmd': 'info_edit_input', 'action': 'exit'}
             if state.exit_error:
                 raise RuntimeError('exit command failed')
+            return None
 
     class Smoke:
         last = {}

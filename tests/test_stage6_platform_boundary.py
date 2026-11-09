@@ -453,7 +453,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "TestDatabaseFeatures",
             "TestPlaylistPerformanceContract",
             "TestPerfOptimizations",
-            "TestSimilarityQueryService",
+            "TestSimilarityQueryV2",
             "TestPreviewPlaylistDatabase",
         }
         behavior = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(
@@ -2619,8 +2619,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertEqual(1, main.count(qualified_call))
         button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-        tooltip = main.index('} else if(editor.action=="custom-colors") {', button)
-        body = main[button:tooltip]
+        next_action = main.index('} else if(editor.action=="custom-colors")', button)
+        body = main[button:next_action]
         self.assertNotIn("OPENFILENAMEW", body)
         self.assertNotIn("GetOpenFileNameW", body)
         self.assertIn(
@@ -9323,24 +9323,25 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("files::Rename(backup_, root_, &cleanupError)", replacement)
         self.assertNotIn("fs::remove_all", replacement)
 
-    def test_main_settings_export_uses_saved_settings_as_source(self) -> None:
+    def test_main_settings_export_source_probe_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "SettingsActions.inl").read_text(encoding="utf-8")
-        body = source.split('} else if(editor.action=="export") {', 1)[1].split(
-            '} else if(editor.action=="import") {', 1
+        body = source.split('} else if(editor.action=="export")', 1)[1].split(
+            '} else if(editor.action=="import")', 1
         )[0]
 
         self.assertIn("TrySaveAppSettings(state)", body)
         self.assertIn("Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)", body)
+        self.assertLess(body.index("TrySaveAppSettings(state)"), body.index("Platform::FileSystem::CopyFile"))
         self.assertNotIn("fs::exists", body)
 
     def test_main_settings_import_export_copy_uses_filesystem_pal(self) -> None:
         header = (ROOT / "src" / "platform" / "filesystem.h").read_text(encoding="utf-8")
         source = (ROOT / "src" / "SettingsActions.inl").read_text(encoding="utf-8")
-        export_body = source.split('} else if(editor.action=="export") {', 1)[1].split(
-            '} else if(editor.action=="import") {', 1
+        export_body = source.split('} else if(editor.action=="export")', 1)[1].split(
+            '} else if(editor.action=="import")', 1
         )[0]
-        import_body = source.split('} else if(editor.action=="import") {', 1)[1].split(
-            '} else if(editor.action=="custom-colors") {', 1
+        import_body = source.split('} else if(editor.action=="import")', 1)[1].split(
+            '} else if(editor.action=="custom-colors")', 1
         )[0]
 
         self.assertIn("bool CopyFile(", header)

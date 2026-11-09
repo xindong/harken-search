@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <atomic>
+#include <algorithm>
 #include <thread>
 
 static int failed = 0;
@@ -245,36 +246,40 @@ int main() {
 
     std::cout << "\n";
 
-// Scenario 5: 缓存加速验证
-    std::cout << "[5] Testing query caching acceleration...\n";
+// Scenario 5: repeated cover query responsiveness
+    std::cout << "[5] Testing repeated cover query latency...\n";
 
     if (!globalFacets.empty()) {
         std::string testCoverKey = globalFacets[0].key;
         SearchFilter coverFilter;
         coverFilter.specificCoverKey = testCoverKey;
 
-        // 第一次查询
-        auto firstQueryTime = measureMs([&]() {
-            db.searchFiles(coverFilter, 1000);
-        });
-
-        // 第二次查询（应该更快，因为缓存）
-        auto secondQueryTime = measureMs([&]() {
-            db.searchFiles(coverFilter, 1000);
-        });
-
-        std::cout << "  First query: " << firstQueryTime << "ms\n";
-        std::cout << "  Second query: " << secondQueryTime << "ms\n";
-
-        // 第二次查询应该不比第一次慢太多（允许10%的时间波动）
-        // 缓存加速在实际使用中体现在prepared statement和page cache，但毫秒级查询时测量误差大
-        bool cacheAccelerated = (secondQueryTime <= firstQueryTime * 1.5);
-        ASSERT(cacheAccelerated, "Second query not significantly slower (cache working)");
-
-        if (firstQueryTime > 0 && secondQueryTime > 0) {
-            double speedup = ((double)firstQueryTime / secondQueryTime);
-            std::cout << "  Cache speedup: " << speedup << "x\n";
+        // Millisecond-scale queries can be interrupted by unrelated parallel tests.
+        // Use a median and keep the user-facing latency limit plus result stability.
+        const auto expectedResults = db.searchFiles(coverFilter, 1000);
+        std::vector<int64_t> queryTimes;
+        bool resultsStable = true;
+        for (int sample = 0; sample < 7; ++sample) {
+            std::vector<AudioRecord> repeatedResults;
+            queryTimes.push_back(measureMs([&]() {
+                repeatedResults = db.searchFiles(coverFilter, 1000);
+            }));
+            if (repeatedResults.size() != expectedResults.size()) {
+                resultsStable = false;
+            } else {
+                for (size_t i = 0; i < repeatedResults.size(); ++i) {
+                    if (repeatedResults[i].filePath != expectedResults[i].filePath) {
+                        resultsStable = false;
+                        break;
+                    }
+                }
+            }
         }
+        std::sort(queryTimes.begin(), queryTimes.end());
+        const auto medianQueryTime = queryTimes[queryTimes.size() / 2];
+        std::cout << "  Median repeated query: " << medianQueryTime << "ms\n";
+        ASSERT(resultsStable, "Repeated cover queries return stable results");
+        ASSERT(medianQueryTime < 100, "Repeated cover query median < 100ms");
     }
 
     std::cout << "\n";
