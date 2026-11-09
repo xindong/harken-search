@@ -96,7 +96,13 @@ static std::string extractSourceSlice(const std::string& source,
 }
 
 int main() {
+#if defined(__APPLE__) && ARIS_PREVIEW_ISOLATION
+    // The preview build rejects DB paths outside its dedicated data root.
+    fs::path tmpDir = fs::path(ARIS_PREVIEW_ISOLATION_ROOT_UTF8) /
+                      "tests/search_semantic_matrix";
+#else
     fs::path tmpDir = fs::temp_directory_path() / "auro_search_semantic_matrix";
+#endif
     std::error_code ec;
     fs::remove_all(tmpDir, ec);
     fs::create_directories(tmpDir, ec);

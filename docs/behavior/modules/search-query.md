@@ -8,7 +8,7 @@
 **Priority:** P0
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -21,6 +21,8 @@
 **用户承诺：** 搜索框里的每个词、引号、排除项和筛选 chip 都只表达用户输入的那一层意思，不会在解析和显示之间被悄悄改写。
 **核心流程：** 用户输入 `war gun -explosion tag:impact` 这类混合查询，Aris 生成可移除 chips；用户移除某个 chip 后，其余关键词、排除项和字段筛选保持原样。
 **非目标：** 这里不决定数据库何时返回，也不裁决异步结果的新旧，只保证“输入语义 -> chip -> 执行参数”的含义一致。
+
+词库设置中的“合并”按钮在 Mac 上选择 JSON 后沿用已有规则追加和保存；取消选择时不修改现有词库。它不改变查询解析或 JSON 格式。
 
 ## BDD Scenarios
 
@@ -47,6 +49,10 @@
 
 ### Failure / Recovery
 
+- Given 用户在 Mac 设置页打开词库合并文件选择器
+- When 用户取消选择
+- Then 现有词库保持不变；若选择可读取的 JSON，则追加并保存解析出的规则
+
 - Given 已满足以下前置条件：the query is malformed or operator-only
 - When 执行以下操作：Aris parses it
 - Then 应得到以下结果：it falls back to safe query behavior without SQL string injection or UI chip corruption
@@ -65,6 +71,7 @@
 | `BuildSearchQueryChips()` | API | Graphify | Produces removable visible query chips |
 | `RemoveSearchQueryChipFromText()` | API | source scan | Removes only the selected chip source token |
 | Search box / active chips | UI | product semantics | Displays and edits query intent without semantic drift |
+| `OpenThesaurusJsonFileDialogUtf8()` | API | src/platform/thesaurus_json_dialog_macos.mm | Selects a file and reuses the shared merge path; empty selection is a no-op |
 | `SearchQueryResult::*` | API | source scan | Carries FTS, trigram, path, tag, color, and exclude lanes |
 
 ## Graphify Binding
@@ -83,10 +90,13 @@
 | TEST-SEARCH-QUERY-TRIGRAM | unit | `TestSearchQueryTrigram` | trigram query behavior passes | active |
 | TEST-SEARCH-RECALL | integration | `TestSearchRecall` | recall fixtures pass | active |
 | TEST-THESAURUS-BIDIRECTIONAL | unit | `TestThesaurusBidirectional` | synonym expansion and exactMode suppression pass | active |
+| TEST-THESAURUS-DIALOG | contract / runtime | `tests/test_thesaurus_json_dialog_boundary.py` and isolated Mac chooser probe | Mac UI reaches the native chooser; cancel returns empty, selected path is UTF-8 | active |
 | DIAG-SEARCH-LANE | diagnostics | `SearchLane` | lane event observed for runtime query families | missing automatic assertion |
+| TEST-MAC-SEARCH-COMPOSITION | real app | tools/macos_search_composition_smoke.py in an isolated Mac build | Phrase, exclusion, path, tag, folder, cover, Chinese character and pinyin searches match rows; reopening retains the library and tag | active |
 
 ## Missing Coverage
 
+- TestSearchSemanticMatrix runs on macOS with its database under the preview isolation root (CV-F797C36F); the real isolated app remains the proof for rendered filter composition.
 - Missing proof: automatic `SearchLane` assertion for every major query family; this matches `DIAG-SEARCH-LANE` in TDD / QA Proof.
 - Suspected stale proof: any test that only checks parser output without DB execution pairing.
 - Human-only verification: visual chip edit ergonomics.

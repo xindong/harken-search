@@ -39,6 +39,7 @@
 #include "platform/audio_playback.h"
 #include "platform/audio_file.h"
 #include "WaveformRegionEditor.h"
+#include "platform/filesystem.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -4837,6 +4838,12 @@ bool AudioEngine::exportRegion(const std::string& outputPath,
         m_lastExportError = L(Ex_NoSource);
         return failExportRegion("not_loaded");
     }
+    // The save dialog may return the selected source path. Reject aliases too,
+    // before opening the WAV encoder, which would otherwise truncate the source.
+    if (Platform::FileSystem::Equivalent(m_fileInfo.filePath, outputPath)) {
+        m_lastExportError = L(Ex_OutputEqualsSource);
+        return failExportRegion("source_equals_output");
+    }
 
     // Defensive: norms are 0..1 from UI; reject non-finite / negative and cap above 1 for non-UI callers.
     if (!std::isfinite(regionFadeInNorm) || regionFadeInNorm < 0.0f) regionFadeInNorm = 0.0f;
@@ -5539,6 +5546,13 @@ bool AudioEngine::isPaused() const {
 uint32_t AudioEngine::getEngineSampleRate() const {
     return m_engine ? Platform::AudioPlayback::QueryEngineSampleRate(m_engine->Borrow()) : 48000;
 }
+
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+Platform::AudioPlayback::OutputProbeSnapshot AudioEngine::getQaOutputProbe() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_engine ? m_engine->QueryOutputProbe() : Platform::AudioPlayback::OutputProbeSnapshot{};
+}
+#endif
 
 bool AudioEngine::isLoaded() const {
     return m_isLoaded;

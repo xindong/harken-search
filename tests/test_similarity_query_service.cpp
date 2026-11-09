@@ -203,8 +203,13 @@ void Run(const fs::path& root) {
                   refreshed.rows[0].fileId == d.id,
               "feature-count changes refresh ranking cache");
 
+#ifdef _WIN32
         const AudioRecord referenceAlias = AddRecord(first, "a.wav", 1.0f);
         const AudioRecord candidateAlias = AddRecord(first, "b.wav", 1.2f);
+#else
+        const AudioRecord referenceAlias = AddRecord(first, "./A.wav", 1.0f);
+        const AudioRecord candidateAlias = AddRecord(first, "temp/../B.wav", 1.2f);
+#endif
         const AudioRecord sameNameOtherDirectory =
             AddRecord(first, "Other/B.wav", 1.25f);
         Check(first.saveAudioFeaturesByPath(referenceAlias.filePath, Feature(0.0f)),
