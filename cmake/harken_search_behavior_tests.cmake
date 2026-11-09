@@ -8651,7 +8651,9 @@ endforeach()
 if(APPLE)
     add_executable(TestMacProcessLaunch EXCLUDE_FROM_ALL
         tests/test_process_launch_macos.cpp
-        src/platform/process_launch_macos.cpp)
+        src/platform/process_launch_macos.cpp
+        src/platform/process_launch_string_macos.cpp
+        src/platform/text_encoding_std.cpp)
     target_include_directories(TestMacProcessLaunch PRIVATE src)
     target_compile_features(TestMacProcessLaunch PRIVATE cxx_std_17)
     add_test(NAME TestMacProcessLaunch COMMAND TestMacProcessLaunch
