@@ -5,15 +5,18 @@ ROOT = Path(__file__).resolve().parents[1]
 HEADER_PATH = ROOT / "src/platform/executable_file_dialog.h"
 WIN32_PATH = ROOT / "src/platform/executable_file_dialog_win32.cpp"
 PORTABLE_PATH = ROOT / "src/platform/executable_file_dialog_std.cpp"
+MACOS_PATH = ROOT / "src/platform/executable_file_dialog_macos.mm"
 
 assert HEADER_PATH.is_file()
 assert WIN32_PATH.is_file()
 assert PORTABLE_PATH.is_file()
+assert MACOS_PATH.is_file()
 
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
 HEADER = HEADER_PATH.read_text(encoding="utf-8")
 WIN32 = WIN32_PATH.read_text(encoding="utf-8")
 PORTABLE = PORTABLE_PATH.read_text(encoding="utf-8")
+MACOS = MACOS_PATH.read_text(encoding="utf-8")
 CMAKE = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 BEHAVIOR = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
 RULES = (ROOT / "docs/architecture/stage-4-dependency-rules.json").read_text(encoding="utf-8")
@@ -32,6 +35,7 @@ for native_token in ("windows.h", "commdlg.h", "HWND", "OPENFILENAMEW"):
 for forbidden_include in ('#include "main.cpp"', '#include "WindowsMain.h"'):
     assert forbidden_include not in WIN32
     assert forbidden_include not in PORTABLE
+    assert forbidden_include not in MACOS
 
 for required in (
     "OPENFILENAMEW ofn = {};",
@@ -55,6 +59,13 @@ for required in (
 
 assert 'return "";' in PORTABLE
 assert "OpenExecutableFileDialogUtf8" in PORTABLE
+for required in (
+    "NSOpenPanel* panel = [NSOpenPanel openPanel];",
+    "if (![NSThread isMainThread]) return {};",
+    "panel.treatsFilePackagesAsDirectories = NO;",
+    "Internal::ResolveExecutableSelectionUtf8(selectedPath)",
+):
+    assert required in MACOS
 
 qualified_call = "Platform::ExecutableDialogs::OpenExecutableFileDialogUtf8("
 assert MAIN.count(qualified_call) == 1
@@ -66,7 +77,7 @@ title = MAIN.index('std::wstring title = L"Select "', browse)
 call = MAIN.index(qualified_call, title)
 empty_check = MAIN.index("if (!picked.empty())", call)
 assign = MAIN.index("selected.exePath = picked;", empty_check)
-buffer_copy = MAIN.index("strncpy_s(s_dawExePathBuf", assign)
+buffer_copy = MAIN.index("CopyUiText(s_dawExePathBuf", assign)
 clear = MAIN.index('aura::ui::ActionButton(L(Main_DawClearBtn)', buffer_copy)
 assert browse < title < call < empty_check < assign < buffer_copy < clear
 assert "Utf8ToWide(selected.exePath)" in MAIN[title:empty_check]
@@ -74,6 +85,7 @@ assert "L(Daw_PickExeHint)" in MAIN
 
 assert "AURO_EXECUTABLE_FILE_DIALOG_SOURCE" in CMAKE
 assert CMAKE.count("${AURO_EXECUTABLE_FILE_DIALOG_SOURCE}") == 1
+assert "set(AURO_EXECUTABLE_FILE_DIALOG_SOURCE src/platform/executable_file_dialog_macos.mm)" in CMAKE
 assert "NAME TestExecutableFileDialogBoundary" in BEHAVIOR
 assert "tests/test_executable_file_dialog_boundary.py" in BEHAVIOR
 assert '"src/platform/executable_file_dialog.h"' in RULES
