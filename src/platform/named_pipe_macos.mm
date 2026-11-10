@@ -1,6 +1,8 @@
 #ifdef __APPLE__
 
 #include "named_pipe.h"
+#include "reaper_bridge_endpoint_macos.h"
+#include "ReaperBridgeProtocol.h"
 #include "text_encoding.h"
 
 #include <sys/socket.h>
@@ -51,8 +53,10 @@ bool WaitFor(int fd, short events, Clock::time_point deadline,
 }
 
 bool ExplicitSocketPath(std::wstring_view name, std::string& path) {
-    // The Windows default pipe name deliberately stays Unsupported until the
-    // separately tested Mac REAPER extension and endpoint selection exist.
+    if (name == HarkenSearch::ReaperBridge::kDefaultPipeName) {
+        path = HarkenSearch::ReaperBridge::MacSelectedSocketPath();
+        return !path.empty();
+    }
     if (name.empty() || name.front() != L'/') return false;
     path = Platform::TextEncoding::WideToUtf8Strict(name);
     if (path.empty() || path.find('\n') != std::string::npos ||

@@ -193,7 +193,8 @@ int main() {
           "handshake becomes ready only after host callback registration");
 
     auto send = std::async(std::launch::async, [&] {
-        return Bridge::SendFiles({first.u8string(), second.u8string()}, {}, socketName, 5000);
+        return Bridge::SendFiles({first.u8string(), second.u8string()}, {},
+                                 Bridge::kDefaultPipeName, 5000);
     });
     const bool completed = PumpUntil(send);
     Check(completed, "two-file batch responds while host timer runs");

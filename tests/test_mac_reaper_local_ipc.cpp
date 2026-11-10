@@ -1,6 +1,7 @@
 #ifdef __APPLE__
 
 #include "ReaperBridgeClient.h"
+#include "platform/reaper_bridge_endpoint_macos.h"
 #include "platform/named_pipe.h"
 
 #include <sys/socket.h>
@@ -98,6 +99,23 @@ int main() {
     if (!uniqueDir) return 2;
     const fs::path testDir(uniqueDir);
 
+    const std::string privateSocket =
+        HarkenSearch::ReaperBridge::MacSocketPathInPrivateDirectory(testDir.string());
+    Check(privateSocket == (testDir / "harken-reaper.sock").string(),
+          "private QA directory produces a stable short socket path");
+    Check(!HarkenSearch::ReaperBridge::MacDefaultSocketPath().empty(),
+          "system user temp directory provides a read-only default endpoint");
+    Check(HarkenSearch::ReaperBridge::MacSocketPathInPrivateDirectory("/tmp").empty(),
+          "world-writable directory cannot host the default endpoint");
+    const fs::path linkDir = testDir / "linked-parent";
+    symlink(testDir.c_str(), linkDir.c_str());
+    Check(HarkenSearch::ReaperBridge::MacSocketPathInPrivateDirectory(linkDir.string()).empty(),
+          "symlink parent is rejected");
+    const fs::path longDir = testDir / std::string(90, 'x');
+    fs::create_directory(longDir);
+    Check(HarkenSearch::ReaperBridge::MacSocketPathInPrivateDirectory(longDir.string()).empty(),
+          "overlong Unix socket endpoint is rejected");
+
     {
         const std::string path = (testDir / "hello.sock").string();
         FakeHost host(path, HarkenSearch::ReaperBridge::BuildHelloResponse(41));
@@ -119,10 +137,18 @@ int main() {
                   decoded == files, "UTF-8 batch payload reaches isolated host intact");
     }
     {
-        const auto result = Platform::NamedPipe::ExchangeMessage(
-            HarkenSearch::ReaperBridge::kDefaultPipeName, "HELLO\n", 50);
-        Check(result.status == Platform::NamedPipe::MessageExchangeStatus::Unsupported,
-              "Windows default pipe name remains unavailable on Mac");
+        const std::string path = (testDir / "default-route.sock").string();
+        FakeHost host(path, HarkenSearch::ReaperBridge::BuildHelloResponse(41));
+        setenv("HARKEN_REAPER_BRIDGE_TEST_SOCKET", path.c_str(), 1);
+        Check(HarkenSearch::ReaperBridge::MacSelectedSocketPath() == path,
+              "explicit QA override selects only its isolated socket");
+        const auto result = HarkenSearch::ReaperBridge::ProbeHandshake();
+        Check(result.code == HarkenSearch::ReaperBridge::HandshakeCode::Ready,
+              "default client call reaches isolated Mac host endpoint");
+        setenv("HARKEN_REAPER_BRIDGE_TEST_SOCKET", "", 1);
+        Check(HarkenSearch::ReaperBridge::MacSelectedSocketPath().empty(),
+              "empty QA override fails closed instead of reaching live user socket");
+        unsetenv("HARKEN_REAPER_BRIDGE_TEST_SOCKET");
     }
     {
         const std::string path = (testDir / "missing.sock").string();

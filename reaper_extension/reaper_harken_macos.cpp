@@ -1,4 +1,5 @@
 #include "reaper_plugin_macos.h"
+#include "platform/reaper_bridge_endpoint_macos.h"
 #include "ReaperBridgeProtocol.h"
 
 #include <sys/socket.h>
@@ -32,7 +33,6 @@ struct MediaItem;
 namespace {
 namespace Protocol = HarkenSearch::ReaperBridge;
 
-constexpr char kQaSocketVariable[] = "HARKEN_REAPER_BRIDGE_TEST_SOCKET";
 struct HostApi {
     int (*insertMedia)(const char*, int) = nullptr;
     double (*getCursorPosition)() = nullptr;
@@ -475,8 +475,8 @@ int ReaperPluginEntry(void*, reaper_plugin_info_t* host) {
         return 0;
     }
     g_timerRegistered = true;
-    // The default product endpoint remains disabled in this isolated slice.
-    if (!StartServer(std::getenv(kQaSocketVariable))) {
+    const std::string endpoint = Protocol::MacSelectedSocketPath();
+    if (!StartServer(endpoint.c_str())) {
         StopServer();
         return 0;
     }

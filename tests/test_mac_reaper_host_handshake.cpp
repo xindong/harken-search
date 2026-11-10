@@ -88,8 +88,8 @@ int main() {
     reaper_plugin_info_t host{kReaperPluginVersion, nullptr,
                               RegisterFake, GetFuncFake};
 
-    unsetenv("HARKEN_REAPER_BRIDGE_TEST_SOCKET");
-    check(entry(nullptr, &host) == 0, "extension refuses missing QA endpoint");
+    setenv("HARKEN_REAPER_BRIDGE_TEST_SOCKET", "", 1);
+    check(entry(nullptr, &host) == 0, "extension refuses empty QA endpoint");
     setenv("HARKEN_REAPER_BRIDGE_TEST_SOCKET", socketText.c_str(), 1);
     reaper_plugin_info_t incompatible = host;
     incompatible.caller_version = 0;
@@ -113,9 +113,9 @@ int main() {
               (endpoint.st_mode & 0077) == 0,
           "endpoint is a private socket owned by this user");
     if (loaded) {
-        const auto handshake = Bridge::ProbeHandshake(socketName, 1200);
+        const auto handshake = Bridge::ProbeHandshake(Bridge::kDefaultPipeName, 1200);
         check(handshake.code == Bridge::HandshakeCode::Ready,
-              "existing Mac client sees ready only after timer registration");
+              "default Mac client reaches the extension after timer registration");
         const auto ping = Bridge::ExchangeMessage("PING\n", socketName, 1200);
         check(ping.ok &&
                   Bridge::ParseHelloResponse(ping.response).code ==

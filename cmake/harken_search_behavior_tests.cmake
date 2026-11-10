@@ -6903,6 +6903,7 @@ if(APPLE)
         tests/test_mac_reaper_local_ipc.cpp
         src/ReaperBridgeClient.cpp
         src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
         src/platform/text_encoding_std.cpp
     )
     target_include_directories(TestMacReaperLocalIpc PRIVATE src)
@@ -6914,6 +6915,7 @@ if(APPLE)
         tests/test_mac_reaper_host_handshake.cpp
         src/ReaperBridgeClient.cpp
         src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
         src/platform/text_encoding_std.cpp
     )
     target_include_directories(TestMacReaperHostHandshake PRIVATE
@@ -6930,6 +6932,7 @@ if(APPLE)
         tests/test_mac_reaper_batch_insert.cpp
         src/ReaperBridgeClient.cpp
         src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
         src/platform/text_encoding_std.cpp
     )
     target_include_directories(TestMacReaperBatchInsert PRIVATE

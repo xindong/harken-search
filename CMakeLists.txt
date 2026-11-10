@@ -782,6 +782,7 @@ elseif(APPLE)
         ${AURO_THREAD_ID_SOURCE}
         src/platform/text_encoding_ascii.cpp
         src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
         src/platform/text_encoding_std.cpp
         src/platform/executable_path_macos.mm
         src/platform/pe_inspection_macos.mm
