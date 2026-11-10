@@ -3,6 +3,22 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+if(APPLE)
+    # Isolated host-side handshake candidate. It is not installed or copied
+    # into the product bundle until REAPER insertion is implemented and tested.
+    add_library(reaper_harken MODULE reaper_harken_macos.cpp)
+    target_compile_features(reaper_harken PRIVATE cxx_std_17)
+    target_include_directories(reaper_harken PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(reaper_harken PRIVATE Threads::Threads)
+    set_target_properties(reaper_harken PROPERTIES
+        PREFIX ""
+        SUFFIX ".dylib"
+        OUTPUT_NAME "reaper_harken"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/reaper-plugin-qa"
+    )
+    return()
+endif()
+
 add_library(reaper_harken SHARED
     reaper_harken.cpp
     reaper_harken.rc

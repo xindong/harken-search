@@ -11,6 +11,24 @@
 // 从 main.cpp 提取的 Windows 平台相关代码
 
 #include "imgui.h"
+#include "UiFonts.h"
+#include "AppMainServices.h"
+
+void MarkUiLeftClickNow();
+bool IsRapidUiClickBurstActive();
+void SetCoverWallPriorityMode(bool enabled);
+bool IsCoverWallPriorityMode();
+void AppendDiagLogLine(const wchar_t* line);
+void AppendDiagLogF(const wchar_t* fmt, ...);
+void SetDiagnosticFileEnabled(bool enabled);
+std::uint64_t GetDiagnosticFileSizeBytes();
+std::uint64_t GetDiagnosticFileMaxBytes();
+bool ClearDiagnosticFile();
+std::string BuildSysInfo();
+extern int g_suppressImGuiDragTooltipFrames;
+#ifndef _WIN32
+std::string OpenFolderDialog(void* ownerWindow);
+#endif
 
 #ifdef _WIN32
 #include <cstdint>
@@ -113,35 +131,6 @@ UINT HotkeyModsFromKeyBinding(const KeyBinding& kb);
 bool IsGlobalHotkeyPressedOnce(const KeyBinding& kb);
 void ApplyShowManagerGlobalHotkey(const AppSettings& settings);
 
-// Font Loading
-
-void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize);
-ImFont* GetUIFontRegular();
-ImFont* GetUIFontEmphasis();
-ImFont* GetUIFontMono();
-ImFont* GetUIListFont();
-ImFont* GetUIMeterFont();  // F-018: 10px ASCII-only, for narrow loudness meter bars
-
-// Reading-surface scope. While alive, GetUIFont*() return the reading-sized
-// faces, and the reading-regular face is pushed so plain text scales too.
-// Defaults are chrome; wrap only reading surfaces (tree, list, breadcrumb,
-// Info panel, sidebar filters, settings, popups, menu dropdowns). A surface
-// that is never wrapped renders at the pinned chrome size — there is no
-// assert, so adding a new reading surface means remembering to wrap it.
-struct ReadingTextScope {
-    bool prev;
-    ReadingTextScope();
-    ~ReadingTextScope();
-};
-
-// Explicitly forces chrome faces inside an outer reading scope (e.g. an icon
-// button embedded in a reading surface).
-struct ChromeTextScope {
-    bool prev;
-    ChromeTextScope();
-    ~ChromeTextScope();
-};
-
 // OpenGL Context
 
 bool CreateOpenGLContext(HWND hwnd, HDC* hdc, HGLRC* hglrc);
@@ -164,7 +153,6 @@ bool ClearDiagnosticFile();
 // Settings
 void LoadAppSettings(AppState& state);
 void SaveAppSettings(const AppState& state);
-bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride = std::nullopt);
 // 仅加载音频相关键，供引擎初始化前调用（缓冲周期、输出设备索引）
 void LoadAudioSettingsEarly(AppState& state);
 void PushRecentDbPath(AppState& state, const std::string& pathUtf8);
@@ -192,7 +180,6 @@ void StartCoverRebuild(AppState& state);
 // 轮询并应用一次异步搜索结果；返回 true 表示消费了一条结果（供加载页等待首包）
 bool PumpOneAsyncSearchResult(AppState& state);
 void PlayRandomFile(AppState& state);
-void LoadAllFilesFiltered(AppState& state, int limit = 1000);
 void FilterResultsByFileType(AppState& state);
 
 // Splash pre-upload: batch upload waveform textures to GPU (bypasses per-frame budget)
