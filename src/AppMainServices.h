@@ -5,6 +5,7 @@
 // before database/audio teardown. Settings paths are owned by the native host.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 struct AppState;
@@ -15,7 +16,7 @@ class AudioEngine;
 // Settings
 void LoadAppSettings(AppState& state);
 void SaveAppSettings(const AppState& state);
-bool TrySaveAppSettings(const AppState& state);
+bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride = std::nullopt);
 // 仅加载音频相关键，供引擎初始化前调用（缓冲周期、输出设备索引）
 void LoadAudioSettingsEarly(AppState& state);
 void PushRecentDbPath(AppState& state, const std::string& pathUtf8);

@@ -11,6 +11,29 @@
 // 从 main.cpp 提取的 Windows 平台相关代码
 
 #include "imgui.h"
+#include "UiFonts.h"
+#include "AppMainServices.h"
+#include <cstdint>
+#include <string>
+
+// Cross-platform declarations consumed by the shared application modules.
+// The implementation is supplied by the platform entry/diagnostics units;
+// these declarations must remain visible on macOS as well as Windows.
+void MarkUiLeftClickNow();
+bool IsRapidUiClickBurstActive();
+void SetCoverWallPriorityMode(bool enabled);
+bool IsCoverWallPriorityMode();
+void AppendDiagLogLine(const wchar_t* line);
+void AppendDiagLogF(const wchar_t* fmt, ...);
+void SetDiagnosticFileEnabled(bool enabled);
+std::uint64_t GetDiagnosticFileSizeBytes();
+std::uint64_t GetDiagnosticFileMaxBytes();
+bool ClearDiagnosticFile();
+std::string BuildSysInfo();
+extern int g_suppressImGuiDragTooltipFrames;
+#ifndef _WIN32
+std::string OpenFolderDialog(void* ownerWindow);
+#endif
 
 #ifdef _WIN32
 #include <cstdint>
