@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HEADER_PATH = ROOT / "src/platform/thesaurus_json_dialog.h"
 WIN32_PATH = ROOT / "src/platform/thesaurus_json_dialog_win32.cpp"
 PORTABLE_PATH = ROOT / "src/platform/thesaurus_json_dialog_std.cpp"
+MACOS_PATH = ROOT / "src/platform/thesaurus_json_dialog_macos.mm"
 
 assert HEADER_PATH.is_file()
 assert WIN32_PATH.is_file()
@@ -57,9 +58,15 @@ for forbidden_policy in (
 ):
     assert forbidden_policy not in WIN32
 assert 'return "";' in PORTABLE
+assert MACOS_PATH.is_file(), "macOS needs a native JSON chooser"
+MACOS = MACOS_PATH.read_text(encoding="utf-8")
+assert "NSOpenPanel" in MACOS
+assert "runModal" in MACOS
+assert "NSModalResponseOK" in MACOS
+assert "src/platform/thesaurus_json_dialog_macos.mm" in CMAKE
 
 qualified_call = (
-    "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
+    "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(MainUiOwnerWindow())"
 )
 assert '#include "SettingsDialog.inl"' in MAIN
 assert '#include "SettingsActions.inl"' in SETTINGS_DIALOG
@@ -71,7 +78,7 @@ merge_body = SETTINGS_THESAURUS[merge_button:reset_button]
 assert "OPENFILENAMEW" not in merge_body
 assert "GetOpenFileNameW" not in merge_body
 
-guard = SETTINGS_THESAURUS.index("#ifdef _WIN32", merge_button, reset_button)
+guard = SETTINGS_THESAURUS.index("#if defined(_WIN32) || defined(__APPLE__)", merge_button, reset_button)
 call = SETTINGS_THESAURUS.index(qualified_call, guard, reset_button)
 empty_check = SETTINGS_THESAURUS.index("if (!importPath.empty())", call, reset_button)
 json_decl = SETTINGS_THESAURUS.index("std::string json;", empty_check, reset_button)
