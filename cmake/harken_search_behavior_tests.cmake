@@ -6898,6 +6898,54 @@ if(WIN32)
     aura_set_test_labels(TestNativeFloatReaderWindowsContract audio)
 endif()
 
+if(APPLE)
+    add_executable(TestMacReaperLocalIpc EXCLUDE_FROM_ALL
+        tests/test_mac_reaper_local_ipc.cpp
+        src/ReaperBridgeClient.cpp
+        src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
+        src/platform/text_encoding_std.cpp
+    )
+    target_include_directories(TestMacReaperLocalIpc PRIVATE src)
+    target_compile_features(TestMacReaperLocalIpc PRIVATE cxx_std_17)
+    add_test(NAME TestMacReaperLocalIpc COMMAND TestMacReaperLocalIpc)
+    aura_set_test_labels(TestMacReaperLocalIpc daw)
+
+    add_executable(TestMacReaperHostHandshake EXCLUDE_FROM_ALL
+        tests/test_mac_reaper_host_handshake.cpp
+        src/ReaperBridgeClient.cpp
+        src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
+        src/platform/text_encoding_std.cpp
+    )
+    target_include_directories(TestMacReaperHostHandshake PRIVATE
+        src reaper_extension)
+    target_compile_features(TestMacReaperHostHandshake PRIVATE cxx_std_17)
+    target_compile_definitions(TestMacReaperHostHandshake PRIVATE
+        HARKEN_TEST_REAPER_DYLIB="$<TARGET_FILE:reaper_harken>")
+    target_link_libraries(TestMacReaperHostHandshake PRIVATE Threads::Threads)
+    add_dependencies(TestMacReaperHostHandshake reaper_harken)
+    add_test(NAME TestMacReaperHostHandshake COMMAND TestMacReaperHostHandshake)
+    aura_set_test_labels(TestMacReaperHostHandshake daw)
+
+    add_executable(TestMacReaperBatchInsert EXCLUDE_FROM_ALL
+        tests/test_mac_reaper_batch_insert.cpp
+        src/ReaperBridgeClient.cpp
+        src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
+        src/platform/text_encoding_std.cpp
+    )
+    target_include_directories(TestMacReaperBatchInsert PRIVATE
+        src reaper_extension)
+    target_compile_features(TestMacReaperBatchInsert PRIVATE cxx_std_17)
+    target_compile_definitions(TestMacReaperBatchInsert PRIVATE
+        HARKEN_TEST_REAPER_DYLIB="$<TARGET_FILE:reaper_harken>")
+    target_link_libraries(TestMacReaperBatchInsert PRIVATE Threads::Threads)
+    add_dependencies(TestMacReaperBatchInsert reaper_harken)
+    add_test(NAME TestMacReaperBatchInsert COMMAND TestMacReaperBatchInsert)
+    aura_set_test_labels(TestMacReaperBatchInsert daw)
+endif()
+
 if(WIN32)
     add_executable(TestPlatformNamedPipeServer EXCLUDE_FROM_ALL
         tests/test_platform_named_pipe_server.cpp

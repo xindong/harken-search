@@ -782,6 +782,7 @@ elseif(APPLE)
         ${AURO_THREAD_ID_SOURCE}
         src/platform/text_encoding_ascii.cpp
         src/platform/named_pipe_macos.mm
+        src/platform/reaper_bridge_endpoint_macos.cpp
         src/platform/text_encoding_std.cpp
         src/platform/executable_path_macos.mm
         src/platform/pe_inspection_macos.mm
@@ -1396,8 +1397,10 @@ endif()
 
 # REAPER extension DLL (reaper_harken.dll): Named Pipe bridge for "Send to DAW".
 # Build explicitly: cmake --build build_dbg --config Debug --target reaper_harken
-if(WIN32)
+if(WIN32 OR APPLE)
     add_subdirectory(reaper_extension)
+endif()
+if(WIN32)
     add_dependencies(HarkenSearch reaper_harken)
 endif()
 
