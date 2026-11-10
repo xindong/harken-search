@@ -151,7 +151,7 @@
         state.audioEngine.setFadeInOutMs(state.settings.fadeInOutMs);
         state.database.setSettings(&state.settings);
         if (oldSettings.folderTreePathMode!=state.settings.folderTreePathMode) StartDeferredSidebarBootstrap(state,true,false);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         if (oldSettings.enableShowManagerHotkey!=state.settings.enableShowManagerHotkey ||
             oldSettings.showManagerHotkey.toString()!=state.settings.showManagerHotkey.toString()) ApplyShowManagerGlobalHotkey(state.settings);
 #endif

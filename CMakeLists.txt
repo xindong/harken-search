@@ -796,6 +796,7 @@ elseif(APPLE)
         src/platform/settings_file_macos.cpp
         src/platform/ui_diagnostics_macos.mm
         src/platform/macos_qa_bridge.cpp
+        src/platform/macos_global_hotkey.cpp
         src/platform/app_entry_macos.mm
         src/main.cpp
     )
@@ -804,6 +805,16 @@ elseif(APPLE)
     list(APPEND APP_SOURCES src/AIEngineStub.cpp src/BpmDetectorStub.cpp src/KeyDetectorStub.cpp)
 endif()
 
+
+if(APPLE)
+    add_executable(TestMacGlobalHotkey EXCLUDE_FROM_ALL
+        tests/test_macos_global_hotkey.cpp
+        src/platform/macos_global_hotkey.cpp)
+    target_include_directories(TestMacGlobalHotkey PRIVATE src thirdparty ${IMGUI_DIR})
+    target_compile_features(TestMacGlobalHotkey PRIVATE cxx_std_17)
+    target_link_libraries(TestMacGlobalHotkey PRIVATE "-framework Carbon")
+    add_test(NAME MacGlobalHotkey COMMAND TestMacGlobalHotkey)
+endif()
 
 if(WIN32)
     add_executable(TestHarkenLegacyDataMigrator EXCLUDE_FROM_ALL
@@ -1534,6 +1545,7 @@ elseif(APPLE)
     target_link_libraries(HarkenSearch PRIVATE
         Threads::Threads
         "-framework Cocoa"
+        "-framework Carbon"           # Native global shortcut registration.
         "-framework CoreServices"      # FSEvents
         "-framework OpenGL"
         "-framework ImageIO"           # Image encode/decode

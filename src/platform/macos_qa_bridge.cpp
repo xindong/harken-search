@@ -3,6 +3,7 @@
 #include "AppMainServices.h"
 #include "UIRenderer.h"
 #include "SimilarSoundsWindow.h"
+#include "SettingsDialogState.h"
 #include "SimilarityWorkflow.h"
 #include "ThemeInspector.h"
 #include "frontend/AppStateAuditionFrontendAdapter.h"
@@ -93,6 +94,12 @@ Request Poll(AppState& state) {
             if (phase != "hover")
                 io.AddMouseButtonEvent(button == "right" ? ImGuiMouseButton_Right : ImGuiMouseButton_Left,
                                        phase == "down");
+        } else if (action == "open_settings") {
+            state.showSettingsDialog = true;
+        } else if (action == "settings_interaction_page") {
+            auto& editor = harken::settings::SettingsEditor();
+            if (!editor.open) throw std::runtime_error("settings_not_open");
+            editor.page = harken::settings::Page::Interaction;
         } else if (action == "settings") {
             const float size = command.at("reading_font").get<float>();
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
@@ -207,6 +214,16 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
         }
         similarUi["rows"] = std::move(similarRows);
         const auto display = ImGui::GetIO().DisplaySize;
+        const auto& settingsObservation = harken::settings::observation;
+        Json settingsItems = Json::array();
+        for (const auto& item : settingsObservation.items) {
+            if (item.id == "hotkeyEnabled" || item.id == "hotkey" ||
+                item.id == "hotkey-record" || item.id == "apply" || item.id == "done") {
+                settingsItems.push_back({{"id", item.id},
+                    {"bounds", {item.bounds.x, item.bounds.y, item.bounds.z, item.bounds.w}},
+                    {"disabled", item.disabled}});
+            }
+        }
         Json value = {{"id",request.id},{"error",request.error},{"captured",captured},
             {"window",{{"width",display.x},{"height",display.y}}},
             {"audio",{{"loaded",state.audioEngine.isLoaded()},{"pending",state.audioEngine.isLoadFilePending()},
@@ -229,6 +246,11 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
+            {"settings_ui",{{"open",settingsObservation.open},
+                {"page",settingsObservation.page},{"pending",settingsObservation.pending},
+                {"items",settingsItems},
+                {"hotkey_enabled",state.settings.enableShowManagerHotkey},
+                {"hotkey",state.settings.showManagerHotkey.toString()}}},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},
             {"filters",{{"text",state.searchBuffer},{"folder",state.selectedFolderPath},
                 {"folder_active",state.folderFilterActive},{"cover_mode",state.coverFilterIndex}}},

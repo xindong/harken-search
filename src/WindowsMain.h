@@ -30,6 +30,12 @@ extern int g_suppressImGuiDragTooltipFrames;
 std::string OpenFolderDialog(void* ownerWindow);
 #endif
 
+#ifdef __APPLE__
+struct AppSettings;
+extern bool g_showManagerHotkeyRegisterOk;
+void ApplyShowManagerGlobalHotkey(const AppSettings& settings);
+#endif
+
 #ifdef _WIN32
 #include <cstdint>
 #include <optional>

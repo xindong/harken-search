@@ -30,6 +30,7 @@
 #include "harken_user_data_layout.h"
 #include "theme_custom_file.h"
 #include "macos_qa_bridge.h"
+#include "macos_global_hotkey.h"
 #include "filesystem.h"
 #include "system.h"
 #include <algorithm>
@@ -42,6 +43,17 @@ extern std::string g_imguiIniPathUtf8;
 extern std::string g_appSettingsPathUtf8;
 namespace {
 NSWindow* mainWindow = nil;
+void ToggleShowManagerWindow() {
+    if (!mainWindow) return;
+    if ([NSApp isActive] && [mainWindow isKeyWindow] && [mainWindow isVisible] &&
+        ![mainWindow isMiniaturized]) {
+        [mainWindow miniaturize:nil];
+        return;
+    }
+    if ([mainWindow isMiniaturized]) [mainWindow deminiaturize:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [mainWindow makeKeyAndOrderFront:nil];
+}
 bool qaSmoke = false;
 bool qaControl = false;
 int applicationExitCode = 0;
@@ -177,6 +189,10 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
         state->startupNeedsDatabaseSetup = true;
         state->startupDatabaseSetupReason = reason;
     }
+    HarkenSearch::MacHotkey::SetToggleHandler(ToggleShowManagerWindow);
+    // Isolated automation must not reserve a shortcut on the user's desktop.
+    HarkenSearch::MacHotkey::SetRegistrationAllowed(!(qaSmoke || qaControl));
+    ApplyShowManagerGlobalHotkey(state->settings);
     RecordStage("ProductInitialized");
     if (qaSmoke || qaControl) {
         std::ofstream snapshot(QaOutput() / "startup.txt", std::ios::app);
@@ -290,6 +306,8 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
 - (void)shutdown {
     if (closing) return;
     closing = true;
+    HarkenSearch::MacHotkey::Unregister();
+    HarkenSearch::MacHotkey::SetToggleHandler(nullptr);
     [self.renderTimer invalidate];
     self.renderTimer = nil;
     [self.glView.openGLContext makeCurrentContext];

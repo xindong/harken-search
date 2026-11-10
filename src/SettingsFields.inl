@@ -137,14 +137,14 @@ else if(id=="closeAction")combo(draft.closeButtonAction,{L(Set_CloseAsk),L(Set_C
 else if(id=="guided")ImGui::Checkbox("##value",&draft.showGuidedMode);
 else if(id=="confirm") {bool value=!draft.suppressConfirmDialogs;if(ImGui::Checkbox("##value",&value))draft.suppressConfirmDialogs=!value;}
 else if(id=="hotkeyEnabled") {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);if(!draft.enableShowManagerHotkey)editor.recording=false;
 #else
     ImGui::TextWrapped("%s",L(Mac_GlobalHotkeyUnavailable));
 #endif
 }
 else if(id=="hotkey") {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     ImGui::BeginDisabled(!draft.enableShowManagerHotkey);
     if(aura::ui::ActionButton(editor.recording?L(Set_ListeningKeys):draft.showManagerHotkey.toString().c_str())){editor.recording=true;ImGui::ClearActiveID();}
     su::Observe("hotkey-record");
