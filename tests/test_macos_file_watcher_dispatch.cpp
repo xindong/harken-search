@@ -55,6 +55,20 @@ bool DispatchSyntheticEvents() {
         std::cerr << "coalesced callback sequence mismatch: " << flushed.size() << " events\n";
         return false;
     }
+
+    FileSystemWatcher unregistered;
+    unregistered.setCoalesceWindowMs(50);
+    unregistered.processAppleEvents(1, modifiedPath, modifiedFlag, nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    std::vector<EventType> afterRegistration;
+    unregistered.setEventCallback([&](const FileSystemWatcher::FileEvent& event) {
+        afterRegistration.push_back(event.type);
+    });
+    unregistered.processAppleEvents(1, rescanPath, rescanFlag, nullptr);
+    if (afterRegistration != std::vector<EventType>{EventType::NeedRescan}) {
+        std::cerr << "event queued while callback was absent\n";
+        return false;
+    }
     return true;
 }
 
