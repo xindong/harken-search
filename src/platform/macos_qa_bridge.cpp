@@ -100,6 +100,22 @@ Request Poll(AppState& state) {
             auto& editor = harken::settings::SettingsEditor();
             if (!editor.open) throw std::runtime_error("settings_not_open");
             editor.page = harken::settings::Page::Interaction;
+        } else if (action == "hotkey_modifiers_down" || action == "hotkey_modifiers_up" ||
+                   action == "hotkey_key_down" || action == "hotkey_key_up") {
+            auto& editor = harken::settings::SettingsEditor();
+            if (!editor.open || editor.page != harken::settings::Page::Interaction)
+                throw std::runtime_error("hotkey_editor_not_open");
+            const std::string name = command.at("key").get<std::string>();
+            const ImGuiKey key = name == "F19" ? ImGuiKey_F19 : name == "M" ? ImGuiKey_M : ImGuiKey_None;
+            if (key == ImGuiKey_None) throw std::runtime_error("unsupported_qa_key");
+            const bool down = action == "hotkey_modifiers_down" || action == "hotkey_key_down";
+            auto& io = ImGui::GetIO();
+            if (action.find("modifiers") != std::string::npos) {
+                io.AddKeyEvent(ImGuiMod_Ctrl, down);
+                io.AddKeyEvent(ImGuiMod_Alt, down);
+            } else {
+                io.AddKeyEvent(key, down);
+            }
         } else if (action == "settings") {
             const float size = command.at("reading_font").get<float>();
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
@@ -249,6 +265,10 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"settings_ui",{{"open",settingsObservation.open},
                 {"page",settingsObservation.page},{"pending",settingsObservation.pending},
                 {"items",settingsItems},
+                {"recording",harken::settings::SettingsEditor().recording},
+                {"draft_hotkey",harken::settings::SettingsEditor().app.Value().showManagerHotkey.toString()},
+                {"ctrl_down",ImGui::IsKeyDown(ImGuiKey_LeftCtrl)},
+                {"alt_down",ImGui::IsKeyDown(ImGuiKey_LeftAlt)},
                 {"hotkey_enabled",state.settings.enableShowManagerHotkey},
                 {"hotkey",state.settings.showManagerHotkey.toString()}}},
             {"search_pending",state.asyncSearchInProgress},{"count",state.totalFileCount},{"rows",rows},

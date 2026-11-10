@@ -152,7 +152,15 @@ else if(id=="hotkey") {
         if(ImGui::IsKeyPressed(ImGuiKey_Escape))editor.recording=false;
         else for(int k=ImGuiKey_NamedKey_BEGIN;k<ImGuiKey_NamedKey_END;++k){auto key=(ImGuiKey)k;
             if(key==ImGuiKey_LeftCtrl||key==ImGuiKey_RightCtrl||key==ImGuiKey_LeftShift||key==ImGuiKey_RightShift||key==ImGuiKey_LeftAlt||key==ImGuiKey_RightAlt||key==ImGuiKey_LeftSuper||key==ImGuiKey_RightSuper||key>=ImGuiKey_MouseLeft)continue;
-            if(ImGui::IsKeyPressed(key)){auto& binding=draft.showManagerHotkey;binding.key=key;binding.ctrl=ImGui::GetIO().KeyCtrl;binding.shift=ImGui::GetIO().KeyShift;binding.alt=ImGui::GetIO().KeyAlt;editor.recording=false;break;}
+            if(ImGui::IsKeyPressed(key)){auto& binding=draft.showManagerHotkey;binding.key=key;
+#ifdef __APPLE__
+                // Dear ImGui swaps physical Ctrl/Cmd under macOS behaviors; the
+                // Windows-compatible binding.ctrl field represents physical Ctrl.
+                binding.ctrl=ImGui::IsKeyDown(ImGuiMod_Super);
+#else
+                binding.ctrl=ImGui::IsKeyDown(ImGuiMod_Ctrl);
+#endif
+                binding.shift=ImGui::IsKeyDown(ImGuiMod_Shift);binding.alt=ImGui::IsKeyDown(ImGuiMod_Alt);editor.recording=false;break;}
         }
     }
     if(aura::ui::SmallActionButton(L(Set_ClearHotkey2)))draft.showManagerHotkey={ImGuiKey_None,false,false,false};
