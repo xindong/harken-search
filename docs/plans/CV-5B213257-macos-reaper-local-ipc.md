@@ -26,3 +26,12 @@
 - 基于最新 QA 的 Mac 完整产品构建在既有 AppState.cpp 的 _TRUNCATE 未定义处失败，本卡没有扩到应用状态模块。故本轮无完整应用包、实际 REAPER 插入或用户验收。Windows 同提交回归仍待提交后执行。
 - 仓库要求的 Graphify --once 已运行；它没有解析新 Objective-C++ 文件的调用点，C++ 客户端仍有 7 个 UNKNOWN_BLOCKING 与 3 个 POSSIBLE_DYNAMIC 静态分类。本卡通过源码追踪和真实 Unix socket 测试限定结论，不声称已取得全项目调用图覆盖；小型复核回执见 qa/CV-5B213257/graphify-reaper-review.json。
 - Windows 相关回归：公共检查流水线加入原有 TestReaperBridgeContract 的构建和执行，在本卡提交上验证 WIN32 条件仍保留 Windows REAPER 扩展与合同测试。实际 CI 结果必须回读 checkout SHA、产品构建和该测试数量后填写；Mac 的成功不能代替此项。
+
+## 接续计划：完整产品内验证（2026-11-10）
+
+现有 CV-C9014E27/1e5da45 候选与本卡同以 QA cfdd64e 为祖先，已含真实 Mac 产品入口及其构建修复。本卡接续时先把该已验证候选合入本卡独立分支，只处理本卡消息交换所需的构建和测试冲突，记录合并来源；不把候选的用户验收状态改为通过。
+
+- 平台通信模块：保留已通过 10/10 假宿主测试的显式 Unix socket 客户端，不增加默认端点，也不启用 Mac 直送按钮。复跑原 2 项定向 CTest，失败时保留原始日志。
+- 产品构建模块：用本卡隔离数据配置完整 HarkenSearch.app，证明该通信实现能与真实 Mac 入口一起编译和链接。构建通过只证明集成，不代表 REAPER 插入。
+- 共用构建与 Windows 回归：逐项处理 CMake/CI 合并冲突；提交后在同一合并 SHA 上跑 Windows 产品及 REAPER 合同回归，核对实际检出 SHA。Mac 产品与 Windows 使用同一最终提交。
+- 交付：在 qa/CV-5B213257/README.md 记录新旧证据、依赖候选、完整错误及剩余宿主扩展缺口；本轮不生成虚假的 REAPER 轨道截图，也不推进用户验收或 QA 合入。
