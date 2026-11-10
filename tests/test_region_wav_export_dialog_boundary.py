@@ -51,7 +51,7 @@ for required in (
 assert "lpstrTitle" in WIN32
 assert 'return "";' in PORTABLE
 
-qualified_call = "Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(g_hwnd)"
+qualified_call = "Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(MainUiOwnerWindow())"
 assert MAIN.count(qualified_call) == 1
 dialog_start = MAIN.index("//  MODULE 4: Loop")
 dialog_end = MAIN.index("//  MODULE 5:", dialog_start)

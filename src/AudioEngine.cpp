@@ -5540,6 +5540,13 @@ uint32_t AudioEngine::getEngineSampleRate() const {
     return m_engine ? Platform::AudioPlayback::QueryEngineSampleRate(m_engine->Borrow()) : 48000;
 }
 
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+Platform::AudioPlayback::OutputProbeSnapshot AudioEngine::getQaOutputProbe() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_engine ? m_engine->QueryOutputProbe() : Platform::AudioPlayback::OutputProbeSnapshot{};
+}
+#endif
+
 bool AudioEngine::isLoaded() const {
     return m_isLoaded;
 }

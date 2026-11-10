@@ -217,21 +217,31 @@ void Run(const fs::path& root) {
         const auto pathIdentityResult = service.Execute(
             RequestFor(firstPath, referenceAlias, 19, 10), [] { return false; });
         int rootCandidateCount = 0;
-        bool containsReferenceIdentity = false;
+        bool containsExactReference = false;
+        bool containsCaseVariantReference = false;
         bool containsOtherDirectorySameName = false;
         for (const auto& row : pathIdentityResult.rows) {
-            containsReferenceIdentity |=
-                row.filePath == a.filePath || row.filePath == referenceAlias.filePath;
+            containsExactReference |= row.filePath == referenceAlias.filePath;
+            containsCaseVariantReference |= row.filePath == a.filePath;
             rootCandidateCount +=
                 row.filePath == b.filePath || row.filePath == candidateAlias.filePath;
             containsOtherDirectorySameName |=
                 row.filePath == sameNameOtherDirectory.filePath;
         }
+#ifdef _WIN32
+        const bool pathIdentityMatchesPlatform =
+            !containsCaseVariantReference && rootCandidateCount == 1;
+#else
+        // POSIX paths keep case: these are distinct database identities even
+        // when a particular volume happens to be case-insensitive.
+        const bool pathIdentityMatchesPlatform =
+            containsCaseVariantReference && rootCandidateCount == 2;
+#endif
         Check(pathIdentityResult.error == HarkenSearch::SimilarityWorkflowError::None &&
-                  !containsReferenceIdentity && rootCandidateCount == 1 &&
+                  !containsExactReference && pathIdentityMatchesPlatform &&
                   containsOtherDirectorySameName,
-              "query service excludes reference aliases, deduplicates full "
-              "paths, and preserves same names in different directories");
+              "query service excludes the reference, applies platform path "
+              "identity, and preserves same names in different directories");
 
         const AudioRecord missing = AddRecord(first, (root / "missing-reference.wav").u8string(), 0.5f);
         const auto unreadable = service.Execute(RequestFor(firstPath, missing, 9, 2), [] { return false; });
