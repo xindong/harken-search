@@ -56,13 +56,15 @@ jobs:
           TestHarkenSearchBootstrapPlan TestUpdateDownloadManager TestUpdateStateStore
           TestUpdateHttpTransport TestUpdateHttpTransportPlatform TestUpdatePersistencePort
           TestUpdateCheckHttpsTransport TestUpdaterBaseVolume TestBootstrapExitExplanation
-          TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput
-          TestLibraryStatisticsWorker TestActionButtonStyle
+          TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput TestSidebarMetadataPicker
+          TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
-          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^LibraryStatisticsWorker$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle)$"
+          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^SidebarMetadataPicker$|^LibraryStatisticsWorker$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle)$"
           --output-junit test-results.xml
+      - name: Run settings draft and device identity tests
+        run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
       - name: Retain test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -1,0 +1,313 @@
+"""Exercise real native settings using only the isolated app's input queue.
+
+The caller supplies an isolated EXE/profile with a real library snapshot.
+Screenshots come from the application's framebuffer on a private desktop.
+"""
+from pathlib import Path
+import argparse, hashlib, json, time, traceback
+from qa_required_library_setup import PrivateDesktop, capture, wait_state
+from qa_transport_themes import Driver
+
+def run(args):
+    import win32con,win32event,win32process,win32gui
+    exe=args.exe.resolve();root=args.isolation_root.resolve();out=args.output.resolve()
+    out.mkdir(parents=True,exist_ok=False)
+    runtime=root/'profile/runtime';runtime.mkdir(parents=True,exist_ok=True)
+    driver=Driver(runtime,out);desktop=PrivateDesktop();process=None;identity_verified=False
+    report={'exe':str(exe),'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'checks':[]}
+    def command(**payload):return driver.command(payload)
+    def state():return command(cmd='settings_ui')
+    def settle():
+        first=state()['frame'];deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            value=state()
+            if value['frame']>first+2:
+                assert not value.get('imgui_errors'),value.get('imgui_log')
+                return value
+            time.sleep(.05)
+        raise AssertionError('No fresh settings frame')
+    def visible(item):
+        a,b,c,d=item['bounds'];l,t,r,bot=item['clip']
+        return a>=l-1 and b>=t-1 and c<=r+1 and d<=bot+1 and c>a and d>b
+    def find(id):
+        found=[x for x in settle()['items'] if x['id']==id and visible(x)]
+        assert len(found)==1,(id,found,state())
+        return found[0]
+    def pointer(x,y):
+        origin=win32gui.ClientToScreen(identity['hwnd'],(0,0))
+        x-=origin[0];y-=origin[1]
+        for phase in ('hover','down','up'):
+            command(cmd='theme_schedule',action='pointer',phase=phase,x=x,y=y);settle()
+    def click(id,fraction=.5):
+        a,b,c,d=find(id)['bounds'];pointer(a+(c-a)*fraction,(b+d)/2)
+    def hover(id):
+        a,b,c,d=find(id)['bounds'];ox,oy=win32gui.ClientToScreen(identity['hwnd'],(0,0))
+        command(cmd='theme_schedule',action='pointer',phase='hover',x=(a+c)/2-ox,y=(b+d)/2-oy);settle()
+    def key(name):
+        command(cmd='settings_ui',action='key',key=name,down=True);settle()
+        command(cmd='settings_ui',action='key',key=name,down=False);settle()
+    def query(value):
+        click('search')
+        command(cmd='settings_ui',action='key',key='Ctrl',down=True);settle()
+        key('K')
+        key('A')
+        command(cmd='settings_ui',action='key',key='Ctrl',down=False);settle()
+        command(cmd='info_edit_input',action='text',text=value);settle()
+    def check(name,**details):report['checks'].append({'case':name,**details});print(name,flush=True)
+    def number(id,value):
+        command(cmd='settings_ui',action='key',key='Ctrl',down=True);settle()
+        click(id)
+        command(cmd='settings_ui',action='key',key='Ctrl',down=False);settle()
+        command(cmd='info_edit_input',action='text',text=str(value));settle();key('Enter')
+    def screenshot(name):
+        from PIL import Image
+        observed=settle();path=out/(name+'.png');capture(driver,path)
+        if observed['open']:
+            ox,oy=win32gui.ClientToScreen(identity['hwnd'],(0,0))
+            a,b,c,d=observed['bounds'];box=tuple(round(n) for n in (a-ox,b-oy,c-ox,d-oy))
+            with Image.open(path) as source:source.crop(box).save(out/(name+'-crop.png'))
+            report.setdefault('screenshots',[]).append({'file':path.name,'crop':name+'-crop.png','bounds':box,'frame':observed['frame']})
+    def surface_check(name):
+        from PIL import Image
+        observed=settle();screenshot(name)
+        image=Image.open(out/(name+'-crop.png')).convert('RGB')
+        wx,wy,_,_=observed['bounds'];rows=[];errors=[]
+        for id in ('nav-4','nav-5'):
+            item=find(id);a,b,c,d=[round(v) for v in item['bounds']]
+            a-=round(wx);c-=round(wx);b-=round(wy);d-=round(wy)
+            background=image.getpixel((c-4,(b+d)//2))
+            ink=[]
+            for y in range(b,d):
+                for x in range(a,min(c-10,a+160)):
+                    if max(abs(image.getpixel((x,y))[k]-background[k]) for k in range(3))>70:
+                        ink.append(y)
+            assert ink,(id,'no readable navigation text')
+            center_error=abs((min(ink)+max(ink)+1)/2-(b+d)/2)
+            # Sample inside the six-pixel curve; edge hit checks stay separate.
+            corners=[image.getpixel((x,y)) for x in (a+8,c-9) for y in (b+2,d-3)]
+            fill_error=max(abs(color[k]-background[k]) for color in corners for k in range(3))
+            rows.append({'id':id,'bounds':[a,b,c,d],'inkY':[min(ink),max(ink)+1],
+                         'centerError':center_error,'fillError':fill_error,'background':background})
+            if center_error>3:errors.append(id+' text is not vertically centered')
+            if fill_error>2:errors.append(id+' highlight does not cover its hit rectangle')
+        search=find('search')['bounds'];y=round(search[3]-wy+24)
+        outer=image.getpixel((round(search[0]-wx-8),y))
+        body=image.getpixel((round(search[0]-wx+200),y))
+        seam=max(abs(outer[k]-body[k]) for k in range(3))
+        if seam>2:errors.append('body background differs from its surrounding surface')
+        check(name,rows=rows,outerBackground=outer,bodyBackground=body,seamDifference=seam,errors=errors)
+        assert not errors,errors
+    try:
+        process,pid=desktop.start(exe)
+        identity=driver.command({'cmd':'magic_eq_identity'},timeout=60)
+        assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe
+        assert Path(identity['isolation_root']).resolve()==root
+        identity_verified=True
+        report['identity']=identity
+        origin=win32gui.ClientToScreen(identity['hwnd'],(0,0))
+        current=wait_state(driver,lambda x:x['main_ui_ready'] and x['total_count']>0,'real library startup',90)
+        report['library']={'path':current['db_path'],'count':current['total_count']}
+        if (exe.parent/'qa-narration.json').is_file():
+            note=command(cmd='qa_narration',action='state')
+            assert note['open'] and not note['error'],note
+            report['narration']=note;capture(driver,out/'00-package-notes.png')
+            command(cmd='qa_narration',action='close');settle()
+        command(cmd='dock_pointer',phase='focus')
+        command(cmd='ordinary_button_window',module='settings',action='open');settle()
+        command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+        assert state()['open'];screenshot('01-appearance')
+        if args.navigation_review:
+            from qa_settings_navigation_selection import verify_review_regressions
+            verify_review_regressions(locals());click('done');return
+        if args.navigation_selection:
+            from qa_settings_navigation_selection import verify
+            verify(locals(),args);return
+        click('nav-2')
+        for id in ('nav-2','search','device','volume','done'):assert find(id)['font_pixels']>=18
+        for id in ('settings-title','page-title'):assert find(id)['font_pixels']>=24
+        report['typography']={'bodyMinimum':18,'titleMinimum':24,'savedGlobalFont':state()['live_font']}
+        if args.expected_volume is not None:
+            assert abs(state()['live_volume']-args.expected_volume)<.001
+            assert abs(state()['engine_volume']-args.expected_volume)<.001
+        if args.expected_row_height is not None:assert state()['live_row_height']==args.expected_row_height
+        if args.expected_scan_threads is not None:assert state()['live_scan_threads']==args.expected_scan_threads
+        if args.smoke:
+            check('native settings open',state=state())
+            return
+        if args.surfaces:
+            for font,option in ((14,4),(24,9)):
+                query('system font');click('result-systemFont');click('systemFont');click('option-'+str(option))
+                if state()['pending']:click('apply')
+                assert state()['live_font']==font
+                for theme in range(5):
+                    command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+                    if state()['pending']:click('revert')
+                    click('nav-1');click('stock-'+str(0 if theme==4 else 4))
+                    if state()['pending']:click('apply')
+                    click('stock-'+str(theme));assert state()['pending']>0
+                    click('nav-4')
+                    for width,height in ((1120,800),(880,600)):
+                        command(cmd='settings_ui',action='resize',width=width,height=height);settle()
+                        for id in ('nav-2','nav-8','search','close','apply'):find(id)
+                        a,b,c,d=find('nav-5')['bounds']
+                        for x,y in ((a+2,b+2),(c-3,d-3)):
+                            pointer(x,y);assert state()['page']==5
+                            click('nav-4')
+                        hover('nav-5')
+                        surface_check(f'surface-t{theme}-font{max(font,18)}-{width}x{height}')
+            click('revert')
+            command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+            query('system font');click('result-systemFont');click('systemFont');click('option-4')
+            if state()['pending']:click('apply')
+            click('nav-2');click('done');assert not settle()['open']
+            return
+        query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
+        assert state()['live_row_height']==state()['effective_row_height']
+        query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
+        assert state()['live_row_height']==state()['effective_row_height']
+        click('nav-2');check('system font changes recompute live density row height')
+        initial=state()['live_volume'];initial_engine=state()['engine_volume']
+        click('volume',.25);edited=settle();assert edited['pending']>0 and edited['live_volume']==initial
+        draft=edited['draft_volume'];assert abs(draft-initial)>.01
+        click('nav-2');assert abs(settle()['draft_volume']-draft)<.0001
+        click('revert');assert state()['pending']==0 and state()['live_volume']==initial
+        check('draft shared across Common and Audio; revert writes nothing')
+        click('nav-2');click('volume',.8 if initial<.6 else .2)
+        command(cmd='settings_ui',action='fail_save_once');click('apply')
+        failed=settle();assert failed['pending']>0 and failed['error'] and failed['live_volume']==initial
+        assert abs(failed['engine_volume']-initial_engine)<.001
+        screenshot('02-save-failure');click('apply');saved=settle()
+        assert saved['pending']==0 and not saved['error'] and saved['live_volume']!=initial
+        assert abs(saved['engine_volume']-saved['live_volume'])<.001
+        check('failed save keeps draft; retry applies',volume=saved['live_volume'])
+        click('volume',.6);click('close');assert settle()['prompt'];screenshot('03-unsaved-close')
+        click('keep-editing');assert state()['open'] and state()['pending']>0
+        click('close');click('discard');assert not settle()['open']
+        command(cmd='ordinary_button_window',module='settings',action='open');settle()
+        assert state()['pending']==0 and state()['live_volume']==saved['live_volume']
+        check('close offers keep editing or discard; reopen preserves applied value')
+        for i in range(1,9):
+            click('nav-'+str(i));assert state()['page']==i
+            screenshot('page-'+str(i))
+        check('all nine categories render')
+        query('FFT');assert find('result-fft');screenshot('04-search')
+        click('result-fft');assert state()['page']==1 and find('fft-control')
+        check('search opens appearance and unfolds spectrum controls')
+        query('monitor');click('result-monitor');click('monitor')
+        choice=1 if state()['live_monitor']!=1 else 2
+        click('option-'+str(choice));assert state()['draft_monitor']==choice
+        click('apply');assert state()['live_monitor']==choice
+        check('channel monitor dropdown remains selectable inside scrolling page')
+        click('nav-2');click('device');find('device-default');key('Escape')
+        assert state()['open'] and not state()['prompt']
+        assert not any(item['id']=='device-default' for item in state()['items'])
+        click('nav-3')
+        click('searchMode');click('option-1' if state()['draft_realtime'] else 'option-0')
+        key('Escape');assert state()['prompt'];click('apply-close');assert not settle()['open']
+        command(cmd='ordinary_button_window',module='settings',action='open');settle()
+        key('Escape');assert not settle()['open']
+        command(cmd='ordinary_button_window',module='settings',action='open');settle()
+        check('Escape closes dropdown only; dirty Escape prompts; apply-and-close saves; clean Escape closes')
+        click('nav-1')
+        if state()['schedule']==0:click('automatic')
+        click('day-combo');click('theme-option-2')
+        click('night-combo');click('theme-option-4')
+        assert state()['draft_day']==2 and state()['draft_night']==4
+        click('apply');assert state()['draft_day']==2 and state()['draft_night']==4
+        screenshot('06-day-night');click('automatic');click('apply')
+        assert state()['schedule']==0
+        check('day and night offer all five themes; selections persist and schedule can be disabled')
+        click('nav-2');click('volume',.45);query('thesaurus');click('result-dictionary');click('dictionary')
+        assert state()['prompt'];click('discard');assert state()['tool']=='dictionary'
+        click('thesaurus-edit-first');find('thesaurus-save');find('thesaurus-cancel');screenshot('07-thesaurus')
+        click('thesaurus-cancel');click('tool-close');assert state()['open'] and not state()['pending']
+        check('specialty tool resolves pending changes and returns to settings')
+        query('day');assert not any(i['id'] in ('result-day','result-night') for i in state()['items'])
+        assert any(i['id']=='result-automatic' for i in state()['items'])
+        check('search omits unavailable schedule rows and retains its enable control')
+        click('nav-2');click('volume',.45);query('hotkey');click('result-hotkey')
+        if find('hotkey-record')['disabled']:click('hotkeyEnabled')
+        click('hotkey-record')
+        assert state()['recording'];click('nav-2');assert not state()['recording']
+        query('hotkey');click('result-hotkey');click('hotkey-record');assert state()['recording']
+        click('search');assert not state()['recording'];key('Escape');assert state()['prompt'];click('discard')
+        command(cmd='ordinary_button_window',module='settings',action='open');settle();assert state()['open']
+        check('leaving hotkey recording by navigation or search keeps Escape usable')
+        click('nav-2');number('volume',21);
+        if state()['pending']:click('apply')
+        query('FFT');click('result-fft')
+        if find('fft-control')['disabled']:click('spectrumEnabled')
+        click('fft');click('option-1');click('apply');assert state()['live_fft']==1024
+        query('reset all');click('result-resetAll');click('resetAll');click('reset-confirm');click('tool-close')
+        query('volume');click('result-volume');number('volume',21)
+        assert abs(state()['draft_volume']-.21)<.001
+        click('apply');assert abs(state()['live_volume']-.21)<.001
+        assert state()['live_fft']==state()['default_fft']
+        check('reset applies subsequent baseline-valued edits and canonical runtime defaults')
+        query('pitch range');click('result-pitchRange');number('pitchRange',-1)
+        assert state()['draft_pitch_range']==1
+        number('pitchRange',99);assert state()['draft_pitch_range']==48
+        click('revert');check('typed pitch range stays within valid bounds')
+        click('nav-1')
+        for index in range(5):
+            click('stock-'+str(index))
+            if state()['pending']:click('apply')
+            screenshot('theme-'+str(index))
+        check('five native themes')
+        command(cmd='settings_ui',action='resize',width=880,height=600);settle();screenshot('05-small-window')
+        for id in ('search','close','done','nav-2','nav-8'):find(id)
+        check('small-window navigation and footer remain accessible')
+        command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+        query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
+        assert state()['live_font']==24
+        assert find('search')['font_pixels']>=24 and find('done')['font_pixels']>=24
+        screenshot('08-large-font');find('search');find('close');find('done')
+        click('nav-2');click('volume',.8)
+        command(cmd='settings_ui',action='resize',width=880,height=600);settle()
+        command(cmd='settings_ui',action='layout_restore_error');settle()
+        assert find('save-error')['bounds'][3]+8<=min(find('apply')['bounds'][1],find('revert')['bounds'][1])
+        screenshot('09-wrapped-save-error');click('revert')
+        command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
+        check('long restore error fits above its buttons at 24 px in a small window')
+        query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
+        assert state()['live_font']==14
+        check('24 px reading font keeps search, close and footer usable; restored 14 px')
+        query('row height');click('result-rowHeight');number('rowHeight',40);click('apply')
+        assert state()['live_row_height']==40
+        check('explicit row height is applied for restart verification')
+        query('threads');click('result-threads');number('threads',4);click('apply')
+        assert state()['live_scan_threads']==4
+        check('scan thread preference is applied for restart verification')
+        report['final_volume']=state()['live_volume']
+        click('done');assert not settle()['open']
+    except Exception:
+        report['error']=traceback.format_exc();print(report['error'],flush=True)
+        try:
+            if identity_verified:screenshot('failure')
+        except Exception:pass
+        raise
+    finally:
+        if process is not None:
+            try:
+                if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+                    if identity_verified:command(cmd='info_edit_input',action='exit')
+                    else:win32process.TerminateProcess(process,1);report['forced_termination']=True
+                assert win32event.WaitForSingleObject(process,15000)==win32con.WAIT_OBJECT_0
+                report['exit_code']=win32process.GetExitCodeProcess(process)
+            except Exception:report['exit_error']=traceback.format_exc()
+            finally:
+                try:
+                    if win32event.WaitForSingleObject(process,0)==win32con.WAIT_TIMEOUT:
+                        win32process.TerminateProcess(process,1);report['forced_termination']=True
+                        win32event.WaitForSingleObject(process,5000)
+                except Exception:report['termination_error']=traceback.format_exc()
+                finally:process.Close()
+        try:desktop.close()
+        except Exception:report['desktop_error']=traceback.format_exc()
+        (out/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+        if not report.get('error') and (report.get('exit_error') or report.get('termination_error') or report.get('desktop_error') or report.get('exit_code')!=0):
+            raise RuntimeError('Native QA process did not exit cleanly; see report.json')
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True);parser.add_argument('--isolation-root',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--navigation-review',action='store_true');parser.add_argument('--navigation-selection',action='store_true');parser.add_argument('--smoke',action='store_true');parser.add_argument('--surfaces',action='store_true');parser.add_argument('--expected-volume',type=float);parser.add_argument('--expected-row-height',type=int);parser.add_argument('--expected-scan-threads',type=int)
+    run(parser.parse_args())

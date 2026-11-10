@@ -576,10 +576,10 @@ void AppState::syncFromTab() {
     coverFilterActive = tab.coverFilterActive;
     coverFilterPath = tab.coverFilterPath;
     coverFilterIndex = tab.coverFilterIndex;
-    CopyStringToBuffer(artistFilterBuffer, tab.artistFilterText);
+    artistFilterBuffer = tab.artistFilterText;
     artistFilterAlternates = tab.artistFilterAlternates;
-    CopyStringToBuffer(albumFilterBuffer, tab.albumFilterText);
-    CopyStringToBuffer(categoryFilterBuffer, tab.categoryFilterText);
+    albumFilterBuffer = tab.albumFilterText;
+    categoryFilterBuffer = tab.categoryFilterText;
     formatFilterIndex = tab.formatFilterIndex;
     channelFilterIndex = tab.channelFilterIndex;
     minDurationFilter = tab.minDurationFilter;
@@ -617,7 +617,8 @@ void AppState::syncFromTab() {
 void AppState::syncToTab() {
     if (listTabs.empty()) return;
     ListTab& tab = currentTab();
-    if (tab.isLocked) return;
+    if (tab.isLocked && (!tab.explicitRefreshPending ||
+        tab.explicitRefreshQueryGeneration != filterQueryGeneration)) return;
 
     // The active tab does not retain a duplicate of the live result sets.
 
@@ -695,10 +696,10 @@ static bool AppStateHasActiveDbFilterForCoverWall(const AppState& state) {
     if (state.searchBuffer[0] != '\0') return true;
     if (state.folderFilterActive && !state.selectedFolderPath.empty()) return true;
     if (state.coverFilterActive && !state.coverFilterPath.empty()) return true;
-    if (state.artistFilterBuffer[0] != '\0') return true;
+    if (!state.artistFilterBuffer.empty()) return true;
     if (!state.artistFilterAlternates.empty()) return true;
-    if (state.albumFilterBuffer[0] != '\0') return true;
-    if (state.categoryFilterBuffer[0] != '\0') return true;
+    if (!state.albumFilterBuffer.empty()) return true;
+    if (!state.categoryFilterBuffer.empty()) return true;
     if (state.formatFilterIndex != 0) return true;
     if (state.channelFilterIndex != 0) return true;
     if (state.sampleRateFilterIndex != 0) return true;
@@ -1075,6 +1076,9 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
     saveCoverWallDisplaySnapshotForTab(activeTabIndex);
     parkLiveResultsInCurrentTab();
     syncToTab();
+    if (currentTab().explicitRefreshPending) {
+        currentTab().dataUnloaded = true;
+    }
     activeTabIndex = tabIndex;
     pendingTabSelectionIndex = tabIndex;
     syncFromTab();
@@ -1097,6 +1101,9 @@ int AppState::createAndActivateNewDatabaseTab(double activationTimeSeconds) {
         saveCoverWallDisplaySnapshotForTab(oldTabIndex);
         parkLiveResultsInCurrentTab();
         syncToTab();
+        if (currentTab().explicitRefreshPending) {
+            currentTab().dataUnloaded = true;
+        }
     }
 
     const int newIdx = createNewTab(u8"全部文件");

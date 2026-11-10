@@ -8,6 +8,8 @@ This note records the AI-related surfaces currently visible in the Harken Search
 
 - Speech-to-text uses `whisper.cpp`
 - Whisper model downloads are sourced from Hugging Face URLs declared in `src/AIEngine.cpp`
+- Similar-sound category matching optionally uses the pinned LAION CLAP HTSAT unfused audio encoder through ONNX Runtime on the CPU. Audio analysis and inference remain on this device; the application does not upload audio or download this model automatically. Release builders explicitly provision the verified resources described in `docs/similarity-model-build.md`.
+- Perceptual matching works without CLAP. Category matching reports an unavailable model rather than silently substituting another algorithm. The deep option compares more candidates and their time sequences locally. Match points are ranking scores, not probabilities.
 
 ## Cloud / third-party AI surfaces
 

@@ -1,6 +1,188 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "AvatarCropHelp", "type": "ui", "zh": "拖动图片调整位置，滚轮或滑杆缩放", "en": "Drag to position. Scroll or use the slider to zoom.", "ja": "画像をドラッグして移動。ホイールかスライダーで拡大。"},
+    {"id": "AvatarCropZoom", "type": "ui", "zh": "缩放", "en": "Zoom", "ja": "拡大"},
+    {"id": "AvatarCropReset", "type": "ui", "zh": "重置", "en": "Reset", "ja": "リセット"},
+    {"id": "AvatarCropPreview", "type": "ui", "zh": "头像预览", "en": "Avatar preview", "ja": "プレビュー"},
+    {"id": "AvatarCropSaveFailed", "type": "ui", "zh": "保存失败，裁剪已保留，请检查头像目录后重试。", "en": "Save failed. Your crop is kept; check the avatar folder and retry.", "ja": "保存できません。切り抜きは保持されています。保存先を確認してください。"},
+    {"id":"SetUX_OutputRestoreFailed","type":"ui","zh":"未能恢复原输出设备，请重新选择。修改仍保留。","en":"Could not restore the previous output device. Select a device again; your changes are kept.","ja":"元の出力デバイスを復元できません。選択し直してください。変更は保持されています。"},
+    {"id":"SetUX_Theme","type":"ui","zh":"界面主题","en":"Interface theme","ja":"画面テーマ"},
+    {"id":"SetUX_Day","type":"ui","zh":"白天主题 · 08:00–16:00","en":"Day theme · 08:00–16:00","ja":"昼のテーマ · 08:00–16:00"},
+    {"id":"SetUX_Night","type":"ui","zh":"黑夜主题 · 16:00–08:00","en":"Night theme · 16:00–08:00","ja":"夜のテーマ · 16:00–08:00"},
+    {"id":"SetUX_SilenceThreshold","type":"ui","zh":"静音判断阈值","en":"Silence threshold","ja":"無音のしきい値"},
+    {"id":"SetUX_SearchMode","type":"ui","zh":"搜索触发方式","en":"Start searching","ja":"検索を実行するタイミング"},
+    {"id":"SetUX_IdleMinutes","type":"ui","zh":"空闲多久后开始","en":"Idle delay","ja":"待機時間"},
+    {"id":"SetUX_Confirm","type":"ui","zh":"显示操作确认","en":"Show confirmation dialogs","ja":"操作確認を表示"},
+    {"id":"SetUX_Hotkey","type":"ui","zh":"唤出窗口快捷键","en":"Show-window shortcut","ja":"ウィンドウを表示するショートカット"},
+    {"id":"SetUX_Shortcuts","type":"ui","zh":"编辑键盘快捷键","en":"Edit keyboard shortcuts","ja":"キーボードショートカットを編集"},
+    {"id":"SetUX_Avatar","type":"ui","zh":"更换头像","en":"Change avatar","ja":"アバターを変更"},
+    {"id":"SetUX_Common","type":"ui","zh":"常用设置","en":"Common","ja":"よく使う設定"},
+    {"id":"SetUX_Appearance","type":"ui","zh":"外观与显示","en":"Appearance","ja":"外観と表示"},
+    {"id":"SetUX_AudioPlayback","type":"ui","zh":"音频与播放","en":"Audio & playback","ja":"オーディオと再生"},
+    {"id":"SetUX_TransportEffectVisibility","type":"ui","zh":"播放栏效果显示","en":"Playback bar effects","ja":"再生バーのエフェクト表示"},
+    {"id":"SetUX_TransportEffectHint","type":"ui","zh":"应用后，隐藏的效果立即旁通；重新显示会恢复之前的状态和参数。","en":"Hidden effects are bypassed when applied. Showing them again restores their previous state and settings.","ja":"適用後、非表示のエフェクトはバイパスされます。再表示すると以前の状態と設定が戻ります。"},
+    {"id":"SetUX_TransportMono","type":"ui","zh":"立体声／单声道","en":"Stereo / mono","ja":"ステレオ／モノラル"},
+    {"id":"SetUX_TransportReverse","type":"ui","zh":"反转","en":"Reverse","ja":"逆再生"},
+    {"id":"SetUX_TransportPan","type":"ui","zh":"Pan","en":"Pan","ja":"パン"},
+    {"id":"SetUX_TransportSoundstage","type":"ui","zh":"声场（含低频单声道）","en":"Soundstage (with BM)","ja":"音場（BM を含む）"},
+    {"id":"SetUX_TransportEQ","type":"ui","zh":"EQ","en":"EQ","ja":"EQ"},
+    {"id":"SetUX_TransportBypassOnApply","type":"ui","zh":"应用后旁通","en":"Bypass on apply","ja":"適用後にバイパス"},
+    {"id":"SetUX_TransportBypassed","type":"ui","zh":"已旁通","en":"Bypassed","ja":"バイパス中"},
+    {"id":"SetUX_TransportRestoreOnApply","type":"ui","zh":"应用后恢复","en":"Restore on apply","ja":"適用後に復元"},
+    {"id":"SetUX_SearchThesaurus","type":"ui","zh":"搜索与词库","en":"Search & thesaurus","ja":"検索と辞書"},
+    {"id":"SetUX_LibraryScanning","type":"ui","zh":"素材库与扫描","en":"Library & scanning","ja":"ライブラリとスキャン"},
+    {"id":"PerfMonitor_Title","type":"ui","zh":"性能监控","en":"Performance monitor","ja":"パフォーマンスモニター"},
+    {"id":"PerfMonitor_Refresh","type":"ui","zh":"当前 Harken Search 进程 · 约每秒更新","en":"Current Harken Search process · Updates about once a second","ja":"現在の Harken Search プロセス · 約1秒ごとに更新"},
+    {"id":"PerfMonitor_Cpu","type":"ui","zh":"处理器占用率（整机）","en":"CPU (share of system capacity)","ja":"CPU（システム全体に占める割合）"},
+    {"id":"PerfMonitor_Read","type":"ui","zh":"读取速率","en":"Read rate","ja":"読み取り速度"},
+    {"id":"PerfMonitor_Write","type":"ui","zh":"写入速率","en":"Write rate","ja":"書き込み速度"},
+    {"id":"PerfMonitor_WorkingSet","type":"ui","zh":"物理内存（工作集）","en":"Physical memory (working set)","ja":"物理メモリ（ワーキングセット）"},
+    {"id":"PerfMonitor_Private","type":"ui","zh":"私有提交内存","en":"Private committed memory","ja":"プライベートコミットメモリ"},
+    {"id":"PerfMonitor_ProcessHint","type":"ui","zh":"读写和内存按整个进程统计。读写包含文件和其他 I/O。","en":"Read/write rates and memory cover the whole process. Read/write rates include files and other I/O.","ja":"読み書きとメモリはプロセス全体の値です。読み書きにはファイルとその他の I/O が含まれます。"},
+    {"id":"PerfMonitor_Module","type":"ui","zh":"功能模块","en":"Module","ja":"機能モジュール"},
+    {"id":"PerfMonitor_ModulesTitle","type":"ui","zh":"模块开销","en":"Module activity","ja":"機能ごとの負荷"},
+    {"id":"PerfMonitor_Activity","type":"ui","zh":"状态","en":"Activity","ja":"状態"},
+    {"id":"PerfMonitor_ModuleCpu","type":"ui","zh":"本次采样处理器时间","en":"CPU time in sample","ja":"サンプル内の CPU 時間"},
+    {"id":"PerfMonitor_ModuleHint","type":"ui","zh":"处理器时间来自已监测的代码，按线程累加。","en":"CPU time covers instrumented code and is summed across threads.","ja":"CPU 時間は計測対象のコードをスレッド間で合算した値です。"},
+    {"id":"PerfMonitor_Interface","type":"ui","zh":"界面绘制","en":"Interface rendering","ja":"画面描画"},
+    {"id":"PerfMonitor_Scan","type":"ui","zh":"素材库扫描","en":"Library scan","ja":"ライブラリスキャン"},
+    {"id":"PerfMonitor_Search","type":"ui","zh":"搜索与数据库查询","en":"Search and database queries","ja":"検索とデータベース照会"},
+    {"id":"PerfMonitor_Similarity","type":"ui","zh":"相似搜索与索引","en":"Similarity search and indexing","ja":"類似音検索とインデックス作成"},
+    {"id":"PerfMonitor_AudioDecode","type":"ui","zh":"音频加载与解码","en":"Audio loading and decoding","ja":"音声の読み込みとデコード"},
+    {"id":"PerfMonitor_Waveform","type":"ui","zh":"波形与音频计量","en":"Waveforms and audio metering","ja":"波形と音声レベル計測"},
+    {"id":"PerfMonitor_Cover","type":"ui","zh":"封面处理","en":"Cover processing","ja":"カバー画像処理"},
+    {"id":"PerfMonitor_Backfill","type":"ui","zh":"后台素材补全","en":"Background asset processing","ja":"バックグラウンドの素材処理"},
+    {"id":"PerfMonitor_Playback","type":"ui","zh":"音频播放","en":"Audio playback","ja":"音声再生"},
+    {"id":"PerfMonitor_Active","type":"ui","zh":"进行中","en":"Active","ja":"実行中"},
+    {"id":"PerfMonitor_Recent","type":"ui","zh":"本次有开销","en":"Used CPU","ja":"CPU 使用あり"},
+    {"id":"PerfMonitor_Idle","type":"ui","zh":"空闲","en":"Idle","ja":"待機中"},
+    {"id":"SetUX_ControlsShortcuts","type":"ui","zh":"操作与快捷键","en":"Controls & shortcuts","ja":"操作とショートカット"},
+    {"id":"SetUX_ProfileExport","type":"ui","zh":"个人与导出","en":"Profile & export","ja":"プロフィールと出力"},
+    {"id":"SetUX_BackupRestore","type":"ui","zh":"备份与恢复","en":"Backup & restore","ja":"バックアップと復元"},
+    {"id":"SetUX_DiagnosticsLogs","type":"ui","zh":"诊断与日志","en":"Diagnostics & logs","ja":"診断とログ"},
+    {"id":"SetUX_OutputDevicesChangedChooseADeviceAgain","type":"ui","zh":"输出设备已变化，请重新选择。","en":"Output devices changed. Choose a device again.","ja":"出力デバイスが変更されました。選択し直してください。"},
+    {"id":"SetUX_CouldNotSwitchOutputDeviceYourChangesAreKept","type":"ui","zh":"无法切换输出设备，修改已保留。","en":"Could not switch output device. Your changes are kept.","ja":"出力デバイスを切り替えられません。変更は保持されています。"},
+    {"id":"SetUX_SaveFailedChangesAreKeptCheckTheSettingsFolderAndRetry","type":"ui","zh":"保存失败，修改仍保留；请检查设置目录是否可写后重试。","en":"Save failed. Changes are kept; check the settings folder and retry.","ja":"保存できません。変更は保持されています。設定フォルダーを確認して再試行してください。"},
+    {"id":"SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder","type":"ui","zh":"保存失败，日夜主题文件未能全部恢复。请检查设置目录后重试。","en":"Save failed and some palette files could not be restored. Check the settings folder.","ja":"保存に失敗し、一部のテーマファイルを復元できませんでした。設定フォルダーを確認してください。"},
+    {"id":"SetUX_SearchSettingsCtrlK","type":"ui","zh":"搜索设置…  Ctrl+K","en":"Search settings…  Ctrl+K","ja":"設定を検索…  Ctrl+K"},
+    {"id":"SetUX_SEARCHRESULTS","type":"ui","zh":"搜索结果","en":"SEARCH RESULTS","ja":"検索結果"},
+    {"id":"SetUX_NoSettingsFoundTryVolumeFontOrShortcut","type":"ui","zh":"没有找到设置，试试“音量”“字体”或“快捷键”。","en":"No settings found. Try volume, font, or shortcut.","ja":"設定が見つかりません。音量、フォント、ショートカットなどを検索してください。"},
+    {"id":"SetUX_PREFERENCES","type":"ui","zh":"偏好设置","en":"PREFERENCES","ja":"環境設定"},
+    {"id":"SetUX_Listening","type":"ui","zh":"试听","en":"Listening","ja":"試聴"},
+    {"id":"SetUX_Interface","type":"ui","zh":"界面","en":"Interface","ja":"画面"},
+    {"id":"SetUX_YourWorkflow","type":"ui","zh":"使用习惯","en":"Your workflow","ja":"使い方"},
+    {"id":"SetUX_WaveformSpectrumMeters","type":"ui","zh":"波形、频谱与计量","en":"Waveform, spectrum & meters","ja":"波形・スペクトル・メーター"},
+    {"id":"SetUX_DisplayDetails","type":"ui","zh":"显示细节","en":"Display details","ja":"表示の詳細"},
+    {"id":"SetUX_AdvancedAudio","type":"ui","zh":"高级音频设置","en":"Advanced audio","ja":"オーディオの詳細"},
+    {"id":"SetUX_ChannelsMonitoring","type":"ui","zh":"声道与监听","en":"Channels & monitoring","ja":"チャンネルとモニター"},
+    {"id":"SetUX_CustomPerformance","type":"ui","zh":"自定义性能","en":"Custom performance","ja":"カスタム性能"},
+    {"id":"SetUX_DragSystemIntegration","type":"ui","zh":"拖拽与系统集成","en":"Drag & system integration","ja":"ドラッグとシステム統合"},
+    {"id":"SetUX_DChangesPending","type":"ui","zh":"%d 项更改尚未应用","en":"%d changes pending","ja":"未適用の変更：%d"},
+    {"id":"SetUX_NoPendingChanges","type":"ui","zh":"没有待应用的更改","en":"No pending changes","ja":"未適用の変更はありません"},
+    {"id":"SetUX_Revert","type":"ui","zh":"撤销修改","en":"Revert","ja":"元に戻す"},
+    {"id":"SetUX_Apply","type":"ui","zh":"应用更改","en":"Apply","ja":"適用"},
+    {"id":"SetUX_UnappliedChanges","type":"ui","zh":"还有未应用的更改","en":"Unapplied changes","ja":"未適用の変更があります"},
+    {"id":"SetUX_ApplyOrDiscardYourChangesBeforeClosing","type":"ui","zh":"关闭前，选择应用或放弃这些修改。","en":"Apply or discard your changes before closing.","ja":"閉じる前に変更を適用するか破棄してください。"},
+    {"id":"SetUX_ThisToolSavesSeparatelyApplyOrDiscardTheCurrentChangesFirst","type":"ui","zh":"这个入口有独立的保存方式。先处理当前设置修改，再继续。","en":"This tool saves separately. Apply or discard the current changes first.","ja":"このツールは別に保存します。先に現在の変更を処理してください。"},
+    {"id":"SetUX_KeepEditing","type":"ui","zh":"继续修改","en":"Keep editing","ja":"編集を続ける"},
+    {"id":"SetUX_DiscardClose","type":"ui","zh":"放弃并关闭","en":"Discard & close","ja":"破棄して閉じる"},
+    {"id":"SetUX_DiscardContinue","type":"ui","zh":"放弃并继续","en":"Discard & continue","ja":"破棄して続ける"},
+    {"id":"SetUX_ApplyClose","type":"ui","zh":"应用并关闭","en":"Apply & close","ja":"適用して閉じる"},
+    {"id":"SetUX_ApplyContinue","type":"ui","zh":"应用并继续","en":"Apply & continue","ja":"適用して続ける"},
+    {"id":"SetUX_UsedWhenScheduleIsOff","type":"ui","zh":"日夜模式关闭后使用","en":"Used when schedule is off","ja":"自動切替がオフのとき使用"},
+    {"id":"SetUX_CustomColors","type":"ui","zh":"自定义颜色…","en":"Custom colors…","ja":"カスタムカラー…"},
+    {"id":"SetUX_AfterRestart","type":"ui","zh":"重启后生效","en":"After restart","ja":"再起動後に適用"},
+    {"id":"SetUX_EditThesaurus","type":"ui","zh":"编辑词库…","en":"Edit thesaurus…","ja":"辞書を編集…"},
+    {"id":"SetUX_D0Auto","type":"ui","zh":"%d（0 = 自动）","en":"%d (0 = auto)","ja":"%d（0 = 自動）"},
+    {"id":"SetUX_DMin","type":"ui","zh":"%d 分钟","en":"%d min","ja":"%d 分"},
+    {"id":"SetUX_MaintenanceTools","type":"ui","zh":"打开维护工具…","en":"Maintenance tools…","ja":"メンテナンスツール…"},
+    {"id":"SetUX_EditShortcuts","type":"ui","zh":"编辑快捷键…","en":"Edit shortcuts…","ja":"ショートカットを編集…"},
+    {"id":"SetUX_EditAvatar","type":"ui","zh":"编辑头像…","en":"Edit avatar…","ja":"アバターを編集…"},
+    {"id":"SetUX_LogTools","type":"ui","zh":"打开日志工具…","en":"Log tools…","ja":"ログツール…"},
+    {"id":"SetUX_EditAvatarAction","type":"ui","zh":"编辑头像","en":"Edit avatar","ja":"アバターの編集"},
+    {"id":"SetUX_ActionsHereSaveSeparately","type":"ui","zh":"这里的操作有独立的保存方式。","en":"Actions here save separately.","ja":"ここでの操作は個別に保存されます。"},
+    {"id":"SetUX_DeveloperTools","type":"ui","zh":"开发工具","en":"Developer tools","ja":"開発ツール"},
+    {"id":"SetUX_ResetPreferencesToDefaultsWhileKeepingTheInterfaceLanguageLibrariesAndAudioFilesAreKeptApplyTheChangesAfterwards","type":"ui","zh":"将所有偏好设置恢复为默认值，保留界面语言。素材库和音频文件不会删除。重置后仍需点击“应用更改”。","en":"Reset preferences to defaults while keeping the interface language. Libraries and audio files are kept. Apply the changes afterwards.","ja":"表示言語を保持して設定を初期化します。ライブラリと音声ファイルは削除されません。最後に適用してください。"},
+    {"id":"SetUX_DefaultsAreStagedCloseThisWindowThenApplyToSave","type":"ui","zh":"默认值已暂存。关闭此窗口后，点击“应用更改”保存。","en":"Defaults are staged. Close this window, then Apply to save.","ja":"初期値を準備しました。この画面を閉じ、適用して保存してください。"},
+    {"id":"SetUX_ExportFailedCheckTheDestinationFolder","type":"ui","zh":"导出失败，请检查目标目录是否可写。","en":"Export failed. Check the destination folder.","ja":"出力できません。保存先フォルダーを確認してください。"},
+    {"id":"SetUX_ImportReplacesYourSavedConfigurationExportABackupFirst","type":"ui","zh":"导入将替换当前保存的配置。建议先导出一份备份。","en":"Import replaces your saved configuration. Export a backup first.","ja":"読み込むと保存済みの設定を置き換えます。先にバックアップしてください。"},
+    {"id":"SetUX_NotAReadableSettingsFile","type":"ui","zh":"无法读取有效的设置文件。","en":"Not a readable settings file.","ja":"有効な設定ファイルを読み込めません。"},
+    {"id":"SetUX_ImportFailedCheckTheSettingsFolder","type":"ui","zh":"导入失败，请检查设置目录。","en":"Import failed. Check the settings folder.","ja":"読み込みに失敗しました。設定フォルダーを確認してください。"},
+    {"id":"ScanUi_SpeedFmt","type":"ui","zh":"速度 %.1f 文件/秒","en":"Speed %.1f files/s","ja":"速度 %.1f ファイル/秒"},
+    {"id":"ScanUi_SpeedPending","type":"ui","zh":"速度 —","en":"Speed —","ja":"速度 —"},
+    {"id":"ScanUi_NoNewProgress","type":"ui","zh":"速度 — · 暂无新增进度","en":"Speed — · No new progress","ja":"速度 — · 進捗更新なし"},
+    {"id":"ScanUi_ProcessedFmt","type":"ui","zh":"已处理 %d 个文件","en":"Processed %d files","ja":"処理済み %d ファイル"},
+    {"id":"ScanUi_CleanupTitle","type":"ui","zh":"清理失效记录","en":"Clean missing records","ja":"無効な記録を整理"},
+    {"id":"ScanUi_CleanupRemovedFmt","type":"ui","zh":"已清理 %d 条失效记录","en":"Removed %d missing records","ja":"無効な記録 %d 件を削除"},
+    {"id":"ScanUi_CleanupStopped","type":"ui","zh":"清理已停止","en":"Cleanup stopped","ja":"整理を停止しました"},
+    {"id":"ScanUi_BusyTitle","type":"ui","zh":"扫描进行中","en":"Scan in progress","ja":"スキャン中"},
+    {"id":"ScanUi_BusyFmt","type":"ui","zh":"%d 个文件夹未加入，扫描结束后再拖入。","en":"%d folders were not added. Drop them after this scan finishes.","ja":"%d フォルダーは追加されませんでした。スキャン終了後に再度ドロップしてください。"},
+    {"id":"ScanUi_DroppedFmt","type":"ui","zh":"已加入 %d 个音效","en":"Added %d sounds","ja":"音声 %d 件を追加"},
+    {"id":"ScanUi_AlreadyImportedFmt","type":"ui","zh":"已在库中 %d 个音效","en":"Already in library: %d sounds","ja":"登録済みの音声 %d 件"},
+    {"id":"ScanUi_DropFailedFmt","type":"ui","zh":"%d 个音效未加入，请重试。","en":"%d sounds were not added. Try again.","ja":"音声 %d 件を追加できませんでした。再試行してください。"},
+    {"id":"ScanUi_SimilarTitle","type":"ui","zh":"相似音效分析","en":"Similarity analysis","ja":"類似音声の解析"},
+    {"id":"ScanUi_Analyzing","type":"ui","zh":"正在分析","en":"Analyzing","ja":"解析中"},
+    {"id":"ScanUi_ImportComplete","type":"ui","zh":"入库已完成","en":"Import complete","ja":"取り込み完了"},
+    {"id":"ScanUi_StopAnalysis","type":"ui","zh":"停止分析","en":"Stop analysis","ja":"解析を停止"},
+    {"id":"ScanUi_StoppingAnalysis","type":"ui","zh":"正在停止…","en":"Stopping…","ja":"停止中…"},
+    {"id":"ScanUi_AnalysisStopped","type":"ui","zh":"相似分析已停止","en":"Similarity analysis stopped","ja":"類似解析を停止しました"},
+    {"id":"ScanUi_AnalysisComplete","type":"ui","zh":"相似分析完成","en":"Similarity analysis complete","ja":"類似解析が完了しました"},
+    {"id":"ScanUi_AnalyzedFmt","type":"ui","zh":"已完成 %d 个音效","en":"Completed %d sounds","ja":"音声 %d 件の解析を完了"},
+    {"id":"ScanUi_AnalysisSuccessFmt","type":"ui","zh":"成功 %d 个音效","en":"Succeeded: %d sounds","ja":"成功した音声 %d 件"},
+    {"id":"ScanUi_ViewProgress","type":"ui","zh":"查看进度","en":"View progress","ja":"進捗を表示"},
+    {"id":"ScanUi_ViewResult","type":"ui","zh":"查看结果","en":"View results","ja":"結果を表示"},
+    {"id":"ScanUi_Title","type":"ui","zh":"扫描入库","en":"Scan library","ja":"ライブラリに取り込む"},
+    {"id":"ScanUi_AdvancedOptions","type":"ui","zh":"高级选项","en":"Advanced options","ja":"詳細設定"},
+    {"id":"ScanUi_AutoThreads","type":"ui","zh":"自动分配线程","en":"Automatic threads","ja":"スレッド数を自動設定"},
+    {"id":"ScanUi_CurrentFolderOnly","type":"ui","zh":"仅当前文件夹","en":"Current folder only","ja":"現在のフォルダーのみ"},
+    {"id":"ScanUi_CustomThreads","type":"ui","zh":"自定义线程","en":"Custom threads","ja":"スレッド数を指定"},
+    {"id":"ScanUi_RemoveInvalid","type":"ui","zh":"移除库中的失效记录","en":"Remove missing library records","ja":"ライブラリの無効な記録を削除"},
+    {"id":"ScanUi_RemoveReminder","type":"ui","zh":"将移除失效记录，不删除原文件。","en":"Removes missing records, not source files.","ja":"無効な記録のみ削除します。元ファイルは削除しません。"},
+    {"id":"ScanUi_SimilarEnabled","type":"ui","zh":"已开启扫描后相似分析","en":"Post-scan similarity analysis enabled","ja":"スキャン後の類似解析が有効"},
+    {"id":"ScanUi_Counting","type":"ui","zh":"正在统计文件","en":"Counting files","ja":"ファイルを集計中"},
+    {"id":"ScanUi_FoundAudioFmt","type":"ui","zh":"已找到 %d 个音频","en":"Found %d audio files","ja":"音声ファイル %d 件を検出"},
+    {"id":"ScanUi_Ingesting","type":"ui","zh":"正在入库","en":"Importing","ja":"取り込み中"},
+    {"id":"ScanUi_Waveforms","type":"ui","zh":"正在生成波形","en":"Preparing waveforms","ja":"波形を生成中"},
+    {"id":"ScanUi_Finalizing","type":"ui","zh":"正在整理封面与列表","en":"Finalizing covers and results","ja":"カバーと一覧を整理中"},
+    {"id":"ScanUi_Saving","type":"ui","zh":"正在保存…","en":"Saving…","ja":"保存中…"},
+    {"id":"ScanUi_Revoking","type":"ui","zh":"正在撤销…","en":"Reverting…","ja":"取り消し中…"},
+    {"id":"ScanUi_Statistics","type":"ui","zh":"统计明细","en":"Statistics","ja":"集計の詳細"},
+    {"id":"ScanUi_RevokeScan","type":"ui","zh":"撤销本次入库","en":"Revert this import","ja":"今回の取り込みを取り消す"},
+    {"id":"ScanUi_RevokeReminder","type":"ui","zh":"撤销数据库改动，原文件不动。","en":"Reverts library changes; source files stay unchanged.","ja":"ライブラリの変更を取り消します。元ファイルは変更しません。"},
+    {"id":"ScanUi_ContinueScan","type":"ui","zh":"继续扫描","en":"Continue scanning","ja":"スキャンを続ける"},
+    {"id":"ScanUi_Rescan","type":"ui","zh":"再次扫描","en":"Scan again","ja":"再スキャン"},
+    {"id":"ScanUi_ResultTitle","type":"ui","zh":"扫描结果","en":"Scan results","ja":"スキャン結果"},
+    {"id":"ScanUi_CompletedTitle","type":"ui","zh":"扫描完成","en":"Scan complete","ja":"スキャン完了"},
+    {"id":"ScanUi_PausedTitle","type":"ui","zh":"扫描已暂停","en":"Scan paused","ja":"スキャンを一時停止"},
+    {"id":"ScanUi_CancelledTitle","type":"ui","zh":"扫描已取消","en":"Scan cancelled","ja":"スキャンをキャンセル"},
+    {"id":"ScanUi_RetainedFmt","type":"ui","zh":"已保留 %d 个音效","en":"Kept %d sounds","ja":"音声 %d 件を保持"},
+    {"id":"ScanUi_ImportedFmt","type":"ui","zh":"已入库 %d 个音效","en":"Imported %d sounds","ja":"音声 %d 件を取り込み済み"},
+    {"id":"ScanUi_UnprocessedFmt","type":"ui","zh":"未处理  %d","en":"Unprocessed  %d","ja":"未処理  %d"},
+    {"id":"ScanUi_SkippedFmt","type":"ui","zh":"跳过  %d","en":"Skipped  %d","ja":"スキップ  %d"},
+    {"id":"ScanUi_AddedFmt","type":"ui","zh":"新增  %d","en":"Added  %d","ja":"追加  %d"},
+    {"id":"ScanUi_UpdatedFmt","type":"ui","zh":"更新  %d","en":"Updated  %d","ja":"更新  %d"},
+    {"id":"ScanUi_RemovedFmt","type":"ui","zh":"移除  %d","en":"Removed  %d","ja":"削除  %d"},
+    {"id":"ScanUi_Revoked","type":"ui","zh":"本次入库已撤销","en":"This import was reverted","ja":"今回の取り込みを取り消しました"},
+    {"id":"ScanUi_Empty","type":"ui","zh":"未找到可入库音频","en":"No audio files found","ja":"取り込める音声がありません"},
+    {"id":"ScanUi_NetworkTitle","type":"ui","zh":"目录无法访问","en":"Folder unavailable","ja":"フォルダーにアクセスできません"},
+    {"id":"ScanUi_NetworkAction","type":"ui","zh":"请检查网络与权限。","en":"Check your connection and permissions.","ja":"ネットワークとアクセス権を確認してください。"},
+    {"id":"ScanUi_ChooseAgain","type":"ui","zh":"重新选择文件夹","en":"Choose another folder","ja":"フォルダーを選び直す"},
+    {"id":"ScanUi_FailedPath","type":"ui","zh":"路径不可访问","en":"Path unavailable","ja":"パスにアクセスできません"},
+    {"id":"ScanUi_FailedRead","type":"ui","zh":"无法读取或已损坏","en":"Unreadable or damaged","ja":"読み込み不能・破損"},
+    {"id":"ScanUi_FailedEmpty","type":"ui","zh":"无可用音频","en":"No usable audio","ja":"有効な音声がありません"},
+    {"id":"ScanUi_FailedSave","type":"ui","zh":"保存失败","en":"Save failed","ja":"保存失敗"},
+    {"id":"ScanUi_FailedOther","type":"ui","zh":"其他错误","en":"Other errors","ja":"その他のエラー"},
+    {"id":"ScanUi_FailuresTitleFmt","type":"ui","zh":"失败文件（%d）","en":"Failed files (%d)","ja":"失敗したファイル（%d）"},
+    {"id":"ScanUi_GroupedFailureCountFmt","type":"ui","zh":"这一原因影响 %d 个文件；没有逐文件明细。","en":"This reason affects %d files; individual file details are unavailable.","ja":"この原因は %d ファイルに影響しています。ファイルごとの詳細はありません。"},
+    {"id":"ScanUi_ViewFailures","type":"ui","zh":"查看失败文件","en":"View failed files","ja":"失敗したファイルを表示"},
+    {"id":"ScanUi_ReturnResult","type":"ui","zh":"返回结果","en":"Back to results","ja":"結果に戻る"},
+    {"id":"ScanUi_ScanStopped","type":"ui","zh":"扫描已停止","en":"Scan stopped","ja":"スキャンを停止しました"},
+    {"id":"ScanUi_RollbackFailed","type":"ui","zh":"部分记录未撤销","en":"Some records were not reverted","ja":"一部の記録を取り消せませんでした"},
+    {"id":"ScanUi_SaveUnavailable","type":"ui","zh":"数据库暂时无法写入。","en":"The library could not be written.","ja":"ライブラリに書き込めませんでした。"},
+    {"id":"ScanUi_FolderCountFmt","type":"ui","zh":"%s 等 %d 个文件夹","en":"%s and %d folders in total","ja":"%s ほか、合計 %d フォルダー"},
+    {"id":"ScanUi_Unsupported","type":"ui","zh":"格式不支持","en":"Unsupported format","ja":"未対応の形式"},
+    {"id":"ScanUi_MappedDriveHelp","type":"ui","zh":"映射盘不可见？","en":"Mapped drive missing?","ja":"ネットワークドライブが見えませんか？"},
     {
       "id": "NewDB_SetupPending",
       "type": "ui",
@@ -1045,32 +1227,11 @@
       "ja": "最後の閲覧位置を記憶"
     },
     {
-      "id": "Set_UIElements",
-      "type": "ui",
-      "zh": "界面元素",
-      "en": "UI Elements",
-      "ja": "UI 要素"
-    },
-    {
       "id": "Set_GuidedMode",
       "type": "ui",
       "zh": "引导模式",
       "en": "Guided Mode",
       "ja": "ガイドモード"
-    },
-    {
-      "id": "Set_GuidedModeDesc",
-      "type": "ui",
-      "zh": "显示功能说明与快捷键提示（关闭后仅保留图标名称提示）",
-      "en": "Show feature hints and shortcut help (turn off to keep only icon-name labels)",
-      "ja": "機能ヒントとショートカット表示を表示（オフにするとアイコン名のみ表示）"
-    },
-    {
-      "id": "Set_SearchBehavior",
-      "type": "ui",
-      "zh": "搜索行为",
-      "en": "Search Behavior",
-      "ja": "検索動作"
     },
     {
       "id": "Set_RealtimeSearch",
@@ -1143,20 +1304,6 @@
       "ja": "直接終了"
     },
     {
-      "id": "Set_RestoreAskOnClose",
-      "type": "ui",
-      "zh": "恢复为每次询问",
-      "en": "Restore to Ask Every Time",
-      "ja": "毎回確認に戻す"
-    },
-    {
-      "id": "Set_DragBehavior",
-      "type": "ui",
-      "zh": "拖拽行为",
-      "en": "Drag Behavior",
-      "ja": "ドラッグ動作"
-    },
-    {
       "id": "Set_HideOnDrag",
       "type": "ui",
       "zh": "拖拽时隐藏到后台（无动画）",
@@ -1192,32 +1339,11 @@
       "ja": "パイロットパス"
     },
     {
-      "id": "Set_GlobalHotkey",
-      "type": "ui",
-      "zh": "全局快捷键：唤出管理器",
-      "en": "Global Hotkey: Show Manager",
-      "ja": "グローバルホットキー：マネージャーを表示"
-    },
-    {
       "id": "Set_EnableHotkey",
       "type": "ui",
       "zh": "启用全局快捷键",
       "en": "Enable Global Hotkey",
       "ja": "グローバルホットキーを有効化"
-    },
-    {
-      "id": "Set_Current",
-      "type": "ui",
-      "zh": "当前: %s",
-      "en": "Current: %s",
-      "ja": "現在: %s"
-    },
-    {
-      "id": "Set_PlaybackDefaults",
-      "type": "ui",
-      "zh": "播放默认值",
-      "en": "Playback Defaults",
-      "ja": "再生のデフォルト"
     },
     {
       "id": "Set_PitchRange",
@@ -1227,32 +1353,11 @@
       "ja": "ピッチ範囲"
     },
     {
-      "id": "Set_ClickProtection",
-      "type": "ui",
-      "zh": "防止点击声 (淡入淡出)",
-      "en": "Click Protection (Fade In/Out)",
-      "ja": "クリックノイズ防止 (フェードイン/アウト)"
-    },
-    {
-      "id": "Set_EnableFadeInOut",
-      "type": "ui",
-      "zh": "波形加载/跳转/播放时启用淡入淡出",
-      "en": "Enable Fade In/Out on Load/Seek/Play",
-      "ja": "読み込み/シーク/再生時にフェードを有効化"
-    },
-    {
       "id": "Set_FadeTime",
       "type": "ui",
       "zh": "淡入淡出时间 (ms)",
       "en": "Fade Time (ms)",
       "ja": "フェード時間 (ms)"
-    },
-    {
-      "id": "Set_UseRecommended",
-      "type": "ui",
-      "zh": "使用推荐 12ms",
-      "en": "Use Recommended 12ms",
-      "ja": "推奨の 12ms を使用"
     },
     {
       "id": "Set_ColFunction",
@@ -1281,13 +1386,6 @@
       "zh": "清除",
       "en": "Clear",
       "ja": "クリア"
-    },
-    {
-      "id": "Set_SaveAndClose",
-      "type": "ui",
-      "zh": "保存并关闭",
-      "en": "Save & Close",
-      "ja": "保存して閉じる"
     },
     {
       "id": "Set_RestoreDefaultTheme",
@@ -1827,6 +1925,20 @@
       "zh": "筛选...",
       "en": "Filter...",
       "ja": "絞り込み..."
+    },
+    {
+      "id": "Filter_NoMatchingNames",
+      "type": "ui",
+      "zh": "没有匹配的名称",
+      "en": "No matching names",
+      "ja": "一致する名前はありません"
+    },
+    {
+      "id": "Filter_DamagedMetadataName",
+      "type": "ui",
+      "zh": "原始名称无法识别",
+      "en": "Unreadable source name",
+      "ja": "元の名前を読み取れません"
     },
     {
       "id": "Filter_SelectExistingArtist",
@@ -2508,13 +2620,6 @@
       "ja": "分離モード：スペクトルを上、波形を下\n統合モード：スペクトルと波形を重ね表示"
     },
     {
-      "id": "Scan_Cancelled",
-      "type": "ui",
-      "zh": "扫描已取消",
-      "en": "Scan cancelled",
-      "ja": "スキャンをキャンセルしました"
-    },
-    {
       "id": "Scan_NoAudioFound",
       "type": "ui",
       "zh": "未找到可识别的音频文件",
@@ -2529,46 +2634,11 @@
       "ja": "ポスト処理中"
     },
     {
-      "id": "Scan_DragDetected",
-      "type": "ui",
-      "zh": "拖拽检测：",
-      "en": "Drag detected:",
-      "ja": "ドラッグ検出："
-    },
-    {
-      "id": "Scan_PendingFolders",
-      "type": "ui",
-      "zh": "待扫描文件夹：",
-      "en": "Folders pending scan:",
-      "ja": "スキャン待ちフォルダー："
-    },
-    {
       "id": "Scan_Activated",
       "type": "ui",
       "zh": "激活",
       "en": "Activated",
       "ja": "有効化"
-    },
-    {
-      "id": "Set_AudioEngine",
-      "type": "ui",
-      "zh": "音频引擎与硬件接口",
-      "en": "Audio Engine & Hardware",
-      "ja": "オーディオエンジンとハードウェア"
-    },
-    {
-      "id": "Set_WaveformRender",
-      "type": "ui",
-      "zh": "波形渲染与可视化分析",
-      "en": "Waveform Rendering & Visualization",
-      "ja": "波形レンダリングと可視化"
-    },
-    {
-      "id": "Set_LibraryPerf",
-      "type": "ui",
-      "zh": "库与性能调度",
-      "en": "Library & Performance",
-      "ja": "ライブラリとパフォーマンス"
     },
     {
       "id": "Set_ScanThreads",
@@ -2578,25 +2648,11 @@
       "ja": "並列スキャンスレッド"
     },
     {
-      "id": "Set_ThreadUnit",
-      "type": "ui",
-      "zh": "%d 线程",
-      "en": "%d threads",
-      "ja": "%d スレッド"
-    },
-    {
       "id": "Set_ListeningKeys",
       "type": "ui",
       "zh": "  正在监听按键组合...",
       "en": "  Listening for key combination...",
       "ja": "  キー入力を待ち受けています..."
-    },
-    {
-      "id": "Set_PitchSemitones",
-      "type": "ui",
-      "zh": "±%d 半音",
-      "en": "+/-%d semitones",
-      "ja": "+/-%d 半音"
     },
     {
       "id": "Set_ThesaurusTitle",
@@ -2869,20 +2925,6 @@
       "zh": "后台索引中... (%d/%d)",
       "en": "Background indexing... (%d/%d)",
       "ja": "バックグラウンドインデックス中... (%d/%d)"
-    },
-    {
-      "id": "Scan_NewAdded",
-      "type": "ui",
-      "zh": "| 新增:",
-      "en": "| New:",
-      "ja": "| 新規:"
-    },
-    {
-      "id": "Scan_UpdatedCount",
-      "type": "ui",
-      "zh": "更新:",
-      "en": "Updated:",
-      "ja": "更新:"
     },
     {
       "id": "Scan_CountingResults",
@@ -4229,6 +4271,13 @@
       "ja": "関連パス"
     },
     {
+      "id": "Nav_FolderSearch",
+      "type": "ui",
+      "zh": "文件夹搜索",
+      "en": "Folder Search",
+      "ja": "フォルダー検索"
+    },
+    {
       "id": "Nav_NoRelatedPaths",
       "type": "ui",
       "zh": "  (暂无相关路径)",
@@ -4537,67 +4586,11 @@
       "ja": "フォルダーとその子項目を分類: %s"
     },
     {
-      "id": "Set_TabApp",
-      "type": "ui",
-      "zh": "应用设置",
-      "en": "Application",
-      "ja": "アプリケーション"
-    },
-    {
-      "id": "Set_TabAudio",
-      "type": "ui",
-      "zh": "音频播放",
-      "en": "Audio",
-      "ja": "オーディオ"
-    },
-    {
-      "id": "Set_TabWaveVis",
-      "type": "ui",
-      "zh": "波形视觉",
-      "en": "Waveform & Visual",
-      "ja": "波形とビジュアル"
-    },
-    {
-      "id": "Set_TabLibPerf",
-      "type": "ui",
-      "zh": "库与性能",
-      "en": "Library & Performance",
-      "ja": "ライブラリとパフォーマンス"
-    },
-    {
-      "id": "Set_TabPersonal",
-      "type": "ui",
-      "zh": "个人偏好",
-      "en": "Personal",
-      "ja": "個人設定"
-    },
-    {
-      "id": "Set_TabThesaurus",
-      "type": "ui",
-      "zh": "联想词库",
-      "en": "Thesaurus",
-      "ja": "類義語辞書"
-    },
-    {
-      "id": "Set_TabDiagnostics",
-      "type": "ui",
-      "zh": "系统诊断",
-      "en": "Diagnostics",
-      "ja": "システム診断"
-    },
-    {
       "id": "Set_VideoFPS",
       "type": "ui",
       "zh": "默认帧率",
       "en": "Default Frame Rate",
       "ja": "デフォルトフレームレート"
-    },
-    {
-      "id": "Set_VideoFPSHint",
-      "type": "ui",
-      "zh": "视频场景可按实际帧率调整 (fps)",
-      "en": "Adjust for video frame rate (fps)",
-      "ja": "映像素材は実際のフレームレートに調整できます (fps)"
     },
     {
       "id": "Set_EditTheme",
@@ -4670,13 +4663,6 @@
       "ja": "診断とログ記録を有効化"
     },
     {
-      "id": "Set_DiagHint",
-      "type": "ui",
-      "zh": "开启后左侧会出现「系统诊断」页，可查看/导出性能日志。",
-      "en": "Enables the Diagnostics tab on the left for viewing/exporting performance logs.",
-      "ja": "有効にすると左側に「システム診断」タブが表示され、パフォーマンスログの閲覧/出力ができます。"
-    },
-    {
       "id": "Set_DevDebugHint",
       "type": "beta-hidden",
       "zh": "使用 settings_dev.ini、imgui_dev.ini，并自动开启诊断。",
@@ -4733,13 +4719,6 @@
       "ja": "exe のあるフォルダーを開き、dev_mode.txt の配置や辞書ファイルの確認に使用します"
     },
     {
-      "id": "Set_OutputHardware",
-      "type": "ui",
-      "zh": "输出硬件",
-      "en": "Output Hardware",
-      "ja": "出力ハードウェア"
-    },
-    {
       "id": "Set_SystemDefault",
       "type": "ui",
       "zh": "系统默认",
@@ -4768,20 +4747,6 @@
       "ja": "ドライババッファ周期:"
     },
     {
-      "id": "Set_PeriodHint",
-      "type": "ui",
-      "zh": "越低延迟越小但对处理器压力越大。建议 10ms。",
-      "en": "Lower latency means higher CPU usage. 10ms recommended.",
-      "ja": "低いほど遅延は小さくなりますが CPU 負荷は大きくなります。10ms 推奨。"
-    },
-    {
-      "id": "Set_PlaybackBehavior",
-      "type": "ui",
-      "zh": "播放行为",
-      "en": "Playback Behavior",
-      "ja": "再生動作"
-    },
-    {
       "id": "Set_PreviewMode",
       "type": "ui",
       "zh": "试听模式:",
@@ -4803,25 +4768,11 @@
       "ja": "連続（自動で次へ）"
     },
     {
-      "id": "Set_DeClickProtection",
-      "type": "ui",
-      "zh": "防爆音保护",
-      "en": "De-click Protection",
-      "ja": "クリックノイズ保護"
-    },
-    {
       "id": "Set_EnableFadeOnJump",
       "type": "ui",
       "zh": "启用跳转时的淡入淡出",
       "en": "Enable fade-in/out on jump",
       "ja": "ジャンプ時のフェードイン/アウトを有効化"
-    },
-    {
-      "id": "Set_FadeRecommend",
-      "type": "ui",
-      "zh": "建议值: 12ms。能有效消除波形跳转时的瞬态卡嗒声。",
-      "en": "Recommended: 12ms. Effectively eliminates transient clicks on waveform jumps.",
-      "ja": "推奨値: 12ms。波形ジャンプ時の一時的なクリック音を効果的に除去します。"
     },
     {
       "id": "Set_EnableLoudnessNorm",
@@ -4831,20 +4782,6 @@
       "ja": "プレビュー正規化を有効化"
     },
     {
-      "id": "Set_LoudnessNormHint",
-      "type": "ui",
-      "zh": "基于 LUFS 积分响度自动调节播放增益，使不同素材听感音量一致。",
-      "en": "Automatically adjusts playback gain based on LUFS integrated loudness for consistent listening levels.",
-      "ja": "LUFS 積分ラウドネスに基づき再生ゲインを自動調整し、素材ごとの体感音量を揃えます。"
-    },
-    {
-      "id": "Set_RefLevel",
-      "type": "ui",
-      "zh": "参考电平",
-      "en": "Reference Level",
-      "ja": "基準レベル"
-    },
-    {
       "id": "Set_TargetLUFS",
       "type": "ui",
       "zh": "目标 LUFS",
@@ -4852,46 +4789,11 @@
       "ja": "目標 LUFS"
     },
     {
-      "id": "Set_LoudnessNormNote",
-      "type": "ui",
-      "zh": "需要先对文件做响度扫描才能生效（无 LUFS 数据的文件使用默认音量）。",
-      "en": "Files need loudness scanning first (files without LUFS data use default volume).",
-      "ja": "先にファイルのラウドネススキャンが必要です（LUFS データのないファイルは既定音量を使用）。"
-    },
-    {
-      "id": "Set_TabChannelRouting",
-      "type": "ui",
-      "zh": "声道路由",
-      "en": "Channel Routing",
-      "ja": "チャンネルルーティング"
-    },
-    {
-      "id": "Set_ChannelRoutingTitle",
-      "type": "ui",
-      "zh": "多声道监听路由",
-      "en": "Multichannel Monitor Routing",
-      "ja": "マルチチャンネルモニタールーティング"
-    },
-    {
-      "id": "Set_ChannelRoutingSubtitle",
-      "type": "ui",
-      "zh": "配置多声道文件的监听方式与声道映射，参考 Pro Tools Dolby Atmos 路由逻辑",
-      "en": "Configure multichannel playback routing and speaker mapping, modeled on Pro Tools Dolby Atmos I/O logic",
-      "ja": "マルチチャンネルファイルのモニタ方式とチャンネルマッピングを設定します（Pro Tools Dolby Atmos ルーティングに準拠）"
-    },
-    {
       "id": "Set_MonitorLayout",
       "type": "ui",
       "zh": "监听布局",
       "en": "Monitor Layout",
       "ja": "モニターレイアウト"
-    },
-    {
-      "id": "Set_MonitorLayoutHint",
-      "type": "ui",
-      "zh": "当前输出设备支持的扬声器布局。选「自动」时 Harken Search 根据文件声道数自动匹配。",
-      "en": "Speaker layout supported by the current output device. Auto lets Harken Search match the file channel count.",
-      "ja": "現在の出力デバイスが対応するスピーカーレイアウト。「自動」を選ぶと Harken Search がファイルのチャンネル数に自動で合わせます。"
     },
     {
       "id": "Set_MonitorLayoutAuto",
@@ -4950,13 +4852,6 @@
       "ja": "ダウンミックス戦略"
     },
     {
-      "id": "Set_DownmixStrategyHint",
-      "type": "ui",
-      "zh": "当文件声道数超过输出设备支持时的处理方式。",
-      "en": "How to handle files whose channel count exceeds the output device capability.",
-      "ja": "ファイルのチャンネル数が出力デバイスの対応を超える場合の処理方法。"
-    },
-    {
       "id": "Set_DownmixAuto",
       "type": "ui",
       "zh": "自动 (设备不支持时降混)",
@@ -4976,13 +4871,6 @@
       "zh": "直通原生声道",
       "en": "Native passthrough",
       "ja": "ネイティブチャンネルのまま"
-    },
-    {
-      "id": "Set_DownmixParams",
-      "type": "ui",
-      "zh": "折叠参数 (ITU-R BS.775)",
-      "en": "Fold-down Parameters (ITU-R BS.775)",
-      "ja": "フォールドダウンパラメータ (ITU-R BS.775)"
     },
     {
       "id": "Set_DownmixCenterDb",
@@ -5006,13 +4894,6 @@
       "ja": "バイノーラルモニター"
     },
     {
-      "id": "Set_BinauralMonitorHint",
-      "type": "ui",
-      "zh": "通过 HRTF 在耳机上模拟多声道空间定位，无需环绕扬声器即可感受立体声场。",
-      "en": "Simulate multichannel spatial imaging on headphones via HRTF — no surround speakers required.",
-      "ja": "HRTF によりヘッドホンでマルチチャンネルの空間定位を再現します。サラウンドスピーカー不要で立体音響を感じられます。"
-    },
-    {
       "id": "Set_DeviceChannelCap",
       "type": "ui",
       "zh": "设备最大声道数",
@@ -5020,32 +4901,11 @@
       "ja": "デバイスの最大チャンネル数"
     },
     {
-      "id": "Set_ChannelLayoutPreview",
-      "type": "ui",
-      "zh": "声道布局预览",
-      "en": "Channel Layout Preview",
-      "ja": "チャンネルレイアウトプレビュー"
-    },
-    {
-      "id": "Set_InteractionFX",
-      "type": "ui",
-      "zh": "交互特效",
-      "en": "Interaction Effects",
-      "ja": "インタラクションエフェクト"
-    },
-    {
       "id": "Set_EnableRipple",
       "type": "ui",
       "zh": "启用列表点击扩散波纹",
       "en": "Enable list click ripple effect",
       "ja": "リストクリックの波紋エフェクトを有効化"
-    },
-    {
-      "id": "Set_RenderStyle",
-      "type": "ui",
-      "zh": "渲染风格",
-      "en": "Rendering Style",
-      "ja": "レンダリングスタイル"
     },
     {
       "id": "Set_PreviewWaveStyle",
@@ -5067,13 +4927,6 @@
       "zh": "实体",
       "en": "Solid",
       "ja": "ソリッド"
-    },
-    {
-      "id": "Set_SolidHint",
-      "type": "ui",
-      "zh": "实体模式提供最接近顶级 DAW 的视觉质感。",
-      "en": "Solid mode provides the closest visual quality to top-tier DAWs.",
-      "ja": "ソリッドモードは上位 DAW に最も近い見た目を提供します。"
     },
     {
       "id": "Set_DefaultDisplayMode",
@@ -5104,13 +4957,6 @@
       "ja": "スペクトル"
     },
     {
-      "id": "Set_AdvancedSpectrum",
-      "type": "ui",
-      "zh": "高级频谱分析",
-      "en": "Advanced Spectrogram",
-      "ja": "高度スペクトル分析"
-    },
-    {
       "id": "Set_EnableHiResSpectrum",
       "type": "ui",
       "zh": "启用高分辨率频谱生成",
@@ -5125,13 +4971,6 @@
       "ja": "FFT ウィンドウサイズ"
     },
     {
-      "id": "Set_FFTHint",
-      "type": "ui",
-      "zh": "值越大频率细节越清晰，但时间轴会变模糊。2048 为平衡推荐值。",
-      "en": "Larger values show finer frequency detail but blur the time axis. 2048 is a balanced default.",
-      "ja": "値が大きいほど周波数詳細は鮮明になりますが、時間軸はぼやけます。2048 はバランスの取れた推奨値です。"
-    },
-    {
       "id": "Set_DefaultBlendRatio",
       "type": "ui",
       "zh": "默认频谱/波形混合比:",
@@ -5144,20 +4983,6 @@
       "zh": "垂直分离显示",
       "en": "Split Mode (Vertical Separation)",
       "ja": "垂直分離表示"
-    },
-    {
-      "id": "Set_MeterColumns",
-      "type": "ui",
-      "zh": "度量监控列",
-      "en": "Meter Columns",
-      "ja": "メーター監視列"
-    },
-    {
-      "id": "Set_MeterColumnsHint",
-      "type": "ui",
-      "zh": "在文件列表中显示的实时分析数据列：",
-      "en": "Real-time analysis columns shown in the file list:",
-      "ja": "ファイルリストに表示するリアルタイム分析データ列："
     },
     {
       "id": "Set_MeterLUFS",
@@ -5188,25 +5013,11 @@
       "ja": "システムパフォーマンスモード"
     },
     {
-      "id": "Set_PerfModeHint",
-      "type": "ui",
-      "zh": "根据您的电脑配置和使用场景选择。",
-      "en": "Choose based on your hardware and usage scenario.",
-      "ja": "PC の構成と使用シーンに応じて選択してください。"
-    },
-    {
       "id": "Set_PerfEco",
       "type": "ui",
       "zh": "节能模式",
       "en": "Eco Mode",
       "ja": "省エネモード"
-    },
-    {
-      "id": "Set_PerfEcoHint",
-      "type": "ui",
-      "zh": "适合笔记本或低配核显。\n- 限制界面帧率为 30 FPS\n- 极低内存/显存占用\n- 限制后台解码为单线程（不抢占 DAW 资源）",
-      "en": "For laptops or low-end GPUs.\n- UI limited to 30 FPS\n- Minimal memory/VRAM\n- Single-thread background decoding",
-      "ja": "ノートPCや低スペック内蔵GPU向け。\n- UIフレームレートを 30 FPS に制限\n- 極小メモリ/VRAM 使用\n- バックグラウンドデコードを単一スレッドに制限（DAW リソースを奪いません）"
     },
     {
       "id": "Set_PerfBalanced",
@@ -5216,32 +5027,11 @@
       "ja": "バランスモード [推奨]"
     },
     {
-      "id": "Set_PerfBalancedHint",
-      "type": "ui",
-      "zh": "推荐的默认配置。\n- 限制界面帧率为 60 FPS\n- 标准缓存容量\n- 智能分配后台线程",
-      "en": "Recommended default.\n- UI limited to 60 FPS\n- Standard cache capacity\n- Smart thread allocation",
-      "ja": "推奨のデフォルト設定。\n- UIフレームレートを 60 FPS に制限\n- 標準のキャッシュ容量\n- バックグラウンドスレッドをスマートに割り当て"
-    },
-    {
       "id": "Set_PerfHigh",
       "type": "ui",
       "zh": "性能模式 (高)",
       "en": "High Performance",
       "ja": "パフォーマンスモード (高)"
-    },
-    {
-      "id": "Set_PerfHighHint",
-      "type": "ui",
-      "zh": "高负载配置：不限制界面帧率、较大内存预读、多线程缓存。",
-      "en": "High-load: unlimited UI FPS, larger memory readahead, multi-thread caching.",
-      "ja": "高負荷設定：UIフレームレート無制限、より大きなメモリ先読み、マルチスレッドキャッシュ。"
-    },
-    {
-      "id": "Set_AdvancedRender",
-      "type": "ui",
-      "zh": "高级渲染调度 (自定义)",
-      "en": "Advanced Rendering (Custom)",
-      "ja": "高度レンダリングスケジューリング（カスタム）"
     },
     {
       "id": "Set_FPSLimit",
@@ -5263,13 +5053,6 @@
       "zh": "封面缩略图精度:",
       "en": "Cover Thumbnail Precision:",
       "ja": "ジャケットサムネイル精度:"
-    },
-    {
-      "id": "Set_ScanEngine",
-      "type": "ui",
-      "zh": "扫描引擎",
-      "en": "Scan Engine",
-      "ja": "スキャンエンジン"
     },
     {
       "id": "Set_DBMaint2",
@@ -5349,13 +5132,6 @@
       "ja": "リストのミニ波形キャッシュをクリアし、次回スキャンまたは閲覧時に自動で再構築します。"
     },
     {
-      "id": "Set_UserInfo2",
-      "type": "ui",
-      "zh": "用户信息",
-      "en": "User Info",
-      "ja": "ユーザー情報"
-    },
-    {
       "id": "Set_AutoRenameTab",
       "type": "ui",
       "zh": "根据搜索词自动重命名当前标签页",
@@ -5363,116 +5139,11 @@
       "ja": "検索語に基づき現在のタブを自動で名前変更"
     },
     {
-      "id": "Set_RealtimeSearchHint",
-      "type": "ui",
-      "zh": "输入时立即刷新搜索结果\n适合快速筛选",
-      "en": "Refresh results as you type\nBest for quick filtering",
-      "ja": "入力中にすぐ検索結果を更新\n素早い絞り込みに適しています"
-    },
-    {
-      "id": "Set_EnterSearchHint",
-      "type": "ui",
-      "zh": "输入完成后按 Enter 才执行搜索\n适合结果很多、希望减少刷新频率",
-      "en": "Press Enter to search\nBest when results are large and you want fewer refreshes",
-      "ja": "入力完了後 Enter で検索を実行\n結果が多く、更新頻度を減らしたい場合に適しています"
-    },
-    {
-      "id": "Set_SuggestSourceHint",
-      "type": "ui",
-      "zh": "控制搜索框下拉建议的来源\n\n- 全部字段：文件名 + 元数据 + 标签（更全）\n- 仅文件名：更干净\n- 仅关键词/分类：更像标签补全",
-      "en": "Controls search suggestion source\n\n- All fields: filename + metadata + tags (comprehensive)\n- Filename only: cleaner\n- Keywords/category only: tag-style completion",
-      "ja": "検索ボックスの候補表示の元を制御します\n\n- 全フィールド：ファイル名 + メタデータ + タグ（最も網羅的）\n- ファイル名のみ：すっきり\n- キーワード/分類のみ：タグ補全に近い"
-    },
-    {
-      "id": "Set_CloseButtonHint",
-      "type": "ui",
-      "zh": "点窗口右上角 X 时的行为\n\n- 每次询问：弹出对话框，可勾选记住选择\n- 最小化到托盘：后台运行，可从托盘唤出\n- 直接退出：关闭程序",
-      "en": "Behavior when clicking the window close button\n\n- Ask each time: show dialog with remember option\n- Minimize to tray: run in background\n- Exit directly: close the app",
-      "ja": "ウィンドウ右上の X を押した時の動作\n\n- 毎回確認：ダイアログを表示し、選択を記憶できます\n- トレイに最小化：バックグラウンドで実行し、トレイから呼び出せます\n- 直接終了：プログラムを閉じます"
-    },
-    {
-      "id": "Set_ConfirmPrompt",
-      "type": "ui",
-      "zh": "确认提示",
-      "en": "Confirmation Prompts",
-      "ja": "確認プロンプト"
-    },
-    {
-      "id": "Set_SkipConfirm",
-      "type": "ui",
-      "zh": "跳过所有确认对话框",
-      "en": "Skip all confirmation dialogs",
-      "ja": "すべての確認ダイアログをスキップ"
-    },
-    {
-      "id": "Set_SkipConfirmHint",
-      "type": "ui",
-      "zh": "开启后，删除文件/移除记录/删除封面/覆盖分类等操作\n将跳过确认弹窗，直接执行。\n\n适合熟练用户批量操作时减少打断。\n误删可通过撤销(Ctrl+Z)恢复。",
-      "en": "When enabled, operations like delete/remove/cover delete/category overwrite\nwill execute immediately without confirmation.\n\nSuitable for power users doing batch operations.\nAccidental changes can be undone with Ctrl+Z.",
-      "ja": "有効にすると、ファイル削除/レコード削除/ジャケット削除/分類上書きなどの操作\nは確認なしで即実行されます。\n\n熟練ユーザーの一括操作で割り込みを減らすのに適しています。\n誤削除はやり直し(Ctrl+Z)で復元できます。"
-    },
-    {
-      "id": "Set_DragBehaviorHint",
-      "type": "ui",
-      "zh": "拖拽音频到DAW时：先短暂延迟确认，避免误触\n确认拖拽后隐藏主窗口（无缩放动画），方便看到DAW界面\n投放成功后保持后台运行（托盘/全局快捷键可唤出）\n取消拖拽则自动恢复窗口",
-      "en": "When dragging audio to DAW: brief delay to confirm intent\nAfter confirming, hide main window for DAW visibility\nStays in background after drop (tray/hotkey to restore)\nCancel drag restores window",
-      "ja": "オーディオをDAWへドラッグする時：短い遅延で誤操作を防ぎます\nドラッグ確定後はメインウィンドウを隠し（縮小アニメーションなし）、DAW画面を見やすくします\n配置成功後もバックグラウンドで実行（トレイ/グローバルホットキーで復帰）\nドラッグをキャンセルするとウィンドウを自動で復元します"
-    },
-    {
       "id": "Set_DragDelay",
       "type": "ui",
       "zh": "拖拽延迟 (ms)",
       "en": "Drag Delay (ms)",
       "ja": "ドラッグ遅延 (ms)"
-    },
-    {
-      "id": "Set_DragDelayHint",
-      "type": "ui",
-      "zh": "拖拽开始后等待多少毫秒再隐藏主窗口\n数值越大越不易误触，默认 400 ms",
-      "en": "Milliseconds to wait before hiding window after drag starts\nHigher = less accidental triggers, default 400ms",
-      "ja": "ドラッグ開始後、何ミリ秒待ってからメインウィンドウを隠すか\n大きいほど誤トリガーしにくく、既定 400 ms"
-    },
-    {
-      "id": "Set_PauseOnDragHint",
-      "type": "ui",
-      "zh": "开启后，开始拖拽产品内项目时会立即暂停正在播放的音频\n没有播放时拖拽不会改变播放状态\n拖拽结束后是否恢复播放沿用现有逻辑",
-      "en": "When enabled, starting an in-scope drag immediately pauses playing audio\nDragging while nothing is playing does not change playback\nWhether playback resumes after the drag still follows existing logic",
-      "ja": "有効時、製品内アイテムのドラッグ開始で再生中のオーディオを即一時停止します\n再生中没有のドラッグは再生状態を変えません\nドラッグ終了後の再開可否は既存ロジックに従います"
-    },
-    {
-      "id": "Set_FolderTreePathModeHint",
-      "type": "ui",
-      "zh": "只改变统一数据库侧栏文件夹树从哪一层开始展开\n绝对路径：从磁盘根往下\n领航路径：从拖进 Harken Search 的库根文件夹开始，只往下展示子目录",
-      "en": "Only changes where the unified database sidebar folder tree starts\nAbsolute path: from the disk root down\nPilot path: from a dragged-in library root, showing only its subfolders",
-      "ja": "統一データベースサイドバーのフォルダーツリーをどの階層から展開するかのみ変更します\n絶対パス：ディスクのルートから下へ\nパイロットパス：Harken Search にドロップしたライブラリルートフォルダーから始まり、そのサブディレクトリのみ表示"
-    },
-    {
-      "id": "Set_HotkeyHint",
-      "type": "ui",
-      "zh": "即使窗口被隐藏，也可以用此快捷键一键唤出\n建议设置为 Ctrl/Alt/Shift + 字母/功能键，避免冲突",
-      "en": "Even when hidden, this hotkey instantly brings up the manager\nRecommend Ctrl/Alt/Shift + letter/function key to avoid conflicts",
-      "ja": "ウィンドウが隠れていても、このホットキーでワンタッチ呼び出せます\n競合を避けるため Ctrl/Alt/Shift + 英字/ファンクションキーを推奨します"
-    },
-    {
-      "id": "Set_RecordHotkey",
-      "type": "ui",
-      "zh": "录制组合键...",
-      "en": "Record Hotkey...",
-      "ja": "組み合わせキーを録音中..."
-    },
-    {
-      "id": "Set_CurrentInput",
-      "type": "ui",
-      "zh": "当前输入: ",
-      "en": "Current input: ",
-      "ja": "現在の入力: "
-    },
-    {
-      "id": "Set_RecordHintKeys",
-      "type": "ui",
-      "zh": "按下任意主按键 (如 M) 完成录制\n按 Esc 取消",
-      "en": "Press any main key (e.g. M) to finish\nPress Esc to cancel",
-      "ja": "任意のメインキー (例 M) を押すと録音完了\nEsc でキャンセル"
     },
     {
       "id": "Set_ClearHotkey2",
@@ -5487,13 +5158,6 @@
       "zh": "该组合键已被其他软件占用",
       "en": "This key combo is already in use by another application",
       "ja": "この組み合わせキーは他のソフトに使用されています"
-    },
-    {
-      "id": "Set_HotkeyRegFailed",
-      "type": "ui",
-      "zh": "注册失败！\n\n该组合键可能已被其他软件锁定。\n请尝试换一个不常用的字母或增加更多修饰键。",
-      "en": "Registration failed!\n\nThis key combo may be locked by another application.\nTry a different letter or add more modifier keys.",
-      "ja": "登録に失敗しました！\n\nこの組み合わせキーは他のソフトにロックされている可能性があります。\nあまり使われない英字に変更するか、修飾キーを追加してみてください。"
     },
     {
       "id": "Set_DefaultVolume",
@@ -5606,27 +5270,6 @@
       "zh": "✏ 正在编辑第 %d 条规则",
       "en": "✏ Editing rule #%d",
       "ja": "✏ 第 %d 条のルールを編集中"
-    },
-    {
-      "id": "Set_DiagAIMode",
-      "type": "ui",
-      "zh": "性能诊断（AI 分析模式）",
-      "en": "Performance Diagnostics (AI Analysis Mode)",
-      "ja": "パフォーマンス診断（AI 分析モード）"
-    },
-    {
-      "id": "Set_DiagEnable",
-      "type": "ui",
-      "zh": "启用诊断模式",
-      "en": "Enable Diagnostics",
-      "ja": "診断モードを有効化"
-    },
-    {
-      "id": "Set_DiagHintDetail",
-      "type": "ui",
-      "zh": "开启后将记录用户操作、性能耗时、系统指标等数据\n可导出为 JSON 文件供 AI 分析性能瓶颈\n关闭时零开销（推荐平时关闭）",
-      "en": "When enabled, records user actions, performance timing, and system metrics\nExport as JSON for AI performance analysis\nZero overhead when disabled (recommended off normally)",
-      "ja": "有効時、ユーザー操作・処理時間・システム指標などのデータを記録します\nJSON エクスポートで AI にボトルネック分析をさせられます\n無効時はゼロオーバーヘッド（普段はオフ推奨）"
     },
     {
       "id": "Set_DiagCollected",
@@ -5769,25 +5412,11 @@
       "ja": "設定をインポート..."
     },
     {
-      "id": "Set_ImportSettingsHint",
-      "type": "ui",
-      "zh": "从 .ini 文件导入设置（覆盖当前设置）",
-      "en": "Import settings from .ini file (overwrites current settings)",
-      "ja": ".ini ファイルから設定をインポートします（現在の設定を上書き）"
-    },
-    {
       "id": "Set_ResetAllDefaults",
       "type": "ui",
       "zh": "恢复全部默认",
       "en": "Reset All Defaults",
       "ja": "すべての既定に戻す"
-    },
-    {
-      "id": "Set_ResetAllDefaultsHint",
-      "type": "ui",
-      "zh": "重置所有设置为出厂默认值（不影响数据库和音效库）",
-      "en": "Reset all settings to factory defaults (database and libraries unaffected)",
-      "ja": "すべての設定を出荷時の既定値にリセットします（データベースとサウンドライブラリには影響しません）"
     },
     {
       "id": "Set_ConfirmReset",
@@ -6033,13 +5662,6 @@
       "zh": "  artist:composer        → Artist 字段",
       "en": "  artist:composer        → Artist field",
       "ja": "  artist:composer        → Artist フィールド"
-    },
-    {
-      "id": "Search_Querying",
-      "type": "ui",
-      "zh": "查询中...",
-      "en": "Querying...",
-      "ja": "照信中..."
     },
     {
       "id": "Scan_QuickScan",
@@ -6296,16 +5918,16 @@
     {
       "id": "Similar_ColumnScore",
       "type": "ui",
-      "zh": "相近度",
-      "en": "Similarity",
-      "ja": "類似度"
+      "zh": "匹配分",
+      "en": "Match score",
+      "ja": "一致スコア"
     },
     {
       "id": "Similar_ScoreTooltip",
       "type": "ui",
-      "zh": "基于音色、节奏、音高与频谱特征计算的声学相近度",
-      "en": "Acoustic similarity based on timbre, rhythm, pitch, and spectral features",
-      "ja": "音色・リズム・ピッチ・スペクトル特徴に基づく音響類似度"
+      "zh": "0–100 匹配分，不代表概率。括号内为本次分项权重。",
+      "en": "0–100 match score, not a probability. Parentheses show each active weight.",
+      "ja": "0–100 の一致スコアです。確率ではありません。括弧内は各項目の重みです。"
     },
     {
       "id": "Similar_PresetBalanced",
@@ -7827,13 +7449,6 @@
       "ja": "バックグラウンドで続行"
     },
     {
-      "id": "Main_ContinueBackgroundTooltip",
-      "type": "ui",
-      "zh": "关闭此窗口，扫描在后台继续。\n已入库的文件可立即使用。",
-      "en": "Close this window; the scan continues in the background.\nAlready-imported files are ready to use.",
-      "ja": "このウィンドウを閉じてもスキャンはバックグラウンドで続行します。\n既にインポート済みのファイルはすぐ使えます。"
-    },
-    {
       "id": "Main_StopBtn",
       "type": "ui",
       "zh": "停止…",
@@ -7841,39 +7456,11 @@
       "ja": "停止..."
     },
     {
-      "id": "Main_PauseCancelExplain",
-      "type": "ui",
-      "zh": "暂停会保留已经提交的文件；取消会回滚本次扫描的全部改动。",
-      "en": "Pausing keeps already-committed files; canceling rolls back all changes of this scan.",
-      "ja": "一時停止は確定済みのファイルを残します。キャンセルは今回のスキャンの全変更をロールバックします。"
-    },
-    {
       "id": "Main_PauseKeepBtn",
       "type": "ui",
       "zh": "暂停并保留",
       "en": "Pause and keep",
       "ja": "一時停止して保持"
-    },
-    {
-      "id": "Main_CancelRollbackBtn",
-      "type": "ui",
-      "zh": "取消并回滚",
-      "en": "Cancel and roll back",
-      "ja": "キャンセルしてロールバック"
-    },
-    {
-      "id": "Main_FirstItemFmt",
-      "type": "ui",
-      "zh": "首项: %s",
-      "en": "First: %s",
-      "ja": "先頭: %s"
-    },
-    {
-      "id": "Main_ClearDragInfoBtn",
-      "type": "ui",
-      "zh": "清除拖拽信息",
-      "en": "Clear drag info",
-      "ja": "ドラッグ情報をクリア"
     },
     {
       "id": "Main_IncludeSubfolders",
@@ -7890,20 +7477,6 @@
       "ja": "既存インポートファイルを更新"
     },
     {
-      "id": "Main_RemoveMissingFiles",
-      "type": "ui",
-      "zh": "移除已丢失文件",
-      "en": "Remove missing files",
-      "ja": "欠損ファイルを削除"
-    },
-    {
-      "id": "Main_ThreadHint",
-      "type": "ui",
-      "zh": "建议：\n- 0=自动（推荐）\n- 机械硬盘/网络盘：2-4\n- SSD：4-8\n- NVMe/高核处理器：8-12\n线程过多会吃满处理器并降低界面响应。",
-      "en": "Recommended:\n- 0=auto (recommended)\n- HDD/network drive: 2-4\n- SSD: 4-8\n- NVMe/high-end: 8+",
-      "ja": "推奨:\n- 0=自動（推奨）\n- HDD/ネットワーク: 2-4\n- SSD: 4-8\n- NVMe/ハイエンド: 8+"
-    },
-    {
       "id": "Main_FastScanMode",
       "type": "ui",
       "zh": "极速模式",
@@ -7918,25 +7491,11 @@
       "ja": "完全モード"
     },
     {
-      "id": "Main_ScanModeTooltip",
-      "type": "ui",
-      "zh": "极速模式不会在扫描阶段强制补齐全库迷你波形，适合大库快速进库。\n完整模式会把迷你波形也纳入本次扫描收尾。",
-      "en": "Fast mode does not force a full-library mini-waveform rebuild during scanning, good for large libraries. Full mode also fills mini waveforms for the whole library.",
-      "ja": "高速モードはスキャン段階で全ライブラリのミニ波形補完を強制しません。大規模ライブラリの高速インポートに向きます。完全モードはミニ波形も全ライブラリ分補完します。"
-    },
-    {
       "id": "Main_BuildSimilarIndexCheck",
       "type": "ui",
-      "zh": "扫描完成后立即建立相似数据库索引",
-      "en": "Build the similarity database index immediately after scanning",
-      "ja": "スキャン完了後に類似データベースインデックスを即構築"
-    },
-    {
-      "id": "Main_BuildSimilarIndexTooltip",
-      "type": "ui",
-      "zh": "勾选后，扫描成功完成才开始建立相似数据库索引。\n取消、失败或部分失败不会启动。默认关闭以免拖慢扫描。",
-      "en": "When checked, the similarity index build starts only after the scan finishes successfully.\nCancel, failure or partial failure will not start it. Off by default to avoid slowing the scan.",
-      "ja": "チェックすると、スキャンが正常完了してから類似インデックス構築を開始します。\nキャンセル・失敗・部分失敗では起動しません。スキャンを遅らせないため既定はオフ。"
+      "zh": "扫描后准备相似搜索",
+      "en": "Prepare similarity search after scanning",
+      "ja": "スキャン後に類似検索を準備"
     },
     {
       "id": "Main_LibraryOperations",
@@ -8443,67 +8002,11 @@
       "ja": "閉じる"
     },
     {
-      "id": "Main_ClearBtn",
-      "type": "ui",
-      "zh": "清除",
-      "en": "Clear",
-      "ja": "クリア"
-    },
-    {
-      "id": "Main_SettingsNoMatch",
-      "type": "ui",
-      "zh": "没有找到匹配的设置项",
-      "en": "No matching settings found",
-      "ja": "一致する設定が見つかりません"
-    },
-    {
-      "id": "Main_SettingsTryHints",
-      "type": "ui",
-      "zh": "试试：主题 / 搜索 / 音频 / 诊断 / 扫描 / 声道",
-      "en": "Try: Theme / Search / Audio / Diagnostics / Scan / Channels",
-      "ja": "次を試行：テーマ / 検索 / オーディオ / 診断 / スキャン / チャンネル"
-    },
-    {
-      "id": "Main_SettingsPagesMatchFmt",
-      "type": "ui",
-      "zh": "匹配到 %d 个设置页",
-      "en": "Matched %d settings pages",
-      "ja": "%d 個の設定ページに一致"
-    },
-    {
-      "id": "Main_SettingsMatchGroupLabel",
-      "type": "ui",
-      "zh": "当前页匹配分组:",
-      "en": "Matching groups on current page:",
-      "ja": "現在ページの一致グループ:"
-    },
-    {
-      "id": "Main_CustomThemeListLabel",
-      "type": "ui",
-      "zh": "我的自定义主题:",
-      "en": "My custom themes:",
-      "ja": "マイカスタムテーマ:"
-    },
-    {
-      "id": "Main_CurrentTag",
-      "type": "ui",
-      "zh": "(当前)",
-      "en": "(current)",
-      "ja": "（現在）"
-    },
-    {
       "id": "Main_ApplyCustomBtn",
       "type": "ui",
       "zh": "应用##custom",
       "en": "Apply##custom",
       "ja": "適用##custom"
-    },
-    {
-      "id": "Main_LightCustomColorsHint",
-      "type": "ui",
-      "zh": "轻量自定义色（高级编辑请打开主题编辑器）",
-      "en": "Lightweight custom colors (open the Theme Editor for advanced editing)",
-      "ja": "軽量カスタムカラー（高度な編集はテーマエディターを開いてください）"
     },
     {
       "id": "Main_LangChinese",
@@ -8513,60 +8016,11 @@
       "ja": "中文"
     },
     {
-      "id": "Main_LangEnglish",
-      "type": "ui",
-      "zh": "English",
-      "en": "English",
-      "ja": "English"
-    },
-    {
-      "id": "Main_LangJapanese",
-      "type": "ui",
-      "zh": "日本語",
-      "en": "日本語",
-      "ja": "日本語"
-    },
-    {
       "id": "Main_MiniRmsStyleCheck",
       "type": "ui",
       "zh": "Mini waveform RMS body style",
       "en": "Mini waveform RMS body style",
       "ja": "Mini waveform RMS body style"
-    },
-    {
-      "id": "Main_SystemFontHint",
-      "type": "ui",
-      "zh": "系统字号：菜单栏、设置、文件夹树、面包屑、Info 面板、筛选器、弹窗等需要阅读的区域",
-      "en": "System font size: menu bar, settings, folder tree, breadcrumbs, Info panel, filters, dialogs and other reading areas",
-      "ja": "システムフォントサイズ：メニューバー、設定、フォルダーツリー、パンくず、Info パネル、フィルター、ダイアログなどの閲覧領域"
-    },
-    {
-      "id": "Main_ListFontHint",
-      "type": "ui",
-      "zh": "列表字号：文件列表数据行的文字大小",
-      "en": "List font size: text size of file-list data rows",
-      "ja": "リストフォントサイズ：ファイル一覧データ行の文字サイズ"
-    },
-    {
-      "id": "Main_DbLocationHint",
-      "type": "ui",
-      "zh": "建议将数据库放在固态硬盘上以获得最佳性能\n默认位置在 C 盘 AppData 目录下",
-      "en": "Keep the database on an SSD for best performance\nDefault location is under AppData on drive C",
-      "ja": "データベースは SSD に置くと最良のパフォーマンスが出ます\n既定位置は C ドライブの AppData 配下です"
-    },
-    {
-      "id": "Main_AudioExtList",
-      "type": "ui",
-      "zh": "(.wav .mp3 .flac .aiff .aif .ogg .m4a .wma)",
-      "en": "(.wav .mp3 .flac .aiff .aif .ogg .m4a .wma)",
-      "ja": "(.wav .mp3 .flac .aiff .aif .ogg .m4a .wma)"
-    },
-    {
-      "id": "Main_ChannelOrderHint",
-      "type": "ui",
-      "zh": "切换 N>2 声道时表头底部的声道标签约定。\nSMPTE: L R C LFE Ls Rs (5.1)  音乐/广播默认\nFilm:  L C R Ls Rs LFE        电影后期\nAtmos: 支持到 7.1.4 (12 声道)\nAmbiX: 4/9/16 声道 ACN+SN3D",
-      "en": "Channel-label convention at the bottom of the header when switching to N>2 channels.\nSMPTE: L R C LFE Ls Rs (5.1)  music/broadcast default\nFilm:  L C R Ls Rs LFE        film post\nAtmos: up to 7.1.4 (12 channels)\nAmbiX: 4/9/16 channels ACN+SN3D",
-      "ja": "N>2 チャンネル切替時のヘッダー下部のチャンネルラベル規約。\nSMPTE: L R C LFE Ls Rs (5.1)  音楽/放送の既定\nFilm:  L C R Ls Rs LFE        映画ポスト\nAtmos: 7.1.4 まで対応（12ch）\nAmbiX: 4/9/16ch ACN+SN3D"
     },
     {
       "id": "Main_AutoRescanCheck",
@@ -8576,32 +8030,11 @@
       "ja": "起動/DB 切替後にライブラリルートを自動でバックグラウンド再スキャン"
     },
     {
-      "id": "Main_AutoRescanHint",
-      "type": "ui",
-      "zh": "默认关闭。开启后，Harken Search 会在启动或切换数据库后异步重扫已登记的库根目录。大库建议手动触发。",
-      "en": "Off by default. When on, Harken Search asynchronously re-scans registered library roots after startup or a database switch. For large libraries, manual trigger is recommended.",
-      "ja": "既定オフ。オンにすると、起動時またはデータベース切替後に Harken Search が登録済みライブラリルートを非同期で再スキャンします。大規模ライブラリでは手動実行を推奨します。"
-    },
-    {
-      "id": "Main_ScanAlwaysFullHint",
-      "type": "ui",
-      "zh": "扫描始终完整入库；波形缓存可自动补齐，也可在维护区手动补齐。",
-      "en": "Scanning always ingests fully; waveform caches can be auto-filled or filled manually in the Maintenance section.",
-      "ja": "スキャンは常に完全に取り込みます。波形キャッシュは自動でも保守セクションでの手動でも補完できます。"
-    },
-    {
       "id": "Main_IdleBackfillCheck",
       "type": "ui",
       "zh": "空闲时补齐当前库的波形与封面",
       "en": "Fill waveforms and covers of the current library when idle",
       "ja": "アイドル時に現在のライブラリの波形とジャケットを補完"
-    },
-    {
-      "id": "Main_IdleBackfillHint",
-      "type": "ui",
-      "zh": "达到空闲时间后，Harken Search 每 60 秒检查一次当前数据库；鼠标、滚轮、点击或键盘操作会立即暂停。",
-      "en": "After the idle time is reached, Harken Search checks the current database every 60 seconds; mouse, wheel, click or keyboard input pauses it immediately.",
-      "ja": "待機時間に達すると Harken Search は 60 秒ごとに現在のデータベースを確認します。マウス・ホイール・クリック・キー入力即座に一時停止します。"
     },
     {
       "id": "Main_RefreshHealthBtn",
@@ -8639,46 +8072,11 @@
       "ja": "更新後はデータベースパッケージ、WAL、欠損ルート、キャッシュ異常の統計を表示します。"
     },
     {
-      "id": "Main_RescanResumeHint",
-      "type": "ui",
-      "zh": "重新扫描同一文件夹可继续处理剩余文件；已经入库的文件会快速跳过。",
-      "en": "Re-scanning the same folder continues the remaining files; already-imported files are skipped quickly.",
-      "ja": "同じフォルダーを再スキャンすれば残りファイルの処理を続けられます。既に取り込み済みファイルはすぐスキップされます。"
-    },
-    {
-      "id": "Main_RecursiveScanTip",
-      "type": "ui",
-      "zh": "提示：如果音频都在子文件夹里，请开启“递归扫描子文件夹”。",
-      "en": "Tip: if audio files are in subfolders, enable “recursive scan subfolders”.",
-      "ja": "ヒント：サブフォルダーにオーディオがある場合は「サブフォルダーを再帰スキャン」を有効にしてください。"
-    },
-    {
-      "id": "Main_ScanErrorsNoFileFmt",
-      "type": "ui",
-      "zh": "扫描遇到 %d 个错误，但底层没有返回具体文件。请查看诊断日志里的 Scan 事件。",
-      "en": "The scan hit %d errors, but the backend returned no specific files. Check Scan events in the diagnostics log.",
-      "ja": "スキャンで %d 件のエラーが発生しましたが、具体的なファイルは返されませんでした。診断ログの Scan イベントを確認してください。"
-    },
-    {
-      "id": "Main_ScanErrorItemFmt",
-      "type": "ui",
-      "zh": "%zu. %s",
-      "en": "%zu. %s",
-      "ja": "%zu. %s"
-    },
-    {
       "id": "Main_MoreErrorsOmittedFmt",
       "type": "ui",
       "zh": "还有 %d 个错误已省略。",
       "en": "%d more errors omitted.",
       "ja": "他 %d 件のエラーは省略されました。"
-    },
-    {
-      "id": "Main_WaitForegroundImport",
-      "type": "ui",
-      "zh": "等待本次入库前台完成...",
-      "en": "Waiting for this foreground import to finish...",
-      "ja": "今回のフォアグラウンド取り込みの完了を待っています..."
     },
     {
       "id": "Main_CreateBtn",
@@ -8947,6 +8345,27 @@
       "ja": "ダウンロード"
     },
     {
+      "id": "Main_AboutWeComQrLabel",
+      "type": "ui",
+      "zh": "企业微信",
+      "en": "WeCom",
+      "ja": "WeCom"
+    },
+    {
+      "id": "Main_AboutFeishuQrLabel",
+      "type": "ui",
+      "zh": "飞书",
+      "en": "Feishu",
+      "ja": "Feishu"
+    },
+    {
+      "id": "Main_AboutCommunityNote",
+      "type": "ui",
+      "zh": "欢迎加入社群，交流使用体验与功能建议。",
+      "en": "Join the Harken community to share feedback and ideas.",
+      "ja": "Harken コミュニティで使用感や機能のアイデアを共有しましょう。"
+    },
+    {
       "id": "Main_CleanDiskDiagBtn",
       "type": "ui",
       "zh": "清理磁盘诊断日志",
@@ -8968,13 +8387,6 @@
       "ja": "キャンセル"
     },
     {
-      "id": "Main_TranscribeConfirmHint",
-      "type": "ui",
-      "zh": "语音转录结果需在 AI 面板确认后写入描述，避免误识别污染素材库。",
-      "en": "Transcription results must be confirmed in the AI panel before writing to the description, to avoid polluting the library with misrecognitions.",
-      "ja": "音声文字起こし結果は AI パネルで確認してから説明欄に書き込みます。誤認識による素材ライブラリの汚染を防ぎます。"
-    },
-    {
       "id": "Main_ArisOutputSuffixCheck",
       "type": "ui",
       "zh": "Harken Search output: keep processing suffixes",
@@ -8982,88 +8394,11 @@
       "ja": "Harken Search 出力：処理サフィックスを保持"
     },
     {
-      "id": "Main_ArisOutputSuffixHint",
-      "type": "ui",
-      "zh": "When enabled, rendered Harken Search output keeps region/pitch/volume suffixes in drag and Send to Editor filenames.",
-      "en": "When enabled, rendered Harken Search output keeps region/pitch/volume suffixes in drag and Send to Editor filenames.",
-      "ja": "有効にすると、レンダリング済み Harken Search 出力はドラッグおよび Send to Editor ファイル名でリージョン/ピッチ/音量サフィックスを保持します。"
-    },
-    {
-      "id": "Main_DetailNewlineFmt",
-      "type": "ui",
-      "zh": "\n%s",
-      "en": "\n%s",
-      "ja": "\n%s"
-    },
-    {
-      "id": "Main_FadeTimeHint",
-      "type": "ui",
-      "zh": "用于减少加载、跳转定位、播放开始/暂停/停止时的点击声与爆音\n推荐时间：12ms（既能消除点击声，又不会感觉拖动延迟）",
-      "en": "Reduces clicks/pops on load, seek, and play start/pause/stop\nRecommended: 12ms (removes clicks without feeling like drag latency)",
-      "ja": "読み込み・シーク・再生開始/一時停止/停止時のクリック/ポップノイズを低減\n推奨時間：12ms（クリックノイズを消しつつドラッグ遅延を感じません）"
-    },
-    {
-      "id": "Main_DownmixAutoHint",
-      "type": "ui",
-      "zh": "输出设备不支持原生声道数时自动降混",
-      "en": "Automatically downmix when the output device does not support the native channel count",
-      "ja": "出力デバイスがネイティブチャンネル数に非対応のとき自動でダウンミックス"
-    },
-    {
-      "id": "Main_DownmixAlwaysHint",
-      "type": "ui",
-      "zh": "始终向下折叠为立体声，无论设备能力",
-      "en": "Always fold down to stereo regardless of device capability",
-      "ja": "デバイス性能に関係なく常にステレオへフォールドダウン"
-    },
-    {
-      "id": "Main_DownmixNativeHint",
-      "type": "ui",
-      "zh": "直通原生声道；不支持时回落到「自动」策略",
-      "en": "Passthrough native channels; falls back to the Auto strategy when unsupported",
-      "ja": "ネイティブチャンネル直通；非対応時は「自動」方針へフォールバック"
-    },
-    {
-      "id": "Main_DownmixCenterGainHint",
-      "type": "ui",
-      "zh": "Center 声道降混到 L+R 的增益 (ITU-R BS.775 默认 -3 dB)",
-      "en": "Gain when folding Center down to L+R (ITU-R BS.775 default -3 dB)",
-      "ja": "Center を L+R へフォールドダウンするゲイン (ITU-R BS.775 既定 -3 dB)"
-    },
-    {
-      "id": "Main_DownmixSurroundGainHint",
-      "type": "ui",
-      "zh": "环绕声道降混到 L+R 的增益 (ITU-R BS.775 默认 -3 dB)",
-      "en": "Gain when folding surround channels down to L+R (ITU-R BS.775 default -3 dB)",
-      "ja": "サラウンドを L+R へフォールドダウンするゲイン (ITU-R BS.775 既定 -3 dB)"
-    },
-    {
-      "id": "Main_CurrentOutputDeviceLabel",
-      "type": "ui",
-      "zh": "当前输出设备：",
-      "en": "Current output device:",
-      "ja": "現在の出力デバイス："
-    },
-    {
       "id": "Main_ChannelCapPendingNote",
       "type": "ui",
       "zh": "声道能力检测将在 F-033 多声道枚举实现后启用。",
       "en": "Channel capability detection will be enabled after F-033 multichannel enumeration is implemented.",
       "ja": "チャンネル能力検出は F-033 マルチチャンネル列挙の実装後に有効化されます。"
-    },
-    {
-      "id": "Main_LayoutFallbackNote",
-      "type": "ui",
-      "zh": "选择的监听布局超出设备能力时，Harken Search 自动回落至最高支持配置。",
-      "en": "When the selected monitor layout exceeds device capability, Harken Search falls back to the highest supported configuration.",
-      "ja": "選択したモニターレイアウトがデバイス性能を超える場合、Harken Search は最高対応構成へ自動でフォールバックします。"
-    },
-    {
-      "id": "Main_CancelBtn3",
-      "type": "ui",
-      "zh": "取消",
-      "en": "Cancel",
-      "ja": "キャンセル"
     },
     {
       "id": "Main_SaveMeBtn",
@@ -9323,13 +8658,6 @@
       "zh": "[骰子] 打乱当前列表\n点击: 打乱并从头播放",
       "en": "[Dice] Shuffle current list\nClick: Shuffle and play from top",
       "ja": "[ダイス] 現在リストをシャッフル\nクリック: シャッフルして先頭から再生"
-    },
-    {
-      "id": "Main_QueryingProgress",
-      "type": "ui",
-      "zh": "查询中...",
-      "en": "Querying...",
-      "ja": "照信中..."
     },
     {
       "id": "Main_ColPresetDialHint",
@@ -9631,13 +8959,6 @@
       "zh": "上半区: 淡变手柄 · 下半区: 入/出端点",
       "en": "Upper half: Fade handles · Lower half: IN/OUT endpoints",
       "ja": "上半分: フェードハンドル · 下半分: イン/アウト端点"
-    },
-    {
-      "id": "Main_PipeStatusFmt",
-      "type": "ui",
-      "zh": "| %s",
-      "en": "| %s",
-      "ja": "| %s"
     },
     {
       "id": "Main_ImportRunLabel",
@@ -10410,60 +9731,11 @@
       "ja": "全ファイルのインデックス完了！"
     },
     {
-      "id": "Main_ScannerTitle",
-      "type": "ui",
-      "zh": "AUDIO LIBRARY SCANNER",
-      "en": "AUDIO LIBRARY SCANNER",
-      "ja": "AUDIO LIBRARY SCANNER"
-    },
-    {
-      "id": "Main_FoundFilesFmt",
-      "type": "ui",
-      "zh": "本次发现文件数：%d",
-      "en": "Files found this pass: %d",
-      "ja": "今回の発見ファイル数：%d"
-    },
-    {
-      "id": "Main_ScannedProcessedFmt",
-      "type": "ui",
-      "zh": "已扫描/已处理：%d / %d",
-      "en": "Scanned/processed: %d / %d",
-      "ja": "スキャン済/処理済：%d / %d"
-    },
-    {
-      "id": "Main_ImportedFmt",
-      "type": "ui",
-      "zh": "成功入库：%d",
-      "en": "Imported successfully: %d",
-      "ja": "正常取り込み：%d"
-    },
-    {
-      "id": "Main_SkippedDupInvalidFmt",
-      "type": "ui",
-      "zh": "跳过/重复/无效：%d",
-      "en": "Skipped/duplicate/invalid: %d",
-      "ja": "スキップ/重複/無効：%d"
-    },
-    {
       "id": "Main_FailedFmt",
       "type": "ui",
       "zh": "失败：%d",
       "en": "Failed: %d",
       "ja": "失敗：%d"
-    },
-    {
-      "id": "Main_MiniCacheProgressFmt",
-      "type": "ui",
-      "zh": "迷你波形缓存：%d / %d",
-      "en": "mini waveform cache: %d / %d",
-      "ja": "ミニ波形キャッシュ：%d / %d"
-    },
-    {
-      "id": "Main_MiniCacheNotIncluded",
-      "type": "ui",
-      "zh": "迷你波形缓存：未纳入本次完整流程（后台继续）",
-      "en": "mini waveform cache: not included in this full pass (continues in background)",
-      "ja": "ミニ波形キャッシュ：今回の完全フロー未含ま（バックグラウンドで継続）"
     },
     {
       "id": "Main_TotalElapsedFmt",
@@ -10482,65 +9754,9 @@
     {
       "id": "Main_SimIndexBuildingFmt",
       "type": "ui",
-      "zh": "正在建立相似数据库索引：%d / %d",
-      "en": "Building similarity index: %d / %d",
-      "ja": "類似データベースインデックス構築中：%d / %d"
-    },
-    {
-      "id": "Main_ScanFolderHint",
-      "type": "ui",
-      "zh": "选择要扫描的文件夹，将音频文件添加到数据库。",
-      "en": "Choose folders to scan and add audio files to the database.",
-      "ja": "スキャンするフォルダーを選択し、オーディオファイルをデータベースへ追加します。"
-    },
-    {
-      "id": "Main_ScanStrategyTitle",
-      "type": "ui",
-      "zh": "扫描策略",
-      "en": "Scan Strategy",
-      "ja": "スキャン戦略"
-    },
-    {
-      "id": "Main_ScanPausedNote",
-      "type": "ui",
-      "zh": "扫描已暂停，已提交文件已保留",
-      "en": "Scan paused; submitted files are kept",
-      "ja": "スキャン一時停止中、送信済みファイルは保持しました"
-    },
-    {
-      "id": "Main_BackfillingStatus",
-      "type": "ui",
-      "zh": "入库后优化中",
-      "en": "Post-import: optimizing",
-      "ja": "インポート後：最適化中"
-    },
-    {
-      "id": "Main_ScanDoneMsg",
-      "type": "ui",
-      "zh": "扫描完成！",
-      "en": "Scan complete!",
-      "ja": "スキャン完了！"
-    },
-    {
-      "id": "Main_ScanStatsFmt",
-      "type": "ui",
-      "zh": "总计: %d  新增: %d  更新: %d  跳过: %d  移除: %d  错误: %d",
-      "en": "Total: %d  New: %d  Updated: %d  Skipped: %d  Removed: %d  Errors: %d",
-      "ja": "合計: %d  新規: %d  更新: %d  スキップ: %d  除去: %d  エラー: %d"
-    },
-    {
-      "id": "Main_ImportRunFmt",
-      "type": "ui",
-      "zh": "本次入库: %d  入库耗时: %s",
-      "en": "Imported this run: %d  Elapsed: %s",
-      "ja": "今回取り込み: %d  所要時間: %s"
-    },
-    {
-      "id": "Main_ErrorDetailsTitle",
-      "type": "ui",
-      "zh": "错误详情",
-      "en": "Error details",
-      "ja": "エラー詳細"
+      "zh": "正在核对并解析相似特征：%d / %d（已复用 %d，已解析 %d）",
+      "en": "Checking and analyzing similarity features: %d / %d (reused %d, analyzed %d)",
+      "ja": "類似特徴を確認・解析中：%d / %d（再利用 %d、解析 %d）"
     },
     {
       "id": "Main_DupNameWarn",
@@ -10639,27 +9855,6 @@
       "zh": "磁盘日志：%.2f MiB / %.0f MiB",
       "en": "Disk logs: %.2f MiB / %.0f MiB",
       "ja": "ディスクログ: %.2f MiB / %.0f MiB"
-    },
-    {
-      "id": "Main_CtrlBadge",
-      "type": "ui",
-      "zh": "[Ctrl]",
-      "en": "[Ctrl]",
-      "ja": "[Ctrl]"
-    },
-    {
-      "id": "Main_ShiftBadge",
-      "type": "ui",
-      "zh": "[Shift]",
-      "en": "[Shift]",
-      "ja": "[Shift]"
-    },
-    {
-      "id": "Main_AltBadge",
-      "type": "ui",
-      "zh": "[Alt]",
-      "en": "[Alt]",
-      "ja": "[Alt]"
     },
     {
       "id": "Main_ShortcutsHint",
@@ -10830,13 +10025,6 @@
       "ja": "+%d BPM"
     },
     {
-      "id": "Main_ImportFinalizing",
-      "type": "ui",
-      "zh": "本次入库收尾中",
-      "en": "Finalizing this import",
-      "ja": "今回の取り込みを仕上げ中"
-    },
-    {
       "id": "Main_ScanDoneShort",
       "type": "ui",
       "zh": "扫描完成",
@@ -10891,76 +10079,6 @@
       "zh": "[%s] %s",
       "en": "[%s] %s",
       "ja": "[%s] %s"
-    },
-    {
-      "id": "Settings_SectionAppearance",
-      "type": "ui",
-      "zh": "外观与主题",
-      "en": "Appearance & Theme",
-      "ja": "外観とテーマ"
-    },
-    {
-      "id": "Settings_SectionAppearanceHint",
-      "type": "ui",
-      "zh": "选择整套主题外观、自定义色与界面语言",
-      "en": "Choose the overall theme, custom colors and UI language",
-      "ja": "テーマ全体の外観・カスタムカラー・UI言語を選択"
-    },
-    {
-      "id": "Settings_SectionDisplay",
-      "type": "ui",
-      "zh": "显示与字号",
-      "en": "Display & Font Size",
-      "ja": "表示とフォントサイズ"
-    },
-    {
-      "id": "Settings_SectionDisplayHint",
-      "type": "ui",
-      "zh": "控制行高、字号与界面密度",
-      "en": "Control row height, font size and UI density",
-      "ja": "行高・フォントサイズ・UI密度を調整"
-    },
-    {
-      "id": "Settings_SectionTimeFormat",
-      "type": "ui",
-      "zh": "时间格式",
-      "en": "Time Format",
-      "ja": "時間フォーマット"
-    },
-    {
-      "id": "Settings_SectionTimeFormatHint",
-      "type": "ui",
-      "zh": "控制时长与时码的显示精度",
-      "en": "Control duration and timecode display precision",
-      "ja": "長さとタイムコードの表示精度を調整"
-    },
-    {
-      "id": "Settings_CurrentDatabaseLabel",
-      "type": "ui",
-      "zh": "当前使用的素材库数据库",
-      "en": "Currently used asset library database",
-      "ja": "現在使用中のアセットライブラリデータベース"
-    },
-    {
-      "id": "Settings_DefaultPlayerHint",
-      "type": "ui",
-      "zh": "点按钮会打开系统默认应用设置；请在那里把常用音频格式交给 Harken Search。",
-      "en": "The button opens Windows default-app settings so you can assign common audio formats to Harken Search.",
-      "ja": "ボタンでシステムの既定アプリ設定を開き、よく使う音声形式を Harken Search に割り当てます。"
-    },
-    {
-      "id": "Settings_SectionDiagnostics",
-      "type": "ui",
-      "zh": "诊断与开发者",
-      "en": "Diagnostics & Developer",
-      "ja": "診断と開発者"
-    },
-    {
-      "id": "Settings_SectionDiagnosticsHint",
-      "type": "ui",
-      "zh": "诊断日志与开发模式开关（开发版/完整版）",
-      "en": "Diagnostics log and dev-mode switches (dev / full builds)",
-      "ja": "診断ログと開発モードの切替（dev / full builds）"
     },
     {
       "id": "AITaskStatus_Done",
@@ -11514,90 +10632,6 @@
       "zh": "编码历史",
       "en": "Coding History",
       "ja": "コーディング履歴"
-    },
-    {
-      "id": "Settings_DownmixTitle",
-      "type": "ui",
-      "zh": "下混策略",
-      "en": "Downmix Strategy",
-      "ja": "ダウンミックス戦略"
-    },
-    {
-      "id": "Settings_SignalProtectTitle",
-      "type": "ui",
-      "zh": "信号保护",
-      "en": "Signal Protection",
-      "ja": "信号保護"
-    },
-    {
-      "id": "Settings_GlobalHotkeysTitle",
-      "type": "ui",
-      "zh": "全局热键",
-      "en": "Global Hotkeys",
-      "ja": "グローバルホットキー"
-    },
-    {
-      "id": "Settings_CloseButtonTitle",
-      "type": "ui",
-      "zh": "关闭按钮",
-      "en": "Close Button",
-      "ja": "閉じるボタン"
-    },
-    {
-      "id": "Settings_LoudnessNormTitle",
-      "type": "ui",
-      "zh": "响度归一化",
-      "en": "Loudness Normalization",
-      "ja": "ラウドネス正規化"
-    },
-    {
-      "id": "Settings_PerfModeTitle",
-      "type": "ui",
-      "zh": "性能模式",
-      "en": "Performance Mode",
-      "ja": "パフォーマンスモード"
-    },
-    {
-      "id": "Settings_ClickProtectTitle",
-      "type": "ui",
-      "zh": "点击保护",
-      "en": "Click Protection",
-      "ja": "クリック保護"
-    },
-    {
-      "id": "Settings_MeterColumnsTitle",
-      "type": "ui",
-      "zh": "计量列",
-      "en": "Meter Columns",
-      "ja": "メーター列"
-    },
-    {
-      "id": "Settings_DeviceChannelsTitle",
-      "type": "ui",
-      "zh": "设备声道能力",
-      "en": "Device Channel Capability",
-      "ja": "デバイスチャンネル能力"
-    },
-    {
-      "id": "Settings_DiagLogTitle",
-      "type": "ui",
-      "zh": "诊断日志",
-      "en": "Diagnostics Log",
-      "ja": "診断ログ"
-    },
-    {
-      "id": "Settings_ThesaurusTitle",
-      "type": "ui",
-      "zh": "词库规则",
-      "en": "Thesaurus Rules",
-      "ja": "シソーラスルール"
-    },
-    {
-      "id": "Settings_AdvancedSpectrumTitle",
-      "type": "ui",
-      "zh": "高级频谱",
-      "en": "Advanced Spectrum",
-      "ja": "高度スペクトル"
     },
     {
       "id": "WinTitle_Initial",
@@ -12447,13 +11481,6 @@
       "ja": "現在表示される効果"
     },
     {
-      "id": "Avatar_LoadingTooltip",
-      "type": "ui",
-      "zh": "自定义头像正在加载，暂时显示预制头像",
-      "en": "Custom avatar is loading; a built-in avatar is shown meanwhile",
-      "ja": "カスタムアバターを読み込み中です。一時的にプリセットアバターを表示しています"
-    },
-    {
       "id": "Crash_DlgTitle",
       "zh": "检测到上次异常退出",
       "en": "Abnormal Exit Detected",
@@ -12465,13 +11492,6 @@
       "zh": "搜索文件名 (多词用空格分隔)...",
       "en": "Search file names (separate words with spaces)...",
       "ja": "ファイル名を検索 (スペースで複数語)...",
-      "type": "ui"
-    },
-    {
-      "id": "Set_SearchQuickHint",
-      "zh": "搜索设置页、分组或功能关键词…",
-      "en": "Search settings, groups or feature keywords...",
-      "ja": "設定・グループ・機能キーワードを検索…",
       "type": "ui"
     },
     {
@@ -12599,13 +11619,6 @@
       "zh": "网络库当前不可达",
       "en": "Network library is currently unreachable",
       "ja": "ネットワークライブラリに現在接続できません"
-    },
-    {
-      "id": "Scan_NetworkUnreachableCountFmt",
-      "type": "ui",
-      "zh": "不可达条目: %d",
-      "en": "Unreachable items: %d",
-      "ja": "到達できない項目: %d"
     },
     {
       "id": "Scan_NetworkLibraryReadonlyHint",
@@ -12888,62 +11901,6 @@
       "ja": "端ドラッグで微調整 · Ctrl+ダブルクリックで終了"
     },
     {
-      "id": "Wf_StageScanning",
-      "type": "ui",
-      "zh": "正在扫描",
-      "en": "Scanning",
-      "ja": "スキャン中"
-    },
-    {
-      "id": "Wf_StageIngesting",
-      "type": "ui",
-      "zh": "正在入库",
-      "en": "Ingesting",
-      "ja": "取り込み中"
-    },
-    {
-      "id": "Wf_StageMiniWave",
-      "type": "ui",
-      "zh": "正在缓存 mini 波形",
-      "en": "Caching mini waveforms",
-      "ja": "mini波形キャッシュ中"
-    },
-    {
-      "id": "Wf_StageFinalizing",
-      "type": "ui",
-      "zh": "正在整理结果",
-      "en": "Finalizing results",
-      "ja": "結果整理中"
-    },
-    {
-      "id": "Wf_StageDone",
-      "type": "ui",
-      "zh": "本次处理完成",
-      "en": "This run complete",
-      "ja": "今回の処理完了"
-    },
-    {
-      "id": "Wf_StagePaused",
-      "type": "ui",
-      "zh": "已暂停",
-      "en": "Paused",
-      "ja": "一時停止中"
-    },
-    {
-      "id": "Wf_StageCancelled",
-      "type": "ui",
-      "zh": "已取消",
-      "en": "Cancelled",
-      "ja": "キャンセル済み"
-    },
-    {
-      "id": "Wf_StageFailed",
-      "type": "ui",
-      "zh": "扫描失败",
-      "en": "Scan failed",
-      "ja": "スキャン失敗"
-    },
-    {
       "id": "Wf_CountingFiles",
       "type": "ui",
       "zh": "正在统计文件数...",
@@ -12991,27 +11948,6 @@
       "zh": "当前文件不存在，无法重建波形",
       "en": "Current file is missing; cannot rebuild waveform",
       "ja": "現在のファイルが存在しないため波形を再構築できません"
-    },
-    {
-      "id": "CoverResLow",
-      "type": "ui",
-      "zh": "128px (极低显存)",
-      "en": "128px (very low VRAM)",
-      "ja": "128px（超低VRAM）"
-    },
-    {
-      "id": "CoverResMid",
-      "type": "ui",
-      "zh": "256px (低显存)",
-      "en": "256px (low VRAM)",
-      "ja": "256px（低VRAM）"
-    },
-    {
-      "id": "CoverResHigh",
-      "type": "ui",
-      "zh": "512px (标准)",
-      "en": "512px (standard)",
-      "ja": "512px（標準）"
     },
     {
       "id": "DAW_DetectRegionBpm",
@@ -13229,13 +12165,6 @@
       "zh": "点击开启精准搜索模式\n\n开启后：不扩展前缀，不展开同义词\n关闭后：恢复模糊匹配（默认）",
       "en": "Click to enable precise search\n\nWhen on: no prefix or synonym expansion\nWhen off: fuzzy matching (default)",
       "ja": "クリックで精密検索オン\n\nオン時：前拡張・同義語展開なし\nオフ時：曖昧マッチ（既定）"
-    },
-    {
-      "id": "Scan_FullModeHint",
-      "type": "ui",
-      "zh": "完整模式：metadata、封面和 mini 波形都进入本次入库完成门。",
-      "en": "Full mode: metadata, covers and mini waveforms all gate this ingest completion.",
-      "ja": "完全モード：metadata・ジャケット・mini波形すべて今回の取り込み完了ゲートに含まれます。"
     },
     {
       "id": "Scan_FastModeHint",
@@ -14777,13 +13706,6 @@
       "ja": "検出中です。少し後に診断サマリーをコピーしてください。"
     },
     {
-      "id": "Tip_ClickToApplyFmt",
-      "type": "ui",
-      "zh": "%s — 点击立即应用",
-      "en": "%s — click to apply",
-      "ja": "%s — クリックで適用"
-    },
-    {
       "id": "Scan_ProgressCountFmt",
       "type": "ui",
       "zh": "%lld / %lld (找到: %d)",
@@ -15963,6 +14885,14 @@
       "ja": "スペースが不足しています。離すとフロートのままになります。別の辺を選ぶか、対象を広げてください。"
     },
     {
+      "id": "Dock_ResultsHomeHint", "type": "ui",
+      "zh": "将「全部文件」拖回这里", "en": "Drag All Files back here", "ja": "「すべてのファイル」をここに戻す"
+    },
+    {
+      "id": "Dock_ResultsHomeDrop", "type": "ui",
+      "zh": "松开，恢复全部文件", "en": "Release to restore All Files", "ja": "離してすべてのファイルを元に戻す"
+    },
+    {
       "id": "Dock_UxDropLeft", "type": "ui",
       "zh": "松手放到左侧 · Esc 取消", "en": "Release to dock left · Esc cancels", "ja": "離すと左に配置 · Esc でキャンセル"
     },
@@ -16012,6 +14942,33 @@
       "en": "Night palette could not be read; using Dark. Edit and save it to repair.",
       "ja": "夜の配色を読めないため Dark を使用中です。再編集して保存してください。"
     },
-    {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"}
+    {"id": "ThemeSchedule_SaveFailed", "type": "ui", "zh": "配色未保存，请检查保存位置后重试。原配色保持不变。", "en": "Palette was not saved. Check the save location and retry. The previous palette is unchanged.", "ja": "配色を保存できません。保存先を確認して再試行してください。以前の配色は保持されています。"},
+    {"id":"Similar_DeepThink","type":"ui","zh":"深度思考","en":"Deep analysis","ja":"深く分析"},
+    {"id":"Similar_DeepHint","type":"ui","zh":"关闭时快速比较少量候选；开启后扩大范围，细比起落和声音顺序，耗时更长。","en":"Off: quickly compare fewer candidates. On: search more widely and compare dynamics and event order; takes longer.","ja":"オフは少数の候補を素早く比較。オンは範囲を広げ、強弱と音の順序を詳しく比較するため時間がかかります。"},
+    {"id":"Similar_NextBatch","type":"ui","zh":"换一批","en":"Next batch","ja":"次の候補"},
+    {"id":"Similar_NoMoreCandidates","type":"ui","zh":"当前已分析素材中，暂无更多匹配结果。更换参考音效或模式可重新查找。","en":"No more matches in the analyzed sounds. Choose another reference or mode to start again.","ja":"分析済み素材にこれ以上の候補はありません。基準音またはモードを変えると再検索できます。"},
+    {"id":"Similar_DimCategory","type":"ui","zh":"类别动作","en":"Source / action","ja":"音源・動作"},
+    {"id":"Similar_DimTimbre","type":"ui","zh":"音色质感","en":"Timbre / texture","ja":"音色・質感"},
+    {"id":"Similar_DimEnvelope","type":"ui","zh":"起音衰减","en":"Attack / decay","ja":"立ち上がり・減衰"},
+    {"id":"Similar_DimRhythm","type":"ui","zh":"事件节奏","en":"Events / rhythm","ja":"音の数・リズム"},
+    {"id":"Similar_DimPitch","type":"ui","zh":"音高走势","en":"Pitch","ja":"ピッチ"},
+    {"id":"Similar_DimDuration","type":"ui","zh":"有效时长","en":"Active duration","ja":"有効な長さ"},
+    {"id":"Similar_ModelUnavailable","type":"ui","zh":"同类替代所需的声音模型未就绪，请检查本机模型后重试。","en":"The audio model for same-type alternatives is not ready. Check the local model and retry.","ja":"同種の代替に必要な音声モデルが未準備です。ローカルモデルを確認して再試行してください。"},
+    {"id":"Similar_IndexRequired","type":"ui","zh":"还没有足够的已分析素材，请先分析当前库。","en":"Not enough analyzed sounds. Analyze this library first.","ja":"分析済みの素材が不足しています。ライブラリを先に分析してください。"},
+    {"id":"Similar_SearchFailed","type":"ui","zh":"查找未完成，请重新分析后再试。","en":"Search did not complete. Reanalyze and retry.","ja":"検索を完了できませんでした。再分析してお試しください。"},
+    {"id":"Similar_Cancelled","type":"ui","zh":"查找已取消。","en":"Search cancelled.","ja":"検索をキャンセルしました。"},
+    {"id":"Similar_CoverageFmt","type":"ui","zh":"已分析 %d / %d","en":"Analyzed %d / %d","ja":"分析済み %d / %d"},
+    {"id":"Similar_SemanticCoverageFmt","type":"ui","zh":"同类分析 %d / %d","en":"Category analysis %d / %d","ja":"同種分析 %d / %d"},
+    {"id":"Similar_Recheck","type":"ui","zh":"核对全部音频","en":"Check all audio","ja":"すべての音声を確認"},
+    {"id":"Similar_AnalysisReport","type":"ui","zh":"分析结果","en":"Analysis results","ja":"分析結果"},
+    {"id":"Similar_AnalysisSummaryFmt","type":"ui","zh":"完成 %d，沿用 %d，未完成 %d","en":"Analyzed %d, reused %d, incomplete %d","ja":"分析 %d、再利用 %d、未完了 %d"},
+    {"id":"Similar_AnalysisCancelled","type":"ui","zh":"分析已停止，已完成的结果已保留。","en":"Analysis stopped. Completed results are retained.","ja":"分析を停止しました。完了した結果は保存されています。"},
+    {"id":"Similar_AnalysisModelMissing","type":"ui","zh":"声音模型未就绪；已完成的基础特征已保留，同类分析仍未完成。","en":"Audio model not ready. Saved acoustic features are retained; category analysis is incomplete.","ja":"音声モデルが未準備です。基礎特徴は保持されていますが、同種分析は未完了です。"},
+    {"id":"Similar_AnalysisFailed","type":"ui","zh":"分析未完成，请检查素材和保存位置后重试。","en":"Analysis did not complete. Check source files and the save location, then retry.","ja":"分析を完了できませんでした。素材と保存先を確認して再試行してください。"},
+    {"id":"Similar_FailureUnreadable","type":"ui","zh":"无法读取或解码","en":"Cannot read or decode","ja":"読込・デコード不可"},
+    {"id":"Similar_FailureSilent","type":"ui","zh":"没有有效声音","en":"No active sound","ja":"有効な音なし"},
+    {"id":"Similar_FailureChanged","type":"ui","zh":"分析期间文件已改变","en":"File changed during analysis","ja":"分析中にファイルが変更"},
+    {"id":"Similar_FailureModel","type":"ui","zh":"同类分析失败","en":"Category analysis failed","ja":"同種分析に失敗"},
+    {"id":"Similar_FailureSave","type":"ui","zh":"结果未保存","en":"Result not saved","ja":"結果を保存できません"}
   ]
 }

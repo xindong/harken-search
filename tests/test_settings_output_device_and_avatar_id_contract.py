@@ -2,13 +2,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+MAIN = (ROOT / "src" / "SettingsFields.inl").read_text(encoding="utf-8") + (ROOT / "src" / "SettingsAvatarTools.inl").read_text(encoding="utf-8")
 LEDGER = (ROOT / "locale" / "harken.ui.strings.json").read_text(encoding="utf-8")
 HELPER_PATH = ROOT / "src" / "OutputDeviceComboItem.h"
 
 
 def _device_combo_body() -> str:
-    start = MAIN.index('BeginTransientScrollbarCombo("##Device"')
+    start = MAIN.index('ImGui::BeginCombo("##value",label)')
     end = MAIN.index("ImGui::EndCombo();", start)
     return MAIN[start:end]
 
@@ -29,7 +29,10 @@ def test_same_named_devices_use_distinct_selectable_ids() -> None:
 
 def test_default_device_label_lives_in_stable_string() -> None:
     combo = _device_combo_body()
-    leftover = combo.replace("selectableId.c_str()", "").replace("displayLabel.c_str()", "")
+    # Observe copies its identifier immediately; only ImGui display strings
+    # participate in the label-lifetime contract.
+    displayed = "\n".join(line for line in combo.splitlines() if "su::Observe(" not in line)
+    leftover = displayed.replace("selectableId.c_str()", "").replace("displayLabel.c_str()", "")
     assert ".c_str()" not in leftover
     assert "(std::string(" not in combo
     assert '+" (默认)"' not in combo

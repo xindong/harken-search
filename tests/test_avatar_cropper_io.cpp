@@ -38,6 +38,11 @@ bool Check(bool condition, const char* message) {
 } // namespace
 
 int main() {
+    auto bounded = InitCropState(800,600);
+    bounded.zoom=100.f; ClampCropState(bounded);
+    if (!Check(bounded.zoom==8.f,"zoom bounded to 8x")) return 1;
+    bounded=InitCropState(1,1); bounded.zoom=8.f; ClampCropState(bounded);
+    if (!Check(ComputeSourceRect(bounded).w==1,"tiny image crop retains one pixel")) return 1;
     TempDirectory temp;
     const std::vector<uint8_t> pixels = {
         255, 0, 0, 255,    0, 255, 0, 128,
@@ -58,6 +63,33 @@ int main() {
     if (!Check(loaded == pixels, "roundtrip RGBA pixels changed")) return 1;
 
     const fs::path unicodePath = temp.path / fs::u8path(u8"头像😀 crop.png");
+    const auto before = [&] { std::ifstream f(roundtripPath, std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), {}); }();
+    auto changedPixels = pixels; changedPixels[0] = 17;
+    if (!Check(!SaveCroppedAvatarWithSettings(changedPixels, 2, 2, crop, roundtripPath.u8string(), [] { return false; }, 2),
+               "settings failure must reject avatar save")) return 1;
+    const auto after = [&] { std::ifstream f(roundtripPath, std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), {}); }();
+    if (!Check(before == after, "settings failure must preserve previous PNG bytes")) return 1;
+    const auto firstAvatar = (temp.path / "first.png").u8string();
+    if (!Check(!SaveCroppedAvatarWithSettings(pixels, 2, 2, crop, firstAvatar, [] { return false; }, 2) && !fs::exists(fs::u8path(firstAvatar)),
+               "first failed save must not leave a custom avatar")) return 1;
+    if (!Check(SaveCroppedAvatarWithSettings(pixels, 2, 2, crop, firstAvatar, [] { return true; }, 2),
+               "retry after settings recovery must save")) return 1;
+    int settingsWrites = 0;
+    if (!Check(!SaveCroppedAvatarWithSettings(pixels, 2, 2, crop,
+               (temp.path / "missing-parent" / "avatar.png").u8string(),
+               [&] { ++settingsWrites; return true; }, 2) && settingsWrites == 0,
+               "image write failure must not save settings")) return 1;
+    if (!Check(SaveCroppedAvatarWithSettings(changedPixels, 2, 2, crop, roundtripPath.u8string(),
+               [&] { ++settingsWrites; return true; }, 2) && settingsWrites == 1,
+               "successful replacement must save settings once")) return 1;
+    loaded.clear();
+    if (!Check(LoadImageForCrop(roundtripPath.u8string(), width, height, loaded) && loaded == changedPixels,
+               "successful replacement must persist new pixels")) return 1;
+    for (const auto& entry : fs::directory_iterator(temp.path)) {
+        if (!Check(entry.path().filename().u8string().find(".pending-") == std::string::npos &&
+                   entry.path().filename().u8string().find(".backup-") == std::string::npos,
+                   "completed saves must clean temporary image files")) return 1;
+    }
     if (!Check(SaveCroppedAvatarPng(pixels, 2, 2, crop, unicodePath.u8string(), 2),
                "Unicode destination should save")) return 1;
     loaded.clear();

@@ -16,6 +16,16 @@ static void check(bool cond, const char* desc) {
 }
 
 int main() {
+    {
+        auto crop = InitCropState(800,600);
+        crop.zoom = 100.f;
+        ClampCropState(crop);
+        check(crop.zoom == 8.f, "zoom is bounded to 8x");
+        crop = InitCropState(1,1);
+        crop.zoom = 8.f;
+        ClampCropState(crop);
+        check(ComputeSourceRect(crop).w == 1, "tiny source retains at least one pixel when zoomed");
+    }
     // ComputeMinZoom always returns 1.0
     check(ComputeMinZoom(1920, 1080) == 1.0f, "ComputeMinZoom landscape = 1.0");
     check(ComputeMinZoom(256, 256)   == 1.0f, "ComputeMinZoom square = 1.0");

@@ -371,6 +371,7 @@ void DrawSidebarActivityBar(AppState& state) {
             if (ImGui::MenuItem(L(Filter_ViewMode),     nullptr, &state.settings.showViewMode))        MarkSettingsDirty(state);
             if (ImGui::MenuItem(L(Nav_QuickPaths),      nullptr, &state.settings.showFolderShortcuts)) MarkSettingsDirty(state);
             if (ImGui::MenuItem(L(Filter_FolderTree),   nullptr, &state.settings.showFolderTree))      MarkSettingsDirty(state);
+            if (ImGui::MenuItem(L(Nav_RelatedPaths),   nullptr, &state.settings.showRelatedPaths))   MarkSettingsDirty(state);
             if (ImGui::MenuItem(L(Filter_TagCloud),     nullptr, &state.settings.showTagCloud))        MarkSettingsDirty(state);
             if (ImGui::MenuItem(L(Filter_Metadata),     nullptr, &state.settings.showMetadataFilter))  MarkSettingsDirty(state);
             if (ImGui::MenuItem(L(Filter_Playlists),    nullptr, &state.settings.showPlaylists))       MarkSettingsDirty(state);

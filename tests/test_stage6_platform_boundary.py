@@ -453,7 +453,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "TestDatabaseFeatures",
             "TestPlaylistPerformanceContract",
             "TestPerfOptimizations",
-            "TestSimilarityQueryService",
+            "TestSimilarityQueryV2",
             "TestPreviewPlaylistDatabase",
         }
         behavior = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(
@@ -877,8 +877,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "if (WM_TASKBARCREATED", 1
         )[0]
 
-        self.assertEqual(2, body.count("lastDropTick ="))
-        self.assertEqual(2, body.count("Platform::MonotonicMilliseconds()"))
+        self.assertEqual(3, body.count("lastDropTick ="))
+        self.assertEqual(3, body.count("Platform::MonotonicMilliseconds()"))
         self.assertNotIn("GetTickCount64()", body)
         self.assertIn("catch (...)", body)
 
@@ -908,7 +908,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
 
         self.assertIn('#include "platform/system.h"', source)
-        self.assertEqual(2, source.count("Platform::MonotonicMilliseconds()"))
+        self.assertEqual(3, source.count("Platform::MonotonicMilliseconds()"))
         self.assertNotIn("GetTickCount64()", source)
 
     def test_main_temp_drag_alias_lifecycle_uses_filesystem_pal(self) -> None:
@@ -2420,7 +2420,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/avatar_image_file_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsAvatarTools.inl").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenAvatarImageFileDialogUtf8(void* ownerWindow);", header)
@@ -2526,7 +2526,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/thesaurus_json_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsThesaurusTools.inl").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenThesaurusJsonFileDialogUtf8(void* ownerWindow);", header)
@@ -2581,7 +2581,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/settings_import_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenSettingsImportFileDialogUtf8(void* ownerWindow);", header)
@@ -2609,8 +2609,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertEqual(1, main.count(qualified_call))
         button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-        tooltip = main.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
-        body = main[button:tooltip]
+        next_action = main.index('} else if(editor.action=="custom-colors")', button)
+        body = main[button:next_action]
         self.assertNotIn("OPENFILENAMEW", body)
         self.assertNotIn("GetOpenFileNameW", body)
         self.assertIn(
@@ -4115,7 +4115,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("#ifdef _WIN32", body)
 
     def test_main_custom_avatar_removal_uses_filesystem_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsAvatarTools.inl").read_text(encoding="utf-8")
         body = source.split(
             "if (aura::ui::ActionButton(L(Set_AvatarRemoveLabelZh)))", 1
         )[1].split("if (aura::ui::ActionButton(settingsAvatarPickerOpenLabel.c_str()))", 1)[0]
@@ -4380,7 +4380,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("in.open", body)
 
     def test_main_thesaurus_merge_reads_selected_wide_path_through_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsThesaurusTools.inl").read_text(encoding="utf-8")
         backend = (
             ROOT / "src" / "platform" / "thesaurus_json_dialog_win32.cpp"
         ).read_text(encoding="utf-8")
@@ -4406,7 +4406,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("std::istreambuf_iterator", body)
 
     def test_main_dev_mode_marker_creation_uses_filesystem_text_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsDeveloperTools.inl").read_text(encoding="utf-8")
         body = source.split("if (aura::ui::ActionButton(L(Set_CreateDevMode)", 1)[1].split(
             "if (aura::ui::ActionButton(L(Set_OpenExeDir)", 1
         )[0]
@@ -4418,7 +4418,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("std::ofstream", body)
 
     def test_main_dev_mode_marker_removal_uses_filesystem_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsDeveloperTools.inl").read_text(encoding="utf-8")
         body = source.split("if (aura::ui::ActionButton(L(Set_DeleteDevMode)", 1)[1].split(
             "if (aura::ui::ActionButton(L(Set_CreateDevMode)", 1
         )[0]
@@ -4446,9 +4446,14 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "// Helper:", 1
         )[0]
 
-        self.assertIn("Platform::FileSystem::StreamWriter writer;", body)
-        self.assertIn("writer.Open(pathUtf8, false, true)", body)
+        self.assertIn("harken::settings::SaveKeyValueFile(pathUtf8,items)", body)
+        body = (ROOT / "src" / "SettingsFileWriter.h").read_text(encoding="utf-8")
+        self.assertIn("Platform::FileSystem::StreamWriter", body)
+        self.assertIn("writer.Open(pending, false, true)", body)
         self.assertIn('writer.Write("# Aris settings (auto-generated)\\n");', body)
+        self.assertIn("writer.Flush()", body)
+        self.assertIn("writer.CloseChecked()", body)
+        self.assertIn("Platform::FileSystem::AtomicFileReplace(pathUtf8,pending)", body)
         for write in (
             "writer.Write(it.first)",
             'writer.Write("=")',
@@ -4471,7 +4476,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertLess(body.index(remove_call), body.index("GetAIEngine().DownloadModel"))
 
     def test_main_thesaurus_reset_removes_current_and_legacy_files_through_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsThesaurusTools.inl").read_text(encoding="utf-8")
         body = source.split("if (aura::ui::ActionButton(L(Set_ThesResetDefault)", 1)[1].split(
             "ImGui::Spacing();", 1
         )[0]
@@ -9284,42 +9289,38 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("fs::remove_all", replacement)
 
     def test_main_settings_export_source_probe_uses_filesystem_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (aura::ui::ActionButton(L(Set_ExportSettings)", 1)[1].split(
-            "if (HoveredForHelp()) Aura::SetTooltip",
-            1,
+        source = (ROOT / "src" / "SettingsActions.inl").read_text(encoding="utf-8")
+        body = source.split('} else if(editor.action=="export")', 1)[1].split(
+            '} else if(editor.action=="import")', 1
         )[0]
 
-        self.assertIn(
-            "Platform::FileSystem::ProbePath(srcPath) == Platform::FileSystem::PathStatus::Present",
-            body,
-        )
+        self.assertIn("TrySaveAppSettings(state)", body)
+        self.assertIn("Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)", body)
+        self.assertLess(body.index("TrySaveAppSettings(state)"), body.index("Platform::FileSystem::CopyFile"))
         self.assertNotIn("fs::exists", body)
 
     def test_main_settings_import_export_copy_uses_filesystem_pal(self) -> None:
         header = (ROOT / "src" / "platform" / "filesystem.h").read_text(encoding="utf-8")
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        export_body = source.split("if (aura::ui::ActionButton(L(Set_ExportSettings)", 1)[1].split(
-            "if (HoveredForHelp()) Aura::SetTooltip",
-            1,
+        source = (ROOT / "src" / "SettingsActions.inl").read_text(encoding="utf-8")
+        export_body = source.split('} else if(editor.action=="export")', 1)[1].split(
+            '} else if(editor.action=="import")', 1
         )[0]
-        import_body = source.split("if (aura::ui::ActionButton(L(Set_ImportSettings)", 1)[1].split(
-            "if (HoveredForHelp()) Aura::SetTooltip",
-            1,
+        import_body = source.split('} else if(editor.action=="import")', 1)[1].split(
+            '} else if(editor.action=="custom-colors")', 1
         )[0]
 
         self.assertIn("bool CopyFile(", header)
         self.assertIn(
-            "Platform::FileSystem::CopyFile(srcPath, exportPath, true)",
+            "Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)",
             export_body,
         )
         self.assertIn(
-            "Platform::FileSystem::CopyFile(importPath, dstPath, true)",
+            "Platform::FileSystem::CopyFile(path,g_appSettingsPathUtf8,true)",
             import_body,
         )
         self.assertLess(
             import_body.index(
-                "Platform::FileSystem::CopyFile(importPath, dstPath, true)"
+                "Platform::FileSystem::CopyFile(path,g_appSettingsPathUtf8,true)"
             ),
             import_body.index("LoadAppSettings(state)"),
         )

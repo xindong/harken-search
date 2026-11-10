@@ -21,6 +21,7 @@
 #include "WaveformCachePolicy.h"
 #include "FolderTreePathModePolicy.h"
 #include "SearchTextIndex.h"
+#include "ScanFailureClassification.h"
 
 // Forward declarations
 struct sqlite3;
@@ -216,13 +217,64 @@ struct ScanStats {
     int waveformPendingFixedDone = 0;
     int waveformLongDetailSkipped = 0;
     std::vector<std::string> errorMessages;
+    std::vector<int> errorMessageCounts;
+    HarkenSearch::ScanFailureCategoryCounts errorCategoryCounts{};
+
+    void recordErrorDetail(std::string message, int count) {
+        if (message.empty()) return;
+        if (errorMessages.size() < 32) {
+            errorMessages.push_back(std::move(message));
+            errorMessageCounts.push_back(count);
+            return;
+        }
+        const auto priority = [](const std::string& detail) {
+            if (detail.find("Scan_NetworkLibraryUnreachable") != std::string::npos) return 3;
+            if (detail.rfind("Database write failed during scan:", 0) == 0) return 2;
+            if (HarkenSearch::ClassifyScanFailure(detail) == HarkenSearch::ScanFailureCategory::Save)
+                return 1;
+            return 0;
+        };
+        const int incomingPriority = priority(message);
+        if (incomingPriority == 0)
+            return;
+        size_t networkDetails = 0;
+        size_t writeCauses = 0;
+        for (const auto& detail : errorMessages) {
+            networkDetails += priority(detail) == 3;
+            writeCauses += priority(detail) == 2;
+        }
+        size_t replacement = errorMessages.size();
+        int replacementPriority = incomingPriority + 1;
+        for (size_t i = 0; i < errorMessages.size(); ++i) {
+            const int currentPriority = priority(errorMessages[i]);
+            // The result view reads these signals from the bounded detail list.
+            if ((currentPriority == 3 && networkDetails == 1) ||
+                (currentPriority == 2 && writeCauses == 1))
+                continue;
+            // Duplicate network details can give way to a new write cause;
+            // their full count is carried separately from the display cap.
+            const int evictionPriority = currentPriority == 3 && networkDetails > 1 ? 1 : currentPriority;
+            if (evictionPriority <= incomingPriority && evictionPriority < replacementPriority) {
+                replacement = i;
+                replacementPriority = evictionPriority;
+            }
+        }
+        if (replacement < errorMessages.size()) {
+            errorMessages[replacement] = std::move(message);
+            errorMessageCounts[replacement] = count;
+        }
+    }
 
     void addError(std::string message = {}, int count = 1) {
         if (count <= 0) return;
         errors += count;
-        if (!message.empty() && errorMessages.size() < 32) {
-            errorMessages.push_back(std::move(message));
-        }
+        errorCategoryCounts[static_cast<size_t>(HarkenSearch::ClassifyScanFailure(message))] += count;
+        recordErrorDetail(std::move(message), count);
+    }
+
+    void addDiagnostic(std::string message) {
+        // Keep a fatal write cause visible without counting an already failed file again.
+        recordErrorDetail(std::move(message), 0);
     }
 
     void mergeFrom(const ScanStats& other) {
@@ -234,6 +286,8 @@ struct ScanStats {
         removed += other.removed;
         unreachable += other.unreachable;
         errors += other.errors;
+        for (size_t i = 0; i < errorCategoryCounts.size(); ++i)
+            errorCategoryCounts[i] += other.errorCategoryCounts[i];
         ingested += other.ingested;
         fatalFailure = fatalFailure || other.fatalFailure;
         paused = paused || other.paused;
@@ -243,9 +297,10 @@ struct ScanStats {
         waveformCacheReused += other.waveformCacheReused;
         waveformPendingFixedDone += other.waveformPendingFixedDone;
         waveformLongDetailSkipped += other.waveformLongDetailSkipped;
-        for (const auto& msg : other.errorMessages) {
-            if (errorMessages.size() >= 32) break;
-            if (!msg.empty()) errorMessages.push_back(msg);
+        for (size_t i = 0; i < other.errorMessages.size(); ++i) {
+            if (other.errorMessages[i].empty()) continue;
+            const int count = i < other.errorMessageCounts.size() ? other.errorMessageCounts[i] : 1;
+            recordErrorDetail(other.errorMessages[i], count);
         }
     }
 };
@@ -1127,7 +1182,10 @@ public:
                               const std::string& backfillDbPathSnapshot = {},
                               int64_t backfillDbGenerationSnapshot = 0,
                               int64_t scanForegroundSessionId = 0,
-                              const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition = nullptr);
+                              const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition = nullptr,
+                              // Synchronous notification after enumeration/ingest, before
+                              // post-processing. Never retained or called from another thread.
+                              std::function<void()> onFinalizing = nullptr);
     void beginScanRollbackSession();
     bool rollbackActiveScanSession(aura::BackfillQueue* backfillQueue);
     void discardScanRollbackSession();
@@ -1501,6 +1559,7 @@ private:
     bool rollbackScanRollbackJournal(const std::string& scopePath,
                                      aura::BackfillQueue* backfillQueue);
     bool m_scanRollbackSessionActive = false;
+    bool m_scanRollbackHasSimilarity = false;
 
 public:
     /// T-297: enqueue a file for waveform pre-extraction. Idempotent —
