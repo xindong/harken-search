@@ -55,6 +55,8 @@
 #include "BackfillWorkerPool.h"
 #include "WorkerThreadPolicy.h"
 #include "HarkenSearchWidgets.h"  // Focus tracking.
+#include "HarkenSearchMetrics.h"
+#include "TransientScrollbarHost.h"
 #include "HarkenSearchIcons.h"    // Lucide font merge.
 #include "DockNativeCaptionBridge.h"
 #include "ui/dock/DockCaptionWndProc.h"
@@ -131,6 +133,7 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "TransferEngine.h"
 #include "DevToolsModule.h"
 #include "FrameBudgetDiagnostics.h"
+#include "PerformanceMonitor.h"
 #include "DiagnosticsLogger.h"
 #include "UserActionLog.h"
 #include "WaapiClient.h"
@@ -199,6 +202,8 @@ static void AcknowledgeBootstrapHealthAfterUiPresented() {
 #include <iterator>
 #include <functional>
 #include <sstream>
+
+#include "PerformanceMonitorWindow.inl"
 
 #if defined(__has_include)
 #if __has_include(<WebView2.h>)
@@ -14053,8 +14058,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         const auto dockTraceRenderStart = std::chrono::steady_clock::now();
 #endif
         DevTools_BeginFramePhase("RenderUI");
-        RenderUI(state);
+        {
+            harken::performance::Scope activity(harken::performance::Module::Interface);
+            RenderUI(state);
+        }
         harken::settings::EndAppearancePreview(state);
+        DrawPerformanceMonitor(state);
         GuardInfoMetadataContext(state);
         RenderInfoMetadataLeavePrompt(state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
@@ -14654,7 +14663,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             ImVec4 clearBg = GetThemeClearColor();
             glClearColor(clearBg.x, clearBg.y, clearBg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            {
+                harken::performance::Scope activity(harken::performance::Module::Interface);
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            }
 #if ARIS_PREVIEW_ISOLATION
             // Capture the actual rendered client frame on an inactive desktop,
             // where Windows PrintWindow cannot capture this OpenGL surface.

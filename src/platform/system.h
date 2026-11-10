@@ -62,6 +62,7 @@ enum class ProcessMemoryUsageStatus {
 struct ProcessMemoryUsageResult {
     ProcessMemoryUsageStatus status = ProcessMemoryUsageStatus::Unsupported;
     uint64_t privateUsageBytes = 0;
+    uint64_t workingSetBytes = 0;
 };
 
 ProcessMemoryUsageResult QueryCurrentProcessMemoryUsage();

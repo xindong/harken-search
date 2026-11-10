@@ -431,7 +431,7 @@
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(24,24));
         if(ImGui::BeginPopupModal("###SettingsUnsaved",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoTitleBar)){
             ImGui::TextUnformatted(L(SetUX_UnappliedChanges));
-            ImGui::TextWrapped("%s",editor.closeAfterPrompt?L(SetUX_ApplyOrDiscardYourChangesBeforeClosing):
+            ImGui::TextWrapped("%s",(editor.closeAfterPrompt || editor.action=="performance-monitor")?L(SetUX_ApplyOrDiscardYourChangesBeforeClosing):
                 L(SetUX_ThisToolSavesSeparatelyApplyOrDiscardTheCurrentChangesFirst));
             if(!editor.error.empty())ImGui::TextWrapped("%s",editor.error.c_str());
             if(aura::ui::ActionButton(L(SetUX_KeepEditing))){editor.closePrompt=false;editor.action.clear();ImGui::CloseCurrentPopup();}su::Observe("keep-editing");

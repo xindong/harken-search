@@ -136,6 +136,7 @@
 #include "AppState.h"
 #include "SidebarMetadataPicker.h"
 #include "SettingsDialogState.h"
+#include "PerformanceMonitor.h"
 #include "SettingsFileWriter.h"
 #include "SettingsMigration.h"
 #include "TagCloudContext.h"
@@ -18603,6 +18604,7 @@ void RenderFileInfoPanelTabContents(
                     cw.preloadGeneration = cw.generation;
                     const std::string dbPath = currentDbPath;
                     cw.preloadFuture = std::async(std::launch::async, [dbPath]() -> CoverWallPageLoadResult {
+                        harken::performance::Scope activity(harken::performance::Module::Cover);
                         return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);
                     });
                 }
@@ -18973,6 +18975,7 @@ void RenderFileInfoPanelTabContents(
 
                         cw.entriesInFlight = true;
                         cw.entriesFuture = std::async(std::launch::async, [rawPreloaded]() -> CoverWallPageLoadResult {
+                            harken::performance::Scope activity(harken::performance::Module::Cover);
                             return BuildCoverWallLoadResultFromEntries(rawPreloaded);
                             // DB 已返回 normalized_key（预存视觉 hash），无需文件 I/O
                             CoverWallPageLoadResult result;
@@ -19008,6 +19011,7 @@ void RenderFileInfoPanelTabContents(
                         cw.entriesInFlight = true;
                         const std::string dbPath = state.database.getMainDbPath();
                         cw.entriesFuture = std::async(std::launch::async, [dbPath]() -> CoverWallPageLoadResult {
+                            harken::performance::Scope activity(harken::performance::Module::Cover);
                             return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);
                             Database localDb;
                             if (!localDb.openReadOnly(dbPath))
@@ -19753,6 +19757,7 @@ void RenderFileInfoPanelTabContents(
                         cw.entriesRequestedAppend = true;
                         cw.entriesRequestBaseItemCount = cw.items.size();
                         cw.entriesFuture = std::async(std::launch::async, [dbPath, afterCursor]() -> CoverWallPageLoadResult {
+                            harken::performance::Scope activity(harken::performance::Module::Cover);
                             return LoadGlobalCoverWallPage(dbPath, afterCursor, kGlobalCoverWallPageSize);
                         });
                     }

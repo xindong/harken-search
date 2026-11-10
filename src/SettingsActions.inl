@@ -1,8 +1,10 @@
 // Actions such as library repair and avatar editing have their own persistence.
 // Pending preferences are resolved explicitly before entering these tools.
 if (!editor.closePrompt && !editor.action.empty()) {
-    if (editor.action=="theme-editor" || editor.action=="day-editor" || editor.action=="night-editor" || editor.action=="shortcuts") {
-        if (editor.action=="shortcuts") state.showShortcutsDialog=true;
+    if (editor.action=="theme-editor" || editor.action=="day-editor" || editor.action=="night-editor" ||
+        editor.action=="shortcuts" || editor.action=="performance-monitor") {
+        if (editor.action=="performance-monitor") aura::ui::OpenStandaloneWindow(&state.performanceMonitorWindow);
+        else if (editor.action=="shortcuts") state.showShortcutsDialog=true;
         else {state.themeScheduleEditorPeriod=editor.action=="day-editor"?0:editor.action=="night-editor"?1:-1;state.showThemeEditor=true;}
         editor.action.clear();editor.open=false;ImGui::CloseCurrentPopup();
     } else if (!ImGui::IsPopupOpen("###SettingsTool")) ImGui::OpenPopup("###SettingsTool");

@@ -1,4 +1,5 @@
 #include "Database.h"
+#include "PerformanceMonitor.h"
 // i18n-anchor (F1, RQ-20260911-04): m_lastError/outError/heartbeatMsg feeders.
 // Display sites (reverse map): getLastError -> main.cpp 10484 switchError /
 // 31884 newDbError, AsyncSearchRefreshCompletionStateAdapter, BackfillWorkerPool
@@ -9180,6 +9181,7 @@ int Database::backfillCoverPhashBatch(int batchSize) {
 }
 
 void Database::coverPhashBackfillWorkerMain() {
+    harken::performance::Scope activity(harken::performance::Module::Cover);
     // COM init handled per-call inside DecodeImageFromMemory (auto COM init/uninit)
     DIAG_ACTION("Database", "CoverPhashBackfillWorker started");
 
@@ -14097,6 +14099,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                                    int64_t scanForegroundSessionId,
                                    const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition,
                                    std::function<void()> onFinalizing) {
+    harken::performance::Scope activity(harken::performance::Module::Scan);
     ScanStats stats;
     fs::path dir = Utf8ToPath(dirPath);
     auto markCancelledAndReturn = [&]() -> ScanStats {
@@ -14617,6 +14620,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         std::set<std::string> inFlightNames;
 
         auto workerFn = [&]() {
+            harken::performance::Scope activity(harken::performance::Module::Scan);
             for (;;) {
                 if (isCancelled()) break;
                 int idx = workIndex.fetch_add(1);
@@ -20085,6 +20089,7 @@ void Database::precomputeWorkerThread() {
             // Keep the path in m_precomputePending for the duration of the
             // job so a re-enqueue while we're working doesn't double-process.
             lk.unlock();
+            harken::performance::Scope activity(harken::performance::Module::Waveform);
 
             // Decode before acquiring database state, then save both payloads in one
             // transaction so a rescan cannot interleave a new pending state.

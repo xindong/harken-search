@@ -730,6 +730,7 @@ if(WIN32)
         src/platform/floating_window_corners_win32.cpp
         src/platform/image_codec_win32.cpp
         src/platform/platform_win32.cpp
+        src/platform/performance_monitor_win32.cpp
         src/platform/system_win32.cpp
         src/platform/harken_user_data_layout.cpp
         src/platform/harken_legacy_data_migrator.cpp
@@ -1067,6 +1068,7 @@ if(WIN32)
         ${SQLITE_SOURCES}
         ${RESOURCE_FILES}
     )
+    target_compile_definitions(HarkenSearch PRIVATE HARKEN_PERFORMANCE_MONITOR=1)
 elseif(APPLE)
     add_executable(HarkenSearch MACOSX_BUNDLE
         ${APP_SOURCES}
