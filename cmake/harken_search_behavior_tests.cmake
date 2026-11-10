@@ -7167,6 +7167,13 @@ add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
 aura_set_test_labels(TestSimilarityIndexer core)
 set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
 set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
+add_executable(TestSimilarityIndexCountState EXCLUDE_FROM_ALL tests/test_similarity_index_count_state.cpp)
+target_include_directories(TestSimilarityIndexCountState PRIVATE src)
+if(MSVC)
+    target_compile_options(TestSimilarityIndexCountState PRIVATE /W4 /WX /utf-8)
+endif()
+add_test(NAME TestSimilarityIndexCountState COMMAND TestSimilarityIndexCountState)
+aura_set_test_labels(TestSimilarityIndexCountState core)
 add_executable(TestAudioEmbeddingService EXCLUDE_FROM_ALL
     tests/test_audio_embedding_service.cpp
     src/AudioEmbeddingService.cpp

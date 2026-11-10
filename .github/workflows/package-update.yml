@@ -32,6 +32,7 @@ jobs:
       ARIS_UPDATE_GITHUB_REPOSITORY: xindong/harken-search
       ARIS_UPDATE_MIRROR_BASE_URL: https://harkensearch.xd.com/aris/
       HARKEN_TRUSTED_SIGNER_SUBJECT: ${{ vars.HARKEN_TRUSTED_SIGNER_SUBJECT }}
+      HARKEN_SIMILARITY_MODEL_BASE_URL: ${{ vars.HARKEN_SIMILARITY_MODEL_BASE_URL }}
       BUILD_ID: ${{ github.sha }}
       PR_NUMBER: ${{ inputs.pr_number }}
       REVIEW_HEAD_SHA: ${{ inputs.head_sha }}
@@ -49,7 +50,15 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Prepare pinned similarity assets
+        shell: pwsh
+        run: |
+          if (-not $env:HARKEN_SIMILARITY_MODEL_BASE_URL) { throw 'HARKEN_SIMILARITY_MODEL_BASE_URL is required' }
+          python -B tools/prepare_similarity_release_assets.py --output build-inputs --model-base-url "$env:HARKEN_SIMILARITY_MODEL_BASE_URL"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Configure the provisioned public release
+        # Pinned SDK and model files must be present before CMake configures.
         shell: pwsh
         run: |
           $keyBytes = [Convert]::FromBase64String($env:UPDATE_PUBLIC_KEY_B64)
@@ -63,6 +72,8 @@ jobs:
             "-DARIS_UPDATE_GITHUB_REPOSITORY=$env:ARIS_UPDATE_GITHUB_REPOSITORY" `
             "-DARIS_UPDATE_MIRROR_BASE_URL=$env:ARIS_UPDATE_MIRROR_BASE_URL" `
             "-DAIRS_BUILD_ID=$env:BUILD_ID" `
+            "-DHARKEN_ONNXRUNTIME_ROOT=$PWD/build-inputs/onnxruntime-win-x64-1.20.1" `
+            "-DHARKEN_SIMILARITY_MODEL_DIR=$PWD/build-inputs/models/clap" `
             -DAIRS_RELEASE_CHANNEL=stable
 
       - name: Build Aris and Bootstrap
@@ -78,7 +89,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -B tools/pack_engine.py --prepare-release-notes --version "$version" --release-dir "$release"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -B tools/verify_release_assembly.py "$release" --source-commit "$env:BUILD_ID"
+          python -B tools/verify_release_assembly.py "$release" --source-commit "$env:BUILD_ID" --require-similarity
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -B tools/check_release_compliance.py --release-dir "$release"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -125,7 +136,7 @@ jobs:
           $env:ARIS_RELEASE_DIR = $release
           $env:ARIS_SIGN_TOOL = $signTool
           $env:ARIS_SIGNER_SUBJECT = $signer
-          $installer = python -c "import os; from tools.pack_engine import compile_installer; print(compile_installer(os.environ['ARIS_RELEASE_VERSION'], os.environ['ARIS_RELEASE_DIR'], sign_tool_path=os.environ['ARIS_SIGN_TOOL'], trusted_signer_subject=os.environ['ARIS_SIGNER_SUBJECT']))"
+          $installer = python -c "import os; from tools.pack_engine import compile_installer; print(compile_installer(os.environ['ARIS_RELEASE_VERSION'], os.environ['ARIS_RELEASE_DIR'], sign_tool_path=os.environ['ARIS_SIGN_TOOL'], trusted_signer_subject=os.environ['ARIS_SIGNER_SUBJECT'], require_similarity=True))"
           Copy-Item $installer ("handoff/installer/HarkenSearch-{0}-win-x64-setup.exe" -f $version)
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

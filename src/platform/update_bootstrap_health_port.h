@@ -38,4 +38,9 @@ struct CreateResult {
 
 CreateResult CreateUpdateBootstrapHealthPort();
 
+// The shipped old Bootstrap assigns stderr and the one-shot health stdout
+// to the same handle. Preserve a private stdout duplicate and route stderr
+// away before application startup can log. Caller owns the returned handle.
+Result ProtectBootstrapHealthOutputFromStderr(std::uintptr_t* protectedOutput);
+
 }  // namespace Platform::UpdateBootstrapHealth
