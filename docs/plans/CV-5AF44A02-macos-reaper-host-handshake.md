@@ -9,7 +9,7 @@
 ## 模块与可独立验证的行为
 
 1. **Mac 扩展装载。** 新增 APPLE 专属扩展目标与 `ReaperPluginEntry` 必需 ABI。输入为宿主提供的 `reaper_plugin_info_t` 和仅用于本卡隔离测试的绝对 Unix socket 路径；无路径或 ABI 不合时返回加载失败。输出为 `reaper_harken.dylib` 和明确的加载/卸载结果。Windows DLL 源码、目标和现有行为不变。
-2. **隔离宿主通信。** 扩展只在同一用户且受限权限的测试 endpoint 上接受单条有界消息，使用共用 REAPER 协议处理 `HELLO` 和 `PING`。协议、架构或 manifest 不匹配时返回对应错误；`INSERT_BATCH` 一律返回明确的未实现错误，不触发宿主 API，也不返回虚假成功。断开、超长消息、占用/非 socket 路径和卸载分别保留可判定失败。
+2. **隔离宿主通信。** 扩展只在同一用户且受限权限的测试 endpoint 上接受单条有界消息，使用共用 REAPER 协议处理 `HELLO` 和 `PING`。协议、架构或 manifest 不匹配时返回对应错误；匹配时仍报告宿主插入未就绪，不能让客户端得到 `Ready`。`INSERT_BATCH` 一律返回明确的未实现错误，不触发宿主 API，也不返回虚假成功。断开、超长消息、占用/非 socket 路径和卸载分别保留可判定失败。
 3. **卸载与资源所有权。** 停止后台接收并关闭连接，只清理本扩展创建且仍由它持有的 endpoint。不得删除其它实例或用户创建的文件。真实 REAPER 插入与默认生产 endpoint 的安全安装、发现和开启另卡处理。
 4. **验证。** 用本卡 QA 目录的隔离数据和短 socket 路径，`dlopen` 实际产出的扩展，假 REAPER 信息结构实测装载、握手、错误和卸载；再配置并构建完整 Mac 产品，运行定向 CTest 和启动退出。共用构建/协议若变更，推送合并 SHA 后取得同 SHA Windows 产品与 REAPER 合同回归，核对实际 checkout、测试数量及原始日志。没有真实 REAPER 宿主就明记未实测，不推进用户验收、QA 合入或对外发布。
 

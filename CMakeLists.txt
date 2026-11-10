@@ -1396,8 +1396,10 @@ endif()
 
 # REAPER extension DLL (reaper_harken.dll): Named Pipe bridge for "Send to DAW".
 # Build explicitly: cmake --build build_dbg --config Debug --target reaper_harken
-if(WIN32)
+if(WIN32 OR APPLE)
     add_subdirectory(reaper_extension)
+endif()
+if(WIN32)
     add_dependencies(HarkenSearch reaper_harken)
 endif()
 
