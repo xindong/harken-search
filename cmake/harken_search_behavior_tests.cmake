@@ -6925,6 +6925,22 @@ if(APPLE)
     add_dependencies(TestMacReaperHostHandshake reaper_harken)
     add_test(NAME TestMacReaperHostHandshake COMMAND TestMacReaperHostHandshake)
     aura_set_test_labels(TestMacReaperHostHandshake daw)
+
+    add_executable(TestMacReaperBatchInsert EXCLUDE_FROM_ALL
+        tests/test_mac_reaper_batch_insert.cpp
+        src/ReaperBridgeClient.cpp
+        src/platform/named_pipe_macos.mm
+        src/platform/text_encoding_std.cpp
+    )
+    target_include_directories(TestMacReaperBatchInsert PRIVATE
+        src reaper_extension)
+    target_compile_features(TestMacReaperBatchInsert PRIVATE cxx_std_17)
+    target_compile_definitions(TestMacReaperBatchInsert PRIVATE
+        HARKEN_TEST_REAPER_DYLIB="$<TARGET_FILE:reaper_harken>")
+    target_link_libraries(TestMacReaperBatchInsert PRIVATE Threads::Threads)
+    add_dependencies(TestMacReaperBatchInsert reaper_harken)
+    add_test(NAME TestMacReaperBatchInsert COMMAND TestMacReaperBatchInsert)
+    aura_set_test_labels(TestMacReaperBatchInsert daw)
 endif()
 
 if(WIN32)

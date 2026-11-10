@@ -23,7 +23,18 @@
 namespace fs = std::filesystem;
 namespace Bridge = HarkenSearch::ReaperBridge;
 
-static int RegisterFake(const char*, void*) { return 1; }
+static void (*registeredTimer)() = nullptr;
+static int RegisterFake(const char* name, void* callback) {
+    if (std::strcmp(name, "timer") == 0) {
+        registeredTimer = reinterpret_cast<void (*)()>(callback);
+        return 1;
+    }
+    if (std::strcmp(name, "-timer") == 0) {
+        registeredTimer = nullptr;
+        return 1;
+    }
+    return 1;
+}
 static const char* missingFunction = nullptr;
 static constexpr const char* requiredFunctions[] = {
     "InsertMedia", "GetCursorPosition", "SetEditCurPos", "CountMediaItems",
@@ -94,7 +105,8 @@ int main() {
     missingFunction = nullptr;
 
     const bool loaded = entry(nullptr, &host) == 1;
-    check(loaded, "actual dylib loads with isolated fake REAPER ABI");
+    check(loaded && registeredTimer,
+          "actual dylib registers a host callback with isolated fake REAPER ABI");
     struct stat endpoint{};
     check(loaded && lstat(socketText.c_str(), &endpoint) == 0 &&
               S_ISSOCK(endpoint.st_mode) && endpoint.st_uid == geteuid() &&
@@ -102,12 +114,13 @@ int main() {
           "endpoint is a private socket owned by this user");
     if (loaded) {
         const auto handshake = Bridge::ProbeHandshake(socketName, 1200);
-        check(handshake.code == Bridge::HandshakeCode::ExtensionError &&
-                  handshake.detail.find("ERR|UNAVAILABLE|") == 0,
-              "existing Mac client sees host insertion is unavailable");
+        check(handshake.code == Bridge::HandshakeCode::Ready,
+              "existing Mac client sees ready only after timer registration");
         const auto ping = Bridge::ExchangeMessage("PING\n", socketName, 1200);
-        check(ping.ok && ping.response.find("ERR|UNAVAILABLE|") == 0,
-              "PING does not claim a ready insert action");
+        check(ping.ok &&
+                  Bridge::ParseHelloResponse(ping.response).code ==
+                      Bridge::HandshakeCode::Ready,
+              "PING reports the same registered host readiness");
         const auto wrongVersion = Bridge::ExchangeMessage(
             "HELLO|999|" + Bridge::CurrentArchitecture() + "|" +
                 Bridge::kBridgeManifest + "\n", socketName, 1200);
@@ -129,7 +142,7 @@ int main() {
         const auto send = Bridge::SendFiles({"/tmp/qa-only.wav"}, {}, socketName, 1200);
         check(!send.ok && send.sent == 0 && send.total == 1 &&
                   send.detail.find("INSERT|") == 0,
-              "unimplemented insertion reports failure without false success");
+              "missing input reports failure without false success");
         std::string request;
         std::string buildError;
         const bool encoded = Bridge::BuildInsertBatchRequest(
@@ -139,9 +152,10 @@ int main() {
             : Bridge::PipeExchangeResult{};
         check(encoded && rawInsert.ok &&
                   rawInsert.response.find("ERR|INSERT|") == 0,
-              "wire response explicitly rejects unsupported insertion");
-        check(entry(nullptr, nullptr) == 0 && !fs::exists(socketPath),
-              "unload stops server and removes only its socket");
+              "wire response explicitly rejects missing input");
+        check(entry(nullptr, nullptr) == 0 && !fs::exists(socketPath) &&
+                  !registeredTimer,
+              "unload unregisters callback and removes only its socket");
         const auto after = Bridge::ProbeHandshake(socketName, 200);
         check(after.code == Bridge::HandshakeCode::TransportUnavailable,
               "client cannot reconnect after unload");
