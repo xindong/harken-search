@@ -2,6 +2,28 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.45",
+      "release_date": "2026-11-09",
+      "headline": "同类替代模型就绪，升级确认与分析入口更稳",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "同类替代模型", "description": "补齐声音模型与推理运行库，修复正式包中同类替代无法分析的问题。", "source": "Harken Search"},
+                {"title": "更新完成确认", "description": "修复旧版更新器启动新版时诊断输出干扰健康确认的问题。", "source": "Harken Search"},
+                {"title": "相似分析入口", "description": "首次统计时显示等待状态，统计失败可重试，切库期间不会误启动分析。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": ["HarkenDeveloper-zhongziyu", "Cindy"]
+    },
+    {
       "version": "1.0.44",
       "release_date": "2026-11-08",
       "headline": "设置更顺手，扫描与更新更稳，相似音效和播放操作更灵活",

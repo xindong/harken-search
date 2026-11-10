@@ -100,6 +100,32 @@ def test_configured_similarity_dependencies_must_be_staged(tmp_path: Path):
     assert verify_release_assembly(release) == []
 
 
+def test_public_similarity_release_rejects_disabled_or_wrong_model(tmp_path: Path):
+    release = _complete_release(tmp_path)
+    metadata = release / "THIRD_PARTY_COMPONENTS.json"
+    metadata.write_text(json.dumps({"components": [
+        {"name": "ONNX Runtime", "distributed": False},
+        {"name": "LAION CLAP HTSAT unfused audio encoder", "distributed": False},
+    ]}), encoding="utf-8")
+    issues = verify_release_assembly(release, require_similarity=True)
+    assert "required similarity component not distributed: ONNX Runtime" in issues
+    assert "required similarity component not distributed: LAION CLAP HTSAT unfused audio encoder" in issues
+
+    metadata.write_text(json.dumps({"components": [
+        {"name": "ONNX Runtime", "distributed": True},
+        {"name": "LAION CLAP HTSAT unfused audio encoder", "distributed": True},
+    ]}), encoding="utf-8")
+    for relative in (
+        "onnxruntime.dll", "models/clap/clap-audio.onnx",
+        "models/clap/clap-mel-filters.f64", "models/clap/clap-window.f64",
+    ):
+        target = release / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"wrong model")
+    issues = verify_release_assembly(release, require_similarity=True)
+    assert "similarity resource SHA256 mismatch: models/clap/clap-audio.onnx" in issues
+
+
 def test_installer_collects_optional_similarity_runtime_and_models():
     script = (ROOT / "installer/HarkenSearch_Setup.iss").read_text(encoding="utf-8")
     assert 'Source: "{#SourceDir}\\onnxruntime.dll"; DestDir: "{app}";' in script
