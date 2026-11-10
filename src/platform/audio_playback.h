@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../BuildConfig.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -103,6 +105,22 @@ struct EngineInitOptions {
     std::vector<std::uint8_t> playbackDeviceIdBlob;
 };
 
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+// QA-only observation of samples submitted by this engine's real device callback.
+// Counts are monotonic until the engine is reinitialized. No capture or loopback.
+struct OutputProbeSnapshot {
+    std::uint64_t callbacks = 0;
+    std::uint64_t frames = 0;
+    std::uint64_t nonzeroSamples = 0;
+    float maxAmplitude = 0;
+    std::uint32_t channels = 0;
+    std::uint32_t sampleRate = 0;
+    bool deviceStarted = false;
+    std::string backend;
+    std::string deviceName;
+};
+#endif
+
 class Engine final {
 public:
     Engine() noexcept;
@@ -118,6 +136,9 @@ public:
     BorrowedEngine Borrow() noexcept;
     bool IsInitialized() const noexcept;
     BackendResult StopDevice() noexcept;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA && !defined(AURO_AUDIO_PLAYBACK_TESTING)
+    OutputProbeSnapshot QueryOutputProbe() const;
+#endif
     void Uninitialize() noexcept;
 
 private:

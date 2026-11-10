@@ -25,6 +25,18 @@ if(HARKEN_ONNXRUNTIME_ROOT)
         add_custom_command(TARGET HarkenSearch POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:HarkenSearch>)
+    elseif(APPLE)
+        set(_harken_onnx_macos_dylib
+            "${HARKEN_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.20.1.dylib")
+        if(NOT EXISTS "${_harken_onnx_macos_dylib}")
+            message(FATAL_ERROR "Pinned ONNX Runtime macOS SDK is missing libonnxruntime.1.20.1.dylib")
+        endif()
+        set_property(TARGET HarkenSearch APPEND PROPERTY BUILD_RPATH "@executable_path")
+        set_property(TARGET HarkenSearch APPEND PROPERTY INSTALL_RPATH "@executable_path")
+        add_custom_command(TARGET HarkenSearch POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_harken_onnx_macos_dylib}" "$<TARGET_FILE_DIR:HarkenSearch>/libonnxruntime.1.20.1.dylib"
+            COMMENT "Bundling pinned macOS ONNX Runtime beside HarkenSearch")
     endif()
 endif()
 if(HARKEN_HNSWLIB_ROOT)
