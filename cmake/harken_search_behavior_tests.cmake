@@ -442,6 +442,18 @@ add_executable(TestStage6FileWatcherProbe EXCLUDE_FROM_ALL
     src/DiagnosticsLogger.cpp
     ${AURO_AUDIO_TEXT_SOURCE}
 )
+if(APPLE)
+    add_executable(TestMacFileWatcherDispatch EXCLUDE_FROM_ALL
+        tests/test_macos_file_watcher_dispatch.cpp
+        src/platform/file_watcher.cpp
+    )
+    target_include_directories(TestMacFileWatcherDispatch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacFileWatcherDispatch PRIVATE cxx_std_17)
+    target_link_libraries(TestMacFileWatcherDispatch PRIVATE "-framework CoreServices")
+    add_test(NAME TestMacFileWatcherDispatch COMMAND TestMacFileWatcherDispatch)
+    set_tests_properties(TestMacFileWatcherDispatch PROPERTIES TIMEOUT 10)
+    aura_set_test_labels(TestMacFileWatcherDispatch core)
+endif()
 target_include_directories(TestStage6FileWatcherProbe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
