@@ -10,7 +10,9 @@
 #include "DiagnosticsLogger.h"
 #include "../thirdparty/lucide/IconsLucide.h"
 #include "AppState.h"  // Guided-tooltip wrappers.
+#ifdef _WIN32
 #include "WindowsMain.h"  // GetUIFontEmphasis() for panel section title weight
+#endif
 
 #include "WaapiClient.h"
 #include "WwiseDiff.h"
@@ -38,6 +40,14 @@ namespace aura {
 namespace wwise {
 
 namespace {
+
+ImFont* TransferPanelEmphasisFont() {
+#ifdef _WIN32
+    return GetUIFontEmphasis();
+#else
+    return ImGui::GetFont();
+#endif
+}
 
 // ---------- Module state ---------------------------------------------------
 // All state behind a single mutex so the render callback (main thread) and
@@ -334,7 +344,7 @@ void drawWwiseSectionTitle(const char* title,
                            const ImVec4& accent,
                            const char* subtitle = nullptr) {
     ImGui::AlignTextToFramePadding();
-    ImGui::PushFont(GetUIFontEmphasis());
+    ImGui::PushFont(TransferPanelEmphasisFont());
     ImGui::PushStyleColor(ImGuiCol_Text,
         ImGui::ColorConvertFloat4ToU32(wwiseTextTone(accent, 0.26f, 0.98f)));
     ImGui::TextUnformatted(title ? title : "");
@@ -1529,7 +1539,7 @@ void RenderWwiseTransferPanel() {
         if (mainColumnVisible) {
         if (aura::ui::BeginPanel("wwiseTransferImportSetup", aura::ui::PanelVariant::Peer, 0.0f, importSetupHeight, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
             ImGui::AlignTextToFramePadding();
-            ImGui::PushFont(GetUIFontEmphasis());
+            ImGui::PushFont(TransferPanelEmphasisFont());
             ImGui::TextUnformatted(wz("Destination", u8"导入目标"));
             ImGui::PopFont();
             ImGui::SameLine(0, 10.0f);
@@ -2018,7 +2028,7 @@ void RenderWwiseTransferPanel() {
         if (railVisible) {
         if (aura::ui::BeginPanel("wwiseTransferActionPanel", aura::ui::PanelVariant::Peer, 0.0f, actionPanelHeight, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
             ImGui::AlignTextToFramePadding();
-            ImGui::PushFont(GetUIFontEmphasis());
+            ImGui::PushFont(TransferPanelEmphasisFont());
             ImGui::TextUnformatted(wz("Transfer", u8"执行传输"));
             ImGui::PopFont();
             ImGui::SameLine(0, 10.0f);
@@ -2069,7 +2079,7 @@ void RenderWwiseTransferPanel() {
             ImGui::Spacing();
             aura::ui::Divider(aura::ui::DividerVariant::Inset);
             ImGui::AlignTextToFramePadding();
-            ImGui::PushFont(GetUIFontEmphasis());
+            ImGui::PushFont(TransferPanelEmphasisFont());
             ImGui::TextUnformatted(wz("Result", u8"结果"));
             ImGui::PopFont();
             if (g_ps.hasResult) {
