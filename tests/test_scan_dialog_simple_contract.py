@@ -94,7 +94,8 @@ def test_advanced_disclosure_contains_original_scan_options():
         assert option in SETUP
     assert "L(ScanUi_AutoThreads)" in SETUP
     assert "L(Scan_FullModeHint)" not in SETUP
-    assert "L(Scan_FastModeHint)" not in SETUP
+    assert 'if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Scan_FastModeHint));' in SETUP
+    assert 'ImGui::TextWrapped("%s", L(Scan_FastModeHint))' not in SETUP
 
 
 def test_progress_does_not_duplicate_numbers_and_preserves_waiting_phase():

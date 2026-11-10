@@ -11,12 +11,50 @@
     auto& draft=editor.app.Value();
     auto& runtime=editor.runtime.Value();
 #include "SettingsAvatarPreview.inl"
+    auto setReverseForVisibility=[&](bool reversed) {
+        if (state.audioEngine.isReversed()==reversed) return true;
+        const float in=state.audioEngine.getInPoint(), out=state.audioEngine.getOutPoint();
+        if (!state.audioEngine.setReverse(reversed)) return false;
+        if ((in>0.0f || out<1.0f) && in<out) {
+            state.audioEngine.clearInOutPoints();
+            state.audioEngine.setInPoint(1.0f-out);
+            state.audioEngine.setOutPoint(1.0f-in);
+        }
+        return true;
+    };
+    auto applyEffectVisibility=[&](const TransportEffectVisibility& before,
+                                   const TransportEffectVisibility& after) {
+        // Reverse must be bypassed before a mono change reloads the file and
+        // clears its engine flag. Capture its requested state before either.
+        if (before.reverse && !after.reverse) {
+            state.hiddenReverseRestore=state.audioEngine.isReversed() || state.pendingReverseRestore;
+            state.pendingReverseRestore=false;
+            if (state.audioEngine.isReversed() && !setReverseForVisibility(false)) {
+                state.loadErrorToast=L(Player_ReverseFailed);
+                state.loadErrorToastUntil=ImGui::GetTime()+4.0;
+            }
+        }
+        state.audioEngine.setTransportEffectVisibility(after);
+        if (before.mono && !after.mono) {
+            state.hiddenMonoRestore=state.audioEngine.isMono();
+            state.audioEngine.setMono(false);
+        } else if (!before.mono && after.mono) {
+            state.audioEngine.setMono(state.hiddenMonoRestore);
+        }
+        if (!before.reverse && after.reverse && state.hiddenReverseRestore) {
+            if (!state.audioEngine.isLoaded()) state.pendingReverseRestore=true;
+            else if (!setReverseForVisibility(true)) state.pendingReverseRestore=true;
+        }
+    };
     auto apply=[&]() -> bool {
         editor.error.clear();
         if (!editor.ChangedCount()) return true;
         const auto oldSettings=su::CaptureSettings(state);
         const auto oldRuntime=su::CaptureRuntime(state);
         const float oldEngineVolume=state.audioEngine.getVolume();
+        const bool oldHiddenMonoRestore=state.hiddenMonoRestore;
+        const bool oldHiddenReverseRestore=state.hiddenReverseRestore;
+        const bool oldPendingReverseRestore=state.pendingReverseRestore;
         auto next=editor.app.MergeInto(oldSettings,editor.resetAll);
         next.rowHeight=next.getEffectiveRowHeight();
         const auto nextRuntime=editor.runtime.MergeInto(oldRuntime,editor.resetAll);
@@ -65,11 +103,28 @@
         const bool volumeApplied=saved && !next.loudnessNormEnabled &&
             (editor.resetAll || next.defaultVolume!=oldSettings.defaultVolume || next.loudnessNormEnabled!=oldSettings.loudnessNormEnabled);
         if(volumeApplied)state.audioEngine.setVolume(next.defaultVolume);
+        const auto& oldVisibility=oldSettings.transportEffectVisibility;
+        const auto& newVisibility=next.transportEffectVisibility;
+        const bool visibilityChanged=oldVisibility!=newVisibility;
+        std::optional<bool> monoModeForSave;
+        if (saved && visibilityChanged) {
+            // Save the requested state first. A failed disk write must leave
+            // playback untouched, especially for effects that reload audio.
+            if (oldVisibility.mono && !newVisibility.mono)
+                state.hiddenMonoRestore=state.audioEngine.isMono();
+            else if (!oldVisibility.mono && newVisibility.mono)
+                monoModeForSave=state.hiddenMonoRestore;
+            if (oldVisibility.reverse && !newVisibility.reverse)
+                state.hiddenReverseRestore=state.audioEngine.isReversed() || state.pendingReverseRestore;
+        }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
         if (su::failSaveOnce) { su::failSaveOnce=false; saved=false; }
 #endif
-        if (saved) saved=TrySaveAppSettings(state);
+        if (saved) saved=TrySaveAppSettings(state,monoModeForSave);
         if (!saved) {
+            state.hiddenMonoRestore=oldHiddenMonoRestore;
+            state.hiddenReverseRestore=oldHiddenReverseRestore;
+            state.pendingReverseRestore=oldPendingReverseRestore;
             std::string rollbackError;
             bool restored=true;
             if (dayWritten) restored &= schedule::SavePalette(schedule::Period::Day,previousDay,rollbackError);
@@ -85,6 +140,7 @@
             if (!outputRestored) editor.error += std::string(" ")+L(SetUX_OutputRestoreFailed);
             return false;
         }
+        if (visibilityChanged) applyEffectVisibility(oldVisibility,newVisibility);
         g_currentLanguage=state.settings.language;
         g_miniWaveformRmsBodyStyle=state.settings.miniWaveformRmsBodyStyle;
 #ifdef _WIN32
@@ -291,6 +347,28 @@
             }
             ImGui::PopStyleVar();
         };
+        auto transportSwitch=[&](bool& visible,bool baselineVisible,float width){
+            const auto origin=ImGui::GetCursorPos();
+            const char* status=!visible
+                ? (baselineVisible?L(SetUX_TransportBypassOnApply):L(SetUX_TransportBypassed))
+                : (!baselineVisible?L(SetUX_TransportRestoreOnApply):nullptr);
+            if(status)ImGui::TextDisabled("%s",status);
+            ImGui::SetCursorPos(ImVec2(origin.x+std::max(0.f,width-44.f),origin.y));
+            ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0,0,0,0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,ImVec4(0,0,0,0));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,0.f);
+            if(ImGui::Button("##visibility-switch",ImVec2(42,24)))visible=!visible;
+            ImGui::PopStyleVar();ImGui::PopStyleColor(3);
+            auto* dl=ImGui::GetWindowDrawList();
+            const auto p=ImGui::GetItemRectMin();
+            const ImVec2 end(p.x+42,p.y+24);
+            dl->AddRectFilled(p,end,ImGui::GetColorU32(visible?preview.controlAccent:preview.frameBgBase),12.f);
+            dl->AddRect(p,end,ImGui::GetColorU32(ImGui::IsItemHovered()?preview.interfaceText:preview.chromeBorder),12.f);
+            dl->AddCircleFilled(ImVec2(p.x+(visible?30.f:12.f),p.y+12.f),8.f,ImGui::GetColorU32(preview.interfaceText));
+            if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
+                dl->AddRect(ImVec2(p.x-2,p.y-2),ImVec2(end.x+2,end.y+2),ImGui::GetColorU32(preview.controlAccent),14.f,0,2.f);
+        };
         auto drawEntry=[&](const su::Entry& entry){
             const auto& id=entry.id;
             if (!su::Available(entry,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection)) return;
@@ -338,7 +416,15 @@
                     heading(group.first);for(const auto& id:group.second){const auto it=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==id;});if(it!=su::Catalog().end())drawEntry(*it);}
                 }
             }else{
-                for(const auto& entry:su::Catalog())if(entry.page==editor.page && entry.group==0)drawEntry(entry);
+                for(const auto& entry:su::Catalog())if(entry.page==editor.page && entry.group==0){
+                    if(editor.page==su::Page::Audio && entry.id=="transportMono"){
+                        ImGui::Dummy(ImVec2(0,12));
+                        heading(L(SetUX_TransportEffectVisibility));
+                        ImGui::TextWrapped("%s",L(SetUX_TransportEffectHint));
+                        ImGui::Dummy(ImVec2(0,6));
+                    }
+                    drawEntry(entry);
+                }
                 for(int group=1;group<=6;++group){
                     const bool has=std::any_of(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.page==editor.page && e.group==group;});if(!has)continue;
                     if(!editor.focusId.empty()){const auto target=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==editor.focusId;});if(target!=su::Catalog().end()&&target->group==group)ImGui::SetNextItemOpen(true);}

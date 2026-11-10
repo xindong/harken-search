@@ -11,27 +11,10 @@
 // 从 main.cpp 提取的 Windows 平台相关代码
 
 #include "imgui.h"
-#include "UiFonts.h"
-#include "AppMainServices.h"
-
-void MarkUiLeftClickNow();
-bool IsRapidUiClickBurstActive();
-void SetCoverWallPriorityMode(bool enabled);
-bool IsCoverWallPriorityMode();
-void AppendDiagLogLine(const wchar_t* line);
-void AppendDiagLogF(const wchar_t* fmt, ...);
-void SetDiagnosticFileEnabled(bool enabled);
-std::uint64_t GetDiagnosticFileSizeBytes();
-std::uint64_t GetDiagnosticFileMaxBytes();
-bool ClearDiagnosticFile();
-std::string BuildSysInfo();
-extern int g_suppressImGuiDragTooltipFrames;
-#ifndef _WIN32
-std::string OpenFolderDialog(void* ownerWindow);
-#endif
 
 #ifdef _WIN32
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -130,6 +113,35 @@ UINT HotkeyModsFromKeyBinding(const KeyBinding& kb);
 bool IsGlobalHotkeyPressedOnce(const KeyBinding& kb);
 void ApplyShowManagerGlobalHotkey(const AppSettings& settings);
 
+// Font Loading
+
+void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize);
+ImFont* GetUIFontRegular();
+ImFont* GetUIFontEmphasis();
+ImFont* GetUIFontMono();
+ImFont* GetUIListFont();
+ImFont* GetUIMeterFont();  // F-018: 10px ASCII-only, for narrow loudness meter bars
+
+// Reading-surface scope. While alive, GetUIFont*() return the reading-sized
+// faces, and the reading-regular face is pushed so plain text scales too.
+// Defaults are chrome; wrap only reading surfaces (tree, list, breadcrumb,
+// Info panel, sidebar filters, settings, popups, menu dropdowns). A surface
+// that is never wrapped renders at the pinned chrome size — there is no
+// assert, so adding a new reading surface means remembering to wrap it.
+struct ReadingTextScope {
+    bool prev;
+    ReadingTextScope();
+    ~ReadingTextScope();
+};
+
+// Explicitly forces chrome faces inside an outer reading scope (e.g. an icon
+// button embedded in a reading surface).
+struct ChromeTextScope {
+    bool prev;
+    ChromeTextScope();
+    ~ChromeTextScope();
+};
+
 // OpenGL Context
 
 bool CreateOpenGLContext(HWND hwnd, HDC* hdc, HGLRC* hglrc);
@@ -147,6 +159,72 @@ std::uint64_t GetDiagnosticFileSizeBytes();
 std::uint64_t GetDiagnosticFileMaxBytes();
 bool ClearDiagnosticFile();
 
+// Functions defined in main.cpp, used by WindowsMain.cpp
+
+// Settings
+void LoadAppSettings(AppState& state);
+void SaveAppSettings(const AppState& state);
+bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride = std::nullopt);
+// 仅加载音频相关键，供引擎初始化前调用（缓冲周期、输出设备索引）
+void LoadAudioSettingsEarly(AppState& state);
+void PushRecentDbPath(AppState& state, const std::string& pathUtf8);
+void MarkSettingsDirty(AppState& state);
+void FlushSettingsDirty(AppState& state);
+
+// F-033 Music Mode ↔ SFX Mode toggle is deferred to frame end because
+// productMode drives many Music-only rendering branches (Module 2.5
+// Key+BPM, Module 3.5 BPM/TAP, multi-channel waveform). Flipping the
+// flag mid-frame desyncs SetCursorPos/ItemAdd pairing and trips the
+// imgui.cpp:10789 parent-boundary assert. Call once per frame after
+// RenderUI returns; defined in main.cpp.
+void ProcessPendingProductModeToggle(AppState& state);
+
+// Drag & drop export (defined in main.cpp)
+void StartRegionDrag(AudioEngine& engine);
+
+// Random playback (defined in main.cpp)
+void PlayRandomFile(AppState& state);
+
+// Search/filter (defined in main.cpp; primary declaration in SearchQuery.h)
+void RefreshSearchResults(AppState& state, bool resetPagination);
+void ForceCoverWallReload(AppState& state);
+void StartCoverRebuild(AppState& state);
+// 轮询并应用一次异步搜索结果；返回 true 表示消费了一条结果（供加载页等待首包）
+bool PumpOneAsyncSearchResult(AppState& state);
+void PlayRandomFile(AppState& state);
+void LoadAllFilesFiltered(AppState& state, int limit = 1000);
+void FilterResultsByFileType(AppState& state);
+
+// Splash pre-upload: batch upload waveform textures to GPU (bypasses per-frame budget)
+void PreUploadWaveformTextures(AppState& state, int count);
+
+// 切库后完整状态清理（defined in main.cpp）
+void ResetDatabaseState(AppState& state);
+// 后台刷新文件夹树/播放列表（defined in main.cpp）
+void StartDeferredSidebarBootstrap(AppState& state, bool reloadFolderTree, bool reloadPlaylists);
+// 轮询异步切库结果，在每帧主循环开头调用
+void PumpDatabaseSwitchIfPending(AppState& state);
+// Join the owned asynchronous database-switch worker before tearing down
+// shared database/runtime resources.
+void WaitForDatabaseSwitchThread();
+void ShutdownSelectedWaveformRebuild();
+// 轮询异步随机池构建结果
+void PumpInitRandomSamplingPoolIfPending(AppState& state);
+// 加载完成后应用 Mini 波形预设跳转点并跳过开头无声（在 pumpLoadFileIfPending 为 true 时由主循环调用）
+void OnAudioLoadPumped(AppState& state);
+// 每帧可调：当有波形数据时根据阈值 seek 到首个有音位置（加载完成时波形常未就绪，故需每帧尝试直到有数据）
+void MaybeSkipLeadingSilence(AppState& state);
+// 开始异步切库（大库不卡主线程）；返回 true 表示已开始
+bool BeginSwitchDatabase(AppState& state, const std::string& newDbPathUtf8);
+// Drag & Drop (defined in main.cpp)
+void StartFileDrag(const std::vector<std::string>& files);
+
+// Utility (defined in main.cpp)
+std::string GetExeDirUtf8();
+std::wstring Utf8ToWide(const std::string& str);
+std::string WideToUtf8(const std::wstring& wstr);
+bool PathExistsUtf8(const std::string& pathUtf8);
+std::string GetDefaultDbPathUtf8();
 std::string OpenFolderDialog(HWND hwnd);
 
 // Shell integration — registry helpers (defined in DefaultAudioPlayerAssociation.cpp)
