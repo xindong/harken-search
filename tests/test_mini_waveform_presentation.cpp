@@ -23,6 +23,18 @@ int main() {
           "ready data without a texture can draw the waveform");
     check(Choose(true, true) == Mode::Texture,
           "ready data uses its texture");
+    check(!MiniWaveformPresentation::HasCompatibleTextureDimensions(
+              false, 220, 36, 220, 36),
+          "missing texture is not compatible");
+    check(!MiniWaveformPresentation::HasCompatibleTextureDimensions(
+              true, 0, 0, 220, 36),
+          "zero dimensions mark a retained texture stale");
+    check(MiniWaveformPresentation::HasCompatibleTextureDimensions(
+              true, 220, 36, 222, 34),
+          "small layout changes reuse a texture");
+    check(!MiniWaveformPresentation::HasCompatibleTextureDimensions(
+              true, 220, 36, 240, 36),
+          "large layout changes request a replacement");
     check(RetainTextureAfterRemoval(Removal::BudgetEviction),
           "memory budget eviction retains the bounded display texture");
     check(!RetainTextureAfterRemoval(Removal::ExplicitInvalidation),

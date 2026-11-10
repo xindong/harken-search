@@ -2121,13 +2121,9 @@ static bool HasCompatibleMiniWaveTexture(const std::string& path, int targetW, i
         return false;
     }
 
-    if (std::abs(cacheIt->second.width - targetW) > 4)
-    {
-        return false;
-    }
-
-    if (std::abs(cacheIt->second.height - targetH) > 4)
-    {
+    if (!MiniWaveformPresentation::HasCompatibleTextureDimensions(
+            cacheIt->second.hasTexture, cacheIt->second.width,
+            cacheIt->second.height, targetW, targetH)) {
         return false;
     }
 
@@ -2177,7 +2173,8 @@ static bool EnsureMiniWaveTextureLoaded(const std::string& filePath, const Wavef
     if (cacheIt != g_miniWaveTextureCache.end() && cacheIt->second.hasTexture) {
         int cachedW = cacheIt->second.width;
         int cachedH = cacheIt->second.height;
-        if (std::abs(cachedW - targetW) <= 4 && std::abs(cachedH - targetH) <= 4) {
+        if (MiniWaveformPresentation::HasCompatibleTextureDimensions(
+                cacheIt->second.hasTexture, cachedW, cachedH, targetW, targetH)) {
             cacheIt->second.lastUsedFrame = currentFrame;
             outTex = cacheIt->second;
 #if AURA_BUILD_DIAGNOSTICS
@@ -2578,8 +2575,17 @@ void InvalidateMiniWaveTextureForPath(const std::string& key) {
 void InvalidateMiniWaveTextureAfterFrame(const std::string& key) {
     auto texIt = g_miniWaveTextureCache.find(key);
     if (texIt == g_miniWaveTextureCache.end()) return;
-    g_deferredMiniWaveTextureDeletes.Queue(texIt->second.textureId);
-    g_miniWaveTextureCache.erase(texIt);
+    // Keep the last complete image visible while the replacement is built.
+    // Erasing here caused one or more blank/CPU-fallback frames whenever a
+    // background waveform result refreshed a row that was already on screen.
+    const int previousWidth = texIt->second.width > 0 ? texIt->second.width : 220;
+    const int previousHeight = texIt->second.height > 0 ? texIt->second.height : 36;
+    texIt->second.width = 0;
+    texIt->second.height = 0;
+    texIt->second.lastUsedFrame = (uint64_t)ImGui::GetFrameCount();
+    g_pendingMiniWaveTextureScheduler.scheduleFrontCoalescedByPath(
+        key, previousWidth, previousHeight);
+    g_pendingMiniWaveTextureScheduler.trimBackExcess(kMaxPendingMiniWaveTextures);
 }
 
 void FlushDeferredMiniWaveTextureDeletes() {
