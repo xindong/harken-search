@@ -13,10 +13,43 @@
 #include "nlohmann_json.hpp"
 
 #include <cstdint>
+#include <cstdio>
+#include <io.h>
 #include <string>
 #include <vector>
 
 namespace Platform::UpdateBootstrapHealth {
+
+Result ProtectBootstrapHealthOutputFromStderr(std::uintptr_t* protectedOutput) {
+    if (protectedOutput == nullptr) return {Status::InvalidChannel, "missing protected output"};
+    *protectedOutput = 0U;
+    const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output == nullptr || output == INVALID_HANDLE_VALUE ||
+        GetFileType(output) != FILE_TYPE_PIPE) {
+        return {Status::InvalidChannel, "bootstrap health output is not a pipe"};
+    }
+    HANDLE copy = INVALID_HANDLE_VALUE;
+    if (!DuplicateHandle(GetCurrentProcess(), output, GetCurrentProcess(),
+                         &copy, 0U, FALSE, DUPLICATE_SAME_ACCESS)) {
+        return {Status::IoFailure, "could not preserve bootstrap health output"};
+    }
+    if (GetStdHandle(STD_ERROR_HANDLE) == output) {
+        FILE* redirected = nullptr;
+        if (freopen_s(&redirected, "NUL", "w", stderr) != 0 || redirected == nullptr) {
+            CloseHandle(copy);
+            return {Status::IoFailure, "could not isolate bootstrap successor stderr"};
+        }
+        const intptr_t errorHandle = _get_osfhandle(_fileno(stderr));
+        if (errorHandle == -1 ||
+            !SetStdHandle(STD_ERROR_HANDLE, reinterpret_cast<HANDLE>(errorHandle))) {
+            CloseHandle(copy);
+            return {Status::IoFailure, "could not redirect bootstrap successor stderr"};
+        }
+    }
+    *protectedOutput = reinterpret_cast<std::uintptr_t>(copy);
+    return {Status::Accepted, {}};
+}
+
 namespace {
 
 // The updated process may spend several seconds loading WebView2, the
@@ -56,6 +89,9 @@ Status ReadAvailable(HANDLE pipe, std::string& bytes) {
 
 class WindowsPort final : public Port {
 public:
+    ~WindowsPort() override {
+        if (output_ != INVALID_HANDLE_VALUE) CloseHandle(output_);
+    }
     Result CaptureChallenge() override {
         if (captureAttempted_) {
             return {Status::InvalidChannel, "bootstrap health challenge already consumed"};
@@ -79,7 +115,10 @@ public:
             !value["version"].is_string() || !value["token"].is_string()) {
             return {Status::InvalidChannel, "bootstrap health challenge invalid"};
         }
-        output_ = output;
+        std::uintptr_t protectedOutput = 0U;
+        const Result isolated = ProtectBootstrapHealthOutputFromStderr(&protectedOutput);
+        if (!isolated.ok()) return isolated;
+        output_ = reinterpret_cast<HANDLE>(protectedOutput);
         buildId_ = value["build_id"].get<std::string>();
         version_ = value["version"].get<std::string>();
         token_ = value["token"].get<std::string>();
@@ -134,6 +173,10 @@ namespace Platform::UpdateBootstrapHealth {
 
 CreateResult CreateUpdateBootstrapHealthPort() {
     return {Status::Unsupported, nullptr, 0U};
+}
+
+Result ProtectBootstrapHealthOutputFromStderr(std::uintptr_t*) {
+    return {Status::Unsupported, "bootstrap health is unsupported"};
 }
 
 }  // namespace Platform::UpdateBootstrapHealth
