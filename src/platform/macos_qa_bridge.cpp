@@ -2,6 +2,7 @@
 #include "AppState.h"
 #include "AppMainServices.h"
 #include "UIRenderer.h"
+#include "SimilarSoundsWindow.h"
 #include "frontend/AppStateAuditionFrontendAdapter.h"
 #include "imgui.h"
 #include "SearchQuery.h"
@@ -69,6 +70,10 @@ Request Poll(AppState& state) {
         } else if (action == "open") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             if (!BeginSwitchDatabase(state, path)) throw std::runtime_error("library_switch_failed");
+        } else if (action == "open_similar") {
+            if (!state.database.isOpen() || state.dbSwitchInProgress)
+                throw std::runtime_error("library_not_ready");
+            aura::ui::OpenSimilarSoundsWindow(state);
         } else if (action == "settings") {
             const float size = command.at("reading_font").get<float>();
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
@@ -166,6 +171,8 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"wave_peaks",wave ? wave->peaks.size() : 0},{"wave_max",maximum},
                 {"wave_pending",state.audioEngine.isWaveformDetailPending()}}},
             {"database",state.currentDbPathUtf8},{"database_open",state.database.isOpen()},
+            {"similar_window",{{"visible",state.panelSimilarSounds.visible},
+                {"floating",state.panelSimilarSounds.floating}}},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
