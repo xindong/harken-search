@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <initializer_list>
 #include <sstream>
 #include <string>
 
@@ -26,6 +27,16 @@ std::string ReadTextFile(const std::filesystem::path& path) {
     std::ostringstream buffer;
     buffer << input.rdbuf();
     return buffer.str();
+}
+
+std::string ReadFirstExistingSource(const std::filesystem::path& root,
+                                    std::initializer_list<const char*> relativePaths) {
+    for (const char* relativePath : relativePaths) {
+        const auto path = root / relativePath;
+        const std::string source = ReadTextFile(path);
+        if (!source.empty()) return source;
+    }
+    return {};
 }
 
 std::string ExtractFunctionBody(const std::string& source, const std::string& signature) {
@@ -99,12 +110,14 @@ void TestForegroundPlaybackPausesUnrelatedBackgroundIo() {
 }
 
 void TestBrowserMiniWaveformWorkerDoesNotRequireOpenDatabaseContract() {
-    const auto sourcePath = std::filesystem::path(__FILE__).parent_path().parent_path() /
-                            "src" / "WindowsMain.cpp";
-    const std::string source = ReadTextFile(sourcePath);
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    // The app-frame refactor moved the worker start gate out of WindowsMain.cpp.
+    // Keep this as a source contract, but read the file that owns the production path.
+    const std::string source = ReadFirstExistingSource(
+        root, {"src/AppFrameServices.cpp", "src/WindowsMain.cpp"});
 
     Check(!source.empty(),
-          "BDD: Given Browser mini-worker startup contract validation runs, WindowsMain.cpp can be opened");
+          "BDD: Given Browser mini-worker startup contract validation runs, its production source can be opened");
     Check(source.find("static bool waveformWorkerStarted = false;") != std::string::npos &&
           source.find("!waveformWorkerStarted && !holdColdMiniWorker") != std::string::npos,
           "BDD: Given direct-file Browser has no open database, its source-decode waveform worker still starts");
@@ -1424,17 +1437,17 @@ void TestCoverWallResetEntrypointsSeparateDatabaseInvalidationContract() {
 }
 
 void TestQaScanCompletionRefreshesDatabaseViewContract() {
-    const auto sourcePath = std::filesystem::path(__FILE__).parent_path().parent_path() / "src" / "WindowsMain.cpp";
-    std::ifstream input(sourcePath);
-    Check(input.good(),
-          "BDD: Given QA scan completion contract validation runs, WindowsMain.cpp can be opened");
-    if (!input.good()) {
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    // Scan completion refresh is owned by AppRuntime after the shared frame split.
+    const std::string source = ReadFirstExistingSource(
+        root, {"src/AppRuntime.cpp", "src/WindowsMain.cpp"});
+    const std::string stateSource = ReadFirstExistingSource(
+        root, {"src/WindowsMain.cpp", "src/AppRuntime.cpp"});
+    Check(!source.empty(),
+          "BDD: Given QA scan completion contract validation runs, its production source can be opened");
+    if (source.empty()) {
         return;
     }
-
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    const std::string source = buffer.str();
 
     const size_t refreshBlock = source.find("if (state.needsDatabaseRefresh && !scanPopupOpen)");
     Check(refreshBlock != std::string::npos,
@@ -1445,7 +1458,7 @@ void TestQaScanCompletionRefreshesDatabaseViewContract() {
           refreshCall != std::string::npos &&
           forceDbView < refreshCall,
           "BDD: QA scan completion normalizes back to Database view before refreshing results");
-    Check(source.find("case ViewMode::PlaylistLibrary: return \"playlist_library\";") != std::string::npos,
+    Check(stateSource.find("case ViewMode::PlaylistLibrary: return \"playlist_library\";") != std::string::npos,
           "BDD: QA get_state exposes PlaylistLibrary instead of reporting unknown active_view");
 }
 
@@ -1672,9 +1685,11 @@ void TestFilterChipQueryRemovalSuppressesRealtimeAutoClearContract() {
           "BDD: query chip removal still uses RemoveSearchQueryChipFromText");
     if (anchorPos == std::string::npos) return;
 
-    const size_t windowEnd = source.find("strncpy_s(state.searchBuffer", anchorPos);
+    const size_t strncpyEnd = source.find("strncpy_s(state.searchBuffer", anchorPos);
+    const size_t portableCopyEnd = source.find("CopyUiText(state.searchBuffer", anchorPos);
+    const size_t windowEnd = strncpyEnd != std::string::npos ? strncpyEnd : portableCopyEnd;
     Check(windowEnd != std::string::npos,
-          "BDD: query chip removal still rewrites searchBuffer directly");
+          "BDD: query chip removal still rewrites searchBuffer directly through the platform-safe copy helper");
     if (windowEnd == std::string::npos) return;
 
     const std::string window = source.substr(anchorPos, windowEnd - anchorPos);
