@@ -19,6 +19,7 @@
 #include "../FileInfoPanel.h"
 #include "../Theme.h"
 #include "../ThemeSchedule.h"
+#include "../ThemeInspector.h"
 #include "../ModuleUI.h"
 #include "../CoverModule.h"
 #include "../DiagnosticsLogger.h"
@@ -234,7 +235,16 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept { return (__bridge void*)
     state->warmupFramesRemaining = std::max(0, 4 - frameCount);
     if (state->dbSwitchSettleFramesRemaining > 0) --state->dbSwitchSettleFramesRemaining;
     harken::theme_schedule::Tick(*state);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (qaControl) {
+        ThemeInspector::SetBridgeCollectionEnabled(true);
+        ThemeInspector::BeginFrame();
+    }
+#endif
     RenderUI(*state);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (qaControl) ThemeInspector::EndFrame();
+#endif
     GuardInfoMetadataContext(*state);
     RenderInfoMetadataLeavePrompt(*state);
     FlushSettingsDirty(*state);

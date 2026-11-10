@@ -3,6 +3,8 @@
 #include "AppMainServices.h"
 #include "UIRenderer.h"
 #include "SimilarSoundsWindow.h"
+#include "SimilarityWorkflow.h"
+#include "ThemeInspector.h"
 #include "frontend/AppStateAuditionFrontendAdapter.h"
 #include "imgui.h"
 #include "SearchQuery.h"
@@ -74,6 +76,23 @@ Request Poll(AppState& state) {
             if (!state.database.isOpen() || state.dbSwitchInProgress)
                 throw std::runtime_error("library_not_ready");
             aura::ui::OpenSimilarSoundsWindow(state);
+        } else if (action == "pointer") {
+            const float x = command.at("x").get<float>();
+            const float y = command.at("y").get<float>();
+            const auto phase = command.at("phase").get<std::string>();
+            const auto button = command.value("button", std::string("left"));
+            const auto size = ImGui::GetIO().DisplaySize;
+            if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 ||
+                x >= size.x || y >= size.y) throw std::runtime_error("pointer_out_of_window");
+            if (phase != "hover" && phase != "down" && phase != "up")
+                throw std::runtime_error("invalid_pointer_phase");
+            if (button != "left" && button != "right")
+                throw std::runtime_error("invalid_pointer_button");
+            auto& io = ImGui::GetIO();
+            io.AddMousePosEvent(x, y);
+            if (phase != "hover")
+                io.AddMouseButtonEvent(button == "right" ? ImGuiMouseButton_Right : ImGuiMouseButton_Left,
+                                       phase == "down");
         } else if (action == "settings") {
             const float size = command.at("reading_font").get<float>();
             if (size < 12 || size > 24) throw std::runtime_error("invalid_font_size");
@@ -156,7 +175,40 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
         const auto outputProbe = state.audioEngine.getQaOutputProbe();
         float maximum = 0;
         if (wave) for (const float peak : wave->peaks) maximum = std::max(maximum, std::abs(peak));
+        Json similarZones = Json::object();
+        for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
+            if (zone.key == "info.similarSounds" || zone.key.rfind("similar.", 0) == 0)
+                similarZones[zone.key] = {zone.minX, zone.minY, zone.maxX, zone.maxY};
+        }
+        Json similarRows = Json::array();
+        Json similarUi = {{"visible",state.panelSimilarSounds.visible},
+            {"floating",state.panelSimilarSounds.floating},
+            {"selected_row",state.similarSoundsSelectedRow},
+            {"index_running",state.batchFeatureExtracting.load()},
+            {"zones",similarZones}};
+        const auto indexReport = state.batchFeatureResults.Snapshot();
+        similarUi["index_report"] = {{"available",indexReport.available},
+            {"running",indexReport.running},{"total",indexReport.total},
+            {"succeeded",indexReport.succeeded},{"failed",indexReport.Failed()},
+            {"error",indexReport.error},{"model_error",indexReport.modelError}};
+        if (state.similarSoundsWorkflow) {
+            const auto snapshot = state.similarSoundsWorkflow->Snapshot();
+            for (const auto& row : snapshot.rows) {
+                if (similarRows.size() >= 50) break;
+                similarRows.push_back({{"id",row.fileId},{"name",row.fileName},
+                    {"path",row.filePath},{"score",row.similarity}});
+            }
+            similarUi["status"] = static_cast<int>(snapshot.status);
+            similarUi["error"] = static_cast<int>(snapshot.error);
+            similarUi["reference_id"] = snapshot.reference.fileId;
+            similarUi["reference_name"] = snapshot.reference.displayName;
+            similarUi["indexed"] = snapshot.indexed;
+            similarUi["total_files"] = snapshot.totalFiles;
+        }
+        similarUi["rows"] = std::move(similarRows);
+        const auto display = ImGui::GetIO().DisplaySize;
         Json value = {{"id",request.id},{"error",request.error},{"captured",captured},
+            {"window",{{"width",display.x},{"height",display.y}}},
             {"audio",{{"loaded",state.audioEngine.isLoaded()},{"pending",state.audioEngine.isLoadFilePending()},
                 {"playing",state.audioEngine.isPlaying()},{"paused",state.audioEngine.isPaused()},
                 {"path",state.audioEngine.getLoadedFilePath()},{"position",state.audioEngine.getPlaybackPosition()},
@@ -173,6 +225,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"database",state.currentDbPathUtf8},{"database_open",state.database.isOpen()},
             {"similar_window",{{"visible",state.panelSimilarSounds.visible},
                 {"floating",state.panelSimilarSounds.floating}}},
+            {"similar_ui",similarUi},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
