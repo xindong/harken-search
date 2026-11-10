@@ -8143,33 +8143,37 @@ endif()
 add_test(NAME TestUpdateStaleError COMMAND TestUpdateStaleError)
 aura_set_test_labels(TestUpdateStaleError core stage4)
 
-# Also guards user-facing wording, so it runs in the ordinary sweep.
-add_executable(TestBootstrapExitExplanation
-    tests/test_bootstrap_exit_explanation.cpp
-    src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
-    src/platform/update_bootstrap_authority_base.cpp
-    src/update/UpdateDownloadManager.cpp
-    src/platform/update_persistence_port.cpp
-    src/platform/text_encoding_win32.cpp
-)
-target_include_directories(TestBootstrapExitExplanation PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
-)
-target_link_libraries(TestBootstrapExitExplanation PRIVATE bcrypt)
-target_compile_definitions(TestBootstrapExitExplanation PRIVATE
-    ARIS_UPDATE_PERSISTENCE_TESTING=1
-)
-target_compile_features(TestBootstrapExitExplanation PRIVATE cxx_std_17)
-if(MSVC)
-    target_compile_options(TestBootstrapExitExplanation PRIVATE /W3 /utf-8)
-    set_target_properties(TestBootstrapExitExplanation PROPERTIES
-        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
-        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+# Also guards user-facing wording, so it runs in the ordinary Windows sweep.
+# The persistence implementation and diagnostic contract are Windows-only;
+# keep this target out of non-Windows builds instead of linking bcrypt on macOS.
+if(WIN32)
+    add_executable(TestBootstrapExitExplanation
+        tests/test_bootstrap_exit_explanation.cpp
+        src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        src/platform/update_bootstrap_authority_base.cpp
+        src/update/UpdateDownloadManager.cpp
+        src/platform/update_persistence_port.cpp
+        src/platform/text_encoding_win32.cpp
     )
+    target_include_directories(TestBootstrapExitExplanation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    )
+    target_link_libraries(TestBootstrapExitExplanation PRIVATE bcrypt)
+    target_compile_definitions(TestBootstrapExitExplanation PRIVATE
+        ARIS_UPDATE_PERSISTENCE_TESTING=1
+    )
+    target_compile_features(TestBootstrapExitExplanation PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(TestBootstrapExitExplanation PRIVATE /W3 /utf-8)
+        set_target_properties(TestBootstrapExitExplanation PROPERTIES
+            LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+    add_test(NAME TestBootstrapExitExplanation COMMAND TestBootstrapExitExplanation)
+    aura_set_test_labels(TestBootstrapExitExplanation core stage4)
 endif()
-add_test(NAME TestBootstrapExitExplanation COMMAND TestBootstrapExitExplanation)
-aura_set_test_labels(TestBootstrapExitExplanation core stage4)
 
 # Guards self-update on non-system drives; must run in the ordinary sweep.
 add_executable(TestUpdaterBaseVolume
