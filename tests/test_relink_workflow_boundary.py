@@ -3,6 +3,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+SETTINGS_MAINTENANCE = (ROOT / "src/SettingsMaintenanceTools.inl").read_text(encoding="utf-8")
+SETTINGS_DIALOG = (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8")
+SETTINGS_ACTIONS = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
 WINDOWS_MAIN = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
 APP_STATE = (ROOT / "src/AppState.h").read_text(encoding="utf-8")
 HEADER_PATH = ROOT / "src/RelinkWorkflow.h"
@@ -36,7 +39,10 @@ assert '#include "RelinkWorkflow.h"' in MAIN
 assert MAIN.count("aura::ui::EvaluateRelinkForRecord(state, record)") == 1
 assert MAIN.count("aura::ui::PumpRelinkWorkflow(state)") == 1
 assert MAIN.count("aura::ui::RenderRelinkBanner(state)") == 1
-assert MAIN.count("aura::ui::RenderRelinkTool(state)") == 1
+assert '#include "SettingsDialog.inl"' in MAIN
+assert '#include "SettingsActions.inl"' in SETTINGS_DIALOG
+assert '#include "SettingsMaintenanceTools.inl"' in SETTINGS_ACTIONS
+assert SETTINGS_MAINTENANCE.count("aura::ui::RenderRelinkTool(state)") == 1
 
 for forbidden in (
     "static void PumpRelinkBannerResults",

@@ -14,6 +14,17 @@ REQUIRED_FILES = (
     "HarkenSearchBootstrap.exe.sig",
     "harken-runtime-pair.json",
     "WebView2Loader.dll",
+    "concrt140.dll",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll",
+    "msvcp140_codecvt_ids.dll",
+    "vccorlib140.dll",
+    "vcomp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "vcruntime140_threads.dll",
     "lucide.ttf",
     "splash_beta.png",
     "LICENSE",
@@ -29,6 +40,15 @@ REQUIRED_DIRECTORIES = (
     "assets/avatars",
     "LICENSES",
 )
+
+SIMILARITY_COMPONENT_FILES = {
+    "ONNX Runtime": ("onnxruntime.dll",),
+    "LAION CLAP HTSAT unfused audio encoder": (
+        "models/clap/clap-audio.onnx",
+        "models/clap/clap-mel-filters.f64",
+        "models/clap/clap-window.f64",
+    ),
+}
 
 PAIR_FIELDS = {
     "arisSha256",
@@ -55,6 +75,26 @@ def _sha256(path: Path) -> str:
 
 def _integrity_sidecar(path: Path) -> bytes:
     return hashlib.sha512(path.read_bytes()).digest()[:32]
+
+
+def configured_similarity_files(root: Path) -> tuple[str, ...]:
+    metadata = root / "THIRD_PARTY_COMPONENTS.json"
+    if not metadata.is_file():
+        return ()
+    payload = json.loads(metadata.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("THIRD_PARTY_COMPONENTS.json: root must be an object")
+    components = payload.get("components")
+    if not isinstance(components, list):
+        raise ValueError("THIRD_PARTY_COMPONENTS.json: components must be a list")
+    required = []
+    for component in components:
+        if not isinstance(component, dict):
+            raise ValueError("THIRD_PARTY_COMPONENTS.json: component must be an object")
+        name = component.get("name")
+        if component.get("distributed") is True and isinstance(name, str):
+            required.extend(SIMILARITY_COMPONENT_FILES.get(name, ()))
+    return tuple(required)
 
 
 def verify_startup_source(source_root: Path) -> list[str]:
@@ -95,6 +135,16 @@ def verify_release_assembly(
         path = root / relative
         if not path.is_dir() or not any(path.rglob("*")):
             issues.append(f"missing required release directory: {relative}")
+
+    try:
+        similarity_files = configured_similarity_files(root)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        issues.append(f"invalid similarity metadata: {error}")
+    else:
+        for relative in similarity_files:
+            path = root / relative
+            if not path.is_file() or path.stat().st_size == 0:
+                issues.append(f"missing configured similarity file: {relative}")
 
     receipt = root / "harken-runtime-pair.json"
     if receipt.is_file() and receipt.stat().st_size:

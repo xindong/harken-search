@@ -213,6 +213,7 @@ namespace HarkenSearch {
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
+#include "SimilarityIndexer.h"
 #include "HarkenSearchWidgets.h"
 #include "UndoSystem.h"
 #include "ProductEdition.h"
@@ -811,6 +812,7 @@ struct AppSettings {
     int audioOutputDeviceIndex = -1;  // -1 = 系统默认
     std::string audioOutputDeviceName; // stable guard for persisted output-device index
     int audioPeriodSizeMs = 10;       // 缓冲周期 (ms)，5/10/20/50，重启后生效
+    TransportEffectVisibility transportEffectVisibility{};
 
     // --- 播放行为层 ---
     PlaybackMode playbackMode = PlaybackMode::SingleClick;
@@ -977,6 +979,7 @@ struct AppSettings {
     // Sidebar panel visibility
     bool showViewMode = true;
     bool showFolderTree = true;
+    bool showRelatedPaths = true;
     bool showMetadataFilter = true;
     bool showPlaylists = true;
     bool showPlaylistQuickBar = true;
@@ -1027,10 +1030,10 @@ struct AppSettings {
     std::string diagnosticListenCategory;  // 空=全部；非空=只记录该 category，避免缓冲爆满
 
     // Performance scheduling settings.
-    int memoryProfile = 1;            // 0=Eco(节能), 1=Balanced(均衡), 2=Ultra(性能), 3=Custom(自定义)
-    int fpsLimit = 60;                // 0=不限制, 30, 60, 120, 144
-    int thumbnailMaxResolution = 256; // 封面缩略图精度：128, 256, 512（默认 256 平衡清晰度与 GPU 内存）
-    int threadLimit = 0;              // 后台线程策略：0=自动, 1=单线程, -1=满载
+    int memoryProfile = 2;            // 默认高性能；0=节能, 1=均衡, 2=高性能, 3=自定义
+    int fpsLimit = 0;                 // 0=不限制, 30, 60, 120, 144
+    int thumbnailMaxResolution = 512; // 封面缩略图精度：128, 256, 512
+    int threadLimit = -1;             // 后台线程策略：0=自动, 1=单线程, -1=满载
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位
@@ -1595,6 +1598,11 @@ enum class SuggestMode { None, WordSuggest, CmdMenu, ValuePick };
 
 struct AppState {
     AudioEngine audioEngine;
+    // Mono and reverse need a real playback reload to bypass. Keep their
+    // requested state here while their transport controls are hidden.
+    bool hiddenMonoRestore = false;
+    bool hiddenReverseRestore = false;
+    bool pendingReverseRestore = false;
     FileBrowser fileBrowser;
     Database database;
     // AppState owns these workers; shared_ptr keeps unrelated state-only test
@@ -2513,10 +2521,10 @@ struct AppState {
     std::vector<std::string> folderSearchTokens;      // 搜索词按空格拆分的 token 列表（小写）
 
     // Metadata filters
-    char artistFilterBuffer[128] = "";
+    std::string artistFilterBuffer;
     std::vector<std::string> artistFilterAlternates;
-    char albumFilterBuffer[128] = "";
-    char categoryFilterBuffer[128] = "";
+    std::string albumFilterBuffer;
+    std::string categoryFilterBuffer;
     int formatFilterIndex = 0;
     int channelFilterIndex = 0;
     float minDurationFilter = 0.0f;
@@ -2529,6 +2537,10 @@ struct AppState {
 #if ARIS_PREVIEW_ISOLATION
     // Client-space rectangles from the last RenderUI frame for native QA clicks.
     std::map<std::string, ImVec4> qaFilterUiRects;
+    std::map<std::string, ImVec4> qaMetadataInputColors;
+    std::map<std::string, std::string> qaMetadataInputText;
+    std::map<std::string, std::string> qaMetadataDraftQuery;
+    bool qaAllowBackgroundKeybinding = false;
 #endif
 
     // Naming convention filter
@@ -3129,6 +3141,7 @@ struct AppState {
     std::unique_ptr<HarkenSearch::SimilarityWorkflow> similarSoundsWorkflow;
     aura::ui::StandaloneWindowState similarSoundsWindow;
     SimilarityPreset similarSoundsPreset = SimilarityPreset::Balanced;
+    bool similarSoundsDeep = false;
     int similarSoundsSelectedRow = -1;
     int64_t similarSoundsObservedSelectionId = -1;
     std::optional<HarkenSearch::SimilarityReference> similarSoundsLocalReference;
@@ -3137,9 +3150,15 @@ struct AppState {
     std::atomic<bool> batchFeatureExtracting{false};
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
+    std::atomic<uint64_t> batchFeatureStartGeneration{0}; // Advances only when a new batch starts.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
+    std::atomic<int>  batchFeatureSkipped{0};
+    std::atomic<int>  batchFeatureSaved{0};
     std::thread batchFeatureThread;
+    std::mutex batchFeatureResultMutex;
+    HarkenSearch::SimilarityIndexResult batchFeatureResult;
+    bool showSimilarAnalysisReport = false;
     HarkenSearch::BatchFeatureResultState batchFeatureResults;
     bool scanSimilarityOwned = false; // UI-thread-only; post-scan analysis surface.
     bool showScanSimilarityDialog = false;
@@ -3253,6 +3272,17 @@ struct AppState {
         int   listVisibleRows = 0;
         int   listScrollTopRow = 0;
         int   playingRowIndex = -1;
+#if ARIS_PREVIEW_ISOLATION
+        int listTextFrame = -1;
+        float listTextFontPixels = 0, listTextLineHeight = 0;
+        float listTextRowHeight = 0;
+        std::string listTextSample;
+        std::vector<float> listRowOrigins, listRowHitHeights;
+        std::vector<std::string> listRawNames, listRenderedNames;
+        std::vector<bool> listRowDirectories;
+        int waveDrawFrame=-1, waveDrawStyle=-1, spectrumDrawFrame=-1;
+        ImVec4 waveDrawBounds{};
+#endif
     } qaRegions;
 };
 

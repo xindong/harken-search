@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -185,6 +186,29 @@ assert "state.batchFeatureCancelRequested.store(true)" in qa_index
 assert 'similar.index.start' in index_panel
 assert 'similar.index.cancel' in index_panel
 
+# Batch progress must expose the two work classes separately. The progress
+# denominator covers the selected work list, while only the saved count
+# represents newly analyzed files. Supplementing selects pending files;
+# the explicit recheck button preserves full content verification.
+assert "if (pending > 0) StartBatchFeatureExtraction(state);" in index_panel
+assert "else StartBatchFeatureExtraction(state, true);" in index_panel
+assert 'ThemeInspector::RegisterLastItem("similar.index.recheck")' in index_panel, \
+    "a permanent pending failure must not hide full content validation"
+assert "recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll" in main
+assert "HarkenSearch::SimilarityIndexScope::PendingOnly" in main
+app_state = (ROOT / "src" / "AppState.h").read_text(encoding="utf-8")
+assert "batchFeatureSkipped" in app_state
+assert "batchFeatureSaved" in app_state
+assert "state.batchFeatureSkipped.store(progress.skipped)" in main
+assert "state.batchFeatureSaved.store(progress.saved)" in main
+assert "state.batchFeatureSkipped.load()" in index_panel
+assert "state.batchFeatureSaved.load()" in index_panel
+assert "L(Main_SimIndexBuildingFmt)" in index_panel
+ledger = json.loads((ROOT / "locale" / "harken.ui.strings.json").read_text(encoding="utf-8"))
+progress_copy = next(item for item in ledger["entries"] if item["id"] == "Main_SimIndexBuildingFmt")
+assert progress_copy["zh"].count("%d") == 4
+assert progress_copy["en"].count("%d") == 4
+
 # Closing the standalone window is a result-lifecycle boundary. Minimize keeps
 # the workflow alive, but an explicit close must invalidate rows so reopening
 # the window cannot present the previous search before a new Find action.
@@ -195,16 +219,15 @@ assert "windowWasOpen && !state.similarSoundsWindow.open" in close_branch
 assert "workflow.Invalidate()" in close_branch
 assert "state.similarSoundsLocalReference.reset()" in close_branch
 
-# A selected local result becomes the next reference only when Find is
-# explicitly clicked. It never writes the central-list selection, and a real
-# main-list selection change clears the local override.
+# Repeated Find advances around the original reference. Audition/selection
+# never becomes an implicit new reference; the main-list selection owns it.
 action_impl = window[window.index("static bool DrawSimilarSoundsActionRow"):
                      window.index("static const char* SimilarSoundsBodyMessage")]
 for required in (
-    "state.similarSoundsSelectedRow >= 0",
-    "state.similarSoundsLocalReference =",
-    "workflow.SetReference(state.similarSoundsLocalReference)",
-    "workflow.RequestSearch(state.similarSoundsPreset, 50)",
+    "snapshot.batchNumber > 0",
+    "Similar_NextBatch",
+    "workflow.CancelSearch()",
+    "workflow.RequestSearch(searchOptions, 50)",
 ):
     assert required in action_impl
 for required in (
@@ -213,22 +236,18 @@ for required in (
 ):
     assert required in window
 
-# RQ-20260725-01: the action-row filename is the next Find reference.
-# A valid similarSoundsSelectedRow must win over snapshot.reference.displayName
-# for currentName. Selection-only display must not SetReference; Find still does.
+# The action-row filename remains the original query reference while auditioning.
 current_name_start = action_impl.index("const char* currentName")
 current_name_end = action_impl.index("ImVec2 currentNameSize", current_name_start)
 current_name_init = action_impl[current_name_start:current_name_end]
 button_click_start = action_impl.index("if (aura::ui::Button(actionLabel, options))")
 pre_button = action_impl[:button_click_start]
 button_click = action_impl[button_click_start:]
-assert "similarSoundsSelectedRow" in current_name_init
-assert "snapshot.rows[" in current_name_init
-assert ".fileName" in current_name_init
+assert "similarSoundsSelectedRow" not in current_name_init
+assert "snapshot.rows[" not in current_name_init
 assert "snapshot.reference.displayName" in current_name_init
-assert current_name_init.index("similarSoundsSelectedRow") <     current_name_init.index("snapshot.reference.displayName")
 assert "workflow.SetReference" not in pre_button
-assert "workflow.SetReference(state.similarSoundsLocalReference)" in button_click
+assert "workflow.SetReference" not in button_click
 
 # A partial feature-index build cannot publish provisional results as if they
 # were final. Starting a batch invalidates rows; Find remains disabled until
@@ -246,13 +265,16 @@ assert "workflow.Invalidate()" in batch_transition
 
 # The main-thread start path also invalidates synchronously, so a very short
 # batch cannot finish before the renderer samples its rising edge.
-batch_start = main[main.index("state.batchFeatureExtracting.store(true)") - 600:
-                   main.index("state.batchFeatureExtracting.store(true)") + 500]
+batch_start = main[main.index("void StartBatchFeatureExtraction(AppState& state"):
+                   main.index("state.batchFeatureThread = std::thread",
+                              main.index("void StartBatchFeatureExtraction(AppState& state"))]
 for required in (
     "aura::ui::InvalidateSimilarSoundsWindow(state)",
     "state.batchFeatureExtracting.store(true)",
 ):
     assert required in batch_start
+assert batch_start.index("InvalidateSimilarSoundsWindow(state)") < batch_start.index(
+    "state.batchFeatureExtracting.store(true)")
 
 space_start = window.index("ImGui::IsKeyPressed(ImGuiKey_Space, false)")
 space_end = window.index("ImGui::PopStyleColor(3)", space_start)
@@ -281,12 +303,17 @@ assert "state.visibleFilePaths.insert(row.filePath)" in cache_miss
 assert cache_miss.index("state.visibleFilePaths.insert(row.filePath)") < \
     cache_miss.index("state.addPendingWaveform(row.filePath, true)")
 
-# Decode completion uses the frame's cross-window visibility set. Checking
-# only central searchResults would discard successful Similar Sounds decodes.
+# Decode completion uses the frame's cross-window visibility set. Both hosts
+# must call the shared pump; checking only central searchResults would discard
+# successful Similar Sounds decodes.
 windows_main = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
-visibility_start = windows_main.index("bool isStillVisiblePageItem")
-visibility_end = windows_main.index("const bool isLoadedFileResult", visibility_start)
-completion_visibility = windows_main[visibility_start:visibility_end]
+mac_entry = (ROOT / "src" / "platform" / "app_entry_macos.mm").read_text(encoding="utf-8")
+frame_services = (ROOT / "src" / "AppFrameServices.cpp").read_text(encoding="utf-8")
+assert "PumpAppWaveforms(state, isMouseIdle, waveformFrameOptions)" in windows_main
+assert "PumpAppWaveforms(*state, isMouseIdle)" in mac_entry
+visibility_start = frame_services.index("bool isStillVisiblePageItem")
+visibility_end = frame_services.index("const bool isLoadedFileResult", visibility_start)
+completion_visibility = frame_services[visibility_start:visibility_end]
 assert "state.visibleFilePaths.find(result.filePath)" in completion_visibility
 assert "state.searchResults" in completion_visibility
 

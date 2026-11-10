@@ -11,6 +11,10 @@ assert WIN32_PATH.is_file()
 assert PORTABLE_PATH.is_file()
 
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+MAIN += (ROOT / "src/SettingsAvatarTools.inl").read_text(encoding="utf-8")
+assert '#include "SettingsDialog.inl"' in (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+assert '#include "SettingsActions.inl"' in (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8")
+assert '#include "SettingsAvatarTools.inl"' in (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
 HEADER = HEADER_PATH.read_text(encoding="utf-8")
 WIN32 = WIN32_PATH.read_text(encoding="utf-8")
 PORTABLE = PORTABLE_PATH.read_text(encoding="utf-8")
@@ -47,7 +51,7 @@ for required in (
     assert required in WIN32
 assert 'return "";' in PORTABLE
 
-qualified_call = "Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(g_hwnd)"
+qualified_call = "Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(MainUiOwnerWindow())"
 assert MAIN.count(qualified_call) == 1
 assert "static std::string OpenAvatarImageFileDialogUtf8(HWND owner)" not in MAIN
 assert MAIN.count("OpenAvatarImageFileDialogUtf8(") == 1

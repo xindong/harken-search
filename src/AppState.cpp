@@ -14,7 +14,12 @@ namespace {
 
 template <size_t N>
 void CopyStringToBuffer(char (&dst)[N], const std::string& src) {
+#ifdef _WIN32
     strncpy_s(dst, N, src.c_str(), _TRUNCATE);
+#else
+    std::strncpy(dst, src.c_str(), N - 1);
+    dst[N - 1] = '\0';
+#endif
 }
 
 bool HasActivePillFilterState(const std::map<std::string, int>& pillState) {
@@ -383,7 +388,11 @@ bool AppState::loadTabPreset(int presetIdx) {
         t.name                    = e.name;
         t.viewMode                = MapLegacyViewMode(e.viewMode);
         t.browserScope            = e.browserScope;
+#ifdef _WIN32
         strncpy_s(t.searchBuffer, sizeof(t.searchBuffer), e.searchBuffer.c_str(), _TRUNCATE);
+#else
+        CopyStringToBuffer(t.searchBuffer, e.searchBuffer);
+#endif
         t.selectedFolderPath      = e.selectedFolderPath;
         t.folderFilterActive      = e.folderFilterActive;
         t.coverFilterActive       = e.coverFilterActive;
@@ -576,10 +585,10 @@ void AppState::syncFromTab() {
     coverFilterActive = tab.coverFilterActive;
     coverFilterPath = tab.coverFilterPath;
     coverFilterIndex = tab.coverFilterIndex;
-    CopyStringToBuffer(artistFilterBuffer, tab.artistFilterText);
+    artistFilterBuffer = tab.artistFilterText;
     artistFilterAlternates = tab.artistFilterAlternates;
-    CopyStringToBuffer(albumFilterBuffer, tab.albumFilterText);
-    CopyStringToBuffer(categoryFilterBuffer, tab.categoryFilterText);
+    albumFilterBuffer = tab.albumFilterText;
+    categoryFilterBuffer = tab.categoryFilterText;
     formatFilterIndex = tab.formatFilterIndex;
     channelFilterIndex = tab.channelFilterIndex;
     minDurationFilter = tab.minDurationFilter;
@@ -696,10 +705,10 @@ static bool AppStateHasActiveDbFilterForCoverWall(const AppState& state) {
     if (state.searchBuffer[0] != '\0') return true;
     if (state.folderFilterActive && !state.selectedFolderPath.empty()) return true;
     if (state.coverFilterActive && !state.coverFilterPath.empty()) return true;
-    if (state.artistFilterBuffer[0] != '\0') return true;
+    if (!state.artistFilterBuffer.empty()) return true;
     if (!state.artistFilterAlternates.empty()) return true;
-    if (state.albumFilterBuffer[0] != '\0') return true;
-    if (state.categoryFilterBuffer[0] != '\0') return true;
+    if (!state.albumFilterBuffer.empty()) return true;
+    if (!state.categoryFilterBuffer.empty()) return true;
     if (state.formatFilterIndex != 0) return true;
     if (state.channelFilterIndex != 0) return true;
     if (state.sampleRateFilterIndex != 0) return true;
@@ -1604,3 +1613,7 @@ std::string AppState::TransferStatusText() const {
     }
     return buf;
 }
+
+// ODR definitions for constants passed by reference to standard algorithms.
+const int AppState::RANDOM_PAGE_SIZE;
+const int AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS;

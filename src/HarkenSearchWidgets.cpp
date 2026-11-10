@@ -329,6 +329,15 @@ void DrawInputLabel(const char* label, const ThemeColorScheme& th) {
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, aura::ui::metrics::kGap4));
 }
+
+int ResizeLongInput(ImGuiInputTextCallbackData* data) {
+    auto* buffer = static_cast<std::vector<char>*>(data->UserData);
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackResize || !buffer) return 0;
+    buffer->resize((std::max)(static_cast<size_t>(data->BufSize),
+                              static_cast<size_t>(data->BufTextLen) + 1));
+    data->Buf = buffer->data();
+    return 0;
+}
 } // anon
 
 bool TextInput(const char* label, std::string* value,
@@ -394,10 +403,20 @@ bool TextInput(const char* label, std::string* value,
     if (opts.variant == TextInputVariant::Number)         flags |= ImGuiInputTextFlags_CharsDecimal;
     flags |= opts.inputFlags;
 
-    // Work in a local buffer - ImGui::InputText writes back here, then
-    // we copy into *value. 1024 bytes covers typical fields; raise if needed.
-    char buf[1024];
-    const size_t nCopy = value->size() < sizeof(buf) - 1 ? value->size() : sizeof(buf) - 1;
+    // Keep ordinary inputs on the stack, but pass long values to ImGui in full.
+    // Extra space lets a user edit a selected long metadata name as well.
+    char inlineBuffer[1024];
+    std::vector<char> longBuffer;
+    char* buf = inlineBuffer;
+    size_t capacity = sizeof(inlineBuffer);
+    // Undo can restore a long value after this active input shrinks below 1024.
+    if (value->size() >= capacity || ImGui::GetActiveID() == ImGui::GetID("##in")) {
+        longBuffer.resize(value->size() + sizeof(inlineBuffer));
+        buf = longBuffer.data();
+        capacity = longBuffer.size();
+        flags |= ImGuiInputTextFlags_CallbackResize;
+    }
+    const size_t nCopy = std::min(value->size(), capacity - 1);
     if (nCopy > 0) std::memcpy(buf, value->data(), nCopy);
     buf[nCopy] = '\0';
 
@@ -406,15 +425,20 @@ bool TextInput(const char* label, std::string* value,
     if (opts.variant == TextInputVariant::Multiline) {
         const ImVec2 size(inputW > 0 ? inputW : 200.0f,
                           kHeightMd * (float)(opts.multilineRows > 0 ? opts.multilineRows : 3));
-        changed = ImGui::InputTextMultiline("##in", buf, sizeof(buf), size, flags);
+        changed = ImGui::InputTextMultiline("##in", buf, capacity, size, flags,
+            longBuffer.empty() ? nullptr : ResizeLongInput,
+            longBuffer.empty() ? nullptr : &longBuffer);
     } else {
         changed = ImGui::InputTextWithHint("##in",
             opts.placeholder ? opts.placeholder : "",
-            buf, sizeof(buf), flags);
+            buf, capacity, flags,
+            longBuffer.empty() ? nullptr : ResizeLongInput,
+            longBuffer.empty() ? nullptr : &longBuffer);
     }
     DrawFocusRing();
 
-    if (changed) *value = buf;
+    // EnterReturnsTrue changes the return contract, not the edited buffer.
+    *value = longBuffer.empty() ? buf : longBuffer.data();
     if (opts.maxLength > 0 && (int)value->size() > opts.maxLength) {
         value->resize((size_t)opts.maxLength);
     }

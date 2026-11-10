@@ -59,7 +59,12 @@ else if(id=="systemFont"||id=="listFont") {
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);
-else if(id=="waveMode") {if(combo(draft.waveformDisplayMode,{L(Set_ModeVolume2),L(Set_ModeLoudness2),L(Set_ModeSpectrum2)})&&draft.waveformDisplayMode==2)runtime.spectrum=true;}
+else if(id=="waveMode") {
+    if(combo(draft.waveformDisplayMode,{L(Set_ModeVolume2),L(Set_ModeLoudness2),L(Set_ModeSpectrum2)})) {
+        runtime.spectrum=draft.waveformDisplayMode==2;
+        if(draft.waveformDisplayMode<2)draft.waveformStyle=draft.waveformDisplayMode==1?kWaveformStyleRms:kWaveformStyleSolid;
+    }
+}
 else if(id=="waveStyle") {int n=draft.waveformStyle==3?1:0;if(combo(n,{L(Set_StyleRMS2),L(Set_StyleSolid)}))draft.waveformStyle=n==1?3:2;}
 else if(id=="miniRms")ImGui::Checkbox("##value",&draft.miniWaveformRmsBodyStyle);
 else if(id=="meterLayout") {int n=(int)draft.meterChannelLayout;if(combo(n,{"SMPTE / WAV","Film","Dolby Atmos Bed","Ambisonic AmbiX","1..N"}))draft.meterChannelLayout=(MeterChannelLayout)n;}
@@ -91,6 +96,11 @@ else if(id=="target") {
     ImGui::EndDisabled();
 }
 else if(id=="fade")ImGui::Checkbox("##value",&draft.fadeInOutEnabled);
+else if(id=="transportMono") {transportSwitch(draft.transportEffectVisibility.mono,editor.app.Baseline().transportEffectVisibility.mono,controlW);su::Observe("transportMono-control");}
+else if(id=="transportReverse") {transportSwitch(draft.transportEffectVisibility.reverse,editor.app.Baseline().transportEffectVisibility.reverse,controlW);su::Observe("transportReverse-control");}
+else if(id=="transportPan") {transportSwitch(draft.transportEffectVisibility.pan,editor.app.Baseline().transportEffectVisibility.pan,controlW);su::Observe("transportPan-control");}
+else if(id=="transportSoundstage") {transportSwitch(draft.transportEffectVisibility.soundstage,editor.app.Baseline().transportEffectVisibility.soundstage,controlW);su::Observe("transportSoundstage-control");}
+else if(id=="transportEQ") {transportSwitch(draft.transportEffectVisibility.eq,editor.app.Baseline().transportEffectVisibility.eq,controlW);su::Observe("transportEQ-control");}
 else if(id=="fadeMs") {ImGui::BeginDisabled(!draft.fadeInOutEnabled);ImGui::SliderInt("##value",&draft.fadeInOutMs,2,50,"%d ms",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="period") {const int values[]{5,10,20,50};int n=1;for(int i=0;i<4;++i)if(values[i]==draft.audioPeriodSizeMs)n=i;if(combo(n,{"5 ms","10 ms","20 ms","50 ms"}))draft.audioPeriodSizeMs=values[n];ImGui::TextDisabled("%s",L(SetUX_AfterRestart));}
 else if(id=="skipSilence")ImGui::Checkbox("##value",&draft.skipLeadingSilence);
@@ -126,8 +136,15 @@ else if(id=="remember")ImGui::Checkbox("##value",&draft.rememberLastFolder);
 else if(id=="closeAction")combo(draft.closeButtonAction,{L(Set_CloseAsk),L(Set_CloseMinimize),L(Set_CloseDirect)});
 else if(id=="guided")ImGui::Checkbox("##value",&draft.showGuidedMode);
 else if(id=="confirm") {bool value=!draft.suppressConfirmDialogs;if(ImGui::Checkbox("##value",&value))draft.suppressConfirmDialogs=!value;}
-else if(id=="hotkeyEnabled") {ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);if(!draft.enableShowManagerHotkey)editor.recording=false;}
+else if(id=="hotkeyEnabled") {
+#ifdef _WIN32
+    ImGui::Checkbox("##value",&draft.enableShowManagerHotkey);if(!draft.enableShowManagerHotkey)editor.recording=false;
+#else
+    ImGui::TextWrapped("%s",L(Mac_GlobalHotkeyUnavailable));
+#endif
+}
 else if(id=="hotkey") {
+#ifdef _WIN32
     ImGui::BeginDisabled(!draft.enableShowManagerHotkey);
     if(aura::ui::ActionButton(editor.recording?L(Set_ListeningKeys):draft.showManagerHotkey.toString().c_str())){editor.recording=true;ImGui::ClearActiveID();}
     su::Observe("hotkey-record");
@@ -141,6 +158,9 @@ else if(id=="hotkey") {
     if(aura::ui::SmallActionButton(L(Set_ClearHotkey2)))draft.showManagerHotkey={ImGuiKey_None,false,false,false};
     ImGui::EndDisabled();
     if(!g_showManagerHotkeyRegisterOk&&state.settings.enableShowManagerHotkey)ImGui::TextWrapped("%s",L(Set_HotkeyConflict));
+#else
+    ImGui::TextWrapped("%s",L(Mac_GlobalHotkeyUnavailable));
+#endif
 }
 else if(id=="shortcuts")actionButton(L(SetUX_EditShortcuts),"shortcuts");
 else if(id=="hideDrag")ImGui::Checkbox("##value",&draft.hideWindowOnDrag);
@@ -149,8 +169,8 @@ else if(id=="pauseDrag")ImGui::Checkbox("##value",&draft.pausePlaybackOnDragStar
 else if(id=="treePath") {int n=(int)draft.folderTreePathMode;if(combo(n,{L(Set_FolderTreePathAbsolute),L(Set_FolderTreePathPilot)}))draft.folderTreePathMode=(aura::folder_tree::PathMode)n;}
 else if(id=="shell")actionButton(L(Set_ShellIntegration),"shell");
 else if(id=="username")stringInput(draft.userName);
-else if(id=="avatar")actionButton(L(SetUX_EditAvatar),"avatar");
-else if(id=="exportPath") {stringInput(draft.defaultExportPath);if(aura::ui::SmallActionButton(L(Browse))){auto folder=OpenFolderDialog(g_hwnd);if(!folder.empty())draft.defaultExportPath=folder;}}
+else if(id=="avatar") { DrawCurrentSettingsAvatar(48.f); ImGui::SameLine(0,12); actionButton(L(SetUX_EditAvatar),"avatar"); }
+else if(id=="exportPath") {stringInput(draft.defaultExportPath);if(aura::ui::SmallActionButton(L(Browse))){auto folder=OpenFolderDialog(MainUiOwnerWindow());if(!folder.empty())draft.defaultExportPath=folder;}}
 else if(id=="suffix")ImGui::Checkbox("##value",&draft.keepHarkenSearchOutputProcessingSuffix);
 else if(id=="export")actionButton(L(Set_ExportSettings),"export");
 else if(id=="import")actionButton(L(Set_ImportSettings),"import");

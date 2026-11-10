@@ -1,8 +1,10 @@
+#include "AppFrameServices.h"
 // SoundManager - Windows平台模块
 // Windows entry point, window management, tray icon, hotkeys, and fonts.
 // Platform code extracted from main.cpp.
 
 #include "WindowsMain.h"
+#include "AppRuntime.h"
 #include "DefaultAudioPlayerAssociation.h"
 #include "CoverBrowseSurfaceState.h"
 #include "PathUtils.h"  // Canonical folder filtering.
@@ -228,39 +230,6 @@ std::string ResolveCanonicalHarkenSearchDatabasePathUtf8(const std::string& path
 
 static void SyncDiagnosticFileEnabledFromSettings();
 
-static bool ResolveStartupDatabaseSelectionForMount(
-    const AppState& state,
-    std::string& outDbPathUtf8,
-    AppState::StartupDatabaseSetupReason& outReason) {
-    outDbPathUtf8.clear();
-    outReason = AppState::StartupDatabaseSetupReason::None;
-
-    const std::string currentDbPathUtf8 =
-        ResolveCanonicalHarkenSearchDatabasePathUtf8(state.currentDbPathUtf8);
-    if (IsDatabaseLibrarySelectable(
-            ClassifyDatabaseLibraryPath(currentDbPathUtf8))) {
-        outDbPathUtf8 = currentDbPathUtf8;
-        return true;
-    }
-
-    for (const auto& recentPathRaw : state.recentDbPathsUtf8) {
-        const std::string recentDbPathUtf8 =
-            ResolveCanonicalHarkenSearchDatabasePathUtf8(recentPathRaw);
-        if (IsDatabaseLibrarySelectable(
-                ClassifyDatabaseLibraryPath(recentDbPathUtf8))) {
-            outDbPathUtf8 = recentDbPathUtf8;
-            return true;
-        }
-    }
-
-    const bool hasKnownDatabasePath =
-        !currentDbPathUtf8.empty() || !state.recentDbPathsUtf8.empty();
-    outReason = hasKnownDatabasePath
-        ? AppState::StartupDatabaseSetupReason::MissingConfiguredDatabase
-        : AppState::StartupDatabaseSetupReason::FirstRunNoDatabase;
-    return false;
-}
-
 static std::string GetHarkenSearchRuntimeRootUtf8() {
     char* runtimeRoot = nullptr;
     size_t runtimeRootLen = 0;
@@ -401,9 +370,9 @@ extern PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
 // Startup entry transition (file scope for main.cpp extern / spatial interpolation)
 
-bool startupEntryTransitionActive = false;
-std::chrono::steady_clock::time_point startupEntryTransitionStart = std::chrono::steady_clock::now();
-extern const float kStartupEntryTransitionMs = 760.0f;
+extern bool startupEntryTransitionActive;
+extern std::chrono::steady_clock::time_point startupEntryTransitionStart;
+extern const float kStartupEntryTransitionMs;
 static constexpr float kStartupTransitionTimeoutMs = 3000.0f;
 
 // Cover prefetch (progressive, avoids empty covers on large libraries)
@@ -851,33 +820,6 @@ static void EnqueueAudioDecoderPrewarmWindow(AppState& state, int anchorIndex, i
     }
 }
 
-static BackgroundIoContext BuildBackgroundIoContextForWindowsMain(AppState& state,
-                                                                  bool contextMenuHeavyFreeze,
-                                                                  bool coverWallPriorityMode,
-                                                                  bool mouseIdle) {
-    BackgroundIoContext ctx;
-    const double now = ImGui::GetTime();
-    ctx.contextMenuHeavyFreeze = contextMenuHeavyFreeze;
-    ctx.coverWallPriorityMode = coverWallPriorityMode;
-    ctx.playing = state.audioEngine.isPlaying();
-    ctx.waveformRebuildActive = state.waveformRebuildActive;
-    ctx.scanning = state.isScanning.load(std::memory_order_acquire);
-    ctx.dbSwitchInProgress = state.dbSwitchInProgress;
-    ctx.dbSwitchSettling = state.dbSwitchSettleFramesRemaining > 0;
-    ctx.loadFilePending = state.audioEngine.isLoadFilePending();
-    ctx.detailPending = state.audioEngine.isWaveformDetailPending();
-    ctx.detailDeferring = !state.pendingDetailFilePath.empty();
-    ctx.modeSwitchCoolingDown = state.lastProductModeSwitchTime > 0.0 &&
-        (now - state.lastProductModeSwitchTime) < 2.5;
-    ctx.mouseIdle = mouseIdle;
-    ctx.userActive = ImGui::IsAnyMouseDown();
-    ctx.hasBrowseAnchor = state.selectedResultIndex >= 0 || !state.audioEngine.getLoadedFilePath().empty();
-    if (state.lastSelectionOrLoadTime > 0.0) {
-        ctx.secondsSinceSelectionOrLoad = now - state.lastSelectionOrLoadTime;
-    }
-    return ctx;
-}
-
 static void PumpAudioDecoderPrewarm(AppState& state, const BackgroundIoContext& ioContext) {
     auto& s = GetAudioDecoderPrewarmState();
 
@@ -1144,28 +1086,6 @@ static bool WaitForScanWaveformBackfillCompletion(AppState& state,
     return false;
 }
 
-static bool MarkScanForegroundMiniTerminalForJob(AppState& state,
-                                                 const aura::BackfillJob& job,
-                                                 bool success,
-                                                 const std::string& reason) {
-    if (job.scanSessionId <= 0 ||
-        job.kind != aura::BackfillJobKind::WaveformL1Overview) {
-        return true;
-    }
-    return state.database.markScanForegroundMiniTerminal(
-        job.scanSessionId,
-        job.fileId,
-        success ? ScanForegroundTerminalState::Cached : ScanForegroundTerminalState::Failed,
-        reason);
-}
-
-static bool CanClearBackfillPendingForJob(AppState& state,
-                                          const aura::BackfillJob& job,
-                                          bool success,
-                                          const std::string& reason) {
-    return MarkScanForegroundMiniTerminalForJob(state, job, success, reason);
-}
-
 // Globals defined here (declared extern in WindowsMain.h)
 
 HWND g_hwnd = nullptr;
@@ -1374,15 +1294,12 @@ void* HarkenSearch::UiHost::MainWindowOwner() noexcept {
 }
 bool g_hideWindowOnDrag = true;
 UINT g_hideWindowOnDragDelayMs = 400;
-int g_suppressImGuiDragTooltipFrames = 0;
 WINDOWPLACEMENT g_savedPlacementForDragHide = { sizeof(WINDOWPLACEMENT) };
 bool g_savedPlacementForDragHideValid = false;
 bool g_savedWasMaximizedForDragHide = false;
 WINDOWPLACEMENT g_savedPlacementForTrayMinimize = { sizeof(WINDOWPLACEMENT) };
 bool g_savedPlacementForTrayMinimizeValid = false;
 bool g_savedWasMaximizedForTrayMinimize = false;
-static std::atomic<ULONGLONG> g_lastUiLeftClickTickMs{0};
-static std::atomic<bool> g_coverWallPriorityMode{false};
 
 // 全局唤醒键 toggle 隐藏时保存的窗口状态
 static WINDOWPLACEMENT g_savedPlacementForHotkeyHide = { sizeof(WINDOWPLACEMENT) };
@@ -1404,26 +1321,6 @@ static const UINT TRAY_CMD_TOGGLE_SHOW = 0x1101;
 static const UINT TRAY_CMD_EXIT = 0x1102;
 static const UINT AURO_WM_SHOW_MANAGER = WM_APP + 0x42;
 static UINT WM_TASKBARCREATED = 0; // 动态注册的 TaskbarCreated 消息ID
-
-void MarkUiLeftClickNow() {
-    g_lastUiLeftClickTickMs.store(
-        Platform::MonotonicMilliseconds(), std::memory_order_relaxed);
-}
-
-bool IsRapidUiClickBurstActive() {
-    const ULONGLONG lastTick = g_lastUiLeftClickTickMs.load(std::memory_order_relaxed);
-    if (lastTick == 0) return false;
-    const ULONGLONG now = Platform::MonotonicMilliseconds();
-    return now >= lastTick && (now - lastTick) <= 320;
-}
-
-void SetCoverWallPriorityMode(bool enabled) {
-    g_coverWallPriorityMode.store(enabled, std::memory_order_relaxed);
-}
-
-bool IsCoverWallPriorityMode() {
-    return g_coverWallPriorityMode.load(std::memory_order_relaxed);
-}
 
 enum class CoverPhysicalTaskType {
     AssignEmbed = 1,
@@ -4404,20 +4301,21 @@ static void PollQaCommandFile(AppState& state) {
             const std::string scenario = getStr(raw, "scenario");
             if (scenario != "pass" && scenario != "bypass" && scenario != "notch" &&
                 scenario != "processing" && scenario != "mono" && scenario != "spectrum" &&
-                scenario != "overdrive" && scenario != "fill-boundary" && scenario != "selection" && scenario != "wide") {
+                scenario != "overdrive" && scenario != "fill-boundary" && scenario != "selection" &&
+                scenario != "wide" && scenario != "mono-reverse") {
                 result = "{\"ok\":false,\"error\":\"invalid_transport_audit_scenario\"}";
             } else {
                 state.audioEngine.stop();
                 state.settings.productMode = ProductMode::SFX;
                 state.audioEngine.setVolume(scenario == "overdrive" ? 1.07f :
                     (scenario == "fill-boundary" ? .55f : (scenario == "processing" ? .85f : .26f)));
-                state.audioEngine.setMono(scenario == "mono");
+                state.audioEngine.setMono(scenario == "mono" || scenario == "mono-reverse");
                 state.audioEngine.setPan(scenario == "processing" ? .5f : 0);
                 state.audioEngine.setCenterSense(scenario == "processing" ? .6f : 0);
                 state.audioEngine.setBassMonoFreq(scenario == "processing" ? 80.f : 0.f);
-                state.audioEngine.setReverse(scenario == "processing");
-                state.audioEngine.setInPoint(scenario == "selection" ? .2f : 0.f);
-                state.audioEngine.setOutPoint(scenario == "selection" ? .8f : 1.f);
+                state.audioEngine.setReverse(scenario == "processing" || scenario == "mono-reverse");
+                state.audioEngine.setInPoint(scenario == "mono-reverse" ? .12f : (scenario == "selection" ? .2f : 0.f));
+                state.audioEngine.setOutPoint(scenario == "mono-reverse" ? .63f : (scenario == "selection" ? .8f : 1.f));
                 state.showSpectrogram = scenario == "spectrum";
                 state.spectrogramSplit = false;
                 state.spectrogramBlend = .5f;
@@ -4435,6 +4333,56 @@ static void PollQaCommandFile(AppState& state) {
         }
 
 #if ARIS_PREVIEW_ISOLATION
+    } else if (cmd == "transport_effect_state") {
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto visibility = state.settings.transportEffectVisibility;
+            const auto effective = state.audioEngine.captureTransferProcessingSnapshot();
+            const auto requestedEQ = state.audioEngine.getMagicEQUserSettings();
+            std::ostringstream out;
+            out << std::boolalpha
+                << "{\"ok\":true,\"visibility\":{\"mono\":" << visibility.mono
+                << ",\"reverse\":" << visibility.reverse << ",\"pan\":" << visibility.pan
+                << ",\"soundstage\":" << visibility.soundstage << ",\"eq\":" << visibility.eq
+                << "},\"requested\":{\"mono\":" << (visibility.mono ? state.audioEngine.isMono() : state.hiddenMonoRestore)
+                << ",\"reverse\":" << (visibility.reverse ? state.audioEngine.isReversed() || state.pendingReverseRestore : state.hiddenReverseRestore)
+                << ",\"pan\":" << state.audioEngine.getRequestedPan()
+                << ",\"centerSense\":" << state.audioEngine.getCenterSense()
+                << ",\"bassMonoFreq\":" << state.audioEngine.getBassMonoFreq()
+                << ",\"eq\":" << requestedEQ.enabled
+                << "},\"effective\":{\"mono\":" << effective.mono
+                << ",\"reverse\":" << effective.reverse << ",\"pan\":" << effective.pan
+                << ",\"centerSense\":" << effective.centerSense
+                << ",\"bassMonoFreq\":" << effective.bassMonoFreqHz
+                << ",\"eq\":" << effective.magicEQ.enabled << "}}";
+            result = out.str();
+        }
+    } else if (cmd == "transport_effect_export") {
+        const std::string output = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(output)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string input = state.audioEngine.getLoadedFilePath();
+            const auto snapshot = state.audioEngine.captureTransferProcessingSnapshot();
+            result = !input.empty() && state.audioEngine.exportRegion(output, 0.0f, 0.0f, nullptr, &snapshot)
+                ? R"({"ok":true,"cmd":"transport_effect_export"})"
+                : R"({"ok":false,"error":"transport_effect_export_failed"})";
+        }
+    } else if (cmd == "transport_effect_import") {
+        const std::string input = getStr(raw, "path");
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(input) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(g_appSettingsPathUtf8)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (!Platform::FileSystem::CopyFile(input, g_appSettingsPathUtf8, true)) {
+            result = R"({"ok":false,"error":"transport_effect_import_copy_failed"})";
+        } else {
+            LoadAppSettings(state);
+            harken::settings::SettingsEditor().Reset(state);
+            result = R"({"ok":true,"cmd":"transport_effect_import"})";
+        }
     } else if (cmd == "info_page_state" || cmd == "info_page_pointer" || cmd == "info_page_layout" || cmd == "info_edit_input") {
         // Real ImGui input, restricted to this compile-time isolated QA package.
         // Never moves the operating-system cursor or targets another process.
@@ -4459,6 +4407,21 @@ static void PollQaCommandFile(AppState& state) {
                     state.qaOpenExistingDbPath=getStr(raw,"text");
                 else if (getStr(raw,"action")=="escape_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,true);
                 else if (getStr(raw,"action")=="escape_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape,false);
+                else if (getStr(raw,"action")=="home_down") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,true);
+                else if (getStr(raw,"action")=="home_up") ImGui::GetIO().AddKeyEvent(ImGuiKey_Home,false);
+                else if (getStr(raw,"action")=="delete_prefix_200" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID()) {
+                    // Exercise vendored ImGui's real text edit path on the active input.
+                    auto& input = ImGui::GetCurrentContext()->InputTextState;
+                    input.OnKeyPressed(0x200006); // STB_TEXTEDIT_K_TEXTSTART
+                    for (int i = 0; i < 200; ++i)
+                        input.OnKeyPressed(0x200001 | 0x400000); // RIGHT | SHIFT
+                    input.OnKeyPressed(0x200008); // STB_TEXTEDIT_K_DELETE
+                }
+                else if (getStr(raw,"action")=="undo_text" &&
+                         ImGui::GetCurrentContext()->InputTextState.ID == ImGui::GetActiveID())
+                    // Vendored ImGui's STB_TEXTEDIT_K_UNDO; exercise the real undo engine.
+                    ImGui::GetCurrentContext()->InputTextState.OnKeyPressed(0x20000A);
                 else ImGui::GetIO().AddInputCharactersUTF8(getStr(raw,"text").c_str());
                 result=R"({"ok":true})";
             } else if (cmd == "info_page_layout") {
@@ -4771,11 +4734,13 @@ static void PollQaCommandFile(AppState& state) {
             namespace su = harken::settings;
             const auto action = getStr(raw,"action");
             if (action == "fail_save_once") su::failSaveOnce = true;
+            if (action == "shortcut_test_background") state.qaAllowBackgroundKeybinding = getBool(raw,"enabled",false);
             if (action == "layout_restore_error") su::SettingsEditor().error=std::string(L(SetUX_SaveFailedAndSomePaletteFilesCouldNotBeRestoredCheckTheSettingsFolder))+" "+L(SetUX_OutputRestoreFailed);
+            if (action == "save_preview_frame") { su::previewSaveResult=false;su::savePreviewOnce=true; }
             if (action == "key") {
                 const auto name=getStr(raw,"key");
                 const bool down=getBool(raw,"down",false);
-                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
+                const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
             if (action == "resize") {
@@ -4796,12 +4761,26 @@ static void PollQaCommandFile(AppState& state) {
             for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
+                {"preview_save_result",su::previewSaveResult},
+                {"thesaurus_text_color",color(observation.thesaurusTextColor)},
                 {"draft_volume",observation.draftVolume},{"draft_realtime",observation.draftRealtime},{"draft_theme",observation.draftTheme},
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
                 {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
                 {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"drawn_list_frame",state.qaRegions.listTextFrame},{"drawn_list_font_pixels",state.qaRegions.listTextFontPixels},
+                {"drawn_list_line_height",state.qaRegions.listTextLineHeight},{"drawn_list_row_height",state.qaRegions.listTextRowHeight},
+                {"drawn_list_sample",state.qaRegions.listTextSample},
+                {"live_extension",state.settings.showFileExtension},{"draft_extension",editor.app.Value().showFileExtension},
+                {"drawn_list_raw_names",state.qaRegions.listRawNames},{"drawn_list_names",state.qaRegions.listRenderedNames},
+                {"drawn_list_directories",state.qaRegions.listRowDirectories},
+                {"live_wave_mode",state.settings.waveformDisplayMode},{"draft_wave_mode",editor.app.Value().waveformDisplayMode},
+                {"live_wave_style",state.settings.waveformStyle},{"live_spectrum",state.showSpectrogram},
+                {"drawn_wave_frame",state.qaRegions.waveDrawFrame},{"drawn_wave_style",state.qaRegions.waveDrawStyle},
+                {"drawn_spectrum_frame",state.qaRegions.spectrumDrawFrame},{"wave_bounds",rect(state.qaRegions.waveDrawBounds)},
+                {"drawn_list_row_origins",state.qaRegions.listRowOrigins},{"drawn_list_hit_heights",state.qaRegions.listRowHitHeights},
+                {"mono_font_pixels",[]{ImGui::PushFont(GetUIFontMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"draft_language",(int)editor.app.Value().language},{"live_language",(int)state.settings.language},
                 {"rendered_language",(int)g_currentLanguage},{"rendered_texts",texts},
                 {"live_list_font",state.settings.listFontSize},{"draft_list_font",editor.app.Value().listFontSize},
@@ -4988,6 +4967,7 @@ static void PollQaCommandFile(AppState& state) {
 #if ARIS_PREVIEW_ISOLATION
         // A repeatable CLI seam for the real window and its app-owned task.
         // Only compile-time pinned preview builds may control these fixtures.
+        s_magicEqQaCollectUntilMs.store(Platform::MonotonicMilliseconds()+5000,std::memory_order_release);
         const std::string action = getStr(raw, "action");
         const bool isolated = !Platform::HarkenUserData::PreviewIsolationRootUtf8().empty() &&
             Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(GetHarkenSearchRuntimeRootUtf8()) &&
@@ -5002,10 +4982,12 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":false,\"error\":\"invalid_preview_layout\"}";
         } else if (action != "open" && action != "close" && action != "start" &&
                    action != "cancel" && action != "find" && action != "state" &&
-                   action != "pointer") {
+                   action != "pointer" && action != "configure" && action != "recheck") {
             result = "{\"ok\":false,\"error\":\"unknown_similar_index_action\"}";
         } else if (state.dbSwitchInProgress) {
             result = "{\"ok\":false,\"error\":\"database_switch_in_progress\"}";
+        } else if (action == "configure" && getInt(raw,"mode",1) != 1) {
+            result = "{\"ok\":false,\"error\":\"unsupported_similarity_mode\"}";
         } else if (action == "pointer") {
 #if AURA_BUILD_DIAGNOSTICS
             // App-owned input only over freshly observed Similar Sounds controls.
@@ -5022,15 +5004,22 @@ static void PollQaCommandFile(AppState& state) {
                     x >= item.min.x && x < item.max.x && y >= item.min.y && y < item.max.y) hit = true;
             }
             const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();
+            const auto controls = ThemeInspector::CopyLatestSnapshot();
+            for (const auto& zone : controls.zones) {
+                if ((zone.key == "similar.options.deep" || zone.key.rfind("similar.result.wave.",0)==0 ||
+                     zone.key.rfind("similar.result.file.",0)==0 ||
+                     zone.key.rfind("similar.index.",0)==0) && controls.frameNumber + 2 >= static_cast<uint64_t>(ImGui::GetFrameCount()) &&
+                    x >= zone.minX && x < zone.maxX && y >= zone.minY && y < zone.maxY) hit = true;
+            }
             if (!hit || !fresh || s_magicEqQaPointer.pending ||
-                (phase != "hover" && phase != "down" && phase != "up") ||
+                (phase != "hover" && phase != "down" && phase != "up" && phase != "move") ||
                 ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
-                (phase == "up" && !s_magicEqQaPointer.held)) {
+                ((phase == "up" || phase == "move") && !s_magicEqQaPointer.held)) {
                 result = R"({"ok":false,"error":"invalid_similar_control_pointer"})";
             } else {
                 s_magicEqQaPointer.active = true;
-                s_magicEqQaPointer.pending = phase != "hover";
-                s_magicEqQaPointer.held = phase == "down";
+                s_magicEqQaPointer.pending = phase == "down" || phase == "up";
+                s_magicEqQaPointer.held = phase == "down" || phase == "move";
                 s_magicEqQaPointer.x = x;
                 s_magicEqQaPointer.y = y;
                 s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
@@ -5053,16 +5042,49 @@ static void PollQaCommandFile(AppState& state) {
                 aura::ui::InvalidateSimilarSoundsWindow(state);
             } else if (action == "start") {
                 StartBatchFeatureExtraction(state);
+            } else if (action == "recheck") {
+                StartBatchFeatureExtraction(state, true);
             } else if (action == "cancel") {
                 state.batchFeatureCancelRequested.store(true);
+            } else if (action == "configure") {
+                const int preset = getInt(raw, "preset", static_cast<int>(state.similarSoundsPreset));
+                if (preset >= 0 && preset <= 4) {
+                    state.similarSoundsDeep = getBool(raw, "deep", state.similarSoundsDeep);
+                    state.similarSoundsPreset = static_cast<SimilarityPreset>(preset);
+                    if (state.similarSoundsWorkflow) state.similarSoundsWorkflow->Invalidate();
+                    state.similarSoundsSelectedRow = -1;
+                    state.settingsDirty = true; state.settingsDirtyAt = ImGui::GetTime();
+                }
             } else if (action == "find" && state.similarSoundsWorkflow &&
                        !state.batchFeatureExtracting.load()) {
-                state.similarSoundsWorkflow->RequestSearch(state.similarSoundsPreset, 50);
+                HarkenSearch::SimilarityOptions options;
+                options.mode = HarkenSearch::SimilarityMode::Substitute; options.deep = state.similarSoundsDeep; options.preset = state.similarSoundsPreset;
+                state.similarSoundsWorkflow->RequestSearch(options, 50);
             }
             const auto snapshot = state.similarSoundsWorkflow
                 ? state.similarSoundsWorkflow->Snapshot() : HarkenSearch::SimilarityWorkflowSnapshot{};
-            int indexed = 0, total = 0;
-            state.database.tryGetFeatureIndexCounts(indexed, total);
+            const auto counts = HarkenSearch::MakeFeatureIndexCountHandler(true)(state.currentDbPathUtf8, [] { return false; });
+            const int indexed = counts.indexed, total = counts.total;
+            nlohmann::json matches = nlohmann::json::array();
+            for (const auto& row : snapshot.rows) matches.push_back({{"id",row.fileId},{"name",row.fileName},{"path",row.filePath},{"score",row.similarity},{"parts",row.breakdown.parts},{"weights",row.breakdown.weights},{"fingerprint",row.contentFingerprint}});
+            const nlohmann::json queryStats={{"scanned_files",snapshot.stats.scannedFiles},{"visited_segments",snapshot.stats.visitedSegments},
+                {"candidates",snapshot.stats.candidates},{"detailed_comparisons",snapshot.stats.detailedComparisons}};
+            nlohmann::json controlBounds = nlohmann::json::object();
+            for (const auto& zone : ThemeInspector::CopyLatestSnapshot().zones) {
+                if (zone.key.rfind("similar.options.",0)==0 || zone.key.rfind("similar.result.wave.",0)==0 ||
+                    zone.key.rfind("similar.result.file.",0)==0 ||
+                    zone.key.rfind("similar.index.",0)==0) controlBounds[zone.key]={zone.minX,zone.minY,zone.maxX,zone.maxY};
+            }
+            nlohmann::json batchSummary;
+            {
+                std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                const auto& report=state.batchFeatureResult;
+                batchSummary={{"saved",report.progress.saved},{"skipped",report.progress.skipped},{"failed",report.progress.failed},{"cancelled",report.cancelled},{"error",report.error},{"model_error",report.modelError}};
+            }
+            batchSummary["progress"] = state.batchFeatureProgress.load();
+            batchSummary["progress_total"] = state.batchFeatureTotal.load();
+            batchSummary["reused"] = state.batchFeatureSkipped.load();
+            batchSummary["analyzed"] = state.batchFeatureSaved.load();
             const bool completionNotice = state.panelSimilarSounds.visible &&
                 !state.batchFeatureExtracting.load() &&
                 !state.batchFeatureCancelRequested.load() && total > 0 && indexed == total &&
@@ -5070,12 +5092,26 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":true,\"cmd\":\"similar_index\",\"visible\":" +
                 std::string(state.panelSimilarSounds.visible ? "true" : "false") +
                 ",\"running\":" + (state.batchFeatureExtracting.load() ? "true" : "false") +
+                ",\"batch_start_generation\":" + std::to_string(state.batchFeatureStartGeneration.load()) +
                 ",\"cancel_requested\":" + (state.batchFeatureCancelRequested.load() ? "true" : "false") +
                 ",\"completion_notice\":" + (completionNotice ? "true" : "false") +
                 ",\"indexed\":" + std::to_string(indexed) +
+                ",\"semantic_indexed\":" + std::to_string(counts.semanticIndexed) +
+                ",\"mode\":" + std::to_string(static_cast<int>(HarkenSearch::SimilarityMode::Substitute)) +
+                ",\"deep\":" + (state.similarSoundsDeep ? "true" : "false") +
+                ",\"status\":" + std::to_string(static_cast<int>(snapshot.status)) +
+                ",\"error\":" + std::to_string(static_cast<int>(snapshot.error)) +
+                ",\"reference_id\":" + std::to_string(snapshot.reference.fileId) +
+                ",\"matches\":" + matches.dump() +
+                ",\"batch_number\":" + std::to_string(snapshot.batchNumber) +
+                ",\"query_stats\":" + queryStats.dump() +
+                ",\"controls\":" + controlBounds.dump() +
+                ",\"batch_summary\":" + batchSummary.dump() +
                 ",\"total\":" + std::to_string(total) +
                 ",\"progress\":" + std::to_string(state.batchFeatureProgress.load()) +
                 ",\"batch_total\":" + std::to_string(state.batchFeatureTotal.load()) +
+                ",\"reused\":" + std::to_string(state.batchFeatureSkipped.load()) +
+                ",\"analyzed\":" + std::to_string(state.batchFeatureSaved.load()) +
                 ",\"rows\":" + std::to_string(snapshot.rows.size()) +
                 ",\"preset\":" + std::to_string(static_cast<int>(state.similarSoundsPreset)) +
                 ",\"open_popups\":" + std::to_string(ImGui::GetCurrentContext()->OpenPopupStack.Size) +
@@ -5176,6 +5212,10 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"current_file\":\"" + jsonEscape(currentFile) + "\",";
         result += "\"audio_loaded\":" + std::string(audioLoaded ? "true" : "false") + ",";
         result += "\"playback_position\":" + std::to_string(playbackPosition) + ",";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"region_in\":" + std::to_string(state.audioEngine.getInPoint()) + ",";
+        result += "\"region_out\":" + std::to_string(state.audioEngine.getOutPoint()) + ",";
+#endif
         result += "\"audio_total_frames\":" + std::to_string((unsigned long long)audioInfo.totalFrames) + ",";
         result += "\"audio_duration\":" + std::to_string(audioInfo.durationSeconds) + ",";
         result += "\"selected_row\":" + std::to_string(selectedRow) + ",";
@@ -5284,6 +5324,32 @@ static void PollQaCommandFile(AppState& state) {
             result += "\"" + jsonEscape(key) + "\":[" + std::to_string(rect.x) + "," +
                 std::to_string(rect.y) + "," + std::to_string(rect.z) + "," +
                 std::to_string(rect.w) + "]";
+        }
+        result += "},";
+        result += "\"qa_metadata_input_colors\":{";
+        bool firstQaMetadataColor = true;
+        for (const auto& [key, color] : state.qaMetadataInputColors) {
+            if (!firstQaMetadataColor) result += ",";
+            firstQaMetadataColor = false;
+            result += "\"" + jsonEscape(key) + "\":[" + std::to_string(color.x * 255.0f) + "," +
+                std::to_string(color.y * 255.0f) + "," + std::to_string(color.z * 255.0f) + "," +
+                std::to_string(color.w * 255.0f) + "]";
+        }
+        result += "},";
+        result += "\"qa_metadata_input_text\":{";
+        bool firstQaMetadataInput = true;
+        for (const auto& [key, value] : state.qaMetadataInputText) {
+            if (!firstQaMetadataInput) result += ",";
+            firstQaMetadataInput = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
+        }
+        result += "},";
+        result += "\"qa_metadata_draft_query\":{";
+        bool firstQaMetadataDraft = true;
+        for (const auto& [key, value] : state.qaMetadataDraftQuery) {
+            if (!firstQaMetadataDraft) result += ",";
+            firstQaMetadataDraft = false;
+            result += "\"" + jsonEscape(key) + "\":\"" + jsonEscape(value) + "\"";
         }
         result += "},";
 #endif
@@ -6536,9 +6602,9 @@ static void PollQaCommandFile(AppState& state) {
                 if (s_mainUiReady.load(std::memory_order_acquire) &&
                     std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < display.x && y < display.y &&
                     !s_magicEqQaPointer.pending &&
-                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || (phase == "up" && s_magicEqQaPointer.held))) {
+                    (((phase == "hover" || phase == "down") && !s_magicEqQaPointer.held) || ((phase == "up" || phase == "move") && s_magicEqQaPointer.held))) {
                     const auto* viewport = ImGui::GetMainViewport();
-                    s_magicEqQaPointer = {true, phase != "hover", phase == "down", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
+                    s_magicEqQaPointer = {true, phase != "hover" && phase != "move", phase == "down" || phase == "move", viewport->Pos.x+x, viewport->Pos.y+y, viewport->ID};
                     ok = true;
                 }
             }
@@ -6884,18 +6950,18 @@ static void PollQaCommandFile(AppState& state) {
         std::string appliedKind;
         std::string appliedValue;
         if (!artist.empty()) {
-            strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
+            state.artistFilterBuffer = artist;
             state.artistFilterAlternates.clear();
             appliedKind = "artist";
             appliedValue = artist;
         }
         if (!album.empty()) {
-            strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
+            state.albumFilterBuffer = album;
             appliedKind = "album";
             appliedValue = album;
         }
         if (!category.empty()) {
-            strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            state.categoryFilterBuffer = category;
             appliedKind = "category";
             appliedValue = category;
         }
@@ -6917,10 +6983,10 @@ static void PollQaCommandFile(AppState& state) {
         }
 
     } else if (cmd == "clear_metadata_filter") {
-        state.artistFilterBuffer[0] = '\0';
+        state.artistFilterBuffer.clear();
         state.artistFilterAlternates.clear();
-        state.albumFilterBuffer[0] = '\0';
-        state.categoryFilterBuffer[0] = '\0';
+        state.albumFilterBuffer.clear();
+        state.categoryFilterBuffer.clear();
         state.formatFilterIndex = 0;
         cancelPendingSearchForQaMutation();
         state.preferDeferredCountForNextRefresh = !ShouldUseHarnessImmediateFilterRefresh();
@@ -7337,14 +7403,14 @@ static void PollQaCommandFile(AppState& state) {
         }
         {
             DiagScopedTimer qaMetadataTimer("Filter", "metadataApply");
-            state.artistFilterBuffer[0] = '\0';
+            state.artistFilterBuffer.clear();
             state.artistFilterAlternates.clear();
-            state.albumFilterBuffer[0] = '\0';
-            state.categoryFilterBuffer[0] = '\0';
+            state.albumFilterBuffer.clear();
+            state.categoryFilterBuffer.clear();
             state.formatFilterIndex = 0;
-            if (!artist.empty()) strncpy_s(state.artistFilterBuffer, sizeof(state.artistFilterBuffer), artist.c_str(), _TRUNCATE);
-            if (!album.empty()) strncpy_s(state.albumFilterBuffer, sizeof(state.albumFilterBuffer), album.c_str(), _TRUNCATE);
-            if (!category.empty()) strncpy_s(state.categoryFilterBuffer, sizeof(state.categoryFilterBuffer), category.c_str(), _TRUNCATE);
+            if (!artist.empty()) state.artistFilterBuffer = artist;
+            if (!album.empty()) state.albumFilterBuffer = album;
+            if (!category.empty()) state.categoryFilterBuffer = category;
             if (!format.empty()) state.formatFilterIndex = formatFilterIndexFromValue(format);
             DIAG_ACTION("Filter", "MetadataApply:stacked");
         }
@@ -8249,268 +8315,6 @@ void ApplyShowManagerGlobalHotkey(const AppSettings& settings) {
     }
 }
 
-// Font Loading
-
-// Chrome group: built at the fixed kChromeFontPx. These remain the ImGui default
-// font, so any call site that does not opt into a ReadingTextScope renders chrome.
-static ImFont* g_uiFontRegular = nullptr;
-static ImFont* g_uiFontEmphasis = nullptr;
-static ImFont* g_uiFontMono = nullptr;
-static ImFont* g_uiMeterFont = nullptr;  // F-018: 10px ASCII-only, for narrow meter bars
-
-// Reading group: built at the user's readingFontSize. Returned by the GetUIFont*()
-// accessors only while g_inReadingScope is true (see ReadingTextScope).
-static ImFont* g_readingRegular = nullptr;
-static ImFont* g_readingEmphasis = nullptr;
-static ImFont* g_readingMono = nullptr;
-static ImFont* g_uiListFont = nullptr;   // reading-sized; the file-list body font
-
-// True while rendering a reading surface. Flipped by ReadingTextScope.
-// File-local: every reader (accessors) and writer (the scope ctors/dtors)
-// lives in this TU, so it stays static to prevent callers from bypassing
-// the RAII save/restore by poking the flag directly.
-static bool g_inReadingScope = false;
-
-static ImFont* AddFontFromCandidates(ImGuiIO& io,
-                                     const char* const* candidates,
-                                     int candidateCount,
-                                     float fontPixelSize,
-                                     const ImFontConfig& config,
-                                     const ImWchar* ranges) {
-    for (int i = 0; i < candidateCount; ++i) {
-        const char* path = candidates[i];
-        if (!path || !PathExistsUtf8(path)) continue;
-        ImFont* f = io.Fonts->AddFontFromFileTTF(path, fontPixelSize, &config, ranges);
-        if (f) return f;
-    }
-    return nullptr;
-}
-
-void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize) {
-    const char* uiRegularLatinBase[] = {
-        "C:\\Windows\\Fonts\\SegoeUIVF.ttf", // Segoe UI Variable (Win11, closer to WebUI style)
-        "C:\\Windows\\Fonts\\segoeui.ttf",   // Segoe UI fallback
-    };
-    const char* uiRegularCjkMerge[] = {
-        "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei UI - rounded and modern CJK
-        "C:\\Windows\\Fonts\\msyhbd.ttc", // Bold fallback
-        "C:\\Windows\\Fonts\\Deng.ttf",   // DengXian fallback (modern sans)
-        "C:\\Windows\\Fonts\\Dengb.ttf",  // DengXian Bold fallback
-        "C:\\Windows\\Fonts\\simhei.ttf", // Legacy fallback only
-        "C:\\Windows\\Fonts\\simsun.ttc", // Legacy fallback only
-    };
-    const char* uiEmphasisLatinBase[] = {
-        "C:\\Windows\\Fonts\\SegoeUIVF.ttf", // Keep family tone consistent when semibold is unavailable
-        "C:\\Windows\\Fonts\\seguisb.ttf",
-        "C:\\Windows\\Fonts\\segoeuib.ttf",
-    };
-    const char* uiEmphasisCjkMerge[] = {
-        "C:\\Windows\\Fonts\\msyhbd.ttc",
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\Dengb.ttf",
-        "C:\\Windows\\Fonts\\Deng.ttf",
-        "C:\\Windows\\Fonts\\simhei.ttf", // Legacy fallback only
-    };
-    const char* monoPaths[] = {
-        "C:\\Windows\\Fonts\\CascadiaMono.ttf",
-        "C:\\Windows\\Fonts\\consola.ttf",
-        "C:\\Windows\\Fonts\\consolab.ttf",
-    };
-
-    ImFontConfig uiConfig;
-    uiConfig.MergeMode = false;
-    uiConfig.OversampleH = 3;
-    uiConfig.OversampleV = 2;
-    uiConfig.PixelSnapH = true;
-    // Slightly brighten rasterization to match WebUI's softer/younger text feeling on dark backgrounds.
-    uiConfig.RasterizerMultiply = 1.03f;
-
-    // Extended Latin glyph range: default + symbols used in UI (stars, arrows, checkmarks, etc.)
-    // Segoe UI on Windows 10/11 contains all these glyphs natively.
-    static const ImWchar kExtendedLatinRanges[] = {
-        0x0020, 0x00FF,  // Basic Latin + Latin-1 Supplement (same as GetGlyphRangesDefault)
-        0x2000, 0x206F,  // General Punctuation (—, –, ", etc.)
-        0x2100, 0x214F,  // Letterlike Symbols
-        0x2190, 0x21FF,  // Arrows (→, ←, ↔, ↕, etc.)
-        0x2200, 0x22FF,  // Mathematical Operators (⊞, ±, etc.)
-        0x2300, 0x23FF,  // Miscellaneous Technical
-        0x2500, 0x25FF,  // Box Drawing + Block Elements + Geometric Shapes (●, ○, ▶, etc.)
-        0x2600, 0x26FF,  // Miscellaneous Symbols
-        0x2700, 0x27FF,  // Dingbats (✓, ✗, ⟳, etc.)
-        0x2800, 0x28FF,  // Braille Patterns (progress spinners)
-        0,
-    };
-
-    // Base Latin/UI glyphs first (Segoe-like modern look), then merge Chinese glyphs
-    // to reduce CJK/Latin mismatch while keeping Chinese coverage complete.
-    // Build a {regular, emphasis, mono} triplet at a given pixel size. Reuses the
-    // candidate arrays declared above. Lucide icons are merged into the regular
-    // face so icon buttons resolve glyphs at this size.
-    auto buildTriplet = [&](float px,
-                            ImFont** outRegular,
-                            ImFont** outEmphasis,
-                            ImFont** outMono) {
-        // Regular: Latin base + CJK merge.
-        *outRegular = AddFontFromCandidates(
-            io, uiRegularLatinBase,
-            (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-            px, uiConfig, kExtendedLatinRanges);
-        if (!*outRegular) {
-            *outRegular = AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, uiConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outRegular) *outRegular = io.Fonts->AddFontDefault();
-        } else {
-            ImFontConfig mergeCjk = uiConfig;
-            mergeCjk.MergeMode = true;
-            mergeCjk.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, mergeCjk, io.Fonts->GetGlyphRangesChineseFull());
-        }
-        // Merge Lucide icons into THIS regular face at THIS size.
-        aura::ui::MergeLucideFont(io.Fonts, px);
-
-        // Emphasis: semibold Latin base + CJK merge.
-        ImFontConfig emphasisConfig = uiConfig;
-        *outEmphasis = AddFontFromCandidates(
-            io, uiEmphasisLatinBase,
-            (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
-            px, emphasisConfig, kExtendedLatinRanges);
-        if (!*outEmphasis) {
-            *outEmphasis = AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, emphasisConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outEmphasis) *outEmphasis = *outRegular;
-        } else {
-            ImFontConfig mergeCjkEmphasis = emphasisConfig;
-            mergeCjkEmphasis.MergeMode = true;
-            mergeCjkEmphasis.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, mergeCjkEmphasis, io.Fonts->GetGlyphRangesChineseFull());
-        }
-
-        // Mono: +1px optical compensation.
-        ImFontConfig monoConfig;
-        monoConfig.MergeMode = false;
-        monoConfig.OversampleH = 2;
-        monoConfig.OversampleV = 1;
-        monoConfig.PixelSnapH = true;
-        *outMono = AddFontFromCandidates(
-            io, monoPaths,
-            (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
-            px + 1.0f, monoConfig, kExtendedLatinRanges);
-        if (!*outMono) *outMono = *outRegular;
-    };
-
-    buildTriplet(chromePixelSize, &g_uiFontRegular, &g_uiFontEmphasis, &g_uiFontMono);
-    buildTriplet(readingPixelSize, &g_readingRegular, &g_readingEmphasis, &g_readingMono);
-
-    // Dedicated list font (independent from system font size).
-    float listPx = listPixelSize;
-    ImFontConfig listConfig = uiConfig;
-    listConfig.MergeMode = false;
-    g_uiListFont = AddFontFromCandidates(
-        io,
-        uiRegularLatinBase,
-        (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-        listPx,
-        listConfig,
-        kExtendedLatinRanges);
-    if (!g_uiListFont) {
-        g_uiListFont = AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            listConfig,
-            io.Fonts->GetGlyphRangesChineseFull());
-    } else {
-        ImFontConfig mergeCjkList = listConfig;
-        mergeCjkList.MergeMode = true;
-        mergeCjkList.RasterizerMultiply = 1.08f;
-        (void)AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            mergeCjkList,
-            io.Fonts->GetGlyphRangesChineseFull());
-    }
-    if (!g_uiListFont) g_uiListFont = g_uiFontRegular;
-
-    // F-018: Small ASCII-only font for Loudness Meter numeric readouts / channel labels
-    // when barW is narrow. No CJK merge needed — meter labels are L/R/C/LFE/Lss/W/Y/Z etc.
-    {
-        ImFontConfig meterConfig;
-        meterConfig.MergeMode = false;
-        meterConfig.OversampleH = 2;
-        meterConfig.OversampleV = 2;
-        meterConfig.PixelSnapH = true;
-        g_uiMeterFont = AddFontFromCandidates(
-            io,
-            uiRegularLatinBase,
-            (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-            10.0f,
-            meterConfig,
-            kExtendedLatinRanges);
-        if (!g_uiMeterFont) g_uiMeterFont = g_uiFontRegular;
-    }
-
-    // F-045: Lucide icons are merged per-triplet inside buildTriplet (into each
-    // regular face at its own size), so both chrome and reading regulars carry
-    // icons; the meter face deliberately does not.
-
-    io.FontDefault = g_uiFontRegular;
-}
-
-ImFont* GetUIFontRegular() {
-    if (g_inReadingScope && g_readingRegular) return g_readingRegular;
-    return g_uiFontRegular;
-}
-
-ImFont* GetUIFontEmphasis() {
-    if (g_inReadingScope) return g_readingEmphasis ? g_readingEmphasis : g_readingRegular;
-    return g_uiFontEmphasis ? g_uiFontEmphasis : g_uiFontRegular;
-}
-
-ImFont* GetUIFontMono() {
-    if (g_inReadingScope) return g_readingMono ? g_readingMono : g_readingRegular;
-    return g_uiFontMono ? g_uiFontMono : g_uiFontRegular;
-}
-
-ImFont* GetUIListFont() {
-    // Reading-sized fallback (not chrome) so the list keeps reading metrics.
-    return g_uiListFont ? g_uiListFont : g_readingRegular;
-}
-
-ImFont* GetUIMeterFont() {
-    return g_uiMeterFont ? g_uiMeterFont : g_uiFontRegular;
-}
-
-ReadingTextScope::ReadingTextScope() : prev(g_inReadingScope) {
-    g_inReadingScope = true;
-    ImGui::PushFont(g_readingRegular ? g_readingRegular : g_uiFontRegular);
-}
-ReadingTextScope::~ReadingTextScope() {
-    ImGui::PopFont();
-    g_inReadingScope = prev;
-}
-
-ChromeTextScope::ChromeTextScope() : prev(g_inReadingScope) {
-    g_inReadingScope = false;
-    ImGui::PushFont(g_uiFontRegular);
-}
-ChromeTextScope::~ChromeTextScope() {
-    ImGui::PopFont();
-    g_inReadingScope = prev;
-}
-
 // UI Scaling (Scheme B): rebuild fonts + scale style sizes (debounced)
 
 static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx) {
@@ -8581,14 +8385,6 @@ static void ApplyThemeAndScaleForSettings(const AppState& state, float scale) {
     ImGuiStyle& style = ImGui::GetStyle();
     style.ScaleAllSizes(scale);
     ThemeColors::discardPendingUiChromeResync();
-}
-
-static ImVec4 GetThemeClearColor() {
-    const ImVec4 bg = ThemeColors::current().mainWindowBG;
-    if (bg.w > 0.0f) {
-        return bg;
-    }
-    return ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
 }
 
 static ImVec4 GetHybridSeamClearColor() {
@@ -12791,22 +12587,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
     state.integrityCheckFailed = g_integrityCheckFailed;
     if (g_integrityCheckFailed) ProductEdition::setIntegrityCheckFailed();
-    AppendDiagLogLine(L"STARTUP: before LoadAudioSettingsEarly");
-    LoadAudioSettingsEarly(state);
-    AppendDiagLogLine(L"STARTUP: after LoadAudioSettingsEarly");
-    AppendDiagLogLine(L"STARTUP: before audioEngine.initialize");
-    if (!state.audioEngine.initialize(state.settings.audioPeriodSizeMs)) {
-        AppendDiagLogLine(L"STARTUP: audioEngine.initialize failed");
+    if (!InitializeAppSettingsAndAudio(state)) {
         Platform::ShowMessageBox(hwnd, Lw(MB_AudioInitFail).c_str(), Lw(MB_Title_Error).c_str(), MB_OK);
         OleUninitialize();
         Platform::UninitThreadCom();
         return 1;
     }
-    AppendDiagLogLine(L"STARTUP: after audioEngine.initialize");
-    AppendDiagLogLine(L"STARTUP: before LoadAppSettings");
-    LoadAppSettings(state);
-    harken::theme_schedule::Initialize(g_appSettingsPathUtf8);
-    AppendDiagLogLine(L"STARTUP: after LoadAppSettings");
 
 // F-035: Crash sentinel — detect previous abnormal exit
     {
@@ -13601,6 +13387,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Rebuild fonts before NewFrame so the active OpenGL texture is not destroyed.
         // Scheme B: dynamic UI scale (font rebuild + style scaling, debounced)
         harken::theme_schedule::Tick(state);
+        harken::settings::BeginAppearancePreview(state);
         UpdateImGuiUiScaleSchemeB(state);
 
         // Start ImGui frame
@@ -13645,72 +13432,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             // 如需恢复，回滚此处并恢复 ThemeMascot.cpp 中的 Lottie 覆盖逻辑
         }
 
-        // Deferred search refresh after DB switch — runs one frame after
-        // ResetDatabaseState so the synchronous SQL query doesn't stack
-        // onto the same frame. Must be checked BEFORE Pump so that the
-        // flag set by Pump on frame N is consumed on frame N+1.
-        DevTools_BeginFramePhase("PreRender.DbSwitchRefresh");
-        if (state.dbSwitchNeedsRefresh) {
-            state.dbSwitchNeedsRefresh = false;
-            RefreshSearchResults(state, true);
-        }
-        DevTools_EndFramePhase();
-        // 异步切库：轮询后台 open 结果，避免大库 open 卡死主线程
-        DevTools_BeginFramePhase("PreRender.AsyncPumps");
-        PumpDatabaseSwitchIfPending(state);
-        PumpInitRandomSamplingPoolIfPending(state);
-
-        // Complete pending audio loads before dependent UI updates.
-        if (state.audioEngine.pumpLoadFileIfPending()) {
-            state.lastSelectionOrLoadTime = ImGui::GetTime();  // 切歌完成，封面墙预算短时降级
-            // 新文件加载成功，清除旧的错误提示
-            state.loadErrorToast.clear();
-            state.loadErrorToastUntil = 0.0;
-            ScheduleDeferredWaveformDetail(state, state.audioEngine.getLoadedFilePath(), AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
-            // 如果有之前在 Mini 波形上预设的跳转点，现在执行它！
-            OnAudioLoadPumped(state);
-            // Start playback AFTER silence-skip so the sound begins at the
-            // correct position — avoids a visible waveform cursor jump.
-            state.audioEngine.playIfLoadReady();
-            static aura::playback::PlayStatsGate s_playStatsGate;
-            static std::uint64_t s_playStatsLoadToken = 0;
-            aura::playback::RecordSuccessfulPlayStats(
-                state.database,
-                s_playStatsGate,
-                aura::playback::PlayStatsEvent{
-                    true,
-                    state.audioEngine.isPlaying(),
-                    state.currentFileId,
-                    ++s_playStatsLoadToken});
-        } else {
-            std::string loadErr = state.audioEngine.getLastLoadError();
-            if (!loadErr.empty()) {
-                const std::string failedPath = state.pendingAudioTargetPath;
-                state.clearPendingAudioTarget();
-                const bool missingOnDisk = !failedPath.empty() &&
-                    Platform::FileSystem::ProbePath(failedPath) ==
-                        Platform::FileSystem::PathStatus::Missing;
-                if (missingOnDisk) {
-                    AudioRecord missingRecord;
-                    missingRecord.filePath = failedPath;
-                    missingRecord.fileName = PathToUtf8(Utf8ToPath(failedPath).filename());
-                    for (const auto& candidate : state.searchResults) {
-                        if (candidate.filePath == failedPath) {
-                            missingRecord = candidate;
-                            break;
-                        }
-                    }
-                    aura::ui::EvaluateRelinkForRecord(state, missingRecord);
-                } else {
-                    state.loadErrorToast = std::move(loadErr);
-                    state.loadErrorToastUntil = ImGui::GetTime() + 5.0;
-                }
-            }
-        }
-        // Pump detail requests outside RenderUI so WebUI mode follows the same path.
-        PumpDeferredWaveformDetail(state);
-        // 跳过开头无声：加载完成时波形常未就绪，每帧尝试直至主波形或 mini 缓存有数据再 seek
-        MaybeSkipLeadingSilence(state);
+        PumpAppDatabaseAndAudio(state);
         if (state.dbSwitchJustCompleted) {
             state.dbSwitchJustCompleted = false;
             std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -13723,120 +13445,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 title = titleBuf;
             }            SetWindowTextW(hwnd, title.c_str());
         }
-        DevTools_EndFramePhase();
 
 
-        const bool scanPopupOpen = ImGui::IsPopupOpen(L(Dlg_ScanFolder));
-
-        // Check if database needs refresh during scan (渐进式更新)
-        DevTools_BeginFramePhase("PreRender.ScanRefresh");
-        if (state.scanDataCommitted.load()) {
-            state.scanDataCommitted = false;
-            
-            // During scan, refresh list incrementally to show newly committed data.
-            if (state.viewMode == ViewMode::Database && state.isScanning.load() && !scanPopupOpen) {
-                // 如果有活跃的搜索/筛选条件，不覆盖 totalFileCount
-                // 避免扫描期间覆盖用户的搜索结果总数（由 RefreshSearchResults 正确计算）
-                // 性能：getFileCount() 大库时耗时可观，节流为每 2 秒最多一次（规范 §11）
-                bool hasActiveFilters = (state.searchBuffer[0] != '\0') ||
-                    state.folderFilterActive || state.coverFilterActive;
-                if (!hasActiveFilters) {
-                    static double s_lastScanGetFileCountTime = 0.0;
-                    double nowSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                    if (s_lastScanGetFileCountTime == 0.0 || nowSeconds - s_lastScanGetFileCountTime >= 2.0) {
-                        state.totalFileCount = state.database.getFileCount();
-                        s_lastScanGetFileCountTime = nowSeconds;
-                    }
-                }
-                
-                // 节流阀 (Throttling) - 防止刷新过快导致闪烁
-                // Heavy list refresh is throttled.
-                const double REFRESH_THROTTLE_INTERVAL = 1.0;
-                auto now = std::chrono::steady_clock::now();
-                auto nowSeconds = std::chrono::duration<double>(now.time_since_epoch()).count();
-                double timeSinceLastRefresh = (state.lastIncrementalRefreshTime == 0.0) ? 
-                    REFRESH_THROTTLE_INTERVAL : (nowSeconds - state.lastIncrementalRefreshTime);
-                
-                // 如果当前在第一页（显示前PAGE_SIZE个结果），刷新以显示新添加的文件
-                // 这样用户可以看到列表在不断填充，体验更好
-                if ((state.loadedCount <= AppState::PAGE_SIZE || state.loadedCount == 0) && 
-                    timeSinceLastRefresh >= REFRESH_THROTTLE_INTERVAL) {
-                    // Refresh the first page so the data source includes the new file; ImGui updates visible rows itself.
-                    RefreshSearchResults(state, false); // keep pagination state, refresh data source
-                    state.lastIncrementalRefreshTime = nowSeconds;
-                }
-                // 如果用户不在第一页，只更新总数，不刷新列表（避免丢失滚动位置）
-                // 用户可以通过滚动到顶部或等待扫描完成来查看新数据
-                
-                // 同步到当前标签页
-                if (!state.listTabs.empty()) {
-                    state.currentTab().searchResults = state.searchResults;
-                    state.currentTab().totalFileCount = state.totalFileCount;
-                    state.currentTab().loadedCount = state.loadedCount;
-                    state.currentTab().hasMoreResults = state.hasMoreResults;
-                }
-            }
-        }
-        DevTools_EndFramePhase();
-
-        // Refresh database-backed rows after scanning completes.
-        DevTools_BeginFramePhase("PreRender.DatabaseRefresh");
-        if (state.needsDatabaseRefresh && !scanPopupOpen) {
-            state.needsDatabaseRefresh = false;
-            state.invalidateCoverWallAfterDatabaseContentChange();
-
-            if (state.scanThread.joinable()) {
-                state.scanThread.detach();
-            }
-
-            // scanDirectoryEx commits before returning, so no second commit is needed here.
-            // Rebuild folder_index (write op), then use a fresh read-only
-            // connection via deferred bootstrap to avoid stale WAL snapshot
-            // missing library roots written by the scan thread.
-            state.database.rebuildFolderIndex();
-            StartDeferredSidebarBootstrap(state, true, false);
-            
-            // Auto-filter to scanned path and load first page.
-            if (state.autoFilterToScannedPath && !state.lastScannedPath.empty()) {
-                state.autoFilterToScannedPath = false;
-                // Scan auto-filter paths are canonical in both fallback branches.
-                try {
-                    fs::path p = Utf8ToPath(state.lastScannedPath);
-                    state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(PathToUtf8(p));
-                } catch (...) {
-                    state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.lastScannedPath);
-                }
-                state.folderFilterActive = true;
-            }
-            
-            // QA/UI scan completion is a database-content transition. Normalize
-            // back to Database before refreshing so a scan started from another
-            // view cannot leave the DB populated while the visible list reports
-            // zero rows.
-            state.viewMode = ViewMode::Database;
-
-            // Reset pagination and query the database; repaint alone would retain stale rows.
-            state.searchResults.clear();
-            state.bumpSearchResultsGen();
-            state.loadedCount = 0;
-            RefreshSearchResults(state, true); // true = 重置分页并重新查询数据库
-            if (state.scanTotal.load() > 0 &&
-                !state.isScanning.load(std::memory_order_acquire)) {
-                state.dbSwitchSettleFramesRemaining =
-                    (std::max)(state.dbSwitchSettleFramesRemaining, 120);
-            }
-            
-            // 同步到当前标签页
-            if (!state.listTabs.empty()) {
-                state.currentTab().searchResults = state.searchResults;
-                state.currentTab().totalFileCount = state.totalFileCount;
-                state.currentTab().loadedCount = state.loadedCount;
-                state.currentTab().hasMoreResults = state.hasMoreResults;
-                state.currentTab().selectedFolderPath = state.selectedFolderPath;
-                state.currentTab().folderFilterActive = state.folderFilterActive;
-            }
-        }
-        DevTools_EndFramePhase();
+        PumpAppScanRefresh(state, ImGui::IsPopupOpen(L(Dlg_ScanFolder)));
 
         // After post-process maintenance (syncCoverRegistry + backfillCoverPhash + backfillNormalizedKey)
         // finishes, reload the cover wall so clustering works with correct phash values.
@@ -13884,6 +13495,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 #endif
         DevTools_BeginFramePhase("RenderUI");
         RenderUI(state);
+        harken::settings::EndAppearancePreview(state);
         GuardInfoMetadataContext(state);
         RenderInfoMetadataLeavePrompt(state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
@@ -13904,465 +13516,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
         ProcessPendingProductModeToggle(state);
         
-        // Continuous playback
-        static bool wasPlayingLastFrame = false;
-        static float lastPlaybackPos = 0.0f;
-        static int consecutiveLoadFailures = 0;
-        
-        if (state.settings.continuousPlayback && state.viewMode != ViewMode::Browser) {
-            bool isPlaying = state.audioEngine.isPlaying();
-            float currentPos = state.audioEngine.getPlaybackPosition();
-            bool isLoaded = state.audioEngine.isLoaded();
-            
-            bool playbackEnded = (wasPlayingLastFrame && !isPlaying && lastPlaybackPos > 0.95f);
-            bool stuckAtEnd = (isLoaded && !isPlaying && currentPos > 0.99f && lastPlaybackPos > 0.99f);
-            
-            if ((playbackEnded || stuckAtEnd) && !state.audioEngine.isLoadFilePending()) {
-                bool success = false;
-
-                if (state.settings.shufflePlayback) {
-                    PlayRandomFile(state);
-                    // loadFileAsync 是异步的，不能立即检查 isPlaying
-                    // 重置检测状态，防止下一帧重复触发
-                    wasPlayingLastFrame = false;
-                    lastPlaybackPos = 0.0f;
-                    success = true;
-                } else {
-                    int nextIdx = state.selectedResultIndex + 1;
-                    if (nextIdx >= 0 && nextIdx < (int)state.searchResults.size()) {
-                        state.selectedResultIndex = nextIdx;
-                        state.selectedIndicesSet.clear();
-                        state.selectedIndicesSet.insert(nextIdx);
-                        state.lastClickedIndex = nextIdx;
-                        state.scrollToSelected = true;
-                        const auto& record = state.searchResults[nextIdx];
-                        if (!record.filePath.empty()) {
-                            state.audioEngine.loadFileAsync(record.filePath, true);
-                            ScheduleDeferredWaveformDetail(state, record.filePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
-                            state.currentFileId = record.id;
-                            ResetWaveformZoom(state);
-                            MarkFilePlayed(state, record.filePath, record.id);
-                            success = true;
-                        }
-                        state.syncToTab();
-                    }
-                }
-                
-                if (success) {
-                    consecutiveLoadFailures = 0;
-                } else {
-                    consecutiveLoadFailures++;
-                    if (consecutiveLoadFailures > 3 && !state.settings.shufflePlayback) {
-                        state.selectedResultIndex += consecutiveLoadFailures;
-                        consecutiveLoadFailures = 0;
-                    }
-                }
-            }
-            
-            wasPlayingLastFrame = isPlaying;
-            lastPlaybackPos = currentPos;
-        } else {
-            wasPlayingLastFrame = state.audioEngine.isPlaying();
-            lastPlaybackPos = state.audioEngine.getPlaybackPosition();
-            consecutiveLoadFailures = 0;
-        }
+        PumpAppContinuousPlayback(state);
 
         // Process pending waveform loading
         auto now_wf = std::chrono::steady_clock::now();
         auto mouseIdleMs = std::chrono::duration_cast<std::chrono::milliseconds>(now_wf - state.lastMouseMoveTime).count();
         bool isMouseIdle = mouseIdleMs > 500;
         
-        // Async waveform loading: submit requests and consume completed items.
-        {
-            // Ensure waveform worker starts once.
-            // Worker 可能已在 Splash Phase 4.8 中启动，start() 内部有幂等检查。
-            static bool waveformWorkerStarted = false;
-            static bool searchWorkerStarted = false;
-            bool holdColdMiniWorker = false;
+        WaveformFrameOptions waveformFrameOptions;
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-            holdColdMiniWorker = s_frameBudgetColdMini.holding && !s_frameBudgetColdMini.workerStarted;
+        waveformFrameOptions.holdWorker = s_frameBudgetColdMini.holding && !s_frameBudgetColdMini.workerStarted;
+        const auto miniCaptureState = aura::diagnostics::FrameBudgetDiagnostics::shared().state();
+        waveformFrameOptions.ignorePlaybackForCapture = s_frameBudgetColdMini.armed &&
+            (miniCaptureState == aura::diagnostics::FrameCaptureState::BusyWarmup ||
+             miniCaptureState == aura::diagnostics::FrameCaptureState::BusyCapture);
+        waveformFrameOptions.seedVisibleRequest =
+            miniCaptureState == aura::diagnostics::FrameCaptureState::BusyCapture && !s_frameBudgetColdMini.seedSubmitted;
 #endif
-            if (!waveformWorkerStarted && !holdColdMiniWorker) {
-                // Browser/direct-file mode can source-decode visible mini waves
-                // without an open library. The stable Database object remains
-                // available for optional cache reads/writes once it is opened.
-                state.waveformWorker.start(&state.database, aura::RecommendedWaveformWorkerThreads());
-                waveformWorkerStarted = true;
-            }
-            if (!searchWorkerStarted && state.database.isOpen()) {
-                state.searchWorker.start(&state.database);
-                searchWorkerStarted = true;
-            }
-            
-            // 1) Submit pending waveforms to background worker.
-            //    Increased from 10→50: DB-cached reads complete in ~1ms each,
-            //    so we can safely queue many more per frame for faster initial display.
-            int submitted = 0;
+        const bool seededMini = PumpAppWaveforms(state, isMouseIdle, waveformFrameOptions);
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-            int listSubmitted = 0;
+        if (seededMini) s_frameBudgetColdMini.seedSubmitted = true;
+#else
+        (void)seededMini;
 #endif
-            // Keep the selected file's main waveform ahead of list mini-waveforms.
-            // During rapid scroll/play, bulk list work can otherwise saturate CPU/disk
-            // and make long-file main detail miss its user-visible window.
-            const bool contextMenuHeavyFreezeForWaveform =
-                ImGui::IsPopupOpen("RowContextMenu") ||
-                ImGui::IsPopupOpen("##PlaylistSidebarContext");
-            BackgroundIoContext miniIo = BuildBackgroundIoContextForWindowsMain(
-                state, contextMenuHeavyFreezeForWaveform, IsCoverWallPriorityMode(), isMouseIdle);
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-            const auto miniCaptureState = aura::diagnostics::FrameBudgetDiagnostics::shared().state();
-            if (s_frameBudgetColdMini.armed &&
-                (miniCaptureState == aura::diagnostics::FrameCaptureState::BusyWarmup ||
-                 miniCaptureState == aura::diagnostics::FrameCaptureState::BusyCapture))
-                miniIo.playing = false;
-#endif
-            const auto miniDecision = ResolveMiniWaveformWorkerDecision(miniIo);
-            static bool s_miniListWasForegroundBlocked = false;
-            if (miniDecision.cancelQueuedListWork && !s_miniListWasForegroundBlocked) {
-                state.waveformWorker.cancelAllPending();
-                // In-flight meterOnly requests get dropped with the worker queue; clear
-                // the dedup set so future visible-mini results can re-enqueue meters.
-                state.meterFollowupPending.clear();
-            }
-            s_miniListWasForegroundBlocked = miniDecision.cancelQueuedListWork;
-            const bool foregroundWaveformRebuild = state.waveformRebuildActive;
-            const bool mainWaveformPending =
-                !foregroundWaveformRebuild && state.audioEngine.isWaveformDetailPending();
-            // Foreground scan completion owns priority-0 mini backfill. If the
-            // worker stays throttled here, scan-created jobs can starve forever.
-            const bool scanForegroundWaveformDrainActive =
-                state.scanCompletionPending.load(std::memory_order_acquire) &&
-                state.scanCompletionWaveformsPending.load(std::memory_order_acquire);
-            const bool throttleWaveformWorker =
-                !scanForegroundWaveformDrainActive &&
-                (mainWaveformPending || miniDecision.throttleWorker);
-            int submitBudget = miniDecision.submitListBudget;
-            if (state.postSearchMiniWaveThrottleFrames > 0 && !scanForegroundWaveformDrainActive) {
-                submitBudget = (std::min)(submitBudget, 1);
-            }
-            state.waveformWorker.setThrottleMode(throttleWaveformWorker);
-
-            const std::string loadedWaveformPath = state.audioEngine.getLoadedFilePath();
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-            if (miniCaptureState == aura::diagnostics::FrameCaptureState::BusyCapture &&
-                submitBudget > 0 && !s_frameBudgetColdMini.seedSubmitted) {
-                for (const auto& record : state.searchResults) {
-                    if (record.filePath.empty() || record.filePath == loadedWaveformPath) continue;
-                    state.visibleFilePaths.insert(record.filePath);
-                    if (state.waveformWorker.submitVisibleRequest(record.filePath)) {
-                        s_frameBudgetColdMini.seedSubmitted = true;
-                        ++submitted;
-                        ++listSubmitted;
-                        break;
-                    }
-                }
-            }
-#endif
-            if (!foregroundWaveformRebuild &&
-                miniDecision.allowCurrentFileFastLane &&
-                !loadedWaveformPath.empty() &&
-                state.waveformCache.count(loadedWaveformPath) == 0 &&
-                state.waveformFailed.count(loadedWaveformPath) == 0) {
-                state.visibleFilePaths.insert(loadedWaveformPath);
-                if (state.waveformWorker.submitVisibleRequest(loadedWaveformPath)) {
-                    submitted++;
-                    DIAG_ACTION_FMT("Waveform", "LoadedFileWaveformFastLane: path=%s",
-                                    loadedWaveformPath.c_str());
-                }
-            }
-
-            // Dequeue urgent visible waveforms before normal work and recheck liveness.
-            std::string filePath;
-            while (!foregroundWaveformRebuild &&
-                   submitted < submitBudget &&
-                   state.popNextPendingWaveform(filePath)) {
-                // 1. 基础过滤：已加载或确认失败的跳过
-                if (state.waveformCache.count(filePath) > 0) continue;
-                if (state.waveformFailed.count(filePath) > 0) continue;
-
-                // 2. 存活校验：如果这个路径不在本帧可见列表里，说明是滚过去的陈旧任务，直接丢弃
-                // 这样能瞬间清空几万个积压请求，让真正需要显示的请求直接进入硬件
-                // 全库重建时绕过此检查，否则非可见文件永远不会被提交
-                if (!state.waveformRebuildActive &&
-                    state.visibleFilePaths.find(filePath) == state.visibleFilePaths.end()) {
-                    continue;
-                }
-                
-                if (state.waveformWorker.submitVisibleCacheRequest(filePath)) {
-                    submitted++;
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-                    listSubmitted++;
-#endif
-                }
-            }
-            
-            // Consume at most N completed background results per frame.
-            state.waveformWorker.setThrottleMode(throttleWaveformWorker);
-            std::vector<WaveformResult> completedResults;
-            const auto resultConsumeStart = std::chrono::steady_clock::now();
-            int consumed = state.waveformWorker.pollResults(completedResults, AppState::WAVEFORMS_PER_FRAME);
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-            int listSuccessfulConsumed = 0;
-#endif
-            int diagCacheOnly = 0;
-            int diagBackfill = 0;
-            int diagTerminal = 0;
-            int diagClear = 0;
-            int diagDeferred = 0;
-            int diagStaleDrop = 0;
-            int diagUiDrop = 0;
-            int visibleDecodePromotionsThisFrame = 0;
-            const int visibleDecodePromotionBudget =
-                (state.postSearchMiniWaveThrottleFrames > 0 && !scanForegroundWaveformDrainActive) ? 1 : 4;
-            static std::map<std::string, int> s_waveformRetryCount;
-            constexpr int kWaveformMaxRetries = 3;
-            constexpr size_t kMaxWaveformRetryEntries = 5000;
-            if (s_waveformRetryCount.size() > kMaxWaveformRetryEntries) {
-                auto half = s_waveformRetryCount.begin();
-                std::advance(half, s_waveformRetryCount.size() / 2);
-                s_waveformRetryCount.erase(s_waveformRetryCount.begin(), half);
-            }
-            
-            for (auto& result : completedResults) {
-                bool isStillVisiblePageItem =
-                    state.visibleFilePaths.find(result.filePath) !=
-                    state.visibleFilePaths.end();
-                if (!isStillVisiblePageItem) {
-                    // Keep the existing central-list retention rule for rows
-                    // that were submitted before the current frame's
-                    // visibility set was rebuilt (for example during a fast
-                    // scroll or page transition).
-                    for (const auto& rec : state.searchResults) {
-                        if (rec.filePath == result.filePath) {
-                            isStillVisiblePageItem = true;
-                            break;
-                        }
-                    }
-                }
-                const bool isLoadedFileResult =
-                    !loadedWaveformPath.empty() && result.filePath == loadedWaveformPath;
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-                const bool isCurrentListPath = isStillVisiblePageItem ||
-                    state.visibleFilePaths.count(result.filePath) > 0;
-#endif
-                if (result.hasBackfillJob) {
-                    ++diagBackfill;
-                    const bool deferredDbWrite = result.errorCode == "deferred_scan_db_write";
-                    if (deferredDbWrite) {
-                        ++diagDeferred;
-                    }
-                    const aura::BackfillCompletionOutcome outcome = result.success
-                        ? aura::BackfillCompletionOutcome::Success
-                        : (deferredDbWrite
-                            ? aura::BackfillCompletionOutcome::TransientFailure
-                            : aura::BackfillCompletionOutcome::PermanentFailure);
-                    state.backfillQueue.reportOutcome(result.backfillJob, outcome);
-                    if (result.success ||
-                        state.backfillQueue.itemState(result.backfillJob.fileId, result.backfillJob.kind) ==
-                            aura::BackfillItemState::FailedPermanent) {
-                        const std::string foregroundReason = result.success
-                            ? "mini_cached"
-                            : (result.errorCode.empty() ? "waveform_backfill_failed" : result.errorCode);
-                        if (CanClearBackfillPendingForJob(
-                                state,
-                                result.backfillJob,
-                                result.success,
-                                foregroundReason)) {
-                            ++diagTerminal;
-                            state.database.clearBackfillPending(
-                                result.backfillJob.fileId,
-                                static_cast<int>(result.backfillJob.kind));
-                            ++diagClear;
-                        } else {
-                            ++diagStaleDrop;
-                        }
-                    }
-                }
-                if (result.cacheOnly) {
-                    ++diagCacheOnly;
-                    if (result.success) {
-                        state.waveformFailed.erase(result.filePath);
-                    } else if (result.errorCode == "deferred_scan_db_write") {
-                        ++diagDeferred;
-                        continue;
-                    } else if (result.errorCode == "mini_cache_miss_no_decode") {
-                        state.waveformMiniCacheMiss.erase(result.filePath);
-                        state.removePendingWaveform(result.filePath);
-                        if (visibleDecodePromotionsThisFrame < visibleDecodePromotionBudget &&
-                            state.waveformWorker.submitVisibleRequest(result.filePath)) {
-                            ++visibleDecodePromotionsThisFrame;
-                            DIAG_ACTION_FMT("MiniWave",
-                                            "VisibleCacheMissPromotedToDecode: path=%s",
-                                            result.filePath.c_str());
-                        } else {
-                            state.addPendingWaveform(result.filePath, true);
-                        }
-                        continue;
-                    } else {
-                        state.waveformFailed.insert(result.filePath);
-                        state.database.upsertWaveformCacheStateByPath(
-                            result.filePath,
-                            "failed",
-                            result.errorCode.empty() ? "decode_failed" : result.errorCode,
-                            1,
-                            "");
-                    }
-                    state.removePendingWaveform(result.filePath);
-                    continue;
-                }
-                // Drop stale/off-page list waveform results to keep cache/upload work focused
-                // on current view state and reduce jitter after rapid filter/page changes.
-                // 全库重建时保留所有结果，否则解码成果被白白丢弃
-                if (!state.waveformRebuildActive && !isStillVisiblePageItem && !isLoadedFileResult) {
-                    ++diagUiDrop;
-                    continue;
-                }
-
-                if (result.success) {
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-                    if (isCurrentListPath && !isLoadedFileResult && !result.hasBackfillJob)
-                        ++listSuccessfulConsumed;
-#endif
-                    s_waveformRetryCount.erase(result.filePath);
-                    state.waveformFailed.erase(result.filePath);
-                    state.waveformMiniCacheMiss.erase(result.filePath);
-                    // 使用字节预算管理（如果可用）
-                    if (state.memoryBudget) {
-                        uint64_t waveformSizeBytes = result.waveform.peaks.size() * sizeof(float) + 
-                                                     result.waveform.rms.size() * sizeof(float);
-                        
-                        if (!state.memoryBudget->canAdd(MemoryBudget::CacheType::Waveform, waveformSizeBytes)) {
-                            uint64_t currentUsage = state.memoryBudget->getCurrentUsage(MemoryBudget::CacheType::Waveform);
-                            uint64_t budget = state.memoryBudget->getBudgetConfig().waveformBudget;
-                            if (currentUsage + waveformSizeBytes > budget) {
-                                uint64_t requiredBytes = (currentUsage + waveformSizeBytes) - budget;
-                                auto evicted = state.memoryBudget->evictLRU(MemoryBudget::CacheType::Waveform, requiredBytes);
-                                for (const auto& evictEntry : evicted)
-                                    ReleaseWaveformEvictedEntry(state, evictEntry.key,
-                                        MiniWaveformPresentation::Removal::BudgetEviction);
-                            }
-                        }
-                        
-                        state.memoryBudget->registerEntry(MemoryBudget::CacheType::Waveform, result.filePath, waveformSizeBytes);
-                        state.memoryBudget->updateUsage(MemoryBudget::CacheType::Waveform, result.filePath);
-                    } else {
-                        if (state.waveformCache.find(result.filePath) == state.waveformCache.end() &&
-                            state.waveformCache.size() >= AppState::MAX_WAVEFORM_CACHE_SIZE) {
-                            DIAG_ACTION_FMT("MiniWave", "dataCacheTrim size=%zu limit=%d",
-                                            state.waveformCache.size(),
-                                            AppState::MAX_WAVEFORM_CACHE_SIZE);
-                            state.waveformCache.erase(state.waveformCache.begin());
-                        }
-                    }
-                    InvalidateMiniWaveTextureAfterFrame(result.filePath);
-                    state.waveformCache[result.filePath] = std::move(result.waveform);
-                } else {
-                    int attempt = 1;
-                    auto itRetry = s_waveformRetryCount.find(result.filePath);
-                    if (itRetry == s_waveformRetryCount.end()) {
-                        s_waveformRetryCount[result.filePath] = 1;
-                    } else {
-                        itRetry->second += 1;
-                        attempt = itRetry->second;
-                    }
-
-                    const char* reason = result.errorCode.empty() ? "unknown" : result.errorCode.c_str();
-                    if (result.errorCode == "mini_cache_miss_no_decode") {
-                        state.waveformMiniCacheMiss.erase(result.filePath);
-                        s_waveformRetryCount.erase(result.filePath);
-                        state.removePendingWaveform(result.filePath);
-                        if (visibleDecodePromotionsThisFrame < visibleDecodePromotionBudget &&
-                            state.waveformWorker.submitVisibleRequest(result.filePath)) {
-                            ++visibleDecodePromotionsThisFrame;
-                            DIAG_ACTION_FMT("MiniWave",
-                                            "VisibleCacheMissPromotedToDecode: path=%s",
-                                            result.filePath.c_str());
-                        } else {
-                            state.addPendingWaveform(result.filePath, true);
-                        }
-                        continue;
-                    }
-                    DIAG_ACTION_FMT("Waveform", "MiniWaveformLoadFailed: path=%s attempt=%d reason=%s",
-                                    result.filePath.c_str(), attempt, reason);
-
-                    if (attempt < kWaveformMaxRetries) {
-                        state.addPendingWaveform(result.filePath, true);
-                        continue;
-                    }
-
-                    DIAG_ACTION_FMT("Waveform", "MiniWaveformPermanentFailure: path=%s reason=%s",
-                                    result.filePath.c_str(), reason);
-                    state.waveformFailed.insert(result.filePath);
-                }
-            }
-#if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
-            aura::diagnostics::FrameBudgetDiagnostics::shared().observeMiniActivity(
-                listSubmitted, listSuccessfulConsumed);
-#endif
-            {
-                static auto s_lastBackfillResultConsumeLog = std::chrono::steady_clock::now();
-                static int s_consumed = 0;
-                static int s_cacheOnly = 0;
-                static int s_backfill = 0;
-                static int s_terminal = 0;
-                static int s_clear = 0;
-                static int s_deferred = 0;
-                static int s_staleDrop = 0;
-                static int s_uiDrop = 0;
-                static double s_durationMs = 0.0;
-                static bool s_wasScanForegroundPending = false;
-                const bool scanForegroundPending =
-                    state.scanCompletionPending.load(std::memory_order_acquire);
-                if (scanForegroundPending || s_wasScanForegroundPending) {
-                    s_wasScanForegroundPending = scanForegroundPending;
-                    const auto resultConsumeEnd = std::chrono::steady_clock::now();
-                    s_consumed += consumed;
-                    s_cacheOnly += diagCacheOnly;
-                    s_backfill += diagBackfill;
-                    s_terminal += diagTerminal;
-                    s_clear += diagClear;
-                    s_deferred += diagDeferred;
-                    s_staleDrop += diagStaleDrop;
-                    s_uiDrop += diagUiDrop;
-                    s_durationMs += std::chrono::duration<double, std::milli>(
-                        resultConsumeEnd - resultConsumeStart).count();
-
-                    const double elapsedSec =
-                        std::chrono::duration<double>(resultConsumeEnd - s_lastBackfillResultConsumeLog).count();
-                    if (elapsedSec >= 1.0 || !scanForegroundPending) {
-                        char detail[320];
-                        std::snprintf(
-                            detail,
-                            sizeof(detail),
-                            "BackfillResultConsume: consumed=%d cacheOnly=%d backfill=%d terminal=%d clear=%d deferred=%d staleDrop=%d uiDrop=%d durationMs=%.2f",
-                            s_consumed,
-                            s_cacheOnly,
-                            s_backfill,
-                            s_terminal,
-                            s_clear,
-                            s_deferred,
-                            s_staleDrop,
-                            s_uiDrop,
-                            s_durationMs);
-                        DIAG_SYSTEM("Waveform", detail);
-                        s_lastBackfillResultConsumeLog = resultConsumeEnd;
-                        s_consumed = 0;
-                        s_cacheOnly = 0;
-                        s_backfill = 0;
-                        s_terminal = 0;
-                        s_clear = 0;
-                        s_deferred = 0;
-                        s_staleDrop = 0;
-                        s_uiDrop = 0;
-                        s_durationMs = 0.0;
-                        s_wasScanForegroundPending = scanForegroundPending;
-                    }
-                }
-            }
-            if (state.postSearchMiniWaveThrottleFrames > 0) {
-                --state.postSearchMiniWaveThrottleFrames;
-            }
-        }
 
         const bool contextMenuHeavyFreeze =
             ImGui::IsPopupOpen("RowContextMenu") ||
@@ -14371,7 +13547,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Progressive cover prefetch (large libraries).
         DevTools_BeginFramePhase("CoverPrefetch");
         if (!contextMenuHeavyFreeze && !state.waveformRebuildActive) {
-            BackgroundIoContext coverPrefetchIo = BuildBackgroundIoContextForWindowsMain(
+            BackgroundIoContext coverPrefetchIo = BuildAppBackgroundIoContext(
                 state, contextMenuHeavyFreeze, IsCoverWallPriorityMode(), isMouseIdle);
             PumpCoverPrefetch(state, coverPrefetchIo);
         }
@@ -14380,33 +13556,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // Upload decoded cover textures to the GPU on the UI thread each frame.
         // 非封面墙 Tab 时强力收缩预算以降低播放/主波形加载时的主线程压力（第一刀）
         DevTools_BeginFramePhase("CoverUpload");
-        {
-            static bool s_lastDetailPending = false;
-            static double s_lastDetailCompletedTime = 0.0;
-            const bool detailPending = state.audioEngine.isWaveformDetailPending();
-            if (s_lastDetailPending && !detailPending)
-                s_lastDetailCompletedTime = ImGui::GetTime();
-            s_lastDetailPending = detailPending;
-
-            BackgroundIoContext bgIo = BuildBackgroundIoContextForWindowsMain(
-                state, contextMenuHeavyFreeze, IsCoverWallPriorityMode(), isMouseIdle);
-            bgIo.detailJustCompleted = s_lastDetailCompletedTime > 0.0 &&
-                (ImGui::GetTime() - s_lastDetailCompletedTime) < 0.4;
-            const auto coverBudget = ResolveCoverWallBackgroundBudget(bgIo);
-#if AURA_BUILD_DIAGNOSTICS
-            if (coverBudget.maxTextureUploads == 0 && coverBudget.budgetMicroseconds == 0 &&
-                std::string(coverBudget.reason) == "foreground") {
-                static double s_lastCoverPauseLogAt = 0.0;
-                const double now = ImGui::GetTime();
-                if ((now - s_lastCoverPauseLogAt) >= 1.0) {
-                    s_lastCoverPauseLogAt = now;
-                    DIAG_ACTION_FMT("CoverWall", "CoverWallPausedByForeground: reason=%s", coverBudget.reason);
-                }
-            }
-#endif
-            CoverModule::PumpCoverTextureUploads(coverBudget.maxTextureUploads,
-                                                 coverBudget.budgetMicroseconds);
-        }
+        PumpAppCoverTextureUploads(state, contextMenuHeavyFreeze, isMouseIdle);
         DevTools_EndFramePhase();
 
         // 播放过的文件：自动缓存主波形+封面
@@ -14415,41 +13565,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             !state.isScanning.load(std::memory_order_acquire)) {
             PumpPlayedMetadataCache(state, isMouseIdle);
             PumpMainDetailPrewarm(state, isMouseIdle);
-            BackgroundIoContext bgIo = BuildBackgroundIoContextForWindowsMain(
+            BackgroundIoContext bgIo = BuildAppBackgroundIoContext(
                 state, contextMenuHeavyFreeze, IsCoverWallPriorityMode(), isMouseIdle);
             PumpAudioDecoderPrewarm(state, bgIo);
         }
         
-        // Track mouse movement
-        static ImVec2 lastMousePos = ImGui::GetMousePos();
-        ImVec2 currentMousePos = ImGui::GetMousePos();
-        bool mouseMoved = (fabsf(currentMousePos.x - lastMousePos.x) > 2.0f || 
-                          fabsf(currentMousePos.y - lastMousePos.y) > 2.0f);
-        if (mouseMoved) {
-            state.lastMouseMoveTime = std::chrono::steady_clock::now();
-            lastMousePos = currentMousePos;
-        }
-
-        // 🚀 现代版：静默后台管理器 (仅保留 UI 状态，不执行全扫)
-
-        // 交互优先：主波形正在解码时，不驱动后台 worker，把 I/O 让给大波形
-
-        {
-            bool isMainDecoding = state.audioEngine.isWaveformDetailPending();
-            const bool contextMenuHeavyFreezeForBgStatus =
-                ImGui::IsPopupOpen("RowContextMenu") ||
-                ImGui::IsPopupOpen("##PlaylistSidebarContext");
-            BackgroundIoContext bgStatusIo = BuildBackgroundIoContextForWindowsMain(
-                state, contextMenuHeavyFreezeForBgStatus, IsCoverWallPriorityMode(), isMouseIdle);
-            const auto miniStatus = ResolveMiniWaveformWorkerDecision(bgStatusIo);
-            if (state.waveformWorker.hasPendingRequests() && !isMainDecoding && !miniStatus.throttleWorker) {
-                state.bgCacheRunning = true;
-                state.bgCacheProgress = state.waveformWorker.pendingCount();
-                state.bgCacheTotal = (int)state.searchResults.size();
-            } else {
-                state.bgCacheRunning = false;
-            }
-        }
+        PumpAppBackgroundStatus(state, isMouseIdle);
 
         if (startupEntryTransitionActive) {
             const auto nowTransition = std::chrono::steady_clock::now();
@@ -14625,44 +13746,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 
     // Cleanup
     logShutdownStage("Begin");
-    logShutdownStage("BatchFeatureThreadJoinBegin");
-    state.batchFeatureCancelRequested.store(true);
-    logShutdownStage("DatabaseSwitchThreadJoinBegin");
-    WaitForDatabaseSwitchThread();
-    logShutdownStage("DatabaseSwitchThreadJoinEnd");
-    if (state.batchFeatureThread.joinable()) {
-        state.batchFeatureThread.join();
-    }
-    logShutdownStage("BatchFeatureThreadJoinEnd");
-    state.requestCancelScanTask();
-    logShutdownStage("ScanThreadJoinBegin");
-    if (state.scanThread.joinable()) {
-        state.scanThread.join();
-    }
-    logShutdownStage("ScanThreadJoinEnd");
-    logShutdownStage("RetiredScanThreadsJoinBegin");
-    state.joinRetiredScanThreads();
-    logShutdownStage("RetiredScanThreadsJoinEnd");
-    logShutdownStage("DawSendThreadJoinBegin");
-    if (state.dawSendThread.joinable()) {
-        state.dawSendThread.join();
-    }
-    logShutdownStage("DawSendThreadJoinEnd");
-
-    // Stop worker threads before releasing shared state.
-    ShutdownSelectedWaveformRebuild();
-    logShutdownStage("WaveformWorkerStopBegin");
-    state.waveformWorker.stop();
-    logShutdownStage("WaveformWorkerStopEnd");
-    logShutdownStage("SearchWorkerStopBegin");
-    state.searchWorker.stop();
-    logShutdownStage("SearchWorkerStopEnd");
-    logShutdownStage("BackfillWorkerPoolStopBegin");
-    aura::GlobalBackfillWorkerPool().stop();
-    logShutdownStage("BackfillWorkerPoolStopEnd");
-    logShutdownStage("FileSystemWatcherStopBegin");
-    state.database.stopFileSystemWatcher();
-    logShutdownStage("FileSystemWatcherStopEnd");
+    StopAppRuntimeWorkers(state, logShutdownStage);
     logShutdownStage("CoverTaskThreadJoinBegin");
     g_coverTaskStop.store(true);
     g_coverTaskCv.notify_all();
@@ -14671,46 +13755,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
     logShutdownStage("CoverTaskThreadJoinEnd");
 
-    logShutdownStage("RelinkWorkflowShutdownBegin");
-    aura::ui::ShutdownRelinkWorkflow(state);
-    auto JoinRelinkThreadWithTimeout = [](std::thread& worker) {
-        if (!worker.joinable()) {
-            return;
-        }
-        void* handle = reinterpret_cast<void*>(worker.native_handle());
-        if (Platform::WaitForNativeThreadHandle(
-                handle, static_cast<uint32_t>(aura::ui::kRelinkShutdownJoinTimeoutMs))) {
-            worker.join();
-            return;
-        }
-        worker.detach();
-    };
-    JoinRelinkThreadWithTimeout(state.relinkBannerSearchThread);
-    JoinRelinkThreadWithTimeout(state.relinkToolSearchThread);
-    for (auto& worker : state.retiredRelinkSearchThreads) {
-        JoinRelinkThreadWithTimeout(worker);
-    }
-    state.retiredRelinkSearchThreads.clear();
-    logShutdownStage("RelinkWorkflowShutdownEnd");
-
-    logShutdownStage("BackfillQueueClosingBegin");
-    state.backfillQueue.onDbClosing(state.backfillDbGeneration);
-    logShutdownStage("BackfillQueueClosingEnd");
-    logShutdownStage("DatabaseCloseBegin");
-    state.database.close();
-    logShutdownStage("DatabaseCloseEnd");
-    logShutdownStage("AudioEngineShutdownBegin");
-    state.audioEngine.shutdown();
-    logShutdownStage("AudioEngineShutdownEnd");
-
-    logShutdownStage("CoverCacheShutdownBegin");
-    CoverModule::ShutdownCoverWallPrecache();
-    CoverModule::ClearAllCoverCaches();
-    logShutdownStage("CoverCacheShutdownEnd");
-
-    logShutdownStage("SettingsSaveBegin");
-    SaveAppSettings(state);
-    logShutdownStage("SettingsSaveEnd");
+    StopAppRelinkWorkers(state, logShutdownStage);
+    CloseAppRuntimeResources(state, logShutdownStage);
 
 // F-035: Remove crash sentinel on clean exit
     {

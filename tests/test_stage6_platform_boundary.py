@@ -453,7 +453,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "TestDatabaseFeatures",
             "TestPlaylistPerformanceContract",
             "TestPerfOptimizations",
-            "TestSimilarityQueryService",
+            "TestSimilarityQueryV2",
             "TestPreviewPlaylistDatabase",
         }
         behavior = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(
@@ -857,7 +857,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("GetTickCount()", body)
 
     def test_windows_main_rapid_click_window_uses_monotonic_pal(self) -> None:
-        source = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src/UiInteraction.cpp").read_text(encoding="utf-8")
         mark = source.split("void MarkUiLeftClickNow()", 1)[1].split(
             "bool IsRapidUiClickBurstActive()", 1
         )[0]
@@ -877,8 +877,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "if (WM_TASKBARCREATED", 1
         )[0]
 
-        self.assertEqual(2, body.count("lastDropTick ="))
-        self.assertEqual(2, body.count("Platform::MonotonicMilliseconds()"))
+        self.assertEqual(3, body.count("lastDropTick ="))
+        self.assertEqual(3, body.count("Platform::MonotonicMilliseconds()"))
         self.assertNotIn("GetTickCount64()", body)
         self.assertIn("catch (...)", body)
 
@@ -908,7 +908,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
 
         self.assertIn('#include "platform/system.h"', source)
-        self.assertEqual(2, source.count("Platform::MonotonicMilliseconds()"))
+        self.assertEqual(3, source.count("Platform::MonotonicMilliseconds()"))
         self.assertNotIn("GetTickCount64()", source)
 
     def test_main_temp_drag_alias_lifecycle_uses_filesystem_pal(self) -> None:
@@ -940,8 +940,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("uint64_t WindowProcessId(void* windowHandle);", header)
         self.assertIn("uint64_t WindowProcessId(void* windowHandle)", win32)
         self.assertIn("GetWindowThreadProcessId(static_cast<HWND>(windowHandle), &pid)", win32)
-        self.assertIn("uint64_t WindowProcessId(void* /*windowHandle*/)", macos)
-        self.assertIn("return 0;", macos)
+        self.assertIn("uint64_t WindowProcessId(void* windowHandle)", macos)
+        self.assertIn("OwnedWindow(windowHandle) ? CurrentProcessId() : 0", macos)
         self.assertIn("fgPid == Platform::CurrentProcessId()", body)
         self.assertNotIn("GetCurrentProcessId()", body)
         self.assertIn("Platform::WindowProcessId(fgWnd)", body)
@@ -987,8 +987,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("bool WindowSetForeground(void* windowHandle);", header)
         self.assertIn("bool WindowSetForeground(void* windowHandle)", win32)
         self.assertIn("SetForegroundWindow(static_cast<HWND>(windowHandle)) != FALSE", win32)
-        self.assertIn("bool WindowSetForeground(void* /*windowHandle*/)", macos)
-        self.assertIn("return false;", macos)
+        self.assertIn("bool WindowSetForeground(void* windowHandle)", macos)
+        self.assertIn("OwnedWindow(windowHandle)", macos)
         self.assertIn("Platform::WindowSetForeground(nextWnd)", source)
         self.assertIn("if (Platform::WindowSetForeground(hwnd))", source)
         self.assertIn("Platform::WindowSetForeground(g_hwnd)", source)
@@ -1004,8 +1004,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("bool WindowShow(void* windowHandle, int command);", header)
         self.assertIn("bool WindowShow(void* windowHandle, int command)", win32)
         self.assertIn("ShowWindow(static_cast<HWND>(windowHandle), command) != FALSE", win32)
-        self.assertIn("bool WindowShow(void* /*windowHandle*/, int /*command*/)", macos)
-        self.assertIn("return false;", macos)
+        self.assertIn("bool WindowShow(void* windowHandle, int command)", macos)
+        self.assertIn("OwnedWindow(windowHandle)", macos)
         self.assertIn("Platform::WindowShow(g_hwnd, SW_SHOW)", source)
         self.assertIn("Platform::WindowShow(g_hwnd, restoreCmd)", source)
         self.assertIn("Platform::WindowShow(hwnd, SW_SHOWMAXIMIZED)", source)
@@ -2032,8 +2032,10 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             self.assertIn(token, win32)
         self.assertGreaterEqual(standard.count('return "";'), 2)
         self.assertIn('#include "platform/theme_json_dialogs.h"', source)
-        self.assertIn("Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(g_hwnd,", source)
-        self.assertIn("Platform::ThemeDialogs::SaveThemeJsonFileDialogUtf8(g_hwnd,", source)
+        self.assertIn("Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(ownerWindow,", source)
+        self.assertIn("void* ownerWindow = g_hwnd;", source)
+        self.assertIn("void* ownerWindow = nullptr;", source)
+        self.assertIn("Platform::ThemeDialogs::SaveThemeJsonFileDialogUtf8(ownerWindow,", source)
 
     def test_user_action_timeline_export_uses_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "UserActionLog.cpp").read_text(encoding="utf-8")
@@ -2324,7 +2326,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             self.assertNotIn(token, source)
 
         legacy_call = (
-            "Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(g_hwnd)"
+            "Platform::DatabaseDialogs::OpenDatabaseFileDialogUtf8(MainUiOwnerWindow())"
         )
         initial_call = (
             "Platform::DatabaseDialogs::"
@@ -2420,7 +2422,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/avatar_image_file_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsAvatarTools.inl").read_text(encoding="utf-8")
+        self.assertIn(
+            '#include "SettingsAvatarTools.inl"',
+            (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8"),
+        )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenAvatarImageFileDialogUtf8(void* ownerWindow);", header)
@@ -2437,7 +2443,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(
             1,
             main.count(
-                "Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(g_hwnd)"
+                "Platform::AvatarDialogs::OpenAvatarImageFileDialogUtf8(MainUiOwnerWindow())"
             ),
         )
         self.assertNotIn(
@@ -2486,7 +2492,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertIn('return "";', portable)
         qualified_call = (
-            "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(g_hwnd)"
+            "Platform::ReaperDialogs::OpenReaperFileListDialogUtf8(MainUiOwnerWindow())"
         )
         self.assertEqual(1, main.count(qualified_call))
         self.assertNotIn(
@@ -2526,7 +2532,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/thesaurus_json_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsThesaurusTools.inl").read_text(encoding="utf-8")
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenThesaurusJsonFileDialogUtf8(void* ownerWindow);", header)
@@ -2546,7 +2552,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertIn('return "";', portable)
         qualified_call = (
-            "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
+            "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(MainUiOwnerWindow())"
         )
         self.assertEqual(1, main.count(qualified_call))
         merge_button = main.index("aura::ui::ActionButton(L(Set_ThesMerge)")
@@ -2581,7 +2587,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         portable = (ROOT / "src/platform/settings_import_dialog_std.cpp").read_text(
             encoding="utf-8"
         )
-        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
+        self.assertIn(
+            '#include "SettingsActions.inl"',
+            (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8"),
+        )
         cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 
         self.assertIn("OpenSettingsImportFileDialogUtf8(void* ownerWindow);", header)
@@ -2605,12 +2615,12 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertIn('return "";', portable)
         qualified_call = (
-            "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd)"
+            "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(MainUiOwnerWindow())"
         )
         self.assertEqual(1, main.count(qualified_call))
         button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-        tooltip = main.index("if (HoveredForHelp()) HarkenSearch::SetTooltip", button)
-        body = main[button:tooltip]
+        next_action = main.index('} else if(editor.action=="custom-colors")', button)
+        body = main[button:next_action]
         self.assertNotIn("OPENFILENAMEW", body)
         self.assertNotIn("GetOpenFileNameW", body)
         self.assertIn(
@@ -2627,6 +2637,31 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(
             1, app_sources.count("${AURO_SETTINGS_IMPORT_DIALOG_SOURCE}")
         )
+
+    def test_macos_settings_export_chooses_a_safe_destination(self) -> None:
+        actions = (ROOT / "src/SettingsActions.inl").read_text(encoding="utf-8")
+        body = actions.split('} else if(editor.action=="export") {', 1)[1].split(
+            '} else if(editor.action=="import") {', 1
+        )[0]
+        self.assertIn("#if defined(__APPLE__)", body)
+        self.assertIn("#else", body)
+        self.assertIn("GetExeDirUtf8()", body.split("#else", 1)[1])
+        self.assertNotIn("GetExeDirUtf8()", body.split("#else", 1)[0])
+        self.assertIn("SaveSettingsExportFileDialogUtf8(MainUiOwnerWindow())", body)
+        self.assertLess(body.index("if(!destination.empty())"), body.index("TrySaveAppSettings(state)"))
+        self.assertLess(body.index("TrySaveAppSettings(state)"), body.index("Platform::FileSystem::CopyFile("))
+
+        header = (ROOT / "src/platform/settings_export_dialog.h").read_text(encoding="utf-8")
+        native = (ROOT / "src/platform/settings_export_dialog_macos.mm").read_text(encoding="utf-8")
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("std::string SaveSettingsExportFileDialogUtf8(void* ownerWindow);", header)
+        self.assertIn("[NSThread isMainThread]", native)
+        self.assertIn("NSSavePanel", native)
+        self.assertIn("aris_settings_export.ini", native)
+        self.assertIn('allowedFileTypes = @[@"ini"]', native)
+        self.assertIn("NSModalResponseOK", native)
+        self.assertIn("panel.URL.isFileURL", native)
+        self.assertIn("settings_export_dialog_macos.mm", cmake)
 
     def test_cover_image_import_dialog_uses_dedicated_pal(self) -> None:
         header = (ROOT / "src/platform/cover_image_import_dialog.h").read_text(
@@ -2661,7 +2696,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("TextEncoding::WideToUtf8(std::wstring(szFile))", win32)
         self.assertIn('return "";', portable)
         qualified_call = (
-            "Platform::CoverDialogs::OpenCoverImageImportFileDialogUtf8(g_hwnd)"
+            "Platform::CoverDialogs::OpenCoverImageImportFileDialogUtf8(MainUiOwnerWindow())"
         )
         self.assertEqual(1, main.count(qualified_call))
         dialog_start = main.index("// COVER IMPORT DIALOG")
@@ -2738,7 +2773,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertIn('return "";', portable)
         qualified_call = (
-            "Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(g_hwnd)"
+            "Platform::RegionDialogs::SaveRegionWavFileDialogUtf8(MainUiOwnerWindow())"
         )
         self.assertEqual(1, main.count(qualified_call))
         dialog_start = main.index("//  MODULE 4: Loop")
@@ -4035,7 +4070,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("GetFileAttributesA", body)
 
     def test_windows_main_font_candidates_use_utf8_path_probe(self) -> None:
-        source = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "UiFonts.cpp").read_text(encoding="utf-8")
         body = source.split("static ImFont* AddFontFromCandidates", 1)[1].split(
             "void LoadChineseFont", 1
         )[0]
@@ -4115,7 +4150,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("#ifdef _WIN32", body)
 
     def test_main_custom_avatar_removal_uses_filesystem_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsAvatarTools.inl").read_text(encoding="utf-8")
         body = source.split(
             "if (aura::ui::ActionButton(L(Set_AvatarRemoveLabelZh)))", 1
         )[1].split("if (aura::ui::ActionButton(settingsAvatarPickerOpenLabel.c_str()))", 1)[0]
@@ -4380,7 +4415,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("in.open", body)
 
     def test_main_thesaurus_merge_reads_selected_wide_path_through_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsThesaurusTools.inl").read_text(encoding="utf-8")
         backend = (
             ROOT / "src" / "platform" / "thesaurus_json_dialog_win32.cpp"
         ).read_text(encoding="utf-8")
@@ -4389,7 +4424,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )[0]
 
         capability_call = (
-            "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(g_hwnd)"
+            "Platform::ThesaurusDialogs::OpenThesaurusJsonFileDialogUtf8(MainUiOwnerWindow())"
         )
         read_call = "Platform::FileSystem::ReadFileText(importPath, json)"
         self.assertIn(
@@ -4406,7 +4441,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("std::istreambuf_iterator", body)
 
     def test_main_dev_mode_marker_creation_uses_filesystem_text_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsDeveloperTools.inl").read_text(encoding="utf-8")
         body = source.split("if (aura::ui::ActionButton(L(Set_CreateDevMode)", 1)[1].split(
             "if (aura::ui::ActionButton(L(Set_OpenExeDir)", 1
         )[0]
@@ -4418,7 +4453,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("std::ofstream", body)
 
     def test_main_dev_mode_marker_removal_uses_filesystem_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsDeveloperTools.inl").read_text(encoding="utf-8")
         body = source.split("if (aura::ui::ActionButton(L(Set_DeleteDevMode)", 1)[1].split(
             "if (aura::ui::ActionButton(L(Set_CreateDevMode)", 1
         )[0]
@@ -4476,7 +4511,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertLess(body.index(remove_call), body.index("GetAIEngine().DownloadModel"))
 
     def test_main_thesaurus_reset_removes_current_and_legacy_files_through_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "SettingsThesaurusTools.inl").read_text(encoding="utf-8")
         body = source.split("if (aura::ui::ActionButton(L(Set_ThesResetDefault)", 1)[1].split(
             "ImGui::Spacing();", 1
         )[0]
@@ -4604,18 +4639,18 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertIn("bool WindowIsValid(void* windowHandle);", header)
         self.assertIn("bool WindowIsValid(void* windowHandle)", win32)
         self.assertIn("IsWindow(static_cast<HWND>(windowHandle)) != FALSE", win32)
-        self.assertIn("bool WindowIsValid(void* /*windowHandle*/)", macos)
+        self.assertIn("bool WindowIsValid(void* windowHandle)", macos)
         self.assertIn("bool WindowIsVisible(void* windowHandle);", header)
         self.assertIn("bool WindowIsVisible(void* windowHandle)", win32)
         self.assertIn("IsWindowVisible(static_cast<HWND>(windowHandle)) != FALSE", win32)
-        self.assertIn("bool WindowIsVisible(void* /*windowHandle*/)", macos)
-        self.assertIn("return false;", macos)
+        self.assertIn("bool WindowIsVisible(void* windowHandle)", macos)
+        self.assertIn("OwnedWindow(windowHandle)", macos)
         self.assertIn("void RequestWindowClose(void* windowHandle);", header)
         self.assertIn("void RequestWindowClose(void* windowHandle)", win32)
-        self.assertIn("void RequestWindowClose(void* /*windowHandle*/)", macos)
+        self.assertIn("void RequestWindowClose(void* windowHandle)", macos)
         self.assertIn("int WindowClassName(void* windowHandle, char* buffer, int capacity);", header)
         self.assertIn("int WindowClassName(void* windowHandle, char* buffer, int capacity)", win32)
-        self.assertIn("int WindowClassName(void* /*windowHandle*/, char* /*buffer*/, int /*capacity*/)", macos)
+        self.assertIn("int WindowClassName(void* windowHandle, char* buffer, int capacity)", macos)
         self.assertIn("Platform::WindowIsValid(windowHandle)", close_body)
         self.assertIn("Platform::WindowProcessId(windowHandle)", close_body)
         self.assertIn("Platform::WindowIsVisible(windowHandle)", close_body)
@@ -4921,7 +4956,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
         windows = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
 
-        self.assertEqual(4, main.count("Platform::ShowMessageBox("))
+        self.assertEqual(5, main.count("Platform::ShowMessageBox("))
         self.assertEqual(10, windows.count("Platform::ShowMessageBox("))
         self.assertNotIn("MessageBoxW", main)
         self.assertNotIn("MessageBoxW", windows)
@@ -5637,7 +5672,11 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(1, playlist_block.count(selected_source))
         for library in ("mfplat", "mfreadwrite", "mfuuid"):
             self.assertIn(library, playlist_block)
-        self.assertEqual(4, behavior_cmake.count(selected_source))
+        similarity_block = behavior_cmake.split(
+            "add_executable(TestSimilarityQueryService", 1
+        )[1].split("add_test(NAME TestSimilarityQueryService", 1)[0]
+        self.assertEqual(1, similarity_block.count(selected_source))
+        self.assertEqual(5, behavior_cmake.count(selected_source))
 
         for library in ("mfplat", "mfreadwrite", "mfuuid"):
             self.assertIn(library, wma_block)
@@ -9289,42 +9328,38 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertNotIn("fs::remove_all", replacement)
 
     def test_main_settings_export_source_probe_uses_filesystem_pal(self) -> None:
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        body = source.split("if (aura::ui::ActionButton(L(Set_ExportSettings)", 1)[1].split(
-            "if (HoveredForHelp()) Aura::SetTooltip",
-            1,
+        source = (ROOT / "src" / "SettingsActions.inl").read_text(encoding="utf-8")
+        body = source.split('} else if(editor.action=="export")', 1)[1].split(
+            '} else if(editor.action=="import")', 1
         )[0]
 
-        self.assertIn(
-            "Platform::FileSystem::ProbePath(srcPath) == Platform::FileSystem::PathStatus::Present",
-            body,
-        )
+        self.assertIn("TrySaveAppSettings(state)", body)
+        self.assertIn("Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)", body)
+        self.assertLess(body.index("TrySaveAppSettings(state)"), body.index("Platform::FileSystem::CopyFile"))
         self.assertNotIn("fs::exists", body)
 
     def test_main_settings_import_export_copy_uses_filesystem_pal(self) -> None:
         header = (ROOT / "src" / "platform" / "filesystem.h").read_text(encoding="utf-8")
-        source = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
-        export_body = source.split("if (aura::ui::ActionButton(L(Set_ExportSettings)", 1)[1].split(
-            "if (HoveredForHelp()) Aura::SetTooltip",
-            1,
+        source = (ROOT / "src" / "SettingsActions.inl").read_text(encoding="utf-8")
+        export_body = source.split('} else if(editor.action=="export")', 1)[1].split(
+            '} else if(editor.action=="import")', 1
         )[0]
-        import_body = source.split("if (aura::ui::ActionButton(L(Set_ImportSettings)", 1)[1].split(
-            "if (HoveredForHelp()) Aura::SetTooltip",
-            1,
+        import_body = source.split('} else if(editor.action=="import")', 1)[1].split(
+            '} else if(editor.action=="custom-colors")', 1
         )[0]
 
         self.assertIn("bool CopyFile(", header)
         self.assertIn(
-            "Platform::FileSystem::CopyFile(srcPath, exportPath, true)",
+            "Platform::FileSystem::CopyFile(g_appSettingsPathUtf8,destination,true)",
             export_body,
         )
         self.assertIn(
-            "Platform::FileSystem::CopyFile(importPath, dstPath, true)",
+            "Platform::FileSystem::CopyFile(path,g_appSettingsPathUtf8,true)",
             import_body,
         )
         self.assertLess(
             import_body.index(
-                "Platform::FileSystem::CopyFile(importPath, dstPath, true)"
+                "Platform::FileSystem::CopyFile(path,g_appSettingsPathUtf8,true)"
             ),
             import_body.index("LoadAppSettings(state)"),
         )

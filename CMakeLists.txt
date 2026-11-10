@@ -1,7 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.43 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.44 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestTransportEffectVisibility EXCLUDE_FROM_ALL tests/test_transport_effect_visibility.cpp)
+target_include_directories(TestTransportEffectVisibility PRIVATE src)
+target_compile_features(TestTransportEffectVisibility PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestTransportEffectVisibility PRIVATE /utf-8)
+endif()
+add_test(NAME TransportEffectVisibility COMMAND TestTransportEffectVisibility)
 add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)
 target_include_directories(TestPreferenceDraft PRIVATE src)
 target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
@@ -11,6 +18,13 @@ else()
     target_compile_options(TestPreferenceDraft PRIVATE -UNDEBUG)
 endif()
 add_test(NAME PreferenceDraft COMMAND TestPreferenceDraft)
+add_executable(TestSidebarMetadataPicker EXCLUDE_FROM_ALL tests/test_sidebar_metadata_picker.cpp)
+target_include_directories(TestSidebarMetadataPicker PRIVATE src)
+target_compile_features(TestSidebarMetadataPicker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSidebarMetadataPicker PRIVATE /utf-8)
+endif()
+add_test(NAME SidebarMetadataPicker COMMAND TestSidebarMetadataPicker)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -369,25 +383,49 @@ if(WIN32)
     set(AURO_AUDIO_FILE_DIALOG_SOURCE src/platform/audio_file_dialog_win32.cpp)
     set(AURO_PROTOOLS_PATH_ENCODING_SOURCE src/platform/pro_tools_path_encoding_win32.cpp)
 else()
-    set(AURO_MEDIA_FOUNDATION_AUDIO_SOURCE src/platform/media_foundation_audio_unsupported.cpp)
     set(AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE src/platform/metadata_legacy_tag_content_std.cpp)
+    if(APPLE)
+        set(AURO_MEDIA_FOUNDATION_AUDIO_SOURCE src/platform/audio_toolbox_audio_macos.cpp)
+    else()
+        set(AURO_MEDIA_FOUNDATION_AUDIO_SOURCE src/platform/media_foundation_audio_unsupported.cpp)
+    endif()
     set(AURO_SEARCH_TEXT_GB2312_SOURCE src/platform/search_text_gb2312_std.cpp)
     set(AURO_THEME_JSON_DIALOGS_SOURCE src/platform/theme_json_dialogs_std.cpp)
-    set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_std.cpp)
+    if(APPLE)
+        set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_macos.mm)
+    else()
+        set(AURO_DATABASE_FILE_DIALOG_SOURCE src/platform/database_file_dialog_std.cpp)
+    endif()
     set(AURO_EXECUTABLE_FILE_DIALOG_SOURCE src/platform/executable_file_dialog_std.cpp)
-    set(AURO_AVATAR_IMAGE_FILE_DIALOG_SOURCE src/platform/avatar_image_file_dialog_std.cpp)
+    if(APPLE)
+        set(AURO_AVATAR_IMAGE_FILE_DIALOG_SOURCE src/platform/avatar_image_file_dialog_macos.mm)
+        set(AURO_SETTINGS_IMPORT_DIALOG_SOURCE src/platform/settings_import_dialog_macos.mm)
+        set(AURO_COVER_IMAGE_IMPORT_DIALOG_SOURCE src/platform/cover_image_import_dialog_macos.mm)
+        set(AURO_REGION_WAV_EXPORT_DIALOG_SOURCE src/platform/region_wav_export_dialog_macos.mm)
+    else()
+        set(AURO_AVATAR_IMAGE_FILE_DIALOG_SOURCE src/platform/avatar_image_file_dialog_std.cpp)
+        set(AURO_SETTINGS_IMPORT_DIALOG_SOURCE src/platform/settings_import_dialog_std.cpp)
+        set(AURO_COVER_IMAGE_IMPORT_DIALOG_SOURCE src/platform/cover_image_import_dialog_std.cpp)
+        set(AURO_REGION_WAV_EXPORT_DIALOG_SOURCE src/platform/region_wav_export_dialog_std.cpp)
+    endif()
     set(AURO_REAPER_FILE_LIST_DIALOG_SOURCE src/platform/reaper_file_list_dialog_std.cpp)
     set(AURO_THESAURUS_JSON_DIALOG_SOURCE src/platform/thesaurus_json_dialog_std.cpp)
-    set(AURO_SETTINGS_IMPORT_DIALOG_SOURCE src/platform/settings_import_dialog_std.cpp)
-    set(AURO_COVER_IMAGE_IMPORT_DIALOG_SOURCE src/platform/cover_image_import_dialog_std.cpp)
-    set(AURO_REGION_WAV_EXPORT_DIALOG_SOURCE src/platform/region_wav_export_dialog_std.cpp)
     set(AURO_AUDIO_FILE_DIALOG_SOURCE src/platform/audio_file_dialog_std.cpp)
     set(AURO_PROTOOLS_PATH_ENCODING_SOURCE src/platform/pro_tools_path_encoding_std.cpp)
 endif()
 
 # Application source files
-# main.cpp is Windows-only (13K LOC); macOS uses app_entry_macos.mm
+if(APPLE)
+    list(APPEND AURO_THEME_JSON_DIALOGS_SOURCE src/platform/theme_json_dialogs_macos.mm)
+    set(AURO_THESAURUS_JSON_DIALOG_SOURCE src/platform/thesaurus_json_dialog_macos.mm)
+endif()
+
+# Both native entries share main.cpp and AppRuntime; platform hosts own windows.
 set(APP_SOURCES
+    src/UiFonts.cpp
+    src/UiInteraction.cpp
+    src/AppRuntime.cpp
+    src/AppFrameServices.cpp
     ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
     ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
     ${AURO_SEARCH_TEXT_GB2312_SOURCE}
@@ -737,6 +775,7 @@ elseif(APPLE)
     set(AURO_THREAD_ID_SOURCE src/platform/thread_id_std.cpp)
     list(APPEND APP_SOURCES
         src/platform/image_codec_macos.mm
+        src/platform/settings_export_dialog_macos.mm
         src/platform/platform_macos.mm
         src/platform/system_macos.mm
         ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
@@ -751,8 +790,13 @@ elseif(APPLE)
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
         src/platform/durable_file_ops_macos.cpp
+        src/platform/macos_file_io.cpp
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/settings_file_macos.cpp
+        src/platform/ui_diagnostics_macos.mm
+        src/platform/macos_qa_bridge.cpp
         src/platform/app_entry_macos.mm
-        src/platform/main_stubs_macos.cpp
+        src/main.cpp
     )
     # whisper.cpp and aubio are not available on macOS; use no-op stubs.
     list(REMOVE_ITEM APP_SOURCES src/AIEngine.cpp src/BpmDetector.cpp src/KeyDetector.cpp)
@@ -899,6 +943,9 @@ add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
     ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
 target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
 target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestLibraryStatisticsWorker PRIVATE /utf-8)
+endif()
 target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
 add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
 set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
@@ -1489,8 +1536,10 @@ elseif(APPLE)
         "-framework ImageIO"           # Image encode/decode
         "-framework IOKit"             # Machine UUID
         "-framework CoreFoundation"
+        "-framework AudioToolbox"     # Native M4A probe and decode.
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
+        ixwebsocket                    # Shared WAAPI source needs its headers and library.
         # macOS builds omit Whisper/aubio until compatible libraries are supplied.
     )
 else()
@@ -1584,6 +1633,27 @@ endif()
 # Post-build: create the models directory and copy WebView2, Whisper/GGML, and rlottie runtime DLLs.
 if(WIN32)
     set(_aris_bootstrap_runtime_args)
+    set(_aris_msvc_redist_root "")
+    if(DEFINED ENV{VCToolsRedistDir} AND IS_DIRECTORY "$ENV{VCToolsRedistDir}")
+        get_filename_component(_aris_msvc_redist_root "$ENV{VCToolsRedistDir}" DIRECTORY)
+    elseif(CMAKE_GENERATOR_INSTANCE)
+        set(_aris_msvc_redist_root "${CMAKE_GENERATOR_INSTANCE}/VC/Redist/MSVC")
+    endif()
+    if(MSVC)
+        file(GLOB _aris_msvc_redist_versions LIST_DIRECTORIES true "${_aris_msvc_redist_root}/*")
+        list(SORT _aris_msvc_redist_versions COMPARE NATURAL ORDER DESCENDING)
+        set(_aris_msvc_redist_dir "")
+        foreach(_aris_redist_version IN LISTS _aris_msvc_redist_versions)
+            if(EXISTS "${_aris_redist_version}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+               AND EXISTS "${_aris_redist_version}/x64/Microsoft.VC143.OpenMP/vcomp140.dll")
+                set(_aris_msvc_redist_dir "${_aris_redist_version}/x64")
+                break()
+            endif()
+        endforeach()
+        if(NOT _aris_msvc_redist_dir)
+            message(FATAL_ERROR "MSVC x64 CRT/OpenMP redistributables not found under ${_aris_msvc_redist_root}")
+        endif()
+    endif()
     if(ARIS_BOOTSTRAP_PACKAGE_KEY_ID AND ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX)
         list(APPEND _aris_bootstrap_runtime_args
             "-DBOOTSTRAP_EXE=$<TARGET_FILE:HarkenSearchBootstrap>")
@@ -1594,6 +1664,7 @@ if(WIN32)
             "-DWEBVIEW2_DLL=${WEBVIEW2_DIR}/x64/WebView2Loader.dll"
             "-DRLOTTIE_BIN=${RLOTTIE_BIN_DIR}"
             "-DRLOTTIE_IMG=${RLOTTIE_IMG_DIR}"
+            "-DMSVC_REDIST_DIR=${_aris_msvc_redist_dir}"
             ${_aris_bootstrap_runtime_args}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_harken_search_runtime_deps.cmake"
         COMMENT "Copying WebView2Loader.dll..."
@@ -1727,6 +1798,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/docs/legal")
 endif()
 
 # Behavior-module test target wiring for the integrated Aris workflow layer.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_similarity_runtime.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_search_behavior_tests.cmake" OPTIONAL)
 
 # Batch1 pinyin Database behavior test. This target pins isolation ROOT to the
@@ -2599,3 +2671,9 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestLocalizationLinkContract core)
 endif()
+
+# Fixed edit buffers and UI scheduling state must behave identically in both hosts.
+add_executable(TestUiPortableServices EXCLUDE_FROM_ALL
+    tests/test_ui_portable_services.cpp src/UiInteraction.cpp)
+target_include_directories(TestUiPortableServices PRIVATE src thirdparty/imgui)
+add_test(NAME TestUiPortableServices COMMAND TestUiPortableServices)

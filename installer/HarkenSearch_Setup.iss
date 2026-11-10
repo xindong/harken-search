@@ -15,7 +15,7 @@
 
 #define MyAppName "Harken Search"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.43"
+#define MyAppVersion "1.0.44"
 #endif
 #define MyAppPublisher "Harken Search"
 #define MyAppURL "https://harkensearch.xd.com/"
@@ -639,6 +639,8 @@ Source: "{#SourceDir}\lucide.ttf"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\splash_beta.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\HarkenSearchProToolsBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
+; App-local Microsoft VC143 CRT and OpenMP runtime for clean Windows installs.
+Source: "{#SourceDir}\*140*.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 ; 旧卸载器身份校验依赖 signtool：构建时同时提供 /DSignToolPath=<signtool.exe 路径>
 ; 与 /DTrustedSignerSubject=<预期证书主体子串> 才会打包校验工具并启用校验；
@@ -675,6 +677,8 @@ Source: "{#SourceDir}\harken_features.sig"; DestDir: "{app}"; Flags: ignoreversi
 
 ; 第三方 DLL（全部用 skipifsourcedoesntexist — packer.py 已按功能裁剪）
 Source: "{#SourceDir}\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceDir}\onnxruntime.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceDir}\models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#SourceDir}\rlottie.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\rlottie-image-loader.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\reaper_harken.dll"; DestDir: "{app}"; Flags: ignoreversion
