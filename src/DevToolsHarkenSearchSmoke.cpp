@@ -8,6 +8,7 @@
 #include "HarkenSearchIcons.h"
 #include "HarkenSearchMetrics.h"
 #include "Theme.h"
+#include "platform/system.h"
 #include "../thirdparty/lucide/IconsLucide.h"
 #include "imgui.h"
 
@@ -41,17 +42,25 @@ struct GalleryState {
 GalleryState& State() {
     static GalleryState s = [] {
         GalleryState initial;
+#ifdef _WIN32
         char* section = nullptr;
         size_t sectionLen = 0;
-        if (_dupenv_s(&section, &sectionLen, "AURO_UI_GALLERY_SECTION") == 0 &&
-            section && section[0]) {
-            const int parsed = std::atoi(section);
+        std::string sectionValue;
+        if (_dupenv_s(&section, &sectionLen, "AURO_UI_GALLERY_SECTION") == 0 && section) {
+            sectionValue = section;
+        }
+        std::free(section);
+#else
+        const auto section = Platform::ReadEnvironmentVariable("AURO_UI_GALLERY_SECTION");
+        const std::string sectionValue =
+            section.status == Platform::EnvironmentStringStatus::Success
+                ? section.valueUtf8 : std::string{};
+#endif
+        if (!sectionValue.empty()) {
+            const int parsed = std::atoi(sectionValue.c_str());
             if (parsed >= 0 && parsed <= 8) {
                 initial.section = parsed;
             }
-        }
-        if (section) {
-            std::free(section);
         }
         return initial;
     }();
