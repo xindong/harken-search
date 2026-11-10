@@ -37,6 +37,24 @@ bool DispatchSyntheticEvents() {
     }
     watcher.setEventCallback({});
     watcher.processAppleEvents(1, paths, flags, nullptr);
+
+    FileSystemWatcher coalesced;
+    coalesced.setCoalesceWindowMs(50);
+    std::vector<EventType> flushed;
+    coalesced.setEventCallback([&](const FileSystemWatcher::FileEvent& event) {
+        flushed.push_back(event.type);
+    });
+    const char* modifiedPath[] = {"/isolated/coalesced.wav"};
+    const uint32_t modifiedFlag[] = {kFSEventStreamEventFlagItemModified};
+    coalesced.processAppleEvents(1, modifiedPath, modifiedFlag, nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    const char* rescanPath[] = {"/isolated"};
+    const uint32_t rescanFlag[] = {kFSEventStreamEventFlagMustScanSubDirs};
+    coalesced.processAppleEvents(1, rescanPath, rescanFlag, nullptr);
+    if (flushed != std::vector<EventType>{EventType::FileModified, EventType::NeedRescan}) {
+        std::cerr << "coalesced callback sequence mismatch: " << flushed.size() << " events\n";
+        return false;
+    }
     return true;
 }
 

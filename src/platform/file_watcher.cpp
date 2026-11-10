@@ -672,9 +672,8 @@ void FileSystemWatcher::processAppleEvents(size_t numEvents,
                                             const char* const eventPaths[],
                                             const uint32_t eventFlags[],
                                             const uint64_t /*eventIds*/[]) {
-    std::lock_guard<std::mutex> lk(m_callbackMutex);
-    if (!m_callback) return;
-
+    // coalesceAndEmit() and flushCoalescedEvents() own callback synchronization.
+    // Holding m_callbackMutex here would request the same non-recursive lock again.
     for (size_t i = 0; i < numEvents; ++i) {
         const std::string path(eventPaths[i]);
         const uint32_t flags = eventFlags[i];
