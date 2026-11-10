@@ -24,7 +24,20 @@ namespace fs = std::filesystem;
 namespace Bridge = HarkenSearch::ReaperBridge;
 
 static int RegisterFake(const char*, void*) { return 1; }
-static void* GetFuncFake(const char*) { return nullptr; }
+static const char* missingFunction = nullptr;
+static constexpr const char* requiredFunctions[] = {
+    "InsertMedia", "GetCursorPosition", "SetEditCurPos", "CountMediaItems",
+    "GetMediaItem", "GetMediaItemInfo_Value", "SetMediaItemInfo_Value",
+    "GetMediaItemTrack", "DeleteTrackMediaItem", "CountTracks", "GetTrack",
+    "DeleteTrack"};
+static void* GetFuncFake(const char* name) {
+    if (missingFunction && std::strcmp(name, missingFunction) == 0) return nullptr;
+    for (const char* required : requiredFunctions) {
+        if (std::strcmp(name, required) == 0)
+            return reinterpret_cast<void*>(&RegisterFake);
+    }
+    return nullptr;
+}
 
 int main() {
     const char* root = std::getenv("HARKEN_MAC_TEST_ROOT");
@@ -71,6 +84,14 @@ int main() {
     incompatible.caller_version = 0;
     check(entry(nullptr, &incompatible) == 0 && !fs::exists(socketPath),
           "extension refuses incompatible host ABI");
+
+    for (const char* required : requiredFunctions) {
+        missingFunction = required;
+        const int result = entry(nullptr, &host);
+        check(result == 0 && !fs::exists(socketPath), required);
+        if (result != 0) entry(nullptr, nullptr);
+    }
+    missingFunction = nullptr;
 
     const bool loaded = entry(nullptr, &host) == 1;
     check(loaded, "actual dylib loads with isolated fake REAPER ABI");

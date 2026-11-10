@@ -21,12 +21,24 @@ namespace {
 namespace Protocol = HarkenSearch::ReaperBridge;
 
 constexpr char kQaSocketVariable[] = "HARKEN_REAPER_BRIDGE_TEST_SOCKET";
+constexpr const char* kRequiredReaperApis[] = {
+    "InsertMedia", "GetCursorPosition", "SetEditCurPos", "CountMediaItems",
+    "GetMediaItem", "GetMediaItemInfo_Value", "SetMediaItemInfo_Value",
+    "GetMediaItemTrack", "DeleteTrackMediaItem", "CountTracks", "GetTrack",
+    "DeleteTrack"};
 std::atomic<bool> g_running{false};
 std::thread g_server;
 int g_listener = -1;
 std::string g_endpoint;
 dev_t g_endpointDevice = 0;
 ino_t g_endpointInode = 0;
+
+bool HasRequiredReaperApis(reaper_plugin_info_t* host) {
+    for (const char* name : kRequiredReaperApis) {
+        if (!host->GetFunc(name)) return false;
+    }
+    return true;
+}
 
 bool ValidEndpoint(const char* raw) {
     if (!raw || raw[0] != '/' || std::strchr(raw, '\n') ||
@@ -201,7 +213,7 @@ int ReaperPluginEntry(void*, reaper_plugin_info_t* host) {
         return 0;
     }
     if (host->caller_version != kReaperPluginVersion ||
-        !host->Register || !host->GetFunc) return 0;
+        !host->Register || !host->GetFunc || !HasRequiredReaperApis(host)) return 0;
     // No production endpoint or REAPER insertion is enabled in this slice.
     return StartServer(std::getenv(kQaSocketVariable)) ? 1 : 0;
 }
