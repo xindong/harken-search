@@ -343,6 +343,132 @@ function CreateFileW(lpFileName: String; dwDesiredAccess: Cardinal;
 function CloseHandle(hObject: LongInt): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
 
+type
+  TInstallFileIdInfo = record
+    VolumeSerialLow: Cardinal;
+    VolumeSerialHigh: Cardinal;
+    FileId0: Cardinal;
+    FileId1: Cardinal;
+    FileId2: Cardinal;
+    FileId3: Cardinal;
+  end;
+
+var
+  InstallMutationMutexHandle: LongInt;
+  InstallMutationMutexOwned: Boolean;
+
+function GetFileInformationByHandleEx(hFile: LongInt;
+  FileInformationClass: Integer; var FileInformation: TInstallFileIdInfo;
+  dwBufferSize: Cardinal): BOOL;
+  external 'GetFileInformationByHandleEx@kernel32.dll stdcall';
+function CreateMutexW(lpMutexAttributes: Cardinal; bInitialOwner: BOOL;
+  lpName: String): LongInt;
+  external 'CreateMutexW@kernel32.dll stdcall';
+function WaitForSingleObject(hHandle: LongInt; dwMilliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function ReleaseMutex(hMutex: LongInt): BOOL;
+  external 'ReleaseMutex@kernel32.dll stdcall';
+
+function CardinalHex(Value: Cardinal): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to 7 do
+  begin
+    Result := Copy('0123456789ABCDEF', (Value and $F) + 1, 1) + Result;
+    Value := Value shr 4;
+  end;
+end;
+
+function CardinalBytesHex(Value: Cardinal): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to 3 do
+  begin
+    Result := Result + Copy(CardinalHex(Value and $FF), 7, 2);
+    Value := Value shr 8;
+  end;
+end;
+
+function InstallMutationMutexName(const InstallLocation: String): String;
+var
+  DirectoryHandle: LongInt;
+  Identity: TInstallFileIdInfo;
+begin
+  Result := '';
+  { A first install has no target root yet. Create only the selected directory
+    before deriving its identity; no application files have been copied. }
+  if not DirExists(InstallLocation) then
+    if not ForceDirectories(InstallLocation) then
+      Exit;
+  DirectoryHandle := CreateFileW(InstallLocation, $80, 7, 0, 3, $02000000, 0);
+  if DirectoryHandle = -1 then
+    Exit;
+  try
+    if not GetFileInformationByHandleEx(DirectoryHandle, 18, Identity, 24) then
+      Exit;
+  finally
+    CloseHandle(DirectoryHandle);
+  end;
+  if ((Identity.VolumeSerialLow = 0) and (Identity.VolumeSerialHigh = 0)) or
+     ((Identity.FileId0 = 0) and (Identity.FileId1 = 0) and
+      (Identity.FileId2 = 0) and (Identity.FileId3 = 0)) then
+    Exit;
+  Result := 'Global\HarkenSearchInstallMutation_' +
+    CardinalHex(Identity.VolumeSerialHigh) +
+    CardinalHex(Identity.VolumeSerialLow) +
+    CardinalBytesHex(Identity.FileId0) +
+    CardinalBytesHex(Identity.FileId1) +
+    CardinalBytesHex(Identity.FileId2) +
+    CardinalBytesHex(Identity.FileId3);
+end;
+
+procedure ReleaseInstallMutationMutex;
+begin
+  if InstallMutationMutexOwned then
+  begin
+    ReleaseMutex(InstallMutationMutexHandle);
+    InstallMutationMutexOwned := False;
+  end;
+  if InstallMutationMutexHandle <> 0 then
+  begin
+    CloseHandle(InstallMutationMutexHandle);
+    InstallMutationMutexHandle := 0;
+  end;
+end;
+
+function AcquireInstallMutationMutex(const InstallLocation: String): Boolean;
+var
+  MutexName: String;
+  MutexHandle: LongInt;
+  WaitResult: Cardinal;
+begin
+  Result := False;
+  if InstallMutationMutexOwned then
+  begin
+    Result := True;
+    Exit;
+  end;
+  MutexName := InstallMutationMutexName(InstallLocation);
+  if MutexName = '' then
+    Exit;
+  MutexHandle := CreateMutexW(0, False, MutexName);
+  if MutexHandle = 0 then
+    Exit;
+  WaitResult := WaitForSingleObject(MutexHandle, 0);
+  if (WaitResult = 0) or (WaitResult = $80) then
+  begin
+    InstallMutationMutexHandle := MutexHandle;
+    InstallMutationMutexOwned := True;
+    Result := True;
+  end
+  else
+    CloseHandle(MutexHandle);
+end;
+
 function IsFileLocked(const FileName: String): Boolean;
 var
   Handle: LongInt;
@@ -364,6 +490,7 @@ begin
   Result :=
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearch.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearchBootstrap.exe') or
+    IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearchProToolsBridge.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'Auro.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'Aris.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'ArisBootstrap.exe');
@@ -611,8 +738,21 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if LegacyProductIsRunning(ExpandConstant('{app}')) then
+  if not AcquireInstallMutationMutex(ExpandConstant('{app}')) then
+  begin
     Result := CustomMessage('CurrentInstallBusy');
+    Exit;
+  end;
+  if LegacyProductIsRunning(ExpandConstant('{app}')) then
+  begin
+    ReleaseInstallMutationMutex;
+    Result := CustomMessage('CurrentInstallBusy');
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  ReleaseInstallMutationMutex;
 end;
 
 function InitializeSetup: Boolean;
