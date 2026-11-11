@@ -458,7 +458,13 @@ const char* ReaperBridgeDoctorActionKey(ReaperBridgeDoctorAction action) {
 
 std::string AutoDetectReaperRootPath() {
     const std::wstring running = FindRunningReaperExecutable();
-    if (!running.empty()) return WideToUtf8Local(fs::path(running).parent_path().wstring());
+    if (!running.empty()) {
+#if defined(__APPLE__)
+        return ResolveMacReaperHostLayout(WideToUtf8Local(running)).bundle.u8string();
+#else
+        return WideToUtf8Local(fs::path(running).parent_path().wstring());
+#endif
+    }
     for (const Platform::RegisteredExecutableScope scope : {
              Platform::RegisteredExecutableScope::CurrentUser,
              Platform::RegisteredExecutableScope::LocalMachine}) {

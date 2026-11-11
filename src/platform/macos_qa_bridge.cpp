@@ -38,6 +38,7 @@ Json lastRegionExport;
 Json reaperHostProbe;
 Json reaperBinaryProbe;
 Json reaperFixtureInstall;
+Json reaperAutoDetectProbe;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 Json inputBeforeUi;
 #endif
@@ -167,6 +168,17 @@ Request Poll(AppState& state) {
                 {"sha256",info.sha256},{"size",info.sizeBytes},{"version",info.version},
                 {"protocol",info.protocolVersion},{"manifest",info.manifest},
                 {"trusted_source",info.trustedSource},{"recognized_entry",info.legacySignature}};
+        } else if (action == "auto_detect_reaper_host") {
+            const auto root = HarkenSearch::DawBridge::AutoDetectReaperRootPath();
+            if (!root.empty()) RequireQaPath(root);
+            HarkenSearch::DawBridge::ReaperBridgeProbeOptions options;
+            options.configuredReaperRootPath = root;
+            const auto status = HarkenSearch::DawBridge::ProbeReaperBridge(options);
+            reaperAutoDetectProbe = {{"root",root},{"configured_root",status.configuredRootPath},
+                {"host_path",status.hostExecutablePath},{"host_exists",status.hostInstalled},
+                {"host_running",status.hostRunning},{"send_ready",status.sendChannelAvailable},
+                {"resource_path",status.resourcePath},
+                {"resolution",HarkenSearch::DawBridge::ReaperBridgeTargetResolutionKey(status.targetResolution)}};
         } else if (action == "reaper_capability_fixture") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             DawTarget reaper;
@@ -621,6 +633,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"similar_ui",similarUi},
             {"database_error",state.database.getLastError()},
             {"reaper_host_probe",reaperHostProbe},
+            {"reaper_auto_detect_probe",reaperAutoDetectProbe},
             {"reaper_binary_probe",reaperBinaryProbe},
             {"reaper_fixture_install",reaperFixtureInstall},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
