@@ -1,6 +1,7 @@
 #include "platform/pe_inspection.h"
 #include "ReaperBridgeVersion.h"
 #include <mach-o/loader.h>
+#include <mach-o/fat.h>
 #include <mach-o/nlist.h>
 #include <algorithm>
 #include <cstring>
@@ -28,6 +29,29 @@ template<class T> static T readAt(const std::vector<char>& bytes, size_t offset)
 }
 template<class T> static void writeAt(std::vector<char>& bytes, size_t offset, const T& value) {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+// Synthetic container, actual Intel image bytes; the other slice is not a runnable host.
+static void integer(std::vector<char>& out, size_t at, uint64_t value, size_t width, bool little) {
+    for (size_t i = 0; i < width; ++i)
+        out[at + i] = static_cast<char>(value >> (8 * (little ? i : width - 1 - i)));
+}
+static std::vector<char> universal(const std::vector<char>& image, bool wide, bool little) {
+    const size_t second = (4096 + image.size() + 4095) & ~size_t(4095);
+    std::vector<char> out(second + 32);
+    integer(out, 0, wide ? FAT_MAGIC_64 : FAT_MAGIC, 4, little);
+    integer(out, 4, 2, 4, little);
+    const size_t stride = wide ? 32 : 20;
+    const auto h = readAt<mach_header_64>(image, 0);
+    for (size_t i = 0; i < 2; ++i) {
+        const size_t at = 8 + i * stride;
+        integer(out, at, i ? CPU_TYPE_ARM64 : h.cputype, 4, little);
+        integer(out, at + 4, i ? 0 : h.cpusubtype, 4, little);
+        integer(out, at + 8, i ? second : 4096, wide ? 8 : 4, little);
+        integer(out, at + (wide ? 16 : 12), i ? 32 : image.size(), wide ? 8 : 4, little);
+        integer(out, at + (wide ? 24 : 16), 12, 4, little);
+    }
+    std::copy(image.begin(), image.end(), out.begin() + 4096);
+    return out;
 }
 int main(int argc, char** argv) {
     try {
@@ -119,6 +143,58 @@ int main(int argc, char** argv) {
               std::to_string(ARIS_REAPER_BRIDGE_PROTOCOL_VERSION), "metadata retains the existing protocol version");
         std::ifstream componentInput(argv[3], std::ios::binary);
         const std::vector<char> component{std::istreambuf_iterator<char>(componentInput), {}};
+        for (bool wide : {false, true}) for (bool little : {false, true}) {
+            for (const auto* image : {static_cast<const std::vector<char>*>(&bytes), &component}) {
+                auto fat = universal(*image, wide, little); save(damaged, fat);
+                auto a = inspect::ReadArchitecture(damaged.string());
+                check(a.status == inspect::Status::Success && a.value == "x64",
+                      "universal container selects its actual Intel slice in either byte order");
+                auto e = inspect::ProbeExport(damaged.string(), "ReaperPluginEntry");
+                check(e.status == inspect::Status::Success && e.present,
+                      "universal exports use slice-relative offsets");
+                auto v = inspect::ReadFileVersion(damaged.string());
+                check(image == &bytes ? v.status == inspect::Status::ValueUnavailable :
+                      v.status == inspect::Status::Success && v.value == ARIS_REAPER_BRIDGE_VERSION_STRING,
+                      "universal metadata stays in the selected slice");
+            }
+            auto reordered = universal(component, wide, little);
+            const size_t recordSize = wide ? 32 : 20;
+            for (size_t j = 0; j < recordSize; ++j) std::swap(reordered[8 + j], reordered[8 + recordSize + j]);
+            save(damaged, reordered);
+            check(inspect::ProbeExport(damaged.string(), "ReaperPluginEntry").present,
+                  "Intel slice need not be first in the container");
+            const auto valid = universal(component, wide, little);
+            const size_t stride = wide ? 32 : 20;
+            auto reject = [&](std::vector<char> bad, const char* why) {
+                save(damaged, bad);
+                check(inspect::ReadArchitecture(damaged.string()).status == inspect::Status::InvalidFormat, why);
+            };
+            auto bad = valid; integer(bad, 4, 0, 4, little); reject(bad, "empty architecture table rejected");
+            bad = valid; integer(bad, 4, 65, 4, little); reject(bad, "excessive architecture count rejected");
+            bad = valid; bad.resize(8 + stride - 1); reject(bad, "truncated architecture table rejected");
+            bad = valid; integer(bad, 16, 8, wide ? 8 : 4, little); reject(bad, "slice cannot overlap container table");
+            bad = valid; integer(bad, 16, ~uint64_t(0), wide ? 8 : 4, little); reject(bad, "overflowing slice offset rejected");
+            bad = valid; integer(bad, 8 + (wide ? 24 : 16), 64, 4, little); reject(bad, "invalid alignment shift rejected");
+            bad = valid; integer(bad, 16, 4097, wide ? 8 : 4, little); reject(bad, "misaligned slice rejected");
+            bad = valid; integer(bad, 8 + stride + 8, 4096, wide ? 8 : 4, little); reject(bad, "overlapping slices rejected");
+            bad = valid; integer(bad, 8 + stride, CPU_TYPE_X86_64, 4, little); reject(bad, "ambiguous Intel slices rejected");
+            bad = valid; bad[4096 + 4] ^= 1; reject(bad, "advertised and actual CPU must agree");
+            bad = valid; integer(bad, 12, 0x1234, 4, little); reject(bad, "advertised and actual CPU subtype must agree");
+            bad = valid; integer(bad, 8 + (wide ? 16 : 12), sizeof(mach_header_64), wide ? 8 : 4, little);
+            reject(bad, "load commands cannot escape selected slice");
+            // Bytes past the selected slice exist in the outer container but are not readable as its data.
+            bad = universal(bytes, wide, little);
+            auto escaped = sym; escaped.stroff = static_cast<uint32_t>(bytes.size()); escaped.strsize = 1;
+            writeAt(bad, 4096 + symOffset, escaped);
+            reject(bad, "symbol strings cannot escape into container padding");
+            bad = valid; integer(bad, 8, CPU_TYPE_ARM64, 4, little); save(damaged, bad);
+            check(inspect::ReadArchitecture(damaged.string()).status == inspect::Status::Unsupported,
+                  "ARM-only container does not claim native support");
+            if (wide) { bad = valid; integer(bad, 36, 1, 4, little); reject(bad, "fat64 reserved field must be zero"); }
+        }
+        auto system = inspect::ReadArchitecture("/System/Applications/TextEdit.app/Contents/MacOS/TextEdit");
+        check(system.status == inspect::Status::Success && system.value == "x64",
+              "actual system universal executable exposes its Intel slice without launch");
         const auto componentHeader = readAt<mach_header_64>(component, 0);
         offset = sizeof(componentHeader);
         size_t metadataRecord = 0;

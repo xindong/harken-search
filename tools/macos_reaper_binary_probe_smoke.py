@@ -4,6 +4,7 @@ import argparse
 import hashlib
 from pathlib import Path
 import shutil
+import struct
 from macos_library_smoke import App, save
 
 parser = argparse.ArgumentParser()
@@ -40,6 +41,29 @@ try:
     assert changed['architecture'] == 'x64' and changed['recognized_entry'], changed
     assert changed['version'] == info['version'] and changed['protocol'] == info['protocol'], changed
     assert changed['sha256'] != expected and not changed['trusted_source'], changed
+    # Synthetic universal wrappers of the actual built component. These are not hosts
+    # and intentionally do not match the product's pinned whole-file digest.
+    report['universal'] = []
+    image = component.read_bytes()
+    cpu, subtype = struct.unpack_from('<II', image, 4)
+    for wide in (False, True):
+        for endian in ('>', '<'):
+            record = endian + ('IIQQII' if wide else 'IIIII')
+            second = (4096 + len(image) + 4095) & ~4095
+            container = bytearray(second + 32)
+            struct.pack_into(endian + 'II', container, 0, 0xcafebabf if wide else 0xcafebabe, 2)
+            for index, fields in enumerate(((cpu, subtype, 4096, len(image), 12),
+                                             (0x0100000c, 0, second, 32, 12))):
+                struct.pack_into(record, container, 8 + index * struct.calcsize(record),
+                                 *(fields + (0,) if wide else fields))
+            container[4096:4096 + len(image)] = image
+            wrapper = fixture / f'universal-{wide}-{endian == "<"}.dylib'
+            wrapper.write_bytes(container)
+            result = app.command('inspect_reaper_binary', path=str(wrapper))['reaper_binary_probe']
+            report['universal'].append(result)
+            assert result['architecture'] == 'x64' and result['recognized_entry'], result
+            assert result['version'] == info['version'] and result['protocol'] == info['protocol'], result
+            assert not result['trusted_source'], result
     bad = app.command('inspect_reaper_binary', path=str(damaged))['reaper_binary_probe']
     report['damaged'] = bad
     assert bad['exists'] and not bad['architecture'] and not bad['trusted_source'], bad

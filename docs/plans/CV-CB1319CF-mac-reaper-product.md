@@ -167,3 +167,13 @@ https://raw.githubusercontent.com/Homebrew/homebrew-cask/master/Casks/r/reaper.r
 ProgramFiles逻辑。通用查询正向以本机TextEdit只读验证，包含后台线程与无效/缺失ID；
 这不替代真实REAPER安装发现的正向证据。禁止注册伪REAPER填补该证据；真实
 REAPER未安装时只记录NotFound和未覆盖，保留许可/宿主验证边界。
+
+### 当前接续：通用 Mach-O 的 Intel 分片
+
+真实系统 TextEdit 同时含 x86_64/arm64e，现有只读解析返回 InvalidFormat。
+先加 FAT32/FAT64 与双字节序回归，再限制架构数量、容器表/分片边界、对齐、
+重叠和重复 Intel 分片；只选唯一 x86_64 分片，核对其头部身份，所有符号和元数据
+读取限制在该分片内。只含其他架构返回 Unsupported，不执行文件初始化器。
+以实际组件和带初始化器的测试库包装成合成容器，覆盖截断、逃逸和身份不一致；
+真实系统文件只读正向验证。完整 Mac 构建与隔离产品运行后取同提交 Windows
+回归；不据此声明 arm64 原生运行、真实宿主安装/直送或用户验收通过。

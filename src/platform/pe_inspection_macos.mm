@@ -3,6 +3,7 @@
 #include "pe_inspection.h"
 
 #include <mach-o/loader.h>
+#include <mach-o/fat.h>
 #include <mach-o/nlist.h>
 #include <cerrno>
 #include <cstdint>
@@ -36,7 +37,13 @@ public:
             return;
         }
         size_ = static_cast<uint64_t>(info.st_size);
+        if (!SelectIntelSlice()) return;
         if (!Read(0, &header, sizeof(header))) return;
+        if (isUniversal_ && (header.cputype != CPU_TYPE_X86_64 ||
+                             header.cpusubtype != advertisedSubtype_)) {
+            status = Status::InvalidFormat;
+            return;
+        }
         if (header.magic != MH_MAGIC_64) { status = Status::InvalidFormat; return; }
         // This first product path is verified for the native Intel candidate.
         // Other architectures/formats cannot count as an installable component.
@@ -115,7 +122,7 @@ public:
         if (!Within(offset, count)) { status = Status::InvalidFormat; return false; }
         auto* output = static_cast<char*>(data);
         while (count > 0) {
-            const ssize_t read = ::pread(fd_, output, count, static_cast<off_t>(offset));
+            const ssize_t read = ::pread(fd_, output, count, static_cast<off_t>(baseOffset_ + offset));
             if (read < 0 && errno == EINTR) continue;
             if (read < 0) { status = Status::QueryFailed; error = errno; return false; }
             if (read == 0) { status = Status::InvalidFormat; return false; }
@@ -134,11 +141,64 @@ public:
     uint64_t metadataOffset = 0;
     uint64_t metadataSize = 0;
 private:
+    bool SelectIntelSlice() {
+        unsigned char prefix[8] {};
+        if (!Read(0, prefix, sizeof(prefix))) return false;
+        auto integer = [](const unsigned char* bytes, size_t width, bool little) {
+            uint64_t value = 0;
+            for (size_t i = 0; i < width; ++i)
+                value = (value << 8) | bytes[little ? width - 1 - i : i];
+            return value;
+        };
+        const auto magic = integer(prefix, 4, false);
+        if (magic != FAT_MAGIC && magic != FAT_CIGAM &&
+            magic != FAT_MAGIC_64 && magic != FAT_CIGAM_64) return true;
+        const bool little = magic == FAT_CIGAM || magic == FAT_CIGAM_64;
+        const bool wide = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64;
+        const uint64_t count = integer(prefix + 4, 4, little);
+        const uint64_t stride = wide ? 32 : 20;
+        auto invalid = [&]() { status = Status::InvalidFormat; return false; };
+        if (count == 0 || count > 64 || !Within(8, count * stride)) return invalid();
+        const uint64_t tableEnd = 8 + count * stride;
+        struct Range { uint64_t start, size; };
+        std::vector<Range> ranges;
+        uint64_t selectedOffset = 0, selectedSize = 0;
+        for (uint64_t index = 0; index < count; ++index) {
+            unsigned char entry[32] {};
+            if (!Read(8 + index * stride, entry, static_cast<size_t>(stride))) return false;
+            const auto cpu = integer(entry, 4, little);
+            const auto subtype = integer(entry + 4, 4, little);
+            const auto offset = integer(entry + 8, wide ? 8 : 4, little);
+            const auto size = integer(entry + (wide ? 16 : 12), wide ? 8 : 4, little);
+            const auto alignment = integer(entry + (wide ? 24 : 16), 4, little);
+            if (offset < tableEnd || size == 0 || !Within(offset, size) || alignment >= 64 ||
+                (offset & ((uint64_t(1) << alignment) - 1)) != 0 ||
+                (wide && integer(entry + 28, 4, little) != 0)) return invalid();
+            for (const auto& range : ranges)
+                if (offset < range.start + range.size && range.start < offset + size) return invalid();
+            ranges.push_back({offset, size});
+            if (cpu == CPU_TYPE_X86_64) {
+                // Multiple Intel subtypes require an explicit selection policy, not guessing.
+                if (selectedSize != 0 || size < sizeof(header)) return invalid();
+                selectedOffset = offset;
+                selectedSize = size;
+                advertisedSubtype_ = static_cast<cpu_subtype_t>(subtype);
+            }
+        }
+        if (selectedSize == 0) { status = Status::Unsupported; return false; }
+        baseOffset_ = selectedOffset;
+        size_ = selectedSize;
+        isUniversal_ = true;
+        return true;
+    }
     bool Within(uint64_t offset, uint64_t count) const {
         return offset <= size_ && count <= size_ - offset;
     }
     int fd_ = -1;
     uint64_t size_ = 0;
+    uint64_t baseOffset_ = 0;
+    bool isUniversal_ = false;
+    cpu_subtype_t advertisedSubtype_ = 0;
 };
 
 StringResult MetadataValue(const std::string& path, const std::string& key) {
