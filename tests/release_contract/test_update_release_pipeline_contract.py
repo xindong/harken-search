@@ -21,7 +21,7 @@ PACKAGE_WORKFLOW = ROOT / ".github" / "workflows" / "package-update.yml"
 COORDINATOR = ROOT / "tools" / "release_update.py"
 BUILDER = ROOT / "tools" / "build_update_manifest.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "expected_update_release_contract.json"
-PLAN = ROOT / "docs" / "superpowers" / "plans" / "2026-07-28-aris-auto-update-release-pipeline.md"
+PLAN = ROOT / "docs" / "plans" / "2026-10-31-release-1.0.43.md"
 CLIENT_REPOSITORY_SOURCES = (
     ROOT / "CMakeLists.txt",
     ROOT / "src" / "update" / "UpdateReleaseConfig.h",
@@ -290,13 +290,8 @@ def test_packaging_workflow_cannot_reach_the_legacy_testing_release_cli() -> Non
     assert "-DAIRS_RELEASE_CHANNEL=stable" in source
 
 
-def test_plan_documents_the_current_stable_only_release_contract() -> None:
+def test_plan_documents_signed_stable_release_gates() -> None:
     text = PLAN.read_text(encoding="utf-8")
-    for heading in (
-        "Current release contract", "Handoff contract", "Publisher order",
-        "Update transport", "Verification",
-    ):
-        assert heading in text
-    assert "one public release channel: `stable`" in text
-    assert "manifest-win-x64-stable.json" in text
-    assert "GitHub is the primary update source" in text
+    for gate in ("签署第一方程序", "旧版实际下载、替换、重启", "GitHub 和 COS",
+                 "两套兼容清单", "正式指针", "不可变版本对象"):
+        assert gate in text

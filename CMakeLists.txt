@@ -1,7 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.43 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.45 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestTransportEffectVisibility EXCLUDE_FROM_ALL tests/test_transport_effect_visibility.cpp)
+target_include_directories(TestTransportEffectVisibility PRIVATE src)
+target_compile_features(TestTransportEffectVisibility PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestTransportEffectVisibility PRIVATE /utf-8)
+endif()
+add_test(NAME TransportEffectVisibility COMMAND TestTransportEffectVisibility)
 add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)
 target_include_directories(TestPreferenceDraft PRIVATE src)
 target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
@@ -1594,6 +1601,27 @@ endif()
 # Post-build: create the models directory and copy WebView2, Whisper/GGML, and rlottie runtime DLLs.
 if(WIN32)
     set(_aris_bootstrap_runtime_args)
+    set(_aris_msvc_redist_root "")
+    if(DEFINED ENV{VCToolsRedistDir} AND IS_DIRECTORY "$ENV{VCToolsRedistDir}")
+        get_filename_component(_aris_msvc_redist_root "$ENV{VCToolsRedistDir}" DIRECTORY)
+    elseif(CMAKE_GENERATOR_INSTANCE)
+        set(_aris_msvc_redist_root "${CMAKE_GENERATOR_INSTANCE}/VC/Redist/MSVC")
+    endif()
+    if(MSVC)
+        file(GLOB _aris_msvc_redist_versions LIST_DIRECTORIES true "${_aris_msvc_redist_root}/*")
+        list(SORT _aris_msvc_redist_versions COMPARE NATURAL ORDER DESCENDING)
+        set(_aris_msvc_redist_dir "")
+        foreach(_aris_redist_version IN LISTS _aris_msvc_redist_versions)
+            if(EXISTS "${_aris_redist_version}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+               AND EXISTS "${_aris_redist_version}/x64/Microsoft.VC143.OpenMP/vcomp140.dll")
+                set(_aris_msvc_redist_dir "${_aris_redist_version}/x64")
+                break()
+            endif()
+        endforeach()
+        if(NOT _aris_msvc_redist_dir)
+            message(FATAL_ERROR "MSVC x64 CRT/OpenMP redistributables not found under ${_aris_msvc_redist_root}")
+        endif()
+    endif()
     if(ARIS_BOOTSTRAP_PACKAGE_KEY_ID AND ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX)
         list(APPEND _aris_bootstrap_runtime_args
             "-DBOOTSTRAP_EXE=$<TARGET_FILE:HarkenSearchBootstrap>")
@@ -1604,6 +1632,7 @@ if(WIN32)
             "-DWEBVIEW2_DLL=${WEBVIEW2_DIR}/x64/WebView2Loader.dll"
             "-DRLOTTIE_BIN=${RLOTTIE_BIN_DIR}"
             "-DRLOTTIE_IMG=${RLOTTIE_IMG_DIR}"
+            "-DMSVC_REDIST_DIR=${_aris_msvc_redist_dir}"
             ${_aris_bootstrap_runtime_args}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_harken_search_runtime_deps.cmake"
         COMMENT "Copying WebView2Loader.dll..."

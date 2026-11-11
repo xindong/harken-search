@@ -4,6 +4,7 @@
 #include <Windows.h>
 
 #include "nlohmann_json.hpp"
+#include "platform/update_bootstrap_health_port.h"
 
 #include <cstdint>
 #include <cwchar>
@@ -44,6 +45,12 @@ int wmain(const int argc, wchar_t** argv) {
     }
     const bool fragmentAcknowledgement =
         value["build_id"].get<std::string>() == "build-health-fragmented";
+    std::uintptr_t protectedOutput = 0U;
+    if (value["build_id"] == "build-health-stderr") {
+        if (!Platform::UpdateBootstrapHealth::ProtectBootstrapHealthOutputFromStderr(
+                 &protectedOutput).ok()) return 28;
+        std::cerr << "pre-ack diagnostic from updated application\n";
+    }
     nlohmann::json acknowledgement = {
         {"build_id", value["build_id"]},
         {"process_id", static_cast<std::uint64_t>(GetCurrentProcessId())},
@@ -56,7 +63,9 @@ int wmain(const int argc, wchar_t** argv) {
     const std::string bytes = acknowledgement.dump() + "\n";
     if (value["build_id"] == "progress-real-update") Sleep(1800U);
     DWORD written = 0;
-    const HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    const HANDLE output = protectedOutput != 0U
+        ? reinterpret_cast<HANDLE>(protectedOutput)
+        : GetStdHandle(STD_OUTPUT_HANDLE);
     if (fragmentAcknowledgement) {
         const DWORD firstSize = static_cast<DWORD>(bytes.size() / 2U);
         if (!WriteFile(output, bytes.data(), firstSize, &written, nullptr) ||

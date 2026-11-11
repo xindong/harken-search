@@ -137,13 +137,14 @@ def run(args):
             scan = until(lambda: command(cmd='scan_status'),
                          lambda s: not s['scanning'] and not s['scan_completion_pending'], 'scan')
             assert scan['errors'] == 0, scan
-            command(cmd='scan_acknowledge_complete')
+            command(cmd='open_scan_dialog')
             until(lambda: command(cmd='info_page_state'),
                   lambda s: 'info.qaScanDone' in s['zones'], 'scan close button')
             for phase in ('hover', 'down', 'up'):
-                command(cmd='info_page_state')
+                time.sleep(.15)
                 command(cmd='info_page_pointer', key='info.qaScanDone', phase=phase)
-                time.sleep(.1)
+            until(lambda: command(cmd='scan_status'),
+                  lambda s: s['total'] == 0, 'scan result dismissal')
         command(cmd='similar_index', action='open', floating=True, width=900, height=620, language=0)
         first = until(index, lambda s: s['total'] == 3 and 'similar.index.start' in s['controls'], 'first coverage')
         click_start()
