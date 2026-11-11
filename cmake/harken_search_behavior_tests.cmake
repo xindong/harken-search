@@ -4757,6 +4757,8 @@ if(APPLE)
     set(HARKEN_MAC_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/Testing/macos-data" CACHE PATH
         "Isolated macOS data/settings test evidence directory")
     add_library(MacInspectionFixture MODULE EXCLUDE_FROM_ALL tests/macos_inspection_fixture.cpp)
+    add_executable(MacReaperRunningFixture EXCLUDE_FROM_ALL tests/reaper_running_fixture.cpp)
+    target_compile_features(MacReaperRunningFixture PRIVATE cxx_std_17)
     target_compile_features(MacInspectionFixture PRIVATE cxx_std_17)
     add_executable(TestMacMachOInspection EXCLUDE_FROM_ALL
         tests/test_mac_macho_inspection.cpp src/platform/pe_inspection_macos.mm)

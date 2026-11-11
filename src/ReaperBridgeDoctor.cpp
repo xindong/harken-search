@@ -117,13 +117,16 @@ bool SamePath(const fs::path& left, const fs::path& right) {
     return a == b;
 }
 
-std::wstring FindRunningReaperExecutable(const fs::path& preferredExecutable = {}) {
+std::wstring FindRunningReaperExecutable(const fs::path& preferredExecutable = {}, bool* stateKnown = nullptr) {
+    if (stateKnown) *stateKnown = false;
     const std::string preferredUtf8 = preferredExecutable.empty()
         ? std::string()
         : WideToUtf8Local(preferredExecutable.wstring());
     if (!preferredExecutable.empty() && preferredUtf8.empty()) return {};
     const Platform::ProcessImageLookupResult result =
         Platform::FindProcessByImageName("reaper.exe", preferredUtf8);
+    if (stateKnown) *stateKnown = result.status == Platform::ProcessImageLookupStatus::NotFound ||
+        (result.status == Platform::ProcessImageLookupStatus::Found && !result.executablePathUtf8.empty());
     if (result.status != Platform::ProcessImageLookupStatus::Found ||
         result.executablePathUtf8.empty()) {
         return {};
@@ -168,6 +171,7 @@ struct ResolvedReaperTarget {
     bool targetResolved = false;
     bool hostInstalled = false;
     bool hostRunning = false;
+    bool hostStateKnown = false;
     ReaperBridgeTargetResolution resolution = ReaperBridgeTargetResolution::Unresolved;
     fs::path configuredRoot;
     fs::path resourcePath;
@@ -194,12 +198,14 @@ ResolvedReaperTarget ResolveReaperTarget(const ReaperBridgeProbeOptions& options
     target.hostInstalled = FileExists(target.hostExecutable);
     if (target.hostInstalled) target.hostArchitecture = ReadPeArchitecture(target.hostExecutable);
 
-    const std::wstring runningExecutable = FindRunningReaperExecutable(target.hostExecutable);
+    const std::wstring runningExecutable = FindRunningReaperExecutable(target.hostExecutable, &target.hostStateKnown);
     target.hostRunning = !runningExecutable.empty();
     if (options.hostRunningQueryOverride) {
         target.hostRunning = options.hostRunningQueryOverride();
+        target.hostStateKnown = true;
     } else if (options.hostRunningOverride.has_value()) {
         target.hostRunning = *options.hostRunningOverride;
+        target.hostStateKnown = true;
     }
 
     if (!options.pluginDirectoryOverride.empty()) {
@@ -523,6 +529,9 @@ InstallStatus ProbeReaperBridge(const ReaperBridgeProbeOptions& options) {
     ReaperBridge::HandshakeResult handshake;
     handshake.code = ReaperBridge::HandshakeCode::TransportUnavailable;
     handshake.detail = "REAPER is not running";
+#if defined(__APPLE__)
+    if (!target.hostStateKnown) handshake.detail = "REAPER process state is unavailable";
+#endif
     if (target.hostRunning) {
         const std::wstring_view pipeName = options.pipeNameOverride.empty()
             ? std::wstring_view(ReaperBridge::kDefaultPipeName)
@@ -557,6 +566,10 @@ InstallStatus ProbeReaperBridge(const ReaperBridgeProbeOptions& options) {
     facts.handshakeCode = handshake.code;
 
     status.state = EvaluateReaperBridgeState(facts);
+#if defined(__APPLE__)
+    if (target.configured && target.hostInstalled && !target.hostStateKnown)
+        status.state = InstallState::Unknown;
+#endif
     status.targetResolution = target.resolution;
     status.configuredRootPath = WideToUtf8Local(target.configuredRoot.wstring());
     status.resourcePath = WideToUtf8Local(target.resourcePath.wstring());
@@ -790,6 +803,14 @@ InstallResult InstallReaperBridge(
         result.detail.setKey(LStr::DBflow_UserPluginsUnlocatable);
         return result;
     }
+#if defined(__APPLE__)
+    if (!target.hostStateKnown) {
+        InstallResult result;
+        result.failureCode = "host-state-unknown";
+        result.detail.setKey(LStr::DBst_UnknownStateD);
+        return result;
+    }
+#endif
     const fs::path bundledPath = options.bundledDllPathOverride.empty()
         ? BundledReaperPlugin()
         : fs::path(Utf8ToWideLocal(options.bundledDllPathOverride));

@@ -36,6 +36,7 @@ std::string browserTreeRootForQa;
 Json lastRegionExport;
 Json reaperHostProbe;
 Json reaperBinaryProbe;
+Json reaperFixtureInstall;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 Json inputBeforeUi;
 #endif
@@ -45,6 +46,18 @@ std::filesystem::path Root() {
 void RequireQaPath(const std::string& path) {
     if (path.empty() || !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path))
         throw std::runtime_error("path_outside_isolated_root");
+}
+void RequireReaperInstallFixturePath(const std::string& path) {
+    RequireQaPath(path);
+    std::error_code error;
+    const auto base = std::filesystem::weakly_canonical(
+        Root().parent_path() / "fixtures" / "reaper-install", error);
+    if (error) throw std::runtime_error("invalid_install_fixture_root");
+    const auto actual = std::filesystem::weakly_canonical(std::filesystem::u8path(path), error);
+    if (error) throw std::runtime_error("invalid_install_fixture_path");
+    const auto relative = actual.lexically_relative(base);
+    if (relative.empty() || relative == "." || relative.is_absolute() || *relative.begin() == "..")
+        throw std::runtime_error("path_outside_reaper_install_fixture");
 }
 }
 Request Poll(AppState& state) {
@@ -107,6 +120,45 @@ Request Poll(AppState& state) {
         } else if (action == "open") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             if (!BeginSwitchDatabase(state, path)) throw std::runtime_error("library_switch_failed");
+        } else if (action == "install_reaper_fixture") {
+            using namespace HarkenSearch::DawBridge;
+            const auto source = command.at("source").get<std::string>();
+            const auto target = command.at("target_directory").get<std::string>();
+            RequireReaperInstallFixturePath(source);
+            RequireReaperInstallFixturePath(target);
+            const auto stop = command.value("fail_at", std::string("none"));
+            std::optional<ReaperBridgeInstallCheckpoint> interrupted;
+            if (stop == "stage") interrupted = ReaperBridgeInstallCheckpoint::Staged;
+            else if (stop == "backup") interrupted = ReaperBridgeInstallCheckpoint::BackupCreated;
+            else if (stop == "replace") interrupted = ReaperBridgeInstallCheckpoint::ReplacementCommitted;
+            else if (stop == "verify") interrupted = ReaperBridgeInstallCheckpoint::Verified;
+            else if (stop != "none") throw std::runtime_error("invalid_install_checkpoint");
+            Json phases = Json::array();
+            auto observer = [&](ReaperBridgeInstallCheckpoint phase) {
+                phases.push_back(static_cast<int>(phase));
+                return !interrupted || phase != *interrupted;
+            };
+            const bool dryRun = command.value("dry_run", false);
+            InstallResult result;
+            bool detectedRunning = false;
+            if (command.value("detect_host", false)) {
+                const auto host = command.at("host_root").get<std::string>();
+                RequireReaperInstallFixturePath(host);
+                ReaperBridgeProbeOptions options;
+                options.configuredReaperRootPath = host;
+                options.pluginDirectoryOverride = target;
+                options.bundledDllPathOverride = source;
+                detectedRunning = ProbeReaperBridge(options).hostRunning;
+                result = InstallReaperBridge(options, dryRun, observer);
+            } else {
+                result = InstallReaperBridgeBinary(source, target,
+                    command.value("host_running", false), dryRun, observer);
+            }
+            reaperFixtureInstall = {{"ok",result.ok},{"changed",result.changed},
+                {"verified",result.binaryVerified},{"rollback",result.rollbackPerformed},
+                {"rollback_verified",result.rollbackVerified},{"installed_path",result.installedPath},
+                {"backup_path",result.backupPath},{"failure_code",result.failureCode},
+                {"phases",phases},{"detected_running",detectedRunning}};
         } else if (action == "inspect_reaper_binary") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             const auto info = HarkenSearch::DawBridge::ProbeBridgeBinary(path);
@@ -548,6 +600,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"database_error",state.database.getLastError()},
             {"reaper_host_probe",reaperHostProbe},
             {"reaper_binary_probe",reaperBinaryProbe},
+            {"reaper_fixture_install",reaperFixtureInstall},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
