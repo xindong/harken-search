@@ -34425,8 +34425,13 @@ void RenderUI(AppState& state) {
             if (!capabilityDetail.empty()) {
                 ImGui::TextWrapped("%s", capabilityDetail.c_str());
             }
-            if (IsReaperNamedPipeTarget(selected) && g_reaperBridgeInstallNotice &&
-                g_reaperBridgeInstallNotice->rootPath == selected.exePath) {
+            const bool reaperInstallInProgress = IsReaperNamedPipeTarget(selected) &&
+                g_dawBridgeSession && g_dawBridgeSession->reaperRootPath == selected.exePath &&
+                g_dawBridgeSession->phase.load() == DawBridgeInstallSession::Phase::Installing;
+            if (reaperInstallInProgress) {
+                ImGui::TextWrapped("%s", L(REAPER_InstallBusy));
+            } else if (IsReaperNamedPipeTarget(selected) && g_reaperBridgeInstallNotice &&
+                       g_reaperBridgeInstallNotice->rootPath == selected.exePath) {
                 const auto& notice = *g_reaperBridgeInstallNotice;
                 if (notice.result.ok) {
                     ImGui::TextWrapped(L(Install_StatusOk), notice.installerName.c_str());
