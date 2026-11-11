@@ -221,7 +221,8 @@ ResolvedReaperTarget ResolveReaperTarget(const ReaperBridgeProbeOptions& options
     if (FileExists(target.configuredRoot / L"reaper.ini")) {
         target.resourcePath = target.configuredRoot;
         target.pluginDirectory = target.resourcePath / L"UserPlugins";
-        target.alternatePlugin = standardResource / L"UserPlugins" / L"reaper_harken.dll";
+        target.alternatePlugin = standardResource / L"UserPlugins" /
+            Platform::HarkenUserData::CanonicalReaperPluginFileName();
         target.targetResolved = true;
         target.resolution = target.hostRunning &&
                             SamePath(fs::path(runningExecutable), target.hostExecutable)
@@ -230,7 +231,8 @@ ResolvedReaperTarget ResolveReaperTarget(const ReaperBridgeProbeOptions& options
     } else if (!standardResource.empty()) {
         target.resourcePath = standardResource;
         target.pluginDirectory = standardResource / L"UserPlugins";
-        target.alternatePlugin = target.configuredRoot / L"UserPlugins" / L"reaper_harken.dll";
+        target.alternatePlugin = target.configuredRoot / L"UserPlugins" /
+            Platform::HarkenUserData::CanonicalReaperPluginFileName();
         target.targetResolved = true;
         target.resolution = ReaperBridgeTargetResolution::StandardResourcePath;
     }
@@ -497,7 +499,7 @@ InstallStatus ProbeReaperBridge(const ReaperBridgeProbeOptions& options) {
         ? BundledReaperPlugin()
         : fs::path(Utf8ToWideLocal(options.bundledDllPathOverride));
     const fs::path installedPath = target.targetResolved
-        ? target.pluginDirectory / L"reaper_harken.dll"
+        ? target.pluginDirectory / Platform::HarkenUserData::CanonicalReaperPluginFileName()
         : fs::path();
     const BridgeBinaryInfo bundled = ProbeBridgeBinary(WideToUtf8Local(bundledPath.wstring()));
     const BridgeBinaryInfo installed = ProbeBridgeBinary(WideToUtf8Local(installedPath.wstring()));
@@ -617,7 +619,7 @@ InstallResult InstallReaperBridgeBinary(
         result.detail.setKey(LStr::DBflow_UserPluginsUnknown);
         return result;
     }
-    const fs::path target = targetDirectory / L"reaper_harken.dll";
+    const fs::path target = targetDirectory / Platform::HarkenUserData::CanonicalReaperPluginFileName();
     result.installedPath = WideToUtf8Local(target.wstring());
     const fs::path legacyTarget = targetDirectory /
         Utf8ToWideLocal(Platform::HarkenUserData::LegacyReaperPluginFileName());

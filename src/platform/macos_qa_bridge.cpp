@@ -116,6 +116,8 @@ Request Poll(AppState& state) {
                 {"host_exists",status.hostInstalled},
                 {"root",status.configuredRootPath},
                 {"executable",status.hostExecutablePath},
+                {"bundled_path",status.bundledPath},
+                {"installed_path",status.installedPath},
                 {"send_ready",status.sendChannelAvailable},
                 {"state",static_cast<int>(status.state)}};
         } else if (action == "open_similar") {

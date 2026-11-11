@@ -36,8 +36,11 @@ class ReaperBridgeDoctorDurableFileOpsReplaceDeleteContract(unittest.TestCase):
         for token in ("DeleteFileW", "ERROR_FILE_NOT_FOUND", "ERROR_PATH_NOT_FOUND", "DeleteFailed"):
             self.assertIn(token, WIN32)
 
-    def test_macos_is_unsupported_without_side_effects(self):
-        self.assertGreaterEqual(MACOS.count("DurableFileOpStatus::Unsupported"), 3)
+    def test_macos_replace_delete_have_a_native_runtime_fixture(self):
+        self.assertIn("DurableFileOpResult ReplaceFileWriteThrough", MACOS)
+        self.assertIn("DurableFileOpResult DeleteFileIfPresent", MACOS)
+        self.assertIn("TestMacDurableSettings", CMAKE)
+        self.assertIn("tests/test_macos_durable_settings.cpp", CMAKE)
         self.assertNotIn("MoveFileExW", MACOS)
         self.assertNotIn("DeleteFileW", MACOS)
 

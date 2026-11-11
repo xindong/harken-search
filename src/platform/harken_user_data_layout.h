@@ -57,8 +57,13 @@ inline const char* LegacyAuroFeaturesJsonFileName() { return "auro_features.json
 inline const char* LegacyAuroFeaturesSigFileName() { return "auro_features.sig"; }
 inline const char* CanonicalRuntimePairFileName() { return "harken-runtime-pair.json"; }
 inline const char* LegacyRuntimePairFileName() { return "aris-runtime-pair.json"; }
+#if defined(__APPLE__)
+inline const char* CanonicalReaperPluginFileName() { return "reaper_harken.dylib"; }
+inline const char* LegacyReaperPluginFileName() { return "reaper_auro.dylib"; }
+#else
 inline const char* CanonicalReaperPluginFileName() { return "reaper_harken.dll"; }
 inline const char* LegacyReaperPluginFileName() { return "reaper_auro.dll"; }
+#endif
 inline const char* CanonicalProcessManifestFileName() { return "HarkenSearch.manifest"; }
 inline const char* LegacyProcessManifestFileName() { return "Aris.manifest"; }
 inline const char* CanonicalLocaleLedgerFileName() { return "harken.ui.strings.json"; }

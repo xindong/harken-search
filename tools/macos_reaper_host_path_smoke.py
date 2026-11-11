@@ -36,6 +36,9 @@ try:
         assert probe['executable'] == str(expected_exe), probe
         assert probe['root_exists'] == root_exists, probe
         assert probe['host_exists'] == host_exists, probe
+        assert Path(probe['bundled_path']).name == 'reaper_harken.dylib', probe
+        if host_exists:
+            assert Path(probe['installed_path']).name == 'reaper_harken.dylib', probe
         assert not probe['send_ready'], 'a fixture must never count as a ready send bridge'
     assert not list(fixture.rglob('UserPlugins')), 'read-only diagnosis installed a plugin'
     report['exit_code'] = app.close()

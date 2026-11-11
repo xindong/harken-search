@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CMAKE = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+CMAKE += (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
 HEADER_PATH = ROOT / "src" / "platform" / "durable_file_ops.h"
 HEADER = HEADER_PATH.read_text(encoding="utf-8") if HEADER_PATH.is_file() else ""
 WIN32_PATH = ROOT / "src" / "platform" / "durable_file_ops_win32.cpp"
@@ -43,9 +44,10 @@ class ReaperBridgeDoctorDurableFileOpsContract(unittest.TestCase):
             self.assertIn(token, WIN32)
         self.assertIn("systemError", WIN32)
 
-    def test_macos_is_explicitly_unsupported_without_side_effects(self):
-        self.assertIn("DurableFileOpStatus::Unsupported", MACOS)
-        self.assertNotIn("open(", MACOS)
+    def test_macos_flush_has_a_native_runtime_fixture(self):
+        self.assertIn("DurableFileOpResult FlushExistingFileToDisk", MACOS)
+        self.assertIn("TestMacDurableSettings", CMAKE)
+        self.assertIn("tests/test_macos_durable_settings.cpp", CMAKE)
         self.assertNotIn("FlushFileBuffers", MACOS)
 
     def test_doctor_delegates_and_preserves_other_write_operations(self):

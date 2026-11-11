@@ -1,4 +1,5 @@
 #include "src/ReaperMacHostLayout.h"
+#include "src/platform/harken_user_data_layout.h"
 #include <filesystem>
 #include <iostream>
 
@@ -10,6 +11,17 @@ int main() {
         std::cout << (condition ? "PASS: " : "FAIL: ") << label << '\n';
         if (!condition) ++failures;
     };
+#ifdef __APPLE__
+    check(std::string(Platform::HarkenUserData::CanonicalReaperPluginFileName()) == "reaper_harken.dylib",
+          "Mac extension lookup uses its real dylib filename");
+    check(std::string(Platform::HarkenUserData::LegacyReaperPluginFileName()) == "reaper_auro.dylib",
+          "Mac legacy plugin lookup stays on the native file type");
+#else
+    check(std::string(Platform::HarkenUserData::CanonicalReaperPluginFileName()) == "reaper_harken.dll",
+          "Windows extension filename remains dll");
+    check(fs::path(Platform::HarkenUserData::LegacyReaperPluginFileName()).extension() == ".dll",
+          "Windows legacy filename remains dll");
+#endif
     const auto parent = fs::temp_directory_path() / fs::u8path(u8"Harken QA 中文 space");
     const auto app = parent / "REAPER.app";
     const auto executable = app / "Contents" / "MacOS" / "REAPER";
