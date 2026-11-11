@@ -15,7 +15,7 @@ int main() {
         const char* expectedTitle = language == AppLanguage::Chinese ? u8"相似音效" : "Similar Sounds";
         const char* expectedFind = language == AppLanguage::Chinese ? u8"查找相似音效" : "Find similar sounds";
         const char* expectedIndexing = language == AppLanguage::Chinese ? u8"正在分析特征…" : "Analyzing features...";
-        const char* expectedScore = language == AppLanguage::Chinese ? u8"相近度" : "Similarity";
+        const char* expectedScore = language == AppLanguage::Chinese ? u8"匹配分" : "Match score";
 
         std::cout << languageName << ": completeness_missing=" << missing
                   << ", Similar_Title=" << (title ? title : "<null>")

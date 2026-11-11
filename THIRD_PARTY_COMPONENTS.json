@@ -12,8 +12,8 @@
       "source": "https://github.com/microsoft/onnxruntime/tree/v1.20.1",
       "license_expression": "MIT",
       "purpose": "本地音频语义模型 CPU 推理",
-      "distributed": false,
-      "load_mode": "可选动态链接；仅配置 HARKEN_ONNXRUNTIME_ROOT 时加入",
+      "distributed": true,
+      "load_mode": "随官方 Windows ZIP 与安装器分发；启用相似功能时与 HarkenSearch.exe 同目录加载",
       "license_files": [
         "LICENSES/ONNX-Runtime-MIT.txt",
         "LICENSES/ONNX-Runtime-ThirdPartyNotices.txt"
@@ -24,7 +24,7 @@
       "risk_classification": "low",
       "policy_category": "permissive",
       "manual_approval_required": false,
-      "approval_reference": "REQ-20261101-SIMILAR-DEEP: pinned upstream license and notices retained; optional local similarity bundle",
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
       "cmake_markers": [
         "cmake/harken_similarity_runtime.cmake"
       ],
@@ -75,8 +75,8 @@
       "source": "https://huggingface.co/laion/clap-htsat-unfused/tree/8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
       "license_expression": "Apache-2.0",
       "purpose": "本机音效类别与动作向量；无音频上传",
-      "distributed": false,
-      "load_mode": "可选音频编码器转换为 ONNX，固定预处理，仅打包配置的模型文件",
+      "distributed": true,
+      "load_mode": "随官方 Windows ZIP 与安装器分发；固定预处理资源与 ONNX 模型随包提供",
       "license_files": [
         "LICENSES/CLAP-Apache-2.0.txt"
       ],
@@ -86,7 +86,7 @@
       "risk_classification": "low",
       "policy_category": "permissive",
       "manual_approval_required": false,
-      "approval_reference": "REQ-20261101-SIMILAR-DEEP: pinned upstream license and notices retained; optional local similarity bundle",
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
       "cmake_markers": [
         "cmake/harken_similarity_runtime.cmake"
       ],

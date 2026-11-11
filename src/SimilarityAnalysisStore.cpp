@@ -114,6 +114,21 @@ bool SimilarityAnalysisStore::GetFile(int64_t id, SimilarityFile& file) {
     if (sqlite3_step(s.get()) != SQLITE_ROW) return false;
     file = File(s.get()); return true;
 }
+bool SimilarityAnalysisStore::CountValidCoverage(sqlite3* readOnlyDatabase, int& acoustic, int& semantic,
+                                                const FeatureExtractionCancelCheck& cancel) {
+    acoustic = semantic = 0;
+    auto s = Prepare(readOnlyDatabase, Select(false));
+    if (!s) return false;
+    int rc = SQLITE_OK;
+    while ((rc = sqlite3_step(s.get())) == SQLITE_ROW) {
+        if (cancel && cancel()) return false;
+        SimilarityAnalysisEntry entry;
+        if (!Row(s.get(), entry, false)) continue;
+        ++acoustic;
+        if (entry.hasSemantic) ++semantic;
+    }
+    return rc == SQLITE_DONE && !(cancel && cancel());
+}
 bool SimilarityAnalysisStore::PendingFiles(std::vector<SimilarityFile>& files, bool requireSemantic) {
     files.clear();
     auto s = Prepare(database_,

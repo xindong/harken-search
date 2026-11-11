@@ -20,6 +20,9 @@ BOOTSTRAP = (ROOT / "src" / "DeferredSidebarBootstrapWorkflow.cpp").read_text(
 )
 MODULE_UI = (ROOT / "src" / "ModuleUI.cpp").read_text(encoding="utf-8")
 PLAYLIST_TREE = (ROOT / "src" / "PlaylistFolderTree.h").read_text(encoding="utf-8")
+SETTINGS_CATALOG = (ROOT / "src" / "SettingsCatalog.h").read_text(encoding="utf-8")
+SETTINGS_FIELDS = (ROOT / "src" / "SettingsFields.inl").read_text(encoding="utf-8")
+SETTINGS_DIALOG = (ROOT / "src" / "SettingsDialog.inl").read_text(encoding="utf-8")
 BEHAVIOR = (ROOT / "cmake" / "harken_search_behavior_tests.cmake").read_text(
     encoding="utf-8"
 )
@@ -36,7 +39,9 @@ def test_preference_defaults_to_absolute_and_persists():
     assert LOCALIZED["Set_FolderTreePathPilot"]["zh"] == "领航路径"
     assert LOCALIZED["Set_FolderTreePathAbsolute"]["en"] == "Absolute path"
     assert LOCALIZED["Set_FolderTreePathPilot"]["en"] == "Pilot path"
-    assert "L(Set_FolderTreePathMode)" in MAIN
+    assert 'u8"treePath",Page::Interaction' in SETTINGS_CATALOG
+    assert 'LStr::Set_FolderTreePathMode' in SETTINGS_CATALOG
+    assert 'if(id=="treePath")' in SETTINGS_FIELDS
 
 
 def test_database_tree_builders_use_path_mode_policy():
@@ -70,11 +75,13 @@ def test_folder_tree_path_mode_policy_is_built_tested_and_wired():
 
 
 def test_personal_preference_saves_and_rebuilds_database_tree():
-    combo = MAIN[MAIN.index('ImGui::Combo("##FolderTreePathMode"') :]
-    combo = combo[:800]
-    assert "MarkSettingsDirty(state)" in combo
-    assert "StartDeferredSidebarBootstrap(state, true, false)" in combo
-    assert "SaveAppSettings(state)" not in combo
+    combo = SETTINGS_FIELDS[SETTINGS_FIELDS.index('if(id=="treePath")') :]
+    combo = combo[:230]
+    assert 'L(Set_FolderTreePathAbsolute)' in combo
+    assert 'L(Set_FolderTreePathPilot)' in combo
+    assert 'draft.folderTreePathMode=' in combo
+    assert 'TrySaveAppSettings(state' in SETTINGS_DIALOG
+    assert 'if (oldSettings.folderTreePathMode!=state.settings.folderTreePathMode) StartDeferredSidebarBootstrap(state,true,false);' in SETTINGS_DIALOG
 
     assert 'items.push_back({"folderTreePathMode"' in MAIN
     assert 'kv["folderTreePathMode"]' in MAIN

@@ -1,5 +1,6 @@
 #include <iostream>
 #include "LibraryStatisticsWorker.h"
+#include "AcousticSimilarity.h"
 #include "AudioEmbeddingService.h"
 #include <atomic>
 #include <chrono>
@@ -97,18 +98,73 @@ int main() {
         sqlite3_close(writer);
         const auto v2Path = dbPath + ".v2";
         sqlite3_open(v2Path.c_str(), &writer);
-        sqlite3_exec(writer, "CREATE TABLE audio_files(id INTEGER PRIMARY KEY,file_path TEXT); INSERT INTO audio_files VALUES(1,'a'),(2,'b');",nullptr,nullptr,nullptr);
+        sqlite3_exec(writer, "CREATE TABLE audio_files(id INTEGER PRIMARY KEY,file_path TEXT,file_name TEXT,format TEXT,duration REAL); INSERT INTO audio_files VALUES(1,'a','a','wav',1),(2,'b','b','wav',1);",nullptr,nullptr,nullptr);
         const auto v2Handler = HarkenSearch::MakeFeatureIndexCountHandler(true);
         auto v2 = v2Handler(v2Path, [] { return false; });
         require(v2.success && v2.total == 2 && v2.indexed == 0, "V1-only library must show V2 analysis pending");
-        sqlite3_exec(writer, "CREATE TABLE harken_similarity_v2(file_id INTEGER PRIMARY KEY,file_path TEXT,version INTEGER,embedding BLOB,model_version TEXT);",nullptr,nullptr,nullptr);
-        const std::string insertV2 = std::string("INSERT INTO harken_similarity_v2 VALUES(1,'a',2,zeroblob(2048),'") + HarkenSearch::kSimilarityModelRevision + "');";
-        sqlite3_exec(writer, insertV2.c_str(),nullptr,nullptr,nullptr);
+        int availableProbes = 0, unavailableProbes = 0;
+        const auto availableHandler = HarkenSearch::MakeFeatureIndexCountHandler(true, [&] { ++availableProbes; return true; });
+        const auto unavailableHandler = HarkenSearch::MakeFeatureIndexCountHandler(true, [&] { ++unavailableProbes; return false; });
+        require(availableHandler(v2Path, [] { return false; }).pending == 2 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 2,
+            "all files await first analysis regardless of model availability");
+        sqlite3_exec(writer, "CREATE TABLE harken_similarity_v2(file_id INTEGER PRIMARY KEY,file_path TEXT,file_bytes INTEGER,modified INTEGER,fingerprint TEXT,version INTEGER,summary BLOB,acoustic BLOB,embedding BLOB,model_version TEXT);",nullptr,nullptr,nullptr);
+        HarkenSearch::AcousticAnalysis validAnalysis;
+        validAnalysis.sourceSeconds = 1.0f;
+        validAnalysis.activeSeconds = 1.0f;
+        validAnalysis.frames.emplace_back();
+        const auto validSummary = validAnalysis.Serialize(false);
+        require(!validSummary.empty(), "valid acoustic summary fixture could not be serialized");
+        HarkenSearch::AudioEmbedding validEmbedding{};
+        validEmbedding[0] = 1.0f;
+        require(HarkenSearch::IsValidAudioEmbedding(validEmbedding), "valid semantic fixture could not be created");
+        auto insertV2Row = [&](int id, const char* path, bool semantic) {
+            sqlite3_stmt* insert = nullptr;
+            require(sqlite3_prepare_v2(writer, "INSERT INTO harken_similarity_v2 VALUES(?,?,1024,1,?,2,?,?,?,?)",
+                -1, &insert, nullptr) == SQLITE_OK, "V2 fixture insert prepare failed");
+            const std::string fingerprint(64, id == 1 ? 'a' : 'b');
+            sqlite3_bind_int(insert, 1, id);
+            sqlite3_bind_text(insert, 2, path, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(insert, 3, fingerprint.c_str(), int(fingerprint.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_blob(insert, 4, validSummary.data(), int(validSummary.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_blob(insert, 5, validSummary.data(), int(validSummary.size()), SQLITE_TRANSIENT);
+            if (semantic) sqlite3_bind_blob(insert, 6, validEmbedding.data(), int(sizeof(validEmbedding)), SQLITE_TRANSIENT);
+            else sqlite3_bind_null(insert, 6);
+            sqlite3_bind_text(insert, 7, semantic ? HarkenSearch::kSimilarityModelRevision : "", -1, SQLITE_TRANSIENT);
+            const int step = sqlite3_step(insert);
+            sqlite3_finalize(insert);
+            require(step == SQLITE_DONE, "V2 fixture row insert failed");
+        };
+        insertV2Row(1, "a", true);
         v2 = v2Handler(v2Path, [] { return false; });
         require(v2.success && v2.total == 2 && v2.indexed == 1 && v2.semanticIndexed == 1, "V2 acoustic and semantic counts must match active model version");
-        sqlite3_exec(writer, "UPDATE harken_similarity_v2 SET model_version='old';",nullptr,nullptr,nullptr);
+        require(availableHandler(v2Path, [] { return false; }).pending == 1 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 1,
+            "completed file is removed from the remaining count");
+        sqlite3_exec(writer, "UPDATE harken_similarity_v2 SET model_version='old' WHERE file_id=1;",nullptr,nullptr,nullptr);
         v2 = v2Handler(v2Path, [] { return false; });
         require(v2.success && v2.indexed == 1 && v2.semanticIndexed == 0, "outdated semantic model cannot appear complete");
+        require(availableHandler(v2Path, [] { return false; }).pending == 2 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 1,
+            "semantic-only work counts when the model is ready, but not when it is unavailable");
+        insertV2Row(2, "b", false);
+        require(availableHandler(v2Path, [] { return false; }).pending == 2 &&
+                unavailableHandler(v2Path, [] { return false; }).pending == 0 &&
+                availableProbes == 1 && unavailableProbes == 1,
+            "acoustic-complete files do not inflate unavailable-model remainder and probe is cached");
+        require(sqlite3_exec(writer, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr) == SQLITE_OK, "WAL fixture failed");
+        int cancelCalls = 0;
+        bool concurrentWrite = false;
+        v2 = v2Handler(v2Path, [&] {
+            if (++cancelCalls == 3) {
+                require(sqlite3_exec(writer, "INSERT INTO audio_files VALUES(3,'c','c','wav',1)", nullptr, nullptr, nullptr) == SQLITE_OK, "concurrent audio insert failed");
+                insertV2Row(3, "c", false);
+                concurrentWrite = true;
+            }
+            return false;
+        });
+        require(concurrentWrite && v2.success && v2.total == 2 && v2.indexed == 2,
+                "concurrent insert must not mix library snapshots");
         sqlite3_close(writer);
         // Reproduce the Windows library-replacement boundary with a real SQLite
         // reader. Cancellation is observable before its connection is released.

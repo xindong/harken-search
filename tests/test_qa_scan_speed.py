@@ -435,7 +435,10 @@ def test_shutdown_only_uses_owned_handle_and_confirms_exit(monkeypatch, waits, v
     monkeypatch.setitem(sys.modules, 'win32process', SimpleNamespace(
         TerminateProcess=terminate, GetExitCodeProcess=lambda _: 0))
     report = {}
-    assert qa.stop_owned_process(handle, (lambda: events.append('exit-owned')) if verified else None, report) == expected_exit
+    actual_exit = qa.stop_owned_process(
+        handle, (lambda: events.append('exit-owned')) if verified else None, report
+    )
+    assert actual_exit == expected_exit
     assert events.count('terminate-owned') == terminations
     assert events.count('closed') == 1
     if not verified:

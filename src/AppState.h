@@ -247,8 +247,13 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
-inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultReadingFontPx = 18;
 inline constexpr int kDefaultListFontPx = 18;
+
+// Keep loaded and displayed sizes safe without rewriting the settings file here.
+inline constexpr int ClampSettingsFontSize(int sizePx) {
+    return std::clamp(sizePx, 10, 24);
+}
 
 // Reading-list rows: extra vertical px added to the reading font height before
 // comparing against the density floor. Matches the existing list cell padding.
@@ -260,10 +265,8 @@ inline int ResolveReadingFontSize(bool hasReading, int readingVal,
                                   bool hasList, int listVal,
                                   bool hasFont, int fontVal,
                                   int defaultPx) {
-    if (hasReading) return readingVal;
-    if (hasList)    return listVal;
-    if (hasFont)    return fontVal;
-    return defaultPx;
+    const int value = hasReading ? readingVal : hasList ? listVal : hasFont ? fontVal : defaultPx;
+    return ClampSettingsFontSize(value);
 }
 
 // Reading-surface row height: never shorter than the density floor, grows with
@@ -812,6 +815,7 @@ struct AppSettings {
     int audioOutputDeviceIndex = -1;  // -1 = 系统默认
     std::string audioOutputDeviceName; // stable guard for persisted output-device index
     int audioPeriodSizeMs = 10;       // 缓冲周期 (ms)，5/10/20/50，重启后生效
+    TransportEffectVisibility transportEffectVisibility{};
 
     // --- 播放行为层 ---
     PlaybackMode playbackMode = PlaybackMode::SingleClick;
@@ -978,6 +982,7 @@ struct AppSettings {
     // Sidebar panel visibility
     bool showViewMode = true;
     bool showFolderTree = true;
+    bool showRelatedPaths = true;
     bool showMetadataFilter = true;
     bool showPlaylists = true;
     bool showPlaylistQuickBar = true;
@@ -1596,6 +1601,11 @@ enum class SuggestMode { None, WordSuggest, CmdMenu, ValuePick };
 
 struct AppState {
     AudioEngine audioEngine;
+    // Mono and reverse need a real playback reload to bypass. Keep their
+    // requested state here while their transport controls are hidden.
+    bool hiddenMonoRestore = false;
+    bool hiddenReverseRestore = false;
+    bool pendingReverseRestore = false;
     FileBrowser fileBrowser;
     Database database;
     // AppState owns these workers; shared_ptr keeps unrelated state-only test

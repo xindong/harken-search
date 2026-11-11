@@ -73,7 +73,7 @@ inline AppSettings CaptureSettings(const AppState& state) {
 struct Editor {
     PreferenceDraft<AppSettings> app{
 #define PREF(name) Field(&AppSettings::name)
-        PREF(audioOutputDeviceIndex),PREF(audioOutputDeviceName),PREF(audioPeriodSizeMs),PREF(listeningMode),
+        PREF(audioOutputDeviceIndex),PREF(audioOutputDeviceName),PREF(audioPeriodSizeMs),PREF(transportEffectVisibility),PREF(listeningMode),
         PREF(defaultVolume),PREF(loudnessNormEnabled),PREF(loudnessNormTargetLUFS),PREF(fadeInOutEnabled),PREF(fadeInOutMs),
         PREF(skipLeadingSilence),PREF(silenceThresholdDb),PREF(defaultPitch),PREF(pitchRange),
         PREF(monitorLayout),PREF(downmixMode),PREF(downmixCenterDb),PREF(downmixSurroundDb),PREF(binauralMonitor),

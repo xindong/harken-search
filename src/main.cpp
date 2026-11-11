@@ -153,6 +153,7 @@
 #include "CoverWallVisibleMirrorAudit.h"
 #include "SimilarSoundsWindow.h"
 #include "SimilarityIndexer.h"
+#include "SimilarityIndexCountState.h"
 #include "RelinkWorkflow.h"
 #include "RecordRemovalWorkflow.h"
 #include "RecordRenameWorkflow.h"
@@ -1510,7 +1511,8 @@ static void ProcessKeybindings(AppState& state) {
         }
 
         // Execute waveform and channel shortcuts before general actions.
-        if (IsShortcutPressedSnapshot(ShortcutAction::ToggleReverse, ks)) {
+        if (state.settings.transportEffectVisibility.reverse &&
+            IsShortcutPressedSnapshot(ShortcutAction::ToggleReverse, ks)) {
             bool wasReversed = state.audioEngine.isReversed();
             const bool reverseApplied = state.audioEngine.setReverse(!wasReversed);
             const bool nowReversed = state.audioEngine.isReversed();
@@ -1536,7 +1538,8 @@ static void ProcessKeybindings(AppState& state) {
                 }
             }
         }
-        if (IsShortcutPressedSnapshot(ShortcutAction::ToggleMono, ks)) {
+        if (state.settings.transportEffectVisibility.mono &&
+            IsShortcutPressedSnapshot(ShortcutAction::ToggleMono, ks)) {
             state.audioEngine.setMono(!state.audioEngine.isMono());
         }
         if (IsShortcutPressedSnapshot(ShortcutAction::ToggleSoloL, ks)) {
@@ -5612,6 +5615,7 @@ void LoadAppSettings(AppState& state) {
     // Read sidebar module visibility.
     state.settings.showViewMode = ParseBool(kv["showViewMode"], state.settings.showViewMode);
     state.settings.showFolderTree = ParseBool(kv["showFolderTree"], state.settings.showFolderTree);
+    state.settings.showRelatedPaths = ParseBool(kv["showRelatedPaths"], state.settings.showRelatedPaths);
     state.settings.showMetadataFilter = ParseBool(kv["showMetadataFilter"], state.settings.showMetadataFilter);
     state.settings.showPlaylists = ParseBool(kv["showPlaylists"], state.settings.showPlaylists);
     state.settings.showPlaylistQuickBar = ParseBool(kv["showPlaylistQuickBar"], state.settings.showPlaylistQuickBar);
@@ -5821,9 +5825,32 @@ void LoadAppSettings(AppState& state) {
     if (state.settings.audioPeriodSizeMs < 5) state.settings.audioPeriodSizeMs = 5;
     if (state.settings.audioPeriodSizeMs > 100) state.settings.audioPeriodSizeMs = 100;
 
-    // Audio mode and volume
-    bool mono = ParseBool(kv["monoMode"], state.audioEngine.isMono());
-    state.audioEngine.setMono(mono);
+    // Transport visibility defaults to the old all-visible behavior.
+    auto& transportVisibility = state.settings.transportEffectVisibility;
+    transportVisibility.mono = ParseBool(kv["showTransportMono"], true);
+    transportVisibility.reverse = ParseBool(kv["showTransportReverse"], true);
+    transportVisibility.pan = ParseBool(kv["showTransportPan"], true);
+    transportVisibility.soundstage = ParseBool(kv["showTransportSoundstage"], true);
+    transportVisibility.eq = ParseBool(kv["showTransportEQ"], true);
+    if (!transportVisibility.reverse && state.audioEngine.isReversed()) {
+        // Importing settings into an active player must bypass reverse now.
+        // Keep the selected source interval aligned with the forward timeline.
+        const float in=state.audioEngine.getInPoint(), out=state.audioEngine.getOutPoint();
+        if (state.audioEngine.setReverse(false) &&
+            (in>0.0f || out<1.0f) && in<out) {
+            state.audioEngine.clearInOutPoints();
+            state.audioEngine.setInPoint(1.0f-out);
+            state.audioEngine.setOutPoint(1.0f-in);
+        }
+    }
+    state.audioEngine.setTransportEffectVisibility(transportVisibility);
+
+    // Audio mode and volume. Hidden mono retains its requested setting while
+    // playback uses stereo; the next show restores that setting.
+    state.hiddenMonoRestore = ParseBool(kv["monoMode"], state.audioEngine.isMono());
+    state.audioEngine.setMono(transportVisibility.mono && state.hiddenMonoRestore);
+    state.hiddenReverseRestore = ParseBool(kv["reverseVisibilityRestore"], false);
+    state.pendingReverseRestore = transportVisibility.reverse && state.hiddenReverseRestore;
     float volume = ParseFloat(kv["volume"], 1.0f);
     state.audioEngine.setVolume(volume);
     float pan = ParseFloat(kv["pan"], 0.0f);
@@ -6328,7 +6355,7 @@ static void InitDefaultColumnPresets(AppState& state) {
     state.columnPresets = {sfx, music, meta, loud};
 }
 
-bool TrySaveAppSettings(const AppState& state) {
+bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride) {
     const auto persistedAppearance=harken::settings::AppearancePreview().ForPersistence(state.settings);
     if (g_appSettingsPathUtf8.empty()) {
         g_siliconFlowApiKeyStorageError.clear();
@@ -6468,6 +6495,7 @@ bool TrySaveAppSettings(const AppState& state) {
     // Save sidebar module visibility.
     items.push_back({"showViewMode", state.settings.showViewMode ? "1" : "0"});
     items.push_back({"showFolderTree", state.settings.showFolderTree ? "1" : "0"});
+    items.push_back({"showRelatedPaths", state.settings.showRelatedPaths ? "1" : "0"});
     items.push_back({"showMetadataFilter", state.settings.showMetadataFilter ? "1" : "0"});
     items.push_back({"showPlaylists", state.settings.showPlaylists ? "1" : "0"});
     items.push_back({"showPlaylistQuickBar", state.settings.showPlaylistQuickBar ? "1" : "0"});
@@ -6549,9 +6577,17 @@ bool TrySaveAppSettings(const AppState& state) {
     items.push_back({"audioPeriodSizeMs", std::to_string(state.settings.audioPeriodSizeMs)});
 
     // Audio mode and volume
-    items.push_back({"monoMode", state.audioEngine.isMono() ? "1" : "0"});
+    const auto& transportVisibility = state.settings.transportEffectVisibility;
+    items.push_back({"showTransportMono", transportVisibility.mono ? "1" : "0"});
+    items.push_back({"showTransportReverse", transportVisibility.reverse ? "1" : "0"});
+    items.push_back({"showTransportPan", transportVisibility.pan ? "1" : "0"});
+    items.push_back({"showTransportSoundstage", transportVisibility.soundstage ? "1" : "0"});
+    items.push_back({"showTransportEQ", transportVisibility.eq ? "1" : "0"});
+    items.push_back({"monoMode", (monoModeOverride.value_or(transportVisibility.mono
+        ? state.audioEngine.isMono() : state.hiddenMonoRestore)) ? "1" : "0"});
+    items.push_back({"reverseVisibilityRestore", (transportVisibility.reverse ? state.pendingReverseRestore : state.hiddenReverseRestore) ? "1" : "0"});
     items.push_back({"volume", std::to_string(state.audioEngine.getVolume())});
-    items.push_back({"pan", std::to_string(state.audioEngine.getPan())});
+    items.push_back({"pan", std::to_string(state.audioEngine.getRequestedPan())});
     items.push_back({"centerSense", std::to_string(state.audioEngine.getCenterSense())});
     items.push_back({"bassMonoFreq", std::to_string(state.audioEngine.getBassMonoFreq())});
     const MagicEQSettings magicEQ = state.audioEngine.getMagicEQUserSettings();
@@ -13972,7 +14008,8 @@ static void RenderFolderTreeExplorerToolbar(
     const std::function<void()>& onSearchEscape,
     const std::function<void()>& onRefresh,
     const std::function<void()>& onLocate,
-    const std::function<void(bool hovered)>& onLocateHover)
+    const std::function<void(bool hovered)>& onLocateHover,
+    AppState* qaState)
 {
     constexpr float kRefreshW = 26.0f;
     constexpr float kLocateW = 22.0f;
@@ -13990,6 +14027,17 @@ static void RenderFolderTreeExplorerToolbar(
         0,
         searchWidth,
         inheritContextColors);
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        qaState->qaFilterUiRects["folder_search"] = ImVec4(
+            min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+    }
+#else
+    (void)qaState;
+#endif
     if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         onSearchEscape();
         ImGui::ClearActiveID();
@@ -14107,6 +14155,10 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
     const ExplorerShellCapabilities browserCaps = browserSource.capabilities;
     RenderExplorerShell(
         [&state, relatedPathsMaxHeight, browserSource, browserCaps, kBrowserRelatedPathsMinHeight]() {
+            if (!state.settings.showRelatedPaths) {
+                ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                return;
+            }
             ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
             if (!g_browserSystemFolderRelatedPath.empty()) {
                 ImGui::SameLine();
@@ -14157,7 +14209,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                false,
+                state.settings.theme == AppTheme::LapisBlue,
                 false,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
@@ -14181,7 +14233,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                         return;
                     }
                     HarkenSearch::SetTooltip("%s", canLocateCurrent ? L(Browser_LocateCurrentFolder) : L(Browser_NoCurrentFolderToLocate));
-                });
+                }, &state);
         },
         [&state, browserSource]() {
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
@@ -16190,7 +16242,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         "%s",
                         canLocateCurrent ? L(Main_LocateInTreeTip)
                                          : L(Main_NoTreeSelTip));
-                });
+                }, &state);
         };
 
         if (playlistScopedFolderTree) {
@@ -16211,6 +16263,10 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         /// Related paths pane remains stable, but users can resize it against the folder tree.
         RenderExplorerShell(
             [&]() {
+                if (!state.settings.showRelatedPaths) {
+                    ImGui::TextDisabled("%s", L(Nav_FolderSearch));
+                    return;
+                }
                 ImGui::TextDisabled("%s", L(Nav_RelatedPaths));
                 RenderRelatedPathsExplorerPane(
                     state,
@@ -29383,9 +29439,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
         !state.settings.useCustomColors && !ThemeColors::customized();
     // Full-table counts run on one independent read-only connection. This UI
     // path only submits work and polls values; it never waits for SQLite.
-    static int cachedIndexed = 0;
-    static int cachedSemantic = 0;
-    static int cachedTotal = 0;
+    static SimilarityIndexCountState count;
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
     static int64_t cachedDbGeneration = -1;
@@ -29393,8 +29447,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
     const bool extracting = state.batchFeatureExtracting.load();
     if (cachedDbPath != state.currentDbPathUtf8 ||
         cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
-        cachedIndexed = cachedTotal = 0;
-        cachedSemantic = 0;
+        count.Reset();
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
         lastCountTime = -999.0;
@@ -29407,20 +29460,37 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!state.dbSwitchInProgress && state.database.isOpen()) {
         if (!state.featureIndexStatistics) {
             state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
-                HarkenSearch::MakeFeatureIndexCountHandler(true));
+                HarkenSearch::MakeFeatureIndexCountHandler(true, [] {
+                    HarkenSearch::AudioEmbeddingService model;
+                    std::string error;
+                    model.Load(GetExeDirUtf8() + "/models/clap", error);
+                    return model.IsReady();
+                }));
         }
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            if (result->success) { cachedIndexed = result->indexed; cachedTotal = result->total; cachedSemantic = result->semanticIndexed; }
+            count.Complete(result->success, result->indexed, result->semanticIndexed,
+                           result->total, result->pending);
         }
-        if (now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
+        if (count.phase() != SimilarityIndexCountState::Phase::Failed &&
+            now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
 
     if (!sharedSimilarStyle) ImGui::Separator();
     ImGui::BeginDisabled(state.dbSwitchInProgress);
-    ImGui::Text(L(Main_IndexedProgressFmt), cachedIndexed, cachedTotal);
-    ImGui::Text(L(Similar_SemanticCoverageFmt), cachedSemantic, cachedTotal);
+    if (state.dbSwitchInProgress) {
+        ImGui::TextUnformatted(L(Similar_StatsSwitching));
+    } else if (!state.database.isOpen()) {
+        ImGui::TextUnformatted(L(Similar_StatsNoDatabase));
+    } else if (count.phase() == SimilarityIndexCountState::Phase::Loading) {
+        ImGui::TextUnformatted(L(Similar_StatsLoading));
+    } else if (count.phase() == SimilarityIndexCountState::Phase::Failed) {
+        ImGui::TextUnformatted(L(Similar_StatsFailed));
+    } else {
+        ImGui::Text(L(Main_IndexedProgressFmt), count.indexed(), count.total());
+        ImGui::Text(L(Similar_SemanticCoverageFmt), count.semanticIndexed(), count.total());
+    }
     ThemeInspector::RegisterLastItem("similar.index.count");
     if (extracting) {
         const int progress = state.batchFeatureProgress.load();
@@ -29452,8 +29522,8 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, cachedTotal - std::min(cachedIndexed, cachedSemantic));
-        if (cachedTotal > 0) {
+        const int pending = count.pending();
+        if (count.CanStart(state.dbSwitchInProgress, state.database.isOpen())) {
             ImGui::Spacing();
             ImGui::Text(L(Similar_PendingCountFmt), pending);
             if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
@@ -29461,8 +29531,25 @@ void DrawSimilarityIndexPanel(AppState& state) {
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
+        } else if (count.phase() == SimilarityIndexCountState::Phase::Failed &&
+                   !state.dbSwitchInProgress && state.database.isOpen()) {
+            if (aura::ui::ActionButton(L(Similar_StatsRetry), ImVec2(-1, 35),
+                                       aura::ui::ButtonVariant::PrimarySearch)) {
+                count.Retry();
+                lastCountTime = -999.0;
+            }
+        } else if (count.phase() == SimilarityIndexCountState::Phase::Loading ||
+                   state.dbSwitchInProgress) {
+            ImGui::BeginDisabled();
+            aura::ui::ActionButton(L(Similar_StatsWaitingAction), ImVec2(-1, 35),
+                                   aura::ui::ButtonVariant::PrimarySearch);
+            ImGui::EndDisabled();
+        } else if (count.phase() == SimilarityIndexCountState::Phase::Ready &&
+                   count.total() == 0) {
+            ImGui::TextUnformatted(L(Similar_StatsEmpty));
         }
-        if (cachedTotal > 0 && state.batchFeatureCompletionNotice.load() &&
+        if (count.phase() == SimilarityIndexCountState::Phase::Ready &&
+            count.total() > 0 && state.batchFeatureCompletionNotice.load() &&
                    !state.batchFeatureCancelRequested.load()) {
             ImGui::Spacing();
             const ImVec4 success(0.3f, 0.9f, 0.3f, 1.0f);
@@ -29738,6 +29825,14 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
 }
 
 void RenderUI(AppState& state) {
+    if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
+        state.audioEngine.isLoaded()) {
+        state.pendingReverseRestore = false;
+        if (!state.audioEngine.setReverse(true)) {
+            state.loadErrorToast = L(Player_ReverseFailed);
+            state.loadErrorToastUntil = ImGui::GetTime() + 4.0;
+        }
+    }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     if(harken::settings::savePreviewOnce) {
         harken::settings::savePreviewOnce=false;
@@ -32150,6 +32245,7 @@ void RenderUI(AppState& state) {
                 ImGui::Spacing();
                 const bool fastScanMode = !state.settings.cacheWaveformsOnScan;
                 if (ImGui::RadioButton(L(Main_FastScanMode), fastScanMode)) state.settings.cacheWaveformsOnScan = false;
+                if (HoveredForHelp()) HarkenSearch::SetTooltip("%s", L(Scan_FastModeHint));
                 if (ImGui::RadioButton(L(Main_FullScanMode), state.settings.cacheWaveformsOnScan)) state.settings.cacheWaveformsOnScan = true;
                 bool automaticThreads = state.scanWorkerThreads == 0;
                 if (ImGui::Checkbox(L(ScanUi_AutoThreads), &automaticThreads)) state.scanWorkerThreads = automaticThreads ? 0 : 4;
@@ -33236,7 +33332,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - 20.f, viewport->WorkPos.y + 60.f),
             ImGuiCond_Always, ImVec2(1.f, 0.f));
         ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(360.f, scanDialogWidth), 0.f), ImVec2(scanDialogWidth, scanDialogMaxHeight));
-        if (ImGui::Begin("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+        if (BeginTransientScrollbarWindow("##ScanDropNotice", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
             { ReadingTextScope readingDrop;
             char title[128];
@@ -45413,7 +45509,7 @@ void RenderUI(AppState& state) {
             // Mono/Stereo toggle — Duality dual-circle animation
             // AUDITION_NATIVE_EXCEPTION: mono
             bool isMonoMode = state.audioEngine.isMono();
-            {
+            if (state.settings.transportEffectVisibility.mono) {
                 bool isStereo = !isMonoMode;
                 const float stW = 30.0f, stH = 32.0f;
 
@@ -45466,7 +45562,7 @@ void RenderUI(AppState& state) {
             }
 
             // Reverse toggle — Fibonacci Swoosh 动画
-            {
+            if (state.settings.transportEffectVisibility.reverse) {
                 // AUDITION_BOUNDARY_INTENT: reverse-preserving-region
                 bool isReversed = auditionSnapshot.reversed;
                 const float revW = 36.0f, revH = 32.0f;
@@ -45546,6 +45642,7 @@ void RenderUI(AppState& state) {
             }
 
             // Pan — 半圆弧旋钮 (PanKnob)
+            if (state.settings.transportEffectVisibility.pan) {
             ImGui::BeginDisabled(isMonoMode);
             {
                 const float panW = 52.0f, panH = 32.0f;
@@ -45562,9 +45659,11 @@ void RenderUI(AppState& state) {
                 curX += panW + 10.0f;
             }
             ImGui::EndDisabled();
+            }
 
 // 中心感 — Soundstage 扇形可视化（与 PAN 统一 110×32）.
 
+            if (state.settings.transportEffectVisibility.soundstage) {
             ImGui::BeginDisabled(isMonoMode);
             {
                 const float csW = 52.0f, csH = 32.0f;
@@ -45735,8 +45834,9 @@ void RenderUI(AppState& state) {
                 }
             }
             ImGui::EndDisabled();
+            }
 
-            {
+            if (state.settings.transportEffectVisibility.eq) {
                 MagicEQSettings magicEQ = state.audioEngine.getMagicEQ();
                 const float magicEqPreferredWidth = magicEQ.widgetWidth;
                 const float trailingMinimumWidth = 260.0f;

@@ -2,6 +2,125 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.45",
+      "release_date": "2026-11-09",
+      "headline": "同类替代模型就绪，升级确认与分析入口更稳",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "同类替代模型", "description": "补齐声音模型与推理运行库，修复正式包中同类替代无法分析的问题。", "source": "Harken Search"},
+                {"title": "更新完成确认", "description": "修复旧版更新器启动新版时诊断输出干扰健康确认的问题。", "source": "Harken Search"},
+                {"title": "相似分析入口", "description": "首次统计时显示等待状态，统计失败可重试，切库期间不会误启动分析。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": ["HarkenDeveloper-zhongziyu", "Cindy"]
+    },
+    {
+      "version": "1.0.44",
+      "release_date": "2026-11-08",
+      "headline": "设置更顺手，扫描与更新更稳，相似音效和播放操作更灵活",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "新增内容",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "播放效果显隐",
+                  "description": "可在设置中逐项隐藏播放栏的五组内置效果；隐藏时自动旁通，重新显示后恢复原有开关和参数。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "相关路径显隐",
+                  "description": "筛选器增加相关路径的显示控制，可按需要收起或恢复。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "相似音效查找",
+                  "description": "试听后直接寻找同类型替代音效，候选结果可拖出到其他软件；补充分析只处理未完成文件，取消重扫保留已有结果，批次进度和失败原因更清楚。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "连续扫描收尾",
+                  "description": "修复极速扫描后接着完整扫描时，待处理的波形、封面或元数据任务可能让扫描一直等待的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "刷新与筛选",
+                  "description": "主动刷新后清空全部筛选并恢复完整文件视图；修复锁定结果页刷新后的状态和待加载结果。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新与安装",
+                  "description": "改善旧安装目录缺少资源时的升级兼容和中断恢复，修正中文安装协议页的字体显示。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "音效库与结果区",
+                  "description": "修复 Pilot 嵌套音效库目录显示；结果面板拖出、排序、关闭和返回主工作区更顺畅，切换音效库时有轻量状态提示。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "设置与外观",
+                  "description": "设置按类别集中查找和修改，新设置默认高性能，保存失败保留原设置；日夜主题可分别编辑五套配色，外观选择即时预览，字体、行高、扩展名和波形显示按所选设置生效。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "扫描信息",
+                  "description": "扫描窗口更简洁，保留真实进度、速度和总用时；失败原因按类型呈现，结果与过程分开查看。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "文本与选择器",
+                  "description": "长文件夹名、筛选条件和元数据更易查看与输入，多个侧栏或浮动窗口中的选择器互不干扰。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "头像、主题与播放栏",
+                  "description": "头像选择和裁剪更清晰，读取或保存失败时保留原头像；优化海军蓝等主题的文字对比度、EQ 窄窗口布局，并在关于页补充社区入口。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
+    },
+    {
       "version": "1.0.43",
       "release_date": "2026-10-31",
       "headline": "完善日夜主题、独立筛选、扫描与更新体验",

@@ -2640,7 +2640,9 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         AURO_FILESYSTEM_PROBE_PATH_TESTING
+        HARKEN_TEST_APPROVED_ROOT_UTF8="${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm"
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm")
     if(MSVC)
         target_compile_options(TestOriginalAudioWriteConfirmIo PRIVATE /W3 /utf-8)
         set_target_properties(TestOriginalAudioWriteConfirmIo PROPERTIES
@@ -5485,6 +5487,8 @@ if(MSVC)
     )
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
+set_tests_properties(TestDatabaseFeatures PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 aura_set_test_labels(TestDatabaseFeatures db)
 add_test(NAME TestDatabaseFtsTriggerConcurrency COMMAND TestDatabaseFeatures --fts-trigger-concurrency)
 aura_set_test_labels(TestDatabaseFtsTriggerConcurrency db)
@@ -7135,8 +7139,10 @@ aura_set_test_labels(TestAcousticSimilarityFile core)
 set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
 add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
     tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
+    src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE}
     src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
 target_include_directories(TestSimilarityAnalysisStore PRIVATE src ${SQLITE_DIR})
+target_link_libraries(TestSimilarityAnalysisStore PRIVATE Threads::Threads)
 if(WIN32)
     target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_win32.cpp)
     target_link_libraries(TestSimilarityAnalysisStore PRIVATE bcrypt)
@@ -7150,6 +7156,15 @@ add_test(NAME TestSimilarityAnalysisStore COMMAND TestSimilarityAnalysisStore)
 aura_set_test_labels(TestSimilarityAnalysisStore core)
 get_target_property(_similarity_store_sources TestSimilarityAnalysisStore SOURCES)
 list(REMOVE_ITEM _similarity_store_sources tests/test_similarity_analysis_store.cpp)
+set(_statistics_worker_store_sources ${_similarity_store_sources})
+list(REMOVE_ITEM _statistics_worker_store_sources
+    src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
+# Keep the worker test linked to the same row decoder used to select indexer work.
+target_sources(TestLibraryStatisticsWorker PRIVATE ${_statistics_worker_store_sources})
+if(WIN32)
+    target_link_libraries(TestLibraryStatisticsWorker PRIVATE bcrypt)
+endif()
+list(REMOVE_ITEM _similarity_store_sources src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE})
 add_executable(TestSimilarityIndexer EXCLUDE_FROM_ALL tests/test_similarity_indexer.cpp
     src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
 target_include_directories(TestSimilarityIndexer PRIVATE src ${SQLITE_DIR})
@@ -7163,6 +7178,13 @@ add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
 aura_set_test_labels(TestSimilarityIndexer core)
 set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
 set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
+add_executable(TestSimilarityIndexCountState EXCLUDE_FROM_ALL tests/test_similarity_index_count_state.cpp)
+target_include_directories(TestSimilarityIndexCountState PRIVATE src)
+if(MSVC)
+    target_compile_options(TestSimilarityIndexCountState PRIVATE /W4 /WX /utf-8)
+endif()
+add_test(NAME TestSimilarityIndexCountState COMMAND TestSimilarityIndexCountState)
+aura_set_test_labels(TestSimilarityIndexCountState core)
 add_executable(TestAudioEmbeddingService EXCLUDE_FROM_ALL
     tests/test_audio_embedding_service.cpp
     src/AudioEmbeddingService.cpp

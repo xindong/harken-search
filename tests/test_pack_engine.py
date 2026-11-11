@@ -192,9 +192,23 @@ class PackEngineTests(unittest.TestCase):
                 stale.write_bytes(b"stale generated asset")
             for name in ["shared.dll", "codec.dll", "meter.dll", "ai.dll", "ultimate.dll"]:
                 (release_dir / name).write_bytes(name.encode("ascii"))
+            for name in pack_engine.ALWAYS_INCLUDE:
+                if not (release_dir / name).exists():
+                    (release_dir / name).write_bytes(name.encode("ascii"))
+            (release_dir / "onnxruntime.dll").write_bytes(b"onnx-runtime")
+            (release_dir / "THIRD_PARTY_COMPONENTS.json").write_text(
+                json.dumps({"components": [
+                    {"name": "ONNX Runtime", "distributed": True},
+                    {"name": "LAION CLAP HTSAT unfused audio encoder", "distributed": True},
+                ]}), encoding="utf-8",
+            )
             models_dir = release_dir / "models"
             models_dir.mkdir()
             (models_dir / "model.bin").write_bytes(b"model")
+            clap_dir = models_dir / "clap"
+            clap_dir.mkdir()
+            for name in ("clap-audio.onnx", "clap-mel-filters.f64", "clap-window.f64"):
+                (clap_dir / name).write_bytes(name.encode("ascii"))
 
             zip_path = pack_engine.pack(
                 release_dir=release_dir,
@@ -225,6 +239,12 @@ class PackEngineTests(unittest.TestCase):
                 self.assertEqual(len(archive_names), len(set(archive_names)))
                 names = set(archive_names)
                 self.assertTrue({"HarkenSearch.exe", "HarkenSearch.exe.sig", "reaper_harken.dll", "harken_features.json", "harken_features.sig"}.issubset(names))
+                for runtime in (
+                    "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+                    "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll",
+                    "vcomp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcruntime140_threads.dll",
+                ):
+                    self.assertEqual(zf.read(runtime), runtime.encode("ascii"))
                 self.assertEqual(zf.read("reaper_harken.dll"), b"reaper-bridge")
                 self.assertTrue({"lucide.ttf", "splash_beta.png", "harken_thesaurus.json"}.issubset(names))
                 self.assertTrue({"Auro.exe", "Auro.exe.sig", "auro_features.json", "auro_features.sig", "auro_thesaurus.json"}.isdisjoint(names))
@@ -233,6 +253,11 @@ class PackEngineTests(unittest.TestCase):
                 self.assertTrue((release_dir/"assets/icons/contributors/cindy.png").is_file())
                 self.assertTrue({"shared.dll", "codec.dll", "meter.dll", "ai.dll"}.issubset(names))
                 self.assertIn("models/model.bin", names)
+                self.assertEqual(zf.read("onnxruntime.dll"), b"onnx-runtime")
+                self.assertTrue({
+                    "models/clap/clap-audio.onnx", "models/clap/clap-mel-filters.f64",
+                    "models/clap/clap-window.f64",
+                }.issubset(names))
                 self.assertIn("aris_release_notes.json", names)
                 self.assertNotIn("ultimate.dll", names)
 
@@ -278,15 +303,42 @@ class PackEngineTests(unittest.TestCase):
             self.assertIn("reaper_harken.dll", str(ctx.exception))
             self.assertEqual(list(output_dir.glob("*.zip")), [])
 
+    def test_pack_rejects_missing_configured_similarity_runtime_before_zip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            release_dir = root / "Release"
+            output_dir = root / "dist"
+            release_dir.mkdir()
+            pack_engine.write_release_notes_file(release_dir, {
+                "schema_version": 2,
+                "releases": [{
+                    "version": "2.3.0", "release_date": "2026-10-19",
+                    "headline": "Similarity package test", "contributors": ["Harken Search Team"],
+                    "items": [{"category": "fix", "text": "Keep configured runtime bundled"}],
+                }],
+            })
+            (release_dir / "THIRD_PARTY_COMPONENTS.json").write_text(
+                json.dumps({"components": [
+                    {"name": "ONNX Runtime", "distributed": True},
+                ]}), encoding="utf-8",
+            )
+            with self.assertRaisesRegex(FileNotFoundError, "onnxruntime.dll"):
+                pack_engine.pack(
+                    release_dir=release_dir, output_dir=output_dir, edition="base",
+                    enabled_ids=[], version="2.3.0", secret=b"x" * 32,
+                    manifest=sample_manifest(),
+                )
+            self.assertEqual(list(output_dir.glob("*.zip")), [])
+
     def test_publish_surface_uses_aris_product_identity(self):
         self.assertEqual(pack_engine.RELEASE_HISTORY_JSON_PATH.name, "harken_release_history.json")
         self.assertEqual(pack_engine.INSTALLER_TEMPLATE_PATH.name, "HarkenSearch_Setup.iss")
         self.assertEqual(pack_engine.GENERATED_INSTALLER_PATH.name, "HarkenSearch_Setup_generated.iss")
         self.assertEqual(pack_engine.RELEASE_NOTES_FILENAME, "aris_release_notes.json")
-        self.assertEqual(
-            pack_engine.ALWAYS_INCLUDE,
-            ["HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll"],
-        )
+        self.assertTrue({
+            "HarkenSearch.exe", "HarkenSearch.exe.sig", "HarkenSearchBootstrap.exe", "reaper_harken.dll",
+            "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll",
+        }.issubset(pack_engine.ALWAYS_INCLUDE))
         self.assertIn("harken_thesaurus.json", pack_engine.RUNTIME_INCLUDE)
         self.assertEqual(
             pack_engine.render_release_history_markdown({"schema_version": 1, "releases": []}).splitlines()[0],

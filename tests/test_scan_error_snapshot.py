@@ -15,7 +15,10 @@ def predicate_exe(tmp_path_factory):
     snapshot = re.search(r'const auto \[scanErrorSnapshot, scanErrorCounts\] = state.getScanErrorSnapshot\(\);', block)
     any_expr = re.search(r'const bool networkUnreachable = std::any_of\([\s\S]*?\}\);', block).group()
     count_expr = "const int unreachableHint = HarkenSearch::BuildScanFailureSummary(scanErrorSnapshot, int(scanErrorSnapshot.size()), scanErrorCounts)[0];"
-    setup = sorted(glob.glob('C:/Program Files/Microsoft Visual Studio/*/*/VC/Auxiliary/Build/vcvars64.bat'))
+    setup = sorted(
+        glob.glob('C:/Program Files/Microsoft Visual Studio/*/*/VC/Auxiliary/Build/vcvars64.bat')
+        + glob.glob('C:/Program Files (x86)/Microsoft Visual Studio/*/*/VC/Auxiliary/Build/vcvars64.bat')
+    )
     assert setup, 'VS C++ toolchain required for checked-iterator regression'
     folder = tmp_path_factory.mktemp('scan-error-snapshot')
     cpp = folder / 'predicate.cpp'
