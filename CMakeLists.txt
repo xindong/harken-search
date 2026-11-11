@@ -1805,6 +1805,10 @@ set(ARIS_RELEASE_METADATA_FILES
 
 foreach(_meta IN LISTS ARIS_RELEASE_METADATA_FILES)
     if(EXISTS "${_meta}")
+        if(APPLE)
+            # Make/Ninja must rerun POST_BUILD staging when only metadata changes.
+            set_property(TARGET HarkenSearch APPEND PROPERTY LINK_DEPENDS "${_meta}")
+        endif()
         add_custom_command(TARGET HarkenSearch POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_meta}" "$<TARGET_FILE_DIR:HarkenSearch>/"
             COMMENT "Copying release metadata: ${_meta}")
