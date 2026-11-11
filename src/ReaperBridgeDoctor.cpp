@@ -1,6 +1,9 @@
 #include "DawBridgeInstaller.h"
 #if defined(__APPLE__)
 #include "ReaperMacHostLayout.h"
+#if __has_include("harken_reaper_build_digest.h")
+#include "harken_reaper_build_digest.h"
+#endif
 #endif
 #include "Localization.h"   // G1: L() ledger accessor (RQ-20260911-04)
 #include <cstdio>
@@ -485,6 +488,17 @@ BridgeBinaryInfo ProbeBridgeBinary(const std::string& pathUtf8) {
     }
     info.trustedSource = info.productName == "HarkenSearch" &&
                          info.fileDescription == "HarkenSearch REAPER Extension";
+#if defined(__APPLE__)
+    // Static identity strings are not source authentication. Only the component
+    // pinned into this application build may pass the Mac source check.
+#if defined(HARKEN_MAC_REAPER_BUILD_SHA256)
+    info.trustedSource = info.trustedSource &&
+        info.sha256 == HARKEN_MAC_REAPER_BUILD_SHA256 &&
+        info.architecture == ReaperBridge::CurrentArchitecture() && HasReaperPluginEntry(path);
+#else
+    info.trustedSource = false;
+#endif
+#endif
     const bool legacyProductIdentity = info.productName == "Aris" &&
         info.fileDescription == "Aris REAPER Extension";
     info.legacySignature = info.trustedSource || legacyProductIdentity ||

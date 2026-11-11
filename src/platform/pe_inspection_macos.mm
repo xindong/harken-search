@@ -11,6 +11,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+#include <array>
+#include <algorithm>
+#include <map>
+#include <string_view>
 
 namespace Platform::PeInspection {
 namespace {
@@ -46,6 +50,7 @@ public:
             status = Status::InvalidFormat;
             return;
         }
+        if (header.sizeofcmds > 16 * 1024 * 1024) { status = Status::Unsupported; return; }
         const uint64_t end = sizeof(header) + static_cast<uint64_t>(header.sizeofcmds);
         uint64_t offset = sizeof(header);
         for (uint32_t i = 0; i < header.ncmds; ++i) {
@@ -77,6 +82,26 @@ public:
                     return;
                 }
                 sectionCount += segment.nsects;
+                if (sectionCount > 4096) { status = Status::Unsupported; return; }
+                for (uint32_t index = 0; index < segment.nsects; ++index) {
+                    section_64 section {};
+                    if (!Read(offset + sizeof(segment) + static_cast<uint64_t>(index) * sizeof(section),
+                              &section, sizeof(section))) return;
+                    if (std::strncmp(section.sectname, "__harken_meta", sizeof(section.sectname)) != 0)
+                        continue;
+                    if (hasMetadata || std::strncmp(section.segname, "__TEXT", sizeof(section.segname)) != 0 ||
+                        std::strncmp(segment.segname, "__TEXT", sizeof(segment.segname)) != 0 ||
+                        (section.flags & SECTION_TYPE) != S_REGULAR || section.size == 0 || section.size > 4096 ||
+                        !Within(section.offset, section.size) || section.offset < segment.fileoff ||
+                        section.offset - segment.fileoff > segment.filesize ||
+                        section.size > segment.filesize - (section.offset - segment.fileoff)) {
+                        status = Status::InvalidFormat;
+                        return;
+                    }
+                    hasMetadata = true;
+                    metadataOffset = section.offset;
+                    metadataSize = section.size;
+                }
             }
             offset += command.cmdsize;
         }
@@ -105,6 +130,9 @@ public:
     symtab_command symbols {};
     bool hasSymbols = false;
     uint64_t sectionCount = 0;
+    bool hasMetadata = false;
+    uint64_t metadataOffset = 0;
+    uint64_t metadataSize = 0;
 private:
     bool Within(uint64_t offset, uint64_t count) const {
         return offset <= size_ && count <= size_ - offset;
@@ -112,6 +140,44 @@ private:
     int fd_ = -1;
     uint64_t size_ = 0;
 };
+
+StringResult MetadataValue(const std::string& path, const std::string& key) {
+    if (key.empty() || key.find('\0') != std::string::npos)
+        return {Status::InvalidArgument, {}, 0};
+    MachFile file(path);
+    if (file.status != Status::Success) return {file.status, {}, file.error};
+    if (!file.hasMetadata) return {Status::ValueUnavailable, {}, 0};
+    std::vector<char> bytes(static_cast<size_t>(file.metadataSize));
+    if (!file.Read(file.metadataOffset, bytes.data(), bytes.size())) return {file.status, {}, file.error};
+    const auto terminator = std::find(bytes.begin(), bytes.end(), '\0');
+    if (terminator == bytes.end() || std::any_of(terminator, bytes.end(), [](char c) { return c != 0; }))
+        return {Status::InvalidFormat, {}, 0};
+    const std::string_view text(bytes.data(), static_cast<size_t>(terminator - bytes.begin()));
+    constexpr std::string_view prefix = "HARKEN-REAPER-METADATA-1\n";
+    if (text.substr(0, prefix.size()) != prefix) return {Status::InvalidFormat, {}, 0};
+    const std::array<std::string_view, 6> allowed = {"ProductName", "FileDescription", "FileVersion",
+        "BridgeProtocolVersion", "BridgeArchitecture", "BridgeManifest"};
+    std::map<std::string, std::string> fields;
+    size_t start = prefix.size();
+    while (start < text.size()) {
+        const size_t end = text.find('\n', start);
+        if (end == std::string_view::npos) return {Status::InvalidFormat, {}, 0};
+        const auto line = text.substr(start, end - start);
+        const auto separator = line.find('=');
+        if (separator == std::string_view::npos) return {Status::InvalidFormat, {}, 0};
+        const auto name = line.substr(0, separator), value = line.substr(separator + 1);
+        if (std::find(allowed.begin(), allowed.end(), name) == allowed.end() || value.empty() ||
+            value.size() > 512 || std::any_of(value.begin(), value.end(), [](unsigned char c) {
+                return c < 32 || c > 126;
+            }) || !fields.emplace(std::string(name), std::string(value)).second)
+            return {Status::InvalidFormat, {}, 0};
+        start = end + 1;
+    }
+    if (fields.size() != allowed.size()) return {Status::InvalidFormat, {}, 0};
+    const auto found = fields.find(key);
+    return found == fields.end() ? StringResult{Status::ValueUnavailable, {}, 0}
+                                : StringResult{Status::Success, found->second, 0};
+}
 }
 
 StringResult ReadArchitecture(const std::string& pathUtf8) {
@@ -123,17 +189,14 @@ StringResult ReadArchitecture(const std::string& pathUtf8) {
     }
 }
 
-StringResult ReadFileVersion(const std::string& /*pathUtf8*/) {
-    StringResult result;
-    result.status = Status::Unsupported;
-    return result;
+StringResult ReadFileVersion(const std::string& pathUtf8) {
+    return ReadVersionString(pathUtf8, "FileVersion");
 }
 
-StringResult ReadVersionString(const std::string& /*pathUtf8*/,
-                               const std::string& /*keyUtf8*/) {
-    StringResult result;
-    result.status = Status::Unsupported;
-    return result;
+StringResult ReadVersionString(const std::string& pathUtf8,
+                               const std::string& keyUtf8) {
+    try { return MetadataValue(pathUtf8, keyUtf8); }
+    catch (...) { return {Status::QueryFailed, {}, 0}; }
 }
 
 ExportResult ProbeExport(const std::string& pathUtf8,

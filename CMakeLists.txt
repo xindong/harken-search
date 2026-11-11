@@ -1422,6 +1422,20 @@ endif()
 if(WIN32)
     add_dependencies(HarkenSearch reaper_harken)
 endif()
+if(APPLE)
+    # Pin the compiled component without bundling/installing the host candidate.
+    set(HARKEN_REAPER_DIGEST_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/harken_reaper_build_digest.h")
+    add_custom_command(OUTPUT "${HARKEN_REAPER_DIGEST_HEADER}"
+        COMMAND ${CMAKE_COMMAND}
+            "-DINPUT=$<TARGET_FILE:reaper_harken>"
+            "-DOUTPUT=${HARKEN_REAPER_DIGEST_HEADER}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_reaper_build_digest.cmake"
+        DEPENDS reaper_harken "${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_reaper_build_digest.cmake"
+        VERBATIM)
+    add_custom_target(HarkenReaperBuildDigest DEPENDS "${HARKEN_REAPER_DIGEST_HEADER}")
+    add_dependencies(HarkenSearch HarkenReaperBuildDigest)
+    target_include_directories(HarkenSearch PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+endif()
 
 set(AURO_PROTOOLS_PTSL_SDK_ROOT "" CACHE PATH "Optional local Avid Pro Tools Scripting SDK root or built PTSLC_CPP drop folder; not vendored")
 set(AURO_PROTOOLS_PTSL_DROP_DIR "${CMAKE_BINARY_DIR}/Debug/ProToolsSdk" CACHE PATH "Local built PTSLC_CPP drop folder used by HarkenSearchProToolsBridge")

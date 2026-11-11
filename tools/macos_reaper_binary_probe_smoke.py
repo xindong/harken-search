@@ -28,8 +28,18 @@ try:
     report['component'] = info
     assert info['exists'] and info['architecture'] == 'x64', info
     assert info['sha256'] == expected and info['recognized_entry'], info
-    assert not info['trusted_source'] and not info['version'] and not info['protocol'], info
-    # Native architecture/entry are facts, not proof of source trust or metadata.
+    assert info['trusted_source'] and info['version'] == '3.0.0.0' and info['protocol'] == 3, info
+    assert info['manifest'], info
+    # Preserve valid metadata/entry while changing the digest. Identity strings
+    # cannot authenticate this copy, even with the managed plugin filename.
+    tampered = fixture / 'tampered' / component.name
+    tampered.parent.mkdir()
+    tampered.write_bytes(component.read_bytes() + b'changed-digest\n')
+    changed = app.command('inspect_reaper_binary', path=str(tampered))['reaper_binary_probe']
+    report['tampered'] = changed
+    assert changed['architecture'] == 'x64' and changed['recognized_entry'], changed
+    assert changed['version'] == info['version'] and changed['protocol'] == info['protocol'], changed
+    assert changed['sha256'] != expected and not changed['trusted_source'], changed
     bad = app.command('inspect_reaper_binary', path=str(damaged))['reaper_binary_probe']
     report['damaged'] = bad
     assert bad['exists'] and not bad['architecture'] and not bad['trusted_source'], bad
