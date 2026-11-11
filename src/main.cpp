@@ -29460,13 +29460,18 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!state.dbSwitchInProgress && state.database.isOpen()) {
         if (!state.featureIndexStatistics) {
             state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
-                HarkenSearch::MakeFeatureIndexCountHandler(true));
+                HarkenSearch::MakeFeatureIndexCountHandler(true, [] {
+                    HarkenSearch::AudioEmbeddingService model;
+                    std::string error;
+                    model.Load(GetExeDirUtf8() + "/models/clap", error);
+                    return model.IsReady();
+                }));
         }
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            count.Complete(result->success, result->indexed,
-                           result->semanticIndexed, result->total);
+            count.Complete(result->success, result->indexed, result->semanticIndexed,
+                           result->total, result->pending);
         }
         if (count.phase() != SimilarityIndexCountState::Phase::Failed &&
             now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
@@ -29517,8 +29522,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, count.total() -
-            std::min(count.indexed(), count.semanticIndexed()));
+        const int pending = count.pending();
         if (count.CanStart(state.dbSwitchInProgress, state.database.isOpen())) {
             ImGui::Spacing();
             char label[128];

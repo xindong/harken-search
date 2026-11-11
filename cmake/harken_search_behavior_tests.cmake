@@ -7139,8 +7139,10 @@ aura_set_test_labels(TestAcousticSimilarityFile core)
 set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
 add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
     tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
+    src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE}
     src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
 target_include_directories(TestSimilarityAnalysisStore PRIVATE src ${SQLITE_DIR})
+target_link_libraries(TestSimilarityAnalysisStore PRIVATE Threads::Threads)
 if(WIN32)
     target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_win32.cpp)
     target_link_libraries(TestSimilarityAnalysisStore PRIVATE bcrypt)
@@ -7154,6 +7156,15 @@ add_test(NAME TestSimilarityAnalysisStore COMMAND TestSimilarityAnalysisStore)
 aura_set_test_labels(TestSimilarityAnalysisStore core)
 get_target_property(_similarity_store_sources TestSimilarityAnalysisStore SOURCES)
 list(REMOVE_ITEM _similarity_store_sources tests/test_similarity_analysis_store.cpp)
+set(_statistics_worker_store_sources ${_similarity_store_sources})
+list(REMOVE_ITEM _statistics_worker_store_sources
+    src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
+# Keep the worker test linked to the same row decoder used to select indexer work.
+target_sources(TestLibraryStatisticsWorker PRIVATE ${_statistics_worker_store_sources})
+if(WIN32)
+    target_link_libraries(TestLibraryStatisticsWorker PRIVATE bcrypt)
+endif()
+list(REMOVE_ITEM _similarity_store_sources src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE})
 add_executable(TestSimilarityIndexer EXCLUDE_FROM_ALL tests/test_similarity_indexer.cpp
     src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
 target_include_directories(TestSimilarityIndexer PRIVATE src ${SQLITE_DIR})
