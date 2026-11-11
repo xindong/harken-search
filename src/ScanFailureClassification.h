@@ -13,6 +13,7 @@ inline ScanFailureCategory ClassifyScanFailure(const std::string& error) {
     if (starts("Scan_NetworkLibraryUnreachable") || starts("Cannot read directory") ||
         starts("Failed to scan directory") || starts("Path not found") || starts("File not found"))
         return ScanFailureCategory::Path;
+    if (starts("Scan folder is unavailable")) return ScanFailureCategory::Path;
     if (starts("No audio samples") || starts("No usable audio") || starts("Empty audio") || starts("Audio file too small to decode"))
         return ScanFailureCategory::Empty;
     if (starts("Failed to decode") || starts("Failed to read audio") || starts("Cannot decode") ||
