@@ -2004,6 +2004,18 @@ static std::unordered_map<std::string, MiniWaveTextureEntry> g_miniWaveTextureCa
 static MiniWaveformPresentation::DeferredTextureDeletes g_deferredMiniWaveTextureDeletes;
 static const size_t kMaxMiniWaveTextures = 250;
 
+#if defined(__APPLE__) && AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+std::vector<std::string> HarkenSearch::MacQa::MiniTexturePaths() {
+    std::vector<std::string> paths;
+    paths.reserve(g_miniWaveTextureCache.size());
+    for (const auto& entry : g_miniWaveTextureCache) {
+        if (entry.second.hasTexture && entry.second.textureId != 0)
+            paths.push_back(entry.first);
+    }
+    return paths;
+}
+#endif
+
 // Mini waveform texture upload queue.
 static MiniWaveformScheduler g_pendingMiniWaveTextureScheduler;
 static const size_t kMaxPendingMiniWaveTextures = 500;

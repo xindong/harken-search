@@ -450,6 +450,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"spectrum_pixels",textureProbe},
                 {"spectrum_commands",spectrumCommands}}},
             {"list_ui",{{"frame",ImGui::GetFrameCount()},
+                {"mini_texture_paths",request.capture ? MiniTexturePaths() : std::vector<std::string>{}},
                 {"draw_frame",state.qaRegions.listTextFrame},
                 {"input_before_ui",inputBeforeUi},
                 {"settle_frames",state.dbSwitchSettleFramesRemaining},

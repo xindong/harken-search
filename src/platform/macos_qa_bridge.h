@@ -21,4 +21,8 @@ Request Poll(AppState& state);
 bool Reply(const AppState& state, const Request& request, bool captured);
 bool ConsumeThesaurusPageRequest();
 const std::string& BrowserTreeRootForQa();
+#if defined(__APPLE__) && AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+// Read on the UI thread after rendering; no texture IDs or mutations escape.
+std::vector<std::string> MiniTexturePaths();
+#endif
 }
