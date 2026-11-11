@@ -1,5 +1,5 @@
 #include "LibraryStatisticsWorker.h"
-#include "AudioEmbeddingService.h"
+#include "SimilarityAnalysisStore.h"
 #include "platform/thread_id.h"
 #include "sqlite3.h"
 #include <algorithm>
@@ -33,16 +33,14 @@ struct ReadOnlyCounter {
         const char* sql = "SELECT COUNT(*), COALESCE(SUM(CASE WHEN audio_features IS NOT NULL "
                           "AND features_version >= 1 THEN 1 ELSE 0 END),0) FROM audio_files;";
         std::string v2Sql;
+        bool hasV2Table = false;
         if (version2) {
             sqlite3_stmt* exists = nullptr;
-            bool hasTable = false;
             if (sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='harken_similarity_v2'", -1, &exists, nullptr) == SQLITE_OK) {
-                hasTable = sqlite3_step(exists) == SQLITE_ROW;
+                hasV2Table = sqlite3_step(exists) == SQLITE_ROW;
             }
             if (exists) sqlite3_finalize(exists);
-            if (hasTable) {
-                v2Sql = std::string("SELECT COUNT(*),COALESCE(SUM(CASE WHEN a.version=2 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN a.version=2 AND length(a.embedding)=2048 AND a.model_version='") + kSimilarityModelRevision + "' THEN 1 ELSE 0 END),0) FROM audio_files f LEFT JOIN harken_similarity_v2 a ON a.file_id=f.id AND a.file_path=f.file_path";
-            } else v2Sql = "SELECT COUNT(*),0,0 FROM audio_files";
+            v2Sql = "SELECT COUNT(*),0,0 FROM audio_files";
             sql = v2Sql.c_str();
         }
         sqlite3_stmt* statement = nullptr;
@@ -54,6 +52,14 @@ struct ReadOnlyCounter {
             result.success = sqlite3_step(statement) == SQLITE_DONE && !cancel();
         }
         if (statement) sqlite3_finalize(statement);
+        if (version2 && hasV2Table && result.success) {
+            int acoustic = 0, semantic = 0;
+            result.success = SimilarityAnalysisStore::CountValidCoverage(db, acoustic, semantic, cancel);
+            if (result.success) {
+                result.indexed = acoustic;
+                result.semanticIndexed = semantic;
+            }
+        }
         sqlite3_progress_handler(db, 0, nullptr, nullptr);
         sqlite3_busy_handler(db, nullptr, nullptr);
         sqlite3_close(db); db = nullptr;

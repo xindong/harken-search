@@ -1,4 +1,4 @@
-"""Real isolated UI check: the button shows and runs only acoustic gaps without a model."""
+"""Real isolated UI check: show and run acoustic gaps, including malformed records, without a model."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -157,9 +157,10 @@ def run(args):
         with sqlite3.connect(db) as connection:
             file_id = connection.execute('SELECT MAX(file_id) FROM harken_similarity_v2').fetchone()[0]
             assert file_id is not None
-            connection.execute('DELETE FROM harken_similarity_segments_v2 WHERE file_id=?', (file_id,))
-            connection.execute('DELETE FROM harken_similarity_v2 WHERE file_id=?', (file_id,))
-        report['removed_qa_analysis_id'] = file_id
+            connection.execute(
+                'UPDATE harken_similarity_v2 SET fingerprint=? WHERE file_id=?',
+                ('invalid-qa-fingerprint', file_id))
+        report['invalidated_qa_analysis_id'] = file_id
 
         report['second_pid'] = launch()
         command(cmd='similar_index', action='open', floating=True, width=900, height=620, language=0)
@@ -176,7 +177,7 @@ def run(args):
         assert resumed['progress'] == 1 and resumed['analyzed'] == 1 and resumed['batch_summary']['failed'] == 0, resumed
         screenshot('remaining-after', resumed['controls']['similar.index.start'])
         report['resumed'] = resumed
-        report['checks'].append('Visible start action processed one remaining file, not three total files')
+        report['checks'].append('Malformed V2 identity counted as one remaining file; visible start processed only that file')
         report['passed'] = True
         save()
     except Exception:
