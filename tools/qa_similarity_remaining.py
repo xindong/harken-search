@@ -21,6 +21,13 @@ from qa_shared_buttons import audit
 from qa_transport_themes import Driver
 
 
+def assert_remaining_label(observation, bounds, remaining):
+    labels = [entry['label'] for entry in observation['checks'] if entry['bounds'] == bounds]
+    expected = f'\u5f00\u59cb\u6279\u91cf\u7279\u5f81\u5206\u6790 ({remaining} \u4e2a\u6587\u4ef6)'
+    assert labels == [expected], f'Expected {expected!r} at {bounds}, observed {labels!r}'
+    return labels[0]
+
+
 def tone(path, frequency):
     path.parent.mkdir(parents=True, exist_ok=True)
     samples = (struct.pack('<h', round(9000 * math.sin(2 * math.pi * frequency * n / 22050)))
@@ -168,6 +175,8 @@ def run(args):
         before = until(index, lambda s: s['total'] == 3 and s['indexed'] == 2
                        and 'similar.index.start' in s['controls'], 'partial coverage')
         time.sleep(2.5)  # asynchronous read-only counter publishes to the visible panel
+        observed = audit(driver, command(cmd='get_state')['theme'])
+        report['visible_start_label'] = assert_remaining_label(observed, before['controls']['similar.index.start'], 1)
         screenshot('remaining-before', before['controls']['similar.index.start'])
         report['before'] = before
         assert before['semantic_indexed'] == 0, before

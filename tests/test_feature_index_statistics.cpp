@@ -152,6 +152,19 @@ int main() {
                 unavailableHandler(v2Path, [] { return false; }).pending == 0 &&
                 availableProbes == 1 && unavailableProbes == 1,
             "acoustic-complete files do not inflate unavailable-model remainder and probe is cached");
+        require(sqlite3_exec(writer, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr) == SQLITE_OK, "WAL fixture failed");
+        int cancelCalls = 0;
+        bool concurrentWrite = false;
+        v2 = v2Handler(v2Path, [&] {
+            if (++cancelCalls == 3) {
+                require(sqlite3_exec(writer, "INSERT INTO audio_files VALUES(3,'c','c','wav',1)", nullptr, nullptr, nullptr) == SQLITE_OK, "concurrent audio insert failed");
+                insertV2Row(3, "c", false);
+                concurrentWrite = true;
+            }
+            return false;
+        });
+        require(concurrentWrite && v2.success && v2.total == 2 && v2.indexed == 2,
+                "concurrent insert must not mix library snapshots");
         sqlite3_close(writer);
         // Reproduce the Windows library-replacement boundary with a real SQLite
         // reader. Cancellation is observable before its connection is released.

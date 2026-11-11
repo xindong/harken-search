@@ -29,6 +29,8 @@ struct ReadOnlyCounter {
             return 1;
         }, check);
         sqlite3_exec(db, "PRAGMA query_only=ON; PRAGMA mmap_size=536870912; PRAGMA cache_size=-8000;", nullptr, nullptr, nullptr);
+        // Keep the total and valid-coverage reads on one SQLite snapshot.
+        if (sqlite3_exec(db, "BEGIN", nullptr, nullptr, nullptr) != SQLITE_OK) return result;
         // Same population and feature-version rule as Database::tryGetFeatureIndexCounts.
         const char* sql = "SELECT COUNT(*), COALESCE(SUM(CASE WHEN audio_features IS NOT NULL "
                           "AND features_version >= 1 THEN 1 ELSE 0 END),0) FROM audio_files;";
@@ -60,6 +62,8 @@ struct ReadOnlyCounter {
                 result.semanticIndexed = semantic;
             }
         }
+        if (sqlite3_exec(db, result.success ? "COMMIT" : "ROLLBACK", nullptr, nullptr, nullptr) != SQLITE_OK)
+            result.success = false;
         sqlite3_progress_handler(db, 0, nullptr, nullptr);
         sqlite3_busy_handler(db, nullptr, nullptr);
         sqlite3_close(db); db = nullptr;
