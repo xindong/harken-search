@@ -265,6 +265,10 @@ def test_qa_packager_publishes_verified_pair_and_preserves_previous_on_failure(
     shutil.copy2(GENERATOR, root / "tools" / GENERATOR.name)
     shutil.copy2(REPO_ROOT / "tools/build_offline_manual.py", root / "tools/build_offline_manual.py")
     shutil.copy2(REPO_ROOT / "tools/pack_engine.py", root / "tools/pack_engine.py")
+    shutil.copy2(
+        REPO_ROOT / "tools/verify_release_assembly.py",
+        root / "tools/verify_release_assembly.py",
+    )
     (root / "src").mkdir()
     shutil.copy2(REPO_ROOT / "src/Version.h", root / "src/Version.h")
     (root / "installer").mkdir()

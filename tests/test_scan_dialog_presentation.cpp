@@ -161,6 +161,14 @@ int main(int argc, char** argv) {
     input.workflow.foregroundTasksDrained = true;
     view = BuildScanDialogView(input);
     Check(view.phase == ScanDialogPhase::Empty, "zero files is an empty result");
+    input = {};
+    input.reportedErrors = 1;
+    view = BuildScanDialogView(input);
+    Check(view.surface == ScanDialogSurface::Result && view.phase == ScanDialogPhase::Partial && view.failed == 1,
+          "missing-root failure shows a result even with zero discovered audio");
+    input = {};
+    input.workflow.stage = ScanWorkflowStage::Completed;
+    input.workflow.foregroundTasksDrained = true;
     input.workflow.discovered = input.workflow.processed = 7093;
     input.workflow.succeeded = 7022; input.workflow.failed = 42; input.workflow.skipped = 29;
     view = BuildScanDialogView(input);
@@ -169,6 +177,8 @@ int main(int argc, char** argv) {
     view = BuildScanDialogView(input);
     Check(view.surface == ScanDialogSurface::Progress && !view.progressKnown, "pending work cannot show result");
     Check(ClassifyScanFailure("Cannot read directory entry path under: X:/audio") == ScanFailureCategory::Path, "path reason");
+    Check(ClassifyScanFailure("Scan folder is unavailable or is not a directory: X:/missing") == ScanFailureCategory::Path,
+          "missing scan root is a path failure");
     Check(ClassifyScanFailure("Failed to decode audio: X:/a.wav") == ScanFailureCategory::Read, "decode reason");
     Check(ClassifyScanFailure("No audio samples: X:/a.wav") == ScanFailureCategory::Empty, "empty reason");
     Check(ClassifyScanFailure("Audio file too small to decode: X:/zero.wav") == ScanFailureCategory::Empty, "real scanner empty-file reason");

@@ -400,7 +400,7 @@ def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
     assert "toolbarTheme.chromeBorder" in toolbar_search
     assert "uiMix(toolbarTheme.toolbarBG, kCurrentTheme.resultsBG" not in toolbar_search
     builtin = read(BUILTIN_THEME_CPP)
-    assert "s.transportBarBG         = H(0xff2e445c)" in builtin
+    assert "s.transportBarBG         = H(0xff223a52)" in builtin
     assert "s.transportBarBG         = H(0xff000000)" not in builtin
     assert "const ImVec2 tableMin(winPos.x, ImGui::GetCursorScreenPos().y);" in main
     assert "ImGui::GetWindowPos().x + ImGui::GetWindowSize().x" in main
@@ -507,7 +507,7 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "centerResultsDrawList->AddRect(" in center_setup
 
 
-def test_lapis_database_folder_search_inherits_only_the_sidebar_semantic_colors():
+def test_lapis_folder_search_inherits_sidebar_semantic_colors_in_both_views():
     main = read(MAIN_CPP)
     widgets_header = read(AURO_WIDGETS_HEADER)
     widgets_source = read(AURO_WIDGETS_SOURCE)
@@ -524,7 +524,7 @@ def test_lapis_database_folder_search_inherits_only_the_sidebar_semantic_colors(
     assert "useLapisBlueFolderSearchSurface" not in browser_search
     assert main.count("useLapisBlueFolderSearchSurface") == 2
     assert "inheritContextColors);" in toolbar
-    assert "false,\n                false," in browser_search
+    assert "state.settings.theme == AppTheme::LapisBlue,\n                false," in browser_search
     assert "useLapisBlueFolderSearchSurface,\n                true," in database_search
     assert "ImGuiCol_FrameBg,              leftPanelInput" in main
     assert "ImGuiCol_Border,               leftPanelOutline" in main
@@ -595,7 +595,7 @@ def test_toolbar_has_one_theme_derived_top_highlight_owner():
 def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     main = read(MAIN_CPP)
     assert "case AppTheme::LapisBlue:" in main
-    assert "s.resultsSecondaryText   = H(0xffe5ecf4);" in read(BUILTIN_THEME_CPP)
+    assert "s.resultsSecondaryText   = H(0xffd7e3ef);" in read(BUILTIN_THEME_CPP)
 
 
 def test_top_menu_dropdowns_use_one_chrome_font_scope():

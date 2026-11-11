@@ -576,6 +576,39 @@ static int testScanPrecomputeWritesCompleteWaveformCache() {
     return failures;
 }
 
+static int testMissingScanRootReportsPathFailure() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("missing_scan_root");
+    const fs::path dbPath = root / "missing_scan_root.db";
+    const fs::path missing = root / "does-not-exist";
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    int callbackCurrent = -1, callbackTotal = -1;
+    const ScanStats stats = db.scanDirectoryEx(
+        missing.u8string(), true, false, false,
+        [&](int current, int total, const std::string&, bool) {
+            callbackCurrent = current;
+            callbackTotal = total;
+        }, nullptr, 1, false);
+    check(stats.errors == 1 && stats.total == 0,
+          "missing scan root reports one failure without discovered audio", failures);
+    check(stats.errorCategoryCounts[static_cast<size_t>(HarkenSearch::ScanFailureCategory::Path)] == 1,
+          "missing scan root is classified as a path failure", failures);
+    check(!stats.errorMessages.empty() &&
+              stats.errorMessages.front().find(missing.u8string()) != std::string::npos,
+          "missing scan root retains its path for result details", failures);
+    check(callbackCurrent == 0 && callbackTotal == 1,
+          "missing scan root publishes a bounded terminal callback", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testCompleteImportSkipsPersistentDetailForOverFiveMinutes() {
     int failures = 0;
     const fs::path root = makeTempRoot("long_file_mini_only");
@@ -4275,6 +4308,8 @@ int main(int argc, char** argv) {
         return testUnchangedFullScanWithConcurrentCacheWrite(false) +
                testUnchangedFullScanWithConcurrentCacheWrite(true) == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string(argv[1]) == "--missing-root")
+        return testMissingScanRootReportsPathFailure() == 0 ? 0 : 1;
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -4285,6 +4320,7 @@ int main(int argc, char** argv) {
     failures += testWpk2PeakEnvelopeCodecPreservesQuietTail();
     std::cout << "-- testScanPrecomputeWritesCompleteWaveformCache\n";
     failures += testScanPrecomputeWritesCompleteWaveformCache();
+    failures += testMissingScanRootReportsPathFailure();
     std::cout << "-- testCompleteImportSkipsPersistentDetailForOverFiveMinutes\n";
     failures += testCompleteImportSkipsPersistentDetailForOverFiveMinutes();
     std::cout << "-- testScanStatsReportIngestSummary\n";
