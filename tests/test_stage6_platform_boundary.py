@@ -2389,11 +2389,16 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertIn('return "";', portable)
         self.assertEqual(
-            1,
+            2,
             main.count(
                 "Platform::ExecutableDialogs::OpenExecutableFileDialogUtf8("
             ),
         )
+        reaper_browse = main.split("aura::ui::ActionButton(L(Main_BrowseReaperPath)", 1)[1]
+        reaper_browse = reaper_browse.split("if (!picked.empty())", 1)[0]
+        self.assertIn("#if defined(__APPLE__)", reaper_browse)
+        self.assertIn("ResolveMacReaperHostLayout(executable)", reaper_browse)
+        self.assertIn("OpenFolderDialog(MainUiOwnerWindow())", reaper_browse)
         self.assertNotIn(
             "static std::string OpenExecutableFileDialogUtf8(HWND owner", main
         )
