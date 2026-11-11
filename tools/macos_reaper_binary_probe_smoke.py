@@ -57,7 +57,8 @@ try:
                 struct.pack_into(record, container, 8 + index * struct.calcsize(record),
                                  *(fields + (0,) if wide else fields))
             container[4096:4096 + len(image)] = image
-            wrapper = fixture / f'universal-{wide}-{endian == "<"}.dylib'
+            wrapper = fixture / f'universal-{wide}-{endian == "<"}' / component.name
+            wrapper.parent.mkdir()
             wrapper.write_bytes(container)
             result = app.command('inspect_reaper_binary', path=str(wrapper))['reaper_binary_probe']
             report['universal'].append(result)
