@@ -7637,6 +7637,13 @@
       "ja": "reaper.exe を含むディレクトリを選択してください。DLL の検索や手動コピーは不要です。"
     },
     {
+      "id": "Main_ReaperAppPathHint",
+      "type": "ui",
+      "zh": "选择 REAPER 应用（.app），或其包内的 REAPER 可执行文件。",
+      "en": "Select the REAPER app (.app) or its REAPER executable inside the app.",
+      "ja": "REAPER アプリ（.app）またはアプリ内の REAPER 実行ファイルを選択してください。"
+    },
+    {
       "id": "Main_AutoDetect",
       "type": "ui",
       "zh": "自动检测##ReaperDetect",

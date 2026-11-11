@@ -34461,7 +34461,13 @@ void RenderUI(AppState& state) {
                 }
                 if (pathCommitted) requestReaperStatusRefresh();
 
+#if defined(__APPLE__)
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled(L(Main_ReaperAppPathHint));
+                ImGui::PopTextWrapPos();
+#else
                 ImGui::TextDisabled(L(Main_ReaperPathHint));
+#endif
                 if (aura::ui::ActionButton(L(Main_AutoDetect))) {
                     g_reaperAutoDetectRequests.insert(ReaperAutoDetectRequestKey(selected));
                     requestReaperStatusRefresh();
