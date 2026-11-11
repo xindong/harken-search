@@ -65,7 +65,11 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-UsePreviousAppDir=no
+; The distinct Harken AppId already separates legacy Aris installs. Reuse the
+; current Harken directory so an upgrade does not create a second installation.
+UsePreviousAppDir=yes
+CloseApplications=no
+RestartApplications=no
 AllowNoIcons=yes
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=no
@@ -96,6 +100,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimp"; MessagesFile: "Languages\ChineseSimplified.isl"
 
 [CustomMessages]
+english.CurrentInstallBusy=Harken Search or its updater is still running, or files in this installation cannot be replaced. Please fully exit Harken Search (including its tray icon), wait for any update to finish, then retry. No installation files have been changed.
+chinesesimp.CurrentInstallBusy=Harken Search 或更新程序尚未退出，或当前安装文件无法替换。请完全退出 Harken Search（包括托盘图标），等待正在进行的更新结束后重试。本次尚未替换安装文件。
 english.EulaTitle=Installation and Use License Agreement
 chinesesimp.EulaTitle=软件安装及使用许可协议
 english.EulaDescription=Read the agreement below, then select the checkbox to agree.
@@ -337,6 +343,132 @@ function CreateFileW(lpFileName: String; dwDesiredAccess: Cardinal;
 function CloseHandle(hObject: LongInt): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
 
+type
+  TInstallFileIdInfo = record
+    VolumeSerialLow: Cardinal;
+    VolumeSerialHigh: Cardinal;
+    FileId0: Cardinal;
+    FileId1: Cardinal;
+    FileId2: Cardinal;
+    FileId3: Cardinal;
+  end;
+
+var
+  InstallMutationMutexHandle: LongInt;
+  InstallMutationMutexOwned: Boolean;
+
+function GetFileInformationByHandleEx(hFile: LongInt;
+  FileInformationClass: Integer; var FileInformation: TInstallFileIdInfo;
+  dwBufferSize: Cardinal): BOOL;
+  external 'GetFileInformationByHandleEx@kernel32.dll stdcall';
+function CreateMutexW(lpMutexAttributes: Cardinal; bInitialOwner: BOOL;
+  lpName: String): LongInt;
+  external 'CreateMutexW@kernel32.dll stdcall';
+function WaitForSingleObject(hHandle: LongInt; dwMilliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function ReleaseMutex(hMutex: LongInt): BOOL;
+  external 'ReleaseMutex@kernel32.dll stdcall';
+
+function CardinalHex(Value: Cardinal): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to 7 do
+  begin
+    Result := Copy('0123456789ABCDEF', (Value and $F) + 1, 1) + Result;
+    Value := Value shr 4;
+  end;
+end;
+
+function CardinalBytesHex(Value: Cardinal): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to 3 do
+  begin
+    Result := Result + Copy(CardinalHex(Value and $FF), 7, 2);
+    Value := Value shr 8;
+  end;
+end;
+
+function InstallMutationMutexName(const InstallLocation: String): String;
+var
+  DirectoryHandle: LongInt;
+  Identity: TInstallFileIdInfo;
+begin
+  Result := '';
+  { A first install has no target root yet. Create only the selected directory
+    before deriving its identity; no application files have been copied. }
+  if not DirExists(InstallLocation) then
+    if not ForceDirectories(InstallLocation) then
+      Exit;
+  DirectoryHandle := CreateFileW(InstallLocation, $80, 7, 0, 3, $02000000, 0);
+  if DirectoryHandle = -1 then
+    Exit;
+  try
+    if not GetFileInformationByHandleEx(DirectoryHandle, 18, Identity, 24) then
+      Exit;
+  finally
+    CloseHandle(DirectoryHandle);
+  end;
+  if ((Identity.VolumeSerialLow = 0) and (Identity.VolumeSerialHigh = 0)) or
+     ((Identity.FileId0 = 0) and (Identity.FileId1 = 0) and
+      (Identity.FileId2 = 0) and (Identity.FileId3 = 0)) then
+    Exit;
+  Result := 'Global\HarkenSearchInstallMutation_' +
+    CardinalHex(Identity.VolumeSerialHigh) +
+    CardinalHex(Identity.VolumeSerialLow) +
+    CardinalBytesHex(Identity.FileId0) +
+    CardinalBytesHex(Identity.FileId1) +
+    CardinalBytesHex(Identity.FileId2) +
+    CardinalBytesHex(Identity.FileId3);
+end;
+
+procedure ReleaseInstallMutationMutex;
+begin
+  if InstallMutationMutexOwned then
+  begin
+    ReleaseMutex(InstallMutationMutexHandle);
+    InstallMutationMutexOwned := False;
+  end;
+  if InstallMutationMutexHandle <> 0 then
+  begin
+    CloseHandle(InstallMutationMutexHandle);
+    InstallMutationMutexHandle := 0;
+  end;
+end;
+
+function AcquireInstallMutationMutex(const InstallLocation: String): Boolean;
+var
+  MutexName: String;
+  MutexHandle: LongInt;
+  WaitResult: Cardinal;
+begin
+  Result := False;
+  if InstallMutationMutexOwned then
+  begin
+    Result := True;
+    Exit;
+  end;
+  MutexName := InstallMutationMutexName(InstallLocation);
+  if MutexName = '' then
+    Exit;
+  MutexHandle := CreateMutexW(0, False, MutexName);
+  if MutexHandle = 0 then
+    Exit;
+  WaitResult := WaitForSingleObject(MutexHandle, 0);
+  if (WaitResult = 0) or (WaitResult = $80) then
+  begin
+    InstallMutationMutexHandle := MutexHandle;
+    InstallMutationMutexOwned := True;
+    Result := True;
+  end
+  else
+    CloseHandle(MutexHandle);
+end;
+
 function IsFileLocked(const FileName: String): Boolean;
 var
   Handle: LongInt;
@@ -344,8 +476,9 @@ begin
   Result := False;
   if not FileExists(FileName) then
     Exit;
-  { GENERIC_READ, 共享模式 0（全部拒绝）, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL }
-  Handle := CreateFileW(FileName, $80000000, 0, 0, 3, $80, 0);
+  { An executable image can still be opened for exclusive READ while running.
+    Probe WRITE access too, without writing any bytes, before replacing it. }
+  Handle := CreateFileW(FileName, $C0000000, 0, 0, 3, $80, 0);
   if Handle = -1 then
     Result := True
   else
@@ -357,6 +490,7 @@ begin
   Result :=
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearch.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearchBootstrap.exe') or
+    IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearchProToolsBridge.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'Auro.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'Aris.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'ArisBootstrap.exe');
@@ -599,6 +733,26 @@ begin
   { 校验不过=拒绝执行旧卸载程序，但不阻断安装；残留文件照常清理，
     卸载入口由新安装写入，旧卸载项留给用户在设置里手动处理。 }
   DeleteLegacyStaleFiles(InstallLocation);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not AcquireInstallMutationMutex(ExpandConstant('{app}')) then
+  begin
+    Result := CustomMessage('CurrentInstallBusy');
+    Exit;
+  end;
+  if LegacyProductIsRunning(ExpandConstant('{app}')) then
+  begin
+    ReleaseInstallMutationMutex;
+    Result := CustomMessage('CurrentInstallBusy');
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  ReleaseInstallMutationMutex;
 end;
 
 function InitializeSetup: Boolean;
