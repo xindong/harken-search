@@ -213,7 +213,7 @@
         {
         ReadingTextScope reading;
         // Preview the selected reading size throughout Settings, including sizes below 18 px.
-        const float settingsBodyPx=static_cast<float>(draft.readingFontSize);
+        const float settingsBodyPx=static_cast<float>(ClampSettingsFontSize(draft.readingFontSize));
         const float settingsTitlePx=settingsBodyPx*(4.f/3.f);
         ImGui::PushFont(GetUIFontRegular(),settingsBodyPx);
         const auto winPos=ImGui::GetWindowPos(),winSize=ImGui::GetWindowSize();

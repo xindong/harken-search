@@ -2,9 +2,23 @@
 
 #include <chrono>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 int main() {
+    if (ClampSettingsFontSize(std::numeric_limits<int>::min()) != 10 ||
+        ClampSettingsFontSize(-1) != 10 || ClampSettingsFontSize(10) != 10 ||
+        ClampSettingsFontSize(15) != 15 || ClampSettingsFontSize(18) != 18 ||
+        ClampSettingsFontSize(24) != 24 ||
+        ClampSettingsFontSize(std::numeric_limits<int>::max()) != 24) {
+        std::printf("FAIL: settings font size should safely stay within 10..24 px\n");
+        return 1;
+    }
+    if (ResolveReadingFontSize(true, -1, false, 0, false, 0, 18) != 10 ||
+        ResolveReadingFontSize(true, std::numeric_limits<int>::max(), false, 0, false, 0, 18) != 24) {
+        std::printf("FAIL: invalid stored reading font should resolve into the supported range\n");
+        return 1;
+    }
     {
         AppSettings height;
         height.rowHeight=40;height.listDensity=ListDensity::Custom;
