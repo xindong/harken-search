@@ -2016,8 +2016,9 @@ static void DeleteMiniWaveTexture(GLuint& textureId) {
         aura::cover_wall::CullTextureMirrorsMatchingNonCoverTexture(
             g_appState->coverWall, textureId);
     }
-    glDeleteTextures(1, &textureId);
-    textureId = 0;
+    // ImGui draw commands retain this ID until the frame is submitted. Cache
+    // eviction or replacement can happen after a row has already queued Image.
+    g_deferredMiniWaveTextureDeletes.Queue(textureId);
 }
 
 static void ReleaseMiniWaveTextureResources() {
@@ -2593,7 +2594,7 @@ void InvalidateMiniWaveTextureAfterFrame(const std::string& key) {
 
 void FlushDeferredMiniWaveTextureDeletes() {
     g_deferredMiniWaveTextureDeletes.Flush([](GLuint id) {
-        DeleteMiniWaveTexture(id);
+        glDeleteTextures(1, &id);
     });
 }
 

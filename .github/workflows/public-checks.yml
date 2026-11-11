@@ -63,6 +63,12 @@ jobs:
           TestSearchWorkspace TestPlaylistFolderTree TestSubPlaylists
           TestBackgroundIoPolicy TestScanWorkflowState TestScanDialogPresentation TestCoverDiscovery
           TestRegionExportPathSafety TestThemeColors
+          TestMiniWaveformPresentation TestMiniWaveformScheduler TestMiniRenderMath
+      - name: Run mini waveform texture lifetime regressions
+        run: |
+          python tests/test_mini_waveform_delete_wiring.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^Test(MiniWaveformPresentation|MiniWaveformScheduler|MiniRenderMath)$"
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
