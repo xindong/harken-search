@@ -8,7 +8,7 @@
 **Priority:** P0
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -92,9 +92,11 @@
 | TEST-THESAURUS-BIDIRECTIONAL | unit | `TestThesaurusBidirectional` | synonym expansion and exactMode suppression pass | active |
 | TEST-THESAURUS-DIALOG | contract / runtime | `tests/test_thesaurus_json_dialog_boundary.py` and isolated Mac chooser probe | Mac UI reaches the native chooser; cancel returns empty, selected path is UTF-8 | active |
 | DIAG-SEARCH-LANE | diagnostics | `SearchLane` | lane event observed for runtime query families | missing automatic assertion |
+| TEST-MAC-SEARCH-COMPOSITION | real app | tools/macos_search_composition_smoke.py in an isolated Mac build | Phrase, exclusion, path, tag, folder, cover, Chinese character and pinyin searches match rows; reopening retains the library and tag | active |
 
 ## Missing Coverage
 
+- TestSearchSemanticMatrix runs on macOS with its database under the preview isolation root (CV-F797C36F); the real isolated app remains the proof for rendered filter composition.
 - Missing proof: automatic `SearchLane` assertion for every major query family; this matches `DIAG-SEARCH-LANE` in TDD / QA Proof.
 - Suspected stale proof: any test that only checks parser output without DB execution pairing.
 - Human-only verification: visual chip edit ergonomics.

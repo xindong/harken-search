@@ -2631,6 +2631,7 @@ void Database::close() {
     m_countMemCache.clear();
     m_cachedFileCount = -1;
     m_cachedFileCountRevision = 0;
+    m_cachedFileCountDataVersion = -1;
     m_cachedFileCountTime = {};
     m_isPrimaryConnection = false;
 }
@@ -2696,6 +2697,17 @@ bool Database::createTables() {
     )";
 
     if (!executeSQL(createFilesTable)) return false;
+    // A file explicitly dropped by the user is retained by root pruning.
+    // Keep the marker separate from audio_files so scan upserts preserve it.
+    if (!executeSQL(R"(
+        CREATE TABLE IF NOT EXISTS manually_imported_files (
+            file_id INTEGER PRIMARY KEY
+        );
+        CREATE TRIGGER IF NOT EXISTS manually_imported_file_deleted
+        AFTER DELETE ON audio_files BEGIN
+            DELETE FROM manually_imported_files WHERE file_id = OLD.id;
+        END;
+    )")) return false;
     if (!executeSQL(createPlaylistsTable)) return false;
     if (!executeSQL(createPlaylistItemsTable)) return false;
 
@@ -4170,6 +4182,136 @@ bool Database::addFile(const AudioRecord& record) {
 
     if (success) bumpDataRevision();
     return success;
+}
+
+bool Database::markFileAsManuallyImported(const std::string& filePath) {
+    if (!m_db || filePath.empty()) return false;
+    // A duplicate drop can arrive while startup workers are committing. Take
+    // the writer reservation before reading the row; a deferred savepoint
+    // can otherwise fail its read-to-write upgrade with SQLITE_BUSY_SNAPSHOT.
+    const bool ownTransaction = sqlite3_get_autocommit(m_db) != 0;
+    if (!executeSQL(ownTransaction ? "BEGIN IMMEDIATE" :
+                    "SAVEPOINT harken_manual_import_mark")) return false;
+    auto rollback = [this, ownTransaction]() {
+        if (ownTransaction) {
+            executeSQL("ROLLBACK");
+        } else {
+            executeSQL("ROLLBACK TO SAVEPOINT harken_manual_import_mark");
+            executeSQL("RELEASE SAVEPOINT harken_manual_import_mark");
+        }
+        return false;
+    };
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db,
+            "SELECT id, folder_path FROM audio_files WHERE file_path = ? LIMIT 1",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        m_lastError = sqlite3_errmsg(m_db);
+        return rollback();
+    }
+    sqlite3_bind_text(stmt, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
+    const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+    const int64_t fileId = found ? sqlite3_column_int64(stmt, 0) : 0;
+    std::string folderPath = found ? safeGetText(stmt, 1) : std::string();
+    sqlite3_finalize(stmt);
+    if (!found) {
+        m_lastError = "Manual import file was not found in the library";
+        return rollback();
+    }
+
+    // Older rows can have no folder_path. Repair only this explicitly dropped
+    // file so both the marker and folder count have an exact identity.
+    if (folderPath.empty()) {
+        try {
+            folderPath = HarkenSearch::CanonicalFolderPath(
+                PathToUtf8(Utf8ToPath(filePath).parent_path()));
+        } catch (...) {
+            folderPath.clear();
+        }
+        if (folderPath.empty()) {
+            m_lastError = "Manual import file has no folder path";
+            return rollback();
+        }
+        if (sqlite3_prepare_v2(m_db,
+                "UPDATE audio_files SET folder_path = ? WHERE id = ?",
+                -1, &stmt, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            return rollback();
+        }
+        sqlite3_bind_text(stmt, 1, folderPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 2, fileId);
+        const bool updated = sqlite3_step(stmt) == SQLITE_DONE;
+        if (!updated) m_lastError = sqlite3_errmsg(m_db);
+        sqlite3_finalize(stmt);
+        if (!updated) return rollback();
+    }
+
+    if (sqlite3_prepare_v2(m_db,
+            "INSERT OR IGNORE INTO manually_imported_files(file_id) VALUES(?)",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        m_lastError = sqlite3_errmsg(m_db);
+        return rollback();
+    }
+    sqlite3_bind_int64(stmt, 1, fileId);
+    const bool marked = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!marked) m_lastError = sqlite3_errmsg(m_db);
+    sqlite3_finalize(stmt);
+    if (!marked) return rollback();
+
+    // A direct file drop bypasses the scan's full index rebuild. Refresh just
+    // this folder; the exact count also makes duplicate drops idempotent.
+    if (sqlite3_prepare_v2(m_db,
+            "DELETE FROM folder_index WHERE folder_path = ?",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        m_lastError = sqlite3_errmsg(m_db);
+        return rollback();
+    }
+    sqlite3_bind_text(stmt, 1, folderPath.c_str(), -1, SQLITE_TRANSIENT);
+    const bool removedOldCount = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!removedOldCount) m_lastError = sqlite3_errmsg(m_db);
+    sqlite3_finalize(stmt);
+    if (!removedOldCount) return rollback();
+
+    if (sqlite3_prepare_v2(m_db,
+            "INSERT INTO folder_index(folder_path, file_count, last_updated) "
+            "SELECT folder_path, COUNT(*), CAST(strftime('%s','now') AS INTEGER) "
+            "FROM audio_files WHERE folder_path = ? GROUP BY folder_path",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        m_lastError = sqlite3_errmsg(m_db);
+        return rollback();
+    }
+    sqlite3_bind_text(stmt, 1, folderPath.c_str(), -1, SQLITE_TRANSIENT);
+    const bool counted = sqlite3_step(stmt) == SQLITE_DONE;
+    if (!counted) m_lastError = sqlite3_errmsg(m_db);
+    sqlite3_finalize(stmt);
+    if (!counted) return rollback();
+
+    if (!executeSQL(ownTransaction ? "COMMIT" :
+                    "RELEASE SAVEPOINT harken_manual_import_mark")) return rollback();
+    bumpDataRevision();
+    return true;
+}
+
+bool Database::addManuallyImportedFile(const AudioRecord& record) {
+    if (!m_db || record.filePath.empty()) return false;
+    const bool ownTransaction = sqlite3_get_autocommit(m_db) != 0;
+    if (!executeSQL(ownTransaction ? "BEGIN IMMEDIATE" :
+                    "SAVEPOINT harken_manual_import_add")) return false;
+    auto rollback = [this, ownTransaction]() {
+        if (ownTransaction) {
+            executeSQL("ROLLBACK");
+        } else {
+            executeSQL("ROLLBACK TO SAVEPOINT harken_manual_import_add");
+            executeSQL("RELEASE SAVEPOINT harken_manual_import_add");
+        }
+        return false;
+    };
+    if (!addFile(record) || !markFileAsManuallyImported(record.filePath)) {
+        return rollback();
+    }
+    if (!executeSQL(ownTransaction ? "COMMIT" :
+                    "RELEASE SAVEPOINT harken_manual_import_add")) return rollback();
+    return true;
 }
 
 bool Database::updateFile(const AudioRecord& record) {
@@ -6925,42 +7067,42 @@ int64_t Database::getFolderFileCount(const std::string& folderPath) {
 int64_t Database::getFileCount() {
     if (!m_db) return 0;
 
-    // Cache total counts for two seconds to avoid full scans on every UI frame.
+    // Local revisions miss commits made by the scanner or a different DB
+    // connection. PRAGMA data_version invalidates this cache immediately for
+    // those writes, while the short TTL also covers writes on this connection
+    // that did not bump the revision.
+    int64_t dataVersion = -1;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db, "PRAGMA data_version", -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            dataVersion = sqlite3_column_int64(stmt, 0);
+        }
+    }
+    sqlite3_finalize(stmt);
+    stmt = nullptr;
     auto now = std::chrono::steady_clock::now();
     const uint64_t currentRevision = dataRevision();
 
     if (m_cachedFileCount >= 0 &&
         m_cachedFileCountRevision == currentRevision &&
+        dataVersion >= 0 && m_cachedFileCountDataVersion == dataVersion &&
         std::chrono::duration_cast<std::chrono::seconds>(now - m_cachedFileCountTime).count() < 2) {
         return m_cachedFileCount;
     }
 
-    sqlite3_stmt* stmt = nullptr;
-    int64_t count = -1;
-    const char* sqlIndex = "SELECT COALESCE(SUM(file_count), -1) FROM folder_index";
-    if (sqlite3_prepare_v2(m_db, sqlIndex, -1, &stmt, nullptr) == SQLITE_OK) {
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            count = sqlite3_column_int64(stmt, 0);
-        }
-        sqlite3_finalize(stmt);
-        stmt = nullptr;
+    // folder_index is rebuilt asynchronously after a scan and may lag behind
+    // a freshly committed row. COUNT(*) is the authoritative global total;
+    // folder_index remains the fast path for folder-specific queries.
+    if (sqlite3_prepare_v2(m_db, "SELECT COUNT(*) FROM audio_files", -1, &stmt, nullptr) != SQLITE_OK) {
+        return (m_cachedFileCount > 0) ? m_cachedFileCount : 0;
     }
-
-    if (count < 0) {
-        const char* sql = "SELECT COUNT(*) FROM audio_files";
-        if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            return (m_cachedFileCount > 0) ? m_cachedFileCount : 0;
-        }
-
-        count = 0;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            count = sqlite3_column_int64(stmt, 0);
-        }
-        sqlite3_finalize(stmt);
-    }
+    int64_t count = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
 
     m_cachedFileCount = count;
     m_cachedFileCountRevision = currentRevision;
+    m_cachedFileCountDataVersion = dataVersion;
     m_cachedFileCountTime = now;
     return count;
 }
@@ -12179,7 +12321,10 @@ int Database::pruneEntriesOutsideLibraryRoots() {
     if (roots.empty()) return 0;
 
     std::vector<int64_t> idsToDelete;
-    const char* sql = "SELECT id, file_path, folder_path FROM audio_files";
+    const char* sql =
+        "SELECT id, file_path, folder_path FROM audio_files "
+        "WHERE NOT EXISTS (SELECT 1 FROM manually_imported_files "
+        "WHERE file_id = audio_files.id)";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -13810,6 +13955,7 @@ bool Database::prepareScanRollbackJournal() {
         "CREATE TEMP TABLE temp.scan_cancel_touched(file_path TEXT PRIMARY KEY);",
         createAudioSnapshotSql,
         "CREATE UNIQUE INDEX temp.scan_cancel_audio_path ON scan_cancel_audio(file_path);",
+        "CREATE TEMP TABLE temp.scan_cancel_manual_imported(file_id INTEGER PRIMARY KEY);",
         "CREATE TEMP TABLE temp.scan_cancel_file_tags("
         "    file_path TEXT NOT NULL,"
         "    file_id   INTEGER NOT NULL,"
@@ -13884,6 +14030,7 @@ void Database::clearScanRollbackJournal() {
             "DROP TABLE IF EXISTS temp.scan_cancel_play_queue;",
             "DROP TABLE IF EXISTS temp.scan_cancel_playlist_items;",
             "DROP TABLE IF EXISTS temp.scan_cancel_file_tags;",
+            "DROP TABLE IF EXISTS temp.scan_cancel_manual_imported;",
             "DROP TABLE IF EXISTS temp.scan_cancel_audio;",
             "DROP TABLE IF EXISTS temp.scan_cancel_touched;",
         };
@@ -13931,6 +14078,10 @@ bool Database::snapshotPathForScanRollback(const std::string& filePath) {
         " FROM audio_files WHERE file_path = ?;";
     const std::vector<std::string> snapshotSql = {
         snapshotAudioSql,
+        "INSERT OR IGNORE INTO temp.scan_cancel_manual_imported(file_id) "
+        "SELECT af.id FROM main.audio_files af "
+        "JOIN main.manually_imported_files mi ON mi.file_id = af.id "
+        "WHERE af.file_path = ?;",
         "INSERT OR IGNORE INTO temp.scan_cancel_file_tags(file_path, file_id, tag_id) "
         "SELECT af.file_path, ft.file_id, ft.tag_id "
         "FROM main.audio_files af "
@@ -14027,6 +14178,9 @@ bool Database::rollbackScanRollbackJournal(const std::string& scopePath,
         "WHERE file_path IN (SELECT file_path FROM temp.scan_cancel_touched);",
         std::string("INSERT INTO audio_files(") + kRecordColumns + ") "
             "SELECT " + kRecordColumns + " FROM temp.scan_cancel_audio;",
+        "INSERT OR IGNORE INTO manually_imported_files(file_id) "
+        "SELECT mi.file_id FROM temp.scan_cancel_manual_imported mi "
+        "JOIN audio_files af ON af.id = mi.file_id;",
         "INSERT OR REPLACE INTO playlist_items(playlist_id, file_id, position) "
         "SELECT playlist_id, file_id, position FROM temp.scan_cancel_playlist_items;",
         "INSERT OR REPLACE INTO file_tags(file_id, tag_id) "

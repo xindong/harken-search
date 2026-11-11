@@ -49,6 +49,17 @@ SIMILARITY_COMPONENT_FILES = {
         "models/clap/clap-window.f64",
     ),
 }
+PINNED_SIMILARITY_SHA256 = {
+    "onnxruntime.dll": "4cb41e89b8bf30578e1dd95e9c40292d61974a4bfcd666409302c4f0c5aa8ce0",
+    "models/clap/clap-audio.onnx": "50d03fb781f7bf520a5d424a3479871cfca4af7a31026892ac1e935d5303f677",
+    "models/clap/clap-mel-filters.f64": "256b8c586fb0f0ea44c6b2cafa44caa9bf288c1cfe1a05ff2527b73ae123d37a",
+    "models/clap/clap-window.f64": "0d9c0e8dfb7e477785eaaac6e2082e19a030bc113178a207cb4d1ab8d536a7a9",
+}
+REQUIRED_SIMILARITY_LICENSES = (
+    "LICENSES/ONNX-Runtime-MIT.txt",
+    "LICENSES/ONNX-Runtime-ThirdPartyNotices.txt",
+    "LICENSES/CLAP-Apache-2.0.txt",
+)
 
 PAIR_FIELDS = {
     "arisSha256",
@@ -124,6 +135,7 @@ def verify_release_assembly(
     output_dir: str | Path,
     expected_source_commit: str | None = None,
     source_root: str | Path | None = None,
+    require_similarity: bool = False,
 ) -> list[str]:
     root = Path(output_dir)
     issues = verify_startup_source(Path(source_root or Path(__file__).resolve().parents[1]))
@@ -145,6 +157,31 @@ def verify_release_assembly(
             path = root / relative
             if not path.is_file() or path.stat().st_size == 0:
                 issues.append(f"missing configured similarity file: {relative}")
+
+    if require_similarity:
+        try:
+            payload = json.loads((root / "THIRD_PARTY_COMPONENTS.json").read_text(encoding="utf-8"))
+            components = {
+                component["name"]: component
+                for component in payload["components"]
+                if isinstance(component, dict) and isinstance(component.get("name"), str)
+            }
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+            issues.append(f"required similarity metadata invalid: {error}")
+        else:
+            for name in SIMILARITY_COMPONENT_FILES:
+                if components.get(name, {}).get("distributed") is not True:
+                    issues.append(f"required similarity component not distributed: {name}")
+        for relative, expected_hash in PINNED_SIMILARITY_SHA256.items():
+            path = root / relative
+            if not path.is_file():
+                issues.append(f"missing required similarity file: {relative}")
+            elif _sha256(path) != expected_hash:
+                issues.append(f"similarity resource SHA256 mismatch: {relative}")
+        for relative in REQUIRED_SIMILARITY_LICENSES:
+            path = root / relative
+            if not path.is_file() or path.stat().st_size == 0:
+                issues.append(f"missing required similarity license: {relative}")
 
     receipt = root / "harken-runtime-pair.json"
     if receipt.is_file() and receipt.stat().st_size:
@@ -196,8 +233,11 @@ def main() -> int:
     )
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--source-commit")
+    parser.add_argument("--require-similarity", action="store_true")
     args = parser.parse_args()
-    issues = verify_release_assembly(args.output_dir, args.source_commit)
+    issues = verify_release_assembly(
+        args.output_dir, args.source_commit, require_similarity=args.require_similarity
+    )
     if issues:
         for issue in issues:
             print(issue)

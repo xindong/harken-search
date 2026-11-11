@@ -5159,11 +5159,25 @@
       "ja": "現在の辞書の保存先: %s\\harken_thesaurus.json"
     },
     {
+      "id": "Set_ThesMacPath",
+      "type": "ui",
+      "zh": "当前词库文件：%s",
+      "en": "Thesaurus file: %s",
+      "ja": "現在の辞書ファイル: %s"
+    },
+    {
       "id": "Set_ThesNotWritable",
       "type": "ui",
       "zh": "请确认 exe 所在目录可写，或点击下方「打开 exe 目录」查看位置。",
       "en": "Please ensure the exe directory is writable, or click 'Open exe directory' below.",
       "ja": "exe のあるディレクトリが書き込み可能か確認するか、下の「exe ディレクトリを開く」で場所を確認してください。"
+    },
+    {
+      "id": "Set_ThesMacNotWritable",
+      "type": "ui",
+      "zh": "词库文件不可写，请检查用户设置目录权限。",
+      "en": "The thesaurus file cannot be written. Check access to the user settings folder.",
+      "ja": "辞書ファイルに書き込めません。ユーザー設定フォルダーのアクセス権を確認してください。"
     },
     {
       "id": "Set_ThesOpenJSON",
@@ -13957,6 +13971,13 @@
       "ja": "未ロードまたはパスが空"
     },
     {
+      "id": "Ex_OutputEqualsSource",
+      "type": "ui",
+      "zh": "导出目标不能是源音频文件。",
+      "en": "Export destination cannot be the source audio file.",
+      "ja": "書き出し先を元の音声ファイルにはできません。"
+    },
+    {
       "id": "Ex_DecoderMaybe",
       "type": "ui",
       "zh": "解码器初始化失败(文件损坏或占用?)",
@@ -14937,6 +14958,13 @@
     {"id":"Similar_Cancelled","type":"ui","zh":"查找已取消。","en":"Search cancelled.","ja":"検索をキャンセルしました。"},
     {"id":"Similar_CoverageFmt","type":"ui","zh":"已分析 %d / %d","en":"Analyzed %d / %d","ja":"分析済み %d / %d"},
     {"id":"Similar_SemanticCoverageFmt","type":"ui","zh":"同类分析 %d / %d","en":"Category analysis %d / %d","ja":"同種分析 %d / %d"},
+    {"id":"Similar_StatsLoading","type":"ui","zh":"正在统计当前库的音效…","en":"Counting audio files in this library…","ja":"このライブラリの音声を集計中…"},
+    {"id":"Similar_StatsFailed","type":"ui","zh":"音效数量统计未完成，请重试。","en":"Could not count audio files. Try again.","ja":"音声数を集計できませんでした。再試行してください。"},
+    {"id":"Similar_StatsRetry","type":"ui","zh":"重新统计","en":"Retry count","ja":"再集計"},
+    {"id":"Similar_StatsWaitingAction","type":"ui","zh":"统计后开始分析","en":"Analyze after count","ja":"集計後に分析"},
+    {"id":"Similar_StatsSwitching","type":"ui","zh":"正在切换音效库…","en":"Switching libraries…","ja":"ライブラリを切り替え中…"},
+    {"id":"Similar_StatsNoDatabase","type":"ui","zh":"请先打开音效库。","en":"Open a library first.","ja":"先にライブラリを開いてください。"},
+    {"id":"Similar_StatsEmpty","type":"ui","zh":"当前库还没有可分析的音效。","en":"No audio files to analyze in this library.","ja":"このライブラリに分析できる音声はありません。"},
     {"id":"Similar_Recheck","type":"ui","zh":"核对全部音频","en":"Check all audio","ja":"すべての音声を確認"},
     {"id":"Similar_AnalysisReport","type":"ui","zh":"分析结果","en":"Analysis results","ja":"分析結果"},
     {"id":"Similar_AnalysisSummaryFmt","type":"ui","zh":"完成 %d，沿用 %d，未完成 %d","en":"Analyzed %d, reused %d, incomplete %d","ja":"分析 %d、再利用 %d、未完了 %d"},

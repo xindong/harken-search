@@ -24,9 +24,8 @@ namespace aura::ui {
 void MergeLucideFont(ImFontAtlas* atlas, float fontPixelSize) {
     if (!atlas) return;
 
-    // Try exe-adjacent path first (release/install layout), then project-
-    // relative path (dev run from repo root). Both resolve to the same
-    // font file; whichever stat-hits-first wins.
+    // On Mac, prefer the font bundled beside the executable. Keep the
+    // project-relative fallback for development runs.
     static const char* kCandidates[] = {
         "lucide.ttf",
         "thirdparty/lucide/lucide.ttf",
@@ -48,6 +47,16 @@ void MergeLucideFont(ImFontAtlas* atlas, float fontPixelSize) {
     cfg.OversampleV          = 1;
     cfg.FontDataOwnedByAtlas = true;
 
+#ifdef __APPLE__
+    const std::string exeDir = Platform::GetExeDir();
+    if (!exeDir.empty()) {
+        const std::string packagedFont = exeDir + "/lucide.ttf";
+        if (Platform::FileSystem::CanOpenFileForRead(packagedFont)) {
+            atlas->AddFontFromFileTTF(packagedFont.c_str(), fontPixelSize, &cfg, kGlyphRange);
+            return;
+        }
+    }
+#endif
     for (const char* path : kCandidates) {
         if (Platform::FileSystem::CanOpenFileForRead(path)) {
             atlas->AddFontFromFileTTF(path, fontPixelSize, &cfg, kGlyphRange);
@@ -99,12 +108,18 @@ BrandTex LoadOne(const std::string& path) {
     return t;
 }
 
-// Try exe-adjacent assets/ first (install layout), then repo-relative.
+// Try packaged assets first on Windows and Mac, then repo-relative.
 std::string ResolveBrandPath(const char* filename) {
 #ifdef _WIN32
     std::string base = Platform::GetExeDir() + "\\assets\\icons\\brand\\";
     std::string p1 = base + filename;
     if (Platform::FileSystem::CanOpenFileForRead(p1)) return p1;
+#elif defined(__APPLE__)
+    const std::string exeDir = Platform::GetExeDir();
+    if (!exeDir.empty()) {
+        const std::string p1 = exeDir + "/assets/icons/brand/" + filename;
+        if (Platform::FileSystem::CanOpenFileForRead(p1)) return p1;
+    }
 #endif
     std::string p2 = std::string("assets/icons/brand/") + filename;
     if (Platform::FileSystem::CanOpenFileForRead(p2)) return p2;
@@ -125,6 +140,12 @@ std::string ResolveLogoPath(const char* filename) {
 #ifdef _WIN32
     std::string p1 = Platform::GetExeDir() + "\\assets\\logos\\brand\\" + filename;
     if (Platform::FileSystem::CanOpenFileForRead(p1)) return p1;
+#elif defined(__APPLE__)
+    const std::string exeDir = Platform::GetExeDir();
+    if (!exeDir.empty()) {
+        const std::string p1 = exeDir + "/assets/logos/brand/" + filename;
+        if (Platform::FileSystem::CanOpenFileForRead(p1)) return p1;
+    }
 #endif
     std::string p2 = std::string("assets/logos/brand/") + filename;
     if (Platform::FileSystem::CanOpenFileForRead(p2)) return p2;
@@ -160,6 +181,12 @@ PackagedAssetTex LoadPackagedAsset(const char* relativePath) {
     for (const char* c = relativePath; *c; ++c)
         candidate += (*c == '/') ? '\\' : *c;
     if (Platform::FileSystem::CanOpenFileForRead(candidate)) path = candidate;
+#elif defined(__APPLE__)
+    const std::string exeDir = Platform::GetExeDir();
+    if (!exeDir.empty()) {
+        const std::string candidate = exeDir + "/" + relativePath;
+        if (Platform::FileSystem::CanOpenFileForRead(candidate)) path = candidate;
+    }
 #endif
     if (path.empty() && Platform::FileSystem::CanOpenFileForRead(relativePath))
         path = relativePath;

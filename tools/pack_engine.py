@@ -461,6 +461,7 @@ def compile_installer(
     generated_path: Path = GENERATED_INSTALLER_PATH,
     sign_tool_path: str | Path | None = None,
     trusted_signer_subject: str | None = None,
+    require_similarity: bool = False,
 ) -> Path:
     """Generate and compile an installer script for the given release directory.
 
@@ -480,7 +481,7 @@ def compile_installer(
         or any(character in trusted_signer_subject for character in "'\"\r\n")
     ):
         raise ValueError("trusted signer subject contains characters that break the installer define")
-    issues = verify_release_assembly(source_dir)
+    issues = verify_release_assembly(source_dir, require_similarity=require_similarity)
     for filename in ("HarkenSearchProToolsBridge.exe", "reaper_harken.dll"):
         if not (Path(source_dir) / filename).is_file():
             issues.append(f"missing required installer file: {filename}")
