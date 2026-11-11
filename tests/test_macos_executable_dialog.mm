@@ -1,4 +1,5 @@
 #include "platform/executable_file_dialog.h"
+#include "ReaperMacHostLayout.h"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -66,6 +67,22 @@ int main(int argc, char** argv) {
     WriteFile(appExecutable, "#!/bin/sh\nexit 0\n", 0755);
     check(Platform::ExecutableDialogs::Internal::ResolveExecutableSelectionUtf8(app.string()) == appExecutable.string(),
           "app bundle resolves its real executable");
+
+    const fs::path reaperApp = root / "REAPER 中文 QA.app";
+    const fs::path reaperExecutable = reaperApp / "Contents/MacOS/REAPER";
+    WriteFile(reaperApp / "Contents/Info.plist",
+              "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>"
+              "<key>CFBundlePackageType</key><string>APPL</string>"
+              "<key>CFBundleExecutable</key><string>REAPER</string>"
+              "</dict></plist>\n", 0644);
+    WriteFile(reaperExecutable, "#!/bin/sh\nexit 0\n", 0755);
+    const auto picked = Platform::ExecutableDialogs::Internal::ResolveExecutableSelectionUtf8(reaperApp.string());
+    const auto reaperLayout = HarkenSearch::DawBridge::ResolveMacReaperHostLayout(picked);
+    check(reaperLayout.bundle == reaperApp && reaperLayout.executable == reaperExecutable,
+          "native application selection resolves back to the REAPER bundle root");
+    check(HarkenSearch::DawBridge::ResolveMacReaperHostLayout(
+              Platform::ExecutableDialogs::Internal::ResolveExecutableSelectionUtf8(app.string())).bundle.empty(),
+          "other application executables cannot replace the REAPER root");
 
     const fs::path brokenApp = root / "Broken.app";
     WriteFile(brokenApp / "Contents/Info.plist",

@@ -331,6 +331,9 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "WwiseTransferPersist.h"  // F-034 S3: persist Send-to-Wwise config
 #include "WwiseTransferPanel.h"    // F-034 S7: Transfer Panel UI
 #include "DawBridgeInstaller.h"    // AUR-P1-047: DAW bridge auto-installer
+#if defined(__APPLE__)
+#include "ReaperMacHostLayout.h"
+#endif
 #include "ReaperBridgeClient.h"
 #include "nlohmann_json.hpp"
 #include "ImGuiAcrylicFader.h" // F-016b: Acrylic Art Fader v5.1
@@ -34431,7 +34434,14 @@ void RenderUI(AppState& state) {
                 const bool pathCommitted = ImGui::IsItemDeactivatedAfterEdit();
                 ImGui::SameLine();
                 if (aura::ui::ActionButton(L(Main_BrowseReaperPath), ImVec2(90, 0))) {
+#if defined(__APPLE__)
+                    const std::string executable = Platform::ExecutableDialogs::OpenExecutableFileDialogUtf8(
+                        MainUiOwnerWindow(), Utf8ToWide(L(Main_BrowseReaperPath)),
+                        Utf8ToWide(selected.exePath));
+                    const std::string picked = HarkenSearch::DawBridge::ResolveMacReaperHostLayout(executable).bundle.u8string();
+#else
                     const std::string picked = OpenFolderDialog(MainUiOwnerWindow());
+#endif
                     if (!picked.empty()) {
                         const std::string oldReaperCacheKey = ReaperBridgeUiCacheKey(selected);
                         EraseReaperBridgeUiStatus(oldReaperCacheKey);

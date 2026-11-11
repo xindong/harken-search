@@ -68,9 +68,9 @@ for required in (
     assert required in MACOS
 
 qualified_call = "Platform::ExecutableDialogs::OpenExecutableFileDialogUtf8("
-assert MAIN.count(qualified_call) == 1
+assert MAIN.count(qualified_call) == 2
 assert "static std::string OpenExecutableFileDialogUtf8(HWND owner" not in MAIN
-assert MAIN.count("OpenExecutableFileDialogUtf8(") == 1
+assert MAIN.count("OpenExecutableFileDialogUtf8(") == 2
 
 browse = MAIN.index('aura::ui::ActionButton(L(Main_DawBrowseBtn)')
 title = MAIN.index('std::wstring title = L"Select "', browse)
