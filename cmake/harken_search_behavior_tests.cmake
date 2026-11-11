@@ -4756,6 +4756,17 @@ aura_set_test_labels(TestPlatformDurableFileOpsReplaceDelete core)
 if(APPLE)
     set(HARKEN_MAC_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/Testing/macos-data" CACHE PATH
         "Isolated macOS data/settings test evidence directory")
+    add_library(MacInspectionFixture MODULE EXCLUDE_FROM_ALL tests/macos_inspection_fixture.cpp)
+    target_compile_features(MacInspectionFixture PRIVATE cxx_std_17)
+    add_executable(TestMacMachOInspection EXCLUDE_FROM_ALL
+        tests/test_mac_macho_inspection.cpp src/platform/pe_inspection_macos.mm)
+    target_include_directories(TestMacMachOInspection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacMachOInspection PRIVATE cxx_std_17)
+    add_dependencies(TestMacMachOInspection MacInspectionFixture reaper_harken)
+    add_test(NAME TestMacMachOInspection COMMAND TestMacMachOInspection
+        "${HARKEN_MAC_TEST_ROOT}/macho"
+        "$<TARGET_FILE:MacInspectionFixture>" "$<TARGET_FILE:reaper_harken>")
+    aura_set_test_labels(TestMacMachOInspection daw)
     add_executable(TestMacOutboundFileDrag EXCLUDE_FROM_ALL
         tests/test_macos_outbound_file_drag.mm
         src/platform/macos_file_drag.mm

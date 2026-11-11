@@ -35,6 +35,7 @@ bool thesaurusPageRequested = false;
 std::string browserTreeRootForQa;
 Json lastRegionExport;
 Json reaperHostProbe;
+Json reaperBinaryProbe;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 Json inputBeforeUi;
 #endif
@@ -106,6 +107,13 @@ Request Poll(AppState& state) {
         } else if (action == "open") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             if (!BeginSwitchDatabase(state, path)) throw std::runtime_error("library_switch_failed");
+        } else if (action == "inspect_reaper_binary") {
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            const auto info = HarkenSearch::DawBridge::ProbeBridgeBinary(path);
+            reaperBinaryProbe = {{"exists",info.exists},{"architecture",info.architecture},
+                {"sha256",info.sha256},{"size",info.sizeBytes},{"version",info.version},
+                {"protocol",info.protocolVersion},{"manifest",info.manifest},
+                {"trusted_source",info.trustedSource},{"recognized_entry",info.legacySignature}};
         } else if (action == "probe_reaper_host") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             HarkenSearch::DawBridge::ReaperBridgeProbeOptions options;
@@ -539,6 +547,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"similar_ui",similarUi},
             {"database_error",state.database.getLastError()},
             {"reaper_host_probe",reaperHostProbe},
+            {"reaper_binary_probe",reaperBinaryProbe},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},

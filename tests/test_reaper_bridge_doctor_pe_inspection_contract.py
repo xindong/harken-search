@@ -89,7 +89,7 @@ class ReaperBridgeDoctorPeInspectionContract(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_macos_is_explicitly_unsupported(self):
+    def test_macos_inspects_native_files_without_executing_them(self):
         self.assertTrue(MACOS.is_file())
         source = MACOS.read_text(encoding="utf-8")
         for token in (
@@ -100,6 +100,10 @@ class ReaperBridgeDoctorPeInspectionContract(unittest.TestCase):
         ):
             self.assertIn(token, source)
         self.assertNotIn("IMAGE_DOS_HEADER", source)
+        self.assertNotIn("dlopen", source)
+        self.assertNotIn("dlsym", source)
+        cmake_tests = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
+        self.assertIn("TestMacMachOInspection", cmake_tests)
 
     def test_doctor_delegates_and_keeps_version_hash_install_native_work(self):
         self.assertIn('#include "platform/pe_inspection.h"', DOCTOR)
