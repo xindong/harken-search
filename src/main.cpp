@@ -416,10 +416,20 @@ struct DawBridgeInstallSession {
     std::mutex                       resultMutex;
     HarkenSearch::DawBridge::InstallResult   result;
     std::string                      installerName; // display name shown in toast
+    std::string                      reaperRootPath; // immutable request identity; empty for other installers
     double                           doneSince = 0.0; // ImGui::GetTime() when done
 };
 static std::shared_ptr<DawBridgeInstallSession> g_dawBridgeSession;
 static std::atomic_bool g_dawBridgeInstallInFlight{false};
+// Accessed only by the UI thread. Keep the completed result independent of
+// the transient global toast and bind it to the configured REAPER target.
+struct ReaperBridgeInstallNotice {
+    std::string rootPath;
+    std::string installerName;
+    HarkenSearch::DawBridge::InstallResult result;
+};
+static std::optional<ReaperBridgeInstallNotice> g_reaperBridgeInstallNotice;
+
 // Lazily-initialized probe cache (probe is fast but we don't want per-frame disk hits)
 struct DawBridgeProbeCache {
     std::vector<HarkenSearch::DawBridge::InstallStatus> statuses;
@@ -4621,6 +4631,8 @@ static bool StartReaperBridgeUpdateAfterExit(
     }
     auto session = std::make_shared<DawBridgeInstallSession>();
     session->installerName = u8"REAPER 发送组件";
+    session->reaperRootPath = options.configuredReaperRootPath;
+    g_reaperBridgeInstallNotice.reset();
     session->phase.store(DawBridgeInstallSession::Phase::Installing);
     g_dawBridgeSession = session;
     std::thread([session, options, waitForHostExit]() {
@@ -30175,6 +30187,7 @@ void RenderUI(AppState& state) {
         g_dawBridgeSession->phase.load() == DawBridgeInstallSession::Phase::Done) {
         HarkenSearch::DawBridge::InstallResult harvested;
         std::string installerName;
+        const std::string reaperRootPath = g_dawBridgeSession->reaperRootPath;
         {
             std::lock_guard<std::mutex> lk(g_dawBridgeSession->resultMutex);
             harvested     = g_dawBridgeSession->result;
@@ -30196,6 +30209,10 @@ void RenderUI(AppState& state) {
             snprintf(toastBuf, sizeof(toastBuf), L(Install_StatusFailed), dawFailDetail.c_str());
             state.loadErrorToast      = toastBuf;
             state.loadErrorToastUntil = ImGui::GetTime() + 10.0; // longer: manual dismiss implied
+        }
+        if (!reaperRootPath.empty()) {
+            g_reaperBridgeInstallNotice = ReaperBridgeInstallNotice{
+                reaperRootPath, installerName, std::move(harvested)};
         }
     }
 
@@ -34407,6 +34424,18 @@ void RenderUI(AppState& state) {
             const std::string capabilityDetail = GetCapabilityDetail(selected);
             if (!capabilityDetail.empty()) {
                 ImGui::TextWrapped("%s", capabilityDetail.c_str());
+            }
+            if (IsReaperNamedPipeTarget(selected) && g_reaperBridgeInstallNotice &&
+                g_reaperBridgeInstallNotice->rootPath == selected.exePath) {
+                const auto& notice = *g_reaperBridgeInstallNotice;
+                if (notice.result.ok) {
+                    ImGui::TextWrapped(L(Install_StatusOk), notice.installerName.c_str());
+                } else if (notice.result.failureCode == "uac-cancelled") {
+                    ImGui::TextWrapped("%s", L(Install_StatusUacCancelled));
+                } else {
+                    const std::string detail = notice.result.detail.Render();
+                    ImGui::TextWrapped(L(Install_StatusFailed), detail.c_str());
+                }
             }
             ImGui::Spacing();
 
