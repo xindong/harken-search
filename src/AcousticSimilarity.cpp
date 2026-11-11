@@ -205,7 +205,7 @@ AcousticAnalysisResult AnalyzeSimilarityStream(size_t count, const SimilaritySam
         std::fill(buffer.begin(), buffer.end(), 0.0f);
         if (!read(at, length, buffer.data())) return fail(FeatureExtractionError::DecodeFailed);
         double sum = 0.0;
-        for (size_t j = 0; j < length; ++j) { buffer[j] /= peak; sum += buffer[j] * buffer[j]; }
+        for (size_t j = 0; j < length; ++j) { buffer[j] /= peak; sum += static_cast<double>(buffer[j]) * buffer[j]; }
         const auto features = FeatureExtractor::extract(buffer.data(), buffer.size(), AcousticAnalysis::SAMPLE_RATE);
         AcousticFrame frame;
         std::copy_n(features.features, frame.mfcc.size(), frame.mfcc.begin());

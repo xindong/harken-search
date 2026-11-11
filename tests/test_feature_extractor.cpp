@@ -76,6 +76,18 @@ void TestValidPcmProducesFiniteFeatures(const fs::path& root) {
     Check(result.features.isValid(), "valid PCM extraction produces finite features");
 }
 
+void TestValidVorbisRemainsAnalyzable() {
+    // Synthetic 440 Hz tone, generated with ffmpeg's sine source and libvorbis.
+    const fs::path path = fs::path(__FILE__).parent_path() /
+                          "fixtures" / "synthetic-vorbis.ogg";
+    Check(fs::is_regular_file(path), "synthetic Vorbis fixture is present");
+    const auto result = FeatureExtractor::extractFromFileChecked(path.u8string());
+    Check(result.ok && result.error == FeatureExtractionError::None,
+          "valid OGG/Vorbis remains analyzable for similarity search");
+    Check(result.ok && result.features.isValid(),
+          "valid OGG/Vorbis produces finite features");
+}
+
 void TestUnicodePathUsesProductionUtf8Conversion(const fs::path& root) {
     const fs::path unicodeDir =
         root / fs::u8path(u8"\u97f3\u9891\u7d20\u6750");
@@ -230,6 +242,7 @@ int main() {
     TestMissingFileReportsDecodeFailure(root);
     TestPreCancelledRequestReportsCancellation(root);
     TestValidPcmProducesFiniteFeatures(root);
+    TestValidVorbisRemainsAnalyzable();
     TestEmptyPcmReportsNoSamples(root);
     TestUnicodePathUsesProductionUtf8Conversion(root);
     TestBatchExtractionUsesIndependentCancellationSignal();
