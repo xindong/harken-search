@@ -234,6 +234,24 @@ def build_release_dir(tmp_path: Path) -> Path:
         (release_dir / name).write_bytes(payload)
     write_file(release_dir / "assets" / "avatars" / "placeholder.svg", "<svg></svg>\n")
 
+    # Keep the release fixture aligned with the manifest's distributed payload.
+    # This matters when a component changes from optional to officially bundled:
+    # release compliance must see the same staged paths that a real package has.
+    for component in component_payload["components"]:
+        if not component["distributed"]:
+            continue
+        for relative in component["distribution_paths"]:
+            if relative in {"Aris.exe", "HarkenSearch.exe"}:
+                continue
+            target = release_dir / relative
+            if target.exists():
+                continue
+            if Path(relative).suffix:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"distributed-fixture")
+            else:
+                target.mkdir(parents=True, exist_ok=True)
+
     def digest(name: str) -> str:
         return hashlib.sha256((release_dir / name).read_bytes()).hexdigest()
 
