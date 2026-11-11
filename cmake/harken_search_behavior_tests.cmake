@@ -8767,4 +8767,13 @@ if(APPLE)
     add_test(NAME TestMacProcessLaunch COMMAND TestMacProcessLaunch
         "${HARKEN_MAC_TEST_ROOT}/process-launch")
     aura_set_test_labels(TestMacProcessLaunch core platform)
+    add_executable(TestMacApplicationLookup EXCLUDE_FROM_ALL
+        tests/test_mac_application_lookup.cpp
+        src/platform/application_lookup_macos.mm)
+    target_include_directories(TestMacApplicationLookup PRIVATE src)
+    target_compile_features(TestMacApplicationLookup PRIVATE cxx_std_17)
+    target_link_libraries(TestMacApplicationLookup PRIVATE "-framework Foundation" "-framework CoreServices")
+    add_test(NAME TestMacApplicationLookup COMMAND TestMacApplicationLookup)
+    set_tests_properties(TestMacApplicationLookup PROPERTIES TIMEOUT 30)
+    aura_set_test_labels(TestMacApplicationLookup core platform)
 endif()

@@ -789,6 +789,7 @@ elseif(APPLE)
         src/platform/reaper_bridge_endpoint_macos.cpp
         src/platform/text_encoding_std.cpp
         src/platform/executable_path_macos.mm
+        src/platform/application_lookup_macos.mm
         src/platform/pe_inspection_macos.mm
         src/platform/file_hash_macos.cpp
         src/platform/hmac_sha256_unsupported.cpp

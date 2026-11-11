@@ -156,3 +156,14 @@ process_query_unsupported。参数和超时/回收只用本卡启动的受控子
 截图发现Mac路径提示仍要求reaper.exe/DLL，增加中英日Mac专用.app提示，仅Apple
 分支使用并允许换行，Windows原文不变。语言账本/接口边界验证、完整Mac构建、
 实际页面截图和正常退出，同提交Windows回归；原生面板确认和真实宿主仍未完成。
+
+### 当前接续：未运行应用只读发现
+
+Mac无运行宿主时，改用CoreServices公开的bundle ID查询，检查实际应用身份和
+可执行文件存在性；不注册、安装、启动或修改应用，不猜路径。REAPER兼容ID
+com.cockos.reaper来自2026-11-11正常公开搜索的Homebrew cask和Cockos诊断资料：
+https://raw.githubusercontent.com/Homebrew/homebrew-cask/master/Casks/r/reaper.rb 。
+记录人Cindy，只参考标识，自主实现，不复制第三方代码。Windows保留原注册表和
+ProgramFiles逻辑。通用查询正向以本机TextEdit只读验证，包含后台线程与无效/缺失ID；
+这不替代真实REAPER安装发现的正向证据。禁止注册伪REAPER填补该证据；真实
+REAPER未安装时只记录NotFound和未覆盖，保留许可/宿主验证边界。

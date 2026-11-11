@@ -1,6 +1,7 @@
 #include "DawBridgeInstaller.h"
 #if defined(__APPLE__)
 #include "ReaperMacHostLayout.h"
+#include "platform/application_lookup_macos.h"
 #if __has_include("harken_reaper_build_digest.h")
 #include "harken_reaper_build_digest.h"
 #endif
@@ -465,6 +466,15 @@ std::string AutoDetectReaperRootPath() {
         return WideToUtf8Local(fs::path(running).parent_path().wstring());
 #endif
     }
+#if defined(__APPLE__)
+    const auto application = Platform::FindMacApplicationByBundleIdentifier("com.cockos.reaper");
+    if (application.status == Platform::MacApplicationLookupStatus::Found) {
+        const auto layout = ResolveMacReaperHostLayout(application.executablePathUtf8);
+        if (layout.bundle.u8string() == application.bundlePathUtf8 &&
+            DirectoryExists(layout.bundle) && FileExists(layout.executable))
+            return layout.bundle.u8string();
+    }
+#else
     for (const Platform::RegisteredExecutableScope scope : {
              Platform::RegisteredExecutableScope::CurrentUser,
              Platform::RegisteredExecutableScope::LocalMachine}) {
@@ -489,6 +499,7 @@ std::string AutoDetectReaperRootPath() {
             }
         }
     }
+#endif
     return {};
 }
 
