@@ -14405,6 +14405,13 @@
       "ja": "バンドルに reaper_harken.dll 無し：%s"
     },
     {
+      "id": "DBflow_BundledMissingMacFmt",
+      "type": "ui",
+      "zh": "包内缺少 REAPER 发送组件：%s",
+      "en": "The bundled REAPER send component is missing: %s",
+      "ja": "同梱の REAPER 送信コンポーネントが見つかりません：%s"
+    },
+    {
       "id": "DBflow_BundledVerifyFail",
       "type": "ui",
       "zh": "包内 REAPER 发送组件未通过版本、协议、manifest 或 SHA-256 校验",

@@ -658,7 +658,11 @@ InstallResult InstallReaperBridgeBinary(
     const BridgeBinaryInfo source = ProbeBridgeBinary(sourceDllUtf8);
     if (!source.exists) {
         result.failureCode = "bundled-component-missing";
+#if defined(__APPLE__)
+        result.detail.setKeyStr(LStr::DBflow_BundledMissingMacFmt, sourceDllUtf8);
+#else
         result.detail.setKeyStr(LStr::DBflow_BundledMissingFmt, sourceDllUtf8);
+#endif
         return result;
     }
     if (!source.trustedSource || source.version != ReaperBridge::kBridgeVersion ||
