@@ -34,7 +34,7 @@ class MiniWaveformDeleteWiring(unittest.TestCase):
         if os.name != 'nt':
             self.assertIsNotNone(compiler, 'C++ compiler required; do not skip lifetime regression')
         source = (ROOT / 'src/main.cpp').read_text(encoding='utf-8')
-        harness = r'''
+        translation_unit = r'''
 #include "src/MiniWaveformPresentation.h"
 #include <cstdio>
 using GLuint = unsigned int;
@@ -48,9 +48,9 @@ void CullTextureMirrorsMatchingNonCoverTexture(int&, GLuint) {}
 } }
 void glDeleteTextures(int, const GLuint* id) { deleted.push_back(*id); }
 '''
-        harness += function_body(source, 'static void DeleteMiniWaveTexture(')
-        harness += '\n' + function_body(source, 'void FlushDeferredMiniWaveTextureDeletes()')
-        harness += r'''
+        translation_unit += function_body(source, 'static void DeleteMiniWaveTexture(')
+        translation_unit += '\n' + function_body(source, 'void FlushDeferredMiniWaveTextureDeletes()')
+        translation_unit += r'''
 int main() {
     GLuint oldTexture = 42, otherTexture = 43, empty = 0;
     const GLuint queuedDrawIds[] = {oldTexture, otherTexture};
@@ -74,7 +74,7 @@ int main() {
         with tempfile.TemporaryDirectory(prefix='harken-mini-delete-') as directory:
             cpp = Path(directory) / 'lifetime.cpp'
             binary = Path(directory) / 'lifetime'
-            cpp.write_text(harness, encoding='utf-8')
+            cpp.write_text(translation_unit, encoding='utf-8')
             if os.name == 'nt':
                 # Use the same installed MSVC toolchain as the product build.
                 cmake = Path(directory) / 'CMakeLists.txt'

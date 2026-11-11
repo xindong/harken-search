@@ -542,6 +542,8 @@ void TestCoverWallRejectsNonCoverKeysAndWaveformTextureReuseContract() {
     const std::string collisionCullBody = textureMirrorPolicySource;
     const std::string deleteMiniTextureBody = ExtractFunctionBody(
         mainSource, "static void DeleteMiniWaveTexture(GLuint& textureId)");
+    const std::string flushMiniTextureBody = ExtractFunctionBody(
+        mainSource, "void FlushDeferredMiniWaveTextureDeletes()");
     const std::string ensureMiniBody = ExtractFunctionBody(
         mainSource, "static bool EnsureMiniWaveTextureLoaded");
     const std::string renderBody = ExtractFunctionBody(
@@ -564,9 +566,14 @@ void TestCoverWallRejectsNonCoverKeysAndWaveformTextureReuseContract() {
           "BDD: Non-cover texture creation only culls cover-wall mirrors that collide on GL texture id");
     Check(!deleteMiniTextureBody.empty() &&
           deleteMiniTextureBody.find("CullTextureMirrorsMatchingNonCoverTexture(") != std::string::npos &&
-          deleteMiniTextureBody.find("glDeleteTextures(1, &textureId)") != std::string::npos &&
-          deleteMiniTextureBody.find("textureId = 0;") != std::string::npos,
-          "BDD: Deleting a mini-wave texture culls only matching cover mirrors before releasing the GL id");
+          deleteMiniTextureBody.find("g_deferredMiniWaveTextureDeletes.Queue(textureId)") != std::string::npos &&
+          deleteMiniTextureBody.find("CullTextureMirrorsMatchingNonCoverTexture(") <
+              deleteMiniTextureBody.find("g_deferredMiniWaveTextureDeletes.Queue(textureId)") &&
+          deleteMiniTextureBody.find("glDeleteTextures(") == std::string::npos &&
+          flushMiniTextureBody.find("g_deferredMiniWaveTextureDeletes.Flush(") != std::string::npos &&
+          flushMiniTextureBody.find("glDeleteTextures(1, &id)") != std::string::npos &&
+          flushMiniTextureBody.find("DeleteMiniWaveTexture(") == std::string::npos,
+          "BDD: Mini-wave deletion culls matching cover mirrors, queues the id, and releases GL storage at frame tail");
     Check(!ensureMiniBody.empty() &&
           ensureMiniBody.find("CullTextureMirrorsMatchingNonCoverTexture(") != std::string::npos &&
           ensureMiniBody.find("MarkCoverWallTextureMirrorsStaleFromNonCoverTexture();\n    }\n    glBindTexture") == std::string::npos,
