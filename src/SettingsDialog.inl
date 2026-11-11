@@ -212,9 +212,8 @@
     if (ImGui::BeginPopupModal("###HarkenSettings",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) {
         {
         ReadingTextScope reading;
-        // Settings is a reading surface with a comfortable minimum. Keep the
-        // saved global preference untouched and honor larger chosen sizes.
-        const float settingsBodyPx=std::max(18.f,static_cast<float>(draft.readingFontSize));
+        // Preview the selected reading size throughout Settings, including sizes below 18 px.
+        const float settingsBodyPx=static_cast<float>(ClampSettingsFontSize(draft.readingFontSize));
         const float settingsTitlePx=settingsBodyPx*(4.f/3.f);
         ImGui::PushFont(GetUIFontRegular(),settingsBodyPx);
         const auto winPos=ImGui::GetWindowPos(),winSize=ImGui::GetWindowSize();
@@ -361,6 +360,7 @@
             const char* entryLabel=entry.Label((int)g_currentLanguage);
             aura::ui::BeginSettingsSearchHighlight(editor.highlightId==id?editor.highlightQuery.c_str():"",entryLabel,entry.keywords.c_str());
             ImGui::PushTextWrapPos(controlX-20);aura::ui::DrawSettingsSearchableLabel(entryLabel);ImGui::PopTextWrapPos();
+            if(id=="systemFont")su::Observe("system-font-preview");
             aura::ui::EndSettingsSearchHighlight();
             const float labelBottom=ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(controlX,rowY)); ImGui::SetNextItemWidth(controlW-2);
