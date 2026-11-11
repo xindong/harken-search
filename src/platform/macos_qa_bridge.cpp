@@ -13,6 +13,7 @@
 #include "nlohmann_json.hpp"
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 #include "SettingsDialogState.h"
+#include "imgui_internal.h"
 #include <OpenGL/gl.h>
 #endif
 #include <filesystem>
@@ -30,6 +31,9 @@ using Json = nlohmann::json;
 bool thesaurusPageRequested = false;
 std::string browserTreeRootForQa;
 Json lastRegionExport;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+Json inputBeforeUi;
+#endif
 std::filesystem::path Root() {
     return std::filesystem::u8path(Platform::HarkenUserData::PreviewIsolationRootUtf8()) / "runtime";
 }
@@ -42,6 +46,12 @@ Request Poll(AppState& state) {
     Request request;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
     static long long lastId = 0;
+    const auto& io = ImGui::GetIO();
+    const auto* context = ImGui::GetCurrentContext();
+    inputBeforeUi = {{"mouse_x",io.MousePos.x},{"mouse_y",io.MousePos.y},
+        {"wheel_y",io.MouseWheel},
+        {"hovered_window",context->HoveredWindow ? context->HoveredWindow->Name : ""},
+        {"active_id",context->ActiveId}};
     try {
         const auto path = Root() / "command.json";
         RequireQaPath(path.string());
@@ -441,6 +451,13 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"spectrum_commands",spectrumCommands}}},
             {"list_ui",{{"frame",ImGui::GetFrameCount()},
                 {"draw_frame",state.qaRegions.listTextFrame},
+                {"input_before_ui",inputBeforeUi},
+                {"settle_frames",state.dbSwitchSettleFramesRemaining},
+                {"warmup_frames",state.warmupFramesRemaining},
+                {"saved_scroll_y",state.listTabs.empty() ? 0.0f :
+                    state.listTabs[std::clamp(state.activeTabIndex, 0, (int)state.listTabs.size()-1)].listScrollY},
+                {"restore_scroll_y",!state.listTabs.empty() &&
+                    state.listTabs[std::clamp(state.activeTabIndex, 0, (int)state.listTabs.size()-1)].restoreScrollY},
                 {"raw_names",state.qaRegions.listRawNames},
                 {"rendered_names",state.qaRegions.listRenderedNames}}},
             {"audio",{{"loaded",state.audioEngine.isLoaded()},{"pending",state.audioEngine.isLoadFilePending()},
