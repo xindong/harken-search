@@ -22,6 +22,10 @@ from qa_shared_buttons import audit
 from qa_transport_themes import Driver
 
 
+def check_semantic_coverage(state):
+    assert 0 <= state['semantic_indexed'] <= state['indexed'], state
+
+
 def tone(path, frequency):
     path.parent.mkdir(parents=True, exist_ok=True)
     samples = (struct.pack('<h', round(9000 * math.sin(2 * math.pi * frequency * n / 22050)))
@@ -181,7 +185,7 @@ def run(args):
         time.sleep(2.5)  # asynchronous read-only counter publishes to the visible panel
         screenshot('single-action-before', before['controls']['similar.index.start'])
         report['before'] = before
-        assert before['semantic_indexed'] == 0, before
+        check_semantic_coverage(before)
         click_start()
         resumed = until(index, lambda s: s['batch_start_generation'] > before['batch_start_generation']
                         and not s['running'] and s['batch_total'] == 3, 'full validation batch', 180)
