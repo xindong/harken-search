@@ -1602,10 +1602,22 @@ static BootstrapApplicationResult runBootstrapApplicationCore(
                      begun.nativeError);
         std::fflush(stderr);
 #endif
+        // Carry the exact cause (status/backend/native names, no paths) on
+        // the result so the entrypoint can put it into the stage failure
+        // record.  Exit code 30 alone has already proven too coarse to act
+        // on in the field.
+        const std::string beginDetail =
+            std::string("begin-status=") +
+            std::to_string(static_cast<int>(begun.status)) + "(" +
+            WindowsBootstrapFilesystemStatusName(begun.status) +
+            ");backend=" +
+            std::to_string(static_cast<int>(begun.backendStatus)) + "(" +
+            WindowsFilesystemBackendStatusName(begun.backendStatus) +
+            ");native=" + std::to_string(begun.nativeError);
         if (options.forwardOnly) {
             dependencies.health.Close();
             return {BootstrapApplicationStatus::FilesystemRejected,
-                    "filesystem-begin-failed", false};
+                    "filesystem-begin-failed", false, beginDetail};
         }
         return rejectFilesystemAfterOldExit(
             plan, dependencies, previousExecutable, "filesystem-begin-failed");

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -170,6 +171,11 @@ static void checkScanDialogPrecomputeControlContract() {
     check(!source.empty(), "main.cpp source is readable for scan dialog contract");
     const std::string ledger = readFirstExistingTextFile({"locale/harken.ui.strings.json"});
     check(!ledger.empty(), "localization ledger is readable for scan dialog contract");
+    const std::string scanPresentation = readFirstExistingTextFile({
+        "src/ScanDialogPresentation.h", "../src/ScanDialogPresentation.h",
+        "../../src/ScanDialogPresentation.h",
+    });
+    check(!scanPresentation.empty(), "scan dialog projection is readable");
     check(source.find("ImGui::Checkbox(L(Scan_PrecomputeCheckbox), &state.settings.cacheWaveformsOnScan)") == std::string::npos,
           "Scan dialog no longer lets scan-time UI change library waveform policy");
     check(source.find("getWaveformCacheMode()") != std::string::npos,
@@ -273,7 +279,7 @@ static void checkScanDialogPrecomputeControlContract() {
               source.find("ScanBackgroundBackfillDeferred: session=%lld reason=ready_to_work strategy=fast ready=%d interactIdleMs=%lld") != std::string::npos &&
               source.find("ScanBackgroundBackfillDeferredSatisfied: session=%lld strategy=fast waitedMs=%lld") != std::string::npos &&
               source.find("ScanBackgroundBackfillResume: session=%lld strategy=%s threads=%d") != std::string::npos &&
-              source.find("&state.backfillQueue,\n                            backgroundBackfillThreads);") != std::string::npos,
+              std::regex_search(source, std::regex(R"(&state[.]backfillQueue,[[:space:]]*backgroundBackfillThreads[)];)")),
           "BDD: Fast scan defers post-completion mini backfill briefly until ready-to-work pressure eases, then resumes on a lighter background worker count");
     check(source.find("const bool foregroundBackfillKickNeeded =") != std::string::npos &&
               source.find("state.scanCompletionPending.load(std::memory_order_acquire) &&") != std::string::npos &&
@@ -305,17 +311,17 @@ static void checkScanDialogPrecomputeControlContract() {
     check(source.find("} else if (state.scanCompletionPending.load(std::memory_order_acquire) &&\n                   state.scanTotal.load() > 0) {") != std::string::npos &&
               source.find("} else if (state.scanSummaryToastUntil > ImGui::GetTime() && state.scanTotal.load() > 0) {") != std::string::npos,
           "BDD: Status bar only promotes to the completed import toast after foreground completion debt fully settles");
-    check(source.find("if (scanCompleteSummaryActive && !state.settings.cacheWaveformsOnScan) {") != std::string::npos &&
-              source.find("L(Main_IndexReadyNote)") != std::string::npos &&
-              ledgerEntryContains(ledger, "Main_IndexReadyNote", u8"按需或后台渐进补齐"),
-          "BDD: Fast scan completion summary explicitly tells the user mini waveforms continue through a non-blocking background/on-demand lane");
+    check(source.find("L(Main_IndexReadyNote)") == std::string::npos &&
+              source.find("ImGui::TextDisabled(L(Main_MiniWaveBackfillNote));") != std::string::npos,
+          "BDD: Fast scan completion keeps one concise background mini-wave note");
     check(source.find("if (!state.settings.cacheWaveformsOnScan) {") != std::string::npos &&
               source.find("ImGui::TextDisabled(L(Main_MiniWaveBackfillNote));") != std::string::npos &&
               ledgerEntryContains(ledger, "Main_MiniWaveBackfillNote", u8"波形后台渐进补齐"),
           "BDD: Fast scan completion toast still discloses background mini waveform fill after Done becomes available");
-    check(source.find("state.scanCompletionPending.load(std::memory_order_acquire)") != std::string::npos &&
-              source.find("ImGui::TextDisabled(\"%s\", BuildScanCompletionPendingLabel(state).c_str());") != std::string::npos,
-          "BDD: Scan dialog summary reports foreground completion debt from the dedicated completion gate");
+    check(source.find("const auto scanView = HarkenSearch::BuildScanDialogView({") != std::string::npos &&
+              scanPresentation.find("if (input.scanning || input.completionPending) {") != std::string::npos &&
+              scanPresentation.find("view.surface = ScanDialogSurface::Progress;") != std::string::npos,
+          "BDD: Scan dialog projection keeps pending completion on the progress surface");
     check(source.find("static std::string BuildScanReadyToWorkPendingLabel(const AppState& state)") != std::string::npos &&
               source.find("RefreshScanReadyToWorkState(state);") != std::string::npos,
           "BDD: Ready-to-work debt remains a separate internal gate even after import-completion wording moves to the new full-import gate");
@@ -330,20 +336,20 @@ static void checkScanDialogPrecomputeControlContract() {
     check(source.find("const bool presentationPending =\n            HasOutstandingReadyToWorkMiniWavePresentation(") != std::string::npos &&
               source.find("if (pendingRows <= 0 && !presentationPending) {") != std::string::npos,
           "BDD: Native ready-to-work waveform debt does not clear until visible mini-wave presentation also settles");
-    check(source.find("if (!state.scanCompletionPending.load(std::memory_order_acquire)) {\n                    state.scanProgress = 0;") != std::string::npos,
-          "BDD: Closing the scan popup preserves the completed-scan summary until foreground debt actually settles");
-    check(source.find("const bool scanCompletionBlocked =\n                state.scanCompletionPending.load(std::memory_order_acquire) &&") != std::string::npos &&
-              source.find("ImGui::BeginDisabled(scanCompletionBlocked);\n            if (aura::ui::ActionButton(L(Done), ImVec2(100, 0))) {") != std::string::npos &&
-              source.find("ImGui::EndDisabled();\n            if (scanCompletionBlocked) {") != std::string::npos,
-          "BDD: Scan dialog keeps Done disabled until the foreground completion gate clears");
-    check(source.find("ImGui::TextDisabled(L(Main_WaitForegroundImport));") != std::string::npos &&
-              ledgerEntryContains(ledger, "Main_WaitForegroundImport", u8"等待本次入库前台完成"),
-          "BDD: Scan dialog tells the user the import is still being finished in the foreground instead of allowing hidden background completion");
-    check(source.find("const bool scanForegroundCompletionActive =\n            state.scanCompletionPending.load(std::memory_order_acquire) &&") != std::string::npos &&
-              source.find("ImGui::BeginDisabled(state.scanCancelRequested.load());") != std::string::npos &&
-              source.find("if (!scanForegroundCompletionActive) {\n                    state.requestCancelScanTask();") == std::string::npos,
-          "BDD: Foreground completion keeps Cancel actionable instead of disabling rollback");
-    const size_t doneButtonBlock = source.find("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0))) {");
+    check(source.find("if (state.showScanDialog && !state.pendingScanFolders.empty() &&\n        !state.isScanning.load() && !state.scanCompletionPending.load()) {") != std::string::npos,
+          "BDD: A new setup request only resets the old result after foreground completion settles");
+    check(scanPresentation.find("view.canClose = false;") != std::string::npos &&
+              source.find("if (scanView.surface == HarkenSearch::ScanDialogSurface::Progress)") != std::string::npos &&
+              source.find("if (BeginTransientScrollbarPopupModal(scanResultPopup, nullptr, scanDialogFlags))") != std::string::npos,
+          "BDD: Progress and final result use separate scan surfaces");
+    check(source.find("const char* phase = L(ScanUi_Finalizing);") != std::string::npos &&
+              source.find("DrawScanDialogMetrics(state.scanUiMetrics.Value(), true);") != std::string::npos,
+          "BDD: Finalizing progress retains elapsed time and scan speed metrics");
+    check(scanPresentation.find("view.canStop = true;") != std::string::npos &&
+              source.find("if (scanView.canStop) {") != std::string::npos &&
+              source.find("L(Main_StopBtn)") != std::string::npos,
+          "BDD: Foreground completion keeps the stop choice actionable");
+    const size_t doneButtonBlock = source.find("if (aura::ui::ActionButton(L(Done), ImVec2(100.f, 32.f)");
     const size_t doneButtonClose = doneButtonBlock == std::string::npos
         ? std::string::npos
         : source.find("ImGui::CloseCurrentPopup();", doneButtonBlock);
@@ -353,10 +359,11 @@ static void checkScanDialogPrecomputeControlContract() {
             : source.substr(doneButtonBlock, doneButtonClose - doneButtonBlock);
     check(!doneButtonBody.empty(),
           "BDD: Scan dialog Done button body is inspectable");
-    check(doneButtonBody.find("state.needsDatabaseRefresh = true;") != std::string::npos,
-          "BDD: Scan dialog Done leaves scan completion refresh queued for the main loop");
-    check(doneButtonBody.find("state.dbSwitchSettleFramesRemaining =\n                        (std::max)(state.dbSwitchSettleFramesRemaining, 120);") != std::string::npos,
-          "BDD: Scan dialog Done arms a short settle window before heavy cover/mini warmup resumes on the main UI");
+    check(source.find("state.isScanning = false;\n                        state.needsDatabaseRefresh = true;") != std::string::npos &&
+              doneButtonBody.find("ResetScanDialogResult(state);") != std::string::npos,
+          "BDD: Scan completion queues refresh before the result Done button clears presentation state");
+    check(doneButtonBody.find("state.needsDatabaseRefresh = false;") == std::string::npos,
+          "BDD: Result Done does not cancel the queued database refresh");
     check(doneButtonBody.find("state.database.rebuildFolderIndex();") == std::string::npos &&
               doneButtonBody.find("StartDeferredSidebarBootstrap(state, true, false);") == std::string::npos &&
               doneButtonBody.find("RefreshSearchResults(state, true);") == std::string::npos &&
@@ -862,11 +869,13 @@ static void checkIdleAssetBackfillContract() {
         "../../src/main.cpp",
     });
     check(!source.empty(), "main.cpp source is readable for idle asset backfill contract");
+    const std::string settingsCatalog = readFirstExistingTextFile({"src/SettingsCatalog.h"});
+    const std::string settingsFields = readFirstExistingTextFile({"src/SettingsFields.inl"});
     check(source.find("idleAssetBackfillEnabled") != std::string::npos &&
               source.find("idleAssetBackfillDelayMinutes") != std::string::npos &&
-              source.find("aura::ui::SettingsSliderRow(") != std::string::npos &&
-              source.find("L(Main_IdleBackfillCheck)") != std::string::npos &&
-              source.find("&idleAssetBackfillDelayMinutes") != std::string::npos,
+              settingsCatalog.find("LStr::Main_IdleBackfillCheck") != std::string::npos &&
+              settingsFields.find("&draft.idleAssetBackfillEnabled") != std::string::npos &&
+              settingsFields.find("&draft.idleAssetBackfillDelayMinutes,1,240") != std::string::npos,
           "BDD: Idle asset backfill keeps the existing configurable idle threshold and settings control");
     check(source.find("kIdleAssetBackfillCheckInterval = std::chrono::seconds(60)") != std::string::npos &&
               source.find("kIdleAssetBackfillProgressPollInterval = std::chrono::seconds(2)") != std::string::npos &&

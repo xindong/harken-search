@@ -973,6 +973,7 @@ target_compile_definitions(TestScanWaveformCacheContract PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURA_TEST_SCAN_STALL_SECONDS=0
     AURA_TEST_SCAN_SLOW_WORKER_MS=500
+    AURA_TEST_SCAN_QUEUE_DRAIN_HOOK=1
     AURO_TEST_WAV_DATABASE_AUDIO_PROBE=1
 )
 if(MSVC)
@@ -2639,7 +2640,9 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         AURO_FILESYSTEM_PROBE_PATH_TESTING
+        HARKEN_TEST_APPROVED_ROOT_UTF8="${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm"
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/original-audio-confirm")
     if(MSVC)
         target_compile_options(TestOriginalAudioWriteConfirmIo PRIVATE /W3 /utf-8)
         set_target_properties(TestOriginalAudioWriteConfirmIo PROPERTIES
@@ -5420,6 +5423,7 @@ aura_set_test_labels(CoverWallPageDedupe db)
 
 add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_database_features.cpp
+    tests/test_database_fts_trigger_concurrency.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AsyncWorker.cpp
@@ -5483,7 +5487,11 @@ if(MSVC)
     )
 endif()
 add_test(NAME TestDatabaseFeatures COMMAND TestDatabaseFeatures)
+set_tests_properties(TestDatabaseFeatures PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 aura_set_test_labels(TestDatabaseFeatures db)
+add_test(NAME TestDatabaseFtsTriggerConcurrency COMMAND TestDatabaseFeatures --fts-trigger-concurrency)
+aura_set_test_labels(TestDatabaseFtsTriggerConcurrency db)
 add_test(NAME TestLegacyDescriptionDisplay COMMAND TestDatabaseFeatures)
 set_tests_properties(TestLegacyDescriptionDisplay PROPERTIES
     ENVIRONMENT "HARKEN_DESCRIPTION_DISPLAY_ONLY=1")
@@ -6292,6 +6300,29 @@ endif()
 add_test(NAME TestReverseReloadContract COMMAND TestReverseReloadContract)
 aura_set_test_labels(TestReverseReloadContract core)
 
+add_executable(TestBatchFeatureResultState EXCLUDE_FROM_ALL tests/test_batch_feature_result_state.cpp)
+target_include_directories(TestBatchFeatureResultState PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestBatchFeatureResultState PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestBatchFeatureResultState COMMAND TestBatchFeatureResultState)
+aura_set_test_labels(TestBatchFeatureResultState core)
+
+add_executable(TestScanDialogPresentation EXCLUDE_FROM_ALL tests/test_scan_dialog_presentation.cpp)
+target_include_directories(TestScanDialogPresentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestScanDialogPresentation PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestScanDialogPresentation COMMAND TestScanDialogPresentation)
+aura_set_test_labels(TestScanDialogPresentation core)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME TestScanDialogSimpleContract COMMAND ${Python3_EXECUTABLE} -m pytest -q
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_dialog_simple_contract.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_completion_refresh_runtime.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qa_scan_dialog_driver.py)
+    aura_set_test_labels(TestScanDialogSimpleContract core)
+endif()
+
 add_executable(TestScanWorkflowState EXCLUDE_FROM_ALL
     tests/test_scan_workflow_state.cpp
 )
@@ -6635,6 +6666,36 @@ if(MSVC)
 endif()
 add_test(NAME TestEmergencyFileWriter COMMAND TestEmergencyFileWriter)
 aura_set_test_labels(TestEmergencyFileWriter core)
+
+add_executable(TestDiagnosticsLoggerStub EXCLUDE_FROM_ALL
+    tests/test_diagnostics_logger_stub.cpp
+    src/DiagnosticsLoggerStub.cpp
+)
+target_include_directories(TestDiagnosticsLoggerStub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestDiagnosticsLoggerStub PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsLoggerStub PRIVATE AURA_BUILD_DIAGNOSTICS=0)
+if(MSVC)
+    target_compile_options(TestDiagnosticsLoggerStub PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsLoggerStub COMMAND TestDiagnosticsLoggerStub)
+aura_set_test_labels(TestDiagnosticsLoggerStub core)
+
+add_executable(TestDiagnosticsLoggerRetention EXCLUDE_FROM_ALL
+    tests/test_diagnostics_logger_retention.cpp
+    src/DiagnosticsLogger.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+)
+target_include_directories(TestDiagnosticsLoggerRetention PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestDiagnosticsLoggerRetention PRIVATE cxx_std_17)
+target_compile_definitions(TestDiagnosticsLoggerRetention PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(TestDiagnosticsLoggerRetention PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestDiagnosticsLoggerRetention COMMAND TestDiagnosticsLoggerRetention)
+aura_set_test_labels(TestDiagnosticsLoggerRetention core)
 
 add_executable(TestScanDatabaseOpenDiagnostics EXCLUDE_FROM_ALL
     tests/test_scan_database_open_diagnostics.cpp
@@ -6995,6 +7056,19 @@ endif()
 add_test(NAME TestSimilaritySearch COMMAND TestSimilaritySearch)
 aura_set_test_labels(TestSimilaritySearch core)
 
+add_executable(TestAcousticSimilarity EXCLUDE_FROM_ALL
+    tests/test_acoustic_similarity.cpp
+    src/AcousticSimilarity.cpp
+    src/FeatureExtractor.cpp
+    tests/audio_file_reader_scripted.cpp
+)
+target_include_directories(TestAcousticSimilarity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestAcousticSimilarity PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestAcousticSimilarity COMMAND TestAcousticSimilarity)
+aura_set_test_labels(TestAcousticSimilarity core)
+
 add_executable(TestSimilarityWorkflow EXCLUDE_FROM_ALL
     tests/test_similarity_workflow.cpp
     src/SimilarityWorkflow.cpp
@@ -7046,6 +7120,116 @@ if(MSVC)
 endif()
 add_test(NAME TestFeatureExtractor COMMAND TestFeatureExtractor)
 aura_set_test_labels(TestFeatureExtractor core)
+
+get_target_property(_acoustic_file_sources TestFeatureExtractor SOURCES)
+list(REMOVE_ITEM _acoustic_file_sources tests/test_feature_extractor.cpp)
+add_executable(TestAcousticSimilarityFile EXCLUDE_FROM_ALL
+    tests/test_acoustic_similarity_file.cpp
+    src/AcousticSimilarity.cpp
+    src/AcousticSimilarityFile.cpp
+    ${_acoustic_file_sources}
+)
+target_include_directories(TestAcousticSimilarityFile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(TestAcousticSimilarityFile PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestAcousticSimilarityFile COMMAND TestAcousticSimilarityFile)
+aura_set_test_labels(TestAcousticSimilarityFile core)
+
+set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
+add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
+    tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
+    src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
+target_include_directories(TestSimilarityAnalysisStore PRIVATE src ${SQLITE_DIR})
+if(WIN32)
+    target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_win32.cpp)
+    target_link_libraries(TestSimilarityAnalysisStore PRIVATE bcrypt)
+else()
+    target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_macos.cpp)
+endif()
+if(MSVC)
+    target_compile_options(TestSimilarityAnalysisStore PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestSimilarityAnalysisStore COMMAND TestSimilarityAnalysisStore)
+aura_set_test_labels(TestSimilarityAnalysisStore core)
+get_target_property(_similarity_store_sources TestSimilarityAnalysisStore SOURCES)
+list(REMOVE_ITEM _similarity_store_sources tests/test_similarity_analysis_store.cpp)
+add_executable(TestSimilarityIndexer EXCLUDE_FROM_ALL tests/test_similarity_indexer.cpp
+    src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+target_include_directories(TestSimilarityIndexer PRIVATE src ${SQLITE_DIR})
+if(WIN32)
+    target_link_libraries(TestSimilarityIndexer PRIVATE bcrypt)
+endif()
+if(MSVC)
+    target_compile_options(TestSimilarityIndexer PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
+aura_set_test_labels(TestSimilarityIndexer core)
+set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
+set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
+add_executable(TestSimilarityIndexCountState EXCLUDE_FROM_ALL tests/test_similarity_index_count_state.cpp)
+target_include_directories(TestSimilarityIndexCountState PRIVATE src)
+if(MSVC)
+    target_compile_options(TestSimilarityIndexCountState PRIVATE /W4 /WX /utf-8)
+endif()
+add_test(NAME TestSimilarityIndexCountState COMMAND TestSimilarityIndexCountState)
+aura_set_test_labels(TestSimilarityIndexCountState core)
+add_executable(TestAudioEmbeddingService EXCLUDE_FROM_ALL
+    tests/test_audio_embedding_service.cpp
+    src/AudioEmbeddingService.cpp
+    src/AcousticSimilarity.cpp src/AcousticSimilarityFile.cpp
+    ${_acoustic_file_sources}
+)
+target_include_directories(TestAudioEmbeddingService PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_sources(TestAudioEmbeddingService PRIVATE src/platform/file_hash_win32.cpp)
+    target_link_libraries(TestAudioEmbeddingService PRIVATE bcrypt)
+else()
+    target_sources(TestAudioEmbeddingService PRIVATE src/platform/file_hash_macos.cpp)
+endif()
+if(MSVC)
+    target_compile_options(TestAudioEmbeddingService PRIVATE /W3 /utf-8)
+endif()
+if(HARKEN_ONNXRUNTIME_ROOT)
+    target_compile_definitions(TestAudioEmbeddingService PRIVATE HARKEN_WITH_ONNX=1)
+    target_include_directories(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_link_libraries(TestAudioEmbeddingService PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    add_custom_command(TARGET TestAudioEmbeddingService POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:TestAudioEmbeddingService>)
+endif()
+if(HARKEN_SIMILARITY_MODEL_FIXTURES)
+    add_executable(TestSimilarityQueryV2 EXCLUDE_FROM_ALL tests/test_similarity_query_v2.cpp
+        src/SimilarityQueryV2.cpp src/SimilarityWorkflow.cpp src/SimilarityIndexer.cpp
+        src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+    target_include_directories(TestSimilarityQueryV2 PRIVATE src ${SQLITE_DIR} ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_ONNX=1)
+    target_link_libraries(TestSimilarityQueryV2 PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(HARKEN_HNSWLIB_ROOT)
+        target_include_directories(TestSimilarityQueryV2 PRIVATE ${HARKEN_HNSWLIB_ROOT})
+        target_compile_definitions(TestSimilarityQueryV2 PRIVATE HARKEN_WITH_HNSW=1)
+    endif()
+    if(MSVC)
+        target_compile_options(TestSimilarityQueryV2 PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME TestSimilarityQueryV2 COMMAND TestSimilarityQueryV2 ${HARKEN_SIMILARITY_MODEL_FIXTURES})
+    aura_set_test_labels(TestSimilarityQueryV2 core model)
+    get_target_property(_similarity_query_sources TestSimilarityQueryV2 SOURCES)
+    list(REMOVE_ITEM _similarity_query_sources tests/test_similarity_query_v2.cpp)
+    add_executable(SimilarityV2Bench EXCLUDE_FROM_ALL tools/similarity_v2_bench.cpp
+        src/SimilaritySearch.cpp tests/test_similarity_search_database_stub.cpp ${_similarity_query_sources})
+    target_include_directories(SimilarityV2Bench PRIVATE src thirdparty ${SQLITE_DIR} ${HARKEN_ONNXRUNTIME_ROOT}/include ${HARKEN_HNSWLIB_ROOT})
+    target_compile_definitions(SimilarityV2Bench PRIVATE HARKEN_WITH_ONNX=1)
+    if(HARKEN_HNSWLIB_ROOT)
+        target_compile_definitions(SimilarityV2Bench PRIVATE HARKEN_WITH_HNSW=1)
+    endif()
+    target_link_libraries(SimilarityV2Bench PRIVATE bcrypt ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(MSVC)
+        target_compile_options(SimilarityV2Bench PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME TestAudioEmbeddingService COMMAND TestAudioEmbeddingService ${HARKEN_SIMILARITY_MODEL_FIXTURES})
+    aura_set_test_labels(TestAudioEmbeddingService core model)
+endif()
 
 add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     tests/test_similarity_query_service.cpp

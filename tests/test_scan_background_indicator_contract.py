@@ -53,8 +53,8 @@ class ScanBackgroundIndicatorContract(unittest.TestCase):
         )
 
     def test_done_acknowledgement_keeps_pause_until_next_scan(self):
-        start = MAIN.index("if (aura::ui::ActionButton(L(Done), ImVec2(100, 0)))")
-        end = MAIN.index("state.scanDialogAutoStart = false;", start)
+        start = MAIN.index("static void ResetScanDialogResult(")
+        end = MAIN.index("void RenderUI(AppState& state)", start)
         done_acknowledgement = MAIN[start:end]
         self.assertNotIn("scanStopDisposition.store", done_acknowledgement)
         self.assertIn("scanStopDisposition.store(", APP_STATE)
@@ -92,19 +92,20 @@ class ScanBackgroundIndicatorContract(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, indicator)
 
-    def test_bottom_status_draws_one_indicator_without_generic_phase_label(self):
+    def test_bottom_status_draws_one_indicator_with_compact_real_phase_and_controls(self):
         status_start = MAIN.index("const bool statusBarScanningNow")
-        status_end = MAIN.index("} else if (state.scanCompletionPending.load", status_start)
+        status_end = MAIN.index("} else if (state.scanSimilarityOwned)", status_start)
         active_status = MAIN[status_start:status_end]
         self.assertEqual(MAIN.count("DrawScanActivityIndicator(state, statusTextH)"), 1)
         self.assertIn("DrawScanActivityIndicator(state, statusTextH)", active_status)
         self.assertNotIn("phaseLabel", active_status)
         self.assertNotIn("state.scanPhase.load", active_status)
-        self.assertIn('snprintf(progressBuf, sizeof(progressBuf), "%d / %d"', active_status)
-        self.assertIn("scanAdded", active_status)
-        self.assertIn("scanUpdated", active_status)
-        self.assertIn("currentFile", active_status)
-        self.assertIn("Scan_PostProcessing", active_status)
+        self.assertIn("scanView.current, scanView.total", active_status)
+        self.assertIn("scanView.progressKnown", active_status)
+        self.assertIn("L(ScanUi_ViewProgress)", active_status)
+        self.assertIn("L(Main_StopBtn)", active_status)
+        self.assertNotIn("scanAdded", active_status)
+        self.assertNotIn("scanUpdated", active_status)
         self.assertIn("const bool mergeBottomStatusIntoWaveFooter = false", MAIN)
 
     def test_docked_waveform_transport_also_draws_indicator(self):

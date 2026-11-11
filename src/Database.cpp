@@ -56,6 +56,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+std::atomic<int> g_scanCommitIntervalOverrideMs{-1};
+std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -1293,6 +1298,17 @@ bool Database::requireFts5() {
     return true;
 }
 
+static bool ReplaceSearchIndexTriggers(sqlite3* db, const char* sql, std::string* error) {
+    // Multiple database connections can initialize simultaneously. Keep each
+    // DROP/CREATE group atomic, including rollback if one CREATE fails. A
+    // savepoint also preserves any transaction owned by the caller.
+    if (!execSqlite(db, "SAVEPOINT harken_fts_trigger_refresh;", error)) return false;
+    if (execSqlite(db, sql, error) &&
+        execSqlite(db, "RELEASE harken_fts_trigger_refresh;", error)) return true;
+    execSqlite(db, "ROLLBACK TO harken_fts_trigger_refresh; RELEASE harken_fts_trigger_refresh;", nullptr);
+    return false;
+}
+
 bool Database::ensureFtsSchema() {
     if (!m_db) return false;
     if (!requireFts5()) return false;
@@ -1382,7 +1398,7 @@ bool Database::ensureFtsSchema() {
             VALUES (new.id, new.file_name, new.file_path, new.folder_path, new.title, new.artist, new.album, new.description, new.keywords, new.category, new.search_data);
         END;
     )";
-    if (!execSqlite(m_db, trig, &err)) {
+    if (!ReplaceSearchIndexTriggers(m_db, trig, &err)) {
         m_lastError = FormatDbError(L(Db_FtsTriggerFailFmt), err.c_str());
         return false;
     }
@@ -1478,7 +1494,7 @@ bool Database::ensureFtsSchema() {
             VALUES (new.id, new.file_name, new.folder_path);
         END;
     )";
-    if (!execSqlite(m_db, trigramTriggers, &err)) {
+    if (!ReplaceSearchIndexTriggers(m_db, trigramTriggers, &err)) {
         m_lastError = FormatDbError(L(Db_TrigramTriggerFailFmt), err.c_str());
         return false;
     }
@@ -13349,9 +13365,18 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         : " AND af.id IN (" + bq.coverKeySubquery + ")";
     const std::string sql =
         "WITH search_candidates AS ("
-        " SELECT af.id AS id, af.folder_cover_key AS folder_cover_key, af.embedded_cover_key AS embedded_cover_key "
+        " SELECT af.id AS id, af.file_path AS file_path, af.folder_path AS folder_path,"
+        " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
+        " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
-        ") SELECT sc.folder_cover_key, sc.embedded_cover_key"
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path,"
+        " CASE WHEN sc.folder_cover_key LIKE 'E|%' THEN COALESCE("
+        " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
+        " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
+        " (SELECT source.file_path FROM audio_files source"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key AND source.embedded_cover_key <> ''"
+        " ORDER BY source.id LIMIT 1), '')"
+        " ELSE sc.folder_cover_src_path END"
         " FROM playlist_items pi"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE pi.playlist_id = ?";
@@ -13367,6 +13392,9 @@ std::vector<AudioRecord> Database::searchPlaylistCoverKeys(int64_t playlistId, c
         AudioRecord record;
         record.folderCoverKey = safeGetText(stmt, 0);
         record.embeddedCoverKey = safeGetText(stmt, 1);
+        record.filePath = safeGetText(stmt, 2);
+        record.folderPath = safeGetText(stmt, 3);
+        record.folderCoverSrcPath = safeGetText(stmt, 4);
         results.push_back(std::move(record));
     }
     sqlite3_finalize(stmt);
@@ -13623,16 +13651,27 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         : " AND af.id IN (" + bq.coverKeySubquery + ")";
     const std::string sql =
         "WITH search_candidates AS ("
-        " SELECT af.id AS id, af.folder_cover_key AS folder_cover_key, af.embedded_cover_key AS embedded_cover_key "
+        " SELECT af.id AS id, af.file_path AS file_path, af.folder_path AS folder_path,"
+        " af.folder_cover_key AS folder_cover_key, af.folder_cover_src_path AS folder_cover_src_path,"
+        " af.embedded_cover_key AS embedded_cover_key "
         + bq.fromClause + " " + bq.whereClause + coverInClause +
         "), ranked AS ("
-        " SELECT sc.id AS id, sc.folder_cover_key AS folder_cover_key, sc.embedded_cover_key AS embedded_cover_key"
+        " SELECT sc.id AS id, sc.file_path AS file_path, sc.folder_path AS folder_path,"
+        " sc.folder_cover_key AS folder_cover_key, sc.folder_cover_src_path AS folder_cover_src_path,"
+        " sc.embedded_cover_key AS embedded_cover_key"
         " FROM playlist_items pi"
         " JOIN playlists p ON p.id = pi.playlist_id"
         " JOIN search_candidates sc ON sc.id = pi.file_id"
         " WHERE p.parent_id = ?"
         " GROUP BY sc.id"
-        ") SELECT folder_cover_key, embedded_cover_key FROM ranked";
+        ") SELECT sc.folder_cover_key, sc.embedded_cover_key, sc.file_path, sc.folder_path,"
+        " CASE WHEN sc.folder_cover_key LIKE 'E|%' THEN COALESCE("
+        " (SELECT NULLIF(rep_path, '') FROM cover_cache_registry"
+        " WHERE cover_key = sc.folder_cover_key AND is_embedded = 1),"
+        " (SELECT source.file_path FROM audio_files source"
+        " WHERE source.embedded_cover_key = sc.folder_cover_key AND source.embedded_cover_key <> ''"
+        " ORDER BY source.id LIMIT 1), '')"
+        " ELSE sc.folder_cover_src_path END FROM ranked sc";
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
@@ -13645,6 +13684,9 @@ std::vector<AudioRecord> Database::searchAggregatedPlaylistCoverKeys(int64_t par
         AudioRecord record;
         record.folderCoverKey = safeGetText(stmt, 0);
         record.embeddedCoverKey = safeGetText(stmt, 1);
+        record.filePath = safeGetText(stmt, 2);
+        record.folderPath = safeGetText(stmt, 3);
+        record.folderCoverSrcPath = safeGetText(stmt, 4);
         results.push_back(std::move(record));
     }
     sqlite3_finalize(stmt);
@@ -13764,7 +13806,7 @@ bool Database::prepareScanRollbackJournal() {
         kRecordColumns +
         " FROM audio_files WHERE 0;";
 
-    const std::vector<std::string> ddl = {
+    std::vector<std::string> ddl = {
         "CREATE TEMP TABLE temp.scan_cancel_touched(file_path TEXT PRIMARY KEY);",
         createAudioSnapshotSql,
         "CREATE UNIQUE INDEX temp.scan_cancel_audio_path ON scan_cancel_audio(file_path);",
@@ -13812,6 +13854,14 @@ bool Database::prepareScanRollbackJournal() {
         ");",
     };
 
+    // Similarity tables are additive and absent from libraries that have never
+    // been analyzed. Preserve their opaque blobs only when the schema exists.
+    m_scanRollbackHasSimilarity = tableExists(m_db, "harken_similarity_v2") &&
+        tableExists(m_db, "harken_similarity_segments_v2");
+    if (m_scanRollbackHasSimilarity) {
+        ddl.push_back("CREATE TEMP TABLE temp.scan_cancel_similarity AS SELECT * FROM harken_similarity_v2 WHERE 0;");
+        ddl.push_back("CREATE TEMP TABLE temp.scan_cancel_similarity_segments AS SELECT * FROM harken_similarity_segments_v2 WHERE 0;");
+    }
     for (const auto& sql : ddl) {
         if (!executeSQL(sql)) {
             clearScanRollbackJournal();
@@ -13826,6 +13876,8 @@ bool Database::prepareScanRollbackJournal() {
 void Database::clearScanRollbackJournal() {
     if (m_db) {
         const std::vector<std::string> dropSql = {
+            "DROP TABLE IF EXISTS temp.scan_cancel_similarity_segments;",
+            "DROP TABLE IF EXISTS temp.scan_cancel_similarity;",
             "DROP TABLE IF EXISTS temp.scan_cancel_current_ids;",
             "DROP TABLE IF EXISTS temp.scan_cancel_waveforms;",
             "DROP TABLE IF EXISTS temp.scan_cancel_backfill_pending;",
@@ -13840,6 +13892,7 @@ void Database::clearScanRollbackJournal() {
         }
     }
     m_scanRollbackSessionActive = false;
+    m_scanRollbackHasSimilarity = false;
 }
 
 bool Database::snapshotPathForScanRollback(const std::string& filePath) {
@@ -13912,6 +13965,15 @@ bool Database::snapshotPathForScanRollback(const std::string& filePath) {
     for (const auto& sql : snapshotSql) {
         if (!executeSingleText(sql)) {
             return false;
+        }
+    }
+    if (m_scanRollbackHasSimilarity) {
+        for (const char* table : {"harken_similarity_v2", "harken_similarity_segments_v2"}) {
+            const char* snapshot = std::string(table) == "harken_similarity_v2"
+                ? "scan_cancel_similarity" : "scan_cancel_similarity_segments";
+            if (!executeSingleText(std::string("INSERT INTO temp.") + snapshot +
+                    " SELECT * FROM main." + table +
+                    " WHERE file_id IN (SELECT id FROM audio_files WHERE file_path=?);")) return false;
         }
     }
 
@@ -13987,6 +14049,13 @@ bool Database::rollbackScanRollbackJournal(const std::string& scopePath,
             return rollbackFailure(sql.c_str());
         }
     }
+    // Deleting the touched audio rows above fires the similarity cleanup
+    // triggers. Restore analyses first, then segments, in the same transaction.
+    if (m_scanRollbackHasSimilarity &&
+        (!executeSQL("INSERT OR REPLACE INTO harken_similarity_v2 SELECT * FROM temp.scan_cancel_similarity;") ||
+         !executeSQL("INSERT OR REPLACE INTO harken_similarity_segments_v2 SELECT * FROM temp.scan_cancel_similarity_segments;"))) {
+        return rollbackFailure("restore_similarity");
+    }
 
     if (!commitTransaction()) {
         return rollbackFailure("commit");
@@ -14026,7 +14095,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                                    const std::string& backfillDbPathSnapshot,
                                    int64_t backfillDbGenerationSnapshot,
                                    int64_t scanForegroundSessionId,
-                                   const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition) {
+                                   const std::atomic<HarkenSearch::ScanStopDisposition>* stopDisposition,
+                                   std::function<void()> onFinalizing) {
     ScanStats stats;
     fs::path dir = Utf8ToPath(dirPath);
     auto markCancelledAndReturn = [&]() -> ScanStats {
@@ -14246,16 +14316,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     ? 0
                     : sqlite3_column_int(skipStmts.hasMiniSidecar, 0);
                 const int channels = std::max(1, sqlite3_column_int(skipStmts.hasMiniSidecar, 1));
+                sqlite3_reset(skipStmts.hasMiniSidecar);
                 return bytes == kScanMiniPeaks * channels * (int)sizeof(float);
             }
+            sqlite3_reset(skipStmts.hasMiniSidecar);
         }
         if (skipStmts.hasMiniLegacy) {
             sqlite3_reset(skipStmts.hasMiniLegacy);
             sqlite3_bind_text(skipStmts.hasMiniLegacy, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(skipStmts.hasMiniLegacy) == SQLITE_ROW &&
-                sqlite3_column_type(skipStmts.hasMiniLegacy, 0) != SQLITE_NULL) {
-                return sqlite3_column_int(skipStmts.hasMiniLegacy, 0) == kScanMiniPeaks * (int)sizeof(float);
-            }
+            const bool usable = sqlite3_step(skipStmts.hasMiniLegacy) == SQLITE_ROW &&
+                sqlite3_column_type(skipStmts.hasMiniLegacy, 0) != SQLITE_NULL &&
+                sqlite3_column_int(skipStmts.hasMiniLegacy, 0) == kScanMiniPeaks * (int)sizeof(float);
+            sqlite3_reset(skipStmts.hasMiniLegacy);
+            return usable;
         }
         return false;
     };
@@ -14654,11 +14727,14 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         writeBuffer.reserve((size_t)COMMIT_BATCH_SIZE);
 
         auto accountWriteBufferFailure = [&](const std::string& message) {
-            const int failedCount = (int)writeBuffer.size();
+            const int failedCount = (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                [](const WorkResult& result) { return !result.scanTerminalFailure; });
             if (failedCount > 0) {
                 stats.addError(message, failedCount);
                 stats.failedFiles += failedCount;
                 failedWriteResultsInBatch += failedCount;
+            } else {
+                stats.addDiagnostic(message);
             }
             writeBuffer.clear();
         };
@@ -15127,7 +15203,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
 
             if (batchOk && commitTransaction()) {
-                committedWritesInBatch += (int)writeBuffer.size();
+                committedWritesInBatch += (int)std::count_if(writeBuffer.begin(), writeBuffer.end(),
+                    [](const WorkResult& result) { return !result.scanTerminalFailure; });
                 stats.added += batchAdded;
                 stats.updated += batchUpdated;
                 stats.ingested += batchAdded + batchUpdated;
@@ -15235,6 +15312,11 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
         bool flushFailed = false;
         auto lastFlushTime = std::chrono::steady_clock::now();
+        int commitIntervalMs = COMMIT_INTERVAL_MS;
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+        const int testCommitIntervalMs = g_scanCommitIntervalOverrideMs.load();
+        if (testCommitIntervalMs >= 0) commitIntervalMs = testCommitIntervalMs;
+#endif
 
         while (consumed.load() < toConsume) {
             if (isCancelled()) {
@@ -15306,9 +15388,12 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
             bool timeSliceExpired = !writeBuffer.empty() &&
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - lastFlushTime).count() >= COMMIT_INTERVAL_MS;
+                    std::chrono::steady_clock::now() - lastFlushTime).count() >= commitIntervalMs;
 
             if (writeBuffer.size() >= (size_t)COMMIT_BATCH_SIZE || timeSliceExpired) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+                if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
                 if (!flushWriteBuffer()) {
                     flushFailed = true;
                     break;
@@ -15324,6 +15409,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (!flushFailed && !writeBuffer.empty()) {
+#if defined(AURA_TEST_SCAN_QUEUE_DRAIN_HOOK)
+            if (g_scanBeforeFlushHook) g_scanBeforeFlushHook(produced, toConsume, consumed.load());
+#endif
             if (!flushWriteBuffer()) {
                 flushFailed = true;
                 DIAG_ACTION_FMT("Scan", "Tail batch flush failed: %s", m_lastError.c_str());
@@ -15338,6 +15426,19 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         }
 
         if (flushFailed) {
+            // Workers have stopped; classify results never consumed by the writer
+            // before grouping the remaining unimported files as write failures.
+            while (!resultQ.empty()) {
+                WorkResult queued = std::move(resultQ.front());
+                resultQ.pop();
+                if (!queued.scanTerminalFailure && queued.ok) continue;
+                const std::string message = queued.errorMessage.empty()
+                    ? ("Failed to scan file: " + queued.record.filePath)
+                    : queued.errorMessage;
+                stats.addError(message);
+                ++stats.failedFiles;
+                ++failedScanResultsInBatch;
+            }
             const int accountedInBatch =
                 committedWritesInBatch + failedScanResultsInBatch + failedWriteResultsInBatch;
             const int unaccountedInBatch = (int)batch.size() - accountedInBatch;
@@ -15432,6 +15533,10 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 wi.existingCoverSuppressed = sqlite3_column_int(stmtExists, 5) != 0;
                 wi.existingDurationSeconds = (float)sqlite3_column_double(stmtExists, 6);
             }
+            // A SELECT left on SQLITE_ROW pins its WAL snapshot. Release it
+            // before any write or worker callback, otherwise a concurrent cache
+            // commit makes the scan's completion writes fail with BUSY_SNAPSHOT.
+            sqlite3_reset(stmtExists);
         } else {
             exists = fileExists(wi.filePath);
         }
@@ -15549,6 +15654,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                         state.cacheKey   = safeGetText(skipStmts.wfState, 4);
                         hasState = true;
                     }
+                    sqlite3_reset(skipStmts.wfState);
                 } else {
                     hasState = getWaveformCacheStateByPath(wi.filePath, state);
                 }
@@ -15866,6 +15972,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     }
     const bool wasCancelled = false; // 能执行到这里说明未取消，后续后处理可安全使用
 
+    // Finalization is a stage, not extra files added to the denominator.
+    // The callback is synchronous; callers retain their generation/cancel gates.
+    if (onFinalizing) onFinalizing();
     // Update callback once at end to ensure UI has latest counts.
     if (callback) {
         callback(completed.load(), stats.total,
@@ -15875,20 +15984,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
     // Count files whose persisted state actually changed.
     const int actualChangesCount = stats.added + stats.updated + stats.removed;
-    const int postBase = (std::max)(completed.load(), stats.total);
-    int postStageCount = 1; 
-    if (removeMissing) postStageCount++;
-    if (!scanCoverDeltas.empty()) postStageCount++;
-    if (completeImport && enqueueExtraction) postStageCount += 2;
-    postStageCount++; 
-    int postStageIdx = 0;
-
     auto reportPostStage = [&](const std::string& msg) {
-        postStageIdx++;
         if (!callback) return;
-        int cur = postBase + postStageIdx;
-        int tot = postBase + postStageCount;
-        callback(cur, tot, msg, true);
+        callback(completed.load(), stats.total, msg, true);
     };
 
     // Optional: remove missing files under this folder（先读完路径再验盘，避免长事务占锁）
@@ -15920,7 +16018,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             }
             checked++;
             if (callback && (checked % 500) == 0) {
-                callback(postBase + postStageIdx, postBase + postStageCount,
+                callback(completed.load(), stats.total,
                          std::string(L(ScanPost_CleanMissing)) + " (" + std::to_string(checked) + ")", true);
             }
         }
@@ -15964,7 +16062,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
            }
        }
         if (stats.unreachable > 0 && callback) {
-            callback(postBase + postStageIdx, postBase + postStageCount,
+            callback(completed.load(), stats.total,
                      std::string("Scan_NetworkLibraryUnreachable"), true);
         }
     }
@@ -15984,7 +16082,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (callback) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now - lastReport >= std::chrono::milliseconds(500)) {
-                    callback(postBase + postStageIdx, postBase + postStageCount,
+                    callback(completed.load(), stats.total,
                              std::string(L(ScanPost_FullWaveCache)) + " (" + std::to_string(depth) + ")", true);
                     lastReport = now;
                 }
@@ -16011,7 +16109,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (repaired <= 0) break;
             repairedTotal += repaired;
             if (callback) {
-                callback(postBase + postStageIdx, postBase + postStageCount,
+                callback(completed.load(), stats.total,
                          std::string(L(ScanPost_CoverThumb)) + " (" + std::to_string(repairedTotal) + ")", true);
             }
         }
@@ -16034,7 +16132,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     if (!fatalScanError && (!wasCancelled || hasCommittedChanges) && needsHeavyPostProcess) {
         // Mark foreground scanning complete before background maintenance begins.
         if (callback) {
-            callback(postBase + postStageCount, postBase + postStageCount, u8"扫描完毕！正在后台静默优化索引...", true);
+            callback(completed.load(), stats.total, u8"扫描完毕！正在后台静默优化索引...", true);
         }
 
         if (m_postProcessThread.joinable()) {
@@ -16091,7 +16189,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     } else {
         // Scans below 50 files can skip global reordering and close immediately.
         if (callback) {
-            callback(postBase + postStageCount, postBase + postStageCount,
+            callback(completed.load(), stats.total,
                      fatalScanError ? std::string(L(ScanFatalDbStop)) : std::string(L(ScanDone)),
                      true);
         }

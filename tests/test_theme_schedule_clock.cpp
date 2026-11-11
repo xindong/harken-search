@@ -57,9 +57,12 @@ int main() {
     for (auto mode : {Mode::Off, Mode::FixedDay, Mode::FixedNight}) {
         Check(ModeAfterManualTheme(mode) == Mode::Off, "manual selection replaces fixed palette when automatic is off");
     }
-    for (auto mode : {Mode::Off, Mode::Automatic, Mode::FixedDay, Mode::FixedNight}) {
-        Check(ModeFromSetting(static_cast<int>(mode)) == mode, "saved mode round trips");
+    for (auto mode : {Mode::Off, Mode::Automatic}) {
+        Check(ModeFromSetting(static_cast<int>(mode)) == mode, "saved visible mode round trips");
     }
+    Check(ModeFromSetting(static_cast<int>(Mode::FixedDay)) == Mode::Off &&
+          ModeFromSetting(static_cast<int>(Mode::FixedNight)) == Mode::Off,
+          "legacy unchecked fixed modes load as off");
     Check(ModeFromSetting(-1) == Mode::Off && ModeFromSetting(4) == Mode::Off, "invalid saved mode does not force theme");
 
     Check(ShouldApply({Period::Day, std::nullopt, false, false, false}), "first application");

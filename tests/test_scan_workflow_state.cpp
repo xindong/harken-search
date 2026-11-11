@@ -92,6 +92,47 @@ void testMiniWaveformDebtBlocksCompleted() {
           "fast scan may complete only when background mini continuation is explicit");
 }
 
+void testLastMiniCompletionBetweenRefreshes() {
+    auto snapshot = completedSnapshot();
+    snapshot.discovered = snapshot.processed = 42681;
+    snapshot.succeeded = 42537;
+    snapshot.skipped = 144;
+    snapshot.miniWaveformsTotal = 42681;
+    snapshot.miniWaveformsCompleted = 42680;
+    snapshot.foregroundTasksDrained = false;
+    check(!HarkenSearch::CanEnterCompleted(snapshot),
+          "one required mini still pending cannot complete");
+
+    // The next reader observes an empty ledger after the final worker finishes.
+    snapshot.foregroundTasksDrained = true;
+    check(!HarkenSearch::CanEnterCompleted(snapshot),
+          "clearing the pending flag alone cannot repair a stale mini count");
+    snapshot.miniWaveformsCompleted = 42681;
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::None, false) ==
+              HarkenSearch::ScanWorkflowStage::Completed,
+          "publishing the final ledger count allows normal completion");
+
+    snapshot.foregroundTasksDrained = false;
+    check(!HarkenSearch::CanEnterCompleted(snapshot),
+          "finished mini count does not hide remaining cover or metadata work");
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::PauseKeepCommitted, false) ==
+              HarkenSearch::ScanWorkflowStage::Paused,
+          "last-mini synchronization preserves pause semantics");
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::CancelRollback, false) ==
+              HarkenSearch::ScanWorkflowStage::Cancelled,
+          "last-mini synchronization preserves rollback semantics");
+
+    snapshot.miniWaveformsRequired = false;
+    snapshot.miniWaveformsContinueInBackground = true;
+    snapshot.miniWaveformsCompleted = snapshot.miniWaveformsTotal = 0;
+    snapshot.foregroundTasksDrained = true;
+    check(HarkenSearch::CanEnterCompleted(snapshot),
+          "fast mode does not wait for optional mini counts");
+}
+
 void testFastModeReleasesOptionalCompletionDebtImmediately() {
     check(HarkenSearch::ShouldReleaseFastScanCompletionGate(
               /*discovered=*/2258,
@@ -108,6 +149,30 @@ void testFastModeReleasesOptionalCompletionDebtImmediately() {
               /*processed=*/2258,
               /*fastMode=*/false),
           "full scan keeps the foreground completion contract for required waveform work");
+}
+
+void testFastCompletionDoesNotWaitForOptionalCovers() {
+    check(HarkenSearch::AreScanCompletionCountersReady(
+              /*fastMode=*/true, /*miniUnresolved=*/0,
+              /*coverUnresolved=*/7093, /*metadataUnresolved=*/0),
+          "fast scan summary is ready while covers continue in background");
+    check(!HarkenSearch::AreScanCompletionCountersReady(
+              /*fastMode=*/false, /*miniUnresolved=*/0,
+              /*coverUnresolved=*/7093, /*metadataUnresolved=*/0),
+          "full scan still waits for required covers");
+    check(!HarkenSearch::AreScanCompletionCountersReady(
+              /*fastMode=*/true, /*miniUnresolved=*/1,
+              /*coverUnresolved=*/0, /*metadataUnresolved=*/0),
+          "required mini work cannot be hidden by fast completion");
+}
+
+void testFastCompletionPreservesPopulatedBackgroundQueue() {
+    check(!HarkenSearch::ShouldRebuildScanBackfillQueue(true, 7093, 0),
+          "fast completion reuses queued cover work without a blocking rebuild");
+    check(HarkenSearch::ShouldRebuildScanBackfillQueue(true, 0, 0),
+          "empty fast queue recovers durable background work");
+    check(HarkenSearch::ShouldRebuildScanBackfillQueue(false, 7093, 0),
+          "full scan retains its existing queue recovery path");
 }
 
 void testPauseIsASeparateTerminalStage() {
@@ -218,7 +283,10 @@ int main() {
     testSkippedFilesRemainACompletePartition();
     testFailedFilesDoNotPreventNonFatalCompletion();
     testMiniWaveformDebtBlocksCompleted();
+    testLastMiniCompletionBetweenRefreshes();
     testFastModeReleasesOptionalCompletionDebtImmediately();
+    testFastCompletionDoesNotWaitForOptionalCovers();
+    testFastCompletionPreservesPopulatedBackgroundQueue();
     testPauseIsASeparateTerminalStage();
     testPostScanSimilarityIndexStartsOnlyOnSuccessfulCompletedScan();
     testPendingPostScanSimilarityIndexDoesNotCrossDatabaseSwitch();

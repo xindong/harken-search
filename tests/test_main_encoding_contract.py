@@ -71,7 +71,9 @@ def main() -> int:
     assert "Platform::FileSystem::ReadFileText(pathUtf8, contents)" in load_settings
     assert "Utf8ToPathMain(pathUtf8)" not in load_settings
     assert "MultiByteToWideChar" not in load_settings
-    assert "Platform::FileSystem::StreamWriter writer" in save_settings
+    assert "harken::settings::SaveKeyValueFile(pathUtf8,items)" in save_settings
+    save_settings += Path("src/SettingsFileWriter.h").read_text(encoding="utf-8")
+    assert "Platform::FileSystem::StreamWriter" in save_settings
     assert "Utf8ToPathMain(pathUtf8)" not in save_settings
     assert "MultiByteToWideChar" not in save_settings
     assert (

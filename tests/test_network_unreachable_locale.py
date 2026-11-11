@@ -36,9 +36,11 @@ class NetworkUnreachableLocaleContract(unittest.TestCase):
         self.assertEqual(FMT_RE.findall(entry["zh"]), FMT_RE.findall(entry["en"]))
         self.assertEqual(FMT_RE.findall(entry["zh"]), FMT_RE.findall(entry["ja"]))
 
-    def test_unreachable_count_fmt_order_matches(self) -> None:
-        entry = self.by_id.get("Scan_NetworkUnreachableCountFmt")
-        self.assertIsNotNone(entry, "missing Scan_NetworkUnreachableCountFmt ledger key")
+    def test_network_result_uses_the_shared_failure_count_format(self) -> None:
+        # The compact result groups network failures under paths; full network
+        # reasons remain available in the separately translated details.
+        entry = self.by_id.get("Main_FailedFmt")
+        self.assertIsNotNone(entry, "missing shared result failure-count ledger key")
         assert entry is not None
         zh_fmt = FMT_RE.findall(entry["zh"])
         self.assertEqual(zh_fmt, ["%d"])
@@ -49,6 +51,11 @@ class NetworkUnreachableLocaleContract(unittest.TestCase):
         self.assertTrue(entry["ja"].strip())
         self.assertFalse(CJK_RE.search(entry["en"]))
         self.assertNotEqual(entry["ja"], entry["zh"])
+        for key in ("ScanUi_NetworkTitle", "ScanUi_NetworkAction", "ScanUi_FailedPath"):
+            with self.subTest(key=key):
+                message = self.by_id[key]
+                self.assertTrue(all(message.get(language, "").strip() for language in ("zh", "en", "ja")))
+                self.assertFalse(CJK_RE.search(message["en"]))
 
 
 if __name__ == "__main__":

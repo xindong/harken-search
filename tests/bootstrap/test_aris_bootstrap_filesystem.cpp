@@ -11328,7 +11328,204 @@ void test_native_invocation_cleanup_rejects_current_bootstrap_image_before_delet
 
 }  // namespace
 
+void test_missing_install_parent_is_admitted_without_mutation() {
+    const Fixture values = fixture();
+    ScriptedBackend backend;
+    backend.set(WindowsFilesystemRootRole::Install, "resources",
+                WindowsFilesystemEntryKind::Missing, {});
+    WindowsBootstrapFilesystemPort port(backend);
+    check(port.Begin(values.plan, values.journal, roots()).ok(),
+          "a signed new file may have a missing install parent");
+    check(!hasMutation(backend),
+          "missing parent admission does not mutate before the durable journal");
+    for (const auto kind : {WindowsFilesystemEntryKind::RegularFile,
+                            WindowsFilesystemEntryKind::ReparsePoint}) {
+        ScriptedBackend conflicting;
+        conflicting.set(WindowsFilesystemRootRole::Install, "resources", kind, identity(93));
+        WindowsBootstrapFilesystemPort rejected(conflicting);
+        check(!rejected.Begin(values.plan, values.journal, roots()).ok() &&
+                  !hasMutation(conflicting),
+              "new directory support still rejects same-name files and reparse points");
+    }
+    auto pending = journalRecord(values);
+    const auto added = std::find_if(pending.items.begin(), pending.items.end(),
+        [](const auto& item) { return item.relativePath == "resources/core.pak"; });
+    check(added != pending.items.end(), "pending-parent codec test has a new nested item");
+    if (added == pending.items.end()) return;
+    added->installParentIdentity = {};
+    check(EncodeWindowsBootstrapJournal(pending).empty(),
+          "schema 9 retains its original bound-parent requirement");
+    pending.schemaVersion = 10U;
+    const auto bytes = EncodeWindowsBootstrapJournal(pending);
+    check(!bytes.empty() && DecodeWindowsBootstrapJournal(
+              bytes, &values.plan, &values.journal).ok(),
+          "schema 10 persists and recovers an unbound new-file parent");
+    added->replacementStarted = true;
+    check(EncodeWindowsBootstrapJournal(pending).empty(),
+          "no journal may start file replacement with an unbound parent");
+}
+
+void test_native_missing_install_parents_publish_and_rollback() {
+#if defined(_WIN32)
+    for (unsigned scenario = 0; scenario < 4U; ++scenario) {
+        const bool rollback = scenario == 1U;
+        NativeSandbox sandbox;
+        NativeSandboxCleanupAssertion cleanup(sandbox, "new-install-parents");
+        const auto base = NativeSandbox::systemTempRoot();
+        for (unsigned attempt = 0; attempt < 32U && !sandbox.owned; ++attempt) {
+            sandbox.path = base / ("harken-new-parents-" +
+                std::to_string(GetCurrentProcessId()) + "-" +
+                std::to_string(attempt));
+            std::error_code error;
+            sandbox.owned = std::filesystem::create_directory(sandbox.path, error);
+        }
+        check(sandbox.owned, "new-parent test owns an isolated directory");
+        if (!sandbox.owned) return;
+        const auto installPath = sandbox.path / "install";
+        const auto stagingPath = sandbox.path / "updater" / "staging";
+        const auto transactionPath = sandbox.path / "updater" / "transaction";
+        const std::string asset = "assets/icons/new-contributors/cindy.png";
+        std::filesystem::create_directories(installPath / "user-data");
+        std::filesystem::create_directories(stagingPath / "assets/icons/new-contributors");
+        std::filesystem::create_directories(transactionPath);
+        check(writeNativeFixtureFile(installPath / "HarkenSearch.exe", "old-native") &&
+                  writeNativeFixtureFile(installPath / "user-data/keep.txt", "user-owned") &&
+                  writeNativeFixtureFile(stagingPath / "HarkenSearch.exe", "new-native") &&
+                  writeNativeFixtureFile(stagingPath / asset, "new-logo"),
+              "new-parent test creates the old version and staged payload");
+        SignedInstallPlan raw = rawPlan();
+        rebindDeploymentIdentity(raw, installPath.u8string());
+        raw.invocation.updaterOwnedBase = stagingPath.parent_path().u8string();
+        raw.invocation.stagingRoot = stagingPath.u8string();
+        raw.invocation.transactionRoot = transactionPath.u8string();
+        raw.inventory = {{"HarkenSearch.exe", BootstrapSha256Hex("new-native"), 10U},
+                         {asset, BootstrapSha256Hex("new-logo"), 8U}};
+        const auto validated = ValidateSignedInstallPlan(raw, SignatureStatus::Verified);
+        check(validated.ok(), "new-parent signed fixture plan validates");
+        if (!validated.ok()) return;
+        const auto journal = BuildReplacementJournal(
+            *validated.plan, {{"HarkenSearch.exe"}}, raw.invocation.transactionId);
+        check(journal.ok(), "new-parent journal classifies the added asset");
+        if (!journal.ok()) return;
+        const WindowsBootstrapFilesystemRoots trusted{
+            stagingPath.u8string(), transactionPath.u8string(),
+            raw.invocation.updaterOwnedBase, raw.invocation.invocationIdentity};
+        WindowsBootstrapFilesystemNativeTestHooks hooks;
+        if (scenario == 2U) {
+            hooks.accessDeniedFailurePoint = WindowsBootstrapFilesystemNativeTestFailurePoint::
+                InstallDirectoryBeforeCreate;
+        } else if (scenario == 3U) {
+            hooks.accessDeniedFailurePoint = WindowsBootstrapFilesystemNativeTestFailurePoint::
+                InstallDirectoryAfterCreateBeforeObservation;
+        }
+        auto backend = createAuthorizedNativeBackend(installPath, stagingPath, transactionPath, hooks);
+        check(backend != nullptr, "new-parent native backend is authorized");
+        if (!backend) return;
+        WindowsFilesystemHandle installHandle = 0;
+        WindowsFilesystemHandle unleasedHandle = 0;
+        WindowsFileIdentity installIdentity;
+        WindowsFileIdentity unleasedIdentity;
+        check(backend->OpenRootExact(installPath.u8string(), WindowsFilesystemRootRole::Install,
+                                    installHandle, installIdentity).ok(),
+              "directory authorization test binds the install root");
+        check(!backend->OpenOrCreateDirectoryNoFollow(installHandle, "unleased", true,
+                    unleasedHandle, unleasedIdentity).ok() &&
+                  !std::filesystem::exists(installPath / "unleased"),
+              "install directories cannot be created without the durable journal lease");
+        if (unleasedHandle != 0) backend->CloseFilesystemHandle(unleasedHandle);
+        backend->CloseFilesystemHandle(installHandle);
+        auto port = std::make_unique<WindowsBootstrapFilesystemPort>(*backend);
+        const auto begun = port->Begin(*validated.plan, *journal.journal, trusted);
+        check(begun.ok(), "native admission accepts three missing parent directories");
+        check(!std::filesystem::exists(installPath / "assets"),
+              "native admission is read-only before the journal");
+        if (!begun.ok()) return;
+        const auto prepared = port->Apply(intent(BootstrapIntentKind::PersistJournal, {}, "prepared"));
+        if (scenario >= 2U) {
+            const auto expected = scenario == 2U
+                ? WindowsBootstrapFilesystemStatus::RetryableAccessDenied
+                : WindowsBootstrapFilesystemStatus::PartialDurableState;
+            check(prepared.status == expected &&
+                      !std::filesystem::exists(installPath / asset) &&
+                      readNativeFixtureFile(installPath / "HarkenSearch.exe") == "old-native",
+                  "directory creation cuts preserve the old installation before file mutation");
+        } else {
+            check(prepared.ok(), "native preparation creates missing install directories durably");
+            check(std::filesystem::is_directory(installPath / "assets/icons/new-contributors") &&
+                  !std::filesystem::exists(installPath / asset) &&
+                  readNativeFixtureFile(installPath / "HarkenSearch.exe") == "old-native",
+              "parents exist before any old or new payload file is changed");
+            if (!prepared.ok()) return;
+        }
+        // A fresh backend must decode the journal, bind the created parent,
+        // and finish the same transaction without any pre-created fixture path.
+        port.reset();
+        backend.reset();
+        if (scenario == 3U) {
+            WindowsBootstrapFilesystemNativeTestHooks flushHooks;
+            flushHooks.accessDeniedFailurePoint =
+                WindowsBootstrapFilesystemNativeTestFailurePoint::InstallDirectoryBeforeFlush;
+            backend = createAuthorizedNativeBackend(installPath, stagingPath, transactionPath, flushHooks);
+            check(backend != nullptr, "unflushed-parent recovery backend is authorized");
+            if (!backend) return;
+            port = std::make_unique<WindowsBootstrapFilesystemPort>(*backend);
+            const auto unflushed = port->BeginRecovery(*validated.plan, *journal.journal, trusted);
+            check(unflushed.filesystem.ok() && !unflushed.intents.empty(),
+                  "interrupted directory creation retains a recovery preparation intent");
+            if (!unflushed.filesystem.ok() || unflushed.intents.empty()) return;
+            check(!port->Apply(unflushed.intents.front()).ok(),
+                  "reused unbound parent must flush before its binding is published");
+            check(!std::filesystem::exists(installPath / "assets/icons") &&
+                      !std::filesystem::exists(installPath / asset) &&
+                      readNativeFixtureFile(installPath / "HarkenSearch.exe") == "old-native",
+                  "failed flush of the reused parent prevents deeper directory and payload publication");
+            port.reset(); backend.reset();
+        }
+        backend = createAuthorizedNativeBackend(installPath, stagingPath, transactionPath);
+        check(backend != nullptr, "restart reopens the authorized roots");
+        if (!backend) return;
+        port = std::make_unique<WindowsBootstrapFilesystemPort>(*backend);
+        const auto recovery = port->BeginRecovery(*validated.plan, *journal.journal, trusted);
+        check(recovery.filesystem.ok() &&
+                  recovery.disposition == WindowsBootstrapRecoveryDisposition::ContinueForward,
+              "a fresh updater resumes after creating the parent directories");
+        if (!recovery.filesystem.ok()) return;
+        for (const auto& action : recovery.intents) {
+            const auto applied = port->Apply(action);
+            check(applied.ok(), "native resumed update publishes each signed file");
+            if (!applied.ok()) return;
+        }
+        check(readNativeFixtureFile(installPath / asset) == "new-logo" &&
+                  readNativeFixtureFile(installPath / "HarkenSearch.exe") == "new-native",
+              "native update publishes both the executable and new nested asset");
+        if (rollback) {
+            check(port->Apply(intent(BootstrapIntentKind::PersistJournal, {}, "rolling-back")).ok() &&
+                      port->Apply(intent(BootstrapIntentKind::RestoreBackup, "HarkenSearch.exe")).ok() &&
+                      port->Apply(intent(BootstrapIntentKind::RemoveNewItem, asset)).ok() &&
+                      port->Apply(intent(BootstrapIntentKind::RemoveBackup)).ok(),
+                  "native rollback restores old files and removes the new nested file");
+            check(readNativeFixtureFile(installPath / "HarkenSearch.exe") == "old-native" &&
+                      !std::filesystem::exists(installPath / asset) &&
+                      std::filesystem::is_directory(installPath / "assets/icons/new-contributors"),
+                  "rollback preserves reusable directories without retaining new payload files");
+        } else {
+            check(checkpointHealthyChildForCommit(*port) &&
+                      port->Apply(intent(BootstrapIntentKind::CommitJournal)).ok() &&
+                      port->Apply(intent(BootstrapIntentKind::RemoveBackup)).ok(),
+                  "native successful update commits and removes its backups");
+        }
+        check(readNativeFixtureFile(installPath / "user-data/keep.txt") == "user-owned",
+              "both success and rollback preserve unrelated user data");
+    }
+#endif
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--only-missing-install-parent") == 0) {
+        test_missing_install_parent_is_admitted_without_mutation();
+        test_native_missing_install_parents_publish_and_rollback();
+        return failures == 0 ? 0 : 1;
+    }
 #if defined(_WIN32)
     if (argc == 2 &&
         std::strcmp(argv[1], "--bootstrap-child-wait-timeout") == 0) {
@@ -11645,6 +11842,8 @@ int main(int argc, char** argv) {
     test_restart_rejects_recreated_backup_after_terminal_cleanup();
     test_terminal_state_rejects_new_journal_phases();
     test_backup_only_rollback_becomes_terminal_and_cleans_backup();
+    test_missing_install_parent_is_admitted_without_mutation();
+    test_native_missing_install_parents_publish_and_rollback();
     test_native_backend_factory_loads_without_touching_install();
 #if defined(_WIN32)
     test_native_child_wait_timeout_terminates_and_closes();

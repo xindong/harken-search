@@ -9627,6 +9627,32 @@
       "rollback": ""
     },
     {
+      "id": "S2-1AFEA1902F",
+      "path": "tools/export_similarity_model.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Build-time generator for pinned similarity model resources; retained as an explicit maintenance entry point."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Build-time generator for pinned similarity model resources; retained as an explicit maintenance entry point.",
+      "rollback": ""
+    },
+    {
       "id": "S2-20F871611A",
       "path": "tools/generate_harken_app_icons.py",
       "symbol": "",
@@ -9693,6 +9719,55 @@
       "compatibility_checked": false,
       "reviewer": "Harken Search migration audit 2026-10-29",
       "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-4D3401D657",
+      "path": "tools/qa_about_window.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E4",
+          "source": "manual QA entrypoint review",
+          "detail": "CLI help succeeds; the tool drives an isolated package, records source/package identity, captures the actual About window and checks its credits/legal links."
+        }
+      ],
+      "contract_refs": [
+        "docs/plans/2026-10-29-about-legal-credits.md"
+      ],
+      "dynamic_lookup_checked": true,
+      "compatibility_checked": true,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Repeatable manual About-window QA utility; lack of a product importer is expected. Retain the runtime evidence entrypoint.",
+      "rollback": "git restore --source=HEAD -- tools/qa_about_window.py"
+    },
+    {
+      "id": "S2-0CA6B9D391",
+      "path": "tools/qa_default_font_sizes.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
       "rollback": ""
     },
     {
@@ -9788,6 +9863,29 @@
       "rollback": ""
     },
     {
+      "id": "S2-3A403C9340",
+      "path": "tools/qa_folder_keyword_search.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_folder_keyword_search.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy GPT-6 Astra QA integration review",
+      "reason": "Manual QA entry point for isolated folder and keyword search checks. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
       "id": "S2-94FC332BF8",
       "path": "tools/qa_folder_shortcuts.py",
       "symbol": "",
@@ -9811,6 +9909,29 @@
       "rollback": ""
     },
     {
+      "id": "S2-691C877B82",
+      "path": "tools/qa_full_scan_completion.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E4",
+          "source": "isolated native scan regression",
+          "detail": "Drives the real scan dialog and Done button on a private desktop; verifies interrupted fast scans, restart, full-cache pause and repeat scans against persisted mini waveform blobs."
+        }
+      ],
+      "contract_refs": [
+        "tests/test_scan_waveform_cache_contract.cpp"
+      ],
+      "dynamic_lookup_checked": true,
+      "compatibility_checked": true,
+      "reviewer": "Cindy GPT-6 Astra scan regression review",
+      "reason": "Repeatable manual QA entrypoint for the mini-cache rescan bug. Invoked by CLI against an explicitly isolated package; it is not imported by the product.",
+      "rollback": "git restore --source=HEAD -- tools/qa_full_scan_completion.py"
+    },
+    {
       "id": "S2-5BADF2514C",
       "path": "tools/qa_info_pages.py",
       "symbol": "",
@@ -9831,121 +9952,6 @@
       "compatibility_checked": false,
       "reviewer": "Harken Search migration audit 2026-10-29",
       "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
-      "rollback": ""
-    },
-    {
-      "id": "S2-652AA70272",
-      "path": "tools/qa_navy_chrome.py",
-      "symbol": "",
-      "kind": "script",
-      "present": true,
-      "disposition": "KEEP",
-      "evidence": [
-        {
-          "type": "E2",
-          "source": "reference_graph",
-          "detail": "zero incoming tracked references"
-        }
-      ],
-      "contract_refs": [
-        "tools/qa_navy_chrome.py"
-      ],
-      "dynamic_lookup_checked": false,
-      "compatibility_checked": false,
-      "reviewer": "Harken Search migration audit 2026-10-29",
-      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
-      "rollback": ""
-    },
-    {
-      "id": "S2-1CB1FB7803",
-      "path": "tools/qa_similar_index.py",
-      "symbol": "",
-      "kind": "script",
-      "present": true,
-      "disposition": "KEEP",
-      "evidence": [
-        {
-          "type": "E2",
-          "source": "reference_graph",
-          "detail": "zero incoming tracked references"
-        }
-      ],
-      "contract_refs": [
-        "tools/qa_similar_index.py"
-      ],
-      "dynamic_lookup_checked": false,
-      "compatibility_checked": false,
-      "reviewer": "Harken Search migration audit 2026-10-29",
-      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
-      "rollback": ""
-    },
-    {
-      "id": "S2-D17DAA9582",
-      "path": "tools/qa_single_host_startup.ps1",
-      "symbol": "",
-      "kind": "script",
-      "present": true,
-      "disposition": "KEEP",
-      "evidence": [
-        {
-          "type": "E2",
-          "source": "reference_graph",
-          "detail": "zero incoming tracked references"
-        }
-      ],
-      "contract_refs": [
-        "tools/qa_single_host_startup.ps1"
-      ],
-      "dynamic_lookup_checked": false,
-      "compatibility_checked": false,
-      "reviewer": "Harken Search migration audit 2026-10-29",
-      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
-      "rollback": ""
-    },
-    {
-      "id": "S2-76C7482A4A",
-      "path": "tools/verify_installer_languages.py",
-      "symbol": "",
-      "kind": "script",
-      "present": true,
-      "disposition": "KEEP",
-      "evidence": [
-        {
-          "type": "E2",
-          "source": "reference_graph",
-          "detail": "zero incoming tracked references"
-        }
-      ],
-      "contract_refs": [
-        "tools/verify_installer_languages.py"
-      ],
-      "dynamic_lookup_checked": false,
-      "compatibility_checked": false,
-      "reviewer": "Harken Search migration audit 2026-10-29",
-      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
-      "rollback": ""
-    },
-    {
-      "id": "S2-3A403C9340",
-      "path": "tools/qa_folder_keyword_search.py",
-      "symbol": "",
-      "kind": "script",
-      "present": true,
-      "disposition": "KEEP",
-      "evidence": [
-        {
-          "type": "E2",
-          "source": "reference_graph",
-          "detail": "zero incoming tracked references"
-        }
-      ],
-      "contract_refs": [
-        "tools/qa_folder_keyword_search.py"
-      ],
-      "dynamic_lookup_checked": false,
-      "compatibility_checked": false,
-      "reviewer": "Cindy GPT-6 Astra QA integration review",
-      "reason": "Manual QA entry point for isolated folder and keyword search checks. Invoked from the command line; zero incoming tracked references does not make this unused.",
       "rollback": ""
     },
     {
@@ -9972,6 +9978,55 @@
       "rollback": ""
     },
     {
+      "id": "S2-1F15F0F3E7",
+      "path": "tools/qa_library_switch_loading.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-652AA70272",
+      "path": "tools/qa_navy_chrome.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_navy_chrome.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Harken Search migration audit 2026-10-29",
+      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
+      "rollback": ""
+    },
+    {
       "id": "S2-7D0BBF74CF",
       "path": "tools/qa_portrait_dock_size.py",
       "symbol": "",
@@ -9992,6 +10047,523 @@
       "compatibility_checked": false,
       "reviewer": "Cindy GPT-6 Astra QA integration review",
       "reason": "Manual QA entry point for portrait Dock resizing and cover rendering. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-46B1B6C613",
+      "path": "tools/qa_related_paths_visibility.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-2D33FE6101",
+      "path": "tools/qa_results_tab_drag.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-CF90821638",
+      "path": "tools/qa_scan_completion_sample.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E4",
+          "source": "isolated native runtime verification",
+          "detail": "CLI QA entry exercises native right-click completion and pause retention on isolated fixtures; prior complete-evidence-native3 and pause-evidence-native3 receipts exist."
+        }
+      ],
+      "contract_refs": [
+        "docs/plans/2026-10-30-rightclick-scan-finalize.md"
+      ],
+      "dynamic_lookup_checked": true,
+      "compatibility_checked": true,
+      "reviewer": "Cindy GPT-6 Astra scan takeover review",
+      "reason": "User-requested reproducible QA utility invoked manually, not a product runtime import. Keep for repeated completion and pause validation.",
+      "rollback": "git restore --source=HEAD -- tools/qa_scan_completion_sample.py"
+    },
+    {
+      "id": "S2-6F04CDB690",
+      "path": "tools/qa_scan_dbwrite_classify.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-54E02A1CF7",
+      "path": "tools/qa_settings_appearance_preview.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-793159D884",
+      "path": "tools/qa_settings_avatar_crop.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-F926039FA0",
+      "path": "tools/qa_settings_avatar_failures.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-8930139BD9",
+      "path": "tools/qa_settings_avatar_visible.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-4836DC5EC9",
+      "path": "tools/qa_settings_custom_colors.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-9F49C62563",
+      "path": "tools/qa_settings_file_extension.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-B1AD7B4E10",
+      "path": "tools/qa_settings_full_theme.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-F68EC79D8A",
+      "path": "tools/qa_settings_language.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-C522738A5A",
+      "path": "tools/qa_settings_list_font.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-C1B7B36BDE",
+      "path": "tools/qa_settings_performance_defaults.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-88C7A1EB7E",
+      "path": "tools/qa_settings_realtime_search.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-911A3880D5",
+      "path": "tools/qa_settings_row_height.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-9E26C47AD9",
+      "path": "tools/qa_settings_search_hint.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-41529731CE",
+      "path": "tools/qa_settings_system_font.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-B0B3AA93C9",
+      "path": "tools/qa_settings_thesaurus_contrast.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-7973BF22FF",
+      "path": "tools/qa_settings_wave_mode.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
       "rollback": ""
     },
     {
@@ -10018,6 +10590,78 @@
       "rollback": ""
     },
     {
+      "id": "S2-1CB1FB7803",
+      "path": "tools/qa_similar_index.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_similar_index.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Harken Search migration audit 2026-10-29",
+      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-8EF5C12B9B",
+      "path": "tools/qa_similarity_scan_handoff.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-D17DAA9582",
+      "path": "tools/qa_single_host_startup.ps1",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_single_host_startup.ps1"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Harken Search migration audit 2026-10-29",
+      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
+      "rollback": ""
+    },
+    {
       "id": "S2-7D48B825F2",
       "path": "tools/qa_theme_schedule.py",
       "symbol": "",
@@ -10038,6 +10682,185 @@
       "compatibility_checked": false,
       "reviewer": "Cindy GPT-6 Astra QA integration review",
       "reason": "Manual QA entry point for day/night theme scheduling on a private desktop. Invoked from the command line; zero incoming tracked references does not make this unused.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-20B407E75A",
+      "path": "tools/qa_theme_schedule_stock_parity.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-E378ACE049",
+      "path": "tools/qa_transport_effect_visibility.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-8F34E38118",
+      "path": "tools/test_qa_day_palette_editor.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-BFE644F86D",
+      "path": "tools/test_qa_fresh_result_driver.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-EBFC45E145",
+      "path": "tools/test_qa_settings_day_theme.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-E00F299267",
+      "path": "tools/test_qa_settings_night_theme.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "entrypoint purpose review",
+          "detail": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks."
+        }
+      ],
+      "contract_refs": [],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Cindy 1.0.44 release review",
+      "reason": "Standalone isolated QA probe or its test; retained for repeatable native acceptance checks.",
+      "rollback": ""
+    },
+    {
+      "id": "S2-76C7482A4A",
+      "path": "tools/verify_installer_languages.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        }
+      ],
+      "contract_refs": [
+        "tools/verify_installer_languages.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Harken Search migration audit 2026-10-29",
+      "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
       "rollback": ""
     }
   ]

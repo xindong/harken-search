@@ -35,6 +35,18 @@ AsyncSearchResultApplicationAdapter::AsyncSearchResultApplicationAdapter(
       effects_(std::move(effects)) {}
 
 void AsyncSearchResultApplicationAdapter::apply() {
+    auto finishExplicitRefresh = [this] {
+        if (state_.listTabs.empty() ||
+            state_.pendingSearchRequestId != 0 ||
+            state_.pendingFacetRequestId != 0) return;
+        ListTab& tab = state_.currentTab();
+        if (!tab.explicitRefreshPending) return;
+        if (!result_.success ||
+            tab.explicitRefreshQueryGeneration != state_.filterQueryGeneration) return;
+        state_.syncToTab();
+        tab.dataUnloaded = false;
+        tab.explicitRefreshPending = false;
+    };
     const double queryDurationMs =
         queryTiming_.finishMilliseconds(result_.requestId);
     const auto dispatch = ClassifyAsyncSearchResultDispatch(
@@ -59,6 +71,7 @@ void AsyncSearchResultApplicationAdapter::apply() {
             queryDurationMs,
         });
     if (lifecycleAdapter.apply()) {
+        finishExplicitRefresh();
         return;
     }
 
@@ -82,6 +95,7 @@ void AsyncSearchResultApplicationAdapter::apply() {
             },
             effects_.requestCoverWallRefresh);
         facetResultAdapter.apply();
+        finishExplicitRefresh();
         return;
     }
 
@@ -124,6 +138,7 @@ void AsyncSearchResultApplicationAdapter::apply() {
     }
 
     state_.syncToTab();
+    finishExplicitRefresh();
 }
 
 }  // namespace aura::search

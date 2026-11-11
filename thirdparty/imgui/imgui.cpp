@@ -7622,7 +7622,7 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     {
         ImGuiItemFlags backup_item_flags = g.CurrentItemFlags;
         g.CurrentItemFlags |= ImGuiItemFlags_NoFocus;
-        if (CloseButton(window->GetID("#CLOSE"), close_button_pos))
+        if (CloseButton(window->GetID("#CLOSE"), close_button_pos, true))
             *p_open = false;
         g.CurrentItemFlags = backup_item_flags;
     }
@@ -19457,7 +19457,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
             PushItemFlag(ImGuiItemFlags_Disabled, true);
             PushStyleColor(ImGuiCol_Text, style.Colors[ImGuiCol_Text] * ImVec4(1.0f,1.0f,1.0f,0.4f));
         }
-        if (CloseButton(host_window->GetID("#CLOSE"), close_button_pos))
+        if (CloseButton(host_window->GetID("#CLOSE"), close_button_pos, true))
         {
             node->WantCloseAll = true;
             for (int n = 0; n < tab_bar->Tabs.Size; n++)

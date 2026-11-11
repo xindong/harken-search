@@ -68,11 +68,13 @@ int main() {
         "H:\\Sound effect",
         "H:\\Sound effect\\FX",
     };
-    const auto longest = BuildFolderTreeLayers(folder, nested, PathMode::Pilot);
-    Check(longest.size() == 2 && LayerNames(longest) == "FX / Fire",
-          "nested library roots pick the longest match");
-    Check(longest[0].path == "H:\\Sound effect\\FX",
-          "longest-match root node keeps the longer full path");
+    const auto nestedLayers = BuildFolderTreeLayers(folder, nested, PathMode::Pilot);
+    Check(nestedLayers.size() == 3 &&
+              LayerNames(nestedLayers) == "Sound effect / FX / Fire",
+          "nested library roots keep the parent above the child");
+    Check(nestedLayers[0].path == "H:\\Sound effect" &&
+              nestedLayers[1].path == "H:\\Sound effect\\FX",
+          "nested root and parent keep their distinct full paths");
 
     const std::string unc = "\\\\server\\share\\FX\\Fire";
     const auto uncAbsolute = BuildFolderTreeLayers(unc, {}, PathMode::Absolute);
@@ -97,6 +99,23 @@ int main() {
             [](Node& node) -> std::string& { return node.path; },
             [](Node& node) -> std::vector<Node>& { return node.children; });
     };
+    Node nestedTree;
+    insertByPath(nestedTree, BuildFolderTreeLayers(
+        "H:\\Sound effect", nested, PathMode::Pilot));
+    insertByPath(nestedTree, BuildFolderTreeLayers(
+        "H:\\Sound effect\\FX", nested, PathMode::Pilot));
+    insertByPath(nestedTree, BuildFolderTreeLayers(
+        folder, nested, PathMode::Pilot));
+    Check(nestedTree.children.size() == 1 &&
+              nestedTree.children[0].name == "Sound effect" &&
+              nestedTree.children[0].children.size() == 1 &&
+              nestedTree.children[0].children[0].name == "FX",
+          "nested registered roots appear once below their parent");
+    Check(nestedTree.children.size() == 1 &&
+              nestedTree.children[0].children.size() == 1 &&
+              nestedTree.children[0].children[0].path ==
+                  "H:\\Sound effect\\FX",
+          "nested tree child keeps the selectable full path");
     const std::vector<std::string> sameNameRoots{"H:\\LibA\\FX", "D:\\LibB\\FX"};
     Node tree;
     insertByPath(tree, BuildFolderTreeLayers("H:\\LibA\\FX\\Fire", sameNameRoots, PathMode::Pilot));

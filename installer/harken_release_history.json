@@ -2,6 +2,247 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.45",
+      "release_date": "2026-11-09",
+      "headline": "同类替代模型就绪，升级确认与分析入口更稳",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "同类替代模型", "description": "补齐声音模型与推理运行库，修复正式包中同类替代无法分析的问题。", "source": "Harken Search"},
+                {"title": "更新完成确认", "description": "修复旧版更新器启动新版时诊断输出干扰健康确认的问题。", "source": "Harken Search"},
+                {"title": "相似分析入口", "description": "首次统计时显示等待状态，统计失败可重试，切库期间不会误启动分析。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": ["HarkenDeveloper-zhongziyu", "Cindy"]
+    },
+    {
+      "version": "1.0.44",
+      "release_date": "2026-11-08",
+      "headline": "设置更顺手，扫描与更新更稳，相似音效和播放操作更灵活",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "新增内容",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "播放效果显隐",
+                  "description": "可在设置中逐项隐藏播放栏的五组内置效果；隐藏时自动旁通，重新显示后恢复原有开关和参数。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "相关路径显隐",
+                  "description": "筛选器增加相关路径的显示控制，可按需要收起或恢复。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "相似音效查找",
+                  "description": "试听后直接寻找同类型替代音效，候选结果可拖出到其他软件；补充分析只处理未完成文件，取消重扫保留已有结果，批次进度和失败原因更清楚。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "连续扫描收尾",
+                  "description": "修复极速扫描后接着完整扫描时，待处理的波形、封面或元数据任务可能让扫描一直等待的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "刷新与筛选",
+                  "description": "主动刷新后清空全部筛选并恢复完整文件视图；修复锁定结果页刷新后的状态和待加载结果。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新与安装",
+                  "description": "改善旧安装目录缺少资源时的升级兼容和中断恢复，修正中文安装协议页的字体显示。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "音效库与结果区",
+                  "description": "修复 Pilot 嵌套音效库目录显示；结果面板拖出、排序、关闭和返回主工作区更顺畅，切换音效库时有轻量状态提示。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "设置与外观",
+                  "description": "设置按类别集中查找和修改，新设置默认高性能，保存失败保留原设置；日夜主题可分别编辑五套配色，外观选择即时预览，字体、行高、扩展名和波形显示按所选设置生效。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "扫描信息",
+                  "description": "扫描窗口更简洁，保留真实进度、速度和总用时；失败原因按类型呈现，结果与过程分开查看。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "文本与选择器",
+                  "description": "长文件夹名、筛选条件和元数据更易查看与输入，多个侧栏或浮动窗口中的选择器互不干扰。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "头像、主题与播放栏",
+                  "description": "头像选择和裁剪更清晰，读取或保存失败时保留原头像；优化海军蓝等主题的文字对比度、EQ 窄窗口布局，并在关于页补充社区入口。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
+    },
+    {
+      "version": "1.0.43",
+      "release_date": "2026-10-31",
+      "headline": "完善日夜主题、独立筛选、扫描与更新体验",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "新增内容",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "日夜主题",
+                  "description": "支持按时间切换白天与黑夜主题，两边均可选择全部五个主题并分别编辑；手动选择和定时设置会在重启后保留。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新过程提示",
+                  "description": "更新执行期间显示官方 Logo、实际步骤与进度；完成后自动关闭，失败时保留原因。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "关于与法律文档",
+                  "description": "关于页补充 Cindy 致谢、仓库和下载地址，并提供随包法律文档。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "独立筛选",
+                  "description": "搜索关键词保留文件夹范围；文件夹、封面、标签和元数据等筛选独立叠加，刷新或清除单项时保留其他条件。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "扫描收尾与再次扫描",
+                  "description": "修复右键快速扫描不能正常收尾，以及暂停保留后重启再次扫描的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "中文描述与封面",
+                  "description": "修复数据库列表中可识别的旧中文描述乱码，并补齐播放列表封面墙中的真实封面。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "丢失文件重新关联",
+                  "description": "完善单个与批量重新关联的确认、结果和冲突提示，改善窄窗口下的操作。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "关闭按钮与控件裁切",
+                  "description": "应用内关闭 X 去掉底框并居中，修复部分普通按钮裁切；Windows 原生标题栏保持原样。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "停靠分隔条与封面闪烁",
+                  "description": "修复左右面板互换后分隔条消失，以及部分窗口尺寸下封面墙反复缩放、闪烁的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新说明显示",
+                  "description": "随包提供完整版本说明与贡献者；本机版本没有精确匹配时显示已有最新记录。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "HarkenDeveloper-zhongziyu",
+              "list": [
+                {
+                  "title": "首次建库",
+                  "description": "首次使用时合为一个压暗背景的建库窗口，名称、位置和完整路径直接可见。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "五主题控件",
+                  "description": "统一普通按钮、相似音效按钮与预设下拉的外观，日夜设置按勾选状态显示。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "大库响应",
+                  "description": "相似音效与后台补全减少同步统计造成的界面停顿。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "诊断日志",
+                  "description": "诊断界面和相关导出保留最近一分钟的日志，满容量时保留新记录。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新缓存",
+                  "description": "成功升级并确认新版启动后，更新器下载区保留当前版本和上一版本，清理更早的旧缓存。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "竖屏与封面浏览",
+                  "description": "扩大 Info 上下停靠的高度调整范围；封面墙支持更小封面和更多列；Info 相似音效入口可隐藏并记住选择。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
+    },
+    {
       "version": "1.0.42",
       "release_date": "2026-10-29",
       "headline": "优化竖屏停靠、封面墙与相似音效入口",

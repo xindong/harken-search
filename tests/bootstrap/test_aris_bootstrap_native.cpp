@@ -993,6 +993,34 @@ void test_health_acknowledgement_waits_for_one_complete_frame() {
     process->Close(child);
 }
 
+void test_health_acknowledgement_survives_child_stderr_diagnostic() {
+    const auto process = CreateNativeBootstrapProcessPort();
+    const auto health = CreateNativeBootstrapHealthPort();
+    const auto fixture = sibling(L"aris_bootstrap_health_fixture.exe");
+    check(process != nullptr && health != nullptr && !fixture.empty(),
+          "stderr health fixture and native ports exist");
+    if (process == nullptr || health == nullptr || fixture.empty()) return;
+    BootstrapLaunchCapability capability;
+    const std::string nonce(64U, 'c');
+    check(health->Prepare(nonce, "1.2.3", "build-health-stderr", capability).ok(),
+          "stderr health challenge is prepared");
+    const auto launched = process->LaunchSuspended(
+        fixture.u8string(), fixture.parent_path().u8string(), capability);
+    health->ReleaseLaunchCapability();
+    check(launched.ok() && launched.process.valid(),
+          "stderr health child starts suspended");
+    if (!launched.ok()) { health->Close(); return; }
+    auto child = launched.process;
+    check(process->ResumeOwned(child).ok(), "stderr health child resumes");
+    const auto acknowledged = health->Await(
+        child, nonce, "1.2.3", "build-health-stderr", 5000U);
+    check(acknowledged.status == BootstrapHealthStatus::Accepted,
+          "old health protocol accepts new child despite unrelated stderr");
+    if (acknowledged.ok()) process->ReleaseOwned(child);
+    else process->TerminateOwned(child, 0xE020U);
+    health->Close();
+}
+
 void test_health_channel_requires_owned_child_wait_capability() {
     const auto process = CreateNativeBootstrapProcessPort();
     const auto health = CreateNativeBootstrapHealthPort();
@@ -1176,6 +1204,7 @@ int main() {
     test_duplex_health_is_one_shot_and_child_bound();
     test_health_acknowledgement_is_exactly_challenge_bound();
     test_health_acknowledgement_waits_for_one_complete_frame();
+    test_health_acknowledgement_survives_child_stderr_diagnostic();
     test_health_channel_requires_owned_child_wait_capability();
     test_authenticated_channel_allows_unsigned_parent_to_reach_payload_validation();
     test_channel_requires_live_exact_parent_identity();

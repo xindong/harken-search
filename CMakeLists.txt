@@ -1,7 +1,30 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.42 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.45 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestTransportEffectVisibility EXCLUDE_FROM_ALL tests/test_transport_effect_visibility.cpp)
+target_include_directories(TestTransportEffectVisibility PRIVATE src)
+target_compile_features(TestTransportEffectVisibility PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestTransportEffectVisibility PRIVATE /utf-8)
+endif()
+add_test(NAME TransportEffectVisibility COMMAND TestTransportEffectVisibility)
+add_executable(TestPreferenceDraft EXCLUDE_FROM_ALL tests/test_preference_draft.cpp src/Localization.cpp)
+target_include_directories(TestPreferenceDraft PRIVATE src)
+target_compile_features(TestPreferenceDraft PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestPreferenceDraft PRIVATE /utf-8 /UNDEBUG)
+else()
+    target_compile_options(TestPreferenceDraft PRIVATE -UNDEBUG)
+endif()
+add_test(NAME PreferenceDraft COMMAND TestPreferenceDraft)
+add_executable(TestSidebarMetadataPicker EXCLUDE_FROM_ALL tests/test_sidebar_metadata_picker.cpp)
+target_include_directories(TestSidebarMetadataPicker PRIVATE src)
+target_compile_features(TestSidebarMetadataPicker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSidebarMetadataPicker PRIVATE /utf-8)
+endif()
+add_test(NAME SidebarMetadataPicker COMMAND TestSidebarMetadataPicker)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -890,6 +913,9 @@ add_executable(TestLibraryStatisticsWorker EXCLUDE_FROM_ALL
     ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
 target_include_directories(TestLibraryStatisticsWorker PRIVATE src ${SQLITE_DIR})
 target_compile_features(TestLibraryStatisticsWorker PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestLibraryStatisticsWorker PRIVATE /utf-8)
+endif()
 target_link_libraries(TestLibraryStatisticsWorker PRIVATE Threads::Threads)
 add_test(NAME LibraryStatisticsWorker COMMAND TestLibraryStatisticsWorker)
 set_tests_properties(LibraryStatisticsWorker PROPERTIES TIMEOUT 20)
@@ -942,6 +968,21 @@ if(MSVC)
 endif()
 add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
     "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
+
+add_executable(TestSettingsFileAtomicSave EXCLUDE_FROM_ALL
+    tests/test_settings_file_atomic_save.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestSettingsFileAtomicSave PRIVATE src/platform/filesystem_win32.cpp
+        src/platform/text_encoding_win32.cpp src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestSettingsFileAtomicSave PRIVATE shlwapi)
+endif()
+target_include_directories(TestSettingsFileAtomicSave PRIVATE src)
+target_compile_features(TestSettingsFileAtomicSave PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSettingsFileAtomicSave PRIVATE /utf-8)
+endif()
+add_test(NAME SettingsFileAtomicSave COMMAND TestSettingsFileAtomicSave
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/settings-file-atomic-save")
 
 add_executable(TestUpdateNoticeContent EXCLUDE_FROM_ALL
     tests/test_update_notice_content.cpp
@@ -1560,6 +1601,27 @@ endif()
 # Post-build: create the models directory and copy WebView2, Whisper/GGML, and rlottie runtime DLLs.
 if(WIN32)
     set(_aris_bootstrap_runtime_args)
+    set(_aris_msvc_redist_root "")
+    if(DEFINED ENV{VCToolsRedistDir} AND IS_DIRECTORY "$ENV{VCToolsRedistDir}")
+        get_filename_component(_aris_msvc_redist_root "$ENV{VCToolsRedistDir}" DIRECTORY)
+    elseif(CMAKE_GENERATOR_INSTANCE)
+        set(_aris_msvc_redist_root "${CMAKE_GENERATOR_INSTANCE}/VC/Redist/MSVC")
+    endif()
+    if(MSVC)
+        file(GLOB _aris_msvc_redist_versions LIST_DIRECTORIES true "${_aris_msvc_redist_root}/*")
+        list(SORT _aris_msvc_redist_versions COMPARE NATURAL ORDER DESCENDING)
+        set(_aris_msvc_redist_dir "")
+        foreach(_aris_redist_version IN LISTS _aris_msvc_redist_versions)
+            if(EXISTS "${_aris_redist_version}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+               AND EXISTS "${_aris_redist_version}/x64/Microsoft.VC143.OpenMP/vcomp140.dll")
+                set(_aris_msvc_redist_dir "${_aris_redist_version}/x64")
+                break()
+            endif()
+        endforeach()
+        if(NOT _aris_msvc_redist_dir)
+            message(FATAL_ERROR "MSVC x64 CRT/OpenMP redistributables not found under ${_aris_msvc_redist_root}")
+        endif()
+    endif()
     if(ARIS_BOOTSTRAP_PACKAGE_KEY_ID AND ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX)
         list(APPEND _aris_bootstrap_runtime_args
             "-DBOOTSTRAP_EXE=$<TARGET_FILE:HarkenSearchBootstrap>")
@@ -1570,6 +1632,7 @@ if(WIN32)
             "-DWEBVIEW2_DLL=${WEBVIEW2_DIR}/x64/WebView2Loader.dll"
             "-DRLOTTIE_BIN=${RLOTTIE_BIN_DIR}"
             "-DRLOTTIE_IMG=${RLOTTIE_IMG_DIR}"
+            "-DMSVC_REDIST_DIR=${_aris_msvc_redist_dir}"
             ${_aris_bootstrap_runtime_args}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_harken_search_runtime_deps.cmake"
         COMMENT "Copying WebView2Loader.dll..."
@@ -1603,6 +1666,19 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand")
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand"
             "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/brand"
         COMMENT "Copying brand icons...")
+endif()
+
+# About contributor icons share the existing brand directory so old updaters
+# never need to create a new destination parent directory.
+
+# Community QR codes also use the existing brand destination: the first fixed
+# package must still be installable by the unmodified 1.0.42 updater.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/community"
+            "$<TARGET_FILE_DIR:HarkenSearch>/assets/icons/brand"
+        COMMENT "Copying community QR codes...")
 endif()
 
 # Copy brand logo lockups next to HarkenSearch.exe. These are larger wordmark assets
@@ -1690,6 +1766,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/docs/legal")
 endif()
 
 # Behavior-module test target wiring for the integrated Aris workflow layer.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_similarity_runtime.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_search_behavior_tests.cmake" OPTIONAL)
 
 # Batch1 pinyin Database behavior test. This target pins isolation ROOT to the

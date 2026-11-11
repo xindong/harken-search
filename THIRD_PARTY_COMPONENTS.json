@@ -7,6 +7,102 @@
   },
   "components": [
     {
+      "name": "ONNX Runtime",
+      "version": "1.20.1",
+      "source": "https://github.com/microsoft/onnxruntime/tree/v1.20.1",
+      "license_expression": "MIT",
+      "purpose": "本地音频语义模型 CPU 推理",
+      "distributed": true,
+      "load_mode": "随官方 Windows ZIP 与安装器分发；启用相似功能时与 HarkenSearch.exe 同目录加载",
+      "license_files": [
+        "LICENSES/ONNX-Runtime-MIT.txt",
+        "LICENSES/ONNX-Runtime-ThirdPartyNotices.txt"
+      ],
+      "notice_files": [
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": false,
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
+      "cmake_markers": [
+        "cmake/harken_similarity_runtime.cmake"
+      ],
+      "distribution_paths": [
+        "onnxruntime.dll"
+      ],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "dynamic",
+        "commercial_restriction": false,
+        "source_offer_required": false
+      }
+    },
+    {
+      "name": "hnswlib",
+      "version": "0.8.0 / 3f3429661187e4c24a490a0f148fc6bc89042b3d",
+      "source": "https://github.com/nmslib/hnswlib/tree/3f3429661187e4c24a490a0f148fc6bc89042b3d",
+      "license_expression": "Apache-2.0",
+      "purpose": "相似音效语义候选检索",
+      "distributed": false,
+      "load_mode": "可选头文件编译；无独立运行时",
+      "license_files": [
+        "LICENSES/hnswlib-Apache-2.0.txt"
+      ],
+      "notice_files": [
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": false,
+      "approval_reference": "REQ-20261101-SIMILAR-DEEP: pinned upstream license and notices retained; optional local similarity bundle",
+      "cmake_markers": [
+        "cmake/harken_similarity_runtime.cmake"
+      ],
+      "distribution_paths": [
+        "HarkenSearch.exe"
+      ],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "static",
+        "commercial_restriction": false,
+        "source_offer_required": false
+      }
+    },
+    {
+      "name": "LAION CLAP HTSAT unfused audio encoder",
+      "version": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
+      "source": "https://huggingface.co/laion/clap-htsat-unfused/tree/8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
+      "license_expression": "Apache-2.0",
+      "purpose": "本机音效类别与动作向量；无音频上传",
+      "distributed": true,
+      "load_mode": "随官方 Windows ZIP 与安装器分发；固定预处理资源与 ONNX 模型随包提供",
+      "license_files": [
+        "LICENSES/CLAP-Apache-2.0.txt"
+      ],
+      "notice_files": [
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": false,
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
+      "cmake_markers": [
+        "cmake/harken_similarity_runtime.cmake"
+      ],
+      "distribution_paths": [
+        "models/clap/clap-audio.onnx",
+        "models/clap/clap-mel-filters.f64",
+        "models/clap/clap-window.f64"
+      ],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "none",
+        "commercial_restriction": false,
+        "source_offer_required": false
+      }
+    },
+    {
       "name": "Inno Setup",
       "version": "6.7.1; zh-CN messages blob d0d44258f51aa3127fc0d1167a7c8be328a9bdcf",
       "source": "https://github.com/jrsoftware/issrc",

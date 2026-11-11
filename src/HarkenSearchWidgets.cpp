@@ -3,9 +3,11 @@
 #include "HarkenSearchWidgets.h"
 #include "HarkenSearchMetrics.h"
 #include "HarkenSearchIcons.h"
+#include "../thirdparty/lucide/IconsLucide.h"
 #include "Theme.h"
 #include "ui/TransportContrast.h"
 #include "ui/ActionButtonStyle.h"
+#include "ui/CloseIconButton.h"
 #include "SettingsSearchHighlightSpans.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -258,15 +260,23 @@ bool Button(const char* label, const ButtonOptions& opts) {
     bool clicked;
     if (opts.variant == ButtonVariant::Icon || opts.variant == ButtonVariant::Ghost) {
         // Compact glyph tools keep their transparent appearance and old geometry.
-        const auto palette = ResolveGraphicPalette(opts.variant);
+        auto palette = ResolveGraphicPalette(opts.variant);
+        const bool closeIcon = opts.variant == ButtonVariant::Icon && label &&
+            std::strcmp(label, ICON_LC_X) == 0;
         ImGui::PushStyleColor(ImGuiCol_Button, palette.bg);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette.bgHover);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette.bgActive);
         ImGui::PushStyleColor(ImGuiCol_Text, palette.text);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kRadiusDefault);
-        clicked = opts.loading ? ActionButtonStyle::Draw(buf, ImVec2(0, h), true)
-                               : ImGui::Button(buf, ImVec2(0, h));
-        DrawFocusRing();
+        if (closeIcon && !opts.loading) {
+            const auto& theme = ThemeColors::current();
+            clicked = CloseIconButton::Draw(buf, ImVec2(0, h), theme.sidebarIconInactive,
+                TransportContrast::Over(ActionButtonStyle::CurrentSurface(), theme.mainWindowBG));
+        } else {
+            clicked = opts.loading ? ActionButtonStyle::Draw(buf, ImVec2(0, h), true)
+                                   : ImGui::Button(buf, ImVec2(0, h));
+        }
+        if (!closeIcon) DrawFocusRing();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(4);
     } else {
@@ -318,6 +328,15 @@ void DrawInputLabel(const char* label, const ThemeColorScheme& th) {
     ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, aura::ui::metrics::kGap4));
+}
+
+int ResizeLongInput(ImGuiInputTextCallbackData* data) {
+    auto* buffer = static_cast<std::vector<char>*>(data->UserData);
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackResize || !buffer) return 0;
+    buffer->resize((std::max)(static_cast<size_t>(data->BufSize),
+                              static_cast<size_t>(data->BufTextLen) + 1));
+    data->Buf = buffer->data();
+    return 0;
 }
 } // anon
 
@@ -384,10 +403,20 @@ bool TextInput(const char* label, std::string* value,
     if (opts.variant == TextInputVariant::Number)         flags |= ImGuiInputTextFlags_CharsDecimal;
     flags |= opts.inputFlags;
 
-    // Work in a local buffer - ImGui::InputText writes back here, then
-    // we copy into *value. 1024 bytes covers typical fields; raise if needed.
-    char buf[1024];
-    const size_t nCopy = value->size() < sizeof(buf) - 1 ? value->size() : sizeof(buf) - 1;
+    // Keep ordinary inputs on the stack, but pass long values to ImGui in full.
+    // Extra space lets a user edit a selected long metadata name as well.
+    char inlineBuffer[1024];
+    std::vector<char> longBuffer;
+    char* buf = inlineBuffer;
+    size_t capacity = sizeof(inlineBuffer);
+    // Undo can restore a long value after this active input shrinks below 1024.
+    if (value->size() >= capacity || ImGui::GetActiveID() == ImGui::GetID("##in")) {
+        longBuffer.resize(value->size() + sizeof(inlineBuffer));
+        buf = longBuffer.data();
+        capacity = longBuffer.size();
+        flags |= ImGuiInputTextFlags_CallbackResize;
+    }
+    const size_t nCopy = std::min(value->size(), capacity - 1);
     if (nCopy > 0) std::memcpy(buf, value->data(), nCopy);
     buf[nCopy] = '\0';
 
@@ -396,15 +425,20 @@ bool TextInput(const char* label, std::string* value,
     if (opts.variant == TextInputVariant::Multiline) {
         const ImVec2 size(inputW > 0 ? inputW : 200.0f,
                           kHeightMd * (float)(opts.multilineRows > 0 ? opts.multilineRows : 3));
-        changed = ImGui::InputTextMultiline("##in", buf, sizeof(buf), size, flags);
+        changed = ImGui::InputTextMultiline("##in", buf, capacity, size, flags,
+            longBuffer.empty() ? nullptr : ResizeLongInput,
+            longBuffer.empty() ? nullptr : &longBuffer);
     } else {
         changed = ImGui::InputTextWithHint("##in",
             opts.placeholder ? opts.placeholder : "",
-            buf, sizeof(buf), flags);
+            buf, capacity, flags,
+            longBuffer.empty() ? nullptr : ResizeLongInput,
+            longBuffer.empty() ? nullptr : &longBuffer);
     }
     DrawFocusRing();
 
-    if (changed) *value = buf;
+    // EnterReturnsTrue changes the return contract, not the edited buffer.
+    *value = longBuffer.empty() ? buf : longBuffer.data();
     if (opts.maxLength > 0 && (int)value->size() > opts.maxLength) {
         value->resize((size_t)opts.maxLength);
     }
@@ -1032,12 +1066,28 @@ bool DrawStandaloneCaptionButton(const char* id,
     const ImVec2 itemMax = ImGui::GetItemRectMax();
 
     if (hovered || active) {
-        const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
-        drawList->AddRectFilled(itemMin, itemMax,
-            ImGui::ColorConvertFloat4ToU32(background));
+        if (action == StandaloneWindowAction::Close) {
+            ImVec4 background = th.filterBrowserButtonBG;
+            if (!active) background.w *= 0.50f;
+            const ImVec2 center((itemMin.x + itemMax.x) * 0.5f,
+                                (itemMin.y + itemMax.y) * 0.5f);
+            const float half = kHeightSm * 0.5f;
+            drawList->AddRectFilled(ImVec2(center.x - half, center.y - half),
+                                    ImVec2(center.x + half, center.y + half),
+                                    ImGui::ColorConvertFloat4ToU32(background),
+                                    kRadiusDefault);
+        } else {
+            const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
+            drawList->AddRectFilled(itemMin, itemMax,
+                ImGui::ColorConvertFloat4ToU32(background));
+        }
     }
 
-    const ImVec4& iconColor = hovered ? th.interfaceText : th.sidebarIconInactive;
+    const ImVec4 closeColor = TransportContrast::ForSurface(
+        th.sidebarIconInactive, th.menuBarBG, 3.0);
+    const ImVec4& iconColor = action == StandaloneWindowAction::Close
+        ? closeColor
+        : (hovered ? th.interfaceText : th.sidebarIconInactive);
     const ImU32 packedIcon = ImGui::ColorConvertFloat4ToU32(iconColor);
     const float centerX = (itemMin.x + itemMax.x) * 0.5f;
     const float centerY = (itemMin.y + itemMax.y) * 0.5f;
@@ -1068,14 +1118,12 @@ bool DrawStandaloneCaptionButton(const char* id,
             }
             break;
         case StandaloneWindowAction::Close:
-            drawList->AddLine(
-                ImVec2(centerX - halfIcon, centerY - halfIcon),
-                ImVec2(centerX + halfIcon, centerY + halfIcon),
-                packedIcon, kFocusRingWidth);
-            drawList->AddLine(
-                ImVec2(centerX + halfIcon, centerY - halfIcon),
-                ImVec2(centerX - halfIcon, centerY + halfIcon),
-                packedIcon, kFocusRingWidth);
+            {
+                const ImVec2 glyphSize = ImGui::CalcTextSize(ICON_LC_X);
+                drawList->AddText(ImVec2(centerX - glyphSize.x * 0.5f,
+                                         centerY - glyphSize.y * 0.5f),
+                                  packedIcon, ICON_LC_X);
+            }
             break;
         case StandaloneWindowAction::None:
             break;

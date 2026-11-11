@@ -229,7 +229,7 @@ GENERATED_HEADER_NAMES = {
     "LocalizationStrings.generated.h",
     "WebUiEmbedded.generated.h",
 }
-SOURCE_SUFFIXES = {".cpp", ".h", ".hpp", ".mm"}
+SOURCE_SUFFIXES = {".cpp", ".h", ".hpp", ".mm", ".inl"}
 
 
 def collect_used_lstr_ids(root: Path) -> list[str]:

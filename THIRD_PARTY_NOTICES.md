@@ -43,6 +43,9 @@ The Windows installer uses [Inno Setup](https://jrsoftware.org/) and the upstrea
 
 | Component | Source / path | License / policy | Release policy |
 |---|---|---|---|
+| ONNX Runtime 1.20.1 CPU | https://github.com/microsoft/onnxruntime/tree/v1.20.1 | MIT plus bundled third-party notices | Included when `HARKEN_ONNXRUNTIME_ROOT` is configured; retain both ONNX Runtime notice files in `LICENSES/`. |
+| hnswlib 0.8.0 | https://github.com/nmslib/hnswlib/tree/3f3429661187e4c24a490a0f148fc6bc89042b3d | Apache-2.0 | Optional compiled headers; retain `LICENSES/hnswlib-Apache-2.0.txt`. Exact search remains available without these headers. |
+| LAION CLAP HTSAT unfused audio encoder | https://huggingface.co/laion/clap-htsat-unfused/tree/8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a | Apache-2.0 as declared in the pinned upstream model card | Optional audio-only ONNX conversion and fixed mel/window resources, generated with `tools/export_similarity_model.py`; original text encoder is excluded. Retain `LICENSES/CLAP-Apache-2.0.txt`. See `docs/similarity-model-build.md` for hashes and preprocessing changes. |
 | aubio | Local `thirdparty/aubio/` checkout when explicitly supplied | GPL-3.0 | OFF by default; enabling it changes the resulting binary's license obligations |
 | Avid PTSL SDK | Local install via `AURO_PROTOOLS_PTSL_SDK_ROOT` or `AURO_PROTOOLS_PTSL_DROP_DIR` | Avid developer agreement / click-through license | User-supplied SDK/runtime only; `PTSLC_CPP.dll` is not copied into default outputs. See RQ-20260803-13 for the GPL / proprietary SDK redistribution boundary. |
 | Full REAPER SDK checkout | Optional local `AURO_REAPER_SDK_ROOT` checkout | REAPER SDK terms; individual example/plugin trees may carry separate terms | Not vendored or bundled; Harken Search consumes no `reaper_mp3` LGPL payload |

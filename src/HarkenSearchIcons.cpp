@@ -132,6 +132,8 @@ std::string ResolveLogoPath(const char* filename) {
 std::unordered_map<int, BrandTex> g_wordmarkTex;
 bool g_wordmarkLoaded = false;
 
+std::unordered_map<std::string, BrandTex> g_packagedAssetTex;
+
 } // anon
 
 void LoadBrandWordmarksOnce() {
@@ -143,6 +145,26 @@ void LoadBrandWordmarksOnce() {
         if (!p.empty()) g_wordmarkTex[i] = LoadOne(p);
     }
     g_wordmarkLoaded = true;
+}
+
+PackagedAssetTex LoadPackagedAsset(const char* relativePath) {
+    if (!relativePath || !*relativePath) return {};
+    const auto cached = g_packagedAssetTex.find(relativePath);
+    if (cached != g_packagedAssetTex.end())
+        return {cached->second.glId, cached->second.w, cached->second.h};
+    std::string path;
+#ifdef _WIN32
+    std::string candidate = Platform::GetExeDir() + "\\";
+    for (const char* c = relativePath; *c; ++c)
+        candidate += (*c == '/') ? '\\' : *c;
+    if (Platform::FileSystem::CanOpenFileForRead(candidate)) path = candidate;
+#endif
+    if (path.empty() && Platform::FileSystem::CanOpenFileForRead(relativePath))
+        path = relativePath;
+    BrandTex tex;
+    if (!path.empty()) tex = LoadOne(path);
+    g_packagedAssetTex[relativePath] = tex;
+    return {tex.glId, tex.w, tex.h};
 }
 
 float DrawMenuBarBrandWordmark(float x0, float y0, float x1, float y1,

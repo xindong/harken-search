@@ -5,13 +5,19 @@
 #include <string>
 #include <vector>
 struct AppState;
+enum class AppTheme;
 
 namespace harken::theme_schedule {
+struct ManualAppearance {
+    AppTheme theme;
+    bool useCustomColors;
+};
 // All runtime calls are UI-thread only. Initialize reads two independent files
 // beside the settings file; Tick never performs disk IO.
 void Initialize(const std::string& settingsFileUtf8);
 bool Ready();
 bool ControlsTheme(const AppState& state);
+std::optional<ManualAppearance> ManualAppearanceForSettings(const AppState& state);
 void SetMode(AppState& state, Mode mode);
 void OnManualThemeSelected(AppState& state);
 std::optional<Period> SelectedPeriod(const AppState& state);
