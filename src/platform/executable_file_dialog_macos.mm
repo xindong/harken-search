@@ -23,8 +23,10 @@ std::string ResolveExecutableSelectionUtf8(const std::string& selectedPath) {
             NSURL* executable = bundle.executableURL;
             if (!executable.isFileURL) return {};
             // Never accept an executable outside the selected application.
-            NSString* bundlePrefix = [path stringByAppendingString:@"/"];
-            if (![executable.path hasPrefix:bundlePrefix]) return {};
+            NSString* actualBundle = [path stringByResolvingSymlinksInPath];
+            NSString* actualExecutable = [executable.path stringByResolvingSymlinksInPath];
+            NSString* bundlePrefix = [actualBundle stringByAppendingString:@"/"];
+            if (![actualExecutable hasPrefix:bundlePrefix]) return {};
             path = executable.path;
             if (![files fileExistsAtPath:path isDirectory:&directory] || directory) return {};
         }

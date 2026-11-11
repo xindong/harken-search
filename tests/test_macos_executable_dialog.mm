@@ -84,6 +84,22 @@ int main(int argc, char** argv) {
               Platform::ExecutableDialogs::Internal::ResolveExecutableSelectionUtf8(app.string())).bundle.empty(),
           "other application executables cannot replace the REAPER root");
 
+    // The selected bundle must contain the actual executable, not merely its symlink name.
+    const fs::path escapingApp = root / "Escaping.app";
+    fs::create_directories(escapingApp / "Contents/MacOS");
+    fs::copy_file(app / "Contents/Info.plist", escapingApp / "Contents/Info.plist");
+    fs::create_symlink(direct, escapingApp / "Contents/MacOS/Launch Tool");
+    check(Platform::ExecutableDialogs::Internal::ResolveExecutableSelectionUtf8(escapingApp.string()).empty(),
+          "reject bundle executable symlink outside selected application");
+
+    const fs::path linkedApp = root / "Internal link.app";
+    fs::create_directories(linkedApp / "Contents/MacOS");
+    fs::copy_file(app / "Contents/Info.plist", linkedApp / "Contents/Info.plist");
+    WriteFile(linkedApp / "Contents/MacOS/Actual Tool", "#!/bin/sh\nexit 0\n", 0755);
+    fs::create_symlink("Actual Tool", linkedApp / "Contents/MacOS/Launch Tool");
+    check(!Platform::ExecutableDialogs::Internal::ResolveExecutableSelectionUtf8(linkedApp.string()).empty(),
+          "allow executable symlink contained within selected application");
+
     const fs::path brokenApp = root / "Broken.app";
     WriteFile(brokenApp / "Contents/Info.plist",
               "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>"
