@@ -1,13 +1,9 @@
-static void DrawPerformanceMonitor(AppState& state) {
+static bool g_performanceMonitorRendered = false;
+
+void RenderPerformanceMonitorContent(AppState& state) {
+    g_performanceMonitorRendered = true;
     namespace perf = harken::performance;
     namespace ui = aura::ui;
-    auto& window = state.performanceMonitorWindow;
-    const ui::StandaloneWindowOptions options{ImVec2(720, 620), ImVec2(520, 360)};
-    if (!ui::BeginStandaloneWindow(L(PerfMonitor_Title), "PerformanceMonitor", &window, options)) {
-        perf::SetEnabled(false);
-        return;
-    }
-
     perf::SetEnabled(true);
     const auto& snapshot = perf::Refresh();
     // The shared caption stays fixed. Scroll only the monitor content below it.
@@ -51,16 +47,16 @@ static void DrawPerformanceMonitor(AppState& state) {
             LStr::PerfMonitor_Cover, LStr::PerfMonitor_Backfill,
         };
         static_assert(moduleLabels.size() == perf::ModuleCount);
-        if (BeginTransientScrollbarTable("PerformanceModules", 3,
+        const bool compact = ImGui::GetContentRegionAvail().x < 330.0f;
+        if (BeginTransientScrollbarTable("PerformanceModules", compact ? 2 : 3,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
             ImGui::TableSetupColumn(L(PerfMonitor_Module), ImGuiTableColumnFlags_WidthStretch, 1.5f);
             ImGui::TableSetupColumn(L(PerfMonitor_Activity), ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn(L(PerfMonitor_ModuleCpu), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+            if (!compact) ImGui::TableSetupColumn(L(PerfMonitor_ModuleCpu), ImGuiTableColumnFlags_WidthStretch, 1.2f);
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-            for (const char* label : {L(PerfMonitor_Module), L(PerfMonitor_Activity), L(PerfMonitor_ModuleCpu)}) {
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", label);
-            }
+            ImGui::TableNextColumn(); ImGui::TextWrapped("%s", L(PerfMonitor_Module));
+            ImGui::TableNextColumn(); ImGui::TextWrapped("%s", L(PerfMonitor_Activity));
+            if (!compact) { ImGui::TableNextColumn(); ImGui::TextWrapped("%s", L(PerfMonitor_ModuleCpu)); }
             auto drawModule = [&](const char* label, bool active, std::optional<double> cpu) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -69,7 +65,8 @@ static void DrawPerformanceMonitor(AppState& state) {
                 if (active) ImGui::TextWrapped("%s", L(PerfMonitor_Active));
                 else if (cpu.value_or(0) > 0) ImGui::TextWrapped("%s", L(PerfMonitor_Recent));
                 else ImGui::TextDisabled("%s", L(PerfMonitor_Idle));
-                ImGui::TableNextColumn();
+                if (compact) ImGui::SameLine();
+                else ImGui::TableNextColumn();
                 if (cpu) ImGui::Text("%.1f ms", *cpu);
                 else ImGui::TextDisabled("--");
             };
@@ -85,5 +82,4 @@ static void DrawPerformanceMonitor(AppState& state) {
         ImGui::PopStyleVar();
     }
     ImGui::EndChild();
-    ui::EndStandaloneWindow();
 }

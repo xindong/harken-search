@@ -13653,6 +13653,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // 已拖出的平台视口仍要继续刷新，否则副屏面板会跟着主窗口一起冻住。
         const bool mainWindowHidden = IsIconic(hwnd) || !Platform::WindowIsVisible(hwnd);
         if (mainWindowHidden && !HarkenSearchHasHostedPlatformViewports()) {
+            harken::performance::SetEnabled(false);
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
             AbortFrameBudgetCapture(state, "window_hidden", "visibility");
 #endif
@@ -14060,10 +14061,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         DevTools_BeginFramePhase("RenderUI");
         {
             harken::performance::Scope activity(harken::performance::Module::Interface);
+            g_performanceMonitorRendered = false;
             RenderUI(state);
         }
         harken::settings::EndAppearancePreview(state);
-        DrawPerformanceMonitor(state);
+        if (!g_performanceMonitorRendered)
+            harken::performance::SetEnabled(false);
         GuardInfoMetadataContext(state);
         RenderInfoMetadataLeavePrompt(state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA

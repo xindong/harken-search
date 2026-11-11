@@ -11,6 +11,10 @@
 
 #include "imgui.h"
 
+#ifdef _WIN32
+void RenderPerformanceMonitorContent(AppState& state);
+#endif
+
 FileInfoPanelChrome MakeFileInfoPanelChrome() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* themeColors = style.Colors;
@@ -156,18 +160,19 @@ int PushFileInfoShellStyle(const ThemeColorScheme& tcs) {
 namespace {
 constexpr bool kDiagnostics = AURA_BUILD_DIAGNOSTICS != 0;
 constexpr float kPageButtonWidth = 24.0f;
-constexpr int kVisibilityAction = 4;
-constexpr int kSimilarSoundsAction = 5;
+constexpr int kVisibilityAction = 5;
+constexpr int kSimilarSoundsAction = 6;
 const char* PageLabel(int page) {
     switch (page) {
     case 0: return L(Info_MetaSummaryTab);
     case 1: return L(Info_ArtworkTab);
     case 2: return L(Info_TransferHistoryTab);
-    default: return L(Info_PlayHistoryTab);
+    case 3: return L(Info_PlayHistoryTab);
+    default: return L(PerfMonitor_Title);
     }
 }
 const char* PageId(int page) {
-    static const char* ids[] = {"info.metadataSummary", "info.artwork", "info.transferHistory", "info.playHistory"};
+    static const char* ids[] = {"info.metadataSummary", "info.artwork", "info.transferHistory", "info.playHistory", "info.performance"};
     return ids[page];
 }
 void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
@@ -190,6 +195,9 @@ void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
         dl->PathStroke(color,0,1.3f);
         line(4,2,4,8); line(4,8,10,8);
         line(10,8,16,12); line(16,12,10,16); line(10,16,10,8);
+    } else if (page == 4) {
+        dl->AddRect(p(3,4), p(21,20), color, 1.5f, 0, 1.3f);
+        line(5,14,8,14); line(8,14,10,8); line(10,8,13,17); line(13,17,15,11); line(15,11,19,11);
     } else if (page == kSimilarSoundsAction) {
         // The existing waveform mark, centered in the same 18px icon box.
         const ImVec2 points[] = {
@@ -230,8 +238,8 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         DrawPageIcon(dl, ImVec2(a.x+3.0f, a.y+(height-18.0f)*.5f), page, ImGui::GetColorU32(color));
         if (selected) dl->AddLine(ImVec2(a.x+4,a.y+height-2),ImVec2(a.x+20,a.y+height-2),ImGui::GetColorU32(accent),2.0f);
         const bool similar = page == kSimilarSoundsAction;
-        const char* label = similar ? L(Similar_OpenTooltip) : (page < 4 ? PageLabel(page) : L(Info_VisiblePages));
-        const char* id = similar ? "info.similarSounds" : (page < 4 ? PageId(page) : "info.pageVisibility");
+        const char* label = similar ? L(Similar_OpenTooltip) : (page < 5 ? PageLabel(page) : L(Info_VisiblePages));
+        const char* id = similar ? "info.similarSounds" : (page < 5 ? PageId(page) : "info.pageVisibility");
         ThemeInspector::RegisterLastItem(id, label, "src/FileInfoPanel.cpp");
         if (hovered) ImGui::SetTooltip("%s", label);
         ImGui::PopID();
@@ -239,14 +247,14 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         return clicked;
     };
     const bool similarClicked = pages.similarSoundsVisible && button(kSimilarSoundsAction, false);
-    for (int i=0; i<4; ++i) {
+    for (int i=0; i<5; ++i) {
         if (!pages.IsVisible(static_cast<InfoPage>(i), kDiagnostics) || (compact && pages.selected != i)) continue;
         if (button(i, pages.selected == i) && pages.Select(static_cast<InfoPage>(i),kDiagnostics)) state.settingsDirty = true;
     }
     if (button(kVisibilityAction,false)) ImGui::OpenPopup("visibility");
     if (BeginTransientScrollbarPopup("visibility")) {
         if (compact) {
-            for (int i=0; i<4; ++i) {
+            for (int i=0; i<5; ++i) {
                 if (!pages.IsVisible(static_cast<InfoPage>(i),kDiagnostics)) continue;
                 ImGui::PushID(i);
                 if (ImGui::MenuItem(PageLabel(i), nullptr, pages.selected==i)) {
@@ -260,7 +268,7 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         ImGui::TextDisabled("%s", L(Info_VisiblePages));
         if (ImGui::MenuItem(L(Similar_Title), nullptr, &pages.similarSoundsVisible)) state.settingsDirty = true;
         ThemeInspector::RegisterLastItem("info.visibility.similarSounds", L(Similar_Title), "src/FileInfoPanel.cpp");
-        for (int i=0; i<4; ++i) {
+        for (int i=0; i<5; ++i) {
             const auto page = static_cast<InfoPage>(i);
             if (!InfoPageNavigation::Available(page,kDiagnostics)) continue;
             const bool visible = pages.IsVisible(page,kDiagnostics);
@@ -289,6 +297,12 @@ void RenderFileInfoPanelContent(AppState& state, float panelWidth) {
         if (!state.infoEditSession.active && pages.Select(InfoPage::Artwork,kDiagnostics)) state.settingsDirty = true;
         state.switchToCoverTabAfterRebuild = false;
     }
+    #ifdef _WIN32
+    if (pages.selected == static_cast<int>(InfoPage::Performance)) {
+        RenderPerformanceMonitorContent(state);
+        return;
+    }
+    #endif
     const FileInfoPanelChrome chrome = MakeFileInfoPanelChrome();
     RenderFileInfoFieldVisibilityMenu(state);
     RenderFileInfoPanelTabContents(state, panelWidth, chrome);

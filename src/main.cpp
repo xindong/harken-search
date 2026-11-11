@@ -5438,6 +5438,7 @@ void LoadAppSettings(AppState& state) {
     }
 
     state.settings.infoPages.visibleMask = ParseInt(kv["infoPageVisibleMask"], 15);
+    if (kv["infoPerformancePageInitialized"] != "1") state.settings.infoPages.visibleMask |= 16;
     state.settings.infoPages.selected = ParseInt(kv["infoSelectedPage"], 1);
     state.settings.infoPages.similarSoundsVisible = ParseBool(kv["infoShowSimilarSounds"], true);
     state.settings.infoPages.Normalize(AURA_BUILD_DIAGNOSTICS != 0);
@@ -6403,6 +6404,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"sidebarDockSide", std::to_string((int)state.sidebarDockSide)});
     items.push_back({"infoPanelLayoutVersion", "1"});
     items.push_back({"infoPageVisibleMask", std::to_string(state.settings.infoPages.visibleMask)});
+    items.push_back({"infoPerformancePageInitialized", "1"});
     items.push_back({"infoSelectedPage", std::to_string(state.settings.infoPages.selected)});
     items.push_back({"infoShowSimilarSounds", state.settings.infoPages.similarSoundsVisible ? "1" : "0"});
 
