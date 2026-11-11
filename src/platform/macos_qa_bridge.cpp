@@ -2,6 +2,7 @@
 #include "AppState.h"
 #include "AppMainServices.h"
 #include "DawBridgeInstaller.h"
+#include "DAWPanel.h"
 #include "UIRenderer.h"
 #include "SimilarSoundsWindow.h"
 #include "SimilarityWorkflow.h"
@@ -166,6 +167,18 @@ Request Poll(AppState& state) {
                 {"sha256",info.sha256},{"size",info.sizeBytes},{"version",info.version},
                 {"protocol",info.protocolVersion},{"manifest",info.manifest},
                 {"trusted_source",info.trustedSource},{"recognized_entry",info.legacySignature}};
+        } else if (action == "reaper_capability_fixture") {
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            DawTarget reaper;
+            reaper.name = "REAPER QA";
+            reaper.processName = "REAPER";
+            reaper.exePath = path;
+            reaper.mode = DawSendMode::NamedPipe;
+            reaper.lastDetectTime = -10;
+            DawTarget control;
+            control.name = "QA unsupported target";
+            control.autoDetect = false;
+            state.settings.dawTargets = {reaper, control};
         } else if (action == "probe_reaper_host") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             HarkenSearch::DawBridge::ReaperBridgeProbeOptions options;
@@ -442,6 +455,11 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
     if (!request.id) return true;
     try {
+        Json dawCapabilities = Json::array();
+        for (const auto& target : state.settings.dawTargets)
+            dawCapabilities.push_back({{"name",target.name},{"path",target.exePath},
+                {"capability",static_cast<int>(GetDawCapability(target))},
+                {"tag",GetCapabilityTag(target)}});
         Json rows = Json::array();
         for (const auto& row : state.searchResults) {
             if (rows.size() >= 100) break;
@@ -608,6 +626,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},
+            {"daw_capabilities",dawCapabilities},
             {"info_page_selected",state.settings.infoPages.selected},
             {"region",{{"start",state.audioEngine.getInPoint()},{"end",state.audioEngine.getOutPoint()},
                 {"fade_in",state.uiState.regionFadeInNorm},{"fade_out",state.uiState.regionFadeOutNorm}}},

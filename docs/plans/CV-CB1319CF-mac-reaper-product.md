@@ -98,3 +98,12 @@ REAPER 加载仍未覆盖。共用 Doctor 改动取得同提交 Windows 证据�
 Windows 不改变。实际产品探测同时检查便携和标准的目标/备用位置以及只读行为，
 正常退出；保留旧包失败报告。产品能力函数还在 REAPER 判定前返回非 Windows
 不可用，留待入口接线阶段修正，本次不开放发送或安装UI。
+
+### 当前接续：REAPER 能力分类
+
+只允许 Mac REAPER 经过既有异步 Doctor 缓存和可用性映射，其他 Mac 工作站保留
+Unavailable。没有真实握手不返回 CanDirect，不绕过发送前重新诊断。
+通过仅隔离QA的目标配置与只读能力观察，先证明旧总开关返回Unavailable，再
+实测缺少宿主返回Unconfigured、缺少组件返回AdapterMissing、其他工作站仍不可用。
+不注入诊断/就绪结果、不启动真实宿主。创建隔离合成音频库并提供实际画面；
+完整Mac构建，最终同提交Windows检查，保持待用户确认界面和真实直送边界。

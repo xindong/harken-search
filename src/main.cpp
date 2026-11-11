@@ -4358,7 +4358,7 @@ static bool IsProToolsLaunchTarget(const DawTarget& target);
 static std::wstring FindInstalledSteinbergExecutable(const DawTarget& target);
 
 DawCapability GetDawCapability(const DawTarget& dt) {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
     return DawCapability::Unavailable;
 #endif
     if (IsReaperNamedPipeTarget(dt)) {
@@ -4379,6 +4379,9 @@ DawCapability GetDawCapability(const DawTarget& dt) {
             return DawCapability::Unconfigured;
         }
     }
+#ifndef _WIN32
+    return DawCapability::Unavailable;
+#endif
     if (HarkenSearch::CubaseAdapter::IsSteinbergDirectInsertTarget(dt)) {
         const auto preflight = HarkenSearch::CubaseAdapter::EvaluatePreflight(dt);
         const bool isNuendo = HarkenSearch::CubaseAdapter::IsNuendoLaunchTarget(dt);
