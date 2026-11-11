@@ -197,6 +197,9 @@
         editor.devices=state.audioEngine.enumerateOutputDevices();
         ImGui::OpenPopup("###HarkenSettings"); state.showSettingsDialog=false;
     }
+#if defined(__APPLE__) && AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (HarkenSearch::MacQa::ConsumeThesaurusPageRequest()) editor.action="dictionary";
+#endif
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     su::observation={}; su::observation.frame=ImGui::GetFrameCount();
 #endif

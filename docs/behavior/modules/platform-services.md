@@ -8,7 +8,7 @@
 **Priority:** P0
 **Owner:** Engineering / QA
 **Created:** 2026-07-14
-**Last Updated:** 2026-11-02
+**Last Updated:** 2026-11-04
 
 ## Product Behavior
 
@@ -29,6 +29,14 @@
 - Given 业务模块需要操作系统、文件、图像或音频 I/O
 - When 调用方执行对应平台能力
 - Then 请求只经过对应 `Platform::*` 能力，业务侧只看到平台无关值、结果和回调
+
+- Given Mac 应用包内已带有菜单字标、品牌图标和 Lucide 字体
+- When 应用从源码目录以外的工作目录启动
+- Then UI 优先读取可执行文件相邻的资源，显示与源码目录启动一致；资源缺失时保留原有文字或空纹理回退
+
+- Given Mac 应用包使用用户提供的 Search 橙色官方图标
+- When Finder 或 Dock 读取应用包图标
+- Then Info.plist 指向 Contents/Resources 内可解码的 HarkenSearch.icns；Windows .ico 和应用内字标不受影响
 
 ### Edge Cases
 
@@ -111,11 +119,15 @@ root. It is not a production automation or remote-control API.
 | TEST-PLATFORM-PERF | integration / performance | `TestStage6PerformanceBaseline` | 五轮入口快照、总体噪声与产品/回归门限均通过纯源验证 | active |
 | DIAG-PLATFORM-GRAPH | diagnostics | `tools/graphify_auto_refresh.py --once` + impact packets | 主/审计图刷新成功，变更边可解释 | missing |
 
+| TEST-MAC-PACKAGED-UI-ASSETS | real app / screenshot comparison | Launch one isolated Mac app from source and unrelated QA directories | Menu wordmark and icon regions agree; normal exit and missing-resource fallback remain explicit | active |
+| TEST-MAC-FINDER-ICON | bundle / system read | Rebuild icon from preserved PNGs; read the packaged app icon with NSWorkspace; launch isolated app | Finder system icon is the official orange Search artwork and real app exits normally | active |
+
 ## Missing Coverage
 
 - Remaining proof: independent final review and the first Stage 6 Graphify baseline remain separate gates.
 - Suspected stale proof: existing `platform.h` callers and `ma_*` ownership require ledger review; static matches do not prove semantic I/O absence.
 - Human-only verification: two-person PAL review; later UI/audio subjective checks and any real device/host workflow.
+- Mac 打包资源的自动截图比较是技术证据；最终界面观感仍须用户明确确认。
 - 待产品确认: any behavior change or improved error wording stays in the private product-review queue; no semantic change is authorized by this contract.
 
 ## Change Gate

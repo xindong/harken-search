@@ -58,6 +58,8 @@
 
 #ifdef __APPLE__
 #include "platform/settings_file.h"
+#include "platform/macos_qa_bridge.h"
+#include "platform/macos_file_drag.h"
 #endif
 
 #include "AudioEngine.h"
@@ -2001,6 +2003,18 @@ static std::unordered_map<std::string, MiniWaveTextureEntry> g_miniWaveTextureCa
 static MiniWaveformPresentation::DeferredTextureDeletes g_deferredMiniWaveTextureDeletes;
 static const size_t kMaxMiniWaveTextures = 250;
 
+#if defined(__APPLE__) && AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+std::vector<std::string> HarkenSearch::MacQa::MiniTexturePaths() {
+    std::vector<std::string> paths;
+    paths.reserve(g_miniWaveTextureCache.size());
+    for (const auto& entry : g_miniWaveTextureCache) {
+        if (entry.second.hasTexture && entry.second.textureId != 0)
+            paths.push_back(entry.first);
+    }
+    return paths;
+}
+#endif
+
 // Mini waveform texture upload queue.
 static MiniWaveformScheduler g_pendingMiniWaveTextureScheduler;
 static const size_t kMaxPendingMiniWaveTextures = 500;
@@ -2013,8 +2027,9 @@ static void DeleteMiniWaveTexture(GLuint& textureId) {
         aura::cover_wall::CullTextureMirrorsMatchingNonCoverTexture(
             g_appState->coverWall, textureId);
     }
-    glDeleteTextures(1, &textureId);
-    textureId = 0;
+    // ImGui draw commands retain this ID until the frame is submitted. Cache
+    // eviction or replacement can happen after a row has already queued Image.
+    g_deferredMiniWaveTextureDeletes.Queue(textureId);
 }
 
 static void ReleaseMiniWaveTextureResources() {
@@ -2121,13 +2136,9 @@ static bool HasCompatibleMiniWaveTexture(const std::string& path, int targetW, i
         return false;
     }
 
-    if (std::abs(cacheIt->second.width - targetW) > 4)
-    {
-        return false;
-    }
-
-    if (std::abs(cacheIt->second.height - targetH) > 4)
-    {
+    if (!MiniWaveformPresentation::HasCompatibleTextureDimensions(
+            cacheIt->second.hasTexture, cacheIt->second.width,
+            cacheIt->second.height, targetW, targetH)) {
         return false;
     }
 
@@ -2177,7 +2188,8 @@ static bool EnsureMiniWaveTextureLoaded(const std::string& filePath, const Wavef
     if (cacheIt != g_miniWaveTextureCache.end() && cacheIt->second.hasTexture) {
         int cachedW = cacheIt->second.width;
         int cachedH = cacheIt->second.height;
-        if (std::abs(cachedW - targetW) <= 4 && std::abs(cachedH - targetH) <= 4) {
+        if (MiniWaveformPresentation::HasCompatibleTextureDimensions(
+                cacheIt->second.hasTexture, cachedW, cachedH, targetW, targetH)) {
             cacheIt->second.lastUsedFrame = currentFrame;
             outTex = cacheIt->second;
 #if AURA_BUILD_DIAGNOSTICS
@@ -2578,13 +2590,22 @@ void InvalidateMiniWaveTextureForPath(const std::string& key) {
 void InvalidateMiniWaveTextureAfterFrame(const std::string& key) {
     auto texIt = g_miniWaveTextureCache.find(key);
     if (texIt == g_miniWaveTextureCache.end()) return;
-    g_deferredMiniWaveTextureDeletes.Queue(texIt->second.textureId);
-    g_miniWaveTextureCache.erase(texIt);
+    // Keep the last complete image visible while the replacement is built.
+    // Erasing here caused one or more blank/CPU-fallback frames whenever a
+    // background waveform result refreshed a row that was already on screen.
+    const int previousWidth = texIt->second.width > 0 ? texIt->second.width : 220;
+    const int previousHeight = texIt->second.height > 0 ? texIt->second.height : 36;
+    texIt->second.width = 0;
+    texIt->second.height = 0;
+    texIt->second.lastUsedFrame = (uint64_t)ImGui::GetFrameCount();
+    g_pendingMiniWaveTextureScheduler.scheduleFrontCoalescedByPath(
+        key, previousWidth, previousHeight);
+    g_pendingMiniWaveTextureScheduler.trimBackExcess(kMaxPendingMiniWaveTextures);
 }
 
 void FlushDeferredMiniWaveTextureDeletes() {
     g_deferredMiniWaveTextureDeletes.Flush([](GLuint id) {
-        DeleteMiniWaveTexture(id);
+        glDeleteTextures(1, &id);
     });
 }
 
@@ -3453,6 +3474,37 @@ void StartFileDrag(const std::vector<std::string>& files) {
     }
 }
 
+#elif defined(__APPLE__)
+namespace Platform::MacFileDrag {
+void CompleteFileDrag(bool copied) {
+    if (ImGui::GetCurrentContext()) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMouseButtonEvent(0, false);
+        io.MouseDown[0] = false;
+    }
+    g_isDragging = false;
+    g_dragCompleted = true; // Prevent the completed gesture from changing selection.
+    ResetDragState();
+    AppendDiagLogF(L"Mac external file drag ended: copy=%d", copied ? 1 : 0);
+}
+}
+
+void StartFileDrag(const std::vector<std::string>& files) {
+    if (files.empty() || g_isDragging || g_dragInitiated) return;
+    std::string error;
+    if (!Platform::MacFileDrag::QueueFileDrag(files, error)) {
+        if (g_appState) {
+            g_appState->loadErrorToast = error.empty() ? L(Misc_DragFailed) : error;
+            g_appState->loadErrorToastUntil = ImGui::GetTime() + 6.0;
+        }
+        AppendDiagLogLine(L"Mac external file drag rejected before native session");
+        return;
+    }
+    MaybePausePlaybackOnInScopeDragStart();
+    g_isDragging = true;
+    g_dragInitiated = true;
+    g_suppressImGuiDragTooltipFrames = 120;
+}
 #else
 void StartFileDrag(const std::vector<std::string>& files) {
     if (files.empty() || g_dragInitiated) return;
@@ -3514,6 +3566,7 @@ static void TrackTempDragFile(const std::string& pathUtf8) {
 // Create a temp "alias" for a file so the DAW sees a different filename (suffix), without altering the original.
 static std::string CreateTempAliasForFile(const std::string& originalPathUtf8, const std::string& desiredFileNameUtf8) {
     std::string dirUtf8 = GetTempDragDirUtf8();
+    if (dirUtf8.empty()) return {};
     std::string dstUtf8 = dirUtf8 + desiredFileNameUtf8;
 
     std::wstring wSrc = Utf8ToWide(originalPathUtf8);
@@ -3765,6 +3818,7 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
         }
 
         std::string tempDir = GetTempDragDirUtf8();
+        if (tempDir.empty()) { outError = "Drag temporary directory unavailable"; return false; }
         std::string finalName = MakeUniqueDragName(tempDir, stem + suffix, ".wav");
         std::string tempFile = tempDir + finalName;
 
@@ -3849,6 +3903,7 @@ static bool ExportFileWithCurrentTransferProcessing(AudioEngine& currentEngine,
     std::string stem, ext;
     SplitFileNameUtf8(sourcePath, stem, ext);
     std::string tempDir = GetTempDragDirUtf8();
+    if (tempDir.empty()) { outError = "Drag temporary directory unavailable"; return false; }
     std::string finalName = MakeUniqueDragName(
         tempDir, stem + BuildTransferSuffix(processingSnapshot, includeRegion, keepHarkenSearchProcessingSuffix), ".wav");
     std::string tempFile = tempDir + finalName;
@@ -3932,7 +3987,9 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
         if (sourcePaths[i].empty()) continue;
 
         std::string normalizedPath = sourcePaths[i];
+#ifdef _WIN32
         std::replace(normalizedPath.begin(), normalizedPath.end(), '/', '\\');
+#endif
 
         const bool isCurrentFile = !currentPath.empty() && currentPath == normalizedPath;
         const bool includeRegionForThisFile = !multiSelect && isCurrentFile && hasRegion;
@@ -13875,6 +13932,15 @@ static void RenderBrowserSystemFolderNode(AppState& state,
 }
 
 static void RenderBrowserSystemFolderTree(AppState& state) {
+#ifdef __APPLE__
+    // Only isolated QA control may replace the visible root with its own
+    // synthetic directory. Avoid traversing any real user or mounted volume.
+    const std::string& qaRoot = HarkenSearch::MacQa::BrowserTreeRootForQa();
+    if (!qaRoot.empty()) {
+        RenderBrowserSystemFolderNode(state, qaRoot, "font_tree");
+        return;
+    }
+#endif
     auto& roots = BrowserSystemFolderRoots();
     for (const auto& root : roots) {
         RenderBrowserSystemFolderNode(state, root.first, root.second);
@@ -15263,6 +15329,20 @@ static void LoadThesaurusJson() {
     }
     g_userThesaurusLoaded = true;
 }
+
+#if defined(__APPLE__)
+bool ResetMacThesaurusToDefaults() {
+    const auto file = Platform::HarkenUserData::EnsureThesaurusFileUtf8(GetExeDirUtf8());
+    const std::string path = Platform::HarkenUserData::WideToUtf8Path(file.activePath);
+    if (file.readOnly || path.empty() ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) return false;
+    if (Platform::FileSystem::Exists(path) && !Platform::FileSystem::RemoveFile(path)) return false;
+    g_userThesaurusLoaded = false;
+    Platform::HarkenUserData::ResetThesaurusCacheForTests();
+    LoadThesaurusJson();
+    return g_userThesaurusLoaded && PathExistsUtf8(path);
+}
+#endif
 
 static std::vector<std::string> SplitThesaurusWords(std::string text) {
     size_t pos;
@@ -41753,13 +41833,10 @@ void RenderUI(AppState& state) {
                             } else {
                                 g_pendingMiniWaveTextureScheduler.scheduleFrontCoalescedByPath(entry.fullPath, (int)waveWidth, (int)waveHeight);
                                 g_pendingMiniWaveTextureScheduler.trimBackExcess(kMaxPendingMiniWaveTextures);
-                                if (ImGui::GetTime() - g_lastScrollOrInputTime < 0.25) {
-                                    ImGui::Dummy(ImVec2(waveWidth, waveHeight));
-                                    float cy = wavePos.y + waveHeight / 2.0f;
-                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(wavePos.x, cy), ImVec2(wavePos.x + waveWidth, cy), IM_COL32(50, 50, 55, 60));
-                                } else {
-                                    DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, waveWidth, waveHeight);
-                                }
+                                // The data is ready even if its GPU texture was evicted.
+                                // Keep the row visible during scrolling instead of
+                                // flashing back to a placeholder for 250 ms.
+                                DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, waveWidth, waveHeight);
                             }
 
                             // Click to play and seek - works for any file
@@ -43436,13 +43513,9 @@ void RenderUI(AppState& state) {
                             } else {
                                 g_pendingMiniWaveTextureScheduler.scheduleFrontCoalescedByPath(record.filePath, (int)cellW, (int)cellH);
                                 g_pendingMiniWaveTextureScheduler.trimBackExcess(kMaxPendingMiniWaveTextures);
-                                if (ImGui::GetTime() - g_lastScrollOrInputTime < 0.25) {
-                                    ImGui::Dummy(ImVec2(cellW, cellH));
-                                    float cy = cellMin.y + cellH / 2.0f;
-                                    ImGui::GetWindowDrawList()->AddLine(ImVec2(cellMin.x, cy), ImVec2(cellMin.x + cellW, cy), IM_COL32(50, 50, 55, 60));
-                                } else {
-                                    DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, cellW, cellH);
-                                }
+                                // Use the ready CPU waveform while the texture is
+                                // queued, including during rapid scrolling.
+                                DrawMiniWaveform(cacheIt->second, isCurrentFile ? playPos : -1.0f, cellW, cellH);
                             }
                         } else {
                             MiniWaveTextureEntry retained;

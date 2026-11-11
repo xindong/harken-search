@@ -712,7 +712,14 @@ static bool IsCJKChar(wchar_t c) {
 
 // 核心 1：打断连续中文，拯救 SQLite 的单字分词
 std::string InjectCJKSpaces(const std::string& utf8_str) {
+#ifdef _WIN32
     std::wstring wstr = Utf8ToWide(utf8_str);
+#else
+    // The legacy non-Windows convenience wrapper preserves raw bytes. Search
+    // tokenization needs Unicode code points so each Han character stays whole.
+    std::wstring wstr = Platform::TextEncoding::Utf8ToWideStrict(utf8_str);
+    if (wstr.empty() && !utf8_str.empty()) return utf8_str;
+#endif
     std::wstring result;
     result.reserve(wstr.size() * 2);
     
@@ -727,7 +734,11 @@ std::string InjectCJKSpaces(const std::string& utf8_str) {
             result.push_back(c);
         }
     }
+#ifdef _WIN32
     return WideToUtf8(result);
+#else
+    return Platform::TextEncoding::WideToUtf8Strict(result);
+#endif
 }
 
 // 核心 2：利用 GB2312 一级字库天然按拼音排序的特性，实现 0 开销首字母提取

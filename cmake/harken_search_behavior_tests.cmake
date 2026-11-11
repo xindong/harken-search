@@ -573,7 +573,6 @@ add_executable(TestSearchSemanticMatrix EXCLUDE_FROM_ALL
     src/WaveformExtractor.cpp
     src/NativeFloatReader.cpp
     src/platform/audio_data_source_miniaudio.cpp
-    src/platform/filesystem_win32.cpp
     src/TimeStretch.cpp
     ${SQLITE_SOURCES}
 )
@@ -584,7 +583,22 @@ target_include_directories(TestSearchSemanticMatrix PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+if(WIN32)
+    target_sources(TestSearchSemanticMatrix PRIVATE src/platform/filesystem_win32.cpp)
+    target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+elseif(APPLE)
+    target_sources(TestSearchSemanticMatrix PRIVATE
+        src/platform/harken_user_data_layout_macos.mm
+        src/platform/macos_file_io.cpp
+    )
+    target_link_libraries(TestSearchSemanticMatrix PRIVATE
+        Threads::Threads
+        "-framework Foundation"
+        "-framework CoreServices"
+    )
+    # Keep the test-only AudioEngine and audio-playback declarations in sync.
+    target_compile_definitions(TestSearchSemanticMatrix PRIVATE AURA_BUILD_DIAGNOSTICS=0)
+endif()
 target_compile_definitions(TestSearchSemanticMatrix PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestSearchSemanticMatrix PRIVATE /W3 /MP /utf-8)
@@ -1019,12 +1033,17 @@ if(WIN32)
 elseif(APPLE)
     target_sources(TestScanPauseResume PRIVATE
         src/platform/harken_user_data_layout_macos.mm
-        src/platform/macos_file_io.cpp)
+        src/platform/macos_file_io.cpp
+    )
     target_link_libraries(TestScanPauseResume PRIVATE
-        "-framework Foundation" "-framework CoreServices")
+        Threads::Threads
+        "-framework Foundation"
+        "-framework CoreServices"
+    )
 endif()
 target_compile_definitions(TestScanPauseResume PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    AURA_BUILD_DIAGNOSTICS=1
     AURA_TEST_SCAN_STALL_SECONDS=0
     AURA_TEST_SCAN_SLOW_WORKER_MS=120
 )
@@ -4737,6 +4756,15 @@ aura_set_test_labels(TestPlatformDurableFileOpsReplaceDelete core)
 if(APPLE)
     set(HARKEN_MAC_TEST_ROOT "${CMAKE_CURRENT_BINARY_DIR}/Testing/macos-data" CACHE PATH
         "Isolated macOS data/settings test evidence directory")
+    add_executable(TestMacOutboundFileDrag EXCLUDE_FROM_ALL
+        tests/test_macos_outbound_file_drag.mm
+        src/platform/macos_file_drag.mm
+    )
+    target_include_directories(TestMacOutboundFileDrag PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestMacOutboundFileDrag PRIVATE cxx_std_17)
+    target_link_libraries(TestMacOutboundFileDrag PRIVATE "-framework AppKit")
+    add_test(NAME TestMacOutboundFileDrag COMMAND TestMacOutboundFileDrag "${HARKEN_MAC_TEST_ROOT}/outbound-drag")
+    aura_set_test_labels(TestMacOutboundFileDrag core)
     add_executable(TestMacUserDataLayout EXCLUDE_FROM_ALL
         tests/test_macos_user_data_layout.cpp
         src/platform/harken_user_data_layout_macos.mm
@@ -5163,6 +5191,18 @@ if(MSVC)
 endif()
 add_test(NAME TestExportRegionPreserve COMMAND TestExportRegionPreserve)
 aura_set_test_labels(TestExportRegionPreserve core)
+
+add_executable(TestRegionExportPathSafety EXCLUDE_FROM_ALL
+    tests/test_region_export_path_safety.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_AUDIO_TEXT_SOURCE})
+target_include_directories(TestRegionExportPathSafety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(TestRegionExportPathSafety PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestRegionExportPathSafety PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestRegionExportPathSafety COMMAND TestRegionExportPathSafety)
+aura_set_test_labels(TestRegionExportPathSafety core)
 
 # Waveform region editor: pure helper tests (fade clamp, trim refine window)
 
@@ -8191,33 +8231,37 @@ endif()
 add_test(NAME TestUpdateStaleError COMMAND TestUpdateStaleError)
 aura_set_test_labels(TestUpdateStaleError core stage4)
 
-# Also guards user-facing wording, so it runs in the ordinary sweep.
-add_executable(TestBootstrapExitExplanation
-    tests/test_bootstrap_exit_explanation.cpp
-    src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
-    src/platform/update_bootstrap_authority_base.cpp
-    src/update/UpdateDownloadManager.cpp
-    src/platform/update_persistence_port.cpp
-    src/platform/text_encoding_win32.cpp
-)
-target_include_directories(TestBootstrapExitExplanation PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
-)
-target_link_libraries(TestBootstrapExitExplanation PRIVATE bcrypt)
-target_compile_definitions(TestBootstrapExitExplanation PRIVATE
-    ARIS_UPDATE_PERSISTENCE_TESTING=1
-)
-target_compile_features(TestBootstrapExitExplanation PRIVATE cxx_std_17)
-if(MSVC)
-    target_compile_options(TestBootstrapExitExplanation PRIVATE /W3 /utf-8)
-    set_target_properties(TestBootstrapExitExplanation PROPERTIES
-        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
-        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+# Also guards user-facing wording, so it runs in the ordinary Windows sweep.
+# The persistence implementation and diagnostic contract are Windows-only;
+# keep this target out of non-Windows builds instead of linking bcrypt on macOS.
+if(WIN32)
+    add_executable(TestBootstrapExitExplanation
+        tests/test_bootstrap_exit_explanation.cpp
+        src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
+        src/platform/update_bootstrap_authority_base.cpp
+        src/update/UpdateDownloadManager.cpp
+        src/platform/update_persistence_port.cpp
+        src/platform/text_encoding_win32.cpp
     )
+    target_include_directories(TestBootstrapExitExplanation PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    )
+    target_link_libraries(TestBootstrapExitExplanation PRIVATE bcrypt)
+    target_compile_definitions(TestBootstrapExitExplanation PRIVATE
+        ARIS_UPDATE_PERSISTENCE_TESTING=1
+    )
+    target_compile_features(TestBootstrapExitExplanation PRIVATE cxx_std_17)
+    if(MSVC)
+        target_compile_options(TestBootstrapExitExplanation PRIVATE /W3 /utf-8)
+        set_target_properties(TestBootstrapExitExplanation PROPERTIES
+            LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+    add_test(NAME TestBootstrapExitExplanation COMMAND TestBootstrapExitExplanation)
+    aura_set_test_labels(TestBootstrapExitExplanation core stage4)
 endif()
-add_test(NAME TestBootstrapExitExplanation COMMAND TestBootstrapExitExplanation)
-aura_set_test_labels(TestBootstrapExitExplanation core stage4)
 
 # Guards self-update on non-system drives; must run in the ordinary sweep.
 add_executable(TestUpdaterBaseVolume

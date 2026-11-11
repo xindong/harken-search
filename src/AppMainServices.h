@@ -22,6 +22,10 @@ void LoadAudioSettingsEarly(AppState& state);
 void PushRecentDbPath(AppState& state, const std::string& pathUtf8);
 void MarkSettingsDirty(AppState& state);
 void FlushSettingsDirty(AppState& state);
+#if defined(__APPLE__)
+// Same action used by the Mac Settings page and isolated QA control.
+bool ResetMacThesaurusToDefaults();
+#endif
 
 // F-033 Music Mode ↔ SFX Mode toggle is deferred to frame end because
 // productMode drives many Music-only rendering branches (Module 2.5

@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <pthread/qos.h>
 #include <thread>
 #include <unistd.h>
@@ -130,8 +131,11 @@ bool WriteFileBytes(void* /*fileHandle*/, const void* /*bytes*/, uint32_t /*byte
 void CloseFileHandle(void* /*fileHandle*/) {
 }
 
-bool CanOpenExclusiveWritePath(const std::string& /*pathUtf8*/) {
-    return true;
+bool CanOpenExclusiveWritePath(const std::string& pathUtf8) {
+    if (pathUtf8.empty() || pathUtf8.find('\0') != std::string::npos) return false;
+    std::error_code error;
+    const bool exists = std::filesystem::exists(std::filesystem::u8path(pathUtf8), error);
+    return !error && !exists;
 }
 
 ProcessImagePathResult ReadProcessImagePath(uint32_t /*processId*/) {
@@ -589,13 +593,21 @@ std::string GetTempDirectory() {
 
 std::string GetTempDragDirectory() {
     @autoreleasepool {
-        NSString* base = NSTemporaryDirectory();
+        NSString* base = nil;
+        if (HarkenUserData::PreviewIsolationActive()) {
+            const auto isolated = (std::filesystem::path(HarkenUserData::PreviewIsolationRootUtf8()) /
+                                   "temp").string();
+            if (!HarkenUserData::PreviewIsolationAllowsDataPathUtf8(isolated)) return {};
+            base = [NSString stringWithUTF8String:isolated.c_str()];
+        } else {
+            base = NSTemporaryDirectory();
+        }
         if (!base) return {};
         NSString* drag = [base stringByAppendingPathComponent:@"Auro_Drag"];
-        [[NSFileManager defaultManager] createDirectoryAtPath:drag
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:drag
                                   withIntermediateDirectories:YES
                                                    attributes:nil
-                                                        error:nil];
+                                                        error:nil]) return {};
         const char* utf8 = [drag UTF8String];
         return utf8 ? std::string(utf8) + "/" : std::string();
     }

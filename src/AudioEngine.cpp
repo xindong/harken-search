@@ -39,6 +39,7 @@
 #include "platform/audio_playback.h"
 #include "platform/audio_file.h"
 #include "WaveformRegionEditor.h"
+#include "platform/filesystem.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -4836,6 +4837,12 @@ bool AudioEngine::exportRegion(const std::string& outputPath,
     if (!m_isLoaded || m_fileInfo.filePath.empty()) {
         m_lastExportError = L(Ex_NoSource);
         return failExportRegion("not_loaded");
+    }
+    // The save dialog may return the selected source path. Reject aliases too,
+    // before opening the WAV encoder, which would otherwise truncate the source.
+    if (Platform::FileSystem::Equivalent(m_fileInfo.filePath, outputPath)) {
+        m_lastExportError = L(Ex_OutputEqualsSource);
+        return failExportRegion("source_equals_output");
     }
 
     // Defensive: norms are 0..1 from UI; reject non-finite / negative and cap above 1 for non-UI callers.

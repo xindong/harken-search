@@ -857,6 +857,47 @@ int main() {
     }
 
     {
+        // A file without a usable palette must not be reported as a custom
+        // theme or change the caller's current colors.
+        const std::filesystem::path invalidPath = std::filesystem::temp_directory_path() /
+            std::filesystem::u8path(u8"harken-theme-invalid-CV-4B8E19F0.json");
+        const std::string invalidFiles[] = {
+            "not-json",
+            "[]",
+            "{}",
+            R"({"note":"ff102030"})",
+            R"({"metadata":{"menuText":"ff102030"}})",
+            R"({"menuText":"not-a-color"})",
+            R"({"menuText":42})"
+        };
+        for (const auto& contents : invalidFiles) {
+            ThemeColorScheme imported = ThemeColors::getClassicDark();
+            const ImVec4 originalText = imported.menuText;
+            CHECK(!ThemeColors::importFromJSON(contents, imported),
+                  "invalid theme JSON import is rejected");
+            CHECK(approxEqual(imported.menuText, originalText),
+                  "invalid theme JSON leaves caller colors unchanged");
+            {
+                std::ofstream file(invalidPath, std::ios::binary | std::ios::trunc);
+                file << contents;
+                CHECK(file.good(), "invalid theme fixture is written");
+            }
+            CHECK(!ThemeColors::loadThemeFromFile(invalidPath.u8string(), imported),
+                  "invalid theme file load is rejected");
+            CHECK(approxEqual(imported.menuText, originalText),
+                  "invalid theme file leaves caller colors unchanged");
+        }
+        ThemeColorScheme partial = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::importFromJSON(
+                  R"({"note":"older theme","menuText":"ffeeccdd"})", partial),
+              "valid partial theme with unknown metadata still imports");
+        CHECK(approxEqual(partial.menuText, ThemeColors::fromARGBHex("ffeeccdd")),
+              "valid partial theme applies its supported color");
+        std::error_code removeError;
+        std::filesystem::remove(invalidPath, removeError);
+    }
+
+    {
         ThemeColorScheme fallback = ThemeColors::getClassicDark();
         fallback.meterBg = ImVec4(0.01f, 0.01f, 0.01f, 0.0f);
         fallback.meterBase = ImVec4(0.01f, 0.01f, 0.01f, 0.0f);

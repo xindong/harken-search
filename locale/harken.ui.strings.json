@@ -5159,11 +5159,25 @@
       "ja": "現在の辞書の保存先: %s\\harken_thesaurus.json"
     },
     {
+      "id": "Set_ThesMacPath",
+      "type": "ui",
+      "zh": "当前词库文件：%s",
+      "en": "Thesaurus file: %s",
+      "ja": "現在の辞書ファイル: %s"
+    },
+    {
       "id": "Set_ThesNotWritable",
       "type": "ui",
       "zh": "请确认 exe 所在目录可写，或点击下方「打开 exe 目录」查看位置。",
       "en": "Please ensure the exe directory is writable, or click 'Open exe directory' below.",
       "ja": "exe のあるディレクトリが書き込み可能か確認するか、下の「exe ディレクトリを開く」で場所を確認してください。"
+    },
+    {
+      "id": "Set_ThesMacNotWritable",
+      "type": "ui",
+      "zh": "词库文件不可写，请检查用户设置目录权限。",
+      "en": "The thesaurus file cannot be written. Check access to the user settings folder.",
+      "ja": "辞書ファイルに書き込めません。ユーザー設定フォルダーのアクセス権を確認してください。"
     },
     {
       "id": "Set_ThesOpenJSON",
@@ -13955,6 +13969,13 @@
       "zh": "未加载或路径为空",
       "en": "Not loaded or empty path",
       "ja": "未ロードまたはパスが空"
+    },
+    {
+      "id": "Ex_OutputEqualsSource",
+      "type": "ui",
+      "zh": "导出目标不能是源音频文件。",
+      "en": "Export destination cannot be the source audio file.",
+      "ja": "書き出し先を元の音声ファイルにはできません。"
     },
     {
       "id": "Ex_DecoderMaybe",

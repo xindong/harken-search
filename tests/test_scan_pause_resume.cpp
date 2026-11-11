@@ -175,6 +175,9 @@ void testRollbackPreservesSimilarityAnalysis(int& failures) {
     check(db.open((root / "library.db").u8string()), "open similarity rollback database", failures);
     db.scanDirectoryEx((root / "audio").u8string(), true, false, false,
                        nullptr, nullptr, 1, false, false);
+    const std::string manuallyImportedPath = (root / "audio" / "stall_01.wav").u8string();
+    check(db.markFileAsManuallyImported(manuallyImportedPath),
+          "mark a scanned row as an explicit user import", failures);
     // Opaque V2 blobs must survive the database rollback byte-for-byte. The
     // deletion cascade is the same one installed by SimilarityAnalysisStore.
     const char* seed = R"SQL(
@@ -221,7 +224,88 @@ CREATE TEMP TABLE expected_segments AS SELECT * FROM harken_similarity_segments_
     check(preserved("harken_similarity_segments_v2", "expected_segments"),
           "cancel preserves all existing similarity segment bytes", failures);
     check(db.getFileCount() == 3, "cancel retains all pre-existing audio rows", failures);
+    int manualMarkerCount = 0;
+    db.execQuery("SELECT COUNT(*) FROM manually_imported_files",
+                 [&](sqlite3_stmt* row) { manualMarkerCount = sqlite3_column_int(row, 0); });
+    check(manualMarkerCount == 1 && db.fileExists(manuallyImportedPath),
+          "cancel preserves explicit import marker with its audio row", failures);
     db.close();
+}
+
+void testExplicitFileImportSurvivesAnotherRootScan(int& failures) {
+    const fs::path root = makeFixture("manual_import");
+    const fs::path dbPath = root / "library.db";
+    const fs::path manualPath = root / "outside" / "manual.wav";
+    const fs::path existingPath = root / "outside" / "existing.wav";
+    const fs::path ordinaryPath = root / "outside" / "ordinary.wav";
+    fs::create_directories(manualPath.parent_path());
+    for (const auto& path : {manualPath, existingPath, ordinaryPath}) {
+        writeSilentMonoWav(path);
+    }
+    auto recordFor = [](const fs::path& path) {
+        AudioRecord record;
+        record.filePath = path.u8string();
+        record.fileName = path.filename().u8string();
+        record.folderPath = path.parent_path().u8string();
+        record.extension = ".wav";
+        return record;
+    };
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        check(false, "open manual import database", failures);
+        return;
+    }
+    check(true, "open manual import database", failures);
+    Database reader;
+    const bool readerOpen = reader.openReadOnly(dbPath.u8string());
+    check(readerOpen, "open independent count reader", failures);
+    if (readerOpen) check(reader.getFileCount() == 0, "reader initially sees empty library", failures);
+    const auto manual = recordFor(manualPath);
+    check(db.addManuallyImportedFile(manual), "explicit file import succeeds", failures);
+    check(db.getFileCount() == 1, "direct import immediately updates total", failures);
+    if (readerOpen) check(reader.getFileCount() == 1,
+                          "other connection immediately sees direct import count", failures);
+    check(db.addManuallyImportedFile(manual) && db.getFileCount() == 1,
+          "repeat import does not increase total", failures);
+
+    const auto existing = recordFor(existingPath);
+    check(db.addFile(existing), "legacy direct row exists before user re-drop", failures);
+    check(db.markFileAsManuallyImported(existing.filePath),
+          "user re-drop marks existing row", failures);
+    check(db.getFileCount() == 2, "existing row changes no total", failures);
+    if (readerOpen) check(reader.getFileCount() == 2,
+                          "other connection sees marked existing file count", failures);
+    const auto ordinary = recordFor(ordinaryPath);
+    check(db.addFile(ordinary), "ordinary out-of-root row added", failures);
+    if (readerOpen) check(reader.getFileCount() == 3,
+                          "other connection counts a row before index rebuild", failures);
+
+    db.mergeLibraryRoots({(root / "audio").u8string()});
+    check(db.pruneEntriesOutsideLibraryRoots() == 1,
+          "root pruning removes only ordinary out-of-root row", failures);
+    check(db.fileExists(manual.filePath) && db.fileExists(existing.filePath) &&
+          !db.fileExists(ordinary.filePath),
+          "both explicit file identities survive pruning", failures);
+    check(db.getFileCount() == 2, "count remains exact after pruning", failures);
+    if (readerOpen) {
+        check(reader.getFileCount() == 2, "other connection sees pruned count", failures);
+        reader.close();
+    }
+    db.close();
+
+    Database reopened;
+    if (!reopened.open(dbPath.u8string())) {
+        check(false, "reopen manual import database", failures);
+        return;
+    }
+    check(true, "reopen manual import database", failures);
+    check(reopened.pruneEntriesOutsideLibraryRoots() == 0,
+          "explicit markers persist after restart", failures);
+    check(reopened.fileExists(manual.filePath) && reopened.fileExists(existing.filePath) &&
+          reopened.getFileCount() == 2,
+          "reopened library keeps exact files and count", failures);
+    reopened.close();
 }
 
 } // namespace
@@ -232,6 +316,7 @@ int main() {
     testCancelStillRollsBack(failures);
     testPostProcessingNeverInflatesFileCounts(failures);
     testRollbackPreservesSimilarityAnalysis(failures);
+    testExplicitFileImportSurvivesAnotherRootScan(failures);
     if (failures == 0) {
         std::cout << "All scan pause and resume tests passed.\n";
         return 0;
