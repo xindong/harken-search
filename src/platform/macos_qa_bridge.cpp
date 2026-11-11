@@ -178,6 +178,10 @@ Request Poll(AppState& state) {
                 {"executable",status.hostExecutablePath},
                 {"bundled_path",status.bundledPath},
                 {"installed_path",status.installedPath},
+                {"resource_path",status.resourcePath},
+                {"alternate_path",status.alternateInstalledPath},
+                {"target_resolved",status.targetResolved},
+                {"resolution",HarkenSearch::DawBridge::ReaperBridgeTargetResolutionKey(status.targetResolution)},
                 {"send_ready",status.sendChannelAvailable},
                 {"state",static_cast<int>(status.state)}};
         } else if (action == "open_similar") {

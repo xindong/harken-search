@@ -83,6 +83,16 @@ bool IsManagedReaperPluginName(const fs::path& path) {
 
 
 fs::path AppDataReaperDirectory() {
+#if defined(__APPLE__)
+    if (Platform::HarkenUserData::PreviewIsolationActive()) {
+        const auto roots = Platform::HarkenUserData::ResolveRoots();
+        if (roots.roamingAppData.empty()) return {};
+        const fs::path resource = fs::path(roots.roamingAppData) / L"REAPER";
+        if (!Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(resource.u8string()))
+            return {};
+        return resource;
+    }
+#endif
     const Platform::UserDataDirectoryResult appData =
         Platform::GetRoamingAppDataDirectory();
     if (appData.status != Platform::UserDataDirectoryStatus::Success ||

@@ -9,6 +9,7 @@ parser.add_argument('--binary', type=Path, required=True)
 parser.add_argument('--root', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
+standard = args.root / 'profile/Application Support/REAPER'
 args.output.mkdir(parents=True, exist_ok=False)
 fixture = args.root / 'fixtures' / args.output.name
 fixture.mkdir(parents=True, exist_ok=False)
@@ -28,13 +29,21 @@ try:
         probe = app.command('probe_reaper_host', path=str(path))['reaper_host_probe']
         report['probes'].append({'input': str(path), 'response': probe})
         assert probe['installed_path'] == str(portable / 'UserPlugins/reaper_harken.dylib'), probe
+        assert probe['resource_path'] == str(portable), probe
+        assert probe['resolution'] == 'configured_portable_install', probe
+        assert probe['alternate_path'] == str(standard / 'UserPlugins/reaper_harken.dylib'), probe
         assert not probe['send_ready'], probe
     marker.unlink()
     (bundle / 'reaper.ini').write_text('[reaper]\n')
     probe = app.command('probe_reaper_host', path=str(bundle))['reaper_host_probe']
     report['probes'].append({'input': str(bundle), 'bundle_marker_only': True, 'response': probe})
     assert probe['installed_path'] != str(bundle / 'UserPlugins/reaper_harken.dylib'), probe
+    assert probe['installed_path'] == str(standard / 'UserPlugins/reaper_harken.dylib'), probe
+    assert probe['resource_path'] == str(standard), probe
+    assert probe['resolution'] == 'standard_resource_path', probe
+    assert probe['alternate_path'] == str(portable / 'UserPlugins/reaper_harken.dylib'), probe
     assert not probe['send_ready'], probe
+    assert not (standard / 'UserPlugins').exists(), 'standard diagnosis must remain read-only'
     assert not list(fixture.rglob('UserPlugins')), 'diagnosis must not create plugin directories'
     report['exit_code'] = app.close()
     report['status'] = 'PASS'
