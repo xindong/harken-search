@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
@@ -9,14 +10,23 @@ import subprocess
 import time
 
 from PIL import Image
-import win32con
-import win32gui
-from qa_folder_shortcuts import Driver
-from qa_scan_speed import contains_root_literal
+from qa_scan_speed import EvidenceDriver, SharedLock, contains_root_literal, ensure_root_idle
 from qa_transport_themes import THEMES
 
 
 CARD_ROOT = Path('D:/Harken-QA/BUG-20261106-BROWSER-FILTER-WHITE').resolve()
+
+
+def sample_search_field(image, bounds):
+    if (not isinstance(bounds, (list, tuple)) or len(bounds) != 4 or
+            not all(isinstance(v, (int, float)) and math.isfinite(v) for v in bounds)):
+        raise ValueError('Missing or invalid observed search field bounds')
+    left, top, right, bottom = bounds
+    if not (0 <= left < right <= image.width and 0 <= top < bottom <= image.height
+            and right - left >= 8 and bottom - top >= 8):
+        raise ValueError('Observed search field bounds are outside the captured frame')
+    point = (int((left + right) / 2), int((top + bottom) / 2))
+    return image.getpixel(point), point
 
 
 def run(args):
@@ -32,9 +42,25 @@ def run(args):
         raise ValueError('Output must be a new directory')
 
     runtime = root / 'profile/runtime'
-    if (runtime / 'qa_cmd.json').exists():
-        raise ValueError('Another QA command is pending')
     runtime.mkdir(parents=True, exist_ok=True)
+    lock = SharedLock(runtime, out)
+    lock.acquire()
+    process_state = {'exited': True}
+    try:
+        if (runtime / 'qa_cmd.json').exists():
+            raise ValueError('Another QA command is pending')
+        if out.exists():
+            raise ValueError('Output must be a new directory')
+        ensure_root_idle(exe, root)
+        _run_locked(exe, root, out, runtime, process_state, lock)
+    finally:
+        lock.release(process_exited=process_state['exited'])
+
+
+def _run_locked(exe, root, out, runtime, process_state, lock):
+    import win32con
+    import win32gui
+
     settings = root / 'profile/Local/HarkenSearch/settings.ini'
     db = root / 'profile/Local/HarkenSearch/Database/BrowserColorQA/main.db'
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -59,10 +85,11 @@ def run(args):
                AURA_HARNESS_LANE_KIND='folder-search', AURA_DISABLE_SINGLE_INSTANCE='1')
     process = subprocess.Popen([str(exe)], cwd=exe.parent, env=env,
                                startupinfo=startup)
-    driver = Driver(runtime, out)
+    process_state['exited'] = False
     hwnd = None
     shots = []
     try:
+        driver = EvidenceDriver(runtime, out, lock)
         identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=45)
         if (identity['pid'] != process.pid or Path(identity['exe_path']).resolve() != exe
                 or Path(identity['isolation_root']).resolve() != root):
@@ -95,14 +122,17 @@ def run(args):
                 image = Image.open(raw).convert('RGB')
                 if len(image.getcolors(image.width * image.height) or []) <= 16:
                     raise RuntimeError(f'Blank native frame: {theme}/{mode}')
+                bounds = state.get('qa_filter_ui_rects', {}).get('folder_search')
+                search_color, sample_point = sample_search_field(image, bounds)
                 path = out / f'{theme}-{mode}.png'
                 image.save(path)
                 crop = image.crop((0, 55, min(480, image.width), min(500, image.height)))
                 crop.save(out / f'{theme}-{mode}-filter.png')
                 shots.append({'theme': theme, 'name': name, 'mode': mode,
                               'path': str(path),
-                              'search_field_rgb': image.getpixel((100, 245)),
-                              'filter_body_rgb': image.getpixel((100, 355)),
+                              'search_field_rgb': search_color,
+                              'search_field_bounds': bounds,
+                              'search_sample_xy': sample_point,
                               'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
         for theme, _ in THEMES:
             browser, database = (next(s for s in shots if s['theme'] == theme
@@ -127,13 +157,17 @@ def run(args):
                                          encoding='utf-8')
         print(f'PASS: captured {len(shots)} real Browser/Database theme frames in {out}')
     finally:
-        if hwnd and win32gui.IsWindow(hwnd):
-            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
         try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            process.wait(timeout=10)
+            if hwnd and win32gui.IsWindow(hwnd):
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        finally:
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=10)
+            finally:
+                process_state['exited'] = process.poll() is not None
 
 
 if __name__ == '__main__':
