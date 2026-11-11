@@ -14008,7 +14008,8 @@ static void RenderFolderTreeExplorerToolbar(
     const std::function<void()>& onSearchEscape,
     const std::function<void()>& onRefresh,
     const std::function<void()>& onLocate,
-    const std::function<void(bool hovered)>& onLocateHover)
+    const std::function<void(bool hovered)>& onLocateHover,
+    AppState* qaState)
 {
     constexpr float kRefreshW = 26.0f;
     constexpr float kLocateW = 22.0f;
@@ -14026,6 +14027,17 @@ static void RenderFolderTreeExplorerToolbar(
         0,
         searchWidth,
         inheritContextColors);
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        qaState->qaFilterUiRects["folder_search"] = ImVec4(
+            min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+    }
+#else
+    (void)qaState;
+#endif
     if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         onSearchEscape();
         ImGui::ClearActiveID();
@@ -14197,7 +14209,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                false,
+                state.settings.theme == AppTheme::LapisBlue,
                 false,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
@@ -14221,7 +14233,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                         return;
                     }
                     HarkenSearch::SetTooltip("%s", canLocateCurrent ? L(Browser_LocateCurrentFolder) : L(Browser_NoCurrentFolderToLocate));
-                });
+                }, &state);
         },
         [&state, browserSource]() {
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
@@ -16230,7 +16242,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         "%s",
                         canLocateCurrent ? L(Main_LocateInTreeTip)
                                          : L(Main_NoTreeSelTip));
-                });
+                }, &state);
         };
 
         if (playlistScopedFolderTree) {

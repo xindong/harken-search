@@ -507,7 +507,7 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "centerResultsDrawList->AddRect(" in center_setup
 
 
-def test_lapis_database_folder_search_inherits_only_the_sidebar_semantic_colors():
+def test_lapis_folder_search_inherits_sidebar_semantic_colors_in_both_views():
     main = read(MAIN_CPP)
     widgets_header = read(AURO_WIDGETS_HEADER)
     widgets_source = read(AURO_WIDGETS_SOURCE)
@@ -524,7 +524,7 @@ def test_lapis_database_folder_search_inherits_only_the_sidebar_semantic_colors(
     assert "useLapisBlueFolderSearchSurface" not in browser_search
     assert main.count("useLapisBlueFolderSearchSurface") == 2
     assert "inheritContextColors);" in toolbar
-    assert "false,\n                false," in browser_search
+    assert "state.settings.theme == AppTheme::LapisBlue,\n                false," in browser_search
     assert "useLapisBlueFolderSearchSurface,\n                true," in database_search
     assert "ImGuiCol_FrameBg,              leftPanelInput" in main
     assert "ImGuiCol_Border,               leftPanelOutline" in main
