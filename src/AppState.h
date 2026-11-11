@@ -247,8 +247,13 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
-inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultReadingFontPx = 18;
 inline constexpr int kDefaultListFontPx = 18;
+
+// Keep loaded and displayed sizes safe without rewriting the settings file here.
+inline constexpr int ClampSettingsFontSize(int sizePx) {
+    return std::clamp(sizePx, 10, 24);
+}
 
 // Reading-list rows: extra vertical px added to the reading font height before
 // comparing against the density floor. Matches the existing list cell padding.
@@ -260,10 +265,8 @@ inline int ResolveReadingFontSize(bool hasReading, int readingVal,
                                   bool hasList, int listVal,
                                   bool hasFont, int fontVal,
                                   int defaultPx) {
-    if (hasReading) return readingVal;
-    if (hasList)    return listVal;
-    if (hasFont)    return fontVal;
-    return defaultPx;
+    const int value = hasReading ? readingVal : hasList ? listVal : hasFont ? fontVal : defaultPx;
+    return ClampSettingsFontSize(value);
 }
 
 // Reading-surface row height: never shorter than the density floor, grows with
