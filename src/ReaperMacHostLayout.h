@@ -11,6 +11,7 @@ namespace HarkenSearch::DawBridge {
 struct MacReaperHostLayout {
     std::filesystem::path bundle;
     std::filesystem::path executable;
+    std::filesystem::path portableResourceDirectory;
 };
 
 inline MacReaperHostLayout ResolveMacReaperHostLayout(const std::string& configuredPath) {
@@ -31,7 +32,7 @@ inline MacReaperHostLayout ResolveMacReaperHostLayout(const std::string& configu
     } else {
         return {};
     }
-    return {bundle, bundle / "Contents" / "MacOS" / "REAPER"};
+    return {bundle, bundle / "Contents" / "MacOS" / "REAPER", bundle.parent_path()};
 }
 
 } // namespace HarkenSearch::DawBridge

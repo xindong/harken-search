@@ -227,8 +227,15 @@ ResolvedReaperTarget ResolveReaperTarget(const ReaperBridgeProbeOptions& options
 
     if (!target.hostInstalled) return target;
     const fs::path standardResource = AppDataReaperDirectory();
-    if (FileExists(target.configuredRoot / L"reaper.ini")) {
-        target.resourcePath = target.configuredRoot;
+#if defined(__APPLE__)
+    // Mac portable configuration lives beside the application bundle.
+    const fs::path portableResource =
+        ResolveMacReaperHostLayout(configuredInput).portableResourceDirectory;
+#else
+    const fs::path portableResource = target.configuredRoot;
+#endif
+    if (!portableResource.empty() && FileExists(portableResource / L"reaper.ini")) {
+        target.resourcePath = portableResource;
         target.pluginDirectory = target.resourcePath / L"UserPlugins";
         target.alternatePlugin = standardResource / L"UserPlugins" /
             Platform::HarkenUserData::CanonicalReaperPluginFileName();
@@ -240,7 +247,7 @@ ResolvedReaperTarget ResolveReaperTarget(const ReaperBridgeProbeOptions& options
     } else if (!standardResource.empty()) {
         target.resourcePath = standardResource;
         target.pluginDirectory = standardResource / L"UserPlugins";
-        target.alternatePlugin = target.configuredRoot / L"UserPlugins" /
+        target.alternatePlugin = portableResource / L"UserPlugins" /
             Platform::HarkenUserData::CanonicalReaperPluginFileName();
         target.targetResolved = true;
         target.resolution = ReaperBridgeTargetResolution::StandardResourcePath;

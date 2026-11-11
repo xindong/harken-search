@@ -28,15 +28,21 @@ int main() {
     auto layout = ResolveMacReaperHostLayout(app.u8string());
     check(layout.bundle == app && layout.executable == executable,
           "selected app resolves its real Mac executable");
+    check(layout.portableResourceDirectory == parent,
+          "Mac portable resource directory is beside the app bundle");
     layout = ResolveMacReaperHostLayout(executable.u8string());
     check(layout.bundle == app && layout.executable == executable,
           "selected inner executable resolves the same app");
+    check(layout.portableResourceDirectory == parent,
+          "inner executable selection retains the same portable resource root");
     layout = ResolveMacReaperHostLayout((app / ".").u8string());
     check(layout.bundle == app, "dot and trailing separator preserve app identity");
     const auto renamed = parent / "REAPER QA.app";
     layout = ResolveMacReaperHostLayout(renamed.u8string());
     check(layout.bundle == renamed && layout.executable == renamed / "Contents/MacOS/REAPER",
           "renamed app keeps REAPER executable identity");
+    check(layout.portableResourceDirectory == parent,
+          "renaming the app does not move portable configuration inside the bundle");
     for (const auto& path : {parent / "reaper.exe", parent / "REAPER",
                             parent / "Other.app/Contents/MacOS/Other",
                             parent / "REAPER.app/Resources/REAPER"}) {
