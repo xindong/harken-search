@@ -1,6 +1,7 @@
 #include "macos_qa_bridge.h"
 #include "AppState.h"
 #include "AppMainServices.h"
+#include "DawBridgeInstaller.h"
 #include "UIRenderer.h"
 #include "SimilarSoundsWindow.h"
 #include "SimilarityWorkflow.h"
@@ -33,6 +34,7 @@ using Json = nlohmann::json;
 bool thesaurusPageRequested = false;
 std::string browserTreeRootForQa;
 Json lastRegionExport;
+Json reaperHostProbe;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
 Json inputBeforeUi;
 #endif
@@ -104,6 +106,18 @@ Request Poll(AppState& state) {
         } else if (action == "open") {
             const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
             if (!BeginSwitchDatabase(state, path)) throw std::runtime_error("library_switch_failed");
+        } else if (action == "probe_reaper_host") {
+            const auto path = command.at("path").get<std::string>(); RequireQaPath(path);
+            HarkenSearch::DawBridge::ReaperBridgeProbeOptions options;
+            options.configuredReaperRootPath = path;
+            const auto status = HarkenSearch::DawBridge::ProbeReaperBridge(options);
+            reaperHostProbe = {{"configured",status.configured},
+                {"root_exists",status.configuredPathExists},
+                {"host_exists",status.hostInstalled},
+                {"root",status.configuredRootPath},
+                {"executable",status.hostExecutablePath},
+                {"send_ready",status.sendChannelAvailable},
+                {"state",static_cast<int>(status.state)}};
         } else if (action == "open_similar") {
             if (!state.database.isOpen() || state.dbSwitchInProgress)
                 throw std::runtime_error("library_not_ready");
@@ -522,6 +536,7 @@ bool Reply(const AppState& state, const Request& request, bool captured) {
                 {"floating",state.panelSimilarSounds.floating}}},
             {"similar_ui",similarUi},
             {"database_error",state.database.getLastError()},
+            {"reaper_host_probe",reaperHostProbe},
             {"switch_pending",state.dbSwitchInProgress},{"switch_error",state.dbSwitchError},
             {"needs_database",state.startupNeedsDatabaseSetup},
             {"reading_font",state.settings.readingFontSize},

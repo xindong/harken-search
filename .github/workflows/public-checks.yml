@@ -60,7 +60,7 @@ jobs:
           TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
           TestUiPortableServices TestDatabaseSwitchWorkerRuntime TestDatabaseSwitchBlockingOperation
           TestScanWaveformCacheContract TestScanPauseResume TestSearchSemanticMatrix
-          TestSimilarityQueryService TestSimilarityIndexCountState TestReaperBridgeContract
+          TestSimilarityQueryService TestSimilarityIndexCountState TestReaperBridgeContract TestReaperMacHostLayout
           TestSearchWorkspace TestPlaylistFolderTree TestSubPlaylists
           TestBackgroundIoPolicy TestScanWorkflowState TestScanDialogPresentation TestCoverDiscovery
           TestRegionExportPathSafety TestThemeColors
@@ -73,7 +73,7 @@ jobs:
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
-          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^SidebarMetadataPicker$|^LibraryStatisticsWorker$|^TestUiPortableServices$|^TestDatabaseSwitch(WorkerRuntime|BlockingOperation)$|^TestSettingsImportDialogBoundary$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle|ScanWaveformCacheContract|ScanPauseResume|SimilarityQueryService|SimilarityIndexCountState|ReaperBridgeContract|SearchSemanticMatrix|SearchWorkspace|PlaylistFolderTree|SubPlaylists|BackgroundIoPolicy|ScanWorkflowState|ScanDialogPresentation|CoverDiscovery|DatabaseOpenDialogBoundary|ScanQuickStartContract|ScanPauseResumeContract)$"
+          -R "^Test(Update(Manifest|CheckService|ApplicationService|Coordinator|Runtime|DownloadManager|StateStore|HttpTransport|PersistencePort|CheckHttpsTransport|FailureExplanation|StaleError)|HarkenSearchBootstrapPlan|UpdaterBaseVolume|BootstrapExitExplanation)(Platform|Boundary)?$|^DetachedViewportInput$|^SidebarMetadataPicker$|^LibraryStatisticsWorker$|^TestUiPortableServices$|^TestDatabaseSwitch(WorkerRuntime|BlockingOperation)$|^TestSettingsImportDialogBoundary$|^Test(DatabaseSwitchWorkerRuntimeBoundary|DatabaseSwitchBlockingOperationBoundary|SimilarSoundsWindowContract|ActionButtonStyle|ScanWaveformCacheContract|ScanPauseResume|SimilarityQueryService|SimilarityIndexCountState|ReaperBridgeContract|ReaperMacHostLayout|SearchSemanticMatrix|SearchWorkspace|PlaylistFolderTree|SubPlaylists|BackgroundIoPolicy|ScanWorkflowState|ScanDialogPresentation|CoverDiscovery|DatabaseOpenDialogBoundary|ScanQuickStartContract|ScanPauseResumeContract)$"
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"

@@ -5963,6 +5963,15 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
+add_executable(TestReaperMacHostLayout EXCLUDE_FROM_ALL tests/test_reaper_mac_host_layout.cpp)
+target_include_directories(TestReaperMacHostLayout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(TestReaperMacHostLayout PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestReaperMacHostLayout PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestReaperMacHostLayout COMMAND TestReaperMacHostLayout)
+aura_set_test_labels(TestReaperMacHostLayout daw)
+
 if(WIN32)
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp

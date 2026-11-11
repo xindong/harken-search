@@ -1,4 +1,7 @@
 #include "DawBridgeInstaller.h"
+#if defined(__APPLE__)
+#include "ReaperMacHostLayout.h"
+#endif
 #include "Localization.h"   // G1: L() ledger accessor (RQ-20260911-04)
 #include <cstdio>
 
@@ -89,6 +92,9 @@ fs::path AppDataReaperDirectory() {
 }
 
 fs::path NormalizeReaperRoot(const std::string& rootOrExecutableUtf8) {
+#if defined(__APPLE__)
+    return ResolveMacReaperHostLayout(rootOrExecutableUtf8).bundle;
+#else
     fs::path input(Utf8ToWideLocal(rootOrExecutableUtf8));
     if (input.empty()) return {};
     input = input.lexically_normal();
@@ -97,6 +103,7 @@ fs::path NormalizeReaperRoot(const std::string& rootOrExecutableUtf8) {
         return input.parent_path();
     }
     return input;
+#endif
 }
 
 bool SamePath(const fs::path& left, const fs::path& right) {
@@ -176,7 +183,11 @@ ResolvedReaperTarget ResolveReaperTarget(const ReaperBridgeProbeOptions& options
     target.configuredRoot = NormalizeReaperRoot(configuredInput);
     target.configuredPathExists = !target.configuredRoot.empty() &&
                                   DirectoryExists(target.configuredRoot);
+#if defined(__APPLE__)
+    target.hostExecutable = ResolveMacReaperHostLayout(configuredInput).executable;
+#else
     target.hostExecutable = target.configuredRoot / L"reaper.exe";
+#endif
     target.hostInstalled = FileExists(target.hostExecutable);
     if (target.hostInstalled) target.hostArchitecture = ReadPeArchitecture(target.hostExecutable);
 
