@@ -54,7 +54,8 @@ else if(id=="themeEditor") {
 else if(id=="language") {int n=(int)draft.language;if(combo(n,{u8"简体中文","English",u8"日本語"}))draft.language=(AppLanguage)n;}
 else if(id=="systemFont"||id=="listFont") {
     auto& value=id=="systemFont"?draft.readingFontSize:draft.listFontSize;
-    int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(value-kFontSteps[i])<abs(value-kFontSteps[n]))n=i;
+    const int safeValue=ClampSettingsFontSize(value);
+    int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
     if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}

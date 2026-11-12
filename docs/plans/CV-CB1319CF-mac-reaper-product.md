@@ -215,3 +215,30 @@ REAPER未安装时只记录NotFound和未覆盖，保留许可/宿主验证边�
 自制受控进程验证进行中、切换路径、恢复路径及完成页面，所有写入限本卡
 专用测试区；正式候选不默认加入组件。最终完整构建、实际截图、同提交
 Windows验证后等待用户验收；真实宿主许可/加载/直送未验证。
+
+### 2026-11-12 接续：前移 QA 基线并尝试实测原生选择回填
+
+开始时卡分支为干净 `b5cee51`，本机 `qa/current` 已过期；只读抓取发现远端
+`origin/qa/current` 已前移到 `a9c1a19`。合并树仅有 7 个共同修改文件，自动合并
+无冲突。候选在新隔离构建目录 `build/macos-native-picker-qa-001` 重配并构建。
+
+首次构建误用系统 Python 3.9，在 `generate_localization.py` 触发
+`Path.write_text(newline=...)` 不兼容；保留日志，使用已安装 Python 3.13.18
+重配后完整 `HarkenSearch`、`TestMacExecutableDialog` 和 `MacReaperRunningFixture`
+构建通过。`TestMacBundleMetadata` 与 `TestMacExecutableDialog` 为 2/2 PASS。
+Stage6 共 440 项中 439 通过、1 失败；8 个未登记 Windows-only
+`HarkenSearchBootstrapMain.cpp` 调用。将远端 `a9c1a19` 精确归档复跑同一检查，
+得到相同 8 项，确认为最新 QA 基线已有审计账本缺口，不是本卡 Mac 实现回归；
+证据在本卡 QA README 的 `logs/168` 至 `logs/171`。
+
+测试包在隔离根启动并成功打开 DAW 设置，新增本卡专用 REAPER 目标后进入原生
+程序选择面板；尚未完成选中文件和设置持久化回读。窗口列表显示前台为 ToDesk
+`Private_Screen_722493590`，不是测试应用；为避免按键落入其他窗口，停止屏幕输入。
+面板阻塞 QA 命令，隔离应用以 SIGTERM 清理，记录为 INCOMPLETE，不能算正常退出
+或回填通过。该隔离设置根与自制 `REAPER QA.app` 路径未改动用户数据或真实宿主。
+截图 `runs/native-picker-qa-001/0030.png` 仅记录测试应用 DAW 设置状态，不是用户验收。
+
+下一步需在 HarkenSearch 测试应用可见的桌面重新运行点选、取消、关闭重开回填；
+真实 Cockos 许可、真实 REAPER 安装/加载/握手/插轨、arm64 运行及用户验收仍未完成。
+本轮没有 Cuevi 插件工具，卡片和 Windows 原需求卡无法实时读写；不改卡状态，待
+可用正式入口后补录。
