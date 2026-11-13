@@ -12,6 +12,8 @@ LOCALIZED = {
     )["entries"]
 }
 POLICY = (ROOT / "src" / "DragPauseOnStartPolicy.h").read_text(encoding="utf-8")
+SETTINGS_CATALOG = (ROOT / "src" / "SettingsCatalog.h").read_text(encoding="utf-8")
+SETTINGS_FIELDS = (ROOT / "src" / "SettingsFields.inl").read_text(encoding="utf-8")
 CMAKE = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 BEHAVIOR = (ROOT / "cmake" / "harken_search_behavior_tests.cmake").read_text(
     encoding="utf-8"
@@ -32,8 +34,9 @@ def test_preference_defaults_off_and_persists_with_existing_settings():
         'items.push_back({"pausePlaybackOnDragStart"' in MAIN
     )
     assert "Set_PauseOnDrag" in LOCALIZED
-    assert "Set_PauseOnDragHint" in LOCALIZED
-    assert "L(Set_PauseOnDrag)" in MAIN
+    assert 'u8"pauseDrag",Page::Interaction' in SETTINGS_CATALOG
+    assert 'LStr::Set_PauseOnDrag' in SETTINGS_CATALOG
+    assert 'if(id=="pauseDrag")ImGui::Checkbox("##value",&draft.pausePlaybackOnDragStart)' in SETTINGS_FIELDS
     assert "state.settings.pausePlaybackOnDragStart" in MAIN
     assert LOCALIZED["Set_PauseOnDrag"]["zh"] == "拖拽时自动暂停正在播放的音频"
     assert LOCALIZED["Set_PauseOnDrag"]["en"] == "Pause audio when a drag starts"

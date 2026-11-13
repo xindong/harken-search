@@ -117,9 +117,11 @@ if(WIN32)
     add_test(NAME bootstrap_webview_tests COMMAND bootstrap_webview_tests)
     set_tests_properties(bootstrap_webview_tests PROPERTIES TIMEOUT 30)
 
-    add_executable(aris_bootstrap_health_fixture bootstrap_health_fixture.cpp)
+    add_executable(aris_bootstrap_health_fixture bootstrap_health_fixture.cpp
+        "${CMAKE_CURRENT_LIST_DIR}/../../src/platform/update_bootstrap_health_port.cpp")
     add_executable(aris_bootstrap_sleep_fixture bootstrap_sleep_fixture.cpp)
     target_include_directories(aris_bootstrap_health_fixture PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/../../src"
         "${CMAKE_CURRENT_LIST_DIR}/../../thirdparty")
     add_executable(aris_bootstrap_native_tests
         test_aris_bootstrap_native.cpp

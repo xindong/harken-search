@@ -1,4 +1,5 @@
 #include "SimilarityAnalysisStore.h"
+#include "LibraryStatisticsWorker.h"
 #include "sqlite3.h"
 #include <filesystem>
 #include <iostream>
@@ -46,8 +47,31 @@ int main() {
     check(store.PendingFiles(pending,true) && pending.size()==2 && store.PendingFiles(pending,false) && pending.size()==1,
         "an obsolete semantic model is pending only when semantic analysis is available");
     check(store.Publish(entry), "restores complete current analysis after model-version check");
+    const auto availableCount = MakeFeatureIndexCountHandler(true, [] { return true; });
+    const auto unavailableCount = MakeFeatureIndexCountHandler(true, [] { return false; });
+    auto available = availableCount(path, [] { return false; });
+    auto unavailable = unavailableCount(path, [] { return false; });
+    check(available.success && available.total == 2 && available.indexed == 1 &&
+          available.semanticIndexed == 1 && available.pending == 1,
+        "statistics agree with valid indexed coverage while semantic analysis is available");
+    check(unavailable.success && unavailable.indexed == 1 && unavailable.pending == 1,
+        "statistics agree with valid acoustic coverage when semantic analysis is unavailable");
+    sqlite3_exec(db,"UPDATE harken_similarity_v2 SET fingerprint='invalid-identity' WHERE file_id=1",nullptr,nullptr,nullptr);
+    available = availableCount(path, [] { return false; });
+    unavailable = unavailableCount(path, [] { return false; });
+    check(available.success && available.indexed == 0 && available.semanticIndexed == 0 && available.pending == 2,
+        "malformed identity remains pending with semantic analysis available");
+    check(unavailable.success && unavailable.indexed == 0 && unavailable.pending == 2,
+        "malformed identity remains pending with semantic analysis unavailable");
+    check(store.Publish(entry), "restores valid identity after malformed-identity check");
     sqlite3_exec(db,"UPDATE harken_similarity_v2 SET summary=X'00' WHERE file_id=1",nullptr,nullptr,nullptr);
     check(store.PendingFiles(pending,false) && pending.size()==2, "malformed acoustic records are included in pending work");
+    available = availableCount(path, [] { return false; });
+    unavailable = unavailableCount(path, [] { return false; });
+    check(available.success && available.indexed == 0 && available.semanticIndexed == 0 && available.pending == 2,
+        "malformed acoustic summary remains pending with semantic analysis available");
+    check(unavailable.success && unavailable.indexed == 0 && unavailable.pending == 2,
+        "malformed acoustic summary remains pending with semantic analysis unavailable");
     check(store.Publish(entry), "restores complete analysis after malformed-record check");
     sqlite3_stmt* statement = nullptr;
     sqlite3_prepare_v2(db, "SELECT hex(audio_features),features_version FROM audio_files WHERE id=1", -1, &statement,nullptr);
