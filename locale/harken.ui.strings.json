@@ -11834,13 +11834,6 @@
       "ja": "このモデルはローカルに存在しません。"
     },
     {
-      "id": "Main_BatchAnalyzeFmt",
-      "type": "ui",
-      "zh": "开始批量特征分析 (%d 个文件)",
-      "en": "Start batch analysis (%d files)",
-      "ja": "一括分析を開始 (%d 件)"
-    },
-    {
       "id": "Wave_SpectrumGenerating",
       "type": "ui",
       "zh": "正在生成频谱...",
@@ -14934,6 +14927,8 @@
     {"id":"Similar_Cancelled","type":"ui","zh":"查找已取消。","en":"Search cancelled.","ja":"検索をキャンセルしました。"},
     {"id":"Similar_CoverageFmt","type":"ui","zh":"已分析 %d / %d","en":"Analyzed %d / %d","ja":"分析済み %d / %d"},
     {"id":"Similar_SemanticCoverageFmt","type":"ui","zh":"同类分析 %d / %d","en":"Category analysis %d / %d","ja":"同種分析 %d / %d"},
+    {"id":"Similar_PendingCountFmt","type":"ui","zh":"待分析 %d 个音频","en":"%d audio files pending analysis","ja":"未分析の音声 %d 件"},
+    {"id":"Similar_Recheck","type":"ui","zh":"核对并分析全部音频","en":"Check and analyze all audio","ja":"すべての音声を確認・分析"},
     {"id":"Similar_StatsLoading","type":"ui","zh":"正在统计当前库的音效…","en":"Counting audio files in this library…","ja":"このライブラリの音声を集計中…"},
     {"id":"Similar_StatsFailed","type":"ui","zh":"音效数量统计未完成，请重试。","en":"Could not count audio files. Try again.","ja":"音声数を集計できませんでした。再試行してください。"},
     {"id":"Similar_StatsRetry","type":"ui","zh":"重新统计","en":"Retry count","ja":"再集計"},
@@ -14941,7 +14936,6 @@
     {"id":"Similar_StatsSwitching","type":"ui","zh":"正在切换音效库…","en":"Switching libraries…","ja":"ライブラリを切り替え中…"},
     {"id":"Similar_StatsNoDatabase","type":"ui","zh":"请先打开音效库。","en":"Open a library first.","ja":"先にライブラリを開いてください。"},
     {"id":"Similar_StatsEmpty","type":"ui","zh":"当前库还没有可分析的音效。","en":"No audio files to analyze in this library.","ja":"このライブラリに分析できる音声はありません。"},
-    {"id":"Similar_Recheck","type":"ui","zh":"核对全部音频","en":"Check all audio","ja":"すべての音声を確認"},
     {"id":"Similar_AnalysisReport","type":"ui","zh":"分析结果","en":"Analysis results","ja":"分析結果"},
     {"id":"Similar_AnalysisSummaryFmt","type":"ui","zh":"完成 %d，沿用 %d，未完成 %d","en":"Analyzed %d, reused %d, incomplete %d","ja":"分析 %d、再利用 %d、未完了 %d"},
     {"id":"Similar_AnalysisCancelled","type":"ui","zh":"分析已停止，已完成的结果已保留。","en":"Analysis stopped. Completed results are retained.","ja":"分析を停止しました。完了した結果は保存されています。"},
