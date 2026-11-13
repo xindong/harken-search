@@ -136,6 +136,7 @@
 #include "AppState.h"
 #include "SidebarMetadataPicker.h"
 #include "SettingsDialogState.h"
+#include "PerformanceMonitor.h"
 #include "SettingsFileWriter.h"
 #include "SettingsMigration.h"
 #include "TagCloudContext.h"
@@ -5437,6 +5438,7 @@ void LoadAppSettings(AppState& state) {
     }
 
     state.settings.infoPages.visibleMask = ParseInt(kv["infoPageVisibleMask"], 15);
+    if (kv["infoPerformancePageInitialized"] != "1") state.settings.infoPages.visibleMask |= 16;
     state.settings.infoPages.selected = ParseInt(kv["infoSelectedPage"], 1);
     state.settings.infoPages.similarSoundsVisible = ParseBool(kv["infoShowSimilarSounds"], true);
     state.settings.infoPages.Normalize(AURA_BUILD_DIAGNOSTICS != 0);
@@ -6356,6 +6358,7 @@ static void InitDefaultColumnPresets(AppState& state) {
 }
 
 bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverride) {
+    DevToolsFramePhaseScope phase("RenderUI.SaveSettings");
     const auto persistedAppearance=harken::settings::AppearancePreview().ForPersistence(state.settings);
     if (g_appSettingsPathUtf8.empty()) {
         g_siliconFlowApiKeyStorageError.clear();
@@ -6401,6 +6404,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"sidebarDockSide", std::to_string((int)state.sidebarDockSide)});
     items.push_back({"infoPanelLayoutVersion", "1"});
     items.push_back({"infoPageVisibleMask", std::to_string(state.settings.infoPages.visibleMask)});
+    items.push_back({"infoPerformancePageInitialized", "1"});
     items.push_back({"infoSelectedPage", std::to_string(state.settings.infoPages.selected)});
     items.push_back({"infoShowSimilarSounds", state.settings.infoPages.similarSoundsVisible ? "1" : "0"});
 
@@ -9430,16 +9434,10 @@ static bool HasSearchExplainability(const AudioRecord& record, const std::string
            !BuildFallbackSearchSnippet(record, query).empty();
 }
 
-// Search-hit explainability is operational search feedback, not Guided Mode help.
-// Keep it available even when the global help-tooltip switch is off.
+// Local customization: suppress search-result hover popups in both the name
+// and description columns. Search matching and inline highlights stay active.
 static bool BeginSearchExplainabilityTooltip() {
-    static int s_lastSearchExplainabilityTooltipFrame = -1;
-    const int frame = ImGui::GetFrameCount();
-    if (s_lastSearchExplainabilityTooltipFrame == frame)
-        return false;
-    ImGui::BeginTooltip();
-    s_lastSearchExplainabilityTooltipFrame = frame;
-    return true;
+    return false;
 }
 
 static bool HasBlockingSearchExplainabilityPopup() {
@@ -11141,6 +11139,7 @@ static bool SwitchDatabase(AppState& state,
     state.selectedResultIndex = -1;
     state.currentFileId = -1;
     CoverModule::CancelPendingCoverWork();
+    aura::cover_cache::PumpPersistence({state.database, state.currentDbPathUtf8, state.database.isOpen()});
     CoverModule::ClearAllCoverCaches();   // DeleteTextureIfAny 是 GPU 调用，必须主线程
     state.listTabs.clear();
     state.activeTabIndex = 0;
@@ -12333,6 +12332,7 @@ static void StopIdleAssetBackfill(AppState& state, bool completed, bool interrup
 }
 
 static void PumpIdleAssetBackfill(AppState& state, bool userInteraction) {
+    DiagUiOperationScope phase("UI.IdleAssetBackfill");
     const auto now = std::chrono::steady_clock::now();
     const auto cancelPendingCheck = [&state] {
         if (state.idleAssetStatistics) state.idleAssetStatistics->SetDatabase("", -1);
@@ -12575,6 +12575,7 @@ static void MaybeStartAdaptiveMiniWaveformFormatUpgrade(AppState& state) {
 }
 
 static void PumpWaveformRebuild(AppState& state) {
+    DiagUiOperationScope phase("UI.WaveformRebuild");
     if (!state.waveformRebuildActive) return;
     if (state.waveformRebuildCancel) {
         aura::waveform_rebuild::DatabaseAdaptiveMiniFormatStampPort stampPort(
@@ -15898,6 +15899,7 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
 // SECTION 8 - Sidebar Panel
 
 static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
+    DevToolsFramePhaseScope phase("RenderUI.Sidebar");
     ImGui::PushID(idScope);
 
     // Layout reservations:
@@ -18616,6 +18618,7 @@ void RenderFileInfoPanelTabContents(
                     cw.preloadGeneration = cw.generation;
                     const std::string dbPath = currentDbPath;
                     cw.preloadFuture = std::async(std::launch::async, [dbPath]() -> CoverWallPageLoadResult {
+                        harken::performance::Scope activity(harken::performance::Module::Cover);
                         return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);
                     });
                 }
@@ -18986,6 +18989,7 @@ void RenderFileInfoPanelTabContents(
 
                         cw.entriesInFlight = true;
                         cw.entriesFuture = std::async(std::launch::async, [rawPreloaded]() -> CoverWallPageLoadResult {
+                            harken::performance::Scope activity(harken::performance::Module::Cover);
                             return BuildCoverWallLoadResultFromEntries(rawPreloaded);
                             // DB 已返回 normalized_key（预存视觉 hash），无需文件 I/O
                             CoverWallPageLoadResult result;
@@ -19021,6 +19025,7 @@ void RenderFileInfoPanelTabContents(
                         cw.entriesInFlight = true;
                         const std::string dbPath = state.database.getMainDbPath();
                         cw.entriesFuture = std::async(std::launch::async, [dbPath]() -> CoverWallPageLoadResult {
+                            harken::performance::Scope activity(harken::performance::Module::Cover);
                             return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);
                             Database localDb;
                             if (!localDb.openReadOnly(dbPath))
@@ -19766,6 +19771,7 @@ void RenderFileInfoPanelTabContents(
                         cw.entriesRequestedAppend = true;
                         cw.entriesRequestBaseItemCount = cw.items.size();
                         cw.entriesFuture = std::async(std::launch::async, [dbPath, afterCursor]() -> CoverWallPageLoadResult {
+                            harken::performance::Scope activity(harken::performance::Module::Cover);
                             return LoadGlobalCoverWallPage(dbPath, afterCursor, kGlobalCoverWallPageSize);
                         });
                     }
@@ -37371,6 +37377,7 @@ void RenderUI(AppState& state) {
             if (lastWord != state.searchSuggestLastQueryNorm) {
                 state.searchSuggestLastQueryNorm = lastWord;
                 if (!lastWord.empty()) {
+                    DevToolsFramePhaseScope phase("RenderUI.SearchSuggestions");
                     state.searchSuggestCandidates = state.database.getSearchSuggestions(lastWord, 10);
                 } else {
                     state.searchSuggestCandidates.clear();
@@ -40826,6 +40833,7 @@ void RenderUI(AppState& state) {
             adjustedFileTableOuterSize.x = -(kResultsTableOuterBorder * 2.0f);
         }
         if (BeginTransientScrollbarTable("FileTableV6", totalColumns, tableFlags, adjustedFileTableOuterSize, resultsTableInnerWidth)) {
+            DevToolsFramePhaseScope resultsPhase("RenderUI.ResultsTable");
             // The scrollable table owns a later regular draw list than the
             // surrounding CenterFileList child. Anchor the frame there so it
             // sits above headers/scrollbars but remains below popup windows.
@@ -43878,6 +43886,7 @@ void RenderUI(AppState& state) {
     state.waveformWorker.setThrottleMode(shouldThrottleWaveformWorker);
     PumpScanWaveformBackfillQueue(state);
     {
+        DiagUiOperationScope waveformPhase("UI.WaveformResults");
         std::vector<WaveformResult> wfResults;
         state.waveformWorker.pollResults(wfResults, 50);  // 每帧限流 50，防止掉帧
         for (auto& res : wfResults) {

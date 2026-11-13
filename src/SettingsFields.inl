@@ -125,6 +125,7 @@ else if(id=="perf") {
         if(draft.memoryProfile==2){draft.fpsLimit=0;draft.thumbnailMaxResolution=512;draft.threadLimit=-1;}
     }
 }
+else if(id=="performanceMonitor")actionButton(L(Open),"performance-monitor");
 else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto),ImGuiSliderFlags_AlwaysClamp);
 else if(id=="startupScan")ImGui::Checkbox("##value",&draft.autoReconcileOnStartup);
 else if(id=="backfill")ImGui::Checkbox("##value",&draft.idleAssetBackfillEnabled);

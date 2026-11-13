@@ -36,3 +36,6 @@ int DiagnosticsLogger::copyRecent(DiagLogEntry*, int) const { return 0; }
 std::string DiagnosticsLogger::getRecentJsonLines(int) const { return {}; }
 std::string DiagnosticsLogger::getRecentFilteredLines(int) const { return {}; }
 bool DiagnosticsLogger::exportJsonLinesCrashSafe(const wchar_t*) { return false; }
+
+uint64_t DiagnosticsLogger::beginUiOperation(const char*) { return 0; }
+void DiagnosticsLogger::endUiOperation(uint64_t) {}

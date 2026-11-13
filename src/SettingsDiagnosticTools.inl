@@ -53,6 +53,7 @@
                     ImGui::Separator();
 
                     if (aura::ui::ActionButton(L(Set_DiagExportJSON), ImVec2(180, 0))) {
+                        DevToolsFramePhaseScope phase("RenderUI.DiagnosticExport");
                         // Export to exe directory
                         std::string exportPath = GetExeDirUtf8() + "\\aura_diagnostics.json";
                         if (diag.exportJson(exportPath)) {

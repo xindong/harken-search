@@ -1680,6 +1680,7 @@ struct AppState {
     bool showPlaylistDialog = false;
     bool showCreateFolderDialog = false;
     bool showSettingsDialog = false;
+    aura::ui::StandaloneWindowState performanceMonitorWindow;
 
     // 子播放列表 dialog state (transient, F-017 v2)
     bool   pendingNewSubDialog = false;

@@ -4,9 +4,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_product_starts_elevated_for_protected_install_updates() -> None:
+def test_product_starts_without_automatic_elevation() -> None:
     manifest = (ROOT / "resources/HarkenSearch.manifest").read_text(encoding="utf-8")
-    assert 'requestedExecutionLevel level="requireAdministrator"' in manifest
+    assert 'requestedExecutionLevel level="asInvoker"' in manifest
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "/MANIFESTUAC:NO" in cmake
 

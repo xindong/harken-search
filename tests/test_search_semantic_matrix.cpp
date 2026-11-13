@@ -75,7 +75,7 @@ static bool hasFacet(const std::vector<Database::TagFacetEntry>& facets,
 }
 
 static std::string readRepoFile(const fs::path& relativePath) {
-    const fs::path repoRoot = fs::path(__FILE__).parent_path().parent_path();
+    const fs::path repoRoot = fs::u8path(__FILE__).parent_path().parent_path();
     std::ifstream in(repoRoot / relativePath, std::ios::binary);
     if (!in) return {};
     std::ostringstream ss;
@@ -340,9 +340,14 @@ int main() {
                "matrix/explainability-whitespace: fallback snippet matches using trimmed term candidates");
         expect(source.find("for (const SearchQueryChip& chip : BuildSearchQueryChips(normalizedQuery))") != std::string::npos,
                "matrix/explainability-whitespace: fallback snippet considers per-chip terms for spaced queries");
-        expect(source.find("static int s_lastSearchExplainabilityTooltipFrame = -1;") != std::string::npos &&
-               source.find("if (s_lastSearchExplainabilityTooltipFrame == frame)") != std::string::npos,
-               "matrix/explainability-tooltip: only one explainability tooltip may open per frame");
+        const std::string searchTooltipBlock = extractSourceSlice(
+            source,
+            "static bool BeginSearchExplainabilityTooltip()",
+            "static bool HasBlockingSearchExplainabilityPopup()");
+        expect(!searchTooltipBlock.empty() &&
+               searchTooltipBlock.find("return false;") != std::string::npos &&
+               searchTooltipBlock.find("ImGui::BeginTooltip()") == std::string::npos,
+               "matrix/explainability-tooltip: local build suppresses search hover popups");
         expect(!inlineHighlightBlock.empty(),
                "matrix/explainability-tooltip-wrap: inline highlight render block is readable");
         expect(source.find("static void ParseInlineHighlightMarkers") != std::string::npos &&

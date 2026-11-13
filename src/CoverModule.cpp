@@ -1,4 +1,5 @@
 #include "CoverModule.h"
+#include "CoverIdentityRefreshState.h"
 #include "PathUtils.h"          // Canonical cover-key paths.
 #include "ExternalLibraryCover.h"
 #include "AppState.h"          // Application settings and database state.
@@ -199,10 +200,13 @@ struct AsyncLoadTask {
     bool highPriority = false; // Needed by the current viewport.
     /// 入队时的视口代际；落后于 g_asyncGeneration 的任务视为僵尸，解码前丢弃
     uint64_t generation = 0;
+    bool discoverIdentity = false;
+    uint64_t identityTicket = 0;
 };
 
 static std::mutex g_asyncMutex;
 static std::deque<AsyncLoadTask> g_asyncQueue;
+static size_t g_identityDiscoveryRunning = 0; // guarded by g_asyncMutex
 /// 列表快速滚动 / 换搜索批次时递增；用于丢弃过时异步解码任务
 static std::atomic<uint64_t> g_asyncGeneration{0};
 static std::unordered_set<std::string> g_asyncPendingKeys;
@@ -412,6 +416,8 @@ static bool FindFolderCoverImagePathFast(const std::string& folderPathUtf8, std:
     return false;
 }
 
+static void ResolveEmbeddedIdentityTask(Database* db, const AsyncLoadTask& task);
+
 static void AsyncLoaderThread() {
     Platform::InitThreadCom();
     Platform::SetThreadBackgroundPriority();
@@ -430,6 +436,7 @@ static void AsyncLoaderThread() {
             if (!g_asyncThreadRunning) break;
             task = g_asyncQueue.front();
             g_asyncQueue.pop_front();
+            if (task.discoverIdentity) ++g_identityDiscoveryRunning;
         }
 
         const std::string originalKey = task.key;
@@ -437,6 +444,14 @@ static void AsyncLoaderThread() {
         if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
             std::lock_guard<std::mutex> lk(g_asyncMutex);
             g_asyncPendingKeys.erase(originalKey);
+            if (task.discoverIdentity) --g_identityDiscoveryRunning;
+            continue;
+        }
+
+        if (task.discoverIdentity) {
+            ResolveEmbeddedIdentityTask(dbPtr, task);
+            std::lock_guard<std::mutex> lk(g_asyncMutex);
+            --g_identityDiscoveryRunning;
             continue;
         }
 
@@ -703,6 +718,7 @@ static std::unordered_map<std::string, std::string> g_folderCoverIdentityKeyCach
 static std::unordered_map<std::string, TextureEntry> g_embeddedCoverCache;
 static std::unordered_map<std::string, std::string> g_fileEmbeddedKeyCache;
 static std::unordered_map<std::string, int64_t> g_fileEmbeddedKeyMtimeCache;
+static aura::cover::IdentityRefreshState g_identityRefresh;
 static std::unordered_map<std::string, std::string> g_fileFolderKeyCache;          // filePath -> coverKey(identity)
 static std::unordered_map<std::string, int64_t> g_fileFolderCoverSrcMtimeCache;
 static std::unordered_map<std::string, TextureEntry> g_folderCoverKeyCache;        // coverKey(identity) -> texture
@@ -773,6 +789,7 @@ static void TrimStringCachesIfNeeded() {
     if (g_fileEmbeddedKeyCache.size() > kMaxStringCache || total > kMaxTotalStringEntries) {
         g_fileEmbeddedKeyCache.clear();
         g_fileEmbeddedKeyMtimeCache.clear();
+        g_identityRefresh.clear();
         g_fileFolderKeyCache.clear();
         g_fileFolderCoverSrcMtimeCache.clear();
         // 保留 kNoCoverMarker（负缓存）条目，避免重新探测已知无封面的文件夹（特别是 USB 驱动器慢 IO）。
@@ -1033,33 +1050,38 @@ static void EnqueueKeyUpdate(const CoverKeyCacheUpdate& u) {
 }
 
 // dbPtr: 调用方传入的数据库连接；后台线程传本地连接，主线程传 s_database，避免共享句柄锁争用
-static bool ComputeEmbeddedCoverKeyForFile(Database* dbPtr, const std::string& filePathUtf8, std::string& outKey) {
+static bool ComputeEmbeddedCoverKeyForFile(Database* dbPtr, const std::string& filePathUtf8,
+                                          std::string& outKey,
+                                          const AsyncLoadTask* request = nullptr) {
     outKey.clear();
     if (filePathUtf8.empty()) return false;
-
+    const auto currentRequest = [&] {
+        return !request || (request->generation == g_asyncGeneration.load(std::memory_order_relaxed) &&
+            g_identityRefresh.current(filePathUtf8, request->generation, request->identityTicket));
+    };
+    std::string cachedKey;
+    int64_t cachedMtime = 0;
     {
         std::lock_guard<std::mutex> lk(g_metaCacheMutex);
-        auto it = g_fileEmbeddedKeyCache.find(filePathUtf8);
-        if (it != g_fileEmbeddedKeyCache.end()) {
-            auto mtIt = g_fileEmbeddedKeyMtimeCache.find(filePathUtf8);
-            if (mtIt != g_fileEmbeddedKeyMtimeCache.end() && mtIt->second > 0) {
-                int64_t cur = 0;
-                if (TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, cur) && cur != mtIt->second) {
-                    g_fileEmbeddedKeyCache.erase(it);
-                    g_fileEmbeddedKeyMtimeCache.erase(mtIt);
-                } else {
-                    if (it->second == kNoCoverMarker) return false;
-                    outKey = it->second;
-                    return true;
-                }
-            } else {
-                if (it->second == kNoCoverMarker) return false;
-                outKey = it->second;
-                return true;
-            }
-        }
+        if (!currentRequest()) return false;
+        const auto it = g_fileEmbeddedKeyCache.find(filePathUtf8);
+        if (it != g_fileEmbeddedKeyCache.end()) cachedKey = it->second;
+        const auto mt = g_fileEmbeddedKeyMtimeCache.find(filePathUtf8);
+        if (mt != g_fileEmbeddedKeyMtimeCache.end()) cachedMtime = mt->second;
     }
-
+    // This function runs on workers for ordinary preview/prefetch. Stat is
+    // deliberately outside the shared lock, including positive-cache hits.
+    int64_t mtime = 0;
+    const bool haveMtime = TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, mtime);
+    if (!cachedKey.empty() && cachedKey != kNoCoverMarker &&
+        (!haveMtime || (cachedMtime > 0 && cachedMtime == mtime))) {
+        outKey = cachedKey;
+        return true;
+    }
+    if (!request && cachedKey == kNoCoverMarker &&
+        (!haveMtime || (cachedMtime > 0 && cachedMtime == mtime))) return false;
+    // Negative entries are re-probed only on the background refresh interval;
+    // a newly added sidecar image need not change the audio file's timestamp.
     AlbumArt art;
     bool hasArt = MetadataReader::readAlbumArt(filePathUtf8, art) && art.hasData();
 
@@ -1087,56 +1109,85 @@ static bool ComputeEmbeddedCoverKeyForFile(Database* dbPtr, const std::string& f
         } catch (...) {}
     }
 
-    if (!hasArt) {
-        std::lock_guard<std::mutex> lk(g_metaCacheMutex);
-        g_fileEmbeddedKeyCache[filePathUtf8] = kNoCoverMarker;
-        int64_t mt = 0;
-        TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, mt);
-        if (mt > 0) {
-            g_fileEmbeddedKeyMtimeCache[filePathUtf8] = mt;
-            CoverKeyCacheUpdate u;
-            u.filePathUtf8 = filePathUtf8;
-            u.updateEmbedded = true;
-            u.embeddedCoverKey.clear();
-            u.embeddedCoverKeyMtime = mt;
-            EnqueueKeyUpdate(u);
-        }
-        return false;
+
+    if (hasArt) {
+        const uint64_t hash = (uint64_t)XXH3_64bits(art.data.data(), art.data.size());
+        outKey = CanonicalCoverKey(std::string("E|") + Hex64(hash) + "|" +
+                                  std::to_string(art.data.size()) + "|" + art.mimeType);
     }
-
-    uint64_t h = (uint64_t)XXH3_64bits(art.data.data(), art.data.size());
-    // T2.2: 任何 cover key 出口都过 CanonicalCoverKey, 保证下游字节比较安全
-    outKey = CanonicalCoverKey(std::string("E|") + Hex64(h) + "|" + std::to_string(art.data.size()) + "|" + art.mimeType);
-
+    // Capture mtime before the read: edits during discovery must trigger a
+    // later refresh rather than marking old bytes as the new file version.
     {
         std::lock_guard<std::mutex> lk(g_metaCacheMutex);
-        g_fileEmbeddedKeyCache[filePathUtf8] = outKey;
-        int64_t mt = 0;
-        TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, mt);
-        if (mt > 0) {
-            g_fileEmbeddedKeyMtimeCache[filePathUtf8] = mt;
-            CoverKeyCacheUpdate u;
-            u.filePathUtf8 = filePathUtf8;
-            u.updateEmbedded = true;
-            u.embeddedCoverKey = outKey;
-            u.embeddedCoverKeyMtime = mt;
-            EnqueueKeyUpdate(u);
+        if (!currentRequest()) { outKey.clear(); return false; }
+        g_fileEmbeddedKeyCache[filePathUtf8] = outKey.empty() ? kNoCoverMarker : outKey;
+        if (haveMtime) g_fileEmbeddedKeyMtimeCache[filePathUtf8] = mtime;
+        else g_fileEmbeddedKeyMtimeCache.erase(filePathUtf8);
+        if (haveMtime) {
+            CoverKeyCacheUpdate update;
+            update.filePathUtf8 = filePathUtf8;
+            update.updateEmbedded = true;
+            update.embeddedCoverKey = outKey;
+            update.embeddedCoverKeyMtime = mtime;
+            EnqueueKeyUpdate(update);
         }
     }
+    if (dbPtr && !outKey.empty() && art.data.size() > 16 && !dbPtr->hasCoverThumb(outKey)) {
+        std::vector<uint8_t> smallJpeg;
+        std::string smallMime;
+        if (DownscaleForDbStorage(art.data, smallJpeg, smallMime))
+            dbPtr->saveCoverThumb(outKey, smallJpeg, smallMime);
+        else
+            dbPtr->saveCoverThumb(outKey, art.data, art.mimeType);
+    }
+    return !outKey.empty();
+}
 
-    if (dbPtr && !outKey.empty() && art.data.size() > 16) {
-        if (!dbPtr->hasCoverThumb(outKey)) {
-            // DB 瘦身：存缩小后的 JPEG 而非原图
-            std::vector<uint8_t> smallJpeg;
-            std::string smallMime;
-            if (DownscaleForDbStorage(art.data, smallJpeg, smallMime)) {
-                dbPtr->saveCoverThumb(outKey, smallJpeg, smallMime);
-            } else {
-                dbPtr->saveCoverThumb(outKey, art.data, art.mimeType);
-            }
-        }
+static double IdentityRefreshNow() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static void ResolveEmbeddedIdentityTask(Database* db, const AsyncLoadTask& task) {
+    DiagScopedTimer timer("CoverIdentity", "BackgroundResolve");
+    try {
+        std::string key;
+        ComputeEmbeddedCoverKeyForFile(db, task.path, key, &task);
+    } catch (...) {
+        DIAG_ACTION("CoverIdentity", "BackgroundResolveFailed");
     }
-    return true;
+    std::lock_guard<std::mutex> lk(g_metaCacheMutex);
+    g_identityRefresh.finish(task.path, task.generation, task.identityTicket, IdentityRefreshNow());
+}
+
+// UI entry: memory lookup and bounded queue admission only. An existing
+// texture remains usable while its source identity is checked in the worker.
+static bool RequestEmbeddedCoverIdentity(const std::string& path, std::string& key) {
+    key.clear();
+    if (path.empty()) return false;
+    bool cached = false;
+    {
+        std::lock_guard<std::mutex> lk(g_metaCacheMutex);
+        const auto it = g_fileEmbeddedKeyCache.find(path);
+        cached = it != g_fileEmbeddedKeyCache.end();
+        if (cached && it->second != kNoCoverMarker) key = it->second;
+    }
+    if (!StartAsyncLoader()) return !key.empty();
+    // Follow the existing metadata -> queue lock order used by invalidation.
+    std::lock_guard<std::mutex> metaLock(g_metaCacheMutex);
+    std::lock_guard<std::mutex> queueLock(g_asyncMutex);
+    if (g_asyncQueue.size() >= 64) return !key.empty();
+    const auto queuedDiscoveries = std::count_if(g_asyncQueue.begin(), g_asyncQueue.end(),
+        [](const AsyncLoadTask& task) { return task.discoverIdentity; });
+    // Avoid turning a cold library into many competing disk reads. Existing
+    // thumbnail decode workers remain free to service ready identities.
+    if (g_identityDiscoveryRunning + queuedDiscoveries >= 2) return !key.empty();
+    const auto generation = g_asyncGeneration.load(std::memory_order_relaxed);
+    const auto ticket = g_identityRefresh.request(path, generation, IdentityRefreshNow());
+    if (ticket) {
+        g_asyncQueue.push_back({"I|" + path, path, false, 0, false, generation, true, ticket});
+        g_asyncCv.notify_one();
+    }
+    return !key.empty();
 }
 
 static bool ComputeFolderCoverKeyForFile(const std::string& filePathUtf8, std::string& outKey) {
@@ -1801,7 +1852,7 @@ bool LoadCurrentFileCoverTexture(const std::string& audioFilePathUtf8,
     if (outCoverFolderUtf8) *outCoverFolderUtf8 = folder;
 
     std::string embKey;
-    if (ComputeEmbeddedCoverKeyForFile(s_database, audioFilePathUtf8, embKey) && !embKey.empty()) {
+    if (RequestEmbeddedCoverIdentity(audioFilePathUtf8, embKey) && !embKey.empty()) {
         TextureEntry e;
         // 请求 LOD 2 (512px) 用于右侧详情面板展示；允许失败后重试一次（点进灰色项时能显示封面）
         bool ok = EnsureEmbeddedCoverTextureLoaded(embKey, audioFilePathUtf8, e, 2, true);
@@ -2310,7 +2361,7 @@ bool GetFolderCoverImagePathBackground(const std::string& folderPathUtf8,
 
 bool GetEmbeddedCoverTextureByPath(const std::string& audioFilePathUtf8, TextureHandle& outTex) {
     std::string key;
-    if (!ComputeEmbeddedCoverKeyForFile(s_database, audioFilePathUtf8, key) || key.empty()) return false;
+    if (!RequestEmbeddedCoverIdentity(audioFilePathUtf8, key) || key.empty()) return false;
     return GetEmbeddedCoverTexture(key, audioFilePathUtf8, outTex, 1);
 }
 
@@ -2345,6 +2396,7 @@ void InvalidateFileCoverCaches(const std::vector<std::string>& filePaths) {
                 g_fileEmbeddedKeyCache.erase(keyIt);
             }
             g_fileEmbeddedKeyMtimeCache.erase(fp);
+            g_identityRefresh.invalidate(fp);
 
             auto fkIt = g_fileFolderKeyCache.find(fp);
             if (fkIt != g_fileFolderKeyCache.end()) {
@@ -2615,6 +2667,7 @@ void ClearAllCoverCaches() {
         g_folderCoverIdentityKeyCache.clear();
         g_fileEmbeddedKeyCache.clear();
         g_fileEmbeddedKeyMtimeCache.clear();
+        g_identityRefresh.clear();
         g_fileFolderKeyCache.clear();
         g_fileFolderCoverSrcMtimeCache.clear();
     }
@@ -2687,6 +2740,7 @@ void PrimeFileCoverKeysFromDb(const std::string& filePathUtf8,
                               const std::string& folderSrcPathUtf8,
                               int64_t folderSrcMtime) {
     if (filePathUtf8.empty()) return;
+    std::lock_guard<std::mutex> cacheLock(g_metaCacheMutex);
 
     // T2.7: embeddedKey (E|...) 与 folderKey (F|...) 都过一次 CanonicalCoverKey,
     // 防止老库的 F|<MixedCase> / 残缺 F|H| 直接污染内存缓存.

@@ -541,6 +541,7 @@ public:
     // Initialize database.  Pass isPrimary=true for the single app-owned connection;
     // worker-thread local connections leave it false to skip one-time migrations.
     bool open(const std::string& dbPath, bool isPrimary = false);
+    bool openCoverPersistenceConnection(const std::string& dbPath);
     // 打开只读连接（WAL 模式下不阻塞写操作，用于 SearchWorker 等纯读场景）
     bool openReadOnly(const std::string& dbPath);
     void close();
@@ -1069,7 +1070,7 @@ public:
     bool updateLastPlayed(int64_t fileId);
 
     // CoverKey cache (persistent)
-    bool updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& updates);
+    bool updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& updates, bool invalidateEvenIfUnchanged = false);
 
     // Cover flag persistence
     bool updateHasCoverByPathsBatch(const std::vector<std::string>& filePaths, bool hasCover);
@@ -1150,6 +1151,8 @@ public:
     bool rebuildFolderIndex();
     /** 删除/移动文件后调用，使 facet 总数与文件夹树数量下次从数据库重算 */
     bool invalidateFacetQueryCache();
+    // Call on the owning thread after another connection changes cover keys.
+    void clearFacetCountMemoryCache() { m_countMemCache.clear(); }
     bool rebuildTagFacetIndex();
     bool invalidateTagFacetIndex();
     bool isTagFacetIndexValid() const;

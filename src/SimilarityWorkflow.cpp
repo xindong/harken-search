@@ -1,4 +1,5 @@
 #include "SimilarityWorkflow.h"
+#include "PerformanceMonitor.h"
 
 #include <utility>
 
@@ -173,6 +174,7 @@ void SimilarityWorkflow::Run() {
 
         SimilarityCompletion completion;
         try {
+            harken::performance::Scope activity(harken::performance::Module::Similarity);
             completion = handler_(*request, cancelled);
         } catch (...) {
             completion.generation = request->generation;

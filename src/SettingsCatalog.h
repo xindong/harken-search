@@ -73,6 +73,7 @@ inline const std::vector<Entry>& Catalog() {
         {u8"renameTab",Page::Search,0,LStr::Set_AutoRenameTab,u8"搜索 标签 命名"},
         {u8"dictionary",Page::Search,0,LStr::Set_ThesaurusTitle,u8"词库 同义词 触发 扩展 thesaurus"},
         {u8"perf",Page::Library,0,LStr::Set_PerfMode,u8"性能 内存 卡顿 慢 performance"},
+        {u8"performanceMonitor",Page::Library,0,LStr::PerfMonitor_Title,u8"性能 监控 CPU 硬盘 内存 performance monitor disk memory"},
         {u8"threads",Page::Library,0,LStr::Set_ScanThreads,u8"扫描 线程 并发"},
         {u8"startupScan",Page::Library,0,LStr::Main_AutoRescanCheck,u8"启动 自动 扫描 变化"},
         {u8"backfill",Page::Library,0,LStr::Main_IdleBackfillCheck,u8"空闲 波形 封面 缓存 补齐"},

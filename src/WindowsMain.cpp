@@ -5,6 +5,7 @@
 #include "WindowsMain.h"
 #include "DefaultAudioPlayerAssociation.h"
 #include "CoverBrowseSurfaceState.h"
+#include "CoverKeyCachePersistenceWorkflow.h"
 #include "PathUtils.h"  // Canonical folder filtering.
 #if ARIS_PREVIEW_ISOLATION
 #include "FolderTreeContextActions.h"
@@ -55,6 +56,8 @@
 #include "BackfillWorkerPool.h"
 #include "WorkerThreadPolicy.h"
 #include "HarkenSearchWidgets.h"  // Focus tracking.
+#include "HarkenSearchMetrics.h"
+#include "TransientScrollbarHost.h"
 #include "HarkenSearchIcons.h"    // Lucide font merge.
 #include "DockNativeCaptionBridge.h"
 #include "ui/dock/DockCaptionWndProc.h"
@@ -131,6 +134,7 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "TransferEngine.h"
 #include "DevToolsModule.h"
 #include "FrameBudgetDiagnostics.h"
+#include "PerformanceMonitor.h"
 #include "DiagnosticsLogger.h"
 #include "UserActionLog.h"
 #include "WaapiClient.h"
@@ -199,6 +203,8 @@ static void AcknowledgeBootstrapHealthAfterUiPresented() {
 #include <iterator>
 #include <functional>
 #include <sstream>
+
+#include "PerformanceMonitorWindow.inl"
 
 #if defined(__has_include)
 #if __has_include(<WebView2.h>)
@@ -13648,6 +13654,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // 已拖出的平台视口仍要继续刷新，否则副屏面板会跟着主窗口一起冻住。
         const bool mainWindowHidden = IsIconic(hwnd) || !Platform::WindowIsVisible(hwnd);
         if (mainWindowHidden && !HarkenSearchHasHostedPlatformViewports()) {
+            harken::performance::SetEnabled(false);
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
             AbortFrameBudgetCapture(state, "window_hidden", "visibility");
 #endif
@@ -14053,8 +14060,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         const auto dockTraceRenderStart = std::chrono::steady_clock::now();
 #endif
         DevTools_BeginFramePhase("RenderUI");
-        RenderUI(state);
+        {
+            harken::performance::Scope activity(harken::performance::Module::Interface);
+            g_performanceMonitorRendered = false;
+            RenderUI(state);
+        }
         harken::settings::EndAppearancePreview(state);
+        if (!g_performanceMonitorRendered)
+            harken::performance::SetEnabled(false);
         GuardInfoMetadataContext(state);
         RenderInfoMetadataLeavePrompt(state);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
@@ -14654,7 +14667,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             ImVec4 clearBg = GetThemeClearColor();
             glClearColor(clearBg.x, clearBg.y, clearBg.z, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            {
+                harken::performance::Scope activity(harken::performance::Module::Interface);
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            }
 #if ARIS_PREVIEW_ISOLATION
             // Capture the actual rendered client frame on an inactive desktop,
             // where Windows PrintWindow cannot capture this OpenGL surface.
@@ -14867,6 +14883,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     logShutdownStage("BackfillQueueClosingBegin");
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
     logShutdownStage("BackfillQueueClosingEnd");
+    aura::cover_cache::PumpPersistence({state.database, state.currentDbPathUtf8, state.database.isOpen()});
+    aura::cover_cache::ShutdownPersistence();
     logShutdownStage("DatabaseCloseBegin");
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");
