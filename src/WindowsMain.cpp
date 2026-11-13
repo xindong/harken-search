@@ -5,6 +5,7 @@
 #include "WindowsMain.h"
 #include "DefaultAudioPlayerAssociation.h"
 #include "CoverBrowseSurfaceState.h"
+#include "CoverKeyCachePersistenceWorkflow.h"
 #include "PathUtils.h"  // Canonical folder filtering.
 #if ARIS_PREVIEW_ISOLATION
 #include "FolderTreeContextActions.h"
@@ -14882,6 +14883,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     logShutdownStage("BackfillQueueClosingBegin");
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
     logShutdownStage("BackfillQueueClosingEnd");
+    aura::cover_cache::PumpPersistence({state.database, state.currentDbPathUtf8, state.database.isOpen()});
+    aura::cover_cache::ShutdownPersistence();
     logShutdownStage("DatabaseCloseBegin");
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");

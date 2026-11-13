@@ -11139,6 +11139,7 @@ static bool SwitchDatabase(AppState& state,
     state.selectedResultIndex = -1;
     state.currentFileId = -1;
     CoverModule::CancelPendingCoverWork();
+    aura::cover_cache::PumpPersistence({state.database, state.currentDbPathUtf8, state.database.isOpen()});
     CoverModule::ClearAllCoverCaches();   // DeleteTextureIfAny 是 GPU 调用，必须主线程
     state.listTabs.clear();
     state.activeTabIndex = 0;

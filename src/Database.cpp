@@ -2518,6 +2518,26 @@ void Database::warmupCoverIndexes() {
     }
 }
 
+bool Database::openCoverPersistenceConnection(const std::string& dbPath) {
+    if (m_db) close();
+    if (dbPath.empty() || !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(dbPath) ||
+        Platform::FileSystem::IsNetworkPath(dbPath)) return false;
+    if (sqlite3_open_v2(dbPath.c_str(), &m_db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
+        m_lastError = m_db ? sqlite3_errmsg(m_db) : "Failed to open cover database";
+        if (m_db) { sqlite3_close(m_db); m_db = nullptr; }
+        return false;
+    }
+    RegisterHarkenSearchSqliteFunctions(m_db);
+    sqlite3_busy_timeout(m_db, 5000);
+    if (!executeSQL("PRAGMA foreign_keys = ON;") ||
+        !executeSQL("PRAGMA synchronous = NORMAL;")) {
+        close();
+        return false;
+    }
+    m_mainDbPath = dbPath;
+    return true;
+}
+
 bool Database::openReadOnly(const std::string& dbPath) {
     if (m_db) close();
    if (dbPath.empty() ||
@@ -5322,7 +5342,7 @@ static SearchMatchSource DeriveSearchMatchSource(const AudioRecord& record,
     return SearchMatchSource::None;
 }
 
-bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& updates) {
+bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& updates, bool invalidateEvenIfUnchanged) {
     DiagUiOperationScope diagOperation("DB.UpdateCoverKeys");
     if (!m_db) return false;
     if (updates.empty()) return true;
@@ -5334,20 +5354,20 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
             folder_cover_key = ?,
             folder_cover_src_path = ?,
             folder_cover_src_mtime = ?
-        WHERE file_path = ?;
+        WHERE file_path = ?6 AND (embedded_cover_key IS NOT ?1 OR embedded_cover_key_mtime IS NOT ?2 OR folder_cover_key IS NOT ?3 OR folder_cover_src_path IS NOT ?4 OR folder_cover_src_mtime IS NOT ?5);
     )";
     const char* sqlEmb = R"(
         UPDATE audio_files
         SET embedded_cover_key = ?,
             embedded_cover_key_mtime = ?
-        WHERE file_path = ?;
+        WHERE file_path = ?3 AND (embedded_cover_key IS NOT ?1 OR embedded_cover_key_mtime IS NOT ?2);
     )";
     const char* sqlFolder = R"(
         UPDATE audio_files
         SET folder_cover_key = ?,
             folder_cover_src_path = ?,
             folder_cover_src_mtime = ?
-        WHERE file_path = ?;
+        WHERE file_path = ?4 AND (folder_cover_key IS NOT ?1 OR folder_cover_src_path IS NOT ?2 OR folder_cover_src_mtime IS NOT ?3);
     )";
 
     sqlite3_stmt* stBoth = nullptr;
@@ -5375,6 +5395,8 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
         DiagUiOperationScope step("DB.CoverKeys.SqliteStep");
         return sqlite3_step(statement);
     };
+    std::vector<std::string> changedPaths;
+    changedPaths.reserve(updates.size());
     for (const auto& u : updates) {
         if (u.filePath.empty()) continue;
 
@@ -5425,21 +5447,24 @@ bool Database::updateCoverKeyCacheBatch(const std::vector<CoverKeyCacheUpdate>& 
                 return false;
             }
         }
+        if ((u.updateEmbedded || u.updateFolder) && sqlite3_changes(m_db) > 0) {
+            changedPaths.push_back(u.filePath);
+        }
     }
 
     sqlite3_finalize(stBoth);
     sqlite3_finalize(stEmb);
     sqlite3_finalize(stFolder);
     bool committed = commitTransaction();
-    if (committed) {
+    if (committed && (invalidateEvenIfUnchanged || !changedPaths.empty())) {
         DiagUiOperationScope invalidate("DB.CoverKeys.InvalidateFacets");
-        std::vector<std::string> changedPaths;
-        changedPaths.reserve(updates.size());
-        for (const auto& u : updates) {
-            if (!u.filePath.empty()) changedPaths.push_back(u.filePath);
+        if (invalidateEvenIfUnchanged) {
+            changedPaths.clear();
+            for (const auto& u : updates) if (!u.filePath.empty()) changedPaths.push_back(u.filePath);
         }
-        invalidateFacetQueryCache();
-        invalidateFolderCoverFacetIndexForPaths(changedPaths);
+        const bool facetsOk = invalidateFacetQueryCache();
+        const bool foldersOk = invalidateFolderCoverFacetIndexForPaths(changedPaths);
+        return facetsOk && foldersOk;
     }
     return committed;
 }
