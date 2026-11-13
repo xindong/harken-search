@@ -14951,6 +14951,15 @@
     {"id":"Similar_FailureSilent","type":"ui","zh":"没有有效声音","en":"No active sound","ja":"有効な音なし"},
     {"id":"Similar_FailureChanged","type":"ui","zh":"分析期间文件已改变","en":"File changed during analysis","ja":"分析中にファイルが変更"},
     {"id":"Similar_FailureModel","type":"ui","zh":"同类分析失败","en":"Category analysis failed","ja":"同種分析に失敗"},
-    {"id":"Similar_FailureSave","type":"ui","zh":"结果未保存","en":"Result not saved","ja":"結果を保存できません"}
+    {"id":"Similar_FailureSave","type":"ui","zh":"结果未保存","en":"Result not saved","ja":"結果を保存できません"},
+    {"id":"Set_SimilarAnalysisMaintenance","type":"ui","zh":"相似音效分析","en":"Similar sound analysis","ja":"類似音声の分析"},
+    {"id":"Set_ClearSimilarAnalysis","type":"ui","zh":"清空相似音效分析结果","en":"Clear similar sound analysis","ja":"類似音声の分析結果を消去"},
+    {"id":"Set_ClearSimilarAnalysisHint","type":"ui","zh":"仅清空当前库的分析结果；音频和入库记录保留。","en":"Clear analysis in the current library only. Audio and library records are kept.","ja":"現在のライブラリの分析結果のみ消去します。音声と登録情報は保持されます。"},
+    {"id":"Set_ClearSimilarConfirmFmt","type":"ui","zh":"清空「%s」的相似音效分析结果？音频和入库记录保留。","en":"Clear similar sound analysis in “%s”? Audio and library records are kept.","ja":"「%s」の類似音声の分析結果を消去しますか？音声と登録情報は保持されます。"},
+    {"id":"Set_ConfirmClearSimilar","type":"ui","zh":"确认清空","en":"Clear analysis","ja":"分析結果を消去"},
+    {"id":"Set_CancelClearSimilar","type":"ui","zh":"取消","en":"Cancel","ja":"キャンセル"},
+    {"id":"Set_ClearSimilarDoneFmt","type":"ui","zh":"已清空 %lld 条分析结果","en":"Cleared %lld analysis results","ja":"%lld 件の分析結果を消去しました"},
+    {"id":"Set_ClearSimilarFailed","type":"ui","zh":"清空失败，请检查当前数据库后重试。","en":"Could not clear analysis. Check the current database and retry.","ja":"消去できませんでした。現在のデータベースを確認して再試行してください。"},
+    {"id":"Set_ClearSimilarChanged","type":"ui","zh":"当前数据库已切换，请重新选择清空。","en":"The current database changed. Choose clear again.","ja":"現在のデータベースが切り替わりました。もう一度消去を選んでください。"}
   ]
 }

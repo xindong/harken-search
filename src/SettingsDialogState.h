@@ -98,10 +98,13 @@ struct Editor {
     bool previousSearching=false, hadChildPopup=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
+    std::string clearSimilarTarget;
+    bool clearSimilarConfirm=false;
+    int64_t clearSimilarResult=-2;
     std::vector<OutputDeviceInfo> devices;
     std::vector<uint8_t> deviceIdentity, baselineDeviceIdentity;
     bool deviceEdited=false;
-    void Reset(const AppState& state) { app.Begin(CaptureSettings(state)); runtime.Begin(CaptureRuntime(state)); deviceIdentity=state.audioEngine.getCurrentOutputDeviceId(); baselineDeviceIdentity=deviceIdentity; deviceEdited=false; error.clear(); recording=false; resetAll=false; }
+    void Reset(const AppState& state) { app.Begin(CaptureSettings(state)); runtime.Begin(CaptureRuntime(state)); deviceIdentity=state.audioEngine.getCurrentOutputDeviceId(); baselineDeviceIdentity=deviceIdentity; deviceEdited=false; error.clear(); recording=false; resetAll=false; clearSimilarTarget.clear(); clearSimilarConfirm=false; clearSimilarResult=-2; }
     size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+(resetAll ? 1 : 0)+(deviceEdited&&deviceIdentity!=baselineDeviceIdentity ? 1 : 0); }
 };
 inline Editor& SettingsEditor() { static Editor editor; return editor; }

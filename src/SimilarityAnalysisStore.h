@@ -45,6 +45,9 @@ public:
     int64_t SegmentCount();
     bool VisitSegments(const std::function<bool(int64_t, const AudioEmbeddingSegment&)>& visitor);
     bool Invalidate(int64_t id);
+    // Removes only this database's V2 analysis and segment rows. Returns -1
+    // on failure; a failed transaction leaves both tables unchanged.
+    int64_t ClearAll();
     int64_t Revision();
     std::string LibraryIdentity();
     SimilarityCoverage Coverage();

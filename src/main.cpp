@@ -29443,13 +29443,16 @@ void DrawSimilarityIndexPanel(AppState& state) {
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
     static int64_t cachedDbGeneration = -1;
+    static uint64_t cachedClearGeneration = 0;
     static bool wasExtracting = false;
     const bool extracting = state.batchFeatureExtracting.load();
     if (cachedDbPath != state.currentDbPathUtf8 ||
-        cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
+        cachedDbGeneration != state.backfillDbGeneration ||
+        cachedClearGeneration != state.similarityAnalysisClearGeneration || state.dbSwitchInProgress) {
         count.Reset();
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
+        cachedClearGeneration = state.similarityAnalysisClearGeneration;
         lastCountTime = -999.0;
     }
     if (ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
