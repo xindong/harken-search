@@ -80,6 +80,29 @@ int main() {
     sqlite3_finalize(statement);
     sqlite3_exec(db, "UPDATE audio_files SET file_path='changed.wav' WHERE id=1", nullptr,nullptr,nullptr);
     check(!store.Load(1,loaded) && store.Coverage().acoustic == 0, "changed library identity invalidates old analysis");
+    sqlite3_exec(db, "UPDATE audio_files SET file_path='a.wav' WHERE id=1", nullptr,nullptr,nullptr);
+    check(store.Publish(entry) && store.Load(1, loaded), "analysis fixture is republished after path change");
+    const auto otherPath = (root / "other-library.db").u8string();
+    sqlite3* otherDb = nullptr; sqlite3_open(otherPath.c_str(), &otherDb);
+    sqlite3_exec(otherDb, "DROP TABLE IF EXISTS audio_files; CREATE TABLE audio_files(id INTEGER PRIMARY KEY,file_path TEXT,file_name TEXT,format TEXT,duration REAL,file_size INTEGER); INSERT INTO audio_files VALUES(1,'a.wav','a','wav',2,100);",nullptr,nullptr,nullptr);
+    SimilarityAnalysisStore otherStore;
+    check(otherStore.Open(otherPath) && otherStore.Publish(entry), "separate library has independent analysis");
+    const auto beforeRejectedClear = store.Revision();
+    sqlite3_exec(db, "CREATE TRIGGER reject_similarity_clear BEFORE DELETE ON harken_similarity_v2 BEGIN SELECT RAISE(ABORT,'blocked'); END;",nullptr,nullptr,nullptr);
+    check(store.ClearAll() < 0 && store.Revision() == beforeRejectedClear &&
+          store.Load(1,loaded) && store.SegmentCount() == 1,
+          "failed clear rolls back both analysis records and segments");
+    sqlite3_exec(db, "DROP TRIGGER reject_similarity_clear;",nullptr,nullptr,nullptr);
+    check(store.ClearAll() == 1 && store.Coverage().total == 2 && store.Coverage().acoustic == 0 &&
+          store.SegmentCount() == 0 && otherStore.Load(1,loaded),
+          "clear removes only the current library similarity results");
+    sqlite3_prepare_v2(db, "SELECT COUNT(*),hex(MAX(audio_features)) FROM audio_files", -1, &statement,nullptr);
+    check(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement,0) == 2 &&
+          std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement,1))) == "1234",
+          "clear preserves audio records and legacy feature bytes");
+    sqlite3_finalize(statement);
+    check(store.ClearAll() == 0, "repeating clear on an empty analysis is harmless");
+    otherStore.Close(); sqlite3_close(otherDb);
     check(!store.Open(path, [] { return true; }), "cancelled open does not retain an old connection");
     store.Close(); sqlite3_close(db);
     return failures ? 1 : 0;

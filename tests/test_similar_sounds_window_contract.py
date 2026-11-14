@@ -153,12 +153,13 @@ assert action_row < index_controls < index_snapshot_refresh < results_draw
 assert main.count('##SimilarPreset') == 0
 assert window.count('##SimilarPreset') == 1
 index_start = main.index("void DrawSimilarityIndexPanel(AppState& state)")
-index_end = main.index("void RenderUI(AppState& state)", index_start)
+index_end = main.index("static std::string ScanDialogLeafName", index_start)
 index_panel = main[index_start:index_end]
 for required in (
     "L(Main_IndexedProgressFmt)",
-    "L(Main_BatchAnalyzeFmt)",
-    "StartBatchFeatureExtraction(state)",
+    "L(Similar_PendingCountFmt)",
+    "L(Similar_Recheck)",
+    "StartBatchFeatureExtraction(state, true)",
     "state.batchFeatureProgress.load()",
     "state.batchFeatureCancelRequested.store(true)",
     "L(Main_IndexAllDone)",
@@ -180,7 +181,8 @@ qa_host = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
 assert 'cmd == "similar_index"' in qa_host
 qa_index = qa_host[qa_host.index('cmd == "similar_index"'):
                    qa_host.index('cmd == "get_state"')]
-assert "StartBatchFeatureExtraction(state)" in qa_index
+qa_start = qa_index.split('} else if (action == "start") {', 1)[1].split('} else if (action == "recheck") {', 1)[0]
+assert "StartBatchFeatureExtraction(state, true)" in qa_start
 assert "PreviewIsolationRootUtf8()" in qa_index
 assert "state.batchFeatureCancelRequested.store(true)" in qa_index
 assert 'similar.index.start' in index_panel
@@ -188,12 +190,11 @@ assert 'similar.index.cancel' in index_panel
 
 # Batch progress must expose the two work classes separately. The progress
 # denominator covers the selected work list, while only the saved count
-# represents newly analyzed files. Supplementing selects pending files;
-# the explicit recheck button preserves full content verification.
-assert "if (pending > 0) StartBatchFeatureExtraction(state);" in index_panel
-assert "else StartBatchFeatureExtraction(state, true);" in index_panel
-assert 'ThemeInspector::RegisterLastItem("similar.index.recheck")' in index_panel, \
-    "a permanent pending failure must not hide full content validation"
+# represents newly analyzed files. One visible action must validate all
+# source identities even while a permanently failing file is still pending.
+assert index_panel.count('ThemeInspector::RegisterLastItem("similar.index.start")') == 1
+assert 'ThemeInspector::RegisterLastItem("similar.index.recheck")' not in index_panel
+assert "StartBatchFeatureExtraction(state);" not in index_panel
 assert "recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll" in main
 assert "HarkenSearch::SimilarityIndexScope::PendingOnly" in main
 app_state = (ROOT / "src" / "AppState.h").read_text(encoding="utf-8")

@@ -5041,7 +5041,7 @@ static void PollQaCommandFile(AppState& state) {
                 state.similarSoundsWindow.open = false;
                 aura::ui::InvalidateSimilarSoundsWindow(state);
             } else if (action == "start") {
-                StartBatchFeatureExtraction(state);
+                StartBatchFeatureExtraction(state, true);
             } else if (action == "recheck") {
                 StartBatchFeatureExtraction(state, true);
             } else if (action == "cancel") {

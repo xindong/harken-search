@@ -11858,13 +11858,6 @@
       "ja": "このモデルはローカルに存在しません。"
     },
     {
-      "id": "Main_BatchAnalyzeFmt",
-      "type": "ui",
-      "zh": "开始批量特征分析 (%d 个文件)",
-      "en": "Start batch analysis (%d files)",
-      "ja": "一括分析を開始 (%d 件)"
-    },
-    {
       "id": "Wave_SpectrumGenerating",
       "type": "ui",
       "zh": "正在生成频谱...",
@@ -14972,6 +14965,8 @@
     {"id":"Similar_Cancelled","type":"ui","zh":"查找已取消。","en":"Search cancelled.","ja":"検索をキャンセルしました。"},
     {"id":"Similar_CoverageFmt","type":"ui","zh":"已分析 %d / %d","en":"Analyzed %d / %d","ja":"分析済み %d / %d"},
     {"id":"Similar_SemanticCoverageFmt","type":"ui","zh":"同类分析 %d / %d","en":"Category analysis %d / %d","ja":"同種分析 %d / %d"},
+    {"id":"Similar_PendingCountFmt","type":"ui","zh":"待分析 %d 个音频","en":"%d audio files pending analysis","ja":"未分析の音声 %d 件"},
+    {"id":"Similar_Recheck","type":"ui","zh":"核对并分析全部音频","en":"Check and analyze all audio","ja":"すべての音声を確認・分析"},
     {"id":"Similar_StatsLoading","type":"ui","zh":"正在统计当前库的音效…","en":"Counting audio files in this library…","ja":"このライブラリの音声を集計中…"},
     {"id":"Similar_StatsFailed","type":"ui","zh":"音效数量统计未完成，请重试。","en":"Could not count audio files. Try again.","ja":"音声数を集計できませんでした。再試行してください。"},
     {"id":"Similar_StatsRetry","type":"ui","zh":"重新统计","en":"Retry count","ja":"再集計"},
@@ -14979,7 +14974,6 @@
     {"id":"Similar_StatsSwitching","type":"ui","zh":"正在切换音效库…","en":"Switching libraries…","ja":"ライブラリを切り替え中…"},
     {"id":"Similar_StatsNoDatabase","type":"ui","zh":"请先打开音效库。","en":"Open a library first.","ja":"先にライブラリを開いてください。"},
     {"id":"Similar_StatsEmpty","type":"ui","zh":"当前库还没有可分析的音效。","en":"No audio files to analyze in this library.","ja":"このライブラリに分析できる音声はありません。"},
-    {"id":"Similar_Recheck","type":"ui","zh":"核对全部音频","en":"Check all audio","ja":"すべての音声を確認"},
     {"id":"Similar_AnalysisReport","type":"ui","zh":"分析结果","en":"Analysis results","ja":"分析結果"},
     {"id":"Similar_AnalysisSummaryFmt","type":"ui","zh":"完成 %d，沿用 %d，未完成 %d","en":"Analyzed %d, reused %d, incomplete %d","ja":"分析 %d、再利用 %d、未完了 %d"},
     {"id":"Similar_AnalysisCancelled","type":"ui","zh":"分析已停止，已完成的结果已保留。","en":"Analysis stopped. Completed results are retained.","ja":"分析を停止しました。完了した結果は保存されています。"},
@@ -14989,6 +14983,15 @@
     {"id":"Similar_FailureSilent","type":"ui","zh":"没有有效声音","en":"No active sound","ja":"有効な音なし"},
     {"id":"Similar_FailureChanged","type":"ui","zh":"分析期间文件已改变","en":"File changed during analysis","ja":"分析中にファイルが変更"},
     {"id":"Similar_FailureModel","type":"ui","zh":"同类分析失败","en":"Category analysis failed","ja":"同種分析に失敗"},
-    {"id":"Similar_FailureSave","type":"ui","zh":"结果未保存","en":"Result not saved","ja":"結果を保存できません"}
+    {"id":"Similar_FailureSave","type":"ui","zh":"结果未保存","en":"Result not saved","ja":"結果を保存できません"},
+    {"id":"Set_SimilarAnalysisMaintenance","type":"ui","zh":"相似音效分析","en":"Similar sound analysis","ja":"類似音声の分析"},
+    {"id":"Set_ClearSimilarAnalysis","type":"ui","zh":"清空相似音效分析结果","en":"Clear similar sound analysis","ja":"類似音声の分析結果を消去"},
+    {"id":"Set_ClearSimilarAnalysisHint","type":"ui","zh":"仅清空当前库的分析结果；音频和入库记录保留。","en":"Clear analysis in the current library only. Audio and library records are kept.","ja":"現在のライブラリの分析結果のみ消去します。音声と登録情報は保持されます。"},
+    {"id":"Set_ClearSimilarConfirmFmt","type":"ui","zh":"清空「%s」的相似音效分析结果？音频和入库记录保留。","en":"Clear similar sound analysis in “%s”? Audio and library records are kept.","ja":"「%s」の類似音声の分析結果を消去しますか？音声と登録情報は保持されます。"},
+    {"id":"Set_ConfirmClearSimilar","type":"ui","zh":"确认清空","en":"Clear analysis","ja":"分析結果を消去"},
+    {"id":"Set_CancelClearSimilar","type":"ui","zh":"取消","en":"Cancel","ja":"キャンセル"},
+    {"id":"Set_ClearSimilarDoneFmt","type":"ui","zh":"已清空 %lld 条分析结果","en":"Cleared %lld analysis results","ja":"%lld 件の分析結果を消去しました"},
+    {"id":"Set_ClearSimilarFailed","type":"ui","zh":"清空失败，请检查当前数据库后重试。","en":"Could not clear analysis. Check the current database and retry.","ja":"消去できませんでした。現在のデータベースを確認して再試行してください。"},
+    {"id":"Set_ClearSimilarChanged","type":"ui","zh":"当前数据库已切换，请重新选择清空。","en":"The current database changed. Choose clear again.","ja":"現在のデータベースが切り替わりました。もう一度消去を選んでください。"}
   ]
 }

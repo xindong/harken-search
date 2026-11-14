@@ -29652,13 +29652,16 @@ void DrawSimilarityIndexPanel(AppState& state) {
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
     static int64_t cachedDbGeneration = -1;
+    static uint64_t cachedClearGeneration = 0;
     static bool wasExtracting = false;
     const bool extracting = state.batchFeatureExtracting.load();
     if (cachedDbPath != state.currentDbPathUtf8 ||
-        cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
+        cachedDbGeneration != state.backfillDbGeneration ||
+        cachedClearGeneration != state.similarityAnalysisClearGeneration || state.dbSwitchInProgress) {
         count.Reset();
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
+        cachedClearGeneration = state.similarityAnalysisClearGeneration;
         lastCountTime = -999.0;
     }
     if (ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
@@ -29734,25 +29737,12 @@ void DrawSimilarityIndexPanel(AppState& state) {
         const int pending = count.pending();
         if (count.CanStart(state.dbSwitchInProgress, state.database.isOpen())) {
             ImGui::Spacing();
-            char label[128];
-            if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
-            else snprintf(label, sizeof(label), "%s", L(Similar_Recheck));
-            if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
-                if (pending > 0) StartBatchFeatureExtraction(state);
-                else StartBatchFeatureExtraction(state, true);
+            ImGui::Text(L(Similar_PendingCountFmt), pending);
+            if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
+                StartBatchFeatureExtraction(state, true);
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
-            if (pending > 0) {
-                // A permanently failing file must not prevent checking already
-                // analyzed files for source changes. Supplementing stays the
-                // primary action and never traverses the completed analyses.
-                if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
-                    StartBatchFeatureExtraction(state, true);
-                    wasExtracting = true;
-                }
-                ThemeInspector::RegisterLastItem("similar.index.recheck");
-            }
         } else if (count.phase() == SimilarityIndexCountState::Phase::Failed &&
                    !state.dbSwitchInProgress && state.database.isOpen()) {
             if (aura::ui::ActionButton(L(Similar_StatsRetry), ImVec2(-1, 35),
