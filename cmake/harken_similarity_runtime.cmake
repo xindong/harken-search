@@ -1,6 +1,12 @@
 set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK")
 set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout")
 set(HARKEN_SIMILARITY_MODEL_DIR "" CACHE PATH "Verified exported CLAP audio resources to bundle")
+set(_harken_onnx_metadata_args)
+if(APPLE AND HARKEN_ONNXRUNTIME_ROOT)
+    file(READ "${HARKEN_ONNXRUNTIME_ROOT}/VERSION_NUMBER" _harken_onnx_version)
+    string(STRIP "${_harken_onnx_version}" _harken_onnx_version)
+    list(APPEND _harken_onnx_metadata_args --onnx-version "${_harken_onnx_version}")
+endif()
 if(Python3_Interpreter_FOUND)
     add_custom_command(TARGET HarkenSearch POST_BUILD
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/stage_similarity_metadata.py"
@@ -9,6 +15,7 @@ if(Python3_Interpreter_FOUND)
             --onnx $<BOOL:${HARKEN_ONNXRUNTIME_ROOT}>
             --hnsw $<BOOL:${HARKEN_HNSWLIB_ROOT}>
             --model $<BOOL:${HARKEN_SIMILARITY_MODEL_DIR}>
+            ${_harken_onnx_metadata_args}
         COMMENT "Recording the configured similarity dependencies in release metadata"
         VERBATIM)
 endif()
@@ -27,15 +34,19 @@ if(HARKEN_ONNXRUNTIME_ROOT)
                 ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:HarkenSearch>)
     elseif(APPLE)
         set(_harken_onnx_macos_dylib
-            "${HARKEN_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.20.1.dylib")
+            "${HARKEN_ONNXRUNTIME_ROOT}/lib/libonnxruntime.${_harken_onnx_version}.dylib")
         if(NOT EXISTS "${_harken_onnx_macos_dylib}")
-            message(FATAL_ERROR "Pinned ONNX Runtime macOS SDK is missing libonnxruntime.1.20.1.dylib")
+            message(FATAL_ERROR "ONNX Runtime macOS SDK is missing ${_harken_onnx_macos_dylib}")
         endif()
         set_property(TARGET HarkenSearch APPEND PROPERTY BUILD_RPATH "@executable_path")
         set_property(TARGET HarkenSearch APPEND PROPERTY INSTALL_RPATH "@executable_path")
         add_custom_command(TARGET HarkenSearch POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_harken_onnx_macos_dylib}" "$<TARGET_FILE_DIR:HarkenSearch>/libonnxruntime.1.20.1.dylib"
+                "${_harken_onnx_macos_dylib}" "$<TARGET_FILE_DIR:HarkenSearch>/libonnxruntime.${_harken_onnx_version}.dylib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${HARKEN_ONNXRUNTIME_ROOT}/LICENSE" "$<TARGET_FILE_DIR:HarkenSearch>/LICENSES/ONNX-Runtime-MIT.txt"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${HARKEN_ONNXRUNTIME_ROOT}/ThirdPartyNotices.txt" "$<TARGET_FILE_DIR:HarkenSearch>/LICENSES/ONNX-Runtime-ThirdPartyNotices.txt"
             COMMENT "Bundling pinned macOS ONNX Runtime beside HarkenSearch")
     endif()
 endif()

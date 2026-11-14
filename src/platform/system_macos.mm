@@ -140,7 +140,7 @@ bool CanOpenExclusiveWritePath(const std::string& pathUtf8) {
 
 std::string GetMachineId() {
     io_service_t platformExpert = IOServiceGetMatchingService(
-        kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"));
+        MACH_PORT_NULL, IOServiceMatching("IOPlatformExpertDevice"));
     if (!platformExpert) return "unknown-machine";
 
     CFStringRef serialRef = (CFStringRef)IORegistryEntryCreateCFProperty(

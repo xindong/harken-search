@@ -7384,8 +7384,8 @@ function(harken_link_onnx_test_runtime target)
         set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "@executable_path")
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${HARKEN_ONNXRUNTIME_ROOT}/lib/libonnxruntime.1.20.1.dylib
-                $<TARGET_FILE_DIR:${target}>/libonnxruntime.1.20.1.dylib)
+                "${_harken_onnx_macos_dylib}"
+                "$<TARGET_FILE_DIR:${target}>/libonnxruntime.${_harken_onnx_version}.dylib")
     endif()
 endfunction()
 function(harken_add_macos_similarity_test_stubs target)

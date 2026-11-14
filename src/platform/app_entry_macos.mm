@@ -6,6 +6,9 @@
 #import <Cocoa/Cocoa.h>
 #undef FolderInfo
 #import <OpenGL/gl.h>
+#ifdef PAGE_SIZE
+#undef PAGE_SIZE
+#endif
 #include "imgui.h"
 #include "imgui_impl_osx.h"
 #include "imgui_impl_opengl3.h"
