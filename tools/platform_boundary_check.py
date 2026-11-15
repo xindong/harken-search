@@ -36,6 +36,11 @@ BOOTSTRAP_EXIT_PLATFORM_ADAPTER_OWNER = "BOOTSTRAP-EXIT"
 BOOTSTRAP_EXIT_PLATFORM_ADAPTER_EVIDENCE = (
     "docs/plans/refactor/stage-6-bootstrap-exit-explanation-audit.md"
 )
+BOOTSTRAP_MAIN_PLATFORM_ADAPTER_PATH = "src/bootstrap/HarkenSearchBootstrapMain.cpp"
+BOOTSTRAP_MAIN_PLATFORM_ADAPTER_OWNER = "BOOTSTRAP-WIN32-MAIN"
+BOOTSTRAP_MAIN_PLATFORM_ADAPTER_EVIDENCE = (
+    "docs/plans/refactor/stage-6-bootstrap-main-entry-audit.md"
+)
 UPDATE_APPLICATION_PLATFORM_ADAPTER_PATH = "src/update/HarkenSearchUpdateComposition.cpp"
 UPDATE_APPLICATION_PLATFORM_ADAPTER_OWNER = "UPDATE-APPLICATION"
 UPDATE_APPLICATION_PLATFORM_ADAPTER_EVIDENCE = (
@@ -833,6 +838,17 @@ APPROVED_BOOTSTRAP_EXIT_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
     "src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp|native-symbol|CoTaskMemFree|201d0bb7065d19b7|1",
 })
 
+APPROVED_BOOTSTRAP_MAIN_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-include|windows.h|d395cd89463e8f58|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CloseHandle|97c6d24b6ef1dcfe|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|MultiByteToWideChar|4c3018a8eb2b8db2|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|MultiByteToWideChar|5bfb8a7166f50da5|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CreateFileW|233b50a7454c3fec|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|GetFileInformationByHandleEx|532e0fb6cb253794|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CloseHandle|fbda12bae9f177bb|1",
+    "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|WaitForSingleObject|fe8dd7054cfd75c4|1",
+})
+
 # Exact Windows updater UI calls independently reviewed on 2026-10-29.
 BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_EVIDENCE = "docs/architecture/bootstrap-progress-native-audit.md"
 BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
@@ -918,6 +934,12 @@ PLATFORM_ADAPTER_PROFILES = {
         BOOTSTRAP_EXIT_PLATFORM_ADAPTER_EVIDENCE,
         PLATFORM_ADAPTER_RULES,
         APPROVED_BOOTSTRAP_EXIT_PLATFORM_ADAPTER_FINGERPRINTS,
+    ),
+    BOOTSTRAP_MAIN_PLATFORM_ADAPTER_PATH: (
+        BOOTSTRAP_MAIN_PLATFORM_ADAPTER_OWNER,
+        BOOTSTRAP_MAIN_PLATFORM_ADAPTER_EVIDENCE,
+        PLATFORM_ADAPTER_RULES,
+        APPROVED_BOOTSTRAP_MAIN_PLATFORM_ADAPTER_FINGERPRINTS,
     ),
     UPDATE_APPLICATION_PLATFORM_ADAPTER_PATH: (
         UPDATE_APPLICATION_PLATFORM_ADAPTER_OWNER,

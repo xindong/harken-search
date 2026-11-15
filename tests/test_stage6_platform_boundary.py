@@ -9064,8 +9064,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
         self.assertEqual(0, result)
         output = stdout.getvalue()
-        self.assertIn("Scanned findings: 637", output)
-        self.assertIn("Audited exceptions: 637", output)
+        self.assertIn("Scanned findings: 645", output)
+        self.assertIn("Audited exceptions: 645", output)
         self.assertIn("Unresolved findings: 0", output)
         self.assertIn("Ledger findings: 0", output)
         self.assertEqual("", stderr.getvalue())
@@ -9080,7 +9080,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             entry.get("disposition") for entry in register["findings"]
         ]
         self.assertEqual(13, dispositions.count("platform-entry"))
-        self.assertEqual(624, dispositions.count("platform-adapter"))
+        self.assertEqual(632, dispositions.count("platform-adapter"))
         owners = [entry.get("owner_slice") for entry in register["findings"]]
         self.assertEqual(94, owners.count("BOOTSTRAP-FILESYSTEM"))
         self.assertEqual(480, owners.count("BOOTSTRAP-RUNTIME"))
@@ -9092,7 +9092,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             ROOT,
         )
         self.assertEqual([], classification.errors)
-        self.assertEqual(637, len(classification.audited_fingerprints))
+        self.assertEqual(645, len(classification.audited_fingerprints))
         self.assertEqual(0, len(classification.unresolved_findings))
 
         runtime_fingerprints = {
@@ -9158,6 +9158,50 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         ]
         self.assertEqual([], metadata_errors, classification.errors)
 
+    def test_bootstrap_main_is_an_exact_windows_only_platform_entry(self) -> None:
+        expected = set(boundary.APPROVED_BOOTSTRAP_MAIN_PLATFORM_ADAPTER_FINGERPRINTS)
+        self.assertEqual(8, len(expected))
+        findings = boundary.scan_tree(ROOT)
+        live = {
+            finding.fingerprint for finding in findings
+            if finding.path == boundary.BOOTSTRAP_MAIN_PLATFORM_ADAPTER_PATH
+        }
+        self.assertEqual(expected, live)
+
+        register = json.loads(
+            (ROOT / "docs/plans/refactor/stage-6-platform-audited-exceptions.json")
+            .read_text(encoding="utf-8")
+        )
+        entries = {
+            entry["fingerprint"]: entry for entry in register["findings"]
+            if entry.get("owner_slice") == boundary.BOOTSTRAP_MAIN_PLATFORM_ADAPTER_OWNER
+        }
+        self.assertEqual(expected, set(entries))
+        for entry in entries.values():
+            self.assertEqual("platform-adapter", entry["disposition"])
+            self.assertEqual(
+                boundary.BOOTSTRAP_MAIN_PLATFORM_ADAPTER_EVIDENCE,
+                entry["evidence_document"],
+            )
+
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        stack = []
+        guards_at_source = None
+        for line in cmake.splitlines():
+            stripped = line.strip()
+            if re.match(r"^if\s*\(", stripped, re.IGNORECASE):
+                stack.append(stripped)
+            if boundary.BOOTSTRAP_MAIN_PLATFORM_ADAPTER_PATH in line:
+                guards_at_source = list(stack)
+            if re.match(r"^endif\b", stripped, re.IGNORECASE) and stack:
+                stack.pop()
+        self.assertIsNotNone(guards_at_source)
+        self.assertTrue(
+            any("WIN32" in condition.upper() for condition in guards_at_source or []),
+            "bootstrap entry source must remain below a WIN32 CMake guard",
+        )
+        self.assertTrue((ROOT / boundary.BOOTSTRAP_MAIN_PLATFORM_ADAPTER_EVIDENCE).is_file())
+
     def test_update_application_adapter_uses_live_renamed_path_without_retired_exceptions(self) -> None:
         self.assertEqual(
             "src/update/HarkenSearchUpdateComposition.cpp",
@@ -9171,12 +9215,12 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(
-            "`637` exact audited entries",
+            "645 exact audited entries",
             report,
             "the report must describe the current exact exception register",
         )
-        self.assertIn("`94` `BOOTSTRAP-FILESYSTEM`", report)
-        self.assertRegex(report, r"`480`\s+`BOOTSTRAP-RUNTIME`")
+        self.assertIn("94 BOOTSTRAP-FILESYSTEM", report)
+        self.assertIn("480 BOOTSTRAP-RUNTIME", report)
         self.assertNotIn("`193` exact audited entries", report)
         self.assertNotIn("`118`\n  `BOOTSTRAP-RUNTIME`", report)
 
