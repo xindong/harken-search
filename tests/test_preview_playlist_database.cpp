@@ -55,6 +55,18 @@ const aura::playlist::PlaylistCoverGroup* FindGroup(
     return nullptr;
 }
 
+
+bool SameFolderTree(const FolderInfo& a, const FolderInfo& b) {
+    if (a.path != b.path || a.name != b.name || a.displayName != b.displayName ||
+        a.fileCount != b.fileCount || a.subfolders.size() != b.subfolders.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.subfolders.size(); ++i) {
+        if (!SameFolderTree(a.subfolders[i], b.subfolders[i])) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main() {
@@ -156,6 +168,11 @@ int main() {
     Expect(fullTree.fileCount == 4, "complete member tree keeps later-page files");
     Expect(pageTree.fileCount == 2, "loaded page tree is incomplete");
 
+    const auto countsTree = BuildPlaylistFolderTreeFromFolderCounts(
+        db.getPlaylistFolderCounts(playlistId), db.getPlaylistFileCount(playlistId));
+    Expect(SameFolderTree(countsTree, fullTree),
+           "lightweight folder counts rebuild the identical playlist tree from the database");
+
     const auto coverKeys = db.searchPlaylistCoverKeys(playlistId, empty);
     bool ordinaryEmbeddedSource = false;
     for (const auto& record : coverKeys) {
@@ -197,6 +214,14 @@ int main() {
     Expect(db.isFolder(folderId), "parent is a folder");
     Expect(db.searchAggregatedPlaylistFileCount(folderId, empty) == 4,
            "aggregated complete count is 4");
+
+    const FolderInfo aggregatedTree =
+        BuildPlaylistFolderTreeFromCompleteMembers(db.getAggregatedPlaylistFiles(folderId), {});
+    const FolderInfo aggregatedCountsTree = BuildPlaylistFolderTreeFromFolderCounts(
+        db.getAggregatedPlaylistFolderCounts(folderId),
+        db.getAggregatedPlaylistFileCount(folderId));
+    Expect(SameFolderTree(aggregatedCountsTree, aggregatedTree),
+           "lightweight aggregated folder counts rebuild the identical aggregated tree");
     const auto aggKeys = db.searchAggregatedPlaylistCoverKeys(folderId, empty);
     bool aggregatedEmbeddedSource = false;
     for (const auto& record : aggKeys) {
