@@ -3,14 +3,16 @@
   "entries": [
     {"id": "DiagnosticOverlay_Title", "type": "ui", "zh": "性能监视器", "en": "Performance Monitor", "ja": "パフォーマンスモニター"},
     {"id": "DiagnosticOverlay_Performance", "type": "ui", "zh": "性能", "en": "Performance", "ja": "性能"},
+    {"id": "DiagnosticOverlay_FpsLabel", "type": "ui", "zh": "帧率", "en": "FPS", "ja": "FPS"},
+    {"id": "DiagnosticOverlay_CpuLabel", "type": "ui", "zh": "处理器", "en": "CPU", "ja": "CPU"},
     {"id": "DiagnosticOverlay_Logs", "type": "ui", "zh": "日志", "en": "Logs", "ja": "ログ"},
     {"id": "DiagnosticOverlay_ExportMinute", "type": "ui", "zh": "导出近 1 分钟", "en": "Export Last Minute", "ja": "直近 1 分間を出力"},
-    {"id": "DiagnosticOverlay_ExportHint", "type": "ui", "zh": "将最近 1 分钟的诊断记录打包为本地 ZIP，不上传。", "en": "Save the last minute of diagnostics as a local ZIP. Nothing is uploaded.", "ja": "直近 1 分間の診断をローカル ZIP に保存します。アップロードは行いません。"},
+    {"id": "DiagnosticOverlay_ExportHint", "type": "ui", "zh": "将最近一分钟的诊断记录打包为本地压缩包，不上传。", "en": "Save the last minute of diagnostics as a local ZIP. Nothing is uploaded.", "ja": "直近 1 分間の診断をローカル ZIP に保存します。アップロードは行いません。"},
     {"id": "DiagnosticOverlay_ExportWriting", "type": "ui", "zh": "正在打包…", "en": "Packing…", "ja": "作成中…"},
     {"id": "DiagnosticOverlay_ExportBusy", "type": "ui", "zh": "日志正忙，请重试", "en": "Logs busy. Try again.", "ja": "ログ処理中です。再試行してください。"},
-    {"id": "DiagnosticOverlay_ExportFailed", "type": "ui", "zh": "无法保存 ZIP，请重试", "en": "Can't save ZIP. Try again.", "ja": "ZIP を保存できません。再試行してください。"},
-    {"id": "DiagnosticOverlay_ExportEmpty", "type": "ui", "zh": "ZIP 已保存（无日志）", "en": "ZIP saved (no logs)", "ja": "ZIP を保存しました（ログなし）"},
-    {"id": "DiagnosticOverlay_ExportSaved", "type": "ui", "zh": "ZIP 已保存", "en": "ZIP saved", "ja": "ZIP を保存しました"},
+    {"id": "DiagnosticOverlay_ExportFailed", "type": "ui", "zh": "无法保存压缩包，请重试", "en": "Can't save ZIP. Try again.", "ja": "ZIP を保存できません。再試行してください。"},
+    {"id": "DiagnosticOverlay_ExportEmpty", "type": "ui", "zh": "已保存压缩包（无日志）", "en": "ZIP saved (no logs)", "ja": "ZIP を保存しました（ログなし）"},
+    {"id": "DiagnosticOverlay_ExportSaved", "type": "ui", "zh": "压缩包已保存", "en": "ZIP saved", "ja": "ZIP を保存しました"},
     {"id": "DiagnosticOverlay_FrameTime", "type": "ui", "zh": "帧时间 (ms)", "en": "Frame time (ms)", "ja": "フレーム時間 (ms)"},
     {"id": "DiagnosticOverlay_FrameStatsFmt", "type": "ui", "zh": "平均 %s · 峰值 %s", "en": "Avg %s · Peak %s", "ja": "平均 %s · 最大 %s"},
     {"id": "DiagnosticOverlay_ChartTenSecondsAgo", "type": "ui", "zh": "10 秒前", "en": "10 s ago", "ja": "10 秒前"},
@@ -10036,46 +10038,11 @@
       "ja": "⚠ %s"
     },
     {
-      "id": "Main_DiagOverlayTitle",
-      "type": "ui",
-      "zh": "诊断悬浮窗 [F10]",
-      "en": "Diagnostics overlay [F10]",
-      "ja": "診断オーバーレイ [F10]"
-    },
-    {
-      "id": "Main_FpsFmt",
-      "type": "ui",
-      "zh": "FPS: %.1f",
-      "en": "FPS: %.1f",
-      "ja": "FPS: %.1f"
-    },
-    {
-      "id": "Main_MemoryFmt",
-      "type": "ui",
-      "zh": "Memory: %.1f MB",
-      "en": "Memory: %.1f MB",
-      "ja": "Memory: %.1f MB"
-    },
-    {
       "id": "Main_DroppedFmt",
       "type": "ui",
       "zh": "Dropped: %llu",
       "en": "Dropped: %llu",
       "ja": "Dropped: %llu"
-    },
-    {
-      "id": "Main_CacheBudgetLabel",
-      "type": "ui",
-      "zh": "Cache Budget",
-      "en": "Cache Budget",
-      "ja": "Cache Budget"
-    },
-    {
-      "id": "Main_BracketPairFmt",
-      "type": "ui",
-      "zh": "[%s] %s",
-      "en": "[%s] %s",
-      "ja": "[%s] %s"
     },
     {
       "id": "AITaskStatus_Done",

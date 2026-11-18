@@ -342,9 +342,9 @@ void DrawPerformance(const Layout& ui, const ViewData& view, const Monitor& moni
     const float fpsLabelX = std::min(cpuX - ui.Width("FPS", kCaptionSize) - 8.0f,
                                     kPadding + ui.Width(fps, fpsSize, true) + 5.0f);
     ui.FitText(kPadding, fpsLabelX - 5.0f, metricsY, fps, fpsSize, ui.ink, true);
-    ui.Text(fpsLabelX, metricsBottom - ui.LineHeight(kCaptionSize), "FPS", kCaptionSize, ui.muted);
+    ui.Text(fpsLabelX, metricsBottom - ui.LineHeight(kCaptionSize), L(DiagnosticOverlay_FpsLabel), kCaptionSize, ui.muted);
     const auto* cpu = Value(cpuBuffer, monitor.CpuPercent(), "%.1f%%");
-    ui.Text(cpuX, valueY, "CPU", kBodySize, ui.muted);
+    ui.Text(cpuX, valueY, L(DiagnosticOverlay_CpuLabel), kBodySize, ui.muted);
     const float cpuValueX = cpuX + ui.Width("CPU", kBodySize) + 5.0f;
     const auto memory = monitor.PrivateUsageBytes();
     const auto* memoryText = Value(memoryBuffer, memory ? std::optional<double>{*memory / kBytesPerMiB} : std::nullopt, "%.0f MB");
