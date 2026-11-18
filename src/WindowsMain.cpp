@@ -9141,6 +9141,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         aura::ui::dock::NativeCaptionModuleId().clear();
     }
 
+#if AURA_BUILD_DIAGNOSTICS
+    if (((msg == WM_SIZE && wParam == SIZE_MINIMIZED) || (msg == WM_SHOWWINDOW && !wParam) ||
+         msg == WM_EXITSIZEMOVE ||
+         (msg == WM_POWERBROADCAST && (wParam == PBT_APMSUSPEND || wParam == PBT_APMRESUMEAUTOMATIC))) &&
+        g_appState && g_appState->diagnosticOverlayMonitor.IsOpen()) {
+        g_appState->diagnosticOverlayMonitor.Pause();
+    }
+#endif
+
     // Let ImGui handle other messages
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
         return true;
@@ -13685,6 +13694,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // 窗口最小化或隐藏时不进行主窗口 OpenGL 呈现，避免 NVIDIA 驱动在 DrvPresentBuffers 内空指针崩溃 (ACCESS_VIOLATION 0x4)
         // 已拖出的平台视口仍要继续刷新，否则副屏面板会跟着主窗口一起冻住。
         const bool mainWindowHidden = IsIconic(hwnd) || !Platform::WindowIsVisible(hwnd);
+#if AURA_BUILD_DIAGNOSTICS
+        if (mainWindowHidden && state.diagnosticOverlayMonitor.IsOpen()) state.diagnosticOverlayMonitor.Pause();
+#endif
         if (mainWindowHidden && !HarkenSearchHasHostedPlatformViewports()) {
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
             AbortFrameBudgetCapture(state, "window_hidden", "visibility");

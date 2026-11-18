@@ -323,6 +323,17 @@ ProcessMemoryUsageResult QueryCurrentProcessMemoryUsage() {
             static_cast<uint64_t>(counters.PrivateUsage)};
 }
 
+std::optional<ProcessCpuTimeResult> QueryCurrentProcessCpuTime() {
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return {};
+    const auto processorCount = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    if (processorCount == 0) return {};
+    const auto ticks = [](FILETIME time) {
+        return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+    };
+    return ProcessCpuTimeResult{ticks(kernel) + ticks(user), processorCount};
+}
+
 void CloseNativeHandle(void* handle) {
     if (handle) {
         CloseHandle(static_cast<HANDLE>(handle));

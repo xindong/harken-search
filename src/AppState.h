@@ -3,6 +3,9 @@
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
 #include "LibraryStatisticsWorker.h"
+#if AURA_BUILD_DIAGNOSTICS
+#include "PerformanceMonitor.h"
+#endif
 #include "DockTabGroups.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
@@ -1620,6 +1623,9 @@ struct AppState {
     aura::BackfillQueue backfillQueue;
     int64_t backfillDbGeneration = 0;
     AppSettings settings;
+#if AURA_BUILD_DIAGNOSTICS
+    harken::performance_monitor::Monitor diagnosticOverlayMonitor;
+#endif
     UILocalState uiState;  // [Unified UI State]
     CoverWallState coverWall;  // 封面墙集中状态（原 main.cpp 46+ static）
 

@@ -24,6 +24,15 @@ void DiagnosticsLogger::logSystem(const char*, const char*) {}
 bool DiagnosticsLogger::logSystemAt(const char*, const char*, int64_t) { return false; }
 bool DiagnosticsLogger::exportJson(const std::string&) const { return false; }
 std::string DiagnosticsLogger::exportJsonString() const { return {}; }
+bool DiagnosticsLogger::trySnapshotForExport(int64_t clickMs, DiagLogSnapshot& snapshot) const {
+    snapshot.entries.clear();
+    snapshot.clickMs = clickMs;
+    snapshot.processDroppedEntries = 0;
+    snapshot.ringCapacity = 0;
+    snapshot.enabled = false;
+    snapshot.categoryFilterEnabled = false;
+    return true;
+}
 size_t DiagnosticsLogger::entryCount() const { return 0; }
 void DiagnosticsLogger::clear() {}
 void DiagnosticsLogger::setMaxEntries(size_t) {}
