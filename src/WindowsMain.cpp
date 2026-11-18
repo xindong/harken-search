@@ -8713,8 +8713,12 @@ ChromeTextScope::~ChromeTextScope() {
 }
 
 float GetMenuFontSizePx() {
-    const float readingPx = g_readingRegular ? g_readingRegular->LegacySize : (float)kChromeFontPx;
-    return std::clamp(readingPx, (float)kChromeFontPx, (float)kMaxReadingFontPx);
+    // The menu keeps the chrome size (14 px) at the default system font (18 px) and
+    // scales proportionally from there: 24 px -> 19 px, 32 px -> 25 px.
+    const float readingPx = g_readingRegular ? g_readingRegular->LegacySize
+                                             : (float)kDefaultReadingFontPx;
+    const float scaled = (float)kChromeFontPx * (readingPx / (float)kDefaultReadingFontPx);
+    return std::clamp(std::round(scaled), (float)kChromeFontPx, (float)kMaxReadingFontPx);
 }
 
 ImFont* GetMenuUIFont() {
