@@ -15,7 +15,7 @@ namespace aura::ui {
 
 enum class BrandIcon { Wwise, ProTools, Reaper, Ableton, Logic, Cubase, HarkenSearchLogo };
 enum class DiffStatus { NoChange, New, Replaced, Unresolved };
-enum class BrandWordmark { MenuWhite, MenuBlack };
+enum class BrandWordmark { MenuWhite, MenuBlack, MenuOrange };
 
 // Populated in Tasks 4-6.
 void MergeLucideFont(ImFontAtlas* atlas, float fontPixelSize);
