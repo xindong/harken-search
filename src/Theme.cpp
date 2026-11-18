@@ -3,6 +3,7 @@
 // Aris-owned preset and custom color definitions
 
 #include "Theme.h"
+#include "imgui_internal.h"
 #include "ui/MistBlueChrome.h"
 #include "ThemeEditorSchema.h"
 #include <cstring>
@@ -14,6 +15,7 @@
 #include "Utils.h"
 #include "ui/CoreWorkspaceStyle.h"
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
@@ -358,6 +360,242 @@ void ThemeDialogStyleScope::reset() {
 }
 
 ThemeDialogStyleScope::~ThemeDialogStyleScope() {
+    reset();
+}
+
+namespace {
+
+float MenuColorLuminance(const ImVec4& color) {
+    auto channel = [](float value) {
+        return value <= 0.03928f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * channel(color.x) + 0.7152f * channel(color.y) + 0.0722f * channel(color.z);
+}
+
+float MenuContrastRatio(const ImVec4& a, const ImVec4& b) {
+    const float la = MenuColorLuminance(a);
+    const float lb = MenuColorLuminance(b);
+    const float lighter = std::max(la, lb);
+    const float darker = std::min(la, lb);
+    return (lighter + 0.05f) / (darker + 0.05f);
+}
+
+ImVec4 FlatMenuSurface(const ThemeColorScheme& scheme) {
+    const bool light = ThemeColors::isLightChromeTheme(scheme);
+    return OpaqueThemeColor(MixThemeColor(ThemeColors::menuBarFillBG(scheme),
+        light ? ThemeColors::popupMenuBG(scheme) : scheme.chromeBorder, light ? 0.65f : 0.20f));
+}
+
+ImVec4 MenuSelectionFill(const ThemeColorScheme& scheme, const ImVec4& surface) {
+    const bool light = ThemeColors::isLightChromeTheme(scheme);
+    return OpaqueThemeColor(MixThemeColor(surface, scheme.controlAccent, light ? 0.46f : 0.40f));
+}
+
+ImVec4 MenuSelectionText(const ThemeColorScheme& scheme, const ImVec4& fill) {
+    const ImVec4 text = OpaqueThemeColor(scheme.menuText);
+    if (MenuContrastRatio(fill, text) >= 4.5f)
+        return text;
+    const ImVec4 white(1.0f, 1.0f, 1.0f, 1.0f);
+    return MenuContrastRatio(fill, white) >= 4.5f ? white : ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+ImVec4 MenuSecondaryText(const ThemeColorScheme& scheme) {
+    const ImVec4 text = OpaqueThemeColor(scheme.menuText);
+    return OpaqueThemeColor(MixThemeColor(text, FlatMenuSurface(scheme), 0.36f));
+}
+
+void PushMenuTextFont(ImFont* textFont, float textSizePx, bool& pushed) {
+    if (!textFont || textSizePx <= 0.0f) return;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    float appliedScale = style.FontScaleMain * style.FontScaleDpi * ImGui::GetCurrentWindow()->FontWindowScale;
+#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+    appliedScale *= ImGui::GetIO().FontGlobalScale * textFont->Scale;
+#endif
+    ImGui::PushFont(textFont, textSizePx / std::max(0.01f, appliedScale));
+    pushed = true;
+}
+
+void GetFlatMenuPopupColors(ImVec4& background, ImVec4& border) {
+    const ThemeColorScheme& scheme = ThemeColors::current();
+    background = ClampThemeColor(FlatMenuSurface(scheme));
+    border = MixThemeColor(background, ClampThemeColor(ThemeColors::popupBorder(scheme)), 0.39f);
+}
+
+}  // namespace
+
+bool InMenuChromeScope() {
+    const ImGuiContext* context = ImGui::GetCurrentContext();
+    if (!context || !context->CurrentWindow) return false;
+    const ImGuiWindow& window = *context->CurrentWindow;
+    return ((window.Flags & ImGuiWindowFlags_MenuChrome) && context->MenuChromeTextStackSize >= 0)
+        || (window.DC.MenuBarAppending && (context->CurrentItemFlags & ImGuiItemFlags_MenuChrome));
+}
+
+ThemeMenuBarStyleScope::ThemeMenuBarStyleScope(ImFont* textFont, float textSizePx) {
+    if (!ImGui::GetCurrentContext() || !ImGui::GetCurrentWindowRead()) return;
+    m_active = true;
+
+    const float legacyTitleSpacing = ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    const ThemeColorScheme& scheme = ThemeColors::current();
+    const bool light = ThemeColors::isLightChromeTheme(scheme);
+    const float scale = ImGui::GetMenuChromeScale();
+    const ImVec4 bar = ThemeColors::menuBarFillBG(scheme);
+    const ImVec4 pill = OpaqueThemeColor(MixThemeColor(
+        MixThemeColor(bar, scheme.menuText, light ? 0.10f : 0.14f), scheme.controlAccent, 0.10f));
+
+    auto pushColor = [&](ImGuiCol idx, const ImVec4& color) {
+        ImGui::PushStyleColor(idx, ClampThemeColor(color));
+        ++m_colorCount;
+    };
+    auto pushVar = [&](ImGuiStyleVar idx, float value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+    auto pushVar2 = [&](ImGuiStyleVar idx, const ImVec2& value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+
+    pushColor(ImGuiCol_Text, OpaqueThemeColor(scheme.menuText));
+    pushColor(ImGuiCol_TextDisabled, MenuSecondaryText(scheme));
+    pushColor(ImGuiCol_Header, pill);
+    pushColor(ImGuiCol_HeaderHovered, OpaqueThemeColor(MixThemeColor(bar, pill, 0.74f)));
+    pushColor(ImGuiCol_HeaderActive, pill);
+
+    const float height = ImGui::GetCurrentWindow()->MenuBarHeight;
+    const float desiredTextPx = textSizePx * scale;
+    PushMenuTextFont(textFont, height > 0.0f ? std::min(desiredTextPx, std::max(1.0f, height - 4.0f * scale))
+                                        : desiredTextPx, m_pushedFont);
+    const float padY = std::max(0.0f, std::floor((height - ImGui::GetFontSize()) * 0.5f));
+    pushVar(ImGuiStyleVar_FrameRounding, 5.0f * scale);
+    pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(legacyTitleSpacing, std::min(6.0f * scale, padY * 2.0f)));
+    pushVar2(ImGuiStyleVar_FramePadding, ImVec2(7.0f * scale, padY));
+    ImGui::PushItemFlag(ImGuiItemFlags_MenuChrome, true);
+}
+
+void ThemeMenuBarStyleScope::reset() {
+    if (!m_active) return;
+    m_active = false;
+    ImGui::PopItemFlag();
+    if (m_pushedFont) {
+        ImGui::PopFont();
+        m_pushedFont = false;
+    }
+    if (m_varCount > 0) {
+        ImGui::PopStyleVar(m_varCount);
+        m_varCount = 0;
+    }
+    if (m_colorCount > 0) {
+        ImGui::PopStyleColor(m_colorCount);
+        m_colorCount = 0;
+    }
+}
+
+ThemeMenuBarStyleScope::~ThemeMenuBarStyleScope() {
+    reset();
+}
+
+ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope(ImFont* textFont, bool enabled) {
+    if (!enabled || !ImGui::GetCurrentContext() || !ImGui::GetCurrentWindowRead()) return;
+    m_active = true;
+
+    const ThemeColorScheme& scheme = ThemeColors::current();
+    const ImVec4 hairline = ThemeColors::popupBorder(scheme);
+    const ImVec4 surface = FlatMenuSurface(scheme);
+    const ImVec4 selection = MenuSelectionFill(scheme, surface);
+    const ImVec4 activeText = MenuSelectionText(scheme, selection);
+    const float scale = ImGui::GetMenuChromeScale();
+
+    auto pushColor = [&](ImGuiCol idx, const ImVec4& color) {
+        ImGui::PushStyleColor(idx, ClampThemeColor(color));
+        ++m_colorCount;
+    };
+    auto pushVar = [&](ImGuiStyleVar idx, float value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+    auto pushVar2 = [&](ImGuiStyleVar idx, const ImVec2& value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+
+    pushColor(ImGuiCol_Text, OpaqueThemeColor(scheme.menuText));
+    pushColor(ImGuiCol_TextDisabled, MenuSecondaryText(scheme));
+    pushColor(ImGuiCol_Header, OpaqueThemeColor(MixThemeColor(surface, selection, 0.35f)));
+    pushColor(ImGuiCol_HeaderHovered, selection);
+    pushColor(ImGuiCol_HeaderActive, selection);
+    pushColor(ImGuiCol_Separator, hairline);
+    pushColor(ImGuiCol_SeparatorHovered, hairline);
+    pushColor(ImGuiCol_SeparatorActive, hairline);
+    pushColor(ImGuiCol_NavCursor, MixThemeColor(selection, activeText, 0.38f));
+
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    m_previousActiveText = context.MenuChromeActiveText;
+    m_previousTextStackSize = context.MenuChromeTextStackSize;
+    context.MenuChromeActiveText = activeText;
+    context.MenuChromeTextStackSize = context.ColorStack.Size;
+
+    pushVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
+    PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), 15.0f * scale, m_pushedFont);
+    pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(16.0f * scale, std::max(0.0f, 27.0f * scale - ImGui::GetTextLineHeight())));
+}
+
+ThemeMenuPopupShellScope::ThemeMenuPopupShellScope(bool enabled) {
+    if (enabled) activate();
+}
+
+void ThemeMenuPopupShellScope::activate() {
+    if (m_active || !ImGui::GetCurrentContext()) return;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    m_previousPopupColors = context.MenuChromeGetPopupColors;
+    context.MenuChromeGetPopupColors = GetFlatMenuPopupColors;
+    m_active = true;
+}
+
+bool ThemeMenuPopupShellScope::beginContextItem(const char* id, bool useMenuChrome) {
+    if (!useMenuChrome) return ImGui::BeginPopupContextItem(id);
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return false;
+    ImGui::OpenPopupOnItemClick(id);
+    const ImGuiID popupId = id ? window->GetID(id) : ImGui::GetItemID();
+    if (ImGui::IsPopupOpen(popupId, ImGuiPopupFlags_None)) activate();
+    return ImGui::BeginPopupEx(popupId, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar
+        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuChrome);
+}
+
+void ThemeMenuPopupShellScope::reset() {
+    if (!m_active) return;
+    m_active = false;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    context.MenuChromeGetPopupColors = m_previousPopupColors;
+}
+
+ThemeMenuPopupShellScope::~ThemeMenuPopupShellScope() {
+    reset();
+}
+
+
+void ThemeMenuPopupStyleScope::reset() {
+    if (!m_active) return;
+    m_active = false;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    context.MenuChromeActiveText = m_previousActiveText;
+    context.MenuChromeTextStackSize = m_previousTextStackSize;
+    if (m_pushedFont) {
+        ImGui::PopFont();
+        m_pushedFont = false;
+    }
+    if (m_varCount > 0) {
+        ImGui::PopStyleVar(m_varCount);
+        m_varCount = 0;
+    }
+    if (m_colorCount > 0) {
+        ImGui::PopStyleColor(m_colorCount);
+        m_colorCount = 0;
+    }
+}
+
+ThemeMenuPopupStyleScope::~ThemeMenuPopupStyleScope() {
     reset();
 }
 

@@ -321,6 +321,63 @@ public:
     static ImVec4 waveformFrameBorder(const ThemeColorScheme& scheme);
 };
 
+class ThemeMenuBarStyleScope {
+public:
+    explicit ThemeMenuBarStyleScope(ImFont* textFont = nullptr, float textSizePx = 0.0f);
+    ~ThemeMenuBarStyleScope();
+
+    void reset();
+
+    ThemeMenuBarStyleScope(const ThemeMenuBarStyleScope&) = delete;
+    ThemeMenuBarStyleScope& operator=(const ThemeMenuBarStyleScope&) = delete;
+
+private:
+    int m_colorCount = 0;
+    int m_varCount = 0;
+    bool m_pushedFont = false;
+    bool m_active = false;
+};
+
+class ThemeMenuPopupStyleScope {
+public:
+    explicit ThemeMenuPopupStyleScope(ImFont* textFont = nullptr, bool enabled = true);
+    ~ThemeMenuPopupStyleScope();
+
+    void reset();
+
+    ThemeMenuPopupStyleScope(const ThemeMenuPopupStyleScope&) = delete;
+    ThemeMenuPopupStyleScope& operator=(const ThemeMenuPopupStyleScope&) = delete;
+
+private:
+    ImVec4 m_previousActiveText{};
+    int m_previousTextStackSize = -1;
+    int m_colorCount = 0;
+    int m_varCount = 0;
+    bool m_pushedFont = false;
+    bool m_active = false;
+};
+
+class ThemeMenuPopupShellScope {
+public:
+    explicit ThemeMenuPopupShellScope(bool enabled = true);
+    ~ThemeMenuPopupShellScope();
+
+    bool beginContextItem(const char* id, bool useMenuChrome = true);
+    void reset();
+
+    ThemeMenuPopupShellScope(const ThemeMenuPopupShellScope&) = delete;
+    ThemeMenuPopupShellScope& operator=(const ThemeMenuPopupShellScope&) = delete;
+
+private:
+    void activate();
+
+    void (*m_previousPopupColors)(ImVec4&, ImVec4&) = nullptr;
+    bool m_active = false;
+};
+
+// 菜单作用域接管字体时，ChromeTextScope 不再把字号换回常规界面字号。
+bool InMenuChromeScope();
+
 // Scoped style for modal/dialog surfaces. The colors are derived from the
 // active ThemeColorScheme, so each shipped preset keeps its own palette.
 class ThemeDialogStyleScope {

@@ -1115,12 +1115,8 @@ static void ShowCoverClipboardMessage(const wchar_t* text, UINT icon = MB_ICONIN
 // Menu item with stable hover styling.
 // Menu item with stable selected styling.
 bool MenuItemWithTooltip(const char* label, const char* shortcut, const char* tooltip, bool selected = false, bool enabled = true) {
-    // Apply the menu palette before rendering the item.
-    // Header 是 MenuItem 的背景，HeaderHovered 是鼠标划过时的高亮背景
     ImGui::PushStyleColor(ImGuiCol_Header, COLOR_SELECTED);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, COLOR_ACCENT);
-
-    // 执行原生 MenuItem 渲染
     bool clicked = ImGui::MenuItem(label, shortcut, selected, enabled);
 
     // 只有在悬停且有内容时才显示 Tooltip，并增加 DelayShort 防闪烁
@@ -1128,9 +1124,7 @@ bool MenuItemWithTooltip(const char* label, const char* shortcut, const char* to
         HarkenSearch::SetTooltip("%s", tooltip);
     }
 
-    // 弹出样式，确保不污染后续其他 UI 组件
     ImGui::PopStyleColor(2);
-
     return clicked;
 }
 
@@ -35471,7 +35465,8 @@ void RenderUI(AppState& state) {
 
     // TOP MENU BAR
 
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().menuPopupBG);
+    ThemeMenuBarStyleScope menuBarChrome(GetUIFontRegular(), static_cast<float>(kChromeFontPx - 1));
+    ThemeMenuPopupShellScope menuPopupShell;
     if (ImGui::BeginMenuBar()) {
         ImGuiWindow* menuWindow = ImGui::GetCurrentWindow();
         const ImRect menuBarRect = menuWindow->MenuBarRect();
@@ -35481,22 +35476,36 @@ void RenderUI(AppState& state) {
             ImGui::GetColorU32(ThemeColors::menuBarFillBG(ThemeColors::current())));
         // 菜单栏前的官方品牌字标：与启动页同一张官网横版字标，深色底用白色图、
         // 浅色底用黑色图，图片读不到时退回纯文字品牌名。窄窗口让位给菜单项。
-        if (menuBarRect.GetWidth() >= 1100.0f) {
-            const float brandGap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
+        const ImGuiStyle& menuStyle = ImGui::GetStyle();
+        const float menuScale = ImGui::GetMenuChromeScale();
+        const float brandLeading = std::floor(14.0f * menuScale);
+        const float brandTrailing = std::floor(8.0f * menuScale);
+        const char* menuTitles[] = {L(Menu_File), L(Menu_Edit), L(Menu_View), L(Menu_Database),
+                                    L(Menu_Playlist), L(Menu_Tools), L(Menu_Settings), L(Menu_Help)};
+        float labelWidth = 0.0f;
+        for (const char* title : menuTitles)
+            labelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
+        const float spacingSlots = static_cast<float>(IM_ARRAYSIZE(menuTitles));
+        const float preferredMenuWidth = labelWidth + menuStyle.ItemSpacing.x * spacingSlots;
+        const float menuRight = menuWindow->ClipRect.Max.x - brandLeading;
+        const float brandStartX = std::max(menuBarRect.Min.x + brandLeading, menuWindow->ClipRect.Min.x);
+        const float brandLimitX = menuRight - preferredMenuWidth - brandTrailing;
+        float menuStartOffset = brandStartX - menuWindow->Pos.x;
+        if (brandLimitX > brandStartX) {
             const float brandRightX = aura::ui::DrawMenuBarBrandWordmark(
-                menuBarRect.Min.x + brandGap, menuBarRect.Min.y,
-                menuBarRect.Max.x, menuBarRect.Max.y,
+                brandStartX, menuBarRect.Min.y,
+                brandLimitX, menuBarRect.Max.y,
                 GetUIFontEmphasis(), L(Main_AppNameBrand));
-            ImGui::SetCursorPosX((brandRightX - menuWindow->Pos.x) + brandGap);
+            if (brandRightX > brandStartX)
+                menuStartOffset = std::ceil((brandRightX - menuWindow->Pos.x) + brandTrailing);
         }
-        ImGui::PushFont(GetUIFontEmphasis());
-        ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().menuText);
-        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(
-            ThemeColors::current().menuText.x * 0.65f,
-            ThemeColors::current().menuText.y * 0.65f,
-            ThemeColors::current().menuText.z * 0.65f,
-            ThemeColors::current().menuText.w));
+        const float menuAvailable = menuRight - menuWindow->Pos.x - menuStartOffset;
+        const float menuSpacing = std::clamp(
+            std::floor((menuAvailable - labelWidth) / spacingSlots), 0.0f, menuStyle.ItemSpacing.x);
+        ImGui::SetCursorPosX(menuStartOffset + menuWindow->Scroll.x);
+        ImGui::PushStyleVarX(ImGuiStyleVar_ItemSpacing, menuSpacing);
         if (ImGui::BeginMenu(L(Menu_File))) {
+            ThemeMenuPopupStyleScope menuChromeFile(GetUIFontRegular());
             { ChromeTextScope _readingMenuFile; // menu dropdowns share the chrome face.
             if (ImGui::MenuItem(L(File_OpenFolder), "Ctrl+O")) {
                 std::string folder = OpenFolderDialog(g_hwnd);
@@ -35575,6 +35584,7 @@ void RenderUI(AppState& state) {
 
             // Database management submenu
             if (ImGui::BeginMenu(L(Menu_Database))) {
+                ThemeMenuPopupStyleScope menuChromeFileDb(GetUIFontRegular());
                 // Current database info
                 if (!state.currentDbPathUtf8.empty()) {
                     std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35644,6 +35654,7 @@ void RenderUI(AppState& state) {
                     }
                 }
 
+                menuChromeFileDb.reset();
                 ImGui::EndMenu();
             }
 
@@ -35656,9 +35667,11 @@ void RenderUI(AppState& state) {
                 }
             }
             }
+            menuChromeFile.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(L(Menu_Edit))) {
+            ThemeMenuPopupStyleScope menuChromeEdit(GetUIFontRegular());
             { ChromeTextScope _readingMenuEdit;
             // Undo / Redo
             {
@@ -35747,6 +35760,7 @@ void RenderUI(AppState& state) {
             {
                 auto lm = state.settings.listeningMode;
                 if (ImGui::BeginMenu(L(Play_PreviewModeLabel))) {
+                    ThemeMenuPopupStyleScope menuChromePreview(GetUIFontRegular());
                     if (ImGui::MenuItem(L(Play_BrowseMode), nullptr, lm == ListeningMode::Browse)) {
                         state.settings.listeningMode = ListeningMode::Browse;
                         state.settings.syncFromListeningMode();
@@ -35757,6 +35771,7 @@ void RenderUI(AppState& state) {
                         state.settings.syncFromListeningMode();
                         SaveAppSettings(state);
                     }
+                    menuChromePreview.reset();
                     ImGui::EndMenu();
                 }
             }
@@ -35805,9 +35820,11 @@ void RenderUI(AppState& state) {
             }
 
             }
+            menuChromeEdit.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(L(Menu_View))) {
+            ThemeMenuPopupStyleScope menuChromeView(GetUIFontRegular());
             { ChromeTextScope _readingMenuView;
             if (ImGui::MenuItem(L(View_FileBrowser), nullptr, state.viewMode == ViewMode::Browser)) {
                 state.viewMode = ViewMode::Browser;
@@ -35828,6 +35845,7 @@ void RenderUI(AppState& state) {
 
             // Waveform visualization options
             if (ImGui::BeginMenu(L(Menu_WaveformDisplay))) {
+                ThemeMenuPopupStyleScope menuChromeWaveform(GetUIFontRegular());
                 bool classicMode = (state.waveformColorMode == AppState::WaveformColorMode::Classic);
                 bool freqMode = (state.waveformColorMode == AppState::WaveformColorMode::FrequencyColored);
                 if (ImGui::MenuItem(L(View_ClassicGreen), nullptr, classicMode)) {
@@ -35836,6 +35854,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::MenuItem(L(View_FreqColor), nullptr, freqMode)) {
                     state.waveformColorMode = AppState::WaveformColorMode::FrequencyColored;
                 }
+                menuChromeWaveform.reset();
                 ImGui::EndMenu();
             }
             if (kEnableLufsUiAndDetection) {
@@ -35870,6 +35889,7 @@ void RenderUI(AppState& state) {
 
             // Panel visibility controls
             if (ImGui::BeginMenu(L(Menu_Panel))) {
+                ThemeMenuPopupStyleScope menuChromePanel(GetUIFontRegular());
                 if (ImGui::MenuItem(L(View_FilterFolder), nullptr, &state.panelSidebar.visible))
                     MarkSettingsDirty(state);
                 if (ImGui::MenuItem(L(View_InfoPanel), nullptr, &state.panelFileInfo.visible))
@@ -35899,6 +35919,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::MenuItem(L(Panel_FolderDetach), nullptr, state.folderBrowserDetached)) {
                     state.folderBrowserDetached = !state.folderBrowserDetached;
                 }
+                menuChromePanel.reset();
                 ImGui::EndMenu();
             }
 
@@ -35907,9 +35928,11 @@ void RenderUI(AppState& state) {
             ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
 #endif
             }
+            menuChromeView.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(L(Menu_Database))) {
+            ThemeMenuPopupStyleScope menuChromeDatabase(GetUIFontRegular());
             { ChromeTextScope _readingMenuDatabase;
             if (!state.currentDbPathUtf8.empty()) {
                 std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35938,6 +35961,7 @@ void RenderUI(AppState& state) {
             }
 #endif
             if (!state.recentDbPathsUtf8.empty() && ImGui::BeginMenu(L(Menu_RecentDB))) {
+                ThemeMenuPopupStyleScope menuChromeRecentDb(GetUIFontRegular());
                 for (size_t i = 0; i < state.recentDbPathsUtf8.size(); ++i) {
                     const std::string& p = state.recentDbPathsUtf8[i];
                     bool isCurrent = (!state.currentDbPathUtf8.empty() && p == state.currentDbPathUtf8);
@@ -35952,6 +35976,7 @@ void RenderUI(AppState& state) {
                     state.recentDbPathsUtf8.clear();
                     SaveAppSettings(state);
                 }
+                menuChromeRecentDb.reset();
                 ImGui::EndMenu();
             }
             ImGui::EndDisabled();
@@ -35964,9 +35989,11 @@ void RenderUI(AppState& state) {
             int64_t count = state.database.getFileCount();
             ImGui::Text(L(Main_TotalFilesFmt), count);
             }
+            menuChromeDatabase.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(L(Menu_Playlist))) {
+            ThemeMenuPopupStyleScope menuChromePlaylist(GetUIFontRegular());
             { ChromeTextScope _readingMenuPlaylist;
             if (ImGui::MenuItem(L(PL_NewPlaylist))) {
                 state.showPlaylistDialog = true;
@@ -36011,9 +36038,11 @@ void RenderUI(AppState& state) {
                 ImGui::PopID();
             }
             }
+            menuChromePlaylist.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(L(Menu_Tools))) {
+            ThemeMenuPopupStyleScope menuChromeTools(GetUIFontRegular());
             { ChromeTextScope _readingMenuTools;
             if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
             if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
@@ -36090,6 +36119,7 @@ void RenderUI(AppState& state) {
                 PumpDawBridgeRegistryProbeCache();
 
                 if (ImGui::BeginMenu(L(Tools_InstallDawBridge))) {
+                    ThemeMenuPopupStyleScope menuChromeDawBridge(GetUIFontRegular());
                     for (int i = 0; i < (int)g_dawBridgeRegistry.size(); ++i) {
                         const auto& installer = g_dawBridgeRegistry[i];
                         const auto& status    = g_dawBridgeProbeCache.statuses[i];
@@ -36159,17 +36189,20 @@ void RenderUI(AppState& state) {
                             }).detach();
                         }
                     }
+                    menuChromeDawBridge.reset();
                     ImGui::EndMenu();
                 }
             }
 
             }
+            menuChromeTools.reset();
             ImGui::EndMenu();
         }
         // 工具菜单 (UCS/标签/嵌入/命名/传输/工作流/主题)
         RenderToolsMenu(state);
 
         if (ImGui::BeginMenu(L(Menu_Settings))) {
+            ThemeMenuPopupStyleScope menuChromeSettings(GetUIFontRegular());
             { ChromeTextScope _readingMenuSettings;
             if (ImGui::MenuItem(L(Set_AppSettings))) {
                 state.showSettingsDialog = true;
@@ -36181,9 +36214,11 @@ void RenderUI(AppState& state) {
                 state.showDawTargetSettings = true;
             }
             }
+            menuChromeSettings.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(L(Menu_Help))) {
+            ThemeMenuPopupStyleScope menuChromeHelp(GetUIFontRegular());
             { ChromeTextScope _readingMenuHelp;
             if (ImGui::MenuItem(L(Help_About))) {
                 state.showAboutWindow = true;
@@ -36213,18 +36248,20 @@ void RenderUI(AppState& state) {
             }
             }
             }
+            menuChromeHelp.reset();
             ImGui::EndMenu();
         }
+        ImGui::PopStyleVar();
         if (ThemeInspector::IsCollecting()) {
             ImGuiWindow* mw = ImGui::GetCurrentWindow();
             ImRect mbr = mw->MenuBarRect();
             ThemeInspector::RegisterZone(mbr.Min, mbr.Max, "menuBarBG", L(ThemeCol_menuBarBG));
         }
-        ImGui::PopStyleColor(2);
-        ImGui::PopFont();
         ImGui::EndMenuBar();
     }
-    ImGui::PopStyleColor();
+    // 菜单栏作用域只盖到菜单栏和本帧展开的菜单，这里主动收尾，后面工具栏仍用常规样式。
+    menuPopupShell.reset();
+    menuBarChrome.reset();
 
     // TOP TOOLBAR - Search and Buttons
 
@@ -41884,20 +41921,22 @@ void RenderUI(AppState& state) {
                     if (wasPlayed) {
                         ImGui::PopStyleColor();
                     }
-                    if (ImGui::BeginPopupContextItem("##BrowserRowCtx")) {
+                    ThemeMenuPopupShellScope browserMenuShell(false);
+                    if (browserMenuShell.beginContextItem("##BrowserRowCtx", !entry.isDirectory)) {
+                        ThemeMenuPopupStyleScope browserMenuChrome(GetUIFontRegular(), !entry.isDirectory);
                         const std::string contextFolder = ResolveBrowserEntryFolderPath(entry);
                         const std::string folderTarget = contextFolder.empty() ? entry.fullPath : contextFolder;
                         const std::vector<std::string> browserSendPaths =
                             BuildBrowserTransferSourcePaths(state, entries, entryIndex);
-                        auto& _bpopColors = ImGui::GetStyle().Colors;
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(
-                            _bpopColors[ImGuiCol_ButtonHovered].x,
-                            _bpopColors[ImGuiCol_ButtonHovered].y,
-                            _bpopColors[ImGuiCol_ButtonHovered].z, 0.85f));
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(
-                            _bpopColors[ImGuiCol_Button].x,
-                            _bpopColors[ImGuiCol_Button].y,
-                            _bpopColors[ImGuiCol_Button].z, 0.55f));
+                        if (entry.isDirectory) {
+                            const auto& colors = ImGui::GetStyle().Colors;
+                            ImVec4 hovered = colors[ImGuiCol_ButtonHovered];
+                            ImVec4 selected = colors[ImGuiCol_Button];
+                            hovered.w = 0.85f;
+                            selected.w = 0.55f;
+                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hovered);
+                            ImGui::PushStyleColor(ImGuiCol_Header, selected);
+                        }
 
                         if (!entry.isDirectory) {
                             if (ImGui::MenuItem(L(Ctx_Play))) {
@@ -42016,9 +42055,11 @@ void RenderUI(AppState& state) {
                             }
                         }
 
-                        ImGui::PopStyleColor(2);
+                        if (entry.isDirectory) ImGui::PopStyleColor(2);
+                        browserMenuChrome.reset();
                         ImGui::EndPopup();
                     }
+                    browserMenuShell.reset();
 
                     // Waveform column - show cached mini waveform with click-to-play/seek
                     ImGui::TableNextColumn();
@@ -42872,18 +42913,10 @@ void RenderUI(AppState& state) {
                     }
                     // Keep the context-menu ID adjacent to Selectable while LastItem is valid.
                     bool rowContextInvalidatedResults = false;
-                    if (!g_playlistQuickDrag.active && ImGui::BeginPopupContextItem("RowContextMenu")) {
+                    ThemeMenuPopupShellScope rowMenuShell(false);
+                    if (!g_playlistQuickDrag.active && rowMenuShell.beginContextItem("RowContextMenu")) {
+                        ThemeMenuPopupStyleScope rowMenuChrome(GetUIFontRegular());
                         DiagScopedTimer _diagRowContextPopup("Playlist", "RowContextMenu.Frame");
-                        // Ensure menu item hover is visible regardless of theme HeaderHovered alpha
-                        auto& _popupColors = ImGui::GetStyle().Colors;
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(
-                            _popupColors[ImGuiCol_ButtonHovered].x,
-                            _popupColors[ImGuiCol_ButtonHovered].y,
-                            _popupColors[ImGuiCol_ButtonHovered].z, 0.85f));
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(
-                            _popupColors[ImGuiCol_Button].x,
-                            _popupColors[ImGuiCol_Button].y,
-                            _popupColors[ImGuiCol_Button].z, 0.55f));
 
                         // Snapshot expensive context-menu inputs on the popup-open frame.
                         // Keep subsequent menu frames render-only: the menu can stay open for many frames,
@@ -43540,10 +43573,11 @@ void RenderUI(AppState& state) {
                             state.showDeleteConfirmDialog = true;
                         }
                         ImGui::PopStyleColor(); // ImGuiCol_Text (red for delete)
-                        ImGui::PopStyleColor(2); // HeaderHovered + Header pushed at popup open
 
+                        rowMenuChrome.reset();
                         ImGui::EndPopup();
                     }
+                    rowMenuShell.reset();
                     if (rowContextInvalidatedResults) {
                         // wasPlayed was already popped before the popup (line ~25652); don't pop again
                         ImGui::PopID();
