@@ -525,5 +525,67 @@ class CardDirectoryCleanupTests(unittest.TestCase):
         self.assertIn(self.card.resolve(), [Path(p).resolve() for p in self.worktree_paths()])
 
 
+    def test_known_runtime_file_at_card_root_does_not_block_cleanup(self):
+        runtime = self.card / next(iter(cleanup.ALLOWED_RUNTIME_FILES))
+        runtime.write_text("{\"workItemId\":\"card\"}", encoding="utf-8")
+        head = git(self.card, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+        self.assertEqual(cleanup.main(self.args("--execute", "--expected-head", head)), 0)
+        self.assertFalse(self.card.exists())
+
+    def test_known_runtime_file_name_inside_subdirectory_still_blocks(self):
+        nested = self.card / "docs" / "_cuevi-session.json"
+        nested.parent.mkdir(exist_ok=True)
+        nested.write_text("{}", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertTrue(nested.exists())
+
+    def test_unknown_untracked_file_next_to_runtime_file_still_blocks(self):
+        (self.card / "_cuevi-session.json").write_text("{}", encoding="utf-8")
+        (self.card / "notes.txt").write_text("scratch", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertTrue((self.card / "notes.txt").exists())
+
+    def test_known_runtime_file_does_not_block_worktree_cleanup(self):
+        self.make_worktree_card()
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        head = git(self.card, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+        self.assertEqual(cleanup.main(self.args("--execute", "--expected-head", head)), 0)
+        self.assertFalse(self.card.exists())
+        self.assertEqual([Path(p).resolve() for p in self.worktree_paths()], [self.main_repo.resolve()])
+
+
+    def test_staged_runtime_file_is_refused(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--dry-run")
+        self.refused("--execute", "--expected-head", head)
+        self.assertTrue(runtime.exists())
+
+    def test_modified_tracked_runtime_file_is_refused(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        git(self.card, "commit", "-m", "track runtime file")
+        git(self.card, "push", str(self.origin), "HEAD:" + REF)
+        runtime.write_text("modified", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertEqual(runtime.read_text(encoding="utf-8"), "modified")
+
+    def test_clean_tracked_runtime_file_is_never_deleted_early(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        git(self.card, "commit", "-m", "track runtime file")
+        cleanup.delete_allowed_runtime_files(self.card)
+        self.assertTrue(runtime.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
