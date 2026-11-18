@@ -1,4 +1,4 @@
-﻿#include <filesystem>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -166,6 +166,15 @@ int main() {
     RequireContains(closeBlock, "g_explicitExitRequested.load", "WM_CLOSE respects explicit exit flag");
     RequireContains(closeBlock, "RequestHarkenSearchExit(hwnd, L\"close-button-direct\")", "direct close action exits through helper");
     RequireContains(closeBlock, "MinimizeWindowNoAnimation(hwnd);", "minimize-to-tray preference remains available for close button only");
+
+    const std::string splashBlock = SliceAfter(windowsMain, "static void RunBetaSplashScreen", 12000);
+    RequireContains(splashBlock, "g_explicitExitRequested.load", "beta splash observes startup exit request");
+    RequireContains(splashBlock, "StartupExitRequestedDuringSplash", "beta splash aborts before finalize");
+    const std::string webUiLoading = SliceAfter(windowsMain, "static void RunWebView2LoadingScreen", 12000);
+    RequireContains(webUiLoading, "g_explicitExitRequested.load", "web loading observes startup exit request");
+    RequireContains(webUiLoading, "StartupExitRequestedDuringWebUiLoading", "web loading aborts before finalize");
+    const std::string startupGate = SliceAfter(windowsMain, "if (!bypassStartupLoadingGate && useBetaSplashFallback)", 5000);
+    RequireContains(startupGate, "StartupExitRequestedBeforeMainUi", "startup gate returns before main UI");
 
     RequireContains(mainCpp, "RequestHarkenSearchExit(g_hwnd, L\"close-choice-exit\")", "close-choice Exit uses helper");
     RequireContains(mainCpp, "RequestHarkenSearchExit(g_hwnd, L\"file-menu-exit\")", "File Exit uses helper");
