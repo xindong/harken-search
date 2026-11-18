@@ -1,4 +1,5 @@
 #pragma once
+#include "BuildConfig.h"
 #include "InfoPageNavigation.h"
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
