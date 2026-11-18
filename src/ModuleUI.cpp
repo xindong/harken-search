@@ -195,7 +195,11 @@ void InitializeModules() {
 // 工具菜单
 
 void RenderToolsMenu(AppState& state) {
-    if (ImGui::BeginMenu(L(Menu_Tools))) {
+    const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
+#if ARIS_PREVIEW_ISOLATION
+    QaProbeMenuBarItem(state, L(Menu_Tools));
+#endif
+    if (toolsMenuOpen) {
         ImGui::TextDisabled("%s", L(Module_CategoryTags));
         if (ImGui::MenuItem(L(Module_UCSBrowser))) {
             state.showUCSBrowser = true;

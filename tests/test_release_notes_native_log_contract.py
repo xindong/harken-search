@@ -98,7 +98,7 @@ def test_release_packaging_supplies_the_installed_local_notes() -> None:
 
 
 def test_help_menu_keeps_update_history_inside_update_center() -> None:
-    help_start = MAIN.index("if (ImGui::BeginMenu(L(Menu_Help)))")
+    help_start = MAIN.index("ImGui::BeginMenu(L(Menu_Help))")
     help_end = MAIN.index("ImGui::EndMenu();", help_start)
     help_menu = MAIN[help_start:help_end]
     assert "L(Main_MenuUpdateCenter)" in help_menu

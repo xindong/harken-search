@@ -52,9 +52,15 @@ else if(id=="themeEditor") {
     }
 }
 else if(id=="language") {int n=(int)draft.language;if(combo(n,{u8"简体中文","English",u8"日本語"}))draft.language=(AppLanguage)n;}
-else if(id=="systemFont"||id=="listFont") {
-    auto& value=id=="systemFont"?draft.readingFontSize:draft.listFontSize;
+else if(id=="systemFont") {
+    auto& value=draft.readingFontSize;
     const int safeValue=ClampSettingsFontSize(value);
+    int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32"}))value=kFontSteps[n];
+}
+else if(id=="listFont") {
+    auto& value=draft.listFontSize;
+    const int safeValue=std::clamp(value,10,kMaxListFontPx);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
     if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
 }
