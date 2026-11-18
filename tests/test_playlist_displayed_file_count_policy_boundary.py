@@ -7,6 +7,7 @@ HEADER = ROOT / "src/PlaylistDisplayedFileCountPolicy.h"
 SOURCE = ROOT / "src/PlaylistDisplayedFileCountPolicy.cpp"
 MAIN = ROOT / "src/main.cpp"
 QUICK_BAR = ROOT / "src/PlaylistQuickBar.cpp"
+INDEX = ROOT / "src/PlaylistCollectionIndex.h"
 
 
 def test_policy_owns_recursive_playlist_display_count_semantics() -> None:
@@ -29,17 +30,22 @@ def test_policy_owns_recursive_playlist_display_count_semantics() -> None:
         assert forbidden not in source
 
 
-def test_product_root_consumes_policy_without_owning_recursive_helper() -> None:
+def test_product_root_consumes_shared_index_without_owning_recursive_helper() -> None:
     main = MAIN.read_text(encoding="utf-8")
     quick_bar = QUICK_BAR.read_text(encoding="utf-8")
-    assert '#include "PlaylistDisplayedFileCountPolicy.h"' in main
+    index = INDEX.read_text(encoding="utf-8")
+    assert '#include "PlaylistCollectionIndex.h"' in main
     assert "static int64_t GetPlaylistDisplayedFileCount" not in main
     assert "static int64_t GetPlaylistDisplayedFileCount" not in quick_bar
-    assert main.count("ResolvePlaylistDisplayedFileCount(") == 1
-    assert quick_bar.count("ResolvePlaylistDisplayedFileCount(") == 1
-    assert main.count("state.playlists, pl.id") >= 1
-    assert quick_bar.count("state.playlists, pl.id") == 1
-
+    # Both playlist surfaces read the cached count from the shared index.
+    assert main.count("state.playlistCollectionIndex.DisplayedCount(") == 1
+    assert quick_bar.count("state.playlistCollectionIndex.DisplayedCount(") == 1
+    assert main.count("EnsurePlaylistCollectionIndex(") == 1
+    assert quick_bar.count("EnsurePlaylistCollectionIndex(") == 1
+    # The recursive aggregation and its pending (-1) propagation live in the index only.
+    for semantic in ("childrenByParent", "displayedCountById", "childCount < 0"):
+        assert semantic in index
+    assert "ResolvePlaylistDisplayedFileCount" not in index
 
 def test_policy_is_built_tested_and_governed() -> None:
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

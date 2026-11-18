@@ -1,4 +1,5 @@
 #include "Database.h"
+#include "PlaylistCollectionIndex.h"
 #include "PathUtils.h"
 #include "sqlite3.h"
 
@@ -298,8 +299,80 @@ static void test_playlist_metadata_load_does_not_wait_for_counts() {
     db.close();
 }
 
+static void test_playlist_collection_index_counts_children_and_hidden() {
+    Playlist folder;
+    folder.id = 1;
+    folder.name = "Folder";
+    folder.is_folder = true;
+    folder.fileCount = 0;
+    Playlist childA;
+    childA.id = 2;
+    childA.parent_id = 1;
+    childA.fileCount = 3;
+    Playlist childB;
+    childB.id = 3;
+    childB.parent_id = 1;
+    childB.fileCount = 4;
+    std::vector<Playlist> playlists{folder, childA, childB};
+    std::vector<int64_t> hidden{3};
+    aura::playlist::PlaylistCollectionIndex index;
+    index.Rebuild(playlists, hidden);
+    check(index.DisplayedCount(1) == 7, "playlist collection index aggregates folder counts");
+    check(index.DisplayedCount(2) == 3, "playlist collection index keeps child count");
+    check(index.Children(1) != nullptr && index.Children(1)->size() == 2,
+          "playlist collection index indexes folder children once");
+    check(index.IsHidden(3) && !index.IsHidden(2),
+          "playlist collection index exposes hidden membership");
+}
+
+static void test_playlist_collection_index_position_lookup_matches_linear_scan() {
+    std::vector<Playlist> playlists;
+    for (int i = 0; i < 64; ++i) {
+        Playlist playlist{};
+        playlist.id = 100 + i * 3;
+        playlist.parent_id = 0;
+        playlist.is_folder = false;
+        playlist.fileCount = i;
+        playlists.push_back(playlist);
+    }
+    aura::playlist::PlaylistCollectionIndex index;
+    index.Rebuild(playlists, {});
+    for (size_t pos = 0; pos < playlists.size(); ++pos) {
+        check(index.IndexOf(playlists[pos].id) == (int)pos,
+              "playlist index position matches linear scan");
+    }
+    check(index.IndexOf(-7) == -1, "playlist index reports unknown ids");
+}
+
+static void test_quickbar_order_signature_tracks_applied_order() {
+    std::vector<Playlist> playlists;
+    for (int id : {5, 1, 9, 3}) {
+        Playlist playlist{};
+        playlist.id = id;
+        playlist.parent_id = 0;
+        playlist.is_folder = false;
+        playlist.fileCount = 0;
+        playlists.push_back(playlist);
+    }
+    std::vector<int64_t> order{3, 9, 1, 5};
+    const uint64_t before = aura::playlist::PlaylistQuickBarOrderSignature(playlists, order);
+    std::vector<Playlist> ordered;
+    for (int64_t id : order) {
+        for (const Playlist& playlist : playlists) {
+            if (playlist.id == id) ordered.push_back(playlist);
+        }
+    }
+    const uint64_t after = aura::playlist::PlaylistQuickBarOrderSignature(ordered, order);
+    check(before != after, "order signature reflects the reordered list");
+    check(after == aura::playlist::PlaylistQuickBarOrderSignature(ordered, order),
+          "applied order signature is stable across calls");
+}
+
 int main() {
     test_schema_indexes_exist();
+    test_playlist_collection_index_counts_children_and_hidden();
+    test_playlist_collection_index_position_lookup_matches_linear_scan();
+    test_quickbar_order_signature_tracks_applied_order();
     test_bulk_add_is_bounded_and_ordered();
     test_bulk_add_rejects_folder_playlist();
     test_folder_drop_order_and_rollback();
