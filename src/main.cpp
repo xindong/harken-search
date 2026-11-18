@@ -36494,9 +36494,9 @@ void RenderUI(AppState& state) {
             historyReserveW - presetDialReserveW;
         const float searchMinW = layoutTinyWidth ? 156.0f : (layoutCompactWidth ? 216.0f : 256.0f);
         const float searchMaxW = layoutCompactWidth ? 356.0f : 456.0f;
-        const float searchWidth = std::min(
+        const float searchWidth = harken::toolbar::SearchWidthWithModeLabel(std::min(
             std::clamp(spaceAfterAnchor - navReserveW - 18.0f, searchMinW, searchMaxW),
-            std::max(96.0f, spaceAfterAnchor - 152.0f));
+            std::max(96.0f, spaceAfterAnchor - 152.0f)));
         const float historyX = historyAfterSearch
             ? resultsHomeLeftScreenX + searchWidth + searchHistoryGap : leadingHistoryX;
         ImGui::SetCursorScreenPos(ImVec2(historyX, toolbarWindowPos.y + kToolbarCenterY));
@@ -36650,7 +36650,9 @@ void RenderUI(AppState& state) {
             const auto search = harken::toolbar::DrawSearchField("##SearchBar", L(Search_Hint),
                 state.searchBuffer, sizeof(state.searchBuffer), searchWidth,
                 toolbarSearchPalette, harken::toolbar::SearchFieldOptions{
-                    true, state.searchExactModeLocked, searchFocusRequested});
+                    true, state.searchExactModeLocked, searchFocusRequested, 0.0f,
+                    state.settings.searchRealtime ? harken::toolbar::SearchModeLabel::Live
+                                                  : harken::toolbar::SearchModeLabel::Enter});
 
             inputReturn = search.submitted;
             forceApply = search.cleared;

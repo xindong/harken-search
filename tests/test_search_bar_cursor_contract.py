@@ -8,7 +8,7 @@ CONTROLS = MAIN.parent / "ui" / "ToolbarSearchControls.h"
 def _search_bar_region() -> str:
     source = MAIN.read_text(encoding="utf-8")
     start = source.index("const float searchY")
-    end = source.index("const float kSearchModeHintReserve", start)
+    end = source.index("const float searchAndHistoryRightX", start)
     return source[start:end]
 
 
@@ -19,13 +19,12 @@ def test_search_bar_uses_native_caret_without_redundant_custom_overlay():
     assert 'ImGui::InputTextEx("##in"' in controls
     assert "ImGuiCol_InputTextCursor, palette.text" in controls
     assert "focusPulse" not in region + controls
-    assert "searchModeHint" not in region
 
 
 def test_search_and_history_keep_the_existing_workflow():
     main = MAIN.read_text(encoding="utf-8")
     start = main.index("constexpr float kHistoryButtonWidth")
-    end = main.index("const float kSearchModeHintReserve", start)
+    end = main.index("const float searchAndHistoryRightX", start)
     toolbar = main[start:end]
     assert 'RegisterLastItem("toolbar.back"' in toolbar
     assert 'RegisterLastItem("toolbar.continue"' in toolbar

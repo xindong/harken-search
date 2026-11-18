@@ -4,6 +4,7 @@
 #include "TransportContrast.h"
 #include "imgui_internal.h"
 
+#include <cmath>
 #include <cstddef>
 #include <limits>
 
@@ -11,6 +12,28 @@ namespace harken::toolbar {
 
 inline constexpr float kSearchTextOffset = 36.0f;
 inline constexpr float kSearchClearWidth = 28.0f;
+inline constexpr float kSearchModeLabelScale = 0.84f;
+inline constexpr float kSearchModeLabelPadding = 4.0f;
+inline constexpr float kMainSearchMinEditableWidth = 86.0f;
+inline constexpr char kLiveModeLabel[] = "live";
+inline constexpr char kEnterModeLabel[] = "enter";
+
+enum class SearchModeLabel { None, Live, Enter };
+
+inline float SearchModeLabelSlotWidth()
+{
+    ImFont* font = ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize() * kSearchModeLabelScale;
+    const float liveWidth = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, kLiveModeLabel).x;
+    const float enterWidth = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, kEnterModeLabel).x;
+    return std::ceil(std::max(liveWidth, enterWidth)) + 2.0f * kSearchModeLabelPadding;
+}
+
+inline float SearchWidthWithModeLabel(float preferredWidth)
+{
+    return std::max(preferredWidth,
+        kSearchTextOffset + kMainSearchMinEditableWidth + SearchModeLabelSlotWidth() + kSearchClearWidth);
+}
 
 inline float SearchFieldHeight()
 {
@@ -61,6 +84,7 @@ struct SearchFieldOptions {
     bool precise = false;
     bool requestFocus = false;
     float minHeight = 0.0f;
+    SearchModeLabel modeLabel = SearchModeLabel::None;
 };
 
 inline SearchFieldResult DrawSearchField(const char* label, const char* placeholder, char* buffer,
@@ -68,10 +92,12 @@ inline SearchFieldResult DrawSearchField(const char* label, const char* placehol
 {
     SearchFieldResult result;
     if (ImGui::GetCurrentWindow()->SkipItems || !buffer || capacity == 0
-        || capacity > static_cast<std::size_t>((std::numeric_limits<int>::max)())
-        || width <= kSearchTextOffset + kSearchClearWidth) {
+        || capacity > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
         return result;
     }
+    const float modeSlotWidth = options.modeLabel == SearchModeLabel::None ? 0.0f : SearchModeLabelSlotWidth();
+    if (width <= kSearchTextOffset + kSearchClearWidth + modeSlotWidth)
+        return result;
 
     const float height = std::max(SearchFieldHeight(), options.minHeight);
     const float radius = height * 0.5f;
@@ -80,6 +106,7 @@ inline SearchFieldResult DrawSearchField(const char* label, const char* placehol
     const float textInset = !options.allowPrecise && width < 160.0f ? 28.0f : kSearchTextOffset;
     const ImVec2 textStart(start.x + textInset, start.y);
     const ImVec2 clearStart(end.x - kSearchClearWidth, start.y);
+    const float editorRight = clearStart.x - modeSlotWidth;
     const float centerY = start.y + radius;
     auto* draw = ImGui::GetWindowDrawList();
     auto& context = *ImGui::GetCurrentContext();
@@ -132,7 +159,7 @@ inline SearchFieldResult DrawSearchField(const char* label, const char* placehol
         io.MouseDown[ImGuiMouseButton_Left] = false;
     }
     const bool hideHint = requestFocus || context.ActiveId == inputId || context.NavId == inputId
-        || (mouseClicked && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(textStart, ImVec2(clearStart.x, end.y)));
+        || (mouseClicked && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(textStart, ImVec2(editorRight, end.y)));
     ImVec4 transparent = palette.searchFill;
     transparent.w = 0.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, (height - ImGui::GetFontSize()) * 0.5f));
@@ -143,8 +170,8 @@ inline SearchFieldResult DrawSearchField(const char* label, const char* placehol
     ImGui::PushStyleColor(ImGuiCol_TextDisabled, palette.hint);
     ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, palette.selection);
     ImGui::PushStyleColor(ImGuiCol_InputTextCursor, palette.text);
-    const float inputRight = !options.allowPrecise && !hideHint && buffer[0] == '\0'
-        ? end.x - 10.0f : clearStart.x;
+    const float inputRight = modeSlotWidth == 0.0f && !options.allowPrecise && !hideHint && buffer[0] == '\0'
+        ? end.x - 10.0f : editorRight;
     result.submitted = ImGui::InputTextEx("##in", hideHint ? "" : placeholder, buffer, static_cast<int>(capacity),
         ImVec2(inputRight - textStart.x, height), ImGuiInputTextFlags_EnterReturnsTrue);
     result.active = enabled && ImGui::IsItemActive();
@@ -168,6 +195,16 @@ inline SearchFieldResult DrawSearchField(const char* label, const char* placehol
         const float outset = std::min(1.0f, std::max(0.0f, clearance) - paintPadding);
         draw->AddRect(ImVec2(start.x - outset, start.y - outset), ImVec2(end.x + outset, end.y + outset),
             ImGui::GetColorU32(palette.focus), radius + outset, 0, focusThickness);
+        if (modeSlotWidth > 0.0f) {
+            const char* labelText = options.modeLabel == SearchModeLabel::Live ? kLiveModeLabel : kEnterModeLabel;
+            ImFont* font = ImGui::GetFont();
+            const float fontSize = ImGui::GetFontSize() * kSearchModeLabelScale;
+            const ImVec2 labelSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, labelText);
+            const ImVec4 clip(editorRight, start.y, clearStart.x, end.y);
+            draw->AddText(font, fontSize,
+                ImVec2(clearStart.x - kSearchModeLabelPadding - labelSize.x, centerY - labelSize.y * 0.5f),
+                ImGui::GetColorU32(palette.hint), labelText, nullptr, 0.0f, &clip);
+        }
     }
     const auto iconSurface = [&](ImVec2 center, ImGuiID id, bool hovered) {
         if (hovered) {

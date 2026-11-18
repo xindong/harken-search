@@ -17,6 +17,12 @@ struct Frame {
     ImRect clearInk{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
     ImRect crossInk{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
     ImRect focusInk{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+    ImRect modeInk{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+    ImRect queryInk{FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX};
+    float modeSlotWidth;
+    float scrollX;
+    ImU32 modeColor;
+    int modeShapeVertices;
     int focusVertices;
 };
 
@@ -27,6 +33,9 @@ struct Fixture {
     bool allowPrecise = true;
     bool clipToSearchBounds = false;
     bool precise = false;
+    bool showModeLabel = false;
+    bool realtime = true;
+    float requestedWidth = width;
 
     Fixture()
     {
@@ -60,26 +69,38 @@ struct Fixture {
         const ImGuiID nativeId = ImGui::GetID("##in");
         ImGui::PopID();
         const auto palette = SearchPalette();
+        const float fieldWidth = showModeLabel ? toolbar::SearchWidthWithModeLabel(requestedWidth) : requestedWidth;
+        const auto modeLabel = showModeLabel
+            ? (realtime ? toolbar::SearchModeLabel::Live : toolbar::SearchModeLabel::Enter)
+            : toolbar::SearchModeLabel::None;
         ImGui::SetCursorScreenPos(searchPos);
         auto* drawList = ImGui::GetWindowDrawList();
         if (clipToSearchBounds)
-            drawList->PushClipRect(searchPos, ImVec2(searchPos.x + width,
+            drawList->PushClipRect(searchPos, ImVec2(searchPos.x + fieldWidth,
                 searchPos.y + toolbar::SearchFieldHeight()), true);
         const int firstVertex = drawList->VtxBuffer.Size;
         Frame frame{};
         frame.search = toolbar::DrawSearchField("##SearchBar", "Search", query, sizeof(query),
-            width, palette, toolbar::SearchFieldOptions{allowPrecise, precise, requestFocus});
+            fieldWidth, palette, toolbar::SearchFieldOptions{allowPrecise, precise, requestFocus, 0.0f, modeLabel});
         requestFocus = false;
         if (frame.search.preciseToggled) precise = !precise;
         frame.searchBounds = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         frame.nativeInputActive = ImGui::GetActiveID() == nativeId;
+        if (const auto* textState = ImGui::GetInputTextState(nativeId))
+            frame.scrollX = textState->Scroll.x;
+        const float modeFontSize = ImGui::GetFontSize() * 0.84f;
+        const float liveWidth = ImGui::GetFont()->CalcTextSizeA(modeFontSize, FLT_MAX, 0.0f, "live").x;
+        const float enterWidth = ImGui::GetFont()->CalcTextSizeA(modeFontSize, FLT_MAX, 0.0f, "enter").x;
+        frame.modeSlotWidth = std::ceil(std::max(liveWidth, enterWidth)) + 8.0f;
+        const float clearLeft = frame.searchBounds.Max.x - toolbar::kSearchClearWidth;
+        const ImVec2 whiteUv = ImGui::GetFontTexUvWhitePixel();
         const ImVec2 clearCenter(frame.searchBounds.Max.x - toolbar::kSearchClearWidth * 0.5f,
             frame.searchBounds.GetCenter().y);
         for (int index = firstVertex; index < drawList->VtxBuffer.Size; ++index) {
             const auto& vertex = drawList->VtxBuffer[index];
             frame.themedFill |= vertex.col == ImGui::GetColorU32(palette.searchFill);
             if (query[0] && vertex.col == ImGui::GetColorU32(palette.searchIcon)
-                && vertex.pos.x > searchPos.x + width - toolbar::kSearchClearWidth)
+                && vertex.pos.x > clearLeft)
                 frame.clearInk.Add(vertex.pos);
             if (query[0] && vertex.col == ImGui::GetColorU32(palette.searchFill)
                 && std::abs(vertex.pos.x - clearCenter.x) < 5.25f
@@ -90,9 +111,21 @@ struct Fixture {
                 if (vertex.pos.y < searchPos.y)
                     ++frame.focusVertices;
             }
+            const bool isGlyph = vertex.uv.x != whiteUv.x || vertex.uv.y != whiteUv.y;
+            const bool inModeSlot = vertex.pos.x > clearLeft - frame.modeSlotWidth && vertex.pos.x < clearLeft;
+            if (!isGlyph && inModeSlot)
+                ++frame.modeShapeVertices;
+            if (isGlyph && query[0] && vertex.col == ImGui::GetColorU32(palette.text))
+                frame.queryInk.Add(vertex.pos);
+            if (isGlyph && inModeSlot && query[0] && vertex.col == ImGui::GetColorU32(palette.hint)) {
+                frame.modeInk.Add(vertex.pos);
+                frame.modeColor = vertex.col;
+            }
         }
         if (clipToSearchBounds)
             drawList->PopClipRect();
+        ImGui::SetCursorScreenPos(ImVec2(searchPos.x, searchPos.y + 60.0f));
+        ImGui::Button("Other control");
         ImGui::End();
         ImGui::Render();
         return frame;
@@ -205,6 +238,90 @@ bool FocusRingFitsClippedField()
     return true;
 }
 
+bool NarrowModeLabelKeepsQueryAndClearSeparate()
+{
+    Fixture fixture;
+    fixture.showModeLabel = true;
+    fixture.requestedWidth = 102.0f;
+    ImGui::GetIO().DisplaySize.x = 850.0f;
+    std::memset(fixture.query, 'm', sizeof(fixture.query) - 1);
+    fixture.requestFocus = true;
+    fixture.Draw();
+    fixture.Draw();
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_End, true);
+    const auto live = fixture.Draw();
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_End, false);
+    CHECK(live.nativeInputActive);
+    const float clearLeft = live.searchBounds.Max.x - toolbar::kSearchClearWidth;
+    const float editorRight = clearLeft - live.modeSlotWidth;
+    const float editorWidth = editorRight - live.searchBounds.Min.x - toolbar::kSearchTextOffset;
+    CHECK(editorWidth >= 80.0f && editorWidth <= 90.0f);
+    CHECK(live.scrollX > 0.0f && live.queryInk.GetWidth() >= 60.0f);
+    CHECK(live.queryInk.Max.x <= editorRight && live.modeInk.Min.x > editorRight);
+    CHECK(live.modeInk.GetWidth() > 0.0f && live.modeInk.Max.x < clearLeft);
+    CHECK(live.clearInk.Min.x > clearLeft);
+    const float centerY = live.searchBounds.GetCenter().y;
+    fixture.Draw();
+    ImGui::GetIO().AddMousePosEvent(clearLeft - 1.0f, centerY);
+    fixture.Draw();
+    CHECK(!fixture.Mouse(clearLeft - 1.0f, centerY, true).search.cleared);
+    CHECK(ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]);
+    CHECK(!fixture.Mouse(clearLeft - 1.0f, centerY, false).search.cleared);
+    CHECK(std::strlen(fixture.query) == sizeof(fixture.query) - 1);
+
+    ImGui::GetIO().AddMousePosEvent(clearLeft + 1.0f, centerY);
+    fixture.Draw();
+    CHECK(!fixture.Mouse(clearLeft + 1.0f, centerY, true).search.cleared);
+    CHECK(ImGui::GetIO().MouseDown[ImGuiMouseButton_Left] && ImGui::GetIO().MousePos.x > clearLeft);
+    const auto cleared = fixture.Mouse(clearLeft + 1.0f, centerY, false);
+    CHECK(cleared.search.cleared && fixture.query[0] == '\0');
+    CHECK(fixture.Draw().nativeInputActive);
+    std::printf("850px geometry: pill %.0f, editor %.0f, label slot %.0f, clear %.0f, scroll %.0f\n",
+        live.searchBounds.GetWidth(), editorWidth, live.modeSlotWidth, toolbar::kSearchClearWidth, live.scrollX);
+    return true;
+}
+
+bool ModeLabelsShareAlignmentAndFollowFocusAndTheme()
+{
+    Fixture fixture;
+    std::strcpy(fixture.query, "rain");
+    fixture.requestFocus = true;
+    fixture.Draw();
+    const auto withoutLabel = fixture.Draw();
+    CHECK(withoutLabel.nativeInputActive && withoutLabel.modeInk.IsInverted());
+    fixture.showModeLabel = true;
+    const auto live = fixture.Draw();
+    CHECK(live.modeInk.GetWidth() > 0.0f && live.modeShapeVertices == withoutLabel.modeShapeVertices);
+    CHECK(live.queryInk.Min.x == withoutLabel.queryInk.Min.x);
+    CHECK(live.clearInk.GetCenter().x == withoutLabel.clearInk.GetCenter().x);
+    CHECK(live.clearInk.GetCenter().y == withoutLabel.clearInk.GetCenter().y);
+    ImGui::GetIO().AddInputCharactersUTF8("wind");
+    CHECK(!fixture.Draw().search.submitted && std::strstr(fixture.query, "wind"));
+
+    fixture.realtime = false;
+    const auto enter = fixture.Draw();
+    CHECK(enter.modeInk.GetWidth() > live.modeInk.GetWidth());
+    CHECK(std::abs(enter.modeInk.Max.x - live.modeInk.Max.x) <= 1.0f);
+    CHECK(enter.clearInk.GetCenter().x == live.clearInk.GetCenter().x);
+    fixture.theme.toolbarBG = ImVec4(0.97f, 0.94f, 0.89f, 1.0f);
+    fixture.theme.frameBgBase = ImVec4(0.99f, 0.96f, 0.91f, 1.0f);
+    fixture.theme.interfaceText = ImVec4(0.18f, 0.09f, 0.24f, 1.0f);
+    const auto light = fixture.Draw();
+    CHECK(light.modeInk.GetWidth() > 0.0f && light.modeColor != enter.modeColor);
+    const auto lightPalette = fixture.SearchPalette();
+    CHECK(TransportContrast::Ratio(ImGui::ColorConvertU32ToFloat4(light.modeColor), lightPalette.searchFill) >= 4.45);
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, true);
+    CHECK(fixture.Draw().search.submitted);
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, false);
+    fixture.Draw();
+    fixture.Mouse(searchPos.x + 12.0f, searchPos.y + 64.0f, true);
+    fixture.Mouse(searchPos.x + 12.0f, searchPos.y + 64.0f, false);
+    const auto unfocused = fixture.Draw();
+    CHECK(!unfocused.search.focused && unfocused.modeInk.IsInverted());
+    CHECK(unfocused.searchBounds.GetWidth() == light.searchBounds.GetWidth());
+    return true;
+}
+
 }
 
 int main()
@@ -217,6 +334,8 @@ int main()
         {"dark and light palette plus visible centered clear glyph", SearchLegibility},
         {"filter lens focuses without switching to precise search", FilterLensFocusesWithoutChangingSearchMode},
         {"focus ring remains inside a clipped field", FocusRingFitsClippedField},
+        {"850px mode label preserves editing and clear hit areas", NarrowModeLabelKeepsQueryAndClearSeparate},
+        {"mode labels align and follow focus and theme", ModeLabelsShareAlignmentAndFollowFocusAndTheme},
     };
     int failures = 0;
     for (const auto& test : tests) {
