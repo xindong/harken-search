@@ -349,6 +349,7 @@ public:
     bool Active() const { return !module_.empty(); }
     bool Owns(std::string_view module) const { return Active() && module_ == module; }
     bool Dragging() const { return dragging_; }
+    void BeginDetachedDrag() { if (Active()) dragging_ = moved_ = true; }
     bool DropArmed() const { return dragging_ && moved_; }
     bool FromFloating() const { return fromFloating_; }
     float HoldProgress(double now) const {
