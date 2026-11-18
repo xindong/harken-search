@@ -21,6 +21,7 @@ from qa_transport_themes import Driver, THEMES
 FONT_OPTIONS = (10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32)
 LIST_OPTIONS = (10, 11, 12, 13, 14, 16, 18, 20, 22, 24)
 MENU_MIN_PX = 14
+kChromeFloor = 14.0
 
 
 def make_library(folder: Path) -> None:
@@ -212,6 +213,31 @@ def main(args: argparse.Namespace) -> int:
             click('apply')
             settle()
 
+    def resize_window(width, height):
+        hwnd = command(cmd='magic_eq_identity')['hwnd']
+        win32gui.SetWindowPos(hwnd, 0, 0, 0, width, height,
+                              win32con.SWP_NOMOVE | win32con.SWP_NOZORDER)
+        msettle()
+        time.sleep(.5)
+        return msettle()
+
+    def check_menu_fits(label, max_width):
+        observed = fresh_menu()
+        assert observed['bar_right'] <= max_width + 2, (label, observed)
+        assert observed['last_item_right'] <= observed['bar_right'] + 0.5, (label, observed)
+        assert kChromeFloor <= observed['font_pixels'] <= 32.5, (label, observed)
+        items = observed['items']
+        assert len(items) >= 8, (label, [entry['label'] for entry in items])
+        for entry in items:
+            x0, y0, x1, y1 = entry['bounds']
+            assert x1 <= observed['bar_right'] + 0.5, (label, entry, observed)
+            assert y0 >= observed['bar_top'] - 1 and y1 <= observed['bar_top'] + observed['bar_height'] + 1, (label, entry, observed)
+        report['checks'].append({'case': label, 'menu_px': observed['font_pixels'],
+                                 'bar_height': observed['bar_height'],
+                                 'bar_right': observed['bar_right'],
+                                 'last_item_right': observed['last_item_right']})
+        return observed
+
     def check_menu(label, size, width_expect=None):
         observed = fresh_menu()
         expected = expected_menu_px(size)
@@ -220,7 +246,8 @@ def main(args: argparse.Namespace) -> int:
         assert observed['workspace_top'] + 2 >= observed['bar_top'] + observed['bar_height'], (label, observed)
         assert observed['bar_right'] >= observed['last_item_right'] - 0.5, (label, observed)
         items = observed['items']
-        assert len(items) >= 6, (label, [entry['label'] for entry in items])
+        assert len(items) >= 8, (label, [entry['label'] for entry in items])
+        assert len({entry['label'] for entry in items}) >= 8, [entry['label'] for entry in items]
         assert observed['bar_right'] - observed['last_item_right'] >= -0.5, (label, observed)
         for entry in items:
             x0, y0, x1, y1 = entry['bounds']
@@ -408,6 +435,23 @@ def main(args: argparse.Namespace) -> int:
         choose_theme(0)
         apply()
         click('nav-1')
+
+        click('close')
+        msettle()
+        if settle()['prompt']:
+            click('discard')
+            settle()
+        hwnd_now = command(cmd='magic_eq_identity')['hwnd']
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd_now)
+        original_size = (right - left, bottom - top)
+        for width in (900, 640):
+            narrow = resize_window(width, 700)
+            shot('09-narrow-' + str(width) + '-32')
+            check_menu_fits('narrow ' + str(width) +
+                            ' px window keeps every menu entry inside the bar',
+                            narrow['work_size'][0])
+        resize_window(original_size[0], original_size[1])
+        ensure_settings()
 
         choose_list(24)
         apply()

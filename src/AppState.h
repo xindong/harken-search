@@ -3314,6 +3314,12 @@ struct AppState {
     } qaRegions;
 };
 
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: records one top-level menu-bar item (label + rect) for the
+// acceptance script, so it can assert the real grid instead of guessing clicks.
+void QaProbeMenuBarItem(AppState& state, const char* label);
+#endif
+
 // Global app state pointer
 extern AppState* g_appState;
 

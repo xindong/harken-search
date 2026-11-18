@@ -29872,6 +29872,16 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
     drawList->PopClipRect();
 }
 
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: record a top-level menu-bar item so the acceptance script can assert
+// the real label grid instead of guessing click coordinates.
+void QaProbeMenuBarItem(AppState& state, const char* label) {
+    const ImVec2 a = ImGui::GetItemRectMin();
+    const ImVec2 b = ImGui::GetItemRectMax();
+    state.qaRegions.menuBarItems.push_back({label, a.x, a.y, b.x, b.y});
+}
+#endif
+
 void RenderUI(AppState& state) {
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
         state.audioEngine.isLoaded()) {
@@ -35366,17 +35376,16 @@ void RenderUI(AppState& state) {
     // TOP MENU BAR
 #if ARIS_PREVIEW_ISOLATION
     state.qaRegions.menuBarItems.clear();
-    auto qaProbeMenuBarItem = [&state](const char* label) {
-        const ImVec2 a = ImGui::GetItemRectMin();
-        const ImVec2 b = ImGui::GetItemRectMax();
-        state.qaRegions.menuBarItems.push_back({label, a.x, a.y, b.x, b.y});
-    };
 #endif
 
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().menuPopupBG);
     // Top menu follows the system/reading font size (REQ-20261110-TOP-MENU-FONT).
     // The font is pushed before the bar is submitted so the bar height grows with it.
-    const float menuFontPx = GetMenuFontSizePx();
+    // When the row cannot fit (narrow window / long translation) the font steps back
+    // towards the chrome size instead of clipping the right-most entries.
+    static float s_menuFitScale = 1.0f;
+    const float menuFontPx =
+        ImMax((float)kChromeFontPx, GetMenuFontSizePx() * s_menuFitScale);
     ImGui::PushFont(GetMenuUIFont(), menuFontPx);
     if (ImGui::BeginMainMenuBar()) {
         ImGuiWindow* menuWindow = ImGui::GetCurrentWindow();
@@ -35404,7 +35413,7 @@ void RenderUI(AppState& state) {
             ThemeColors::current().menuText.w));
         const bool fileMenuOpen = ImGui::BeginMenu(L(Menu_File));
 #if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_File));
+        QaProbeMenuBarItem(state, L(Menu_File));
 #endif
         if (fileMenuOpen) {
             { MenuTextScope _readingMenuFile; // menu dropdowns share the chrome face.
@@ -35484,11 +35493,8 @@ void RenderUI(AppState& state) {
             ImGui::Separator();
 
             // Database management submenu
-            const bool databaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
-#if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_Database));
-#endif
-        if (databaseMenuOpen) {
+            const bool fileDatabaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
+        if (fileDatabaseMenuOpen) {
                 // Current database info
                 if (!state.currentDbPathUtf8.empty()) {
                     std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35574,7 +35580,7 @@ void RenderUI(AppState& state) {
         }
         const bool editMenuOpen = ImGui::BeginMenu(L(Menu_Edit));
 #if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_Edit));
+        QaProbeMenuBarItem(state, L(Menu_Edit));
 #endif
         if (editMenuOpen) {
             { MenuTextScope _readingMenuEdit;
@@ -35727,7 +35733,7 @@ void RenderUI(AppState& state) {
         }
         const bool viewMenuOpen = ImGui::BeginMenu(L(Menu_View));
 #if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_View));
+        QaProbeMenuBarItem(state, L(Menu_View));
 #endif
         if (viewMenuOpen) {
             { MenuTextScope _readingMenuView;
@@ -35831,7 +35837,11 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Database))) {
+        const bool databaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Database));
+#endif
+        if (databaseMenuOpen) {
             { MenuTextScope _readingMenuDatabase;
             if (!state.currentDbPathUtf8.empty()) {
                 std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35890,7 +35900,7 @@ void RenderUI(AppState& state) {
         }
         const bool playlistMenuOpen = ImGui::BeginMenu(L(Menu_Playlist));
 #if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_Playlist));
+        QaProbeMenuBarItem(state, L(Menu_Playlist));
 #endif
         if (playlistMenuOpen) {
             { MenuTextScope _readingMenuPlaylist;
@@ -35939,7 +35949,11 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Tools))) {
+        const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Tools));
+#endif
+        if (toolsMenuOpen) {
             { MenuTextScope _readingMenuTools;
             if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
             if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
@@ -36097,7 +36111,7 @@ void RenderUI(AppState& state) {
 
         const bool settingsMenuOpen = ImGui::BeginMenu(L(Menu_Settings));
 #if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_Settings));
+        QaProbeMenuBarItem(state, L(Menu_Settings));
 #endif
         if (settingsMenuOpen) {
             { MenuTextScope _readingMenuSettings;
@@ -36115,7 +36129,7 @@ void RenderUI(AppState& state) {
         }
         const bool helpMenuOpen = ImGui::BeginMenu(L(Menu_Help));
 #if ARIS_PREVIEW_ISOLATION
-        qaProbeMenuBarItem(L(Menu_Help));
+        QaProbeMenuBarItem(state, L(Menu_Help));
 #endif
         if (helpMenuOpen) {
             { MenuTextScope _readingMenuHelp;
@@ -36154,17 +36168,24 @@ void RenderUI(AppState& state) {
             ImRect mbr = mw->MenuBarRect();
             ThemeInspector::RegisterZone(mbr.Min, mbr.Max, "menuBarBG", L(ThemeCol_menuBarBG));
         }
+        const float menuRowRight = ImGui::GetItemRectMax().x;
+        const float menuBarRightEdge = menuBarRect.Max.x;
 #if ARIS_PREVIEW_ISOLATION
         state.qaRegions.menuBarFrame = ImGui::GetFrameCount();
         state.qaRegions.menuBarFontPixels = ImGui::GetFontSize();
         state.qaRegions.menuBarHeight = menuBarRect.GetHeight();
         state.qaRegions.menuBarRight = menuBarRect.Max.x;
         state.qaRegions.menuBarTop = menuBarRect.Min.y;
-        state.qaRegions.menuBarLastItemRight = ImGui::GetItemRectMax().x;
+        state.qaRegions.menuBarLastItemRight = menuRowRight;
 #endif
         ImGui::PopStyleColor(2);
         ImGui::PopFont();
         ImGui::EndMainMenuBar();
+        if (menuRowRight > menuBarRightEdge - 4.0f) {
+            s_menuFitScale = ImMax(0.5f, s_menuFitScale - 0.06f);
+        } else if (s_menuFitScale < 1.0f && menuRowRight < menuBarRightEdge * 0.82f) {
+            s_menuFitScale = ImMin(1.0f, s_menuFitScale + 0.03f);
+        }
     }
     ImGui::PopFont();
     ImGui::PopStyleColor();
@@ -36173,10 +36194,19 @@ void RenderUI(AppState& state) {
     // MAIN LAYOUT - classic library layout
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // BeginMainMenuBar only reports its height into the *build* work area, which
+    // becomes WorkPos/WorkSize on the next frame. Read the build area so the
+    // workspace never spends one frame under the bar (or leaving a gap).
+    const ImGuiViewportP* viewportBuild = (const ImGuiViewportP*)viewport;
+    const ImVec2 frameWorkPos(viewportBuild->Pos.x + viewportBuild->BuildWorkInsetMin.x,
+                              viewportBuild->Pos.y + viewportBuild->BuildWorkInsetMin.y);
+    const ImVec2 frameWorkSize(
+        viewportBuild->Size.x - viewportBuild->BuildWorkInsetMin.x - viewportBuild->BuildWorkInsetMax.x,
+        viewportBuild->Size.y - viewportBuild->BuildWorkInsetMin.y - viewportBuild->BuildWorkInsetMax.y);
     // Saved detached layouts must not turn the root workspace into a second OS window.
     ImGui::SetNextWindowViewport(viewport->ID);
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowPos(frameWorkPos);
+    ImGui::SetNextWindowSize(frameWorkSize);
 
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -36282,8 +36312,8 @@ void RenderUI(AppState& state) {
 
     // TOP TOOLBAR - Search and Buttons
 
-    const float mainWorkW = viewport ? viewport->WorkSize.x : ImGui::GetIO().DisplaySize.x;
-    const float mainWorkH = viewport ? viewport->WorkSize.y : ImGui::GetIO().DisplaySize.y;
+    const float mainWorkW = frameWorkSize.x > 0.0f ? frameWorkSize.x : ImGui::GetIO().DisplaySize.x;
+    const float mainWorkH = frameWorkSize.y > 0.0f ? frameWorkSize.y : ImGui::GetIO().DisplaySize.y;
     // desktop-resize: content-driven breakpoints. Do not scale the whole UI down;
     // progressively reflow secondary chrome away from the central workspace.
     const bool layoutCompactWidth = mainWorkW < 1100.0f;
