@@ -65,6 +65,16 @@ def _optional_manifest_github_paths():
 
 
 class PublicCiOpensrcTests(unittest.TestCase):
+    def test_windows_ci_builds_and_runs_toolbar_search_regression(self):
+        workflow = _read(".github/workflows/public-checks.yml").split("\n  windows-build:", 1)[1]
+        build_step = workflow.split("cmake --build build/public", 1)[1].split("\n      - name:", 1)[0]
+        filters = re.findall(r'\bctest\b[^"]*?-R\s+"([^"]+)"', workflow)
+
+        with self.subTest("build target"):
+            self.assertRegex(build_step, r"--target\s+[\s\S]*\bTestToolbarSearchControls\b")
+        with self.subTest("CTest filter"):
+            self.assertTrue(any(re.search(pattern, "ToolbarSearchControls") for pattern in filters))
+
     def test_public_github_subset_keeps_standalone_delivery_and_excludes_private_integrations(self):
         live = _optional_manifest_github_paths()
         if live is not None:

@@ -26,6 +26,12 @@
 - 计划中的事项、实际完成的事项、等待用户确认的事项分开写，不能把待做内容登记成已完成。
 - 仓库内文档使用相对路径互相引用；不要把其他仓库的本机路径写进本项目文档。外部资料若有用，先整理成仓库内可独立阅读的内容。
 
+## 前端开发准则
+
+- Harken Search 桌面端直接采用 Apple 官方 macOS [Human Interface Guidelines（HIG）](https://developer.apple.com/design/human-interface-guidelines/designing-for-macos) 和 [macOS UI Kit](https://developer.apple.com/design/resources/#macos-apps) 作为设计基准，不另写一套平行规范。布局和交互按 HIG，控件外观和状态对照官方 UI Kit。
+- 采用 Apple 的设计基准不等于更换前端技术栈；Windows 的系统标题栏和窗框继续使用原生样式。
+- 改版先用现版实机截图做对照，只改已明确的区域，其他区域保持不变。先确认预览，再实施；用实际 QA 包截图验收，设计稿不能代替实机截图。
+
 ## 测试和验收
 
 - 普通卡优先跑与改动直接相关的测试；只有改动数据库、音频读取、更新、构建底层或正式发布前才跑全量测试。
