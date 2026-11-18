@@ -402,7 +402,7 @@
                         heading(L(SetUX_TransportEffectVisibility));
                         ImGui::TextWrapped("%s",L(SetUX_TransportEffectHint));
                         ImGui::Dummy(ImVec2(0,2));
-                        if(transportFocus){ImGui::SetScrollHereY(.25f);editor.focusId.clear();editor.highlightId.clear();}
+                        if(transportFocus){ImGui::SetScrollHereY(.25f);editor.focusId.clear();}
                         // The five switches read as one block: a slightly lighter
                         // surface groups them without adding a border per row.
                         auto* groupDraw=ImGui::GetWindowDrawList();
@@ -416,11 +416,14 @@
                         const ImVec4& groupBase=preview.dialogBG;
                         const ImVec4& groupTint=preview.interfaceText;
                         const ImVec4 groupFill(groupBase.x+(groupTint.x-groupBase.x)*.07f,groupBase.y+(groupTint.y-groupBase.y)*.07f,groupBase.z+(groupTint.z-groupBase.z)*.07f,1.f);
-                        // Bleed past the content column so the fill reads as a padded card;
-                        // the body child clip rect would otherwise cut it off.
+                        // Bleed past the content column so the fill reads as a padded card,
+                        // but keep the body's vertical clipping: a short or scrolled body
+                        // must never paint the fill over the search row or footer.
+                        const ImVec2 bodyClipMin=groupDraw->GetClipRectMin();
+                        const ImVec2 bodyClipMax=groupDraw->GetClipRectMax();
                         const ImVec2 groupFillMin(groupMin.x-14.f,groupMin.y-11.f);
                         const ImVec2 groupFillMax(groupRight+14.f,groupCursor.y-2.f);
-                        ImGui::PushClipRect(groupFillMin,groupFillMax,false);
+                        ImGui::PushClipRect(ImVec2(groupMin.x-14.f,bodyClipMin.y),ImVec2(groupRight+14.f,bodyClipMax.y),false);
                         groupDraw->AddRectFilled(groupFillMin,groupFillMax,ImGui::GetColorU32(groupFill),10.f);
                         ImGui::PopClipRect();
                         groupDraw->ChannelsMerge();
