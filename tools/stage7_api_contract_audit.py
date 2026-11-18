@@ -411,6 +411,7 @@ REVIEWED_CONTRACTS = {
     "src/ScanDialogPresentation.h": "tests/test_scan_dialog_presentation.cpp",
     "src/ScanFailureClassification.h": "tests/test_scan_dialog_presentation.cpp",
     "src/SettingsCatalog.h": "tests/test_preference_draft.cpp",
+    "src/SimilarityIndexCountState.h": "tests/test_similarity_index_count_state.cpp",
     "src/SettingsFileWriter.h": "tests/test_settings_file_atomic_save.cpp",
     "src/SidebarMetadataPicker.h": "tests/test_sidebar_metadata_picker.cpp",
 }
