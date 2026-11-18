@@ -855,6 +855,18 @@ if(WIN32)
     target_include_directories(TestDatabaseFolderRowInput PRIVATE src ${IMGUI_DIR})
     target_compile_features(TestDatabaseFolderRowInput PRIVATE cxx_std_17)
     add_test(NAME DatabaseFolderRowInput COMMAND TestDatabaseFolderRowInput)
+    add_executable(TestFolderTreeControls EXCLUDE_FROM_ALL
+        tests/test_folder_tree_controls.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestFolderTreeControls PRIVATE src ${IMGUI_DIR})
+    target_compile_features(TestFolderTreeControls PRIVATE cxx_std_17)
+    add_test(NAME FolderTreeControls COMMAND TestFolderTreeControls
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lucide/lucide.ttf")
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME FolderTreeControlsBoundary COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_folder_tree_controls_boundary.py")
+    endif()
     # Isolated Dock frame replay: no product settings, database, or legal-flow bypass.
     add_executable(TestDockPerfReplay EXCLUDE_FROM_ALL
         tests/test_dock_hit_test.cpp src/DockLayout.cpp src/DockDragSession.cpp

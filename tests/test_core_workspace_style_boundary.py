@@ -536,8 +536,8 @@ def test_lapis_folder_search_inherits_sidebar_semantic_colors_in_both_views():
     assert "useLapisBlueFolderSearchSurface" not in browser_search
     assert main.count("useLapisBlueFolderSearchSurface") == 2
     assert "inheritContextColors);" in toolbar
-    assert "state.settings.theme == AppTheme::LapisBlue,\n                false," in browser_search
-    assert "useLapisBlueFolderSearchSurface,\n                true," in database_search
+    assert "state.settings.theme == AppTheme::LapisBlue,\n                controls.refresh," in browser_search
+    assert "useLapisBlueFolderSearchSurface,\n                controls.refresh," in database_search
     assert "ImGuiCol_FrameBg,              leftPanelInput" in main
     assert "ImGuiCol_Border,               leftPanelOutline" in main
     assert "ImGuiCol_Text,                 leftPanelText" in main
@@ -548,11 +548,11 @@ def test_folder_tree_search_preserves_refresh_and_locate_action_width():
     toolbar = between(main, "static void RenderFolderTreeExplorerToolbar", "static void RenderFolderTreeExplorerList")
     sources = between(main, "static ExplorerSource BrowserExplorerSource", "static void RenderRelatedPathsExplorerPane")
 
-    assert "kSameLine + kRefreshW + kBtnGap + kLocateW + 2.0f" in toolbar
+    assert "2.0f * (kButtonGap + aura::folder_tree::controls::kButtonSize) + 2.0f" in toolbar
     assert "ImGui::GetContentRegionAvail().x - searchReserve" in toolbar
     assert "searchWidth,\n        inheritContextColors);" in toolbar
-    assert "SidebarRefreshGlyphButton(refreshId, ImVec2(kRefreshW, 22.0f), refreshBusy)" in toolbar
-    assert "ImGui::InvisibleButton(locateId, ImVec2(btnSize, btnSize))" in toolbar
+    assert "DrawButton(refreshId, ICON_LC_REFRESH, true," in toolbar
+    assert "DrawButton(locateId, ICON_LC_FOLDER_OPEN, canLocate," in toolbar
     assert "ImGui::SetNextItemWidth(-searchReserve)" not in toolbar
     for action_id in (
         "##BrowserFolderSearch", "##BrowserSidebarRefreshBtn", "##BrowserLocateCurrentFolderBtn",
