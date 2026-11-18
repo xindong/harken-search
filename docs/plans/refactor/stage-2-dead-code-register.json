@@ -10862,6 +10862,34 @@
       "reviewer": "Harken Search migration audit 2026-10-29",
       "reason": "Keep this standalone maintenance, packaging or QA command. A command-line entry does not require a product link; removal is not part of this migration.",
       "rollback": ""
+    },
+    {
+      "id": "S2-B63F73B619",
+      "path": "tools/qa_settings_similar_clear.py",
+      "symbol": "",
+      "kind": "script",
+      "present": true,
+      "disposition": "KEEP",
+      "evidence": [
+        {
+          "type": "E2",
+          "source": "reference_graph",
+          "detail": "zero incoming tracked references"
+        },
+        {
+          "type": "E4",
+          "source": "documented command entry",
+          "detail": "manual QA driver invoked from the isolated QA package commands for the settings similar-clear checks"
+        }
+      ],
+      "contract_refs": [
+        "tools/qa_settings_similar_clear.py"
+      ],
+      "dynamic_lookup_checked": false,
+      "compatibility_checked": false,
+      "reviewer": "Harken Search baseline audit 2026-11-18",
+      "reason": "Repeatable QA driver for the settings similar-clear checks; it is a manual command entry, not product code, and removal is not part of this migration.",
+      "rollback": ""
     }
   ]
 }

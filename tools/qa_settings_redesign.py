@@ -161,9 +161,11 @@ def run(args):
             if state()['pending']:click('apply')
             click('nav-2');click('done');assert not settle()['open']
             return
-        query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
+        query('system font');click('result-systemFont');click('systemFont');click('option-9')
+        if state()['pending']:click('apply')
         assert state()['live_row_height']==state()['effective_row_height']
-        query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
+        query('system font');click('result-systemFont');click('systemFont');click('option-4')
+        if state()['pending']:click('apply')
         assert state()['live_row_height']==state()['effective_row_height']
         click('nav-2');check('system font changes recompute live density row height')
         initial=state()['live_volume'];initial_engine=state()['engine_volume']
@@ -258,7 +260,8 @@ def run(args):
         for id in ('search','close','done','nav-2','nav-8'):find(id)
         check('small-window navigation and footer remain accessible')
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
-        query('system font');click('result-systemFont');click('systemFont');click('option-9');click('apply')
+        query('system font');click('result-systemFont');click('systemFont');click('option-9')
+        if state()['pending']:click('apply')
         assert state()['live_font']==24
         assert find('search')['font_pixels']>=24 and find('done')['font_pixels']>=24
         screenshot('08-large-font');find('search');find('close');find('done')
@@ -269,7 +272,8 @@ def run(args):
         screenshot('09-wrapped-save-error');click('revert')
         command(cmd='settings_ui',action='resize',width=1120,height=800);settle()
         check('long restore error fits above its buttons at 24 px in a small window')
-        query('system font');click('result-systemFont');click('systemFont');click('option-4');click('apply')
+        query('system font');click('result-systemFont');click('systemFont');click('option-4')
+        if state()['pending']:click('apply')
         assert state()['live_font']==14
         check('24 px reading font keeps search, close and footer usable; restored 14 px')
         query('row height');click('result-rowHeight');number('rowHeight',40);click('apply')

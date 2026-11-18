@@ -248,6 +248,7 @@
 #include "RenderFrameRequestPolicy.h"
 #include "PlaylistQuickBarMotion.h"
 #include "PlaylistFolderTree.h"
+#include "PlaylistCollectionIndex.h"
 #include "PlaylistDisplayedFileCountPolicy.h"
 #include "PlaylistScopeCounts.h"
 #include "DbNorm.h"
@@ -15300,17 +15301,14 @@ bool AddFolderPathToPlaylist(AppState& state,
                                     const char* diagLabel) {
     if (playlistId <= 0 || folderPath == nullptr || folderPath[0] == '\0') return false;
 
-    auto records = state.database.getFilesByFolder(folderPath, 1000000, 0);
-    if (records.empty()) return false;
-
-    std::vector<int64_t> fileIds;
-    fileIds.reserve(records.size());
-    for (const auto& record : records) {
-        if (record.id > 0) fileIds.push_back(record.id);
-    }
-    const auto bulk = state.database.addManyToPlaylist(playlistId, fileIds);
+    const auto bulk = state.database.addFolderToPlaylist(playlistId, folderPath);
     const int addedCount = bulk.addedFiles;
 
+    if (!bulk.error.empty()) {
+        DIAG_ACTION_FMT("Playlist", "Folder drop failed via %s target=%lld error=%s",
+                        diagLabel ? diagLabel : "drag", (long long)playlistId, bulk.error.c_str());
+        return false;
+    }
     if (addedCount <= 0) return false;
 
     DIAG_ACTION_FMT("Playlist",
@@ -15385,30 +15383,37 @@ bool ShouldSuppressPlaylistContextPopup() {
 void ApplyPlaylistQuickBarOrder(AppState& state) {
     if (state.playlists.empty() || state.settings.playlistQuickBarOrder.empty()) return;
 
+    const uint64_t signature = aura::playlist::PlaylistQuickBarOrderSignature(
+        state.playlists, state.settings.playlistQuickBarOrder);
+    if (signature == state.playlistQuickBarAppliedOrderSignature) return;
+
+    std::unordered_map<int64_t, size_t> indexById;
+    indexById.reserve(state.playlists.size());
+    for (size_t i = 0; i < state.playlists.size(); ++i) {
+        indexById[state.playlists[i].id] = i;
+    }
+
     std::vector<Playlist> ordered;
     ordered.reserve(state.playlists.size());
-    std::vector<int64_t> usedIds;
+    std::unordered_set<int64_t> usedIds;
     usedIds.reserve(state.playlists.size());
 
     for (int64_t id : state.settings.playlistQuickBarOrder) {
-        auto it = std::find_if(state.playlists.begin(), state.playlists.end(),
-            [&](const Playlist& pl) { return pl.id == id; });
-        if (it != state.playlists.end() &&
-            std::find(usedIds.begin(), usedIds.end(), id) == usedIds.end()) {
-            ordered.push_back(*it);
-            usedIds.push_back(id);
-        }
+        auto it = indexById.find(id);
+        if (it == indexById.end() || !usedIds.insert(id).second) continue;
+        ordered.push_back(state.playlists[it->second]);
     }
-
-    for (const Playlist& pl : state.playlists) {
-        if (std::find(usedIds.begin(), usedIds.end(), pl.id) == usedIds.end()) {
-            ordered.push_back(pl);
-            usedIds.push_back(pl.id);
-        }
+    for (const Playlist& playlist : state.playlists) {
+        if (usedIds.insert(playlist.id).second) ordered.push_back(playlist);
     }
 
     if (ordered.size() == state.playlists.size()) {
         state.playlists = std::move(ordered);
+        // Cache the signature of the order we just applied, otherwise the next
+        // frame sees a different signature and rebuilds the whole list again.
+        state.playlistQuickBarAppliedOrderSignature =
+            aura::playlist::PlaylistQuickBarOrderSignature(
+                state.playlists, state.settings.playlistQuickBarOrder);
     }
 }
 
@@ -15798,26 +15803,35 @@ static void ClearPlaylistFolderFilter(AppState& state) {
     state.syncToTab();
 }
 
-static std::vector<AudioRecord> LoadCompletePlaylistMembers(AppState& state, int64_t playlistId) {
-    if (playlistId <= 0) return {};
-    if (state.database.isFolder(playlistId)) {
-        return state.database.getAggregatedPlaylistFiles(playlistId);
+static bool RefreshPlaylistFolderHierarchy(AppState& state, int64_t playlistId) {
+    if (playlistId <= 0) return false;
+
+    const uint64_t dataRevision = state.database.dataRevision();
+    if (state.playlistFolderHierarchyPlaylistId == playlistId &&
+        state.playlistFolderHierarchyDataRevision == dataRevision) {
+        return false;
     }
-    return state.database.getPlaylistFiles(playlistId);
+
+    const bool folderPlaylist = state.database.isFolder(playlistId);
+    const int64_t totalMembers = folderPlaylist
+        ? state.database.getAggregatedPlaylistFileCount(playlistId)
+        : state.database.getPlaylistFileCount(playlistId);
+    std::vector<PlaylistFolderCount> folderCounts = folderPlaylist
+        ? state.database.getAggregatedPlaylistFolderCounts(playlistId)
+        : state.database.getPlaylistFolderCounts(playlistId);
+
+    state.setPlaylistFolderHierarchy(
+        BuildPlaylistFolderTreeFromFolderCounts(std::move(folderCounts), totalMembers),
+        playlistId,
+        dataRevision);
+    return true;
 }
 
 static void RenderActivePlaylistFolderTree(AppState& state, const Playlist& playlist) {
-    if (state.playlistFolderHierarchyPlaylistId != playlist.id &&
-        state.viewMode == ViewMode::Playlist &&
+    if (state.viewMode == ViewMode::Playlist &&
         state.selectedPlaylistId == playlist.id &&
         !state.folderFilterActive) {
-        const std::vector<AudioRecord> completeMembers =
-            LoadCompletePlaylistMembers(state, playlist.id);
-        if (!completeMembers.empty()) {
-            state.setPlaylistFolderHierarchy(
-                BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                playlist.id);
-        }
+        RefreshPlaylistFolderHierarchy(state, playlist.id);
     }
 
     ImGui::Indent(10.0f);
@@ -15868,15 +15882,7 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
     }
 
     state.expandedPlaylistFolderTreePlaylistId = state.selectedPlaylistId;
-    if (state.playlistFolderHierarchyPlaylistId != state.selectedPlaylistId) {
-        const std::vector<AudioRecord> completeMembers =
-            LoadCompletePlaylistMembers(state, state.selectedPlaylistId);
-        if (!completeMembers.empty()) {
-            state.setPlaylistFolderHierarchy(
-                BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                state.selectedPlaylistId);
-        }
-    }
+    RefreshPlaylistFolderHierarchy(state, state.selectedPlaylistId);
 
     const ThemeColorScheme& tcs = ThemeColors::current();
     const ImVec4 playlistTreePanelBg = tcs.filterBrowserBG;
@@ -16161,15 +16167,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const bool playlistScopedFolderTree = (effectivePlaylistFolderTreeId > 0);
         if (playlistScopedFolderTree) {
             state.selectedPlaylistId = effectivePlaylistFolderTreeId;
-            const std::vector<AudioRecord> completeMembers =
-                LoadCompletePlaylistMembers(state, effectivePlaylistFolderTreeId);
-            const bool playlistTreeNeedsRebuild =
-                state.playlistFolderHierarchyPlaylistId != effectivePlaylistFolderTreeId ||
-                state.playlistFolderHierarchy.fileCount != (int)completeMembers.size();
-            if (playlistTreeNeedsRebuild && !completeMembers.empty()) {
-                state.setPlaylistFolderHierarchy(
-                    BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                    effectivePlaylistFolderTreeId);
+            const bool playlistTreeRebuilt =
+                RefreshPlaylistFolderHierarchy(state, effectivePlaylistFolderTreeId);
+            if (playlistTreeRebuilt) {
                 state.folderSearchHits.clear();
                 state.folderSearchDirectHits.clear();
                 state.folderSearchExpandPaths.clear();
@@ -17222,6 +17222,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         } else if (state.playlists.empty()) {
             ImGui::TextDisabled("%s", L(Nav_NoPlaylists));
         } else {
+            state.EnsurePlaylistCollectionIndex();
             // 次世代：控制台风格播放列表 (Console-Style Playlists)
             auto uiWithAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
             const ImVec4 kThemeTextMuted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
@@ -17442,8 +17443,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
                 // playlistRowMeta: keep counts as light metadata, not chrome badges.
                 int64_t count =
-                    aura::playlist::ResolvePlaylistDisplayedFileCount(
-                        state.playlists, pl.id);
+                    state.playlistCollectionIndex.DisplayedCount(pl.id);
                 const bool countPending = (count < 0);
                 const bool quickBarVisible = IsPlaylistShownInQuickBar(state, pl.id);
                 const bool showCountMeta = countPending || count > 0 || isSelected || isHovered;
