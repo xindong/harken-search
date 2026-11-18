@@ -6059,9 +6059,9 @@ static void PollQaCommandFile(AppState& state) {
             !std::isfinite(x) || !std::isfinite(y) ||
             x < 0.0f || y < 0.0f || x >= display.x || y >= display.y ||
             s_magicEqQaPointer.pending ||
-            (phase == "down" && s_magicEqQaPointer.active) ||
-            (phase == "up" && !s_magicEqQaPointer.active) ||
-            (phase != "down" && phase != "up")) {
+            ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
+            (phase == "up" && !s_magicEqQaPointer.held) ||
+            (phase != "hover" && phase != "down" && phase != "up")) {
             result = "{\"ok\":false,\"error\":\"invalid_folder_search_pointer\",\"display\":[" +
                 std::to_string(display.x) + "," + std::to_string(display.y) +
                 "],\"point\":[" + std::to_string(x) + "," + std::to_string(y) +
@@ -6075,7 +6075,7 @@ static void PollQaCommandFile(AppState& state) {
             s_magicEqQaPointer.x = viewportPos.x + x;
             s_magicEqQaPointer.y = viewportPos.y + y;
             s_magicEqQaPointer.held = phase == "down";
-            s_magicEqQaPointer.pending = true;
+            s_magicEqQaPointer.pending = phase != "hover";
             s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
             result = "{\"ok\":true,\"cmd\":\"folder_search_pointer\",\"phase\":\"" + phase +
                 "\",\"display\":[" + std::to_string(display.x) + "," + std::to_string(display.y) +

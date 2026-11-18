@@ -356,6 +356,29 @@
       }
     },
     {
+      "name": "Hugeicons folder outlines",
+      "version": "Iconify SVG snapshot 2026-11-19",
+      "source": "https://icon-sets.iconify.design/hugeicons/",
+      "license_expression": "MIT",
+      "purpose": "Database folder tree icons",
+      "distributed": true,
+      "load_mode": "Compiled SVG contours",
+      "license_files": ["LICENSES/Hugeicons-MIT.txt"],
+      "notice_files": ["THIRD_PARTY_NOTICES.md"],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": false,
+      "approval_reference": "REQ-20261118-FOLDER-TREE-SPEC",
+      "cmake_markers": ["src/main.cpp"],
+      "distribution_paths": ["HarkenSearch.exe"],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "none",
+        "commercial_restriction": false,
+        "source_offer_required": false
+      }
+    },
+    {
       "name": "Lucide icon font",
       "version": "0.468.0",
       "source": "https://lucide.dev/",
