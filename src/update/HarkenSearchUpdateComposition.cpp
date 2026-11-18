@@ -14,6 +14,7 @@
 #include "update/UpdateReleaseConfig.h"
 #include "Version.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace aris::update {
 namespace {
@@ -104,6 +106,18 @@ bool ConsumeRestartConfirmation() {
     return true;
 }
 
+bool BeginScheduledWork() {
+    std::lock_guard<std::mutex> lock(g_updateUiMutex);
+    if (g_manualCheckRequested || g_restartConfirmed ||
+        g_updateUiState.checkInFlight ||
+        g_updateUiState.phase == HarkenSearchUpdateUiPhase::Ready ||
+        g_updateUiState.phase == HarkenSearchUpdateUiPhase::Restarting) {
+        return false;
+    }
+    g_updateUiState.checkInFlight = true;
+    return true;
+}
+
 // Bootstrap acked the new version as healthy on first presentation: retired
 // update download trees under the updater-owned root can go now.  Retention
 // keeps the running version's tree, the newest older tree as the rollback
@@ -152,10 +166,6 @@ void StartHarkenSearchAutomaticUpdate() {
 #else
     static std::once_flag once;
     std::call_once(once, [] {
-        {
-            std::lock_guard<std::mutex> lock(g_updateUiMutex);
-            g_workerStarted = true;
-        }
         std::thread([] {
             auto check = CreateUpdateCheckHttpsTransport();
             auto download = Platform::UpdateHttp::CreateUpdateHttpTransportPort();
@@ -245,20 +255,39 @@ void StartHarkenSearchAutomaticUpdate() {
             const auto started = service.Start();
             if (started.schedules.empty()) return;
             MergeSnapshot(started.snapshot);
-            const auto runCheck = [&]() -> UpdateApplicationResult {
-                SetCheckInFlight(true);
-                auto state = SnapshotUiState();
-                state.phase = HarkenSearchUpdateUiPhase::Checking;
-                // Starting a new check retires the previous failure text.
-                // Without this the old message survives underneath the new
-                // attempt and reappears if this one lands in a phase that does
-                // not overwrite lastError, so a fixed problem keeps being
-                // reported.
-                state.lastError.clear();
-                state.candidateReleaseNotes.clear();
-                state.candidateReleaseNotesFailed = false;
-                SetUiState(state);
-                auto result = service.CheckNow(checkCancel, downloadCancel);
+            {
+                std::lock_guard<std::mutex> lock(g_updateUiMutex);
+                g_workerStarted = true;
+            }
+            struct ScheduledWork {
+                UpdateApplicationScheduleIntent intent;
+                std::uint64_t eligibleAt;
+            };
+            std::vector<ScheduledWork> pending;
+            const auto enqueue = [&](const UpdateApplicationResult& result) {
+                for (const auto& intent : result.schedules) {
+                    std::uint64_t eligibleAt = intent.dueAtMonotonicMs();
+                    if (intent.kind() != UpdateApplicationScheduleKind::Check &&
+                        result.disposition == UpdateApplicationDisposition::RetryScheduled &&
+                        result.error == DownloadErrorKind::Disk) {
+                        eligibleAt = std::max(eligibleAt, clock.NowMonotonicMs() + 5'000);
+                    }
+                    pending.push_back({intent, eligibleAt});
+                }
+            };
+            enqueue(started);
+            const auto runOperation = [&](const UpdateApplicationScheduleIntent* scheduled) {
+                if (!scheduled || scheduled->kind() == UpdateApplicationScheduleKind::Check) {
+                    auto state = SnapshotUiState();
+                    state.phase = HarkenSearchUpdateUiPhase::Checking;
+                    state.lastError.clear();
+                    state.candidateReleaseNotes.clear();
+                    state.candidateReleaseNotesFailed = false;
+                    SetUiState(state);
+                }
+                const auto result = scheduled
+                    ? service.ExecuteScheduled(*scheduled, checkCancel, downloadCancel)
+                    : service.CheckNow(checkCancel, downloadCancel);
                 // Presentation-only read. Failure never changes Ready or the
                 // existing verify/replace/rollback decisions.
                 if (result.snapshot.readyPatch) {
@@ -277,58 +306,61 @@ void StartHarkenSearchAutomaticUpdate() {
                 }
                 MergeSnapshot(result.snapshot);
                 SetCheckInFlight(false);
-                return result;
+                enqueue(result);
             };
-            const auto initial = runCheck();
-            if (initial.disposition == UpdateApplicationDisposition::Ready) {
+            const auto runManualCheck = [&] {
+                pending.erase(std::remove_if(pending.begin(), pending.end(),
+                    [](const ScheduledWork& work) {
+                        return work.intent.kind() == UpdateApplicationScheduleKind::Check;
+                    }), pending.end());
+                runOperation(nullptr);
+            };
+            bool handoffFailed = false;
+            bool retryHandoff = false;
+            const auto runHandoff = [&] {
                 auto state = SnapshotUiState();
-                state.phase = HarkenSearchUpdateUiPhase::Ready;
+                state.phase = HarkenSearchUpdateUiPhase::Restarting;
+                state.lastError.clear();
                 SetUiState(state);
-
-                while (true) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                    if (!ConsumeRestartConfirmation()) continue;
-                    const auto applied = service.ConfirmRestart();
-                    if (applied.disposition == UpdateApplicationDisposition::BootstrapAccepted) {
-                        auto confirmed = SnapshotUiState();
-                        confirmed.phase = HarkenSearchUpdateUiPhase::Restarting;
-                        SetUiState(confirmed);
-                        PublishHarkenSearchUpdateGracefulExitRequest();
-                        return;
-                    }
-                    auto failed = SnapshotUiState();
-                    failed.phase = HarkenSearchUpdateUiPhase::Error;
-                    failed.lastError = applied.detail.empty() ? "Bootstrap handoff failed" : applied.detail;
-                    SetUiState(failed);
-                    return;
+                const auto applied = service.ConfirmRestart();
+                if (applied.disposition == UpdateApplicationDisposition::BootstrapAccepted) {
+                    PublishHarkenSearchUpdateGracefulExitRequest();
+                    return true;
                 }
+                handoffFailed = true;
+                retryHandoff = applied.disposition == UpdateApplicationDisposition::BootstrapRetryable;
+                state.phase = HarkenSearchUpdateUiPhase::Error;
+                state.checkInFlight = false;
+                state.lastError = applied.detail.empty() ? "Bootstrap handoff failed" : applied.detail;
+                SetUiState(state);
+                return false;
+            };
+            if (started.snapshot.phase != UpdatePhase::Downloading && BeginScheduledWork()) {
+                runManualCheck();
             }
             while (true) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                if (!ConsumeManualCheckRequest()) continue;
-                const auto result = runCheck();
-                if (result.disposition == UpdateApplicationDisposition::Ready) {
-                    auto state = SnapshotUiState();
-                    state.phase = HarkenSearchUpdateUiPhase::Ready;
-                    SetUiState(state);
-                    while (true) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                        if (!ConsumeRestartConfirmation()) continue;
-                        const auto applied = service.ConfirmRestart();
-                        if (applied.disposition == UpdateApplicationDisposition::BootstrapAccepted) {
-                            auto confirmed = SnapshotUiState();
-                            confirmed.phase = HarkenSearchUpdateUiPhase::Restarting;
-                            SetUiState(confirmed);
-                            PublishHarkenSearchUpdateGracefulExitRequest();
-                            return;
-                        }
-                        auto failed = SnapshotUiState();
-                        failed.phase = HarkenSearchUpdateUiPhase::Error;
-                        failed.lastError = applied.detail.empty() ? "Bootstrap handoff failed" : applied.detail;
-                        SetUiState(failed);
-                        return;
+                if (ConsumeRestartConfirmation()) {
+                    if (runHandoff()) return;
+                } else if (ConsumeManualCheckRequest()) {
+                    if (retryHandoff) {
+                        if (runHandoff()) return;
+                    } else {
+                        handoffFailed = false;
+                        runManualCheck();
+                    }
+                } else if (!handoffFailed) {
+                    const auto next = std::min_element(pending.begin(), pending.end(),
+                        [](const ScheduledWork& left, const ScheduledWork& right) {
+                            return left.eligibleAt < right.eligibleAt;
+                        });
+                    if (next != pending.end() && next->eligibleAt <= clock.NowMonotonicMs() &&
+                        BeginScheduledWork()) {
+                        const auto intent = next->intent;
+                        pending.erase(next);
+                        runOperation(&intent);
                     }
                 }
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
             }
         }).detach();
     });
@@ -347,11 +379,13 @@ bool RequestHarkenSearchUpdateCheck() {
 #if defined(ARIS_BOOTSTRAP_PACKAGE_PUBLIC_KEY_HEX)
     std::lock_guard<std::mutex> lock(g_updateUiMutex);
     if (!g_workerStarted || g_updateUiState.checkInFlight ||
+        g_updateUiState.phase == HarkenSearchUpdateUiPhase::Downloading ||
         g_updateUiState.phase == HarkenSearchUpdateUiPhase::Ready ||
         g_updateUiState.phase == HarkenSearchUpdateUiPhase::Restarting) {
         return false;
     }
     g_manualCheckRequested = true;
+    g_updateUiState.checkInFlight = true;
     return true;
 #else
     return false;

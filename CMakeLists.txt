@@ -25,6 +25,32 @@ if(MSVC)
     target_compile_options(TestSidebarMetadataPicker PRIVATE /utf-8)
 endif()
 add_test(NAME SidebarMetadataPicker COMMAND TestSidebarMetadataPicker)
+
+add_executable(TestAITaskQueueStop EXCLUDE_FROM_ALL
+    tests/test_ai_task_queue_stop.cpp
+    src/AITaskQueueStopGate.cpp)
+target_include_directories(TestAITaskQueueStop PRIVATE src)
+target_compile_features(TestAITaskQueueStop PRIVATE cxx_std_17)
+target_compile_definitions(TestAITaskQueueStop PRIVATE ARIS_TASK_QUEUE_TESTING=1)
+if(MSVC)
+    target_compile_options(TestAITaskQueueStop PRIVATE /utf-8)
+endif()
+add_test(NAME AITaskQueueStop COMMAND TestAITaskQueueStop)
+
+add_executable(TestAITaskQueueStopLegacyWindow EXCLUDE_FROM_ALL
+    tests/test_ai_task_queue_stop.cpp
+    src/AITaskQueueStopGate.cpp)
+target_include_directories(TestAITaskQueueStopLegacyWindow PRIVATE src)
+target_compile_features(TestAITaskQueueStopLegacyWindow PRIVATE cxx_std_17)
+target_compile_definitions(TestAITaskQueueStopLegacyWindow PRIVATE
+    ARIS_TASK_QUEUE_TESTING=1
+    ARIS_TASK_QUEUE_REGRESSION_LEGACY_STOP=1)
+if(MSVC)
+    target_compile_options(TestAITaskQueueStopLegacyWindow PRIVATE /utf-8)
+endif()
+add_test(NAME AITaskQueueStopLegacyWindow COMMAND TestAITaskQueueStopLegacyWindow --expect-legacy-hang)
+set_tests_properties(AITaskQueueStop AITaskQueueStopLegacyWindow PROPERTIES TIMEOUT 30)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -578,6 +604,7 @@ set(APP_SOURCES
     src/stb_image_impl.cpp
     src/ExternalLibraryCover.cpp
     src/AIEngine.cpp
+    src/AITaskQueueStopGate.cpp
     src/VoiceDeliveryAcceptance.cpp
     src/VoiceAssetOrganizer.cpp
     src/ThemeMascot.cpp

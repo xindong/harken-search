@@ -12140,6 +12140,15 @@ static void RunBetaSplashScreen(
 
     if (worker.joinable()) worker.join();
 
+    // WM_CLOSE during startup destroys the window and posts WM_QUIT, but the
+    // splash loop consumes that message. Do not walk on into finalize/main UI
+    // after the user already asked to exit.
+    if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+        DIAG_SYSTEM("Shutdown", "StartupExitRequestedDuringSplash");
+        if (splashTex) glDeleteTextures(1, &splashTex);
+        return;
+    }
+
     auto pumpBetaStartupUi = [&]() {
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -12308,6 +12317,7 @@ static void RunWebView2LoadingScreen(
     // UI 线程仅做消息泵 + 进度同步（确保 WebView2 丝滑渲染）
     while (true) {
         pumpUi();
+        if (g_explicitExitRequested.load(std::memory_order_acquire)) break;
         const std::vector<ProgressEvent> local = flushProgressQueue();
 
         if (loadDone.load(std::memory_order_acquire)) {
@@ -12317,6 +12327,10 @@ static void RunWebView2LoadingScreen(
     }
 
     if (worker.joinable()) worker.join();
+    if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+        DIAG_SYSTEM("Shutdown", "StartupExitRequestedDuringWebUiLoading");
+        return;
+    }
     flushProgressQueue();
 
     // 等待首包搜索结果（含 facet），以便进主界面时封面墙已有列表
@@ -13377,6 +13391,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 CloseWebView2(wv2Controller, wv2Webview, wv2Loader);
                 RunBetaSplashScreen(hwnd, hdc, state, runStartupPhases, finalizeStartupOnUi);
                 startupEntryTransitionActive = false;
+                if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+                    DIAG_SYSTEM("Shutdown", "StartupExitRequestedBeforeMainUi");
+                    return 0;
+                }
                 if (dbOpenFailed.load(std::memory_order_acquire)) {
                     std::lock_guard<std::mutex> lock(dbOpenMutex);
                     std::wstring wDb = Utf8ToWide(dbOpenPathUtf8);
@@ -13389,6 +13407,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 // Loading 完成后直接关闭启动门面，避免再出现一次“Entering Library...”过场。
                 CloseWebView2(wv2Controller, wv2Webview, wv2Loader);
                 startupEntryTransitionActive = false;
+                if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+                    DIAG_SYSTEM("Shutdown", "StartupExitRequestedBeforeMainUi");
+                    return 0;
+                }
                 // 若数据库挂载失败，主线程安全弹窗并退出
                 if (dbOpenFailed.load(std::memory_order_acquire)) {
                     std::string errUtf8;

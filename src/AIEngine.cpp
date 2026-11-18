@@ -281,7 +281,7 @@ bool AIEngine::Initialize(const AIEngineConfig& config) {
     } catch (...) {}
     
     // 启动工作线程
-    m_shutdownRequested = false;
+    m_taskQueue.Reset();
     m_workerThread = std::thread([this]() {
         ProcessTaskQueue();
     });
@@ -306,8 +306,7 @@ bool AIEngine::Initialize(const AIEngineConfig& config) {
 void AIEngine::Shutdown() {
     if (!m_initialized) return;
     
-    m_shutdownRequested = true;
-    m_taskCondition.notify_all();
+    m_taskQueue.RequestStop();
     
     if (m_workerThread.joinable()) {
         m_workerThread.join();
@@ -797,10 +796,9 @@ int AIEngine::CreateTask(AITaskType type, const std::string& inputPath) {
     {
         std::lock_guard<std::mutex> lock(m_tasksMutex);
         m_tasks[task.id] = task;
-        m_taskQueue.push(task.id);
     }
-    
-    m_taskCondition.notify_one();
+
+    m_taskQueue.Push(task.id);
     return task.id;
 }
 
@@ -917,23 +915,9 @@ void AIEngine::SetProgressCallback(AIProgressCallback callback) {
 // 工作线程
 
 void AIEngine::ProcessTaskQueue() {
-    while (!m_shutdownRequested) {
+    for (;;) {
         int taskId = -1;
-        
-        {
-            std::unique_lock<std::mutex> lock(m_tasksMutex);
-            m_taskCondition.wait(lock, [this]() {
-                return m_shutdownRequested || !m_taskQueue.empty();
-            });
-            
-            if (m_shutdownRequested) break;
-            
-            if (!m_taskQueue.empty()) {
-                taskId = m_taskQueue.front();
-                m_taskQueue.pop();
-            }
-        }
-        
+        if (!m_taskQueue.WaitForTask(taskId)) break;
         if (taskId >= 0) {
             AITask task;
             bool hasTask = false;

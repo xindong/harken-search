@@ -760,6 +760,14 @@ void test_happy_path_and_wait_timeout() {
     check(timedOut.status == BootstrapApplicationStatus::OldProcessTimedOut &&
               !timeoutFilesystem.beginCalled,
           "old-process timeout is bounded and mutation-free");
+    const std::string expectedOldIdentity =
+        "old-pid=" + std::to_string(admission.plan->oldProcessId) +
+        ";old-created=" +
+        std::to_string(admission.plan->invocation.oldProcess.creationTime) +
+        ";waited-ms=" +
+        std::to_string(BootstrapApplicationOptions{}.oldProcessWaitMs);
+    check(timedOut.detail == expectedOldIdentity,
+          "old-process timeout records the identity that outlived the wait");
 }
 
 void test_forward_only_terminal_failures_never_restore_installed_payload() {
