@@ -18340,14 +18340,55 @@ bool Database::migrateFromSingleDatabase(const std::string& mainDbPath) {
         INSERT OR IGNORE INTO waveforms_db.waveforms (file_id, waveform_data, rms_data)
         SELECT id, waveform_data, rms_data
         FROM audio_files
-        WHERE waveform_data IS NOT NULL AND length(waveform_data) > 0;
+        WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0);
     )";
 
-    // Clear migrated BLOB columns from the main database to release space.
+    // Clear only the columns that actually landed in the sidecar. A copy that
+    // was silently skipped (for example an IGNORE rule on the waveforms side)
+    // keeps its source blob, so the probe below stays positive and the
+    // migration is retried on the next open instead of dropping the data.
     const char* clearSql = R"(
-        UPDATE audio_files SET waveform_data = NULL, rms_data = NULL
-        WHERE waveform_data IS NOT NULL AND length(waveform_data) > 0;
+        UPDATE audio_files SET
+            waveform_data = CASE WHEN waveform_data IS NOT NULL
+                    AND length(waveform_data) > 0
+                    AND EXISTS (SELECT 1 FROM waveforms_db.waveforms w
+                                WHERE w.file_id = audio_files.id
+                                  AND length(w.waveform_data) > 0)
+                THEN NULL ELSE waveform_data END,
+            rms_data = CASE WHEN rms_data IS NOT NULL
+                    AND length(rms_data) > 0
+                    AND EXISTS (SELECT 1 FROM waveforms_db.waveforms w
+                                WHERE w.file_id = audio_files.id
+                                  AND length(w.rms_data) > 0)
+                THEN NULL ELSE rms_data END
+        WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0);
     )";
+
+    // The completion marker may only be written once no legacy blob is left in
+    // audio_files. The probe runs inside the same transaction as the copy and
+    // the clear, so a blocked or partial copy rolls back instead of recording
+    // a library that still holds legacy data as migrated.
+    const char* remainingSql = R"(
+        SELECT 1 FROM audio_files
+        WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0)
+        LIMIT 1;
+    )";
+    auto probeStep = [&](const char* sql) -> int {
+        sqlite3_stmt* probe = nullptr;
+        if (sqlite3_prepare_v2(m_db, sql, -1, &probe, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            return -1;
+        }
+        const int step = sqlite3_step(probe);
+        sqlite3_finalize(probe);
+        if (step == SQLITE_DONE) return 0;
+        if (step == SQLITE_ROW) return 1;
+        m_lastError = sqlite3_errmsg(m_db);
+        return -1;
+    };
 
     // Copy and clear must both land before the marker is written; otherwise a
     // failed copy followed by a successful clear would drop waveform data.
@@ -18359,10 +18400,12 @@ bool Database::migrateFromSingleDatabase(const std::string& mainDbPath) {
 
     const bool copied = executeSQL(migrateSql);
     const bool cleared = copied && executeSQL(clearSql);
-    if (!copied || !cleared) {
+    const int remaining = cleared ? probeStep(remainingSql) : -1;
+    if (!copied || !cleared || remaining != 0) {
         if (ownTransaction) executeSQL("ROLLBACK");
-        DIAG_ACTION_FMT("Database", "LegacyWaveformBlobMigrationDeferred: copied=%d cleared=%d error=%s",
-                        copied ? 1 : 0, cleared ? 1 : 0, m_lastError.c_str());
+        DIAG_ACTION_FMT("Database",
+                        "LegacyWaveformBlobMigrationDeferred: copied=%d cleared=%d remaining=%d error=%s",
+                        copied ? 1 : 0, cleared ? 1 : 0, remaining, m_lastError.c_str());
         return true;
     }
 
