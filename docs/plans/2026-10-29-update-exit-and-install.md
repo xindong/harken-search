@@ -57,3 +57,12 @@
 - 失败记录在超时时补充 old-pid / old-created / waited-ms，下一次出现 21 时可把仍存活的旧进程与本次更新事务对应起来。
 - AIEngine::Shutdown 的失唤醒已用 C++ 探针复现，但不能认定为当年卡点，本轮未修改该实现。
 - 隔离签名整链升级按用户指令暂缓，本轮未执行。
+
+
+## 2026-11-18 退出竞态修复（AIEngine 工作线程）
+
+- 现象链：AIEngine 静态实例在进程退出时析构，Shutdown 在等待所用锁之外发布停止标志并通知；工作线程若已判断继续等待但尚未阻塞，会丢失通知并永久卡在 join。
+- 修复：停止标志、任务队列与等待判断统一由 AITaskQueueStopGate 的同一互斥量保护；RequestStop 持锁发布后再通知，Reset 同样持锁复位。退出仍优先于取下一任务，已取任务照常收尾；模型加载生命周期未改。
+- 回归：tests/test_ai_task_queue_stop.cpp 用 500ms 同步点固定“已决定等待、尚未阻塞”的时序，直接驱动真实的 AITaskQueueStopGate。旧实现变体（仅测试编译宏）稳定复现丢失唤醒，修复实现通过；旧变体在修复期望下稳定失败。
+- 证据：D:/Harken-QA/BUG-20261029-UPDATE-EXIT21/20261118-exit-race/（run-fixed.log、run-legacy.log、run-fixed-against-legacy-gate.log）。
+- 边界：这是退出路径上已复现的竞态修复，不证明历史错误 21 的唯一卡点；未做隔离签名整链升级。
