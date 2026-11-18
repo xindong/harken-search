@@ -339,14 +339,9 @@ def test_results_content_edge_is_compact_and_tab_labels_reject_settings_payloads
 
     # Tabs, breadcrumb/path, table header and rows share one compact content
     # origin instead of the previous 20 px left moat.
-    assert (
-        "kResultsContentInsetX = "
-        "aura::ui::workspace::kCoreWorkspaceMetrics.space4"
-    ) in center
-    assert (
-        "ImGuiStyleVar_WindowPadding, "
-        "ImVec2(kResultsContentInsetX, 2.0f)"
-    ) in center
+    layout = read(ROOT / "src" / "ui" / "ResultsPanelLayout.h")
+    assert "kContentInsetX = aura::ui::workspace::kCoreWorkspaceMetrics.space8" in layout
+    assert "ImGuiStyleVar_WindowPadding, ImVec2(harken::results::kContentInsetX, 0.0f)" in center
     assert "ImVec2(20.0f, 2.0f)" not in center
     assert "constexpr float kBreadcrumbLabelIndentX = 0.0f" in center
 
@@ -481,7 +476,7 @@ def test_results_frame_has_one_complete_rounded_two_pixel_waveform_color_owner()
     assert "const ImVec4 centerResultsOutline = centerResultsTheme.waveformColor;" in center_setup
     assert "const ImVec4 centerResultsOutline = workspacePalette.perimeter;" not in center_setup
     assert "ImGuiStyleVar_ChildBorderSize" not in center_setup
-    assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), false,' in center_setup
+    assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), ImGuiChildFlags_AlwaysUseWindowPadding,' in center_setup
     assert center_setup.count("centerResultsDrawList->AddRect(") == 1
     assert "ImGui::GetForegroundDrawList(ImGui::GetMainViewport())" not in center_setup
     assert center_setup.index("centerResultsDrawList->PushClipRectFullScreen();") < center_setup.index("centerResultsDrawList->AddRect(")
@@ -507,7 +502,7 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "ImDrawList* centerResultsDrawList = nullptr;" in center_setup
     assert "centerResultsDrawList = ImGui::GetWindowDrawList();" in center_setup
     assert center_setup.count("centerResultsDrawList = ImGui::GetWindowDrawList();") >= 2
-    assert center_setup.index('if (BeginTransientScrollbarTable("FileTableV6"') < center_setup.rindex("centerResultsDrawList = ImGui::GetWindowDrawList();")
+    assert center_setup.index("if (BeginTransientScrollbarTable(resultsTableName,") < center_setup.rindex("centerResultsDrawList = ImGui::GetWindowDrawList();")
     assert center_setup.index("ImGui::EndTable();") < center_setup.index("centerResultsDrawList->AddRect(")
     assert "ImGui::GetForegroundDrawList(ImGui::GetMainViewport())" not in center_setup
     assert "centerResultsDrawList->AddRect(" in center_setup
@@ -836,7 +831,7 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert '"##RelatedPathsBox"' in between(main, 'static ExplorerSource DatabaseExplorerSource()', 'static void RenderRelatedPathsExplorerPane(')
     related_pane = between(main, 'static void RenderRelatedPathsExplorerPane(', 'renderRows();')
     assert re.search(r'BeginTransientScrollbarChild\(\s*childId,', related_pane)
-    assert 'BeginTransientScrollbarTable("FileTableV6"' in main
+    assert "BeginTransientScrollbarTable(resultsTableName," in main
     assert "reportInteraction(ImGui::GetTime())" not in main
 
     vertical_splitter = between(
@@ -860,10 +855,10 @@ def test_browser_cover_column_width_keeps_localized_header_visible():
 
     assert "const float coverHeaderMinW" in cover_column
     assert "ImGui::CalcTextSize(L(Col_Cover)).x" in cover_column
-    assert "ImGui::GetStyle().CellPadding.x * 2.0f" in cover_column
+    assert "fileTableStyle.CellPadding.x * 2.0f" in cover_column
     assert "ImGui::GetFontSize()" in cover_column
-    assert "const float coverColW = std::max(" in cover_column
-    assert "(float)state.settings.rowHeight + kCoverColumnExtra" in cover_column
+    assert "const float coverColW = coverColumnCount ? (std::max)(" in cover_column
+    assert "static_cast<float>(state.settings.rowHeight) + kCoverColumnExtra" in cover_column
     assert "coverHeaderMinW" in cover_column
     assert "ImGuiTableColumnFlags_NoResize" in cover_column
 
@@ -944,7 +939,7 @@ def test_database_tabs_restore_scroll_after_table_extent_is_known():
     main = read(MAIN_CPP)
     table = between(
         main,
-        'if (BeginTransientScrollbarTable("FileTableV6"',
+        "if (BeginTransientScrollbarTable(resultsTableName,",
         'ImGui::EndTable();',
     )
 

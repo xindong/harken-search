@@ -6268,6 +6268,7 @@ aura_set_test_labels(TestThemeColors nightly)
 
 add_executable(TestCoreWorkspaceStyle EXCLUDE_FROM_ALL
     tests/test_core_workspace_style.cpp
+    src/TransientScrollbarHost.cpp
     src/ui/CoreWorkspaceStyle.cpp
     src/ui/ModuleWindowShell.cpp
     ${IMGUI_DIR}/imgui.cpp
