@@ -143,6 +143,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
 #include "CoverWallSelectionKey.h"
@@ -14004,7 +14005,6 @@ static void RenderFolderTreeExplorerToolbar(
     bool refreshBusy,
     const char* locateId,
     bool canLocate,
-    bool inheritContextColors,
     bool drawLocateRipple,
     const std::function<void()>& onSearchEscape,
     const std::function<void()>& onRefresh,
@@ -14020,14 +14020,12 @@ static void RenderFolderTreeExplorerToolbar(
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 3.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(7.0f, 2.0f));
     const float searchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - searchReserve);
-    DrawUnifiedSearchInput(
-        searchId,
-        searchHint,
-        searchBuf,
-        searchBufSize,
-        0,
-        searchWidth,
-        inheritContextColors);
+    const auto palette = harken::toolbar::ResolveSearchPalette(ThemeColors::current(),
+        ImGui::GetStyleColorVec4(ImGuiCol_ChildBg),
+        ImGui::GetStyleColorVec4(ImGuiCol_FrameBg),
+        ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    const auto search = harken::toolbar::DrawSearchField(
+        searchId, searchHint, searchBuf, searchBufSize, searchWidth, palette);
 #if ARIS_PREVIEW_ISOLATION
     if (qaState) {
         const ImVec2 origin = ImGui::GetMainViewport()->Pos;
@@ -14039,7 +14037,9 @@ static void RenderFolderTreeExplorerToolbar(
 #else
     (void)qaState;
 #endif
-    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (search.cleared) {
+        onSearchEscape();
+    } else if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         onSearchEscape();
         ImGui::ClearActiveID();
     }
@@ -14203,14 +14203,13 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
         [&state, canLocateCurrent, browserSource]() {
             RenderFolderTreeExplorerToolbar(
                 browserSource.searchId,
-                "",
+                L(Filter_SearchFolder),
                 g_browserSystemFolderSearchBuffer,
                 sizeof(g_browserSystemFolderSearchBuffer),
                 browserSource.refreshId,
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                state.settings.theme == AppTheme::LapisBlue,
                 false,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
@@ -16183,17 +16182,15 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 state.selectedResultIndex >= 0 &&
                 state.selectedResultIndex < (int)state.searchResults.size();
             const bool canLocateCurrent = hasSelectedLocateRow || state.currentFileId > 0;
-            const bool useLapisBlueFolderSearchSurface = state.settings.theme == AppTheme::LapisBlue;
             RenderFolderTreeExplorerToolbar(
                 databaseSource.searchId,
-                "",
+                L(Filter_SearchFolder),
                 state.folderSearchBuffer,
                 sizeof(state.folderSearchBuffer),
                 databaseSource.refreshId,
                 folderTreeLoading,
                 databaseSource.locateId,
                 canLocateCurrent,
-                useLapisBlueFolderSearchSurface,
                 true,
                 []() {},
                 [&state, playlistScopedFolderTree, effectivePlaylistFolderTreeId]() {
@@ -36369,6 +36366,8 @@ void RenderUI(AppState& state) {
     const float rightDockColumnWidth = dockColumnBudget.rightWidth;
     if (showLeftColumn) leftPanelWidth = leftDockColumnWidth;
     if (showRightColumn) rightPanelWidth = rightDockColumnWidth;
+    const float resultsHomeLeftScreenX = std::trunc(viewport->WorkPos.x +
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f));
 
     float toolbarHeight = 40.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
@@ -36419,17 +36418,6 @@ void RenderUI(AppState& state) {
         const ImVec4 kToolbarMinorText = uiWithAlpha(kThemeTextMinor, 0.94f);
         const ImVec4 kToolbarAccent = uiWithAlpha(toolbarTheme.toolbarAccent, 1.0f);
         const ImVec4 kToolbarSelected = uiWithAlpha(toolbarTheme.resultsSelection, 1.0f);
-        const ImVec4 kToolbarSearchHintText = uiWithAlpha(uiMix(kThemeTextMuted, kToolbarAccent, 0.14f), 0.94f);
-        const bool kUseLapisBlueSearchChrome = state.settings.theme == AppTheme::LapisBlue;
-        const ImVec4 kToolbarSearchCue = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(uiMix(toolbarTheme.toolbarAccent, toolbarTheme.controlAccent, 0.35f), 1.0f)
-            : uiWithAlpha(uiMix(toolbarTheme.searchButtonBG, kToolbarAccent, 0.20f), 1.0f);
-        const ImVec4 kToolbarSearchShell = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(toolbarTheme.historyCapsuleBG, 1.0f)
-            : uiWithAlpha(uiMix(uiMix(uiColors[ImGuiCol_FrameBg], toolbarTheme.toolbarBG, 0.34f), kToolbarSearchCue, 0.06f), 1.0f);
-        const ImVec4 kToolbarSearchBorder = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(toolbarTheme.chromeBorder, 1.0f)
-            : uiWithAlpha(uiMix(kToolbarSearchCue, uiColors[ImGuiCol_Border], 0.18f), 0.34f);
         auto drawToolbarChromeShell = [&](ImDrawList* shellDl,
                                            const ImVec2& shellMin,
                                            const ImVec2& shellMax,
@@ -36474,7 +36462,6 @@ void RenderUI(AppState& state) {
         const float kCapsuleH = 34.0f;   // unified capsule height for both pill groups
         const float kToolbarCenterY = (toolbarHeight - kCapsuleH) * 0.5f;
         const float kToolbarLeftGutter = layoutTinyWidth ? 8.0f : 14.0f;
-        const float toolbarWindowW = ImGui::GetWindowSize().x;
         constexpr float kPresetDialWidth = 160.0f;
         constexpr float kPresetDialGap = 12.0f;
         const bool showPresetDial = !state.columnPresets.empty();
@@ -36490,9 +36477,29 @@ void RenderUI(AppState& state) {
             showPresetDial ? kPresetDialWidth + kPresetDialGap : 0.0f;
         aura::ui::workspace::ToolbarFlowLayout toolbarFlow;
 
-        // 1. Back/Continue 胶囊 (恢复到最左侧)
-
-        ImGui::SetCursorPos(ImVec2(kToolbarLeftGutter, kToolbarCenterY));
+        const auto toolbarSearchPalette = harken::toolbar::ResolveSearchPalette(
+            toolbarTheme, toolbarTheme.toolbarBG, toolbarTheme.frameBgBase, toolbarTheme.interfaceText);
+        constexpr float kHistoryButtonWidth = 46.0f;
+        constexpr float kHistoryInnerPad = 3.0f;
+        constexpr float kHistoryDividerGap = 2.0f;
+        constexpr float kHistoryCapsuleWidth =
+            2.0f * (kHistoryButtonWidth + kHistoryInnerPad + kHistoryDividerGap) + 1.0f;
+        constexpr float searchHistoryGap = 8.0f;
+        const float leadingHistoryX = toolbarWindowPos.x + kToolbarLeftGutter;
+        const bool historyAfterSearch =
+            resultsHomeLeftScreenX < leadingHistoryX + kHistoryCapsuleWidth + searchHistoryGap;
+        const float historyReserveW = historyAfterSearch ? kHistoryCapsuleWidth + searchHistoryGap : 0.0f;
+        const float navReserveW = layoutTinyWidth ? 252.0f : (layoutCompactWidth ? 276.0f : 620.0f);
+        const float spaceAfterAnchor = toolbarResultsRightScreenX - resultsHomeLeftScreenX -
+            historyReserveW - presetDialReserveW;
+        const float searchMinW = layoutTinyWidth ? 156.0f : (layoutCompactWidth ? 216.0f : 256.0f);
+        const float searchMaxW = layoutCompactWidth ? 356.0f : 456.0f;
+        const float searchWidth = std::min(
+            std::clamp(spaceAfterAnchor - navReserveW - 18.0f, searchMinW, searchMaxW),
+            std::max(96.0f, spaceAfterAnchor - 152.0f));
+        const float historyX = historyAfterSearch
+            ? resultsHomeLeftScreenX + searchWidth + searchHistoryGap : leadingHistoryX;
+        ImGui::SetCursorScreenPos(ImVec2(historyX, toolbarWindowPos.y + kToolbarCenterY));
         {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec4 kWarmWhite = ImVec4(0.988f, 0.978f, 0.952f, 1.0f);
@@ -36505,32 +36512,27 @@ void RenderUI(AppState& state) {
             ImVec2 capsulePos = ImGui::GetCursorScreenPos();
             const float capsuleH  = kCapsuleH;
             const float capsuleR  = capsuleH * 0.5f;
-            const float innerPad  = 3.0f;
-            const float innerH    = capsuleH - innerPad * 2;
+            const float innerH    = capsuleH - kHistoryInnerPad * 2;
             const float innerR    = innerH * 0.5f;
-            const float backW     = layoutTinyWidth ? 34.0f : (layoutCompactWidth ? 46.0f : 100.0f);
-            const float fwdW      = layoutTinyWidth ? 34.0f : (layoutCompactWidth ? 46.0f : 110.0f);
-            const float divSpace  = 2.0f;
-            const float capsuleW  = innerPad + backW + divSpace + 1.0f + divSpace + fwdW + innerPad;
 
             const bool canBack = state.canViewStateBack();
             const bool canFwd  = state.canViewStateForward();
 
-            ImVec2 backMin(capsulePos.x + innerPad, capsulePos.y + innerPad);
-            ImVec2 backMax(backMin.x + backW, backMin.y + innerH);
-            float  divX = backMax.x + divSpace;
-            ImVec2 fwdMin(divX + 1.0f + divSpace, capsulePos.y + innerPad);
-            ImVec2 fwdMax(fwdMin.x + fwdW, fwdMin.y + innerH);
+            ImVec2 backMin(capsulePos.x + kHistoryInnerPad, capsulePos.y + kHistoryInnerPad);
+            ImVec2 backMax(backMin.x + kHistoryButtonWidth, backMin.y + innerH);
+            float  divX = backMax.x + kHistoryDividerGap;
+            ImVec2 fwdMin(divX + 1.0f + kHistoryDividerGap, capsulePos.y + kHistoryInnerPad);
+            ImVec2 fwdMax(fwdMin.x + kHistoryButtonWidth, fwdMin.y + innerH);
 
             ImGui::SetCursorScreenPos(backMin);
-            ImGui::InvisibleButton("##NavBack", ImVec2(backW, innerH));
+            ImGui::InvisibleButton("##NavBack", ImVec2(kHistoryButtonWidth, innerH));
             ThemeInspector::RegisterLastItem("toolbar.back", L(Nav_Back), "src/main.cpp:42220");
             const bool backHov = ImGui::IsItemHovered();
             const bool backClk = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
             ImGui::SetCursorScreenPos(fwdMin);
-            ImGui::InvisibleButton("##NavFwd", ImVec2(fwdW, innerH));
-            ThemeInspector::RegisterLastItem("toolbar.continue", L(Splash_AriaContinue), "src/main.cpp:42225");
+            ImGui::InvisibleButton("##NavFwd", ImVec2(kHistoryButtonWidth, innerH));
+            ThemeInspector::RegisterLastItem("toolbar.continue", L(Nav_Forward), "src/main.cpp:42225");
             const bool fwdHov = ImGui::IsItemHovered();
             const bool fwdClk = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
@@ -36540,7 +36542,7 @@ void RenderUI(AppState& state) {
             drawToolbarChromeShell(
                 dl,
                 capsulePos,
-                ImVec2(capsulePos.x + capsuleW, capsulePos.y + capsuleH),
+                ImVec2(capsulePos.x + kHistoryCapsuleWidth, capsulePos.y + capsuleH),
                 capsuleR,
                 historyCapsuleFill);
 
@@ -36585,27 +36587,6 @@ void RenderUI(AppState& state) {
                                     : IM_COL32(180, 200, 240, 48), 1.0f);
 
             {
-                ImU32 backCol = canBack
-                    ? (backHov ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextStrong, 1.0f)) : IM_COL32(240, 246, 255, 250))
-                               : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextChrome, 0.95f)) : IM_COL32(215, 228, 248, 230)))
-                    : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextSubtle, 0.92f)) : IM_COL32(148, 168, 198, 170));
-                const char* backLabel = L(Nav_Back);
-                if (!layoutCompactWidth) {
-                    ImVec2 bs = ImGui::CalcTextSize(backLabel);
-                    dl->AddText(ImVec2(backMin.x + 26.0f + (backW - 26.0f - bs.x) * 0.5f, backMin.y + (innerH - bs.y) * 0.5f), backCol, backLabel);
-                }
-
-                ImU32 fwdCol = canFwd
-                    ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(uiMix(kThemeTextStrong, kToolbarAccent, 0.18f), 0.97f)) : IM_COL32(16, 24, 48, 240))
-                    : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextSubtle, 0.88f)) : IM_COL32(188, 200, 224, 210));
-                const char* fwdLabel = L(Nav_Forward);
-                if (!layoutCompactWidth) {
-                    ImVec2 fs = ImGui::CalcTextSize(fwdLabel);
-                    dl->AddText(ImVec2(fwdMin.x + (fwdW - 26.0f - fs.x) * 0.5f, fwdMin.y + (innerH - fs.y) * 0.5f), fwdCol, fwdLabel);
-                }
-            }
-
-            {
                 float bCx = backMin.x + 16.0f;
                 float bCy = backMin.y + innerH * 0.5f;
                 ImU32 chevCol = canBack ? (backHov ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextStrong, 1.0f)) : IM_COL32(240, 246, 255, 250)) : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextMuted, 0.96f)) : IM_COL32(215, 228, 248, 230))) : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextSubtle, 0.92f)) : IM_COL32(148, 168, 198, 170));
@@ -36640,10 +36621,8 @@ void RenderUI(AppState& state) {
             }
 
             ImGui::SetCursorScreenPos(capsulePos);
-            ImGui::Dummy(ImVec2(capsuleW, capsuleH));
+            ImGui::Dummy(ImVec2(kHistoryCapsuleWidth, capsuleH));
         }
-
-        // 2. 搜索框区域 (恢复到中间，并紧随上一个组件)
 
         ImGui::SameLine(0, 15);
 
@@ -36652,208 +36631,52 @@ void RenderUI(AppState& state) {
         bool forceApply = false;
         bool inputReturn = false;
 
-        float capsuleBaseY = kToolbarCenterY;
-        ImGui::SetCursorPosY(capsuleBaseY);
-
-        ImGui::BeginGroup();
+        const float capsuleBaseY = kToolbarCenterY;
+        const float searchY = toolbarWindowPos.y + capsuleBaseY +
+            (kCapsuleH - harken::toolbar::SearchFieldHeight()) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(resultsHomeLeftScreenX, searchY));
         {
-            // 1. 搜索按钮：使用主题里的 searchButtonBG，避免再借全局按钮 hover 伪装
-            const float iconHitW = 30.0f;
-            const float iconHitH = kCapsuleH;
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float searchGroupTopY = ImGui::GetCursorScreenPos().y;
-            const ImVec4 searchButtonBase = uiWithAlpha(ThemeColors::current().searchButtonBG, 0.88f);
-            const ImVec4 searchButtonHover = uiWithAlpha(uiMix(ThemeColors::current().searchButtonBG, kToolbarSelected, 0.18f), 0.98f);
-            ImGui::InvisibleButton("##SearchExecute", ImVec2(iconHitW, iconHitH));
-            const bool searchButtonHovered = ImGui::IsItemHovered();
-            const bool searchButtonClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-            const ImVec2 iconMin = ImGui::GetItemRectMin();
-            const ImVec2 iconMax = ImGui::GetItemRectMax();
-            const ImVec2 iconCenter((iconMin.x + iconMax.x) * 0.5f, (iconMin.y + iconMax.y) * 0.5f);
-            // F-035: when precise mode is locked, use accent color for the icon
-            const bool preciseLocked = state.searchExactModeLocked;
-            ImU32 iconCol = preciseLocked
-                ? ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, 0.96f))
-                : (kUseLightSoftChromeTheme
-                    ? ImGui::GetColorU32(uiWithAlpha(kThemeAccentText, 0.88f))
-                    : ImGui::GetColorU32(uiWithAlpha(uiMix(kThemeTextStrong, kToolbarAccent, 0.18f), 0.94f)));
-            if (searchButtonHovered) {
-                dl->AddCircleFilled(iconCenter, 12.0f, ImGui::GetColorU32(ImVec4(searchButtonHover.x, searchButtonHover.y, searchButtonHover.z, 0.16f)), 20);
-            } else if (preciseLocked) {
-                // subtle accent fill when locked
-                dl->AddCircleFilled(iconCenter, 10.0f, ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, 0.12f)), 20);
-            } else {
-                dl->AddCircleFilled(iconCenter, 10.0f, ImGui::GetColorU32(ImVec4(searchButtonBase.x, searchButtonBase.y, searchButtonBase.z, 0.06f)), 20);
-            }
-            dl->AddCircle(ImVec2(iconCenter.x - 1.5f, iconCenter.y - 1.5f), 6.5f, iconCol, 16, preciseLocked ? 2.2f : 1.8f);
-            dl->AddLine(ImVec2(iconCenter.x + 2.5f, iconCenter.y + 2.5f), ImVec2(iconCenter.x + 6.5f, iconCenter.y + 6.5f), iconCol, preciseLocked ? 2.2f : 1.8f);
-            // F-035: small dot indicator at top-right of icon when locked
-            if (preciseLocked) {
-                dl->AddCircleFilled(ImVec2(iconCenter.x + 5.0f, iconCenter.y - 5.0f), 2.8f, ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, 0.95f)), 10);
-            }
-            if (searchButtonHovered) {
-                HarkenSearch::SetTooltip(preciseLocked
-                    ? L(Search_PreciseOn)
-                    : L(Search_PreciseOff));
-            }
-            ImGui::SameLine(0, 6.0f);
-            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, searchGroupTopY + (kCapsuleH - ImGui::GetFrameHeight()) * 0.5f));
-
-            // 2. 交互判定
-            bool searchActive = ImGui::IsItemActive() || (ImGui::GetActiveID() == ImGui::GetID("##SearchBar"));
-            int colorPushes = 0;
-
-            static bool lastSearchRealtime = true;
-            forceApply = false;
-            if (searchButtonClicked) {
-                // F-035: toggle precise mode lock; if turning on, also force an immediate exact query
-                state.searchExactModeLocked = !state.searchExactModeLocked;
-                state.searchExactMode = state.searchExactModeLocked;
-                forceApply = true;
-            }
-            if (lastSearchRealtime != state.settings.searchRealtime) {
-                forceApply = state.settings.searchRealtime;
-                lastSearchRealtime = state.settings.searchRealtime;
-                if (!state.settings.searchRealtime) {
-                    state.searchDebounce.reset();
-                    if (state.filterQueryState == FilterQueryState::Debouncing)
-                        state.filterQueryState = FilterQueryState::Idle;
-                }
-            }
-            static bool searchHintHidden = false;
-            static bool hasSearchInputRect = false;
-            static ImVec2 searchInputRectMin(0.0f, 0.0f);
-            static ImVec2 searchInputRectMax(0.0f, 0.0f);
             const bool searchFocusRequested = state.searchSuggestRequestFocus || state.focusSearchBar;
-            bool searchClickStarting = false;
-            if (hasSearchInputRect && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                const ImVec2 mouse = ImGui::GetMousePos();
-                searchClickStarting = mouse.x >= searchInputRectMin.x && mouse.x < searchInputRectMax.x
-                    && mouse.y >= searchInputRectMin.y && mouse.y < searchInputRectMax.y;
-            }
-            const bool hideSearchPlaceholder = searchHintHidden || searchClickStarting || searchFocusRequested;
-
             if (state.searchSuggestRequestFocus) {
                 if (!state.searchSuggestPendingText.empty()) {
                     strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), state.searchSuggestPendingText.c_str(), _TRUNCATE);
                     state.searchSuggestPendingText.clear();
                     ImGui::ClearActiveID();
                 }
-                ImGui::SetKeyboardFocusHere();
                 state.searchSuggestRequestFocus = false;
             }
+            state.focusSearchBar = false;
 
-            // Focus the primary search field after a shortcut.
-            if (state.focusSearchBar) {
-                ImGui::SetKeyboardFocusHere();
-                state.focusSearchBar = false;
-            }
+            const auto search = harken::toolbar::DrawSearchField("##SearchBar", L(Search_Hint),
+                state.searchBuffer, sizeof(state.searchBuffer), searchWidth,
+                toolbarSearchPalette, harken::toolbar::SearchFieldOptions{
+                    true, state.searchExactModeLocked, searchFocusRequested});
 
-            // Draw a stronger caret and selection while search owns focus.
-            const ImVec4 kWarmWhite = ImVec4(0.988f, 0.978f, 0.952f, 1.0f);
-            if (searchActive) {
-                // 1. 隐藏占位符
-                ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0, 0, 0, 0)); colorPushes++;
-
-                // 2. 文本颜色：粉色主题下用极深玫瑰灰，确保文字清晰
-                ImVec4 textCol = kUseLightSoftChromeTheme ? kLightSoftText : kWarmWhite;
-                ImGui::PushStyleColor(ImGuiCol_Text, textCol); colorPushes++;
-
-                // 3. 背景颜色：粉色主题下使用暖白，拉开对比度但不发冷
-                ImVec4 frameBg = kUseLightSoftChromeTheme ? kLightSoftSurface : kToolbarSearchShell;
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, frameBg); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_Border, kUseLightSoftChromeTheme
-                    ? kLightSoftBorderStrong
-                    : kToolbarSearchBorder); colorPushes++;
-
-                // 4. 文本选区(TextSelectedBg)：如果用户拖拽选中文字，确保选区颜色够深
-                ImVec4 selectBg = kUseLightSoftChromeTheme
-                    ? kLightSoftSelection
-                    : uiWithAlpha(uiMix(kToolbarSearchCue, uiColors[ImGuiCol_TextSelectedBg], 0.42f), 0.46f);
-                ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, selectBg); colorPushes++;
-            } else {
-                ImVec4 searchFrameBg = kUseLightSoftChromeTheme ? kLightSoftSurface : kToolbarSearchShell;
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, searchFrameBg); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_Border, kUseLightSoftChromeTheme
-                    ? kLightSoftBorder
-                    : kToolbarSearchBorder); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_TextDisabled, hideSearchPlaceholder
-                    ? ImVec4(0, 0, 0, 0)
-                    : (kUseLightSoftChromeTheme ? kLightSoftHintText : kToolbarSearchHintText)); colorPushes++;
-            }
-
-            // Reclaim search focus after popup input.
-            if (state.focusSearchBar) {
-                ImGui::SetKeyboardFocusHere();
-                state.focusSearchBar = false;
-            }
-
-            const float searchCursorX = ImGui::GetCursorScreenPos().x - ImGui::GetWindowPos().x;
-            // Half-screen toolbar adaptation:
-            // reserve the *reachable compact nav width* first, then let search take
-            // the remaining space.  The nav capsule below also remeasures itself
-            // against this available width and can collapse all labels to icons.
-            const float navReserveW = layoutTinyWidth ? 252.0f : (layoutCompactWidth ? 276.0f : 620.0f);
-            const float searchAvailableW = toolbarWindowW - searchCursorX - navReserveW - presetDialReserveW - 18.0f;
-            const float searchMinW = layoutTinyWidth ? 120.0f : (layoutCompactWidth ? 180.0f : 220.0f);
-            const float searchMaxW = layoutCompactWidth ? 320.0f : 420.0f;
-            const float searchInputW = std::clamp(searchAvailableW, searchMinW, searchMaxW);
-            ImGui::SetNextItemWidth(searchInputW);
-            // EnterReturnsTrue centralizes Enter handling for this field.
-            ImGuiInputTextFlags searchFlags = ImGuiInputTextFlags_EnterReturnsTrue;
-            inputReturn = DrawUnifiedSearchInput("##SearchBar", L(Search_Hint),
-                state.searchBuffer, sizeof(state.searchBuffer), searchFlags, searchInputW, true);
-
-            searchFocused = ImGui::IsItemFocused() || ImGui::IsItemActive();
+            inputReturn = search.submitted;
+            forceApply = search.cleared;
+            searchFocused = search.focused;
             g_searchBarFocusedForShortcuts = searchFocused;
             searchRectMin = ImGui::GetItemRectMin();
             searchRectMax = ImGui::GetItemRectMax();
-            searchHintHidden = searchFocused;
-            searchInputRectMin = searchRectMin;
-            searchInputRectMax = searchRectMax;
-            hasSearchInputRect = true;
             if (ThemeInspector::IsCollecting()) {
-                ThemeInspector::RegisterZone(searchRectMin, searchRectMax, "searchButtonBG", L(ThemeCol_searchButtonBG));
+                ThemeInspector::RegisterZone(ImGui::GetItemRectMin(), searchRectMax, "searchButtonBG", L(ThemeCol_searchButtonBG));
             }
+            searchRectMin.x += harken::toolbar::kSearchTextOffset;
 
-            // Draw the focused search shell breathing feedback.
-            if (searchFocused) {
-                const float focusPulse =
-                    0.5f + 0.5f * sinf((float)ImGui::GetTime() * 3.2f);
-                const ImVec4 focusTone = uiMix(
-                    kCurrentTheme.controlAccent,
-                    kToolbarSearchCue,
-                    0.28f);
-                const ImVec2 focusMin(searchRectMin.x - 1.0f, searchRectMin.y - 1.0f);
-                const ImVec2 focusMax(searchRectMax.x + 1.0f, searchRectMax.y + 1.0f);
-                dl->AddRect(
-                    focusMin,
-                    focusMax,
-                    ImGui::GetColorU32(uiWithAlpha(focusTone, 0.24f + focusPulse * 0.30f)),
-                    7.0f,
-                    0,
-                    1.2f + focusPulse * 0.8f);
+            if (search.preciseToggled) {
+                state.searchExactModeLocked = !state.searchExactModeLocked;
+                state.searchExactMode = state.searchExactModeLocked;
+                forceApply = true;
             }
-
-            ImGui::PopStyleColor(colorPushes);
-
-            if (searchFocused) {
-                const char* searchModeHint = state.settings.searchRealtime ? "live" : "enter";
-                const float hintFontSize = ImGui::GetFontSize() * 0.84f;
-                ImFont* hintFont = ImGui::GetFont();
-                const ImVec2 hintSize = hintFont->CalcTextSizeA(hintFontSize, 1000.0f, 0.0f, searchModeHint);
-                const ImVec2 hintPos(
-                    searchRectMax.x - ImGui::GetStyle().FramePadding.x - hintSize.x - 3.0f,
-                    searchRectMax.y - ImGui::GetStyle().FramePadding.y - hintSize.y + 1.0f);
-                const ImVec4 hintTone = state.settings.searchRealtime
-                    ? uiMix(kToolbarSearchCue, kThemeTextStrong, 0.34f)
-                    : uiMix(kThemeTextMuted, ThemeColors::current().toolbarBG, 0.16f);
-                dl->AddText(
-                    hintFont,
-                    hintFontSize,
-                    hintPos,
-                    ImGui::GetColorU32(uiWithAlpha(hintTone, state.settings.searchRealtime ? 0.82f : 0.74f)),
-                    searchModeHint);
+            static bool lastSearchRealtime = true;
+            if (lastSearchRealtime != state.settings.searchRealtime) {
+                forceApply = forceApply || state.settings.searchRealtime;
+                lastSearchRealtime = state.settings.searchRealtime;
+                if (!state.settings.searchRealtime) {
+                    state.searchDebounce.reset();
+                    if (state.filterQueryState == FilterQueryState::Debouncing)
+                        state.filterQueryState = FilterQueryState::Idle;
+                }
             }
 
             if (HoveredForHelp()) {
@@ -36865,6 +36688,9 @@ void RenderUI(AppState& state) {
                 ImGui::TextUnformatted(L(Main_SearchMultiKeywordHint));
                 ImGui::Text(L(Main_SearchTriggerFmt), state.settings.searchRealtime ? L(Search_Live) : L(Search_EnterConfirm));
                 ImGui::TextDisabled(L(Main_SearchModeSwitchNote));
+                if (search.preciseHovered) {
+                    ImGui::TextUnformatted(state.searchExactModeLocked ? L(Search_PreciseOn) : L(Search_PreciseOff));
+                }
 
                 // 段 2 — 语法参考
                 ImGui::Separator();
@@ -36886,12 +36712,11 @@ void RenderUI(AppState& state) {
                 ImGui::EndTooltip(); }
             }
         }
-        ImGui::EndGroup();
 
-        // 搜索模式提示改为输入框内部轻提示后，这里保留原有右侧胶囊的安全缓冲，避免挤动布局。
         const float kSearchModeHintReserve = layoutCompactWidth ? 0.0f : 56.0f;
         const float kToolbarNavGap = layoutCompactWidth ? 8.0f : 95.0f;
-        float navCapsuleScreenX = searchRectMax.x + kToolbarNavGap + kSearchModeHintReserve;
+        const float searchAndHistoryRightX = searchRectMax.x + historyReserveW;
+        float navCapsuleScreenX = searchAndHistoryRightX + kToolbarNavGap + kSearchModeHintReserve;
 
         // 恢复 Y 坐标基准
         ImGui::SetCursorPosY(capsuleBaseY);
@@ -37000,7 +36825,7 @@ void RenderUI(AppState& state) {
             const float toolbarNavRightPad = layoutTinyWidth ? 6.0f : 10.0f;
             const float toolbarDialRightInset = showRightColumn ? 0.0f : toolbarNavRightPad;
             const float navLeftLimitScreenX =
-                searchRectMax.x + (layoutCompactWidth ? 8.0f : 16.0f);
+                searchAndHistoryRightX + (layoutCompactWidth ? 8.0f : 16.0f);
             aura::ui::workspace::ToolbarFlowLayoutInput toolbarFlowInput;
             toolbarFlowInput.toolbarMinX =
                 toolbarWindowPos.x + ImGui::GetWindowContentRegionMin().x;
@@ -38647,9 +38472,7 @@ void RenderUI(AppState& state) {
     // A Dock root can outlive its legacy Filter/Info shell. Keep Results beside
     // that live root until its last leaf floats, then this frame budget returns
     // to zero on the next layout pass.
-    ImGui::SetCursorScreenPos(ImVec2(
-        viewport->WorkPos.x + (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f),
-        dockContentTop));
+    ImGui::SetCursorScreenPos(ImVec2(resultsHomeLeftScreenX, dockContentTop));
     // Calculate available width for center panel
     float centerWidth = ImGui::GetContentRegionAvail().x;
     if (rightDockSlotRequired) centerWidth -= rightDockColumnWidth + splitterWidth;
@@ -39919,24 +39742,16 @@ void RenderUI(AppState& state) {
                     ImGui::TextDisabled(L(Main_CountParenFmt), audioCount);
 
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(-1.0f);  // fill remaining row width
                 {
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-                    ImGui::PushStyleColor(ImGuiCol_FrameBg,
-                        uiWithAlpha(uiColors[ImGuiCol_FrameBg], 0.85f));
-                    ImGui::PushStyleColor(ImGuiCol_Border,
-                        uiWithAlpha(uiColors[ImGuiCol_Border], 0.50f));
-                    ImGui::PushStyleColor(ImGuiCol_TextDisabled,
-                        uiWithAlpha(uiColors[ImGuiCol_TextDisabled], 0.70f));
-                    HintAwareInputTextWithHint("##BrowserSearch",
-                        L(Search_FileHint),
-                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer));
-                    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    const auto palette = harken::toolbar::ResolveSearchPalette(kCurrentTheme,
+                        kCurrentTheme.resultsBG, uiColors[ImGuiCol_FrameBg], uiColors[ImGuiCol_Text]);
+                    const float browserSearchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - 1.0f);
+                    const auto search = harken::toolbar::DrawSearchField("##BrowserSearch", L(Search_FileHint),
+                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer), browserSearchWidth, palette);
+                    if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                         state.browserFilterBuffer[0] = '\0';
                         ImGui::ClearActiveID();
                     }
-                    ImGui::PopStyleColor(3);
-                    ImGui::PopStyleVar();
                 }
 
                 // source label (from DB->browser jump, auto-dismiss after 5s)

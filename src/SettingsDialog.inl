@@ -276,10 +276,15 @@
         }
         ImGui::PopStyleColor(4);ImGui::PopStyleVar(2);ImGui::EndChild();
         ImGui::SetCursorPos(ImVec2(contentX,18));
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
-        ImGui::SetNextItemWidth(contentW-52);
-        HintAwareInputTextWithHint("##settings-search",L(SetUX_SearchSettingsCtrlK),editor.query,sizeof(editor.query)); su::Observe("search");
-        if(ImGui::IsItemActive())editor.recording=false;
+        const auto searchPalette = harken::toolbar::ResolveSearchPalette(
+            preview, preview.dialogBG, preview.frameBgBase, preview.interfaceText);
+        harken::toolbar::SearchFieldOptions searchOptions{};
+        searchOptions.requestFocus = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K);
+        searchOptions.minHeight = ImGui::GetFrameHeight();
+        const auto search = harken::toolbar::DrawSearchField("##settings-search", L(SetUX_SearchSettingsCtrlK),
+            editor.query, sizeof(editor.query), contentW-52, searchPalette, searchOptions);
+        su::Observe("search");
+        if (search.active) editor.recording=false;
         ImGui::SameLine();
         // Borderless close glyph, including hovered and pressed states.
         const auto xOrigin=ImGui::GetCursorScreenPos();

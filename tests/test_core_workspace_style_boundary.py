@@ -309,16 +309,13 @@ def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
 
 def test_top_toolbar_search_respects_reserved_width_for_navigation():
     main = read(MAIN_CPP)
-    search_adapter = between(main, "static bool DrawUnifiedSearchInput(", "// Renders [optional search field]")
+    search = between(main, "const bool historyAfterSearch", "float navCapsuleScreenX")
 
-    # The toolbar reserves room for the six navigation actions.  The shared
-    # TextInput adapter must consume the caller's width; otherwise it expands
-    # to the entire child and forces the navigation capsule into icon-only mode.
-    assert "float width = 0.0f" in search_adapter
-    assert "options.width = width" in search_adapter
-    assert "DrawUnifiedSearchInput(\"##SearchBar\"" in main
-    assert "searchInputW" in main
-    assert "state.searchBuffer, sizeof(state.searchBuffer), searchFlags, searchInputW" in main
+    assert "toolbarResultsRightScreenX - resultsHomeLeftScreenX" in search
+    assert "historyReserveW - presetDialReserveW" in search
+    assert "std::clamp(spaceAfterAnchor - navReserveW - 18.0f, searchMinW, searchMaxW)" in search
+    assert 'DrawSearchField("##SearchBar"' in search
+    assert "searchRectMax.x + historyReserveW" in search
 
 
 def test_results_content_edge_is_compact_and_tab_labels_reject_settings_payloads():
@@ -387,18 +384,14 @@ def test_all_resize_handles_share_the_three_dot_grip_logic():
 
 def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
     main = read(MAIN_CPP)
-    toolbar_search = between(
-        main,
-        "const bool kUseLapisBlueSearchChrome",
-        "auto drawToolbarChromeShell",
-    )
+    controls = read(MAIN_CPP.parent / "ui" / "ToolbarSearchControls.h")
+    toolbar_palette = between(controls, "inline Palette ResolveSearchPalette", "struct SearchFieldResult")
 
-    assert "kUseLapisBlueSearchChrome" in main
-    assert "toolbarTheme.historyCapsuleBG" in toolbar_search
-    assert "toolbarTheme.toolbarAccent" in toolbar_search
-    assert "toolbarTheme.controlAccent" in toolbar_search
-    assert "toolbarTheme.chromeBorder" in toolbar_search
-    assert "uiMix(toolbarTheme.toolbarBG, kCurrentTheme.resultsBG" not in toolbar_search
+    assert "toolbarTheme = ThemeColors::current()" in main
+    assert "toolbarTheme, toolbarTheme.toolbarBG, toolbarTheme.frameBgBase, toolbarTheme.interfaceText" in main
+    for token in ("toolbarAccent", "controlAccent", "searchButtonBG", "resultsSelection"):
+        assert f"theme.{token}" in toolbar_palette
+    assert "AppTheme::" not in toolbar_palette and "IM_COL32" not in toolbar_palette
     builtin = read(BUILTIN_THEME_CPP)
     assert "s.transportBarBG         = H(0xff223a52)" in builtin
     assert "s.transportBarBG         = H(0xff000000)" not in builtin
@@ -507,25 +500,15 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "centerResultsDrawList->AddRect(" in center_setup
 
 
-def test_lapis_folder_search_inherits_sidebar_semantic_colors_in_both_views():
+def test_folder_search_inherits_sidebar_semantic_colors_in_both_views():
     main = read(MAIN_CPP)
-    widgets_header = read(AURO_WIDGETS_HEADER)
-    widgets_source = read(AURO_WIDGETS_SOURCE)
     toolbar = between(main, "static void RenderFolderTreeExplorerToolbar", "static void RenderFolderTreeExplorerList")
-    browser_search = between(main, "RenderFolderTreeExplorerToolbar(\n                browserSource.searchId", "RunBrowserSystemFolderSearchIfNeeded")
-    database_search = between(main, "const bool useLapisBlueFolderSearchSurface", "[]() {}")
-
-    assert "bool inheritContextColors = false;" in widgets_header
-    assert "opts.inheritContextColors" in widgets_source
-    for color in ("FrameBg", "FrameBgHovered", "FrameBgActive", "Border", "Text"):
-        assert f"ImGuiCol_{color}" in widgets_source
-    assert "const bool useLapisBlueFolderSearchSurface = state.settings.theme == AppTheme::LapisBlue;" in database_search
-    assert "useLapisBlueFolderSearchSurface" in database_search
-    assert "useLapisBlueFolderSearchSurface" not in browser_search
-    assert main.count("useLapisBlueFolderSearchSurface") == 2
-    assert "inheritContextColors);" in toolbar
-    assert "state.settings.theme == AppTheme::LapisBlue,\n                false," in browser_search
-    assert "useLapisBlueFolderSearchSurface,\n                true," in database_search
+    assert "ResolveSearchPalette(ThemeColors::current()," in toolbar
+    for color in ("ChildBg", "FrameBg", "Text"):
+        assert f"ImGui::GetStyleColorVec4(ImGuiCol_{color})" in toolbar
+    assert "harken::toolbar::DrawSearchField(" in toolbar
+    assert "browserSource.searchId,\n                L(Filter_SearchFolder)" in main
+    assert "databaseSource.searchId,\n                L(Filter_SearchFolder)" in main
     assert "ImGuiCol_FrameBg,              leftPanelInput" in main
     assert "ImGuiCol_Border,               leftPanelOutline" in main
     assert "ImGuiCol_Text,                 leftPanelText" in main
@@ -538,7 +521,8 @@ def test_folder_tree_search_preserves_refresh_and_locate_action_width():
 
     assert "kSameLine + kRefreshW + kBtnGap + kLocateW + 2.0f" in toolbar
     assert "ImGui::GetContentRegionAvail().x - searchReserve" in toolbar
-    assert "searchWidth,\n        inheritContextColors);" in toolbar
+    assert "searchBufSize, searchWidth, palette);" in toolbar
+    assert "search.cleared" in toolbar and "onSearchEscape();" in toolbar
     assert "SidebarRefreshGlyphButton(refreshId, ImVec2(kRefreshW, 22.0f), refreshBusy)" in toolbar
     assert "ImGui::InvisibleButton(locateId, ImVec2(btnSize, btnSize))" in toolbar
     assert "ImGui::SetNextItemWidth(-searchReserve)" not in toolbar
@@ -698,10 +682,13 @@ def test_primary_search_uses_the_scoped_toolbar_input_material():
     main = read(MAIN_CPP)
     toolbar = between(main, "// TOP TOOLBAR - Search and Buttons", "// MAIN CONTENT AREA")
 
-    # The toolbar already establishes the search shell colors. The reusable
-    # TextInput must consume that scoped palette instead of replacing it with
-    # the global frame background.
-    assert "state.searchBuffer, sizeof(state.searchBuffer), searchFlags, searchInputW, true);" in toolbar
+    call = between(toolbar, 'DrawSearchField("##SearchBar"', "inputReturn = search.submitted")
+    assert "toolbarSearchPalette, harken::toolbar::SearchFieldOptions{" in call
+    assert "true, state.searchExactModeLocked, searchFocusRequested" in call
+    controls = read(MAIN_CPP.parent / "ui" / "ToolbarSearchControls.h")
+    material = between(controls, "inline SearchFieldResult DrawSearchField(", "const auto iconPressed")
+    assert "AddRectFilled(start, end, ImGui::GetColorU32(palette.searchFill)" in material
+    assert "ImGuiCol_FrameBg, transparent" in controls
 
 
 def test_preset_dial_has_shadow_without_a_perimeter_card():
@@ -912,30 +899,25 @@ def test_playlist_quickbar_blank_space_is_not_an_invisible_hide_button():
     assert "SetPlaylistQuickBarVisible(state, !state.settings.showPlaylistQuickBar)" in main
 
 
-def test_primary_search_uses_native_caret_without_custom_overlay():
+def test_primary_search_has_a_static_theme_focus_ring_across_the_capsule():
+    controls = read(MAIN_CPP.parent / "ui" / "ToolbarSearchControls.h")
+    ring = between(controls, "if (result.focused)", "const auto iconSurface")
+
+    assert "draw->AddRect(" in ring
+    assert "GetClipRectMin()" in ring and "GetClipRectMax()" in ring
+    assert "start.x - outset" in ring and "end.x + outset" in ring
+    assert "ImGui::GetColorU32(palette.focus)" in ring
+    assert "GetTime" not in ring and "sinf" not in ring
+
+
+def test_primary_search_shares_the_results_left_edge():
     main = read(MAIN_CPP)
-    search = between(main, 'DrawUnifiedSearchInput("##SearchBar"', 'ImGui::PopStyleColor(colorPushes);')
+    layout = between(main, "const float leftDockColumnWidth", "// Right Column - File Info")
 
-    assert "Draw the custom breathing caret" not in search
-    assert "AddRectFilled" not in search
-
-
-def test_primary_search_focus_breathes_across_entire_input_shell():
-    main = read(MAIN_CPP)
-    search = between(
-        main,
-        '// Draw the focused search shell breathing feedback.',
-        'ImGui::PopStyleColor(colorPushes);',
-    )
-
-    assert "if (searchFocused)" in search
-    assert "0.5f + 0.5f * sinf" in search
-    assert "searchRectMin" in search
-    assert "searchRectMax" in search
-    assert "dl->AddRect(" in search
-    assert "focusPulse" in search
-    assert "kCurrentTheme.controlAccent" in search
-    assert "kUseLightSoftChromeTheme" not in search
+    assert "const float resultsHomeLeftScreenX" in layout
+    assert "ImVec2(resultsHomeLeftScreenX, searchY)" in layout
+    assert "ImVec2(resultsHomeLeftScreenX, dockContentTop)" in layout
+    assert "historySlotWidth" not in layout
 
 
 def test_database_tabs_restore_scroll_after_table_extent_is_known():
