@@ -18,6 +18,9 @@ REPOSITORY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_
 CARD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*$")
 BRANCH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*$")
 COMMIT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+# Agent runtime files belong outside the card directory; these names are tolerated at its
+# root as a safety net so a leftover one never blocks a proven-clean closeout.
+ALLOWED_RUNTIME_FILES = frozenset({"_cuevi-session.json"})
 WORKTREE_POINTER = re.compile(r"gitdir: (.+)$")
 
 
@@ -128,7 +131,12 @@ def assert_no_local_content(root: Path) -> None:
     indexed = git_output(root, "ls-files", "-v", "-z")
     if any(entry and (entry[0] == "S" or entry[0].islower()) for entry in indexed.split("\0")):
         refuse("索引含 assume-unchanged 或 skip-worktree 标记；无法证明文件未修改")
-    if git_output(root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"):
+    status = git_output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
+    for entry in (item for item in status.split("\0") if item):
+        if len(entry) < 4 or entry[2] != " ":
+            refuse("无法解析 Git 状态输出")
+        if entry[3:] in ALLOWED_RUNTIME_FILES:
+            continue
         refuse("目录还有未保存或被 Git 忽略的文件")
 
 
@@ -361,7 +369,18 @@ def delete_feature_branches(card: Path, main_repo: Path, branch: str, remote_sha
             refuse("删除主仓功能分支失败")
 
 
+def delete_allowed_runtime_files(root: Path) -> None:
+    for name in ALLOWED_RUNTIME_FILES:
+        path = root / name
+        if path.exists() and is_reparse(path):
+            refuse("运行期文件是链接或重解析点")
+        if path.is_file():
+            path.unlink()
+
+
 def remove_registered_worktree(main_repo: Path, root: Path) -> None:
+    # Git refuses to drop a worktree holding even a tolerated untracked runtime file.
+    delete_allowed_runtime_files(root)
     if git(main_repo, "worktree", "remove", str(root)).returncode:
         refuse("git worktree remove 失败；请人工核验卡目录和登记状态")
     git(main_repo, "worktree", "prune")

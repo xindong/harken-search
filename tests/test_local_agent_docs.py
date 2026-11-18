@@ -54,3 +54,12 @@ def test_local_agent_rules_default_to_git_worktree() -> None:
     assert "clone" in entry
     assert "独立 clone" not in workflow
     assert "本卡目录" in workflow
+
+def test_runtime_files_stay_outside_the_card_directory() -> None:
+    """运行期文件放在卡目录外，避免混进产品改动或挡住收尾清理。"""
+    entry = ENTRY.read_text(encoding="utf-8")
+    workflow = (METHODS / "workflow.md").read_text(encoding="utf-8")
+
+    assert "运行期文件" in entry
+    assert "不写进卡目录" in entry
+    assert "运行期文件" in workflow
