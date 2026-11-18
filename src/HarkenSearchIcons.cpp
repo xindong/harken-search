@@ -115,6 +115,7 @@ const char* BrandWordmarkFilename(BrandWordmark mark) {
     switch (mark) {
         case BrandWordmark::MenuWhite: return "harken-search-menu-wordmark-white.png";
         case BrandWordmark::MenuBlack: return "harken-search-menu-wordmark-black.png";
+        case BrandWordmark::MenuOrange: return "harken-search-menu-wordmark-orange.png";
     }
     return nullptr;
 }
@@ -138,7 +139,7 @@ std::unordered_map<std::string, BrandTex> g_packagedAssetTex;
 
 void LoadBrandWordmarksOnce() {
     if (g_wordmarkLoaded) return;
-    for (int i = 0; i <= (int)BrandWordmark::MenuBlack; ++i) {
+    for (int i = 0; i <= (int)BrandWordmark::MenuOrange; ++i) {
         const char* fn = BrandWordmarkFilename((BrandWordmark)i);
         if (!fn) continue;
         const std::string p = ResolveLogoPath(fn);
@@ -174,8 +175,13 @@ float DrawMenuBarBrandWordmark(float x0, float y0, float x1, float y1,
     // 只看整体深浅主题会让自定义配色的字标看不见。
     const ImVec4 barBG = ThemeColors::menuBarFillBG(ThemeColors::current());
     const float barLuma = barBG.x * 0.299f + barBG.y * 0.587f + barBG.z * 0.114f;
-    auto it = g_wordmarkTex.find(barLuma >= 0.5f ? (int)BrandWordmark::MenuBlack
-                                                 : (int)BrandWordmark::MenuWhite);
+    // 品牌要求菜单栏固定用橙色字标；只有橙色图缺失时才退回按底色选黑/白图。
+    auto it = g_wordmarkTex.find((int)BrandWordmark::MenuOrange);
+    if (it == g_wordmarkTex.end() || it->second.glId == 0 || it->second.w <= 0
+        || it->second.h <= 0) {
+        it = g_wordmarkTex.find(barLuma >= 0.5f ? (int)BrandWordmark::MenuBlack
+                                                : (int)BrandWordmark::MenuWhite);
+    }
     if (it == g_wordmarkTex.end() || it->second.glId == 0 || it->second.w <= 0
         || it->second.h <= 0) {
         // No packaged artwork: keep the plain-text brand name.

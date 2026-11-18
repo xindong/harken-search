@@ -105,11 +105,10 @@ int main() {
               windowsMain.find("assets\\\\avatars\\\\dicebear\\\\lorelei-neutral") != std::string::npos &&
               windowsMain.find("startupAvatarDataUri") != std::string::npos,
           "Startup welcome entry reads the local DiceBear avatar pool without a runtime API request");
-    check(windowsMain.find("loadingAvatarDataUri") != std::string::npos &&
-              windowsMain.find("loadingAvatarBubble") != std::string::npos &&
+    check(windowsMain.find("HarkenSearch::kStartupLoadingMascotArtwork") != std::string::npos &&
               windowsMain.find("spinner-container{display:none!important;}") != std::string::npos &&
               windowsMain.find(".glass-card{width:min(312px,calc(100vw - 48px));min-height:300px") != std::string::npos,
-          "Startup loading/preheat screen reuses the welcome-style avatar card instead of the old spinner card");
+          "Startup loading/preheat screen uses the mascot in the existing compact loading card");
     check(windowsMain.find("Preparing your sound workspace...") != std::string::npos,
           "Startup welcome entry includes the sound-workspace warmup copy");
     check(windowsMain.find("\"Inter\", \"Noto Sans SC\", \"Noto Sans CJK SC\"") != std::string::npos,
