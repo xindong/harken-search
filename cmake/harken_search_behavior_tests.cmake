@@ -7009,8 +7009,10 @@ add_test(
     NAME TestStage4DependencyAudit
     COMMAND ${Python3_EXECUTABLE} -m pytest tests/test_stage4_dependency_audit.py -q
 )
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
 set_tests_properties(TestStage4DependencyAudit PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
 )
 aura_set_test_labels(TestStage4DependencyAudit core)
 

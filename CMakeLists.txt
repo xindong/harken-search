@@ -2116,8 +2116,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} -m pytest -q
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qa_exe_packaging_contract.py"
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
     set_tests_properties(TestQaExePackagingContract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
     )
     aura_set_test_labels(TestQaExePackagingContract core)
 
@@ -2579,8 +2581,10 @@ if(Python3_Interpreter_FOUND)
             tests/test_stage7_platform_contract.py
             -q
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
     set_tests_properties(TestStage7ApiContract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
     )
     aura_set_test_labels(TestStage7ApiContract core)
 endif()
