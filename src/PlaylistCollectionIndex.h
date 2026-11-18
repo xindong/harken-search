@@ -107,6 +107,12 @@ struct PlaylistCollectionIndex {
         return hiddenIds.find(playlistId) != hiddenIds.end();
     }
 
+    // O(1) lookup of the playlist position; -1 when the id is unknown.
+    int IndexOf(int64_t playlistId) const {
+        auto it = indexById.find(playlistId);
+        return it == indexById.end() ? -1 : static_cast<int>(it->second);
+    }
+
     int64_t DisplayedCount(int64_t playlistId) const {
         auto it = displayedCountById.find(playlistId);
         return it == displayedCountById.end() ? 0 : it->second;

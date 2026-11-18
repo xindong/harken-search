@@ -15401,7 +15401,11 @@ void ApplyPlaylistQuickBarOrder(AppState& state) {
 
     if (ordered.size() == state.playlists.size()) {
         state.playlists = std::move(ordered);
-        state.playlistQuickBarAppliedOrderSignature = signature;
+        // Cache the signature of the order we just applied, otherwise the next
+        // frame sees a different signature and rebuilds the whole list again.
+        state.playlistQuickBarAppliedOrderSignature =
+            aura::playlist::PlaylistQuickBarOrderSignature(
+                state.playlists, state.settings.playlistQuickBarOrder);
     }
 }
 

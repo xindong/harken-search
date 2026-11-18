@@ -277,18 +277,12 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         for (int visualIdx = 0; visualIdx < (int)chipPlan.size(); ++visualIdx) {
             const auto& chip = chipPlan[(size_t)visualIdx];
 
-            // Look up original Playlist and its state.playlists index for swap logic.
-            const Playlist* plPtr = nullptr;
-            int i = -1;
-            for (int si = 0; si < (int)state.playlists.size(); ++si) {
-                if (state.playlists[(size_t)si].id == chip.id) {
-                    plPtr = &state.playlists[(size_t)si];
-                    i = si;
-                    break;
-                }
-            }
-            if (!plPtr) continue;
-            const Playlist& pl = *plPtr;
+            // Look up the original Playlist position through the shared index instead
+            // of scanning the whole list for every chip.
+            const int i = state.playlistCollectionIndex.IndexOf(chip.id);
+            if (i < 0 || (size_t)i >= state.playlists.size()) continue;
+            if (state.playlists[(size_t)i].id != chip.id) continue;
+            const Playlist& pl = state.playlists[(size_t)i];
 
             ImGui::PushID((const void*)(intptr_t)pl.id);
             const std::string safePlName = pl.name.empty() ? L(Nav_UnnamedList) : pl.name;
