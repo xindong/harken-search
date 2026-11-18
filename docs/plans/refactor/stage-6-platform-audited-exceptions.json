@@ -6996,6 +6996,94 @@
       "occurrence": 1,
       "owner_slice": "S6-02",
       "disposition": "platform-entry"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-include|windows.h|d395cd89463e8f58|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 10,
+      "rule": "native-include",
+      "token": "windows.h",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CloseHandle|97c6d24b6ef1dcfe|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 153,
+      "rule": "native-symbol",
+      "token": "CloseHandle",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|MultiByteToWideChar|4c3018a8eb2b8db2|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 158,
+      "rule": "native-symbol",
+      "token": "MultiByteToWideChar",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|MultiByteToWideChar|5bfb8a7166f50da5|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 164,
+      "rule": "native-symbol",
+      "token": "MultiByteToWideChar",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CreateFileW|233b50a7454c3fec|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 168,
+      "rule": "native-symbol",
+      "token": "CreateFileW",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|GetFileInformationByHandleEx|532e0fb6cb253794|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 174,
+      "rule": "native-symbol",
+      "token": "GetFileInformationByHandleEx",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CloseHandle|fbda12bae9f177bb|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 176,
+      "rule": "native-symbol",
+      "token": "CloseHandle",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
+    },
+    {
+      "fingerprint": "src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|WaitForSingleObject|fe8dd7054cfd75c4|1",
+      "path": "src/bootstrap/HarkenSearchBootstrapMain.cpp",
+      "line": 192,
+      "rule": "native-symbol",
+      "token": "WaitForSingleObject",
+      "occurrence": 1,
+      "owner_slice": "S6-02",
+      "disposition": "platform-adapter",
+      "evidence_document": "docs/architecture/bootstrap-main-native-audit.md"
     }
   ]
 }

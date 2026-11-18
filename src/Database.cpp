@@ -17577,9 +17577,11 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
 
     if (!executeSQL("DELETE FROM audio_files WHERE id IN (SELECT id FROM temp.remove_folder_subtree_candidates)")) {
         const std::string deleteErr = sqlite3_errmsg(m_db);
+        const int deleteErrorCode = sqlite3_extended_errcode(m_db);
         static thread_local bool s_retryingAfterSearchIndexRepair = false;
         if (!s_retryingAfterSearchIndexRepair &&
-            IsRecoverableSearchIndexMalformedError(deleteErr)) {
+            (deleteErrorCode == SQLITE_CORRUPT_VTAB ||
+             IsRecoverableSearchIndexMalformedError(deleteErr))) {
             rollbackTransaction();
             executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
             std::string repairError;
