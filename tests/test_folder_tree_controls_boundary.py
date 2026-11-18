@@ -83,3 +83,10 @@ def test_sidebar_render_instances_own_independent_folder_tree_controls():
     sidebar_tree = section("// Section 1: 文件夹树", "// Section 2:")
     assert "controls.BeginFrame(ImGui::GetFrameCount(), controlsPanel, state.currentDbPathUtf8, tabId, -1, true);" in sidebar_tree
     assert re.search(r"controls\.BeginFrame\([^;]*state\.currentDbPathUtf8, tabId,\s*effectivePlaylistFolderTreeId, false\)", sidebar_tree)
+
+
+def test_existing_metadata_picker_keys_keep_the_original_sidebar_scope():
+    assert "const char* metadataScope = instance->imguiScope;" in MAIN
+    for picker in ("Artist", "Album", "Category"):
+        assert f"{picker.lower()}Pickers[metadataScope]" in MAIN
+        assert f'metadataScope, "{picker}", "##{picker}Filter"' in MAIN

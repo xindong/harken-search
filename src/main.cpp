@@ -16108,6 +16108,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
     IM_ASSERT(instance != instances.end());
     if (instance == instances.end()) return;
     ImGui::PushID(instance->imguiScope);
+    const char* metadataScope = instance->imguiScope;
 
     // Layout reservations:
     // No status or content-header bands reserve vertical space.
@@ -16999,30 +17000,30 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // Artist, album and category share one transactional name picker.
         // Their text is only a list query until a row is selected.
         static std::unordered_map<std::string, SidebarMetadataPickerUiState> artistPickers;
-        auto& artistPicker = artistPickers[idScope];
+        auto& artistPicker = artistPickers[metadataScope];
         drawSidebarFilterLabel(L(Filter_Artist));
         DrawSidebarMetadataPickerField(
-            idScope, "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
+            metadataScope, "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
             state.artistFilterBuffer,
             state.currentDbPathUtf8, artistPicker, &state,
             [&]() { return state.database.getUniqueArtists(std::numeric_limits<int>::max()); },
             [&]() { state.artistFilterAlternates.clear(); applyMetaFilters(); });
 
         static std::unordered_map<std::string, SidebarMetadataPickerUiState> albumPickers;
-        auto& albumPicker = albumPickers[idScope];
+        auto& albumPicker = albumPickers[metadataScope];
         drawSidebarFilterLabel(L(Filter_Album));
         DrawSidebarMetadataPickerField(
-            idScope, "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
+            metadataScope, "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
             state.albumFilterBuffer,
             state.currentDbPathUtf8, albumPicker, &state,
             [&]() { return state.database.getUniqueAlbums(std::numeric_limits<int>::max()); },
             [&]() { applyMetaFilters(); });
 
         static std::unordered_map<std::string, SidebarMetadataPickerUiState> categoryPickers;
-        auto& categoryPicker = categoryPickers[idScope];
+        auto& categoryPicker = categoryPickers[metadataScope];
         drawSidebarFilterLabel(L(Filter_CategoryLabel));
         DrawSidebarMetadataPickerField(
-            idScope, "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
+            metadataScope, "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
             state.categoryFilterBuffer,
             state.currentDbPathUtf8, categoryPicker, &state,
             [&]() { return state.database.getUniqueCategories(std::numeric_limits<int>::max()); },
