@@ -1,4 +1,5 @@
 #include "FolderTreeControls.h"
+#include "HarkenSearchIcons.h"
 #include "../thirdparty/lucide/IconsLucide.h"
 
 #include <cmath>
@@ -91,16 +92,16 @@ struct ButtonDraw {
     bool helpHovered = false;
 };
 
-static void TestButtons(const char* fontPath) {
+static void TestButtons(bool loadLucide) {
     ImGui::CreateContext();
     auto& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.DisplaySize = ImVec2(480, 320);
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.Fonts->AddFontDefault();
-    ImFontConfig fontConfig;
-    fontConfig.MergeMode = true;
-    io.Fonts->AddFontFromFileTTF(fontPath, 20.0f, &fontConfig);
+    if (loadLucide) {
+        aura::ui::MergeLucideFont(io.Fonts, 20.0f);
+    }
     const ImVec4 icon(0.68f, 0.74f, 0.80f, 1.0f);
     const ImVec4 fill(0.40f, 0.55f, 0.70f, 0.24f);
     controls::RefreshMotion motion;
@@ -137,6 +138,16 @@ static void TestButtons(const char* fontPath) {
     };
     frame();
     frame();
+    if (!loadLucide) {
+        Check(refresh.vertices > 4, "refresh draws a visible shape without Lucide");
+        Check(locate.vertices > 4, "locate draws a visible shape without Lucide");
+        Check(Near(refresh.max.x - refresh.min.x, locate.max.x - locate.min.x),
+              "fallback icons preserve the shared hit area");
+        frame(false);
+        Check(locate.vertices > 4, "disabled locate remains visible without Lucide");
+        ImGui::DestroyContext();
+        return;
+    }
     Check(refresh.vertices == 4 && locate.vertices == 4, "idle buttons draw only glyphs and no background or border");
     Check(Near(refresh.max.x - refresh.min.x, locate.max.x - locate.min.x) &&
           Near(refresh.max.y - refresh.min.y, locate.max.y - locate.min.y) &&
@@ -183,14 +194,11 @@ static void TestButtons(const char* fontPath) {
     ImGui::DestroyContext();
 }
 
-int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "Usage: TestFolderTreeControls <lucide.ttf>\n");
-        return 2;
-    }
+int main() {
     TestRefreshMotion();
     TestLocatePathMatching();
     TestLocateFeedback();
-    TestButtons(argv[1]);
+    TestButtons(true);
+    TestButtons(false);
     return failures != 0;
 }

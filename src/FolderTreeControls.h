@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "../thirdparty/lucide/IconsLucide.h"
 
 #include <algorithm>
 #include <cmath>
@@ -122,6 +123,39 @@ inline void DrawGlyph(ImDrawList* drawList, ImVec2 center, const char* text, ImU
     ImFont* font = ImGui::GetFont();
     const ImFontGlyph* glyph = font->GetFontBaked(kIconEm)->FindGlyphNoFallback(static_cast<ImWchar>(codepoint));
     if (!glyph || !glyph->Visible) {
+        constexpr float kStroke = 1.5f;
+        const std::string_view icon(text);
+        if (icon == ICON_LC_REFRESH) {
+            constexpr float kRadius = 5.75f;
+            const float tipAngle = (2.0f * turns - 0.125f) * IM_PI;
+            drawList->PathArcTo(center, kRadius, tipAngle - 1.6f * IM_PI, tipAngle, 16);
+            drawList->PathStroke(color, ImDrawFlags_None, kStroke);
+
+            const float cosine = std::cos(tipAngle);
+            const float sine = std::sin(tipAngle);
+            const auto arrowPoint = [&](float radial, float tangential) {
+                return ImVec2(center.x + radial * cosine - tangential * sine,
+                              center.y + radial * sine + tangential * cosine);
+            };
+            const ImVec2 arrow[] = {
+                arrowPoint(kRadius - 2.5f, -3.0f), arrowPoint(kRadius, 0.0f),
+                arrowPoint(kRadius + 2.5f, -3.0f),
+            };
+            drawList->AddPolyline(arrow, IM_ARRAYSIZE(arrow), color, ImDrawFlags_None, kStroke);
+        } else if (icon == ICON_LC_FOLDER_OPEN) {
+            const auto point = [&](float horizontal, float vertical) {
+                return ImVec2(center.x + horizontal, center.y + vertical);
+            };
+            const ImVec2 back[] = {
+                point(-7.0f, 5.0f), point(-7.0f, -5.0f), point(-3.0f, -5.0f),
+                point(-1.0f, -3.0f), point(5.0f, -3.0f), point(5.0f, -1.0f),
+            };
+            const ImVec2 front[] = {
+                back[0], point(-5.0f, -1.0f), point(7.0f, -1.0f), point(5.0f, 5.0f),
+            };
+            drawList->AddPolyline(back, IM_ARRAYSIZE(back), color, ImDrawFlags_None, kStroke);
+            drawList->AddPolyline(front, IM_ARRAYSIZE(front), color, ImDrawFlags_Closed, kStroke);
+        }
         return;
     }
 

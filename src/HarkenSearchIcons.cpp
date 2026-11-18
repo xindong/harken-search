@@ -1,6 +1,6 @@
 // src/HarkenSearchIcons.cpp
 // Aris UI v1 - icon system implementation.
-// - MergeLucideFont / LoadBrandIconsOnce / DrawBrandIcon land in Tasks 4-5.
+// - LoadBrandIconsOnce / DrawBrandIcon land in Task 5.
 // - StatusDot / DiffBadge / LoadingSpinner are pure ImDrawList helpers, no
 //   external resources; implemented in Task 6.
 #include "HarkenSearchIcons.h"
@@ -18,42 +18,6 @@
 #endif
 
 namespace aura::ui {
-
-void MergeLucideFont(ImFontAtlas* atlas, float fontPixelSize) {
-    if (!atlas) return;
-
-    // Try exe-adjacent path first (release/install layout), then project-
-    // relative path (dev run from repo root). Both resolve to the same
-    // font file; whichever stat-hits-first wins.
-    static const char* kCandidates[] = {
-        "lucide.ttf",
-        "thirdparty/lucide/lucide.ttf",
-    };
-
-    // Lucide codepoints used by the widget layer (see IconsLucide.h). Keep the
-    // range tight so we don't rasterise 1500+ unused glyphs into the atlas.
-    // Values match _gen_header.py output as of 2026-04-21.
-    static const ImWchar kGlyphRange[] = {
-        0xE042, 0xE55E,
-        0,
-    };
-
-    ImFontConfig cfg;
-    cfg.MergeMode            = true;
-    cfg.PixelSnapH           = true;
-    cfg.GlyphMinAdvanceX     = fontPixelSize;  // square icon cell
-    cfg.OversampleH          = 1;
-    cfg.OversampleV          = 1;
-    cfg.FontDataOwnedByAtlas = true;
-
-    for (const char* path : kCandidates) {
-        if (Platform::FileSystem::CanOpenFileForRead(path)) {
-            atlas->AddFontFromFileTTF(path, fontPixelSize, &cfg, kGlyphRange);
-            return;
-        }
-    }
-    // Graceful degradation - icons fall back to tofu boxes.
-}
 
 // Task 5 - Brand PNG loader
 
