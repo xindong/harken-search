@@ -19,6 +19,7 @@
 #include "AnnotationBridge.h"
 #include "BackgroundIoPolicy.h"
 #include "BetaFeatureFlags.h"
+#include "StartupLoadingMascotArt.h"
 #include "WelcomeGreeting.h"
 #include "WaveformCachePolicy.h"
 #include "platform/system.h"
@@ -4908,6 +4909,37 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result=R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
+    } else if (cmd == "menu_ui") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto& qa = state.qaRegions;
+            auto menuItems = nlohmann::json::array();
+            for (const auto& item : qa.menuBarItems) menuItems.push_back({{"label",item.label},{"bounds",{item.x0,item.y0,item.x1,item.y1}}});
+            auto popups = nlohmann::json::array();
+            for (const auto* w : ImGui::GetCurrentContext()->Windows) {
+                if (!w->WasActive || !(w->Flags & ImGuiWindowFlags_Popup)) continue;
+                popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}},{"font_pixels",GetMenuPopupFontPixelsForQa(*w)}});
+            }
+            result = nlohmann::json({{"ok",true},{"popups",popups},{"items",menuItems},
+                {"frame",qa.menuBarFrame},{"current_frame",ImGui::GetFrameCount()},
+                {"workspace_frame",qa.workspaceTopFrame},
+                {"font_pixels",qa.menuBarFontPixels},{"bar_height",qa.menuBarHeight},
+                {"bar_right",qa.menuBarRight},{"bar_top",qa.menuBarTop},{"last_item_right",qa.menuBarLastItemRight},
+                {"workspace_top",qa.workspaceTop},
+                {"work_pos",{ImGui::GetMainViewport()->WorkPos.x,ImGui::GetMainViewport()->WorkPos.y}},
+                {"work_size",{ImGui::GetMainViewport()->WorkSize.x,ImGui::GetMainViewport()->WorkSize.y}},
+                {"reading_font",state.settings.readingFontSize},
+                {"theme",(int)state.settings.theme},
+                {"hovered_window",ImGui::GetCurrentContext()->HoveredWindow?ImGui::GetCurrentContext()->HoveredWindow->Name:""},
+                {"mouse",{ImGui::GetIO().MousePos.x,ImGui::GetIO().MousePos.y}},
+                {"mouse_down",ImGui::GetIO().MouseDown[0]},
+                {"nav_window",ImGui::GetCurrentContext()->NavWindow?ImGui::GetCurrentContext()->NavWindow->Name:""}}).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
@@ -6065,9 +6097,10 @@ static void PollQaCommandFile(AppState& state) {
             x < 0.0f || y < 0.0f || x >= display.x || y >= display.y ||
             (!buttonName.empty() && buttonName != "left" && buttonName != "right") ||
             s_magicEqQaPointer.pending ||
-            (phase == "down" && s_magicEqQaPointer.active) ||
-            (phase == "up" && (!s_magicEqQaPointer.active || s_magicEqQaPointer.button != button)) ||
-            (phase != "down" && phase != "up")) {
+            ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
+            (phase == "up" && (!s_magicEqQaPointer.active || !s_magicEqQaPointer.held ||
+                               s_magicEqQaPointer.button != button)) ||
+            (phase != "hover" && phase != "down" && phase != "up")) {
             result = "{\"ok\":false,\"error\":\"invalid_folder_search_pointer\",\"display\":[" +
                 std::to_string(display.x) + "," + std::to_string(display.y) +
                 "],\"point\":[" + std::to_string(x) + "," + std::to_string(y) +
@@ -6081,7 +6114,7 @@ static void PollQaCommandFile(AppState& state) {
             s_magicEqQaPointer.x = viewportPos.x + x;
             s_magicEqQaPointer.y = viewportPos.y + y;
             s_magicEqQaPointer.held = phase == "down";
-            s_magicEqQaPointer.pending = true;
+            s_magicEqQaPointer.pending = phase != "hover";
             s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
             s_magicEqQaPointer.button = button;
             result = "{\"ok\":true,\"cmd\":\"folder_search_pointer\",\"phase\":\"" + phase +
@@ -8695,6 +8728,33 @@ ChromeTextScope::~ChromeTextScope() {
     g_inReadingScope = prev;
 }
 
+float GetMenuFontSizePx() {
+    // The menu keeps the chrome size (14 px) at the default system font (18 px) and
+    // scales proportionally from there: 24 px -> 19 px, 32 px -> 25 px.
+    const float readingPx = g_readingRegular ? g_readingRegular->LegacySize
+                                             : (float)kDefaultReadingFontPx;
+    const float scaled = (float)kChromeFontPx * (readingPx / (float)kDefaultReadingFontPx);
+    return std::clamp(std::round(scaled), (float)kChromeFontPx, (float)kMaxReadingFontPx);
+}
+
+ImFont* GetMenuUIFont() {
+    return g_readingRegular ? g_readingRegular : g_uiFontRegular;
+}
+
+ImFont* GetMenuUIFontEmphasis() {
+    if (g_readingEmphasis) return g_readingEmphasis;
+    return GetMenuUIFont();
+}
+
+MenuTextScope::MenuTextScope() : prev(g_inReadingScope) {
+    g_inReadingScope = true;
+    ImGui::PushFont(GetMenuUIFont(), GetMenuFontSizePx());
+}
+MenuTextScope::~MenuTextScope() {
+    ImGui::PopFont();
+    g_inReadingScope = prev;
+}
+
 // UI Scaling (Scheme B): rebuild fonts + scale style sizes (debounced)
 
 static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx) {
@@ -8798,8 +8858,8 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     static int s_lastTheme = -9999;
     static bool s_lastUseCustom = false;
 
-    const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, 24));
-    const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, 24));
+    const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, kMaxReadingFontPx));
+    const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, kMaxListFontPx));
     const int themeNow = (int)state.settings.theme;
     const bool useCustomNow = state.settings.useCustomColors;
 
@@ -9814,13 +9874,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const std::wstring tokenCardSheen = BuildCssRgba(
         mixColor(startupTheme.interfaceText, startupTheme.dialogBG, 0.76f),
         useLightStartupChrome ? 0.10f : 0.04f);
-    const std::wstring tokenAvatarHalo = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.62f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.56f)
-                : mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.48f)),
-        useLightStartupChrome ? (isJadeMistStartup ? 0.26f : 0.24f) : 0.16f);
     const std::wstring tokenStatusText = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.18f)
@@ -9920,7 +9973,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
                 ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.50f)
                 : mixColor(startupTheme.resultsSecondaryText, startupTheme.waveformColor, 0.30f)),
         useLightStartupChrome ? (isJadeMistStartup ? 0.18f : 0.14f) : 0.06f);
-    const std::string displayNameUtf8 = settings.userName.empty() ? std::string(L(Splash_DefaultUser)) : settings.userName;    const std::string startupAvatarDataUri = BuildLocalDiceBearAvatarDataUri(displayNameUtf8, settings.hasCustomAvatar, settings.diceBearAvatarIndex);
     std::wstring html;
 
     // ---- Part 1: head + CSS ----
@@ -9973,7 +10025,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       content: "";
       position: fixed;
       inset: 0;
-      z-index: 60;
+      z-index: 5;
       pointer-events: none;
       background:
         radial-gradient(circle at 66% 76%, rgba(18, 30, 46, 0.42), transparent 52%),
@@ -9984,7 +10036,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       position: absolute; inset: 0; z-index: 10;
       display: flex; flex-direction: column;
       justify-content: center; align-items: center;
-      animation: overlayIn 220ms ease-out both;
       transition: opacity 320ms cubic-bezier(0.22, 0.0, 0.12, 1), transform 320ms cubic-bezier(0.22, 0.0, 0.12, 1);
       will-change: opacity, transform;
     }
@@ -10003,7 +10054,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
       display: flex; flex-direction: column; align-items: center; gap: 24px;
       overflow: hidden;
-      animation: cardIn 420ms ease-out both;
+      animation: cardIn 120ms ease-out;
       transition: opacity 180ms cubic-bezier(0.19, 1, 0.22, 1), transform 180ms cubic-bezier(0.19, 1, 0.22, 1);
       will-change: opacity, transform;
     }
@@ -10016,8 +10067,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       pointer-events: none; opacity: 0.8;
     }
     @keyframes entryVeilOut { to { opacity: 0; } }
-    @keyframes overlayIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes cardIn { from { opacity: 0; transform: scale(0.965) translateY(14px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    @keyframes cardIn { from { opacity: .9; } to { opacity: 1; } }
     .spinner-container { width: 70px; height: 70px; position: relative; }
     .spinner-ring {
       position: absolute; inset: 0;
@@ -10082,7 +10132,47 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       opacity: 0.58;
       transform: scale(1.006);
     }
+)HTML_L1";
+    html += LR"HTML(
+    .startup-loading-mascot-slot {
+      position: relative; z-index: 1;
+      width: 86px; height: 86px; margin: 0 0 22px;
+      display: grid; place-items: center;
+    }
+    .startup-loading-mascot {
+      display: block; width: 74px; height: 74px; overflow: visible;
+    }
+    .startup-loading-mascot-antenna {
+      animation: startupMascotAntenna 3.2s ease-in-out infinite;
+    }
+    .startup-loading-mascot-antenna-warmth {
+      animation: startupMascotWarmth 3.2s ease-in-out infinite;
+    }
+    .startup-loading-mascot-eyes {
+      transform-box: view-box;
+      transform-origin: 50% 47.2%;
+      animation: startupMascotEyes 3.2s ease-in-out infinite;
+    }
+    @keyframes startupMascotAntenna {
+      0%, 53.125%, 100% { transform: translateY(0); }
+      4.6875% { transform: translateY(-1.2px); }
+    }
+    @keyframes startupMascotWarmth {
+      0%, 53.125%, 100% { opacity: 0; }
+      4.6875% { opacity: .93; }
+    }
+    @keyframes startupMascotEyes {
+      0%, 53.125%, 58.125%, 65%, 100% { transform: translateX(0) scaleY(1); }
+      3.75%, 28.75% { transform: translateX(-2.9px) scaleY(1); }
+      38.75%, 45.9375% { transform: translateX(2.3px) scaleY(1); }
+      60.625% { transform: translateX(0) scaleY(.25); }
+    }
     @media (prefers-reduced-motion: reduce) {
+      .startup-loading-mascot-antenna,
+      .startup-loading-mascot-antenna-warmth,
+      .startup-loading-mascot-eyes {
+        animation: none;
+      }
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
@@ -10091,7 +10181,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     }
   </style>
 </head>
-)HTML_L1";
+)HTML";
     html += L"<style>\n";
     html += L":root{--bg-dark:" + tokenMainBg +
             L";--startup-card:" + tokenCardBg +
@@ -10113,9 +10203,8 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     html += L".loading-overlay{z-index:10;}.glass-card{width:min(312px,calc(100vw - 48px));min-height:300px;padding:30px 28px 28px;border-radius:20px;background:linear-gradient(180deg," + tokenCardTop + L"," + tokenCardBottom + L");border:1px solid " + BuildCssRgba(startupTheme.waveformPanelBorder, useLightStartupChrome ? 0.28f : 0.18f) + L";box-shadow:0 14px 38px " + tokenCardShadowSoft + L",inset 0 0 0 1px " + tokenCardSheen + L";backdrop-filter:blur(12px) saturate(108%);-webkit-backdrop-filter:blur(12px) saturate(108%);gap:0;justify-content:center;}\n";
     html += L".glass-card::before{border-radius:20px;padding:0;background:linear-gradient(135deg," + tokenCardSheen + L",transparent 46%);-webkit-mask:none;mask:none;opacity:1;}\n";
     html += L".glass-card::after{content:\"\";position:absolute;inset:auto -10% 42% -10%;height:54%;pointer-events:none;background:radial-gradient(circle at 24% 28%," + tokenCardBloomA + L",transparent 58%),radial-gradient(circle at 76% 6%," + tokenCardBloomB + L",transparent 54%);filter:blur(14px);opacity:.98;}\n";
-    html += L".avatar-wrap{position:relative;width:86px;height:86px;margin:0 0 22px;display:grid;place-items:center;}.avatar{position:relative;z-index:1;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;color:rgba(255,255,255,.94);font-family:var(--font-sans);font-size:23px;font-weight:680;letter-spacing:-.03em;background:radial-gradient(circle at 34% 24%,rgba(255,255,255,.18),transparent 30%),linear-gradient(145deg,hsl(var(--avatar-hue),44%,43%),hsl(calc(var(--avatar-hue) + 22),38%,30%));box-shadow:inset 0 0 0 1px rgba(255,255,255,.11),0 6px 16px " + tokenCardShadowSoft + L";animation:avatarPulse 2.8s ease-in-out infinite;}.avatar::after{content:\"\";position:absolute;inset:-7px;border-radius:50%;background:" + tokenAvatarHalo + L";z-index:-1;animation:pulseHalo 2.8s ease-in-out infinite;}.avatar-img{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover;image-rendering:-webkit-optimize-contrast;display:none;background:rgba(255,255,255,.04);}.avatar.has-image{background:rgba(255,255,255,.045);}.avatar.has-image .avatar-img{display:block;}.avatar.has-image #loadingAvatarInitials{display:none;}\n";
     html += L".spinner-container{display:none!important;}.status-text{position:relative;z-index:1;margin:0;color:" + tokenStatusText + L";font-size:12.5px;line-height:1.45;font-weight:420;min-height:1.45em;animation:statusPulse 2.2s ease-in-out infinite;}.progress-detail{position:relative;z-index:1;margin-top:8px;font-size:11px;color:" + tokenDetailText + L";}.progress-bar-track{position:relative;z-index:1;width:104px;height:1px;margin-top:16px;background:" + tokenProgressTrack + L";border-radius:999px;}.progress-bar-fill{height:100%;background:linear-gradient(90deg," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L"," + tokenProgressCore + L"," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L");box-shadow:none;transition:width .28s ease-out;}\n";
-    html += L".version-footer{display:none!important;}@keyframes avatarPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.018);}}@keyframes pulseHalo{0%,100%{opacity:.18;transform:scale(.96);}50%{opacity:.34;transform:scale(1.05);}}@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
+    html += L".version-footer{display:none!important;}@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
     AppendStartupBrandLogoCss(html, useLightStartupChrome);
     html += L"</style>\n";
 
@@ -10131,11 +10220,10 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
   <div class="brand-word">Harken Search</div>
   <div class="loading-overlay">
     <div class="glass-card">
-      <div class="avatar-wrap" aria-hidden="true">
-        <div class="avatar" id="loadingAvatarBubble">
-          <img class="avatar-img" id="loadingAvatarImage" alt="" />
-          <span id="loadingAvatarInitials">AR</span>
-        </div>
+      <div class="startup-loading-mascot-slot" aria-hidden="true">
+)HTML_L2";
+    html += HarkenSearch::kStartupLoadingMascotArtwork;
+    html += LR"HTML_L2(
       </div>
       <div class="status-text" id="statusText">Preparing your sound workspace...</div>
       <div class="progress-bar-track">
@@ -10163,8 +10251,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     html += L"    const themeTextGlow = \"" + themeTextGlow + L"\";\n";
     html += L"    const canvasWash = \"" + tokenCanvasWash + L"\";\n";
     html += L"    const themedParticleChance = " + themedParticleChance + L";\n";
-    html += L"    const loadingDisplayName = \"" + Utf8ToWide(JsonEscape(displayNameUtf8)) + L"\";\n";
-    html += L"    const loadingAvatarDataUri = \"" + Utf8ToWide(JsonEscape(startupAvatarDataUri)) + L"\";\n";
     html += LR"HTML_L3(
     const canvas = document.getElementById("fx");
     const ctx = canvas.getContext("2d");
@@ -10304,17 +10390,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     animate();
 
     let exitStarted = false;
-
-    const loadingNameChars = Array.from(loadingDisplayName || "Harken Search User");
-    document.getElementById("loadingAvatarInitials").textContent =
-      (loadingNameChars.length > 0 ? loadingNameChars.slice(0, 2).join("") : "AU").toUpperCase();
-    const loadingAvatarHash = loadingNameChars.reduce((acc, ch) => ((acc * 31) + ch.codePointAt(0)) >>> 0, 2166136261);
-    document.documentElement.style.setProperty("--avatar-hue", String(196 + (loadingAvatarHash % 34)));
-    if (loadingAvatarDataUri) {
-      const loadingAvatarImage = document.getElementById("loadingAvatarImage");
-      loadingAvatarImage.src = loadingAvatarDataUri;
-      document.getElementById("loadingAvatarBubble").classList.add("has-image");
-    }
 
     // 进度更新 API —— C++ 通过 ExecuteScript 调用
     // loaded/total：进度数值，message：阶段说明
@@ -12139,6 +12214,15 @@ static void RunBetaSplashScreen(
 
     if (worker.joinable()) worker.join();
 
+    // WM_CLOSE during startup destroys the window and posts WM_QUIT, but the
+    // splash loop consumes that message. Do not walk on into finalize/main UI
+    // after the user already asked to exit.
+    if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+        DIAG_SYSTEM("Shutdown", "StartupExitRequestedDuringSplash");
+        if (splashTex) glDeleteTextures(1, &splashTex);
+        return;
+    }
+
     auto pumpBetaStartupUi = [&]() {
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -12307,6 +12391,7 @@ static void RunWebView2LoadingScreen(
     // UI 线程仅做消息泵 + 进度同步（确保 WebView2 丝滑渲染）
     while (true) {
         pumpUi();
+        if (g_explicitExitRequested.load(std::memory_order_acquire)) break;
         const std::vector<ProgressEvent> local = flushProgressQueue();
 
         if (loadDone.load(std::memory_order_acquire)) {
@@ -12316,6 +12401,10 @@ static void RunWebView2LoadingScreen(
     }
 
     if (worker.joinable()) worker.join();
+    if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+        DIAG_SYSTEM("Shutdown", "StartupExitRequestedDuringWebUiLoading");
+        return;
+    }
     flushProgressQueue();
 
     // 等待首包搜索结果（含 facet），以便进主界面时封面墙已有列表
@@ -13376,6 +13465,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 CloseWebView2(wv2Controller, wv2Webview, wv2Loader);
                 RunBetaSplashScreen(hwnd, hdc, state, runStartupPhases, finalizeStartupOnUi);
                 startupEntryTransitionActive = false;
+                if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+                    DIAG_SYSTEM("Shutdown", "StartupExitRequestedBeforeMainUi");
+                    return 0;
+                }
                 if (dbOpenFailed.load(std::memory_order_acquire)) {
                     std::lock_guard<std::mutex> lock(dbOpenMutex);
                     std::wstring wDb = Utf8ToWide(dbOpenPathUtf8);
@@ -13388,6 +13481,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 // Loading 完成后直接关闭启动门面，避免再出现一次“Entering Library...”过场。
                 CloseWebView2(wv2Controller, wv2Webview, wv2Loader);
                 startupEntryTransitionActive = false;
+                if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+                    DIAG_SYSTEM("Shutdown", "StartupExitRequestedBeforeMainUi");
+                    return 0;
+                }
                 // 若数据库挂载失败，主线程安全弹窗并退出
                 if (dbOpenFailed.load(std::memory_order_acquire)) {
                     std::string errUtf8;

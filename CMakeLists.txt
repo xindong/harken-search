@@ -25,6 +25,32 @@ if(MSVC)
     target_compile_options(TestSidebarMetadataPicker PRIVATE /utf-8)
 endif()
 add_test(NAME SidebarMetadataPicker COMMAND TestSidebarMetadataPicker)
+
+add_executable(TestAITaskQueueStop EXCLUDE_FROM_ALL
+    tests/test_ai_task_queue_stop.cpp
+    src/AITaskQueueStopGate.cpp)
+target_include_directories(TestAITaskQueueStop PRIVATE src)
+target_compile_features(TestAITaskQueueStop PRIVATE cxx_std_17)
+target_compile_definitions(TestAITaskQueueStop PRIVATE ARIS_TASK_QUEUE_TESTING=1)
+if(MSVC)
+    target_compile_options(TestAITaskQueueStop PRIVATE /utf-8)
+endif()
+add_test(NAME AITaskQueueStop COMMAND TestAITaskQueueStop)
+
+add_executable(TestAITaskQueueStopLegacyWindow EXCLUDE_FROM_ALL
+    tests/test_ai_task_queue_stop.cpp
+    src/AITaskQueueStopGate.cpp)
+target_include_directories(TestAITaskQueueStopLegacyWindow PRIVATE src)
+target_compile_features(TestAITaskQueueStopLegacyWindow PRIVATE cxx_std_17)
+target_compile_definitions(TestAITaskQueueStopLegacyWindow PRIVATE
+    ARIS_TASK_QUEUE_TESTING=1
+    ARIS_TASK_QUEUE_REGRESSION_LEGACY_STOP=1)
+if(MSVC)
+    target_compile_options(TestAITaskQueueStopLegacyWindow PRIVATE /utf-8)
+endif()
+add_test(NAME AITaskQueueStopLegacyWindow COMMAND TestAITaskQueueStopLegacyWindow --expect-legacy-hang)
+set_tests_properties(AITaskQueueStop AITaskQueueStopLegacyWindow PROPERTIES TIMEOUT 30)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -234,6 +260,22 @@ set_source_files_properties(${SQLITE_DIR}/sqlite3.c PROPERTIES
 
 # ImGui source files
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
+
+add_executable(TestToolbarSearchControls EXCLUDE_FROM_ALL
+    tests/test_toolbar_search_controls.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(TestToolbarSearchControls PRIVATE src ${IMGUI_DIR})
+target_compile_features(TestToolbarSearchControls PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestToolbarSearchControls PRIVATE /utf-8)
+endif()
+add_test(NAME ToolbarSearchControls COMMAND TestToolbarSearchControls)
+aura_set_test_labels(ToolbarSearchControls core)
+
 set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
@@ -578,6 +620,7 @@ set(APP_SOURCES
     src/stb_image_impl.cpp
     src/ExternalLibraryCover.cpp
     src/AIEngine.cpp
+    src/AITaskQueueStopGate.cpp
     src/VoiceDeliveryAcceptance.cpp
     src/VoiceAssetOrganizer.cpp
     src/ThemeMascot.cpp
@@ -821,6 +864,13 @@ if(WIN32)
     target_compile_features(TestDockHitTest PRIVATE cxx_std_17)
     target_compile_options(TestDockHitTest PRIVATE /utf-8)
     add_test(NAME DockHitTest COMMAND TestDockHitTest)
+    add_executable(TestDatabaseFolderRowInput EXCLUDE_FROM_ALL
+        tests/test_database_folder_row_input.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestDatabaseFolderRowInput PRIVATE src ${IMGUI_DIR})
+    target_compile_features(TestDatabaseFolderRowInput PRIVATE cxx_std_17)
+    add_test(NAME DatabaseFolderRowInput COMMAND TestDatabaseFolderRowInput)
     # Isolated Dock frame replay: no product settings, database, or legal-flow bypass.
     add_executable(TestDockPerfReplay EXCLUDE_FROM_ALL
         tests/test_dock_hit_test.cpp src/DockLayout.cpp src/DockDragSession.cpp

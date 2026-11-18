@@ -359,7 +359,7 @@ private:
 
 class ThemeMenuPopupShellScope {
 public:
-    explicit ThemeMenuPopupShellScope(bool enabled = true);
+    explicit ThemeMenuPopupShellScope(bool enabled = true, float textSizePx = 0.0f);
     ~ThemeMenuPopupShellScope();
 
     bool beginContextItem(const char* id, bool useMenuChrome = true);
@@ -372,8 +372,16 @@ private:
     void activate();
 
     void (*m_previousPopupColors)(ImVec4&, ImVec4&) = nullptr;
+    float m_textSizePx;
+    float m_previousTextSizePx = 0.0f;
     bool m_active = false;
 };
+
+float GetMenuChromeFontPushSize(ImFont* textFont, float textPixels);
+#if ARIS_PREVIEW_ISOLATION
+struct ImGuiWindow;
+float GetMenuPopupFontPixelsForQa(const ImGuiWindow& window);
+#endif
 
 // 菜单作用域接管字体时，ChromeTextScope 不再把字号换回常规界面字号。
 bool InMenuChromeScope();

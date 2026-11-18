@@ -37,8 +37,16 @@
 #include <string_view>
 #include <vector>
 
+#if defined(ARIS_BOOTSTRAP_TEST_PROCESS_CUTS)
+#include <functional>
+#endif
+
 namespace aris::bootstrap {
 namespace {
+
+#if defined(ARIS_BOOTSTRAP_TEST_PROCESS_CUTS)
+thread_local std::function<void()> beforeOldProcessIdentityCapture;
+#endif
 
 using json = nlohmann::json;
 
@@ -1119,8 +1127,7 @@ public:
             return {BootstrapProcessStatus::NotFound,
                     classified.nativeError, {}, std::move(executable)};
         }
-        const DWORD initialWait = WaitForSingleObject(process, 0U);
-        if (initialWait == WAIT_OBJECT_0) {
+        const auto snapshotExitedProcess = [&expected, process]() -> BootstrapProcessResult {
             HANDLE imagePin = nullptr;
             std::wstring pinnedImagePath;
             BootstrapExecutableExpectation executable;
@@ -1136,21 +1143,27 @@ public:
             }
             return {BootstrapProcessStatus::NotFound,
                     ERROR_PROCESS_ABORTED, {}, std::move(executable)};
+        };
+        const DWORD initialWait = WaitForSingleObject(process, 0U);
+        if (initialWait == WAIT_OBJECT_0) {
+            return snapshotExitedProcess();
         }
         if (initialWait == WAIT_FAILED) {
             const DWORD error = GetLastError();
             CloseHandle(process);
             return {BootstrapProcessStatus::WaitFailed, error};
         }
+#if defined(ARIS_BOOTSTRAP_TEST_PROCESS_CUTS)
+        if (beforeOldProcessIdentityCapture) beforeOldProcessIdentityCapture();
+#endif
         BootstrapProcessIdentity observed;
         if (!captureIdentity(process, observed)) {
             const DWORD terminalWait = WaitForSingleObject(process, 0U);
             const DWORD error = GetLastError();
-            CloseHandle(process);
             if (terminalWait == WAIT_OBJECT_0) {
-                return {BootstrapProcessStatus::NotFound,
-                        ERROR_PROCESS_ABORTED};
+                return snapshotExitedProcess();
             }
+            CloseHandle(process);
             return {terminalWait == WAIT_FAILED
                         ? BootstrapProcessStatus::WaitFailed
                         : BootstrapProcessStatus::IdentityMismatch,
@@ -3392,6 +3405,10 @@ public:
 }  // namespace
 
 #if defined(ARIS_BOOTSTRAP_TEST_PROCESS_CUTS)
+void SetBootstrapOldProcessCaptureCutForTesting(std::function<void()> cut) {
+    beforeOldProcessIdentityCapture = std::move(cut);
+}
+
 bool CaptureBootstrapParentIdentityForTesting(
     std::uintptr_t processHandle, BootstrapProcessIdentity& identity) {
     return captureIdentity(reinterpret_cast<HANDLE>(processHandle), identity);

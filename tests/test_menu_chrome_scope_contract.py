@@ -59,7 +59,7 @@ class MenuChromeScopeContract(unittest.TestCase):
 
     def test_bar_spacing_reserves_one_slot_per_visible_title(self):
         main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
-        bar = main.split("if (ImGui::BeginMenuBar()) {", 1)[1].split("if (ImGui::BeginMenu(L(Menu_File)))", 1)[0]
+        bar = main.split("if (ImGui::BeginMainMenuBar()) {", 1)[1].split("ImGui::BeginMenu(L(Menu_File))", 1)[0]
         self.assertIn("CalcTextSize(title, nullptr, true)", bar)
         self.assertIn("brandLeading", bar)
         self.assertIn("brandTrailing", bar)
@@ -74,7 +74,8 @@ class MenuChromeScopeContract(unittest.TestCase):
         theme = (ROOT / "src/Theme.cpp").read_text(encoding="utf-8")
         popup = theme.split("ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope(", 1)[1]
         popup = popup.split("ThemeMenuPopupShellScope::ThemeMenuPopupShellScope(", 1)[0]
-        self.assertIn("27.0f * scale - ImGui::GetTextLineHeight()", popup)
+        self.assertIn("std::max(27.0f, textSizePx + 8.0f) * scale", popup)
+        self.assertIn("rowPitch - ImGui::GetTextLineHeight()", popup)
         self.assertLess(popup.index("PushMenuTextFont("), popup.index("ImGui::GetTextLineHeight()"))
 
     def test_all_bar_titles_share_one_spacing_scope(self):
@@ -89,7 +90,7 @@ class MenuChromeScopeContract(unittest.TestCase):
             "ImGui::BeginMenu(L(Menu_Settings))",
             "ImGui::BeginMenu(L(Menu_Help))",
             "menuChromeHelp.reset();",
-            "ImGui::EndMenuBar();",
+            "ImGui::EndMainMenuBar();",
         )
         positions = [chrome.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
@@ -129,7 +130,7 @@ class MenuChromeScopeContract(unittest.TestCase):
         chrome = main.split("// TOP MENU BAR", 1)[1].split("// TOP TOOLBAR", 1)[0]
         scopes = []
         for line in chrome.splitlines():
-            if "if (" in line and "ImGui::BeginMenu(" in line:
+            if "ImGui::BeginMenu(" in line:
                 scopes.append(None)
             scope = re.search(r"ThemeMenuPopupStyleScope (\w+)\(", line)
             if scope:
@@ -141,6 +142,52 @@ class MenuChromeScopeContract(unittest.TestCase):
             previous = line
         self.assertEqual(scopes, [])
         self.assertLess(chrome.index("menuPopupShell.reset();"), chrome.index("menuBarChrome.reset();"))
+        self.assertLess(chrome.index("menuBarChrome.reset();"), chrome.index("ImGui::EndMainMenuBar();"))
+
+    def test_menu_host_follows_the_fitted_regular_face_but_popup_does_not(self):
+        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        theme = (ROOT / "src/Theme.cpp").read_text(encoding="utf-8")
+        chrome = main.split("// TOP MENU BAR", 1)[1].split("// MAIN LAYOUT", 1)[0]
+        self.assertIn("ImFont* menuFont = GetUIFontRegular();", chrome)
+        self.assertIn("constexpr float minMenuBarFontPx = kChromeFontPx - 1.0f;", chrome)
+        self.assertIn("baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx", chrome)
+        self.assertIn("menuBarFontPx -= 1.0f", chrome)
+        self.assertIn("std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale", chrome)
+        self.assertLess(chrome.index("GetMenuChromeFontPushSize(menuFont, hostFontPx)"),
+                        chrome.index("ImGui::BeginMainMenuBar()"))
+        self.assertIn("ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);", chrome)
+        self.assertIn("kMenuPopupMinTextPx = 15.0f;", theme)
+        self.assertIn("std::max(kMenuPopupMinTextPx, textSizePx)", theme)
+        self.assertIn("s_menuPopupTextSizePx = m_previousTextSizePx;", theme)
+        self.assertIn("viewportBuild->BuildWorkInsetMin.y", main.split("// MAIN LAYOUT", 1)[1])
+
+    def test_default_wordmark_uses_approved_theme_art(self):
+        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        bar = main.split("if (ImGui::BeginMainMenuBar()) {", 1)[1].split("ImGui::BeginMenu(L(Menu_File))", 1)[0]
+        default_wordmark = bar.split("if (baseMenuFontPx == kChromeFontPx) {", 1)[1].split("\n            }", 1)[0]
+        self.assertIn("barLuma >= 0.5f", default_wordmark)
+        for color in ("black", "white"):
+            self.assertIn(f"harken-search-menu-wordmark-{color}.png", default_wordmark)
+        self.assertIn("aura::ui::DrawMenuBarBrandWordmark(", bar)
+
+    def test_isolated_menu_diagnostics_track_actual_font_and_all_eight_titles_once(self):
+        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        module = (ROOT / "src/ModuleUI.cpp").read_text(encoding="utf-8")
+        windows = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+        chrome = main.split("// TOP MENU BAR", 1)[1].split("// MAIN LAYOUT", 1)[0]
+        self.assertCountEqual(re.findall(r"QaProbeMenuBarItem\(state, L\(Menu_(\w+)\)\)", chrome),
+                              ["File", "Edit", "View", "Database", "Playlist", "Tools", "Settings", "Help"])
+        self.assertNotIn("QaProbeMenuBarItem(", module.split("void RenderToolsMenu(", 1)[1].split("// 1)", 1)[0])
+        self.assertIn("state.qaRegions.menuBarFontPixels = ImGui::GetFontSize();", chrome)
+        self.assertIn("GetMenuPopupFontPixelsForQa(*w)", windows)
+
+    def test_isolated_folder_pointer_accepts_hover_and_requires_matching_button_release(self):
+        windows = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+        pointer = windows.split('cmd == "folder_search_pointer"', 1)[1].split('"invalid_folder_search_pointer', 1)[0]
+        self.assertIn("MagicEqQaIsolationReady()", pointer)
+        self.assertIn('((phase == "hover" || phase == "down") && s_magicEqQaPointer.held)', pointer)
+        self.assertRegex(pointer, r'phase == "up" && [^\n]*!s_magicEqQaPointer\.active\s*\|\|\s*'
+                                  r'!s_magicEqQaPointer\.held\s*\|\|\s*s_magicEqQaPointer\.button != button')
 
     def test_result_popup_body_styles_unwind_before_end_popup(self):
         main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")

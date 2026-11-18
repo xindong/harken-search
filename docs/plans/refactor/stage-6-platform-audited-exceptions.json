@@ -1616,7 +1616,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|2b054e65b6bbd075|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 70,
+      "line": 78,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -1627,7 +1627,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DeleteProcThreadAttributeList|5af493dbebacfe91|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 83,
+      "line": 91,
       "rule": "native-symbol",
       "token": "DeleteProcThreadAttributeList",
       "occurrence": 1,
@@ -1638,7 +1638,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeProcThreadAttributeList|125826e7d0435143|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 94,
+      "line": 102,
       "rule": "native-symbol",
       "token": "InitializeProcThreadAttributeList",
       "occurrence": 1,
@@ -1649,7 +1649,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WideCharToMultiByte|3c88cbaff44a0119|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 112,
+      "line": 120,
       "rule": "native-symbol",
       "token": "WideCharToMultiByte",
       "occurrence": 1,
@@ -1660,7 +1660,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WideCharToMultiByte|c3e229c3fbc4c8ad|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 117,
+      "line": 125,
       "rule": "native-symbol",
       "token": "WideCharToMultiByte",
       "occurrence": 1,
@@ -1671,7 +1671,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|1254d8b060fda0ab|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 148,
+      "line": 156,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 1,
@@ -1682,7 +1682,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileSizeEx|b4436911c10ee462|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 150,
+      "line": 158,
       "rule": "native-symbol",
       "token": "GetFileSizeEx",
       "occurrence": 1,
@@ -1693,7 +1693,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d6183be8f4af725e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 157,
+      "line": 165,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -1704,7 +1704,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetFilePointerEx|d350d4b9cd126b82|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 161,
+      "line": 169,
       "rule": "native-symbol",
       "token": "SetFilePointerEx",
       "occurrence": 1,
@@ -1715,7 +1715,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 162,
+      "line": 170,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -1726,7 +1726,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptAcquireContextW|314bb1444209ae58|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 168,
+      "line": 176,
       "rule": "native-symbol",
       "token": "CryptAcquireContextW",
       "occurrence": 1,
@@ -1737,7 +1737,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptCreateHash|3808bae20b5ae882|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 170,
+      "line": 178,
       "rule": "native-symbol",
       "token": "CryptCreateHash",
       "occurrence": 1,
@@ -1748,7 +1748,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ReadFile|ea7ee11c82c50b70|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 174,
+      "line": 182,
       "rule": "native-symbol",
       "token": "ReadFile",
       "occurrence": 1,
@@ -1759,7 +1759,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 176,
+      "line": 184,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -1770,7 +1770,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptHashData|d32e501f65a5eefa|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 181,
+      "line": 189,
       "rule": "native-symbol",
       "token": "CryptHashData",
       "occurrence": 1,
@@ -1781,7 +1781,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 182,
+      "line": 190,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -1792,7 +1792,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptGetHashParam|a0d3c763c245e8b0|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 189,
+      "line": 197,
       "rule": "native-symbol",
       "token": "CryptGetHashParam",
       "occurrence": 1,
@@ -1803,7 +1803,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 191,
+      "line": 199,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -1814,7 +1814,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptDestroyHash|c4071bd2abf1285a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 194,
+      "line": 202,
       "rule": "native-symbol",
       "token": "CryptDestroyHash",
       "occurrence": 1,
@@ -1825,7 +1825,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptReleaseContext|08afe7426ad1964e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 195,
+      "line": 203,
       "rule": "native-symbol",
       "token": "CryptReleaseContext",
       "occurrence": 1,
@@ -1836,7 +1836,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|MultiByteToWideChar|7afd2c12aa1cd3c6|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 214,
+      "line": 222,
       "rule": "native-symbol",
       "token": "MultiByteToWideChar",
       "occurrence": 1,
@@ -1847,7 +1847,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|MultiByteToWideChar|50ec9fee9bea75f6|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 219,
+      "line": 227,
       "rule": "native-symbol",
       "token": "MultiByteToWideChar",
       "occurrence": 1,
@@ -1858,7 +1858,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFinalPathNameByHandleW|15b16cfcabb4629c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 230,
+      "line": 238,
       "rule": "native-symbol",
       "token": "GetFinalPathNameByHandleW",
       "occurrence": 1,
@@ -1869,7 +1869,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|8a8f14e77ea9aed2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 268,
+      "line": 276,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -1880,7 +1880,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|1254d8b060fda0ab|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 274,
+      "line": 282,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 2,
@@ -1891,7 +1891,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|7b98bdc9ffa1b1bf|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 277,
+      "line": 285,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 1,
@@ -1902,7 +1902,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|7d774c08fb4dcb0f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 280,
+      "line": 288,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -1913,7 +1913,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|27754a2524a1a0e2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 309,
+      "line": 317,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -1924,7 +1924,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 314,
+      "line": 322,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 5,
@@ -1935,7 +1935,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|75a3d7283ede8231|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 319,
+      "line": 327,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 1,
@@ -1946,7 +1946,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|d524f1d77ee18252|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 322,
+      "line": 330,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 1,
@@ -1957,7 +1957,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|894697007db7b527|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 324,
+      "line": 332,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -1968,7 +1968,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessTimes|59d02503c5ac1fec|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 370,
+      "line": 378,
       "rule": "native-symbol",
       "token": "GetProcessTimes",
       "occurrence": 1,
@@ -1979,7 +1979,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryFullProcessImageNameW|eedf2eeec1ab39c2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 377,
+      "line": 385,
       "rule": "native-symbol",
       "token": "QueryFullProcessImageNameW",
       "occurrence": 1,
@@ -1990,7 +1990,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|a26d1a04fdcb2db8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 378,
+      "line": 386,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2001,7 +2001,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|b69103f924a1ae8b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 394,
+      "line": 402,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 1,
@@ -2012,7 +2012,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenProcessToken|18cd8e84c8aa5b14|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 425,
+      "line": 433,
       "rule": "native-symbol",
       "token": "OpenProcessToken",
       "occurrence": 1,
@@ -2023,7 +2023,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTokenInformation|743fd39db9e46277|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 427,
+      "line": 435,
       "rule": "native-symbol",
       "token": "GetTokenInformation",
       "occurrence": 1,
@@ -2034,7 +2034,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|c25a011cb37ad59a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 430,
+      "line": 438,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -2045,7 +2045,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTokenInformation|28c9fb8d74071cc5|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 434,
+      "line": 442,
       "rule": "native-symbol",
       "token": "GetTokenInformation",
       "occurrence": 1,
@@ -2056,7 +2056,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|c25a011cb37ad59a|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 436,
+      "line": 444,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 2,
@@ -2067,7 +2067,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|eefb8f2d8fb7ee10|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 443,
+      "line": 451,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -2078,7 +2078,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsValidSid|57e2dc664ca15f87|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 450,
+      "line": 458,
       "rule": "native-symbol",
       "token": "IsValidSid",
       "occurrence": 1,
@@ -2089,7 +2089,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsValidSid|c7c99d18bc46fb15|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 451,
+      "line": 459,
       "rule": "native-symbol",
       "token": "IsValidSid",
       "occurrence": 1,
@@ -2100,7 +2100,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|EqualSid|b9bbe4b352c2dd00|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 452,
+      "line": 460,
       "rule": "native-symbol",
       "token": "EqualSid",
       "occurrence": 1,
@@ -2111,7 +2111,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|7325fcbbdef5935b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 459,
+      "line": 467,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -2122,7 +2122,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 467,
+      "line": 475,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 1,
@@ -2133,7 +2133,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 469,
+      "line": 477,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 2,
@@ -2144,7 +2144,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|a08a942192c7b26d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 487,
+      "line": 495,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -2155,7 +2155,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WinVerifyTrust|2e600284dab9db3a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 503,
+      "line": 511,
       "rule": "native-symbol",
       "token": "WinVerifyTrust",
       "occurrence": 1,
@@ -2166,7 +2166,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WTHelperProvDataFromStateData|a0ef1f12c96fa01b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 508,
+      "line": 516,
       "rule": "native-symbol",
       "token": "WTHelperProvDataFromStateData",
       "occurrence": 1,
@@ -2177,7 +2177,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WTHelperGetProvSignerFromChain|2dbccab2804949a8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 511,
+      "line": 519,
       "rule": "native-symbol",
       "token": "WTHelperGetProvSignerFromChain",
       "occurrence": 1,
@@ -2188,7 +2188,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CertGetCertificateContextProperty|5c3776917e06ee41|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 520,
+      "line": 528,
       "rule": "native-symbol",
       "token": "CertGetCertificateContextProperty",
       "occurrence": 1,
@@ -2199,7 +2199,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WinVerifyTrust|8c53ca2371b0b364|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 528,
+      "line": 536,
       "rule": "native-symbol",
       "token": "WinVerifyTrust",
       "occurrence": 1,
@@ -2210,7 +2210,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|a08a942192c7b26d|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 529,
+      "line": 537,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 2,
@@ -2221,7 +2221,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetModuleFileNameW|4ad2b3a6c736fc7d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 541,
+      "line": 549,
       "rule": "native-symbol",
       "token": "GetModuleFileNameW",
       "occurrence": 1,
@@ -2232,7 +2232,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WriteFile|a1cb3f1b25febc49|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 670,
+      "line": 678,
       "rule": "native-symbol",
       "token": "WriteFile",
       "occurrence": 1,
@@ -2243,7 +2243,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ReadFile|807d610f2f692c5c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 672,
+      "line": 680,
       "rule": "native-symbol",
       "token": "ReadFile",
       "occurrence": 1,
@@ -2254,7 +2254,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|30daa2de4d3aa083|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 675,
+      "line": 683,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2265,7 +2265,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateEventW|029ac72f34ad8d85|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 713,
+      "line": 721,
       "rule": "native-symbol",
       "token": "CreateEventW",
       "occurrence": 1,
@@ -2276,7 +2276,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|aa10ea56d0541673|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 718,
+      "line": 726,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -2287,7 +2287,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|0cc4c1d361e31e3a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 723,
+      "line": 731,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -2298,7 +2298,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 738,
+      "line": 746,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 6,
@@ -2309,7 +2309,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WriteFile|a1cb3f1b25febc49|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 751,
+      "line": 759,
       "rule": "native-symbol",
       "token": "WriteFile",
       "occurrence": 2,
@@ -2320,7 +2320,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ReadFile|807d610f2f692c5c|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 753,
+      "line": 761,
       "rule": "native-symbol",
       "token": "ReadFile",
       "occurrence": 2,
@@ -2331,7 +2331,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|3de00a11909c551d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 756,
+      "line": 764,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2342,7 +2342,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|05223bffe4808e3b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 761,
+      "line": 769,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -2353,7 +2353,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CancelIoEx|4100069cd79de606|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 763,
+      "line": 771,
       "rule": "native-symbol",
       "token": "CancelIoEx",
       "occurrence": 1,
@@ -2364,7 +2364,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|b64a13ae37666cb7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 765,
+      "line": 773,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -2375,7 +2375,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d6183be8f4af725e|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 773,
+      "line": 781,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -2386,7 +2386,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetOverlappedResult|cd2762c2dcd14149|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 776,
+      "line": 784,
       "rule": "native-symbol",
       "token": "GetOverlappedResult",
       "occurrence": 1,
@@ -2397,7 +2397,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 778,
+      "line": 786,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 7,
@@ -2408,7 +2408,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptAcquireContextW|96cdfa095976a766|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 820,
+      "line": 828,
       "rule": "native-symbol",
       "token": "CryptAcquireContextW",
       "occurrence": 1,
@@ -2419,7 +2419,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|8",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 822,
+      "line": 830,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 8,
@@ -2430,7 +2430,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptGenRandom|2a550484cb17e738|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 825,
+      "line": 833,
       "rule": "native-symbol",
       "token": "CryptGenRandom",
       "occurrence": 1,
@@ -2441,7 +2441,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|bc76b55b440007ad|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 827,
+      "line": 835,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2452,7 +2452,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CryptReleaseContext|346a4fabcef4c093|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 828,
+      "line": 836,
       "rule": "native-symbol",
       "token": "CryptReleaseContext",
       "occurrence": 1,
@@ -2463,7 +2463,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|60fb03bdf78baaa0|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1015,
+      "line": 1023,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -2474,7 +2474,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenProcessToken|60fb03bdf78baaa0|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1015,
+      "line": 1023,
       "rule": "native-symbol",
       "token": "OpenProcessToken",
       "occurrence": 1,
@@ -2485,7 +2485,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|9",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1016,
+      "line": 1024,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 9,
@@ -2496,7 +2496,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTokenInformation|839d4f29f99c1f80|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1021,
+      "line": 1029,
       "rule": "native-symbol",
       "token": "GetTokenInformation",
       "occurrence": 1,
@@ -2507,7 +2507,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|ce338fb63c2784e2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1023,
+      "line": 1031,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2518,7 +2518,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|10",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1024,
+      "line": 1032,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 10,
@@ -2529,7 +2529,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTokenInformation|600aacf7614807f4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1028,
+      "line": 1036,
       "rule": "native-symbol",
       "token": "GetTokenInformation",
       "occurrence": 1,
@@ -2540,7 +2540,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|11",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1030,
+      "line": 1038,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 11,
@@ -2551,7 +2551,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsValidSid|f909dcc8ddf01588|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1035,
+      "line": 1043,
       "rule": "native-symbol",
       "token": "IsValidSid",
       "occurrence": 1,
@@ -2562,7 +2562,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLengthSid|c21e6e8a764aa5a8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1039,
+      "line": 1047,
       "rule": "native-symbol",
       "token": "GetLengthSid",
       "occurrence": 1,
@@ -2573,7 +2573,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeAcl|a6e50e9a45b62436|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1045,
+      "line": 1053,
       "rule": "native-symbol",
       "token": "InitializeAcl",
       "occurrence": 1,
@@ -2584,7 +2584,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|AddAccessAllowedAce|27bd551df12d7ba1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1046,
+      "line": 1054,
       "rule": "native-symbol",
       "token": "AddAccessAllowedAce",
       "occurrence": 1,
@@ -2595,7 +2595,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeSecurityDescriptor|ae6cb01e4616fff8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1048,
+      "line": 1056,
       "rule": "native-symbol",
       "token": "InitializeSecurityDescriptor",
       "occurrence": 1,
@@ -2606,7 +2606,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetSecurityDescriptorDacl|142f8aad9233d92e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1050,
+      "line": 1058,
       "rule": "native-symbol",
       "token": "SetSecurityDescriptorDacl",
       "occurrence": 1,
@@ -2617,7 +2617,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|12",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1051,
+      "line": 1059,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 12,
@@ -2628,7 +2628,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1058,
+      "line": 1066,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 1,
@@ -2639,7 +2639,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateJobObjectW|9370335f979a7a53|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1059,
+      "line": 1067,
       "rule": "native-symbol",
       "token": "CreateJobObjectW",
       "occurrence": 1,
@@ -2650,7 +2650,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|025ab8574e758995|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1060,
+      "line": 1068,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2661,7 +2661,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|eeb64d23c415c6de|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1061,
+      "line": 1069,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2672,7 +2672,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenProcess|a876150ebd79d124|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1100,
+      "line": 1108,
       "rule": "native-symbol",
       "token": "OpenProcess",
       "occurrence": 1,
@@ -2683,7 +2683,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|102654b6e380cb9a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1105,
+      "line": 1113,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2694,7 +2694,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|ecde4dbdf9e29c30|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1118,
+      "line": 1126,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -2705,7 +2705,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|c2b2179ba8597969|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1122,
+      "line": 1147,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -2716,7 +2716,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|ecde4dbdf9e29c30|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1131,
+      "line": 1138,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 2,
@@ -2727,7 +2727,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1133,
+      "line": 1140,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -2738,7 +2738,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1141,
+      "line": 1152,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2749,7 +2749,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1142,
+      "line": 1153,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 2,
@@ -2760,7 +2760,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|eb8efece2287e7bd|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1147,
+      "line": 1161,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -2771,7 +2771,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1148,
+      "line": 1162,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -2782,7 +2782,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1149,
+      "line": 1166,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 3,
@@ -2793,7 +2793,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1160,
+      "line": 1173,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 4,
@@ -2804,7 +2804,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1169,
+      "line": 1182,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 5,
@@ -2815,7 +2815,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenJobObjectW|19efedc591ebd53c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1186,
+      "line": 1199,
       "rule": "native-symbol",
       "token": "OpenJobObjectW",
       "occurrence": 1,
@@ -2826,7 +2826,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|ae1dd62ff72826cc|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1191,
+      "line": 1204,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2837,7 +2837,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenProcess|a876150ebd79d124|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1193,
+      "line": 1206,
       "rule": "native-symbol",
       "token": "OpenProcess",
       "occurrence": 2,
@@ -2848,7 +2848,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|8225e9f769b41aa5|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1197,
+      "line": 1210,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -2859,7 +2859,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|c2b2179ba8597969|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1204,
+      "line": 1217,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -2870,7 +2870,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|134496d5b55e28d5|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1208,
+      "line": 1221,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 1,
@@ -2881,7 +2881,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1211,
+      "line": 1224,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -2892,7 +2892,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1212,
+      "line": 1225,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 6,
@@ -2903,7 +2903,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1220,
+      "line": 1233,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 7,
@@ -2914,7 +2914,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|8",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1225,
+      "line": 1238,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 8,
@@ -2925,7 +2925,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1229,
+      "line": 1242,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -2936,7 +2936,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|9",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1230,
+      "line": 1243,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 9,
@@ -2947,7 +2947,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|10",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1234,
+      "line": 1247,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 10,
@@ -2958,7 +2958,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|eb8efece2287e7bd|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1241,
+      "line": 1254,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -2969,7 +2969,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1242,
+      "line": 1255,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 5,
@@ -2980,7 +2980,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|11",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1243,
+      "line": 1256,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 11,
@@ -2991,7 +2991,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|12",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1254,
+      "line": 1267,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 12,
@@ -3002,7 +3002,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsProcessInJob|3367698c644ce153|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1258,
+      "line": 1271,
       "rule": "native-symbol",
       "token": "IsProcessInJob",
       "occurrence": 1,
@@ -3013,7 +3013,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1260,
+      "line": 1273,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 6,
@@ -3024,7 +3024,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|13",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1261,
+      "line": 1274,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 13,
@@ -3035,7 +3035,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|8d049e7dbcd8fe30|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1266,
+      "line": 1279,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -3046,7 +3046,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1271,
+      "line": 1284,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 7,
@@ -3057,7 +3057,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|14",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1272,
+      "line": 1285,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 14,
@@ -3068,7 +3068,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1278,
+      "line": 1291,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 3,
@@ -3079,7 +3079,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1281,
+      "line": 1294,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 4,
@@ -3090,7 +3090,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f3445102531e8c64|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1283,
+      "line": 1296,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3101,7 +3101,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|ecde4dbdf9e29c30|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1296,
+      "line": 1309,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 3,
@@ -3112,7 +3112,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|15",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1297,
+      "line": 1310,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 15,
@@ -3123,7 +3123,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|2428ffae9c013a98|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1318,
+      "line": 1331,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3134,7 +3134,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|97122ec77cdb6e20|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1322,
+      "line": 1335,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3145,7 +3145,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|3b50283fb9b51717|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1324,
+      "line": 1337,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3156,7 +3156,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ResumeThread|30a9587fde3fc9cf|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1397,
+      "line": 1410,
       "rule": "native-symbol",
       "token": "ResumeThread",
       "occurrence": 1,
@@ -3167,7 +3167,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1398,
+      "line": 1411,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3178,7 +3178,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|5bddf535bb88630f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1400,
+      "line": 1413,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3189,7 +3189,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|b2c4a20669add33b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1415,
+      "line": 1428,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3200,7 +3200,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0fdab409e400d411|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1419,
+      "line": 1432,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3211,7 +3211,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1421,
+      "line": 1434,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -3222,7 +3222,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|9e270bfd8c9413fb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1453,
+      "line": 1466,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3233,7 +3233,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1455,
+      "line": 1468,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -3244,7 +3244,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|873a314b73d78dbb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1473,
+      "line": 1486,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3255,7 +3255,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1482,
+      "line": 1495,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -3266,7 +3266,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|a9c69437637765ea|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1493,
+      "line": 1506,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 1,
@@ -3277,7 +3277,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|65a9cf3a0de490f3|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1494,
+      "line": 1507,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3288,7 +3288,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|873a314b73d78dbb|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1496,
+      "line": 1509,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -3299,7 +3299,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|dc314c60c519c00e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1502,
+      "line": 1515,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3310,7 +3310,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|9fe9b0d174d68c8e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1505,
+      "line": 1518,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3321,7 +3321,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|1168b41117cc8141|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1506,
+      "line": 1519,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3332,7 +3332,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|b2c4a20669add33b|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1517,
+      "line": 1530,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -3343,7 +3343,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1519,
+      "line": 1532,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 5,
@@ -3354,7 +3354,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetInformationJobObject|16114d22919b215c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1537,
+      "line": 1550,
       "rule": "native-symbol",
       "token": "SetInformationJobObject",
       "occurrence": 1,
@@ -3365,7 +3365,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|8",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1540,
+      "line": 1553,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 8,
@@ -3376,7 +3376,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|3cd9042a76b8496e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1562,
+      "line": 1575,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -3387,7 +3387,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|0483d85554588b01|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1563,
+      "line": 1576,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -3398,7 +3398,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|0d5d50cca3629ffb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1567,
+      "line": 1580,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3409,7 +3409,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|134496d5b55e28d5|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1581,
+      "line": 1594,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 2,
@@ -3420,7 +3420,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|40523cec8c138f8a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1587,
+      "line": 1600,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3431,7 +3431,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|c5ec4ba866dabe7b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1588,
+      "line": 1601,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3442,7 +3442,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|f0462119acfcb2fd|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1590,
+      "line": 1603,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 1,
@@ -3453,7 +3453,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenProcess|d6ec58abf253fe2d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1596,
+      "line": 1609,
       "rule": "native-symbol",
       "token": "OpenProcess",
       "occurrence": 1,
@@ -3464,7 +3464,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0a8193a63035c703|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1601,
+      "line": 1614,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3475,7 +3475,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1604,
+      "line": 1617,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3486,7 +3486,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|26469cf121033297|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1606,
+      "line": 1619,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3497,7 +3497,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsProcessInJob|b87f143aa6df5ebc|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1608,
+      "line": 1621,
       "rule": "native-symbol",
       "token": "IsProcessInJob",
       "occurrence": 1,
@@ -3508,7 +3508,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|9",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1610,
+      "line": 1623,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 9,
@@ -3519,7 +3519,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|75af7eea6b18f83c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1616,
+      "line": 1629,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -3530,7 +3530,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|75af7eea6b18f83c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1616,
+      "line": 1629,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -3541,7 +3541,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|10",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1618,
+      "line": 1631,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 10,
@@ -3552,7 +3552,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetInformationJobObject|b1e6d60ece589454|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1656,
+      "line": 1669,
       "rule": "native-symbol",
       "token": "SetInformationJobObject",
       "occurrence": 1,
@@ -3563,7 +3563,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|AssignProcessToJobObject|d663ab9142ce57a3|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1659,
+      "line": 1672,
       "rule": "native-symbol",
       "token": "AssignProcessToJobObject",
       "occurrence": 1,
@@ -3574,7 +3574,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1660,
+      "line": 1673,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -3585,7 +3585,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetInformationJobObject|b1e6d60ece589454|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1663,
+      "line": 1676,
       "rule": "native-symbol",
       "token": "SetInformationJobObject",
       "occurrence": 2,
@@ -3596,7 +3596,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1666,
+      "line": 1679,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -3607,7 +3607,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|134496d5b55e28d5|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1686,
+      "line": 1699,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 3,
@@ -3618,7 +3618,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|1168b41117cc8141|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1689,
+      "line": 1702,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -3629,7 +3629,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|OpenProcess|d6ec58abf253fe2d|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1701,
+      "line": 1714,
       "rule": "native-symbol",
       "token": "OpenProcess",
       "occurrence": 2,
@@ -3640,7 +3640,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|11",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1705,
+      "line": 1718,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 11,
@@ -3651,7 +3651,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsProcessInJob|36687eb755d75537|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1710,
+      "line": 1723,
       "rule": "native-symbol",
       "token": "IsProcessInJob",
       "occurrence": 1,
@@ -3662,7 +3662,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|12",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1712,
+      "line": 1725,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 12,
@@ -3673,7 +3673,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateJobObject|a45f1c22fe67e516|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1718,
+      "line": 1731,
       "rule": "native-symbol",
       "token": "TerminateJobObject",
       "occurrence": 1,
@@ -3684,7 +3684,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|1168b41117cc8141|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1719,
+      "line": 1732,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -3695,7 +3695,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|1e35047c40a5bde4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1721,
+      "line": 1734,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -3706,7 +3706,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|0cc4c1d361e31e3a|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1723,
+      "line": 1736,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 2,
@@ -3717,7 +3717,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|402be7a6a2fe3571|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1728,
+      "line": 1741,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3728,7 +3728,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1730,
+      "line": 1743,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 6,
@@ -3739,7 +3739,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|134496d5b55e28d5|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1739,
+      "line": 1752,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 4,
@@ -3750,7 +3750,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1743,
+      "line": 1756,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -3761,7 +3761,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|ba2e088843a1776e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1746,
+      "line": 1759,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -3772,7 +3772,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|Sleep|3fb3e2ee0cb7ed01|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1750,
+      "line": 1763,
       "rule": "native-symbol",
       "token": "Sleep",
       "occurrence": 1,
@@ -3783,7 +3783,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|0cc4c1d361e31e3a|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1755,
+      "line": 1768,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 3,
@@ -3794,7 +3794,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|c694fb3259bf93f2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1759,
+      "line": 1772,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3805,7 +3805,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0c77b9be4e942b1f|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1761,
+      "line": 1774,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 7,
@@ -3816,7 +3816,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateJobObject|de00782ae6de2187|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1778,
+      "line": 1791,
       "rule": "native-symbol",
       "token": "TerminateJobObject",
       "occurrence": 1,
@@ -3827,7 +3827,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|9ace742a8a2da8bc|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1782,
+      "line": 1795,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3838,7 +3838,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|6a15731b07a61d11|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1786,
+      "line": 1799,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3849,7 +3849,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|3debc3d65da51169|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1789,
+      "line": 1802,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3860,7 +3860,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|2af65554a92764fe|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1806,
+      "line": 1819,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3871,7 +3871,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|1a6ab34744262f74|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1810,
+      "line": 1823,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3882,7 +3882,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetInformationJobObject|df6519b0ae511a89|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1816,
+      "line": 1829,
       "rule": "native-symbol",
       "token": "SetInformationJobObject",
       "occurrence": 1,
@@ -3893,7 +3893,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|29932aab2ed1e325|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1820,
+      "line": 1833,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3904,7 +3904,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|d903e2cbb0769cb9|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1824,
+      "line": 1837,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -3915,7 +3915,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|76fb88501ae687a4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1868,
+      "line": 1881,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -3926,7 +3926,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|b464b9d758e6fb98|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1883,
+      "line": 1896,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -3937,7 +3937,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1891,
+      "line": 1904,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 5,
@@ -3948,7 +3948,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|13",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1898,
+      "line": 1911,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 13,
@@ -3959,7 +3959,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateJobObjectW|6486f9f3e29000a4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1903,
+      "line": 1916,
       "rule": "native-symbol",
       "token": "CreateJobObjectW",
       "occurrence": 1,
@@ -3970,7 +3970,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetInformationJobObject|af715ec9ec19f2aa|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1908,
+      "line": 1921,
       "rule": "native-symbol",
       "token": "SetInformationJobObject",
       "occurrence": 1,
@@ -3981,7 +3981,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1911,
+      "line": 1924,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -3992,7 +3992,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|de276a431f427fb1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1917,
+      "line": 1930,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -4003,7 +4003,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|554d2fc7f7a6e46d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1918,
+      "line": 1931,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -4014,7 +4014,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1921,
+      "line": 1934,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -4025,7 +4025,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|d023fffe91e15137|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1924,
+      "line": 1937,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -4036,7 +4036,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|14",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1929,
+      "line": 1942,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 14,
@@ -4047,7 +4047,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|4a8010cc1d0e0242|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1936,
+      "line": 1949,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -4058,7 +4058,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|15",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1942,
+      "line": 1955,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 15,
@@ -4069,7 +4069,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|d4ff1d206dcc3fc1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 1964,
+      "line": 1977,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -4080,7 +4080,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|e4061afacb1a1c3d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2003,
+      "line": 2016,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -4091,7 +4091,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|d023fffe91e15137|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2007,
+      "line": 2020,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 2,
@@ -4102,7 +4102,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|13",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2011,
+      "line": 2024,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 13,
@@ -4113,7 +4113,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|a78f93471475f723|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2012,
+      "line": 2025,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4124,7 +4124,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|cbdfc265cbf0e547|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2013,
+      "line": 2026,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4135,7 +4135,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|f1229c73b820550c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2023,
+      "line": 2036,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4146,7 +4146,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|4bd1558ed1245b2e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2083,
+      "line": 2096,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -4157,7 +4157,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2089,
+      "line": 2102,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 5,
@@ -4168,7 +4168,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|de0664bdf04be914|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2093,
+      "line": 2106,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 1,
@@ -4179,7 +4179,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0f63eb29639c3af4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2100,
+      "line": 2113,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -4190,7 +4190,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d6183be8f4af725e|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2102,
+      "line": 2115,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -4201,7 +4201,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateJobObjectW|a66370923291a747|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2124,
+      "line": 2137,
       "rule": "native-symbol",
       "token": "CreateJobObjectW",
       "occurrence": 1,
@@ -4212,7 +4212,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetInformationJobObject|9d6359845702015b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2129,
+      "line": 2142,
       "rule": "native-symbol",
       "token": "SetInformationJobObject",
       "occurrence": 1,
@@ -4223,7 +4223,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2132,
+      "line": 2145,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 6,
@@ -4234,7 +4234,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeProcThreadAttributeList|ad3fc43df3809375|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2144,
+      "line": 2157,
       "rule": "native-symbol",
       "token": "InitializeProcThreadAttributeList",
       "occurrence": 1,
@@ -4245,7 +4245,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|e34823463e81fd55|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2146,
+      "line": 2159,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -4256,7 +4256,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|16",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2150,
+      "line": 2163,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 16,
@@ -4267,7 +4267,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|UpdateProcThreadAttribute|310070d7a2bf41c7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2156,
+      "line": 2169,
       "rule": "native-symbol",
       "token": "UpdateProcThreadAttribute",
       "occurrence": 1,
@@ -4278,7 +4278,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2160,
+      "line": 2173,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 7,
@@ -4289,7 +4289,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|UpdateProcThreadAttribute|310070d7a2bf41c7|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2175,
+      "line": 2188,
       "rule": "native-symbol",
       "token": "UpdateProcThreadAttribute",
       "occurrence": 2,
@@ -4300,7 +4300,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|f113d65aab562ffb|8",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2178,
+      "line": 2191,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 8,
@@ -4311,7 +4311,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateProcessW|2108dba4624bb85f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2208,
+      "line": 2221,
       "rule": "native-symbol",
       "token": "CreateProcessW",
       "occurrence": 1,
@@ -4322,7 +4322,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|17",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2213,
+      "line": 2226,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 17,
@@ -4333,7 +4333,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetEnvironmentVariableW|19e5a9c3d6a6e1ad|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2222,
+      "line": 2235,
       "rule": "native-symbol",
       "token": "GetEnvironmentVariableW",
       "occurrence": 1,
@@ -4344,7 +4344,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|e1519ba0b1756962|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2228,
+      "line": 2241,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4355,7 +4355,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|9d57f66b6e076422|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2239,
+      "line": 2252,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4366,7 +4366,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|87ce60d2a83e438a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2249,
+      "line": 2262,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4377,7 +4377,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreatePipe|ad1635c9d0296bf7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2289,
+      "line": 2302,
       "rule": "native-symbol",
       "token": "CreatePipe",
       "occurrence": 1,
@@ -4388,7 +4388,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreatePipe|3afe601c52316141|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2290,
+      "line": 2303,
       "rule": "native-symbol",
       "token": "CreatePipe",
       "occurrence": 1,
@@ -4399,7 +4399,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|7bac1be47eb94e5c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2291,
+      "line": 2304,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -4410,7 +4410,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|902caef304d3e51e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2292,
+      "line": 2305,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -4421,7 +4421,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|338ff3e3a22c0e59|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2293,
+      "line": 2306,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4432,7 +4432,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|1410861f9cd08574|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2294,
+      "line": 2307,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4443,7 +4443,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|d3867054f98d9d1c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2295,
+      "line": 2308,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4454,7 +4454,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|2fed500240c725cb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2296,
+      "line": 2309,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4465,7 +4465,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|b2c599d147b225da|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2297,
+      "line": 2310,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -4476,7 +4476,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|48e0aa60754ff0fc|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2314,
+      "line": 2327,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4487,7 +4487,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|9fcd4fc43c360e3d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2315,
+      "line": 2328,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4498,7 +4498,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|a0e16a1e25118ab8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2340,
+      "line": 2353,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4509,7 +4509,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WriteFile|da83242839cdee66|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2354,
+      "line": 2367,
       "rule": "native-symbol",
       "token": "WriteFile",
       "occurrence": 1,
@@ -4520,7 +4520,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|b2c599d147b225da|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2358,
+      "line": 2371,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -4531,7 +4531,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|90b40b32f3c80e67|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2360,
+      "line": 2373,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4542,7 +4542,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|1c935603595669c7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2363,
+      "line": 2376,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -4553,7 +4553,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|PeekNamedPipe|26b799e8c3958e82|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2368,
+      "line": 2381,
       "rule": "native-symbol",
       "token": "PeekNamedPipe",
       "occurrence": 1,
@@ -4564,7 +4564,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|18",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2369,
+      "line": 2382,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 18,
@@ -4575,7 +4575,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ReadFile|81c583161f1c08e1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2383,
+      "line": 2396,
       "rule": "native-symbol",
       "token": "ReadFile",
       "occurrence": 1,
@@ -4586,7 +4586,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|a9fb1afa247b0895|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2387,
+      "line": 2400,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -4597,7 +4597,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|c401f83c67fb755c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2416,
+      "line": 2429,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4608,7 +4608,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|6e7e35fb10d71574|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2421,
+      "line": 2434,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -4619,7 +4619,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|Sleep|3fb3e2ee0cb7ed01|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2425,
+      "line": 2438,
       "rule": "native-symbol",
       "token": "Sleep",
       "occurrence": 2,
@@ -4630,7 +4630,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|e8f1e829db2eac56|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2430,
+      "line": 2443,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4641,7 +4641,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|1f4324d453581f7e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2431,
+      "line": 2444,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -4652,7 +4652,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|48e0aa60754ff0fc|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2432,
+      "line": 2445,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 2,
@@ -4663,7 +4663,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|9fcd4fc43c360e3d|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2433,
+      "line": 2446,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 2,
@@ -4674,7 +4674,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|abf5ae9070c72502|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2508,
+      "line": 2521,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -4685,7 +4685,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsProcessInJob|abf5ae9070c72502|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2508,
+      "line": 2521,
       "rule": "native-symbol",
       "token": "IsProcessInJob",
       "occurrence": 1,
@@ -4696,7 +4696,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|970db5c435454d7f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2514,
+      "line": 2527,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 1,
@@ -4707,7 +4707,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|0c9f6e7065da4fe9|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2680,
+      "line": 2693,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 1,
@@ -4718,7 +4718,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|PeekNamedPipe|8eb98e530e378288|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2715,
+      "line": 2728,
       "rule": "native-symbol",
       "token": "PeekNamedPipe",
       "occurrence": 1,
@@ -4729,7 +4729,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|14",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2716,
+      "line": 2729,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 14,
@@ -4740,7 +4740,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|Sleep|9995c212f810466f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2731,
+      "line": 2744,
       "rule": "native-symbol",
       "token": "Sleep",
       "occurrence": 1,
@@ -4751,7 +4751,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|0c9f6e7065da4fe9|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2741,
+      "line": 2754,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 2,
@@ -4762,7 +4762,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|PeekNamedPipe|8eb98e530e378288|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2747,
+      "line": 2760,
       "rule": "native-symbol",
       "token": "PeekNamedPipe",
       "occurrence": 2,
@@ -4773,7 +4773,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|19",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2748,
+      "line": 2761,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 19,
@@ -4784,7 +4784,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ReadFile|3565543304461679|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2772,
+      "line": 2785,
       "rule": "native-symbol",
       "token": "ReadFile",
       "occurrence": 1,
@@ -4795,7 +4795,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|20",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2774,
+      "line": 2787,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 20,
@@ -4806,7 +4806,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|Sleep|9995c212f810466f|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2808,
+      "line": 2821,
       "rule": "native-symbol",
       "token": "Sleep",
       "occurrence": 2,
@@ -4817,7 +4817,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|15",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2816,
+      "line": 2829,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 15,
@@ -4828,7 +4828,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ConnectNamedPipe|4fb329e0499ad2d8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2819,
+      "line": 2832,
       "rule": "native-symbol",
       "token": "ConnectNamedPipe",
       "occurrence": 1,
@@ -4839,7 +4839,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|3de00a11909c551d|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2820,
+      "line": 2833,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -4850,7 +4850,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CancelIoEx|4100069cd79de606|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2828,
+      "line": 2841,
       "rule": "native-symbol",
       "token": "CancelIoEx",
       "occurrence": 2,
@@ -4861,7 +4861,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|05223bffe4808e3b|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2832,
+      "line": 2845,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -4872,7 +4872,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CancelIoEx|4100069cd79de606|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2834,
+      "line": 2847,
       "rule": "native-symbol",
       "token": "CancelIoEx",
       "occurrence": 3,
@@ -4883,7 +4883,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|ddb3fe497a89c9ff|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2835,
+      "line": 2848,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -4894,7 +4894,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|aa36178de899fcdb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2839,
+      "line": 2852,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -4905,7 +4905,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetOverlappedResult|cd2762c2dcd14149|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2843,
+      "line": 2856,
       "rule": "native-symbol",
       "token": "GetOverlappedResult",
       "occurrence": 2,
@@ -4916,7 +4916,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|16",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2845,
+      "line": 2858,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 16,
@@ -4927,7 +4927,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|033e967a698277fe|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2854,
+      "line": 2867,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -4938,7 +4938,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsValidSid|cbce5e5abcb3184a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2857,
+      "line": 2870,
       "rule": "native-symbol",
       "token": "IsValidSid",
       "occurrence": 1,
@@ -4949,7 +4949,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLengthSid|0a6967723755328d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2858,
+      "line": 2871,
       "rule": "native-symbol",
       "token": "GetLengthSid",
       "occurrence": 1,
@@ -4960,7 +4960,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeAcl|180d358397447e6b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2864,
+      "line": 2877,
       "rule": "native-symbol",
       "token": "InitializeAcl",
       "occurrence": 1,
@@ -4971,7 +4971,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeSecurityDescriptor|e501d9cf2371e882|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2867,
+      "line": 2880,
       "rule": "native-symbol",
       "token": "InitializeSecurityDescriptor",
       "occurrence": 1,
@@ -4982,7 +4982,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetSecurityDescriptorDacl|cf579cbea62acdcf|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2869,
+      "line": 2882,
       "rule": "native-symbol",
       "token": "SetSecurityDescriptorDacl",
       "occurrence": 1,
@@ -4993,7 +4993,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|5944d91b6fe53e23|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2924,
+      "line": 2937,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -5004,7 +5004,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d06cb039c2b8bcd7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2929,
+      "line": 2942,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5015,7 +5015,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2958,
+      "line": 2971,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 2,
@@ -5026,7 +5026,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|5733ec3b174d4f4b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2959,
+      "line": 2972,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -5037,7 +5037,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|704fb7222b651857|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2960,
+      "line": 2973,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5048,7 +5048,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2961,
+      "line": 2974,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 3,
@@ -5059,7 +5059,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|4ef886624ffb0208|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2963,
+      "line": 2976,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5070,7 +5070,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2965,
+      "line": 2978,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 4,
@@ -5081,7 +5081,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|c4248772e9ccbda8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2966,
+      "line": 2979,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 1,
@@ -5092,7 +5092,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|2d7167f0bf2a1eb2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2967,
+      "line": 2980,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5103,7 +5103,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2996,
+      "line": 3009,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 5,
@@ -5114,7 +5114,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|3a356f961bc9c04a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2997,
+      "line": 3010,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -5125,7 +5125,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsProcessInJob|3a356f961bc9c04a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2997,
+      "line": 3010,
       "rule": "native-symbol",
       "token": "IsProcessInJob",
       "occurrence": 1,
@@ -5136,7 +5136,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|7e5fc35fb39278ca|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 2998,
+      "line": 3011,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5147,7 +5147,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3002,
+      "line": 3015,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 6,
@@ -5158,7 +5158,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|134496d5b55e28d5|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3003,
+      "line": 3016,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 5,
@@ -5169,7 +5169,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|331074e62ae9e919|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3006,
+      "line": 3019,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5180,7 +5180,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|b464b9d758e6fb98|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3091,
+      "line": 3104,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 2,
@@ -5191,7 +5191,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3100,
+      "line": 3113,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 6,
@@ -5202,7 +5202,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileInformationByHandleEx|25b3f606bdf6b997|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3103,
+      "line": 3116,
       "rule": "native-symbol",
       "token": "GetFileInformationByHandleEx",
       "occurrence": 7,
@@ -5213,7 +5213,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|36121ad516c0223d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3110,
+      "line": 3123,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5224,7 +5224,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|c5ec4ba866dabe7b|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3111,
+      "line": 3124,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -5235,7 +5235,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreatePipe|db310af0a09784ca|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3130,
+      "line": 3143,
       "rule": "native-symbol",
       "token": "CreatePipe",
       "occurrence": 1,
@@ -5246,7 +5246,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3133,
+      "line": 3146,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -5257,7 +5257,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|16425ac85d136acc|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3137,
+      "line": 3150,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -5268,7 +5268,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3139,
+      "line": 3152,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -5279,7 +5279,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateNamedPipeW|5812d09af06df94a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3158,
+      "line": 3171,
       "rule": "native-symbol",
       "token": "CreateNamedPipeW",
       "occurrence": 1,
@@ -5290,7 +5290,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|8dfcc62f82cb8ae7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3167,
+      "line": 3180,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5301,7 +5301,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|d325471aaea8d499|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3169,
+      "line": 3182,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -5312,7 +5312,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|8dfcc62f82cb8ae7|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3170,
+      "line": 3183,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -5323,7 +5323,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|9b90f504ae769921|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3172,
+      "line": 3185,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -5334,7 +5334,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|8dfcc62f82cb8ae7|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3178,
+      "line": 3191,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -5345,7 +5345,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|2b5257bdce691171|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3182,
+      "line": 3195,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -5356,7 +5356,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|2b5257bdce691171|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3182,
+      "line": 3195,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -5367,7 +5367,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|2b5257bdce691171|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3182,
+      "line": 3195,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 2,
@@ -5378,7 +5378,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|06c8f5a19a1b1c12|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3183,
+      "line": 3196,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -5389,7 +5389,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|8dfcc62f82cb8ae7|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3187,
+      "line": 3200,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -5400,7 +5400,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetLastError|b0980f149dc31d86|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3193,
+      "line": 3206,
       "rule": "native-symbol",
       "token": "SetLastError",
       "occurrence": 7,
@@ -5411,7 +5411,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeProcThreadAttributeList|ad3fc43df3809375|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3194,
+      "line": 3207,
       "rule": "native-symbol",
       "token": "InitializeProcThreadAttributeList",
       "occurrence": 2,
@@ -5422,7 +5422,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|6216ea7483093757|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3196,
+      "line": 3209,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5433,7 +5433,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0abf1d918e1583d4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3208,
+      "line": 3221,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5444,7 +5444,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|UpdateProcThreadAttribute|310070d7a2bf41c7|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3211,
+      "line": 3224,
       "rule": "native-symbol",
       "token": "UpdateProcThreadAttribute",
       "occurrence": 3,
@@ -5455,7 +5455,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|0abf1d918e1583d4|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3215,
+      "line": 3228,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -5466,7 +5466,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateProcessW|24e0a8be633d695f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3248,
+      "line": 3261,
       "rule": "native-symbol",
       "token": "CreateProcessW",
       "occurrence": 1,
@@ -5477,7 +5477,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|e8f0b7b2eb97d230|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3253,
+      "line": 3266,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5488,7 +5488,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|9cc17b9bb7e6549d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3286,
+      "line": 3299,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 1,
@@ -5499,7 +5499,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|30be1fc456008a7c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3287,
+      "line": 3300,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -5510,7 +5510,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|59fc6e00a5c7f9fa|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3291,
+      "line": 3304,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -5521,7 +5521,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|15942ab747cddc80|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3292,
+      "line": 3305,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -5532,7 +5532,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|69aeec6328e9fe18|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3293,
+      "line": 3306,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -5543,7 +5543,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|21",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3294,
+      "line": 3307,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 21,
@@ -5554,7 +5554,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|9cc17b9bb7e6549d|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3295,
+      "line": 3308,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 2,
@@ -5565,7 +5565,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|30be1fc456008a7c|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3296,
+      "line": 3309,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -5576,7 +5576,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ResumeThread|e8d734d4a14adc78|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3302,
+      "line": 3315,
       "rule": "native-symbol",
       "token": "ResumeThread",
       "occurrence": 1,
@@ -5587,7 +5587,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|22",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3304,
+      "line": 3317,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 22,
@@ -5598,7 +5598,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|9cc17b9bb7e6549d|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3309,
+      "line": 3322,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 3,
@@ -5609,7 +5609,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|30be1fc456008a7c|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3310,
+      "line": 3323,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 3,
@@ -5620,7 +5620,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|1e35047c40a5bde4|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3314,
+      "line": 3327,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 2,
@@ -5631,7 +5631,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|9cc17b9bb7e6549d|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3322,
+      "line": 3335,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 4,
@@ -5642,7 +5642,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|30be1fc456008a7c|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3323,
+      "line": 3336,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 4,
@@ -5653,7 +5653,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|9cc17b9bb7e6549d|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3338,
+      "line": 3351,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 5,
@@ -5664,7 +5664,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|30be1fc456008a7c|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3339,
+      "line": 3352,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 5,
@@ -5675,7 +5675,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateProcess|9cc17b9bb7e6549d|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3361,
+      "line": 3374,
       "rule": "native-symbol",
       "token": "TerminateProcess",
       "occurrence": 6,
@@ -5686,7 +5686,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|30be1fc456008a7c|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3362,
+      "line": 3375,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 6,
@@ -5697,7 +5697,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|b86024ce0cc4daaa|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3370,
+      "line": 3383,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -5708,7 +5708,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|7fb6746603686446|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3376,
+      "line": 3389,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5719,7 +5719,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|c5ec4ba866dabe7b|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3382,
+      "line": 3395,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -5730,7 +5730,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|3a07561ba9a9f262|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3405,
+      "line": 3422,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -5741,7 +5741,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|1b47c32ce5a2ace2|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3434,
+      "line": 3451,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 1,
@@ -5752,7 +5752,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|4b7547259be5518d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3441,
+      "line": 3458,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -5763,7 +5763,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|adc43735146d875e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3444,
+      "line": 3461,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -5774,7 +5774,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|InitializeProcThreadAttributeList|ad3fc43df3809375|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3468,
+      "line": 3485,
       "rule": "native-symbol",
       "token": "InitializeProcThreadAttributeList",
       "occurrence": 3,
@@ -5785,7 +5785,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|035f46dac73ba10c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3474,
+      "line": 3491,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -5796,7 +5796,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|UpdateProcThreadAttribute|310070d7a2bf41c7|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3477,
+      "line": 3494,
       "rule": "native-symbol",
       "token": "UpdateProcThreadAttribute",
       "occurrence": 4,
@@ -5807,7 +5807,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|035f46dac73ba10c|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3481,
+      "line": 3498,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -5818,7 +5818,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|UpdateProcThreadAttribute|c852ee94fed6a331|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3483,
+      "line": 3500,
       "rule": "native-symbol",
       "token": "UpdateProcThreadAttribute",
       "occurrence": 1,
@@ -5829,7 +5829,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|035f46dac73ba10c|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3489,
+      "line": 3506,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -5840,7 +5840,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateProcessW|24e0a8be633d695f|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3512,
+      "line": 3529,
       "rule": "native-symbol",
       "token": "CreateProcessW",
       "occurrence": 2,
@@ -5851,7 +5851,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|035f46dac73ba10c|4",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3520,
+      "line": 3537,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 4,
@@ -5862,7 +5862,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetEnvironmentVariableW|fd37b2ac50bb68cb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3532,
+      "line": 3549,
       "rule": "native-symbol",
       "token": "GetEnvironmentVariableW",
       "occurrence": 1,
@@ -5873,7 +5873,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CreateFileW|97174c09de3c914f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3536,
+      "line": 3553,
       "rule": "native-symbol",
       "token": "CreateFileW",
       "occurrence": 1,
@@ -5884,7 +5884,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|f18ae72961ee44a3|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3540,
+      "line": 3557,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 1,
@@ -5895,7 +5895,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WriteFile|01dac41a0dcba129|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3543,
+      "line": 3560,
       "rule": "native-symbol",
       "token": "WriteFile",
       "occurrence": 1,
@@ -5906,7 +5906,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|FlushFileBuffers|d49eb3fdc1337a73|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3546,
+      "line": 3563,
       "rule": "native-symbol",
       "token": "FlushFileBuffers",
       "occurrence": 1,
@@ -5917,7 +5917,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetEnvironmentVariableW|e694faa5a7740fac|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3550,
+      "line": 3567,
       "rule": "native-symbol",
       "token": "GetEnvironmentVariableW",
       "occurrence": 1,
@@ -5928,7 +5928,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|Sleep|882e99c4c258b9ed|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3559,
+      "line": 3576,
       "rule": "native-symbol",
       "token": "Sleep",
       "occurrence": 1,
@@ -5939,7 +5939,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|TerminateJobObject|3c64d66a8d755412|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3585,
+      "line": 3602,
       "rule": "native-symbol",
       "token": "TerminateJobObject",
       "occurrence": 1,
@@ -5950,7 +5950,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetEnvironmentVariableW|58e6d185bf23c3e7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3589,
+      "line": 3606,
       "rule": "native-symbol",
       "token": "GetEnvironmentVariableW",
       "occurrence": 1,
@@ -5961,7 +5961,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|180baec63a732f33|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3625,
+      "line": 3642,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -5972,7 +5972,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|8d2bf1d6f9c4e0d8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3627,
+      "line": 3644,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -5983,7 +5983,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|f27ff963c5635251|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3630,
+      "line": 3647,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 1,
@@ -5994,7 +5994,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|IsProcessInJob|fa9193101e639b27|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3636,
+      "line": 3653,
       "rule": "native-symbol",
       "token": "IsProcessInJob",
       "occurrence": 1,
@@ -6005,7 +6005,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|QueryInformationJobObject|1b47c32ce5a2ace2|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3637,
+      "line": 3654,
       "rule": "native-symbol",
       "token": "QueryInformationJobObject",
       "occurrence": 2,
@@ -6016,7 +6016,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcess|de276a431f427fb1|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3649,
+      "line": 3666,
       "rule": "native-symbol",
       "token": "GetCurrentProcess",
       "occurrence": 2,
@@ -6027,7 +6027,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|358d58b261ab4fa9|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3650,
+      "line": 3667,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -6038,7 +6038,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|3c9512018cedba6a|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3653,
+      "line": 3670,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -6049,7 +6049,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|DuplicateHandle|f2bccb9b4665b421|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3655,
+      "line": 3672,
       "rule": "native-symbol",
       "token": "DuplicateHandle",
       "occurrence": 1,
@@ -6060,7 +6060,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|6c92be2be26088f1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3657,
+      "line": 3674,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6071,7 +6071,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|f8184c1242de1706|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3658,
+      "line": 3675,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6082,7 +6082,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|504c37261562da55|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3659,
+      "line": 3676,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6093,7 +6093,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|4ce2071783b5db47|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3665,
+      "line": 3682,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6104,7 +6104,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|a5f04ce82f83934d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3666,
+      "line": 3683,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6115,7 +6115,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|ddd05aeaedc750e9|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3667,
+      "line": 3684,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6126,7 +6126,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|3f8c0c1a242d10c7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3670,
+      "line": 3687,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6137,7 +6137,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|d240926414b31170|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3671,
+      "line": 3688,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6148,7 +6148,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|b6e6736b30bb084d|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3672,
+      "line": 3689,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6159,7 +6159,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentDirectoryW|b6b6e57762f516f1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3690,
+      "line": 3707,
       "rule": "native-symbol",
       "token": "GetCurrentDirectoryW",
       "occurrence": 1,
@@ -6170,7 +6170,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SHGetKnownFolderPath|b491ce5babb6eef6|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3707,
+      "line": 3724,
       "rule": "native-symbol",
       "token": "SHGetKnownFolderPath",
       "occurrence": 1,
@@ -6181,7 +6181,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CoTaskMemFree|16ef00703efb18f6|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3712,
+      "line": 3729,
       "rule": "native-symbol",
       "token": "CoTaskMemFree",
       "occurrence": 1,
@@ -6192,7 +6192,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SHGetKnownFolderPath|b491ce5babb6eef6|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3735,
+      "line": 3752,
       "rule": "native-symbol",
       "token": "SHGetKnownFolderPath",
       "occurrence": 2,
@@ -6203,7 +6203,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CoTaskMemFree|16ef00703efb18f6|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3740,
+      "line": 3757,
       "rule": "native-symbol",
       "token": "CoTaskMemFree",
       "occurrence": 2,
@@ -6214,7 +6214,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|a85452281559059c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3750,
+      "line": 3767,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6225,7 +6225,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|548693dd960adab7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3751,
+      "line": 3768,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6236,7 +6236,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|11c33203065d1392|16",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3759,
+      "line": 3776,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 16,
@@ -6247,7 +6247,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|9c189a52d1270c45|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3772,
+      "line": 3789,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 1,
@@ -6258,7 +6258,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|212092482c4dd3fb|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3774,
+      "line": 3791,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -6269,7 +6269,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|5",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3776,
+      "line": 3793,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 5,
@@ -6280,7 +6280,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|13ad141789b00362|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3782,
+      "line": 3799,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6291,7 +6291,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|e99892c7cbb36b60|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3783,
+      "line": 3800,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -6302,7 +6302,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetNamedPipeServerProcessId|d18e8edf77fe2aaa|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3786,
+      "line": 3803,
       "rule": "native-symbol",
       "token": "GetNamedPipeServerProcessId",
       "occurrence": 1,
@@ -6313,7 +6313,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|547d9a782ebed61e|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3788,
+      "line": 3805,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -6324,7 +6324,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|1c935603595669c7|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3801,
+      "line": 3818,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 2,
@@ -6335,7 +6335,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|PeekNamedPipe|8eb98e530e378288|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3804,
+      "line": 3821,
       "rule": "native-symbol",
       "token": "PeekNamedPipe",
       "occurrence": 3,
@@ -6346,7 +6346,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|5dd08c5ecf57b63e|23",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3805,
+      "line": 3822,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 23,
@@ -6357,7 +6357,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|ReadFile|3565543304461679|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3816,
+      "line": 3833,
       "rule": "native-symbol",
       "token": "ReadFile",
       "occurrence": 2,
@@ -6368,7 +6368,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|ac3c4b87fe1df8b4|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3818,
+      "line": 3835,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -6379,7 +6379,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|6e7e35fb10d71574|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3842,
+      "line": 3859,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 2,
@@ -6390,7 +6390,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|Sleep|3fb3e2ee0cb7ed01|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3845,
+      "line": 3862,
       "rule": "native-symbol",
       "token": "Sleep",
       "occurrence": 3,
@@ -6401,7 +6401,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|9c189a52d1270c45|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3858,
+      "line": 3875,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 2,
@@ -6412,7 +6412,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|212092482c4dd3fb|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3860,
+      "line": 3877,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 2,
@@ -6423,7 +6423,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|6",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3862,
+      "line": 3879,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 6,
@@ -6434,7 +6434,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|13ad141789b00362|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3868,
+      "line": 3885,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 2,
@@ -6445,7 +6445,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|e0b83ee1d8e31ee1|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3869,
+      "line": 3886,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -6456,7 +6456,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetNamedPipeServerProcessId|d18e8edf77fe2aaa|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3872,
+      "line": 3889,
       "rule": "native-symbol",
       "token": "GetNamedPipeServerProcessId",
       "occurrence": 2,
@@ -6467,7 +6467,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|be451ef45afc28f3|7",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3875,
+      "line": 3892,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 7,
@@ -6478,7 +6478,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|51de82c899ad9760|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3931,
+      "line": 3948,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6489,7 +6489,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCurrentProcessId|7155de8444ea1b1f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3936,
+      "line": 3953,
       "rule": "native-symbol",
       "token": "GetCurrentProcessId",
       "occurrence": 1,
@@ -6500,7 +6500,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetTickCount64|0c9f6e7065da4fe9|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3943,
+      "line": 3960,
       "rule": "native-symbol",
       "token": "GetTickCount64",
       "occurrence": 3,
@@ -6511,7 +6511,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WriteFile|1a48191602586ffe|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3954,
+      "line": 3971,
       "rule": "native-symbol",
       "token": "WriteFile",
       "occurrence": 1,
@@ -6522,7 +6522,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|d799bb079b9a857d|17",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3957,
+      "line": 3974,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 17,
@@ -6533,7 +6533,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CloseHandle|8251182e6886892b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3972,
+      "line": 3989,
       "rule": "native-symbol",
       "token": "CloseHandle",
       "occurrence": 1,
@@ -6544,7 +6544,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessId|346908dcd439a7d8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3988,
+      "line": 4005,
       "rule": "native-symbol",
       "token": "GetProcessId",
       "occurrence": 1,
@@ -6555,7 +6555,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetProcessTimes|173322853dce917c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3989,
+      "line": 4006,
       "rule": "native-symbol",
       "token": "GetProcessTimes",
       "occurrence": 1,
@@ -6566,7 +6566,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|WaitForSingleObject|859dafe782e6f8c9|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 3999,
+      "line": 4016,
       "rule": "native-symbol",
       "token": "WaitForSingleObject",
       "occurrence": 1,
@@ -6577,7 +6577,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|748c50aed1973464|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4004,
+      "line": 4021,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -6588,7 +6588,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|CommandLineToArgvW|109409c0aaa97db7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4023,
+      "line": 4040,
       "rule": "native-symbol",
       "token": "CommandLineToArgvW",
       "occurrence": 1,
@@ -6599,7 +6599,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCommandLineW|109409c0aaa97db7|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4023,
+      "line": 4040,
       "rule": "native-symbol",
       "token": "GetCommandLineW",
       "occurrence": 1,
@@ -6610,7 +6610,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|LocalFree|e8ca5dec00070824|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4040,
+      "line": 4057,
       "rule": "native-symbol",
       "token": "LocalFree",
       "occurrence": 1,
@@ -6621,7 +6621,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|cf8f2ffefd6addff|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4057,
+      "line": 4074,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -6632,7 +6632,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|9bae5bb00947e03f|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4059,
+      "line": 4076,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 1,
@@ -6643,7 +6643,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|7f7af7ab8b010dbe|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4062,
+      "line": 4079,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -6654,7 +6654,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|9bae5bb00947e03f|2",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4065,
+      "line": 4082,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 2,
@@ -6665,7 +6665,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|SetHandleInformation|8390a60b50f689ef|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4068,
+      "line": 4085,
       "rule": "native-symbol",
       "token": "SetHandleInformation",
       "occurrence": 1,
@@ -6676,7 +6676,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetLastError|9bae5bb00947e03f|3",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4071,
+      "line": 4088,
       "rule": "native-symbol",
       "token": "GetLastError",
       "occurrence": 3,
@@ -6687,7 +6687,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|e37ca915f9677f0b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4095,
+      "line": 4112,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6698,7 +6698,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|87ec472c4dc06230|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4099,
+      "line": 4116,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6709,7 +6709,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|9cada58c3d7a3634|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4103,
+      "line": 4120,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6720,7 +6720,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetStdHandle|71eb5d608ee47f17|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4137,
+      "line": 4154,
       "rule": "native-symbol",
       "token": "GetStdHandle",
       "occurrence": 1,
@@ -6731,7 +6731,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetStdHandle|d28547d42e66fde5|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4138,
+      "line": 4155,
       "rule": "native-symbol",
       "token": "GetStdHandle",
       "occurrence": 1,
@@ -6742,7 +6742,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetStdHandle|e3df69b6c452fce0|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4139,
+      "line": 4156,
       "rule": "native-symbol",
       "token": "GetStdHandle",
       "occurrence": 1,
@@ -6753,7 +6753,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetCommandLineW|baf08b022d91e96c|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4169,
+      "line": 4186,
       "rule": "native-symbol",
       "token": "GetCommandLineW",
       "occurrence": 1,
@@ -6764,7 +6764,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|GetFileType|bc7ccdeef83b4b32|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4189,
+      "line": 4206,
       "rule": "native-symbol",
       "token": "GetFileType",
       "occurrence": 1,
@@ -6775,7 +6775,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|MultiByteToWideChar|82a634782f561c4b|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4220,
+      "line": 4237,
       "rule": "native-symbol",
       "token": "MultiByteToWideChar",
       "occurrence": 1,
@@ -6786,7 +6786,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|MultiByteToWideChar|381de0015ed516cf|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4225,
+      "line": 4242,
       "rule": "native-symbol",
       "token": "MultiByteToWideChar",
       "occurrence": 1,
@@ -6797,7 +6797,7 @@
     {
       "fingerprint": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp|native-symbol|MessageBoxW|767ba0a566e946d8|1",
       "path": "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp",
-      "line": 4233,
+      "line": 4250,
       "rule": "native-symbol",
       "token": "MessageBoxW",
       "occurrence": 1,

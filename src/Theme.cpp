@@ -404,14 +404,15 @@ ImVec4 MenuSecondaryText(const ThemeColorScheme& scheme) {
     return OpaqueThemeColor(MixThemeColor(text, FlatMenuSurface(scheme), 0.36f));
 }
 
+constexpr float kMenuPopupMinTextPx = 15.0f;
+float s_menuPopupTextSizePx = kMenuPopupMinTextPx;
+#if ARIS_PREVIEW_ISOLATION
+const ImGuiID kMenuPopupFontPixelsKey = ImHashStr("##MenuChromeFontPixels");
+#endif
+
 void PushMenuTextFont(ImFont* textFont, float textSizePx, bool& pushed) {
     if (!textFont || textSizePx <= 0.0f) return;
-    const ImGuiStyle& style = ImGui::GetStyle();
-    float appliedScale = style.FontScaleMain * style.FontScaleDpi * ImGui::GetCurrentWindow()->FontWindowScale;
-#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
-    appliedScale *= ImGui::GetIO().FontGlobalScale * textFont->Scale;
-#endif
-    ImGui::PushFont(textFont, textSizePx / std::max(0.01f, appliedScale));
+    ImGui::PushFont(textFont, GetMenuChromeFontPushSize(textFont, textSizePx));
     pushed = true;
 }
 
@@ -422,6 +423,24 @@ void GetFlatMenuPopupColors(ImVec4& background, ImVec4& border) {
 }
 
 }  // namespace
+
+float GetMenuChromeFontPushSize(ImFont* textFont, float textPixels) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImGuiWindow* window = ImGui::GetCurrentWindowRead();
+    float appliedScale = style.FontScaleMain * style.FontScaleDpi * (window ? window->FontWindowScale : 1.0f);
+#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+    appliedScale *= ImGui::GetIO().FontGlobalScale * textFont->Scale;
+#endif
+    return textPixels / std::max(0.01f, appliedScale);
+}
+
+#if ARIS_PREVIEW_ISOLATION
+float GetMenuPopupFontPixelsForQa(const ImGuiWindow& window) {
+    return (window.Flags & ImGuiWindowFlags_MenuChrome)
+        ? window.StateStorage.GetFloat(kMenuPopupFontPixelsKey, window.FontRefSize)
+        : window.FontRefSize;
+}
+#endif
 
 bool InMenuChromeScope() {
     const ImGuiContext* context = ImGui::GetCurrentContext();
@@ -464,8 +483,7 @@ ThemeMenuBarStyleScope::ThemeMenuBarStyleScope(ImFont* textFont, float textSizeP
 
     const float height = ImGui::GetCurrentWindow()->MenuBarHeight;
     const float desiredTextPx = textSizePx * scale;
-    PushMenuTextFont(textFont, height > 0.0f ? std::min(desiredTextPx, std::max(1.0f, height - 4.0f * scale))
-                                        : desiredTextPx, m_pushedFont);
+    PushMenuTextFont(textFont, height > 0.0f ? std::min(desiredTextPx, height) : desiredTextPx, m_pushedFont);
     const float padY = std::max(0.0f, std::floor((height - ImGui::GetFontSize()) * 0.5f));
     pushVar(ImGuiStyleVar_FrameRounding, 5.0f * scale);
     pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(legacyTitleSpacing, std::min(6.0f * scale, padY * 2.0f)));
@@ -536,11 +554,17 @@ ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope(ImFont* textFont, bool enable
     context.MenuChromeTextStackSize = context.ColorStack.Size;
 
     pushVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
-    PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), 15.0f * scale, m_pushedFont);
-    pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(16.0f * scale, std::max(0.0f, 27.0f * scale - ImGui::GetTextLineHeight())));
+    const float textSizePx = s_menuPopupTextSizePx;
+    PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), textSizePx * scale, m_pushedFont);
+    const float rowPitch = std::max(27.0f, textSizePx + 8.0f) * scale;
+    pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(16.0f * scale, std::max(0.0f, rowPitch - ImGui::GetTextLineHeight())));
+#if ARIS_PREVIEW_ISOLATION
+    ImGui::GetCurrentWindow()->StateStorage.SetFloat(kMenuPopupFontPixelsKey, ImGui::GetFontSize());
+#endif
 }
 
-ThemeMenuPopupShellScope::ThemeMenuPopupShellScope(bool enabled) {
+ThemeMenuPopupShellScope::ThemeMenuPopupShellScope(bool enabled, float textSizePx)
+    : m_textSizePx(std::max(kMenuPopupMinTextPx, textSizePx)) {
     if (enabled) activate();
 }
 
@@ -549,6 +573,8 @@ void ThemeMenuPopupShellScope::activate() {
     ImGuiContext& context = *ImGui::GetCurrentContext();
     m_previousPopupColors = context.MenuChromeGetPopupColors;
     context.MenuChromeGetPopupColors = GetFlatMenuPopupColors;
+    m_previousTextSizePx = s_menuPopupTextSizePx;
+    s_menuPopupTextSizePx = m_textSizePx;
     m_active = true;
 }
 
@@ -568,6 +594,7 @@ void ThemeMenuPopupShellScope::reset() {
     m_active = false;
     ImGuiContext& context = *ImGui::GetCurrentContext();
     context.MenuChromeGetPopupColors = m_previousPopupColors;
+    s_menuPopupTextSizePx = m_previousTextSizePx;
 }
 
 ThemeMenuPopupShellScope::~ThemeMenuPopupShellScope() {

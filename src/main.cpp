@@ -21,6 +21,8 @@
 // split into MainUI_*.cpp targets.
 
 #include "imgui.h"
+#include "HugeFolderIcons.h"
+#include "DatabaseFolderRowInput.h"
 #include "imgui_internal.h"        // Active-ID control for suggestion selection.
 #include <functional>
 
@@ -144,6 +146,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
 #include "CoverWallSelectionKey.h"
@@ -14006,7 +14009,6 @@ static void RenderFolderTreeExplorerToolbar(
     bool refreshBusy,
     const char* locateId,
     bool canLocate,
-    bool inheritContextColors,
     bool drawLocateRipple,
     const std::function<void()>& onSearchEscape,
     const std::function<void()>& onRefresh,
@@ -14022,14 +14024,12 @@ static void RenderFolderTreeExplorerToolbar(
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 3.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(7.0f, 2.0f));
     const float searchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - searchReserve);
-    DrawUnifiedSearchInput(
-        searchId,
-        searchHint,
-        searchBuf,
-        searchBufSize,
-        0,
-        searchWidth,
-        inheritContextColors);
+    const auto palette = harken::toolbar::ResolveSearchPalette(ThemeColors::current(),
+        ImGui::GetStyleColorVec4(ImGuiCol_ChildBg),
+        ImGui::GetStyleColorVec4(ImGuiCol_FrameBg),
+        ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    const auto search = harken::toolbar::DrawSearchField(
+        searchId, searchHint, searchBuf, searchBufSize, searchWidth, palette);
 #if ARIS_PREVIEW_ISOLATION
     if (qaState) {
         const ImVec2 origin = ImGui::GetMainViewport()->Pos;
@@ -14041,7 +14041,9 @@ static void RenderFolderTreeExplorerToolbar(
 #else
     (void)qaState;
 #endif
-    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (search.cleared) {
+        onSearchEscape();
+    } else if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         onSearchEscape();
         ImGui::ClearActiveID();
     }
@@ -14205,14 +14207,13 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
         [&state, canLocateCurrent, browserSource]() {
             RenderFolderTreeExplorerToolbar(
                 browserSource.searchId,
-                "",
+                L(Filter_SearchFolder),
                 g_browserSystemFolderSearchBuffer,
                 sizeof(g_browserSystemFolderSearchBuffer),
                 browserSource.refreshId,
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                state.settings.theme == AppTheme::LapisBlue,
                 false,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
@@ -14459,11 +14460,137 @@ enum class FolderTreeSelectionMode {
     PlaylistFilter,
 };
 
+// --- macOS-style folder-tree rows (REQ-20261118-FOLDER-TREE-SPEC) -----------
+// ImGui keeps owning the tree node itself (open/close state, hit testing,
+// keyboard navigation). Its label is pushed transparent and the visible row is
+// drawn here, so the disclosure chevron, the folder glyph and the label share
+// one baseline grid across leaves and branches.
+struct FolderTreeRowMetrics {
+    float fontSize    = 14.0f;
+    float rowHeight   = 26.0f;
+    int rowIndex = 0;
+    float NextHeight() {
+        const float top = roundf(rowIndex * rowHeight);
+        return roundf(++rowIndex * rowHeight) - top;
+    }
+    float chevronZone = 9.0f;
+    float iconWidth   = 14.0f;
+    float textGap     = 5.0f;
+    float sideInset   = 5.0f;
+};
+
+static FolderTreeRowMetrics MakeFolderTreeRowMetrics(float fontSize) {
+    FolderTreeRowMetrics m;
+    m.fontSize    = fontSize;
+    m.iconWidth   = 17.0f * fontSize / kDefaultReadingFontPx;
+    m.rowHeight   = m.iconWidth * (29.5f / 17.0f);
+    m.chevronZone = roundf(fontSize * 0.62f);
+    m.textGap     = roundf(fontSize * 0.34f);
+    m.sideInset   = roundf(fontSize * 0.34f);
+    return m;
+}
+
+static void DrawFolderTreeChevron(ImDrawList* dl, const ImVec2& center, float halfSize,
+                                  float thickness, bool open, ImU32 col) {
+    ImVec2 pts[3];
+    if (open) {
+        pts[0] = ImVec2(center.x - halfSize, center.y - halfSize * 0.55f);
+        pts[1] = ImVec2(center.x, center.y + halfSize * 0.62f);
+        pts[2] = ImVec2(center.x + halfSize, center.y - halfSize * 0.55f);
+    } else {
+        pts[0] = ImVec2(center.x - halfSize * 0.55f, center.y - halfSize);
+        pts[1] = ImVec2(center.x + halfSize * 0.62f, center.y);
+        pts[2] = ImVec2(center.x - halfSize * 0.55f, center.y + halfSize);
+    }
+    dl->AddPolyline(pts, 3, col, ImDrawFlags_None, thickness);
+}
+
+// Shared by every row inside the database folder-tree panel: folder nodes
+// (showIcon = true) and text-only rows such as "All files (N)".
+static void DrawFolderTreeRowModern(ImDrawList* dl,
+                                    const FolderTreeRowMetrics& m,
+                                    const ImVec2& rowMin, const ImVec2& rowMax,
+                                    bool hasChildren, bool nodeOpen, bool showIcon, bool databaseRow,
+                                    bool searchFill, ImU32 searchFillCol,
+                                    bool stateFill, ImU32 stateFillCol,
+                                    ImU32 chevronCol, ImU32 iconCol, ImU32 textCol,
+                                    const char* labelBegin, const char* labelEnd) {
+    const float x0 = rowMin.x + m.sideInset;
+    const float x1 = rowMax.x - m.sideInset;
+    if (x1 <= x0 || !ImGui::IsRectVisible(rowMin, rowMax)) return;
+
+    const float cy = rowMin.y + (rowMax.y - rowMin.y) * 0.5f;
+    const float radius = ImClamp(m.fontSize * 0.34f, 4.0f, 8.0f);
+    if (searchFill) {
+        dl->AddRectFilled(ImVec2(x0, rowMin.y), ImVec2(x1, rowMax.y), searchFillCol, radius);
+    }
+    if (stateFill) {
+        dl->AddRectFilled(ImVec2(x0, rowMin.y), ImVec2(x1, rowMax.y), stateFillCol, radius);
+    }
+
+    const float chevronLeft = x0 + roundf(m.chevronZone * 0.30f);
+    if (hasChildren) {
+        DrawFolderTreeChevron(dl, ImVec2(chevronLeft + m.chevronZone * 0.36f, cy),
+                              m.chevronZone * 0.30f,
+                              ImMax(1.0f, roundf(m.fontSize * 0.085f)),
+                              nodeOpen, chevronCol);
+    }
+
+    float x = chevronLeft + m.chevronZone;
+    if (showIcon && databaseRow) {
+        HugeFolderIcons::Draw(dl, ImVec2(x + m.iconWidth * 0.5f, cy),
+                              18.0f * m.fontSize / kDefaultReadingFontPx, nodeOpen && hasChildren, iconCol);
+    } else if (showIcon) {
+        constexpr float stroke = 1.7f;
+        const float center = x + m.iconWidth * 0.5f;
+        const float left = center - (18.0f - stroke) * 0.5f;
+        const float right = 2.0f * center - left;
+        const bool open = nodeOpen && hasChildren;
+        const float hinge = open ? 2.5f : 0.0f;
+        const ImVec2 front[] = {
+            {left + hinge, cy - 1.0f}, {right, cy - (open ? 2.0f : 1.0f)},
+            {right - hinge, cy + 6.0f}, {left, cy + 6.0f}
+        };
+        const ImVec2 back[] = {
+            {left, open ? front[3].y : front[0].y}, {left, cy - 6.0f},
+            {left + 5.0f, cy - 6.0f}, {left + 7.0f, cy - 4.0f},
+            {right - hinge, cy - 4.0f}, {right - hinge, front[1].y +
+                (front[0].y - front[1].y) * hinge / (right - front[0].x)}
+        };
+        ImVec4 tint = ImGui::ColorConvertU32ToFloat4(iconCol);
+        tint.w *= 0.14f;
+        dl->AddConvexPolyFilled(front, IM_ARRAYSIZE(front), ImGui::ColorConvertFloat4ToU32(tint));
+        dl->AddPolyline(back, IM_ARRAYSIZE(back), iconCol, ImDrawFlags_None, stroke);
+        dl->AddPolyline(front, IM_ARRAYSIZE(front), iconCol, ImDrawFlags_Closed, stroke);
+    }
+    x += m.iconWidth + m.textGap;
+
+    if (labelEnd > labelBegin && x < x1) {
+        const ImVec4 clipRect(x, rowMin.y, x1, rowMax.y);
+        ImFontBaked* baked = ImGui::GetFontBaked();
+        float top = FLT_MAX, bottom = -FLT_MAX;
+        for (const char* cursor = labelBegin; cursor < labelEnd;) {
+            unsigned int codepoint;
+            cursor += ImTextCharFromUtf8(&codepoint, cursor, labelEnd);
+            const ImFontGlyph* ink = baked->FindGlyph((ImWchar)codepoint);
+            if (ink && ink->Visible) {
+                top = ImMin(top, ink->Y0);
+                bottom = ImMax(bottom, ink->Y1);
+            }
+        }
+        if (bottom < top) return;
+        dl->AddText(ImGui::GetFont(), m.fontSize,
+                    ImVec2(x, roundf(cy - (top + bottom) * 0.5f * m.fontSize / baked->Size)), textCol,
+                    labelBegin, labelEnd, 0.0f, &clipRect);
+    }
+}
+
 static void RenderFolderTreeNode(AppState& state,
                                  const FolderInfo& folder,
                                  const std::string& search,
                                  FolderTreeSelectionMode mode,
-                                 bool revealSubtree = false) {
+                                 bool revealSubtree = false,
+                                 FolderTreeRowMetrics* modernRow = nullptr, bool nested = false) {
     // Use the precomputed folderSearchHits set for constant-time membership.
     // 杜绝调用 FolderOrChildMatchesSearch 这种每帧递归的"性能黑洞"
     if (!search.empty() && !revealSubtree) {
@@ -14508,6 +14635,9 @@ static void RenderFolderTreeNode(AppState& state,
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
                              ImGuiTreeNodeFlags_SpanAvailWidth |
                              ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    // Modern rows derive their height from FramePadding, which an unframed tree
+    // node ignores unless _FramePadding is set.
+    if (modernRow) flags |= ImGuiTreeNodeFlags_FramePadding;
     if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
     if (state.folderTreeCollapseAll && !shouldAutoOpen) ImGui::SetNextItemOpen(false);
     else if (shouldAutoOpen) ImGui::SetNextItemOpen(true);
@@ -14521,6 +14651,13 @@ static void RenderFolderTreeNode(AppState& state,
                  displayLabel, L(Lib_ReadonlyNetwork), folder.path.c_str());
     } else {
         snprintf(labelBuf, sizeof(labelBuf), "%s###%s", displayLabel, folder.path.c_str());
+    }
+
+    // The visible label stops before the "###<path>" ImGui id suffix.
+    const char* labelTextBegin = labelBuf;
+    const char* labelTextEnd = labelBuf + strlen(labelBuf);
+    if (const char* idMarker = strstr(labelBuf, "###")) {
+        labelTextEnd = idMarker;
     }
 
     const auto& tcs = ThemeColors::current();
@@ -14543,14 +14680,27 @@ static void RenderFolderTreeNode(AppState& state,
     treeBgSplitter.Split(treeDrawList, 2);
     treeBgSplitter.SetCurrentChannel(treeDrawList, 1);
 
-    ImGui::PushStyleColor(ImGuiCol_Text, treeTextColor);
+    ImGui::PushStyleColor(ImGuiCol_Text, modernRow ? ImVec4(0, 0, 0, 0) : treeTextColor);
 
     // 禁用默认高亮，减少 Overdraw
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
 
-    bool nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
+    const bool databaseRow = modernRow && mode == FolderTreeSelectionMode::DatabaseFilter;
+    const float arrowWidth = modernRow ? modernRow->sideInset + modernRow->chevronZone : ImGui::GetTreeNodeToLabelSpacing();
+    bool nodeOpen;
+    if (databaseRow) {
+        const float padding = (modernRow->NextHeight() - modernRow->fontSize) * 0.5f;
+        nodeOpen = DatabaseFolderRowInput::TreeNode(labelBuf, flags, arrowWidth, padding);
+    } else if (modernRow) {
+        const float padding = (modernRow->NextHeight() - modernRow->fontSize) * 0.5f;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, padding));
+        nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
+        ImGui::PopStyleVar();
+    } else {
+        nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
+    }
 
     ImGui::PopStyleColor(4);
 
@@ -14559,29 +14709,49 @@ static void RenderFolderTreeNode(AppState& state,
     bool isLocateHighlight = ShouldHighlightFolderNodeForLocate(folder.path, state.folderTreeHighlightPath, state.folderTreeHighlightUntilMs, nowMs);
 
     // 手动绘制搜索命中 / 选中 / 待确认(pending) / 定位高亮 / 悬停背景
-    if (matchesSearch || isSelected || isPending || isLocateHighlight || ImGui::IsItemHovered()) {
-        float arrowWidth = ImGui::GetTreeNodeToLabelSpacing();
-        ImVec2 rMin = ImGui::GetItemRectMin();
-        ImVec2 rMax = ImGui::GetItemRectMax();
+    const ImVec2 rowMin = ImGui::GetItemRectMin();
+    const ImVec2 rowMax = ImGui::GetItemRectMax();
+    const bool rowHovered = ImGui::IsItemHovered();
+    const bool hasStateFill = isLocateHighlight || isSelected || isPending || rowHovered;
+    const bool isLightTreeTheme = (tcs.filterBrowserBG.x + tcs.filterBrowserBG.y + tcs.filterBrowserBG.z) > 2.15f;
+    const ImVec4 searchCol = withAlpha(
+        mixColor(tcs.filterBrowserSearchHitText, tcs.filterBrowserBG, isLightTreeTheme ? 0.64f : 0.78f),
+        isLightTreeTheme ? 0.34f : 0.26f);
+    const ImVec4 locateCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserLocateTint, 0.38f), 0.54f);
+    const ImVec4 selectedCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.60f), 0.28f);
+    const ImVec4 pendingCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.52f), 0.22f);
+    const ImVec4 hoverCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.78f), 0.14f);
+    const bool roseDatabaseRow = modernRow && mode == FolderTreeSelectionMode::DatabaseFilter &&
+                                 state.settings.theme == AppTheme::RoseCedar;
+    const ImVec4 stateCol = roseDatabaseRow && isSelected ? ImColor(223, 160, 183).Value
+                          : roseDatabaseRow && rowHovered && !isLocateHighlight && !isPending ? ImColor(244, 220, 230).Value
+                          : isLocateHighlight ? locateCol
+                          : isSelected ? selectedCol
+                          : isPending  ? pendingCol
+                          : hoverCol;
+
+    if (modernRow) {
+        const ImU32 chevronCol = ImGui::GetColorU32(
+            withAlpha(mixColor(tcs.filterBrowserTreeText, tcs.filterBrowserBG, 0.42f), 0.78f));
+        const ImU32 iconCol = ImGui::GetColorU32(
+            withAlpha(mixColor(tcs.filterBrowserTreeText, tcs.filterBrowserBG, 0.26f), 0.92f));
+        DrawFolderTreeRowModern(treeDrawList, *modernRow, rowMin, rowMax,
+                                hasChildren, nodeOpen, true, mode == FolderTreeSelectionMode::DatabaseFilter,
+                                matchesSearch, ImGui::GetColorU32(searchCol),
+                                hasStateFill, ImGui::GetColorU32(stateCol),
+                                chevronCol, iconCol, ImGui::GetColorU32(treeTextColor),
+                                labelTextBegin, labelTextEnd);
+    } else if (matchesSearch || hasStateFill) {
+        const float arrowWidth = ImGui::GetTreeNodeToLabelSpacing();
+        ImVec2 rMin = rowMin;
+        ImVec2 rMax = rowMax;
         rMin.x += arrowWidth;
-        const bool isLightTreeTheme = (tcs.filterBrowserBG.x + tcs.filterBrowserBG.y + tcs.filterBrowserBG.z) > 2.15f;
-        const ImVec4 searchCol = withAlpha(
-            mixColor(tcs.filterBrowserSearchHitText, tcs.filterBrowserBG, isLightTreeTheme ? 0.64f : 0.78f),
-            isLightTreeTheme ? 0.34f : 0.26f);
-        const ImVec4 locateCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserLocateTint, 0.38f), 0.54f);
-        const ImVec4 selectedCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.60f), 0.28f);
-        const ImVec4 pendingCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.52f), 0.22f);
-        const ImVec4 hoverCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.78f), 0.14f);
         treeBgSplitter.SetCurrentChannel(treeDrawList, 0);
         if (matchesSearch) {
             treeDrawList->AddRectFilled(rMin, rMax, ImGui::GetColorU32(searchCol), 3.0f);
         }
-        if (isLocateHighlight || isSelected || isPending || ImGui::IsItemHovered()) {
-            ImU32 col = isLocateHighlight ? ImGui::GetColorU32(locateCol)
-                       : isSelected ? ImGui::GetColorU32(selectedCol)
-                       : isPending  ? ImGui::GetColorU32(pendingCol)
-                       : ImGui::GetColorU32(hoverCol);
-            treeDrawList->AddRectFilled(rMin, rMax, col, 3.0f);
+        if (hasStateFill) {
+            treeDrawList->AddRectFilled(rMin, rMax, ImGui::GetColorU32(stateCol), 3.0f);
         }
         treeBgSplitter.SetCurrentChannel(treeDrawList, 1);
     }
@@ -14598,26 +14768,24 @@ static void RenderFolderTreeNode(AppState& state,
     }
 
     // 4. 交互优化：防抖与 I/O 优先级抢占
-    if (ImGui::IsItemClicked()) {
-        float arrowWidth = ImGui::GetTreeNodeToLabelSpacing();
-        if (ImGui::GetIO().MousePos.x > ImGui::GetItemRectMin().x + arrowWidth) {
-            if (mode == FolderTreeSelectionMode::PlaylistFilter) {
-                SelectPlaylistFolderFilter(state, folder.path);
-            } else {
-                // Database scope keeps the deferred folder-switch handshake.
-                state.uiState.pendingFolderPath = folder.path;
-                state.uiState.pendingFolderTime = ImGui::GetTime();
-                state.preferDeferredCountForNextRefresh = true;
+    if (databaseRow ? DatabaseFolderRowInput::SelectClicked(hasChildren, arrowWidth)
+                    : ImGui::IsItemClicked() && ImGui::GetIO().MousePos.x > ImGui::GetItemRectMin().x + arrowWidth) {
+        if (mode == FolderTreeSelectionMode::PlaylistFilter) {
+            SelectPlaylistFolderFilter(state, folder.path);
+        } else {
+            // Database scope keeps the deferred folder-switch handshake.
+            state.uiState.pendingFolderPath = folder.path;
+            state.uiState.pendingFolderTime = ImGui::GetTime();
+            state.preferDeferredCountForNextRefresh = true;
 
-                // Keep cover-wall facets alive until the refreshed result set swaps in.
-                aura::cover_wall::RequestDisplayRefresh(state);
+            // Keep cover-wall facets alive until the refreshed result set swaps in.
+            aura::cover_wall::RequestDisplayRefresh(state);
 
-                // Preempt background waveform work before the database refresh.
-                state.clearPendingWaveforms();
+            // Preempt background waveform work before the database refresh.
+            state.clearPendingWaveforms();
 
-                // Preserve navigation history before applying the folder filter.
-                state.pushViewState();
-            }
+            // Preserve navigation history before applying the folder filter.
+            state.pushViewState();
         }
     }
 
@@ -14671,7 +14839,7 @@ static void RenderFolderTreeNode(AppState& state,
         //    in reveal mode), so the user keeps control of further expansion.
         const bool revealChildren = revealSubtree || isSearchTerminalHit;
         for (const auto& sub : folder.subfolders) {
-            RenderFolderTreeNode(state, sub, search, mode, revealChildren);
+            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true);
         }
         ImGui::Unindent();
     }
@@ -16185,17 +16353,15 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 state.selectedResultIndex >= 0 &&
                 state.selectedResultIndex < (int)state.searchResults.size();
             const bool canLocateCurrent = hasSelectedLocateRow || state.currentFileId > 0;
-            const bool useLapisBlueFolderSearchSurface = state.settings.theme == AppTheme::LapisBlue;
             RenderFolderTreeExplorerToolbar(
                 databaseSource.searchId,
-                "",
+                L(Filter_SearchFolder),
                 state.folderSearchBuffer,
                 sizeof(state.folderSearchBuffer),
                 databaseSource.refreshId,
                 folderTreeLoading,
                 databaseSource.locateId,
                 canLocateCurrent,
-                useLapisBlueFolderSearchSurface,
                 true,
                 []() {},
                 [&state, playlistScopedFolderTree, effectivePlaylistFolderTreeId]() {
@@ -16326,16 +16492,11 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         if (treeH < 60.0f) treeH = 60.0f;
 
         {
-        ReadingTextScope _readingTree;   // 文件夹树:行高/字号随阅读字号;缩进步距保持固定
-        const ImVec2 previousFramePadding = ImGui::GetStyle().FramePadding;
-        const ImVec2 previousItemSpacing = ImGui::GetStyle().ItemSpacing;
-        const float previousIndentSpacing = ImGui::GetStyle().IndentSpacing;
-        const float compactTreePadY = ImClamp(previousFramePadding.y * 0.45f, 1.0f, 2.0f);
-        const float compactTreeSpacingY = ImClamp(previousItemSpacing.y * 0.35f, 1.0f, 3.0f);
-        const float compactTreeIndentSpacing = ImClamp(previousIndentSpacing, 12.0f, 16.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(previousFramePadding.x, compactTreePadY));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(previousItemSpacing.x, compactTreeSpacingY));
-        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, compactTreeIndentSpacing);
+        ReadingTextScope _readingTree;   // 文件夹树:行高/字号随阅读字号;缩进步距按图标宽度对齐
+        FolderTreeRowMetrics treeRowMetrics = MakeFolderTreeRowMetrics(ImGui::GetFontSize());
+        const float treeRowIndentSpacing = treeRowMetrics.iconWidth * (11.25f / 17.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, treeRowIndentSpacing);
         const bool collapseFolderTree = state.folderTreeCollapseAll;
         if (collapseFolderTree) {
             state.folderTreeCollapseAll = false;
@@ -16473,21 +16634,50 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             char allLabel[128];
             snprintf(allLabel, sizeof(allLabel), "%s (%d)###PlaylistScopedFolder_All",
                      L(Misc_AllFiles), activeFolderHierarchy.fileCount);
-            if (ImGui::Selectable(allLabel, allSelected)) {
+            const float allRowWidth = ImGui::GetContentRegionAvail().x;
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+            const bool allClicked = ImGui::Selectable(allLabel, allSelected, ImGuiSelectableFlags_None,
+                                                      ImVec2(allRowWidth, treeRowMetrics.NextHeight()));
+            ImGui::PopStyleColor(4);
+
+            // Same row grid as the folder nodes: no chevron, no folder glyph,
+            // text starts where node labels start.
+            const ThemeColorScheme& allTheme = ThemeColors::current();
+            const auto allMix = [](const ImVec4& a, const ImVec4& b, float t) {
+                return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                              a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+            };
+            ImVec4 allFill = allSelected
+                ? allMix(allTheme.filterBrowserTreeSelection, allTheme.filterBrowserBG, 0.60f)
+                : allMix(allTheme.filterBrowserTreeSelection, allTheme.filterBrowserBG, 0.78f);
+            allFill.w = allSelected ? 0.28f : 0.14f;
+            DrawFolderTreeRowModern(ImGui::GetWindowDrawList(), treeRowMetrics,
+                                    ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                    false, false, false, false,
+                                    false, 0,
+                                    allSelected || ImGui::IsItemHovered(),
+                                    ImGui::GetColorU32(allFill),
+                                    0, 0,
+                                    ImGui::GetColorU32(allTheme.filterBrowserTreeText),
+                                    allLabel, strstr(allLabel, "###"));
+            if (allClicked) {
                 ClearPlaylistFolderFilter(state);
             }
         }
         for (const auto& folder : activeFolderHierarchy.subfolders) {
             if (playlistScopedFolderTree) {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter);
+                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter, false, &treeRowMetrics);
             } else {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter);
+                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter, false, &treeRowMetrics);
             }
         }
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
         }
             });
-        ImGui::PopStyleVar(3);
+        ImGui::PopStyleVar(2);
         }
             });
         }
@@ -29866,6 +30056,16 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
     drawList->PopClipRect();
 }
 
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: record a top-level menu-bar item so the acceptance script can assert
+// the real label grid instead of guessing click coordinates.
+void QaProbeMenuBarItem(AppState& state, const char* label) {
+    const ImVec2 a = ImGui::GetItemRectMin();
+    const ImVec2 b = ImGui::GetItemRectMax();
+    state.qaRegions.menuBarItems.push_back({label, a.x, a.y, b.x, b.y});
+}
+#endif
+
 void RenderUI(AppState& state) {
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
         state.audioEngine.isLoaded()) {
@@ -35357,131 +35557,48 @@ void RenderUI(AppState& state) {
         ImGui::EndPopup();
     }
 
-    // MAIN LAYOUT - classic library layout
-
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    // Saved detached layouts must not turn the root workspace into a second OS window.
-    ImGui::SetNextWindowViewport(viewport->ID);
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_MenuBar |
-                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                                    ImGuiWindowFlags_NoDocking;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, workspacePalette.applicationSurface); // workspace application surface
-    BeginTransientScrollbarWindow("MainWindow", nullptr, windowFlags);
-    ImGui::PopStyleColor(); // workspace application surface
-    ImGui::PopStyleVar();
-
-    // Initialize the first tab through the asynchronous search path.
-    if (state.listTabs.empty()) {
-        state.createNewTab(u8"全部文件");
-        // Avoid a synchronous database query during first-frame layout.
-        RefreshSearchResults(state, true);
-        state.syncToTab();
-    }
-
-    // Tab snapshots synchronize only at explicit ownership boundaries:
-    // tab switch, search-result delivery, rename, and close.
-
-    static bool s_firstFrame = true;
-    if (s_firstFrame) {
-        state.syncFromTab();
-        s_firstFrame = false;
-    }
-
-    // Apply a debounced pending folder switch.
-    {
-        double now = ImGui::GetTime();
-        if (!state.uiState.pendingFolderPath.empty() && (now - state.uiState.pendingFolderTime) >= 0.15) {
-            state.folderFilterActive = true;
-            // T2.6: pending folder 入口 canonical
-            state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
-            state.viewMode = ViewMode::Database;
-            state.preferDeferredCountForNextRefresh = true;
-
-            state.clearPendingWaveforms();
-            RefreshSearchResults(state, true);
-            state.uiState.pendingFolderPath.clear();
-        }
-    }
-
-    // 4a：LRU 时间戳用当前帧号，保证淘汰顺序可靠
-    if (state.memoryBudget) state.memoryBudget->setCurrentFrame((uint64_t)ImGui::GetFrameCount());
-    // 4b：处理 registerEntry 因总预算触发的跨类型淘汰，由调用方真实释放
-    if (state.memoryBudget) {
-        auto pending = state.memoryBudget->getAndClearPendingEvicted();
-        for (const auto& [t, e] : pending) {
-            if (t == MemoryBudget::CacheType::Waveform) {
-                ReleaseWaveformEvictedEntry(state, e.key,
-                    MiniWaveformPresentation::Removal::BudgetEviction);
-            } else if (t == MemoryBudget::CacheType::Cover) {
-                CoverModule::ReleaseCoverEvictedEntry(e.key);
-            }
-        }
-    }
-    // Consume search results early in the frame to reduce display latency.
-    aura::search::Pump(
-        state,
-        [](AppState& appState, AsyncSearchResult& result) {
-            aura::search::Apply(
-                appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
-                kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
-                BuildAsyncSearchResultApplicationEffects());
-        },
-        [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
-#ifdef _WIN32
-    PumpReaperFileListImportResult(state);
+    // TOP MENU BAR
+#if ARIS_PREVIEW_ISOLATION
+    state.qaRegions.menuBarItems.clear();
 #endif
 
-    PumpDeferredWaveformDetail(state);
-    ProcessPendingMiniWaveTextures(state);
-    FlushMiniWavePerfDiagnostics();
-
-    // VIEW STATE HISTORY - Auto-detect navigation changes per frame
-
-    {
-        static ViewStateSnapshot s_lastViewState;
-        static bool s_initialized = false;
-
-        if (!s_initialized) {
-            s_lastViewState = state.captureViewState();
-            state.pushViewState(); // Push initial state
-            s_initialized = true;
-        } else if (!state.viewStateNavigating) {
-            ViewStateSnapshot current = state.captureViewState();
-            if (current != s_lastViewState) {
-                state.pushViewState();
-                s_lastViewState = current;
-            }
-        } else {
-            s_lastViewState = state.captureViewState();
-        }
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    auto* viewportBuild = static_cast<ImGuiViewportP*>(viewport);
+    ImGui::SetCurrentViewport(nullptr, viewportBuild);
+    ImFont* menuFont = GetUIFontRegular();
+    if (!menuFont) menuFont = ImGui::GetFont();
+    const float menuScale = ImGui::GetMenuChromeScale();
+    const float baseMenuFontPx = GetMenuFontSizePx();
+    constexpr float minMenuBarFontPx = kChromeFontPx - 1.0f;
+    float menuBarFontPx = baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx;
+    const char* menuTitles[] = {L(Menu_File), L(Menu_Edit), L(Menu_View), L(Menu_Database),
+                                L(Menu_Playlist), L(Menu_Tools), L(Menu_Settings), L(Menu_Help)};
+    const float brandLeading = std::floor(14.0f * menuScale);
+    const float brandTrailing = std::floor(8.0f * menuScale);
+    const float widthForTitles = viewportBuild->GetBuildWorkRect().GetWidth()
+        - 2.0f * brandLeading - std::ceil(ImGui::GetStyle().WindowBorderSize) - 2.0f;
+    for (; menuBarFontPx > minMenuBarFontPx; menuBarFontPx -= 1.0f) {
+        ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, menuBarFontPx * menuScale));
+        float fittedLabelWidth = 0.0f;
+        for (const char* title : menuTitles)
+            fittedLabelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
+        ImGui::PopFont();
+        if (fittedLabelWidth <= widthForTitles) break;
     }
-
-    // TOP MENU BAR
-
-    ThemeMenuBarStyleScope menuBarChrome(GetUIFontRegular(), static_cast<float>(kChromeFontPx - 1));
-    ThemeMenuPopupShellScope menuPopupShell;
-    if (ImGui::BeginMenuBar()) {
+    const float hostFontPx = std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale;
+    ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));
+    if (ImGui::BeginMainMenuBar()) {
+        ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);
+        ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);
         ImGuiWindow* menuWindow = ImGui::GetCurrentWindow();
         const ImRect menuBarRect = menuWindow->MenuBarRect();
+        const ImVec4& barFill = ThemeColors::menuBarFillBG(ThemeColors::current());
         menuWindow->DrawList->AddRectFilled(
             menuBarRect.Min,
             menuBarRect.Max,
-            ImGui::GetColorU32(ThemeColors::menuBarFillBG(ThemeColors::current())));
-        // 菜单栏前的官方品牌字标：与启动页同一张官网横版字标，深色底用白色图、
-        // 浅色底用黑色图，图片读不到时退回纯文字品牌名。窄窗口让位给菜单项。
+            ImGui::GetColorU32(barFill));
+        // 默认字号保留签字版黑白字标；较大字号沿用 QA 的品牌素材。窄窗口让位给菜单项。
         const ImGuiStyle& menuStyle = ImGui::GetStyle();
-        const float menuScale = ImGui::GetMenuChromeScale();
-        const float brandLeading = std::floor(14.0f * menuScale);
-        const float brandTrailing = std::floor(8.0f * menuScale);
-        const char* menuTitles[] = {L(Menu_File), L(Menu_Edit), L(Menu_View), L(Menu_Database),
-                                    L(Menu_Playlist), L(Menu_Tools), L(Menu_Settings), L(Menu_Help)};
         float labelWidth = 0.0f;
         for (const char* title : menuTitles)
             labelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
@@ -35492,10 +35609,29 @@ void RenderUI(AppState& state) {
         const float brandLimitX = menuRight - preferredMenuWidth - brandTrailing;
         float menuStartOffset = brandStartX - menuWindow->Pos.x;
         if (brandLimitX > brandStartX) {
-            const float brandRightX = aura::ui::DrawMenuBarBrandWordmark(
-                brandStartX, menuBarRect.Min.y,
-                brandLimitX, menuBarRect.Max.y,
-                GetUIFontEmphasis(), L(Main_AppNameBrand));
+            aura::ui::PackagedAssetTex approvedWordmark;
+            if (baseMenuFontPx == kChromeFontPx) {
+                const float barLuma = barFill.x * 0.299f + barFill.y * 0.587f + barFill.z * 0.114f;
+                approvedWordmark = aura::ui::LoadPackagedAsset(barLuma >= 0.5f
+                    ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
+                    : "assets/logos/brand/harken-search-menu-wordmark-white.png");
+            }
+            float brandRightX = brandStartX;
+            if (approvedWordmark.glId != 0 && approvedWordmark.w > 0 && approvedWordmark.h > 0) {
+                const float artHeight = std::clamp(menuBarRect.GetHeight() * 0.58f, 12.0f, 20.0f);
+                const float artWidth = artHeight * (static_cast<float>(approvedWordmark.w) / approvedWordmark.h);
+                if (brandStartX + artWidth <= brandLimitX) {
+                    const float centerY = menuBarRect.GetCenter().y;
+                    brandRightX = brandStartX + artWidth;
+                    menuWindow->DrawList->AddImage((ImTextureID)(intptr_t)approvedWordmark.glId,
+                        ImVec2(brandStartX, centerY - artHeight * 0.5f),
+                        ImVec2(brandRightX, centerY + artHeight * 0.5f));
+                }
+            } else {
+                brandRightX = aura::ui::DrawMenuBarBrandWordmark(
+                    brandStartX, menuBarRect.Min.y, brandLimitX, menuBarRect.Max.y,
+                    GetUIFontEmphasis(), L(Main_AppNameBrand));
+            }
             if (brandRightX > brandStartX)
                 menuStartOffset = std::ceil((brandRightX - menuWindow->Pos.x) + brandTrailing);
         }
@@ -35504,7 +35640,11 @@ void RenderUI(AppState& state) {
             std::floor((menuAvailable - labelWidth) / spacingSlots), 0.0f, menuStyle.ItemSpacing.x);
         ImGui::SetCursorPosX(menuStartOffset + menuWindow->Scroll.x);
         ImGui::PushStyleVarX(ImGuiStyleVar_ItemSpacing, menuSpacing);
-        if (ImGui::BeginMenu(L(Menu_File))) {
+        const bool fileMenuOpen = ImGui::BeginMenu(L(Menu_File));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_File));
+#endif
+        if (fileMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeFile(GetUIFontRegular());
             { ChromeTextScope _readingMenuFile; // menu dropdowns share the chrome face.
             if (ImGui::MenuItem(L(File_OpenFolder), "Ctrl+O")) {
@@ -35670,7 +35810,11 @@ void RenderUI(AppState& state) {
             menuChromeFile.reset();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Edit))) {
+        const bool editMenuOpen = ImGui::BeginMenu(L(Menu_Edit));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Edit));
+#endif
+        if (editMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeEdit(GetUIFontRegular());
             { ChromeTextScope _readingMenuEdit;
             // Undo / Redo
@@ -35823,7 +35967,11 @@ void RenderUI(AppState& state) {
             menuChromeEdit.reset();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_View))) {
+        const bool viewMenuOpen = ImGui::BeginMenu(L(Menu_View));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_View));
+#endif
+        if (viewMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeView(GetUIFontRegular());
             { ChromeTextScope _readingMenuView;
             if (ImGui::MenuItem(L(View_FileBrowser), nullptr, state.viewMode == ViewMode::Browser)) {
@@ -35931,7 +36079,11 @@ void RenderUI(AppState& state) {
             menuChromeView.reset();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Database))) {
+        const bool databaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Database));
+#endif
+        if (databaseMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeDatabase(GetUIFontRegular());
             { ChromeTextScope _readingMenuDatabase;
             if (!state.currentDbPathUtf8.empty()) {
@@ -35992,7 +36144,11 @@ void RenderUI(AppState& state) {
             menuChromeDatabase.reset();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Playlist))) {
+        const bool playlistMenuOpen = ImGui::BeginMenu(L(Menu_Playlist));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Playlist));
+#endif
+        if (playlistMenuOpen) {
             ThemeMenuPopupStyleScope menuChromePlaylist(GetUIFontRegular());
             { ChromeTextScope _readingMenuPlaylist;
             if (ImGui::MenuItem(L(PL_NewPlaylist))) {
@@ -36041,7 +36197,11 @@ void RenderUI(AppState& state) {
             menuChromePlaylist.reset();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Tools))) {
+        const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Tools));
+#endif
+        if (toolsMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeTools(GetUIFontRegular());
             { ChromeTextScope _readingMenuTools;
             if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
@@ -36201,7 +36361,11 @@ void RenderUI(AppState& state) {
         // 工具菜单 (UCS/标签/嵌入/命名/传输/工作流/主题)
         RenderToolsMenu(state);
 
-        if (ImGui::BeginMenu(L(Menu_Settings))) {
+        const bool settingsMenuOpen = ImGui::BeginMenu(L(Menu_Settings));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Settings));
+#endif
+        if (settingsMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeSettings(GetUIFontRegular());
             { ChromeTextScope _readingMenuSettings;
             if (ImGui::MenuItem(L(Set_AppSettings))) {
@@ -36217,7 +36381,11 @@ void RenderUI(AppState& state) {
             menuChromeSettings.reset();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Help))) {
+        const bool helpMenuOpen = ImGui::BeginMenu(L(Menu_Help));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Help));
+#endif
+        if (helpMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeHelp(GetUIFontRegular());
             { ChromeTextScope _readingMenuHelp;
             if (ImGui::MenuItem(L(Help_About))) {
@@ -36257,16 +36425,143 @@ void RenderUI(AppState& state) {
             ImRect mbr = mw->MenuBarRect();
             ThemeInspector::RegisterZone(mbr.Min, mbr.Max, "menuBarBG", L(ThemeCol_menuBarBG));
         }
-        ImGui::EndMenuBar();
+#if ARIS_PREVIEW_ISOLATION
+        state.qaRegions.menuBarFrame = ImGui::GetFrameCount();
+        state.qaRegions.menuBarFontPixels = ImGui::GetFontSize();
+        state.qaRegions.menuBarHeight = menuBarRect.GetHeight();
+        state.qaRegions.menuBarRight = menuBarRect.Max.x;
+        state.qaRegions.menuBarTop = menuBarRect.Min.y;
+        state.qaRegions.menuBarLastItemRight = state.qaRegions.menuBarItems.empty()
+            ? menuBarRect.Min.x : state.qaRegions.menuBarItems.back().x1;
+#endif
+        menuPopupShell.reset();
+        menuBarChrome.reset();
+        ImGui::EndMainMenuBar();
     }
-    // 菜单栏作用域只盖到菜单栏和本帧展开的菜单，这里主动收尾，后面工具栏仍用常规样式。
-    menuPopupShell.reset();
-    menuBarChrome.reset();
+    ImGui::PopFont();
+
+
+    // MAIN LAYOUT - classic library layout
+
+    // BeginMainMenuBar only reports its height into the *build* work area, which
+    // becomes WorkPos/WorkSize on the next frame. Read the build area so the
+    // workspace never spends one frame under the bar (or leaving a gap).
+    const ImVec2 frameWorkPos(viewportBuild->Pos.x + viewportBuild->BuildWorkInsetMin.x,
+                              viewportBuild->Pos.y + viewportBuild->BuildWorkInsetMin.y);
+    const ImVec2 frameWorkSize(
+        viewportBuild->Size.x - viewportBuild->BuildWorkInsetMin.x - viewportBuild->BuildWorkInsetMax.x,
+        viewportBuild->Size.y - viewportBuild->BuildWorkInsetMin.y - viewportBuild->BuildWorkInsetMax.y);
+    // Saved detached layouts must not turn the root workspace into a second OS window.
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::SetNextWindowPos(frameWorkPos);
+    ImGui::SetNextWindowSize(frameWorkSize);
+
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                                    ImGuiWindowFlags_NoDocking;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, workspacePalette.applicationSurface); // workspace application surface
+    BeginTransientScrollbarWindow("MainWindow", nullptr, windowFlags);
+#if ARIS_PREVIEW_ISOLATION
+    state.qaRegions.workspaceTopFrame = ImGui::GetFrameCount();
+    state.qaRegions.workspaceTop = ImGui::GetWindowPos().y;
+#endif
+    ImGui::PopStyleColor(); // workspace application surface
+    ImGui::PopStyleVar();
+
+    // Initialize the first tab through the asynchronous search path.
+    if (state.listTabs.empty()) {
+        state.createNewTab(u8"全部文件");
+        // Avoid a synchronous database query during first-frame layout.
+        RefreshSearchResults(state, true);
+        state.syncToTab();
+    }
+
+    // Tab snapshots synchronize only at explicit ownership boundaries:
+    // tab switch, search-result delivery, rename, and close.
+
+    static bool s_firstFrame = true;
+    if (s_firstFrame) {
+        state.syncFromTab();
+        s_firstFrame = false;
+    }
+
+    // Apply a debounced pending folder switch.
+    {
+        double now = ImGui::GetTime();
+        if (!state.uiState.pendingFolderPath.empty() && (now - state.uiState.pendingFolderTime) >= 0.15) {
+            state.folderFilterActive = true;
+            // T2.6: pending folder 入口 canonical
+            state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
+            state.viewMode = ViewMode::Database;
+            state.preferDeferredCountForNextRefresh = true;
+
+            state.clearPendingWaveforms();
+            RefreshSearchResults(state, true);
+            state.uiState.pendingFolderPath.clear();
+        }
+    }
+
+    // 4a：LRU 时间戳用当前帧号，保证淘汰顺序可靠
+    if (state.memoryBudget) state.memoryBudget->setCurrentFrame((uint64_t)ImGui::GetFrameCount());
+    // 4b：处理 registerEntry 因总预算触发的跨类型淘汰，由调用方真实释放
+    if (state.memoryBudget) {
+        auto pending = state.memoryBudget->getAndClearPendingEvicted();
+        for (const auto& [t, e] : pending) {
+            if (t == MemoryBudget::CacheType::Waveform) {
+                ReleaseWaveformEvictedEntry(state, e.key,
+                    MiniWaveformPresentation::Removal::BudgetEviction);
+            } else if (t == MemoryBudget::CacheType::Cover) {
+                CoverModule::ReleaseCoverEvictedEntry(e.key);
+            }
+        }
+    }
+    // Consume search results early in the frame to reduce display latency.
+    aura::search::Pump(
+        state,
+        [](AppState& appState, AsyncSearchResult& result) {
+            aura::search::Apply(
+                appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
+                kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
+                BuildAsyncSearchResultApplicationEffects());
+        },
+        [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
+#ifdef _WIN32
+    PumpReaperFileListImportResult(state);
+#endif
+
+    PumpDeferredWaveformDetail(state);
+    ProcessPendingMiniWaveTextures(state);
+    FlushMiniWavePerfDiagnostics();
+
+    // VIEW STATE HISTORY - Auto-detect navigation changes per frame
+
+    {
+        static ViewStateSnapshot s_lastViewState;
+        static bool s_initialized = false;
+
+        if (!s_initialized) {
+            s_lastViewState = state.captureViewState();
+            state.pushViewState(); // Push initial state
+            s_initialized = true;
+        } else if (!state.viewStateNavigating) {
+            ViewStateSnapshot current = state.captureViewState();
+            if (current != s_lastViewState) {
+                state.pushViewState();
+                s_lastViewState = current;
+            }
+        } else {
+            s_lastViewState = state.captureViewState();
+        }
+    }
 
     // TOP TOOLBAR - Search and Buttons
 
-    const float mainWorkW = viewport ? viewport->WorkSize.x : ImGui::GetIO().DisplaySize.x;
-    const float mainWorkH = viewport ? viewport->WorkSize.y : ImGui::GetIO().DisplaySize.y;
+    const float mainWorkW = frameWorkSize.x > 0.0f ? frameWorkSize.x : ImGui::GetIO().DisplaySize.x;
+    const float mainWorkH = frameWorkSize.y > 0.0f ? frameWorkSize.y : ImGui::GetIO().DisplaySize.y;
     // desktop-resize: content-driven breakpoints. Do not scale the whole UI down;
     // progressively reflow secondary chrome away from the central workspace.
     const bool layoutCompactWidth = mainWorkW < 1100.0f;
@@ -36516,6 +36811,8 @@ void RenderUI(AppState& state) {
     const float rightDockColumnWidth = dockColumnBudget.rightWidth;
     if (showLeftColumn) leftPanelWidth = leftDockColumnWidth;
     if (showRightColumn) rightPanelWidth = rightDockColumnWidth;
+    const float resultsHomeLeftScreenX = std::trunc(viewport->WorkPos.x +
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f));
 
     constexpr float toolbarHeight = 40.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
@@ -36567,17 +36864,6 @@ void RenderUI(AppState& state) {
         const ImVec4 kToolbarMinorText = uiWithAlpha(kThemeTextMinor, 0.94f);
         const ImVec4 kToolbarAccent = uiWithAlpha(toolbarTheme.toolbarAccent, 1.0f);
         const ImVec4 kToolbarSelected = uiWithAlpha(toolbarTheme.resultsSelection, 1.0f);
-        const ImVec4 kToolbarSearchHintText = uiWithAlpha(uiMix(kThemeTextMuted, kToolbarAccent, 0.14f), 0.94f);
-        const bool kUseLapisBlueSearchChrome = state.settings.theme == AppTheme::LapisBlue;
-        const ImVec4 kToolbarSearchCue = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(uiMix(toolbarTheme.toolbarAccent, toolbarTheme.controlAccent, 0.35f), 1.0f)
-            : uiWithAlpha(uiMix(toolbarTheme.searchButtonBG, kToolbarAccent, 0.20f), 1.0f);
-        const ImVec4 kToolbarSearchShell = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(toolbarTheme.historyCapsuleBG, 1.0f)
-            : uiWithAlpha(uiMix(uiMix(uiColors[ImGuiCol_FrameBg], toolbarTheme.toolbarBG, 0.34f), kToolbarSearchCue, 0.06f), 1.0f);
-        const ImVec4 kToolbarSearchBorder = kUseLapisBlueSearchChrome
-            ? uiWithAlpha(toolbarTheme.chromeBorder, 1.0f)
-            : uiWithAlpha(uiMix(kToolbarSearchCue, uiColors[ImGuiCol_Border], 0.18f), 0.34f);
         auto drawToolbarChromeShell = [&](ImDrawList* shellDl,
                                            const ImVec2& shellMin,
                                            const ImVec2& shellMax,
@@ -36622,7 +36908,6 @@ void RenderUI(AppState& state) {
         const float kCapsuleH = 34.0f;   // unified capsule height for both pill groups
         const float kToolbarCenterY = (toolbarHeight - kCapsuleH) * 0.5f;
         const float kToolbarLeftGutter = layoutTinyWidth ? 8.0f : 14.0f;
-        const float toolbarWindowW = ImGui::GetWindowSize().x;
         constexpr float kPresetDialWidth = 160.0f;
         constexpr float kPresetDialGap = 12.0f;
         const bool showPresetDial = !state.columnPresets.empty();
@@ -36636,11 +36921,58 @@ void RenderUI(AppState& state) {
         ImRect presetDialRect;
         const float presetDialReserveW =
             showPresetDial ? kPresetDialWidth + kPresetDialGap : 0.0f;
+        const float innerPad = 3.0f;
+        const float innerH = kCapsuleH - innerPad * 2.0f;
+        const float iconW = 18.0f;
+        const float navIconOnlyWidth = 12.0f + iconW;
+        const float itemGap = 2.0f;
+        const float diceBtnSize = innerH;
+        const float diceGap = 6.0f;
+        const float toolbarNavRightPad = layoutTinyWidth ? 6.0f : 10.0f;
+        const float toolbarDialRightInset = showRightColumn ? 0.0f : toolbarNavRightPad;
+        const float toolbarNavMinGap = layoutCompactWidth ? 8.0f : 16.0f;
+        aura::ui::workspace::ToolbarFlowLayoutInput toolbarFlowInput;
+        toolbarFlowInput.toolbarMinX =
+            toolbarWindowPos.x + ImGui::GetWindowContentRegionMin().x;
+        toolbarFlowInput.toolbarMaxX = toolbarResultsRightScreenX;
+        toolbarFlowInput.rightInset = toolbarDialRightInset;
+        toolbarFlowInput.presetDialWidth = showPresetDial ? kPresetDialWidth : 0.0f;
+        toolbarFlowInput.presetDialGap = showPresetDial ? kPresetDialGap : 0.0f;
+        toolbarFlowInput.navLeadingInset = innerPad;
+        toolbarFlowInput.navTrailingInset = innerPad;
+        toolbarFlowInput.compactItemWidths.fill(navIconOnlyWidth);
+        toolbarFlowInput.compactItemWidths.back() = diceBtnSize;
+        toolbarFlowInput.itemGaps = {itemGap, itemGap, itemGap, itemGap, diceGap * 2.0f + 1.0f};
+        float compactNavWidth = innerPad * 2.0f;
+        for (float width : toolbarFlowInput.compactItemWidths) compactNavWidth += width;
+        for (float gap : toolbarFlowInput.itemGaps) compactNavWidth += gap;
         aura::ui::workspace::ToolbarFlowLayout toolbarFlow;
 
-        // 1. Back/Continue 胶囊 (恢复到最左侧)
-
-        ImGui::SetCursorPos(ImVec2(kToolbarLeftGutter, kToolbarCenterY));
+        const auto toolbarSearchPalette = harken::toolbar::ResolveSearchPalette(
+            toolbarTheme, toolbarTheme.toolbarBG, toolbarTheme.frameBgBase, toolbarTheme.interfaceText);
+        constexpr float kHistoryButtonWidth = 46.0f;
+        constexpr float kHistoryInnerPad = 3.0f;
+        constexpr float kHistoryDividerGap = 2.0f;
+        constexpr float kHistoryCapsuleWidth =
+            2.0f * (kHistoryButtonWidth + kHistoryInnerPad + kHistoryDividerGap) + 1.0f;
+        constexpr float searchHistoryGap = 8.0f;
+        const float leadingHistoryX = toolbarWindowPos.x + kToolbarLeftGutter;
+        const bool historyAfterSearch =
+            resultsHomeLeftScreenX < leadingHistoryX + kHistoryCapsuleWidth + searchHistoryGap;
+        const float historyReserveW = historyAfterSearch ? kHistoryCapsuleWidth + searchHistoryGap : 0.0f;
+        const float navReserveW = layoutTinyWidth ? 252.0f : (layoutCompactWidth ? 276.0f : 620.0f);
+        const float spaceAfterAnchor = toolbarResultsRightScreenX - resultsHomeLeftScreenX -
+            historyReserveW - presetDialReserveW - toolbarDialRightInset - toolbarNavMinGap;
+        const float searchMinW = harken::toolbar::SearchWidthWithModeLabel(
+            layoutTinyWidth ? 156.0f : (layoutCompactWidth ? 216.0f : 256.0f));
+        const float searchMaxW = std::max(searchMinW, layoutCompactWidth ? 356.0f : 456.0f);
+        const float searchFitMaxW = std::clamp(
+            spaceAfterAnchor - compactNavWidth, searchMinW, searchMaxW);
+        const float searchWidth = std::clamp(
+            spaceAfterAnchor - navReserveW, searchMinW, searchFitMaxW);
+        const float historyX = historyAfterSearch
+            ? resultsHomeLeftScreenX + searchWidth + searchHistoryGap : leadingHistoryX;
+        ImGui::SetCursorScreenPos(ImVec2(historyX, toolbarWindowPos.y + kToolbarCenterY));
         {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec4 kWarmWhite = ImVec4(0.988f, 0.978f, 0.952f, 1.0f);
@@ -36653,32 +36985,27 @@ void RenderUI(AppState& state) {
             ImVec2 capsulePos = ImGui::GetCursorScreenPos();
             const float capsuleH  = kCapsuleH;
             const float capsuleR  = capsuleH * 0.5f;
-            const float innerPad  = 3.0f;
-            const float innerH    = capsuleH - innerPad * 2;
+            const float innerH    = capsuleH - kHistoryInnerPad * 2;
             const float innerR    = innerH * 0.5f;
-            const float backW     = layoutTinyWidth ? 34.0f : (layoutCompactWidth ? 46.0f : 100.0f);
-            const float fwdW      = layoutTinyWidth ? 34.0f : (layoutCompactWidth ? 46.0f : 110.0f);
-            const float divSpace  = 2.0f;
-            const float capsuleW  = innerPad + backW + divSpace + 1.0f + divSpace + fwdW + innerPad;
 
             const bool canBack = state.canViewStateBack();
             const bool canFwd  = state.canViewStateForward();
 
-            ImVec2 backMin(capsulePos.x + innerPad, capsulePos.y + innerPad);
-            ImVec2 backMax(backMin.x + backW, backMin.y + innerH);
-            float  divX = backMax.x + divSpace;
-            ImVec2 fwdMin(divX + 1.0f + divSpace, capsulePos.y + innerPad);
-            ImVec2 fwdMax(fwdMin.x + fwdW, fwdMin.y + innerH);
+            ImVec2 backMin(capsulePos.x + kHistoryInnerPad, capsulePos.y + kHistoryInnerPad);
+            ImVec2 backMax(backMin.x + kHistoryButtonWidth, backMin.y + innerH);
+            float  divX = backMax.x + kHistoryDividerGap;
+            ImVec2 fwdMin(divX + 1.0f + kHistoryDividerGap, capsulePos.y + kHistoryInnerPad);
+            ImVec2 fwdMax(fwdMin.x + kHistoryButtonWidth, fwdMin.y + innerH);
 
             ImGui::SetCursorScreenPos(backMin);
-            ImGui::InvisibleButton("##NavBack", ImVec2(backW, innerH));
+            ImGui::InvisibleButton("##NavBack", ImVec2(kHistoryButtonWidth, innerH));
             ThemeInspector::RegisterLastItem("toolbar.back", L(Nav_Back), "src/main.cpp:42220");
             const bool backHov = ImGui::IsItemHovered();
             const bool backClk = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
             ImGui::SetCursorScreenPos(fwdMin);
-            ImGui::InvisibleButton("##NavFwd", ImVec2(fwdW, innerH));
-            ThemeInspector::RegisterLastItem("toolbar.continue", L(Splash_AriaContinue), "src/main.cpp:42225");
+            ImGui::InvisibleButton("##NavFwd", ImVec2(kHistoryButtonWidth, innerH));
+            ThemeInspector::RegisterLastItem("toolbar.continue", L(Nav_Forward), "src/main.cpp:42225");
             const bool fwdHov = ImGui::IsItemHovered();
             const bool fwdClk = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
@@ -36688,7 +37015,7 @@ void RenderUI(AppState& state) {
             drawToolbarChromeShell(
                 dl,
                 capsulePos,
-                ImVec2(capsulePos.x + capsuleW, capsulePos.y + capsuleH),
+                ImVec2(capsulePos.x + kHistoryCapsuleWidth, capsulePos.y + capsuleH),
                 capsuleR,
                 historyCapsuleFill);
 
@@ -36733,27 +37060,6 @@ void RenderUI(AppState& state) {
                                     : IM_COL32(180, 200, 240, 48), 1.0f);
 
             {
-                ImU32 backCol = canBack
-                    ? (backHov ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextStrong, 1.0f)) : IM_COL32(240, 246, 255, 250))
-                               : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextChrome, 0.95f)) : IM_COL32(215, 228, 248, 230)))
-                    : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextSubtle, 0.92f)) : IM_COL32(148, 168, 198, 170));
-                const char* backLabel = L(Nav_Back);
-                if (!layoutCompactWidth) {
-                    ImVec2 bs = ImGui::CalcTextSize(backLabel);
-                    dl->AddText(ImVec2(backMin.x + 26.0f + (backW - 26.0f - bs.x) * 0.5f, backMin.y + (innerH - bs.y) * 0.5f), backCol, backLabel);
-                }
-
-                ImU32 fwdCol = canFwd
-                    ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(uiMix(kThemeTextStrong, kToolbarAccent, 0.18f), 0.97f)) : IM_COL32(16, 24, 48, 240))
-                    : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextSubtle, 0.88f)) : IM_COL32(188, 200, 224, 210));
-                const char* fwdLabel = L(Nav_Forward);
-                if (!layoutCompactWidth) {
-                    ImVec2 fs = ImGui::CalcTextSize(fwdLabel);
-                    dl->AddText(ImVec2(fwdMin.x + (fwdW - 26.0f - fs.x) * 0.5f, fwdMin.y + (innerH - fs.y) * 0.5f), fwdCol, fwdLabel);
-                }
-            }
-
-            {
                 float bCx = backMin.x + 16.0f;
                 float bCy = backMin.y + innerH * 0.5f;
                 ImU32 chevCol = canBack ? (backHov ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextStrong, 1.0f)) : IM_COL32(240, 246, 255, 250)) : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextMuted, 0.96f)) : IM_COL32(215, 228, 248, 230))) : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kThemeTextSubtle, 0.92f)) : IM_COL32(148, 168, 198, 170));
@@ -36788,10 +37094,8 @@ void RenderUI(AppState& state) {
             }
 
             ImGui::SetCursorScreenPos(capsulePos);
-            ImGui::Dummy(ImVec2(capsuleW, capsuleH));
+            ImGui::Dummy(ImVec2(kHistoryCapsuleWidth, capsuleH));
         }
-
-        // 2. 搜索框区域 (恢复到中间，并紧随上一个组件)
 
         ImGui::SameLine(0, 15);
 
@@ -36800,208 +37104,54 @@ void RenderUI(AppState& state) {
         bool forceApply = false;
         bool inputReturn = false;
 
-        float capsuleBaseY = kToolbarCenterY;
-        ImGui::SetCursorPosY(capsuleBaseY);
-
-        ImGui::BeginGroup();
+        const float capsuleBaseY = kToolbarCenterY;
+        const float searchY = toolbarWindowPos.y + capsuleBaseY +
+            (kCapsuleH - harken::toolbar::SearchFieldHeight()) * 0.5f;
+        ImGui::SetCursorScreenPos(ImVec2(resultsHomeLeftScreenX, searchY));
         {
-            // 1. 搜索按钮：使用主题里的 searchButtonBG，避免再借全局按钮 hover 伪装
-            const float iconHitW = 30.0f;
-            const float iconHitH = kCapsuleH;
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float searchGroupTopY = ImGui::GetCursorScreenPos().y;
-            const ImVec4 searchButtonBase = uiWithAlpha(ThemeColors::current().searchButtonBG, 0.88f);
-            const ImVec4 searchButtonHover = uiWithAlpha(uiMix(ThemeColors::current().searchButtonBG, kToolbarSelected, 0.18f), 0.98f);
-            ImGui::InvisibleButton("##SearchExecute", ImVec2(iconHitW, iconHitH));
-            const bool searchButtonHovered = ImGui::IsItemHovered();
-            const bool searchButtonClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-            const ImVec2 iconMin = ImGui::GetItemRectMin();
-            const ImVec2 iconMax = ImGui::GetItemRectMax();
-            const ImVec2 iconCenter((iconMin.x + iconMax.x) * 0.5f, (iconMin.y + iconMax.y) * 0.5f);
-            // F-035: when precise mode is locked, use accent color for the icon
-            const bool preciseLocked = state.searchExactModeLocked;
-            ImU32 iconCol = preciseLocked
-                ? ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, 0.96f))
-                : (kUseLightSoftChromeTheme
-                    ? ImGui::GetColorU32(uiWithAlpha(kThemeAccentText, 0.88f))
-                    : ImGui::GetColorU32(uiWithAlpha(uiMix(kThemeTextStrong, kToolbarAccent, 0.18f), 0.94f)));
-            if (searchButtonHovered) {
-                dl->AddCircleFilled(iconCenter, 12.0f, ImGui::GetColorU32(ImVec4(searchButtonHover.x, searchButtonHover.y, searchButtonHover.z, 0.16f)), 20);
-            } else if (preciseLocked) {
-                // subtle accent fill when locked
-                dl->AddCircleFilled(iconCenter, 10.0f, ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, 0.12f)), 20);
-            } else {
-                dl->AddCircleFilled(iconCenter, 10.0f, ImGui::GetColorU32(ImVec4(searchButtonBase.x, searchButtonBase.y, searchButtonBase.z, 0.06f)), 20);
-            }
-            dl->AddCircle(ImVec2(iconCenter.x - 1.5f, iconCenter.y - 1.5f), 6.5f, iconCol, 16, preciseLocked ? 2.2f : 1.8f);
-            dl->AddLine(ImVec2(iconCenter.x + 2.5f, iconCenter.y + 2.5f), ImVec2(iconCenter.x + 6.5f, iconCenter.y + 6.5f), iconCol, preciseLocked ? 2.2f : 1.8f);
-            // F-035: small dot indicator at top-right of icon when locked
-            if (preciseLocked) {
-                dl->AddCircleFilled(ImVec2(iconCenter.x + 5.0f, iconCenter.y - 5.0f), 2.8f, ImGui::GetColorU32(uiWithAlpha(kToolbarAccent, 0.95f)), 10);
-            }
-            if (searchButtonHovered) {
-                HarkenSearch::SetTooltip(preciseLocked
-                    ? L(Search_PreciseOn)
-                    : L(Search_PreciseOff));
-            }
-            ImGui::SameLine(0, 6.0f);
-            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, searchGroupTopY + (kCapsuleH - ImGui::GetFrameHeight()) * 0.5f));
-
-            // 2. 交互判定
-            bool searchActive = ImGui::IsItemActive() || (ImGui::GetActiveID() == ImGui::GetID("##SearchBar"));
-            int colorPushes = 0;
-
-            static bool lastSearchRealtime = true;
-            forceApply = false;
-            if (searchButtonClicked) {
-                // F-035: toggle precise mode lock; if turning on, also force an immediate exact query
-                state.searchExactModeLocked = !state.searchExactModeLocked;
-                state.searchExactMode = state.searchExactModeLocked;
-                forceApply = true;
-            }
-            if (lastSearchRealtime != state.settings.searchRealtime) {
-                forceApply = state.settings.searchRealtime;
-                lastSearchRealtime = state.settings.searchRealtime;
-                if (!state.settings.searchRealtime) {
-                    state.searchDebounce.reset();
-                    if (state.filterQueryState == FilterQueryState::Debouncing)
-                        state.filterQueryState = FilterQueryState::Idle;
-                }
-            }
-            static bool searchHintHidden = false;
-            static bool hasSearchInputRect = false;
-            static ImVec2 searchInputRectMin(0.0f, 0.0f);
-            static ImVec2 searchInputRectMax(0.0f, 0.0f);
             const bool searchFocusRequested = state.searchSuggestRequestFocus || state.focusSearchBar;
-            bool searchClickStarting = false;
-            if (hasSearchInputRect && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                const ImVec2 mouse = ImGui::GetMousePos();
-                searchClickStarting = mouse.x >= searchInputRectMin.x && mouse.x < searchInputRectMax.x
-                    && mouse.y >= searchInputRectMin.y && mouse.y < searchInputRectMax.y;
-            }
-            const bool hideSearchPlaceholder = searchHintHidden || searchClickStarting || searchFocusRequested;
-
             if (state.searchSuggestRequestFocus) {
                 if (!state.searchSuggestPendingText.empty()) {
                     strncpy_s(state.searchBuffer, sizeof(state.searchBuffer), state.searchSuggestPendingText.c_str(), _TRUNCATE);
                     state.searchSuggestPendingText.clear();
                     ImGui::ClearActiveID();
                 }
-                ImGui::SetKeyboardFocusHere();
                 state.searchSuggestRequestFocus = false;
             }
+            state.focusSearchBar = false;
 
-            // Focus the primary search field after a shortcut.
-            if (state.focusSearchBar) {
-                ImGui::SetKeyboardFocusHere();
-                state.focusSearchBar = false;
-            }
+            const auto search = harken::toolbar::DrawSearchField("##SearchBar", L(Search_Hint),
+                state.searchBuffer, sizeof(state.searchBuffer), searchWidth,
+                toolbarSearchPalette, harken::toolbar::SearchFieldOptions{
+                    true, state.searchExactModeLocked, searchFocusRequested, 0.0f,
+                    state.settings.searchRealtime ? harken::toolbar::SearchModeLabel::Live
+                                                  : harken::toolbar::SearchModeLabel::Enter});
 
-            // Draw a stronger caret and selection while search owns focus.
-            const ImVec4 kWarmWhite = ImVec4(0.988f, 0.978f, 0.952f, 1.0f);
-            if (searchActive) {
-                // 1. 隐藏占位符
-                ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0, 0, 0, 0)); colorPushes++;
-
-                // 2. 文本颜色：粉色主题下用极深玫瑰灰，确保文字清晰
-                ImVec4 textCol = kUseLightSoftChromeTheme ? kLightSoftText : kWarmWhite;
-                ImGui::PushStyleColor(ImGuiCol_Text, textCol); colorPushes++;
-
-                // 3. 背景颜色：粉色主题下使用暖白，拉开对比度但不发冷
-                ImVec4 frameBg = kUseLightSoftChromeTheme ? kLightSoftSurface : kToolbarSearchShell;
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, frameBg); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_Border, kUseLightSoftChromeTheme
-                    ? kLightSoftBorderStrong
-                    : kToolbarSearchBorder); colorPushes++;
-
-                // 4. 文本选区(TextSelectedBg)：如果用户拖拽选中文字，确保选区颜色够深
-                ImVec4 selectBg = kUseLightSoftChromeTheme
-                    ? kLightSoftSelection
-                    : uiWithAlpha(uiMix(kToolbarSearchCue, uiColors[ImGuiCol_TextSelectedBg], 0.42f), 0.46f);
-                ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, selectBg); colorPushes++;
-            } else {
-                ImVec4 searchFrameBg = kUseLightSoftChromeTheme ? kLightSoftSurface : kToolbarSearchShell;
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, searchFrameBg); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_Border, kUseLightSoftChromeTheme
-                    ? kLightSoftBorder
-                    : kToolbarSearchBorder); colorPushes++;
-                ImGui::PushStyleColor(ImGuiCol_TextDisabled, hideSearchPlaceholder
-                    ? ImVec4(0, 0, 0, 0)
-                    : (kUseLightSoftChromeTheme ? kLightSoftHintText : kToolbarSearchHintText)); colorPushes++;
-            }
-
-            // Reclaim search focus after popup input.
-            if (state.focusSearchBar) {
-                ImGui::SetKeyboardFocusHere();
-                state.focusSearchBar = false;
-            }
-
-            const float searchCursorX = ImGui::GetCursorScreenPos().x - ImGui::GetWindowPos().x;
-            // Half-screen toolbar adaptation:
-            // reserve the *reachable compact nav width* first, then let search take
-            // the remaining space.  The nav capsule below also remeasures itself
-            // against this available width and can collapse all labels to icons.
-            const float navReserveW = layoutTinyWidth ? 252.0f : (layoutCompactWidth ? 276.0f : 620.0f);
-            const float searchAvailableW = toolbarWindowW - searchCursorX - navReserveW - presetDialReserveW - 18.0f;
-            const float searchMinW = layoutTinyWidth ? 120.0f : (layoutCompactWidth ? 180.0f : 220.0f);
-            const float searchMaxW = layoutCompactWidth ? 320.0f : 420.0f;
-            const float searchInputW = std::clamp(searchAvailableW, searchMinW, searchMaxW);
-            ImGui::SetNextItemWidth(searchInputW);
-            // EnterReturnsTrue centralizes Enter handling for this field.
-            ImGuiInputTextFlags searchFlags = ImGuiInputTextFlags_EnterReturnsTrue;
-            inputReturn = DrawUnifiedSearchInput("##SearchBar", L(Search_Hint),
-                state.searchBuffer, sizeof(state.searchBuffer), searchFlags, searchInputW, true);
-
-            searchFocused = ImGui::IsItemFocused() || ImGui::IsItemActive();
+            inputReturn = search.submitted;
+            forceApply = search.cleared;
+            searchFocused = search.focused;
             g_searchBarFocusedForShortcuts = searchFocused;
             searchRectMin = ImGui::GetItemRectMin();
             searchRectMax = ImGui::GetItemRectMax();
-            searchHintHidden = searchFocused;
-            searchInputRectMin = searchRectMin;
-            searchInputRectMax = searchRectMax;
-            hasSearchInputRect = true;
             if (ThemeInspector::IsCollecting()) {
-                ThemeInspector::RegisterZone(searchRectMin, searchRectMax, "searchButtonBG", L(ThemeCol_searchButtonBG));
+                ThemeInspector::RegisterZone(ImGui::GetItemRectMin(), searchRectMax, "searchButtonBG", L(ThemeCol_searchButtonBG));
             }
+            searchRectMin.x += harken::toolbar::kSearchTextOffset;
 
-            // Draw the focused search shell breathing feedback.
-            if (searchFocused) {
-                const float focusPulse =
-                    0.5f + 0.5f * sinf((float)ImGui::GetTime() * 3.2f);
-                const ImVec4 focusTone = uiMix(
-                    kCurrentTheme.controlAccent,
-                    kToolbarSearchCue,
-                    0.28f);
-                const ImVec2 focusMin(searchRectMin.x - 1.0f, searchRectMin.y - 1.0f);
-                const ImVec2 focusMax(searchRectMax.x + 1.0f, searchRectMax.y + 1.0f);
-                dl->AddRect(
-                    focusMin,
-                    focusMax,
-                    ImGui::GetColorU32(uiWithAlpha(focusTone, 0.24f + focusPulse * 0.30f)),
-                    7.0f,
-                    0,
-                    1.2f + focusPulse * 0.8f);
+            if (search.preciseToggled) {
+                state.searchExactModeLocked = !state.searchExactModeLocked;
+                state.searchExactMode = state.searchExactModeLocked;
+                forceApply = true;
             }
-
-            ImGui::PopStyleColor(colorPushes);
-
-            if (searchFocused) {
-                const char* searchModeHint = state.settings.searchRealtime ? "live" : "enter";
-                const float hintFontSize = ImGui::GetFontSize() * 0.84f;
-                ImFont* hintFont = ImGui::GetFont();
-                const ImVec2 hintSize = hintFont->CalcTextSizeA(hintFontSize, 1000.0f, 0.0f, searchModeHint);
-                const ImVec2 hintPos(
-                    searchRectMax.x - ImGui::GetStyle().FramePadding.x - hintSize.x - 3.0f,
-                    searchRectMax.y - ImGui::GetStyle().FramePadding.y - hintSize.y + 1.0f);
-                const ImVec4 hintTone = state.settings.searchRealtime
-                    ? uiMix(kToolbarSearchCue, kThemeTextStrong, 0.34f)
-                    : uiMix(kThemeTextMuted, ThemeColors::current().toolbarBG, 0.16f);
-                dl->AddText(
-                    hintFont,
-                    hintFontSize,
-                    hintPos,
-                    ImGui::GetColorU32(uiWithAlpha(hintTone, state.settings.searchRealtime ? 0.82f : 0.74f)),
-                    searchModeHint);
+            static bool lastSearchRealtime = true;
+            if (lastSearchRealtime != state.settings.searchRealtime) {
+                forceApply = forceApply || state.settings.searchRealtime;
+                lastSearchRealtime = state.settings.searchRealtime;
+                if (!state.settings.searchRealtime) {
+                    state.searchDebounce.reset();
+                    if (state.filterQueryState == FilterQueryState::Debouncing)
+                        state.filterQueryState = FilterQueryState::Idle;
+                }
             }
 
             if (HoveredForHelp()) {
@@ -37013,6 +37163,9 @@ void RenderUI(AppState& state) {
                 ImGui::TextUnformatted(L(Main_SearchMultiKeywordHint));
                 ImGui::Text(L(Main_SearchTriggerFmt), state.settings.searchRealtime ? L(Search_Live) : L(Search_EnterConfirm));
                 ImGui::TextDisabled(L(Main_SearchModeSwitchNote));
+                if (search.preciseHovered) {
+                    ImGui::TextUnformatted(state.searchExactModeLocked ? L(Search_PreciseOn) : L(Search_PreciseOff));
+                }
 
                 // 段 2 — 语法参考
                 ImGui::Separator();
@@ -37034,12 +37187,10 @@ void RenderUI(AppState& state) {
                 ImGui::EndTooltip(); }
             }
         }
-        ImGui::EndGroup();
 
-        // 搜索模式提示改为输入框内部轻提示后，这里保留原有右侧胶囊的安全缓冲，避免挤动布局。
-        const float kSearchModeHintReserve = layoutCompactWidth ? 0.0f : 56.0f;
-        const float kToolbarNavGap = layoutCompactWidth ? 8.0f : 95.0f;
-        float navCapsuleScreenX = searchRectMax.x + kToolbarNavGap + kSearchModeHintReserve;
+        const float toolbarNavPreferredGap = layoutCompactWidth ? toolbarNavMinGap : 151.0f;
+        const float searchAndHistoryRightX = searchRectMax.x + historyReserveW;
+        const float navCapsuleScreenX = searchAndHistoryRightX + toolbarNavPreferredGap;
 
         // 恢复 Y 坐标基准
         ImGui::SetCursorPosY(capsuleBaseY);
@@ -37102,7 +37253,7 @@ void RenderUI(AppState& state) {
                 : IM_COL32(160, 190, 240, 40);
 
             struct NavItem { const char* label; ViewMode mode; bool isModeBtn; };
-            NavItem navItems[] = {
+            const NavItem navItems[] = {
                 { L(View_FileBrowser), ViewMode::Browser,   true  },
                 { L(View_Database),    ViewMode::Database,  true  },
                 { L(View_Playlists),   ViewMode::PlaylistLibrary, true },
@@ -37117,57 +37268,33 @@ void RenderUI(AppState& state) {
                 "toolbar.refresh",
             };
             const int navCount = 5;
+            const auto navItemIconOnly = [layoutTinyWidth](const NavItem& item) {
+                return layoutTinyWidth || !item.isModeBtn;
+            };
 
             const float navH      = kCapsuleH;
             const float navR      = navH * 0.5f;
-            const float innerPad  = 3.0f;
-            const float innerH    = navH - innerPad * 2;
             const float innerR    = innerH * 0.5f;
-            const float itemGap   = 2.0f;
-            const float iconW     = 18.0f;
             const float iconGap   = 5.0f;
             const float itemPadX  = 16.0f;
 
-            const float diceBtnSize = innerH;
-            const float diceGap     = 6.0f;
-            std::array<float, aura::ui::workspace::kToolbarFlowItemCount> expandedItemWidths{};
-            std::array<float, aura::ui::workspace::kToolbarFlowItemCount> compactItemWidths{};
             for (int i = 0; i < navCount; ++i) {
-                const bool secondaryIconOnly = layoutTinyWidth || (layoutCompactWidth && i >= 4);
-                const ImVec2 ts = secondaryIconOnly
-                    ? ImVec2(0.0f, 0.0f)
-                    : ImGui::CalcTextSize(navItems[i].label);
-                expandedItemWidths[i] =
-                    (secondaryIconOnly ? 12.0f : itemPadX) + iconW +
-                    (secondaryIconOnly ? 0.0f : iconGap + ts.x + itemPadX);
-                compactItemWidths[i] = 12.0f + iconW;
+                toolbarFlowInput.expandedItemWidths[i] = navItemIconOnly(navItems[i])
+                    ? navIconOnlyWidth
+                    : itemPadX * 2.0f + iconW + iconGap + ImGui::CalcTextSize(navItems[i].label).x;
             }
-            expandedItemWidths[5] = diceBtnSize;
-            compactItemWidths[5] = diceBtnSize;
-
-            const float toolbarNavRightPad = layoutTinyWidth ? 6.0f : 10.0f;
-            const float toolbarDialRightInset = showRightColumn ? 0.0f : toolbarNavRightPad;
-            const float navLeftLimitScreenX =
-                searchRectMax.x + (layoutCompactWidth ? 8.0f : 16.0f);
-            aura::ui::workspace::ToolbarFlowLayoutInput toolbarFlowInput;
-            toolbarFlowInput.toolbarMinX =
-                toolbarWindowPos.x + ImGui::GetWindowContentRegionMin().x;
-            toolbarFlowInput.toolbarMaxX = toolbarResultsRightScreenX;
-            toolbarFlowInput.navMinX = navLeftLimitScreenX;
+            toolbarFlowInput.expandedItemWidths.back() = diceBtnSize;
+            toolbarFlowInput.navMinX = searchAndHistoryRightX + toolbarNavMinGap;
             toolbarFlowInput.navPreferredX = navCapsuleScreenX;
-            toolbarFlowInput.rightInset = toolbarDialRightInset;
-            toolbarFlowInput.presetDialWidth = showPresetDial ? kPresetDialWidth : 0.0f;
-            toolbarFlowInput.presetDialGap = showPresetDial ? kPresetDialGap : 0.0f;
-            toolbarFlowInput.navLeadingInset = innerPad;
-            toolbarFlowInput.navTrailingInset = innerPad;
-            toolbarFlowInput.expandedItemWidths = expandedItemWidths;
-            toolbarFlowInput.compactItemWidths = compactItemWidths;
-            toolbarFlowInput.itemGaps = {
-                itemGap, itemGap, itemGap, itemGap,
-                diceGap + 1.0f + diceGap,
-            };
-            toolbarFlowInput.minimumVisibleItems = 4;
+            // 导航最多让到三个视图入口；再窄就真的没有位置，绝不整组消失。
+            toolbarFlowInput.minimumVisibleItems = 3;
             toolbarFlow = aura::ui::workspace::ResolveToolbarFlowLayout(toolbarFlowInput);
+            if (!toolbarFlow.navCapsule.visible && toolbarFlowInput.presetDialWidth > 0.0f) {
+                // 导航优先于预设选择器：先让预设选择器腾出空间，再谈隐藏导航项。
+                toolbarFlowInput.presetDialWidth = 0.0f;
+                toolbarFlowInput.presetDialGap = 0.0f;
+                toolbarFlow = aura::ui::workspace::ResolveToolbarFlowLayout(toolbarFlowInput);
+            }
 
             navOrigin.x = toolbarFlow.navCapsule.minX;
             const float navW = toolbarFlow.navCapsule.maxX - toolbarFlow.navCapsule.minX;
@@ -37227,7 +37354,10 @@ void RenderUI(AppState& state) {
                     dl->AddRectFilled(itemMin, itemMax, navHoverBgCol, innerR);
                 }
 
-                const bool iconOnly = navAllIconOnly || layoutTinyWidth || (layoutCompactWidth && i >= 4);
+                const bool iconOnly = navAllIconOnly || navItemIconOnly(navItems[i]);
+                if (iconOnly && navHovered[i]) {
+                    HarkenSearch::SetTooltip("%s", navItems[i].label);
+                }
                 float iconCx = iconOnly ? itemMin.x + itemWidths[i] * 0.5f : itemMin.x + itemPadX + iconW * 0.5f;
                 float iconCy = itemMin.y + innerH * 0.5f;
                 ImU32 iconCol = isActive ? navActiveIconCol : navInactiveIconCol;
@@ -37271,7 +37401,7 @@ void RenderUI(AppState& state) {
                         break;
                     }
                     case 4: {
-                        float cx = iconCx, cy = iconCy;
+                        float cx = iconCx + 1.0f, cy = iconCy;
                         float r = 5.5f;
                         for (int s = 0; s < 18; s++) {
                             float a0 = (float)s * (3.14159f * 1.5f / 18.0f) - 3.14159f * 0.5f;
@@ -37285,9 +37415,9 @@ void RenderUI(AppState& state) {
                     }
                 }
 
-                ImU32 textCol = isActive ? navActiveTextCol : (navHovered[i] ? navInactiveTextHoverCol : navInactiveTextCol);
-                ImVec2 ts = ImGui::CalcTextSize(navItems[i].label);
                 if (!iconOnly) {
+                    const ImU32 textCol = isActive ? navActiveTextCol : (navHovered[i] ? navInactiveTextHoverCol : navInactiveTextCol);
+                    const ImVec2 ts = ImGui::CalcTextSize(navItems[i].label);
                     float textX = itemMin.x + itemPadX + iconW + iconGap;
                     float textY = itemMin.y + (innerH - ts.y) * 0.5f;
                     dl->AddText(ImVec2(textX, textY), textCol, navItems[i].label);
@@ -38906,9 +39036,7 @@ void RenderUI(AppState& state) {
     // A Dock root can outlive its legacy Filter/Info shell. Keep Results beside
     // that live root until its last leaf floats, then this frame budget returns
     // to zero on the next layout pass.
-    ImGui::SetCursorScreenPos(ImVec2(
-        viewport->WorkPos.x + (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f),
-        dockContentTop));
+    ImGui::SetCursorScreenPos(ImVec2(resultsHomeLeftScreenX, dockContentTop));
     // Calculate available width for center panel
     float centerWidth = ImGui::GetContentRegionAvail().x;
     if (rightDockSlotRequired) centerWidth -= rightDockColumnWidth + splitterWidth;
@@ -40390,24 +40518,16 @@ void RenderUI(AppState& state) {
                     ImGui::TextDisabled(L(Main_CountParenFmt), audioCount);
 
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(-1.0f);  // fill remaining row width
                 {
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-                    ImGui::PushStyleColor(ImGuiCol_FrameBg,
-                        uiWithAlpha(uiColors[ImGuiCol_FrameBg], 0.85f));
-                    ImGui::PushStyleColor(ImGuiCol_Border,
-                        uiWithAlpha(uiColors[ImGuiCol_Border], 0.50f));
-                    ImGui::PushStyleColor(ImGuiCol_TextDisabled,
-                        uiWithAlpha(uiColors[ImGuiCol_TextDisabled], 0.70f));
-                    HintAwareInputTextWithHint("##BrowserSearch",
-                        L(Search_FileHint),
-                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer));
-                    if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                    const auto palette = harken::toolbar::ResolveSearchPalette(kCurrentTheme,
+                        kCurrentTheme.resultsBG, uiColors[ImGuiCol_FrameBg], uiColors[ImGuiCol_Text]);
+                    const float browserSearchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - 1.0f);
+                    const auto search = harken::toolbar::DrawSearchField("##BrowserSearch", L(Search_FileHint),
+                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer), browserSearchWidth, palette);
+                    if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                         state.browserFilterBuffer[0] = '\0';
                         ImGui::ClearActiveID();
                     }
-                    ImGui::PopStyleColor(3);
-                    ImGui::PopStyleVar();
                 }
 
                 // source label (from DB->browser jump, auto-dismiss after 5s)
@@ -40890,18 +41010,56 @@ void RenderUI(AppState& state) {
                     ((ThemeColors::current().resultsBG.x +
                       ThemeColors::current().resultsBG.y +
                       ThemeColors::current().resultsBG.z) > 2.20f);
-                const float filterRowHeight = ImGui::GetFontSize() + 6.0f;
+                ImFont* filterFont = GetUIListFont();
+                if (filterFont) ImGui::PushFont(filterFont);
+                const ImVec2 filterFramePadding(8.0f, 4.0f);
+                const float filterScrollbarSize = ImGui::GetStyle().ScrollbarSize;
+                std::vector<std::string> filterChipDisplays;
+                filterChipDisplays.reserve(activeFilters.size());
+                float filterContentWidth = 4.0f + ImGui::CalcTextSize(L(Status_FilterActive)).x;
+                for (const auto& filter : activeFilters) {
+                    const bool metadataNameChip = filter.type == FilterChipType::Category ||
+                        filter.type == FilterChipType::Artist || filter.type == FilterChipType::Album;
+                    std::string chipDisplay = filter.label;
+                    constexpr float kMetadataChipTextMaxWidth = 220.0f;
+                    if (metadataNameChip &&
+                        ImGui::CalcTextSize(chipDisplay.c_str()).x > kMetadataChipTextMaxWidth) {
+                        size_t end = 0, lastFit = 0;
+                        while (end < chipDisplay.size()) {
+                            const unsigned char lead = static_cast<unsigned char>(chipDisplay[end]);
+                            const size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+                            end = std::min(chipDisplay.size(), end + bytes);
+                            const std::string candidate = chipDisplay.substr(0, end) + u8"…";
+                            if (ImGui::CalcTextSize(candidate.c_str()).x > kMetadataChipTextMaxWidth)
+                                break;
+                            lastFit = end;
+                        }
+                        chipDisplay = chipDisplay.substr(0, lastFit) + u8"…";
+                    }
+                    const std::string chipLabel = chipDisplay + u8" ×";
+                    filterContentWidth += (filterChipDisplays.empty() ? 6.0f : 4.0f) +
+                        ImGui::CalcTextSize(chipLabel.c_str()).x + 2.0f * filterFramePadding.x;
+                    filterChipDisplays.push_back(std::move(chipDisplay));
+                }
+                filterContentWidth += 6.0f + ImGui::CalcTextSize(L(Main_ClearAllBtn2)).x +
+                    2.0f * filterFramePadding.x;
+                const bool filterRowOverflows = filterContentWidth > ImGui::GetContentRegionAvail().x;
+                const float filterRowHeight = ImGui::GetFontSize() + 2.0f * filterFramePadding.y + 2.0f +
+                    (filterRowOverflows ? filterScrollbarSize : 0.0f);
                 ImVec4 barBg = useLightThemeFilterChips ? ImVec4(0.96f, 0.94f, 0.95f, 0.18f) : ImVec4(0.10f, 0.17f, 0.28f, 0.12f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, barBg);
+                if (filterRowOverflows)
+                    ImGui::SetNextWindowContentSize(ImVec2(filterContentWidth, 0.0f));
                 BeginTransientScrollbarChild("##FilterInfoBar", ImVec2(0, filterRowHeight), false,
-                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5.0f, 1.0f));
+                    filterRowOverflows ? ImGuiWindowFlags_HorizontalScrollbar :
+                        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                if (!filterRowOverflows) ImGui::SetScrollX(0.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, filterFramePadding);
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                ImFont* filterFont = GetUIFontRegular();
-                if (filterFont) ImGui::PushFont(filterFont);
+                ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(useLightThemeFilterChips ? ImVec4(0.42f, 0.34f, 0.38f, 0.80f) : kInfoMuted, "%s", L(Status_FilterActive));
                 for (size_t i = 0; i < activeFilters.size(); ++i) {
                     ImGui::SameLine(0.0f, i == 0 ? 6.0f : 4.0f);
@@ -40958,24 +41116,9 @@ void RenderUI(AppState& state) {
                     const bool metadataNameChip = activeFilters[i].type == FilterChipType::Category ||
                         activeFilters[i].type == FilterChipType::Artist ||
                         activeFilters[i].type == FilterChipType::Album;
-                    std::string chipDisplay = activeFilters[i].label;
-                    constexpr float kMetadataChipTextMaxWidth = 220.0f;
-                    if (metadataNameChip &&
-                        ImGui::CalcTextSize(chipDisplay.c_str()).x > kMetadataChipTextMaxWidth) {
-                        size_t end = 0, lastFit = 0;
-                        while (end < chipDisplay.size()) {
-                            const unsigned char lead = static_cast<unsigned char>(chipDisplay[end]);
-                            const size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-                            end = std::min(chipDisplay.size(), end + bytes);
-                            const std::string candidate = chipDisplay.substr(0, end) + u8"…";
-                            if (ImGui::CalcTextSize(candidate.c_str()).x > kMetadataChipTextMaxWidth)
-                                break;
-                            lastFit = end;
-                        }
-                        chipDisplay = chipDisplay.substr(0, lastFit) + u8"…";
-                    }
+                    const std::string& chipDisplay = filterChipDisplays[i];
                     std::string chipLabel = chipDisplay + u8" ×";
-                    bool chipClicked = ImGui::SmallButton(chipLabel.c_str());
+                    bool chipClicked = ImGui::Button(chipLabel.c_str());
 #if ARIS_PREVIEW_ISOLATION
                     const char* qaChipKey = activeFilters[i].type == FilterChipType::CoverKey ? "chip_cover_key" :
                         activeFilters[i].type == FilterChipType::CoverMode ? "chip_cover_mode" :
@@ -41127,7 +41270,7 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, useLightThemeFilterChips ? ImVec4(0.62f, 0.60f, 0.50f, 0.92f) : ImVec4(0.44f, 0.36f, 0.23f, 0.28f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, useLightThemeFilterChips ? ImVec4(0.56f, 0.54f, 0.44f, 0.98f) : ImVec4(0.56f, 0.44f, 0.28f, 0.44f));
                 ImGui::PushStyleColor(ImGuiCol_Text, useLightThemeFilterChips ? ImVec4(1.0f, 1.0f, 1.0f, 0.98f) : ImVec4(0.98f, 0.90f, 0.74f, 0.86f));
-                if (ImGui::SmallButton(L(Main_ClearAllBtn2))) {
+                if (ImGui::Button(L(Main_ClearAllBtn2))) {
                     ClearAllFiltersForShowAll(state);
                     RefreshSearchResults(state, true);
                     state.syncToTab();
@@ -41139,12 +41282,18 @@ void RenderUI(AppState& state) {
                     state.qaFilterUiRects["clear_all"] = ImVec4(
                         min.x - origin.x, min.y - origin.y,
                         max.x - origin.x, max.y - origin.y);
+                    if (filterRowOverflows && ImGui::GetScrollMaxX() > 0.0f) {
+                        const ImVec2 barPos = ImGui::GetWindowPos(), barSize = ImGui::GetWindowSize();
+                        state.qaFilterUiRects["filter_scrollbar"] = ImVec4(
+                            barPos.x - origin.x, barPos.y + barSize.y - filterScrollbarSize - origin.y,
+                            barPos.x + barSize.x - origin.x, barPos.y + barSize.y - origin.y);
+                    }
                 }
 #endif
                 ImGui::PopStyleColor(3);
-                if (filterFont) ImGui::PopFont();
                 ImGui::PopStyleVar(3);
                 ImGui::EndChild();
+                if (filterFont) ImGui::PopFont();
                 ImGui::PopStyleColor();
                 ImGui::Dummy(ImVec2(0.0f, 0.0f)); // tight gap between filter row and table header
             }
