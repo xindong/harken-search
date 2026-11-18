@@ -22,6 +22,7 @@
 
 #include "imgui.h"
 #include "HugeFolderIcons.h"
+#include "DatabaseFolderRowInput.h"
 #include "imgui_internal.h"        // Active-ID control for suggestion selection.
 #include <functional>
 
@@ -14693,12 +14694,20 @@ static void RenderFolderTreeNode(AppState& state,
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
 
-    if (modernRow) {
+    const bool databaseRow = modernRow && mode == FolderTreeSelectionMode::DatabaseFilter;
+    const float arrowWidth = modernRow ? modernRow->sideInset + modernRow->chevronZone : ImGui::GetTreeNodeToLabelSpacing();
+    bool nodeOpen;
+    if (databaseRow) {
+        const float padding = (modernRow->NextHeight() - modernRow->fontSize) * 0.5f;
+        nodeOpen = DatabaseFolderRowInput::TreeNode(labelBuf, flags, arrowWidth, padding);
+    } else if (modernRow) {
         const float padding = (modernRow->NextHeight() - modernRow->fontSize) * 0.5f;
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, padding));
+        nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
+        ImGui::PopStyleVar();
+    } else {
+        nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
     }
-    bool nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
-    if (modernRow) ImGui::PopStyleVar();
 
     ImGui::PopStyleColor(4);
 
@@ -14766,29 +14775,24 @@ static void RenderFolderTreeNode(AppState& state,
     }
 
     // 4. 交互优化：防抖与 I/O 优先级抢占
-    if (ImGui::IsItemClicked()) {
-        const float arrowWidth = modernRow
-            ? (modernRow->sideInset + modernRow->chevronZone)
-            : ImGui::GetTreeNodeToLabelSpacing();
-        if ((modernRow && mode == FolderTreeSelectionMode::DatabaseFilter && !hasChildren) ||
-            ImGui::GetIO().MousePos.x > ImGui::GetItemRectMin().x + arrowWidth) {
-            if (mode == FolderTreeSelectionMode::PlaylistFilter) {
-                SelectPlaylistFolderFilter(state, folder.path);
-            } else {
-                // Database scope keeps the deferred folder-switch handshake.
-                state.uiState.pendingFolderPath = folder.path;
-                state.uiState.pendingFolderTime = ImGui::GetTime();
-                state.preferDeferredCountForNextRefresh = true;
+    if (databaseRow ? DatabaseFolderRowInput::SelectClicked(hasChildren, arrowWidth)
+                    : ImGui::IsItemClicked() && ImGui::GetIO().MousePos.x > ImGui::GetItemRectMin().x + arrowWidth) {
+        if (mode == FolderTreeSelectionMode::PlaylistFilter) {
+            SelectPlaylistFolderFilter(state, folder.path);
+        } else {
+            // Database scope keeps the deferred folder-switch handshake.
+            state.uiState.pendingFolderPath = folder.path;
+            state.uiState.pendingFolderTime = ImGui::GetTime();
+            state.preferDeferredCountForNextRefresh = true;
 
-                // Keep cover-wall facets alive until the refreshed result set swaps in.
-                aura::cover_wall::RequestDisplayRefresh(state);
+            // Keep cover-wall facets alive until the refreshed result set swaps in.
+            aura::cover_wall::RequestDisplayRefresh(state);
 
-                // Preempt background waveform work before the database refresh.
-                state.clearPendingWaveforms();
+            // Preempt background waveform work before the database refresh.
+            state.clearPendingWaveforms();
 
-                // Preserve navigation history before applying the folder filter.
-                state.pushViewState();
-            }
+            // Preserve navigation history before applying the folder filter.
+            state.pushViewState();
         }
     }
 
