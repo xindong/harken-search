@@ -203,16 +203,19 @@ void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
 }
 }
 
-float FileInfoPageActionsWidth(AppState& state, float availableWidth) {
+float FileInfoPageActionsWidth(AppState& state, float availableWidth, bool grouped) {
     state.settings.infoPages.Normalize(kDiagnostics);
-    const int count = availableWidth < 172.0f ? 1 : state.settings.infoPages.VisibleCount(kDiagnostics);
-    return (count + 1 + (state.settings.infoPages.similarSoundsVisible ? 1 : 0)) * kPageButtonWidth + 6.0f;
+    const bool compact = availableWidth < 172.0f;
+    const int count = compact ? 1 : state.settings.infoPages.VisibleCount(kDiagnostics);
+    const bool showSimilar = state.settings.infoPages.similarSoundsVisible && !(compact && grouped);
+    return (count + 1 + (showSimilar ? 1 : 0)) * kPageButtonWidth + 6.0f;
 }
 
-bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth) {
+bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth, bool grouped) {
     auto& pages = state.settings.infoPages;
     pages.Normalize(kDiagnostics);
     const bool compact = availableWidth < 172.0f;
+    const bool similarInMenu = compact && grouped;
     const ImVec2 saved = ImGui::GetCursorPos();
     const auto& theme = ThemeColors::current();
     const ImVec4 base = theme.metadataPanelText;
@@ -238,7 +241,7 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         x += kPageButtonWidth;
         return clicked;
     };
-    const bool similarClicked = pages.similarSoundsVisible && button(kSimilarSoundsAction, false);
+    bool similarClicked = pages.similarSoundsVisible && !similarInMenu && button(kSimilarSoundsAction, false);
     for (int i=0; i<4; ++i) {
         if (!pages.IsVisible(static_cast<InfoPage>(i), kDiagnostics) || (compact && pages.selected != i)) continue;
         if (button(i, pages.selected == i) && pages.Select(static_cast<InfoPage>(i),kDiagnostics)) state.settingsDirty = true;
@@ -246,6 +249,10 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
     if (button(kVisibilityAction,false)) ImGui::OpenPopup("visibility");
     if (BeginTransientScrollbarPopup("visibility")) {
         if (compact) {
+            if (similarInMenu && pages.similarSoundsVisible) {
+                similarClicked = ImGui::MenuItem(L(Similar_OpenTooltip));
+                ThemeInspector::RegisterLastItem("info.similarSounds", L(Similar_OpenTooltip), "src/FileInfoPanel.cpp");
+            }
             for (int i=0; i<4; ++i) {
                 if (!pages.IsVisible(static_cast<InfoPage>(i),kDiagnostics)) continue;
                 ImGui::PushID(i);

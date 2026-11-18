@@ -288,10 +288,10 @@ class ImguiDockingViewportPanelContract(unittest.TestCase):
         helper = main.split("static bool ClampFloatingPanelToViewport(", 1)[1].split("static void StartBatchFeatureExtraction", 1)[0]
         self.assertIn("ShouldClampFloatingPanelToWorkArea", helper)
         self.assertIn("restoreClampPending", helper)
-        sidebar = main.split("if (state.panelSidebar.visible && state.panelSidebar.floating)", 1)[1]
-        sidebar = sidebar.split("if (state.panelFileInfo.visible && state.panelFileInfo.floating)", 1)[0]
-        info = main.split("if (state.panelFileInfo.visible && state.panelFileInfo.floating)", 1)[1]
-        info = info.split("if (g_searchResultsDockPanel.visible && g_searchResultsDockPanel.floating)", 1)[0]
+        sidebar_guard = 'if (state.panelSidebar.visible && state.panelSidebar.floating && !state.dockTabGroups.Find("filter"))'
+        info_guard = 'if (state.panelFileInfo.visible && state.panelFileInfo.floating && !state.dockTabGroups.Find("info"))'
+        sidebar = main.split(sidebar_guard, 1)[1].split(info_guard, 1)[0]
+        info = main.split(info_guard, 1)[1].split("if (state.panelSimilarSounds.visible", 1)[0]
         for block in (sidebar, info):
             self.assertIn("ClampFloatingPanelToViewport(", block)
         self.assertNotIn("BeginStandaloneWindow", sidebar + info)

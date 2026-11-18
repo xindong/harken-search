@@ -3,6 +3,7 @@
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
 #include "LibraryStatisticsWorker.h"
+#include "DockTabGroups.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -2745,6 +2746,7 @@ struct AppState {
     void removePendingWaveform(const std::string& path);
 
     // Panel states
+    aura::ui::dock::DockTabGroups dockTabGroups;
     PanelState panelSidebar;
     PanelState panelFileInfo = [] {
         PanelState panel;

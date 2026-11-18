@@ -1,4 +1,6 @@
 #include "DockHitTest.h"
+#include "DockPlacementPreview.h"
+#include "DockTabGroups.h"
 
 #include <cmath>
 #include <cstdio>
@@ -378,6 +380,94 @@ bool Check(bool ok, const char* message) {
 int main() { return RunDockPerfReplay(); }
 #else
 int main() {
+    {
+        using namespace aura::ui::dock;
+        DockTabGroups groups;
+        if (groups.Merge("info", "info") || groups.Merge("info", "waveform") ||
+            groups.Merge("info", "search-results") || groups.Merge("search-results", "info") ||
+            !groups.Merge("info", "similar-sounds")) return 1;
+        const auto* group = groups.Find("info");
+        if (!group || group != groups.Find("similar-sounds") ||
+            group->active != "info" ||
+            group->members != std::vector<std::string>{"similar-sounds", "info"}) return 1;
+        if (!groups.Select(group->id, "similar-sounds") ||
+            !groups.Merge("mod-ucs-browser", "similar-sounds") ||
+            !groups.Merge("filter", "mod-tag-browser") ||
+            !groups.Merge("filter", "info")) return 1;
+        if (groups.Find("mod-tag-browser") != groups.Find("info") ||
+            groups.Find("info")->members.size() != 5) return 1;
+        DockTabGroups restored;
+        restored.Load(groups.Save());
+        if (restored.Save() != groups.Save() || restored.Find("info")->active != "filter" ||
+            !restored.Detach("filter") || restored.Find("filter") ||
+            restored.Find("info")->active != "similar-sounds") return 1;
+        restored.Load("info:info,info;foo:foo,filter;info:info,similar-sounds;info:filter,info");
+        if (restored.Find("filter") || !restored.Find("info") ||
+            restored.Find("info")->members.size() != 2) return 1;
+        restored.Load("search-results:search-results,info,similar-sounds;info:info,filter");
+        const auto* migrated = restored.Find("info");
+        if (!migrated || migrated->active != "info" || restored.Find("search-results") ||
+            migrated->members != std::vector<std::string>{"info", "similar-sounds"}) {
+            std::puts("FAIL: old Results groups must migrate to tool-only groups");
+            return 1;
+        }
+        if (!restored.Reorder(migrated->id, {"similar-sounds", "info"}) ||
+            restored.Find("info")->members != std::vector<std::string>{"similar-sounds", "info"} ||
+            restored.Find("info")->anchor != "info" || restored.Find("info")->active != "info") {
+            std::puts("FAIL: reordering visible tabs must not move the dock anchor or change selection");
+            return 1;
+        }
+        const auto reordered = restored.Save();
+        restored.Load(reordered);
+        const auto* loaded = restored.Find("info");
+        if (!loaded || loaded->anchor != "info" || loaded->members.front() != "similar-sounds" ||
+            restored.Reorder(loaded->id, {"info", "info"}) ||
+            restored.Reorder(loaded->id, {"filter", "info"}) ||
+            !restored.Merge("filter", "info") ||
+            !restored.Reorder(loaded->id, {"info", "similar-sounds"}) ||
+            restored.Find("info")->members != std::vector<std::string>{"info", "similar-sounds", "filter"} ||
+            !restored.Detach("info") || restored.Find("filter")->anchor != "similar-sounds") {
+            std::puts("FAIL: saved order, hidden slots and anchor replacement must survive reordering");
+            return 1;
+        }
+        const auto closingGroup = restored.Find("filter")->id;
+        if (!restored.Remove(closingGroup) || restored.Find("filter") || restored.Find("similar-sounds") ||
+            restored.Remove(closingGroup) || !restored.Save().empty()) {
+            std::puts("FAIL: closing the final visible tab clears the saved group");
+            return 1;
+        }
+    }
+    {
+        using namespace aura::ui::dock;
+        const DockRect surface{100.0f, 80.0f, 600.0f, 400.0f};
+        const auto preview = PlanDockPlacementPreview(surface, 1.0f);
+        const auto check = [&](float x, float y, DockPlacement placement, DockRect expected) {
+            const auto* target = HitDockPlacementPreview(preview, x, y);
+            return target && target->placement == placement &&
+                target->highlight.x == expected.x && target->highlight.y == expected.y &&
+                target->highlight.width == expected.width && target->highlight.height == expected.height;
+        };
+        if (!check(400.0f, 280.0f, DockPlacement::Tabs, surface) ||
+            !check(364.0f, 280.0f, DockPlacement::Left, {100.0f, 80.0f, 300.0f, 400.0f}) ||
+            !check(436.0f, 280.0f, DockPlacement::Right, {400.0f, 80.0f, 300.0f, 400.0f}) ||
+            !check(400.0f, 244.0f, DockPlacement::Top, {100.0f, 80.0f, 600.0f, 200.0f}) ||
+            !check(400.0f, 316.0f, DockPlacement::Bottom, {100.0f, 280.0f, 600.0f, 200.0f}) ||
+            HitDockPlacementPreview(preview, 418.0f, 280.0f) ||
+            HitDockPlacementPreview(preview, 90.0f, 280.0f)) {
+            std::puts("FAIL: dock placement preview maps the five markers to their highlight rects");
+            return 1;
+        }
+        const auto scaled = PlanDockPlacementPreview(surface, 2.0f);
+        const auto* scaledLeft = HitDockPlacementPreview(scaled, 328.0f, 280.0f);
+        const auto small = PlanDockPlacementPreview({0.0f, 0.0f, 100.0f, 40.0f}, 1.0f);
+        const auto invalid = PlanDockPlacementPreview(surface, 0.0f);
+        if (!scaledLeft || scaledLeft->placement != DockPlacement::Left ||
+            HitDockPlacementPreview(small, 50.0f, 20.0f) ||
+            HitDockPlacementPreview(invalid, 400.0f, 280.0f)) {
+            std::puts("FAIL: dock placement preview scales and hides targets that cannot fit");
+            return 1;
+        }
+    }
     using namespace aura::ui::dock;
     const DockRect mainWork{0.0f, 0.0f, 1920.0f, 1080.0f};
     const float snap = 80.0f;
