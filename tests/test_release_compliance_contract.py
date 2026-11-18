@@ -119,6 +119,7 @@ def build_repo(tmp_path: Path) -> Path:
                 "thirdparty/rlottie",
                 "thirdparty/webview2",
                 "thirdparty/lucide/lucide.ttf",
+                "src/main.cpp",
                 "assets/avatars",
                 "installer/Languages/ChineseSimplified.isl",
                 "reaper_extension",
