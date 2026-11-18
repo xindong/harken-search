@@ -67,13 +67,16 @@ int main() {
           "search sizing accounts for the actual Results edge before reserving compact navigation");
     CHECK(mainCpp.find("searchAvailableW, searchMinW, searchFitMaxW") != std::string::npos,
           "navigation pressure never reduces the search input below its existing minimum");
-    CHECK(mainCpp.find("toolbarFlowInput.minimumVisibleItems = navCount;") != std::string::npos,
-          "toolbar overflow never retains Scan while dropping Refresh");
+    CHECK(mainCpp.find("toolbarFlowInput.minimumVisibleItems = 3;") != std::string::npos,
+          "toolbar overflow drops from the right and stops at the three view entries");
+    CHECK(mainCpp.find("if (!toolbarFlow.navCapsule.visible && toolbarFlowInput.presetDialWidth > 0.0f)") != std::string::npos &&
+          mainCpp.find("toolbarFlowInput.presetDialWidth = 0.0f;") != std::string::npos,
+          "navigation yields the preset dial before the whole group disappears");
     CHECK(appState.find("Favorites = 2,") != std::string::npos &&
           appState.find("case 2: return ViewMode::Database;") != std::string::npos,
           "retired Favorites retains its persisted numeric hole and Database fallback");
 
-    const int totalChecks = 21;
+    const int totalChecks = 22;
     std::cout << "\n" << (totalChecks - failed) << "/" << totalChecks
               << " passed, " << failed << " failed\n";
     return failed == 0 ? 0 : 1;

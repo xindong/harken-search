@@ -37017,8 +37017,15 @@ void RenderUI(AppState& state) {
             toolbarFlowInput.expandedItemWidths.back() = diceBtnSize;
             toolbarFlowInput.navMinX = searchRectMax.x + toolbarNavMinGap;
             toolbarFlowInput.navPreferredX = navCapsuleScreenX;
-            toolbarFlowInput.minimumVisibleItems = navCount;
+            // 导航最多让到三个视图入口；再窄就真的没有位置，绝不整组消失。
+            toolbarFlowInput.minimumVisibleItems = 3;
             toolbarFlow = aura::ui::workspace::ResolveToolbarFlowLayout(toolbarFlowInput);
+            if (!toolbarFlow.navCapsule.visible && toolbarFlowInput.presetDialWidth > 0.0f) {
+                // 导航优先于预设选择器：先让预设选择器腾出空间，再谈隐藏导航项。
+                toolbarFlowInput.presetDialWidth = 0.0f;
+                toolbarFlowInput.presetDialGap = 0.0f;
+                toolbarFlow = aura::ui::workspace::ResolveToolbarFlowLayout(toolbarFlowInput);
+            }
 
             navOrigin.x = toolbarFlow.navCapsule.minX;
             const float navW = toolbarFlow.navCapsule.maxX - toolbarFlow.navCapsule.minX;

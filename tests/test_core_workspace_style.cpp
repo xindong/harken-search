@@ -248,7 +248,7 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
     input.expandedItemWidths = {90.0f, 78.0f, 82.0f, 30.0f, 30.0f, 28.0f};
     input.compactItemWidths = {30.0f, 30.0f, 30.0f, 30.0f, 30.0f, 28.0f};
     input.itemGaps = {2.0f, 2.0f, 2.0f, 2.0f, 13.0f};
-    input.minimumVisibleItems = 5;
+    input.minimumVisibleItems = 3;
 
     const ToolbarFlowLayout wide = ResolveToolbarFlowLayout(input);
     CheckToolbarFlowGeometry(wide, input.presetDialGap,
@@ -293,6 +293,30 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
     Check(overflow.itemSlots[3].visible && overflow.itemSlots[4].visible &&
           !overflow.itemSlots[5].visible,
           "overflow drops rightmost Shuffle before either Scan or Refresh");
+
+    // 132..164 px：五个图标放不下、四个刚好放得下。这里以前直接返回无效布局，
+    // 整组导航（三个视图入口 + 扫描 + 刷新）全部消失。
+    input.rightInset = 0.0f;
+    input.presetDialWidth = 0.0f;
+    input.presetDialGap = 0.0f;
+    input.toolbarMaxX = 140.0f;
+    input.navMinX = 0.0f;
+    input.navPreferredX = 0.0f;
+    const ToolbarFlowLayout iconBand = ResolveToolbarFlowLayout(input);
+    Check(iconBand.valid && SlotInside(iconBand.navCapsule, iconBand.toolbarClip),
+          "one-icon-short toolbar still resolves a navigation capsule");
+    Check(iconBand.navCapsule.visible && iconBand.visibleItemCount == 4,
+          "toolbar short of five icons keeps four instead of hiding navigation");
+    Check(iconBand.itemSlots[3].visible && !iconBand.itemSlots[4].visible,
+          "the missing icon is dropped from the right, not the whole group");
+
+    // 再窄也只能让到三个视图入口。
+    input.toolbarMaxX = 120.0f;
+    const ToolbarFlowLayout viewsOnly = ResolveToolbarFlowLayout(input);
+    Check(viewsOnly.valid && SlotInside(viewsOnly.navCapsule, viewsOnly.toolbarClip),
+          "two-icon-short toolbar still resolves a navigation capsule");
+    Check(viewsOnly.navCapsule.visible && viewsOnly.visibleItemCount == 3,
+          "extreme width floor keeps the three view entries instead of an empty toolbar");
 }
 
 void TestTransientScrollbarVisibilityPolicy() {
