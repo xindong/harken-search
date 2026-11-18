@@ -53,14 +53,19 @@ struct DockModuleTarget {
 };
 
 struct DockMinimumSize { float width = 160.0f; float height = 120.0f; };
+enum class DockMinimumPurpose { Placement, Resize };
 
 // Content floors for the existing modules (title/padding included). Scaling is
 // taken from the destination viewport, never from the floating source monitor.
-inline DockMinimumSize DockModuleMinimum(std::string_view id, float scale = 1.0f) {
+inline DockMinimumSize DockModuleMinimum(
+    std::string_view id,
+    float scale = 1.0f,
+    DockMinimumPurpose purpose = DockMinimumPurpose::Placement) {
+    const bool resizing = purpose == DockMinimumPurpose::Resize;
     DockMinimumSize size;
-    if (id == "filter") size = {280.0f, 180.0f};
-    else if (id == "info") size = {300.0f, 180.0f};
-    else if (id == "similar-sounds") size = {420.0f, 220.0f};
+    if (id == "filter") size = resizing ? DockMinimumSize{160.0f, 120.0f} : DockMinimumSize{280.0f, 180.0f};
+    else if (id == "info") size = resizing ? DockMinimumSize{150.0f, 120.0f} : DockMinimumSize{300.0f, 180.0f};
+    else if (id == "similar-sounds") size = resizing ? DockMinimumSize{220.0f, 180.0f} : DockMinimumSize{420.0f, 220.0f};
     else if (id == "search-results") size = {480.0f, 200.0f};
     else if (id == "mod-ucs-browser") size = {480.0f, 260.0f};
     else if (id == "mod-tag-browser") size = {320.0f, 320.0f};
@@ -70,14 +75,17 @@ inline DockMinimumSize DockModuleMinimum(std::string_view id, float scale = 1.0f
     return {size.width * scale, size.height * scale};
 }
 
-inline DockMinimumSize DockSubtreeMinimum(const DockNode* node, float scale = 1.0f) {
+inline DockMinimumSize DockSubtreeMinimum(
+    const DockNode* node,
+    float scale = 1.0f,
+    DockMinimumPurpose purpose = DockMinimumPurpose::Placement) {
     if (!node) return {0, 0};
     if (node->Kind() == NodeKind::Module)
-        return DockModuleMinimum(static_cast<const ModuleNode*>(node)->id, scale);
+        return DockModuleMinimum(static_cast<const ModuleNode*>(node)->id, scale, purpose);
     if (node->Kind() != NodeKind::Split) return {0, 0};
     const auto* split = static_cast<const SplitNode*>(node);
-    const auto a = DockSubtreeMinimum(split->first.get(), scale);
-    const auto b = DockSubtreeMinimum(split->second.get(), scale);
+    const auto a = DockSubtreeMinimum(split->first.get(), scale, purpose);
+    const auto b = DockSubtreeMinimum(split->second.get(), scale, purpose);
     const float ratio = std::clamp(split->ratio, .08f, .92f);
     return split->axis == Axis::Horizontal
         ? DockMinimumSize{std::max(a.width / ratio, b.width / (1 - ratio)), std::max(a.height, b.height)}
@@ -339,12 +347,12 @@ inline bool DragAdjacentLeafGrip(
     SplitNode* split = FindSplitContainingLeaves(layout, firstId, secondId);
     if (!split || extent <= 1.0f) return false;
     if (readabilityScale > 0.0f) {
-        const auto a = DockSubtreeMinimum(split->first.get(), readabilityScale);
-        const auto b = DockSubtreeMinimum(split->second.get(), readabilityScale);
+        const auto a = DockSubtreeMinimum(split->first.get(), readabilityScale, DockMinimumPurpose::Resize);
+        const auto b = DockSubtreeMinimum(split->second.get(), readabilityScale, DockMinimumPurpose::Resize);
         const float firstMin = split->axis == Axis::Horizontal ? a.width : a.height;
         const float secondMin = split->axis == Axis::Horizontal ? b.width : b.height;
-        const float lower = std::max(0.08f, firstMin / extent);
-        const float upper = std::min(0.92f, 1.0f - secondMin / extent);
+        const float lower = std::max(split->minFirst, firstMin / extent);
+        const float upper = std::min(1.0f - split->minSecond, 1.0f - secondMin / extent);
         if (lower > upper) return false;
         const float next = std::clamp(split->ratio + pixelDelta / extent, lower, upper);
         return layout.ResizeSplit(split, next - split->ratio);

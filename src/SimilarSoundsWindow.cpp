@@ -418,6 +418,12 @@ void OpenSimilarSoundsWindow(AppState& state) {
                 HarkenSearch::MakeSimilarityQueryV2Handler(GetExeDirUtf8() + "/models/clap"));
     }
     state.panelSimilarSounds.visible = true;
+    if (const auto* group = state.dockTabGroups.Find("similar-sounds")) {
+        state.dockTabGroups.Select(group->id, "similar-sounds");
+        state.settingsDirty = true;
+        state.settingsDirtyAt = ImGui::GetTime();
+        return;
+    }
     state.panelSimilarSounds.floating = true;
     state.panelSimilarSounds.wasDragging = false;
     if (state.panelSimilarSounds.floatW < 220.0f) state.panelSimilarSounds.floatW = 640.0f;

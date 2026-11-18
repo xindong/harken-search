@@ -56,7 +56,27 @@ int main() {
     CHECK(countRepairAdapter.find("result.totalCount == -1 && !result.countFollowUpSkipped") != std::string::npos,
           "UI does not leave pendingCountFollowUp stuck when count follow-up was skipped");
 
-    const int totalChecks = 14;
+    CHECK(mainCpp.find("return layoutTinyWidth || !item.isModeBtn;") != std::string::npos,
+          "Scan and Refresh are icon-only even at full toolbar width");
+    CHECK(mainCpp.find("toolbarFlowInput.expandedItemWidths[i] = navItemIconOnly(navItems[i])") != std::string::npos &&
+          mainCpp.find("navAllIconOnly || navItemIconOnly(navItems[i])") != std::string::npos,
+          "toolbar measurement and drawing share the icon-only rule");
+    CHECK(mainCpp.find(R"(HarkenSearch::SetTooltip("%s", navItems[i].label);)") != std::string::npos,
+          "icon-only navigation actions retain their localized hover labels");
+    CHECK(mainCpp.find("toolbarResultsRightScreenX - searchCursorScreenX") != std::string::npos,
+          "search sizing accounts for the actual Results edge before reserving compact navigation");
+    CHECK(mainCpp.find("searchAvailableW, searchMinW, searchFitMaxW") != std::string::npos,
+          "navigation pressure never reduces the search input below its existing minimum");
+    CHECK(mainCpp.find("toolbarFlowInput.minimumVisibleItems = 3;") != std::string::npos,
+          "toolbar overflow drops from the right and stops at the three view entries");
+    CHECK(mainCpp.find("if (!toolbarFlow.navCapsule.visible && toolbarFlowInput.presetDialWidth > 0.0f)") != std::string::npos &&
+          mainCpp.find("toolbarFlowInput.presetDialWidth = 0.0f;") != std::string::npos,
+          "navigation yields the preset dial before the whole group disappears");
+    CHECK(appState.find("Favorites = 2,") != std::string::npos &&
+          appState.find("case 2: return ViewMode::Database;") != std::string::npos,
+          "retired Favorites retains its persisted numeric hole and Database fallback");
+
+    const int totalChecks = 22;
     std::cout << "\n" << (totalChecks - failed) << "/" << totalChecks
               << " passed, " << failed << " failed\n";
     return failed == 0 ? 0 : 1;
