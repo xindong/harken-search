@@ -210,6 +210,7 @@ namespace HarkenSearch {
 }
 #include "FileBrowser.h"
 #include "Database.h"
+#include "PlaylistCollectionIndex.h"
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
@@ -247,8 +248,13 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
-inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultReadingFontPx = 18;
 inline constexpr int kDefaultListFontPx = 18;
+
+// Keep loaded and displayed sizes safe without rewriting the settings file here.
+inline constexpr int ClampSettingsFontSize(int sizePx) {
+    return std::clamp(sizePx, 10, 24);
+}
 
 // Reading-list rows: extra vertical px added to the reading font height before
 // comparing against the density floor. Matches the existing list cell padding.
@@ -260,10 +266,8 @@ inline int ResolveReadingFontSize(bool hasReading, int readingVal,
                                   bool hasList, int listVal,
                                   bool hasFont, int fontVal,
                                   int defaultPx) {
-    if (hasReading) return readingVal;
-    if (hasList)    return listVal;
-    if (hasFont)    return fontVal;
-    return defaultPx;
+    const int value = hasReading ? readingVal : hasList ? listVal : hasFont ? fontVal : defaultPx;
+    return ClampSettingsFontSize(value);
 }
 
 // Reading-surface row height: never shorter than the density floor, grows with
@@ -2477,15 +2481,27 @@ struct AppState {
     FolderInfo playlistFolderHierarchy;
     bool folderHierarchyShowingPlaylistScope = false;
     int64_t playlistFolderHierarchyPlaylistId = -1;
+    uint64_t playlistFolderHierarchyDataRevision = 0;
     int64_t expandedPlaylistFolderTreePlaylistId = -1;
+    uint64_t playlistQuickBarAppliedOrderSignature = 0;
+    aura::playlist::PlaylistCollectionIndex playlistCollectionIndex;
+    void EnsurePlaylistCollectionIndex() {
+        const uint64_t signature = aura::playlist::PlaylistCollectionSignature(
+            playlists, settings.playlistQuickBarHiddenIds);
+        if (signature == playlistCollectionIndex.signature) return;
+        playlistCollectionIndex.Rebuild(playlists, settings.playlistQuickBarHiddenIds);
+        playlistCollectionIndex.signature = signature;
+    }
     void setFolderHierarchy(FolderInfo&& tree, const std::string& /*dbPath*/) {
         databaseFolderHierarchy = tree;
         folderHierarchy = std::move(tree);
         folderHierarchyShowingPlaylistScope = false;
     }
-    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId) {
+    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId,
+                                    uint64_t dataRevision = 0) {
         playlistFolderHierarchy = std::move(tree);
         playlistFolderHierarchyPlaylistId = playlistId;
+        playlistFolderHierarchyDataRevision = dataRevision;
         folderHierarchy = playlistFolderHierarchy;
         folderHierarchyShowingPlaylistScope = true;
     }
@@ -2500,6 +2516,7 @@ struct AppState {
         playlistFolderHierarchy = FolderInfo{};
         folderHierarchyShowingPlaylistScope = false;
         playlistFolderHierarchyPlaylistId = -1;
+        playlistFolderHierarchyDataRevision = 0;
         expandedPlaylistFolderTreePlaylistId = -1;
     }
     std::string pendingRemoveFolderDbPath;
@@ -3151,6 +3168,7 @@ struct AppState {
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
     std::atomic<uint64_t> batchFeatureStartGeneration{0}; // Advances only when a new batch starts.
+    uint64_t similarityAnalysisClearGeneration = 0; // UI-thread-only; invalidate displayed coverage after maintenance.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
     std::atomic<int>  batchFeatureSkipped{0};

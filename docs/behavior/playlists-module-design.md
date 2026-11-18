@@ -10,7 +10,7 @@
 
 ## 接口
 
-- LoadCompletePlaylistMembers：UI 线程同步读完整成员建树。
+- RefreshPlaylistFolderHierarchy：UI 线程用轻量 folder_path 计数刷新播放列表范围目录树，按 playlist id 与数据版本缓存，不再加载完整 AudioRecord。
 - searchPlaylistCoverKeys / searchAggregatedPlaylistCoverKeys：SearchWorker 自有只读连接上的只读 SELECT，紧邻对应 FileCount。
 - BuildPlaylistCoverGroupsFromCompleteMembers：用完整筛选键生成分组，不用当前页。
 - AsyncSearchRefreshFacetsInput.playlistView / AsyncSearchFacetResultInput.playlistView：默认 false。

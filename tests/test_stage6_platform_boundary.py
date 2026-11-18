@@ -455,6 +455,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             "TestPerfOptimizations",
             "TestSimilarityQueryV2",
             "TestPreviewPlaylistDatabase",
+            "TestPlaylistFolderTreeRealLibrary",
         }
         behavior = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(
             encoding="utf-8"
@@ -5637,7 +5638,13 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(1, playlist_block.count(selected_source))
         for library in ("mfplat", "mfreadwrite", "mfuuid"):
             self.assertIn(library, playlist_block)
-        self.assertEqual(4, behavior_cmake.count(selected_source))
+        folder_tree_block = behavior_cmake.split(
+            "add_executable(TestPlaylistFolderTreeRealLibrary", 1
+        )[1].split("add_test(", 1)[0]
+        self.assertEqual(1, folder_tree_block.count(selected_source))
+        for library in ("mfplat", "mfreadwrite", "mfuuid"):
+            self.assertIn(library, folder_tree_block)
+        self.assertEqual(5, behavior_cmake.count(selected_source))
 
         for library in ("mfplat", "mfreadwrite", "mfuuid"):
             self.assertIn(library, wma_block)
@@ -9007,8 +9014,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
         self.assertEqual(0, result)
         output = stdout.getvalue()
-        self.assertIn("Scanned findings: 637", output)
-        self.assertIn("Audited exceptions: 637", output)
+        self.assertIn("Scanned findings: 645", output)
+        self.assertIn("Audited exceptions: 645", output)
         self.assertIn("Unresolved findings: 0", output)
         self.assertIn("Ledger findings: 0", output)
         self.assertEqual("", stderr.getvalue())
@@ -9023,7 +9030,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             entry.get("disposition") for entry in register["findings"]
         ]
         self.assertEqual(13, dispositions.count("platform-entry"))
-        self.assertEqual(624, dispositions.count("platform-adapter"))
+        self.assertEqual(632, dispositions.count("platform-adapter"))
         owners = [entry.get("owner_slice") for entry in register["findings"]]
         self.assertEqual(94, owners.count("BOOTSTRAP-FILESYSTEM"))
         self.assertEqual(480, owners.count("BOOTSTRAP-RUNTIME"))
@@ -9035,7 +9042,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             ROOT,
         )
         self.assertEqual([], classification.errors)
-        self.assertEqual(637, len(classification.audited_fingerprints))
+        self.assertEqual(645, len(classification.audited_fingerprints))
         self.assertEqual(0, len(classification.unresolved_findings))
 
         runtime_fingerprints = {
@@ -9114,7 +9121,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(
-            "`637` exact audited entries",
+            "`645` exact audited entries",
             report,
             "the report must describe the current exact exception register",
         )

@@ -1531,8 +1531,9 @@ std::vector<PlaylistChipPlanItem> ComputePlaylistChipPlan(
     const std::vector<Playlist>& all,
     const std::vector<int64_t>& hiddenIds) {
 
+    std::unordered_set<int64_t> hidden(hiddenIds.begin(), hiddenIds.end());
     auto isHidden = [&](int64_t id) {
-        return std::find(hiddenIds.begin(), hiddenIds.end(), id) != hiddenIds.end();
+        return hidden.find(id) != hidden.end();
     };
 
     // Build id -> Playlist* index
@@ -1542,6 +1543,11 @@ std::vector<PlaylistChipPlanItem> ComputePlaylistChipPlan(
 
     std::vector<PlaylistChipPlanItem> out;
     out.reserve(all.size());
+    std::unordered_map<int64_t, int> visibleChildCounts;
+    visibleChildCounts.reserve(all.size());
+    for (const auto& p : all) {
+        if (p.parent_id > 0 && !isHidden(p.id)) ++visibleChildCounts[p.parent_id];
+    }
 
     for (const auto& p : all) {
         if (isHidden(p.id)) continue;
@@ -1569,11 +1575,7 @@ std::vector<PlaylistChipPlanItem> ComputePlaylistChipPlan(
         item.name = p.name;
         if (p.is_folder) {
             item.kind = ChipKind::Folder;
-            int n = 0;
-            for (const auto& q : all) {
-                if (q.parent_id == p.id && !isHidden(q.id)) ++n;
-            }
-            item.visibleChildCount = n;
+            item.visibleChildCount = visibleChildCounts[p.id];
         } else {
             item.kind = ChipKind::Orphan;
         }

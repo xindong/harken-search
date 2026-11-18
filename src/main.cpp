@@ -247,6 +247,7 @@
 #include "RenderFrameRequestPolicy.h"
 #include "PlaylistQuickBarMotion.h"
 #include "PlaylistFolderTree.h"
+#include "PlaylistCollectionIndex.h"
 #include "PlaylistDisplayedFileCountPolicy.h"
 #include "PlaylistScopeCounts.h"
 #include "DbNorm.h"
@@ -14008,7 +14009,8 @@ static void RenderFolderTreeExplorerToolbar(
     const std::function<void()>& onSearchEscape,
     const std::function<void()>& onRefresh,
     const std::function<void()>& onLocate,
-    const std::function<void(bool hovered)>& onLocateHover)
+    const std::function<void(bool hovered)>& onLocateHover,
+    AppState* qaState)
 {
     constexpr float kRefreshW = 26.0f;
     constexpr float kLocateW = 22.0f;
@@ -14026,6 +14028,17 @@ static void RenderFolderTreeExplorerToolbar(
         0,
         searchWidth,
         inheritContextColors);
+#if ARIS_PREVIEW_ISOLATION
+    if (qaState) {
+        const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        qaState->qaFilterUiRects["folder_search"] = ImVec4(
+            min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+    }
+#else
+    (void)qaState;
+#endif
     if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         onSearchEscape();
         ImGui::ClearActiveID();
@@ -14197,7 +14210,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                false,
+                state.settings.theme == AppTheme::LapisBlue,
                 false,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
@@ -14221,7 +14234,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                         return;
                     }
                     HarkenSearch::SetTooltip("%s", canLocateCurrent ? L(Browser_LocateCurrentFolder) : L(Browser_NoCurrentFolderToLocate));
-                });
+                }, &state);
         },
         [&state, browserSource]() {
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
@@ -15280,17 +15293,14 @@ bool AddFolderPathToPlaylist(AppState& state,
                                     const char* diagLabel) {
     if (playlistId <= 0 || folderPath == nullptr || folderPath[0] == '\0') return false;
 
-    auto records = state.database.getFilesByFolder(folderPath, 1000000, 0);
-    if (records.empty()) return false;
-
-    std::vector<int64_t> fileIds;
-    fileIds.reserve(records.size());
-    for (const auto& record : records) {
-        if (record.id > 0) fileIds.push_back(record.id);
-    }
-    const auto bulk = state.database.addManyToPlaylist(playlistId, fileIds);
+    const auto bulk = state.database.addFolderToPlaylist(playlistId, folderPath);
     const int addedCount = bulk.addedFiles;
 
+    if (!bulk.error.empty()) {
+        DIAG_ACTION_FMT("Playlist", "Folder drop failed via %s target=%lld error=%s",
+                        diagLabel ? diagLabel : "drag", (long long)playlistId, bulk.error.c_str());
+        return false;
+    }
     if (addedCount <= 0) return false;
 
     DIAG_ACTION_FMT("Playlist",
@@ -15365,30 +15375,37 @@ bool ShouldSuppressPlaylistContextPopup() {
 void ApplyPlaylistQuickBarOrder(AppState& state) {
     if (state.playlists.empty() || state.settings.playlistQuickBarOrder.empty()) return;
 
+    const uint64_t signature = aura::playlist::PlaylistQuickBarOrderSignature(
+        state.playlists, state.settings.playlistQuickBarOrder);
+    if (signature == state.playlistQuickBarAppliedOrderSignature) return;
+
+    std::unordered_map<int64_t, size_t> indexById;
+    indexById.reserve(state.playlists.size());
+    for (size_t i = 0; i < state.playlists.size(); ++i) {
+        indexById[state.playlists[i].id] = i;
+    }
+
     std::vector<Playlist> ordered;
     ordered.reserve(state.playlists.size());
-    std::vector<int64_t> usedIds;
+    std::unordered_set<int64_t> usedIds;
     usedIds.reserve(state.playlists.size());
 
     for (int64_t id : state.settings.playlistQuickBarOrder) {
-        auto it = std::find_if(state.playlists.begin(), state.playlists.end(),
-            [&](const Playlist& pl) { return pl.id == id; });
-        if (it != state.playlists.end() &&
-            std::find(usedIds.begin(), usedIds.end(), id) == usedIds.end()) {
-            ordered.push_back(*it);
-            usedIds.push_back(id);
-        }
+        auto it = indexById.find(id);
+        if (it == indexById.end() || !usedIds.insert(id).second) continue;
+        ordered.push_back(state.playlists[it->second]);
     }
-
-    for (const Playlist& pl : state.playlists) {
-        if (std::find(usedIds.begin(), usedIds.end(), pl.id) == usedIds.end()) {
-            ordered.push_back(pl);
-            usedIds.push_back(pl.id);
-        }
+    for (const Playlist& playlist : state.playlists) {
+        if (usedIds.insert(playlist.id).second) ordered.push_back(playlist);
     }
 
     if (ordered.size() == state.playlists.size()) {
         state.playlists = std::move(ordered);
+        // Cache the signature of the order we just applied, otherwise the next
+        // frame sees a different signature and rebuilds the whole list again.
+        state.playlistQuickBarAppliedOrderSignature =
+            aura::playlist::PlaylistQuickBarOrderSignature(
+                state.playlists, state.settings.playlistQuickBarOrder);
     }
 }
 
@@ -15778,26 +15795,35 @@ static void ClearPlaylistFolderFilter(AppState& state) {
     state.syncToTab();
 }
 
-static std::vector<AudioRecord> LoadCompletePlaylistMembers(AppState& state, int64_t playlistId) {
-    if (playlistId <= 0) return {};
-    if (state.database.isFolder(playlistId)) {
-        return state.database.getAggregatedPlaylistFiles(playlistId);
+static bool RefreshPlaylistFolderHierarchy(AppState& state, int64_t playlistId) {
+    if (playlistId <= 0) return false;
+
+    const uint64_t dataRevision = state.database.dataRevision();
+    if (state.playlistFolderHierarchyPlaylistId == playlistId &&
+        state.playlistFolderHierarchyDataRevision == dataRevision) {
+        return false;
     }
-    return state.database.getPlaylistFiles(playlistId);
+
+    const bool folderPlaylist = state.database.isFolder(playlistId);
+    const int64_t totalMembers = folderPlaylist
+        ? state.database.getAggregatedPlaylistFileCount(playlistId)
+        : state.database.getPlaylistFileCount(playlistId);
+    std::vector<PlaylistFolderCount> folderCounts = folderPlaylist
+        ? state.database.getAggregatedPlaylistFolderCounts(playlistId)
+        : state.database.getPlaylistFolderCounts(playlistId);
+
+    state.setPlaylistFolderHierarchy(
+        BuildPlaylistFolderTreeFromFolderCounts(std::move(folderCounts), totalMembers),
+        playlistId,
+        dataRevision);
+    return true;
 }
 
 static void RenderActivePlaylistFolderTree(AppState& state, const Playlist& playlist) {
-    if (state.playlistFolderHierarchyPlaylistId != playlist.id &&
-        state.viewMode == ViewMode::Playlist &&
+    if (state.viewMode == ViewMode::Playlist &&
         state.selectedPlaylistId == playlist.id &&
         !state.folderFilterActive) {
-        const std::vector<AudioRecord> completeMembers =
-            LoadCompletePlaylistMembers(state, playlist.id);
-        if (!completeMembers.empty()) {
-            state.setPlaylistFolderHierarchy(
-                BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                playlist.id);
-        }
+        RefreshPlaylistFolderHierarchy(state, playlist.id);
     }
 
     ImGui::Indent(10.0f);
@@ -15848,15 +15874,7 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
     }
 
     state.expandedPlaylistFolderTreePlaylistId = state.selectedPlaylistId;
-    if (state.playlistFolderHierarchyPlaylistId != state.selectedPlaylistId) {
-        const std::vector<AudioRecord> completeMembers =
-            LoadCompletePlaylistMembers(state, state.selectedPlaylistId);
-        if (!completeMembers.empty()) {
-            state.setPlaylistFolderHierarchy(
-                BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                state.selectedPlaylistId);
-        }
-    }
+    RefreshPlaylistFolderHierarchy(state, state.selectedPlaylistId);
 
     const ThemeColorScheme& tcs = ThemeColors::current();
     const ImVec4 playlistTreePanelBg = tcs.filterBrowserBG;
@@ -16141,15 +16159,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const bool playlistScopedFolderTree = (effectivePlaylistFolderTreeId > 0);
         if (playlistScopedFolderTree) {
             state.selectedPlaylistId = effectivePlaylistFolderTreeId;
-            const std::vector<AudioRecord> completeMembers =
-                LoadCompletePlaylistMembers(state, effectivePlaylistFolderTreeId);
-            const bool playlistTreeNeedsRebuild =
-                state.playlistFolderHierarchyPlaylistId != effectivePlaylistFolderTreeId ||
-                state.playlistFolderHierarchy.fileCount != (int)completeMembers.size();
-            if (playlistTreeNeedsRebuild && !completeMembers.empty()) {
-                state.setPlaylistFolderHierarchy(
-                    BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                    effectivePlaylistFolderTreeId);
+            const bool playlistTreeRebuilt =
+                RefreshPlaylistFolderHierarchy(state, effectivePlaylistFolderTreeId);
+            if (playlistTreeRebuilt) {
                 state.folderSearchHits.clear();
                 state.folderSearchDirectHits.clear();
                 state.folderSearchExpandPaths.clear();
@@ -16230,7 +16242,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         "%s",
                         canLocateCurrent ? L(Main_LocateInTreeTip)
                                          : L(Main_NoTreeSelTip));
-                });
+                }, &state);
         };
 
         if (playlistScopedFolderTree) {
@@ -17202,6 +17214,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         } else if (state.playlists.empty()) {
             ImGui::TextDisabled("%s", L(Nav_NoPlaylists));
         } else {
+            state.EnsurePlaylistCollectionIndex();
             // 次世代：控制台风格播放列表 (Console-Style Playlists)
             auto uiWithAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
             const ImVec4 kThemeTextMuted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
@@ -17422,8 +17435,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
                 // playlistRowMeta: keep counts as light metadata, not chrome badges.
                 int64_t count =
-                    aura::playlist::ResolvePlaylistDisplayedFileCount(
-                        state.playlists, pl.id);
+                    state.playlistCollectionIndex.DisplayedCount(pl.id);
                 const bool countPending = (count < 0);
                 const bool quickBarVisible = IsPlaylistShownInQuickBar(state, pl.id);
                 const bool showCountMeta = countPending || count > 0 || isSelected || isHovered;
@@ -29431,13 +29443,16 @@ void DrawSimilarityIndexPanel(AppState& state) {
     static double lastCountTime = -999.0;
     static std::string cachedDbPath;
     static int64_t cachedDbGeneration = -1;
+    static uint64_t cachedClearGeneration = 0;
     static bool wasExtracting = false;
     const bool extracting = state.batchFeatureExtracting.load();
     if (cachedDbPath != state.currentDbPathUtf8 ||
-        cachedDbGeneration != state.backfillDbGeneration || state.dbSwitchInProgress) {
+        cachedDbGeneration != state.backfillDbGeneration ||
+        cachedClearGeneration != state.similarityAnalysisClearGeneration || state.dbSwitchInProgress) {
         count.Reset();
         cachedDbPath = state.currentDbPathUtf8;
         cachedDbGeneration = state.backfillDbGeneration;
+        cachedClearGeneration = state.similarityAnalysisClearGeneration;
         lastCountTime = -999.0;
     }
     if (ImGui::IsWindowAppearing() || (wasExtracting && !extracting)) {
@@ -29448,13 +29463,18 @@ void DrawSimilarityIndexPanel(AppState& state) {
     if (!state.dbSwitchInProgress && state.database.isOpen()) {
         if (!state.featureIndexStatistics) {
             state.featureIndexStatistics = std::make_shared<HarkenSearch::LibraryStatisticsWorker>(
-                HarkenSearch::MakeFeatureIndexCountHandler(true));
+                HarkenSearch::MakeFeatureIndexCountHandler(true, [] {
+                    HarkenSearch::AudioEmbeddingService model;
+                    std::string error;
+                    model.Load(GetExeDirUtf8() + "/models/clap", error);
+                    return model.IsReady();
+                }));
         }
         auto& statistics = *state.featureIndexStatistics;
         statistics.SetDatabase(state.currentDbPathUtf8, state.backfillDbGeneration);
         if (const auto result = statistics.Poll()) {
-            count.Complete(result->success, result->indexed,
-                           result->semanticIndexed, result->total);
+            count.Complete(result->success, result->indexed, result->semanticIndexed,
+                           result->total, result->pending);
         }
         if (count.phase() != SimilarityIndexCountState::Phase::Failed &&
             now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
@@ -29505,29 +29525,15 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
         ThemeInspector::RegisterLastItem("similar.index.cancel");
     } else {
-        const int pending = std::max(0, count.total() -
-            std::min(count.indexed(), count.semanticIndexed()));
+        const int pending = count.pending();
         if (count.CanStart(state.dbSwitchInProgress, state.database.isOpen())) {
             ImGui::Spacing();
-            char label[128];
-            if (pending > 0) snprintf(label, sizeof(label), L(Main_BatchAnalyzeFmt), pending);
-            else snprintf(label, sizeof(label), "%s", L(Similar_Recheck));
-            if (aura::ui::ActionButton(label, ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
-                if (pending > 0) StartBatchFeatureExtraction(state);
-                else StartBatchFeatureExtraction(state, true);
+            ImGui::Text(L(Similar_PendingCountFmt), pending);
+            if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 35), aura::ui::ButtonVariant::PrimarySearch)) {
+                StartBatchFeatureExtraction(state, true);
                 wasExtracting = true;
             }
             ThemeInspector::RegisterLastItem("similar.index.start");
-            if (pending > 0) {
-                // A permanently failing file must not prevent checking already
-                // analyzed files for source changes. Supplementing stays the
-                // primary action and never traverses the completed analyses.
-                if (aura::ui::ActionButton(L(Similar_Recheck), ImVec2(-1, 28), aura::ui::ButtonVariant::Quiet)) {
-                    StartBatchFeatureExtraction(state, true);
-                    wasExtracting = true;
-                }
-                ThemeInspector::RegisterLastItem("similar.index.recheck");
-            }
         } else if (count.phase() == SimilarityIndexCountState::Phase::Failed &&
                    !state.dbSwitchInProgress && state.database.isOpen()) {
             if (aura::ui::ActionButton(L(Similar_StatsRetry), ImVec2(-1, 35),

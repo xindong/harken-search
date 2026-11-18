@@ -33,6 +33,9 @@ public:
     bool Open(const std::string& databasePath, const FeatureExtractionCancelCheck& cancel = {});
     void Close();
     bool Files(std::vector<SimilarityFile>& files);
+    // Count the well-formed rows accepted by PendingFiles() on the caller's read-only connection.
+    static bool CountValidCoverage(sqlite3* readOnlyDatabase, int& acoustic, int& semantic,
+                                   const FeatureExtractionCancelCheck& cancel = {});
     // Select work from stored coverage without opening already indexed audio.
     bool PendingFiles(std::vector<SimilarityFile>& files, bool requireSemantic);
     bool GetFile(int64_t id, SimilarityFile& file);
@@ -42,6 +45,9 @@ public:
     int64_t SegmentCount();
     bool VisitSegments(const std::function<bool(int64_t, const AudioEmbeddingSegment&)>& visitor);
     bool Invalidate(int64_t id);
+    // Removes only this database's V2 analysis and segment rows. Returns -1
+    // on failure; a failed transaction leaves both tables unchanged.
+    int64_t ClearAll();
     int64_t Revision();
     std::string LibraryIdentity();
     SimilarityCoverage Coverage();

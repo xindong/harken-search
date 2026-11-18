@@ -441,6 +441,14 @@ struct FolderInfo {
     std::vector<FolderInfo> subfolders;
 };
 
+// Lightweight playlist folder aggregation row so the playlist folder tree can
+// show folder names and counts without loading complete AudioRecord rows.
+struct PlaylistFolderCount {
+    std::string folderPath;   // Canonical folder path used as the tree key.
+    std::string displayPath;  // Representative display folder path from a member file.
+    int fileCount = 0;
+};
+
 // 启动健康检查结果 (F-009)
 struct HealthCheckResult {
     bool allOk = true;
@@ -1009,6 +1017,7 @@ public:
     std::vector<Playlist> getAllPlaylists(bool includeFileCounts = true);
     bool addToPlaylist(int64_t playlistId, int64_t fileId);
     PlaylistBulkAddResult addManyToPlaylist(int64_t playlistId, const std::vector<int64_t>& fileIds);
+    PlaylistBulkAddResult addFolderToPlaylist(int64_t playlistId, const std::string& folderPath);
     PlaylistImportResult importReaperFileListToPlaylist(const std::string& fileListPath,
                                                         const std::string& playlistName,
                                                         ScanProgressCallback callback = nullptr,
@@ -1025,6 +1034,11 @@ public:
     int64_t searchAllPlaylistFileCount(const SearchFilter& filter);
     /** 极速获取播放列表文件总数（百万级 <1ms，命中主键索引） */
     int64_t getPlaylistFileCount(int64_t playlistId);
+
+    // Playlist-scoped folder aggregation that only reads folder_path/file_path
+    // and counts members instead of building complete AudioRecord rows.
+    std::vector<PlaylistFolderCount> getPlaylistFolderCounts(int64_t playlistId);
+    std::vector<PlaylistFolderCount> getAggregatedPlaylistFolderCounts(int64_t parentFolderId);
 
     // 子播放列表 API (F-017 v2)
     bool markAsFolder(int64_t playlistId);                                   // 升级为 folder

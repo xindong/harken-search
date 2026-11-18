@@ -76,14 +76,15 @@ def run(args):
         query('theme');click('result-theme');click('stock-'+str(index));settle()
     def saved(key):
         return int(next(s.split('=',1)[1] for s in profile.read_text('utf-8-sig').splitlines() if s.startswith(key+'=')))
-    def verify_fonts(list_size,system=18):
+    def verify_fonts(list_size,system=18,preview_list=None):
         v=settle()
-        assert v['live_list_font']==list_size and abs(v['list_font_pixels']-list_size)<.1,v
+        visible_list=list_size if preview_list is None else preview_list
+        assert v['live_list_font']==list_size and abs(v['list_font_pixels']-visible_list)<.1,v
         assert v['live_font']==system and abs(v['reading_font_pixels']-system)<.1,v
-        assert abs(item('search')['font_pixels']-max(18,system))<.1,v
+        assert abs(item('search')['font_pixels']-system)<.1,v
         assert saved('listFontSize')==list_size and saved('readingFontSize')==system
         assert v['drawn_list_sample'] and v['drawn_list_frame']>=v['current_frame']-3,v
-        assert abs(v['drawn_list_font_pixels']-list_size)<.1,v
+        assert abs(v['drawn_list_font_pixels']-visible_list)<.1,v
         # This is the content height; the table adds its own cell padding.
         assert v['drawn_list_row_height']>=v['drawn_list_line_height']-.1,v
         return v
@@ -128,16 +129,16 @@ def run(args):
         verify_fonts(18);shot('01-before-18')
         choose_list(24)
         assert state()['draft_list_font']==24 and state()['live_list_font']==18
-        verify_fonts(18);shot('02-draft-24');click('revert');verify_fonts(18)
-        check('choosing 24px waits for Apply; Revert leaves actual file-list text at 18px')
+        verify_fonts(18,preview_list=24);shot('02-draft-24');click('revert');verify_fonts(18)
+        check('choosing 24px previews the actual file list; Revert restores 18px')
         choose_list(24);click('close');assert state()['prompt'];shot('03-unsaved-prompt');click('discard');settle()
         assert not state()['open'] and saved('listFontSize')==18
         open_settings();verify_fonts(18)
         check('closing and discarding a list-font change preserves original actual and saved size')
         choose_list(24);cmd(cmd='settings_ui',action='fail_save_once');click('apply');settle()
         assert state()['pending'] and state()['error'] and state()['draft_list_font']==24
-        verify_fonts(18);shot('04-save-failure')
-        check('save failure preserves original file-list font and pending choice')
+        verify_fonts(18,preview_list=24);shot('04-save-failure')
+        check('save failure preserves the pending file-list preview and saved original size')
         click('apply');verify_fonts(24);shot('05-applied-24')
         check('retry Apply changes actual filename draw font to 24px and retains independent 18px system font')
         click('done');shot('06-main-24');stop();start();open_settings();verify_fonts(24);shot('07-restart-24')
@@ -161,7 +162,8 @@ def run(args):
                     cmd(cmd='settings_ui',action='resize',width=width,height=height);settle();v=verify_fonts(size)
                     for nav in range(1,9):item('nav-'+str(nav))
                     item('close');choose_list(size);click('listFont');item('option-'+str(fonts.index(size)))
-                    shot(f'11-options-{size}-theme{theme}-{width}x{height}');key('Escape');settle()
+                    shot(f'11-options-{size}-theme{theme}-{width}x{height}')
+                    click('search');settle()
                     apply();click('done');shot(f'12-main-{size}-theme{theme}-{width}x{height}');open_settings()
                     check(f'{size}px theme {theme} {width}x{height}: actual list rendering, row height, selector, navigation and close control fit')
                 cmd(cmd='settings_ui',action='resize',width=1120,height=800);settle()
