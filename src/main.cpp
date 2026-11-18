@@ -146,6 +146,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/ResultsPanelLayout.h"
 #include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
@@ -39301,14 +39302,11 @@ void RenderUI(AppState& state) {
     float listOffY = 15.0f * (1.0f - t);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + listOffY);
 
-        // Keep tabs, breadcrumb/path, table header and rows on one compact
-        // content origin; the old 20 px inset created a visible left moat.
-        constexpr float kResultsContentInsetX = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kResultsContentInsetX, 2.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(harken::results::kContentInsetX, 0.0f));
 
         static ImVec2 s_centerPanelMin, s_centerPanelMax;
         ImDrawList* centerResultsDrawList = nullptr;
-        BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), false,
+        BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     {
         centerResultsDrawList = ImGui::GetWindowDrawList();
@@ -40375,13 +40373,10 @@ void RenderUI(AppState& state) {
                                                         : ImVec4(0.28f, 0.44f, 0.64f, 0.22f);
         const ImVec4 kInfoLinkActive = kIsRoseCedarTheme ? uiWithAlpha(uiMix(uiColors[ImGuiCol_ButtonActive], COLOR_SELECTED, 0.18f), 0.32f)
                                                          : ImVec4(0.33f, 0.50f, 0.72f, 0.30f);
+        const bool emptyLibraryFileTable = (state.totalFileCount == 0);
         {
         // Breadcrumb / path strip is a reading surface: scale with reading font.
         ReadingTextScope _readingCrumb;
-        // Browser top strip should align with the database results lane.
-        // Do not add an extra left indent here, otherwise the Browser path/scope
-        // rows look visually shifted relative to the shared file table below.
-        ImGui::Indent(0.0f);
         if (state.viewMode == ViewMode::Browser) {
             const std::string& currentPath = state.fileBrowser.getCurrentPath();
             if (state.browserPathBuffer[0] == '\0') {
@@ -40389,6 +40384,9 @@ void RenderUI(AppState& state) {
             }
 
             // --- Row 1: parent button + path bar + open button ---
+            const float pathRowRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            const float pathItemGap = ImGui::GetStyle().ItemSpacing.x;
+            harken::results::AlignBrowserPathLabel(emptyLibraryFileTable);
             ImGui::TextColored(kInfoLabel, "%s", L(Status_PathLabel));
             ImGui::SameLine();
             bool canNavigateUp = false;
@@ -40407,14 +40405,17 @@ void RenderUI(AppState& state) {
                 SyncBrowserPathBuffer(state);
             }
             ImGui::EndDisabled();
+            const float parentButtonRight = ImGui::GetItemRectMax().x;
             if (!canNavigateUp && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 HarkenSearch::SetTooltip(L(Main_TopLevelTip));
             }
 
-            ImGui::SameLine();
+            constexpr float minInlinePathWidth = 72.0f;
+            if (pathRowRight - parentButtonRight - openButtonWidth - pathItemGap * 2.0f >= minInlinePathWidth)
+                ImGui::SameLine();
             const float browserPathInputWidth = std::max(
                 1.0f,
-                ImGui::GetContentRegionAvail().x - openButtonWidth - ImGui::GetStyle().ItemSpacing.x);
+                ImGui::GetContentRegionAvail().x - openButtonWidth - pathItemGap);
             const ImVec2 browserPathHitMin = ImGui::GetCursorScreenPos();
             const ImVec2 browserPathHitMax(
                 browserPathHitMin.x + browserPathInputWidth,
@@ -40479,6 +40480,16 @@ void RenderUI(AppState& state) {
 
             // --- Row 2: scope toggle + in-view filter + source label ---
             {
+                const float filterRowWidth = ImGui::GetContentRegionAvail().x;
+                const float filterRowRight = ImGui::GetCursorScreenPos().x + filterRowWidth;
+                const float filterItemGap = ImGui::GetStyle().ItemSpacing.x;
+                const auto inlineFilterWidth = [&] {
+                    return filterRowRight - ImGui::GetItemRectMax().x - filterItemGap;
+                };
+                const auto toggleWidth = [](const char* label) {
+                    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
+                           ImGui::CalcTextSize(label, nullptr, true).x;
+                };
                 bool isCurDir = (state.fileBrowser.getScope() == BrowserScope::CurrentDir);
                 bool isRecursive = !isCurDir;
 
@@ -40490,7 +40501,7 @@ void RenderUI(AppState& state) {
                     state.browserSortPath.clear();
                     state.syncToTab();
                 }
-                ImGui::SameLine();
+                if (inlineFilterWidth() >= toggleWidth(L(Main_TabIncludeSubRadio))) ImGui::SameLine();
                 if (ImGui::RadioButton(L(Main_TabIncludeSubRadio), isRecursive)) {
                     state.fileBrowser.setScope(BrowserScope::RecursiveAudio);
                     state.browserSelectedIndicesSet.clear();
@@ -40498,7 +40509,7 @@ void RenderUI(AppState& state) {
                     state.browserSortPath.clear();
                     state.syncToTab();
                 }
-                ImGui::SameLine();
+                if (inlineFilterWidth() >= toggleWidth(L(Filter_OnlyAudio))) ImGui::SameLine();
                 bool audioFilter = state.fileBrowser.isAudioFilterEnabled();
                 if (ImGui::Checkbox(L(Filter_OnlyAudio), &audioFilter)) {
                     state.fileBrowser.setAudioFilter(audioFilter);
@@ -40511,34 +40522,44 @@ void RenderUI(AppState& state) {
 
                 int audioCount = (int)state.fileBrowser.activeAudioFileCount();
 
-                ImGui::SameLine();
-                if (state.fileBrowser.isDirScanInProgress())
-                    ImGui::TextDisabled(L(Main_ScanningSuffix));
-                else
-                    ImGui::TextDisabled(L(Main_CountParenFmt), audioCount);
+                char audioCountText[64]{};
+                std::snprintf(audioCountText, sizeof(audioCountText), L(Main_CountParenFmt), audioCount);
+                const char* scanStatus = state.fileBrowser.isDirScanInProgress() ? L(Main_ScanningSuffix) : audioCountText;
+                if (inlineFilterWidth() >= ImGui::CalcTextSize(scanStatus).x) ImGui::SameLine();
+                ImGui::TextDisabled("%s", scanStatus);
 
-                ImGui::SameLine();
+                if (!state.browserLocateSourceLabel.empty() && ImGui::GetTime() * 1000.0 >= state.browserLocateSourceUntilMs)
+                    state.browserLocateSourceLabel.clear();
+                const char* sourceLabel = state.browserLocateSourceLabel.c_str();
+                const ImVec2 sourceTextSize = ImGui::CalcTextSize(sourceLabel);
+                const auto filterLayout = harken::results::LayoutBrowserSearchRow(
+                    filterRowWidth, inlineFilterWidth(), sourceTextSize.x, filterItemGap);
+                if (filterLayout.searchBesideControls) ImGui::SameLine();
                 {
                     const auto palette = harken::toolbar::ResolveSearchPalette(kCurrentTheme,
                         kCurrentTheme.resultsBG, uiColors[ImGuiCol_FrameBg], uiColors[ImGuiCol_Text]);
-                    const float browserSearchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - 1.0f);
                     const auto search = harken::toolbar::DrawSearchField("##BrowserSearch", L(Search_FileHint),
-                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer), browserSearchWidth, palette);
+                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer), filterLayout.searchWidth, palette);
                     if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                         state.browserFilterBuffer[0] = '\0';
                         ImGui::ClearActiveID();
                     }
                 }
 
-                // source label (from DB->browser jump, auto-dismiss after 5s)
-                if (!state.browserLocateSourceLabel.empty()) {
-                    double now = ImGui::GetTime() * 1000.0;
-                    if (now < state.browserLocateSourceUntilMs) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 0.9f), "%s", state.browserLocateSourceLabel.c_str());
+                if (filterLayout.sourceWidth > 0.0f) {
+                    if (filterLayout.sourceBesideSearch) ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 0.9f));
+                    if (filterLayout.sourceWidth < sourceTextSize.x) {
+                        ImVec2 textMin = ImGui::GetCursorScreenPos();
+                        textMin.y += ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset;
+                        const ImVec2 textMax(textMin.x + filterLayout.sourceWidth, textMin.y + sourceTextSize.y);
+                        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), textMin, textMax, textMax.x,
+                                                 sourceLabel, nullptr, &sourceTextSize);
+                        ImGui::Dummy(ImVec2(filterLayout.sourceWidth, sourceTextSize.y));
                     } else {
-                        state.browserLocateSourceLabel.clear();
+                        ImGui::TextUnformatted(sourceLabel);
                     }
+                    ImGui::PopStyleColor();
                 }
 
             }
@@ -40791,7 +40812,6 @@ void RenderUI(AppState& state) {
             ImGui::SameLine(0, 2);
             ImGui::TextColored(kInfoMuted, "%s", L(Status_FilesUnit));
         }
-        ImGui::Unindent(4.0f); // restore x=0 for filter chips + table below
         }
         ImGui::Separator();
 
@@ -41300,12 +41320,13 @@ void RenderUI(AppState& state) {
         }
 
 // File table with sortable columns
+        const bool browserFileTable = state.viewMode == ViewMode::Browser;
         const bool needsDbSetup =
             state.viewMode != ViewMode::Browser &&
             state.startupNeedsDatabaseSetup && !state.database.isOpen();
         ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
                                       ImGuiTableFlags_Hideable |
-                                      ImGuiTableFlags_BordersOuter |
+                                      harken::results::TableOuterFlags(emptyLibraryFileTable) |
                                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
                                       ImGuiTableFlags_SizingStretchProp |
                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti;
@@ -41340,13 +41361,32 @@ void RenderUI(AppState& state) {
             fileNameColW = kFileNameColMinW;
             waveformColW = (std::max)(kWaveColMinW, flexibleColsWidth - fileNameColW);
         }
+        const auto& fileTableStyle = ImGui::GetStyle();
+        const float coverHeaderMinW = coverColumnCount ?
+            ImGui::CalcTextSize(L(Col_Cover)).x + fileTableStyle.CellPadding.x * 2.0f + ImGui::GetFontSize() : 0.0f;
+        const float coverColW = coverColumnCount ? (std::max)(
+            static_cast<float>(state.settings.rowHeight) + kCoverColumnExtra,
+            coverHeaderMinW) : 0.0f;
+        if (browserFileTable) {
+            constexpr float durationFormatAndSampleRate = 88.0f + 72.0f + 76.0f;
+            const bool musicDefaults = state.settings.productMode == ProductMode::Music;
+            const float musicMetadataWidth = musicDefaults ? 120.0f + 64.0f + 72.0f : 0.0f;
+            const int visibleColumnCount = 5 + coverColumnCount + (musicDefaults ? 3 : 0);
+            const float visibleCellPadding = visibleColumnCount * fileTableStyle.CellPadding.x * 2.0f;
+            const float reservedWidth = durationFormatAndSampleRate + musicMetadataWidth + coverColW + visibleCellPadding +
+                                        fileTableStyle.ScrollbarSize + 2.0f;
+            const auto defaults = harken::results::ResolveBrowserColumnDefaults(availWidth, reservedWidth);
+            fileNameColW = defaults.fileName;
+            waveformColW = defaults.waveform;
+        }
 
         // FilePath is a stable physical column (index 16) and its row emission
         // stays unconditional. Only an enabled FilePath may own the trailing
         // stretch; when hidden, fit the table to its fixed visible columns so
         // no invisible stretch gutter reaches the results border.
         constexpr int kResultsFilePathColumnIndex = 16;
-        const ImGuiID resultsTableId = ImGui::GetID("FileTableV6");
+        const char* const resultsTableName = harken::results::TableName(browserFileTable);
+        const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);
         const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId);
         const bool filePathVisible = previousResultsTable &&
             previousResultsTable->ColumnsCount > kResultsFilePathColumnIndex &&
@@ -41354,11 +41394,6 @@ void RenderUI(AppState& state) {
         const float resultsTableInnerWidth = filePathVisible ? innerWidth : 0.0f;
         const ImGuiTableFlags resultsSizingPolicy = filePathVisible ? ImGuiTableFlags_SizingStretchProp : ImGuiTableFlags_SizingFixedFit;
         tableFlags = resultsSizingPolicy | (tableFlags & ~ImGuiTableFlags_SizingMask_);
-        const bool emptyLibraryFileTable = (state.totalFileCount == 0);
-        if (emptyLibraryFileTable)
-            tableFlags &= ~ImGuiTableFlags_BordersOuter;
-        constexpr float kResultsTableOuterBorder = kResultsPerimeterWidth;
-
         if (!needsDbSetup) {
         // Results list background should follow the active theme tokens, not a fixed AppTheme branch.
         {
@@ -41439,13 +41474,7 @@ void RenderUI(AppState& state) {
         // UX #109 follow-up (TASK-20261028-NO-EMPTY-SURFACE): the standalone
         // empty-results surface was removed at the user's request, so the
         // results table keeps its full height even with zero rows.
-        ImVec2 adjustedFileTableOuterSize = ImVec2(0.0f, 0.0f);
-        if (emptyLibraryFileTable) {
-            // Dropping BordersOuter would otherwise let the header fill to the independent frame.
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kResultsTableOuterBorder);
-            adjustedFileTableOuterSize.x = -(kResultsTableOuterBorder * 2.0f);
-        }
-        if (BeginTransientScrollbarTable("FileTableV6", totalColumns, tableFlags, adjustedFileTableOuterSize, resultsTableInnerWidth)) {
+        if (BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth)) {
             // The scrollable table owns a later regular draw list than the
             // surrounding CenterFileList child. Anchor the frame there so it
             // sits above headers/scrollbars but remains below popup windows.
@@ -41530,13 +41559,6 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(L(Col_FilePath), ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultHide, 1.0f, (ImGuiID)SortColumn::FilePath);
 
             if (state.settings.showCoverColumn) {
-                const float coverHeaderMinW =
-                    ImGui::CalcTextSize(L(Col_Cover)).x +
-                    ImGui::GetStyle().CellPadding.x * 2.0f +
-                    ImGui::GetFontSize();
-                const float coverColW = std::max(
-                    (float)state.settings.rowHeight + kCoverColumnExtra,
-                    coverHeaderMinW);
                 ImGui::TableSetupColumn(L(Col_Cover), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, coverColW, (ImGuiID)SortColumn::Cover);
             }
             // 响度分析列：始终注册（DefaultHide），用户通过右键表头控制显示

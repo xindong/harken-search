@@ -84,7 +84,7 @@ def test_browser_and_settings_reuse_filter_variant_without_precise_mode():
     main = MAIN.read_text(encoding="utf-8")
     settings = (MAIN.parent / "SettingsDialog.inl").read_text(encoding="utf-8")
     assert 'DrawSearchField("##BrowserSearch", L(Search_FileHint),' in main
-    assert "state.browserFilterBuffer, sizeof(state.browserFilterBuffer), browserSearchWidth, palette" in main
+    assert "state.browserFilterBuffer, sizeof(state.browserFilterBuffer), filterLayout.searchWidth, palette" in main
     assert 'DrawSearchField("##settings-search", L(SetUX_SearchSettingsCtrlK),' in settings
     assert "searchOptions.requestFocus = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)" in settings
     assert "if (search.active) editor.recording=false;" in settings

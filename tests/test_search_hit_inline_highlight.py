@@ -64,7 +64,7 @@ class SearchHitInlineHighlightSourceContractTests(unittest.TestCase):
         self.assertNotIn("static void DrawResultRowFieldText", main)
         self.assertNotIn("ResultRowFieldMatchesSearchHit", main)
 
-        table_start = main.index("const ImGuiID resultsTableId = ImGui::GetID(\"FileTableV6\");")
+        table_start = main.index("const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);")
         table_end = main.index("const bool isResultsWaveColumnVisible =", table_start)
         table = main[table_start:table_end]
         self.assertNotIn("ResolveSearchHitColumnIndex", table)

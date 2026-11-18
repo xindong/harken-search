@@ -12,13 +12,13 @@ double transientScrollbarNow = 0.0;
 bool BeginTransientScrollbarChild(
     const char* strId,
     const ImVec2& size,
-    bool childBorder,
+    ImGuiChildFlags childFlags,
     ImGuiWindowFlags flags) {
     const ImGuiID regionId = ImGui::GetID(strId);
     aura::ui::workspace::TransientScrollbarStyleScope styleScope(
         transientScrollbarController.shouldShow(
             regionId, transientScrollbarNow, true));
-    const bool visible = (ImGui::BeginChild)(strId, size, childBorder, flags);
+    const bool visible = (ImGui::BeginChild)(strId, size, childFlags, flags);
     transientScrollbarController.bindCurrentWindowToRegion(regionId);
     return visible;
 }
@@ -26,11 +26,11 @@ bool BeginTransientScrollbarChild(
 bool BeginTransientScrollbarChild(
     ImGuiID id,
     const ImVec2& size,
-    bool childBorder,
+    ImGuiChildFlags childFlags,
     ImGuiWindowFlags flags) {
     aura::ui::workspace::TransientScrollbarStyleScope styleScope(
         transientScrollbarController.shouldShow(id, transientScrollbarNow, true));
-    const bool visible = (ImGui::BeginChild)(id, size, childBorder, flags);
+    const bool visible = (ImGui::BeginChild)(id, size, childFlags, flags);
     transientScrollbarController.bindCurrentWindowToRegion(id);
     return visible;
 }
