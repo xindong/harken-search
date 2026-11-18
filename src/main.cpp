@@ -42070,7 +42070,7 @@ void RenderUI(AppState& state) {
                     if (wasPlayed) {
                         ImGui::PopStyleColor();
                     }
-                    ThemeMenuPopupShellScope browserMenuShell(false);
+                    ThemeMenuPopupShellScope browserMenuShell(false, GetMenuFontSizePx());
                     if (browserMenuShell.beginContextItem("##BrowserRowCtx", !entry.isDirectory)) {
                         ThemeMenuPopupStyleScope browserMenuChrome(GetUIFontRegular(), !entry.isDirectory);
                         const std::string contextFolder = ResolveBrowserEntryFolderPath(entry);
@@ -43062,7 +43062,7 @@ void RenderUI(AppState& state) {
                     }
                     // Keep the context-menu ID adjacent to Selectable while LastItem is valid.
                     bool rowContextInvalidatedResults = false;
-                    ThemeMenuPopupShellScope rowMenuShell(false);
+                    ThemeMenuPopupShellScope rowMenuShell(false, GetMenuFontSizePx());
                     if (!g_playlistQuickDrag.active && rowMenuShell.beginContextItem("RowContextMenu")) {
                         ThemeMenuPopupStyleScope rowMenuChrome(GetUIFontRegular());
                         DiagScopedTimer _diagRowContextPopup("Playlist", "RowContextMenu.Frame");

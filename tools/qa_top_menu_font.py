@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -163,7 +164,8 @@ def preflight(args: argparse.Namespace):
     if not pinned.is_absolute() or absolute_path(pinned) != root:
         raise ValueError(f'--isolation-root must match ARIS_PREVIEW_ISOLATION_ROOT: {pinned}')
     image = exe.read_bytes()
-    channels = (b'magic_eq_identity\0', b'menu_ui\0', b'settings_ui\0', b'capture_preview_frame\0')
+    channels = (b'magic_eq_identity\0', b'menu_ui\0', b'settings_ui\0', b'capture_preview_frame\0',
+                b'folder_search_pointer\0')
     if not image.startswith(b'MZ') or not exe_has_root(image, root) or not all(
             channel in image for channel in channels):
         raise ValueError('EXE does not embed the requested pinned root and the required QA commands')
@@ -317,6 +319,51 @@ def hover_points(bounds, client):
         yield point_x, top + (index + 0.5) * (bottom - top) / steps
 
 
+def context_row_target(observed, dock, client, names):
+    tabs = [tab for tab in dock.get('results_tabs', []) if 'rect' in tab]
+    assert tabs, ('No drawn results-tab geometry', dock)
+    point_x = min(tab['rect']['x'] for tab in tabs) + 48
+    rows = zip(observed['drawn_list_raw_names'], observed['drawn_list_directories'],
+               observed['drawn_list_row_origins'], observed['drawn_list_hit_heights'], strict=True)
+    for name, directory, top, height in rows:
+        point = (point_x, top + height * .42)
+        if not directory and name in names and height > 0 and (
+                client[0] <= point[0] < client[2] and client[1] <= point[1] < client[3]):
+            return name, point
+    raise AssertionError(('No drawn isolated WAV row', names, observed))
+
+
+def danger_ink(path, bounds, client, *, browser):
+    from PIL import Image
+
+    left, top, right, bottom = (round(value - client[index % 2])
+                                for index, value in enumerate(bounds))
+    band_top = top + 4 if browser else max(top + 4, bottom - 80)
+    band_bottom = min(bottom - 4, top + 110) if browser else bottom - 4
+    label_right = left + round((right - left) * .72)
+    with Image.open(path) as frame:
+        pixels = frame.convert('RGB').crop((left + 7, band_top, label_right, band_bottom))
+    points = [(index % pixels.width + left + 7, index // pixels.width + band_top)
+              for index, (red, green, blue) in enumerate(pixels.getdata())
+              if red >= 235 and abs(green - 102) <= 14 and abs(blue - 102) <= 14
+              and abs(green - blue) <= 6]
+    assert len(points) >= 12 and len({row for _, row in points}) >= 4, (path, bounds, points)
+    columns, rows = zip(*points)
+    return {'pixels': len(points), 'client_ink_box': [min(columns), min(rows), max(columns), max(rows)]}
+
+
+def check_browser_context_source():
+    source = Path(__file__).resolve().parents[1] / 'src/main.cpp'
+    text = source.read_text(encoding='utf-8')
+    block = text.split('ThemeMenuPopupShellScope browserMenuShell(', 1)[1].split('browserMenuShell.reset()', 1)[0]
+    assert re.match(r'false,\s*GetMenuFontSizePx\(\)\s*\);', block), 'Browser audio shell does not use system menu size'
+    assert 'beginContextItem("##BrowserRowCtx", !entry.isDirectory)' in block
+    assert re.search(r'PushStyleColor\(ImGuiCol_Text,\s*ImVec4\(1\.0f,\s*0\.4f,\s*0\.4f,\s*1\.0f\)\);\s*'
+                     r'if\s*\(ImGui::MenuItem\(L\(Ctx_DeleteFromFS\)', block)
+    assert 'BeginMenu(L(Ctx_SendToDAW))' in block, 'Browser no longer has its conditional cascade'
+    return 'Browser audio shell, red Delete from disk and optional Send to DAW submenu checked in source'
+
+
 def main(args: argparse.Namespace) -> int:
     exe, root, output, existing_fixture, digest = preflight(args)
     if args.preflight_only:
@@ -340,6 +387,7 @@ def main(args: argparse.Namespace) -> int:
     report = {'exe': str(exe), 'sha256': digest, 'isolation_root': str(root),
               'started_at': datetime.now(timezone.utc).isoformat(), 'checks': [],
               'screenshots': [], 'starts': []}
+    report['scope'] = 'context-menus-only' if args.context_menus_only else 'full-font-and-context-regression'
     process = desktop = identity = None
     translations = None
     runtime = root / 'profile/runtime'
@@ -387,6 +435,7 @@ def main(args: argparse.Namespace) -> int:
             'LOCALAPPDATA': str(root / 'profile/Local'),
             'APPDATA': str(root / 'profile/Roaming'),
             'AURA_RUNTIME_ROOT': str(runtime),
+            'AURA_HARNESS_LANE_KIND': 'folder-search',
             'TEMP': str(root / 'temp'), 'TMP': str(root / 'temp'),
             'ARIS_PREVIEW_ISOLATION': '1',
         })
@@ -498,6 +547,7 @@ def main(args: argparse.Namespace) -> int:
             left, top, right, bottom = client_bounds()
             assert image.size == (right - left, bottom - top), (path, image.size, client_bounds())
         report['screenshots'].append(str(path))
+        return path
 
     def record(case, **evidence):
         report['checks'].append(dict(case=case, **evidence))
@@ -519,8 +569,16 @@ def main(args: argparse.Namespace) -> int:
         if not observed['popups']:
             return
         left, right = observed['last_item_right'], observed['bar_right']
-        assert right - left > 2, ('No empty space in the menu bar for an outside click', observed)
-        pointer_at(((left + right) / 2, observed['bar_top'] + observed['bar_height'] / 2))
+        point_y = observed['bar_top'] + observed['bar_height'] / 2
+        for point_x in ((left + right) / 2, *range(math.floor(right - 3), math.ceil(left + 2), -8)):
+            if point_x > left + 1 and point_x < right - 1 and all(
+                    not (popup['bounds'][0] - 1 <= point_x <= popup['bounds'][2] + 1 and
+                         popup['bounds'][1] - 1 <= point_y <= popup['bounds'][3] + 1)
+                    for popup in observed['popups']):
+                pointer_at((point_x, point_y))
+                break
+        else:
+            raise AssertionError(('No empty space outside the popups for a safe dismissal', observed))
         settle(accept=lambda value: not value['popups'])
 
     def open_menu(menu_id):
@@ -574,6 +632,94 @@ def main(args: argparse.Namespace) -> int:
             close_menus()
             return
         raise AssertionError(f'No named Waveform Display cascade inside View popup: {observed}')
+
+    def check_context(size, paths, cascade_label, *, browser=False):
+        prefix = f'{"browser" if browser else "results"}-right-{size}'
+        expected_view = 'browser' if browser else 'database'
+        state = app_state()
+        assert state['active_view'] == expected_view, state
+        names = {path.name: path for path in paths}
+        rows = settings_frame(lambda value: (
+            0 <= value['current_frame'] - value['drawn_list_frame'] <= 2 and
+            any(name in names for name in value['drawn_list_raw_names'])))
+        client = client_bounds()
+        row_name, point = context_row_target(rows, command(cmd='dock_state'), client, names)
+        assert not settle()['popups'], 'Right click requires a clean popup stack'
+
+        def right_click_at(target, viewport):
+            for phase in ('hover', 'down', 'up'):
+                command(cmd='folder_search_pointer', phase=phase, button='right',
+                        x=target[0] - viewport[0], y=target[1] - viewport[1])
+                observed = settle()
+            return observed
+
+        observed = right_click_at(point, client)
+        if not browser and not observed['popups']:
+            selected = app_state()
+            expected_path = names[row_name]
+            attempt = {'case': prefix, 'target': str(expected_path), 'first_point': point,
+                       'first_drawn_frame': rows['drawn_list_frame'],
+                       'selected_before': state['selected_path'], 'selected_after': selected['selected_path'],
+                       'retried': False}
+            report.setdefault('result_right_click_rechecks', []).append(attempt)
+            if (selected['active_view'] == 'database' and selected['db_path'] == state['db_path']
+                    and Path(state['selected_path']) != expected_path
+                    and Path(selected['selected_path']) == expected_path):
+                after_click_frame = observed['frame']
+                fresh = settings_frame(lambda value: (
+                    0 <= value['current_frame'] - value['drawn_list_frame'] <= 2 and
+                    value['drawn_list_frame'] > after_click_frame and
+                    row_name in value['drawn_list_raw_names']))
+                fresh_client = client_bounds()
+                _, fresh_point = context_row_target(
+                    fresh, command(cmd='dock_state'), fresh_client, {row_name})
+                attempt.update(fresh_point=fresh_point, fresh_drawn_frame=fresh['drawn_list_frame'])
+                observed = settle()
+                if not observed['popups'] and abs(fresh_point[1] - point[1]) >= 6:
+                    stable = app_state()
+                    assert (stable['active_view'] == 'database' and stable['db_path'] == state['db_path']
+                            and Path(stable['selected_path']) == expected_path), (attempt, stable)
+                    attempt['retried'] = True
+                    point, client = fresh_point, fresh_client
+                    observed = right_click_at(point, client)
+        if not observed['popups']:
+            observed = settle(accept=lambda value: bool(value['popups']))
+        assert len(observed['popups']) == 1, observed
+        parent = observed['popups'][0]
+        assert parent['name'].startswith('##Popup_'), observed
+        if not browser:
+            selected_path = app_state()['selected_path']
+            assert Path(selected_path) == names[row_name], (row_name, selected_path)
+        assert observed['reading_font'] == size, observed
+        assert inside(parent['bounds'], client), (parent, client)
+        parent_shot = shot(prefix + '-parent')
+        assert abs(parent['font_pixels'] - expected_popup_px(size)) < FONT_TOLERANCE, (
+            size, expected_popup_px(size), parent, str(parent_shot))
+        danger = danger_ink(parent_shot, parent['bounds'], client, browser=browser)
+        record(prefix + ' parent and red Delete from disk', row=row_name, row_point=point,
+               popup=parent, danger=danger, screenshot=str(parent_shot), frame=observed['frame'])
+        for point in hover_points(parent['bounds'], client):
+            observed = pointer_at(point, phases=('hover',))
+            child = next((popup for popup in menu_popups(observed).values()
+                          if popup['label'] == cascade_label), None)
+            if child is None:
+                continue
+            assert len(observed['popups']) == 2 and any(
+                popup['name'] == parent['name'] and
+                abs(popup['font_pixels'] - expected_popup_px(size)) < FONT_TOLERANCE
+                for popup in observed['popups']), observed
+            assert abs(child['font_pixels'] - expected_popup_px(size)) < FONT_TOLERANCE, child
+            assert inside(child['bounds'], client), (child, client)
+            screenshot = shot(prefix + '-cascade')
+            record(prefix + ' named cascade', popup=child, hover_at=point,
+                   screenshot=str(screenshot), frame=observed['frame'])
+            break
+        else:
+            assert browser, ('No Color Mark cascade for the real result row', observed)
+            record(prefix + ' cascade', status='not-covered',
+                   reason='No visible Send to DAW child; it requires configured DAW targets',
+                   structural=check_browser_context_source())
+        close_menus()
 
     def app_state():
         state = command(cmd='get_state')
@@ -647,7 +793,8 @@ def main(args: argparse.Namespace) -> int:
         library = existing_fixture or root / 'library'
         if existing_fixture is None:
             make_library(library)
-        expected_names = [path.name for path in audio_files(library)]
+        fixture_paths = audio_files(library)
+        expected_names = [path.name for path in fixture_paths]
         desktop = PrivateDesktop()
         start()
         db_path = create_library(library, expected_names)
@@ -655,9 +802,20 @@ def main(args: argparse.Namespace) -> int:
         initial = settings_frame()
         language = ('zh', 'en', 'ja')[initial['rendered_language']]
         locale_file = Path(__file__).resolve().parents[1] / 'locale/harken.ui.strings.json'
-        translations = {entry['id'].removeprefix('Menu_'): entry[language] for entry in
-                        json.loads(locale_file.read_text(encoding='utf-8'))['entries']
-                        if entry['id'].startswith('Menu_')}
+        strings = {entry['id']: entry[language] for entry in
+                   json.loads(locale_file.read_text(encoding='utf-8'))['entries'] if language in entry}
+        translations = {key.removeprefix('Menu_'): value for key, value in strings.items()
+                        if key.startswith('Menu_')}
+        browser_dir = root / ('browser-menu-' + uuid.uuid4().hex[:8])
+        browser_dir.mkdir()
+        browser_wav = browser_dir / fixture_paths[0].name
+        shutil.copyfile(fixture_paths[0], browser_wav)
+        all_fixtures = [*fixture_paths, browser_wav]
+        original_hashes = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in all_fixtures}
+        bookmark = command(cmd='folder_shortcut')['shortcut_count']
+        assert command(cmd='folder_shortcut', bookmark_path=str(browser_dir))['shortcut_count'] == bookmark + 1
+        initial_results = command(cmd='get_results', limit=len(fixture_paths))['items']
+        assert {Path(row['path']) for row in initial_results} == set(fixture_paths), initial_results
 
         open_settings()
         if existing_fixture is not None:
@@ -680,6 +838,28 @@ def main(args: argparse.Namespace) -> int:
                 apply_settings()
                 close_settings()
             check_fonts(f'{size} px system font leaves list font at 18 px', size, 18, expected_names)
+            check_context(size, fixture_paths, strings['Ctx_ColorMark'])
+            browser_state = command(cmd='folder_shortcut', open_index=bookmark)
+            assert browser_state['mode'] == 'browser' and Path(browser_state['browser_path']) == browser_dir, browser_state
+            try:
+                wait_for(lambda: command(cmd='folder_shortcut'), lambda value: value['entries'] >= 1,
+                         'Isolated browser WAV did not load', 10)
+                settings_frame(lambda value: 0 <= value['current_frame'] - value['drawn_list_frame'] <= 2
+                               and browser_wav.name in value['drawn_list_raw_names'])
+            except TimeoutError as error:
+                record(f'browser-right-{size}', status='not-covered', reason=str(error),
+                       structural=check_browser_context_source())
+            else:
+                check_context(size, [browser_wav], strings['Ctx_SendToDAW'], browser=True)
+            command(cmd='set_view_mode', mode='database')
+            wait_for(app_state, lambda value: value['active_view'] == 'database'
+                     and value['result_count'] == len(fixture_paths), 'Restore isolated result rows', 30)
+            assert command(cmd='get_results', limit=len(fixture_paths))['items'] == initial_results
+            assert {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in all_fixtures} == original_hashes
+            record(f'Context {size} px: no delete, result rows and WAV contents unchanged')
+            if args.context_menus_only:
+                previous = size
+                continue
             check_menu(f'{size} px system font in wide client', size)
             shot(f'wide-{size}-bar')
             check_popups(f'wide-{size}', size)
@@ -693,7 +873,7 @@ def main(args: argparse.Namespace) -> int:
                 check_menu(f'{size} px menu recovers after widening', size)
             previous = size
 
-        for index, (theme, name) in enumerate(STOCK_THEMES):
+        for index, (theme, name) in enumerate(() if args.context_menus_only else STOCK_THEMES):
             open_settings()
             choose_setting('theme', 'theme', f'stock-{index}')
             assert apply_settings()['live_theme'] == theme, (name, theme)
@@ -703,24 +883,25 @@ def main(args: argparse.Namespace) -> int:
             shot(f'theme-{name}-bar')
             check_popups(f'theme-{name}', 32, file_menu=False)
 
-        open_settings()
-        choose_setting('theme', 'theme', 'stock-0')
-        apply_settings()
-        choose_setting('listFont', 'list font', f'option-{LIST_OPTIONS.index(24)}')
-        apply_settings()
-        close_settings()
-        check_fonts('Changing list font to its 24 px cap leaves system at 32 px', 32, 24, expected_names)
-        check_menu('Changing list font leaves the wide menu at 25 px', 32)
-        stop()
+        if not args.context_menus_only:
+            open_settings()
+            choose_setting('theme', 'theme', 'stock-0')
+            apply_settings()
+            choose_setting('listFont', 'list font', f'option-{LIST_OPTIONS.index(24)}')
+            apply_settings()
+            close_settings()
+            check_fonts('Changing list font to its 24 px cap leaves system at 32 px', 32, 24, expected_names)
+            check_menu('Changing list font leaves the wide menu at 25 px', 32)
+            stop()
 
-        start()
-        resize(*WIDE_SIZE)
-        wait_for(app_state, lambda state: Path(state['db_path']) == db_path
-                 and state['result_count'] == len(expected_names), 'Same fixture after restart', 60)
-        check_fonts('Real restart retains 32 px system and 24 px drawn list font', 32, 24, expected_names)
-        check_menu('Real restart retains 25 px wide menu', 32)
-        shot('restart-32-bar')
-        check_popups('restart-32', 32, file_menu=False)
+            start()
+            resize(*WIDE_SIZE)
+            wait_for(app_state, lambda state: Path(state['db_path']) == db_path
+                     and state['result_count'] == len(expected_names), 'Same fixture after restart', 60)
+            check_fonts('Real restart retains 32 px system and 24 px drawn list font', 32, 24, expected_names)
+            check_menu('Real restart retains 25 px wide menu', 32)
+            shot('restart-32-bar')
+            check_popups('restart-32', 32, file_menu=False)
         stop()
         report['result'] = 'passed'
     except Exception:
@@ -765,6 +946,8 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True, help='New directory outside the isolation root')
     parser.add_argument('--fixture-dir', type=Path, help='Existing synthetic WAV folder under the pinned root')
     parser.add_argument('--preflight-only', action='store_true', help='Read-only checks; do not start the EXE')
+    parser.add_argument('--context-menus-only', action='store_true',
+                        help='Check the three settings sizes and both right-click menus; reuse prior top-menu evidence')
     try:
         sys.exit(main(parser.parse_args()))
     except (ValueError, OSError, RuntimeError) as error:

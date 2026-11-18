@@ -189,6 +189,14 @@ class MenuChromeScopeContract(unittest.TestCase):
         self.assertRegex(pointer, r'phase == "up" && [^\n]*!s_magicEqQaPointer\.active\s*\|\|\s*'
                                   r'!s_magicEqQaPointer\.held\s*\|\|\s*s_magicEqQaPointer\.button != button')
 
+    def test_row_context_popups_use_the_system_menu_font(self):
+        main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+        for shell, popup_id in (("browserMenuShell", "##BrowserRowCtx"), ("rowMenuShell", "RowContextMenu")):
+            with self.subTest(popup_id=popup_id):
+                before_open = main.split(f'{shell}.beginContextItem("{popup_id}"', 1)[0]
+                declaration = before_open.rsplit("ThemeMenuPopupShellScope ", 1)[1].split(";", 1)[0]
+                self.assertEqual(declaration, f"{shell}(false, GetMenuFontSizePx())")
+
     def test_result_popup_body_styles_unwind_before_end_popup(self):
         main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
         for popup_id, chrome, shell in (("##BrowserRowCtx", "browserMenuChrome", "browserMenuShell"),
