@@ -40862,18 +40862,20 @@ void RenderUI(AppState& state) {
                     ((ThemeColors::current().resultsBG.x +
                       ThemeColors::current().resultsBG.y +
                       ThemeColors::current().resultsBG.z) > 2.20f);
-                const float filterRowHeight = ImGui::GetFontSize() + 6.0f;
+                ImFont* filterFont = GetUIListFont();
+                if (filterFont) ImGui::PushFont(filterFont);
+                const ImVec2 filterFramePadding(8.0f, 4.0f);
+                const float filterRowHeight = ImGui::GetFontSize() + 2.0f * filterFramePadding.y + 2.0f;
                 ImVec4 barBg = useLightThemeFilterChips ? ImVec4(0.96f, 0.94f, 0.95f, 0.18f) : ImVec4(0.10f, 0.17f, 0.28f, 0.12f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, barBg);
                 BeginTransientScrollbarChild("##FilterInfoBar", ImVec2(0, filterRowHeight), false,
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5.0f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, filterFramePadding);
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                ImFont* filterFont = GetUIFontRegular();
-                if (filterFont) ImGui::PushFont(filterFont);
+                ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(useLightThemeFilterChips ? ImVec4(0.42f, 0.34f, 0.38f, 0.80f) : kInfoMuted, "%s", L(Status_FilterActive));
                 for (size_t i = 0; i < activeFilters.size(); ++i) {
                     ImGui::SameLine(0.0f, i == 0 ? 6.0f : 4.0f);
@@ -40947,7 +40949,7 @@ void RenderUI(AppState& state) {
                         chipDisplay = chipDisplay.substr(0, lastFit) + u8"…";
                     }
                     std::string chipLabel = chipDisplay + u8" ×";
-                    bool chipClicked = ImGui::SmallButton(chipLabel.c_str());
+                    bool chipClicked = ImGui::Button(chipLabel.c_str());
 #if ARIS_PREVIEW_ISOLATION
                     const char* qaChipKey = activeFilters[i].type == FilterChipType::CoverKey ? "chip_cover_key" :
                         activeFilters[i].type == FilterChipType::CoverMode ? "chip_cover_mode" :
@@ -41099,7 +41101,7 @@ void RenderUI(AppState& state) {
                 ImGui::PushStyleColor(ImGuiCol_Button, useLightThemeFilterChips ? ImVec4(0.62f, 0.60f, 0.50f, 0.92f) : ImVec4(0.44f, 0.36f, 0.23f, 0.28f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, useLightThemeFilterChips ? ImVec4(0.56f, 0.54f, 0.44f, 0.98f) : ImVec4(0.56f, 0.44f, 0.28f, 0.44f));
                 ImGui::PushStyleColor(ImGuiCol_Text, useLightThemeFilterChips ? ImVec4(1.0f, 1.0f, 1.0f, 0.98f) : ImVec4(0.98f, 0.90f, 0.74f, 0.86f));
-                if (ImGui::SmallButton(L(Main_ClearAllBtn2))) {
+                if (ImGui::Button(L(Main_ClearAllBtn2))) {
                     ClearAllFiltersForShowAll(state);
                     RefreshSearchResults(state, true);
                     state.syncToTab();
@@ -41114,9 +41116,9 @@ void RenderUI(AppState& state) {
                 }
 #endif
                 ImGui::PopStyleColor(3);
-                if (filterFont) ImGui::PopFont();
                 ImGui::PopStyleVar(3);
                 ImGui::EndChild();
+                if (filterFont) ImGui::PopFont();
                 ImGui::PopStyleColor();
                 ImGui::Dummy(ImVec2(0.0f, 0.0f)); // tight gap between filter row and table header
             }
