@@ -12353,6 +12353,7 @@ bool Database::setPlaylistParent(int64_t playlistId, int64_t newParentId) {
                     "SetParentApplied: child=%lld parent=%lld",
                     (long long)playlistId,
                     (long long)newParentId);
+    bumpDataRevision();
     return true;
 }
 
@@ -13253,6 +13254,99 @@ std::vector<AudioRecord> Database::getPlaylistFilesPage(int64_t playlistId, int 
 
     sqlite3_finalize(stmt);
     return results;
+}
+
+namespace {
+
+struct PlaylistFolderCountAccumulator {
+    std::unordered_map<std::string, size_t> indexByPath;
+    std::vector<PlaylistFolderCount> rows;
+
+    void Add(const std::string& rawFolderPath, const std::string& filePath, int64_t count) {
+        if (count <= 0) return;
+        const std::string canonical = rawFolderPath.empty()
+            ? HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(filePath))
+            : HarkenSearch::CanonicalFolderPath(rawFolderPath);
+        if (canonical.empty()) return;
+
+        auto inserted = indexByPath.emplace(canonical, rows.size());
+        if (inserted.second) {
+            PlaylistFolderCount row;
+            row.folderPath = canonical;
+            row.displayPath = HarkenSearch::DisplayFolderFromFilePath(filePath);
+            if (row.displayPath.empty()) row.displayPath = rawFolderPath;
+            row.fileCount = static_cast<int>(count);
+            rows.push_back(std::move(row));
+        } else {
+            rows[inserted.first->second].fileCount += static_cast<int>(count);
+        }
+    }
+};
+
+std::vector<PlaylistFolderCount> CollectPlaylistFolderCounts(
+    sqlite3* db,
+    const char* scopedFilterSql,
+    int64_t scopeId) {
+    PlaylistFolderCountAccumulator accumulator;
+    if (!db || scopeId <= 0) return {};
+
+    const std::string groupedSql =
+        std::string("SELECT af.folder_path, MIN(af.file_path), COUNT(DISTINCT af.id)"
+                    " FROM audio_files af"
+                    " INNER JOIN playlist_items pi ON af.id = pi.file_id"
+                    " WHERE ") + scopedFilterSql +
+        " AND af.folder_path IS NOT NULL AND af.folder_path <> ''"
+        " GROUP BY af.folder_path";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, groupedSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return {};
+    }
+    sqlite3_bind_int64(stmt, 1, scopeId);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* folderText = sqlite3_column_text(stmt, 0);
+        const unsigned char* pathText = sqlite3_column_text(stmt, 1);
+        accumulator.Add(
+            folderText ? reinterpret_cast<const char*>(folderText) : "",
+            pathText ? reinterpret_cast<const char*>(pathText) : "",
+            sqlite3_column_int64(stmt, 2));
+    }
+    sqlite3_finalize(stmt);
+
+    const std::string derivedSql =
+        std::string("SELECT DISTINCT af.id, af.file_path"
+                    " FROM audio_files af"
+                    " INNER JOIN playlist_items pi ON af.id = pi.file_id"
+                    " WHERE ") + scopedFilterSql +
+        " AND (af.folder_path IS NULL OR af.folder_path = '')";
+
+    stmt = nullptr;
+    if (sqlite3_prepare_v2(db, derivedSql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        return std::move(accumulator.rows);
+    }
+    sqlite3_bind_int64(stmt, 1, scopeId);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* pathText = sqlite3_column_text(stmt, 1);
+        accumulator.Add("", pathText ? reinterpret_cast<const char*>(pathText) : "", 1);
+    }
+    sqlite3_finalize(stmt);
+    return std::move(accumulator.rows);
+}
+
+} // namespace
+
+std::vector<PlaylistFolderCount> Database::getPlaylistFolderCounts(int64_t playlistId) {
+    if (!m_db || playlistId <= 0) return {};
+    return CollectPlaylistFolderCounts(m_db, "pi.playlist_id = ?", playlistId);
+}
+
+std::vector<PlaylistFolderCount> Database::getAggregatedPlaylistFolderCounts(int64_t parentFolderId) {
+    if (!m_db || parentFolderId <= 0) return {};
+    if (!isFolder(parentFolderId)) return {};
+    return CollectPlaylistFolderCounts(
+        m_db,
+        "pi.playlist_id IN (SELECT id FROM playlists WHERE parent_id = ?)",
+        parentFolderId);
 }
 
 static void ApplyScopedSearchFtsFallback(sqlite3* db, Database::BuiltSearchQuery& bq, const SearchFilter& filter) {

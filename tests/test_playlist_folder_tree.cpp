@@ -5,6 +5,7 @@
 #include "src/PlaylistFolderTree.h"
 
 #include <cstdio>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -46,6 +47,26 @@ static int countOccurrences(const std::string& haystack, const std::string& need
         pos += needle.size();
     }
     return count;
+}
+
+static const FolderInfo* descend(const FolderInfo& node, const std::vector<const char*>& names) {
+    const FolderInfo* current = &node;
+    for (const char* name : names) {
+        if (!current) return nullptr;
+        current = childNamed(*current, name);
+    }
+    return current;
+}
+
+static bool sameTree(const FolderInfo& a, const FolderInfo& b) {
+    if (a.name != b.name || a.displayName != b.displayName ||
+        a.fileCount != b.fileCount || a.subfolders.size() != b.subfolders.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.subfolders.size(); ++i) {
+        if (!sameTree(a.subfolders[i], b.subfolders[i])) return false;
+    }
+    return true;
 }
 
 namespace fs = std::filesystem;
@@ -113,6 +134,80 @@ int main() {
               childNamed(*fullFx, "whoosh")->fileCount == 1 &&
               fullTree.fileCount == 4,
           "playlist folder tree uses the complete member set, not the loaded page");
+
+    const std::vector<PlaylistFolderCount> folderCounts = {
+        {"h:/sound effect/fx/fire", "H:/Sound effect/FX/Fire", 2},
+        {"h:/sound effect/fx/whoosh", "H:/Sound effect/FX/Whoosh", 1},
+        {"h:/sound effect/impacts", "H:/Sound effect/Impacts", 1},
+    };
+    const FolderInfo countTree = BuildPlaylistFolderTreeFromFolderCounts(folderCounts, 4);
+    check(countTree.fileCount == 4,
+          "folder-count tree keeps the complete playlist member total");
+    check(sameTree(countTree, fullTree),
+          "folder-count tree matches the record-built tree exactly");
+    const std::vector<PlaylistFolderCount> prefixSiblingCounts = {
+        {"h:/foo", "H:/foo", 1},
+        {"h:/foo-bar", "H:/foo-bar", 2},
+        {"h:/foo/child", "H:/foo/child", 3},
+    };
+    const std::vector<AudioRecord> prefixSiblingRecords = {
+        record(10, "H:/foo/a.wav", "h:/foo"),
+        record(11, "H:/foo-bar/b1.wav", "h:/foo-bar"),
+        record(12, "H:/foo-bar/b2.wav", "h:/foo-bar"),
+        record(13, "H:/foo/child/c1.wav", "h:/foo/child"),
+        record(14, "H:/foo/child/c2.wav", "h:/foo/child"),
+        record(15, "H:/foo/child/c3.wav", "h:/foo/child"),
+    };
+    const FolderInfo prefixSiblingTree = BuildPlaylistFolderTreeFromFolderCounts(prefixSiblingCounts, 6);
+    const FolderInfo prefixSiblingRecordTree = BuildPlaylistFolderTreeFromRecords(prefixSiblingRecords);
+    check(sameTree(prefixSiblingTree, prefixSiblingRecordTree),
+          "folder-count tree keeps one h:/foo node when a sibling name shares its prefix");
+    const FolderInfo* prefixFoo = descend(prefixSiblingTree, {"h:", "foo"});
+    check(prefixFoo != nullptr && prefixFoo->fileCount == 1 && prefixFoo->subfolders.size() == 1 &&
+              childNamed(*prefixFoo, "child") != nullptr,
+          "prefix-shared sibling keeps direct count and child folders under one node");
+
+
+    const FolderInfo* countFire = descend(countTree, {"h:", "sound effect", "fx", "fire"});
+    check(countFire != nullptr && countFire->fileCount == 2 && countFire->displayName == "Fire",
+          "folder-count tree keeps per-folder counts and display casing");
+
+    {
+        std::vector<AudioRecord> manyRecords;
+        std::vector<PlaylistFolderCount> manyCounts;
+        manyRecords.reserve(20000);
+        manyCounts.reserve(200);
+        for (int folder = 0; folder < 200; ++folder) {
+            char folderPath[128];
+            char displayPath[128];
+            std::snprintf(folderPath, sizeof(folderPath), "h:/library/bank%03d", folder);
+            std::snprintf(displayPath, sizeof(displayPath), "H:/Library/Bank%03d", folder);
+            for (int file = 0; file < 100; ++file) {
+                char filePath[256];
+                std::snprintf(filePath, sizeof(filePath), "%s/Clip_%03d.wav", displayPath, file);
+                manyRecords.push_back(record(1000 + folder * 100 + file, filePath, folderPath));
+            }
+            manyCounts.push_back({folderPath, displayPath, 100});
+        }
+
+        const auto recordsStart = std::chrono::steady_clock::now();
+        const FolderInfo recordsTree = BuildPlaylistFolderTreeFromRecords(manyRecords);
+        const auto recordsEnd = std::chrono::steady_clock::now();
+        const auto countsStart = std::chrono::steady_clock::now();
+        const FolderInfo countsTree =
+            BuildPlaylistFolderTreeFromFolderCounts(manyCounts, static_cast<int64_t>(manyRecords.size()));
+        const auto countsEnd = std::chrono::steady_clock::now();
+        const auto recordsMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(recordsEnd - recordsStart).count();
+        const auto countsMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(countsEnd - countsStart).count();
+        std::printf("INFO: tree build 20000 files: records=%lldms folder-counts=%lldms\n",
+                    (long long)recordsMs, (long long)countsMs);
+        check(sameTree(recordsTree, countsTree),
+              "folder-count tree stays identical for a 20000-file playlist");
+        check(countsMs <= recordsMs,
+              "folder-count tree build is not slower than the record-based build");
+    }
 
     auto fxFiltered = FilterPlaylistRecordsByFolder(records, true, "H:/Sound effect/FX");
     check(fxFiltered.size() == 3, "playlist sidebar folder filter includes descendants");

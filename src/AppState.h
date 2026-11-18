@@ -2480,15 +2480,18 @@ struct AppState {
     FolderInfo playlistFolderHierarchy;
     bool folderHierarchyShowingPlaylistScope = false;
     int64_t playlistFolderHierarchyPlaylistId = -1;
+    uint64_t playlistFolderHierarchyDataRevision = 0;
     int64_t expandedPlaylistFolderTreePlaylistId = -1;
     void setFolderHierarchy(FolderInfo&& tree, const std::string& /*dbPath*/) {
         databaseFolderHierarchy = tree;
         folderHierarchy = std::move(tree);
         folderHierarchyShowingPlaylistScope = false;
     }
-    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId) {
+    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId,
+                                    uint64_t dataRevision = 0) {
         playlistFolderHierarchy = std::move(tree);
         playlistFolderHierarchyPlaylistId = playlistId;
+        playlistFolderHierarchyDataRevision = dataRevision;
         folderHierarchy = playlistFolderHierarchy;
         folderHierarchyShowingPlaylistScope = true;
     }
@@ -2503,6 +2506,7 @@ struct AppState {
         playlistFolderHierarchy = FolderInfo{};
         folderHierarchyShowingPlaylistScope = false;
         playlistFolderHierarchyPlaylistId = -1;
+        playlistFolderHierarchyDataRevision = 0;
         expandedPlaylistFolderTreePlaylistId = -1;
     }
     std::string pendingRemoveFolderDbPath;
