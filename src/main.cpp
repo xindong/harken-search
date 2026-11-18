@@ -21,6 +21,7 @@
 // split into MainUI_*.cpp targets.
 
 #include "imgui.h"
+#include "HugeFolderIcons.h"
 #include "imgui_internal.h"        // Active-ID control for suggestion selection.
 #include <functional>
 
@@ -14469,12 +14470,15 @@ enum class FolderTreeSelectionMode {
 // ImGui keeps owning the tree node itself (open/close state, hit testing,
 // keyboard navigation). Its label is pushed transparent and the visible row is
 // drawn here, so the disclosure chevron, the folder glyph and the label share
-// one baseline grid across leaves and branches. Row metrics derive from the
-// reading font size: rowHeight = fontSize * 1.9, padding splits the rest.
+// one baseline grid across leaves and branches.
 struct FolderTreeRowMetrics {
     float fontSize    = 14.0f;
     float rowHeight   = 26.0f;
-    float padY        = 6.0f;
+    int rowIndex = 0;
+    float NextHeight() {
+        const float top = roundf(rowIndex * rowHeight);
+        return roundf(++rowIndex * rowHeight) - top;
+    }
     float chevronZone = 9.0f;
     float iconWidth   = 14.0f;
     float textGap     = 5.0f;
@@ -14484,10 +14488,9 @@ struct FolderTreeRowMetrics {
 static FolderTreeRowMetrics MakeFolderTreeRowMetrics(float fontSize) {
     FolderTreeRowMetrics m;
     m.fontSize    = fontSize;
-    m.rowHeight   = floorf(fontSize * 1.9f + 0.5f);
-    m.padY        = floorf((m.rowHeight - fontSize) * 0.5f);
+    m.iconWidth   = 17.0f * fontSize / kDefaultReadingFontPx;
+    m.rowHeight   = m.iconWidth * (29.5f / 17.0f);
     m.chevronZone = roundf(fontSize * 0.62f);
-    m.iconWidth   = roundf(fontSize * 1.0f);
     m.textGap     = roundf(fontSize * 0.34f);
     m.sideInset   = roundf(fontSize * 0.34f);
     return m;
@@ -14513,14 +14516,14 @@ static void DrawFolderTreeChevron(ImDrawList* dl, const ImVec2& center, float ha
 static void DrawFolderTreeRowModern(ImDrawList* dl,
                                     const FolderTreeRowMetrics& m,
                                     const ImVec2& rowMin, const ImVec2& rowMax,
-                                    bool hasChildren, bool nodeOpen, bool showIcon,
+                                    bool hasChildren, bool nodeOpen, bool showIcon, bool databaseRow,
                                     bool searchFill, ImU32 searchFillCol,
                                     bool stateFill, ImU32 stateFillCol,
                                     ImU32 chevronCol, ImU32 iconCol, ImU32 textCol,
                                     const char* labelBegin, const char* labelEnd) {
     const float x0 = rowMin.x + m.sideInset;
     const float x1 = rowMax.x - m.sideInset;
-    if (x1 <= x0) return;
+    if (x1 <= x0 || !ImGui::IsRectVisible(rowMin, rowMax)) return;
 
     const float cy = rowMin.y + (rowMax.y - rowMin.y) * 0.5f;
     const float radius = ImClamp(m.fontSize * 0.34f, 4.0f, 8.0f);
@@ -14540,18 +14543,50 @@ static void DrawFolderTreeRowModern(ImDrawList* dl,
     }
 
     float x = chevronLeft + m.chevronZone;
-    if (showIcon) {
-        const char* glyph = (nodeOpen && hasChildren) ? ICON_LC_FOLDER_OPEN : ICON_LC_FOLDER;
-        dl->AddText(ImGui::GetFont(), m.fontSize,
-                    ImVec2(x, cy - m.fontSize * 0.5f), iconCol, glyph);
-        x += m.iconWidth;
+    if (showIcon && databaseRow) {
+        HugeFolderIcons::Draw(dl, ImVec2(x + m.iconWidth * 0.5f, cy),
+                              18.0f * m.fontSize / kDefaultReadingFontPx, nodeOpen && hasChildren, iconCol);
+    } else if (showIcon) {
+        constexpr float stroke = 1.7f;
+        const float center = x + m.iconWidth * 0.5f;
+        const float left = center - (18.0f - stroke) * 0.5f;
+        const float right = 2.0f * center - left;
+        const bool open = nodeOpen && hasChildren;
+        const float hinge = open ? 2.5f : 0.0f;
+        const ImVec2 front[] = {
+            {left + hinge, cy - 1.0f}, {right, cy - (open ? 2.0f : 1.0f)},
+            {right - hinge, cy + 6.0f}, {left, cy + 6.0f}
+        };
+        const ImVec2 back[] = {
+            {left, open ? front[3].y : front[0].y}, {left, cy - 6.0f},
+            {left + 5.0f, cy - 6.0f}, {left + 7.0f, cy - 4.0f},
+            {right - hinge, cy - 4.0f}, {right - hinge, front[1].y +
+                (front[0].y - front[1].y) * hinge / (right - front[0].x)}
+        };
+        ImVec4 tint = ImGui::ColorConvertU32ToFloat4(iconCol);
+        tint.w *= 0.14f;
+        dl->AddConvexPolyFilled(front, IM_ARRAYSIZE(front), ImGui::ColorConvertFloat4ToU32(tint));
+        dl->AddPolyline(back, IM_ARRAYSIZE(back), iconCol, ImDrawFlags_None, stroke);
+        dl->AddPolyline(front, IM_ARRAYSIZE(front), iconCol, ImDrawFlags_Closed, stroke);
     }
-    x += m.textGap;
+    x += m.iconWidth + m.textGap;
 
     if (labelEnd > labelBegin && x < x1) {
         const ImVec4 clipRect(x, rowMin.y, x1, rowMax.y);
+        ImFontBaked* baked = ImGui::GetFontBaked();
+        float top = FLT_MAX, bottom = -FLT_MAX;
+        for (const char* cursor = labelBegin; cursor < labelEnd;) {
+            unsigned int codepoint;
+            cursor += ImTextCharFromUtf8(&codepoint, cursor, labelEnd);
+            const ImFontGlyph* ink = baked->FindGlyph((ImWchar)codepoint);
+            if (ink && ink->Visible) {
+                top = ImMin(top, ink->Y0);
+                bottom = ImMax(bottom, ink->Y1);
+            }
+        }
+        if (bottom < top) return;
         dl->AddText(ImGui::GetFont(), m.fontSize,
-                    ImVec2(x, cy - m.fontSize * 0.5f), textCol,
+                    ImVec2(x, roundf(cy - (top + bottom) * 0.5f * m.fontSize / baked->Size)), textCol,
                     labelBegin, labelEnd, 0.0f, &clipRect);
     }
 }
@@ -14561,7 +14596,7 @@ static void RenderFolderTreeNode(AppState& state,
                                  const std::string& search,
                                  FolderTreeSelectionMode mode,
                                  bool revealSubtree = false,
-                                 bool modernRow = false) {
+                                 FolderTreeRowMetrics* modernRow = nullptr, bool nested = false) {
     // Use the precomputed folderSearchHits set for constant-time membership.
     // 杜绝调用 FolderOrChildMatchesSearch 这种每帧递归的"性能黑洞"
     if (!search.empty() && !revealSubtree) {
@@ -14658,7 +14693,12 @@ static void RenderFolderTreeNode(AppState& state,
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
 
+    if (modernRow) {
+        const float padding = (modernRow->NextHeight() - modernRow->fontSize) * 0.5f;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, padding));
+    }
     bool nodeOpen = ImGui::TreeNodeEx(labelBuf, flags);
+    if (modernRow) ImGui::PopStyleVar();
 
     ImGui::PopStyleColor(4);
 
@@ -14679,19 +14719,22 @@ static void RenderFolderTreeNode(AppState& state,
     const ImVec4 selectedCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.60f), 0.28f);
     const ImVec4 pendingCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.52f), 0.22f);
     const ImVec4 hoverCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.78f), 0.14f);
-    const ImVec4 stateCol = isLocateHighlight ? locateCol
+    const bool roseDatabaseRow = modernRow && mode == FolderTreeSelectionMode::DatabaseFilter &&
+                                 state.settings.theme == AppTheme::RoseCedar;
+    const ImVec4 stateCol = roseDatabaseRow && isSelected ? ImColor(223, 160, 183).Value
+                          : roseDatabaseRow && rowHovered && !isLocateHighlight && !isPending ? ImColor(244, 220, 230).Value
+                          : isLocateHighlight ? locateCol
                           : isSelected ? selectedCol
                           : isPending  ? pendingCol
                           : hoverCol;
-    const FolderTreeRowMetrics rowMetrics = MakeFolderTreeRowMetrics(ImGui::GetFontSize());
 
     if (modernRow) {
         const ImU32 chevronCol = ImGui::GetColorU32(
             withAlpha(mixColor(tcs.filterBrowserTreeText, tcs.filterBrowserBG, 0.42f), 0.78f));
         const ImU32 iconCol = ImGui::GetColorU32(
             withAlpha(mixColor(tcs.filterBrowserTreeText, tcs.filterBrowserBG, 0.26f), 0.92f));
-        DrawFolderTreeRowModern(treeDrawList, rowMetrics, rowMin, rowMax,
-                                hasChildren, nodeOpen, true,
+        DrawFolderTreeRowModern(treeDrawList, *modernRow, rowMin, rowMax,
+                                hasChildren, nodeOpen, true, mode == FolderTreeSelectionMode::DatabaseFilter,
                                 matchesSearch, ImGui::GetColorU32(searchCol),
                                 hasStateFill, ImGui::GetColorU32(stateCol),
                                 chevronCol, iconCol, ImGui::GetColorU32(treeTextColor),
@@ -14725,9 +14768,10 @@ static void RenderFolderTreeNode(AppState& state,
     // 4. 交互优化：防抖与 I/O 优先级抢占
     if (ImGui::IsItemClicked()) {
         const float arrowWidth = modernRow
-            ? (rowMetrics.sideInset + rowMetrics.chevronZone)
+            ? (modernRow->sideInset + modernRow->chevronZone)
             : ImGui::GetTreeNodeToLabelSpacing();
-        if (ImGui::GetIO().MousePos.x > ImGui::GetItemRectMin().x + arrowWidth) {
+        if ((modernRow && mode == FolderTreeSelectionMode::DatabaseFilter && !hasChildren) ||
+            ImGui::GetIO().MousePos.x > ImGui::GetItemRectMin().x + arrowWidth) {
             if (mode == FolderTreeSelectionMode::PlaylistFilter) {
                 SelectPlaylistFolderFilter(state, folder.path);
             } else {
@@ -14798,7 +14842,7 @@ static void RenderFolderTreeNode(AppState& state,
         //    in reveal mode), so the user keeps control of further expansion.
         const bool revealChildren = revealSubtree || isSearchTerminalHit;
         for (const auto& sub : folder.subfolders) {
-            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow);
+            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true);
         }
         ImGui::Unindent();
     }
@@ -16454,17 +16498,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
         {
         ReadingTextScope _readingTree;   // 文件夹树:行高/字号随阅读字号;缩进步距按图标宽度对齐
-        const ImVec2 previousFramePadding = ImGui::GetStyle().FramePadding;
-        const ImVec2 previousItemSpacing = ImGui::GetStyle().ItemSpacing;
-        const float previousIndentSpacing = ImGui::GetStyle().IndentSpacing;
-        // REQ-20261118-FOLDER-TREE-SPEC: macOS-style rows. The row keeps a fixed
-        // 1.9x ratio against the reading font size, so 18px text gets 34px rows
-        // and 24px text gets 46px rows without adding another density setting.
-        const FolderTreeRowMetrics treeRowMetrics = MakeFolderTreeRowMetrics(ImGui::GetFontSize());
-        const float treeRowSpacingY = ImClamp(roundf(treeRowMetrics.fontSize * 0.14f), 2.0f, 4.0f);
-        const float treeRowIndentSpacing = ImClamp(roundf(treeRowMetrics.fontSize * 0.82f), 14.0f, 20.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(previousFramePadding.x, treeRowMetrics.padY));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(previousItemSpacing.x, treeRowSpacingY));
+        FolderTreeRowMetrics treeRowMetrics = MakeFolderTreeRowMetrics(ImGui::GetFontSize());
+        const float treeRowIndentSpacing = treeRowMetrics.iconWidth * (11.25f / 17.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, treeRowIndentSpacing);
         const bool collapseFolderTree = state.folderTreeCollapseAll;
         if (collapseFolderTree) {
@@ -16609,7 +16645,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
             const bool allClicked = ImGui::Selectable(allLabel, allSelected, ImGuiSelectableFlags_None,
-                                                      ImVec2(allRowWidth, 0.0f));
+                                                      ImVec2(allRowWidth, treeRowMetrics.NextHeight()));
             ImGui::PopStyleColor(4);
 
             // Same row grid as the folder nodes: no chevron, no folder glyph,
@@ -16625,7 +16661,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             allFill.w = allSelected ? 0.28f : 0.14f;
             DrawFolderTreeRowModern(ImGui::GetWindowDrawList(), treeRowMetrics,
                                     ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                                    false, false, false,
+                                    false, false, false, false,
                                     false, 0,
                                     allSelected || ImGui::IsItemHovered(),
                                     ImGui::GetColorU32(allFill),
@@ -16638,15 +16674,15 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         }
         for (const auto& folder : activeFolderHierarchy.subfolders) {
             if (playlistScopedFolderTree) {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter, false, true);
+                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter, false, &treeRowMetrics);
             } else {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter, false, true);
+                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter, false, &treeRowMetrics);
             }
         }
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
         }
             });
-        ImGui::PopStyleVar(3);
+        ImGui::PopStyleVar(2);
         }
             });
         }
