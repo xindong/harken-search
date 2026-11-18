@@ -77,8 +77,12 @@ int main() {
     repaired.settings.infoPages.selected = 3;
     AppState pagesReopened; Load(pagesReopened, Save(repaired));
     check(pagesReopened.settings.infoPages.visibleMask == 9 && pagesReopened.settings.infoPages.selected == 3, "page visibility and selection survive real settings roundtrip");
-    check(missing.settings.infoPages.visibleMask == 15 && missing.settings.infoPages.selected == 1, "legacy settings default to artwork and all available pages");
+    check(missing.settings.infoPages.visibleMask == 31 && missing.settings.infoPages.selected == 1, "legacy settings default to artwork and all available pages");
     check(Save(missing)["infoShowSimilarSounds"] == "1", "legacy settings keep the Similar Sounds shortcut visible");
+    AppState legacyPages; Load(legacyPages, {{"infoPageVisibleMask", "9"}, {"infoSelectedPage", "3"}});
+    check(legacyPages.settings.infoPages.visibleMask == 25 && legacyPages.settings.infoPages.selected == 3, "legacy pages gain performance without losing choices");
+    AppState hiddenPerformance; Load(hiddenPerformance, Save(repaired));
+    check(!hiddenPerformance.settings.infoPages.IsVisible(InfoPage::Performance, true), "hidden performance stays hidden after reload");
     Values shortcutSettings = Save(repaired);
     shortcutSettings["infoShowSimilarSounds"] = "0";
     AppState hiddenShortcut; Load(hiddenShortcut, shortcutSettings);

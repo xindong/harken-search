@@ -16,6 +16,7 @@ static constexpr int kPhaseStackMax = 16;
 static constexpr int kPhaseRecordMax = 64;
 struct PhaseFrame {
     const char* name;
+    uint64_t operationId = 0;
     std::chrono::steady_clock::time_point start;
 };
 struct PhaseRecord {
@@ -24,6 +25,7 @@ struct PhaseRecord {
 };
 static PhaseFrame s_phaseStack[kPhaseStackMax];
 static int s_phaseStackDepth = 0;
+static int s_phaseOverflow = 0;
 static PhaseRecord s_phaseRecords[kPhaseRecordMax];
 static int s_phaseRecordCount = 0;
 static const char* s_slowestPhase = nullptr;
@@ -31,16 +33,19 @@ static float s_slowestPhaseMs = 0.0f;
 
 void DevTools_BeginFramePhase(const char* phaseName) {
     if (!DiagnosticsLogger::instance().isEnabled()) return;
-    if (s_phaseStackDepth >= kPhaseStackMax) return;  // overflow guard
+    if (s_phaseStackDepth >= kPhaseStackMax) { ++s_phaseOverflow; return; }  // overflow guard
     s_phaseStack[s_phaseStackDepth].name = phaseName;
+    s_phaseStack[s_phaseStackDepth].operationId = DiagnosticsLogger::instance().beginUiOperation(phaseName);
     s_phaseStack[s_phaseStackDepth].start = std::chrono::steady_clock::now();
     ++s_phaseStackDepth;
 }
 
 void DevTools_EndFramePhase() {
+    if (s_phaseOverflow > 0) { --s_phaseOverflow; return; }
     if (s_phaseStackDepth <= 0) return;
     --s_phaseStackDepth;
     const PhaseFrame& f = s_phaseStack[s_phaseStackDepth];
+    DiagnosticsLogger::instance().endUiOperation(f.operationId);
     float ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - f.start).count();
     if (ms > s_slowestPhaseMs) {
@@ -58,6 +63,7 @@ void DevTools_ResetFramePhases() {
     s_slowestPhaseMs = 0.0f;
     s_slowestPhase = nullptr;
     s_phaseStackDepth = 0;
+    s_phaseOverflow = 0;
     s_phaseRecordCount = 0;
 }
 

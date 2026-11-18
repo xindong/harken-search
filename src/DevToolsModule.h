@@ -84,3 +84,16 @@ inline void DevTools_ResetFramePhases() {}
 #define AURA_PHASE_BEGIN(name) ((void)0)
 #define AURA_PHASE_END()       ((void)0)
 #endif
+
+// Frame-phase scope for UI-only callers; background work uses DiagScopedTimer.
+class DevToolsFramePhaseScope {
+public:
+    explicit DevToolsFramePhaseScope(const char* name) : active_(DevTools_IsEnabled()) {
+        if (active_) DevTools_BeginFramePhase(name);
+    }
+    ~DevToolsFramePhaseScope() { if (active_) DevTools_EndFramePhase(); }
+    DevToolsFramePhaseScope(const DevToolsFramePhaseScope&) = delete;
+    DevToolsFramePhaseScope& operator=(const DevToolsFramePhaseScope&) = delete;
+private:
+    bool active_;
+};

@@ -36,6 +36,19 @@
 - When 执行以下操作：cover facets and preview resolve
 - Then 应得到以下结果：de-duplication does not collapse unrelated source images or split identical identity incorrectly
 
+### Non-blocking Preview and Prefetch
+
+- Given 已满足以下前置条件：a file has no primed embedded-cover identity or needs source validation
+- When 执行以下操作：the list prefetch or current-file preview requests its cover
+- Then 应得到以下结果：the UI returns cached artwork or a placeholder immediately; file timestamps, artwork discovery, downscaling and thumbnail persistence run on the cover worker's database connection
+- Given 已满足以下前置条件：a discovery request is pending or completed without artwork
+- When 执行以下操作：successive UI frames request the same file
+- Then 应得到以下结果：pending work is deduplicated and completed checks are reused for 30 seconds; explicit file invalidation bypasses the cooldown
+- Given 已满足以下前置条件：the file is invalidated, caches are reset, or the request generation is cancelled
+- When 执行以下操作：an old background discovery completes
+- Then 应得到以下结果：its ticket cannot publish over newer identity state
+- Verification: `TestCoverIdentityRefresh` and `tests/test_cover_identity_ui_boundary.py`.
+
 ### Failure / Recovery
 
 - Given 已满足以下前置条件：a cover texture load fails or source art is missing
@@ -203,3 +216,13 @@
 ### 未证
 
 界面、人眼、整条使用路径、听感、内嵌网页、真实网络库、性能、合法可播放媒体和真实凭据删除都还没证。第4批真实文件读写这一轮不重跑，不能当成新证据。
+
+### Diagnostic Attribution (2026-11-02)
+
+- Given 已满足以下前置条件：AI analysis diagnostics is enabled and the UI enters cover-key persistence
+- When 执行以下操作：a database operation blocks the UI for more than 500ms
+- Then 应得到以下结果：the independent diagnostic writer samples active instrumented UI operations with parent IDs and frame IDs; completion emits monotonic inclusive/exclusive timings for operations taking at least 10ms
+- Given 已满足以下前置条件：an exported record contains a truncated Chinese path
+- When 执行以下操作：JSON is exported
+- Then 应得到以下结果：UTF-8 remains valid and timestamp strings use actual UTC with epoch milliseconds; instrumented operation snapshots are explicitly distinguished from native stack traces
+- Verification: `TestDiagnosticsUiOperations`, `TestDiagnosticsLoggerRetention`, `TestDiagnosticsLoggerStub`.

@@ -7,6 +7,10 @@ int main() {
     };
     InfoPageNavigation pages;
     check(pages.selected == 1, "first launch opens artwork");
+    check(pages.IsVisible(InfoPage::Performance, true), "performance page visible by default");
+    check(pages.Select(InfoPage::Performance, true) && pages.selected == 4, "select performance page");
+    check(pages.SetVisible(InfoPage::Performance, false, true) && pages.selected == 0, "hiding performance selects existing page");
+    check(pages.SetVisible(InfoPage::Performance, true, true), "restore performance page");
     check(pages.Select(InfoPage::Playback, true) && pages.selected == 3, "switch to playback");
     check(pages.SetVisible(InfoPage::Playback, false, true) && pages.selected == 0, "hiding active page selects first visible page");
     check(!pages.IsVisible(InfoPage::Playback, true), "hidden page is absent");
@@ -22,7 +26,7 @@ int main() {
     pages.visibleMask = 9; pages.selected = 3; pages.Normalize(false);
     check(pages.visibleMask == 9 && pages.selected == 3 && pages.VisibleCount(false) == 2, "saved choice survives reload");
     pages.visibleMask = -1; pages.Normalize(true);
-    check(pages.visibleMask == 15, "unknown saved bits are discarded");
+    check(pages.visibleMask == 31, "unknown saved bits are discarded");
     check(!pages.SetVisible(static_cast<InfoPage>(88), false, true), "invalid page cannot shift outside mask");
     std::cout << failures << " failures\n";
     return failures ? 1 : 0;

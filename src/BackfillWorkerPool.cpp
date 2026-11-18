@@ -1,4 +1,5 @@
 #include "BackfillWorkerPool.h"
+#include "PerformanceMonitor.h"
 
 #include "AppState.h"
 #include "BackfillQueue.h"
@@ -800,6 +801,10 @@ void BackfillWorkerPool::workerMain(int workerIndex) {
             std::this_thread::sleep_for(std::chrono::milliseconds(25));
             continue;
         }
+        using harken::performance::Module;
+        const Module module = job.kind == BackfillJobKind::CoverResolveAndThumb ? Module::Cover :
+            job.kind == BackfillJobKind::WaveformL1Overview ? Module::Waveform : Module::Backfill;
+        harken::performance::Scope activity(module);
 #if AURA_BUILD_DIAGNOSTICS
         const auto jobStart = std::chrono::steady_clock::now();
 #endif

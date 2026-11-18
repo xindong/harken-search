@@ -320,7 +320,8 @@ ProcessMemoryUsageResult QueryCurrentProcessMemoryUsage() {
         return {ProcessMemoryUsageStatus::QueryFailed, 0};
     }
     return {ProcessMemoryUsageStatus::Success,
-            static_cast<uint64_t>(counters.PrivateUsage)};
+            static_cast<uint64_t>(counters.PrivateUsage),
+            static_cast<uint64_t>(counters.WorkingSetSize)};
 }
 
 void CloseNativeHandle(void* handle) {

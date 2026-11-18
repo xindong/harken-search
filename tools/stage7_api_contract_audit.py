@@ -418,6 +418,8 @@ REVIEWED_CONTRACTS = {
 EXCLUDED_HEADERS = {
     "src/EditorSendSurfaceModel.h": "unused product draft with no source consumer",
     "src/GuiDbManager.h": "empty legacy placeholder header",
+    "src/PerformanceMonitor.h": "private instrumentation compiled into the Windows application",
+    "src/PerformanceMonitorWindow.inl": "private monitor window implementation included by WindowsMain.cpp",
     "src/Version.h": "unused legacy compile-time edition header",
     "src/SettingsActions.inl": "private settings action implementation included by SettingsDialog.inl",
     "src/SettingsAvatarPreview.inl": "private avatar preview implementation included by SettingsDialog.inl",

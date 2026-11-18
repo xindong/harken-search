@@ -1,4 +1,5 @@
 #include "SimilarityIndexer.h"
+#include "PerformanceMonitor.h"
 namespace HarkenSearch {
 bool AnalyzeSimilarityEntry(const SimilarityFile& file, AudioEmbeddingService* model, SimilarityAnalysisEntry& out,
                             SimilarityIndexFailure& failure, const FeatureExtractionCancelCheck& cancel) {
@@ -25,6 +26,7 @@ bool AnalyzeSimilarityEntry(const SimilarityFile& file, AudioEmbeddingService* m
 SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::string& modelDirectory,
     const FeatureExtractionCancelCheck& cancel, const std::function<void(const SimilarityIndexProgress&)>& progress,
     SimilarityIndexScope scope) {
+    harken::performance::Scope activity(harken::performance::Module::Similarity);
     SimilarityIndexResult result;
     auto cancelled = [&] { return cancel && cancel(); };
     if (cancelled()) { result.cancelled = true; return result; }

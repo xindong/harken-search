@@ -2,6 +2,7 @@
 // AsyncWorker.cpp - 波形加载、搜索查询的异步处理实现
 
 #include "AsyncWorker.h"
+#include "PerformanceMonitor.h"
 #include "Database.h"
 #include "MetadataReader.h"
 #include "PlaylistCoverScope.h"
@@ -574,6 +575,7 @@ void WaveformWorker::workerThread() {
         }
 
         ActiveWorkerGuard guard(m_activeWorkers, m_requestCv);
+        harken::performance::Scope activity(harken::performance::Module::Waveform);
 
         const uint64_t activeGeneration = m_generation.load(std::memory_order_relaxed);
         if (!req.hasBackfillJob && req.generation != activeGeneration) continue;
@@ -1316,6 +1318,7 @@ void SearchWorker::workerThread() {
             m_hasPendingRequest = false;
         }
         
+        harken::performance::Scope activity(harken::performance::Module::Search);
         m_searching.store(true);
         m_currentProcessingId.store(req.requestId, std::memory_order_release);
         // 执行查询

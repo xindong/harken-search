@@ -3,6 +3,7 @@
 #endif
 #define STB_VORBIS_HEADER_ONLY
 #include "../thirdparty/whisper.cpp/examples/stb_vorbis.c"
+#include "PerformanceMonitor.h"
 #define MINIAUDIO_IMPLEMENTATION
 #include "../thirdparty/miniaudio.h"
 #undef STB_VORBIS_HEADER_ONLY
@@ -901,6 +902,7 @@ void AudioEngine::waveformWorkerLoop() {
         }
 
         // 2. 获取任务信息
+        harken::performance::Scope activity(harken::performance::Module::Waveform);
         std::string path;
         bool mono = false;
         int solo = 0;
@@ -2998,6 +3000,7 @@ void AudioEngine::loadFileWorkerLoop() {
         result.token = token;
         result.filePath = path;
         result.requestStartedAt = requestStartedAt;
+        harken::performance::Scope activity(harken::performance::Module::AudioDecode);
         DiagScopedTimer loadDecodeTimer("Audio", "loadFileAsyncDecode");
         auto dec = std::make_unique<Platform::AudioDataSource::Decoder>();
         uint32_t outChannels = (forceMono || channelSolo != 0) ? 1 : 2;

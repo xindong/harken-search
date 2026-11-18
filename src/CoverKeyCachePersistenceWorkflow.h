@@ -12,8 +12,9 @@ struct PersistenceContext {
     bool persistenceEnabled = true;
 };
 
-// Drains cover-key updates and persists them on the caller's (UI) thread.
-// The workflow owns only database synchronization; presentation remains above.
+// Collects updates on the UI thread and persists batches on a worker.
 void PumpPersistence(PersistenceContext context);
+// Finish queued work before application shutdown.
+void ShutdownPersistence();
 
 }  // namespace aura::cover_cache
