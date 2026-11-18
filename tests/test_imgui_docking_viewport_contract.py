@@ -311,6 +311,27 @@ class ImguiDockingViewportPanelContract(unittest.TestCase):
             self.assertIn("DockModuleTarget", body)
             self.assertNotIn("DetectFloatingPanelDockZone", body)
 
+    def test_grouped_utilities_propagate_content_close_state(self) -> None:
+        main = _read(MAIN)
+        body = main.split("const auto renderToolContent", 1)[1].split("const auto drawSimilarBodyPerimeter", 1)[0]
+        for panel, flag, render in (
+            ("panelUCSBrowser", "showUCSBrowser", "RenderUCSBrowserContent"),
+            ("panelTagBrowser", "showTagBrowser", "RenderTagBrowserContent"),
+            ("panelWorkflow", "showWorkflowDialog", "RenderWorkflowDialogContent"),
+            ("panelTransfer", "showTransferDialog", "RenderTransferDialogContent"),
+        ):
+            self.assertIn(f"renderGroupedUtility(state.{panel}, state.{flag}, {render})", body)
+        utility = main.split("const auto renderGroupedUtility", 1)[1].split("const auto renderToolContent", 1)[0]
+        self.assertLess(utility.index("render(state)"), utility.index("if (!show)"))
+        self.assertIn("panel.visible = false", utility)
+
+    def test_similar_sounds_entry_reuses_existing_group(self) -> None:
+        source = _read(MAIN.with_name("SimilarSoundsWindow.cpp"))
+        opener = source.split("void OpenSimilarSoundsWindow(", 1)[1].split("void InvalidateSimilarSoundsWindow", 1)[0]
+        group = opener.split('state.dockTabGroups.Find("similar-sounds")', 1)[1]
+        self.assertIn('state.dockTabGroups.Select(group->id, "similar-sounds")', group)
+        self.assertLess(group.index("return;"), group.index("state.panelSimilarSounds.floating = true"))
+
     def test_dock_preview_requires_title_bar_drag_and_draws_full_inner_strips(self) -> None:
         main = _read(MAIN)
         helper = main.split("auto driveFloatingDockDrag", 1)[1].split("Floating Sidebar", 1)[0]

@@ -16,6 +16,11 @@ struct DockPlacementTarget {
 
 using DockPlacementPreview = std::array<DockPlacementTarget, 5>;
 
+inline bool DockTabMemberFits(const DockRect& surface, std::string_view member, float scale) {
+    const auto minimum = DockModuleMinimum(member, scale, DockMinimumPurpose::Resize);
+    return surface.width >= minimum.width && surface.height >= minimum.height;
+}
+
 inline DockPlacementPreview PlanDockPlacementPreview(const DockRect& surface, float scale) {
     DockPlacementPreview preview{};
     const float markerSize = 28.0f * scale;

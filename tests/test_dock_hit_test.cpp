@@ -440,6 +440,16 @@ int main() {
     {
         using namespace aura::ui::dock;
         const DockRect surface{100.0f, 80.0f, 600.0f, 400.0f};
+        const DockRect narrow{100.0f, 80.0f, 250.0f, 400.0f};
+        if (!DockTabMemberFits(narrow, "filter", 1.0f) ||
+            !DockTabMemberFits(narrow, "info", 1.0f) ||
+            DockTabMemberFits(narrow, "mod-workflow", 1.0f) ||
+            !DockTabMemberFits(surface, "mod-workflow", 1.0f) ||
+            DockTabMemberFits(surface, "mod-transfer", 2.0f) ||
+            DockTabMemberFits({0.0f, 0.0f, 600.0f, 200.0f}, "mod-workflow", 1.0f)) {
+            std::puts("FAIL: tab merge requires space for every tool without growing the destination");
+            return 1;
+        }
         const auto preview = PlanDockPlacementPreview(surface, 1.0f);
         const auto check = [&](float x, float y, DockPlacement placement, DockRect expected) {
             const auto* target = HitDockPlacementPreview(preview, x, y);

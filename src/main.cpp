@@ -38708,6 +38708,13 @@ void RenderUI(AppState& state) {
         ImGui::PopStyleColor(appearance.colors);
         if (appearance.vars) ImGui::PopStyleVar(appearance.vars);
     };
+    const auto renderGroupedUtility = [&](PanelState& panel, const bool& show, void (*render)(AppState&)) {
+        render(state);
+        if (!show) {
+            panel.visible = false;
+            MarkSettingsDirty(state);
+        }
+    };
     const auto renderToolContent = [&](std::string_view module, float width, const char* sidebarScope) {
         if (!tabAvailable(module)) return;
         if (module == "filter") {
@@ -38722,10 +38729,15 @@ void RenderUI(AppState& state) {
         } else if (module == "similar-sounds") {
             state.similarSoundsWindow.open = false;
             aura::ui::RenderSimilarSoundsContent(state);
-        } else if (module == "mod-ucs-browser") RenderUCSBrowserContent(state);
-        else if (module == "mod-tag-browser") RenderTagBrowserContent(state);
-        else if (module == "mod-workflow") RenderWorkflowDialogContent(state);
-        else if (module == "mod-transfer") RenderTransferDialogContent(state);
+        } else if (module == "mod-ucs-browser") {
+            renderGroupedUtility(state.panelUCSBrowser, state.showUCSBrowser, RenderUCSBrowserContent);
+        } else if (module == "mod-tag-browser") {
+            renderGroupedUtility(state.panelTagBrowser, state.showTagBrowser, RenderTagBrowserContent);
+        } else if (module == "mod-workflow") {
+            renderGroupedUtility(state.panelWorkflow, state.showWorkflowDialog, RenderWorkflowDialogContent);
+        } else if (module == "mod-transfer") {
+            renderGroupedUtility(state.panelTransfer, state.showTransferDialog, RenderTransferDialogContent);
+        }
     };
     const auto drawSimilarBodyPerimeter = [&](ImVec2 pos, ImVec2 size) {
         ImGui::GetWindowDrawList()->AddRect(
@@ -39058,13 +39070,7 @@ void RenderUI(AppState& state) {
             RenderFileInfoPageActions(state,
                 ImVec2(headerStart.x + headerWidth - infoActionWidth, headerStart.y),
                 headerHeight, infoActionBudget, true)) {
-            if (const auto* similarGroup = state.dockTabGroups.Find("similar-sounds")) {
-                state.panelSimilarSounds.visible = true;
-                state.dockTabGroups.Select(similarGroup->id, "similar-sounds");
-                MarkSettingsDirty(state);
-            } else {
-                aura::ui::OpenSimilarSoundsWindow(state);
-            }
+            aura::ui::OpenSimilarSoundsWindow(state);
         }
         if (!detach.empty()) detachDockTab(detach, false);
         return active;
@@ -49863,6 +49869,34 @@ void RenderUI(AppState& state) {
         bool overTabMarker = false;
         std::string tabTargetId;
         aura::ui::dock::DockRect targetTabRect{};
+        const auto considerTabDrop = [&](const std::string& target, const aura::ui::dock::DockRect& rect,
+                                         ImGuiViewport* targetViewport, bool floatingTarget) {
+            using namespace aura::ui::dock;
+            const float scale = targetViewport->DpiScale;
+            const auto preview = PlanDockPlacementPreview(rect, scale);
+            const auto& center = preview.front();
+            if (center.marker.width <= 0.0f) return;
+            const bool hovered = HitDockPlacementPreview(preview, mouse.x, mouse.y) == &center;
+            const auto fits = [&](std::string_view id) { return DockTabMemberFits(center.highlight, id, scale); };
+            const auto groupFits = [&](std::string_view id) {
+                const auto* group = state.dockTabGroups.Find(id);
+                return group ? std::all_of(group->members.begin(), group->members.end(), fits) : fits(id);
+            };
+            if (!groupFits(moduleId) || !groupFits(target)) {
+                if (hovered) {
+                    tabTargetId = target;
+                    g_dockDropPlan.tooSmall = true;
+                    if (titleBarDrag) ImGui::SetTooltip("%s", L(Dock_UxTooSmall));
+                }
+                return;
+            }
+            overTabMarker = hovered;
+            if (hovered || floatingTarget) {
+                tabTargetId = target;
+                targetTabRect = center.highlight;
+            }
+            if (titleBarDrag) drawTabDrop(targetViewport, center, hovered);
+        };
         if (aura::ui::dock::ShouldEvaluateFloatingDockZone(
                 titleBarDrag, step.released, g_dockDrag.OwnsDrag(moduleId),
                 g_dockTitleGesture.DropArmed() && movedFromDockOrigin)) {
@@ -49870,17 +49904,9 @@ void RenderUI(AppState& state) {
                 const auto [targetId, targetWindow] = floatingTabTarget(moduleId);
                 if (targetWindow) {
                     const ImRect rect = targetWindow->Rect();
-                    const auto preview = aura::ui::dock::PlanDockPlacementPreview(
+                    considerTabDrop(targetId,
                         {rect.Min.x, rect.Min.y, rect.GetWidth(), rect.GetHeight()},
-                        targetWindow->Viewport->DpiScale);
-                    const auto& center = preview.front();
-                    if (center.marker.width > 0.0f) {
-                        tabTargetId = targetId;
-                        targetTabRect = center.highlight;
-                        const auto* hovered = aura::ui::dock::HitDockPlacementPreview(preview, mouse.x, mouse.y);
-                        overTabMarker = hovered == &center;
-                        if (titleBarDrag) drawTabDrop(targetWindow->Viewport, center, overTabMarker);
-                    }
+                        targetWindow->Viewport, true);
                 } else {
                     aura::ui::dock::DockModuleTarget modules[16]{};
                     const int count = collectDockedModuleTargets(moduleId, modules, 16);
@@ -49892,15 +49918,7 @@ void RenderUI(AppState& state) {
                         const auto& rect = leaf.rect;
                         if (!ImRect(ImVec2(rect.x, rect.y), ImVec2(rect.x + rect.width, rect.y + rect.height))
                                 .Contains(mouse)) continue;
-                        const auto preview = aura::ui::dock::PlanDockPlacementPreview(rect, viewport->DpiScale);
-                        const auto& center = preview.front();
-                        if (center.marker.width <= 0.0f) break;
-                        overTabMarker = aura::ui::dock::HitDockPlacementPreview(preview, mouse.x, mouse.y) == &center;
-                        if (overTabMarker) {
-                            tabTargetId = leaf.id;
-                            targetTabRect = center.highlight;
-                        }
-                        if (titleBarDrag) drawTabDrop(viewport, center, overTabMarker);
+                        considerTabDrop(leaf.id, rect, viewport, false);
                         break;
                     }
                 }
