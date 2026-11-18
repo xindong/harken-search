@@ -18330,21 +18330,52 @@ bool Database::migrateFromSingleDatabase(const std::string& mainDbPath) {
     (void)mainDbPath;
 
     // Move waveform and RMS BLOBs from audio_files into waveforms_db.
-    // Migrate only rows that contain data; this is a one-time operation.
+    // Migrate only rows that contain data; this is a one-time operation per
+    // library. The completion marker keeps every later connection (and every
+    // reopen) from rescanning the whole audio_files table.
+    static const char* kMigrationKey = "legacy_waveform_blob_migration_v1";
+    if (ReadAppMetaInt(m_db, kMigrationKey) == 1) return true;
+
     const char* migrateSql = R"(
         INSERT OR IGNORE INTO waveforms_db.waveforms (file_id, waveform_data, rms_data)
         SELECT id, waveform_data, rms_data
         FROM audio_files
         WHERE waveform_data IS NOT NULL AND length(waveform_data) > 0;
     )";
-    executeSQL(migrateSql);
 
     // Clear migrated BLOB columns from the main database to release space.
     const char* clearSql = R"(
         UPDATE audio_files SET waveform_data = NULL, rms_data = NULL
         WHERE waveform_data IS NOT NULL AND length(waveform_data) > 0;
     )";
-    executeSQL(clearSql);
+
+    // Copy and clear must both land before the marker is written; otherwise a
+    // failed copy followed by a successful clear would drop waveform data.
+    const bool ownTransaction = sqlite3_get_autocommit(m_db) != 0;
+    if (ownTransaction && !executeSQL("BEGIN IMMEDIATE")) {
+        DIAG_ACTION_FMT("Database", "LegacyWaveformBlobMigrationDeferred: begin failed: %s", m_lastError.c_str());
+        return true;
+    }
+
+    const bool copied = executeSQL(migrateSql);
+    const bool cleared = copied && executeSQL(clearSql);
+    if (!copied || !cleared) {
+        if (ownTransaction) executeSQL("ROLLBACK");
+        DIAG_ACTION_FMT("Database", "LegacyWaveformBlobMigrationDeferred: copied=%d cleared=%d error=%s",
+                        copied ? 1 : 0, cleared ? 1 : 0, m_lastError.c_str());
+        return true;
+    }
+
+    if (ownTransaction && !executeSQL("COMMIT")) {
+        executeSQL("ROLLBACK");
+        DIAG_ACTION_FMT("Database", "LegacyWaveformBlobMigrationDeferred: commit failed: %s", m_lastError.c_str());
+        return true;
+    }
+
+    // Only a fully successful migration records completion, so a failed or
+    // interrupted attempt is retried on the next open.
+    WriteAppMetaInt(m_db, kMigrationKey, 1);
+    DIAG_ACTION("Database", "LegacyWaveformBlobMigrationComplete");
 
     return true;
 }

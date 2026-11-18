@@ -5601,6 +5601,97 @@ int testLegacyDescriptionDisplay() {
     return ok ? 0 : 1;
 }
 
+// BUG-20261119-LEGACY-WAVEFORM-MIGRATION: old builds kept waveform BLOBs in
+// audio_files. Moving them into the waveforms sidecar is a one-time library
+// operation recorded in app_meta, so background connections and reopens do not
+// rescan the whole audio_files table again.
+int testLegacyWaveformBlobMigrationRunsOncePerLibrary() {
+    printSeparator("Test: legacy waveform blob migration is recorded once");
+
+    const fs::path root = makeTempRoot("legacy_waveform_blob_migration");
+    const std::string dbPath = (root / "legacy_library.db").string();
+    const std::string legacyPath = "C:/t/legacy_blob.wav";
+    const char* markerKey = "legacy_waveform_blob_migration_v1";
+    int failures = 0;
+    auto expect = [&](bool ok, const char* label, long long actual) {
+        std::cout << (ok ? "PASS" : "FAIL") << ": " << label << " actual=" << actual << "\n";
+        if (!ok) ++failures;
+    };
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: open legacy fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        AudioRecord r;
+        r.filePath = legacyPath;
+        r.fileName = "legacy_blob.wav";
+        r.extension = ".wav";
+        r.format = "WAV";
+        r.channels = 1;
+        r.sampleRate = 48000;
+        r.bitDepth = 16;
+        r.durationSeconds = 1.0f;
+        r.fileSize = 1024;
+        r.totalFrames = 48000;
+        if (!db.addFile(r)) {
+            std::cerr << "FAIL: add legacy row: " << db.getLastError() << "\n";
+            return 1;
+        }
+    }
+
+    if (!execSqlOnDbPath(dbPath, {
+            "UPDATE audio_files SET waveform_data = x'0000803F', rms_data = x'0000803F' "
+            "WHERE file_path = 'C:/t/legacy_blob.wav';",
+            std::string("DELETE FROM app_meta WHERE key = '") + markerKey + "';"})) {
+        std::cerr << "FAIL: seed legacy audio_files blob\n";
+        return 1;
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen legacy fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        expect(queryAppMetaInt(db, markerKey) == 1, "completion marker recorded",
+               queryAppMetaInt(db, markerKey));
+        const int sidecarBytes = queryIntPragma(db,
+            "SELECT length(w.waveform_data) FROM waveforms_db.waveforms w "
+            "JOIN audio_files af ON af.id = w.file_id "
+            "WHERE af.file_path = 'C:/t/legacy_blob.wav' LIMIT 1", 0);
+        expect(sidecarBytes == 4, "legacy blob copied into waveforms sidecar", sidecarBytes);
+        const int legacyBytes = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_blob.wav' LIMIT 1", 0);
+        expect(legacyBytes == 0, "legacy column cleared after copy", legacyBytes);
+    }
+
+    // A leftover legacy row must not start another full-table scan: the
+    // persisted marker is the completion record for the whole library.
+    if (!execSqlOnDbPath(dbPath, {
+            "UPDATE audio_files SET waveform_data = x'0000803F' "
+            "WHERE file_path = 'C:/t/legacy_blob.wav';"})) {
+        std::cerr << "FAIL: re-seed leftover legacy blob\n";
+        return 1;
+    }
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen completed library: " << db.getLastError() << "\n";
+            return 1;
+        }
+        const int legacyBytes = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_blob.wav' LIMIT 1", 0);
+        expect(legacyBytes == 4, "completed library is not rescanned or re-cleared", legacyBytes);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
 int testConcurrentFtsTriggerRefresh();
 
 int main(int argc, char* argv[]) {
@@ -5755,6 +5846,9 @@ int main(int argc, char* argv[]) {
         if (focused == "cover_wall_page_cursor") {
             return testGlobalCoverWallPageApiUsesStableCursor() == 0 ? 0 : 1;
         }
+        if (focused == "legacy_waveform_blob_migration") {
+            return testLegacyWaveformBlobMigrationRunsOncePerLibrary() == 0 ? 0 : 1;
+        }
         if (focused == "cover_wall_same_filename_page_cursor") {
             return testSmallCoverWallSameFilenamePageCursorDoesNotSkipOrRepeat() == 0 ? 0 : 1;
         }
@@ -5817,6 +5911,8 @@ int main(int argc, char* argv[]) {
     int waveformCompressionFailures = testWaveformCompressionRoundTripAndLegacyRawCompatibility();
     int tagFacetIndexFailures = testTagFacetIndexPrestoreAndFallback();
     int readOnlyPinyinFailures = testReadOnlyPinyinRecomputeStops();
+    int legacyWaveformBlobMigrationFailures =
+        testLegacyWaveformBlobMigrationRunsOncePerLibrary();
 
     printSeparator("测试完成");
     if (channelFailures == 0 && audioBoundaryFailures == 0 && coverDedupFailures == 0 &&
@@ -5862,7 +5958,8 @@ int main(int argc, char* argv[]) {
         fastScanModeFailures == 0 &&
         waveformCompressionFailures == 0 &&
         tagFacetIndexFailures == 0 &&
-        readOnlyPinyinFailures == 0 && readOnlySidecarFailures == 0) {
+        readOnlyPinyinFailures == 0 && readOnlySidecarFailures == 0 &&
+        legacyWaveformBlobMigrationFailures == 0) {
         std::cout << "所有测试已完成。\n";
         return 0;
     }
@@ -5916,6 +6013,7 @@ int main(int argc, char* argv[]) {
     std::cerr << "WaveformCompression: " << waveformCompressionFailures << " assertion(s) failed.\n";
     std::cerr << "TagFacetIndex: " << tagFacetIndexFailures << " assertion(s) failed.\n";
     std::cerr << "ReadOnlyPinyinRecompute: " << readOnlyPinyinFailures << " assertion(s) failed.\n";
+    std::cerr << "LegacyWaveformBlobMigration: " << legacyWaveformBlobMigrationFailures << " assertion(s) failed.\n";
     std::cerr << "ReadOnlyLegacySidecars: " << readOnlySidecarFailures << " assertion(s) failed.\n";
     return 1;
 }
