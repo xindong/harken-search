@@ -38358,6 +38358,7 @@ void RenderUI(AppState& state) {
         : ThemeColors::peerPanelHeading(ThemeColors::current()));
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
+    constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
 
     auto drawDockTitleBar = [&](ImDrawList* dl,
                                 const ImVec2& wp,
@@ -38386,8 +38387,8 @@ void RenderUI(AppState& state) {
     struct DockModuleShellLayout {
         float insetL = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         float insetR = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        float insetT = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        float insetB = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+        float insetT = kDockShellVerticalInset;
+        float insetB = kDockShellVerticalInset;
         float innerPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         float titleHeight = 24.0f;
         float shellWidth = 0.0f;
@@ -44818,8 +44819,8 @@ void RenderUI(AppState& state) {
     ImGui::PopStyleVar();      // WindowPadding.
     };
     renderLeftColumn(renderDockTabsInShell);
-    ImGui::SetCursorScreenPos(resultsHomePos);
-    renderResultsSurface(centerWidth, availHeight);
+    ImGui::SetCursorScreenPos(ImVec2(resultsHomePos.x, resultsHomePos.y + kDockShellVerticalInset));
+    renderResultsSurface(centerWidth, availHeight - 2.0f * kDockShellVerticalInset);
 
     // Right Column - File Info with title bar
     const auto* rightTabGroup = anchoredTabGroup("info");
