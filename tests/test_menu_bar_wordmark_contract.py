@@ -52,7 +52,8 @@ class MenuBarWordmarkContract(unittest.TestCase):
         self.assertIn("float DrawMenuBarBrandWordmark(float x0, float y0, float x1, float y1,", ICONS_H)
 
     def test_main_menu_bar_uses_the_wordmark_before_the_menus(self) -> None:
-        bar = MAIN.split("if (ImGui::BeginMenuBar()) {", 1)[1].split("if (ImGui::BeginMenu(L(Menu_File)))", 1)[0]
+        bar = MAIN.split("if (ImGui::BeginMainMenuBar()) {", 1)[1]
+        bar = bar.split("ImGui::BeginMenu(L(Menu_File))", 1)[0]
         self.assertIn("aura::ui::DrawMenuBarBrandWordmark(", bar)
         self.assertIn("L(Main_AppNameBrand)", bar)
         self.assertIn("menuBarRect", bar)

@@ -30065,6 +30065,16 @@ static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& boun
     drawList->PopClipRect();
 }
 
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: record a top-level menu-bar item so the acceptance script can assert
+// the real label grid instead of guessing click coordinates.
+void QaProbeMenuBarItem(AppState& state, const char* label) {
+    const ImVec2 a = ImGui::GetItemRectMin();
+    const ImVec2 b = ImGui::GetItemRectMax();
+    state.qaRegions.menuBarItems.push_back({label, a.x, a.y, b.x, b.y});
+}
+#endif
+
 void RenderUI(AppState& state) {
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
         state.audioEngine.isLoaded()) {
@@ -35556,116 +35566,21 @@ void RenderUI(AppState& state) {
         ImGui::EndPopup();
     }
 
-    // MAIN LAYOUT - classic library layout
-
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    // Saved detached layouts must not turn the root workspace into a second OS window.
-    ImGui::SetNextWindowViewport(viewport->ID);
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_MenuBar |
-                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                                    ImGuiWindowFlags_NoDocking;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, workspacePalette.applicationSurface); // workspace application surface
-    BeginTransientScrollbarWindow("MainWindow", nullptr, windowFlags);
-    ImGui::PopStyleColor(); // workspace application surface
-    ImGui::PopStyleVar();
-
-    // Initialize the first tab through the asynchronous search path.
-    if (state.listTabs.empty()) {
-        state.createNewTab(u8"全部文件");
-        // Avoid a synchronous database query during first-frame layout.
-        RefreshSearchResults(state, true);
-        state.syncToTab();
-    }
-
-    // Tab snapshots synchronize only at explicit ownership boundaries:
-    // tab switch, search-result delivery, rename, and close.
-
-    static bool s_firstFrame = true;
-    if (s_firstFrame) {
-        state.syncFromTab();
-        s_firstFrame = false;
-    }
-
-    // Apply a debounced pending folder switch.
-    {
-        double now = ImGui::GetTime();
-        if (!state.uiState.pendingFolderPath.empty() && (now - state.uiState.pendingFolderTime) >= 0.15) {
-            state.folderFilterActive = true;
-            // T2.6: pending folder 入口 canonical
-            state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
-            state.viewMode = ViewMode::Database;
-            state.preferDeferredCountForNextRefresh = true;
-
-            state.clearPendingWaveforms();
-            RefreshSearchResults(state, true);
-            state.uiState.pendingFolderPath.clear();
-        }
-    }
-
-    // 4a：LRU 时间戳用当前帧号，保证淘汰顺序可靠
-    if (state.memoryBudget) state.memoryBudget->setCurrentFrame((uint64_t)ImGui::GetFrameCount());
-    // 4b：处理 registerEntry 因总预算触发的跨类型淘汰，由调用方真实释放
-    if (state.memoryBudget) {
-        auto pending = state.memoryBudget->getAndClearPendingEvicted();
-        for (const auto& [t, e] : pending) {
-            if (t == MemoryBudget::CacheType::Waveform) {
-                ReleaseWaveformEvictedEntry(state, e.key,
-                    MiniWaveformPresentation::Removal::BudgetEviction);
-            } else if (t == MemoryBudget::CacheType::Cover) {
-                CoverModule::ReleaseCoverEvictedEntry(e.key);
-            }
-        }
-    }
-    // Consume search results early in the frame to reduce display latency.
-    aura::search::Pump(
-        state,
-        [](AppState& appState, AsyncSearchResult& result) {
-            aura::search::Apply(
-                appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
-                kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
-                BuildAsyncSearchResultApplicationEffects());
-        },
-        [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
-#ifdef _WIN32
-    PumpReaperFileListImportResult(state);
+    // TOP MENU BAR
+#if ARIS_PREVIEW_ISOLATION
+    state.qaRegions.menuBarItems.clear();
 #endif
 
-    PumpDeferredWaveformDetail(state);
-    ProcessPendingMiniWaveTextures(state);
-    FlushMiniWavePerfDiagnostics();
-
-    // VIEW STATE HISTORY - Auto-detect navigation changes per frame
-
-    {
-        static ViewStateSnapshot s_lastViewState;
-        static bool s_initialized = false;
-
-        if (!s_initialized) {
-            s_lastViewState = state.captureViewState();
-            state.pushViewState(); // Push initial state
-            s_initialized = true;
-        } else if (!state.viewStateNavigating) {
-            ViewStateSnapshot current = state.captureViewState();
-            if (current != s_lastViewState) {
-                state.pushViewState();
-                s_lastViewState = current;
-            }
-        } else {
-            s_lastViewState = state.captureViewState();
-        }
-    }
-
-    // TOP MENU BAR
-
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().menuPopupBG);
-    if (ImGui::BeginMenuBar()) {
+    // Top menu follows the system/reading font size (REQ-20261110-TOP-MENU-FONT).
+    // The font is pushed before the bar is submitted so the bar height grows with it.
+    // When the row cannot fit (narrow window / long translation) the font steps back
+    // towards the chrome size instead of clipping the right-most entries.
+    static float s_menuFitScale = 1.0f;
+    const float menuFontPx =
+        ImMax((float)kChromeFontPx, GetMenuFontSizePx() * s_menuFitScale);
+    ImGui::PushFont(GetMenuUIFont(), menuFontPx);
+    if (ImGui::BeginMainMenuBar()) {
         ImGuiWindow* menuWindow = ImGui::GetCurrentWindow();
         const ImRect menuBarRect = menuWindow->MenuBarRect();
         menuWindow->DrawList->AddRectFilled(
@@ -35682,15 +35597,19 @@ void RenderUI(AppState& state) {
                 GetUIFontEmphasis(), L(Main_AppNameBrand));
             ImGui::SetCursorPosX((brandRightX - menuWindow->Pos.x) + brandGap);
         }
-        ImGui::PushFont(GetUIFontEmphasis());
+        ImGui::PushFont(GetMenuUIFontEmphasis(), menuFontPx);
         ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().menuText);
         ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(
             ThemeColors::current().menuText.x * 0.65f,
             ThemeColors::current().menuText.y * 0.65f,
             ThemeColors::current().menuText.z * 0.65f,
             ThemeColors::current().menuText.w));
-        if (ImGui::BeginMenu(L(Menu_File))) {
-            { ChromeTextScope _readingMenuFile; // menu dropdowns share the chrome face.
+        const bool fileMenuOpen = ImGui::BeginMenu(L(Menu_File));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_File));
+#endif
+        if (fileMenuOpen) {
+            { MenuTextScope _readingMenuFile; // menu dropdowns share the chrome face.
             if (ImGui::MenuItem(L(File_OpenFolder), "Ctrl+O")) {
                 std::string folder = OpenFolderDialog(g_hwnd);
                 if (!folder.empty()) {
@@ -35767,7 +35686,8 @@ void RenderUI(AppState& state) {
             ImGui::Separator();
 
             // Database management submenu
-            if (ImGui::BeginMenu(L(Menu_Database))) {
+            const bool fileDatabaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
+        if (fileDatabaseMenuOpen) {
                 // Current database info
                 if (!state.currentDbPathUtf8.empty()) {
                     std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35851,8 +35771,12 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Edit))) {
-            { ChromeTextScope _readingMenuEdit;
+        const bool editMenuOpen = ImGui::BeginMenu(L(Menu_Edit));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Edit));
+#endif
+        if (editMenuOpen) {
+            { MenuTextScope _readingMenuEdit;
             // Undo / Redo
             {
                 std::string undoLabel = std::string(L(Undo_UndoBtn));
@@ -36000,8 +35924,12 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_View))) {
-            { ChromeTextScope _readingMenuView;
+        const bool viewMenuOpen = ImGui::BeginMenu(L(Menu_View));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_View));
+#endif
+        if (viewMenuOpen) {
+            { MenuTextScope _readingMenuView;
             if (ImGui::MenuItem(L(View_FileBrowser), nullptr, state.viewMode == ViewMode::Browser)) {
                 state.viewMode = ViewMode::Browser;
             }
@@ -36102,8 +36030,12 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Database))) {
-            { ChromeTextScope _readingMenuDatabase;
+        const bool databaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Database));
+#endif
+        if (databaseMenuOpen) {
+            { MenuTextScope _readingMenuDatabase;
             if (!state.currentDbPathUtf8.empty()) {
                 std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
                 ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.3f, 1.0f), "%s %s", L(DB_CurrentDB), dbName.c_str());
@@ -36159,8 +36091,12 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Playlist))) {
-            { ChromeTextScope _readingMenuPlaylist;
+        const bool playlistMenuOpen = ImGui::BeginMenu(L(Menu_Playlist));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Playlist));
+#endif
+        if (playlistMenuOpen) {
+            { MenuTextScope _readingMenuPlaylist;
             if (ImGui::MenuItem(L(PL_NewPlaylist))) {
                 state.showPlaylistDialog = true;
                 memset(state.playlistNameBuffer, 0, sizeof(state.playlistNameBuffer));
@@ -36206,8 +36142,12 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Tools))) {
-            { ChromeTextScope _readingMenuTools;
+        const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Tools));
+#endif
+        if (toolsMenuOpen) {
+            { MenuTextScope _readingMenuTools;
             if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
             if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
                 ResetDockTestLayout();
@@ -36362,8 +36302,12 @@ void RenderUI(AppState& state) {
         // 工具菜单 (UCS/标签/嵌入/命名/传输/工作流/主题)
         RenderToolsMenu(state);
 
-        if (ImGui::BeginMenu(L(Menu_Settings))) {
-            { ChromeTextScope _readingMenuSettings;
+        const bool settingsMenuOpen = ImGui::BeginMenu(L(Menu_Settings));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Settings));
+#endif
+        if (settingsMenuOpen) {
+            { MenuTextScope _readingMenuSettings;
             if (ImGui::MenuItem(L(Set_AppSettings))) {
                 state.showSettingsDialog = true;
             }
@@ -36376,8 +36320,12 @@ void RenderUI(AppState& state) {
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(L(Menu_Help))) {
-            { ChromeTextScope _readingMenuHelp;
+        const bool helpMenuOpen = ImGui::BeginMenu(L(Menu_Help));
+#if ARIS_PREVIEW_ISOLATION
+        QaProbeMenuBarItem(state, L(Menu_Help));
+#endif
+        if (helpMenuOpen) {
+            { MenuTextScope _readingMenuHelp;
             if (ImGui::MenuItem(L(Help_About))) {
                 state.showAboutWindow = true;
             }
@@ -36413,16 +36361,152 @@ void RenderUI(AppState& state) {
             ImRect mbr = mw->MenuBarRect();
             ThemeInspector::RegisterZone(mbr.Min, mbr.Max, "menuBarBG", L(ThemeCol_menuBarBG));
         }
+        const float menuRowRight = ImGui::GetItemRectMax().x;
+        const float menuBarRightEdge = menuBarRect.Max.x;
+#if ARIS_PREVIEW_ISOLATION
+        state.qaRegions.menuBarFrame = ImGui::GetFrameCount();
+        state.qaRegions.menuBarFontPixels = ImGui::GetFontSize();
+        state.qaRegions.menuBarHeight = menuBarRect.GetHeight();
+        state.qaRegions.menuBarRight = menuBarRect.Max.x;
+        state.qaRegions.menuBarTop = menuBarRect.Min.y;
+        state.qaRegions.menuBarLastItemRight = menuRowRight;
+#endif
         ImGui::PopStyleColor(2);
         ImGui::PopFont();
-        ImGui::EndMenuBar();
+        ImGui::EndMainMenuBar();
+        if (menuRowRight > menuBarRightEdge - 4.0f) {
+            s_menuFitScale = ImMax(0.5f, s_menuFitScale - 0.06f);
+        } else if (s_menuFitScale < 1.0f && menuRowRight < menuBarRightEdge * 0.82f) {
+            s_menuFitScale = ImMin(1.0f, s_menuFitScale + 0.03f);
+        }
     }
+    ImGui::PopFont();
     ImGui::PopStyleColor();
+
+
+    // MAIN LAYOUT - classic library layout
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // BeginMainMenuBar only reports its height into the *build* work area, which
+    // becomes WorkPos/WorkSize on the next frame. Read the build area so the
+    // workspace never spends one frame under the bar (or leaving a gap).
+    const ImGuiViewportP* viewportBuild = (const ImGuiViewportP*)viewport;
+    const ImVec2 frameWorkPos(viewportBuild->Pos.x + viewportBuild->BuildWorkInsetMin.x,
+                              viewportBuild->Pos.y + viewportBuild->BuildWorkInsetMin.y);
+    const ImVec2 frameWorkSize(
+        viewportBuild->Size.x - viewportBuild->BuildWorkInsetMin.x - viewportBuild->BuildWorkInsetMax.x,
+        viewportBuild->Size.y - viewportBuild->BuildWorkInsetMin.y - viewportBuild->BuildWorkInsetMax.y);
+    // Saved detached layouts must not turn the root workspace into a second OS window.
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::SetNextWindowPos(frameWorkPos);
+    ImGui::SetNextWindowSize(frameWorkSize);
+
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                    ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                                    ImGuiWindowFlags_NoDocking;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, workspacePalette.applicationSurface); // workspace application surface
+    BeginTransientScrollbarWindow("MainWindow", nullptr, windowFlags);
+#if ARIS_PREVIEW_ISOLATION
+    state.qaRegions.workspaceTopFrame = ImGui::GetFrameCount();
+    state.qaRegions.workspaceTop = ImGui::GetWindowPos().y;
+#endif
+    ImGui::PopStyleColor(); // workspace application surface
+    ImGui::PopStyleVar();
+
+    // Initialize the first tab through the asynchronous search path.
+    if (state.listTabs.empty()) {
+        state.createNewTab(u8"全部文件");
+        // Avoid a synchronous database query during first-frame layout.
+        RefreshSearchResults(state, true);
+        state.syncToTab();
+    }
+
+    // Tab snapshots synchronize only at explicit ownership boundaries:
+    // tab switch, search-result delivery, rename, and close.
+
+    static bool s_firstFrame = true;
+    if (s_firstFrame) {
+        state.syncFromTab();
+        s_firstFrame = false;
+    }
+
+    // Apply a debounced pending folder switch.
+    {
+        double now = ImGui::GetTime();
+        if (!state.uiState.pendingFolderPath.empty() && (now - state.uiState.pendingFolderTime) >= 0.15) {
+            state.folderFilterActive = true;
+            // T2.6: pending folder 入口 canonical
+            state.selectedFolderPath = HarkenSearch::CanonicalFolderPath(state.uiState.pendingFolderPath);
+            state.viewMode = ViewMode::Database;
+            state.preferDeferredCountForNextRefresh = true;
+
+            state.clearPendingWaveforms();
+            RefreshSearchResults(state, true);
+            state.uiState.pendingFolderPath.clear();
+        }
+    }
+
+    // 4a：LRU 时间戳用当前帧号，保证淘汰顺序可靠
+    if (state.memoryBudget) state.memoryBudget->setCurrentFrame((uint64_t)ImGui::GetFrameCount());
+    // 4b：处理 registerEntry 因总预算触发的跨类型淘汰，由调用方真实释放
+    if (state.memoryBudget) {
+        auto pending = state.memoryBudget->getAndClearPendingEvicted();
+        for (const auto& [t, e] : pending) {
+            if (t == MemoryBudget::CacheType::Waveform) {
+                ReleaseWaveformEvictedEntry(state, e.key,
+                    MiniWaveformPresentation::Removal::BudgetEviction);
+            } else if (t == MemoryBudget::CacheType::Cover) {
+                CoverModule::ReleaseCoverEvictedEntry(e.key);
+            }
+        }
+    }
+    // Consume search results early in the frame to reduce display latency.
+    aura::search::Pump(
+        state,
+        [](AppState& appState, AsyncSearchResult& result) {
+            aura::search::Apply(
+                appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
+                kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
+                BuildAsyncSearchResultApplicationEffects());
+        },
+        [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
+#ifdef _WIN32
+    PumpReaperFileListImportResult(state);
+#endif
+
+    PumpDeferredWaveformDetail(state);
+    ProcessPendingMiniWaveTextures(state);
+    FlushMiniWavePerfDiagnostics();
+
+    // VIEW STATE HISTORY - Auto-detect navigation changes per frame
+
+    {
+        static ViewStateSnapshot s_lastViewState;
+        static bool s_initialized = false;
+
+        if (!s_initialized) {
+            s_lastViewState = state.captureViewState();
+            state.pushViewState(); // Push initial state
+            s_initialized = true;
+        } else if (!state.viewStateNavigating) {
+            ViewStateSnapshot current = state.captureViewState();
+            if (current != s_lastViewState) {
+                state.pushViewState();
+                s_lastViewState = current;
+            }
+        } else {
+            s_lastViewState = state.captureViewState();
+        }
+    }
 
     // TOP TOOLBAR - Search and Buttons
 
-    const float mainWorkW = viewport ? viewport->WorkSize.x : ImGui::GetIO().DisplaySize.x;
-    const float mainWorkH = viewport ? viewport->WorkSize.y : ImGui::GetIO().DisplaySize.y;
+    const float mainWorkW = frameWorkSize.x > 0.0f ? frameWorkSize.x : ImGui::GetIO().DisplaySize.x;
+    const float mainWorkH = frameWorkSize.y > 0.0f ? frameWorkSize.y : ImGui::GetIO().DisplaySize.y;
     // desktop-resize: content-driven breakpoints. Do not scale the whole UI down;
     // progressively reflow secondary chrome away from the central workspace.
     const bool layoutCompactWidth = mainWorkW < 1100.0f;

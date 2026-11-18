@@ -122,6 +122,12 @@ ImFont* GetUIFontMono();
 ImFont* GetUIListFont();
 ImFont* GetUIMeterFont();  // F-018: 10px ASCII-only, for narrow loudness meter bars
 
+// Top-menu typography. The menu bar follows the system/reading font size, never
+// smaller than the pinned chrome size, capped at kMaxReadingFontPx.
+float GetMenuFontSizePx();
+ImFont* GetMenuUIFont();
+ImFont* GetMenuUIFontEmphasis();
+
 // Reading-surface scope. While alive, GetUIFont*() return the reading-sized
 // faces, and the reading-regular face is pushed so plain text scales too.
 // Defaults are chrome; wrap only reading surfaces (tree, list, breadcrumb,
@@ -140,6 +146,14 @@ struct ChromeTextScope {
     bool prev;
     ChromeTextScope();
     ~ChromeTextScope();
+};
+
+// Menu font scope: reading faces at the menu font size, so the top menu bar and
+// its dropdowns/cascades stay on one grid while still following the setting.
+struct MenuTextScope {
+    bool prev;
+    MenuTextScope();
+    ~MenuTextScope();
 };
 
 // OpenGL Context
