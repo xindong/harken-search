@@ -508,6 +508,24 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "centerResultsDrawList->AddRect(" in center_setup
 
 
+def test_default_docked_results_match_the_side_shell_vertical_insets():
+    main = read(MAIN_CPP)
+    home_results = between(main, "renderLeftColumn(renderDockTabsInShell);", "// Right Column - File Info")
+    assert re.search(
+        r"ImGui::SetCursorScreenPos\(ImVec2\(resultsHomePos\.x,\s*"
+        r"resultsHomePos\.y \+ kDockShellVerticalInset\)\);\s*"
+        r"renderResultsSurface\(centerWidth,\s*availHeight - 2\.0f \* kDockShellVerticalInset\);",
+        home_results,
+    ), "The default results child must inset both vertical edges, not just its drawn frame."
+
+    shell_layout = between(main, "struct DockModuleShellLayout", "auto drawDockModuleShell")
+    assert "constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;" in main
+    assert "float insetT = kDockShellVerticalInset;" in shell_layout
+    assert "float insetB = kDockShellVerticalInset;" in shell_layout
+    home_slot = between(main, "const aura::ui::dock::DockRect resultsHomeRect{", "};")
+    assert "resultsHomePos.x, resultsHomePos.y, centerWidth, availHeight" in home_slot
+
+
 def test_folder_search_inherits_sidebar_semantic_colors_in_both_views():
     main = read(MAIN_CPP)
     toolbar = between(main, "static void RenderFolderTreeExplorerToolbar", "static void RenderFolderTreeExplorerList")
