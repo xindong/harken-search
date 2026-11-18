@@ -292,8 +292,15 @@ int main() {
                 browserToolbar == std::string::npos || browserHintEnd == std::string::npos || browserHintEnd <= browserToolbar
                     ? std::string{}
                     : mainCpp.substr(browserToolbar, browserHintEnd - browserToolbar);
-            CHECK(!browserHintScope.empty() && browserHintScope.find("L(Filter_SearchFolder)") == std::string::npos,
-                  "browser folder search uses the same empty hint as the database folder tree");
+            const size_t databaseToolbar = mainCpp.find("databaseSource.searchId", browserHintEnd);
+            const size_t databaseHintEnd = mainCpp.find("state.folderSearchBuffer", databaseToolbar);
+            const std::string databaseHintScope =
+                databaseToolbar == std::string::npos || databaseHintEnd == std::string::npos || databaseHintEnd <= databaseToolbar
+                    ? std::string{}
+                    : mainCpp.substr(databaseToolbar, databaseHintEnd - databaseToolbar);
+            CHECK(browserHintScope.find("L(Filter_SearchFolder)") != std::string::npos &&
+                      databaseHintScope.find("L(Filter_SearchFolder)") != std::string::npos,
+                  "browser and database folder searches use the same localized hint");
         }
         {
             const size_t browserList = mainCpp.find("browserSource.treeListChildId");

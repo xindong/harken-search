@@ -260,6 +260,22 @@ set_source_files_properties(${SQLITE_DIR}/sqlite3.c PROPERTIES
 
 # ImGui source files
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
+
+add_executable(TestToolbarSearchControls EXCLUDE_FROM_ALL
+    tests/test_toolbar_search_controls.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(TestToolbarSearchControls PRIVATE src ${IMGUI_DIR})
+target_compile_features(TestToolbarSearchControls PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestToolbarSearchControls PRIVATE /utf-8)
+endif()
+add_test(NAME ToolbarSearchControls COMMAND TestToolbarSearchControls)
+aura_set_test_labels(ToolbarSearchControls core)
+
 set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp

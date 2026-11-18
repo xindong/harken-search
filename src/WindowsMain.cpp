@@ -4905,6 +4905,37 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result=R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
+    } else if (cmd == "menu_ui") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto& qa = state.qaRegions;
+            auto menuItems = nlohmann::json::array();
+            for (const auto& item : qa.menuBarItems) menuItems.push_back({{"label",item.label},{"bounds",{item.x0,item.y0,item.x1,item.y1}}});
+            auto popups = nlohmann::json::array();
+            for (const auto* w : ImGui::GetCurrentContext()->Windows) {
+                if (!w->WasActive || !(w->Flags & ImGuiWindowFlags_Popup)) continue;
+                popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}},{"font_pixels",w->FontRefSize}});
+            }
+            result = nlohmann::json({{"ok",true},{"popups",popups},{"items",menuItems},
+                {"frame",qa.menuBarFrame},{"current_frame",ImGui::GetFrameCount()},
+                {"workspace_frame",qa.workspaceTopFrame},
+                {"font_pixels",qa.menuBarFontPixels},{"bar_height",qa.menuBarHeight},
+                {"bar_right",qa.menuBarRight},{"bar_top",qa.menuBarTop},{"last_item_right",qa.menuBarLastItemRight},
+                {"workspace_top",qa.workspaceTop},
+                {"work_pos",{ImGui::GetMainViewport()->WorkPos.x,ImGui::GetMainViewport()->WorkPos.y}},
+                {"work_size",{ImGui::GetMainViewport()->WorkSize.x,ImGui::GetMainViewport()->WorkSize.y}},
+                {"reading_font",state.settings.readingFontSize},
+                {"theme",(int)state.settings.theme},
+                {"hovered_window",ImGui::GetCurrentContext()->HoveredWindow?ImGui::GetCurrentContext()->HoveredWindow->Name:""},
+                {"mouse",{ImGui::GetIO().MousePos.x,ImGui::GetIO().MousePos.y}},
+                {"mouse_down",ImGui::GetIO().MouseDown[0]},
+                {"nav_window",ImGui::GetCurrentContext()->NavWindow?ImGui::GetCurrentContext()->NavWindow->Name:""}}).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
@@ -8681,6 +8712,29 @@ ChromeTextScope::~ChromeTextScope() {
     g_inReadingScope = prev;
 }
 
+float GetMenuFontSizePx() {
+    const float readingPx = g_readingRegular ? g_readingRegular->LegacySize : (float)kChromeFontPx;
+    return std::clamp(readingPx, (float)kChromeFontPx, (float)kMaxReadingFontPx);
+}
+
+ImFont* GetMenuUIFont() {
+    return g_readingRegular ? g_readingRegular : g_uiFontRegular;
+}
+
+ImFont* GetMenuUIFontEmphasis() {
+    if (g_readingEmphasis) return g_readingEmphasis;
+    return GetMenuUIFont();
+}
+
+MenuTextScope::MenuTextScope() : prev(g_inReadingScope) {
+    g_inReadingScope = true;
+    ImGui::PushFont(GetMenuUIFont(), GetMenuFontSizePx());
+}
+MenuTextScope::~MenuTextScope() {
+    ImGui::PopFont();
+    g_inReadingScope = prev;
+}
+
 // UI Scaling (Scheme B): rebuild fonts + scale style sizes (debounced)
 
 static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx) {
@@ -8784,8 +8838,8 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     static int s_lastTheme = -9999;
     static bool s_lastUseCustom = false;
 
-    const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, 24));
-    const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, 24));
+    const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, kMaxReadingFontPx));
+    const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, kMaxListFontPx));
     const int themeNow = (int)state.settings.theme;
     const bool useCustomNow = state.settings.useCustomColors;
 
