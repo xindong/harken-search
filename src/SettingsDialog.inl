@@ -254,7 +254,7 @@
             const auto page=static_cast<su::Page>(i);
             ImGui::PushID(i);
             // Keep the painted row, text alignment and hit rectangle together.
-            if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();}
+            if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();editor.scrollToTop=true;}
             su::Observe(("nav-"+std::to_string(i)).c_str());
             const auto rowMin=ImGui::GetItemRectMin(),rowMax=ImGui::GetItemRectMax();
             const bool selected=editor.page==page,hovered=ImGui::IsItemHovered();
@@ -294,7 +294,8 @@
         // The modal already paints this surface. Painting its translucent
         // background again makes a dark rectangle during theme previews.
         ImGui::BeginChild("SettingsBody",ImVec2(contentW,winSize.y-headerH-footerH),false,ImGuiWindowFlags_NoBackground);
-        if(editor.previousPage!=editor.page || editor.previousSearching!=(editor.query[0]!=0))ImGui::SetScrollY(0);
+        if(editor.previousPage!=editor.page || editor.previousSearching!=(editor.query[0]!=0) || editor.scrollToTop)ImGui::SetScrollY(0);
+        editor.scrollToTop=false;
         editor.previousPage=editor.page;editor.previousSearching=editor.query[0]!=0;
         auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
         auto actionButton=[&](const char* label,const char* action){if(aura::ui::ActionButton(label))requestAction(action);};

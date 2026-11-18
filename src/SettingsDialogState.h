@@ -95,7 +95,7 @@ struct Editor {
     bool open=false, closePrompt=false, closeAfterPrompt=false, recording=false, resetAll=false;
     Page page=Page::Common;
     Page previousPage=Page::Common;
-    bool previousSearching=false, hadChildPopup=false;
+    bool previousSearching=false, hadChildPopup=false, scrollToTop=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
     std::string clearSimilarTarget;
