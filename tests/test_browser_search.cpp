@@ -189,9 +189,9 @@ int main() {
               "browser Send to DAW routes through browser-selected paths");
         CHECK(mainCpp.find("RenderBrowserSystemFolderTree(state)") != std::string::npos,
               "browser sidebar exposes a dedicated system folder tree surface");
-        CHECK(mainCpp.find("Browser top strip should align with the database results lane.") != std::string::npos &&
-              mainCpp.find("ImGui::Indent(0.0f);") != std::string::npos,
-              "browser top strip does not add a left indent that would shift it away from the database list lane");
+        CHECK(mainCpp.find("harken::results::AlignBrowserPathLabel(emptyLibraryFileTable)") != std::string::npos &&
+              mainCpp.find("ImGui::Indent(0.0f);") == std::string::npos,
+              "browser path aligns to the first column without indenting the shared results lane");
         CHECK(mainCpp.find("RenderBrowserFolderTreeSidebarPanel(state);") != std::string::npos,
               "browser system folder tree is mounted from the real folder-tree sidebar section");
         CHECK(mainCpp.find("RunBrowserSystemFolderSearchIfNeeded(") != std::string::npos,

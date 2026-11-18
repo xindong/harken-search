@@ -38,7 +38,7 @@ int main() {
     ok &= requireContains(mainCpp, "constexpr int kResultsFilePathColumnIndex = 16",
                           "FilePath keeps its stable physical table index");
     ok &= requireContains(mainCpp, "const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId)",
-                          "FilePath visibility is read from the persisted FileTableV6 table state");
+                          "FilePath visibility is read from the active table's own persisted state");
     ok &= requireContains(mainCpp, "const bool filePathVisible = previousResultsTable &&",
                           "hidden FilePath is distinguished before table sizing");
     ok &= requireContains(mainCpp, "const float resultsTableInnerWidth = filePathVisible ? innerWidth : 0.0f",
@@ -48,8 +48,8 @@ int main() {
     ok &= requireContains(mainCpp, "resultsSizingPolicy |",
                           "results table combines the conditional sizing policy with stable flags");
     ok &= requireContains(mainCpp,
-                          "BeginTransientScrollbarTable(\"FileTableV6\", totalColumns, tableFlags, ImVec2(0, 0), resultsTableInnerWidth)",
-                          "FileTableV6 passes the visibility-aware inner width");
+                          "BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth)",
+                          "results table passes the visibility-aware inner width");
     ok &= requireNotContains(mainCpp, "TableSetColumnEnabled(kResultsFilePathColumnIndex, false)",
                              "tail fix must not mutate persisted column visibility or reorder row emission");
 

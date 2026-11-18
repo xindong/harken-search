@@ -1676,7 +1676,8 @@ void ImGui::SeparatorEx(ImGuiSeparatorFlags flags, float thickness)
     {
         // Horizontal Separator
         float x1 = window->DC.CursorPos.x;
-        float x2 = window->WorkRect.Max.x;
+        float x2 = (window->Flags & ImGuiWindowFlags_MenuChrome)
+            ? ImMax(x1, window->InnerRect.Max.x - window->WindowPadding.x) : window->WorkRect.Max.x;
 
         // Preserve legacy behavior inside Columns()
         // Before Tables API happened, we relied on Separator() to span all columns of a Columns() set.
@@ -7322,6 +7323,12 @@ bool ImGui::CollapsingHeader(const char* label, bool* p_visible, ImGuiTreeNodeFl
 // But you need to make sure the ID is unique, e.g. enclose calls in PushID/PopID or use ##unique_id.
 // With this scheme, ImGuiSelectableFlags_SpanAllColumns and ImGuiSelectableFlags_AllowOverlap are also frequently used flags.
 // FIXME: Selectable() with (size.x == 0.0f) and (SelectableTextAlign.x > 0.0f) followed by SameLine() is currently not supported.
+static bool IsMenuChromeNavHighlight(const ImGuiWindow* window, ImGuiID id)
+{
+    const ImGuiContext& g = *GImGui;
+    return g.NavHighlightItemUnderNav && g.NavCursorVisible && g.NavWindow == window && g.NavId == id;
+}
+
 bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size_arg)
 {
     ImGuiWindow* window = GetCurrentWindow();
@@ -7462,16 +7469,20 @@ bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags fl
     // Render
     if (is_visible)
     {
-        const bool highlighted = hovered || (flags & ImGuiSelectableFlags_Highlight);
+        const bool menu_highlight = (flags & ImGuiSelectableFlags_MenuHighlight) &&
+            !(g.LastItemData.ItemFlags & ImGuiItemFlags_Disabled) && IsMenuChromeNavHighlight(window, id);
+        const bool highlighted = hovered || menu_highlight || (flags & ImGuiSelectableFlags_Highlight);
         if (highlighted || selected)
         {
             // Between 1.91.0 and 1.91.4 we made selected Selectable use an arbitrary lerp between _Header and _HeaderHovered. Removed that now. (#8106)
             ImU32 col = GetColorU32((held && highlighted) ? ImGuiCol_HeaderActive : highlighted ? ImGuiCol_HeaderHovered : ImGuiCol_Header);
-            RenderFrame(bb.Min, bb.Max, col, false, 0.0f);
+            RenderFrame(bb.Min, bb.Max, col, false, (flags & ImGuiSelectableFlags_MenuHighlight) ? g.Style.FrameRounding : 0.0f);
         }
         if (g.NavId == id)
         {
-            ImGuiNavRenderCursorFlags nav_render_cursor_flags = ImGuiNavRenderCursorFlags_Compact | ImGuiNavRenderCursorFlags_NoRounding;
+            ImGuiNavRenderCursorFlags nav_render_cursor_flags = ImGuiNavRenderCursorFlags_Compact;
+            if (!(flags & ImGuiSelectableFlags_MenuHighlight))
+                nav_render_cursor_flags |= ImGuiNavRenderCursorFlags_NoRounding;
             if (is_multi_select)
                 nav_render_cursor_flags |= ImGuiNavRenderCursorFlags_AlwaysDraw; // Always show the nav rectangle
             RenderNavCursor(bb, id, nav_render_cursor_flags);
@@ -9217,6 +9228,101 @@ static bool IsRootOfOpenMenuSet()
     return upper_popup->Window && (upper_popup->Window->Flags & ImGuiWindowFlags_ChildMenu) && ImGui::IsWindowChildOf(upper_popup->Window, window, true, false);
 }
 
+static ImGuiSelectableFlags MenuHighlightFlags(const ImGuiWindow* window)
+{
+    return (window->Flags & ImGuiWindowFlags_MenuChrome) ||
+           (window->DC.MenuBarAppending && (GImGui->CurrentItemFlags & ImGuiItemFlags_MenuChrome))
+        ? ImGuiSelectableFlags_MenuHighlight : ImGuiSelectableFlags_None;
+}
+
+static bool MenuChromeHasDefaultText(const ImGuiContext& g)
+{
+    if (g.MenuChromeTextStackSize < 0)
+        return false;
+    for (int index = g.ColorStack.Size - 1; index >= g.MenuChromeTextStackSize; --index)
+        if (g.ColorStack[index].Col == ImGuiCol_Text)
+            return false;
+    return true;
+}
+
+static bool MenuChromeRow(const char* label, const char* icon, const char* shortcut,
+                          const ImVec2& label_size, ImGuiSelectableFlags flags,
+                          bool open, bool checkmark, bool submenu)
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiWindow* window = g.CurrentWindow;
+    const ImVec2 pos = window->DC.CursorPos;
+    const ImVec2 text_pos(pos.x, pos.y + window->DC.CurrLineTextBaseOffset);
+    const float right = ImMax(pos.x, window->InnerRect.Max.x - window->WindowPadding.x);
+    const float gap = g.Style.ItemSpacing.x * 0.75f;
+    const float icon_width = icon && icon[0] ? ImGui::CalcTextSize(icon).x + gap : 0.0f;
+    const float shortcut_font_size = g.FontSizeBase * (14.0f / 15.0f);
+    float shortcut_width = 0.0f;
+    float shortcut_y_offset = 0.0f;
+    if (shortcut && shortcut[0])
+    {
+        const float label_ascent = g.FontBaked->Ascent * g.FontBakedScale;
+        ImGui::PushFont(NULL, shortcut_font_size);
+        shortcut_width = ImGui::CalcTextSize(shortcut).x;
+        shortcut_y_offset = label_ascent - g.FontBaked->Ascent * g.FontBakedScale;
+        ImGui::PopFont();
+    }
+    const float mark_width = g.FontSize * (submenu ? 0.42f : 0.82f);
+    const float trailing_width = shortcut_width + (submenu || checkmark ? mark_width : 0.0f)
+        + (checkmark && shortcut_width > 0.0f ? gap : 0.0f);
+    const float ideal_width = label_size.x + icon_width + trailing_width + (trailing_width > 0.0f ? gap : 0.0f);
+    const float previous_max_x = window->DC.CursorMaxPos.x;
+    const bool pressed = ImGui::Selectable("", open, flags, ImVec2(ImMax(1.0f, right - pos.x), label_size.y));
+    window->DC.CursorMaxPos.x = ImMax(previous_max_x, ImMin(pos.x + ideal_width, right));
+    window->DC.IdealMaxPos.x = ImMax(window->DC.IdealMaxPos.x, pos.x + ideal_width);
+    if (!(g.LastItemData.StatusFlags & ImGuiItemStatusFlags_Visible))
+        return pressed;
+
+    const ImGuiID id = g.LastItemData.ID;
+    const bool active = !(g.LastItemData.ItemFlags & ImGuiItemFlags_Disabled) &&
+        (IsMenuChromeNavHighlight(window, id) ||
+         (!g.NavHighlightItemUnderNav && g.HoveredId == id && g.HoveredWindow == window));
+    const bool use_active_text = active && MenuChromeHasDefaultText(g);
+    if (use_active_text)
+        ImGui::PushStyleColor(ImGuiCol_Text, g.MenuChromeActiveText);
+    const float label_left = text_pos.x + icon_width;
+    const float label_right = right - trailing_width - (trailing_width > 0.0f ? gap : 0.0f);
+    if (icon_width > 0.0f && label_right >= label_left)
+        ImGui::RenderText(text_pos, icon);
+    if (label_right > label_left)
+        ImGui::RenderTextEllipsis(window->DrawList, ImVec2(label_left, text_pos.y),
+            ImVec2(label_right, text_pos.y + label_size.y), label_right,
+            label, ImGui::FindRenderedTextEnd(label), &label_size);
+
+    const ImVec4 hint_color = active && g.MenuChromeTextStackSize >= 0
+        ? g.MenuChromeActiveText : g.Style.Colors[ImGuiCol_TextDisabled];
+    if (shortcut_width > 0.0f && right - shortcut_width >= text_pos.x)
+    {
+        ImGui::PushFont(NULL, shortcut_font_size);
+        ImGui::PushStyleColor(ImGuiCol_Text, hint_color);
+        ImGui::LogSetNextTextDecoration("(", ")");
+        ImGui::RenderText(ImVec2(right - shortcut_width, text_pos.y + shortcut_y_offset), shortcut, NULL, false);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    if (submenu && right - mark_width >= text_pos.x)
+    {
+        const float mid_y = text_pos.y + g.FontSize * 0.52f;
+        const float half_height = g.FontSize * 0.27f;
+        const float tip = right - 1.0f;
+        const ImVec2 points[] = { ImVec2(tip - g.FontSize * 0.23f, mid_y - half_height),
+                                  ImVec2(tip, mid_y),
+                                  ImVec2(tip - g.FontSize * 0.23f, mid_y + half_height) };
+        window->DrawList->AddPolyline(points, IM_ARRAYSIZE(points), ImGui::GetColorU32(hint_color), 0, ImMax(1.0f, g.FontSize / 13.0f));
+    }
+    if (checkmark && right - trailing_width >= text_pos.x)
+        ImGui::RenderCheckMark(window->DrawList, ImVec2(right - trailing_width, text_pos.y + g.FontSize * 0.14f),
+            ImGui::GetColorU32(ImGuiCol_Text), mark_width);
+    if (use_active_text)
+        ImGui::PopStyleColor();
+    return pressed;
+}
+
 bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
 {
     ImGuiWindow* window = GetCurrentWindow();
@@ -9227,12 +9333,15 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
     const ImGuiStyle& style = g.Style;
     const ImGuiID id = window->GetID(label);
     bool menu_is_open = IsPopupOpen(id, ImGuiPopupFlags_None);
+    const ImGuiSelectableFlags menu_highlight_flags = MenuHighlightFlags(window);
 
     // Sub-menus are ChildWindow so that mouse can be hovering across them (otherwise top-most popup menu would steal focus and not allow hovering on parent menu)
     // The first menu in a hierarchy isn't so hovering doesn't get across (otherwise e.g. resizing borders with ImGuiButtonFlags_FlattenChildren would react), but top-most BeginMenu() will bypass that limitation.
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     if (window->Flags & ImGuiWindowFlags_ChildMenu)
         window_flags |= ImGuiWindowFlags_ChildWindow;
+    if (menu_highlight_flags)
+        window_flags |= ImGuiWindowFlags_MenuChrome;
 
     // If a menu with same the ID was already submitted, we will append to it, matching the behavior of Begin().
     // We are relying on a O(N) search - so O(N log N) over the frame - which seems like the most efficient for the expected small amount of BeginMenu() calls per frame.
@@ -9240,7 +9349,11 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
     if (g.MenusIdSubmittedThisFrame.contains(id))
     {
         if (menu_is_open)
+        {
+            if (menu_highlight_flags & ImGuiSelectableFlags_MenuHighlight)
+                SetNextWindowViewport(window->ViewportId);
             menu_is_open = BeginPopupMenuEx(id, label, window_flags); // menu_is_open can be 'false' when the popup is completely clipped (e.g. zero size display)
+        }
         else
             g.NextWindowData.ClearFlags();          // we behave like Begin() and need to consume those values
         return menu_is_open;
@@ -9269,22 +9382,30 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
     bool pressed;
 
     // We use ImGuiSelectableFlags_NoSetKeyOwner to allow down on one menu item, move, up on another.
-    const ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_NoHoldingActiveID | ImGuiSelectableFlags_NoSetKeyOwner | ImGuiSelectableFlags_SelectOnClick | ImGuiSelectableFlags_NoAutoClosePopups;
+    const ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_NoHoldingActiveID | ImGuiSelectableFlags_NoSetKeyOwner | ImGuiSelectableFlags_SelectOnClick | ImGuiSelectableFlags_NoAutoClosePopups | menu_highlight_flags;
     if (window->DC.LayoutType == ImGuiLayoutType_Horizontal)
     {
         // Menu inside a horizontal menu bar
         // Selectable extend their highlight by half ItemSpacing in each direction.
         // For ChildMenu, the popup position will be overwritten by the call to FindBestWindowPosForPopup() in Begin()
-        window->DC.CursorPos.x += IM_TRUNC(style.ItemSpacing.x * 0.5f);
-        PushStyleVarX(ImGuiStyleVar_ItemSpacing, style.ItemSpacing.x * 2.0f);
-        float w = label_size.x;
-        ImVec2 text_pos(window->DC.CursorPos.x + offsets->OffsetLabel, pos.y + window->DC.CurrLineTextBaseOffset);
-        pressed = Selectable("", menu_is_open, selectable_flags, ImVec2(w, label_size.y));
+        const float label_inset = IM_TRUNC(style.ItemSpacing.x * 0.5f);
+        window->DC.CursorPos.x += label_inset;
+        if (!menu_highlight_flags)
+            PushStyleVarX(ImGuiStyleVar_ItemSpacing, style.ItemSpacing.x * 2.0f);
+        ImVec2 text_pos(window->DC.CursorPos.x + (menu_highlight_flags ? 0.0f : offsets->OffsetLabel), pos.y + window->DC.CurrLineTextBaseOffset);
+        pressed = Selectable("", menu_is_open, selectable_flags, label_size);
         LogSetNextTextDecoration("[", "]");
         RenderText(text_pos, label);
-        PopStyleVar();
-        window->DC.CursorPos.x += IM_TRUNC(style.ItemSpacing.x * (-1.0f + 0.5f)); // -1 spacing to compensate the spacing added when Selectable() did a SameLine(). It would also work to call SameLine() ourselves after the PopStyleVar().
-        popup_pos = ImVec2(pos.x - 1.0f - IM_TRUNC(style.ItemSpacing.x * 0.5f), text_pos.y - style.FramePadding.y + window->MenuBarHeight);
+        if (!menu_highlight_flags)
+            PopStyleVar();
+        window->DC.CursorPos.x -= label_inset;
+        popup_pos = ImVec2(menu_highlight_flags ? g.LastItemData.Rect.Min.x : pos.x - 1.0f - label_inset,
+            text_pos.y - style.FramePadding.y + window->MenuBarHeight);
+    }
+    else if (menu_highlight_flags)
+    {
+        pressed = MenuChromeRow(label, icon, NULL, label_size, selectable_flags, menu_is_open, false, true);
+        popup_pos = ImVec2(pos.x, pos.y + window->DC.PrevLineTextBaseOffset - window->WindowPadding.y);
     }
     else
     {
@@ -9402,6 +9523,8 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
     {
         ImGuiLastItemData last_item_in_parent = g.LastItemData;
         SetNextWindowPos(popup_pos, ImGuiCond_Always);                  // Note: misleading: the value will serve as reference for FindBestWindowPosForPopup(), not actual pos.
+        if (menu_highlight_flags & ImGuiSelectableFlags_MenuHighlight)
+            SetNextWindowViewport(window->ViewportId);
         PushStyleVar(ImGuiStyleVar_ChildRounding, style.PopupRounding); // First level will use _PopupRounding, subsequent will use _ChildRounding
         menu_is_open = BeginPopupMenuEx(id, label, window_flags); // menu_is_open may be 'false' when the popup is completely clipped (e.g. zero size display)
         PopStyleVar();
@@ -9478,21 +9601,29 @@ bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut
         BeginDisabled();
 
     // We use ImGuiSelectableFlags_NoSetKeyOwner to allow down on one menu item, move, up on another.
-    const ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SelectOnRelease | ImGuiSelectableFlags_NoSetKeyOwner | ImGuiSelectableFlags_SetNavIdOnHover;
+    const ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SelectOnRelease | ImGuiSelectableFlags_NoSetKeyOwner | ImGuiSelectableFlags_SetNavIdOnHover | MenuHighlightFlags(window);
     const ImGuiMenuColumns* offsets = &window->DC.MenuColumns;
     if (window->DC.LayoutType == ImGuiLayoutType_Horizontal)
     {
         // Mimic the exact layout spacing of BeginMenu() to allow MenuItem() inside a menu bar, which is a little misleading but may be useful
         // Note that in this situation: we don't render the shortcut, we render a highlight instead of the selected tick mark.
-        float w = label_size.x;
-        window->DC.CursorPos.x += IM_TRUNC(style.ItemSpacing.x * 0.5f);
-        ImVec2 text_pos(window->DC.CursorPos.x + offsets->OffsetLabel, window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset);
-        PushStyleVarX(ImGuiStyleVar_ItemSpacing, style.ItemSpacing.x * 2.0f);
-        pressed = Selectable("", selected, selectable_flags, ImVec2(w, 0.0f));
-        PopStyleVar();
+        const bool menu_chrome = (selectable_flags & ImGuiSelectableFlags_MenuHighlight) != 0;
+        const float label_inset = IM_TRUNC(style.ItemSpacing.x * 0.5f);
+        window->DC.CursorPos.x += label_inset;
+        ImVec2 text_pos(window->DC.CursorPos.x + (menu_chrome ? 0.0f : offsets->OffsetLabel),
+                       window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset);
+        if (!menu_chrome)
+            PushStyleVarX(ImGuiStyleVar_ItemSpacing, style.ItemSpacing.x * 2.0f);
+        pressed = Selectable("", selected, selectable_flags, ImVec2(label_size.x, 0.0f));
+        if (!menu_chrome)
+            PopStyleVar();
         if (g.LastItemData.StatusFlags & ImGuiItemStatusFlags_Visible)
             RenderText(text_pos, label);
-        window->DC.CursorPos.x += IM_TRUNC(style.ItemSpacing.x * (-1.0f + 0.5f)); // -1 spacing to compensate the spacing added when Selectable() did a SameLine(). It would also work to call SameLine() ourselves after the PopStyleVar().
+        window->DC.CursorPos.x -= label_inset;
+    }
+    else if (selectable_flags & ImGuiSelectableFlags_MenuHighlight)
+    {
+        pressed = MenuChromeRow(label, icon, shortcut, label_size, selectable_flags, false, selected, false);
     }
     else
     {

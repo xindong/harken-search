@@ -339,14 +339,9 @@ def test_results_content_edge_is_compact_and_tab_labels_reject_settings_payloads
 
     # Tabs, breadcrumb/path, table header and rows share one compact content
     # origin instead of the previous 20 px left moat.
-    assert (
-        "kResultsContentInsetX = "
-        "aura::ui::workspace::kCoreWorkspaceMetrics.space4"
-    ) in center
-    assert (
-        "ImGuiStyleVar_WindowPadding, "
-        "ImVec2(kResultsContentInsetX, 2.0f)"
-    ) in center
+    layout = read(ROOT / "src" / "ui" / "ResultsPanelLayout.h")
+    assert "kContentInsetX = aura::ui::workspace::kCoreWorkspaceMetrics.space8" in layout
+    assert "ImGuiStyleVar_WindowPadding, ImVec2(harken::results::kContentInsetX, 0.0f)" in center
     assert "ImVec2(20.0f, 2.0f)" not in center
     assert "constexpr float kBreadcrumbLabelIndentX = 0.0f" in center
 
@@ -481,7 +476,7 @@ def test_results_frame_has_one_complete_rounded_two_pixel_waveform_color_owner()
     assert "const ImVec4 centerResultsOutline = centerResultsTheme.waveformColor;" in center_setup
     assert "const ImVec4 centerResultsOutline = workspacePalette.perimeter;" not in center_setup
     assert "ImGuiStyleVar_ChildBorderSize" not in center_setup
-    assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), false,' in center_setup
+    assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), ImGuiChildFlags_AlwaysUseWindowPadding,' in center_setup
     assert center_setup.count("centerResultsDrawList->AddRect(") == 1
     assert "ImGui::GetForegroundDrawList(ImGui::GetMainViewport())" not in center_setup
     assert center_setup.index("centerResultsDrawList->PushClipRectFullScreen();") < center_setup.index("centerResultsDrawList->AddRect(")
@@ -507,10 +502,28 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "ImDrawList* centerResultsDrawList = nullptr;" in center_setup
     assert "centerResultsDrawList = ImGui::GetWindowDrawList();" in center_setup
     assert center_setup.count("centerResultsDrawList = ImGui::GetWindowDrawList();") >= 2
-    assert center_setup.index('if (BeginTransientScrollbarTable("FileTableV6"') < center_setup.rindex("centerResultsDrawList = ImGui::GetWindowDrawList();")
+    assert center_setup.index("if (BeginTransientScrollbarTable(resultsTableName,") < center_setup.rindex("centerResultsDrawList = ImGui::GetWindowDrawList();")
     assert center_setup.index("ImGui::EndTable();") < center_setup.index("centerResultsDrawList->AddRect(")
     assert "ImGui::GetForegroundDrawList(ImGui::GetMainViewport())" not in center_setup
     assert "centerResultsDrawList->AddRect(" in center_setup
+
+
+def test_default_docked_results_match_the_side_shell_vertical_insets():
+    main = read(MAIN_CPP)
+    home_results = between(main, "renderLeftColumn(renderDockTabsInShell);", "// Right Column - File Info")
+    assert re.search(
+        r"ImGui::SetCursorScreenPos\(ImVec2\(resultsHomePos\.x,\s*"
+        r"resultsHomePos\.y \+ kDockShellVerticalInset\)\);\s*"
+        r"renderResultsSurface\(centerWidth,\s*availHeight - 2\.0f \* kDockShellVerticalInset\);",
+        home_results,
+    ), "The default results child must inset both vertical edges, not just its drawn frame."
+
+    shell_layout = between(main, "struct DockModuleShellLayout", "auto drawDockModuleShell")
+    assert "constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;" in main
+    assert "float insetT = kDockShellVerticalInset;" in shell_layout
+    assert "float insetB = kDockShellVerticalInset;" in shell_layout
+    home_slot = between(main, "const aura::ui::dock::DockRect resultsHomeRect{", "};")
+    assert "resultsHomePos.x, resultsHomePos.y, centerWidth, availHeight" in home_slot
 
 
 def test_folder_search_inherits_sidebar_semantic_colors_in_both_views():
@@ -595,17 +608,63 @@ def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     assert "s.resultsSecondaryText   = H(0xffd7e3ef);" in read(BUILTIN_THEME_CPP)
 
 
+def test_system_menu_font_keeps_141_proportional_mapping():
+    settings = read(ROOT / "src" / "AppState.h")
+    windows = read(ROOT / "src" / "WindowsMain.cpp")
+    mapping = " ".join(between(windows, "float GetMenuFontSizePx()", "ImFont* GetMenuUIFont()").split())
+    assert "kChromeFontPx = 14;" in settings
+    assert "kDefaultReadingFontPx = 18;" in settings
+    assert "kMaxReadingFontPx = 32;" in settings
+    assert "g_readingRegular ? g_readingRegular->LegacySize : (float)kDefaultReadingFontPx" in mapping
+    assert "(float)kChromeFontPx * (readingPx / (float)kDefaultReadingFontPx)" in mapping
+    assert "return std::clamp(std::round(scaled), (float)kChromeFontPx, (float)kMaxReadingFontPx);" in mapping
+
+
 def test_top_menu_uses_the_system_font_scope():
     main = read(MAIN_CPP)
-    assert "ReadingTextScope _readingMenu" not in main
-    assert "ChromeTextScope _readingMenu" not in main
-    assert main.count("MenuTextScope _readingMenu") == 8
-    assert "ImGui::PushFont(GetMenuUIFont(), menuFontPx);" in main
-    assert "ImGui::BeginMainMenuBar()" in main
-    assert "ImGui::EndMainMenuBar();" in main
+    theme = read(THEME_CPP)
+    windows = read(ROOT / "src" / "WindowsMain.cpp")
     header = between(main, "// TOP MENU BAR", "// TOP TOOLBAR")
+    host = between(header, "const float baseMenuFontPx", "ImGui::BeginMainMenuBar()")
+    bar = between(header, "if (ImGui::BeginMainMenuBar())", "ImGui::EndMainMenuBar();")
     assert "ImGuiWindowFlags_MenuBar" not in header
-    assert "GetMenuFontSizePx()" in header
+    assert "const float baseMenuFontPx = GetMenuFontSizePx();" in host
+    assert "baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx" in host
+    assert "std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale" in host
+    assert "ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));" in host
+    assert "ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);" in bar
+    assert "ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);" in bar
+
+    for title in ("File", "Edit", "View", "Database", "Playlist", "Tools", "Settings", "Help"):
+        popup = between(bar, f"ImGui::BeginMenu(L(Menu_{title}))", f"menuChrome{title}.reset();")
+        assert f"ThemeMenuPopupStyleScope menuChrome{title}(GetUIFontRegular());" in popup
+    assert re.search(r"\b(?:ReadingTextScope|MenuTextScope)\s+\w+", bar) is None
+    chrome_scope = between(windows, "ChromeTextScope::ChromeTextScope()", "ChromeTextScope::~ChromeTextScope()")
+    assert re.search(r"if \(!InMenuChromeScope\(\)\)\s*\{\s*ImGui::PushFont\(g_uiFontRegular\);", chrome_scope)
+
+    bar_style = between(theme, "ThemeMenuBarStyleScope::ThemeMenuBarStyleScope", "void ThemeMenuBarStyleScope::reset")
+    assert "const float desiredTextPx = textSizePx * scale;" in bar_style
+    assert re.search(r"PushMenuTextFont\(textFont,[^;]*desiredTextPx[^;]*\);", bar_style)
+    popup_style = between(theme, "ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope",
+                          "ThemeMenuPopupShellScope::ThemeMenuPopupShellScope")
+    assert "const float textSizePx = s_menuPopupTextSizePx;" in popup_style
+    assert "PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), textSizePx * scale, m_pushedFont);" in popup_style
+    popup_shell = between(theme, "ThemeMenuPopupShellScope::ThemeMenuPopupShellScope",
+                          "bool ThemeMenuPopupShellScope::beginContextItem")
+    assert "m_textSizePx(std::max(kMenuPopupMinTextPx, textSizePx))" in popup_shell
+    assert "s_menuPopupTextSizePx = m_textSizePx;" in popup_shell
+
+
+def test_appended_tools_menu_keeps_the_system_popup_font_scope():
+    main = read(MAIN_CPP)
+    shared_shell = between(main, "ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);", "menuPopupShell.reset();")
+    assert "RenderToolsMenu(state);" in shared_shell
+    module = read(ROOT / "src" / "ModuleUI.cpp")
+    tools = between(module, "void RenderToolsMenu(AppState& state)", "// 1)")
+    assert tools.index("ImGui::BeginMenu(L(Menu_Tools))") < tools.index("ThemeMenuPopupStyleScope menuChromeTools;")
+    assert tools.index("ThemeMenuPopupStyleScope menuChromeTools;") < tools.index("ImGui::MenuItem(")
+    assert re.search(r"menuChromeTools\.reset\(\);\s*ImGui::EndMenu\(\);", tools)
+    assert re.search(r"\b(?:ReadingTextScope|MenuTextScope)\s+\w+", tools) is None
 
 
 def test_results_file_path_column_fills_trailing_width():
@@ -836,7 +895,7 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert '"##RelatedPathsBox"' in between(main, 'static ExplorerSource DatabaseExplorerSource()', 'static void RenderRelatedPathsExplorerPane(')
     related_pane = between(main, 'static void RenderRelatedPathsExplorerPane(', 'renderRows();')
     assert re.search(r'BeginTransientScrollbarChild\(\s*childId,', related_pane)
-    assert 'BeginTransientScrollbarTable("FileTableV6"' in main
+    assert "BeginTransientScrollbarTable(resultsTableName," in main
     assert "reportInteraction(ImGui::GetTime())" not in main
 
     vertical_splitter = between(
@@ -860,10 +919,10 @@ def test_browser_cover_column_width_keeps_localized_header_visible():
 
     assert "const float coverHeaderMinW" in cover_column
     assert "ImGui::CalcTextSize(L(Col_Cover)).x" in cover_column
-    assert "ImGui::GetStyle().CellPadding.x * 2.0f" in cover_column
+    assert "fileTableStyle.CellPadding.x * 2.0f" in cover_column
     assert "ImGui::GetFontSize()" in cover_column
-    assert "const float coverColW = std::max(" in cover_column
-    assert "(float)state.settings.rowHeight + kCoverColumnExtra" in cover_column
+    assert "const float coverColW = coverColumnCount ? (std::max)(" in cover_column
+    assert "static_cast<float>(state.settings.rowHeight) + kCoverColumnExtra" in cover_column
     assert "coverHeaderMinW" in cover_column
     assert "ImGuiTableColumnFlags_NoResize" in cover_column
 
@@ -944,7 +1003,7 @@ def test_database_tabs_restore_scroll_after_table_extent_is_known():
     main = read(MAIN_CPP)
     table = between(
         main,
-        'if (BeginTransientScrollbarTable("FileTableV6"',
+        "if (BeginTransientScrollbarTable(resultsTableName,",
         'ImGui::EndTable();',
     )
 

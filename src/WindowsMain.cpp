@@ -3836,6 +3836,7 @@ struct MagicEqQaPointer {
     float x = 0.0f;
     float y = 0.0f;
     unsigned int viewport = 0;
+    ImGuiMouseButton button = ImGuiMouseButton_Left;
 };
 static MagicEqQaPointer s_magicEqQaPointer;
 #if ARIS_PREVIEW_ISOLATION
@@ -3890,9 +3891,12 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
     io.AddMousePosEvent(s_magicEqQaPointer.x, s_magicEqQaPointer.y);
     if (s_magicEqQaPointer.viewport) io.AddMouseViewportEvent(s_magicEqQaPointer.viewport);
     if (s_magicEqQaPointer.pending) {
-        io.AddMouseButtonEvent(ImGuiMouseButton_Left, s_magicEqQaPointer.held);
+        io.AddMouseButtonEvent(s_magicEqQaPointer.button, s_magicEqQaPointer.held);
         s_magicEqQaPointer.pending = false;
-        if (!s_magicEqQaPointer.held) s_magicEqQaPointer.active = false;
+        if (!s_magicEqQaPointer.held) {
+            s_magicEqQaPointer.active = false;
+            s_magicEqQaPointer.button = ImGuiMouseButton_Left;
+        }
     }
 }
 
@@ -4916,7 +4920,7 @@ static void PollQaCommandFile(AppState& state) {
             auto popups = nlohmann::json::array();
             for (const auto* w : ImGui::GetCurrentContext()->Windows) {
                 if (!w->WasActive || !(w->Flags & ImGuiWindowFlags_Popup)) continue;
-                popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}},{"font_pixels",w->FontRefSize}});
+                popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}},{"font_pixels",GetMenuPopupFontPixelsForQa(*w)}});
             }
             result = nlohmann::json({{"ok",true},{"popups",popups},{"items",menuItems},
                 {"frame",qa.menuBarFrame},{"current_frame",ImGui::GetFrameCount()},
@@ -6079,6 +6083,8 @@ static void PollQaCommandFile(AppState& state) {
     } else if (cmd == "folder_search_pointer") {
 #if ARIS_PREVIEW_ISOLATION
         const std::string phase = getStr(raw, "phase");
+        const std::string buttonName = getStr(raw, "button");
+        const ImGuiMouseButton button = buttonName == "right" ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
         const float x = static_cast<float>(getDouble(raw, "x", -1.0));
         const float y = static_cast<float>(getDouble(raw, "y", -1.0));
         const ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -6089,9 +6095,11 @@ static void PollQaCommandFile(AppState& state) {
             !Platform::WindowIsVisible(g_hwnd) || IsIconic(g_hwnd) ||
             !std::isfinite(x) || !std::isfinite(y) ||
             x < 0.0f || y < 0.0f || x >= display.x || y >= display.y ||
+            (!buttonName.empty() && buttonName != "left" && buttonName != "right") ||
             s_magicEqQaPointer.pending ||
             ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
-            (phase == "up" && !s_magicEqQaPointer.held) ||
+            (phase == "up" && (!s_magicEqQaPointer.active || !s_magicEqQaPointer.held ||
+                               s_magicEqQaPointer.button != button)) ||
             (phase != "hover" && phase != "down" && phase != "up")) {
             result = "{\"ok\":false,\"error\":\"invalid_folder_search_pointer\",\"display\":[" +
                 std::to_string(display.x) + "," + std::to_string(display.y) +
@@ -6108,6 +6116,7 @@ static void PollQaCommandFile(AppState& state) {
             s_magicEqQaPointer.held = phase == "down";
             s_magicEqQaPointer.pending = phase != "hover";
             s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+            s_magicEqQaPointer.button = button;
             result = "{\"ok\":true,\"cmd\":\"folder_search_pointer\",\"phase\":\"" + phase +
                 "\",\"display\":[" + std::to_string(display.x) + "," + std::to_string(display.y) +
                 "],\"viewport\":[" + std::to_string(ImGui::GetMainViewport()->Pos.x) + "," +
@@ -8705,10 +8714,17 @@ ReadingTextScope::~ReadingTextScope() {
 
 ChromeTextScope::ChromeTextScope() : prev(g_inReadingScope) {
     g_inReadingScope = false;
-    ImGui::PushFont(g_uiFontRegular);
+    // 菜单作用域已经按 macOS 菜单字号换过字体，这里不要再撞回常规界面字号。
+    if (!InMenuChromeScope()) {
+        ImGui::PushFont(g_uiFontRegular);
+        pushedFont = true;
+    }
 }
 ChromeTextScope::~ChromeTextScope() {
-    ImGui::PopFont();
+    if (pushedFont) {
+        ImGui::PopFont();
+        pushedFont = false;
+    }
     g_inReadingScope = prev;
 }
 

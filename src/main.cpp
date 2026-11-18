@@ -146,6 +146,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/ResultsPanelLayout.h"
 #include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
@@ -1118,12 +1119,8 @@ static void ShowCoverClipboardMessage(const wchar_t* text, UINT icon = MB_ICONIN
 // Menu item with stable hover styling.
 // Menu item with stable selected styling.
 bool MenuItemWithTooltip(const char* label, const char* shortcut, const char* tooltip, bool selected = false, bool enabled = true) {
-    // Apply the menu palette before rendering the item.
-    // Header 是 MenuItem 的背景，HeaderHovered 是鼠标划过时的高亮背景
     ImGui::PushStyleColor(ImGuiCol_Header, COLOR_SELECTED);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, COLOR_ACCENT);
-
-    // 执行原生 MenuItem 渲染
     bool clicked = ImGui::MenuItem(label, shortcut, selected, enabled);
 
     // 只有在悬停且有内容时才显示 Tooltip，并增加 DelayShort 防闪烁
@@ -1131,9 +1128,7 @@ bool MenuItemWithTooltip(const char* label, const char* shortcut, const char* to
         HarkenSearch::SetTooltip("%s", tooltip);
     }
 
-    // 弹出样式，确保不污染后续其他 UI 组件
     ImGui::PopStyleColor(2);
-
     return clicked;
 }
 
@@ -35568,45 +35563,91 @@ void RenderUI(AppState& state) {
     state.qaRegions.menuBarItems.clear();
 #endif
 
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().menuPopupBG);
-    // Top menu follows the system/reading font size (REQ-20261110-TOP-MENU-FONT).
-    // The font is pushed before the bar is submitted so the bar height grows with it.
-    // When the row cannot fit (narrow window / long translation) the font steps back
-    // towards the chrome size instead of clipping the right-most entries.
-    static float s_menuFitScale = 1.0f;
-    const float menuFontPx =
-        ImMax((float)kChromeFontPx, GetMenuFontSizePx() * s_menuFitScale);
-    ImGui::PushFont(GetMenuUIFont(), menuFontPx);
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    auto* viewportBuild = static_cast<ImGuiViewportP*>(viewport);
+    ImGui::SetCurrentViewport(nullptr, viewportBuild);
+    ImFont* menuFont = GetUIFontRegular();
+    if (!menuFont) menuFont = ImGui::GetFont();
+    const float menuScale = ImGui::GetMenuChromeScale();
+    const float baseMenuFontPx = GetMenuFontSizePx();
+    constexpr float minMenuBarFontPx = kChromeFontPx - 1.0f;
+    float menuBarFontPx = baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx;
+    const char* menuTitles[] = {L(Menu_File), L(Menu_Edit), L(Menu_View), L(Menu_Database),
+                                L(Menu_Playlist), L(Menu_Tools), L(Menu_Settings), L(Menu_Help)};
+    const float brandLeading = std::floor(14.0f * menuScale);
+    const float brandTrailing = std::floor(8.0f * menuScale);
+    const float widthForTitles = viewportBuild->GetBuildWorkRect().GetWidth()
+        - 2.0f * brandLeading - std::ceil(ImGui::GetStyle().WindowBorderSize) - 2.0f;
+    for (; menuBarFontPx > minMenuBarFontPx; menuBarFontPx -= 1.0f) {
+        ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, menuBarFontPx * menuScale));
+        float fittedLabelWidth = 0.0f;
+        for (const char* title : menuTitles)
+            fittedLabelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
+        ImGui::PopFont();
+        if (fittedLabelWidth <= widthForTitles) break;
+    }
+    const float hostFontPx = std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale;
+    ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));
     if (ImGui::BeginMainMenuBar()) {
+        ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);
+        ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);
         ImGuiWindow* menuWindow = ImGui::GetCurrentWindow();
         const ImRect menuBarRect = menuWindow->MenuBarRect();
+        const ImVec4& barFill = ThemeColors::menuBarFillBG(ThemeColors::current());
         menuWindow->DrawList->AddRectFilled(
             menuBarRect.Min,
             menuBarRect.Max,
-            ImGui::GetColorU32(ThemeColors::menuBarFillBG(ThemeColors::current())));
-        // 菜单栏前的官方品牌字标：与启动页同一张官网横版字标，深色底用白色图、
-        // 浅色底用黑色图，图片读不到时退回纯文字品牌名。窄窗口让位给菜单项。
-        if (menuBarRect.GetWidth() >= 1100.0f) {
-            const float brandGap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
-            const float brandRightX = aura::ui::DrawMenuBarBrandWordmark(
-                menuBarRect.Min.x + brandGap, menuBarRect.Min.y,
-                menuBarRect.Max.x, menuBarRect.Max.y,
-                GetUIFontEmphasis(), L(Main_AppNameBrand));
-            ImGui::SetCursorPosX((brandRightX - menuWindow->Pos.x) + brandGap);
+            ImGui::GetColorU32(barFill));
+        // 默认字号保留签字版黑白字标；较大字号沿用 QA 的品牌素材。窄窗口让位给菜单项。
+        const ImGuiStyle& menuStyle = ImGui::GetStyle();
+        float labelWidth = 0.0f;
+        for (const char* title : menuTitles)
+            labelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
+        const float spacingSlots = static_cast<float>(IM_ARRAYSIZE(menuTitles));
+        const float preferredMenuWidth = labelWidth + menuStyle.ItemSpacing.x * spacingSlots;
+        const float menuRight = menuWindow->ClipRect.Max.x - brandLeading;
+        const float brandStartX = std::max(menuBarRect.Min.x + brandLeading, menuWindow->ClipRect.Min.x);
+        const float brandLimitX = menuRight - preferredMenuWidth - brandTrailing;
+        float menuStartOffset = brandStartX - menuWindow->Pos.x;
+        if (brandLimitX > brandStartX) {
+            aura::ui::PackagedAssetTex approvedWordmark;
+            if (baseMenuFontPx == kChromeFontPx) {
+                const float barLuma = barFill.x * 0.299f + barFill.y * 0.587f + barFill.z * 0.114f;
+                approvedWordmark = aura::ui::LoadPackagedAsset(barLuma >= 0.5f
+                    ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
+                    : "assets/logos/brand/harken-search-menu-wordmark-white.png");
+            }
+            float brandRightX = brandStartX;
+            if (approvedWordmark.glId != 0 && approvedWordmark.w > 0 && approvedWordmark.h > 0) {
+                const float artHeight = std::clamp(menuBarRect.GetHeight() * 0.58f, 12.0f, 20.0f);
+                const float artWidth = artHeight * (static_cast<float>(approvedWordmark.w) / approvedWordmark.h);
+                if (brandStartX + artWidth <= brandLimitX) {
+                    const float centerY = menuBarRect.GetCenter().y;
+                    brandRightX = brandStartX + artWidth;
+                    menuWindow->DrawList->AddImage((ImTextureID)(intptr_t)approvedWordmark.glId,
+                        ImVec2(brandStartX, centerY - artHeight * 0.5f),
+                        ImVec2(brandRightX, centerY + artHeight * 0.5f));
+                }
+            } else {
+                brandRightX = aura::ui::DrawMenuBarBrandWordmark(
+                    brandStartX, menuBarRect.Min.y, brandLimitX, menuBarRect.Max.y,
+                    GetUIFontEmphasis(), L(Main_AppNameBrand));
+            }
+            if (brandRightX > brandStartX)
+                menuStartOffset = std::ceil((brandRightX - menuWindow->Pos.x) + brandTrailing);
         }
-        ImGui::PushFont(GetMenuUIFontEmphasis(), menuFontPx);
-        ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().menuText);
-        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(
-            ThemeColors::current().menuText.x * 0.65f,
-            ThemeColors::current().menuText.y * 0.65f,
-            ThemeColors::current().menuText.z * 0.65f,
-            ThemeColors::current().menuText.w));
+        const float menuAvailable = menuRight - menuWindow->Pos.x - menuStartOffset;
+        const float menuSpacing = std::clamp(
+            std::floor((menuAvailable - labelWidth) / spacingSlots), 0.0f, menuStyle.ItemSpacing.x);
+        ImGui::SetCursorPosX(menuStartOffset + menuWindow->Scroll.x);
+        ImGui::PushStyleVarX(ImGuiStyleVar_ItemSpacing, menuSpacing);
         const bool fileMenuOpen = ImGui::BeginMenu(L(Menu_File));
 #if ARIS_PREVIEW_ISOLATION
         QaProbeMenuBarItem(state, L(Menu_File));
 #endif
         if (fileMenuOpen) {
-            { MenuTextScope _readingMenuFile; // menu dropdowns share the chrome face.
+            ThemeMenuPopupStyleScope menuChromeFile(GetUIFontRegular());
+            { ChromeTextScope _readingMenuFile; // menu dropdowns share the chrome face.
             if (ImGui::MenuItem(L(File_OpenFolder), "Ctrl+O")) {
                 std::string folder = OpenFolderDialog(g_hwnd);
                 if (!folder.empty()) {
@@ -35683,8 +35724,8 @@ void RenderUI(AppState& state) {
             ImGui::Separator();
 
             // Database management submenu
-            const bool fileDatabaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
-        if (fileDatabaseMenuOpen) {
+            if (ImGui::BeginMenu(L(Menu_Database))) {
+                ThemeMenuPopupStyleScope menuChromeFileDb(GetUIFontRegular());
                 // Current database info
                 if (!state.currentDbPathUtf8.empty()) {
                     std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35754,6 +35795,7 @@ void RenderUI(AppState& state) {
                     }
                 }
 
+                menuChromeFileDb.reset();
                 ImGui::EndMenu();
             }
 
@@ -35766,6 +35808,7 @@ void RenderUI(AppState& state) {
                 }
             }
             }
+            menuChromeFile.reset();
             ImGui::EndMenu();
         }
         const bool editMenuOpen = ImGui::BeginMenu(L(Menu_Edit));
@@ -35773,7 +35816,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Edit));
 #endif
         if (editMenuOpen) {
-            { MenuTextScope _readingMenuEdit;
+            ThemeMenuPopupStyleScope menuChromeEdit(GetUIFontRegular());
+            { ChromeTextScope _readingMenuEdit;
             // Undo / Redo
             {
                 std::string undoLabel = std::string(L(Undo_UndoBtn));
@@ -35861,6 +35905,7 @@ void RenderUI(AppState& state) {
             {
                 auto lm = state.settings.listeningMode;
                 if (ImGui::BeginMenu(L(Play_PreviewModeLabel))) {
+                    ThemeMenuPopupStyleScope menuChromePreview(GetUIFontRegular());
                     if (ImGui::MenuItem(L(Play_BrowseMode), nullptr, lm == ListeningMode::Browse)) {
                         state.settings.listeningMode = ListeningMode::Browse;
                         state.settings.syncFromListeningMode();
@@ -35871,6 +35916,7 @@ void RenderUI(AppState& state) {
                         state.settings.syncFromListeningMode();
                         SaveAppSettings(state);
                     }
+                    menuChromePreview.reset();
                     ImGui::EndMenu();
                 }
             }
@@ -35919,6 +35965,7 @@ void RenderUI(AppState& state) {
             }
 
             }
+            menuChromeEdit.reset();
             ImGui::EndMenu();
         }
         const bool viewMenuOpen = ImGui::BeginMenu(L(Menu_View));
@@ -35926,7 +35973,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_View));
 #endif
         if (viewMenuOpen) {
-            { MenuTextScope _readingMenuView;
+            ThemeMenuPopupStyleScope menuChromeView(GetUIFontRegular());
+            { ChromeTextScope _readingMenuView;
             if (ImGui::MenuItem(L(View_FileBrowser), nullptr, state.viewMode == ViewMode::Browser)) {
                 state.viewMode = ViewMode::Browser;
             }
@@ -35946,6 +35994,7 @@ void RenderUI(AppState& state) {
 
             // Waveform visualization options
             if (ImGui::BeginMenu(L(Menu_WaveformDisplay))) {
+                ThemeMenuPopupStyleScope menuChromeWaveform(GetUIFontRegular());
                 bool classicMode = (state.waveformColorMode == AppState::WaveformColorMode::Classic);
                 bool freqMode = (state.waveformColorMode == AppState::WaveformColorMode::FrequencyColored);
                 if (ImGui::MenuItem(L(View_ClassicGreen), nullptr, classicMode)) {
@@ -35954,6 +36003,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::MenuItem(L(View_FreqColor), nullptr, freqMode)) {
                     state.waveformColorMode = AppState::WaveformColorMode::FrequencyColored;
                 }
+                menuChromeWaveform.reset();
                 ImGui::EndMenu();
             }
             if (kEnableLufsUiAndDetection) {
@@ -35988,6 +36038,7 @@ void RenderUI(AppState& state) {
 
             // Panel visibility controls
             if (ImGui::BeginMenu(L(Menu_Panel))) {
+                ThemeMenuPopupStyleScope menuChromePanel(GetUIFontRegular());
                 if (ImGui::MenuItem(L(View_FilterFolder), nullptr, &state.panelSidebar.visible))
                     MarkSettingsDirty(state);
                 if (ImGui::MenuItem(L(View_InfoPanel), nullptr, &state.panelFileInfo.visible))
@@ -36017,6 +36068,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::MenuItem(L(Panel_FolderDetach), nullptr, state.folderBrowserDetached)) {
                     state.folderBrowserDetached = !state.folderBrowserDetached;
                 }
+                menuChromePanel.reset();
                 ImGui::EndMenu();
             }
 
@@ -36025,6 +36077,7 @@ void RenderUI(AppState& state) {
             ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
 #endif
             }
+            menuChromeView.reset();
             ImGui::EndMenu();
         }
         const bool databaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
@@ -36032,7 +36085,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Database));
 #endif
         if (databaseMenuOpen) {
-            { MenuTextScope _readingMenuDatabase;
+            ThemeMenuPopupStyleScope menuChromeDatabase(GetUIFontRegular());
+            { ChromeTextScope _readingMenuDatabase;
             if (!state.currentDbPathUtf8.empty()) {
                 std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
                 ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.3f, 1.0f), "%s %s", L(DB_CurrentDB), dbName.c_str());
@@ -36060,6 +36114,7 @@ void RenderUI(AppState& state) {
             }
 #endif
             if (!state.recentDbPathsUtf8.empty() && ImGui::BeginMenu(L(Menu_RecentDB))) {
+                ThemeMenuPopupStyleScope menuChromeRecentDb(GetUIFontRegular());
                 for (size_t i = 0; i < state.recentDbPathsUtf8.size(); ++i) {
                     const std::string& p = state.recentDbPathsUtf8[i];
                     bool isCurrent = (!state.currentDbPathUtf8.empty() && p == state.currentDbPathUtf8);
@@ -36074,6 +36129,7 @@ void RenderUI(AppState& state) {
                     state.recentDbPathsUtf8.clear();
                     SaveAppSettings(state);
                 }
+                menuChromeRecentDb.reset();
                 ImGui::EndMenu();
             }
             ImGui::EndDisabled();
@@ -36086,6 +36142,7 @@ void RenderUI(AppState& state) {
             int64_t count = state.database.getFileCount();
             ImGui::Text(L(Main_TotalFilesFmt), count);
             }
+            menuChromeDatabase.reset();
             ImGui::EndMenu();
         }
         const bool playlistMenuOpen = ImGui::BeginMenu(L(Menu_Playlist));
@@ -36093,7 +36150,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Playlist));
 #endif
         if (playlistMenuOpen) {
-            { MenuTextScope _readingMenuPlaylist;
+            ThemeMenuPopupStyleScope menuChromePlaylist(GetUIFontRegular());
+            { ChromeTextScope _readingMenuPlaylist;
             if (ImGui::MenuItem(L(PL_NewPlaylist))) {
                 state.showPlaylistDialog = true;
                 memset(state.playlistNameBuffer, 0, sizeof(state.playlistNameBuffer));
@@ -36137,6 +36195,7 @@ void RenderUI(AppState& state) {
                 ImGui::PopID();
             }
             }
+            menuChromePlaylist.reset();
             ImGui::EndMenu();
         }
         const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
@@ -36144,7 +36203,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Tools));
 #endif
         if (toolsMenuOpen) {
-            { MenuTextScope _readingMenuTools;
+            ThemeMenuPopupStyleScope menuChromeTools(GetUIFontRegular());
+            { ChromeTextScope _readingMenuTools;
             if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
             if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
                 ResetDockTestLayout();
@@ -36220,6 +36280,7 @@ void RenderUI(AppState& state) {
                 PumpDawBridgeRegistryProbeCache();
 
                 if (ImGui::BeginMenu(L(Tools_InstallDawBridge))) {
+                    ThemeMenuPopupStyleScope menuChromeDawBridge(GetUIFontRegular());
                     for (int i = 0; i < (int)g_dawBridgeRegistry.size(); ++i) {
                         const auto& installer = g_dawBridgeRegistry[i];
                         const auto& status    = g_dawBridgeProbeCache.statuses[i];
@@ -36289,11 +36350,13 @@ void RenderUI(AppState& state) {
                             }).detach();
                         }
                     }
+                    menuChromeDawBridge.reset();
                     ImGui::EndMenu();
                 }
             }
 
             }
+            menuChromeTools.reset();
             ImGui::EndMenu();
         }
         // 工具菜单 (UCS/标签/嵌入/命名/传输/工作流/主题)
@@ -36304,7 +36367,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Settings));
 #endif
         if (settingsMenuOpen) {
-            { MenuTextScope _readingMenuSettings;
+            ThemeMenuPopupStyleScope menuChromeSettings(GetUIFontRegular());
+            { ChromeTextScope _readingMenuSettings;
             if (ImGui::MenuItem(L(Set_AppSettings))) {
                 state.showSettingsDialog = true;
             }
@@ -36315,6 +36379,7 @@ void RenderUI(AppState& state) {
                 state.showDawTargetSettings = true;
             }
             }
+            menuChromeSettings.reset();
             ImGui::EndMenu();
         }
         const bool helpMenuOpen = ImGui::BeginMenu(L(Menu_Help));
@@ -36322,7 +36387,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Help));
 #endif
         if (helpMenuOpen) {
-            { MenuTextScope _readingMenuHelp;
+            ThemeMenuPopupStyleScope menuChromeHelp(GetUIFontRegular());
+            { ChromeTextScope _readingMenuHelp;
             if (ImGui::MenuItem(L(Help_About))) {
                 state.showAboutWindow = true;
             }
@@ -36351,43 +36417,36 @@ void RenderUI(AppState& state) {
             }
             }
             }
+            menuChromeHelp.reset();
             ImGui::EndMenu();
         }
+        ImGui::PopStyleVar();
         if (ThemeInspector::IsCollecting()) {
             ImGuiWindow* mw = ImGui::GetCurrentWindow();
             ImRect mbr = mw->MenuBarRect();
             ThemeInspector::RegisterZone(mbr.Min, mbr.Max, "menuBarBG", L(ThemeCol_menuBarBG));
         }
-        const float menuRowRight = ImGui::GetItemRectMax().x;
-        const float menuBarRightEdge = menuBarRect.Max.x;
 #if ARIS_PREVIEW_ISOLATION
         state.qaRegions.menuBarFrame = ImGui::GetFrameCount();
         state.qaRegions.menuBarFontPixels = ImGui::GetFontSize();
         state.qaRegions.menuBarHeight = menuBarRect.GetHeight();
         state.qaRegions.menuBarRight = menuBarRect.Max.x;
         state.qaRegions.menuBarTop = menuBarRect.Min.y;
-        state.qaRegions.menuBarLastItemRight = menuRowRight;
+        state.qaRegions.menuBarLastItemRight = state.qaRegions.menuBarItems.empty()
+            ? menuBarRect.Min.x : state.qaRegions.menuBarItems.back().x1;
 #endif
-        ImGui::PopStyleColor(2);
-        ImGui::PopFont();
+        menuPopupShell.reset();
+        menuBarChrome.reset();
         ImGui::EndMainMenuBar();
-        if (menuRowRight > menuBarRightEdge - 4.0f) {
-            s_menuFitScale = ImMax(0.5f, s_menuFitScale - 0.06f);
-        } else if (s_menuFitScale < 1.0f && menuRowRight < menuBarRightEdge * 0.82f) {
-            s_menuFitScale = ImMin(1.0f, s_menuFitScale + 0.03f);
-        }
     }
     ImGui::PopFont();
-    ImGui::PopStyleColor();
 
 
     // MAIN LAYOUT - classic library layout
 
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
     // BeginMainMenuBar only reports its height into the *build* work area, which
     // becomes WorkPos/WorkSize on the next frame. Read the build area so the
     // workspace never spends one frame under the bar (or leaving a gap).
-    const ImGuiViewportP* viewportBuild = (const ImGuiViewportP*)viewport;
     const ImVec2 frameWorkPos(viewportBuild->Pos.x + viewportBuild->BuildWorkInsetMin.x,
                               viewportBuild->Pos.y + viewportBuild->BuildWorkInsetMin.y);
     const ImVec2 frameWorkSize(
@@ -38299,6 +38358,7 @@ void RenderUI(AppState& state) {
         : ThemeColors::peerPanelHeading(ThemeColors::current()));
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
+    constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
 
     auto drawDockTitleBar = [&](ImDrawList* dl,
                                 const ImVec2& wp,
@@ -38327,8 +38387,8 @@ void RenderUI(AppState& state) {
     struct DockModuleShellLayout {
         float insetL = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         float insetR = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        float insetT = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        float insetB = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+        float insetT = kDockShellVerticalInset;
+        float insetB = kDockShellVerticalInset;
         float innerPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         float titleHeight = 24.0f;
         float shellWidth = 0.0f;
@@ -39243,14 +39303,11 @@ void RenderUI(AppState& state) {
     float listOffY = 15.0f * (1.0f - t);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + listOffY);
 
-        // Keep tabs, breadcrumb/path, table header and rows on one compact
-        // content origin; the old 20 px inset created a visible left moat.
-        constexpr float kResultsContentInsetX = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kResultsContentInsetX, 2.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(harken::results::kContentInsetX, 0.0f));
 
         static ImVec2 s_centerPanelMin, s_centerPanelMax;
         ImDrawList* centerResultsDrawList = nullptr;
-        BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), false,
+        BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     {
         centerResultsDrawList = ImGui::GetWindowDrawList();
@@ -40317,13 +40374,10 @@ void RenderUI(AppState& state) {
                                                         : ImVec4(0.28f, 0.44f, 0.64f, 0.22f);
         const ImVec4 kInfoLinkActive = kIsRoseCedarTheme ? uiWithAlpha(uiMix(uiColors[ImGuiCol_ButtonActive], COLOR_SELECTED, 0.18f), 0.32f)
                                                          : ImVec4(0.33f, 0.50f, 0.72f, 0.30f);
+        const bool emptyLibraryFileTable = (state.totalFileCount == 0);
         {
         // Breadcrumb / path strip is a reading surface: scale with reading font.
         ReadingTextScope _readingCrumb;
-        // Browser top strip should align with the database results lane.
-        // Do not add an extra left indent here, otherwise the Browser path/scope
-        // rows look visually shifted relative to the shared file table below.
-        ImGui::Indent(0.0f);
         if (state.viewMode == ViewMode::Browser) {
             const std::string& currentPath = state.fileBrowser.getCurrentPath();
             if (state.browserPathBuffer[0] == '\0') {
@@ -40331,6 +40385,9 @@ void RenderUI(AppState& state) {
             }
 
             // --- Row 1: parent button + path bar + open button ---
+            const float pathRowRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            const float pathItemGap = ImGui::GetStyle().ItemSpacing.x;
+            harken::results::AlignBrowserPathLabel(emptyLibraryFileTable);
             ImGui::TextColored(kInfoLabel, "%s", L(Status_PathLabel));
             ImGui::SameLine();
             bool canNavigateUp = false;
@@ -40349,14 +40406,17 @@ void RenderUI(AppState& state) {
                 SyncBrowserPathBuffer(state);
             }
             ImGui::EndDisabled();
+            const float parentButtonRight = ImGui::GetItemRectMax().x;
             if (!canNavigateUp && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 HarkenSearch::SetTooltip(L(Main_TopLevelTip));
             }
 
-            ImGui::SameLine();
+            constexpr float minInlinePathWidth = 72.0f;
+            if (pathRowRight - parentButtonRight - openButtonWidth - pathItemGap * 2.0f >= minInlinePathWidth)
+                ImGui::SameLine();
             const float browserPathInputWidth = std::max(
                 1.0f,
-                ImGui::GetContentRegionAvail().x - openButtonWidth - ImGui::GetStyle().ItemSpacing.x);
+                ImGui::GetContentRegionAvail().x - openButtonWidth - pathItemGap);
             const ImVec2 browserPathHitMin = ImGui::GetCursorScreenPos();
             const ImVec2 browserPathHitMax(
                 browserPathHitMin.x + browserPathInputWidth,
@@ -40421,6 +40481,16 @@ void RenderUI(AppState& state) {
 
             // --- Row 2: scope toggle + in-view filter + source label ---
             {
+                const float filterRowWidth = ImGui::GetContentRegionAvail().x;
+                const float filterRowRight = ImGui::GetCursorScreenPos().x + filterRowWidth;
+                const float filterItemGap = ImGui::GetStyle().ItemSpacing.x;
+                const auto inlineFilterWidth = [&] {
+                    return filterRowRight - ImGui::GetItemRectMax().x - filterItemGap;
+                };
+                const auto toggleWidth = [](const char* label) {
+                    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x +
+                           ImGui::CalcTextSize(label, nullptr, true).x;
+                };
                 bool isCurDir = (state.fileBrowser.getScope() == BrowserScope::CurrentDir);
                 bool isRecursive = !isCurDir;
 
@@ -40432,7 +40502,7 @@ void RenderUI(AppState& state) {
                     state.browserSortPath.clear();
                     state.syncToTab();
                 }
-                ImGui::SameLine();
+                if (inlineFilterWidth() >= toggleWidth(L(Main_TabIncludeSubRadio))) ImGui::SameLine();
                 if (ImGui::RadioButton(L(Main_TabIncludeSubRadio), isRecursive)) {
                     state.fileBrowser.setScope(BrowserScope::RecursiveAudio);
                     state.browserSelectedIndicesSet.clear();
@@ -40440,7 +40510,7 @@ void RenderUI(AppState& state) {
                     state.browserSortPath.clear();
                     state.syncToTab();
                 }
-                ImGui::SameLine();
+                if (inlineFilterWidth() >= toggleWidth(L(Filter_OnlyAudio))) ImGui::SameLine();
                 bool audioFilter = state.fileBrowser.isAudioFilterEnabled();
                 if (ImGui::Checkbox(L(Filter_OnlyAudio), &audioFilter)) {
                     state.fileBrowser.setAudioFilter(audioFilter);
@@ -40453,34 +40523,44 @@ void RenderUI(AppState& state) {
 
                 int audioCount = (int)state.fileBrowser.activeAudioFileCount();
 
-                ImGui::SameLine();
-                if (state.fileBrowser.isDirScanInProgress())
-                    ImGui::TextDisabled(L(Main_ScanningSuffix));
-                else
-                    ImGui::TextDisabled(L(Main_CountParenFmt), audioCount);
+                char audioCountText[64]{};
+                std::snprintf(audioCountText, sizeof(audioCountText), L(Main_CountParenFmt), audioCount);
+                const char* scanStatus = state.fileBrowser.isDirScanInProgress() ? L(Main_ScanningSuffix) : audioCountText;
+                if (inlineFilterWidth() >= ImGui::CalcTextSize(scanStatus).x) ImGui::SameLine();
+                ImGui::TextDisabled("%s", scanStatus);
 
-                ImGui::SameLine();
+                if (!state.browserLocateSourceLabel.empty() && ImGui::GetTime() * 1000.0 >= state.browserLocateSourceUntilMs)
+                    state.browserLocateSourceLabel.clear();
+                const char* sourceLabel = state.browserLocateSourceLabel.c_str();
+                const ImVec2 sourceTextSize = ImGui::CalcTextSize(sourceLabel);
+                const auto filterLayout = harken::results::LayoutBrowserSearchRow(
+                    filterRowWidth, inlineFilterWidth(), sourceTextSize.x, filterItemGap);
+                if (filterLayout.searchBesideControls) ImGui::SameLine();
                 {
                     const auto palette = harken::toolbar::ResolveSearchPalette(kCurrentTheme,
                         kCurrentTheme.resultsBG, uiColors[ImGuiCol_FrameBg], uiColors[ImGuiCol_Text]);
-                    const float browserSearchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - 1.0f);
                     const auto search = harken::toolbar::DrawSearchField("##BrowserSearch", L(Search_FileHint),
-                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer), browserSearchWidth, palette);
+                        state.browserFilterBuffer, sizeof(state.browserFilterBuffer), filterLayout.searchWidth, palette);
                     if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                         state.browserFilterBuffer[0] = '\0';
                         ImGui::ClearActiveID();
                     }
                 }
 
-                // source label (from DB->browser jump, auto-dismiss after 5s)
-                if (!state.browserLocateSourceLabel.empty()) {
-                    double now = ImGui::GetTime() * 1000.0;
-                    if (now < state.browserLocateSourceUntilMs) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 0.9f), "%s", state.browserLocateSourceLabel.c_str());
+                if (filterLayout.sourceWidth > 0.0f) {
+                    if (filterLayout.sourceBesideSearch) ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.8f, 1.0f, 0.9f));
+                    if (filterLayout.sourceWidth < sourceTextSize.x) {
+                        ImVec2 textMin = ImGui::GetCursorScreenPos();
+                        textMin.y += ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset;
+                        const ImVec2 textMax(textMin.x + filterLayout.sourceWidth, textMin.y + sourceTextSize.y);
+                        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), textMin, textMax, textMax.x,
+                                                 sourceLabel, nullptr, &sourceTextSize);
+                        ImGui::Dummy(ImVec2(filterLayout.sourceWidth, sourceTextSize.y));
                     } else {
-                        state.browserLocateSourceLabel.clear();
+                        ImGui::TextUnformatted(sourceLabel);
                     }
+                    ImGui::PopStyleColor();
                 }
 
             }
@@ -40733,7 +40813,6 @@ void RenderUI(AppState& state) {
             ImGui::SameLine(0, 2);
             ImGui::TextColored(kInfoMuted, "%s", L(Status_FilesUnit));
         }
-        ImGui::Unindent(4.0f); // restore x=0 for filter chips + table below
         }
         ImGui::Separator();
 
@@ -41242,12 +41321,13 @@ void RenderUI(AppState& state) {
         }
 
 // File table with sortable columns
+        const bool browserFileTable = state.viewMode == ViewMode::Browser;
         const bool needsDbSetup =
             state.viewMode != ViewMode::Browser &&
             state.startupNeedsDatabaseSetup && !state.database.isOpen();
         ImGuiTableFlags tableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable |
                                       ImGuiTableFlags_Hideable |
-                                      ImGuiTableFlags_BordersOuter |
+                                      harken::results::TableOuterFlags(emptyLibraryFileTable) |
                                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
                                       ImGuiTableFlags_SizingStretchProp |
                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti;
@@ -41282,13 +41362,32 @@ void RenderUI(AppState& state) {
             fileNameColW = kFileNameColMinW;
             waveformColW = (std::max)(kWaveColMinW, flexibleColsWidth - fileNameColW);
         }
+        const auto& fileTableStyle = ImGui::GetStyle();
+        const float coverHeaderMinW = coverColumnCount ?
+            ImGui::CalcTextSize(L(Col_Cover)).x + fileTableStyle.CellPadding.x * 2.0f + ImGui::GetFontSize() : 0.0f;
+        const float coverColW = coverColumnCount ? (std::max)(
+            static_cast<float>(state.settings.rowHeight) + kCoverColumnExtra,
+            coverHeaderMinW) : 0.0f;
+        if (browserFileTable) {
+            constexpr float durationFormatAndSampleRate = 88.0f + 72.0f + 76.0f;
+            const bool musicDefaults = state.settings.productMode == ProductMode::Music;
+            const float musicMetadataWidth = musicDefaults ? 120.0f + 64.0f + 72.0f : 0.0f;
+            const int visibleColumnCount = 5 + coverColumnCount + (musicDefaults ? 3 : 0);
+            const float visibleCellPadding = visibleColumnCount * fileTableStyle.CellPadding.x * 2.0f;
+            const float reservedWidth = durationFormatAndSampleRate + musicMetadataWidth + coverColW + visibleCellPadding +
+                                        fileTableStyle.ScrollbarSize + 2.0f;
+            const auto defaults = harken::results::ResolveBrowserColumnDefaults(availWidth, reservedWidth);
+            fileNameColW = defaults.fileName;
+            waveformColW = defaults.waveform;
+        }
 
         // FilePath is a stable physical column (index 16) and its row emission
         // stays unconditional. Only an enabled FilePath may own the trailing
         // stretch; when hidden, fit the table to its fixed visible columns so
         // no invisible stretch gutter reaches the results border.
         constexpr int kResultsFilePathColumnIndex = 16;
-        const ImGuiID resultsTableId = ImGui::GetID("FileTableV6");
+        const char* const resultsTableName = harken::results::TableName(browserFileTable);
+        const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);
         const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId);
         const bool filePathVisible = previousResultsTable &&
             previousResultsTable->ColumnsCount > kResultsFilePathColumnIndex &&
@@ -41296,11 +41395,6 @@ void RenderUI(AppState& state) {
         const float resultsTableInnerWidth = filePathVisible ? innerWidth : 0.0f;
         const ImGuiTableFlags resultsSizingPolicy = filePathVisible ? ImGuiTableFlags_SizingStretchProp : ImGuiTableFlags_SizingFixedFit;
         tableFlags = resultsSizingPolicy | (tableFlags & ~ImGuiTableFlags_SizingMask_);
-        const bool emptyLibraryFileTable = (state.totalFileCount == 0);
-        if (emptyLibraryFileTable)
-            tableFlags &= ~ImGuiTableFlags_BordersOuter;
-        constexpr float kResultsTableOuterBorder = kResultsPerimeterWidth;
-
         if (!needsDbSetup) {
         // Results list background should follow the active theme tokens, not a fixed AppTheme branch.
         {
@@ -41381,13 +41475,7 @@ void RenderUI(AppState& state) {
         // UX #109 follow-up (TASK-20261028-NO-EMPTY-SURFACE): the standalone
         // empty-results surface was removed at the user's request, so the
         // results table keeps its full height even with zero rows.
-        ImVec2 adjustedFileTableOuterSize = ImVec2(0.0f, 0.0f);
-        if (emptyLibraryFileTable) {
-            // Dropping BordersOuter would otherwise let the header fill to the independent frame.
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kResultsTableOuterBorder);
-            adjustedFileTableOuterSize.x = -(kResultsTableOuterBorder * 2.0f);
-        }
-        if (BeginTransientScrollbarTable("FileTableV6", totalColumns, tableFlags, adjustedFileTableOuterSize, resultsTableInnerWidth)) {
+        if (BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth)) {
             // The scrollable table owns a later regular draw list than the
             // surrounding CenterFileList child. Anchor the frame there so it
             // sits above headers/scrollbars but remains below popup windows.
@@ -41472,13 +41560,6 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(L(Col_FilePath), ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultHide, 1.0f, (ImGuiID)SortColumn::FilePath);
 
             if (state.settings.showCoverColumn) {
-                const float coverHeaderMinW =
-                    ImGui::CalcTextSize(L(Col_Cover)).x +
-                    ImGui::GetStyle().CellPadding.x * 2.0f +
-                    ImGui::GetFontSize();
-                const float coverColW = std::max(
-                    (float)state.settings.rowHeight + kCoverColumnExtra,
-                    coverHeaderMinW);
                 ImGui::TableSetupColumn(L(Col_Cover), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, coverColW, (ImGuiID)SortColumn::Cover);
             }
             // 响度分析列：始终注册（DefaultHide），用户通过右键表头控制显示
@@ -42012,20 +42093,22 @@ void RenderUI(AppState& state) {
                     if (wasPlayed) {
                         ImGui::PopStyleColor();
                     }
-                    if (ImGui::BeginPopupContextItem("##BrowserRowCtx")) {
+                    ThemeMenuPopupShellScope browserMenuShell(false, GetMenuFontSizePx());
+                    if (browserMenuShell.beginContextItem("##BrowserRowCtx", !entry.isDirectory)) {
+                        ThemeMenuPopupStyleScope browserMenuChrome(GetUIFontRegular(), !entry.isDirectory);
                         const std::string contextFolder = ResolveBrowserEntryFolderPath(entry);
                         const std::string folderTarget = contextFolder.empty() ? entry.fullPath : contextFolder;
                         const std::vector<std::string> browserSendPaths =
                             BuildBrowserTransferSourcePaths(state, entries, entryIndex);
-                        auto& _bpopColors = ImGui::GetStyle().Colors;
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(
-                            _bpopColors[ImGuiCol_ButtonHovered].x,
-                            _bpopColors[ImGuiCol_ButtonHovered].y,
-                            _bpopColors[ImGuiCol_ButtonHovered].z, 0.85f));
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(
-                            _bpopColors[ImGuiCol_Button].x,
-                            _bpopColors[ImGuiCol_Button].y,
-                            _bpopColors[ImGuiCol_Button].z, 0.55f));
+                        if (entry.isDirectory) {
+                            const auto& colors = ImGui::GetStyle().Colors;
+                            ImVec4 hovered = colors[ImGuiCol_ButtonHovered];
+                            ImVec4 selected = colors[ImGuiCol_Button];
+                            hovered.w = 0.85f;
+                            selected.w = 0.55f;
+                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hovered);
+                            ImGui::PushStyleColor(ImGuiCol_Header, selected);
+                        }
 
                         if (!entry.isDirectory) {
                             if (ImGui::MenuItem(L(Ctx_Play))) {
@@ -42144,9 +42227,11 @@ void RenderUI(AppState& state) {
                             }
                         }
 
-                        ImGui::PopStyleColor(2);
+                        if (entry.isDirectory) ImGui::PopStyleColor(2);
+                        browserMenuChrome.reset();
                         ImGui::EndPopup();
                     }
+                    browserMenuShell.reset();
 
                     // Waveform column - show cached mini waveform with click-to-play/seek
                     ImGui::TableNextColumn();
@@ -43000,18 +43085,10 @@ void RenderUI(AppState& state) {
                     }
                     // Keep the context-menu ID adjacent to Selectable while LastItem is valid.
                     bool rowContextInvalidatedResults = false;
-                    if (!g_playlistQuickDrag.active && ImGui::BeginPopupContextItem("RowContextMenu")) {
+                    ThemeMenuPopupShellScope rowMenuShell(false, GetMenuFontSizePx());
+                    if (!g_playlistQuickDrag.active && rowMenuShell.beginContextItem("RowContextMenu")) {
+                        ThemeMenuPopupStyleScope rowMenuChrome(GetUIFontRegular());
                         DiagScopedTimer _diagRowContextPopup("Playlist", "RowContextMenu.Frame");
-                        // Ensure menu item hover is visible regardless of theme HeaderHovered alpha
-                        auto& _popupColors = ImGui::GetStyle().Colors;
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(
-                            _popupColors[ImGuiCol_ButtonHovered].x,
-                            _popupColors[ImGuiCol_ButtonHovered].y,
-                            _popupColors[ImGuiCol_ButtonHovered].z, 0.85f));
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(
-                            _popupColors[ImGuiCol_Button].x,
-                            _popupColors[ImGuiCol_Button].y,
-                            _popupColors[ImGuiCol_Button].z, 0.55f));
 
                         // Snapshot expensive context-menu inputs on the popup-open frame.
                         // Keep subsequent menu frames render-only: the menu can stay open for many frames,
@@ -43668,10 +43745,11 @@ void RenderUI(AppState& state) {
                             state.showDeleteConfirmDialog = true;
                         }
                         ImGui::PopStyleColor(); // ImGuiCol_Text (red for delete)
-                        ImGui::PopStyleColor(2); // HeaderHovered + Header pushed at popup open
 
+                        rowMenuChrome.reset();
                         ImGui::EndPopup();
                     }
+                    rowMenuShell.reset();
                     if (rowContextInvalidatedResults) {
                         // wasPlayed was already popped before the popup (line ~25652); don't pop again
                         ImGui::PopID();
@@ -44741,8 +44819,8 @@ void RenderUI(AppState& state) {
     ImGui::PopStyleVar();      // WindowPadding.
     };
     renderLeftColumn(renderDockTabsInShell);
-    ImGui::SetCursorScreenPos(resultsHomePos);
-    renderResultsSurface(centerWidth, availHeight);
+    ImGui::SetCursorScreenPos(ImVec2(resultsHomePos.x, resultsHomePos.y + kDockShellVerticalInset));
+    renderResultsSurface(centerWidth, availHeight - 2.0f * kDockShellVerticalInset);
 
     // Right Column - File Info with title bar
     const auto* rightTabGroup = anchoredTabGroup("info");
