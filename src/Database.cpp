@@ -1769,7 +1769,11 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     // Waveform and RMS BLOBs live in the waveforms sidecar.
     {
         const char* migKey = "legacy_blob_purge_v1";
-        if (ReadAppMetaInt(m_db, migKey) != 1) {
+        // The purge drops waveform_data/rms_data from audio_files, so it may
+        // only run once the migration above has really finished; a deferred
+        // migration keeps its source blobs for the next open.
+        if (ReadAppMetaInt(m_db, migKey) != 1 &&
+            ReadAppMetaInt(m_db, "legacy_waveform_blob_migration_v1") == 1) {
             int purged = 0;
             const char* purgeSql =
                 "UPDATE audio_files SET waveform_data = NULL, waveform_detail = NULL, rms_data = NULL "
@@ -18336,18 +18340,26 @@ bool Database::migrateFromSingleDatabase(const std::string& mainDbPath) {
     static const char* kMigrationKey = "legacy_waveform_blob_migration_v1";
     if (ReadAppMetaInt(m_db, kMigrationKey) == 1) return true;
 
+    // A sidecar row can already hold one of the two columns (a waveform without
+    // RMS, or the reverse). Filling the missing column keeps such rows
+    // migratable instead of leaving them behind on every later open.
     const char* migrateSql = R"(
-        INSERT OR IGNORE INTO waveforms_db.waveforms (file_id, waveform_data, rms_data)
+        INSERT INTO waveforms_db.waveforms (file_id, waveform_data, rms_data)
         SELECT id, waveform_data, rms_data
         FROM audio_files
         WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
-           OR (rms_data IS NOT NULL AND length(rms_data) > 0);
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0)
+        ON CONFLICT(file_id) DO UPDATE SET
+            waveform_data = CASE WHEN length(coalesce(waveform_data, x'')) > 0
+                THEN waveform_data ELSE excluded.waveform_data END,
+            rms_data = CASE WHEN length(coalesce(rms_data, x'')) > 0
+                THEN rms_data ELSE excluded.rms_data END;
     )";
 
     // Clear only the columns that actually landed in the sidecar. A copy that
-    // was silently skipped (for example an IGNORE rule on the waveforms side)
-    // keeps its source blob, so the probe below stays positive and the
-    // migration is retried on the next open instead of dropping the data.
+    // was silently skipped keeps its source blob, so the probe below stays
+    // positive and the migration is retried on the next open instead of
+    // dropping the data.
     const char* clearSql = R"(
         UPDATE audio_files SET
             waveform_data = CASE WHEN waveform_data IS NOT NULL
