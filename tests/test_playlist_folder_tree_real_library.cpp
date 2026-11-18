@@ -142,6 +142,42 @@ int main() {
         ++compared;
     }
 
+
+    const std::string measureSwitch = EnvValue("HARKEN_MEASURE_SWITCH");
+    if (!measureSwitch.empty()) {
+        SearchFilter emptyFilter;
+        for (const Playlist& playlist : playlists) {
+            const bool folder = playlist.is_folder;
+            const int64_t storedTotal = folder
+                ? db.getAggregatedPlaylistFileCount(playlist.id)
+                : db.getPlaylistFileCount(playlist.id);
+            if (storedTotal < 1000) continue;
+
+            const auto t0 = std::chrono::steady_clock::now();
+            const int64_t filteredTotal = folder
+                ? db.searchAggregatedPlaylistFileCount(playlist.id, emptyFilter)
+                : db.searchPlaylistFileCount(playlist.id, emptyFilter);
+            const auto t1 = std::chrono::steady_clock::now();
+            const std::vector<AudioRecord> page = folder
+                ? db.searchAggregatedPlaylistFilesPage(playlist.id, emptyFilter, 500, 0)
+                : db.searchPlaylistFilesPage(playlist.id, emptyFilter, 500, 0);
+            const auto t2 = std::chrono::steady_clock::now();
+            const std::vector<AudioRecord> coverKeys = folder
+                ? db.searchAggregatedPlaylistCoverKeys(playlist.id, emptyFilter)
+                : db.searchPlaylistCoverKeys(playlist.id, emptyFilter);
+            const auto t3 = std::chrono::steady_clock::now();
+
+            std::printf("switch id=%lld name=%s folder=%d total=%lld count=%.2fms page500=%.2fms rows=%zu coverKeys=%.2fms keys=%zu\n",
+                        (long long)playlist.id, playlist.name.c_str(), folder ? 1 : 0,
+                        (long long)filteredTotal,
+                        std::chrono::duration<double, std::milli>(t1 - t0).count(),
+                        std::chrono::duration<double, std::milli>(t2 - t1).count(),
+                        page.size(),
+                        std::chrono::duration<double, std::milli>(t3 - t2).count(),
+                        coverKeys.size());
+        }
+    }
+
     std::printf("compared playlists=%d folder-playlists=%d failures=%d\n", compared, comparedFolders, g_failures);
     Expect(compared > 0, "at least one plain playlist compared against the real library");
     return g_failures == 0 ? 0 : 1;
