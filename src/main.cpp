@@ -247,6 +247,7 @@
 #include "RenderFrameRequestPolicy.h"
 #include "PlaylistQuickBarMotion.h"
 #include "PlaylistFolderTree.h"
+#include "PlaylistCollectionIndex.h"
 #include "PlaylistDisplayedFileCountPolicy.h"
 #include "PlaylistScopeCounts.h"
 #include "DbNorm.h"
@@ -15377,30 +15378,33 @@ bool ShouldSuppressPlaylistContextPopup() {
 void ApplyPlaylistQuickBarOrder(AppState& state) {
     if (state.playlists.empty() || state.settings.playlistQuickBarOrder.empty()) return;
 
+    const uint64_t signature = aura::playlist::PlaylistQuickBarOrderSignature(
+        state.playlists, state.settings.playlistQuickBarOrder);
+    if (signature == state.playlistQuickBarAppliedOrderSignature) return;
+
+    std::unordered_map<int64_t, size_t> indexById;
+    indexById.reserve(state.playlists.size());
+    for (size_t i = 0; i < state.playlists.size(); ++i) {
+        indexById[state.playlists[i].id] = i;
+    }
+
     std::vector<Playlist> ordered;
     ordered.reserve(state.playlists.size());
-    std::vector<int64_t> usedIds;
+    std::unordered_set<int64_t> usedIds;
     usedIds.reserve(state.playlists.size());
 
     for (int64_t id : state.settings.playlistQuickBarOrder) {
-        auto it = std::find_if(state.playlists.begin(), state.playlists.end(),
-            [&](const Playlist& pl) { return pl.id == id; });
-        if (it != state.playlists.end() &&
-            std::find(usedIds.begin(), usedIds.end(), id) == usedIds.end()) {
-            ordered.push_back(*it);
-            usedIds.push_back(id);
-        }
+        auto it = indexById.find(id);
+        if (it == indexById.end() || !usedIds.insert(id).second) continue;
+        ordered.push_back(state.playlists[it->second]);
     }
-
-    for (const Playlist& pl : state.playlists) {
-        if (std::find(usedIds.begin(), usedIds.end(), pl.id) == usedIds.end()) {
-            ordered.push_back(pl);
-            usedIds.push_back(pl.id);
-        }
+    for (const Playlist& playlist : state.playlists) {
+        if (usedIds.insert(playlist.id).second) ordered.push_back(playlist);
     }
 
     if (ordered.size() == state.playlists.size()) {
         state.playlists = std::move(ordered);
+        state.playlistQuickBarAppliedOrderSignature = signature;
     }
 }
 
@@ -17214,6 +17218,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         } else if (state.playlists.empty()) {
             ImGui::TextDisabled("%s", L(Nav_NoPlaylists));
         } else {
+            state.EnsurePlaylistCollectionIndex();
             // 次世代：控制台风格播放列表 (Console-Style Playlists)
             auto uiWithAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
             const ImVec4 kThemeTextMuted = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
@@ -17434,8 +17439,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
                 // playlistRowMeta: keep counts as light metadata, not chrome badges.
                 int64_t count =
-                    aura::playlist::ResolvePlaylistDisplayedFileCount(
-                        state.playlists, pl.id);
+                    state.playlistCollectionIndex.DisplayedCount(pl.id);
                 const bool countPending = (count < 0);
                 const bool quickBarVisible = IsPlaylistShownInQuickBar(state, pl.id);
                 const bool showCountMeta = countPending || count > 0 || isSelected || isHovered;

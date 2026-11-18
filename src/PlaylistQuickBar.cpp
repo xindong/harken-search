@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <unordered_set>
 
 struct ReadingTextScope {
     bool prev;
@@ -82,30 +83,40 @@ PlaylistQuickBarReorderAnimState::Item& EnsurePlaylistQuickBarAnimItem(
     int64_t playlistId,
     float initialX)
 {
-    for (auto& entry : g_playlistQuickBarReorderAnim.items) {
-        if (entry.playlistId == playlistId) return entry;
+    auto& state = g_playlistQuickBarReorderAnim;
+    auto it = state.indexById.find(playlistId);
+    if (it != state.indexById.end() && it->second < state.items.size() &&
+        state.items[it->second].playlistId == playlistId) {
+        return state.items[it->second];
     }
     PlaylistQuickBarReorderAnimState::Item item;
     item.playlistId = playlistId;
     item.currentX = initialX;
     item.targetX = initialX;
     item.initialized = true;
-    g_playlistQuickBarReorderAnim.items.push_back(item);
-    return g_playlistQuickBarReorderAnim.items.back();
+    state.items.push_back(item);
+    state.indexById[playlistId] = state.items.size() - 1;
+    return state.items.back();
 }
 
 void PrunePlaylistQuickBarAnimItems(const std::vector<Playlist>& playlists) {
-    g_playlistQuickBarReorderAnim.items.erase(
+    auto& state = g_playlistQuickBarReorderAnim;
+    std::unordered_set<int64_t> alive;
+    alive.reserve(playlists.size());
+    for (const Playlist& playlist : playlists) alive.insert(playlist.id);
+    state.items.erase(
         std::remove_if(
-            g_playlistQuickBarReorderAnim.items.begin(),
-            g_playlistQuickBarReorderAnim.items.end(),
+            state.items.begin(),
+            state.items.end(),
             [&](const PlaylistQuickBarReorderAnimState::Item& entry) {
-                return std::none_of(
-                    playlists.begin(),
-                    playlists.end(),
-                    [&](const Playlist& pl) { return pl.id == entry.playlistId; });
+                return alive.find(entry.playlistId) == alive.end();
             }),
-        g_playlistQuickBarReorderAnim.items.end());
+        state.items.end());
+    state.indexById.clear();
+    state.indexById.reserve(state.items.size());
+    for (size_t i = 0; i < state.items.size(); ++i) {
+        state.indexById[state.items[i].playlistId] = i;
+    }
 }
 
 void RenderPlaylistQuickBar(AppState& state, float height) {
@@ -125,6 +136,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
 
     const auto& tcs = ThemeColors::current();
     ApplyPlaylistQuickBarOrder(state);
+    state.EnsurePlaylistCollectionIndex();
     ImGui::SetCursorPosX(0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 0.0f));
@@ -376,8 +388,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
 
             char countBuf[16];
             const int64_t displayedCount =
-                aura::playlist::ResolvePlaylistDisplayedFileCount(
-                    state.playlists, pl.id);
+                state.playlistCollectionIndex.DisplayedCount(pl.id);
             if (displayedCount < 0) {
                 snprintf(countBuf, sizeof(countBuf), "...");
             } else {
@@ -619,12 +630,14 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
 
                 // Collect this folder's visible (non-hidden) children.
                 std::vector<const Playlist*> kids;
-                for (const auto& pl2 : state.playlists) {
-                    if (pl2.parent_id != chip.id) continue;
-                    if (std::find(state.settings.playlistQuickBarHiddenIds.begin(),
-                                  state.settings.playlistQuickBarHiddenIds.end(),
-                                  pl2.id) != state.settings.playlistQuickBarHiddenIds.end()) continue;
-                    kids.push_back(&pl2);
+                if (const auto* childIndices = state.playlistCollectionIndex.Children(chip.id)) {
+                    kids.reserve(childIndices->size());
+                    for (size_t childIndex : *childIndices) {
+                        if (childIndex >= state.playlists.size()) continue;
+                        const Playlist& child = state.playlists[childIndex];
+                        if (state.playlistCollectionIndex.IsHidden(child.id)) continue;
+                        kids.push_back(&child);
+                    }
                 }
 
                 if (kids.empty()) {

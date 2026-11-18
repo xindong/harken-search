@@ -210,6 +210,7 @@ namespace HarkenSearch {
 }
 #include "FileBrowser.h"
 #include "Database.h"
+#include "PlaylistCollectionIndex.h"
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
@@ -2481,6 +2482,15 @@ struct AppState {
     bool folderHierarchyShowingPlaylistScope = false;
     int64_t playlistFolderHierarchyPlaylistId = -1;
     int64_t expandedPlaylistFolderTreePlaylistId = -1;
+    uint64_t playlistQuickBarAppliedOrderSignature = 0;
+    aura::playlist::PlaylistCollectionIndex playlistCollectionIndex;
+    void EnsurePlaylistCollectionIndex() {
+        const uint64_t signature = aura::playlist::PlaylistCollectionSignature(
+            playlists, settings.playlistQuickBarHiddenIds);
+        if (signature == playlistCollectionIndex.signature) return;
+        playlistCollectionIndex.Rebuild(playlists, settings.playlistQuickBarHiddenIds);
+        playlistCollectionIndex.signature = signature;
+    }
     void setFolderHierarchy(FolderInfo&& tree, const std::string& /*dbPath*/) {
         databaseFolderHierarchy = tree;
         folderHierarchy = std::move(tree);

@@ -385,6 +385,7 @@ REVIEWED_CONTRACTS = {
     "src/MiniWaveformRender.h": "tests/test_stage7_platform_contract.py",
     "src/MiniWaveformScheduler.h": "tests/test_stage7_platform_contract.py",
     "src/PlaylistFolderTree.h": "tests/test_stage7_platform_contract.py",
+    "src/PlaylistCollectionIndex.h": "tests/test_playlist_performance_contract.cpp",
     "src/PlaylistDisplayedFileCountPolicy.h": "tests/test_playlist_displayed_file_count_policy_boundary.py",
     "src/PlaylistQuickBarMotion.h": "tests/test_stage7_platform_contract.py",
     "src/SelectedWaveformRebuildQueue.h": "tests/test_stage7_platform_contract.py",
