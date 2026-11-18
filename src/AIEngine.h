@@ -2,6 +2,7 @@
 
 #include <string>
 #include "Localization.h"  // H1b: LedgerText + LStr (RQ-20260911-04)
+#include "AITaskQueueStopGate.h"
 #include <vector>
 #include <functional>
 #include <thread>
@@ -191,7 +192,6 @@ private:
 private:
     AIEngineConfig m_config;
     std::atomic<bool> m_initialized{false};
-    std::atomic<bool> m_shutdownRequested{false};
     
     // Whisper context
     struct whisper_context* m_whisperCtx = nullptr;
@@ -201,8 +201,7 @@ private:
     
     // Task queue
     mutable std::mutex m_tasksMutex;
-    std::condition_variable m_taskCondition;
-    std::queue<int> m_taskQueue;
+    AITaskQueueStopGate m_taskQueue;
     std::map<int, AITask> m_tasks;
     std::atomic<int> m_nextTaskId{1};
     
