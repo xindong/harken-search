@@ -49,6 +49,7 @@ if(MSVC)
     target_compile_options(TestAITaskQueueStopLegacyWindow PRIVATE /utf-8)
 endif()
 add_test(NAME AITaskQueueStopLegacyWindow COMMAND TestAITaskQueueStopLegacyWindow --expect-legacy-hang)
+set_tests_properties(AITaskQueueStop AITaskQueueStopLegacyWindow PROPERTIES TIMEOUT 30)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)

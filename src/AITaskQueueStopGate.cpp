@@ -2,6 +2,20 @@
 
 #include <utility>
 
+namespace {
+
+#if defined(ARIS_TASK_QUEUE_TESTING)
+template <typename Hook>
+void RunOnce(Hook& slot) {
+    if (!slot) return;
+    Hook hook = std::move(slot);
+    slot = nullptr;
+    hook();
+}
+#endif
+
+}  // namespace
+
 void AITaskQueueStopGate::Reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     stopRequested_.store(false);
@@ -23,8 +37,8 @@ bool AITaskQueueStopGate::WaitForTask(int& taskId) {
             BeforeWaitHook hook = std::move(beforeWaitHook_);
             beforeWaitHook_ = nullptr;
             // Runs with mutex_ held, after the wait decision and before the
-            // release-and-block. A correct RequestStop cannot publish while
-            // this hook runs, so the wakeup can never be lost.
+            // release-and-block. Guarded RequestStop cannot publish while this
+            // hook runs, so the wakeup can never be lost.
             hook();
         }
 #endif
@@ -43,7 +57,21 @@ void AITaskQueueStopGate::RequestStop() {
     // this notification and wait forever.
     stopRequested_.store(true);
     condition_.notify_all();
+#if defined(ARIS_TASK_QUEUE_TESTING)
+    RunOnce(stopPathHook_);
+#endif
 #else
+#if defined(ARIS_TASK_QUEUE_TESTING)
+    // Probe the same mutex the worker holds at its wait decision. Only a
+    // failed try-lock is real contention and gets reported; a successful probe
+    // is released immediately and is never reported as contention.
+    if (!mutex_.try_lock()) {
+        RunOnce(stopPathHook_);
+    } else {
+        mutex_.unlock();
+    }
+#endif
+    // The shipped path, shared by production and the tests.
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stopRequested_.store(true);
@@ -65,5 +93,21 @@ std::size_t AITaskQueueStopGate::QueueSize() const {
 void AITaskQueueStopGate::SetBeforeWaitHook(BeforeWaitHook hook) {
     std::lock_guard<std::mutex> lock(mutex_);
     beforeWaitHook_ = std::move(hook);
+}
+
+void AITaskQueueStopGate::SetStopPathHook(StopPathHook hook) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stopPathHook_ = std::move(hook);
+}
+
+void AITaskQueueStopGate::NotifyWaitersForTesting() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    condition_.notify_all();
+}
+
+void AITaskQueueStopGate::ForceStopAndNotifyForTesting() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stopRequested_.store(true);
+    condition_.notify_all();
 }
 #endif
