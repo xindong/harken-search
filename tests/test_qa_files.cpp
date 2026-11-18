@@ -1,9 +1,16 @@
 #include "platform/qa_files.h"
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using Platform::QaFiles::ReadCommandJson;
@@ -79,6 +86,31 @@ int main() {
     Check(!WriteResultAtomically(Utf8(blockedTarget), Utf8(failedTemporary), "new"),
           "failed replacement reports failure");
     Check(!fs::exists(failedTemporary), "failed replacement cleans temporary file");
+
+#ifdef _WIN32
+    {
+        const fs::path lockedResult = base / "locked-result.json";
+        const fs::path lockedTemporary = base / "locked.tmp";
+        Write(lockedResult, "old");
+        std::atomic<bool> locked{false};
+        std::thread holder([&] {
+            HANDLE handle = CreateFileW(lockedResult.wstring().c_str(),
+                                        GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            locked.store(true);
+            if (handle != INVALID_HANDLE_VALUE) {
+                Sleep(50);
+                CloseHandle(handle);
+            }
+        });
+        while (!locked.load()) std::this_thread::yield();
+        Check(WriteResultAtomically(Utf8(lockedResult), Utf8(lockedTemporary), "new"),
+              "transiently locked result is retried");
+        holder.join();
+        Check(Read(lockedResult) == "new", "retried result replaces target");
+        Check(!fs::exists(lockedTemporary), "retried result consumes temporary file");
+    }
+#endif
 
     fs::remove_all(base, error);
     return failures;
