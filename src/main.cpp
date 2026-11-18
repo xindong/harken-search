@@ -36599,6 +36599,31 @@ void RenderUI(AppState& state) {
         ImRect presetDialRect;
         const float presetDialReserveW =
             showPresetDial ? kPresetDialWidth + kPresetDialGap : 0.0f;
+        const float innerPad = 3.0f;
+        const float innerH = kCapsuleH - innerPad * 2.0f;
+        const float iconW = 18.0f;
+        const float navIconOnlyWidth = 12.0f + iconW;
+        const float itemGap = 2.0f;
+        const float diceBtnSize = innerH;
+        const float diceGap = 6.0f;
+        const float toolbarNavRightPad = layoutTinyWidth ? 6.0f : 10.0f;
+        const float toolbarDialRightInset = showRightColumn ? 0.0f : toolbarNavRightPad;
+        const float toolbarNavMinGap = layoutCompactWidth ? 8.0f : 16.0f;
+        aura::ui::workspace::ToolbarFlowLayoutInput toolbarFlowInput;
+        toolbarFlowInput.toolbarMinX =
+            toolbarWindowPos.x + ImGui::GetWindowContentRegionMin().x;
+        toolbarFlowInput.toolbarMaxX = toolbarResultsRightScreenX;
+        toolbarFlowInput.rightInset = toolbarDialRightInset;
+        toolbarFlowInput.presetDialWidth = showPresetDial ? kPresetDialWidth : 0.0f;
+        toolbarFlowInput.presetDialGap = showPresetDial ? kPresetDialGap : 0.0f;
+        toolbarFlowInput.navLeadingInset = innerPad;
+        toolbarFlowInput.navTrailingInset = innerPad;
+        toolbarFlowInput.compactItemWidths.fill(navIconOnlyWidth);
+        toolbarFlowInput.compactItemWidths.back() = diceBtnSize;
+        toolbarFlowInput.itemGaps = {itemGap, itemGap, itemGap, itemGap, diceGap * 2.0f + 1.0f};
+        float compactNavWidth = innerPad * 2.0f;
+        for (float width : toolbarFlowInput.compactItemWidths) compactNavWidth += width;
+        for (float gap : toolbarFlowInput.itemGaps) compactNavWidth += gap;
         aura::ui::workspace::ToolbarFlowLayout toolbarFlow;
 
         // 1. Back/Continue 胶囊 (恢复到最左侧)
@@ -36899,7 +36924,8 @@ void RenderUI(AppState& state) {
                 state.focusSearchBar = false;
             }
 
-            const float searchCursorX = ImGui::GetCursorScreenPos().x - ImGui::GetWindowPos().x;
+            const float searchCursorScreenX = ImGui::GetCursorScreenPos().x;
+            const float searchCursorX = searchCursorScreenX - toolbarWindowPos.x;
             // Half-screen toolbar adaptation:
             // reserve the *reachable compact nav width* first, then let search take
             // the remaining space.  The nav capsule below also remeasures itself
@@ -36908,7 +36934,11 @@ void RenderUI(AppState& state) {
             const float searchAvailableW = toolbarWindowW - searchCursorX - navReserveW - presetDialReserveW - 18.0f;
             const float searchMinW = layoutTinyWidth ? 120.0f : (layoutCompactWidth ? 180.0f : 220.0f);
             const float searchMaxW = layoutCompactWidth ? 320.0f : 420.0f;
-            const float searchInputW = std::clamp(searchAvailableW, searchMinW, searchMaxW);
+            const float searchFitMaxW = std::clamp(
+                toolbarResultsRightScreenX - searchCursorScreenX - toolbarDialRightInset -
+                    presetDialReserveW - toolbarNavMinGap - compactNavWidth,
+                searchMinW, searchMaxW);
+            const float searchInputW = std::clamp(searchAvailableW, searchMinW, searchFitMaxW);
             ImGui::SetNextItemWidth(searchInputW);
             // EnterReturnsTrue centralizes Enter handling for this field.
             ImGuiInputTextFlags searchFlags = ImGuiInputTextFlags_EnterReturnsTrue;
@@ -37065,7 +37095,7 @@ void RenderUI(AppState& state) {
                 : IM_COL32(160, 190, 240, 40);
 
             struct NavItem { const char* label; ViewMode mode; bool isModeBtn; };
-            NavItem navItems[] = {
+            const NavItem navItems[] = {
                 { L(View_FileBrowser), ViewMode::Browser,   true  },
                 { L(View_Database),    ViewMode::Database,  true  },
                 { L(View_Playlists),   ViewMode::PlaylistLibrary, true },
@@ -37080,57 +37110,33 @@ void RenderUI(AppState& state) {
                 "toolbar.refresh",
             };
             const int navCount = 5;
+            const auto navItemIconOnly = [layoutTinyWidth](const NavItem& item) {
+                return layoutTinyWidth || !item.isModeBtn;
+            };
 
             const float navH      = kCapsuleH;
             const float navR      = navH * 0.5f;
-            const float innerPad  = 3.0f;
-            const float innerH    = navH - innerPad * 2;
             const float innerR    = innerH * 0.5f;
-            const float itemGap   = 2.0f;
-            const float iconW     = 18.0f;
             const float iconGap   = 5.0f;
             const float itemPadX  = 16.0f;
 
-            const float diceBtnSize = innerH;
-            const float diceGap     = 6.0f;
-            std::array<float, aura::ui::workspace::kToolbarFlowItemCount> expandedItemWidths{};
-            std::array<float, aura::ui::workspace::kToolbarFlowItemCount> compactItemWidths{};
             for (int i = 0; i < navCount; ++i) {
-                const bool secondaryIconOnly = layoutTinyWidth || (layoutCompactWidth && i >= 4);
-                const ImVec2 ts = secondaryIconOnly
-                    ? ImVec2(0.0f, 0.0f)
-                    : ImGui::CalcTextSize(navItems[i].label);
-                expandedItemWidths[i] =
-                    (secondaryIconOnly ? 12.0f : itemPadX) + iconW +
-                    (secondaryIconOnly ? 0.0f : iconGap + ts.x + itemPadX);
-                compactItemWidths[i] = 12.0f + iconW;
+                toolbarFlowInput.expandedItemWidths[i] = navItemIconOnly(navItems[i])
+                    ? navIconOnlyWidth
+                    : itemPadX * 2.0f + iconW + iconGap + ImGui::CalcTextSize(navItems[i].label).x;
             }
-            expandedItemWidths[5] = diceBtnSize;
-            compactItemWidths[5] = diceBtnSize;
-
-            const float toolbarNavRightPad = layoutTinyWidth ? 6.0f : 10.0f;
-            const float toolbarDialRightInset = showRightColumn ? 0.0f : toolbarNavRightPad;
-            const float navLeftLimitScreenX =
-                searchRectMax.x + (layoutCompactWidth ? 8.0f : 16.0f);
-            aura::ui::workspace::ToolbarFlowLayoutInput toolbarFlowInput;
-            toolbarFlowInput.toolbarMinX =
-                toolbarWindowPos.x + ImGui::GetWindowContentRegionMin().x;
-            toolbarFlowInput.toolbarMaxX = toolbarResultsRightScreenX;
-            toolbarFlowInput.navMinX = navLeftLimitScreenX;
+            toolbarFlowInput.expandedItemWidths.back() = diceBtnSize;
+            toolbarFlowInput.navMinX = searchRectMax.x + toolbarNavMinGap;
             toolbarFlowInput.navPreferredX = navCapsuleScreenX;
-            toolbarFlowInput.rightInset = toolbarDialRightInset;
-            toolbarFlowInput.presetDialWidth = showPresetDial ? kPresetDialWidth : 0.0f;
-            toolbarFlowInput.presetDialGap = showPresetDial ? kPresetDialGap : 0.0f;
-            toolbarFlowInput.navLeadingInset = innerPad;
-            toolbarFlowInput.navTrailingInset = innerPad;
-            toolbarFlowInput.expandedItemWidths = expandedItemWidths;
-            toolbarFlowInput.compactItemWidths = compactItemWidths;
-            toolbarFlowInput.itemGaps = {
-                itemGap, itemGap, itemGap, itemGap,
-                diceGap + 1.0f + diceGap,
-            };
-            toolbarFlowInput.minimumVisibleItems = 4;
+            // 导航最多让到三个视图入口；再窄就真的没有位置，绝不整组消失。
+            toolbarFlowInput.minimumVisibleItems = 3;
             toolbarFlow = aura::ui::workspace::ResolveToolbarFlowLayout(toolbarFlowInput);
+            if (!toolbarFlow.navCapsule.visible && toolbarFlowInput.presetDialWidth > 0.0f) {
+                // 导航优先于预设选择器：先让预设选择器腾出空间，再谈隐藏导航项。
+                toolbarFlowInput.presetDialWidth = 0.0f;
+                toolbarFlowInput.presetDialGap = 0.0f;
+                toolbarFlow = aura::ui::workspace::ResolveToolbarFlowLayout(toolbarFlowInput);
+            }
 
             navOrigin.x = toolbarFlow.navCapsule.minX;
             const float navW = toolbarFlow.navCapsule.maxX - toolbarFlow.navCapsule.minX;
@@ -37190,7 +37196,10 @@ void RenderUI(AppState& state) {
                     dl->AddRectFilled(itemMin, itemMax, navHoverBgCol, innerR);
                 }
 
-                const bool iconOnly = navAllIconOnly || layoutTinyWidth || (layoutCompactWidth && i >= 4);
+                const bool iconOnly = navAllIconOnly || navItemIconOnly(navItems[i]);
+                if (iconOnly && navHovered[i]) {
+                    HarkenSearch::SetTooltip("%s", navItems[i].label);
+                }
                 float iconCx = iconOnly ? itemMin.x + itemWidths[i] * 0.5f : itemMin.x + itemPadX + iconW * 0.5f;
                 float iconCy = itemMin.y + innerH * 0.5f;
                 ImU32 iconCol = isActive ? navActiveIconCol : navInactiveIconCol;
@@ -37234,7 +37243,7 @@ void RenderUI(AppState& state) {
                         break;
                     }
                     case 4: {
-                        float cx = iconCx, cy = iconCy;
+                        float cx = iconCx + 1.0f, cy = iconCy;
                         float r = 5.5f;
                         for (int s = 0; s < 18; s++) {
                             float a0 = (float)s * (3.14159f * 1.5f / 18.0f) - 3.14159f * 0.5f;
@@ -37248,9 +37257,9 @@ void RenderUI(AppState& state) {
                     }
                 }
 
-                ImU32 textCol = isActive ? navActiveTextCol : (navHovered[i] ? navInactiveTextHoverCol : navInactiveTextCol);
-                ImVec2 ts = ImGui::CalcTextSize(navItems[i].label);
                 if (!iconOnly) {
+                    const ImU32 textCol = isActive ? navActiveTextCol : (navHovered[i] ? navInactiveTextHoverCol : navInactiveTextCol);
+                    const ImVec2 ts = ImGui::CalcTextSize(navItems[i].label);
                     float textX = itemMin.x + itemPadX + iconW + iconGap;
                     float textY = itemMin.y + (innerH - ts.y) * 0.5f;
                     dl->AddText(ImVec2(textX, textY), textCol, navItems[i].label);
