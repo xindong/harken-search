@@ -38,7 +38,8 @@ def make_library(folder: Path) -> None:
 
 
 def expected_menu_px(size: int) -> float:
-    return float(max(size, MENU_MIN_PX))
+    """Menu keeps 14 px at the 18 px default; larger sizes scale proportionally."""
+    return float(min(32, max(MENU_MIN_PX, round(14 * size / 18))))
 
 
 def main(args: argparse.Namespace) -> int:
@@ -225,7 +226,7 @@ def main(args: argparse.Namespace) -> int:
         observed = fresh_menu()
         assert observed['bar_right'] <= max_width + 2, (label, observed)
         assert observed['last_item_right'] <= observed['bar_right'] + 0.5, (label, observed)
-        assert kChromeFloor <= observed['font_pixels'] <= 32.5, (label, observed)
+        assert kChromeFloor <= observed['font_pixels'] <= expected_menu_px(32) + 0.6, (label, observed)
         items = observed['items']
         assert len(items) >= 8, (label, [entry['label'] for entry in items])
         for entry in items:
@@ -387,7 +388,7 @@ def main(args: argparse.Namespace) -> int:
                                 'mouse': fresh_menu().get('mouse')}
         dropdown = shot('04-menu-32-dropdown')
         assert len(opened) == 1, opened
-        assert abs(opened[0]['font_pixels'] - 32) < .6, opened
+        assert abs(opened[0]['font_pixels'] - expected_menu_px(32)) < .6, opened
         assert opened[0]['bounds'][1] >= observed['bar_top'] + observed['bar_height'] - 1, opened
         report['checks'].append({'case': 'file dropdown renders at the menu font size',
                                  'popup_px': opened[0]['font_pixels'],
@@ -399,7 +400,7 @@ def main(args: argparse.Namespace) -> int:
         click_twice((view[0] + view[2]) / 2, (view[1] + view[3]) / 2)
         viewp = fresh_menu()['popups']
         assert len(viewp) >= 1, 'view menu did not open'
-        assert abs(viewp[0]['font_pixels'] - 32) < .6, viewp
+        assert abs(viewp[0]['font_pixels'] - expected_menu_px(32)) < .6, viewp
         view_shot = shot('05-menu-32-view')
         cascade = None
         row_step = observed['font_pixels'] + 6.0
@@ -411,7 +412,7 @@ def main(args: argparse.Namespace) -> int:
             if len(popups) >= 2:
                 cascade = shot('06-menu-32-cascade')
                 ids = [entry['name'] for entry in popups]
-                assert all(abs(entry['font_pixels'] - 32) < .6 for entry in popups), popups
+                assert all(abs(entry['font_pixels'] - expected_menu_px(32)) < .6 for entry in popups), popups
                 report['checks'].append({'case': 'cascading submenu renders at the menu font size',
                                          'popups': ids,
                                          'sizes': [entry['font_pixels'] for entry in popups]})
@@ -469,7 +470,7 @@ def main(args: argparse.Namespace) -> int:
         stop()
         start()
         observed = fresh_menu()
-        assert abs(observed['font_pixels'] - 32) < .6, observed
+        assert abs(observed['font_pixels'] - expected_menu_px(32)) < .6, observed
         assert settle()['live_font'] == 32
         report['checks'].append({'case': 'restart keeps 32 px menu', 'frame': observed['frame']})
         shot('08-restart-32')
