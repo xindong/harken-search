@@ -16090,7 +16090,25 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
 // SECTION 8 - Sidebar Panel
 
 static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
-    ImGui::PushID(idScope);
+    struct SidebarRenderInstance {
+        std::string_view id;
+        const char* imguiScope;
+        aura::folder_tree::controls::Interaction controls;
+    };
+    static std::array<SidebarRenderInstance, 7> instances{{
+        {"LeftSidebar", "LeftSidebar", {}},
+        {"RightSidebar", "LeftSidebar", {}},
+        {"GroupedDockedSidebar", "LeftSidebar", {}},
+        {"GroupedFloatingSidebar", "FloatSidebar", {}},
+        {"FloatSidebar", "FloatSidebar", {}},
+        {"DockedFilter", "DockedFilter", {}},
+        {"DetachedSidebar", "DetachedSidebar", {}},
+    }};
+    const auto instance = std::find_if(instances.begin(), instances.end(),
+        [idScope](const SidebarRenderInstance& candidate) { return candidate.id == idScope; });
+    IM_ASSERT(instance != instances.end());
+    if (instance == instances.end()) return;
+    ImGui::PushID(instance->imguiScope);
 
     // Layout reservations:
     // No status or content-header bands reserve vertical space.
@@ -16332,7 +16350,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const ExplorerSource browserSource = BrowserExplorerSource();
         const ExplorerSource databaseSource = DatabaseExplorerSource();
         (void)browserSource;
-        static aura::folder_tree::controls::Interaction controls;
+        auto& controls = instance->controls;
         const ImGuiID controlsPanel = ImGui::GetID("##FolderTreeControls");
         const int tabId = state.listTabs.empty() ? 0 : state.currentTab().id;
         if (state.viewMode == ViewMode::Browser) {
@@ -16400,7 +16418,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 useLapisBlueFolderSearchSurface,
                 controls.refresh,
                 []() {},
-                [&state, playlistScopedFolderTree, effectivePlaylistFolderTreeId]() {
+                [&state, &controls, playlistScopedFolderTree, effectivePlaylistFolderTreeId]() {
                     state.folderTreeCollapseAll = true;
                     state.folderSearchBuffer[0] = '\0';
                     state.folderSearchHits.clear();
@@ -16412,7 +16430,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                         StartDeferredSidebarBootstrap(state, true, false);
                     }
                 },
-                [&state, locateTarget]() {
+                [&state, &controls, locateTarget]() {
                     state.folderTreeScrollTarget.clear();
                     controls.locate.Request(locateTarget->path);
                 },
@@ -38847,7 +38865,7 @@ void RenderUI(AppState& state) {
             aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
     };
     const auto renderDockedToolBody = [&](std::string_view module, const DockModuleShellLayout& shell,
-                                          float shellHeight, bool similarPerimeter) {
+                                          float shellHeight, bool similarPerimeter, const char* sidebarScope) {
         const bool isFilter = module == "filter";
         const bool isInfo = module == "info";
         const bool isSimilar = module == "similar-sounds";
@@ -38866,7 +38884,7 @@ void RenderUI(AppState& state) {
             ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
             : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
         const bool bodyVisible = BeginTransientScrollbarChild(childId, bodySize, false, bodyFlags);
-        if (bodyVisible) renderToolContent(module, bodySize.x, "LeftSidebar");
+        if (bodyVisible) renderToolContent(module, bodySize.x, sidebarScope);
         ImGui::EndChild();
         if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
     };
@@ -38927,7 +38945,7 @@ void RenderUI(AppState& state) {
             }
 
             }
-            renderDockedToolBody(displayedTool, leftShell, leftShellHeight, appearance.similarPerimeter);
+            renderDockedToolBody(displayedTool, leftShell, leftShellHeight, appearance.similarPerimeter, "LeftSidebar");
         }
 
         if (displayedTool == "filter" && ThemeInspector::IsCollecting()) {
@@ -44809,7 +44827,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        renderDockedToolBody(displayedTool, rightShell, size.y, appearance.similarPerimeter);
+        renderDockedToolBody(displayedTool, rightShell, size.y, appearance.similarPerimeter, "RightSidebar");
 
         if (displayedTool == "info" && ThemeInspector::IsCollecting()) {
             ImVec2 wp = ImGui::GetWindowPos();
@@ -50452,7 +50470,7 @@ void RenderUI(AppState& state) {
             renderDockTabStrip(group, selected, false);
             const ImVec2 contentPos = ImGui::GetCursorScreenPos();
             const ImVec2 contentSize = ImGui::GetContentRegionAvail();
-            renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "FloatSidebar");
+            renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
             if (selected == "similar-sounds" && useSharedSimilarAppearance())
                 drawSimilarBodyPerimeter(contentPos, contentSize);
         }
@@ -50498,7 +50516,7 @@ void RenderUI(AppState& state) {
                     ImGui::GetWindowDrawList(), bodyPos, bodySize.x, bodySize.y, nullptr, appearance.bodyBg, kTitleText,
                     selected == "filter");
                 renderDockTabsInShell(group, shell);
-                renderDockedToolBody(selected, shell, bodySize.y, appearance.similarPerimeter);
+                renderDockedToolBody(selected, shell, bodySize.y, appearance.similarPerimeter, "GroupedDockedSidebar");
             }
             ImGui::End();
             popDockedToolAppearance(appearance);

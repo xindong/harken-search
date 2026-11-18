@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 MAIN = (Path(__file__).resolve().parents[1] / "src" / "main.cpp").read_text(
@@ -54,3 +55,31 @@ def test_browser_locate_disables_paths_outside_the_system_tree():
                     "static void ClearSpecificCoverKeyFilter(")
     assert "BrowserSystemFolderRoots()" in panel
     assert "ContainsPath(" in panel
+
+
+def test_sidebar_render_instances_own_independent_folder_tree_controls():
+    renderer = section("static void RenderSidebarPanelContent(", "if (state.viewMode == ViewMode::Browser) {")
+    assert "static aura::folder_tree::controls::Interaction controls;" not in renderer
+    assert "controls = instance->controls;" in renderer
+    assert 'ImGui::PushID(instance->imguiScope);' in renderer
+
+    slots = dict(re.findall(r'\{"(\w+)", "(\w+)", \{\}\}', renderer))
+    assert slots == {
+        "LeftSidebar": "LeftSidebar",
+        "RightSidebar": "LeftSidebar",
+        "GroupedDockedSidebar": "LeftSidebar",
+        "GroupedFloatingSidebar": "FloatSidebar",
+        "FloatSidebar": "FloatSidebar",
+        "DockedFilter": "DockedFilter",
+        "DetachedSidebar": "DetachedSidebar",
+    }
+    assert 'RenderSidebarPanelContent(state, sidebarScope);' in MAIN
+    assert 'renderToolContent(module, bodySize.x, sidebarScope);' in MAIN
+    docked = re.findall(r'renderDockedToolBody\([^;\n]+, "(\w+)"\);', MAIN)
+    floating = re.findall(r'renderToolContent\(selected,[^;\n]+, "(\w+)"\);', MAIN)
+    standalone = re.findall(r'RenderSidebarPanelContent\(state, "(\w+)"\);', MAIN)
+    assert sorted(docked + floating + standalone) == sorted(slots)
+
+    sidebar_tree = section("// Section 1: 文件夹树", "// Section 2:")
+    assert "controls.BeginFrame(ImGui::GetFrameCount(), controlsPanel, state.currentDbPathUtf8, tabId, -1, true);" in sidebar_tree
+    assert re.search(r"controls\.BeginFrame\([^;]*state\.currentDbPathUtf8, tabId,\s*effectivePlaylistFolderTreeId, false\)", sidebar_tree)
