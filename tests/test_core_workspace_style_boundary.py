@@ -610,10 +610,17 @@ def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     assert "s.resultsSecondaryText   = H(0xffd7e3ef);" in read(BUILTIN_THEME_CPP)
 
 
-def test_top_menu_dropdowns_use_one_chrome_font_scope():
+def test_top_menu_uses_the_system_font_scope():
     main = read(MAIN_CPP)
     assert "ReadingTextScope _readingMenu" not in main
-    assert main.count("ChromeTextScope _readingMenu") == 8
+    assert "ChromeTextScope _readingMenu" not in main
+    assert main.count("MenuTextScope _readingMenu") == 8
+    assert "ImGui::PushFont(GetMenuUIFont(), menuFontPx);" in main
+    assert "ImGui::BeginMainMenuBar()" in main
+    assert "ImGui::EndMainMenuBar();" in main
+    header = between(main, "// TOP MENU BAR", "// TOP TOOLBAR")
+    assert "ImGuiWindowFlags_MenuBar" not in header
+    assert "GetMenuFontSizePx()" in header
 
 
 def test_results_file_path_column_fills_trailing_width():
