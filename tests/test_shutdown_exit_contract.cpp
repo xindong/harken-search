@@ -117,6 +117,21 @@ void RequireCleanupDrainUnconditional(const std::string& windowsMain) {
         }
     }
 }
+
+void RequireWaveformStopWakesIdleWorkers(const std::string& asyncWorker) {
+    const std::string stop = SliceAfter(asyncWorker, "void WaveformWorker::stop()", 1000);
+    const size_t lock = stop.find("std::lock_guard<std::mutex> lk(m_requestMutex);");
+    const size_t publish = stop.find("m_running.store(false");
+    const size_t unlock = stop.find("\n    }", lock);
+    const size_t notify = stop.find("m_requestCv.notify_all();");
+    const size_t join = stop.find("t.join()");
+    if (!(lock < publish && publish < unlock && unlock < notify &&
+          notify < join && join != std::string::npos)) {
+        std::cerr << "Waveform shutdown must publish stop under the request mutex "
+                     "before notifying and joining the idle workers\n";
+        std::exit(1);
+    }
+}
 } // namespace
 
 int main() {
@@ -164,6 +179,7 @@ int main() {
     RequireContains(windowsMain, "logShutdownStage(\"Complete\")", "shutdown complete marker");
 
     RequireCleanupDrainUnconditional(windowsMain);
+    RequireWaveformStopWakesIdleWorkers(ReadText(root / "src" / "AsyncWorker.cpp"));
 
     std::cout << "Shutdown exit contract passed\n";
     return 0;
