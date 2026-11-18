@@ -135,7 +135,9 @@ def assert_no_local_content(root: Path) -> None:
     for entry in (item for item in status.split("\0") if item):
         if len(entry) < 4 or entry[2] != " ":
             refuse("无法解析 Git 状态输出")
-        if entry[3:] in ALLOWED_RUNTIME_FILES:
+        # Only an untracked or ignored runtime file may pass; a staged or modified one is
+        # real work and must never be discarded with the directory.
+        if entry[3:] in ALLOWED_RUNTIME_FILES and entry[:2] in {"??", "!!"}:
             continue
         refuse("目录还有未保存或被 Git 忽略的文件")
 
@@ -372,10 +374,14 @@ def delete_feature_branches(card: Path, main_repo: Path, branch: str, remote_sha
 def delete_allowed_runtime_files(root: Path) -> None:
     for name in ALLOWED_RUNTIME_FILES:
         path = root / name
-        if path.exists() and is_reparse(path):
-            refuse("运行期文件是链接或重解析点")
-        if path.is_file():
-            path.unlink()
+        if not path.exists():
+            continue
+        if is_reparse(path) or not path.is_file():
+            refuse("运行期文件是链接、重解析点或目录")
+        if git(root, "ls-files", "--error-unmatch", "--", name).returncode == 0:
+            # A tracked file belongs to the committed tree; git removes it with the worktree.
+            continue
+        path.unlink()
 
 
 def remove_registered_worktree(main_repo: Path, root: Path) -> None:

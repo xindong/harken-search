@@ -559,5 +559,33 @@ class CardDirectoryCleanupTests(unittest.TestCase):
         self.assertEqual([Path(p).resolve() for p in self.worktree_paths()], [self.main_repo.resolve()])
 
 
+    def test_staged_runtime_file_is_refused(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--dry-run")
+        self.refused("--execute", "--expected-head", head)
+        self.assertTrue(runtime.exists())
+
+    def test_modified_tracked_runtime_file_is_refused(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        git(self.card, "commit", "-m", "track runtime file")
+        git(self.card, "push", str(self.origin), "HEAD:" + REF)
+        runtime.write_text("modified", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertEqual(runtime.read_text(encoding="utf-8"), "modified")
+
+    def test_clean_tracked_runtime_file_is_never_deleted_early(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        git(self.card, "commit", "-m", "track runtime file")
+        cleanup.delete_allowed_runtime_files(self.card)
+        self.assertTrue(runtime.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
