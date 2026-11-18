@@ -1118,12 +1118,8 @@ static void ShowCoverClipboardMessage(const wchar_t* text, UINT icon = MB_ICONIN
 // Menu item with stable hover styling.
 // Menu item with stable selected styling.
 bool MenuItemWithTooltip(const char* label, const char* shortcut, const char* tooltip, bool selected = false, bool enabled = true) {
-    // Apply the menu palette before rendering the item.
-    // Header 是 MenuItem 的背景，HeaderHovered 是鼠标划过时的高亮背景
     ImGui::PushStyleColor(ImGuiCol_Header, COLOR_SELECTED);
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, COLOR_ACCENT);
-
-    // 执行原生 MenuItem 渲染
     bool clicked = ImGui::MenuItem(label, shortcut, selected, enabled);
 
     // 只有在悬停且有内容时才显示 Tooltip，并增加 DelayShort 防闪烁
@@ -1131,9 +1127,7 @@ bool MenuItemWithTooltip(const char* label, const char* shortcut, const char* to
         HarkenSearch::SetTooltip("%s", tooltip);
     }
 
-    // 弹出样式，确保不污染后续其他 UI 组件
     ImGui::PopStyleColor(2);
-
     return clicked;
 }
 
@@ -35568,45 +35562,91 @@ void RenderUI(AppState& state) {
     state.qaRegions.menuBarItems.clear();
 #endif
 
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().menuPopupBG);
-    // Top menu follows the system/reading font size (REQ-20261110-TOP-MENU-FONT).
-    // The font is pushed before the bar is submitted so the bar height grows with it.
-    // When the row cannot fit (narrow window / long translation) the font steps back
-    // towards the chrome size instead of clipping the right-most entries.
-    static float s_menuFitScale = 1.0f;
-    const float menuFontPx =
-        ImMax((float)kChromeFontPx, GetMenuFontSizePx() * s_menuFitScale);
-    ImGui::PushFont(GetMenuUIFont(), menuFontPx);
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    auto* viewportBuild = static_cast<ImGuiViewportP*>(viewport);
+    ImGui::SetCurrentViewport(nullptr, viewportBuild);
+    ImFont* menuFont = GetUIFontRegular();
+    if (!menuFont) menuFont = ImGui::GetFont();
+    const float menuScale = ImGui::GetMenuChromeScale();
+    const float baseMenuFontPx = GetMenuFontSizePx();
+    constexpr float minMenuBarFontPx = kChromeFontPx - 1.0f;
+    float menuBarFontPx = baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx;
+    const char* menuTitles[] = {L(Menu_File), L(Menu_Edit), L(Menu_View), L(Menu_Database),
+                                L(Menu_Playlist), L(Menu_Tools), L(Menu_Settings), L(Menu_Help)};
+    const float brandLeading = std::floor(14.0f * menuScale);
+    const float brandTrailing = std::floor(8.0f * menuScale);
+    const float widthForTitles = viewportBuild->GetBuildWorkRect().GetWidth()
+        - 2.0f * brandLeading - std::ceil(ImGui::GetStyle().WindowBorderSize) - 2.0f;
+    for (; menuBarFontPx > minMenuBarFontPx; menuBarFontPx -= 1.0f) {
+        ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, menuBarFontPx * menuScale));
+        float fittedLabelWidth = 0.0f;
+        for (const char* title : menuTitles)
+            fittedLabelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
+        ImGui::PopFont();
+        if (fittedLabelWidth <= widthForTitles) break;
+    }
+    const float hostFontPx = std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale;
+    ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));
     if (ImGui::BeginMainMenuBar()) {
+        ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);
+        ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);
         ImGuiWindow* menuWindow = ImGui::GetCurrentWindow();
         const ImRect menuBarRect = menuWindow->MenuBarRect();
+        const ImVec4& barFill = ThemeColors::menuBarFillBG(ThemeColors::current());
         menuWindow->DrawList->AddRectFilled(
             menuBarRect.Min,
             menuBarRect.Max,
-            ImGui::GetColorU32(ThemeColors::menuBarFillBG(ThemeColors::current())));
-        // 菜单栏前的官方品牌字标：与启动页同一张官网横版字标，深色底用白色图、
-        // 浅色底用黑色图，图片读不到时退回纯文字品牌名。窄窗口让位给菜单项。
-        if (menuBarRect.GetWidth() >= 1100.0f) {
-            const float brandGap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
-            const float brandRightX = aura::ui::DrawMenuBarBrandWordmark(
-                menuBarRect.Min.x + brandGap, menuBarRect.Min.y,
-                menuBarRect.Max.x, menuBarRect.Max.y,
-                GetUIFontEmphasis(), L(Main_AppNameBrand));
-            ImGui::SetCursorPosX((brandRightX - menuWindow->Pos.x) + brandGap);
+            ImGui::GetColorU32(barFill));
+        // 默认字号保留签字版黑白字标；较大字号沿用 QA 的品牌素材。窄窗口让位给菜单项。
+        const ImGuiStyle& menuStyle = ImGui::GetStyle();
+        float labelWidth = 0.0f;
+        for (const char* title : menuTitles)
+            labelWidth += ImGui::CalcTextSize(title, nullptr, true).x;
+        const float spacingSlots = static_cast<float>(IM_ARRAYSIZE(menuTitles));
+        const float preferredMenuWidth = labelWidth + menuStyle.ItemSpacing.x * spacingSlots;
+        const float menuRight = menuWindow->ClipRect.Max.x - brandLeading;
+        const float brandStartX = std::max(menuBarRect.Min.x + brandLeading, menuWindow->ClipRect.Min.x);
+        const float brandLimitX = menuRight - preferredMenuWidth - brandTrailing;
+        float menuStartOffset = brandStartX - menuWindow->Pos.x;
+        if (brandLimitX > brandStartX) {
+            aura::ui::PackagedAssetTex approvedWordmark;
+            if (baseMenuFontPx == kChromeFontPx) {
+                const float barLuma = barFill.x * 0.299f + barFill.y * 0.587f + barFill.z * 0.114f;
+                approvedWordmark = aura::ui::LoadPackagedAsset(barLuma >= 0.5f
+                    ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
+                    : "assets/logos/brand/harken-search-menu-wordmark-white.png");
+            }
+            float brandRightX = brandStartX;
+            if (approvedWordmark.glId != 0 && approvedWordmark.w > 0 && approvedWordmark.h > 0) {
+                const float artHeight = std::clamp(menuBarRect.GetHeight() * 0.58f, 12.0f, 20.0f);
+                const float artWidth = artHeight * (static_cast<float>(approvedWordmark.w) / approvedWordmark.h);
+                if (brandStartX + artWidth <= brandLimitX) {
+                    const float centerY = menuBarRect.GetCenter().y;
+                    brandRightX = brandStartX + artWidth;
+                    menuWindow->DrawList->AddImage((ImTextureID)(intptr_t)approvedWordmark.glId,
+                        ImVec2(brandStartX, centerY - artHeight * 0.5f),
+                        ImVec2(brandRightX, centerY + artHeight * 0.5f));
+                }
+            } else {
+                brandRightX = aura::ui::DrawMenuBarBrandWordmark(
+                    brandStartX, menuBarRect.Min.y, brandLimitX, menuBarRect.Max.y,
+                    GetUIFontEmphasis(), L(Main_AppNameBrand));
+            }
+            if (brandRightX > brandStartX)
+                menuStartOffset = std::ceil((brandRightX - menuWindow->Pos.x) + brandTrailing);
         }
-        ImGui::PushFont(GetMenuUIFontEmphasis(), menuFontPx);
-        ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().menuText);
-        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(
-            ThemeColors::current().menuText.x * 0.65f,
-            ThemeColors::current().menuText.y * 0.65f,
-            ThemeColors::current().menuText.z * 0.65f,
-            ThemeColors::current().menuText.w));
+        const float menuAvailable = menuRight - menuWindow->Pos.x - menuStartOffset;
+        const float menuSpacing = std::clamp(
+            std::floor((menuAvailable - labelWidth) / spacingSlots), 0.0f, menuStyle.ItemSpacing.x);
+        ImGui::SetCursorPosX(menuStartOffset + menuWindow->Scroll.x);
+        ImGui::PushStyleVarX(ImGuiStyleVar_ItemSpacing, menuSpacing);
         const bool fileMenuOpen = ImGui::BeginMenu(L(Menu_File));
 #if ARIS_PREVIEW_ISOLATION
         QaProbeMenuBarItem(state, L(Menu_File));
 #endif
         if (fileMenuOpen) {
-            { MenuTextScope _readingMenuFile; // menu dropdowns share the chrome face.
+            ThemeMenuPopupStyleScope menuChromeFile(GetUIFontRegular());
+            { ChromeTextScope _readingMenuFile; // menu dropdowns share the chrome face.
             if (ImGui::MenuItem(L(File_OpenFolder), "Ctrl+O")) {
                 std::string folder = OpenFolderDialog(g_hwnd);
                 if (!folder.empty()) {
@@ -35683,8 +35723,8 @@ void RenderUI(AppState& state) {
             ImGui::Separator();
 
             // Database management submenu
-            const bool fileDatabaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
-        if (fileDatabaseMenuOpen) {
+            if (ImGui::BeginMenu(L(Menu_Database))) {
+                ThemeMenuPopupStyleScope menuChromeFileDb(GetUIFontRegular());
                 // Current database info
                 if (!state.currentDbPathUtf8.empty()) {
                     std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
@@ -35754,6 +35794,7 @@ void RenderUI(AppState& state) {
                     }
                 }
 
+                menuChromeFileDb.reset();
                 ImGui::EndMenu();
             }
 
@@ -35766,6 +35807,7 @@ void RenderUI(AppState& state) {
                 }
             }
             }
+            menuChromeFile.reset();
             ImGui::EndMenu();
         }
         const bool editMenuOpen = ImGui::BeginMenu(L(Menu_Edit));
@@ -35773,7 +35815,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Edit));
 #endif
         if (editMenuOpen) {
-            { MenuTextScope _readingMenuEdit;
+            ThemeMenuPopupStyleScope menuChromeEdit(GetUIFontRegular());
+            { ChromeTextScope _readingMenuEdit;
             // Undo / Redo
             {
                 std::string undoLabel = std::string(L(Undo_UndoBtn));
@@ -35861,6 +35904,7 @@ void RenderUI(AppState& state) {
             {
                 auto lm = state.settings.listeningMode;
                 if (ImGui::BeginMenu(L(Play_PreviewModeLabel))) {
+                    ThemeMenuPopupStyleScope menuChromePreview(GetUIFontRegular());
                     if (ImGui::MenuItem(L(Play_BrowseMode), nullptr, lm == ListeningMode::Browse)) {
                         state.settings.listeningMode = ListeningMode::Browse;
                         state.settings.syncFromListeningMode();
@@ -35871,6 +35915,7 @@ void RenderUI(AppState& state) {
                         state.settings.syncFromListeningMode();
                         SaveAppSettings(state);
                     }
+                    menuChromePreview.reset();
                     ImGui::EndMenu();
                 }
             }
@@ -35919,6 +35964,7 @@ void RenderUI(AppState& state) {
             }
 
             }
+            menuChromeEdit.reset();
             ImGui::EndMenu();
         }
         const bool viewMenuOpen = ImGui::BeginMenu(L(Menu_View));
@@ -35926,7 +35972,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_View));
 #endif
         if (viewMenuOpen) {
-            { MenuTextScope _readingMenuView;
+            ThemeMenuPopupStyleScope menuChromeView(GetUIFontRegular());
+            { ChromeTextScope _readingMenuView;
             if (ImGui::MenuItem(L(View_FileBrowser), nullptr, state.viewMode == ViewMode::Browser)) {
                 state.viewMode = ViewMode::Browser;
             }
@@ -35946,6 +35993,7 @@ void RenderUI(AppState& state) {
 
             // Waveform visualization options
             if (ImGui::BeginMenu(L(Menu_WaveformDisplay))) {
+                ThemeMenuPopupStyleScope menuChromeWaveform(GetUIFontRegular());
                 bool classicMode = (state.waveformColorMode == AppState::WaveformColorMode::Classic);
                 bool freqMode = (state.waveformColorMode == AppState::WaveformColorMode::FrequencyColored);
                 if (ImGui::MenuItem(L(View_ClassicGreen), nullptr, classicMode)) {
@@ -35954,6 +36002,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::MenuItem(L(View_FreqColor), nullptr, freqMode)) {
                     state.waveformColorMode = AppState::WaveformColorMode::FrequencyColored;
                 }
+                menuChromeWaveform.reset();
                 ImGui::EndMenu();
             }
             if (kEnableLufsUiAndDetection) {
@@ -35988,6 +36037,7 @@ void RenderUI(AppState& state) {
 
             // Panel visibility controls
             if (ImGui::BeginMenu(L(Menu_Panel))) {
+                ThemeMenuPopupStyleScope menuChromePanel(GetUIFontRegular());
                 if (ImGui::MenuItem(L(View_FilterFolder), nullptr, &state.panelSidebar.visible))
                     MarkSettingsDirty(state);
                 if (ImGui::MenuItem(L(View_InfoPanel), nullptr, &state.panelFileInfo.visible))
@@ -36017,6 +36067,7 @@ void RenderUI(AppState& state) {
                 if (ImGui::MenuItem(L(Panel_FolderDetach), nullptr, state.folderBrowserDetached)) {
                     state.folderBrowserDetached = !state.folderBrowserDetached;
                 }
+                menuChromePanel.reset();
                 ImGui::EndMenu();
             }
 
@@ -36025,6 +36076,7 @@ void RenderUI(AppState& state) {
             ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
 #endif
             }
+            menuChromeView.reset();
             ImGui::EndMenu();
         }
         const bool databaseMenuOpen = ImGui::BeginMenu(L(Menu_Database));
@@ -36032,7 +36084,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Database));
 #endif
         if (databaseMenuOpen) {
-            { MenuTextScope _readingMenuDatabase;
+            ThemeMenuPopupStyleScope menuChromeDatabase(GetUIFontRegular());
+            { ChromeTextScope _readingMenuDatabase;
             if (!state.currentDbPathUtf8.empty()) {
                 std::string dbName = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
                 ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.3f, 1.0f), "%s %s", L(DB_CurrentDB), dbName.c_str());
@@ -36060,6 +36113,7 @@ void RenderUI(AppState& state) {
             }
 #endif
             if (!state.recentDbPathsUtf8.empty() && ImGui::BeginMenu(L(Menu_RecentDB))) {
+                ThemeMenuPopupStyleScope menuChromeRecentDb(GetUIFontRegular());
                 for (size_t i = 0; i < state.recentDbPathsUtf8.size(); ++i) {
                     const std::string& p = state.recentDbPathsUtf8[i];
                     bool isCurrent = (!state.currentDbPathUtf8.empty() && p == state.currentDbPathUtf8);
@@ -36074,6 +36128,7 @@ void RenderUI(AppState& state) {
                     state.recentDbPathsUtf8.clear();
                     SaveAppSettings(state);
                 }
+                menuChromeRecentDb.reset();
                 ImGui::EndMenu();
             }
             ImGui::EndDisabled();
@@ -36086,6 +36141,7 @@ void RenderUI(AppState& state) {
             int64_t count = state.database.getFileCount();
             ImGui::Text(L(Main_TotalFilesFmt), count);
             }
+            menuChromeDatabase.reset();
             ImGui::EndMenu();
         }
         const bool playlistMenuOpen = ImGui::BeginMenu(L(Menu_Playlist));
@@ -36093,7 +36149,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Playlist));
 #endif
         if (playlistMenuOpen) {
-            { MenuTextScope _readingMenuPlaylist;
+            ThemeMenuPopupStyleScope menuChromePlaylist(GetUIFontRegular());
+            { ChromeTextScope _readingMenuPlaylist;
             if (ImGui::MenuItem(L(PL_NewPlaylist))) {
                 state.showPlaylistDialog = true;
                 memset(state.playlistNameBuffer, 0, sizeof(state.playlistNameBuffer));
@@ -36137,6 +36194,7 @@ void RenderUI(AppState& state) {
                 ImGui::PopID();
             }
             }
+            menuChromePlaylist.reset();
             ImGui::EndMenu();
         }
         const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
@@ -36144,7 +36202,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Tools));
 #endif
         if (toolsMenuOpen) {
-            { MenuTextScope _readingMenuTools;
+            ThemeMenuPopupStyleScope menuChromeTools(GetUIFontRegular());
+            { ChromeTextScope _readingMenuTools;
             if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
             if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
                 ResetDockTestLayout();
@@ -36220,6 +36279,7 @@ void RenderUI(AppState& state) {
                 PumpDawBridgeRegistryProbeCache();
 
                 if (ImGui::BeginMenu(L(Tools_InstallDawBridge))) {
+                    ThemeMenuPopupStyleScope menuChromeDawBridge(GetUIFontRegular());
                     for (int i = 0; i < (int)g_dawBridgeRegistry.size(); ++i) {
                         const auto& installer = g_dawBridgeRegistry[i];
                         const auto& status    = g_dawBridgeProbeCache.statuses[i];
@@ -36289,11 +36349,13 @@ void RenderUI(AppState& state) {
                             }).detach();
                         }
                     }
+                    menuChromeDawBridge.reset();
                     ImGui::EndMenu();
                 }
             }
 
             }
+            menuChromeTools.reset();
             ImGui::EndMenu();
         }
         // 工具菜单 (UCS/标签/嵌入/命名/传输/工作流/主题)
@@ -36304,7 +36366,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Settings));
 #endif
         if (settingsMenuOpen) {
-            { MenuTextScope _readingMenuSettings;
+            ThemeMenuPopupStyleScope menuChromeSettings(GetUIFontRegular());
+            { ChromeTextScope _readingMenuSettings;
             if (ImGui::MenuItem(L(Set_AppSettings))) {
                 state.showSettingsDialog = true;
             }
@@ -36315,6 +36378,7 @@ void RenderUI(AppState& state) {
                 state.showDawTargetSettings = true;
             }
             }
+            menuChromeSettings.reset();
             ImGui::EndMenu();
         }
         const bool helpMenuOpen = ImGui::BeginMenu(L(Menu_Help));
@@ -36322,7 +36386,8 @@ void RenderUI(AppState& state) {
         QaProbeMenuBarItem(state, L(Menu_Help));
 #endif
         if (helpMenuOpen) {
-            { MenuTextScope _readingMenuHelp;
+            ThemeMenuPopupStyleScope menuChromeHelp(GetUIFontRegular());
+            { ChromeTextScope _readingMenuHelp;
             if (ImGui::MenuItem(L(Help_About))) {
                 state.showAboutWindow = true;
             }
@@ -36351,43 +36416,36 @@ void RenderUI(AppState& state) {
             }
             }
             }
+            menuChromeHelp.reset();
             ImGui::EndMenu();
         }
+        ImGui::PopStyleVar();
         if (ThemeInspector::IsCollecting()) {
             ImGuiWindow* mw = ImGui::GetCurrentWindow();
             ImRect mbr = mw->MenuBarRect();
             ThemeInspector::RegisterZone(mbr.Min, mbr.Max, "menuBarBG", L(ThemeCol_menuBarBG));
         }
-        const float menuRowRight = ImGui::GetItemRectMax().x;
-        const float menuBarRightEdge = menuBarRect.Max.x;
 #if ARIS_PREVIEW_ISOLATION
         state.qaRegions.menuBarFrame = ImGui::GetFrameCount();
         state.qaRegions.menuBarFontPixels = ImGui::GetFontSize();
         state.qaRegions.menuBarHeight = menuBarRect.GetHeight();
         state.qaRegions.menuBarRight = menuBarRect.Max.x;
         state.qaRegions.menuBarTop = menuBarRect.Min.y;
-        state.qaRegions.menuBarLastItemRight = menuRowRight;
+        state.qaRegions.menuBarLastItemRight = state.qaRegions.menuBarItems.empty()
+            ? menuBarRect.Min.x : state.qaRegions.menuBarItems.back().x1;
 #endif
-        ImGui::PopStyleColor(2);
-        ImGui::PopFont();
+        menuPopupShell.reset();
+        menuBarChrome.reset();
         ImGui::EndMainMenuBar();
-        if (menuRowRight > menuBarRightEdge - 4.0f) {
-            s_menuFitScale = ImMax(0.5f, s_menuFitScale - 0.06f);
-        } else if (s_menuFitScale < 1.0f && menuRowRight < menuBarRightEdge * 0.82f) {
-            s_menuFitScale = ImMin(1.0f, s_menuFitScale + 0.03f);
-        }
     }
     ImGui::PopFont();
-    ImGui::PopStyleColor();
 
 
     // MAIN LAYOUT - classic library layout
 
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
     // BeginMainMenuBar only reports its height into the *build* work area, which
     // becomes WorkPos/WorkSize on the next frame. Read the build area so the
     // workspace never spends one frame under the bar (or leaving a gap).
-    const ImGuiViewportP* viewportBuild = (const ImGuiViewportP*)viewport;
     const ImVec2 frameWorkPos(viewportBuild->Pos.x + viewportBuild->BuildWorkInsetMin.x,
                               viewportBuild->Pos.y + viewportBuild->BuildWorkInsetMin.y);
     const ImVec2 frameWorkSize(
@@ -42012,20 +42070,22 @@ void RenderUI(AppState& state) {
                     if (wasPlayed) {
                         ImGui::PopStyleColor();
                     }
-                    if (ImGui::BeginPopupContextItem("##BrowserRowCtx")) {
+                    ThemeMenuPopupShellScope browserMenuShell(false, GetMenuFontSizePx());
+                    if (browserMenuShell.beginContextItem("##BrowserRowCtx", !entry.isDirectory)) {
+                        ThemeMenuPopupStyleScope browserMenuChrome(GetUIFontRegular(), !entry.isDirectory);
                         const std::string contextFolder = ResolveBrowserEntryFolderPath(entry);
                         const std::string folderTarget = contextFolder.empty() ? entry.fullPath : contextFolder;
                         const std::vector<std::string> browserSendPaths =
                             BuildBrowserTransferSourcePaths(state, entries, entryIndex);
-                        auto& _bpopColors = ImGui::GetStyle().Colors;
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(
-                            _bpopColors[ImGuiCol_ButtonHovered].x,
-                            _bpopColors[ImGuiCol_ButtonHovered].y,
-                            _bpopColors[ImGuiCol_ButtonHovered].z, 0.85f));
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(
-                            _bpopColors[ImGuiCol_Button].x,
-                            _bpopColors[ImGuiCol_Button].y,
-                            _bpopColors[ImGuiCol_Button].z, 0.55f));
+                        if (entry.isDirectory) {
+                            const auto& colors = ImGui::GetStyle().Colors;
+                            ImVec4 hovered = colors[ImGuiCol_ButtonHovered];
+                            ImVec4 selected = colors[ImGuiCol_Button];
+                            hovered.w = 0.85f;
+                            selected.w = 0.55f;
+                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, hovered);
+                            ImGui::PushStyleColor(ImGuiCol_Header, selected);
+                        }
 
                         if (!entry.isDirectory) {
                             if (ImGui::MenuItem(L(Ctx_Play))) {
@@ -42144,9 +42204,11 @@ void RenderUI(AppState& state) {
                             }
                         }
 
-                        ImGui::PopStyleColor(2);
+                        if (entry.isDirectory) ImGui::PopStyleColor(2);
+                        browserMenuChrome.reset();
                         ImGui::EndPopup();
                     }
+                    browserMenuShell.reset();
 
                     // Waveform column - show cached mini waveform with click-to-play/seek
                     ImGui::TableNextColumn();
@@ -43000,18 +43062,10 @@ void RenderUI(AppState& state) {
                     }
                     // Keep the context-menu ID adjacent to Selectable while LastItem is valid.
                     bool rowContextInvalidatedResults = false;
-                    if (!g_playlistQuickDrag.active && ImGui::BeginPopupContextItem("RowContextMenu")) {
+                    ThemeMenuPopupShellScope rowMenuShell(false, GetMenuFontSizePx());
+                    if (!g_playlistQuickDrag.active && rowMenuShell.beginContextItem("RowContextMenu")) {
+                        ThemeMenuPopupStyleScope rowMenuChrome(GetUIFontRegular());
                         DiagScopedTimer _diagRowContextPopup("Playlist", "RowContextMenu.Frame");
-                        // Ensure menu item hover is visible regardless of theme HeaderHovered alpha
-                        auto& _popupColors = ImGui::GetStyle().Colors;
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(
-                            _popupColors[ImGuiCol_ButtonHovered].x,
-                            _popupColors[ImGuiCol_ButtonHovered].y,
-                            _popupColors[ImGuiCol_ButtonHovered].z, 0.85f));
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(
-                            _popupColors[ImGuiCol_Button].x,
-                            _popupColors[ImGuiCol_Button].y,
-                            _popupColors[ImGuiCol_Button].z, 0.55f));
 
                         // Snapshot expensive context-menu inputs on the popup-open frame.
                         // Keep subsequent menu frames render-only: the menu can stay open for many frames,
@@ -43668,10 +43722,11 @@ void RenderUI(AppState& state) {
                             state.showDeleteConfirmDialog = true;
                         }
                         ImGui::PopStyleColor(); // ImGuiCol_Text (red for delete)
-                        ImGui::PopStyleColor(2); // HeaderHovered + Header pushed at popup open
 
+                        rowMenuChrome.reset();
                         ImGui::EndPopup();
                     }
+                    rowMenuShell.reset();
                     if (rowContextInvalidatedResults) {
                         // wasPlayed was already popped before the popup (line ~25652); don't pop again
                         ImGui::PopID();

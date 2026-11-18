@@ -144,6 +144,7 @@ struct ReadingTextScope {
 // button embedded in a reading surface).
 struct ChromeTextScope {
     bool prev;
+    bool pushedFont = false;
     ChromeTextScope();
     ~ChromeTextScope();
 };
