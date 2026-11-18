@@ -40865,11 +40865,47 @@ void RenderUI(AppState& state) {
                 ImFont* filterFont = GetUIListFont();
                 if (filterFont) ImGui::PushFont(filterFont);
                 const ImVec2 filterFramePadding(8.0f, 4.0f);
-                const float filterRowHeight = ImGui::GetFontSize() + 2.0f * filterFramePadding.y + 2.0f;
+                const float filterScrollbarSize = ImGui::GetStyle().ScrollbarSize;
+                std::vector<std::string> filterChipDisplays;
+                filterChipDisplays.reserve(activeFilters.size());
+                float filterContentWidth = 4.0f + ImGui::CalcTextSize(L(Status_FilterActive)).x;
+                for (const auto& filter : activeFilters) {
+                    const bool metadataNameChip = filter.type == FilterChipType::Category ||
+                        filter.type == FilterChipType::Artist || filter.type == FilterChipType::Album;
+                    std::string chipDisplay = filter.label;
+                    constexpr float kMetadataChipTextMaxWidth = 220.0f;
+                    if (metadataNameChip &&
+                        ImGui::CalcTextSize(chipDisplay.c_str()).x > kMetadataChipTextMaxWidth) {
+                        size_t end = 0, lastFit = 0;
+                        while (end < chipDisplay.size()) {
+                            const unsigned char lead = static_cast<unsigned char>(chipDisplay[end]);
+                            const size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+                            end = std::min(chipDisplay.size(), end + bytes);
+                            const std::string candidate = chipDisplay.substr(0, end) + u8"…";
+                            if (ImGui::CalcTextSize(candidate.c_str()).x > kMetadataChipTextMaxWidth)
+                                break;
+                            lastFit = end;
+                        }
+                        chipDisplay = chipDisplay.substr(0, lastFit) + u8"…";
+                    }
+                    const std::string chipLabel = chipDisplay + u8" ×";
+                    filterContentWidth += (filterChipDisplays.empty() ? 6.0f : 4.0f) +
+                        ImGui::CalcTextSize(chipLabel.c_str()).x + 2.0f * filterFramePadding.x;
+                    filterChipDisplays.push_back(std::move(chipDisplay));
+                }
+                filterContentWidth += 6.0f + ImGui::CalcTextSize(L(Main_ClearAllBtn2)).x +
+                    2.0f * filterFramePadding.x;
+                const bool filterRowOverflows = filterContentWidth > ImGui::GetContentRegionAvail().x;
+                const float filterRowHeight = ImGui::GetFontSize() + 2.0f * filterFramePadding.y + 2.0f +
+                    (filterRowOverflows ? filterScrollbarSize : 0.0f);
                 ImVec4 barBg = useLightThemeFilterChips ? ImVec4(0.96f, 0.94f, 0.95f, 0.18f) : ImVec4(0.10f, 0.17f, 0.28f, 0.12f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, barBg);
+                if (filterRowOverflows)
+                    ImGui::SetNextWindowContentSize(ImVec2(filterContentWidth, 0.0f));
                 BeginTransientScrollbarChild("##FilterInfoBar", ImVec2(0, filterRowHeight), false,
-                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                    filterRowOverflows ? ImGuiWindowFlags_HorizontalScrollbar :
+                        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                if (!filterRowOverflows) ImGui::SetScrollX(0.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, filterFramePadding);
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
@@ -40932,22 +40968,7 @@ void RenderUI(AppState& state) {
                     const bool metadataNameChip = activeFilters[i].type == FilterChipType::Category ||
                         activeFilters[i].type == FilterChipType::Artist ||
                         activeFilters[i].type == FilterChipType::Album;
-                    std::string chipDisplay = activeFilters[i].label;
-                    constexpr float kMetadataChipTextMaxWidth = 220.0f;
-                    if (metadataNameChip &&
-                        ImGui::CalcTextSize(chipDisplay.c_str()).x > kMetadataChipTextMaxWidth) {
-                        size_t end = 0, lastFit = 0;
-                        while (end < chipDisplay.size()) {
-                            const unsigned char lead = static_cast<unsigned char>(chipDisplay[end]);
-                            const size_t bytes = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-                            end = std::min(chipDisplay.size(), end + bytes);
-                            const std::string candidate = chipDisplay.substr(0, end) + u8"…";
-                            if (ImGui::CalcTextSize(candidate.c_str()).x > kMetadataChipTextMaxWidth)
-                                break;
-                            lastFit = end;
-                        }
-                        chipDisplay = chipDisplay.substr(0, lastFit) + u8"…";
-                    }
+                    const std::string& chipDisplay = filterChipDisplays[i];
                     std::string chipLabel = chipDisplay + u8" ×";
                     bool chipClicked = ImGui::Button(chipLabel.c_str());
 #if ARIS_PREVIEW_ISOLATION
@@ -41113,6 +41134,12 @@ void RenderUI(AppState& state) {
                     state.qaFilterUiRects["clear_all"] = ImVec4(
                         min.x - origin.x, min.y - origin.y,
                         max.x - origin.x, max.y - origin.y);
+                    if (filterRowOverflows && ImGui::GetScrollMaxX() > 0.0f) {
+                        const ImVec2 barPos = ImGui::GetWindowPos(), barSize = ImGui::GetWindowSize();
+                        state.qaFilterUiRects["filter_scrollbar"] = ImVec4(
+                            barPos.x - origin.x, barPos.y + barSize.y - filterScrollbarSize - origin.y,
+                            barPos.x + barSize.x - origin.x, barPos.y + barSize.y - origin.y);
+                    }
                 }
 #endif
                 ImGui::PopStyleColor(3);
