@@ -245,10 +245,10 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
     input.presetDialGap = 12.0f;
     input.navLeadingInset = 3.0f;
     input.navTrailingInset = 3.0f;
-    input.expandedItemWidths = {90.0f, 78.0f, 82.0f, 62.0f, 62.0f, 28.0f};
+    input.expandedItemWidths = {90.0f, 78.0f, 82.0f, 30.0f, 30.0f, 28.0f};
     input.compactItemWidths = {30.0f, 30.0f, 30.0f, 30.0f, 30.0f, 28.0f};
     input.itemGaps = {2.0f, 2.0f, 2.0f, 2.0f, 13.0f};
-    input.minimumVisibleItems = 4;
+    input.minimumVisibleItems = 5;
 
     const ToolbarFlowLayout wide = ResolveToolbarFlowLayout(input);
     CheckToolbarFlowGeometry(wide, input.presetDialGap,
@@ -256,6 +256,11 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
     Check(!wide.compact, "1600 px toolbar preserves navigation labels");
     Check(wide.visibleItemCount == kToolbarFlowItemCount,
           "1600 px toolbar keeps navigation and all actions visible");
+    for (std::size_t actionIndex : {3u, 4u}) {
+        const auto& slot = wide.itemSlots[actionIndex];
+        Check(Near(slot.maxX - slot.minX, input.compactItemWidths[actionIndex]),
+              "expanded navigation keeps the Scan and Refresh hit areas icon-sized");
+    }
 
     input.toolbarMaxX = 1270.0f;
     input.navMinX = 650.0f;
@@ -269,14 +274,25 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
 
     input.toolbarMinX = 0.0f;
     input.toolbarMaxX = 600.0f;
-    input.navMinX = 280.0f;
-    input.navPreferredX = 280.0f;
+    input.navMinX = 213.0f;
+    input.navPreferredX = 213.0f;
     const ToolbarFlowLayout narrow = ResolveToolbarFlowLayout(input);
     CheckToolbarFlowGeometry(narrow, input.presetDialGap,
                              "narrow toolbar resolves a valid navigation flow");
     Check(narrow.compact, "narrow toolbar uses icon-only navigation");
-    Check(narrow.visibleItemCount == input.minimumVisibleItems,
-          "narrow toolbar hides secondary actions before hiding the preset dial");
+    Check(narrow.visibleItemCount == kToolbarFlowItemCount,
+          "a tight compact fit keeps Scan, Refresh and rightmost Shuffle visible");
+    Check(narrow.itemSlots[3].maxX < narrow.itemSlots[4].minX &&
+          narrow.itemSlots[4].maxX < narrow.itemSlots[5].minX,
+          "Scan, Refresh and Shuffle keep separate hit areas in compact mode");
+
+    input.navMinX = 250.0f;
+    const ToolbarFlowLayout overflow = ResolveToolbarFlowLayout(input);
+    CheckToolbarFlowGeometry(overflow, input.presetDialGap,
+                             "toolbar still fits when only five slots are available");
+    Check(overflow.itemSlots[3].visible && overflow.itemSlots[4].visible &&
+          !overflow.itemSlots[5].visible,
+          "overflow drops rightmost Shuffle before either Scan or Refresh");
 }
 
 void TestTransientScrollbarVisibilityPolicy() {
