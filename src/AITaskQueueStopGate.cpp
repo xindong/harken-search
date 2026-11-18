@@ -52,7 +52,7 @@ bool AITaskQueueStopGate::WaitForTask(int& taskId) {
 
 void AITaskQueueStopGate::RequestStop() {
 #if defined(ARIS_TASK_QUEUE_REGRESSION_LEGACY_STOP)
-    // Regression harness only: the previous implementation published the stop
+    // Regression test only: the previous implementation published the stop
     // flag outside the mutex. A worker that already decided to block can miss
     // this notification and wait forever.
     stopRequested_.store(true);

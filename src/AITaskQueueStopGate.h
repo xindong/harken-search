@@ -44,16 +44,16 @@ public:
     std::size_t QueueSize() const;
 
 #if defined(ARIS_TASK_QUEUE_TESTING)
-    // Regression harness: invoked once while the worker holds the mutex,
+    // Regression test hook: invoked once while the worker holds the mutex,
     // after the wait decision and immediately before it blocks.
     using BeforeWaitHook = std::function<void()>;
     void SetBeforeWaitHook(BeforeWaitHook hook);
 
-    // Regression harness: invoked once by the stop path at the last moment it
+    // Regression test hook: invoked once by the stop path at the last moment it
     // can act while a worker holds the mutex. In the guarded path this runs
     // after a real try-lock on the shipped path's mutex fails, immediately
     // before the shared lock-guard block blocks on that same mutex.
-    // In the legacy harness it runs immediately after publishing without
+    // In the legacy test path it runs immediately after publishing without
     // the mutex. It must not call back into this gate.
     using StopPathHook = std::function<void()>;
     void SetStopPathHook(StopPathHook hook);

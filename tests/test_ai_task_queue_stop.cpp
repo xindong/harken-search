@@ -34,7 +34,7 @@ int Fail(const char* message) {
 //   2. the stopper runs the real RequestStop path and publishes the last
 //      moment it can act while the mutex is held: after a real try-lock
 //      contention in the guarded path (before the shared lock-guard block), or
-//      after publishing outside the lock in the legacy harness;
+//      after publishing outside the lock in the legacy test path;
 //   3. the worker leaves its park point only after that event and records
 //      whether the stop was already published.
 // No step branches on elapsed time; the watchdog only reports a hang.
