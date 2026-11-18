@@ -4,6 +4,7 @@
 #include "PathUtils.h"
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -164,6 +165,29 @@ inline bool IsSameOrDescendantFolder(std::string_view childPath, std::string_vie
     return boundary == '\\' || boundary == '/';
 }
 
+struct FolderCountNode {
+    std::string displayName;
+    int fileCount = 0;
+    std::map<std::string, FolderCountNode> children;
+};
+
+inline FolderInfo ConvertFolderCountNode(const std::string& name,
+                                         const std::string& path,
+                                         const FolderCountNode& node) {
+    FolderInfo info;
+    info.name = name;
+    info.displayName = node.displayName.empty() ? name : node.displayName;
+    info.path = path;
+    info.fileCount = node.fileCount;
+    info.subfolders.reserve(node.children.size());
+    for (const auto& child : node.children) {
+        const std::string childPath =
+            path.empty() ? child.first : path + std::string(1, PreferredSeparator()) + child.first;
+        info.subfolders.push_back(ConvertFolderCountNode(child.first, childPath, child.second));
+    }
+    return info;
+}
+
 } // namespace PlaylistFolderTreeDetail
 
 inline FolderInfo BuildPlaylistFolderTreeFromRecords(const std::vector<AudioRecord>& records) {
@@ -188,29 +212,15 @@ inline FolderInfo BuildPlaylistFolderTreeFromCompleteMembers(
 }
 
 // Builds the playlist folder tree from lightweight folder counts instead of
-// complete AudioRecord rows. Entries are sorted once, then walked with a parent
-// chain so each distinct folder path is inserted exactly once.
+// complete AudioRecord rows. Folders are keyed per name in an ordered map so a
+// child folder can never be duplicated when sibling names share a prefix (for
+// example "h:\foo", "h:\foo-bar" and "h:\foo\child").
 inline FolderInfo BuildPlaylistFolderTreeFromFolderCounts(
     std::vector<PlaylistFolderCount> folderCounts,
     int64_t totalMemberCount) {
-    FolderInfo root;
-    root.name = "playlist";
-    root.displayName = "Playlist";
-    root.path.clear();
-    root.fileCount = totalMemberCount > 0 ? static_cast<int>(totalMemberCount) : 0;
-
-    std::sort(folderCounts.begin(), folderCounts.end(),
-              [](const PlaylistFolderCount& a, const PlaylistFolderCount& b) {
-                  return a.folderPath < b.folderPath;
-              });
-
-    std::vector<FolderInfo*> chain;
-    chain.push_back(&root);
-    std::vector<std::string> previousParts;
-
+    PlaylistFolderTreeDetail::FolderCountNode root;
     for (const PlaylistFolderCount& folderCount : folderCounts) {
         if (folderCount.folderPath.empty() || folderCount.fileCount <= 0) continue;
-
         const std::vector<std::string> parts =
             PlaylistFolderTreeDetail::SplitPathSegments(folderCount.folderPath);
         if (parts.empty()) continue;
@@ -218,30 +228,26 @@ inline FolderInfo BuildPlaylistFolderTreeFromFolderCounts(
             PlaylistFolderTreeDetail::SplitPathSegments(
                 PlaylistFolderTreeDetail::NormalizeDisplayPath(folderCount.displayPath));
 
-        size_t common = 0;
-        while (common < previousParts.size() && common < parts.size() &&
-               previousParts[common] == parts[common]) {
-            ++common;
-        }
-        if (common < parts.size()) {
-            chain.resize(common + 1);
-            for (size_t i = common; i < parts.size(); ++i) {
-                FolderInfo node;
-                node.name = parts[i];
-                node.displayName = (i < displayParts.size() && !displayParts[i].empty())
+        PlaylistFolderTreeDetail::FolderCountNode* current = &root;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            auto inserted = current->children.emplace(parts[i],
+                                                     PlaylistFolderTreeDetail::FolderCountNode{});
+            PlaylistFolderTreeDetail::FolderCountNode& child = inserted.first->second;
+            if (inserted.second) {
+                child.displayName = (i < displayParts.size() && !displayParts[i].empty())
                     ? displayParts[i]
                     : parts[i];
-                node.path = PlaylistFolderTreeDetail::JoinPathPrefix(parts, i);
-                chain.back()->subfolders.push_back(std::move(node));
-                chain.push_back(&chain.back()->subfolders.back());
             }
+            current = &child;
         }
-        chain.back()->fileCount += folderCount.fileCount;
-        previousParts = parts;
+        current->fileCount += folderCount.fileCount;
     }
 
-    PlaylistFolderTreeDetail::SortTree(root);
-    return root;
+    FolderInfo tree = PlaylistFolderTreeDetail::ConvertFolderCountNode("playlist", "", root);
+    tree.displayName = "Playlist";
+    tree.path.clear();
+    tree.fileCount = totalMemberCount > 0 ? static_cast<int>(totalMemberCount) : 0;
+    return tree;
 }
 
 inline bool ShouldRenderPlaylistFolderTreeForRow(int64_t rowPlaylistId,

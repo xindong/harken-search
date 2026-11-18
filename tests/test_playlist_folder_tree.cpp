@@ -145,6 +145,29 @@ int main() {
           "folder-count tree keeps the complete playlist member total");
     check(sameTree(countTree, fullTree),
           "folder-count tree matches the record-built tree exactly");
+    const std::vector<PlaylistFolderCount> prefixSiblingCounts = {
+        {"h:/foo", "H:/foo", 1},
+        {"h:/foo-bar", "H:/foo-bar", 2},
+        {"h:/foo/child", "H:/foo/child", 3},
+    };
+    const std::vector<AudioRecord> prefixSiblingRecords = {
+        record(10, "H:/foo/a.wav", "h:/foo"),
+        record(11, "H:/foo-bar/b1.wav", "h:/foo-bar"),
+        record(12, "H:/foo-bar/b2.wav", "h:/foo-bar"),
+        record(13, "H:/foo/child/c1.wav", "h:/foo/child"),
+        record(14, "H:/foo/child/c2.wav", "h:/foo/child"),
+        record(15, "H:/foo/child/c3.wav", "h:/foo/child"),
+    };
+    const FolderInfo prefixSiblingTree = BuildPlaylistFolderTreeFromFolderCounts(prefixSiblingCounts, 6);
+    const FolderInfo prefixSiblingRecordTree = BuildPlaylistFolderTreeFromRecords(prefixSiblingRecords);
+    check(sameTree(prefixSiblingTree, prefixSiblingRecordTree),
+          "folder-count tree keeps one h:/foo node when a sibling name shares its prefix");
+    const FolderInfo* prefixFoo = descend(prefixSiblingTree, {"h:", "foo"});
+    check(prefixFoo != nullptr && prefixFoo->fileCount == 1 && prefixFoo->subfolders.size() == 1 &&
+              childNamed(*prefixFoo, "child") != nullptr,
+          "prefix-shared sibling keeps direct count and child folders under one node");
+
+
     const FolderInfo* countFire = descend(countTree, {"h:", "sound effect", "fx", "fire"});
     check(countFire != nullptr && countFire->fileCount == 2 && countFire->displayName == "Fire",
           "folder-count tree keeps per-folder counts and display casing");

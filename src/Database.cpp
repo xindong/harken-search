@@ -12353,6 +12353,7 @@ bool Database::setPlaylistParent(int64_t playlistId, int64_t newParentId) {
                     "SetParentApplied: child=%lld parent=%lld",
                     (long long)playlistId,
                     (long long)newParentId);
+    bumpDataRevision();
     return true;
 }
 

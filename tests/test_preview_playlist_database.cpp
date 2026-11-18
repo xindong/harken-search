@@ -214,6 +214,10 @@ int main() {
     Expect(db.isFolder(folderId), "parent is a folder");
     Expect(db.searchAggregatedPlaylistFileCount(folderId, empty) == 4,
            "aggregated complete count is 4");
+    const uint64_t revisionBeforeParent = db.dataRevision();
+    Expect(db.setPlaylistParent(childId, -1) && db.dataRevision() > revisionBeforeParent,
+           "moving a sub-playlist bumps the data revision so the folder tree cache invalidates");
+    Expect(db.setPlaylistParent(childId, folderId), "restore aggregated child parent");
 
     const FolderInfo aggregatedTree =
         BuildPlaylistFolderTreeFromCompleteMembers(db.getAggregatedPlaylistFiles(folderId), {});
