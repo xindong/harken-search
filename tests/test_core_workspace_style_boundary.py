@@ -590,17 +590,63 @@ def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     assert "s.resultsSecondaryText   = H(0xffd7e3ef);" in read(BUILTIN_THEME_CPP)
 
 
+def test_system_menu_font_keeps_141_proportional_mapping():
+    settings = read(ROOT / "src" / "AppState.h")
+    windows = read(ROOT / "src" / "WindowsMain.cpp")
+    mapping = " ".join(between(windows, "float GetMenuFontSizePx()", "ImFont* GetMenuUIFont()").split())
+    assert "kChromeFontPx = 14;" in settings
+    assert "kDefaultReadingFontPx = 18;" in settings
+    assert "kMaxReadingFontPx = 32;" in settings
+    assert "g_readingRegular ? g_readingRegular->LegacySize : (float)kDefaultReadingFontPx" in mapping
+    assert "(float)kChromeFontPx * (readingPx / (float)kDefaultReadingFontPx)" in mapping
+    assert "return std::clamp(std::round(scaled), (float)kChromeFontPx, (float)kMaxReadingFontPx);" in mapping
+
+
 def test_top_menu_uses_the_system_font_scope():
     main = read(MAIN_CPP)
-    assert "ReadingTextScope _readingMenu" not in main
-    assert "ChromeTextScope _readingMenu" not in main
-    assert main.count("MenuTextScope _readingMenu") == 8
-    assert "ImGui::PushFont(GetMenuUIFont(), menuFontPx);" in main
-    assert "ImGui::BeginMainMenuBar()" in main
-    assert "ImGui::EndMainMenuBar();" in main
+    theme = read(THEME_CPP)
+    windows = read(ROOT / "src" / "WindowsMain.cpp")
     header = between(main, "// TOP MENU BAR", "// TOP TOOLBAR")
+    host = between(header, "const float baseMenuFontPx", "ImGui::BeginMainMenuBar()")
+    bar = between(header, "if (ImGui::BeginMainMenuBar())", "ImGui::EndMainMenuBar();")
     assert "ImGuiWindowFlags_MenuBar" not in header
-    assert "GetMenuFontSizePx()" in header
+    assert "const float baseMenuFontPx = GetMenuFontSizePx();" in host
+    assert "baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx" in host
+    assert "std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale" in host
+    assert "ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));" in host
+    assert "ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);" in bar
+    assert "ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);" in bar
+
+    for title in ("File", "Edit", "View", "Database", "Playlist", "Tools", "Settings", "Help"):
+        popup = between(bar, f"ImGui::BeginMenu(L(Menu_{title}))", f"menuChrome{title}.reset();")
+        assert f"ThemeMenuPopupStyleScope menuChrome{title}(GetUIFontRegular());" in popup
+    assert re.search(r"\b(?:ReadingTextScope|MenuTextScope)\s+\w+", bar) is None
+    chrome_scope = between(windows, "ChromeTextScope::ChromeTextScope()", "ChromeTextScope::~ChromeTextScope()")
+    assert re.search(r"if \(!InMenuChromeScope\(\)\)\s*\{\s*ImGui::PushFont\(g_uiFontRegular\);", chrome_scope)
+
+    bar_style = between(theme, "ThemeMenuBarStyleScope::ThemeMenuBarStyleScope", "void ThemeMenuBarStyleScope::reset")
+    assert "const float desiredTextPx = textSizePx * scale;" in bar_style
+    assert re.search(r"PushMenuTextFont\(textFont,[^;]*desiredTextPx[^;]*\);", bar_style)
+    popup_style = between(theme, "ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope",
+                          "ThemeMenuPopupShellScope::ThemeMenuPopupShellScope")
+    assert "const float textSizePx = s_menuPopupTextSizePx;" in popup_style
+    assert "PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), textSizePx * scale, m_pushedFont);" in popup_style
+    popup_shell = between(theme, "ThemeMenuPopupShellScope::ThemeMenuPopupShellScope",
+                          "bool ThemeMenuPopupShellScope::beginContextItem")
+    assert "m_textSizePx(std::max(kMenuPopupMinTextPx, textSizePx))" in popup_shell
+    assert "s_menuPopupTextSizePx = m_textSizePx;" in popup_shell
+
+
+def test_appended_tools_menu_keeps_the_system_popup_font_scope():
+    main = read(MAIN_CPP)
+    shared_shell = between(main, "ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);", "menuPopupShell.reset();")
+    assert "RenderToolsMenu(state);" in shared_shell
+    module = read(ROOT / "src" / "ModuleUI.cpp")
+    tools = between(module, "void RenderToolsMenu(AppState& state)", "// 1)")
+    assert tools.index("ImGui::BeginMenu(L(Menu_Tools))") < tools.index("ThemeMenuPopupStyleScope menuChromeTools;")
+    assert tools.index("ThemeMenuPopupStyleScope menuChromeTools;") < tools.index("ImGui::MenuItem(")
+    assert re.search(r"menuChromeTools\.reset\(\);\s*ImGui::EndMenu\(\);", tools)
+    assert re.search(r"\b(?:ReadingTextScope|MenuTextScope)\s+\w+", tools) is None
 
 
 def test_results_file_path_column_fills_trailing_width():

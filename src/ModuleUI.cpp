@@ -195,11 +195,9 @@ void InitializeModules() {
 // 工具菜单
 
 void RenderToolsMenu(AppState& state) {
-    const bool toolsMenuOpen = ImGui::BeginMenu(L(Menu_Tools));
-#if ARIS_PREVIEW_ISOLATION
-    QaProbeMenuBarItem(state, L(Menu_Tools));
-#endif
-    if (toolsMenuOpen) {
+    if (ImGui::BeginMenu(L(Menu_Tools))) {
+        // 工具菜单和其他下拉菜单共用菜单栏外壳；这里只接管菜单项颜色、行距和弹层阴影。
+        ThemeMenuPopupStyleScope menuChromeTools;
         ImGui::TextDisabled("%s", L(Module_CategoryTags));
         if (ImGui::MenuItem(L(Module_UCSBrowser))) {
             state.showUCSBrowser = true;
@@ -262,6 +260,7 @@ void RenderToolsMenu(AppState& state) {
             }
         }
 
+        menuChromeTools.reset();
         ImGui::EndMenu();
     }
 }

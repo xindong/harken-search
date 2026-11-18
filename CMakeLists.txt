@@ -928,6 +928,16 @@ if(WIN32)
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_imgui_docking_viewport_contract.py")
     set_tests_properties(TestImguiDockingViewportContract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME TestMenuChromeScopeContract
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_menu_chrome_scope_contract.py")
+
+    add_executable(TestMenuChromeLayout EXCLUDE_FROM_ALL
+        tests/test_menu_chrome_layout.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestMenuChromeLayout PRIVATE ${IMGUI_DIR})
+    target_compile_features(TestMenuChromeLayout PRIVATE cxx_std_17)
+    add_test(NAME MenuChromeLayout COMMAND TestMenuChromeLayout)
 
     add_executable(TestPreviewIsolationGuard EXCLUDE_FROM_ALL
         tests/test_preview_isolation_guard.cpp
