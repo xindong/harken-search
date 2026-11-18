@@ -1009,6 +1009,7 @@ public:
     std::vector<Playlist> getAllPlaylists(bool includeFileCounts = true);
     bool addToPlaylist(int64_t playlistId, int64_t fileId);
     PlaylistBulkAddResult addManyToPlaylist(int64_t playlistId, const std::vector<int64_t>& fileIds);
+    PlaylistBulkAddResult addFolderToPlaylist(int64_t playlistId, const std::string& folderPath);
     PlaylistImportResult importReaperFileListToPlaylist(const std::string& fileListPath,
                                                         const std::string& playlistName,
                                                         ScanProgressCallback callback = nullptr,

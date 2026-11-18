@@ -16269,6 +16269,51 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
     return stats;
 }
 
+Database::PlaylistBulkAddResult Database::addFolderToPlaylist(int64_t playlistId,
+                                                              const std::string& folderPath) {
+    PlaylistBulkAddResult result;
+    result.playlistId = playlistId;
+    if (!m_db) {
+        result.error = "database is not open";
+        return result;
+    }
+    if (folderPath.empty()) return result;
+
+    constexpr int maxFolderDropFiles = 1000000;
+    const std::string childPrefix = MakeFolderChildPrefix(folderPath);
+    const std::string upper = MakeFolderPathUpperBound(childPrefix);
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(m_db,
+            "SELECT id FROM audio_files INDEXED BY idx_files_folder_name_natural "
+            "WHERE folder_path = ? OR (folder_path >= ? AND folder_path < ?) "
+            "ORDER BY file_name COLLATE AURA_NATURAL LIMIT ?",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        result.error = sqlite3_errmsg(m_db);
+        return result;
+    }
+
+    std::vector<int64_t> fileIds;
+    if (sqlite3_bind_text(stmt, 1, folderPath.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_text(stmt, 2, childPrefix.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_text(stmt, 3, upper.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_int(stmt, 4, maxFolderDropFiles) == SQLITE_OK) {
+        int stepResult = SQLITE_OK;
+        while ((stepResult = sqlite3_step(stmt)) == SQLITE_ROW) {
+            const int64_t fileId = sqlite3_column_int64(stmt, 0);
+            if (fileId > 0) fileIds.push_back(fileId);
+        }
+        if (stepResult != SQLITE_DONE) result.error = sqlite3_errmsg(m_db);
+    } else {
+        result.error = sqlite3_errmsg(m_db);
+    }
+    sqlite3_finalize(stmt);
+    if (!result.error.empty() || fileIds.empty()) return result;
+
+    result = addManyToPlaylist(playlistId, fileIds);
+    if (!result.error.empty()) result.addedFiles = 0;
+    return result;
+}
+
 std::vector<AudioRecord> Database::getFilesByFolder(const std::string& folderPath, int limit, int offset) {
     std::vector<AudioRecord> results;
     if (!m_db || folderPath.empty()) return results;
