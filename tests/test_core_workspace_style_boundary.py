@@ -207,6 +207,16 @@ def test_only_four_non_dark_builtins_restore_pre_workspace_semantic_surfaces():
     assert "workspacePalette.functionalAccent" in main
 
 
+def test_docked_panels_begin_below_the_rendered_toolbar():
+    main = read(MAIN_CPP)
+    toolbar = between(main, 'BeginTransientScrollbarChild("Toolbar"', "// MAIN CONTENT AREA")
+    assert "toolbarBottomY = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y" in toolbar
+    assert "dockColumnTop = toolbarBottomY" in main
+    for host in ("LeftDockColumn", "RightDockColumn"):
+        child = between(main, f'"{host}",', ");")
+        assert "ImGuiWindowFlags_NoBackground" in child
+
+
 def test_shipping_dock_shell_has_one_perimeter_owner_and_no_decorative_layers():
     main = read(MAIN_CPP)
     title_bar = between(main, "auto drawDockTitleBar", "struct DockModuleShellLayout")
@@ -299,6 +309,8 @@ def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
     assert names
     for name in set(names):
         assert main.count(f"PopStyleColor({name})") == names.count(name)
+    assert main.count("const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) : PushFileInfoShellStyle(theme);") == 1
+    assert main.count("PopStyleColor(dockGroupStyleCount)") == 1
     waveform = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "// FLOATING PANELS")
     assert "ThemeColors::waveformPanelBG(waveformShellTheme)" in waveform
     assert "const ImVec4 waveShellEdge = workspacePalette.perimeter" in waveform
@@ -312,8 +324,9 @@ def test_top_toolbar_search_respects_reserved_width_for_navigation():
     search = between(main, "const bool historyAfterSearch", "float navCapsuleScreenX")
 
     assert "toolbarResultsRightScreenX - resultsHomeLeftScreenX" in search
-    assert "historyReserveW - presetDialReserveW" in search
-    assert "std::clamp(spaceAfterAnchor - navReserveW - 18.0f, searchMinW, searchMaxW)" in search
+    assert "historyReserveW - presetDialReserveW - toolbarDialRightInset - toolbarNavMinGap" in search
+    assert "spaceAfterAnchor - compactNavWidth, searchMinW, searchMaxW" in search
+    assert "spaceAfterAnchor - navReserveW, searchMinW, searchFitMaxW" in search
     assert 'DrawSearchField("##SearchBar"' in search
     assert "searchRectMax.x + historyReserveW" in search
 

@@ -110,9 +110,28 @@ def test_consent_health_callback_is_deferred_until_dialog_is_visible_and_interac
 def test_bootstrap_acceptance_requests_graceful_ui_thread_shutdown() -> None:
     assert "ConsumeHarkenSearchUpdateGracefulExitRequest" in COMPOSITION_H
     assert "PublishHarkenSearchUpdateGracefulExitRequest" in COMPOSITION_CPP
-    assert COMPOSITION_CPP.count("PublishHarkenSearchUpdateGracefulExitRequest();") == 2
+    assert COMPOSITION_CPP.count("PublishHarkenSearchUpdateGracefulExitRequest();") == 1
     assert "std::_Exit(" not in COMPOSITION_CPP
     assert "ExitProcess(" not in COMPOSITION_CPP
+
+
+def test_update_owner_can_retry_without_exiting_after_failed_handoff() -> None:
+    owner = function_body(COMPOSITION_CPP, "void StartHarkenSearchAutomaticUpdate()")
+    handoff = function_body(owner, "const auto runHandoff =")
+    assert "UpdateApplicationDisposition::BootstrapRetryable" in handoff
+    assert "HarkenSearchUpdateUiPhase::Error" in handoff
+    assert "return false;" in handoff
+    assert "if (runHandoff()) return;" in owner
+    assert "if (retryHandoff)" in owner
+
+
+def test_update_owner_dispatches_due_download_retries_and_startup_resume() -> None:
+    owner = function_body(COMPOSITION_CPP, "void StartHarkenSearchAutomaticUpdate()")
+    assert "started.schedules" in owner
+    assert "result.schedules" in owner
+    assert "dueAtMonotonicMs()" in owner
+    assert "service.ExecuteScheduled(" in owner
+    assert "started.snapshot.phase != UpdatePhase::Downloading" in owner
     assert "TerminateProcess(" not in COMPOSITION_CPP
 
     consume = function_body(

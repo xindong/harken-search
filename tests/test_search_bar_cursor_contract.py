@@ -77,7 +77,7 @@ def test_narrow_search_places_history_to_its_right_and_reserves_actual_width():
     assert "resultsHomeLeftScreenX < leadingHistoryX + kHistoryCapsuleWidth + searchHistoryGap" in main
     assert "historyAfterSearch ? kHistoryCapsuleWidth + searchHistoryGap : 0.0f" in main
     assert "? resultsHomeLeftScreenX + searchWidth + searchHistoryGap : leadingHistoryX" in main
-    assert "searchAndHistoryRightX + (layoutCompactWidth ? 8.0f : 16.0f)" in main
+    assert "toolbarFlowInput.navMinX = searchAndHistoryRightX + toolbarNavMinGap" in main
 
 
 def test_browser_and_settings_reuse_filter_variant_without_precise_mode():
