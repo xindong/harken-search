@@ -15293,17 +15293,14 @@ bool AddFolderPathToPlaylist(AppState& state,
                                     const char* diagLabel) {
     if (playlistId <= 0 || folderPath == nullptr || folderPath[0] == '\0') return false;
 
-    auto records = state.database.getFilesByFolder(folderPath, 1000000, 0);
-    if (records.empty()) return false;
-
-    std::vector<int64_t> fileIds;
-    fileIds.reserve(records.size());
-    for (const auto& record : records) {
-        if (record.id > 0) fileIds.push_back(record.id);
-    }
-    const auto bulk = state.database.addManyToPlaylist(playlistId, fileIds);
+    const auto bulk = state.database.addFolderToPlaylist(playlistId, folderPath);
     const int addedCount = bulk.addedFiles;
 
+    if (!bulk.error.empty()) {
+        DIAG_ACTION_FMT("Playlist", "Folder drop failed via %s target=%lld error=%s",
+                        diagLabel ? diagLabel : "drag", (long long)playlistId, bulk.error.c_str());
+        return false;
+    }
     if (addedCount <= 0) return false;
 
     DIAG_ACTION_FMT("Playlist",
@@ -15794,26 +15791,35 @@ static void ClearPlaylistFolderFilter(AppState& state) {
     state.syncToTab();
 }
 
-static std::vector<AudioRecord> LoadCompletePlaylistMembers(AppState& state, int64_t playlistId) {
-    if (playlistId <= 0) return {};
-    if (state.database.isFolder(playlistId)) {
-        return state.database.getAggregatedPlaylistFiles(playlistId);
+static bool RefreshPlaylistFolderHierarchy(AppState& state, int64_t playlistId) {
+    if (playlistId <= 0) return false;
+
+    const uint64_t dataRevision = state.database.dataRevision();
+    if (state.playlistFolderHierarchyPlaylistId == playlistId &&
+        state.playlistFolderHierarchyDataRevision == dataRevision) {
+        return false;
     }
-    return state.database.getPlaylistFiles(playlistId);
+
+    const bool folderPlaylist = state.database.isFolder(playlistId);
+    const int64_t totalMembers = folderPlaylist
+        ? state.database.getAggregatedPlaylistFileCount(playlistId)
+        : state.database.getPlaylistFileCount(playlistId);
+    std::vector<PlaylistFolderCount> folderCounts = folderPlaylist
+        ? state.database.getAggregatedPlaylistFolderCounts(playlistId)
+        : state.database.getPlaylistFolderCounts(playlistId);
+
+    state.setPlaylistFolderHierarchy(
+        BuildPlaylistFolderTreeFromFolderCounts(std::move(folderCounts), totalMembers),
+        playlistId,
+        dataRevision);
+    return true;
 }
 
 static void RenderActivePlaylistFolderTree(AppState& state, const Playlist& playlist) {
-    if (state.playlistFolderHierarchyPlaylistId != playlist.id &&
-        state.viewMode == ViewMode::Playlist &&
+    if (state.viewMode == ViewMode::Playlist &&
         state.selectedPlaylistId == playlist.id &&
         !state.folderFilterActive) {
-        const std::vector<AudioRecord> completeMembers =
-            LoadCompletePlaylistMembers(state, playlist.id);
-        if (!completeMembers.empty()) {
-            state.setPlaylistFolderHierarchy(
-                BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                playlist.id);
-        }
+        RefreshPlaylistFolderHierarchy(state, playlist.id);
     }
 
     ImGui::Indent(10.0f);
@@ -15864,15 +15870,7 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
     }
 
     state.expandedPlaylistFolderTreePlaylistId = state.selectedPlaylistId;
-    if (state.playlistFolderHierarchyPlaylistId != state.selectedPlaylistId) {
-        const std::vector<AudioRecord> completeMembers =
-            LoadCompletePlaylistMembers(state, state.selectedPlaylistId);
-        if (!completeMembers.empty()) {
-            state.setPlaylistFolderHierarchy(
-                BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                state.selectedPlaylistId);
-        }
-    }
+    RefreshPlaylistFolderHierarchy(state, state.selectedPlaylistId);
 
     const ThemeColorScheme& tcs = ThemeColors::current();
     const ImVec4 playlistTreePanelBg = tcs.filterBrowserBG;
@@ -16157,15 +16155,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const bool playlistScopedFolderTree = (effectivePlaylistFolderTreeId > 0);
         if (playlistScopedFolderTree) {
             state.selectedPlaylistId = effectivePlaylistFolderTreeId;
-            const std::vector<AudioRecord> completeMembers =
-                LoadCompletePlaylistMembers(state, effectivePlaylistFolderTreeId);
-            const bool playlistTreeNeedsRebuild =
-                state.playlistFolderHierarchyPlaylistId != effectivePlaylistFolderTreeId ||
-                state.playlistFolderHierarchy.fileCount != (int)completeMembers.size();
-            if (playlistTreeNeedsRebuild && !completeMembers.empty()) {
-                state.setPlaylistFolderHierarchy(
-                    BuildPlaylistFolderTreeFromCompleteMembers(completeMembers, state.searchResults),
-                    effectivePlaylistFolderTreeId);
+            const bool playlistTreeRebuilt =
+                RefreshPlaylistFolderHierarchy(state, effectivePlaylistFolderTreeId);
+            if (playlistTreeRebuilt) {
                 state.folderSearchHits.clear();
                 state.folderSearchDirectHits.clear();
                 state.folderSearchExpandPaths.clear();

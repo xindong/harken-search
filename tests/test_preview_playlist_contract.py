@@ -29,10 +29,14 @@ def main():
     facet_cpp = read("src/AsyncSearchFacetResultWorkflow.cpp")
     folder_tree = read("src/PlaylistFolderTree.h")
 
-    expect("LoadCompletePlaylistMembers" in main,
-           "main loads complete unfiltered playlist members for the sidebar tree")
-    expect(main.count("BuildPlaylistFolderTreeFromCompleteMembers") >= 3,
-           "three playlist tree entry points build from complete members")
+    expect("RefreshPlaylistFolderHierarchy" in main,
+           "main refreshes the playlist sidebar tree through one lightweight helper")
+    expect(main.count("RefreshPlaylistFolderHierarchy(state") >= 3,
+           "three playlist tree entry points share the lightweight folder-count refresh")
+    expect("LoadCompletePlaylistMembers" not in main,
+           "playlist sidebar tree no longer loads complete AudioRecord rows")
+    expect("getPlaylistFolderCounts" in db_h and "getAggregatedPlaylistFolderCounts" in db_h,
+           "Database declares lightweight playlist folder-count queries")
     expect(main.count("BuildPlaylistFolderTreeFromRecords(state.searchResults)") == 0,
            "playlist tree no longer uses the loaded searchResults page")
 
@@ -84,6 +88,8 @@ def main():
            "pendingFacet clear requires matching requestId")
     expect("BuildPlaylistFolderTreeFromCompleteMembers" in folder_tree,
            "folder tree helper builds from complete members")
+    expect("BuildPlaylistFolderTreeFromFolderCounts" in folder_tree,
+           "folder tree helper builds from lightweight folder counts")
     expect("BeginDockablePanel" in main and "wasDragging" in main,
            "745 BeginDockablePanel/wasDragging remain")
     expect("DockController" not in main and "DockingEnable" not in main and "ViewportsEnable" not in main,

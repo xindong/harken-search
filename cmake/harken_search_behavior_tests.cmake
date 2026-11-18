@@ -4978,6 +4978,70 @@ if(WIN32)
     aura_set_test_labels(PreviewPlaylistDatabase db)
 endif()
 
+    add_executable(TestPlaylistFolderTreeRealLibrary EXCLUDE_FROM_ALL
+        tests/test_playlist_folder_tree_real_library.cpp
+        tests/test_database_link_stubs.cpp
+        tests/test_appstate_link_stubs.cpp
+        src/AppState.cpp
+        src/CoverReplacementFoundation.cpp
+        src/Database.cpp
+        src/BackfillQueue.cpp
+        src/BackfillWorkerPool.cpp
+        src/PathUtils.cpp
+        src/platform/file_watcher.cpp
+        src/Utils.cpp
+        src/MetadataReader.cpp
+        src/SearchQuery.cpp
+        src/SimilaritySearch.cpp
+        src/AudioEngine.cpp
+        src/platform/audio_playback_miniaudio.cpp
+        src/TagVocabularyMapper.cpp
+        src/DiagnosticsLogger.cpp
+        src/CenterSenseDataSource.cpp
+        src/CenterSenseDsp.cpp
+        src/TimeStretch.cpp
+        src/WaveformExtractor.cpp
+        src/NativeFloatReader.cpp
+        src/platform/audio_data_source_miniaudio.cpp
+        src/platform/harken_user_data_layout.cpp
+        src/platform/harken_legacy_data_migrator.cpp
+        src/platform/filesystem_win32.cpp
+        src/platform/filesystem_std.cpp
+        src/platform/audio_file_miniaudio.cpp
+        ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+        ${AURO_THREAD_ID_SOURCE}
+        ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+        ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+        ${AURO_AUDIO_TEXT_SOURCE}
+        ${AURO_SEARCH_TEXT_GB2312_SOURCE}
+        ${SQLITE_SOURCES}
+    )
+    target_include_directories(TestPlaylistFolderTreeRealLibrary PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+        ${SQLITE_DIR}
+        ${IMGUI_DIR}
+    )
+    target_link_libraries(TestPlaylistFolderTreeRealLibrary PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid
+    )
+    target_compile_definitions(TestPlaylistFolderTreeRealLibrary PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+        AURO_TEST_EXTERNAL_PATH_ATTRIBUTES
+    )
+    if(MSVC)
+        target_compile_options(TestPlaylistFolderTreeRealLibrary PRIVATE
+            /W3 /MP /utf-8
+        )
+        set_target_properties(TestPlaylistFolderTreeRealLibrary PROPERTIES
+            LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+    add_test(NAME TestPlaylistFolderTreeRealLibrary COMMAND TestPlaylistFolderTreeRealLibrary)
+    aura_set_test_labels(TestPlaylistFolderTreeRealLibrary core)
+
+
 add_test(
     NAME TestPreviewPlaylistContract
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_preview_playlist_contract.py --build-dir ${CMAKE_CURRENT_BINARY_DIR}
@@ -6945,8 +7009,10 @@ add_test(
     NAME TestStage4DependencyAudit
     COMMAND ${Python3_EXECUTABLE} -m pytest tests/test_stage4_dependency_audit.py -q
 )
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
 set_tests_properties(TestStage4DependencyAudit PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
 )
 aura_set_test_labels(TestStage4DependencyAudit core)
 

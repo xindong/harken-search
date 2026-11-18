@@ -173,7 +173,7 @@
     },
     {
       "name": "SQLite",
-      "version": "3.46.1",
+      "version": "3.54.1",
       "source": "https://www.sqlite.org/",
       "license_expression": "LicenseRef-Public-Domain",
       "purpose": "本地数据库与全文索引",
