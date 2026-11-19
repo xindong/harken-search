@@ -36925,6 +36925,9 @@ void RenderUI(AppState& state) {
         // --- Unified vertical centering for ALL toolbar elements ---
         const float kCapsuleH = 34.0f;   // unified capsule height for both pill groups
         const float kToolbarCenterY = (toolbarHeight - kCapsuleH) * 0.5f;
+        // The main search bar must never read thinner than the history capsule
+        // beside it, so it takes the capsule thickness as its floor.
+        const float kMainSearchH = std::max(harken::toolbar::SearchFieldHeight(), kCapsuleH);
         const float kToolbarLeftGutter = layoutTinyWidth ? 8.0f : 14.0f;
         constexpr float kPresetDialWidth = 160.0f;
         constexpr float kPresetDialGap = 12.0f;
@@ -37124,7 +37127,7 @@ void RenderUI(AppState& state) {
 
         const float capsuleBaseY = kToolbarCenterY;
         const float searchY = toolbarWindowPos.y + capsuleBaseY +
-            (kCapsuleH - harken::toolbar::SearchFieldHeight()) * 0.5f;
+            (kCapsuleH - kMainSearchH) * 0.5f;
         ImGui::SetCursorScreenPos(ImVec2(resultsHomeLeftScreenX, searchY));
         {
             const bool searchFocusRequested = state.searchSuggestRequestFocus || state.focusSearchBar;
@@ -37141,7 +37144,7 @@ void RenderUI(AppState& state) {
             const auto search = harken::toolbar::DrawSearchField("##SearchBar", L(Search_Hint),
                 state.searchBuffer, sizeof(state.searchBuffer), searchWidth,
                 toolbarSearchPalette, harken::toolbar::SearchFieldOptions{
-                    true, state.searchExactModeLocked, searchFocusRequested, 0.0f,
+                    true, state.searchExactModeLocked, searchFocusRequested, kMainSearchH,
                     state.settings.searchRealtime ? harken::toolbar::SearchModeLabel::Live
                                                   : harken::toolbar::SearchModeLabel::Enter});
 
