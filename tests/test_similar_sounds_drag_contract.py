@@ -30,8 +30,8 @@ def test_drag_uses_existing_processing_and_error_handling():
     assert "state.uiState.regionFadeInNorm" in helper
     assert "state.uiState.regionFadeOutNorm" in helper
     assert "state.settings.keepHarkenSearchOutputProcessingSuffix" in helper
-    assert "StartFileDrag(files)" in helper
-    assert helper.index("BuildTransferPayloadForPaths(") < helper.index("StartFileDrag(files)")
+    assert "StartFileDrag(files, &dragOrigin)" in helper
+    assert helper.index("BuildTransferPayloadForPaths(") < helper.index("StartFileDrag(files, &dragOrigin)")
     assert "ImGui::ClearActiveID()" in helper
     assert "state.loadErrorToast" in helper and "L(Misc_DragFailed)" in helper
     assert "state.getSelectedRecords()" not in helper

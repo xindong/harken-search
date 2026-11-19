@@ -2865,6 +2865,12 @@ public:
 };
 
 class FileDataObject : public IDataObject {
+    struct StoredFormat {
+        FORMATETC format;
+        STGMEDIUM medium;
+    };
+    std::vector<StoredFormat> m_storedFormats;
+
 public:
     LONG m_refCount = 1;
     std::vector<std::wstring> m_files;
@@ -2881,6 +2887,10 @@ public:
                 m_files.push_back(wstr);
             }
         }
+    }
+
+    ~FileDataObject() {
+        for (auto& stored : m_storedFormats) ReleaseStgMedium(&stored.medium);
     }
 
     // IUnknown
@@ -2906,6 +2916,7 @@ public:
 
     // IDataObject
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* pformatetcIn, STGMEDIUM* pmedium) override {
+        if (!pformatetcIn || !pmedium) return E_INVALIDARG;
         if (pformatetcIn->cfFormat == CF_HDROP && (pformatetcIn->tymed & TYMED_HGLOBAL)) {
             // Calculate size needed
             size_t totalSize = sizeof(DROPFILES);
@@ -2940,6 +2951,22 @@ public:
             pmedium->pUnkForRelease = nullptr;
             return S_OK;
         }
+        for (const auto& stored : m_storedFormats) {
+            if (stored.format.cfFormat != pformatetcIn->cfFormat ||
+                stored.format.dwAspect != pformatetcIn->dwAspect ||
+                stored.format.lindex != pformatetcIn->lindex ||
+                !(pformatetcIn->tymed & stored.medium.tymed)) continue;
+            pmedium->tymed = stored.medium.tymed;
+            if (stored.medium.tymed == TYMED_HGLOBAL) {
+                pmedium->hGlobal = OleDuplicateData(stored.medium.hGlobal, stored.format.cfFormat, 0);
+                if (!pmedium->hGlobal) return E_OUTOFMEMORY;
+            } else {
+                pmedium->pstm = stored.medium.pstm;
+                pmedium->pstm->AddRef();
+            }
+            pmedium->pUnkForRelease = nullptr;
+            return S_OK;
+        }
         return DV_E_FORMATETC;
     }
 
@@ -2953,13 +2980,56 @@ public:
             if (pformatetc->tymed & TYMED_HGLOBAL) return S_OK;
             return DV_E_TYMED;
         }
+        for (const auto& stored : m_storedFormats) {
+            if (stored.format.cfFormat == pformatetc->cfFormat &&
+                stored.format.dwAspect == pformatetc->dwAspect &&
+                stored.format.lindex == pformatetc->lindex) {
+                return (pformatetc->tymed & stored.medium.tymed) ? S_OK : DV_E_TYMED;
+            }
+        }
         return DV_E_FORMATETC;
     }
     HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC* pformatetcOut) override {
         pformatetcOut->ptd = nullptr;
         return E_NOTIMPL;
     }
-    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC* format, STGMEDIUM* medium, BOOL release) override {
+        if (!format || !medium) return E_INVALIDARG;
+        if (format->ptd) return DV_E_DVTARGETDEVICE;
+        if (format->cfFormat == CF_HDROP) return DV_E_FORMATETC;
+        if ((medium->tymed != TYMED_HGLOBAL && medium->tymed != TYMED_ISTREAM) ||
+            !(format->tymed & medium->tymed)) return DV_E_TYMED;
+        if ((medium->tymed == TYMED_HGLOBAL && !medium->hGlobal) ||
+            (medium->tymed == TYMED_ISTREAM && !medium->pstm)) return E_INVALIDARG;
+
+        STGMEDIUM stored = *medium;
+        if (!release) {
+            if (medium->tymed == TYMED_HGLOBAL) {
+                stored.hGlobal = OleDuplicateData(medium->hGlobal, format->cfFormat, 0);
+                if (!stored.hGlobal) return E_OUTOFMEMORY;
+            } else {
+                stored.pstm->AddRef();
+            }
+            stored.pUnkForRelease = nullptr;
+        }
+        for (auto& existing : m_storedFormats) {
+            if (existing.format.cfFormat == format->cfFormat &&
+                existing.format.dwAspect == format->dwAspect &&
+                existing.format.lindex == format->lindex) {
+                ReleaseStgMedium(&existing.medium);
+                existing.format = *format;
+                existing.medium = stored;
+                return S_OK;
+            }
+        }
+        try {
+            m_storedFormats.push_back(StoredFormat{*format, stored});
+        } catch (...) {
+            if (!release) ReleaseStgMedium(&stored);
+            return E_OUTOFMEMORY;
+        }
+        return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC** ppEnumFormatEtc) override {
         // Preserve Pro Tools behavior during custom-frame handling.
         // Pro Tools 会在拖拽前调用 EnumFormatEtc 查询支持的数据格式
@@ -2967,7 +3037,7 @@ public:
         if (ppEnumFormatEtc == nullptr) return E_INVALIDARG;
         if (dwDirection != DATADIR_GET) return E_NOTIMPL;
 
-        static FORMATETC s_formatEtc = {
+        FORMATETC fileFormat = {
             CF_HDROP,
             nullptr,
             DVASPECT_CONTENT,
@@ -2975,7 +3045,9 @@ public:
             TYMED_HGLOBAL
         };
 
-        return SHCreateStdEnumFmtEtc(1, &s_formatEtc, ppEnumFormatEtc);
+        std::vector<FORMATETC> formats{fileFormat};
+        for (const auto& stored : m_storedFormats) formats.push_back(stored.format);
+        return SHCreateStdEnumFmtEtc(static_cast<UINT>(formats.size()), formats.data(), ppEnumFormatEtc);
     }
     HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
@@ -3118,28 +3190,28 @@ static void SuppressDefaultDragImage(IDataObject* dataObject) {
         return;
     }
 
-    static HBITMAP transparentBitmap = nullptr;
-    if (!transparentBitmap) {
-        BITMAPINFO info = {};
-        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth = 1;
-        info.bmiHeader.biHeight = -1;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-        void* bits = nullptr;
-        transparentBitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-        if (transparentBitmap && bits) {
-            *static_cast<uint32_t*>(bits) = 0;
-        }
-    }
-    if (transparentBitmap) {
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 1;
+    info.bmiHeader.biHeight = -1;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP transparentBitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (transparentBitmap && bits) {
+        *static_cast<uint32_t*>(bits) = 0;
         SHDRAGIMAGE image = {};
         image.sizeDragImage = { 1, 1 };
         image.ptOffset = { 0, 0 };
         image.hbmpDragImage = transparentBitmap;
         image.crColorKey = CLR_NONE;
-        helper->InitializeFromBitmap(&image, dataObject);
+        const HRESULT imageHr = helper->InitializeFromBitmap(&image, dataObject);
+        if (FAILED(imageHr)) {
+            AppendDiagLogF(L"StartFileDrag: InitializeFromBitmap failed hr=0x%08X", (unsigned int)imageHr);
+        }
+    } else if (transparentBitmap) {
+        DeleteObject(transparentBitmap);
     }
     helper->Release();
 }
@@ -3194,10 +3266,8 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
         if (origin && !origin->peaks.empty()) {
             peaks = origin->peaks;
             peakChannels = origin->peakChannels;
-        } else if (!TryGetCachedDragPeaks(files[0], peaks, peakChannels) && files.size() > 1) {
-            for (size_t i = 1; i < files.size(); ++i) {
-                if (TryGetCachedDragPeaks(files[i], peaks, peakChannels)) break;
-            }
+        } else {
+            TryGetCachedDragPeaks(files[0], peaks, peakChannels);
         }
         card.envelope = BuildDragCardEnvelope(peaks, peakChannels, 76);
         card.fileName = (origin && !origin->displayName.empty())
@@ -3400,11 +3470,10 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
 
 // 主波形区域在屏幕上的位置（用于起拖时把卡片从波形缩成小卡）
 static RECT WaveformScreenRect(float x, float y, float width, float height) {
-    const ImVec2 viewportPos = ImGui::GetMainViewport()->Pos;
-    POINT topLeft = { (LONG)std::lround(viewportPos.x + x), (LONG)std::lround(viewportPos.y + y) };
-    POINT bottomRight = { (LONG)std::lround(viewportPos.x + x + width), (LONG)std::lround(viewportPos.y + y + height) };
+    POINT topLeft = { (LONG)std::lround(x), (LONG)std::lround(y) };
+    POINT bottomRight = { (LONG)std::lround(x + width), (LONG)std::lround(y + height) };
     extern HWND g_hwnd;
-    if (g_hwnd) {
+    if (g_hwnd && !(ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
         ClientToScreen(g_hwnd, &topLeft);
         ClientToScreen(g_hwnd, &bottomRight);
     }

@@ -951,6 +951,10 @@ if(WIN32)
     target_link_libraries(TestAudioDragCard PRIVATE gdiplus gdi32 user32)
     add_test(NAME AudioDragCard COMMAND TestAudioDragCard)
     set_tests_properties(AudioDragCard PROPERTIES LABELS "ui" TIMEOUT 60)
+    if(Python3_EXECUTABLE)
+        add_test(NAME AudioDragReview COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audio_drag_review.py")
+        set_tests_properties(AudioDragReview PROPERTIES LABELS "ui" TIMEOUT 120)
+    endif()
     add_executable(AudioDragCardLiveProbe EXCLUDE_FROM_ALL
         tests/audio_drag_card_live_probe.cpp
         src/AudioDragCard.cpp)

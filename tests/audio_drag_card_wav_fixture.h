@@ -24,6 +24,7 @@ struct WavInfo {
 };
 
 bool ParseWav(const std::filesystem::path& path, std::vector<unsigned char>& bytes, WavInfo& info) {
+    info = {};
     std::ifstream stream(path, std::ios::binary);
     if (!stream) return false;
     bytes.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
@@ -32,15 +33,18 @@ bool ParseWav(const std::filesystem::path& path, std::vector<unsigned char>& byt
         return false;
     }
 
-    const unsigned char* cursor = bytes.data() + 12;
-    const unsigned char* end = bytes.data() + bytes.size();
-    while (cursor + 8 <= end) {
+    size_t offset = 12;
+    while (offset <= bytes.size() && bytes.size() - offset >= 8) {
+        const unsigned char* cursor = bytes.data() + offset;
         char chunkId[5] = {};
         std::memcpy(chunkId, cursor, 4);
         uint32_t chunkSize = 0;
         std::memcpy(&chunkSize, cursor + 4, 4);
-        const unsigned char* payload = cursor + 8;
-        if (payload + chunkSize > end) break;
+        const size_t payloadOffset = offset + 8;
+        if (chunkSize > bytes.size() - payloadOffset) return false;
+        const size_t paddedSize = static_cast<size_t>(chunkSize) + (chunkSize % 2);
+        if (paddedSize > bytes.size() - payloadOffset) return false;
+        const unsigned char* payload = bytes.data() + payloadOffset;
         if (std::strcmp(chunkId, "fmt ") == 0 && chunkSize >= 16) {
             uint16_t tag = 0, channels = 0, blockAlign = 0, bits = 0;
             std::memcpy(&tag, payload, 2);
@@ -60,16 +64,26 @@ bool ParseWav(const std::filesystem::path& path, std::vector<unsigned char>& byt
             info.data = payload;
             info.dataBytes = chunkSize;
         }
-        cursor = payload + chunkSize + (chunkSize % 2);
+        offset = payloadOffset + paddedSize;
     }
-    if (!info.data || info.channels <= 0 || info.blockAlign <= 0) return false;
+    if (offset != bytes.size() || !info.data || info.channels <= 0 || info.blockAlign <= 0) return false;
+    const bool pcm = info.formatTag == 1 &&
+                     (info.bitsPerSample == 8 || info.bitsPerSample == 16 ||
+                      info.bitsPerSample == 24 || info.bitsPerSample == 32);
+    const bool float32 = info.formatTag == 3 && info.bitsPerSample == 32;
+    if ((!pcm && !float32) || info.blockAlign != info.channels * (info.bitsPerSample / 8) ||
+        info.dataBytes % static_cast<size_t>(info.blockAlign) != 0) return false;
     info.sampleFrames = info.dataBytes / static_cast<size_t>(info.blockAlign);
     return info.sampleFrames > 0;
 }
 
 float ReadSample(const WavInfo& info, size_t frame, int channel) {
+    if (!info.data || frame >= info.sampleFrames || channel < 0 || channel >= info.channels ||
+        info.blockAlign <= 0 || info.bitsPerSample <= 0 || info.bitsPerSample % 8 != 0) return 0.0f;
     const size_t offset = frame * static_cast<size_t>(info.blockAlign) +
                           static_cast<size_t>(channel) * static_cast<size_t>(info.bitsPerSample / 8);
+    const size_t sampleBytes = static_cast<size_t>(info.bitsPerSample / 8);
+    if (offset > info.dataBytes || sampleBytes > info.dataBytes - offset) return 0.0f;
     const unsigned char* p = info.data + offset;
     if (info.formatTag == 3 && info.bitsPerSample == 32) {
         float value = 0.0f;
