@@ -581,7 +581,9 @@ public:
     /// 启动预热：ANALYZE + 预编译热门 SQL + FTS5 索引预加载，应在 loading screen 期间调用
     void preheat();
     /// 预热封面索引：让 cover_key 复合索引页进入 mmap/page cache，加速首次封面点击
-    void warmupCoverIndexes();
+    // Optional shouldContinue lets a worker abort between the two warmup
+    // queries when its thread is being stopped.
+    void warmupCoverIndexes(const std::function<bool()>& shouldContinue = {});
 
     // File indexing
     bool addFile(const AudioRecord& record);

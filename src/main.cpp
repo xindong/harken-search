@@ -10501,7 +10501,6 @@ static bool MountFilePlayerDatabaseForInteractiveRefresh(AppState& state,
     SyncAdaptiveMiniWaveformFormatUpgradeStateOnOpen(state);
     if (fullPreheat) {
         state.database.preheat();
-        state.database.warmupCoverIndexes();
     }
 
     if (state.settings.autoReconcileOnStartup) {
