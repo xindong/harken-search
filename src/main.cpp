@@ -19049,19 +19049,11 @@ void RenderFileInfoPanelTabContents(
                     cw.preloadInFlight = false;
                     if (!stalePreload) {
                         cw.preloadFullList = std::move(preloaded.items);
-                        cw.preloadDbPath = state.database.getMainDbPath();
+                        cw.preloadDbPath = currentDbPath;
                         cw.globalPageDbPath = cw.preloadDbPath;
                         cw.globalPageNextCursor = preloaded.nextCursor;
                         cw.globalPageHasMore = preloaded.hasMore;
                         cw.globalPageLoadingNext = false;
-                    } else {
-                        cw.preloadFullList.clear();
-                        cw.preloadFirstPage.clear();
-                        cw.preloadDbPath.clear();
-                        cw.globalPageNextCursor.clear();
-                        cw.globalPageHasMore = false;
-                        cw.globalPageLoadingNext = false;
-                        cw.globalPageDbPath.clear();
                     }
                     // 不预热整页：首屏只由内容区按视口+1 行预热
                 }
@@ -19343,7 +19335,13 @@ void RenderFileInfoPanelTabContents(
                     cw.lastDisplaySnapshotCursor = cw.items.size();
                     cw.discoveryDone = !cw.globalPageHasMore;
                 }
-                if (!cw.preloadFullList.empty() && cw.items.empty() && cw.preloadDbPath == mainDbPath && !state.needsCoverWallReload) {
+                const bool preloadReadyForReuse =
+                    !cw.loaded &&
+                    !cw.preloadFullList.empty() &&
+                    cw.preloadGeneration == cw.generation &&
+                    cw.preloadDbPath == mainDbPath &&
+                    !state.needsCoverWallReload;
+                if (preloadReadyForReuse) {
                     cw.items = cw.preloadFullList;
                     ReconstructGlobalCoverWallPageState(
                         cw, mainDbPath, kGlobalCoverWallPageSize);
@@ -19359,10 +19357,6 @@ void RenderFileInfoPanelTabContents(
                     StoreGlobalCoverWallCache(cw, mainDbPath, currentTotal);
                 }
 
-                const bool preloadReadyForReuse =
-                    !cw.preloadFullList.empty() &&
-                    cw.preloadDbPath == mainDbPath &&
-                    !state.needsCoverWallReload;
                 const bool preloadStillBuildingFirstPage =
                     cw.preloadInFlight &&
                     cw.preloadGeneration == cw.generation;
@@ -19389,6 +19383,7 @@ void RenderFileInfoPanelTabContents(
                     cw.globalPageHasMore = false;
                     cw.globalPageLoadingNext = false;
                     cw.globalPageDbPath = mainDbPath;
+                    cw.preloadDbPath = mainDbPath;
 
                     cw.loaded = false;
                     cw.loading = true;
@@ -19510,6 +19505,7 @@ void RenderFileInfoPanelTabContents(
                     const size_t pageItemCount = page.items.size();
                     const bool staleEntries = (cw.entriesGeneration != cw.generation);
                     const bool staleEntriesView = (cw.entriesViewGeneration != cw.viewGeneration);
+                    const bool currentEntriesView = !staleEntries && !staleEntriesView;
                     const bool wasLoadingNextPage = cw.globalPageLoadingNext;
                     const bool requestMatchesCurrentPageState =
                         cw.entriesRequestedAppend
@@ -19520,13 +19516,10 @@ void RenderFileInfoPanelTabContents(
                                cw.globalPageNextCursor.empty() &&
                                cw.items.size() == cw.entriesRequestBaseItemCount);
                     cw.entriesInFlight = false;
-                    cw.globalPageLoadingNext = false;
-                    if (staleEntries) {
-                        cw.loaded = false;
-                        cw.loading = false;
-                        cw.discoveryDone = false;
-                        aura::cover_wall::RequestDatabaseInvalidation(state);
-                    } else if (!requestMatchesCurrentPageState) {
+                    if (!staleEntries && cw.entriesRequestedAppend) {
+                        cw.globalPageLoadingNext = false;
+                    }
+                    if (currentEntriesView && !requestMatchesCurrentPageState) {
                         DIAG_ACTION_FMT(
                             "CoverWall",
                             "GlobalPageIgnored: requestedAppend=%d wasAppend=%d requestedCursor=%d currentCursor=%d baseItems=%zu currentItems=%zu",
@@ -19539,7 +19532,7 @@ void RenderFileInfoPanelTabContents(
                         cw.loading = false;
                         cw.loaded = !cw.items.empty();
                         cw.discoveryDone = !cw.globalPageHasMore;
-                    } else if (!staleEntriesView) {
+                    } else if (currentEntriesView) {
                     SanitizeCoverWallItemsForCache(page.items);
                     if (wasLoadingNextPage) {
                         AppendUniqueCoverWallPageItems(cw.items, page.items);
@@ -19612,7 +19605,7 @@ void RenderFileInfoPanelTabContents(
                             return discovered;
                         });
                     }
-                    } else {
+                    } else if (!staleEntries) {
                         cw.loading = false;
                     }
                     DevTools_EndFramePhase();
@@ -19624,12 +19617,7 @@ void RenderFileInfoPanelTabContents(
                     const bool staleFolders = (cw.foldersGeneration != cw.generation);
                     const bool staleFoldersView = (cw.foldersViewGeneration != cw.viewGeneration);
                     cw.foldersInFlight = false;
-                    if (staleFolders) {
-                        cw.loaded = false;
-                        cw.loading = false;
-                        cw.discoveryDone = false;
-                        aura::cover_wall::RequestDatabaseInvalidation(state);
-                    } else if (!staleFoldersView) {
+                    if (!staleFolders && !staleFoldersView) {
                     SanitizeCoverWallItemsForCache(discovered);
                     if (!discovered.empty()) {
                         // Deduplicate discovered folders against existing identity keys.
@@ -19653,7 +19641,7 @@ void RenderFileInfoPanelTabContents(
                     StoreGlobalCoverWallCache(cw, mainDbPath, cw.loadTotal);
                     cw.displaySnapshot = cw.items;
                     cw.lastDisplaySnapshotCursor = cw.items.size();
-                    } else {
+                    } else if (!staleFolders) {
                         cw.loading = false;
                     }
                 }
