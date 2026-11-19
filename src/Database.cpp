@@ -292,6 +292,12 @@ constexpr int kFolderCoverFacetMaxDepth = 4;
 constexpr int kFolderCoverFacetPrewarmMaxScopes = 192;
 // An empty registry above this file-count threshold waits for background sync instead of grouping audio_files inline.
 constexpr int64_t kGlobalCoverWallFallbackMaxFiles = 50000;
+constexpr int kCoverWallOrderIndexVersion = 1;
+constexpr const char* kCoverWallOrderIndexVersionKey = "cover_wall_order_index_version";
+constexpr const char* kCoverWallOrderIndexStateKey = "cover_wall_order_index_state";
+constexpr const char* kCoverWallOrderIndexRowsKey = "cover_wall_order_index_rows";
+constexpr int kCoverWallOrderIndexBatchSize = 20000;
+static void StartCoverWallOrderIndexBuild(const std::string& dbPath);
 
 template<typename T>
 static void AppendPod(std::vector<uint8_t>& out, const T& value) {
@@ -1747,12 +1753,12 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     if (!createTables()) {
         return cleanupOnFail("Create tables failed: " + m_lastError);
     }
-    
+
     // 3. 挂载 Sidecar (即使失败也不强制回滚主库，但记录日志)
     if (sidecarAttached) {
         createSidecarTables();
     }
-    
+
     migrateFromSingleDatabase(dbPath);
 
     {
@@ -1887,6 +1893,20 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             DIAG_ACTION("Database", "Cover tile membership maintenance armed during open for legacy or empty membership state.");
         }
         if (totalFiles > kGlobalCoverWallFallbackMaxFiles) {
+            const bool wallOrderReady =
+                ReadAppMetaInt(m_db, kCoverWallOrderIndexVersionKey) == kCoverWallOrderIndexVersion &&
+                ReadAppMetaString(m_db, kCoverWallOrderIndexStateKey) == "ready";
+            char* disableWallOrderBuild = nullptr;
+            size_t disableWallOrderBuildLen = 0;
+            _dupenv_s(&disableWallOrderBuild, &disableWallOrderBuildLen,
+                      "HARKEN_DISABLE_COVER_WALL_ORDER_BACKGROUND_BUILD");
+            const bool wallOrderBuildDisabled =
+                disableWallOrderBuild && disableWallOrderBuild[0] == '1';
+            std::free(disableWallOrderBuild);
+            if (!wallOrderReady && !wallOrderBuildDisabled) {
+                DIAG_ACTION("Database", "Cover wall file-order index building in background.");
+                StartCoverWallOrderIndexBuild(dbPath);
+            }
             const int registryEntries = countCoverRegistryEntries();
             if (RearmCoverRegistryMaintenanceForEmptyLargeLibrary(m_db, registryEntries, totalFiles)) {
                 DIAG_ACTION("Database", "Cover registry maintenance re-armed during open for empty large-library registry.");
@@ -2692,11 +2712,11 @@ bool Database::createTables() {
             play_count      INTEGER DEFAULT 0,
             date_added      INTEGER,
             last_played     INTEGER,
-            
+
             waveform_data   BLOB
         );
     )";
-    
+
     // Playlists table
     const char* createPlaylistsTable = R"(
         CREATE TABLE IF NOT EXISTS playlists (
@@ -3024,7 +3044,7 @@ bool Database::createTables() {
     const char* createIndexes = R"(
         -- 1. Unique path index for locating a file
         CREATE UNIQUE INDEX IF NOT EXISTS idx_files_path ON audio_files(file_path);
-        
+
         -- 2. Sorting indexes used by header clicks on large libraries
         -- File name (default)
         CREATE INDEX IF NOT EXISTS idx_files_name ON audio_files(file_name);
@@ -3043,7 +3063,7 @@ bool Database::createTables() {
         CREATE INDEX IF NOT EXISTS idx_files_date_added ON audio_files(date_added);
         -- File type visibility count path (WAV/MP3/FLAC toggles).
         CREATE INDEX IF NOT EXISTS idx_files_extension_nocase ON audio_files(extension COLLATE NOCASE);
-        
+
         -- 3. Composite indexes for folder/name and format/name filters
         CREATE INDEX IF NOT EXISTS idx_files_folder_name ON audio_files(folder_path, file_name);
         CREATE INDEX IF NOT EXISTS idx_files_folder_name_natural ON audio_files(folder_path, file_name COLLATE AURA_NATURAL);
@@ -3062,7 +3082,7 @@ bool Database::createTables() {
         -- Avoid table lookups for sort columns so cold-cache first pages remain fast.
         CREATE INDEX IF NOT EXISTS idx_files_cover_fold_sort ON audio_files(folder_cover_key, file_name) WHERE folder_cover_key <> '';
         CREATE INDEX IF NOT EXISTS idx_files_cover_emb_sort ON audio_files(embedded_cover_key, file_name) WHERE embedded_cover_key <> '';
-        
+
         -- 5. Business-state indexes
         CREATE INDEX IF NOT EXISTS idx_files_played ON audio_files(last_played);
         CREATE INDEX IF NOT EXISTS idx_files_category ON audio_files(category);
@@ -3265,6 +3285,147 @@ bool Database::createTables() {
     executeSQL("CREATE INDEX IF NOT EXISTS idx_folder_cover_scope_depth ON folder_cover_facet_scope_state(scope_depth, scope_path);");
     executeSQL("CREATE INDEX IF NOT EXISTS idx_folder_path_facet_depth ON folder_path_facet_index(scope_depth, scope_path, hit_count DESC);");
 
+    // Cover wall file-order materialized index. The default wall order is the
+    // natural file-name order of the first file in each cover group. Keeping
+    // that first row in a table turns the first page into an index range scan
+    // instead of a window/aggregate over the whole library.
+    executeSQL(R"(
+        CREATE TABLE IF NOT EXISTS cover_wall_order_index (
+            tile_key     TEXT PRIMARY KEY,
+            tile_kind    INTEGER NOT NULL DEFAULT 0,
+            tile_value   TEXT NOT NULL DEFAULT '',
+            order_name   TEXT NOT NULL DEFAULT '',
+            order_path   TEXT NOT NULL DEFAULT '',
+            order_id     INTEGER NOT NULL DEFAULT 0,
+            cover_key    TEXT NOT NULL DEFAULT '',
+            rep_path     TEXT NOT NULL DEFAULT '',
+            source_path  TEXT NOT NULL DEFAULT '',
+            is_embedded  INTEGER NOT NULL DEFAULT 0,
+            phash        INTEGER NOT NULL DEFAULT 0,
+            hit_count    INTEGER NOT NULL DEFAULT 0,
+            updated_at   INTEGER NOT NULL DEFAULT 0
+        );
+    )");
+    executeSQL("CREATE INDEX IF NOT EXISTS idx_cover_wall_order_natural ON cover_wall_order_index(order_name COLLATE AURA_NATURAL, order_path, order_id);");
+    executeSQL("CREATE INDEX IF NOT EXISTS idx_cover_wall_order_id ON cover_wall_order_index(order_id);");
+    executeSQL(R"(
+        CREATE TABLE IF NOT EXISTS cover_wall_order_dirty (
+            file_id     INTEGER NOT NULL,
+            tile_kind   INTEGER NOT NULL,
+            tile_value  TEXT NOT NULL,
+            PRIMARY KEY (file_id, tile_kind, tile_value)
+        );
+    )");    executeSQL("CREATE INDEX IF NOT EXISTS idx_cover_wall_order_dirty_tile ON cover_wall_order_dirty(tile_kind, tile_value);");
+
+    executeSQL("DROP TRIGGER IF EXISTS trg_cover_wall_order_dirty_ai;");
+    executeSQL("DROP TRIGGER IF EXISTS trg_cover_wall_order_dirty_au;");
+    executeSQL("DROP TRIGGER IF EXISTS trg_cover_wall_order_dirty_ad;");
+    executeSQL(R"(
+        CREATE TRIGGER trg_cover_wall_order_dirty_ai AFTER INSERT ON audio_files
+        BEGIN
+            INSERT OR IGNORE INTO cover_wall_order_dirty(file_id, tile_kind, tile_value)
+            SELECT NEW.id,
+                   CASE WHEN NEW.embedded_cover_key IS NOT NULL AND NEW.embedded_cover_key <> '' THEN 0
+                        WHEN NEW.folder_cover_key IS NOT NULL AND NEW.folder_cover_key <> '' THEN 1
+                        WHEN NEW.has_cover = 1 AND NEW.folder_path IS NOT NULL AND NEW.folder_path <> '' THEN 2
+                        ELSE -1 END,
+                   CASE WHEN NEW.embedded_cover_key IS NOT NULL AND NEW.embedded_cover_key <> '' THEN NEW.embedded_cover_key
+                        WHEN NEW.folder_cover_key IS NOT NULL AND NEW.folder_cover_key <> '' THEN NEW.folder_cover_key
+                        WHEN NEW.has_cover = 1 AND NEW.folder_path IS NOT NULL AND NEW.folder_path <> '' THEN NEW.folder_path
+                        ELSE NULL END
+            WHERE (CASE WHEN NEW.embedded_cover_key IS NOT NULL AND NEW.embedded_cover_key <> '' THEN 0
+                        WHEN NEW.folder_cover_key IS NOT NULL AND NEW.folder_cover_key <> '' THEN 1
+                        WHEN NEW.has_cover = 1 AND NEW.folder_path IS NOT NULL AND NEW.folder_path <> '' THEN 2
+                        ELSE -1 END) >= 0
+                   AND (SELECT value FROM app_meta WHERE key = 'cover_wall_order_index_state') IN ('ready', 'building');
+        END;
+    )");
+    executeSQL(R"(
+        CREATE TRIGGER trg_cover_wall_order_dirty_au
+        AFTER UPDATE OF file_name, file_path, folder_path, has_cover, embedded_cover_key, folder_cover_key, folder_cover_src_path ON audio_files
+        BEGIN
+            INSERT OR IGNORE INTO cover_wall_order_dirty(file_id, tile_kind, tile_value)
+            SELECT OLD.id,
+                   CASE WHEN OLD.embedded_cover_key IS NOT NULL AND OLD.embedded_cover_key <> '' THEN 0
+                        WHEN OLD.folder_cover_key IS NOT NULL AND OLD.folder_cover_key <> '' THEN 1
+                        WHEN OLD.has_cover = 1 AND OLD.folder_path IS NOT NULL AND OLD.folder_path <> '' THEN 2
+                        ELSE -1 END,
+                   CASE WHEN OLD.embedded_cover_key IS NOT NULL AND OLD.embedded_cover_key <> '' THEN OLD.embedded_cover_key
+                        WHEN OLD.folder_cover_key IS NOT NULL AND OLD.folder_cover_key <> '' THEN OLD.folder_cover_key
+                        WHEN OLD.has_cover = 1 AND OLD.folder_path IS NOT NULL AND OLD.folder_path <> '' THEN OLD.folder_path
+                        ELSE NULL END
+            WHERE (CASE WHEN OLD.embedded_cover_key IS NOT NULL AND OLD.embedded_cover_key <> '' THEN 0
+                        WHEN OLD.folder_cover_key IS NOT NULL AND OLD.folder_cover_key <> '' THEN 1
+                        WHEN OLD.has_cover = 1 AND OLD.folder_path IS NOT NULL AND OLD.folder_path <> '' THEN 2
+                        ELSE -1 END) >= 0
+                   AND (SELECT value FROM app_meta WHERE key = 'cover_wall_order_index_state') IN ('ready', 'building');
+            INSERT OR IGNORE INTO cover_wall_order_dirty(file_id, tile_kind, tile_value)
+            SELECT NEW.id,
+                   CASE WHEN NEW.embedded_cover_key IS NOT NULL AND NEW.embedded_cover_key <> '' THEN 0
+                        WHEN NEW.folder_cover_key IS NOT NULL AND NEW.folder_cover_key <> '' THEN 1
+                        WHEN NEW.has_cover = 1 AND NEW.folder_path IS NOT NULL AND NEW.folder_path <> '' THEN 2
+                        ELSE -1 END,
+                   CASE WHEN NEW.embedded_cover_key IS NOT NULL AND NEW.embedded_cover_key <> '' THEN NEW.embedded_cover_key
+                        WHEN NEW.folder_cover_key IS NOT NULL AND NEW.folder_cover_key <> '' THEN NEW.folder_cover_key
+                        WHEN NEW.has_cover = 1 AND NEW.folder_path IS NOT NULL AND NEW.folder_path <> '' THEN NEW.folder_path
+                        ELSE NULL END
+            WHERE (CASE WHEN NEW.embedded_cover_key IS NOT NULL AND NEW.embedded_cover_key <> '' THEN 0
+                        WHEN NEW.folder_cover_key IS NOT NULL AND NEW.folder_cover_key <> '' THEN 1
+                        WHEN NEW.has_cover = 1 AND NEW.folder_path IS NOT NULL AND NEW.folder_path <> '' THEN 2
+                        ELSE -1 END) >= 0
+                   AND (SELECT value FROM app_meta WHERE key = 'cover_wall_order_index_state') IN ('ready', 'building');
+        END;
+    )");
+    executeSQL(R"(
+        CREATE TRIGGER trg_cover_wall_order_dirty_ad AFTER DELETE ON audio_files
+        BEGIN
+            INSERT OR IGNORE INTO cover_wall_order_dirty(file_id, tile_kind, tile_value)
+            SELECT OLD.id,
+                   CASE WHEN OLD.embedded_cover_key IS NOT NULL AND OLD.embedded_cover_key <> '' THEN 0
+                        WHEN OLD.folder_cover_key IS NOT NULL AND OLD.folder_cover_key <> '' THEN 1
+                        WHEN OLD.has_cover = 1 AND OLD.folder_path IS NOT NULL AND OLD.folder_path <> '' THEN 2
+                        ELSE -1 END,
+                   CASE WHEN OLD.embedded_cover_key IS NOT NULL AND OLD.embedded_cover_key <> '' THEN OLD.embedded_cover_key
+                        WHEN OLD.folder_cover_key IS NOT NULL AND OLD.folder_cover_key <> '' THEN OLD.folder_cover_key
+                        WHEN OLD.has_cover = 1 AND OLD.folder_path IS NOT NULL AND OLD.folder_path <> '' THEN OLD.folder_path
+                        ELSE NULL END
+            WHERE (CASE WHEN OLD.embedded_cover_key IS NOT NULL AND OLD.embedded_cover_key <> '' THEN 0
+                        WHEN OLD.folder_cover_key IS NOT NULL AND OLD.folder_cover_key <> '' THEN 1
+                        WHEN OLD.has_cover = 1 AND OLD.folder_path IS NOT NULL AND OLD.folder_path <> '' THEN 2
+                        ELSE -1 END) >= 0
+                   AND (SELECT value FROM app_meta WHERE key = 'cover_wall_order_index_state') IN ('ready', 'building');
+        END;
+    )");
+    executeSQL("DROP TRIGGER IF EXISTS trg_cover_wall_order_registry_ai;");
+    executeSQL("DROP TRIGGER IF EXISTS trg_cover_wall_order_registry_au;");
+    executeSQL("DROP TRIGGER IF EXISTS trg_cover_wall_order_registry_ad;");
+    executeSQL(R"(
+        CREATE TRIGGER trg_cover_wall_order_registry_ai AFTER INSERT ON cover_cache_registry
+        BEGIN
+            UPDATE cover_wall_order_index
+               SET cover_key = COALESCE(NULLIF(NEW.normalized_key, ''), NEW.cover_key),
+                   phash = COALESCE(NEW.cover_phash, 0)
+             WHERE tile_key = NEW.cover_key;
+        END;
+    )");
+    executeSQL(R"(
+        CREATE TRIGGER trg_cover_wall_order_registry_au
+        AFTER UPDATE OF cover_key, normalized_key, cover_phash ON cover_cache_registry
+        BEGIN
+            UPDATE cover_wall_order_index
+               SET cover_key = COALESCE(NULLIF(NEW.normalized_key, ''), NEW.cover_key),
+                   phash = COALESCE(NEW.cover_phash, 0)
+             WHERE tile_key IN (OLD.cover_key, NEW.cover_key);
+        END;
+    )");
+    executeSQL(R"(
+        CREATE TRIGGER trg_cover_wall_order_registry_ad AFTER DELETE ON cover_cache_registry
+        BEGIN
+            UPDATE cover_wall_order_index
+               SET cover_key = tile_key, phash = 0
+             WHERE tile_key = OLD.cover_key;
+        END;
+    )");
     const int currentFolderFacetVersion = ReadAppMetaInt(m_db, "folder_cover_facet_index_version");
     if (currentFolderFacetVersion != kFolderCoverFacetIndexVersion) {
         executeSQL("DELETE FROM folder_cover_facet_index;");
@@ -4686,7 +4847,7 @@ bool Database::applyMetadataPatch(int64_t fileId, const MetadataEditPatch& patch
     return res.success == 1;
 }
 
-bool Database::updateMetadata(int64_t fileId, const std::string& description, 
+bool Database::updateMetadata(int64_t fileId, const std::string& description,
                               const std::string& keywords, const std::string& category) {
     MetadataEditPatch patch;
     patch.setDescription(description);
@@ -5600,7 +5761,7 @@ AudioRecord Database::getFileByPath(const std::string& filePath) {
     if (!m_db) return r;
 
     std::string sql = std::string("SELECT ") + kRecordColumns + " FROM audio_files WHERE file_path = ?";
-    
+
     // High-frequency single-row reads use the prepared-statement pool.
     sqlite3_stmt* stmt = checkoutStmt(sql);
     if (!stmt) return r;
@@ -7296,18 +7457,18 @@ int Database::purgeResourceForkFiles() {
 
 int Database::purgeLowResWaveformDetail(int minFloatCount) {
     if (!m_db) return 0;
-    
+
     // waveform_detail stores float samples; each float occupies four bytes.
     // At req=400 in mono, a valid detail BLOB needs at least 400 floats or 1600 bytes.
     // Smaller rows came from the old low-resolution cache bug.
     int minBytes = minFloatCount * (int)sizeof(float);
-    
+
     // Set undersized waveform_detail to NULL while retaining the other waveform and RMS fields.
     std::string sql =
         "UPDATE waveforms_db.waveforms SET waveform_detail = NULL, waveform_min_detail = NULL, detail_num_channels = 0 "
         "WHERE waveform_detail IS NOT NULL AND length(waveform_detail) < " + std::to_string(minBytes) + " "
         "AND NOT " + std::string(kWpk2SqlValidWaveformDetail) + ";";
-    
+
     char* errMsg = nullptr;
     int rc = sqlite3_exec(m_db, sql.c_str(), nullptr, nullptr, &errMsg);
     if (rc != SQLITE_OK) {
@@ -7325,11 +7486,11 @@ void Database::propagateFolderCovers() {
     // Use INSTR instead of LIKE so wildcard characters in paths remain literal.
     // INSTR(folder_path, parent_path) = 1 能够 100% 精准识别父子继承关系
     const char* sql = R"SQL(
-        UPDATE audio_files 
+        UPDATE audio_files
         SET folder_cover_key = (
             SELECT folder_cover_key FROM audio_files AS parent
             WHERE INSTR(audio_files.folder_path, parent.folder_path) = 1
-              AND parent.folder_cover_key IS NOT NULL 
+              AND parent.folder_cover_key IS NOT NULL
               AND parent.folder_cover_key <> ''
             ORDER BY LENGTH(parent.folder_path) DESC
             LIMIT 1
@@ -7724,6 +7885,145 @@ static int64_t CountRows64FromTable(sqlite3* db, const char* tableName) {
     return count;
 }
 
+struct CoverWallOrderTile {
+    int kind = -1;
+    std::string value;
+};
+
+static std::string CoverWallOrderTileKey(int kind, const std::string& value) {
+    return kind == 2 ? std::string("?|") + value : value;
+}
+
+static bool IsCoverWallOrderIndexReady(sqlite3* db) {
+    if (!db) return false;
+    if (ReadAppMetaInt(db, kCoverWallOrderIndexVersionKey) != kCoverWallOrderIndexVersion) return false;
+    return ReadAppMetaString(db, kCoverWallOrderIndexStateKey) == "ready";
+}
+
+static int64_t CoverWallOrderDirtyCount(sqlite3* db) {
+    if (!db) return 0;
+    sqlite3_stmt* stmt = nullptr;
+    int64_t count = 0;
+    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM cover_wall_order_dirty;", -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+    return count;
+}
+
+static std::string BuildCoverWallOrderTileInsertSql(int kind) {
+    std::string condition;
+    if (kind == 0) {
+        condition = "af.embedded_cover_key = ?4 AND af.embedded_cover_key <> ''";
+    } else if (kind == 1) {
+        condition = "af.folder_cover_key = ?4 AND af.folder_cover_key <> ''";
+    } else {
+        condition = "af.has_cover = 1 AND (af.embedded_cover_key IS NULL OR af.embedded_cover_key = '') "
+                    "AND (af.folder_cover_key IS NULL OR af.folder_cover_key = '') "
+                    "AND af.folder_path = ?4";
+    }
+    return std::string(
+        "INSERT INTO cover_wall_order_index("
+        "tile_key, tile_kind, tile_value, order_name, order_path, order_id, "
+        "cover_key, rep_path, source_path, is_embedded, phash, hit_count, updated_at) "
+        "SELECT v.tile_key, v.tile_kind, v.tile_value, af.file_name, af.file_path, af.id, "
+        "       COALESCE(NULLIF(r.normalized_key, ''), r.cover_key, v.tile_key), "
+        "       CASE WHEN v.tile_kind = 0 THEN af.file_path ELSE af.folder_path END, "
+        "       CASE WHEN v.tile_kind = 0 THEN '' ELSE COALESCE(af.folder_cover_src_path, '') END, "
+        "       CASE WHEN v.tile_kind = 0 THEN 1 ELSE 0 END, "
+        "       COALESCE(r.cover_phash, 0), 0, strftime('%s','now') "
+        "FROM (SELECT ?1 AS tile_key, ?2 AS tile_kind, ?3 AS tile_value) v "
+        "JOIN audio_files af ON " + condition + " "
+        "LEFT JOIN cover_cache_registry r ON r.cover_key = v.tile_key "
+        "ORDER BY af.file_name COLLATE AURA_NATURAL, af.file_path, af.id LIMIT 1;");
+}
+
+static bool FlushCoverWallOrderDirty(sqlite3* db, int maxTiles) {
+    if (!db) return false;
+    if (maxTiles <= 0) return true;
+    if (sqlite3_db_readonly(db, "main") == 1) return false;
+
+    std::vector<CoverWallOrderTile> tiles;
+    {
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db,
+                "SELECT tile_kind, tile_value FROM cover_wall_order_dirty "
+                "GROUP BY tile_kind, tile_value LIMIT ?;",
+                -1, &stmt, nullptr) != SQLITE_OK) {
+            return false;
+        }
+        sqlite3_bind_int(stmt, 1, maxTiles);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            CoverWallOrderTile tile;
+            tile.kind = sqlite3_column_int(stmt, 0);
+            tile.value = safeGetText(stmt, 1);
+            if (tile.kind >= 0 && !tile.value.empty()) tiles.push_back(std::move(tile));
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (tiles.empty()) return true;
+
+    sqlite3_stmt* deleteIndex = nullptr;
+    sqlite3_stmt* deleteDirty = nullptr;
+    sqlite3_stmt* insert[3] = {nullptr, nullptr, nullptr};
+    auto cleanup = [&]() {
+        if (deleteIndex) sqlite3_finalize(deleteIndex);
+        if (deleteDirty) sqlite3_finalize(deleteDirty);
+        for (auto*& stmt : insert) {
+            if (stmt) sqlite3_finalize(stmt);
+            stmt = nullptr;
+        }
+    };
+
+    if (sqlite3_prepare_v2(db, "DELETE FROM cover_wall_order_index WHERE tile_key = ?;", -1, &deleteIndex, nullptr) != SQLITE_OK ||
+        sqlite3_prepare_v2(db, "DELETE FROM cover_wall_order_dirty WHERE tile_kind = ? AND tile_value = ?;", -1, &deleteDirty, nullptr) != SQLITE_OK) {
+        cleanup();
+        return false;
+    }
+    for (int kind = 0; kind < 3; ++kind) {
+        const std::string sql = BuildCoverWallOrderTileInsertSql(kind);
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &insert[kind], nullptr) != SQLITE_OK) {
+            cleanup();
+            return false;
+        }
+    }
+
+    const bool ownTxn = sqlite3_get_autocommit(db) != 0;
+    if (ownTxn && sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        cleanup();
+        return false;
+    }
+
+    bool ok = true;
+    for (const auto& tile : tiles) {
+        const std::string key = CoverWallOrderTileKey(tile.kind, tile.value);
+        sqlite3_reset(deleteIndex);
+        sqlite3_clear_bindings(deleteIndex);
+        sqlite3_bind_text(deleteIndex, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(deleteIndex) != SQLITE_DONE) { ok = false; break; }
+
+        sqlite3_stmt* stmt = insert[tile.kind];
+        sqlite3_reset(stmt);
+        sqlite3_clear_bindings(stmt);
+        sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, tile.kind);
+        sqlite3_bind_text(stmt, 3, tile.value.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 4, tile.value.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) { ok = false; break; }
+
+        sqlite3_reset(deleteDirty);
+        sqlite3_clear_bindings(deleteDirty);
+        sqlite3_bind_int(deleteDirty, 1, tile.kind);
+        sqlite3_bind_text(deleteDirty, 2, tile.value.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(deleteDirty) != SQLITE_DONE) { ok = false; break; }
+    }
+
+    if (ownTxn) {
+        sqlite3_exec(db, ok ? "COMMIT;" : "ROLLBACK;", nullptr, nullptr, nullptr);
+    }
+    cleanup();
+    return ok;
+}
 static GlobalCoverAggregationReadiness AssessGlobalCoverAggregationReadiness(sqlite3* db) {
     GlobalCoverAggregationReadiness readiness;
     if (!db) return readiness;
@@ -7755,6 +8055,303 @@ static GlobalCoverAggregationReadiness AssessGlobalCoverAggregationReadiness(sql
     return readiness;
 }
 
+static bool RebuildCoverWallOrderIndexOnConnection(sqlite3* db, int batchSize) {
+    if (!db) return false;
+    if (sqlite3_db_readonly(db, "main") == 1) return false;
+    if (batchSize <= 0) batchSize = kCoverWallOrderIndexBatchSize;
+
+    WriteAppMetaString(db, kCoverWallOrderIndexStateKey, "building");
+    if (sqlite3_exec(db, "DELETE FROM cover_wall_order_index; DELETE FROM cover_wall_order_dirty;",
+                     nullptr, nullptr, nullptr) != SQLITE_OK) {
+        WriteAppMetaString(db, kCoverWallOrderIndexStateKey, "stale");
+        return false;
+    }
+
+    const char* batchSql = R"SQL(
+        WITH batch AS (
+            SELECT id, file_name, file_path, folder_path, folder_cover_src_path,
+                   CASE WHEN embedded_cover_key IS NOT NULL AND embedded_cover_key <> '' THEN 0
+                        WHEN folder_cover_key IS NOT NULL AND folder_cover_key <> '' THEN 1
+                        WHEN has_cover = 1 AND folder_path IS NOT NULL AND folder_path <> '' THEN 2
+                        ELSE -1 END AS tile_kind,
+                   CASE WHEN embedded_cover_key IS NOT NULL AND embedded_cover_key <> '' THEN embedded_cover_key
+                        WHEN folder_cover_key IS NOT NULL AND folder_cover_key <> '' THEN folder_cover_key
+                        WHEN has_cover = 1 AND folder_path IS NOT NULL AND folder_path <> '' THEN folder_path
+                        ELSE NULL END AS tile_value
+            FROM audio_files
+            WHERE id > ?1 AND id <= ?2
+        ),
+        ranked AS (
+            SELECT *,
+                   (CASE WHEN tile_kind = 2 THEN '?|' || tile_value ELSE tile_value END) AS tile_key,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY (CASE WHEN tile_kind = 2 THEN '?|' || tile_value ELSE tile_value END)
+                       ORDER BY file_name COLLATE AURA_NATURAL, file_path, id
+                   ) AS rn
+            FROM batch
+            WHERE tile_kind >= 0
+        )
+        INSERT INTO cover_wall_order_index(
+            tile_key, tile_kind, tile_value, order_name, order_path, order_id,
+            cover_key, rep_path, source_path, is_embedded, phash, hit_count, updated_at)
+        SELECT v.tile_key, v.tile_kind, v.tile_value, v.file_name, v.file_path, v.id,
+               COALESCE(NULLIF(r.normalized_key, ''), r.cover_key, v.tile_key),
+               CASE WHEN v.tile_kind = 0 THEN v.file_path ELSE v.folder_path END,
+               CASE WHEN v.tile_kind = 0 THEN '' ELSE COALESCE(v.folder_cover_src_path, '') END,
+               CASE WHEN v.tile_kind = 0 THEN 1 ELSE 0 END,
+               COALESCE(r.cover_phash, 0), 0, strftime('%s','now')
+        FROM ranked v
+        LEFT JOIN cover_cache_registry r ON r.cover_key = v.tile_key
+        WHERE v.rn = 1
+        ON CONFLICT(tile_key) DO UPDATE SET
+            tile_kind = excluded.tile_kind,
+            tile_value = excluded.tile_value,
+            order_name = excluded.order_name,
+            order_path = excluded.order_path,
+            order_id = excluded.order_id,
+            cover_key = excluded.cover_key,
+            rep_path = excluded.rep_path,
+            source_path = excluded.source_path,
+            is_embedded = excluded.is_embedded,
+            phash = excluded.phash,
+            updated_at = excluded.updated_at
+        WHERE (excluded.order_name COLLATE AURA_NATURAL < cover_wall_order_index.order_name COLLATE AURA_NATURAL)
+           OR (excluded.order_name COLLATE AURA_NATURAL = cover_wall_order_index.order_name COLLATE AURA_NATURAL
+               AND excluded.order_path < cover_wall_order_index.order_path)
+           OR (excluded.order_name COLLATE AURA_NATURAL = cover_wall_order_index.order_name COLLATE AURA_NATURAL
+               AND excluded.order_path = cover_wall_order_index.order_path
+               AND excluded.order_id < cover_wall_order_index.order_id);
+    )SQL";
+
+    sqlite3_stmt* batchStmt = nullptr;
+    if (sqlite3_prepare_v2(db, batchSql, -1, &batchStmt, nullptr) != SQLITE_OK) {
+        WriteAppMetaString(db, kCoverWallOrderIndexStateKey, "stale");
+        return false;
+    }
+
+    bool ok = true;
+    int64_t lastId = 0;
+    while (ok) {
+        int64_t maxId = 0;
+        sqlite3_stmt* rangeStmt = nullptr;
+        if (sqlite3_prepare_v2(db,
+                "SELECT MAX(id) FROM (SELECT id FROM audio_files WHERE id > ? ORDER BY id LIMIT ?);",
+                -1, &rangeStmt, nullptr) != SQLITE_OK) {
+            ok = false;
+            break;
+        }
+        sqlite3_bind_int64(rangeStmt, 1, lastId);
+        sqlite3_bind_int(rangeStmt, 2, batchSize);
+        if (sqlite3_step(rangeStmt) == SQLITE_ROW && sqlite3_column_type(rangeStmt, 0) != SQLITE_NULL) {
+            maxId = sqlite3_column_int64(rangeStmt, 0);
+        }
+        sqlite3_finalize(rangeStmt);
+        if (maxId <= 0) break;
+
+        if (sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            ok = false;
+            break;
+        }
+        sqlite3_reset(batchStmt);
+        sqlite3_clear_bindings(batchStmt);
+        sqlite3_bind_int64(batchStmt, 1, lastId);
+        sqlite3_bind_int64(batchStmt, 2, maxId);
+        ok = sqlite3_step(batchStmt) == SQLITE_DONE;
+        sqlite3_exec(db, ok ? "COMMIT;" : "ROLLBACK;", nullptr, nullptr, nullptr);
+        lastId = maxId;
+    }
+    sqlite3_finalize(batchStmt);
+
+    if (ok) {
+        for (int round = 0; round < 8 && CoverWallOrderDirtyCount(db) > 0; ++round) {
+            if (!FlushCoverWallOrderDirty(db, 4096)) break;
+        }
+        const int64_t rows = CountRows64FromTable(db, "cover_wall_order_index");
+        WriteAppMetaInt(db, kCoverWallOrderIndexRowsKey, static_cast<int>(rows));
+        WriteAppMetaInt(db, kCoverWallOrderIndexVersionKey, kCoverWallOrderIndexVersion);
+        WriteAppMetaString(db, kCoverWallOrderIndexStateKey, "ready");
+        DIAG_ACTION_FMT("Database", "CoverWallOrderIndexReady: rows=%lld", (long long)rows);
+    } else {
+        WriteAppMetaString(db, kCoverWallOrderIndexStateKey, "stale");
+        DIAG_ACTION("Database", "CoverWallOrderIndexBuildFailed");
+    }
+    return ok;
+}
+
+static void StartCoverWallOrderIndexBuild(const std::string& dbPath) {
+    static std::atomic<bool> running{false};
+    if (dbPath.empty() || running.exchange(true)) return;
+    std::thread([dbPath]() {
+        sqlite3* db = nullptr;
+#ifdef _WIN32
+        const fs::path path = Utf8ToPath(dbPath);
+        const std::wstring widePath = path.wstring();
+        sqlite3_open16(widePath.c_str(), &db);
+#else
+        sqlite3_open(dbPath.c_str(), &db);
+#endif
+        if (db) {
+            sqlite3_busy_timeout(db, 5000);
+            RebuildCoverWallOrderIndexOnConnection(db, kCoverWallOrderIndexBatchSize);
+            sqlite3_close(db);
+        }
+        running.store(false);
+    }).detach();
+}
+
+static std::string EncodeCoverWallOrderCursor(const std::string& name,
+                                              const std::string& path,
+                                              int64_t id) {
+    std::string cursor = "cwi:";
+    cursor.append(name);
+    cursor.push_back('\x1f');
+    cursor.append(path);
+    cursor.push_back('\x1f');
+    cursor.append(std::to_string(id));
+    return cursor;
+}
+
+static bool ParseInt64Text(const std::string& text, int64_t* value) {
+    if (text.empty() || !value) return false;
+    char* end = nullptr;
+    errno = 0;
+    const long long parsed = std::strtoll(text.c_str(), &end, 10);
+    if (errno != 0 || !end || *end != '\0' || parsed <= 0) return false;
+    *value = static_cast<int64_t>(parsed);
+    return true;
+}
+
+static bool ParseCoverWallOrderCursor(sqlite3* db,
+                                      const std::string& cursor,
+                                      std::string* name,
+                                      std::string* path,
+                                      int64_t* id) {
+    if (!db || !name || !path || !id) return false;
+    if (cursor.rfind("cwi:", 0) == 0) {
+        const size_t first = cursor.find('\x1f', 4);
+        if (first == std::string::npos) return false;
+        const size_t second = cursor.find('\x1f', first + 1);
+        if (second == std::string::npos) return false;
+        *name = cursor.substr(4, first - 4);
+        *path = cursor.substr(first + 1, second - first - 1);
+        return ParseInt64Text(cursor.substr(second + 1), id);
+    }
+    if (cursor.rfind("fl2:", 0) == 0) {
+        int64_t fileId = 0;
+        if (!ParseInt64Text(cursor.substr(4), &fileId)) return false;
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db,
+                "SELECT order_name, order_path, order_id FROM cover_wall_order_index WHERE order_id = ? LIMIT 1;",
+                -1, &stmt, nullptr) != SQLITE_OK) {
+            return false;
+        }
+        sqlite3_bind_int64(stmt, 1, fileId);
+        bool found = false;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            *name = safeGetText(stmt, 0);
+            *path = safeGetText(stmt, 1);
+            *id = sqlite3_column_int64(stmt, 2);
+            found = true;
+        }
+        sqlite3_finalize(stmt);
+        return found;
+    }
+    return false;
+}
+
+static bool LoadCoverWallOrderIndexPage(sqlite3* db,
+                                        const std::string& afterCursor,
+                                        int limit,
+                                        Database::CoverWallPage* out) {
+    if (!db || !out || limit <= 0) return false;
+
+    std::string cursorName;
+    std::string cursorPath;
+    int64_t cursorId = 0;
+    const bool hasCursor = !afterCursor.empty();
+    if (hasCursor && !ParseCoverWallOrderCursor(db, afterCursor, &cursorName, &cursorPath, &cursorId)) {
+        out->entries.clear();
+        out->hasMore = false;
+        out->nextCursor.clear();
+        out->fromRegistry = true;
+        return true;
+    }
+
+    std::string sql =
+        "SELECT tile_key, cover_key, rep_path, source_path, is_embedded, phash, "
+        "       order_name, order_path, order_id "
+        "FROM cover_wall_order_index";
+    if (hasCursor) {
+        sql +=
+            " WHERE (order_name COLLATE AURA_NATURAL > ? OR "
+            "        (order_name COLLATE AURA_NATURAL = ? AND "
+            "         (order_path > ? OR (order_path = ? AND order_id > ?))))";
+    }
+    sql += " ORDER BY order_name COLLATE AURA_NATURAL, order_path, order_id LIMIT ?;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return false;
+    int bind = 1;
+    if (hasCursor) {
+        sqlite3_bind_text(stmt, bind++, cursorName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, bind++, cursorName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, bind++, cursorPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, bind++, cursorPath.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, bind++, cursorId);
+    }
+    sqlite3_bind_int(stmt, bind, limit + 1);
+
+    struct Row {
+        Database::CoverWallEntry entry;
+        std::string orderName;
+        std::string orderPath;
+        int64_t orderId = 0;
+    };
+    std::vector<Row> rows;
+    rows.reserve(static_cast<size_t>(limit + 1));
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        Row row;
+        const std::string tileKey = safeGetText(stmt, 0);
+        row.entry.key = safeGetText(stmt, 1);
+        if (row.entry.key.empty()) row.entry.key = tileKey;
+        row.entry.path = safeGetText(stmt, 2);
+        row.entry.isEmbedded = sqlite3_column_int(stmt, 4) != 0;
+        const int64_t phash = sqlite3_column_int64(stmt, 5);
+        if (row.entry.isEmbedded) {
+            row.entry.sourcePath = phash != 0
+                ? std::string(kCoverWallEmbeddedPhashTokenPrefix) + std::to_string(phash)
+                : std::string();
+        } else {
+            row.entry.sourcePath = safeGetText(stmt, 3);
+        }
+        row.orderName = safeGetText(stmt, 6);
+        row.orderPath = safeGetText(stmt, 7);
+        row.orderId = sqlite3_column_int64(stmt, 8);
+        if (!row.entry.key.empty() && !row.entry.path.empty()) {
+            rows.push_back(std::move(row));
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    bool hasMore = false;
+    if (rows.size() > static_cast<size_t>(limit)) {
+        hasMore = true;
+        rows.resize(static_cast<size_t>(limit));
+    }
+
+    out->entries.clear();
+    out->entries.reserve(rows.size());
+    for (auto& row : rows) out->entries.push_back(std::move(row.entry));
+    out->hasMore = hasMore;
+    out->nextCursor.clear();
+    if (hasMore && !rows.empty()) {
+        out->nextCursor = EncodeCoverWallOrderCursor(rows.back().orderName,
+                                                     rows.back().orderPath,
+                                                     rows.back().orderId);
+    }
+    out->fromRegistry = true;
+    return true;
+}
 static std::vector<GlobalCoverWallRawRow> LoadGlobalCoverWallRegistryRows(
     sqlite3* db,
     const std::string& afterCursor,
@@ -9970,7 +10567,7 @@ std::vector<float> Database::getWaveformByPath(const std::string& filePath,
 
     // Return the statement to the pool instead of finalizing it.
     returnStmt(sql, stmt);
-    
+
     return result;
 }
 
@@ -10229,7 +10826,7 @@ bool Database::getMiniWaveformBundleByPath(const std::string& filePath,
 // RMS data storage for accurate loudness measurement
 bool Database::saveRmsDataByPath(const std::string& filePath, const std::vector<float>& rmsData) {
     if (!m_db || rmsData.empty()) return false;
-    
+
     // 1. Resolve file_id.
     const char* idSql = "SELECT id FROM audio_files WHERE file_path = ? LIMIT 1;";
     sqlite3_stmt* idStmt;
@@ -10260,7 +10857,7 @@ bool Database::saveRmsDataByPath(const std::string& filePath, const std::vector<
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         return false;
     }
-    
+
     size_t byteSize = rmsData.size() * sizeof(float);
     int blobSize = SafeSqliteBlobSize(byteSize);
     if (blobSize < 0) {
@@ -10270,7 +10867,7 @@ bool Database::saveRmsDataByPath(const std::string& filePath, const std::vector<
     sqlite3_bind_blob(stmt, 1, rmsData.data(), blobSize, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 2, getCurrentTimestamp());
     sqlite3_bind_int64(stmt, 3, fileId);
-    
+
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return success;
@@ -10279,13 +10876,13 @@ bool Database::saveRmsDataByPath(const std::string& filePath, const std::vector<
 std::vector<float> Database::getRmsDataByPath(const std::string& filePath) {
     std::vector<float> result;
     if (!m_db) return result;
-    
+
     // Read from the waveforms sidecar first.
     const char* sql = "SELECT w.rms_data FROM waveforms_db.waveforms w "
                       "JOIN audio_files af ON w.file_id = af.id "
                       "WHERE af.file_path = ? LIMIT 1";
     sqlite3_stmt* stmt;
-    
+
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -10299,7 +10896,7 @@ std::vector<float> Database::getRmsDataByPath(const std::string& filePath) {
         }
         sqlite3_finalize(stmt);
     }
-    
+
     return result;
 }
 
@@ -10367,20 +10964,20 @@ std::vector<float> Database::getSpectralDataByPath(const std::string& filePath) 
 // Loudness data storage (ITU-R BS.1770-4)
 bool Database::saveLoudnessByPath(const std::string& filePath, float integrated, float momentary, float shortTerm, float truePeak) {
     if (!m_db) return false;
-    
+
     const char* sql = "UPDATE audio_files SET integrated_lufs = ?, momentary_lufs = ?, short_term_lufs = ?, true_peak_dbtp = ? WHERE file_path = ?";
     sqlite3_stmt* stmt;
-    
+
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         return false;
     }
-    
+
     sqlite3_bind_double(stmt, 1, (double)integrated);
     sqlite3_bind_double(stmt, 2, (double)momentary);
     sqlite3_bind_double(stmt, 3, (double)shortTerm);
     sqlite3_bind_double(stmt, 4, (double)truePeak);
     sqlite3_bind_text(stmt, 5, filePath.c_str(), -1, SQLITE_TRANSIENT);
-    
+
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     return success;
@@ -10388,16 +10985,16 @@ bool Database::saveLoudnessByPath(const std::string& filePath, float integrated,
 
 bool Database::getLoudnessByPath(const std::string& filePath, float& integrated, float& momentary, float& shortTerm, float& truePeak) {
     if (!m_db) return false;
-    
+
     const char* sql = "SELECT integrated_lufs, momentary_lufs, short_term_lufs, true_peak_dbtp FROM audio_files WHERE file_path = ?";
     sqlite3_stmt* stmt;
-    
+
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         return false;
     }
-    
+
     sqlite3_bind_text(stmt, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
-    
+
     bool found = false;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         if (sqlite3_column_type(stmt, 0) != SQLITE_NULL) {
@@ -10408,7 +11005,7 @@ bool Database::getLoudnessByPath(const std::string& filePath, float& integrated,
             found = true;
         }
     }
-    
+
     sqlite3_finalize(stmt);
     return found;
 }
@@ -10691,13 +11288,13 @@ bool Database::saveWaveformDetailByPath(const std::string& filePath,
     if (!m_db || waveform.empty()) return false;
     const bool hasMinWaveform = (minWaveform.size() == waveform.size());
     if (detailChannels <= 0) detailChannels = 1;
-    
+
     // Query only the file ID instead of materializing a full AudioRecord.
     // This reads one int64 rather than hundreds of bytes of row data.
     const char* idSql = "SELECT id FROM audio_files INDEXED BY idx_files_path WHERE file_path = ? LIMIT 1;";
     sqlite3_stmt* idStmt;
     int64_t fileId = -1;
-    
+
     if (sqlite3_prepare_v2(m_db, idSql, -1, &idStmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(idStmt, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(idStmt) == SQLITE_ROW) {
@@ -10705,7 +11302,7 @@ bool Database::saveWaveformDetailByPath(const std::string& filePath,
         }
         sqlite3_finalize(idStmt);
     }
-    
+
     if (fileId > 0) {
         return saveWaveformDetail(fileId, waveform, minWaveform, detailChannels);
     }
@@ -11026,7 +11623,7 @@ int Database::purgeAllMiniWaveform() {
 std::vector<float> Database::getWaveformDetailByPath(const std::string& filePath) {
     std::vector<float> result;
     if (!m_db) return result;
-    
+
     std::string sql = R"(
         SELECT w.waveform_detail
         FROM main.audio_files af INDEXED BY idx_files_path
@@ -11034,13 +11631,13 @@ std::vector<float> Database::getWaveformDetailByPath(const std::string& filePath
         WHERE af.file_path = ?
         LIMIT 1
     )";
-    
+
     // Reuse a pooled statement to avoid repeated prepare cost.
     sqlite3_stmt* stmt = checkoutStmt(sql);
     if (!stmt) return result;
-    
+
     sqlite3_bind_text(stmt, 1, filePath.c_str(), -1, SQLITE_TRANSIENT);
-    
+
     bool trackedLibraryRow = false;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         trackedLibraryRow = true;
@@ -11050,7 +11647,7 @@ std::vector<float> Database::getWaveformDetailByPath(const std::string& filePath
             CopyDetailMaxBlobColumn(stmt, 0, result);
         }
     }
-    
+
     returnStmt(sql, stmt);
     if (trackedLibraryRow) return result;
 
@@ -11482,7 +12079,7 @@ bool Database::clearWaveformCache() {
 std::vector<int64_t> Database::getFilesNeedingWaveformCache(int limit) {
     std::vector<int64_t> result;
     if (!m_db) return result;
-    
+
     // Current mini cache lives in the sidecar. Legacy main-table
     // audio_files.waveform_data may exist from older builds, but list rendering
     // no longer treats it as the authoritative persistent mini cache.
@@ -11563,7 +12160,7 @@ std::vector<int64_t> Database::getFilesNeedingDetailCache(int limit) {
     std::vector<int64_t> result;
     if (!m_db) return result;
     if (getWaveformCacheMode() == WaveformCachePolicy::Mode::MiniOnly) return result;
-    
+
     // Prefer the sidecar cache. "Fill missing waveforms" means restoring the
     // user-visible readable cache, not upgrading every row to the heavier
     // rebuild-only min-envelope/channel metadata shape.
@@ -11581,7 +12178,7 @@ std::vector<int64_t> Database::getFilesNeedingDetailCache(int limit) {
         "ORDER BY af.folder_path COLLATE NOCASE, af.file_name COLLATE NOCASE "
         "LIMIT ?";
     sqlite3_stmt* stmt;
-    
+
     if (sqlite3_prepare_v2(m_db, sqlSidecar.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_int(stmt, 1, limit);
         while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -11590,7 +12187,7 @@ std::vector<int64_t> Database::getFilesNeedingDetailCache(int limit) {
         sqlite3_finalize(stmt);
         return result;
     }
-    
+
     // Fall back to the primary database only.
     const char* sqlFallback =
         "SELECT id FROM audio_files "
@@ -15439,7 +16036,9 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 // stale cache keys without scheduling bulk decode work; first use
                 // extracts and caches on demand.
 
-                backfillWriteGuard.reset();
+                if (IsCoverWallOrderIndexReady(m_db)) {
+                    FlushCoverWallOrderDirty(m_db, 512);
+                }                backfillWriteGuard.reset();
                 if (queueScanMetadataBackfill) {
                     for (int64_t fileId : batchMetadataBackfillIds) {
                         backfillQueue->enqueueFromScan(
@@ -16599,7 +17198,7 @@ std::vector<AudioRecord> Database::getFilesByExactFolder(const std::string& fold
 std::vector<AudioRecord> Database::getFilesByIds(const std::vector<int64_t>& ids) {
     std::vector<AudioRecord> results;
     if (!m_db || ids.empty()) return results;
-    
+
     // Build SQL with IN clause
     std::string sql = std::string("SELECT ") + kRecordColumns + " FROM audio_files WHERE id IN (";
     for (size_t i = 0; i < ids.size(); ++i) {
@@ -16607,17 +17206,17 @@ std::vector<AudioRecord> Database::getFilesByIds(const std::vector<int64_t>& ids
         sql += std::to_string(ids[i]);
     }
     sql += ")";
-    
+
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         m_lastError = sqlite3_errmsg(m_db);
         return results;
     }
-    
+
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         results.push_back(recordFromStatement(stmt));
     }
-    
+
     sqlite3_finalize(stmt);
     return results;
 }
@@ -18096,7 +18695,7 @@ bool Database::attachSidecarDatabases(const std::string& mainDbPath, bool readOn
     if (!Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(mainDbPath)) {
         return false;
     }
-    
+
     m_mainDbPath = mainDbPath;
     m_blobsDbPath = getBlobsDbPath(mainDbPath);
     m_waveformsDbPath = getWaveformsDbPath(mainDbPath);
@@ -18104,7 +18703,7 @@ bool Database::attachSidecarDatabases(const std::string& mainDbPath, bool readOn
         !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(m_waveformsDbPath)) {
         return false;
     }
-    
+
     bool blobsMissing = false;
     bool waveformsMissing = false;
     if (readOnly) {
@@ -18238,7 +18837,7 @@ bool Database::attachSidecarDatabases(const std::string& mainDbPath, bool readOn
     } else {
         sqlite3_finalize(stmt);
     }
-    
+
     // Attach the waveform-data sidecar.
     std::string attachWaveforms = "ATTACH DATABASE ? AS waveforms_db;";
     stmt = nullptr;
@@ -18261,13 +18860,13 @@ bool Database::attachSidecarDatabases(const std::string& mainDbPath, bool readOn
     } else {
         sqlite3_finalize(stmt);
     }
-    
+
     return true;
 }
 
 bool Database::createSidecarTables() {
     if (!m_db) return false;
-    
+
     // Create cover_thumbs table in blobs_db
     const char* createCoverThumbs = R"(
         CREATE TABLE IF NOT EXISTS blobs_db.cover_thumbs (
@@ -18278,7 +18877,7 @@ bool Database::createSidecarTables() {
         );
     )";
     if (!executeSQL(createCoverThumbs)) return false;
-    
+
     // Create waveforms table in waveforms_db
     // 注意：不使用 FOREIGN KEY 约束跨库引用，SQLite ATTACH 数据库不支持跨库 FK
     const char* createWaveforms = R"(
@@ -18445,7 +19044,7 @@ bool Database::createSidecarTables() {
             WriteAppMetaInt(m_db, migKey, 1);
         }
     }
-    
+
     return true;
 }
 
@@ -18559,7 +19158,7 @@ bool Database::migrateFromSingleDatabase(const std::string& mainDbPath) {
 
 int64_t Database::getOrCreateFolderId(const std::string& folderPath) {
     if (!m_db || folderPath.empty()) return 0;
-    
+
     // Create the directories table one statement at a time for SQLite compatibility.
     // NULL parent_id denotes a root and avoids a foreign-key reference to id zero.
     if (!tableExists(m_db, "directories")) {
@@ -18573,7 +19172,7 @@ int64_t Database::getOrCreateFolderId(const std::string& folderPath) {
         if (!executeSQL("CREATE INDEX IF NOT EXISTS idx_dirs_path ON directories(folder_path)")) return 0;
         if (!executeSQL("CREATE INDEX IF NOT EXISTS idx_dirs_parent ON directories(parent_id)")) return 0;
     }
-    
+
     // Try to get existing ID
     const char* selectSql = "SELECT id FROM directories WHERE folder_path = ? LIMIT 1";
     sqlite3_stmt* stmt = nullptr;
@@ -18586,7 +19185,7 @@ int64_t Database::getOrCreateFolderId(const std::string& folderPath) {
         }
     }
     if (stmt) sqlite3_finalize(stmt);
-    
+
     // Create new directory entry
     int64_t parentId = 0;
     try {
@@ -18599,7 +19198,7 @@ int64_t Database::getOrCreateFolderId(const std::string& folderPath) {
     } catch (...) {
         parentId = 0;
     }
-    
+
     const char* insertSql = "INSERT INTO directories (folder_path, parent_id, created_at) VALUES (?, ?, ?)";
     stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, insertSql, -1, &stmt, nullptr) != SQLITE_OK) {
@@ -18611,12 +19210,12 @@ int64_t Database::getOrCreateFolderId(const std::string& folderPath) {
     else
         sqlite3_bind_null(stmt, 2);
     sqlite3_bind_int64(stmt, 3, getCurrentTimestamp());
-    
+
     if (sqlite3_step(stmt) != SQLITE_DONE) {
         sqlite3_finalize(stmt);
         return 0;
     }
-    
+
     int64_t newId = getLastInsertId();
     sqlite3_finalize(stmt);
     return newId;
@@ -18624,13 +19223,13 @@ int64_t Database::getOrCreateFolderId(const std::string& folderPath) {
 
 std::string Database::getFolderPathById(int64_t folderId) {
     if (!m_db || folderId <= 0) return "";
-    
+
     const char* sql = "SELECT folder_path FROM directories WHERE id = ? LIMIT 1";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         return "";
     }
-    
+
     sqlite3_bind_int64(stmt, 1, folderId);
     std::string result;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -18642,13 +19241,13 @@ std::string Database::getFolderPathById(int64_t folderId) {
 
 int64_t Database::getFolderIdByPath(const std::string& folderPath) {
     if (!m_db || folderPath.empty()) return 0;
-    
+
     const char* sql = "SELECT id FROM directories WHERE folder_path = ? LIMIT 1";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         return 0;
     }
-    
+
     sqlite3_bind_text(stmt, 1, folderPath.c_str(), -1, SQLITE_TRANSIENT);
     int64_t result = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -18661,7 +19260,7 @@ int64_t Database::getFolderIdByPath(const std::string& folderPath) {
 std::unordered_map<std::string, int64_t> Database::getFolderIdMap(const std::vector<std::string>& folderPaths) {
     std::unordered_map<std::string, int64_t> result;
     if (!m_db || folderPaths.empty()) return result;
-    
+
     const char* sql = "SELECT folder_path, id FROM directories WHERE folder_path IN (";
     std::string sqlWithParams = sql;
     for (size_t i = 0; i < folderPaths.size(); ++i) {
@@ -18669,16 +19268,16 @@ std::unordered_map<std::string, int64_t> Database::getFolderIdMap(const std::vec
         sqlWithParams += "?";
     }
     sqlWithParams += ")";
-    
+
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sqlWithParams.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         return result;
     }
-    
+
     for (size_t i = 0; i < folderPaths.size(); ++i) {
         sqlite3_bind_text(stmt, (int)(i + 1), folderPaths[i].c_str(), -1, SQLITE_TRANSIENT);
     }
-    
+
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         std::string path = safeGetText(stmt, 0);
         int64_t id = sqlite3_column_int64(stmt, 1);
@@ -18690,11 +19289,11 @@ std::unordered_map<std::string, int64_t> Database::getFolderIdMap(const std::vec
 
 int64_t Database::getFolderFileCountById(int64_t folderId) {
     if (!m_db || folderId <= 0) return 0;
-    
+
     // Get folder path first
     std::string folderPath = getFolderPathById(folderId);
     if (folderPath.empty()) return 0;
-    
+
     // Use existing getFolderFileCount with path
     return getFolderFileCount(folderPath);
 }
@@ -18715,6 +19314,27 @@ static bool MatchesSmallCoverFileListCursor(const Database::CoverWallEntry& entr
     return !afterCursor.empty() && EncodeSmallCoverFileListCursor(entry) == afterCursor;
 }
 
+bool Database::isCoverWallOrderIndexReady() const {
+    return IsCoverWallOrderIndexReady(m_db);
+}
+
+bool Database::flushCoverWallOrderIndexDirty(int maxTiles) {
+    if (!m_db) return false;
+    const bool ok = FlushCoverWallOrderDirty(m_db, maxTiles);
+    if (!ok && m_lastError.empty()) m_lastError = "cover wall order index flush failed";
+    return ok;
+}
+
+bool Database::rebuildCoverWallOrderIndex(int batchSize) {
+    if (!m_db) return false;
+    if (sqlite3_db_readonly(m_db, "main") == 1) {
+        m_lastError = "cover wall order index requires a writable database";
+        return false;
+    }
+    const bool ok = RebuildCoverWallOrderIndexOnConnection(m_db, batchSize);
+    if (!ok && m_lastError.empty()) m_lastError = "cover wall order index rebuild failed";
+    return ok;
+}
 Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(const std::string& afterCursor,
                                                                 int limit,
                                                                 bool followFileListOrder) {
@@ -18730,6 +19350,27 @@ Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(const std::strin
     page.largeLibrary = readiness.largeLibrary;
 
     if (followFileListOrder && page.largeLibrary) {
+        if (IsCoverWallOrderIndexReady(m_db)) {
+            if (sqlite3_db_readonly(m_db, "main") != 1 && CoverWallOrderDirtyCount(m_db) > 0) {
+                FlushCoverWallOrderDirty(m_db, 4096);
+            }
+            if (CoverWallOrderDirtyCount(m_db) == 0) {
+                const auto indexStarted = std::chrono::steady_clock::now();
+                if (LoadCoverWallOrderIndexPage(m_db, afterCursor, limit, &page)) {
+                    PrewarmCoverTileMembershipForWallEntries(this, page.entries);
+                    const auto indexMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - indexStarted).count();
+                    DIAG_ACTION_FMT("Database",
+                                    "GlobalCoverWallPageFileOrderIndex: rows=%d hasMore=%d cursor=%d page_ms=%lld",
+                                    (int)page.entries.size(),
+                                    page.hasMore ? 1 : 0,
+                                    afterCursor.empty() ? 0 : 1,
+                                    (long long)indexMs);
+                    return page;
+                }
+            }
+        }
+
         // Read in the same natural-name order as the unfiltered file list. A
         // cursor identifies the last emitted audio row, so later pages do not
         // stop at the first 50,000 files or revisit earlier cover groups.
@@ -19136,6 +19777,7 @@ std::vector<Database::CoverWallEntry> Database::getGlobalCoverWallEntries() {
     if (results.empty()) {
         int64_t totalFiles = readiness.totalFiles >= 0 ? readiness.totalFiles : getFileCount();
         if (totalFiles > kGlobalCoverWallFallbackMaxFiles) {
+
             DIAG_ACTION("Database", "Global cover wall GROUP BY bypassed for large library. Waiting for background sync.");
             return results;
         }
@@ -20687,18 +21329,18 @@ void Database::watcherRescanWorkerThread() {
 void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirectories) {
     // 停止已有的监听器
     stopFileSystemWatcher();
-    
+
     if (watchDirectories.empty()) return;
-    
+
     m_fileSystemWatcher = new FileSystemWatcher();
-    
+
     // 添加监听目录
     for (const auto& dir : watchDirectories) {
         if (!dir.empty()) {
             m_fileSystemWatcher->addWatchDirectory(dir);
         }
     }
-    
+
     m_fileSystemWatcher->setEventCallback([this](const FileSystemWatcher::FileEvent& event) {
         if (event.type == FileSystemWatcher::EventType::NeedRescan) {
             DIAG_ACTION_FMT("Watcher", "NeedRescan requested for root: %s", event.path.c_str());
@@ -20762,7 +21404,7 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
                 break;
         }
     });
-    
+
     // 启动监听
     m_fileSystemWatcher->start();
 }
@@ -20792,21 +21434,21 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
             m_watcherChangeCallback(WatcherChangeType::Deleted, filePath);
         return;
     }
-    
+
     if (isAdded) {
         // 文件添加：检查是否已存在
         if (fileExists(filePath)) return;
-        
+
         // Read audio properties.
         AudioRecord record;
         record.filePath = filePath;
-        
+
         try {
             fs::path p = Utf8ToPath(filePath);
             record.fileName = PathToUtf8(p.filename());
             record.extension = PathToUtf8(p.extension());
             record.folderPath = PathToUtf8(p.parent_path());
-            
+
             // Read file size and modification time.
             const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
             record.fileSize = fileInfo.sizeAvailable ? fileInfo.sizeBytes : 0;
@@ -20814,13 +21456,13 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
         } catch (...) {
             return; // 文件路径解析失败
         }
-        
+
         readAudioFileInfo(Utf8ToPath(filePath),
                           record.sampleRate,
                           record.channels,
                           record.totalFrames,
                           record.durationSeconds);
-        
+
         // Read metadata tags.
         AudioMetadata metadata;
         if (MetadataReader::readMetadata(filePath, metadata)) {
@@ -20859,7 +21501,7 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
             m_watcherChangeCallback(WatcherChangeType::Added, filePath);
         return;
     }
-    
+
     if (isModified) {
         // 文件修改：更新元数据
         AudioRecord existing = getFileByPath(filePath);
@@ -20868,7 +21510,7 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
             handleFileSystemEvent(filePath, true, false, false);
             return;
         }
-        
+
         // Check whether the modification time actually changed.
         try {
             const int64_t newMtime =
@@ -20882,13 +21524,13 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
                 ? modifiedFileInfo.sizeBytes
                 : std::numeric_limits<uint64_t>::max();
         } catch (...) {}
-        
+
         readAudioFileInfo(Utf8ToPath(filePath),
                           existing.sampleRate,
                           existing.channels,
                           existing.totalFrames,
                           existing.durationSeconds);
-        
+
         // Re-read metadata tags.
         AudioMetadata metadata;
         if (MetadataReader::readMetadata(filePath, metadata)) {
@@ -20905,7 +21547,7 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
             else if (!metadata.comment.empty()) existing.keywords = metadata.comment;
             PopulateExtendedMeta(existing.meta, metadata);
         }
-        
+
         existing.lastIndexed = (int64_t)std::time(nullptr);
         updateFile(existing);
         if (m_watcherChangeCallback)

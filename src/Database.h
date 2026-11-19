@@ -1149,6 +1149,9 @@ public:
     };
     CoverWallPage getGlobalCoverWallEntriesPage(const std::string& afterCursor = {}, int limit = 512,
                                                 bool followFileListOrder = false);
+    bool rebuildCoverWallOrderIndex(int batchSize = 20000);
+    bool flushCoverWallOrderIndexDirty(int maxTiles = 4096);
+    bool isCoverWallOrderIndexReady() const;
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
     std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);
