@@ -49,11 +49,11 @@ constexpr int kLandingEndMs = 245;
 constexpr float kLandingDip = 8.0f;
 
 constexpr ARGB kSurfaceFill = 0xFF192737;
-constexpr ARGB kSurfaceBorder = 0xFF6F98C1;
+constexpr ARGB kSurfaceBorder = 0xFF3C546E;
 constexpr ARGB kStackFirstFill = 0xFF1B2938;
-constexpr ARGB kStackFirstBorder = 0xFF627C99;
+constexpr ARGB kStackFirstBorder = 0xFF3A4E62;
 constexpr ARGB kStackSecondFill = 0xFF172332;
-constexpr ARGB kStackSecondBorder = 0xFF4F6780;
+constexpr ARGB kStackSecondBorder = 0xFF31414F;
 constexpr ARGB kWaveBar = 0xFFB7D4F0;
 constexpr ARGB kWaveCenter = 0xFF59718A;
 constexpr ARGB kNameText = 0xFFE2EDF8;
