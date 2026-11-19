@@ -35638,7 +35638,7 @@ void RenderUI(AppState& state) {
             menuBarRect.Min,
             menuBarRect.Max,
             ImGui::GetColorU32(barFill));
-        // 默认字号保留签字版黑白字标；较大字号沿用 QA 的品牌素材。窄窗口让位给菜单项。
+        // 品牌字标固定橙色，系统字号只影响字标显示尺寸，不参与选图。窄窗口让位给菜单项。
         const ImGuiStyle& menuStyle = ImGui::GetStyle();
         float labelWidth = 0.0f;
         for (const char* title : menuTitles)
@@ -35650,29 +35650,9 @@ void RenderUI(AppState& state) {
         const float brandLimitX = menuRight - preferredMenuWidth - brandTrailing;
         float menuStartOffset = brandStartX - menuWindow->Pos.x;
         if (brandLimitX > brandStartX) {
-            aura::ui::PackagedAssetTex approvedWordmark;
-            if (baseMenuFontPx == kChromeFontPx) {
-                const float barLuma = barFill.x * 0.299f + barFill.y * 0.587f + barFill.z * 0.114f;
-                approvedWordmark = aura::ui::LoadPackagedAsset(barLuma >= 0.5f
-                    ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
-                    : "assets/logos/brand/harken-search-menu-wordmark-white.png");
-            }
-            float brandRightX = brandStartX;
-            if (approvedWordmark.glId != 0 && approvedWordmark.w > 0 && approvedWordmark.h > 0) {
-                const float artHeight = std::clamp(menuBarRect.GetHeight() * 0.58f, 12.0f, 20.0f);
-                const float artWidth = artHeight * (static_cast<float>(approvedWordmark.w) / approvedWordmark.h);
-                if (brandStartX + artWidth <= brandLimitX) {
-                    const float centerY = menuBarRect.GetCenter().y;
-                    brandRightX = brandStartX + artWidth;
-                    menuWindow->DrawList->AddImage((ImTextureID)(intptr_t)approvedWordmark.glId,
-                        ImVec2(brandStartX, centerY - artHeight * 0.5f),
-                        ImVec2(brandRightX, centerY + artHeight * 0.5f));
-                }
-            } else {
-                brandRightX = aura::ui::DrawMenuBarBrandWordmark(
-                    brandStartX, menuBarRect.Min.y, brandLimitX, menuBarRect.Max.y,
-                    GetUIFontEmphasis(), L(Main_AppNameBrand));
-            }
+            const float brandRightX = aura::ui::DrawMenuBarBrandWordmark(
+                brandStartX, menuBarRect.Min.y, brandLimitX, menuBarRect.Max.y,
+                GetUIFontEmphasis(), L(Main_AppNameBrand));
             if (brandRightX > brandStartX)
                 menuStartOffset = std::ceil((brandRightX - menuWindow->Pos.x) + brandTrailing);
         }
