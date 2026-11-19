@@ -42,8 +42,9 @@ class SearchHitInlineHighlightSourceContractTests(unittest.TestCase):
         self.assertIn("std::lower_bound", merge_header)
         self.assertIn("span.first < value", merge_header)
 
-        draw_start = main.index("DrawResultRowFilename")
-        draw = main[draw_start : draw_start + 3500]
+        draw_start = main.index("static void DrawResultRowFilename(")
+        draw_end = main.index("static const char* GetSearchMatchSourceLabel", draw_start)
+        draw = main[draw_start:draw_end]
         self.assertIn("AddRectFilled", draw)
         self.assertIn("0.38f", draw)
         self.assertIn("wrapFileName", block)

@@ -148,6 +148,7 @@
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/ResultsPanelLayout.h"
+#include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
@@ -9316,11 +9317,25 @@ static bool FindAsciiCaseInsensitiveSpan(const std::string& text, const std::str
     return false;
 }
 
+static const char* NextUtf8Codepoint(const char* pos, const char* end) {
+    if (pos >= end) return end;
+    ++pos;
+    while (pos < end && (static_cast<unsigned char>(*pos) & 0xC0) == 0x80) ++pos;
+    return pos;
+}
+
+static const char* PreviousUtf8Codepoint(const char* begin, const char* pos) {
+    if (pos <= begin) return begin;
+    --pos;
+    while (pos > begin && (static_cast<unsigned char>(*pos) & 0xC0) == 0x80) --pos;
+    return pos;
+}
+
 static void DrawResultRowFilename(const std::string& displayName,
                                   const std::vector<std::pair<size_t, size_t>>& highlightSpans,
                                   const ImVec2& origin,
                                   float availW,
-                                  float rowHeight,
+                                  float drawableHeight,
                                   bool wrapFileName) {
     if (displayName.empty()) return;
 
@@ -9330,37 +9345,44 @@ static void DrawResultRowFilename(const std::string& displayName,
     const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
     const ImVec4 selectionColor = ThemeColors::current().resultsSelection;
     const ImU32 highlightBgColor = ImGui::GetColorU32(ImVec4(selectionColor.x, selectionColor.y, selectionColor.z, 0.38f));
-    const float wrapW = wrapFileName
+    const bool wrap = wrapFileName && availW > 0.0f;
+    const float wrapW = wrap
         ? ((availW > 12.0f) ? (availW - 6.0f) : availW)
         : 0.0f;
-    const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+    // Wrapped draw-list text advances by one font height per line. The result
+    // row is already raised to three whole lines when names wrap, so this only
+    // bounds names that need more lines than the row can show.
+    const float lineAdvance = ImGui::GetTextLineHeight();
     const float highlightPadX = 2.0f;
     const float highlightPadY = 1.0f;
+    const int maxLines = wrap
+        ? harken::results::ResolveWrappedFilenameLineCount(drawableHeight, lineAdvance)
+        : 1;
+    const char* const ellipsis = u8"\u2026";
+    const float ellipsisWidth = ImGui::CalcTextSize(ellipsis).x;
 
-    drawList->PushClipRect(origin, ImVec2(origin.x + availW, origin.y + rowHeight), true);
-
-    if (highlightSpans.empty()) {
-        if (wrapFileName) {
-            drawList->AddText(font, fontSize, origin, textColor, displayName.c_str(), nullptr, wrapW);
-        } else {
-            drawList->AddText(font, fontSize, origin, textColor, displayName.c_str());
-        }
-        drawList->PopClipRect();
-        return;
-    }
+    drawList->PushClipRect(origin, ImVec2(origin.x + availW, origin.y + drawableHeight), true);
 
     const char* textBegin = displayName.c_str();
     const char* textEnd = textBegin + displayName.size();
     const char* lineStart = textBegin;
     float y = origin.y;
-    const float wrapLimit = wrapFileName ? wrapW : 1.0e8f;
 
-    while (lineStart < textEnd) {
-        const char* lineEnd = wrapFileName
-            ? font->CalcWordWrapPosition(fontSize, lineStart, textEnd, wrapLimit)
+    for (int lineIndex = 0; lineStart < textEnd && lineIndex < maxLines; ++lineIndex) {
+        const bool lastDrawnLine = (lineIndex + 1 == maxLines);
+        const char* lineEnd = wrap
+            ? font->CalcWordWrapPosition(fontSize, lineStart, textEnd, wrapW)
             : textEnd;
-        if (lineEnd == lineStart) {
-            lineEnd = lineStart + 1;
+        if (lineEnd <= lineStart) {
+            lineEnd = NextUtf8Codepoint(lineStart, textEnd);
+        }
+        const bool truncated = lastDrawnLine && lineEnd < textEnd;
+        if (truncated) {
+            // Keep whole glyphs and reserve room for the closing ellipsis.
+            while (lineEnd > lineStart &&
+                   ImGui::CalcTextSize(lineStart, lineEnd).x + ellipsisWidth > wrapW) {
+                lineEnd = PreviousUtf8Codepoint(lineStart, lineEnd);
+            }
         }
 
         const size_t lineByteStart = static_cast<size_t>(lineStart - textBegin);
@@ -9402,8 +9424,15 @@ static void DrawResultRowFilename(const std::string& displayName,
             drawList->AddText(font, fontSize, ImVec2(x, y), textColor, segBegin, segEnd);
         }
 
-        if (!wrapFileName) break;
-        y += lineHeight;
+        if (truncated) {
+            drawList->AddText(font, fontSize,
+                              ImVec2(origin.x + ImGui::CalcTextSize(lineStart, lineEnd).x, y),
+                              textColor, ellipsis);
+            break;
+        }
+        if (!wrap) break;
+
+        y += lineAdvance;
         lineStart = lineEnd;
         if (lineStart < textEnd && *lineStart == '\n') {
             ++lineStart;
@@ -42917,7 +42946,9 @@ void RenderUI(AppState& state) {
                 }
             } else {
                 // --- Database mode ---
-                // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动
+                // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动。
+                // 名称换行时文字用满整行高度（含上下留白），三行文字在设定行高内完整显示，
+                // 行高本身不因换行额外增加。
                 const float fixedRowHeight = floorf(targetRowHeight) - listCellPadY * 2.0f;
                 const float actualRowHeight = fixedRowHeight + listCellPadY * 2.0f; // Row height including cell padding.
 
@@ -43093,7 +43124,12 @@ void RenderUI(AppState& state) {
                     const float nameLineH = ImGui::GetTextLineHeight();
                     const bool wrapFileName = fixedRowHeight >= nameLineH * 2.0f + 2.0f;
                     const float nameColAvailW = ImGui::GetContentRegionAvail().x;
-                    const ImVec2 nameTextOrigin = ImGui::GetCursorScreenPos();
+                    const ImVec2 nameCellOrigin = ImGui::GetCursorScreenPos();
+                    // Wrapped names start at the row band top (cell padding
+                    // included) so three whole lines sit inside the configured
+                    // row height; single-line rows keep the content origin.
+                    const ImVec2 nameTextOrigin(nameCellOrigin.x,
+                        wrapFileName ? nameCellOrigin.y - listCellPadY : nameCellOrigin.y);
                     const std::string safeLabel = "##RowSelect";
 
                     // 因为 ImGui Table 会在内容上下各加 CellPadding.y，
@@ -43120,7 +43156,7 @@ void RenderUI(AppState& state) {
                             emptySpans,
                             nameTextOrigin,
                             nameColAvailW,
-                            fixedRowHeight,
+                            wrapFileName ? actualRowHeight : fixedRowHeight,
                             wrapFileName);
 #if ARIS_PREVIEW_ISOLATION
                         // Observe the font bound at the actual filename draw site.
