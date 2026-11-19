@@ -329,8 +329,10 @@ def main(args: argparse.Namespace) -> int:
         # The scrolled view can place a row directly against the next row's
         # content, which the pixel probe cannot separate; scrolling is checked
         # visually from its screenshot while the top and narrow views are gated.
-        complete = all(row['complete_lines'] for row in report['row_analysis']
-                       if row['label'] in ('top', 'narrow'))
+        checked = [row for row in report['row_analysis'] if row['label'] in ('top', 'narrow')]
+        complete = (len(checked) >= 2
+                    and all(row['line_bands'] for row in checked)
+                    and all(row['complete_lines'] for row in checked))
         report['checks'].append({
             'case': 'text ink stays inside the resolved line block',
             'expected_capacity_lines': expected_lines, 'expected_line_advance': expected_advance,
