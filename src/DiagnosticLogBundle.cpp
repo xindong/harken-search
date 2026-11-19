@@ -104,6 +104,18 @@ constexpr EventRule kEvents[]{
     {Type::Performance, "Playlist", "OpenPlaylistTotal", "OpenPlaylistTotal"},
     {Type::Performance, "Playlist", "OpenLibraryAbandoned", "OpenLibraryAbandoned"},
     {Type::Performance, "Playlist", "OpenPlaylistAbandoned", "OpenPlaylistAbandoned"},
+    {Type::Performance, "TabSwitch", "TabSwitchBegin", "TabSwitchBegin"},
+    {Type::Performance, "TabSwitch", "TabSwitchPark", "TabSwitchPark"},
+    {Type::Performance, "TabSwitch", "TabSwitchRestore", "TabSwitchRestore"},
+    {Type::Performance, "TabSwitch", "TabSwitchGc", "TabSwitchGc"},
+    {Type::Performance, "TabSwitch", "TabSwitchCoverWall", "TabSwitchCoverWall"},
+    {Type::Performance, "TabSwitch", "TabSwitchTotal", "TabSwitchTotal"},
+    {Type::Performance, "TabSwitch", "GcWaveform", "GcWaveform"},
+    {Type::Performance, "TabSwitch", "GcCoverCache", "GcCoverCache"},
+    {Type::Performance, "TabSwitch", "GcTabUnload", "GcTabUnload"},
+    {Type::Performance, "TabSwitch", "GcShrink", "GcShrink"},
+    {Type::Performance, "TabSwitch", "BrowserFilterBuild", "BrowserFilterBuild"},
+    {Type::Performance, "TabSwitch", "BrowserSortBuild", "BrowserSortBuild"},
     {Type::Action, "UI", "Click.Left ", "UiClickLeft", true},
     {Type::Action, "UI", "Click.Right ", "UiClickRight", true},
     {Type::Action, "UI", "Browser All-Select Executed", "BrowserAllSelect"},
@@ -115,7 +127,7 @@ constexpr EventRule kEvents[]{
 
 constexpr const char* kCategories[]{"Search", "Scan", "Database", "Waveform",
                                     "Audio", "Memory", "Cover", "MiniWave", "DAW",
-                                    "AutoUpdate", "Playlist",
+                                    "AutoUpdate", "Playlist", "TabSwitch",
                                     "UI", "Frame", "Pointer", "WebView"};
 
 template <size_t Size>
