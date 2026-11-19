@@ -2942,6 +2942,10 @@ struct AppState {
     std::string browserSortPath;
     int browserSortEntryCount = 0;
     std::vector<int> browserSortedIndices;
+    // Cached display rows for the file browser quick filter. Rebuilding these
+    // every frame copies every entry name and stalls on huge folders.
+    std::vector<int> browserFilteredRows;
+    uint64_t browserFilteredRowsKey = 0;
 
     // Browser scope & bridging state
     char browserFilterBuffer[256] = "";                // in-view quick filter

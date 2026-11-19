@@ -7539,6 +7539,26 @@ static bool BrowserEntryMatchesQuery(
     return true;
 }
 
+static uint64_t BrowserFilterKey(const AppState& state,
+                                const std::vector<FileEntry>& entries,
+                                const std::vector<std::string>& terms) {
+    uint64_t hash = 1469598103934665603ull;
+    const auto mix = [&hash](uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ull;
+    };
+    mix((uint64_t)(uintptr_t)entries.data());
+    mix((uint64_t)entries.size());
+    for (const unsigned char ch : state.fileBrowser.getCurrentPath()) mix(ch);
+    mix((uint64_t)state.browserSortColumn);
+    mix(state.browserSortAscending ? 1ull : 0ull);
+    for (const auto& term : terms) {
+        for (const unsigned char ch : term) mix(ch);
+        mix(0);
+    }
+    return hash;
+}
+
 static void RebuildBrowserSortedIndices(AppState& state, const std::vector<FileEntry>& entries) {
     if (state.browserSortPath != state.fileBrowser.getCurrentPath()) {
         state.browserSelectedIndicesSet.clear();
@@ -10944,6 +10964,16 @@ void AppState::performGlobalMemoryGC() {
     double startTime = ImGui::GetTime();
     const double kInactiveTabUnloadSec = 600.0;  // 10 分钟未激活则卸载该标签页数据
 
+#if AURA_BUILD_DIAGNOSTICS
+    auto gcStageStart = std::chrono::steady_clock::now();
+    const auto logGcStage = [&](const char* stage) {
+        const auto stageEnd = std::chrono::steady_clock::now();
+        DiagnosticsLogger::instance().logPerformance(
+            "TabSwitch", stage,
+            std::chrono::duration<double, std::milli>(stageEnd - gcStageStart).count());
+        gcStageStart = stageEnd;
+    };
+#endif
     // 1. 清理过期的波形缓存
     // 波形缓存按 filePath 索引，跨 Tab 共用；切换 Tab 时不应无脑清空。
     // 有 memoryBudget 时按预算 LRU 驱逐；无 memoryBudget 时才退化为核清。
@@ -10965,8 +10995,14 @@ void AppState::performGlobalMemoryGC() {
     waveformNormalPending.clear();
     waveformPendingSet.clear();
 
+#if AURA_BUILD_DIAGNOSTICS
+    logGcStage("GcWaveform");
+#endif
     // 2. 清理封面纹理缓存（非可见部分的 GPU 资源）
     CoverModule::ClearAllCoverCaches();
+#if AURA_BUILD_DIAGNOSTICS
+    logGcStage("GcCoverCache");
+#endif
 
     // 3. 非活动标签页数据卸载：只保留筛选条件，清空 searchResults，切回时自动重跑查询
     for (size_t i = 0; i < listTabs.size(); i++) {
@@ -10986,10 +11022,16 @@ void AppState::performGlobalMemoryGC() {
         }
     }
 
+#if AURA_BUILD_DIAGNOSTICS
+    logGcStage("GcTabUnload");
+#endif
     // 4. 释放当前活动容器预留空间 (关键：shrink_to_fit 才会把内存还给系统)
     searchResults.shrink_to_fit();
     waveformUrgentPending.shrink_to_fit();
     waveformNormalPending.shrink_to_fit();
+#if AURA_BUILD_DIAGNOSTICS
+    logGcStage("GcShrink");
+#endif
 
     lastGCPerformanceTime = ImGui::GetTime() - startTime;
     DIAG_SYSTEM_FMT("Memory", "Global GC completed in %.3fs", lastGCPerformanceTime);
@@ -41760,33 +41802,75 @@ void RenderUI(AppState& state) {
             if (state.viewMode == ViewMode::Browser) {
                 // File system browser — use scope-aware active list
                 const auto& entries = state.fileBrowser.activeEntries();
-                if (browserSortDirty ||
-                    state.browserSortPath != state.fileBrowser.getCurrentPath() ||
-                    state.browserSortEntryCount != (int)entries.size() ||
-                    (int)state.browserSortedIndices.size() != (int)entries.size()) {
+                // Do not re-sort while the directory scan is still appending:
+                // on the H: root every new batch would trigger a full O(n log n)
+                // sort. The count check below rebuilds once the scan settles.
+                const bool browserScanInProgress = state.fileBrowser.isDirScanInProgress();
+                if (!browserScanInProgress &&
+                    (browserSortDirty ||
+                     state.browserSortPath != state.fileBrowser.getCurrentPath() ||
+                     state.browserSortEntryCount != (int)entries.size() ||
+                     (int)state.browserSortedIndices.size() != (int)entries.size())) {
+#if AURA_BUILD_DIAGNOSTICS
+                    const auto browserSortStart = std::chrono::steady_clock::now();
+#endif
                     RebuildBrowserSortedIndices(state, entries);
+#if AURA_BUILD_DIAGNOSTICS
+                    DiagnosticsLogger::instance().logPerformance(
+                        "TabSwitch", "BrowserSortBuild",
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - browserSortStart).count());
+#endif
                 }
                 const auto& sortedIndices = state.browserSortedIndices;
                 // Build search terms from browser filter buffer (multi-word, space-separated)
                 const std::vector<std::string> browserSearchTerms =
                     SplitBrowserQuery(state.browserFilterBuffer);
 
-                // Build filtered display list
-                std::vector<int> filteredRows;
-                filteredRows.reserve(entries.size());
-                for (int si = 0; si < (int)entries.size(); ++si) {
-                    int ei = sortedIndices.empty() ? si : sortedIndices[si];
-                    if (!browserSearchTerms.empty()) {
-                        const auto& fe = entries[ei];
-                        std::string nameLower = fe.name;
-                        for (char& c : nameLower) c = (char)std::tolower((unsigned char)c);
-                        std::string relLower = fe.relativePath;
-                        for (char& c : relLower) c = (char)std::tolower((unsigned char)c);
-                        if (!BrowserEntryMatchesQuery(nameLower, relLower, browserSearchTerms))
-                            continue;
+                // Build the filtered display list once per input change.
+                // The H: root can hold hundreds of thousands of entries, so a
+                // per-frame rebuild copies every name and stalls the UI for
+                // seconds. With no filter the sorted index is already the list.
+                std::vector<int> filteredRowsFallback;
+                const std::vector<int>* filteredRowsPtr = nullptr;
+                if (browserSearchTerms.empty()) {
+                    if (sortedIndices.size() == entries.size()) {
+                        filteredRowsPtr = &sortedIndices;
+                    } else {
+                        filteredRowsFallback.resize(entries.size());
+                        for (int i = 0; i < (int)entries.size(); ++i) filteredRowsFallback[i] = i;
+                        filteredRowsPtr = &filteredRowsFallback;
                     }
-                    filteredRows.push_back(ei);
+                } else {
+                    const uint64_t filterKey = BrowserFilterKey(state, entries, browserSearchTerms);
+                    if (state.browserFilteredRowsKey != filterKey) {
+#if AURA_BUILD_DIAGNOSTICS
+                        const auto browserFilterStart = std::chrono::steady_clock::now();
+#endif
+                        auto& rows = state.browserFilteredRows;
+                        rows.clear();
+                        rows.reserve(entries.size());
+                        for (int si = 0; si < (int)entries.size(); ++si) {
+                            int ei = sortedIndices.empty() ? si : sortedIndices[si];
+                            const auto& fe = entries[ei];
+                            std::string nameLower = fe.name;
+                            for (char& c : nameLower) c = (char)std::tolower((unsigned char)c);
+                            std::string relLower = fe.relativePath;
+                            for (char& c : relLower) c = (char)std::tolower((unsigned char)c);
+                            if (BrowserEntryMatchesQuery(nameLower, relLower, browserSearchTerms))
+                                rows.push_back(ei);
+                        }
+                        state.browserFilteredRowsKey = filterKey;
+#if AURA_BUILD_DIAGNOSTICS
+                        DiagnosticsLogger::instance().logPerformance(
+                            "TabSwitch", "BrowserFilterBuild",
+                            std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - browserFilterStart).count());
+#endif
+                    }
+                    filteredRowsPtr = &state.browserFilteredRows;
                 }
+                const auto& filteredRows = *filteredRowsPtr;
 
                 if (!ImGui::GetIO().WantTextInput &&
                     !ImGui::GetIO().KeyCtrl &&
