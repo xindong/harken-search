@@ -6976,7 +6976,10 @@ static void PollQaCommandFile(AppState& state) {
                 state.scanCompletionPending.load(), state.scanStopDisposition.load(), state.scanFatalFailure.load(), state.scanErrorCount.load(), cleanup});
             const char* surfaces[] = {"setup", "progress", "result"};
             const char* phases[] = {"setup", "counting", "ingesting", "waveforms", "finalizing", "saving", "revoking",
-                "completed", "partial", "paused", "cancelled", "empty", "failed"};
+                "completed", "partial", "paused", "cancelled", "empty", "failed", "cancelling_keeping_committed"};
+            static_assert(static_cast<int>(HarkenSearch::ScanDialogPhase::CancellingKeepingCommitted) + 1 ==
+                              static_cast<int>(sizeof(phases) / sizeof(phases[0])),
+                          "phase names must cover every ScanDialogPhase value");
             auto windows = nlohmann::json::array();
             for (const auto* window : ImGui::GetCurrentContext()->Windows) {
                 if (!window->WasActive || (std::strstr(window->Name, "Scan") == nullptr && std::strcmp(window->Name, L(Dlg_ScanFolder)) != 0)) continue;
