@@ -148,6 +148,7 @@
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/ResultsPanelLayout.h"
+#include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
 #include "CoverWallPageResultBuilder.h"
@@ -9316,11 +9317,25 @@ static bool FindAsciiCaseInsensitiveSpan(const std::string& text, const std::str
     return false;
 }
 
+static const char* NextUtf8Codepoint(const char* pos, const char* end) {
+    if (pos >= end) return end;
+    ++pos;
+    while (pos < end && (static_cast<unsigned char>(*pos) & 0xC0) == 0x80) ++pos;
+    return pos;
+}
+
+static const char* PreviousUtf8Codepoint(const char* begin, const char* pos) {
+    if (pos <= begin) return begin;
+    --pos;
+    while (pos > begin && (static_cast<unsigned char>(*pos) & 0xC0) == 0x80) --pos;
+    return pos;
+}
+
 static void DrawResultRowFilename(const std::string& displayName,
                                   const std::vector<std::pair<size_t, size_t>>& highlightSpans,
                                   const ImVec2& origin,
                                   float availW,
-                                  float rowHeight,
+                                  float drawableHeight,
                                   bool wrapFileName) {
     if (displayName.empty()) return;
 
@@ -9330,37 +9345,46 @@ static void DrawResultRowFilename(const std::string& displayName,
     const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
     const ImVec4 selectionColor = ThemeColors::current().resultsSelection;
     const ImU32 highlightBgColor = ImGui::GetColorU32(ImVec4(selectionColor.x, selectionColor.y, selectionColor.z, 0.38f));
-    const float wrapW = wrapFileName
+    const bool wrap = wrapFileName && availW > 0.0f;
+    const float wrapW = wrap
         ? ((availW > 12.0f) ? (availW - 6.0f) : availW)
         : 0.0f;
-    const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+    // Wrapped draw-list text advances by one font height per line. The layout
+    // keeps whole lines inside the row band so the row boundary never cuts
+    // through a line of text.
+    const float naturalLineAdvance = ImGui::GetTextLineHeight();
     const float highlightPadX = 2.0f;
     const float highlightPadY = 1.0f;
+    const harken::results::WrappedFilenameLayout filenameLayout = wrap
+        ? harken::results::ResolveWrappedFilenameLayout(drawableHeight, naturalLineAdvance)
+        : harken::results::WrappedFilenameLayout{1, naturalLineAdvance};
+    const int maxLines = filenameLayout.lines;
+    const float lineAdvance = filenameLayout.lineAdvance;
+    const char* const ellipsis = u8"\u2026";
+    const float ellipsisWidth = ImGui::CalcTextSize(ellipsis).x;
 
-    drawList->PushClipRect(origin, ImVec2(origin.x + availW, origin.y + rowHeight), true);
-
-    if (highlightSpans.empty()) {
-        if (wrapFileName) {
-            drawList->AddText(font, fontSize, origin, textColor, displayName.c_str(), nullptr, wrapW);
-        } else {
-            drawList->AddText(font, fontSize, origin, textColor, displayName.c_str());
-        }
-        drawList->PopClipRect();
-        return;
-    }
+    drawList->PushClipRect(origin, ImVec2(origin.x + availW, origin.y + drawableHeight), true);
 
     const char* textBegin = displayName.c_str();
     const char* textEnd = textBegin + displayName.size();
     const char* lineStart = textBegin;
     float y = origin.y;
-    const float wrapLimit = wrapFileName ? wrapW : 1.0e8f;
 
-    while (lineStart < textEnd) {
-        const char* lineEnd = wrapFileName
-            ? font->CalcWordWrapPosition(fontSize, lineStart, textEnd, wrapLimit)
+    for (int lineIndex = 0; lineStart < textEnd && lineIndex < maxLines; ++lineIndex) {
+        const bool lastDrawnLine = (lineIndex + 1 == maxLines);
+        const char* lineEnd = wrap
+            ? font->CalcWordWrapPosition(fontSize, lineStart, textEnd, wrapW)
             : textEnd;
-        if (lineEnd == lineStart) {
-            lineEnd = lineStart + 1;
+        if (lineEnd <= lineStart) {
+            lineEnd = NextUtf8Codepoint(lineStart, textEnd);
+        }
+        const bool truncated = lastDrawnLine && lineEnd < textEnd;
+        if (truncated) {
+            // Keep whole glyphs and reserve room for the closing ellipsis.
+            while (lineEnd > lineStart &&
+                   ImGui::CalcTextSize(lineStart, lineEnd).x + ellipsisWidth > wrapW) {
+                lineEnd = PreviousUtf8Codepoint(lineStart, lineEnd);
+            }
         }
 
         const size_t lineByteStart = static_cast<size_t>(lineStart - textBegin);
@@ -9402,8 +9426,15 @@ static void DrawResultRowFilename(const std::string& displayName,
             drawList->AddText(font, fontSize, ImVec2(x, y), textColor, segBegin, segEnd);
         }
 
-        if (!wrapFileName) break;
-        y += lineHeight;
+        if (truncated) {
+            drawList->AddText(font, fontSize,
+                              ImVec2(origin.x + ImGui::CalcTextSize(lineStart, lineEnd).x, y),
+                              textColor, ellipsis);
+            break;
+        }
+        if (!wrap) break;
+
+        y += lineAdvance;
         lineStart = lineEnd;
         if (lineStart < textEnd && *lineStart == '\n') {
             ++lineStart;
@@ -43132,7 +43163,7 @@ void RenderUI(AppState& state) {
                             emptySpans,
                             nameTextOrigin,
                             nameColAvailW,
-                            fixedRowHeight,
+                            fixedRowHeight + listCellPadY,
                             wrapFileName);
 #if ARIS_PREVIEW_ISOLATION
                         // Observe the font bound at the actual filename draw site.

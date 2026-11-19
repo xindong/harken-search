@@ -6060,6 +6060,22 @@ endif()
 add_test(NAME TestMiniWaveformPresentation COMMAND TestMiniWaveformPresentation)
 aura_set_test_labels(TestMiniWaveformPresentation core)
 
+add_executable(TestResultRowFilenameLayout EXCLUDE_FROM_ALL
+    tests/test_result_row_filename_layout.cpp
+)
+target_include_directories(TestResultRowFilenameLayout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+if(MSVC)
+    target_compile_options(TestResultRowFilenameLayout PRIVATE /W3 /utf-8)
+    set_target_properties(TestResultRowFilenameLayout PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestResultRowFilenameLayout COMMAND TestResultRowFilenameLayout)
+aura_set_test_labels(TestResultRowFilenameLayout core)
+
 add_executable(TestMiniRenderMath EXCLUDE_FROM_ALL
     tests/test_mini_render_math.cpp
 )
