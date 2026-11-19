@@ -102,6 +102,8 @@ constexpr EventRule kEvents[]{
     {Type::Performance, "Playlist", "OpenPlaylistApply", "OpenPlaylistApply"},
     {Type::Performance, "Playlist", "OpenPlaylistFirstFrame", "OpenPlaylistFirstFrame"},
     {Type::Performance, "Playlist", "OpenPlaylistTotal", "OpenPlaylistTotal"},
+    {Type::Performance, "Playlist", "OpenLibraryAbandoned", "OpenLibraryAbandoned"},
+    {Type::Performance, "Playlist", "OpenPlaylistAbandoned", "OpenPlaylistAbandoned"},
     {Type::Action, "UI", "Click.Left ", "UiClickLeft", true},
     {Type::Action, "UI", "Click.Right ", "UiClickRight", true},
     {Type::Action, "UI", "Browser All-Select Executed", "BrowserAllSelect"},
