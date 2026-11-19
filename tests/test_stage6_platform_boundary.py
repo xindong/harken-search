@@ -6256,13 +6256,12 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(2, body.count("throw std::runtime_error("))
         self.assertNotIn("std::filesystem::create_directories", body)
 
-    def test_windows_main_startup_avatar_reads_use_filesystem_pal(self) -> None:
+    def test_windows_main_startup_binary_reads_use_filesystem_pal(self) -> None:
         source = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
-        for helper in ("ReadStartupAvatarSvgFile", "ReadBinaryFile"):
-            body = source.split(f"static bool {helper}", 1)[1].split("\n}", 1)[0]
-            self.assertIn("Platform::FileSystem::ReadFileBytes(pathUtf8)", body)
-            self.assertNotIn("std::ifstream", body)
-            self.assertNotIn("Utf8ToWide(pathUtf8)", body)
+        body = source.split("static bool ReadBinaryFile", 1)[1].split("\n}", 1)[0]
+        self.assertIn("Platform::FileSystem::ReadFileBytes(pathUtf8)", body)
+        self.assertNotIn("std::ifstream", body)
+        self.assertNotIn("Utf8ToWide(pathUtf8)", body)
 
     def test_windows_main_drops_unused_binary_writer(self) -> None:
         source = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
