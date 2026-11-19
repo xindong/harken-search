@@ -204,6 +204,13 @@ bool BeginDialog(const char* title, bool* open,
                  float width = 480.0f, float height = 0.0f);
 void EndDialog();
 
+// macOS-style alert panel: one rounded surface, no title bar and no rule
+// between title and body. The title is drawn inside the panel, so pass the
+// same popup id to ImGui::OpenPopup. Pair with EndAlertDialog() when true.
+bool BeginAlertDialog(const char* id, const char* title,
+                      ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize);
+void EndAlertDialog();
+
 // Panel / SectionHeader / Divider (Task 14)
 
 enum class PanelVariant { Peer, Surface, Inset };

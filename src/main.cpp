@@ -30472,17 +30472,15 @@ void RenderUI(AppState& state) {
     }
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
-    if (BeginTransientScrollbarPopupModal(L(Dlg_CloseSM), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_CloseSM), L(Dlg_CloseSM))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
-        ImGui::TextWrapped("%s", L(CloseDlg_Question));
-        ImGui::Separator();
         ImGui::RadioButton(L(CloseDlg_Minimize), &state.closeChoiceSelection, 1);
         ImGui::RadioButton(L(CloseDlg_Exit), &state.closeChoiceSelection, 2);
         ImGui::Spacing();
         ImGui::Checkbox(L(CloseDlg_Remember), &state.closeChoiceRemember);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             int sel = std::clamp(state.closeChoiceSelection, 1, 2);
             if (state.closeChoiceRemember) {
@@ -30507,7 +30505,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     ImGui::PopStyleColor(2);
 
@@ -30597,7 +30595,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_EditFilename));
         state.showEditFilenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_EditFilename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_EditFilename), L(Dlg_EditFilename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(Dlg_InputNewFilename));
@@ -30605,7 +30603,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##EditFilename", state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canRename = strlen(state.editFilenameBuffer) > 0;
         ImGui::BeginDisabled(!canRename);
@@ -30625,7 +30623,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete Confirmation Dialog
@@ -30650,12 +30648,12 @@ void RenderUI(AppState& state) {
     }
 
     // Remove from database only
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmRemove), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmRemove), L(Dlg_ConfirmRemove))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_RemoveRecordsAsk), (int)state.pendingDeleteIds.size());
         ImGui::Text(L(Main_RemoveRecordsNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             RemoveRecordsFromDatabase(state, state.pendingDeleteIds);
@@ -30671,17 +30669,17 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete from file system
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDelete), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDelete), L(Dlg_ConfirmDelete))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
         ImGui::Text(L(Main_DeleteWarnLine));
         ImGui::PopStyleColor();
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text(L(Main_DeleteFilesAsk), (int)state.pendingDeleteIds.size());
 
         // Show file list (max 5)
@@ -30695,7 +30693,7 @@ void RenderUI(AppState& state) {
         }
         ImGui::EndChild();
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
@@ -30715,7 +30713,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Transfer / Export Dialog (F-008)
@@ -33639,7 +33637,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewPlaylist));
         state.showPlaylistDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewPlaylist), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewPlaylist), L(Dlg_NewPlaylist))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -33653,7 +33651,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // 当输入框为空或名称已存在时禁用创建按钮
         bool canCreate = strlen(state.playlistNameBuffer) > 0;
@@ -33694,7 +33692,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // New folder dialog
@@ -33702,7 +33700,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewFolder));
         state.showCreateFolderDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewFolder), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewFolder), L(Dlg_NewFolder))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_FolderNameLabel));
@@ -33714,7 +33712,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canCreate = strlen(state.folderNameBuffer) > 0;
         bool isDuplicateName = false;
@@ -33751,7 +33749,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Remove-folder-from-Aris confirmation modal.
@@ -34064,10 +34062,10 @@ void RenderUI(AppState& state) {
             }
             state.showDbDestroyConfirmDialog = false;
         }
-        if (BeginTransientScrollbarPopupModal(L(AssetLib_DeleteConfirm), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (aura::ui::BeginAlertDialog(L(AssetLib_DeleteConfirm), L(AssetLib_DeleteConfirm))) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             ImGui::Text(L(Main_DelLibAsk));
-            ImGui::Separator();
+            ImGui::Spacing();
             ImGui::Text(L(Main_TargetLabel));
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", state.dbManagerSelectedPath.c_str());
             ImGui::Spacing();
@@ -34089,7 +34087,7 @@ void RenderUI(AppState& state) {
             ImGui::SameLine();
             if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 35), aura::ui::ButtonVariant::Quiet)) { state.dbDestroyErrorMsg.clear(); ImGui::CloseCurrentPopup(); }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 38.0f);
@@ -34713,7 +34711,7 @@ void RenderUI(AppState& state) {
                     ImGui::OpenPopup(L(PtCloseAfterSave));
                     state.showProToolsCloseConfirm = false;
                 }
-                if (BeginTransientScrollbarPopupModal(L(PtCloseAfterSave), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (aura::ui::BeginAlertDialog(L(PtCloseAfterSave), L(PtCloseAfterSave))) {
                     ImGui::TextWrapped(L(Main_ProToolsCloseWarn));                    ImGui::Spacing();
                     if (aura::ui::ActionButton(L(Main_ProToolsSavedCloseBtn))) {
                         const auto reset = HarkenSearch::ProTools::ResetProToolsConnection(true);
@@ -34727,7 +34725,7 @@ void RenderUI(AppState& state) {
                     if (aura::ui::ActionButton(L(Main_ProToolsCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                         ImGui::CloseCurrentPopup();
                     }
-                    ImGui::EndPopup();
+                    aura::ui::EndAlertDialog();
                 }
                 if (!state.lastProToolsConnectionStatus.empty()) {
                     ImGui::TextWrapped(L(Main_ProToolsLastTestFmt),
@@ -35514,12 +35512,12 @@ void RenderUI(AppState& state) {
         }
         state.showCoverRemoveConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDeleteCover), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDeleteCover), L(Dlg_ConfirmDeleteCover))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_DelCoverAsk), (int)state.coverRemovePaths.size());
         ImGui::Text(L(Main_DelCoverNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(Delete), ImVec2(120, 0), aura::ui::ButtonVariant::Danger)) {
             // Remove per-file so we can persist exact successes
@@ -35560,7 +35558,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     if (state.showOriginalAudioWriteConfirm) {
@@ -35571,7 +35569,7 @@ void RenderUI(AppState& state) {
         }
         state.showOriginalAudioWriteConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmWriteOriginalAudio), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmWriteOriginalAudio), L(Dlg_ConfirmWriteOriginalAudio))) {
         { ReadingTextScope _readingPopup;
         if (EscClosePopup()) {
             ClearPendingOriginalAudioWrite(state);
@@ -35583,7 +35581,7 @@ void RenderUI(AppState& state) {
                 : (int)state.pendingOriginalAudioWritePaths.size();
         ImGui::Text(L(Main_WriteOriginalAudioAsk), writeCount);
         ImGui::TextUnformatted(L(Main_WriteOriginalAudioNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ApplyPendingOriginalAudioWrite(state);
@@ -35595,7 +35593,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // TOP MENU BAR
@@ -40375,7 +40373,7 @@ void RenderUI(AppState& state) {
 
         // Rename popup
         if (renamingTabIndex >= 0) ImGui::OpenPopup(L(Dlg_RenameTab));
-        if (BeginTransientScrollbarPopupModal(L(Dlg_RenameTab), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (aura::ui::BeginAlertDialog(L(Dlg_RenameTab), L(Dlg_RenameTab))) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             ImGui::Text(L(Main_TabNameLabel));
@@ -40383,7 +40381,7 @@ void RenderUI(AppState& state) {
             bool enter = ImGui::InputText("##RenameTab", renameBuffer, sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
             if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
             if (aura::ui::ActionButton(L(OK), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch) || enter) {
                 if (renamingTabIndex >= 0 && renamingTabIndex < (int)state.listTabs.size()) {
                     state.listTabs[renamingTabIndex].name = renameBuffer;
@@ -40397,7 +40395,7 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         // F-033: When the 专辑 album grid tab is active it fills all available space,

@@ -1351,6 +1351,47 @@ void EndDialog() {
     ImGui::PopStyleVar(4);
     ImGui::PopStyleColor(7);
 }
+bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags) {
+    using namespace aura::ui::metrics;
+    const ThemeColorScheme& th = ThemeColors::current();
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::popupModalBG(th));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::popupModalBG(th));
+    ImGui::PushStyleColor(ImGuiCol_Border, ThemeColors::popupBorder(th));
+    ImGui::PushStyleColor(ImGuiCol_BorderShadow, ThemeColors::popupShadow(th));
+    ImGui::PushStyleColor(ImGuiCol_Text, th.menuText);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, kRadiusDialog);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kRadiusDialog);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kGap24, kGap16));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kGap12, kGap12));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+
+    const bool visible = ImGui::BeginPopupModal(
+        id, nullptr, flags | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
+    if (!visible) {
+        ImGui::PopStyleVar(5);
+        ImGui::PopStyleColor(5);
+        return false;
+    }
+
+    if (title && *title) {
+        const char* end = title;
+        while (*end && !(end[0] == '#' && end[1] == '#')) ++end;
+        if (end != title) {
+            ImGui::SetWindowFontScale(1.12f);
+            ImGui::TextUnformatted(title, end);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Dummy(ImVec2(0.0f, kGap4));
+        }
+    }
+    return true;
+}
+
+void EndAlertDialog() {
+    ImGui::EndPopup();
+    ImGui::PopStyleVar(5);
+    ImGui::PopStyleColor(5);
+}
 
 // Panel / SectionHeader / Divider (Task 14)
 

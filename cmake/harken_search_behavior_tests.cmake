@@ -8554,3 +8554,12 @@ foreach(_standalone_localized_target IN ITEMS
     target_sources(${_standalone_localized_target} PRIVATE src/Localization.cpp)
     add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)
 endforeach()
+
+add_test(
+    NAME TestAlertDialogContract
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_alert_dialog_contract.py"
+)
+set_tests_properties(TestAlertDialogContract PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+aura_set_test_labels(TestAlertDialogContract core)

@@ -41,6 +41,7 @@ constexpr float kRadiusTight   = aris::design::kRadiusTight;    // table cells, 
 constexpr float kRadiusDefault = aris::design::kRadiusControl;  // buttons, inputs, combos (baseline)
 constexpr float kRadiusPanel   = aris::design::kRadiusPanel;    // cards, panels
 constexpr float kRadiusCapsule = aris::design::kRadiusCapsule;  // capsule pills, RoseCedar frames
+constexpr float kRadiusDialog  = 12.0f;                         // macOS-style alert panels
 
 // Icon sizes (square, pixels)
 constexpr float kIconXs = aris::design::kIconSizeXs;
