@@ -427,6 +427,7 @@ static std::string BuildPersistentFacetCacheKey(const SearchFilter& filter,
         << filter.coverFilter << '|'
         << filter.specificCoverKey << '|'
         << filter.includeOnlyKnownExts << '|'
+        << filter.losslessWavPackOnly << '|'
         << filter.musicalKey << '|'
         << filter.unplayedOnly << '|'
         << filter.playedOnlyAny << '|'
@@ -517,6 +518,7 @@ static bool IsPureFolderFacetFilter(const SearchFilter& filter) {
            filter.musicalKey.empty() &&
            filter.excludeExtensions.empty() &&
            !filter.includeOnlyKnownExts &&
+           !filter.losslessWavPackOnly &&
            !filter.unplayedOnly &&
            !filter.playedOnlyAny &&
            !filter.highlyRatedOnly &&
@@ -915,7 +917,7 @@ static const std::unordered_set<std::string>& EditableIntColumns() {
 // These BLOB columns are fetched separately on demand.
 static const char* kRecordColumns =
     "id, file_path, file_name, extension, file_size, folder_path, file_mtime, last_indexed, "
-    "sample_rate, bit_depth, channels, total_frames, duration, format, "
+    "sample_rate, bit_depth, channels, total_frames, duration, format, wavpack_lossless, "
     "title, artist, album, description, category, keywords, rating, "
     "play_count, date_added, last_played, has_cover, "
     "embedded_cover_key, embedded_cover_key_mtime, folder_cover_key, folder_cover_src_path, folder_cover_src_mtime, cover_suppressed, "
@@ -942,7 +944,7 @@ static const char* kRecordColumns =
 // Same columns with the af. alias for joins.
 static const char* kRecordColumnsAf =
     "af.id, af.file_path, af.file_name, af.extension, af.file_size, af.folder_path, af.file_mtime, af.last_indexed, "
-    "af.sample_rate, af.bit_depth, af.channels, af.total_frames, af.duration, af.format, "
+    "af.sample_rate, af.bit_depth, af.channels, af.total_frames, af.duration, af.format, af.wavpack_lossless, "
     "af.title, af.artist, af.album, af.description, af.category, af.keywords, af.rating, "
     "af.play_count, af.date_added, af.last_played, af.has_cover, "
     "af.embedded_cover_key, af.embedded_cover_key_mtime, af.folder_cover_key, af.folder_cover_src_path, af.folder_cover_src_mtime, af.cover_suppressed, "
@@ -1531,13 +1533,15 @@ bool Database::ensureFtsSchema() {
 
 static bool readAudioFileInfo(const fs::path& path,
                               uint32_t& sampleRate, uint32_t& channels,
-                              uint64_t& totalFrames, float& durationSeconds) {
+                              uint64_t& totalFrames, float& durationSeconds,
+                              std::optional<bool>* wavPackLossless = nullptr) {
     Platform::DatabaseAudioProbe::Info info;
     const bool ok = Platform::DatabaseAudioProbe::Probe(path, info);
     sampleRate = info.sampleRate;
     channels = info.channels;
     totalFrames = info.totalFrames;
     durationSeconds = info.durationSeconds;
+    if (wavPackLossless) *wavPackLossless = ok ? info.wavPackLossless : std::nullopt;
     return ok;
 }
 
@@ -1598,7 +1602,8 @@ bool Database::readAudioRecordMetadataSnapshot(
         record.folderPath = HarkenSearch::CanonicalFolderPath(PathToUtf8(path.parent_path()));
 
         const bool hasAudioInfo = readAudioFileInfo(
-            path, record.sampleRate, record.channels, record.totalFrames, record.durationSeconds);
+            path, record.sampleRate, record.channels, record.totalFrames, record.durationSeconds,
+            &record.wavPackLossless);
         AudioMetadata metadata;
         const bool hasMetadata = MetadataReader::readMetadata(filePath, metadata);
         if (hasMetadata) ApplyAudioMetadataToRecord(record, metadata);
@@ -2826,6 +2831,7 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "last_indexed", "INTEGER DEFAULT 0");
     ensureColumn(m_db, "audio_files", "has_cover", "INTEGER DEFAULT 0");
     ensureColumn(m_db, "audio_files", "bit_depth", "INTEGER DEFAULT 0");
+    if (!ensureColumn(m_db, "audio_files", "wavpack_lossless", "INTEGER")) return false;
     ensureColumn(m_db, "audio_files", "rating", "INTEGER DEFAULT 0");
 
     // Retired Favorites: drop index then column. PRAGMA first so a second
@@ -3939,8 +3945,9 @@ static const std::string& GetAddFileSql() {
             "album_artist, track_number, disc_number, "
             "energy_tension, energy_drive, "
             "replay_gain_track, replay_gain_album, highlight_start_ms, "
-            "raw_genre, raw_instruments, norm_genre, norm_instruments, norm_mood_tags, vocal_type";
-        int baseCount = 44;
+            "raw_genre, raw_instruments, norm_genre, norm_instruments, norm_mood_tags, vocal_type, "
+            "wavpack_lossless";
+        int baseCount = 45;
 
         // Extended meta columns
         for (size_t i = 0; i < kExtMetaCount; ++i) {
@@ -3968,6 +3975,7 @@ static const std::string& GetAddFileSql() {
             "total_frames = excluded.total_frames, "
             "duration = excluded.duration, "
             "format = excluded.format, "
+            "wavpack_lossless = excluded.wavpack_lossless, "
             "title = excluded.title, "
             "artist = excluded.artist, "
             "album = excluded.album, "
@@ -4155,10 +4163,11 @@ bool Database::addFile(const AudioRecord& record) {
     sqlite3_bind_text(stmt, 42, record.normInstruments.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 43, record.normMoodTags.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 44, record.vocalType.c_str(), -1, SQLITE_TRANSIENT);
+    if (record.wavPackLossless.has_value()) sqlite3_bind_int(stmt, 45, *record.wavPackLossless);
 
-    // Extended meta columns (params 45 .. 44+kExtMetaCount)
+    // Extended meta columns (params 46 .. 45+kExtMetaCount)
     for (size_t i = 0; i < kExtMetaCount; ++i) {
-        int paramIdx = 45 + (int)i;
+        int paramIdx = 46 + (int)i;
         auto it = record.meta.find(kExtMetaCols[i].col);
         if (it != record.meta.end() && !it->second.empty()) {
             sqlite3_bind_text(stmt, paramIdx, it->second.c_str(), -1, SQLITE_TRANSIENT);
@@ -4955,7 +4964,7 @@ int Database::removeMissingFilesDatabaseWide(ScanProgressCallback callback, std:
 enum class ColId : uint8_t {
     Unknown = 0,
     Id, FilePath, FileName, Extension, FileSize, FolderPath, FileMtime, LastIndexed,
-    SampleRate, BitDepth, Channels, TotalFrames, Duration, Format,
+    SampleRate, BitDepth, Channels, TotalFrames, Duration, Format, WavPackLossless,
     Title, Artist, Album, Description, Category, Keywords, Rating,
     PlayCount, DateAdded, LastPlayed, HasCover,
     EmbeddedCoverKey, EmbeddedCoverKeyMtime, FolderCoverKey, FolderCoverSrcPath, FolderCoverSrcMtime, CoverSuppressed,
@@ -4982,6 +4991,7 @@ static std::vector<ColMapEntry> buildColumnMap(sqlite3_stmt* stmt, int colCount)
         {"file_mtime", ColId::FileMtime}, {"last_indexed", ColId::LastIndexed},
         {"sample_rate", ColId::SampleRate}, {"bit_depth", ColId::BitDepth}, {"channels", ColId::Channels},
         {"total_frames", ColId::TotalFrames}, {"duration", ColId::Duration}, {"format", ColId::Format},
+        {"wavpack_lossless", ColId::WavPackLossless},
         {"title", ColId::Title}, {"artist", ColId::Artist}, {"album", ColId::Album},
         {"description", ColId::Description}, {"category", ColId::Category}, {"keywords", ColId::Keywords},
         {"rating", ColId::Rating}, {"play_count", ColId::PlayCount},
@@ -5073,6 +5083,11 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
         case ColId::TotalFrames:            r.totalFrames = (uint64_t)sqlite3_column_int64(stmt, i); break;
         case ColId::Duration:               r.durationSeconds = (float)sqlite3_column_double(stmt, i); break;
         case ColId::Format:                 r.format = safeGetText(stmt, i); break;
+        case ColId::WavPackLossless:
+            if (sqlite3_column_type(stmt, i) != SQLITE_NULL) {
+                r.wavPackLossless = sqlite3_column_int(stmt, i) == 1;
+            }
+            break;
         case ColId::Title:                  r.title = safeGetText(stmt, i); break;
         case ColId::Artist:                 r.artist = safeGetText(stmt, i); break;
         case ColId::Album:                  r.album = safeGetText(stmt, i); break;
@@ -6367,6 +6382,10 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
         bq.whereClause += " AND " + col_sec("extension") + " COLLATE NOCASE IN ("
             "'.wav','.wave','.mp3','.flac','.ogg','.aiff','.aif','.m4a','.wma','.wv')";
     }
+    if (filter.losslessWavPackOnly) {
+        bq.whereClause += " AND (" + col_sec("extension") + " COLLATE NOCASE IS NOT '.wv' OR " +
+            col_sec("wavpack_lossless") + " = 1)";
+    }
 
     return bq;
 }
@@ -6490,7 +6509,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
     }
 
     if (filter.folderPath.empty() &&
-        IsFileTypeOnlyFilter(filter) &&
+        IsFileTypeOnlyFilter(filter) && !filter.losslessWavPackOnly &&
         (!filter.excludeExtensions.empty() || filter.includeOnlyKnownExts)) {
         static const char* kKnownExts[] = {
             ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma", ".wv"
@@ -14370,7 +14389,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
     sqlite3_stmt* stmtExists = nullptr;
     const char* existsSql =
-        "SELECT id, file_size, file_mtime, embedded_cover_key, folder_cover_key, cover_suppressed, duration "
+        "SELECT id, file_size, file_mtime, embedded_cover_key, folder_cover_key, cover_suppressed, duration, wavpack_lossless "
         "FROM audio_files WHERE file_path = ? LIMIT 1;";
     if (sqlite3_prepare_v2(m_db, existsSql, -1, &stmtExists, nullptr) != SQLITE_OK) {
         stmtExists = nullptr;
@@ -14610,7 +14629,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
                 // Audio properties (duration, sample rate, channels)
                 const auto t0_audioInfo = std::chrono::steady_clock::now();
-                readAudioFileInfo(wi.path, record.sampleRate, record.channels, record.totalFrames, record.durationSeconds);
+                readAudioFileInfo(wi.path, record.sampleRate, record.channels, record.totalFrames,
+                                  record.durationSeconds, &record.wavPackLossless);
                 phaseReadAudioInfoUs.fetch_add(
                     (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - t0_audioInfo).count(),
@@ -15620,6 +15640,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         bool exists = false;
         uint64_t sizeDb = 0;
         int64_t mtimeDb = 0;
+        bool wavPackNeedsClassification = false;
         if (stmtExists) {
             sqlite3_reset(stmtExists);
             sqlite3_clear_bindings(stmtExists);
@@ -15636,6 +15657,8 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                      sqlite3_column_bytes(stmtExists, 4) > 0);
                 wi.existingCoverSuppressed = sqlite3_column_int(stmtExists, 5) != 0;
                 wi.existingDurationSeconds = (float)sqlite3_column_double(stmtExists, 6);
+                wavPackNeedsClassification = wi.extension == ".wv" &&
+                    sqlite3_column_type(stmtExists, 7) == SQLITE_NULL;
             }
             // A SELECT left on SQLITE_ROW pins its WAL snapshot. Release it
             // before any write or worker callback, otherwise a concurrent cache
@@ -15696,7 +15719,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             const int64_t mtimeDelta = mtimeDb - wi.fileMtime;
             const bool sameMtime = (mtimeDelta >= -1 && mtimeDelta <= 1);
 
-            if (sameSize && sameMtime) {
+            if (sameSize && sameMtime && !wavPackNeedsClassification) {
                 skip = true;
                 ++scanDiagSkipUnchanged;
             } else {
@@ -20626,7 +20649,8 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
                           record.sampleRate,
                           record.channels,
                           record.totalFrames,
-                          record.durationSeconds);
+                          record.durationSeconds,
+                          &record.wavPackLossless);
         
         // Read metadata tags.
         AudioMetadata metadata;
@@ -20694,7 +20718,8 @@ void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, 
                           existing.sampleRate,
                           existing.channels,
                           existing.totalFrames,
-                          existing.durationSeconds);
+                          existing.durationSeconds,
+                          &existing.wavPackLossless);
         
         // Re-read metadata tags.
         AudioMetadata metadata;

@@ -642,6 +642,7 @@ struct ListTab {
     bool showM4A = true;
     bool showWMA = true;
     bool showOther = true;
+    bool showLosslessWavPack = false;
     
     // Pagination
     int64_t totalFileCount = 0;
@@ -764,6 +765,7 @@ struct TabPresetEntry {
     bool        showM4A = true;
     bool        showWMA = true;
     bool        showOther = true;
+    bool        showLosslessWavPack = false;
     std::string findSameFilenameQuery;
     bool        findSameFilenameActive = false;
     int64_t     selectedPlaylistId = -1;
@@ -2592,8 +2594,9 @@ struct AppState {
     bool showM4A = true;
     bool showWMA = true;
     bool showOther = true;
+    bool showLosslessWavPack = false;
     
-    bool shouldShowFile(const std::string& extension) const;
+    bool shouldShowFile(const AudioRecord& record) const;
 
     // Playback history tracking
     std::set<std::string> playedFiles;

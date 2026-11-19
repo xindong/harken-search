@@ -104,6 +104,7 @@ bool ProbeMiniaudioCpp(const std::filesystem::path& path, Info& out) {
 
     out.sampleRate = decoder.outputSampleRate;
     out.channels = decoder.outputChannels;
+    out.wavPackLossless = Platform::WavPack::IsLossless(decoder);
 
     ma_uint64 length = 0;
     (void)GetLength(&decoder, &length);

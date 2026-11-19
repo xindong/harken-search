@@ -2,6 +2,7 @@
 // AppState.cpp - 应用状态、设置、标签页结构实现
 
 #include "AppState.h"
+#include "FileTypeVisibilityPolicy.h"
 #include "Localization.h"   // L(id) used by shortcut preset names (knife-B explicit include)
 #include "Utils.h"
 
@@ -339,6 +340,7 @@ int AppState::saveTabPresetFromCurrent(const std::string& name) {
         e.showM4A                 = t.showM4A;
         e.showWMA                 = t.showWMA;
         e.showOther               = t.showOther;
+        e.showLosslessWavPack      = t.showLosslessWavPack;
         e.findSameFilenameQuery   = t.findSameFilenameQuery;
         e.findSameFilenameActive  = t.findSameFilenameActive;
         e.selectedPlaylistId      = t.selectedPlaylistId;
@@ -414,6 +416,7 @@ bool AppState::loadTabPreset(int presetIdx) {
         t.showM4A                 = e.showM4A;
         t.showWMA                 = e.showWMA;
         t.showOther               = e.showOther;
+        t.showLosslessWavPack      = e.showLosslessWavPack;
         t.findSameFilenameQuery   = e.findSameFilenameQuery;
         t.findSameFilenameActive  = e.findSameFilenameActive;
         t.selectedPlaylistId      = e.selectedPlaylistId;
@@ -601,6 +604,7 @@ void AppState::syncFromTab() {
     showM4A = tab.showM4A;
     showWMA = tab.showWMA;
     showOther = tab.showOther;
+    showLosslessWavPack = tab.showLosslessWavPack;
     if (!coverFilterActive) {
         coverFilterPath.clear();
         coverFilterMatchSig = 0;
@@ -670,6 +674,7 @@ void AppState::syncToTab() {
     tab.showM4A = showM4A;
     tab.showWMA = showWMA;
     tab.showOther = showOther;
+    tab.showLosslessWavPack = showLosslessWavPack;
     tab.totalFileCount = totalFileCount;
     tab.loadedCount = loadedCount;
     tab.hasMoreResults = hasMoreResults;
@@ -1253,18 +1258,11 @@ bool AppState::viewStateForward() {
     return true;
 }
 
-bool AppState::shouldShowFile(const std::string& extension) const {
-    std::string ext = extension;
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    if (ext == "wav" || ext == ".wav") return showWAV;
-    if (ext == "mp3" || ext == ".mp3") return showMP3;
-    if (ext == "flac" || ext == ".flac") return showFLAC;
-    if (ext == "ogg" || ext == ".ogg") return showOGG;
-    if (ext == "aiff" || ext == ".aiff" || ext == "aif" || ext == ".aif") return showAIFF;
-    if (ext == "m4a" || ext == ".m4a") return showM4A;
-    if (ext == "wma" || ext == ".wma") return showWMA;
-    if (ext == "wv" || ext == ".wv") return showOther;
-    return showOther;
+bool AppState::shouldShowFile(const AudioRecord& record) const {
+    return aura::file_types::isVisible(
+        {showWAV, showMP3, showFLAC, showOGG, showAIFF, showM4A, showWMA, showOther,
+         showLosslessWavPack},
+        record.extension, record.wavPackLossless.value_or(false));
 }
 
 void AppState::resetRandomSampling() {

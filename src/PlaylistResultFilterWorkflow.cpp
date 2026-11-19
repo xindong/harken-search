@@ -31,7 +31,7 @@ std::vector<std::size_t> HandlePlaylistResultFilter(
             !IsSameOrDescendant(record.folderPath, input.selectedFolderPath)) {
             continue;
         }
-        if (!aura::file_types::isVisible(input.visibility, record.extension)) continue;
+        if (!aura::file_types::isVisible(input.visibility, record.extension, record.wavPackLossless)) continue;
         kept.push_back(i);
     }
     return kept;

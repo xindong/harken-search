@@ -6017,8 +6017,11 @@ static void PollQaCommandFile(AppState& state) {
                 state.instrumentPillState["__qa_instrument__"] = 1;
             }
             state.showWAV = !enabled;
-            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
-                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            if (!enabled) {
+                state.showMP3 = state.showFLAC = state.showOGG =
+                    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
+            }
             cancelPendingSearchForQaMutation();
             RefreshSearchResults(state, true);
             state.syncToTab();

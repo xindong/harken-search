@@ -17,7 +17,7 @@ void FilterResultsByFileTypePolicy(
     std::vector<AudioRecord>& batch) {
     const aura::file_types::FileTypeVisibility visibility{
         state.showWAV, state.showMP3, state.showFLAC, state.showOGG,
-        state.showAIFF, state.showM4A, state.showWMA, state.showOther};
+        state.showAIFF, state.showM4A, state.showWMA, state.showOther, state.showLosslessWavPack};
     const auto policy = aura::file_types::BuildPolicy(visibility);
     if (policy.allVisible) return;
     batch.erase(
@@ -26,7 +26,7 @@ void FilterResultsByFileTypePolicy(
             batch.end(),
             [&](const AudioRecord& record) {
                 return !aura::file_types::isVisible(
-                    visibility, record.extension);
+                    visibility, record.extension, record.wavPackLossless.value_or(false));
             }),
         batch.end());
 }
@@ -62,10 +62,10 @@ void ApplyPlaylistScopedFilters(
     input.selectedFolderPath = state.selectedFolderPath;
     input.visibility = {
         state.showWAV, state.showMP3, state.showFLAC, state.showOGG,
-        state.showAIFF, state.showM4A, state.showWMA, state.showOther};
+        state.showAIFF, state.showM4A, state.showWMA, state.showOther, state.showLosslessWavPack};
     input.records.reserve(batch.size());
     for (const auto& record : batch) {
-        input.records.push_back({record.folderPath, record.extension});
+        input.records.push_back({record.folderPath, record.extension, record.wavPackLossless.value_or(false)});
     }
 
     const auto kept = aura::playlist::HandlePlaylistResultFilter(

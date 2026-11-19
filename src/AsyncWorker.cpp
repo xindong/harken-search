@@ -189,6 +189,7 @@ uint64_t BuildSearchFilterSignature(const SearchFilter& filter, int viewMode, in
     h ^= (uint64_t)filter.coverFilter; h *= 0x100000001B3ull;
     hashCombine(filter.specificCoverKey);
     h ^= (uint64_t)filter.includeOnlyKnownExts; h *= 0x100000001B3ull;
+    h ^= (uint64_t)filter.losslessWavPackOnly; h *= 0x100000001B3ull;
     for (const auto& artist : filter.artists) hashCombine(artist);
     for (const auto& ext : filter.excludeExtensions) hashCombine(ext);
     return h;
@@ -230,6 +231,7 @@ static std::string BuildFacetCacheKey(const AsyncSearchRequest& req, int64_t tot
         << req.filter.coverFilter << '|'
         << req.filter.specificCoverKey << '|'
         << req.filter.includeOnlyKnownExts << '|'
+        << req.filter.losslessWavPackOnly << '|'
         << req.filter.exactMode << '|'
         << req.filter.sortColumn << '|'      // Sorting is part of the facet-cache key.
         << req.filter.sortAscending << '|'

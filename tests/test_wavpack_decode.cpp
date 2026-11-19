@@ -2,6 +2,7 @@
 // WavPack encoder, decode it through the same platform decoder the product
 // uses, and compare PCM plus seek behaviour.
 #include "platform/audio_data_source.h"
+#include "platform/wavpack_decoding_backend.h"
 #include "MetadataReader.h"
 
 #include "../thirdparty/wavpack/include/wavpack.h"
@@ -54,7 +55,7 @@ int32_t WriteBlock(void* id, void* data, int32_t byteCount) {
 }
 
 bool EncodeWavPack(const fs::path& path, std::vector<int32_t> samples, int channels,
-                  int channelMask, int floatExponent = 0) {
+                  int channelMask, int floatExponent = 0, bool hybrid = false) {
 #ifdef _WIN32
     std::FILE* file = _wfopen(path.wstring().c_str(), L"wb");
 #else
@@ -76,6 +77,10 @@ bool EncodeWavPack(const fs::path& path, std::vector<int32_t> samples, int chann
     config.channel_mask = channelMask;
     config.sample_rate = kSampleRate;
     config.block_samples = 1024;
+    if (hybrid) {
+        config.flags = CONFIG_HYBRID_FLAG;
+        config.bitrate = 3.5f;
+    }
 
     if (!WavpackSetConfiguration64(context, &config, kFrames, nullptr) ||
         !WavpackPackInit(context)) {
@@ -98,6 +103,21 @@ bool EncodeWavPack(const fs::path& path, std::vector<int32_t> samples, int chann
     WavpackCloseFile(context);
     std::fclose(file);
     return flushed;
+}
+
+std::optional<bool> ReadWavPackLosslessness(const fs::path& path) {
+    ma_decoder decoder;
+    auto config = ma_decoder_config_init_default();
+    Platform::WavPack::ApplyDecodingBackend(config);
+#ifdef _WIN32
+    const auto opened = ma_decoder_init_file_w(path.c_str(), &config, &decoder);
+#else
+    const auto opened = ma_decoder_init_file(path.c_str(), &config, &decoder);
+#endif
+    if (opened != MA_SUCCESS) return std::nullopt;
+    const auto result = Platform::WavPack::IsLossless(decoder);
+    ma_decoder_uninit(&decoder);
+    return result;
 }
 
 constexpr unsigned char kPngCover[] = {
@@ -208,6 +228,11 @@ int main() {
     check(EncodeWavPack(wvPath, std::vector<int32_t>(pcm.begin(), pcm.end()), kChannels, 0x3),
           "encoder writes a WV fixture");
     check(fs::exists(wvPath), "WV fixture exists");
+    check(ReadWavPackLosslessness(wvPath) == true, "lossless WV is selectable as lossless");
+    const fs::path hybridPath = temp / "hybrid.WV";
+    check(EncodeWavPack(hybridPath, std::vector<int32_t>(pcm.begin(), pcm.end()), kChannels, 0x3, 0, true),
+          "encoder writes a hybrid main file without correction");
+    check(ReadWavPackLosslessness(hybridPath) == false, "hybrid WV without correction stays lossy");
 
     std::vector<float> decoded;
     std::uint32_t channels = 0;

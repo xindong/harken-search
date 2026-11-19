@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../thirdparty/miniaudio.h"
+#include <optional>
 
 namespace Platform::WavPack {
 
@@ -10,5 +11,6 @@ namespace Platform::WavPack {
 // registers after the built-in decoders and rejects anything it cannot open,
 // so existing formats keep their current behaviour.
 void ApplyDecodingBackend(ma_decoder_config& config);
+std::optional<bool> IsLossless(const ma_decoder& decoder);
 
 }  // namespace Platform::WavPack

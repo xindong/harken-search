@@ -422,4 +422,10 @@ void ApplyDecodingBackend(ma_decoder_config& config) {
     config.customBackendCount = 1;
 }
 
+std::optional<bool> IsLossless(const ma_decoder& decoder) {
+    if (decoder.pBackendVTable != &g_backendVtable || !decoder.pBackend) return std::nullopt;
+    const auto* backend = reinterpret_cast<const Decoder*>(decoder.pBackend);
+    return (WavpackGetMode(backend->context) & MODE_LOSSLESS) != 0;
+}
+
 }  // namespace Platform::WavPack
