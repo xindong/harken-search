@@ -33,4 +33,22 @@ inline bool IsScanRollbackCancel(ScanStopDisposition disposition) {
     return disposition == ScanStopDisposition::CancelRollback;
 }
 
+// One decision for every stop path: a keep-committed pause and a keep-committed
+// cancel must both survive, and only CancelRollback may discard committed rows.
+struct ScanStopPlan {
+    bool paused = false;
+    bool cancel = false;
+    bool rollback = false;
+    bool keepCommitted = false;
+};
+
+inline ScanStopPlan PlanScanStop(ScanStopDisposition disposition) {
+    ScanStopPlan plan;
+    plan.paused = IsScanPause(disposition);
+    plan.cancel = IsScanCancel(disposition);
+    plan.rollback = IsScanRollbackCancel(disposition);
+    plan.keepCommitted = IsScanKeepCommitted(disposition);
+    return plan;
+}
+
 } // namespace HarkenSearch

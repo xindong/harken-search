@@ -179,6 +179,24 @@ void testFastCompletionPreservesPopulatedBackgroundQueue() {
           "full scan retains its existing queue recovery path");
 }
 
+void testKeepCommittedStopPlanCoversEveryDisposition() {
+    const auto none = HarkenSearch::PlanScanStop(HarkenSearch::ScanStopDisposition::None);
+    check(!none.paused && !none.cancel && !none.rollback && !none.keepCommitted,
+          "no stop request plans no interruption");
+
+    const auto pause = HarkenSearch::PlanScanStop(HarkenSearch::ScanStopDisposition::PauseKeepCommitted);
+    check(pause.paused && !pause.cancel && !pause.rollback && pause.keepCommitted,
+          "pause keeps committed rows without cancelling");
+
+    const auto rollback = HarkenSearch::PlanScanStop(HarkenSearch::ScanStopDisposition::CancelRollback);
+    check(!rollback.paused && rollback.cancel && rollback.rollback && !rollback.keepCommitted,
+          "regular cancel rolls back committed rows");
+
+    const auto keep = HarkenSearch::PlanScanStop(HarkenSearch::ScanStopDisposition::CancelKeepCommitted);
+    check(!keep.paused && keep.cancel && !keep.rollback && keep.keepCommitted,
+          "drive-root cancel is a cancellation that keeps committed rows");
+}
+
 void testPauseIsASeparateTerminalStage() {
     auto snapshot = completedSnapshot();
     snapshot.processed = 120;
@@ -292,6 +310,7 @@ int main() {
     testFastCompletionDoesNotWaitForOptionalCovers();
     testFastCompletionPreservesPopulatedBackgroundQueue();
     testPauseIsASeparateTerminalStage();
+    testKeepCommittedStopPlanCoversEveryDisposition();
     testPostScanSimilarityIndexStartsOnlyOnSuccessfulCompletedScan();
     testPendingPostScanSimilarityIndexDoesNotCrossDatabaseSwitch();
     testPostScanSimilarityIndexDoesNotStartOnCancelFailOrPartialFailure();

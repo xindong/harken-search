@@ -683,7 +683,13 @@ static bool IsPathInsideLibraryRoots(const std::string& pathUtf8,
     // retain their original case.
 
     for (const std::string& rootAny : rootsAnyCase) {
-        const std::string rootNorm = NormalizeLibraryPathUtf8(rootAny, true);
+        std::string rootNorm = NormalizeLibraryPathUtf8(rootAny, true);
+        // A drive-root library root keeps its trailing separator in storage
+        // ("z:\\"); compare it as "z:" so every indexed folder below the
+        // drive root still counts as inside the library.
+        while (rootNorm.size() > 2 && (rootNorm.back() == '\\' || rootNorm.back() == '/')) {
+            rootNorm.pop_back();
+        }
         if (rootNorm.empty()) continue;
         if (pathNorm == rootNorm) return true;
         if (pathNorm.size() <= rootNorm.size()) continue;

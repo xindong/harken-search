@@ -32787,9 +32787,12 @@ void RenderUI(AppState& state) {
                     bool cancelled = isCancelled();
                     const HarkenSearch::ScanStopDisposition stopDisposition =
                         state.scanStopDisposition.load(std::memory_order_acquire);
-                    bool paused = cancelled &&
-                        (combined.paused || HarkenSearch::IsScanPause(stopDisposition));
-                    bool rollbackCancelled = cancelled && !paused;
+                    const HarkenSearch::ScanStopPlan stopPlan =
+                        HarkenSearch::PlanScanStop(stopDisposition);
+                    bool paused = cancelled && (combined.paused || stopPlan.paused);
+                    bool rollbackCancelled = cancelled && !paused && !stopPlan.keepCommitted;
+                    const bool keepCommittedInterrupted =
+                        paused || (cancelled && stopPlan.keepCommitted);
                     auto zeroCancelledSummary = [&]() {
                         combined.added = 0;
                         combined.updated = 0;
@@ -32807,16 +32810,16 @@ void RenderUI(AppState& state) {
                             if (!scanDb.resetScanForegroundCompletionSession(
                                     static_cast<int64_t>(scanGeneration))) {
                                 combined.addError(
-                                    "Pause kept committed files but failed to clear the foreground completion session.");
+                                    "Keep-committed stop could not clear the foreground completion session.");
                                 DIAG_SYSTEM_FMT(
                                     "Scan",
-                                    "ScanPauseFailed: session=%lld error=%s",
+                                    "ScanKeepCommittedFailed: session=%lld error=%s",
                                     (long long)scanGeneration,
                                     scanDb.getLastError().c_str());
                             } else {
                                 DIAG_SYSTEM_FMT(
                                     "Scan",
-                                    "ScanPauseCommitted: session=%lld added=%d updated=%d skipped=%d",
+                                    "ScanKeepCommitted: session=%lld added=%d updated=%d skipped=%d",
                                     (long long)scanGeneration,
                                     combined.added,
                                     combined.updated,
@@ -32832,8 +32835,8 @@ void RenderUI(AppState& state) {
                             zeroCancelledSummary();
                         }
                     };
-                    if (paused || rollbackCancelled) {
-                        finishInterruptedScanSession(paused);
+                    if (keepCommittedInterrupted || rollbackCancelled) {
+                        finishInterruptedScanSession(keepCommittedInterrupted);
                     }
 
                     if (state.isScanTaskCurrent(scanGeneration)) {
@@ -33197,9 +33200,11 @@ void RenderUI(AppState& state) {
                         if (state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
                             const HarkenSearch::ScanStopDisposition completionStopDisposition =
                                 state.scanStopDisposition.load(std::memory_order_acquire);
-                            paused = HarkenSearch::IsScanPause(completionStopDisposition);
-                            rollbackCancelled = !paused;
-                            finishInterruptedScanSession(paused);
+                            const HarkenSearch::ScanStopPlan completionPlan =
+                                HarkenSearch::PlanScanStop(completionStopDisposition);
+                            paused = completionPlan.paused;
+                            rollbackCancelled = !completionPlan.keepCommitted;
+                            finishInterruptedScanSession(completionPlan.keepCommitted);
                             cancelled = true;
                             if (state.isScanTaskCurrent(scanGeneration)) {
                                 state.scanAddedCount = combined.added;
@@ -33270,9 +33275,10 @@ void RenderUI(AppState& state) {
                         }
                         if (state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
                             const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
-                            paused = HarkenSearch::IsScanPause(disposition);
-                            rollbackCancelled = !paused;
-                            finishInterruptedScanSession(paused);
+                            const auto stopPlan = HarkenSearch::PlanScanStop(disposition);
+                            paused = stopPlan.paused;
+                            rollbackCancelled = !stopPlan.keepCommitted;
+                            finishInterruptedScanSession(stopPlan.keepCommitted);
                             cancelled = true;
                         }
                         if (!cancelled) {
@@ -33288,9 +33294,10 @@ void RenderUI(AppState& state) {
                         }
                         if (!cancelled && state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
                             const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
-                            paused = HarkenSearch::IsScanPause(disposition);
-                            rollbackCancelled = !paused;
-                            finishInterruptedScanSession(paused);
+                            const auto stopPlan = HarkenSearch::PlanScanStop(disposition);
+                            paused = stopPlan.paused;
+                            rollbackCancelled = !stopPlan.keepCommitted;
+                            finishInterruptedScanSession(stopPlan.keepCommitted);
                             cancelled = true;
                         }
                         if (!cancelled) {
@@ -33467,7 +33474,13 @@ void RenderUI(AppState& state) {
             } else if (rollbackFailed) ImGui::TextUnformatted(L(ScanUi_RollbackFailed));
             else if (networkUnreachable && scanWorkflowSnapshot.discovered == 0) ImGui::TextUnformatted(L(ScanUi_NetworkTitle));
             else if (scanView.phase == Phase::Empty) ImGui::TextUnformatted(L(ScanUi_Empty));
-            else if (scanView.phase == Phase::Cancelled) ImGui::TextUnformatted(L(ScanUi_Revoked));
+            else if (scanView.phase == Phase::Cancelled) {
+                if (HarkenSearch::IsScanKeepCommitted(state.scanStopDisposition.load())) {
+                    ImGui::Text(L(ScanUi_RetainedFmt), scanView.succeeded);
+                } else {
+                    ImGui::TextUnformatted(L(ScanUi_Revoked));
+                }
+            }
             else ImGui::Text(scanView.phase == Phase::Paused ? L(ScanUi_RetainedFmt) : L(ScanUi_ImportedFmt), scanView.succeeded);
             ImGui::PopFont();
             DrawScanDialogMetrics(state.scanUiMetrics.Value(), false);
