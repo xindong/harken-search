@@ -7579,6 +7579,8 @@ static void RebuildBrowserSortedIndices(AppState& state, const std::vector<FileE
 
     state.browserSortEntryCount = count;
     state.browserSortPath = state.fileBrowser.getCurrentPath();
+    // The sorted order changed, so any cached filtered rows are stale.
+    state.browserFilteredRowsKey = 0;
 }
 
 static std::string FormatDurationMsCompact(int64_t ms) {
@@ -41806,6 +41808,11 @@ void RenderUI(AppState& state) {
                 // on the H: root every new batch would trigger a full O(n log n)
                 // sort. The count check below rebuilds once the scan settles.
                 const bool browserScanInProgress = state.fileBrowser.isDirScanInProgress();
+                if (browserScanInProgress) {
+                    // A rescan can end with the same entry count; mark the sorted
+                    // index stale so the post-scan pass always rebuilds it.
+                    state.browserSortEntryCount = -1;
+                }
                 if (!browserScanInProgress &&
                     (browserSortDirty ||
                      state.browserSortPath != state.fileBrowser.getCurrentPath() ||
@@ -41850,8 +41857,9 @@ void RenderUI(AppState& state) {
                         auto& rows = state.browserFilteredRows;
                         rows.clear();
                         rows.reserve(entries.size());
+                        const bool sortedIndexValid = sortedIndices.size() == entries.size();
                         for (int si = 0; si < (int)entries.size(); ++si) {
-                            int ei = sortedIndices.empty() ? si : sortedIndices[si];
+                            const int ei = sortedIndexValid ? sortedIndices[si] : si;
                             const auto& fe = entries[ei];
                             std::string nameLower = fe.name;
                             for (char& c : nameLower) c = (char)std::tolower((unsigned char)c);
