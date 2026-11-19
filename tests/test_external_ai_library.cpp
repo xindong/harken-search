@@ -258,6 +258,9 @@ void TestShortMetadataAndLiteralSearch(const fs::path& scratch) {
         fixture.Add(writer.get(), 12, fixture.root / "wind" / "wind% literal.wav", u8"\u8f7b\u811a\u6b65");
         fixture.Add(writer.get(), 13, fixture.root / "wind" / "001.wav", "wind% gust");
         fixture.Add(writer.get(), 14, fixture.root / fs::u8path(u8"\u811a\u6b65\u96e8") / "privacy.wav");
+#ifdef _WIN32
+        fixture.Add(writer.get(), 15, fixture.root / "wind" / fs::u8path(u8"\u0412\u0435\u0442\u0435\u0440.wav"));
+#endif
         Exec(writer.get(), R"SQL(
             UPDATE audio_files SET keywords=char(26292,38632,22768) WHERE id=13;
             UPDATE audio_files SET search_data=char(33050,27493,38632) WHERE id=14;
@@ -275,6 +278,10 @@ void TestShortMetadataAndLiteralSearch(const fs::path& scratch) {
     Check(Ids(library.SearchAudio("wind%", 1)) == std::vector<std::int64_t>({12}) &&
         Ids(library.SearchAudio("wind%", 10)) == std::vector<std::int64_t>({12, 13}),
         "long indexed queries verify literal punctuation before limit, including metadata");
+#ifdef _WIN32
+    Check(Ids(library.SearchAudio(u8"\u0432\u0435\u0442\u0435\u0440", 10)) == std::vector<std::int64_t>({15}),
+        "Windows literal verification matches Cyrillic filename case invariantly");
+#endif
 }
 
 void TestFoldersWithStaleIndex(const fs::path& scratch) {
@@ -285,6 +292,17 @@ void TestFoldersWithStaleIndex(const fs::path& scratch) {
         fixture.Add(writer.get(), 13, fixture.root / "new-valve" / "second.wav");
         fixture.Add(writer.get(), 14, fixture.outside / "new-valve" / "outside.wav");
         Exec(writer.get(), "INSERT INTO folder_index SELECT folder_path,1,0 FROM audio_files WHERE id=14;");
+#ifdef _WIN32
+        fixture.Add(writer.get(), 15, fixture.root / "nested" / "mid" / "leaf" / "inside.wav");
+        fixture.Add(writer.get(), 16, fixture.outside / "nested" / "mid" / "leaf" / "outside.wav");
+        Exec(writer.get(), R"SQL(
+            UPDATE audio_files SET
+                file_path=replace(replace(file_path,char(92),'/'),'nested/mid/leaf/', 'nested'||char(92)||'/mid/leaf/'),
+                folder_path=replace(replace(folder_path,char(92),'/'),'nested/mid/leaf', 'nested'||char(92)||'/mid/leaf')
+            WHERE id IN (15,16);
+            INSERT INTO folder_index SELECT folder_path,1,0 FROM audio_files WHERE id IN (15,16);
+        )SQL");
+#endif
     }
     const auto before = fixture.State();
     ExternalAiLibrary library;
@@ -294,6 +312,13 @@ void TestFoldersWithStaleIndex(const fs::path& scratch) {
     const auto folders = library.FindFolders("new-valve", 1);
     Check(opened && Status(folders, "ok") && folders["results"] == expected,
         "a stale folder index does not hide a new authorized folder or include outside files");
+#ifdef _WIN32
+    const Json nested = {{"status", "ok"}, {"results", Json::array({
+        {{"relative_path", "nested/mid/leaf"}, {"file_count", 1}}})}};
+    Check(library.FindFolders("nested/mid/leaf", 1) == nested &&
+        library.FindFolders("nested\\mid/leaf", 1) == nested,
+        "nested folder prefilter handles mixed separators while excluding outside rows");
+#endif
     Check(fixture.State() == before, "folder lookup does not repair the cached index on disk");
 }
 
