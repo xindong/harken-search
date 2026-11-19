@@ -234,7 +234,7 @@ bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& s
         error = "authorization document path must be an absolute file path";
         return false;
     }
-    if (!Platform::FileSystem::CreateDirectories(target.parent_path().u8string())) {
+    if (!Platform::FileSystem::EnsureDirectoryExists(target.parent_path().u8string())) {
         error = "authorization directory could not be created";
         return false;
     }

@@ -208,6 +208,12 @@ int main(int argc, char** argv)
     Check(savedBytes.size() >= 2 && static_cast<unsigned char>(savedBytes[0]) != 0xEF,
         "saved file has no byte order mark");
 
+    stored.enabled = false;
+    Check(HarkenSearch::SaveExternalAiSettings(libraryPath, stored, storeError),
+        "saving again into an existing authorization directory succeeds");
+    stored.enabled = true;
+    Check(HarkenSearch::SaveExternalAiSettings(libraryPath, stored, storeError),
+        "a later save replaces the previous document");
     HarkenSearch::ExternalAiSettings reloaded;
     existed = false;
     Check(HarkenSearch::LoadExternalAiSettings(libraryPath, libraryIdText, reloaded, storeError, &existed) &&
