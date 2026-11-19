@@ -281,8 +281,8 @@ def main(args: argparse.Namespace) -> int:
                     bands = [band for band in text_bands(image, x0, x1, top, bottom)
                              if band[1] - band[0] >= 1]
                     ink_heights = [band[1] - band[0] for band in bands]
-                    pad_y = max(0.0, (heights_local[index] - row_h_local) * 0.5)
-                    lines, advance = resolve_line_layout(row_h_local + pad_y, line_h_local)
+                    # The name text uses the whole row band (cell padding included).
+                    lines, advance = resolve_line_layout(heights_local[index], line_h_local)
                     text_end = top + lines * advance
                     rows.append({
                         'label': label, 'row': index,

@@ -42959,13 +42959,9 @@ void RenderUI(AppState& state) {
             } else {
                 // --- Database mode ---
                 // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动。
-                // 名称列启用换行时，结果行至少留出三整行的高度，第三行不再被行底裁掉。
-                const float wrappedNameRowHeightFloor = 3.0f * listFontPx + listCellPadY * 2.0f;
-                const bool wrapsResultNames = targetRowHeight >= listFontPx * 2.0f + 2.0f;
-                const float resultRowTarget = wrapsResultNames
-                    ? (std::max)(targetRowHeight, wrappedNameRowHeightFloor)
-                    : targetRowHeight;
-                const float fixedRowHeight = floorf(resultRowTarget) - listCellPadY * 2.0f;
+                // 名称换行时文字用满整行高度（含上下留白），三行文字在设定行高内完整显示，
+                // 行高本身不因换行额外增加。
+                const float fixedRowHeight = floorf(targetRowHeight) - listCellPadY * 2.0f;
                 const float actualRowHeight = fixedRowHeight + listCellPadY * 2.0f; // Row height including cell padding.
 
                 {
@@ -43140,7 +43136,12 @@ void RenderUI(AppState& state) {
                     const float nameLineH = ImGui::GetTextLineHeight();
                     const bool wrapFileName = fixedRowHeight >= nameLineH * 2.0f + 2.0f;
                     const float nameColAvailW = ImGui::GetContentRegionAvail().x;
-                    const ImVec2 nameTextOrigin = ImGui::GetCursorScreenPos();
+                    const ImVec2 nameCellOrigin = ImGui::GetCursorScreenPos();
+                    // Wrapped names start at the row band top (cell padding
+                    // included) so three whole lines sit inside the configured
+                    // row height; single-line rows keep the content origin.
+                    const ImVec2 nameTextOrigin(nameCellOrigin.x,
+                        wrapFileName ? nameCellOrigin.y - listCellPadY : nameCellOrigin.y);
                     const std::string safeLabel = "##RowSelect";
 
                     // 因为 ImGui Table 会在内容上下各加 CellPadding.y，
@@ -43167,7 +43168,7 @@ void RenderUI(AppState& state) {
                             emptySpans,
                             nameTextOrigin,
                             nameColAvailW,
-                            fixedRowHeight + listCellPadY,
+                            wrapFileName ? actualRowHeight : fixedRowHeight,
                             wrapFileName);
 #if ARIS_PREVIEW_ISOLATION
                         // Observe the font bound at the actual filename draw site.
