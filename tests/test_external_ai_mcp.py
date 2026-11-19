@@ -548,6 +548,31 @@ class ExternalAiMcpTest(unittest.TestCase):
         )
         self.assertEqual(self.tool_payload(replies[0]), {"status": "not_authorized", "results": []})
 
+    def test_authorization_documents_are_bound_to_one_library(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        other_library = "harken-other-library"
+        base = ["--library-db", str(self.database), "--library-root", str(self.root)]
+
+        borrowed = write_authorization(scratch / "borrowed.json", self.root)
+        completed = self.launch(
+            [initialize()],
+            flags=[*base, "--settings", str(borrowed), "--library-id", other_library],
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, b"")
+        self.assertIn(b"belongs to another library", completed.stderr)
+        self.assert_no_echo(completed.stdout, completed.stderr)
+
+        owned = write_authorization(scratch / "owned.json", self.root, library_id=other_library)
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 3}, 1),
+            flags=[*base, "--settings", str(owned), "--library-id", other_library],
+        )
+        self.assertEqual(self.tool_payload(replies[0])["status"], "ok")
+
+        replies = self.with_session(call(SEARCH, {"query": "wind", "limit": 3}, 1))
+        self.assertEqual(self.tool_payload(replies[0])["status"], "ok")
+
     def test_similar_reference_outside_ticked_roots_is_refused(self):
         scratch = Path(tempfile.mkdtemp(dir=self.fixture))
         document = write_authorization(scratch / "sub.json", self.root / "wind")
