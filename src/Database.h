@@ -1152,6 +1152,7 @@ public:
     bool rebuildCoverWallOrderIndex(int batchSize = 20000);
     bool flushCoverWallOrderIndexDirty(int maxTiles = 4096);
     bool isCoverWallOrderIndexReady() const;
+    static bool flushCoverWallOrderIndexDirtyAtPath(const std::string& dbPath, int maxTiles = 4096);
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
     std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);

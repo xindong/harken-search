@@ -65,6 +65,8 @@ std::function<void(const std::atomic<int>&, int, int)> g_scanBeforeFlushHook;
 #include <intrin.h>
 #endif
 
+static void RegisterAuraNaturalCollation(sqlite3* db);
+
 static double MsSince(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -145,20 +147,8 @@ static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
             const uint64_t rhs = static_cast<uint64_t>(sqlite3_value_int64(argv[1]));
             sqlite3_result_int(ctx, CountBits64(lhs ^ rhs));
         }, nullptr, nullptr);
-    sqlite3_create_collation(
-        db,
-        "AURA_NATURAL",
-        SQLITE_UTF8,
-        nullptr,
-        [](void*, int lhsLen, const void* lhsData, int rhsLen, const void* rhsData) -> int {
-            const std::string_view lhs(
-                lhsData ? static_cast<const char*>(lhsData) : "",
-                lhsData && lhsLen > 0 ? static_cast<size_t>(lhsLen) : 0);
-            const std::string_view rhs(
-                rhsData ? static_cast<const char*>(rhsData) : "",
-                rhsData && rhsLen > 0 ? static_cast<size_t>(rhsLen) : 0);
-            return CompareNaturalUtf8(lhs, rhs);
-        });
+    RegisterAuraNaturalCollation(db);
+
 }
 
 static std::string Hex64_db(uint64_t v) {
@@ -297,6 +287,7 @@ constexpr const char* kCoverWallOrderIndexVersionKey = "cover_wall_order_index_v
 constexpr const char* kCoverWallOrderIndexStateKey = "cover_wall_order_index_state";
 constexpr const char* kCoverWallOrderIndexRowsKey = "cover_wall_order_index_rows";
 constexpr int kCoverWallOrderIndexBatchSize = 20000;
+static void RegisterAuraNaturalCollation(sqlite3* db);
 static void StartCoverWallOrderIndexBuild(const std::string& dbPath);
 
 template<typename T>
@@ -1635,6 +1626,23 @@ static bool RearmCoverRegistryMaintenanceForEmptyLargeLibrary(sqlite3* db,
                                                               int registryEntries,
                                                               int64_t totalFiles);
 
+static void RegisterAuraNaturalCollation(sqlite3* db) {
+    if (!db) return;
+    sqlite3_create_collation(
+        db,
+        "AURA_NATURAL",
+        SQLITE_UTF8,
+        nullptr,
+        [](void*, int lhsLen, const void* lhsData, int rhsLen, const void* rhsData) -> int {
+            const std::string_view lhs(
+                lhsData ? static_cast<const char*>(lhsData) : "",
+                lhsData && lhsLen > 0 ? static_cast<size_t>(lhsLen) : 0);
+            const std::string_view rhs(
+                rhsData ? static_cast<const char*>(rhsData) : "",
+                rhsData && rhsLen > 0 ? static_cast<size_t>(rhsLen) : 0);
+            return CompareNaturalUtf8(lhs, rhs);
+        });
+}
 Database::Database() {}
 
 Database::~Database() {
@@ -8192,6 +8200,7 @@ static void StartCoverWallOrderIndexBuild(const std::string& dbPath) {
 #endif
         if (db) {
             sqlite3_busy_timeout(db, 5000);
+            RegisterAuraNaturalCollation(db);
             RebuildCoverWallOrderIndexOnConnection(db, kCoverWallOrderIndexBatchSize);
             sqlite3_close(db);
         }
@@ -16038,7 +16047,12 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
 
                 if (IsCoverWallOrderIndexReady(m_db)) {
                     FlushCoverWallOrderDirty(m_db, 512);
-                }                backfillWriteGuard.reset();
+                } else if (getFileCount() > kGlobalCoverWallFallbackMaxFiles &&
+                           !m_mainDbPath.empty()) {
+                    StartCoverWallOrderIndexBuild(m_mainDbPath);
+                }
+
+                backfillWriteGuard.reset();
                 if (queueScanMetadataBackfill) {
                     for (int64_t fileId : batchMetadataBackfillIds) {
                         backfillQueue->enqueueFromScan(
@@ -19318,6 +19332,25 @@ bool Database::isCoverWallOrderIndexReady() const {
     return IsCoverWallOrderIndexReady(m_db);
 }
 
+bool Database::flushCoverWallOrderIndexDirtyAtPath(const std::string& dbPath, int maxTiles) {
+    if (dbPath.empty()) return false;
+    sqlite3* db = nullptr;
+#ifdef _WIN32
+    const fs::path path = Utf8ToPath(dbPath);
+    const std::wstring widePath = path.wstring();
+    if (sqlite3_open16(widePath.c_str(), &db) != SQLITE_OK) {
+#else
+    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
+#endif
+        if (db) sqlite3_close(db);
+        return false;
+    }
+    sqlite3_busy_timeout(db, 2000);
+    RegisterAuraNaturalCollation(db);
+    const bool ok = FlushCoverWallOrderDirty(db, maxTiles);
+    sqlite3_close(db);
+    return ok;
+}
 bool Database::flushCoverWallOrderIndexDirty(int maxTiles) {
     if (!m_db) return false;
     const bool ok = FlushCoverWallOrderDirty(m_db, maxTiles);
@@ -19351,8 +19384,12 @@ Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(const std::strin
 
     if (followFileListOrder && page.largeLibrary) {
         if (IsCoverWallOrderIndexReady(m_db)) {
-            if (sqlite3_db_readonly(m_db, "main") != 1 && CoverWallOrderDirtyCount(m_db) > 0) {
-                FlushCoverWallOrderDirty(m_db, 4096);
+            if (CoverWallOrderDirtyCount(m_db) > 0) {
+                if (sqlite3_db_readonly(m_db, "main") == 1) {
+                    Database::flushCoverWallOrderIndexDirtyAtPath(m_mainDbPath, 4096);
+                } else {
+                    FlushCoverWallOrderDirty(m_db, 4096);
+                }
             }
             if (CoverWallOrderDirtyCount(m_db) == 0) {
                 const auto indexStarted = std::chrono::steady_clock::now();
@@ -19368,6 +19405,20 @@ Database::CoverWallPage Database::getGlobalCoverWallEntriesPage(const std::strin
                                     (long long)indexMs);
                     return page;
                 }
+            }
+        }
+
+        // A page can start on the file-order index and fall back here when a
+        // pending tile refresh appears between requests. Translate the new
+        // cursor back to the legacy audio-row cursor so pagination continues.
+        std::string fallbackCursor = afterCursor;
+        if (fallbackCursor.rfind("cwi:", 0) == 0) {
+            std::string cursorOrderName;
+            std::string cursorOrderPath;
+            int64_t cursorOrderId = 0;
+            if (ParseCoverWallOrderCursor(m_db, fallbackCursor,
+                    &cursorOrderName, &cursorOrderPath, &cursorOrderId)) {
+                fallbackCursor = "fl2:" + std::to_string(cursorOrderId);
             }
         }
 

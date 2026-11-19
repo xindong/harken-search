@@ -204,7 +204,8 @@ int RunUnit() {
     };
     const std::string cursor1 = checkPage({}, 10, 0);
     if (cursor1.empty()) return Fail("missing first cursor");
-    checkPage(cursor1, 10, 10);
+    const std::string cursor2 = checkPage(cursor1, 10, 10);
+    if (cursor2.empty()) return Fail("second page failed");
 
     if (!Exec(raw, "UPDATE audio_files SET file_name = 'zzz_last.wav', file_path = 'C:/testlib/folder0000/zzz_last.wav' "
                   "WHERE folder_cover_key = 'F|0000' AND file_name = 'track000_00000.wav';")) return 1;
@@ -232,6 +233,20 @@ int RunUnit() {
     for (const auto& entry : afterDelete.entries) keys.insert(entry.key);
     if (keys.find("F|0001") == keys.end()) return Fail("deleted representative removed tile");
 
+    if (!Exec(raw, "UPDATE audio_files SET file_name = 'zzz_after.wav' "
+                  "WHERE folder_cover_key = 'F|0002' AND file_name = 'track002_00000.wav';")) return 1;
+    if (!Database::flushCoverWallOrderIndexDirtyAtPath(dbPath.string(), 64)) {
+        return Fail("separate writable connection flush failed");
+    }
+    {
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(raw, "SELECT order_name FROM cover_wall_order_index WHERE tile_key = 'F|0002';",
+                -1, &stmt, nullptr) != SQLITE_OK) return Fail("separate flush check prepare failed");
+        std::string orderName;
+        if (sqlite3_step(stmt) == SQLITE_ROW) orderName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        sqlite3_finalize(stmt);
+        if (orderName != "track002_00001.wav") return Fail("separate flush did not refresh tile: " + orderName);
+    }
     sqlite3_close(raw);
     db.close();
     fs::remove_all(root, removeError);
