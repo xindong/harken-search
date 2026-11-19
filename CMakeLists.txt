@@ -1768,6 +1768,7 @@ endif()
 # Behavior-module test target wiring for the integrated Aris workflow layer.
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_similarity_runtime.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_search_behavior_tests.cmake" OPTIONAL)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/harken_external_ai_mcp.cmake")
 
 # Batch1 pinyin Database behavior test. This target pins isolation ROOT to the
 # canonical test-databases card directory; HarkenSearch keeps the product preview ROOT.
