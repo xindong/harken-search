@@ -15944,13 +15944,18 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
         if (disposition == HarkenSearch::ScanStopDisposition::None) {
             disposition = HarkenSearch::ScanStopDisposition::CancelRollback;
         }
-        if (HarkenSearch::IsScanPause(disposition)) {
+        if (HarkenSearch::IsScanKeepCommitted(disposition)) {
             if (m_scanRollbackSessionActive) {
                 discardScanRollbackSession();
             }
-            stats.paused = true;
-            stats.cancelled = false;
-            DIAG_SYSTEM("Scan", "Pause detected. Kept committed batches and skipped post-processing.");
+            const bool paused = HarkenSearch::IsScanPause(disposition);
+            stats.paused = paused;
+            stats.cancelled = !paused;
+            if (paused) {
+                DIAG_SYSTEM("Scan", "Pause detected. Kept committed batches and skipped post-processing.");
+            } else {
+                DIAG_SYSTEM("Scan", "Cancel detected. Kept committed batches and skipped post-processing.");
+            }
             return stats;
         }
 

@@ -6897,6 +6897,7 @@ static void PollQaCommandFile(AppState& state) {
                 ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
                 result = R"({"ok":false,"error":"invalid_scan_setup_or_task_active"})";
             } else {
+                state.pendingScanIsDirectDriveRootDrop = false;
                 state.pendingScanFolders = folders;
                 state.settings.cacheWaveformsOnScan = !getBool(raw, "fast", false);
                 state.scanBuildSimilarityIndexAfterScan = getBool(raw, "similar", false);
@@ -8991,6 +8992,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 }
                 // 不立即扫描，保存待扫描路径并弹出对话框让用户确认选项
+                const bool directDriveRootDrop = !dropTruncated && files.empty() &&
+                    std::all_of(folders.begin(), folders.end(), [](const std::string& folder) {
+                        try {
+                            const std::filesystem::path normalizedPath =
+                                std::filesystem::path(Utf8ToWide(folder)).lexically_normal();
+                            const std::wstring driveName = normalizedPath.root_name().wstring();
+                            return normalizedPath.has_root_directory() &&
+                                driveName.size() == 2 && driveName[1] == L':' &&
+                                normalizedPath == normalizedPath.root_path();
+                        } catch (...) {
+                            return false;
+                        }
+                    });
+                g_appState->pendingScanIsDirectDriveRootDrop = directDriveRootDrop;
                 g_appState->pendingScanFolders = folders;
                 g_appState->scanDialogAutoStart = false;
                 g_appState->showScanDialog = true;
@@ -13016,6 +13031,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                         }
                 } else {
                     // Directory or other path: existing scan-dialog behavior.
+                    state.pendingScanIsDirectDriveRootDrop = false;
                     state.pendingScanFolders.push_back(cmdPath);
                     state.scanDialogAutoStart = false;
                     state.showScanDialog = true;

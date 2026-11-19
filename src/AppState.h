@@ -1942,6 +1942,7 @@ struct AppState {
     std::atomic<HarkenSearch::ScanStopDisposition> scanStopDisposition{
         HarkenSearch::ScanStopDisposition::None
     };
+    std::atomic<bool> scanKeepCommittedOnCancel{false};
     bool scanWasCancelled = false;
     bool scanWasPaused = false;
     double scanSummaryToastUntil = 0.0;
@@ -2074,6 +2075,7 @@ struct AppState {
     std::string lastScannedPath;
     std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.
     std::vector<std::string> pendingScanFolders; // 拖入但尚未开始扫描的文件夹
+    bool pendingScanIsDirectDriveRootDrop = false;
     std::string pendingOpenFilePath;             // argv/IPC 传入的音频文件路径，主循环消费后清空
     bool filePlayerFastPathActive = false;       // 双击音频/IPC 打开时跳过素材库预热，优先进入播放
     std::thread scanThread;
@@ -2335,7 +2337,7 @@ struct AppState {
     std::function<void(AppState&, const std::string&, uint64_t)> relinkBannerSearchFn;
     std::function<void(AppState&, const std::vector<std::string>&, uint64_t)> relinkToolSearchFn;
 
-    uint64_t beginNewScanTask() {
+    uint64_t beginNewScanTask(bool keepCommittedOnCancel = false) {
         std::lock_guard<std::mutex> lk(scanTaskMutex);
         // 废弃当前任务：置 cancel，并把线程句柄转入待回收列表（避免 UI 线程 join 卡顿）
         scanStopDisposition.store(
@@ -2352,6 +2354,7 @@ struct AppState {
         scanStopDisposition.store(
             HarkenSearch::ScanStopDisposition::None,
             std::memory_order_release);
+        scanKeepCommittedOnCancel.store(keepCommittedOnCancel, std::memory_order_release);
         scanTaskCancelToken = std::make_shared<std::atomic<bool>>(false);
         beginScanTiming();
         return scanTaskGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -2369,8 +2372,12 @@ struct AppState {
         return token && token->load(std::memory_order_acquire);
     }
     void requestCancelScanTask() {
+        const HarkenSearch::ScanStopDisposition cancelDisposition =
+            scanKeepCommittedOnCancel.load(std::memory_order_acquire)
+                ? HarkenSearch::ScanStopDisposition::CancelKeepCommitted
+                : HarkenSearch::ScanStopDisposition::CancelRollback;
         scanStopDisposition.store(
-            HarkenSearch::ScanStopDisposition::CancelRollback,
+            cancelDisposition,
             std::memory_order_release);
         scanCancelRequested.store(true, std::memory_order_release);
         std::shared_ptr<std::atomic<bool>> token;

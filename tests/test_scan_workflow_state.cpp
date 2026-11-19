@@ -124,6 +124,10 @@ void testLastMiniCompletionBetweenRefreshes() {
               snapshot, HarkenSearch::ScanStopDisposition::CancelRollback, false) ==
               HarkenSearch::ScanWorkflowStage::Cancelled,
           "last-mini synchronization preserves rollback semantics");
+    check(HarkenSearch::ResolveTerminalScanWorkflowStage(
+              snapshot, HarkenSearch::ScanStopDisposition::CancelKeepCommitted, false) ==
+              HarkenSearch::ScanWorkflowStage::Cancelled,
+          "keep-committed cancellation is terminal cancellation rather than pause");
 
     snapshot.miniWaveformsRequired = false;
     snapshot.miniWaveformsContinueInBackground = true;

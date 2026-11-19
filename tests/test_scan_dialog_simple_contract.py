@@ -82,7 +82,9 @@ def test_stop_and_result_actions_measure_text_before_deciding_same_line():
     assert 'ImGui::GetStyle().FramePadding.x' in helper
     assert 'ImGui::GetWindowContentRegionMax().x' in helper
     assert 'ImGui::GetItemRectMax().x' in helper
-    assert 'ScanDialogNextAction(L(ScanUi_RevokeScan));' in SCAN
+    assert 'const char* cancelActionLabel = keepCommittedOnCancel' in SCAN
+    assert 'ScanDialogNextAction(cancelActionLabel);' in SCAN
+    assert 'const char* cancelReminder = keepCommittedOnCancel' in SCAN
     assert 'ScanDialogNextAction(resume ? L(ScanUi_Rescan) : L(ScanUi_ChooseAgain));' in SCAN
     assert 'ScanDialogNextAction(L(Done), 100.f);' in SCAN
 

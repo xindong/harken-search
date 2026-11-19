@@ -33,6 +33,7 @@ inline void PrepareQuickScanDialogForPath(TState& state,
                                           bool autoStart = false) {
     if (path.empty() || state.isScanning.load()) return;
     state.pendingScanFolders.clear();
+    state.pendingScanIsDirectDriveRootDrop = false;
     state.pendingScanFolders.push_back(path);
     state.scanDialogAutoStart = autoStart;
     state.showScanDialog = true;
