@@ -599,7 +599,7 @@
       "risk_classification": "low",
       "policy_category": "permissive",
       "manual_approval_required": true,
-      "approval_reference": "Cuevi REQ-20261110-WV-FORMAT context 6db3a295-71c1-47bd-9849-275bd5b9d621 (2026-11-19): pinned 5.9.0 source, Windows static link, installer and update distribution approved",
+      "approval_reference": "Project approval on 2026-11-19: pinned WavPack 5.9.0 source, Windows static link, and distribution with the installer and update packages",
       "cmake_markers": ["thirdparty/wavpack"],
       "distribution_paths": ["HarkenSearch.exe"],
       "distribution_obligation": {
