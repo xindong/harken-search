@@ -36527,16 +36527,17 @@ void RenderUI(AppState& state) {
     }
     // Consume search results early in the frame to reduce display latency.
     MarkPlaylistOpenFrame();
-    aura::search::Pump(
-        state,
-        [](AppState& appState, AsyncSearchResult& result) {
-            aura::search::Apply(
-                appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
-                kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
-                BuildAsyncSearchResultApplicationEffects());
-        },
-        [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
-    MarkPlaylistOpenApplied();
+    const bool pumpedEarly =
+        aura::search::Pump(
+            state,
+            [](AppState& appState, AsyncSearchResult& result) {
+                aura::search::Apply(
+                    appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
+                    kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
+                    BuildAsyncSearchResultApplicationEffects());
+            },
+            [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
+    if (pumpedEarly) MarkPlaylistOpenApplied();
 #ifdef _WIN32
     PumpReaperFileListImportResult(state);
 #endif
@@ -44497,16 +44498,17 @@ void RenderUI(AppState& state) {
     }
 
     // Async search results handoff (refresh/load more/load all)
-    aura::search::Pump(
-        state,
-        [](AppState& appState, AsyncSearchResult& result) {
-            aura::search::Apply(
-                appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
-                kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
-                BuildAsyncSearchResultApplicationEffects());
-        },
-        [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
-    MarkPlaylistOpenApplied();
+    const bool pumpedHandoff =
+        aura::search::Pump(
+            state,
+            [](AppState& appState, AsyncSearchResult& result) {
+                aura::search::Apply(
+                    appState, result, g_loadAllBatchRuntime, g_searchQueryTiming,
+                    kLoadAllThreshold, g_resultsMiniWaveColumnVisible,
+                    BuildAsyncSearchResultApplicationEffects());
+            },
+            [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
+    if (pumpedHandoff) MarkPlaylistOpenApplied();
 #ifdef _WIN32
     PumpReaperFileListImportResult(state);
 #endif

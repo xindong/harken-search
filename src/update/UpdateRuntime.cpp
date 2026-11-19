@@ -102,6 +102,7 @@ void LogUpdateTransition(const UpdateEvent& event) {
     static Clock::time_point lastProgress{};
     const auto now = Clock::now();
     const auto since = [&](Clock::time_point from) {
+        if (from == Clock::time_point{}) return 0.0;
         return std::chrono::duration<double, std::milli>(now - from).count();
     };
     auto& log = DiagnosticsLogger::instance();
@@ -120,6 +121,10 @@ void LogUpdateTransition(const UpdateEvent& event) {
         log.logPerformance("AutoUpdate", "UpdateCheckFailed", since(checkStart));
         break;
     case UpdateEventKind::DownloadCandidateAccepted:
+        // The accepted candidate is the actual download entry; resumes reuse it,
+        // so the stage clock must start here as well as on an explicit request.
+        downloadStart = now;
+        lastProgress = now;
         log.logSystem("AutoUpdate", "UpdateCandidateAccepted");
         break;
     case UpdateEventKind::DownloadRequested:
