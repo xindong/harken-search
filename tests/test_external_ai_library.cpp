@@ -246,6 +246,82 @@ void TestReadOnlySearch(const fs::path& scratch) {
     Check(fixture.State() == before, "rollback-mode queries leave all fixture bytes and times unchanged");
 }
 
+void TestShortMetadataAndLiteralSearch(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    {
+        const auto writer = fixture.Seed();
+        Exec(writer.get(), R"SQL(
+            DELETE FROM audio_files WHERE id=1;
+            ALTER TABLE audio_files ADD COLUMN keywords TEXT;
+        )SQL");
+        fixture.Add(writer.get(), 1, fixture.root / "wind" / "wind.wav");
+        fixture.Add(writer.get(), 12, fixture.root / "wind" / "wind% literal.wav", u8"\u8f7b\u811a\u6b65");
+        fixture.Add(writer.get(), 13, fixture.root / "wind" / "001.wav", "wind% gust");
+        fixture.Add(writer.get(), 14, fixture.root / fs::u8path(u8"\u811a\u6b65\u96e8") / "privacy.wav");
+        Exec(writer.get(), R"SQL(
+            UPDATE audio_files SET keywords=char(26292,38632,22768) WHERE id=13;
+            UPDATE audio_files SET search_data=char(33050,27493,38632) WHERE id=14;
+            INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');
+            INSERT INTO audio_files_name_trigram(audio_files_name_trigram) VALUES('rebuild');
+        )SQL");
+    }
+    ExternalAiLibrary library;
+    std::string error;
+    Check(library.Open(fixture.path.u8string(), fixture.root.u8string(), error),
+        "opens the literal-search fixture with optional catalog metadata");
+    Check(Ids(library.SearchAudio(u8"\u811a\u6b65", 10)) == std::vector<std::int64_t>({12}) &&
+        Ids(library.SearchAudio(u8"\u96e8", 10)) == std::vector<std::int64_t>({13}),
+        "one- and two-character Chinese queries match title or keywords, not path or derived text");
+    Check(Ids(library.SearchAudio("wind%", 1)) == std::vector<std::int64_t>({12}) &&
+        Ids(library.SearchAudio("wind%", 10)) == std::vector<std::int64_t>({12, 13}),
+        "long indexed queries verify literal punctuation before limit, including metadata");
+}
+
+void TestFoldersWithStaleIndex(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    {
+        const auto writer = fixture.Seed();
+        fixture.Add(writer.get(), 12, fixture.root / "new-valve" / "first.wav");
+        fixture.Add(writer.get(), 13, fixture.root / "new-valve" / "second.wav");
+        fixture.Add(writer.get(), 14, fixture.outside / "new-valve" / "outside.wav");
+        Exec(writer.get(), "INSERT INTO folder_index SELECT folder_path,1,0 FROM audio_files WHERE id=14;");
+    }
+    const auto before = fixture.State();
+    ExternalAiLibrary library;
+    std::string error;
+    const Json expected = Json::array({{{"relative_path", "new-valve"}, {"file_count", 2}}});
+    const bool opened = library.Open(fixture.path.u8string(), fixture.root.u8string(), error);
+    const auto folders = library.FindFolders("new-valve", 1);
+    Check(opened && Status(folders, "ok") && folders["results"] == expected,
+        "a stale folder index does not hide a new authorized folder or include outside files");
+    Check(fixture.State() == before, "folder lookup does not repair the cached index on disk");
+}
+
+void TestSimilarContentDeduplication(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    fixture.Seed().reset();
+    fixture.Cache(1, fixture.root / "wind" / "wind%_.wav", true);
+    fixture.Cache(2, fixture.root / "wind" / "wind-b.wav", true);
+    fixture.Cache(3, fixture.root / "wind" / "wind-c.wav", true);
+    fixture.Cache(4, fixture.root / "rain" / "unindexed.wav", true);
+    fixture.Cache(5, fixture.root / "wind" / "stale.wav", true);
+    {
+        const auto writer = fixture.Connect();
+        Exec(writer.get(), R"SQL(
+            UPDATE harken_similarity_v2 SET fingerprint=replace(fingerprint,'1','a') WHERE file_id=1;
+            UPDATE harken_similarity_v2 SET fingerprint=upper(
+                (SELECT fingerprint FROM harken_similarity_v2 WHERE file_id=1)) WHERE file_id=2;
+            UPDATE harken_similarity_v2 SET fingerprint=
+                (SELECT fingerprint FROM harken_similarity_v2 WHERE file_id=3) WHERE file_id=4;
+        )SQL");
+    }
+    ExternalAiLibrary library;
+    std::string error;
+    Check(library.Open(fixture.path.u8string(), fixture.root.u8string(), error) &&
+        Ids(library.FindSimilar(1, 2)) == std::vector<std::int64_t>({3, 5}),
+        "substitutes exclude copies of the reference and deduplicate candidates before limit");
+}
+
 void TestCachedSimilarity(const fs::path& scratch) {
     Fixture fixture(scratch);
     fixture.Seed();
@@ -519,6 +595,9 @@ int main(int argc, char** argv) {
         TestWalShmRejectsUnverifiedCachedMapping(scratch);
 #endif
         TestReadOnlySearch(scratch);
+        TestShortMetadataAndLiteralSearch(scratch);
+        TestFoldersWithStaleIndex(scratch);
+        TestSimilarContentDeduplication(scratch);
         TestCachedSimilarity(scratch);
         TestWalReadOnly(scratch);
 #ifdef _WIN32

@@ -672,41 +672,27 @@ std::string SearchPhrase(std::string_view text) {
     return phrase + '"';
 }
 
-std::optional<std::string> FtsMetadataColumns(sqlite3* database) {
+std::optional<std::vector<std::string_view>> SearchableColumns(sqlite3* database, const char* tableInfo) {
     constexpr std::array<std::string_view, 7> allowed = {
         "file_name", "title", "artist", "album", "description", "keywords", "category"
     };
-    const auto statement = Prepare(database, "PRAGMA main.table_info(audio_files_fts)");
+    const auto statement = Prepare(database, tableInfo);
     if (!statement) {
         return std::nullopt;
     }
-    std::string columns;
+    std::vector<std::string_view> columns;
     int step = 0;
     while ((step = sqlite3_step(statement.get())) == SQLITE_ROW) {
         const auto name = SqlText(statement.get(), 1);
         const auto known = std::find(allowed.begin(), allowed.end(), name);
         if (known != allowed.end()) {
-            columns += ' ';
-            columns += *known;
+            columns.push_back(*known);
         }
     }
     if (step != SQLITE_DONE) {
         return std::nullopt;
     }
-    return columns.empty() ? columns : "{" + columns + " } : ";
-}
-
-std::string FolderScopePrefix(const fs::path& root) {
-    auto prefix = root.generic_u8string();
-#ifdef _WIN32
-    std::transform(prefix.begin(), prefix.end(), prefix.begin(), [](unsigned char byte) {
-        return static_cast<char>(byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte);
-    });
-#endif
-    if (prefix.back() != '/') {
-        prefix += '/';
-    }
-    return prefix;
+    return columns;
 }
 
 Json AudioRow(std::int64_t fileId, std::string_view relative, double duration) {
@@ -769,7 +755,8 @@ Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
     auto* database = session.Database();
     const auto fts = HasTable(database, "audio_files_fts");
     const auto trigram = HasTable(database, "audio_files_name_trigram");
-    if (!fts || !trigram) {
+    const auto columns = SearchableColumns(database, "PRAGMA main.table_info(audio_files)");
+    if (!fts || !trigram || !columns || columns->empty()) {
         return Payload("query_failed");
     }
     const auto characters = std::count_if(query.begin(), query.end(), [](const unsigned char byte) {
@@ -777,40 +764,50 @@ Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
     });
     std::string sql = "SELECT audio.id,harken_scoped_path(audio.file_path) AS relative_path,audio.duration "
         "FROM main.audio_files audio ";
-    const auto ftsColumns = characters >= 3 && *fts ? FtsMetadataColumns(database) :
-        std::optional<std::string>(std::string{});
-    if (!ftsColumns) {
-        return Payload("query_failed");
+    std::string ftsFilter;
+    if (characters >= 3 && *fts) {
+        const auto indexedColumns = SearchableColumns(database, "PRAGMA main.table_info(audio_files_fts)");
+        if (!indexedColumns) {
+            return Payload("query_failed");
+        }
+        for (const auto column : *indexedColumns) {
+            if (std::find(columns->begin(), columns->end(), column) != columns->end()) {
+                ftsFilter += ' ';
+                ftsFilter += column;
+            }
+        }
     }
-    const bool useFts = !ftsColumns->empty();
+    const bool useFts = !ftsFilter.empty();
     const bool useTrigram = characters >= 3 && *trigram;
     const bool useIndex = useFts || useTrigram;
     if (useIndex) {
         sql += "JOIN (";
         if (useFts) {
-            sql += "SELECT rowid FROM main.audio_files_fts WHERE audio_files_fts MATCH ?1";
+            sql += "SELECT rowid FROM main.audio_files_fts WHERE audio_files_fts MATCH ?2";
         }
         if (useFts && useTrigram) {
             sql += " UNION ";
         }
         if (useTrigram) {
-            sql += "SELECT rowid FROM main.audio_files_name_trigram WHERE file_name MATCH ?2";
+            sql += "SELECT rowid FROM main.audio_files_name_trigram WHERE file_name MATCH ?3";
         }
         sql += ") hits ON hits.rowid=audio.id ";
     }
     sql += "WHERE audio.id>0 AND typeof(audio.id)='integer' "
         "AND instr(audio.file_name,'/')=0 AND instr(audio.file_name,char(92))=0 AND instr(audio.file_name,':')=0 "
-        "AND harken_scoped_path(audio.file_path) IS NOT NULL ";
-    if (!useIndex) {
-        sql += "AND instr(lower(audio.file_name),lower(?2))>0 ";
+        "AND (0";
+    for (const auto column : *columns) {
+        sql += " OR instr(lower(audio.";
+        sql += column;
+        sql += "),lower(?1))>0";
     }
-    sql += "ORDER BY audio.id LIMIT ?3";
+    sql += ") AND harken_scoped_path(audio.file_path) IS NOT NULL ORDER BY audio.id LIMIT ?4";
     auto statement = Prepare(database, sql);
     const auto phrase = useIndex ? SearchPhrase(query) : std::string{};
-    if (!statement ||
-        (useFts && !BindText(statement.get(), 1, *ftsColumns + phrase)) ||
-        ((useTrigram || !useIndex) && !BindText(statement.get(), 2, useTrigram ? phrase : query)) ||
-        sqlite3_bind_int(statement.get(), 3, limit) != SQLITE_OK) {
+    if (!statement || !BindText(statement.get(), 1, query) ||
+        (useFts && !BindText(statement.get(), 2, "{" + ftsFilter + " } : " + phrase)) ||
+        (useTrigram && !BindText(statement.get(), 3, phrase)) ||
+        sqlite3_bind_int(statement.get(), 4, limit) != SQLITE_OK) {
         return Payload("query_failed");
     }
     Json results = Json::array();
@@ -832,30 +829,18 @@ Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
         return Payload("query_failed");
     }
     auto* database = session.Database();
-    const auto folderIndex = HasTable(database, "folder_index");
-    if (!folderIndex) {
-        return Payload("query_failed");
-    }
     std::string sql = "WITH scoped(folder) AS ("
-        "SELECT harken_parent_path(harken_scoped_path(audio.file_path)) ";
-    if (*folderIndex) {
-        sql += "FROM main.folder_index folder CROSS JOIN main.audio_files audio ON audio.folder_path=folder.folder_path "
-            "WHERE folder.file_count>0 AND ";
-#ifdef _WIN32
-        sql += "instr(lower(replace(folder.folder_path,char(92),'/')),?3)=1 AND ";
-#else
-        sql += "instr(folder.folder_path,?3)=1 AND ";
-#endif
-    } else {
-        sql += "FROM main.audio_files audio WHERE ";
+        "SELECT harken_parent_path(harken_scoped_path(audio.file_path)) "
+        "FROM main.audio_files audio WHERE audio.id>0 ";
+    if (query.find('/') == std::string::npos) {
+        sql += "AND instr(lower(audio.file_path),lower(?1))>0 ";
     }
-    sql += "audio.id>0) SELECT scoped.folder,COUNT(*) FROM scoped "
+    sql += ") SELECT scoped.folder,COUNT(*) FROM scoped "
         "WHERE instr(lower(scoped.folder),lower(?1))>0 "
         "GROUP BY scoped.folder ORDER BY scoped.folder COLLATE BINARY LIMIT ?2";
     auto statement = Prepare(database, sql);
     if (!statement || !BindText(statement.get(), 1, query) ||
-        sqlite3_bind_int(statement.get(), 2, limit) != SQLITE_OK ||
-        (*folderIndex && !BindText(statement.get(), 3, FolderScopePrefix(implementation_->root)))) {
+        sqlite3_bind_int(statement.get(), 2, limit) != SQLITE_OK) {
         return Payload("query_failed");
     }
     Json results = Json::array();
@@ -927,6 +912,7 @@ Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
     struct Match {
         std::int64_t id;
         float score;
+        std::string fingerprint;
         Json row;
     };
     const auto better = [](const Match& left, const Match& right) {
@@ -951,7 +937,8 @@ Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
         SimilarityAnalysisEntry candidate;
         const auto relative = SqlText(candidates.get(), 11);
         if (relative.empty() || relative == referencePath ||
-            !SimilarityAnalysisStore::DecodeStoredSummary(candidates.get(), candidate) || !candidate.hasSemantic) {
+            !SimilarityAnalysisStore::DecodeStoredSummary(candidates.get(), candidate) || !candidate.hasSemantic ||
+            sqlite3_stricmp(reference.identity.sha256.c_str(), candidate.identity.sha256.c_str()) == 0) {
             continue;
         }
         const float category = std::clamp(AudioEmbeddingCosine(reference.embedding, candidate.embedding), 0.0f, 1.0f);
@@ -961,7 +948,16 @@ Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
         }
         auto row = AudioRow(candidate.file.id, relative, sqlite3_column_double(candidates.get(), 4));
         row["match_score"] = std::clamp(static_cast<double>(score.total) * 100.0, 0.0, 100.0);
-        Match match{candidate.file.id, score.total, std::move(row)};
+        Match match{candidate.file.id, score.total, std::move(candidate.identity.sha256), std::move(row)};
+        const auto duplicate = std::find_if(matches.begin(), matches.end(), [&match](const Match& other) {
+            return sqlite3_stricmp(match.fingerprint.c_str(), other.fingerprint.c_str()) == 0;
+        });
+        if (duplicate != matches.end()) {
+            if (!better(match, *duplicate)) {
+                continue;
+            }
+            matches.erase(duplicate);
+        }
         matches.insert(std::lower_bound(matches.begin(), matches.end(), match, better), std::move(match));
         if (matches.size() > static_cast<std::size_t>(limit)) {
             matches.pop_back();
