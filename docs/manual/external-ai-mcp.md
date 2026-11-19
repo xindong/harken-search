@@ -49,3 +49,47 @@ whose filenames and directory names you are comfortable returning to that client
 This is a local connector, not a Codex Cloud endpoint or a Harken chat panel.
 Automatic tagging, batch metadata edits and direct integration with a cloud
 runner are not included.
+
+## Authorization document (backend)
+
+Each library keeps its own authorization document. The connector must load the
+document for the database it was pointed at and check every request against it;
+a document copied from another library never matches.
+
+```json
+{
+  "libraryId": "<database identity>",
+  "enabled": true,
+  "sampleLibrary": false,
+  "roots": ["D:/Sounds/Selected Library"],
+  "capabilities": {
+    "searchAudio": "read",
+    "findSimilar": "read",
+    "findFolders": "none",
+    "readFileName": "read",
+    "readMetadata": "read",
+    "editMetadata": "none"
+  }
+}
+```
+
+- `enabled` is the master switch. When it is off, every capability is denied
+  even if roots and grants are still saved.
+- `roots` are only the indexed directories the user ticked. An empty list
+  grants nothing; adding a path to the file is not the same as authorizing it.
+- Each capability is `none`, `read` or `edit`. File names and library
+  metadata are checked separately, so one can be shared while the other stays
+  closed.
+- A request is allowed only if its canonical target stays inside a ticked root.
+  Sibling folders with a shared name prefix, `..` components, relative paths
+  and junctions or symlinks that resolve outside the root are denied.
+- Revoking a root or lowering a capability applies to the next request even
+  while the MCP client keeps the connector process alive.
+- `sampleLibrary` stays read-only; an `edit` grant cannot widen it. The
+  connector still exposes no write tool, so configuration never substitutes for
+  an unimplemented capability.
+
+Malformed documents are rejected as a whole: unknown fields, misspelled
+capability names and unknown access levels fail instead of silently granting
+access. `src/ExternalAiAuthorization.cpp` implements these checks and
+`tests/test_external_ai_authorization.cpp` covers them.

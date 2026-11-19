@@ -1,5 +1,6 @@
 add_library(HarkenExternalAiLibrary STATIC EXCLUDE_FROM_ALL
     src/ExternalAiLibrary.cpp
+    src/ExternalAiAuthorization.cpp
     ${_similarity_store_sources})
 target_include_directories(HarkenExternalAiLibrary PUBLIC src thirdparty PRIVATE "${SQLITE_DIR}")
 target_link_libraries(HarkenExternalAiLibrary PRIVATE Threads::Threads)
@@ -33,3 +34,14 @@ if(Python3_Interpreter_FOUND)
         "TEMP=${CMAKE_CURRENT_BINARY_DIR};TMP=${CMAKE_CURRENT_BINARY_DIR};TMPDIR=${CMAKE_CURRENT_BINARY_DIR};PYTHONDONTWRITEBYTECODE=1")
     aura_set_test_labels(TestExternalAiMcp core)
 endif()
+
+add_executable(TestExternalAiAuthorization EXCLUDE_FROM_ALL
+    tests/test_external_ai_authorization.cpp
+    src/ExternalAiAuthorization.cpp)
+target_include_directories(TestExternalAiAuthorization PRIVATE src thirdparty)
+if(MSVC)
+    target_compile_options(TestExternalAiAuthorization PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestExternalAiAuthorization COMMAND TestExternalAiAuthorization "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(TestExternalAiAuthorization PROPERTIES TIMEOUT 30)
+aura_set_test_labels(TestExternalAiAuthorization core)
