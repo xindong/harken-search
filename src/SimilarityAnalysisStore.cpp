@@ -218,9 +218,12 @@ bool SimilarityAnalysisStore::LoadSummaries(std::vector<SimilarityAnalysisEntry>
     entries.clear(); auto s = Prepare(database_, Select(false) + " ORDER BY a.file_id"); if (!s) return false; int rc;
     while ((rc = sqlite3_step(s.get())) == SQLITE_ROW) {
         if (cancel_ && cancel_()) { entries.clear(); return false; }
-        SimilarityAnalysisEntry entry; if (Row(s.get(),entry,false)) entries.push_back(std::move(entry));
+        SimilarityAnalysisEntry entry; if (DecodeStoredSummary(s.get(),entry)) entries.push_back(std::move(entry));
     }
     return rc == SQLITE_DONE;
+}
+bool SimilarityAnalysisStore::DecodeStoredSummary(sqlite3_stmt* summaryRow, SimilarityAnalysisEntry& entry) {
+    return Row(summaryRow, entry, false);
 }
 int64_t SimilarityAnalysisStore::SegmentCount() {
     auto s = Prepare(database_, "SELECT COUNT(*) FROM harken_similarity_segments_v2 s JOIN harken_similarity_v2 a ON a.file_id=s.file_id JOIN audio_files f ON f.id=a.file_id AND f.file_path=a.file_path WHERE a.version=2 AND a.model_version=?");
