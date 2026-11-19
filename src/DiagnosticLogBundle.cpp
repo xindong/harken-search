@@ -29,6 +29,7 @@ struct EventRule {
     const char* event;
     bool prefix = false;
     const char* exportCategory = nullptr;
+    bool exportReason = false;
 };
 
 constexpr EventRule kEvents[]{
@@ -80,6 +81,27 @@ constexpr EventRule kEvents[]{
     {Type::Action, "MiniWave", "tex hit=", "MiniWaveTextureFlush", true},
     {Type::Action, "MiniWave", "worker cacheHit=", "MiniWaveWorkerFlush", true},
     {Type::Performance, "DAW", "AsyncRunningStateProbe", "DawRunningStateProbe"},
+    {Type::Performance, "AutoUpdate", "UpdateCheckStart", "UpdateCheckStart"},
+    {Type::Performance, "AutoUpdate", "UpdateCheckSucceeded", "UpdateCheckSucceeded"},
+    {Type::Performance, "AutoUpdate", "UpdateNoUpdate", "UpdateNoUpdate"},
+    {Type::Performance, "AutoUpdate", "UpdateCheckFailed", "UpdateCheckFailed"},
+    {Type::Performance, "AutoUpdate", "UpdateDownloadStart", "UpdateDownloadStart"},
+    {Type::Performance, "AutoUpdate", "UpdateDownloadCompleted", "UpdateDownloadCompleted"},
+    {Type::Performance, "AutoUpdate", "UpdateDownloadFailed", "UpdateDownloadFailed"},
+    {Type::Performance, "AutoUpdate", "UpdateDownloadCancelled", "UpdateDownloadCancelled"},
+    {Type::Metric, "AutoUpdate", "UpdateDownloadProgressMB", "UpdateDownloadProgressMB"},
+    {Type::System, "AutoUpdate", "UpdateCandidateAccepted", "UpdateCandidateAccepted"},
+    {Type::System, "AutoUpdate", "UpdateRestartConfirmed", "UpdateRestartConfirmed"},
+    {Type::System, "AutoUpdate", "UpdateCheckReason reason=", "UpdateCheckReason", true, nullptr, true},
+    {Type::System, "AutoUpdate", "UpdateDownloadReason reason=", "UpdateDownloadReason", true, nullptr, true},
+    {Type::Performance, "Playlist", "OpenLibraryRequest", "OpenLibraryRequest"},
+    {Type::Performance, "Playlist", "OpenLibraryApply", "OpenLibraryApply"},
+    {Type::Performance, "Playlist", "OpenLibraryFirstFrame", "OpenLibraryFirstFrame"},
+    {Type::Performance, "Playlist", "OpenLibraryTotal", "OpenLibraryTotal"},
+    {Type::Performance, "Playlist", "OpenPlaylistRequest", "OpenPlaylistRequest"},
+    {Type::Performance, "Playlist", "OpenPlaylistApply", "OpenPlaylistApply"},
+    {Type::Performance, "Playlist", "OpenPlaylistFirstFrame", "OpenPlaylistFirstFrame"},
+    {Type::Performance, "Playlist", "OpenPlaylistTotal", "OpenPlaylistTotal"},
     {Type::Action, "UI", "Click.Left ", "UiClickLeft", true},
     {Type::Action, "UI", "Click.Right ", "UiClickRight", true},
     {Type::Action, "UI", "Browser All-Select Executed", "BrowserAllSelect"},
@@ -91,6 +113,7 @@ constexpr EventRule kEvents[]{
 
 constexpr const char* kCategories[]{"Search", "Scan", "Database", "Waveform",
                                     "Audio", "Memory", "Cover", "MiniWave", "DAW",
+                                    "AutoUpdate", "Playlist",
                                     "UI", "Frame", "Pointer", "WebView"};
 
 template <size_t Size>
@@ -153,6 +176,29 @@ Json publicRow(const DiagLogEntry& entry, int64_t clickMs, size_t threadGroup) {
                    {"category", publicCategory}, {"repeat", entry.repeatCount}, {"thread_group", threadGroup}};
     if (match) {
         result["event"] = match->event;
+        if (match->exportReason) {
+            const auto marker = detail.find("reason=");
+            if (marker != std::string_view::npos) {
+                std::string code;
+                for (const char ch : detail.substr(marker + 7)) {
+                    if (code.size() >= 40) break;
+                    const bool keep = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                                      (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+                    if (!keep) break;
+                    code.push_back(ch);
+                }
+                std::string lower = code;
+                std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+                    return static_cast<char>(std::tolower(ch));
+                });
+                const bool sensitive = lower.find("token") != std::string::npos ||
+                                       lower.find("secret") != std::string::npos ||
+                                       lower.find("password") != std::string::npos ||
+                                       lower.find("auth") != std::string::npos ||
+                                       lower.find("key") != std::string::npos;
+                if (!code.empty()) result["reason_code"] = sensitive ? "redacted" : code;
+            }
+        }
         if (entry.type == Type::Performance && std::isfinite(entry.durationMs) && entry.durationMs >= 0)
             result["duration_ms"] = entry.durationMs;
         if (entry.type == Type::Metric && std::isfinite(entry.value))

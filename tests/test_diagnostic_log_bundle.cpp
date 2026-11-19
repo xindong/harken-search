@@ -264,6 +264,11 @@ void checkDiagnosticsCoverage(DiagnosticsLogger& logger, const fs::path& root) {
         entry(-10, DiagLogType::Metric, "Cover", "EmbeddedCacheSize"),
         entry(-11, DiagLogType::Metric, "Cover", "UploadQueuedKeysSize"),
         entry(-12, DiagLogType::Action, "Audio", "DecoderPrewarmSkippedByForeground: reason=no_anchor"),
+        entry(-13, DiagLogType::Performance, "AutoUpdate", "UpdateCheckFailed"),
+        entry(-14, DiagLogType::System, "AutoUpdate", "UpdateCheckReason reason=http_503"),
+        entry(-15, DiagLogType::Metric, "AutoUpdate", "UpdateDownloadProgressMB"),
+        entry(-16, DiagLogType::Performance, "Playlist", "OpenLibraryApply"),
+        entry(-17, DiagLogType::System, "AutoUpdate", "UpdateCheckReason reason=token=secret"),
     };
     entries[0].value = 812.5;
     entries[1].durationMs = 1.25;
@@ -273,6 +278,9 @@ void checkDiagnosticsCoverage(DiagnosticsLogger& logger, const fs::path& root) {
     entries[8].value = 1;
     entries[9].value = 42;
     entries[10].value = 7;
+    entries[12].durationMs = 1830.5;
+    entries[14].value = 12.5;
+    entries[15].durationMs = 42.75;
     DiagnosticsRetentionTestAccess::seed(logger, entries);
     DiagLogSnapshot snapshot;
     check(logger.trySnapshotForExport(kClick, snapshot) && snapshot.entries.size() == entries.size(),
@@ -313,7 +321,18 @@ void checkDiagnosticsCoverage(DiagnosticsLogger& logger, const fs::path& root) {
     check(at(-12).at("category") == "Audio" &&
           at(-12).at("event") == "DecoderPrewarmSkippedByForeground",
           "audio prewarm skips keep a stable name");
-    for (const auto* forbidden : {"hit=7", "x=10", "reason=", "private-memory"})
+    check(at(-13).at("event") == "UpdateCheckFailed" && at(-13).at("duration_ms") == 1830.5,
+          "update check failure keeps its stage duration");
+    check(at(-14).at("event") == "UpdateCheckReason" && at(-14).at("reason_code") == "http_503",
+          "update failure keeps only a bounded reason token");
+    check(at(-15).at("event") == "UpdateDownloadProgressMB" && at(-15).at("value") == 12.5,
+          "update download progress keeps its megabyte value");
+    check(at(-16).at("category") == "Playlist" && at(-16).at("event") == "OpenLibraryApply" &&
+          at(-16).at("duration_ms") == 42.75,
+          "playlist open keeps each stage duration");
+    check(at(-17).at("reason_code") == "redacted",
+          "sensitive reason tokens are replaced instead of exported");
+    for (const auto* forbidden : {"hit=7", "x=10", "reason=", "private-memory", "secret"})
         check(archive.logs.find(forbidden) == std::string::npos,
               "expanded coverage keeps raw details out of the ZIP");
 }

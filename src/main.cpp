@@ -15136,6 +15136,65 @@ void LoadAllFilesFiltered(AppState& state, int limit) {
     state.syncToTab();
 }
 
+#if AURA_BUILD_DIAGNOSTICS
+namespace {
+// Playlist open probe: request -> result applied -> first frame.
+// Kept in the diagnostics build only so release builds pay nothing.
+struct PlaylistOpenProbe {
+    bool active = false;
+    bool library = false;
+    int64_t requestedMs = 0;
+    int64_t appliedMs = 0;
+};
+
+PlaylistOpenProbe g_playlistOpenProbe;
+
+int64_t PlaylistProbeNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+void BeginPlaylistOpenDiagnostics(bool library) {
+    auto& probe = g_playlistOpenProbe;
+    probe.active = true;
+    probe.library = library;
+    probe.requestedMs = PlaylistProbeNowMs();
+    probe.appliedMs = 0;
+    DiagnosticsLogger::instance().logPerformance(
+        "Playlist", library ? "OpenLibraryRequest" : "OpenPlaylistRequest", 0.0);
+}
+
+void MarkPlaylistOpenApplied() {
+    auto& probe = g_playlistOpenProbe;
+    if (!probe.active || probe.appliedMs != 0) return;
+    probe.appliedMs = PlaylistProbeNowMs();
+    DiagnosticsLogger::instance().logPerformance(
+        "Playlist", probe.library ? "OpenLibraryApply" : "OpenPlaylistApply",
+        static_cast<double>(probe.appliedMs - probe.requestedMs));
+}
+
+void MarkPlaylistOpenFrame() {
+    auto& probe = g_playlistOpenProbe;
+    if (!probe.active || probe.appliedMs == 0) return;
+    const auto now = PlaylistProbeNowMs();
+    DiagnosticsLogger::instance().logPerformance(
+        "Playlist", probe.library ? "OpenLibraryFirstFrame" : "OpenPlaylistFirstFrame",
+        static_cast<double>(now - probe.appliedMs));
+    DiagnosticsLogger::instance().logPerformance(
+        "Playlist", probe.library ? "OpenLibraryTotal" : "OpenPlaylistTotal",
+        static_cast<double>(now - probe.requestedMs));
+    probe.active = false;
+}
+} // namespace
+#else
+namespace {
+inline void BeginPlaylistOpenDiagnostics(bool) {}
+inline void MarkPlaylistOpenApplied() {}
+inline void MarkPlaylistOpenFrame() {}
+} // namespace
+#endif
+
 static void LoadPlaylistLibraryFiltered(AppState& state) {
     ClearSpecificCoverKeyFilter(state);
     ResetPlaylistCoverWallScope(state);
@@ -15145,9 +15204,16 @@ static void LoadPlaylistLibraryFiltered(AppState& state) {
     state.playlistAggregatedView = false;
     state.viewMode = ViewMode::PlaylistLibrary;
     DIAG_ACTION("Playlist", "ActivateLibraryView");
+    BeginPlaylistOpenDiagnostics(true);
     RefreshSearchResults(state, true);
     state.syncToTab();
 }
+
+#if AURA_BUILD_DIAGNOSTICS
+void LoadPlaylistLibraryFilteredForQa(AppState& state) {
+    LoadPlaylistLibraryFiltered(state);
+}
+#endif
 
 void LoadPlaylistFiltered(AppState& state,
                                  int64_t playlistId,
@@ -15162,6 +15228,7 @@ void LoadPlaylistFiltered(AppState& state,
     }
     state.selectedPlaylistId = playlistId;
     state.viewMode = ViewMode::Playlist;
+    BeginPlaylistOpenDiagnostics(false);
     RefreshSearchResults(state, true);
 }
 
@@ -36459,6 +36526,7 @@ void RenderUI(AppState& state) {
         }
     }
     // Consume search results early in the frame to reduce display latency.
+    MarkPlaylistOpenFrame();
     aura::search::Pump(
         state,
         [](AppState& appState, AsyncSearchResult& result) {
@@ -36468,6 +36536,7 @@ void RenderUI(AppState& state) {
                 BuildAsyncSearchResultApplicationEffects());
         },
         [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
+    MarkPlaylistOpenApplied();
 #ifdef _WIN32
     PumpReaperFileListImportResult(state);
 #endif
@@ -44437,6 +44506,7 @@ void RenderUI(AppState& state) {
                 BuildAsyncSearchResultApplicationEffects());
         },
         [](const char* line) { AppendHarkenSearchPerfLogLine(line); });
+    MarkPlaylistOpenApplied();
 #ifdef _WIN32
     PumpReaperFileListImportResult(state);
 #endif

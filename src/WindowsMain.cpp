@@ -142,6 +142,7 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "ui/ActionButtonStyle.h"
 #if AURA_BUILD_DIAGNOSTICS
 #include "ui/DiagnosticOverlay.h"
+#include "update/HarkenSearchUpdateComposition.h"
 #endif
 #include "nlohmann_json.hpp"
 #include "WwiseTransferPersist.h"
@@ -6834,6 +6835,24 @@ static void PollQaCommandFile(AppState& state) {
                  (started ? "true" : "false") + "}";
 #else
         result = "{\"ok\":false,\"cmd\":\"diagnostic_export\",\"error\":\"diagnostics_disabled\"}";
+#endif
+
+    } else if (cmd == "playlist_open_library") {
+#if AURA_BUILD_DIAGNOSTICS
+        extern void LoadPlaylistLibraryFilteredForQa(AppState& state);
+        LoadPlaylistLibraryFilteredForQa(state);
+        result = "{\"ok\":true,\"cmd\":\"playlist_open_library\"}";
+#else
+        result = "{\"ok\":false,\"cmd\":\"playlist_open_library\",\"error\":\"diagnostics_disabled\"}";
+#endif
+
+    } else if (cmd == "update_check") {
+#if AURA_BUILD_DIAGNOSTICS
+        const bool accepted = aris::update::RequestHarkenSearchUpdateCheck();
+        result = std::string("{\"ok\":true,\"cmd\":\"update_check\",\"accepted\":") +
+                 (accepted ? "true" : "false") + "}";
+#else
+        result = "{\"ok\":false,\"cmd\":\"update_check\",\"error\":\"diagnostics_disabled\"}";
 #endif
 
     } else if (cmd == "switch_db") {
