@@ -3,6 +3,8 @@
 #include "platform/filesystem.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -163,6 +165,28 @@ std::string ExternalAiSettingsPath(const std::string& settingsDirectory, const s
     return directory.u8string();
 }
 
+std::string ExternalAiLibraryIdForPath(const std::string& canonicalDatabasePathUtf8)
+{
+    if (canonicalDatabasePathUtf8.empty()) {
+        return std::string{};
+    }
+    // Fold case and slash style so the same file keeps one identity on Windows;
+    // FNV-1a 64 is deterministic across restarts and app builds.
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const unsigned char unit : canonicalDatabasePathUtf8) {
+        unsigned char folded = unit;
+        if (folded == '\\') {
+            folded = '/';
+        } else if (folded >= 'A' && folded <= 'Z') {
+            folded = static_cast<unsigned char>(folded - 'A' + 'a');
+        }
+        hash ^= folded;
+        hash *= 1099511628211ull;
+    }
+    char buffer[21]{};
+    std::snprintf(buffer, sizeof(buffer), "lib-%016llx", static_cast<unsigned long long>(hash));
+    return std::string(buffer);
+}
 bool LoadExternalAiSettings(const std::string& path, const std::string& libraryId, ExternalAiSettings& out,
     std::string& error, bool* existed)
 {

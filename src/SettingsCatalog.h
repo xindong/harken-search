@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 namespace harken::settings {
-enum class Page { Common, Appearance, Audio, Search, Library, Interaction, Personal, Backup, Diagnostics };
+enum class Page { Common, Appearance, Audio, Search, Library, Interaction, Personal, Backup, Diagnostics, ExternalAi };
 struct Entry {
     std::string id; Page page; int group;
     std::string zh, en, ja, keywords;
@@ -104,6 +104,7 @@ inline const std::vector<Entry>& Catalog() {
         {u8"logging",Page::Diagnostics,0,LStr::Set_EnableDiag,u8"诊断 日志 logging debug"},
         {u8"overlay",Page::Diagnostics,0,LStr::Set_DiagShowOverlay,u8"诊断 浮层"},
         {u8"diagnosticTools",Page::Diagnostics,0,LStr::Set_DiagnosticsLogging,u8"诊断 日志 导出 清理 开发"},
+        {u8"externalAi",Page::ExternalAi,0,LStr::SetUX_ExternalAiMcp,u8"外部 AI MCP 授权 访问 library external ai"},
     };
     return entries;
 }

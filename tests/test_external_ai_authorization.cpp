@@ -229,6 +229,21 @@ int main(int argc, char** argv)
     Check(!HarkenSearch::LoadExternalAiSettings(libraryPath, libraryIdText, afterBroken, storeError, &existed) &&
             existed && !afterBroken.enabled,
         "a malformed document is reported instead of granting access");
+    // Library identity shown on the settings page and copied into the connector command.
+    const std::string idForward = HarkenSearch::ExternalAiLibraryIdForPath("C:/Sounds/Selected/Library.db");
+    const std::string idBackward = HarkenSearch::ExternalAiLibraryIdForPath("c:\\sounds\\selected\\library.db");
+    Check(!idForward.empty() && idForward.rfind("lib-", 0) == 0,
+        "library identity uses the stable lib- prefix");
+    Check(idForward == idBackward, "identity folds drive-letter case and slash style");
+    Check(idForward != HarkenSearch::ExternalAiLibraryIdForPath("D:/Sounds/Selected/Library.db"),
+        "a different library file gets a different identity");
+    Check(HarkenSearch::ExternalAiLibraryIdForPath("").empty(), "an empty path has no library identity");
+    bool identityCharactersValid = !idForward.empty() && idForward.size() <= 64;
+    for (const char unit : idForward) {
+        identityCharactersValid = identityCharactersValid &&
+            ((unit >= '0' && unit <= '9') || (unit >= 'a' && unit <= 'z') || unit == '-');
+    }
+    Check(identityCharactersValid, "identity can name an authorization document");
     std::error_code ignored;
     fs::remove_all(base, ignored);
     std::cout << (failures == 0 ? "ALL PASS" : "FAILURES") << ": " << failures << '\n';

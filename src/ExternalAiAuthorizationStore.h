@@ -55,6 +55,13 @@ bool ParseExternalAiSettings(const std::string& json, const std::string& expecte
 // a library identity that cannot name a file, so a bad identity never writes
 // somewhere unexpected.
 std::string ExternalAiSettingsPath(const std::string& settingsDirectory, const std::string& libraryId);
+// Stable identity for one database file, shown on the settings page and passed
+// to the connector as --library-id. Derived from the canonical database path so
+// it needs no database open and no network round trip; the same file keeps the
+// same identity across restarts and app versions. Path case and slash style are
+// folded, so respelling the same location does not create a second identity.
+// Returns an empty string for an empty path.
+std::string ExternalAiLibraryIdForPath(const std::string& canonicalDatabasePathUtf8);
 
 // A missing file is not an error: the library starts disabled with no ticked
 // directory and every capability closed. existed (optional) reports whether a

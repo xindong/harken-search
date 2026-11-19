@@ -97,3 +97,22 @@ Malformed documents are rejected as a whole: unknown fields, misspelled
 capability names and unknown access levels fail instead of silently granting
 access. `src/ExternalAiAuthorization.cpp` implements these checks and
 `tests/test_external_ai_authorization.cpp` covers them.
+
+
+## Settings page
+Harken's settings dialog has an **External AI (MCP)** page. It reads and writes the
+same document the connector loads:
+- The page shows the library ID and the document path, and prints the `codex mcp add`
+  command with the connector, database, settings and library ID already filled in.
+  Copy it into a local terminal.
+- Tick only the folders the AI client may see. Removing a folder or turning the
+  master switch off applies to the client's next request, even when the client
+  keeps the connector process alive.
+- Each capability is set to not allowed, read-only or editable. File names and
+  metadata are separate switches.
+- A database that has never been authorized starts closed: no folder is ticked and
+  every capability is not allowed.
+The library ID is derived from the canonical database path (`lib-` plus a hash).
+The same database keeps the same ID across restarts, and moving the file gives it a
+new ID that needs its own authorization document.
+
