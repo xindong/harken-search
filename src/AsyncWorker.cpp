@@ -1208,12 +1208,6 @@ void SearchWorker::start(const std::string& dbPath) {
             }, this);
     }
 
-    // Pre-warm cover key indexes: touch root/first pages of cover filter indexes
-    // so subsequent cover clicks don't hit cold mmap pages.
-    if (m_db) {
-        m_db->warmupCoverIndexes();
-    }
-
     m_running.store(true);
     m_thread = std::thread(&SearchWorker::workerThread, this);
 }
@@ -1292,6 +1286,13 @@ bool SearchWorker::pollResult(AsyncSearchResult& outResult, uint64_t expectedReq
 }
 
 void SearchWorker::workerThread() {
+    // Warm cover-key indexes on this worker thread instead of in start(), so
+    // opening or switching a database never blocks the UI thread on the
+    // COUNT(DISTINCT) scan. stop() can interrupt it through m_db->interrupt().
+    if (m_db) {
+        m_db->warmupCoverIndexes();
+    }
+
     struct LegacyCommentCacheEntry {
         int64_t fileMtime = 0;
         uint64_t fileSize = 0;

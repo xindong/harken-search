@@ -2500,16 +2500,19 @@ void Database::warmupCoverIndexes() {
     // This runs during loading; a million-row library typically costs 10-30 ms.
 
     sqlite3_stmt* st = nullptr;
+    // Use the same predicate as the partial cover-dedup indexes
+    // (idx_files_cover_dedup_emb/fold), otherwise SQLite cannot reuse them and
+    // the warmup degenerates into a full table scan on a million-row library.
     if (sqlite3_prepare_v2(m_db,
             "SELECT COUNT(DISTINCT folder_cover_key) FROM audio_files "
-            "WHERE folder_cover_key > ''",
+            "WHERE folder_cover_key <> ''",
             -1, &st, nullptr) == SQLITE_OK) {
         sqlite3_step(st);
         sqlite3_finalize(st);
     }
     if (sqlite3_prepare_v2(m_db,
             "SELECT COUNT(DISTINCT embedded_cover_key) FROM audio_files "
-            "WHERE embedded_cover_key > ''",
+            "WHERE embedded_cover_key <> ''",
             -1, &st, nullptr) == SQLITE_OK) {
         sqlite3_step(st);
         sqlite3_finalize(st);

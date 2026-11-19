@@ -2167,6 +2167,16 @@ set_tests_properties(TestDeferredSidebarBootstrapWorkflowBoundary PROPERTIES
 aura_set_test_labels(TestDeferredSidebarBootstrapWorkflowBoundary core stage4)
 
 add_test(
+    NAME TestCoverWarmupOffUiThreadBoundary
+    COMMAND ${Python3_EXECUTABLE} -m pytest -q
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cover_warmup_off_ui_thread_boundary.py
+)
+set_tests_properties(TestCoverWarmupOffUiThreadBoundary PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+aura_set_test_labels(TestCoverWarmupOffUiThreadBoundary core stage4)
+
+add_test(
     NAME TestReaperFileListImportWorkflowBoundary
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reaper_file_list_import_workflow_boundary.py
