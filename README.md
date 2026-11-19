@@ -37,6 +37,7 @@ python tools/remove_card_directory.py --workspace-root "<absolute-parent>" --car
 Windows quick build / packaging guide:
 
 - [BUILD_WINDOWS.md](BUILD_WINDOWS.md)
+- [Optional local MCP connector](docs/manual/external-ai-mcp.md)
 
 ## Release compliance
 
