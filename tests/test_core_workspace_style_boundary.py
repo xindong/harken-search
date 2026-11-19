@@ -545,12 +545,15 @@ def test_folder_tree_search_preserves_refresh_and_locate_action_width():
     toolbar = between(main, "static void RenderFolderTreeExplorerToolbar", "static void RenderFolderTreeExplorerList")
     sources = between(main, "static ExplorerSource BrowserExplorerSource", "static void RenderRelatedPathsExplorerPane")
 
-    assert "kSameLine + kRefreshW + kBtnGap + kLocateW + 2.0f" in toolbar
+    assert "2.0f * (kButtonGap + aura::folder_tree::controls::kButtonSize) + 2.0f" in toolbar
     assert "ImGui::GetContentRegionAvail().x - searchReserve" in toolbar
     assert "searchBufSize, searchWidth, palette);" in toolbar
     assert "search.cleared" in toolbar and "onSearchEscape();" in toolbar
-    assert "SidebarRefreshGlyphButton(refreshId, ImVec2(kRefreshW, 22.0f), refreshBusy)" in toolbar
-    assert "ImGui::InvisibleButton(locateId, ImVec2(btnSize, btnSize))" in toolbar
+    assert "DrawButton(refreshId, ICON_LC_REFRESH, true," in toolbar
+    assert "DrawButton(locateId, ICON_LC_FOLDER_OPEN, canLocate," in toolbar
+    assert "&refreshMotion, refreshBusy)" in toolbar
+    assert "browserSource.locateId,\n                canLocateCurrent,\n                controls.refresh," in main
+    assert "databaseSource.locateId,\n                locateTarget != nullptr,\n                controls.refresh," in main
     assert "ImGui::SetNextItemWidth(-searchReserve)" not in toolbar
     for action_id in (
         "##BrowserFolderSearch", "##BrowserSidebarRefreshBtn", "##BrowserLocateCurrentFolderBtn",

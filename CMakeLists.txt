@@ -753,6 +753,7 @@ set(APP_SOURCES
     src/WwiseTransferPanel.cpp
     # Aris UI v1 (F-035) - shared widget library for all windows
     src/HarkenSearchIcons.cpp
+    src/LucideFont.cpp
     src/HarkenSearchWidgets.cpp
     src/HarkenSearchWidgetsFocus.cpp
     src/ui/CoreWorkspaceStyle.cpp
@@ -881,6 +882,28 @@ if(WIN32)
     target_include_directories(TestDatabaseFolderRowInput PRIVATE src ${IMGUI_DIR})
     target_compile_features(TestDatabaseFolderRowInput PRIVATE cxx_std_17)
     add_test(NAME DatabaseFolderRowInput COMMAND TestDatabaseFolderRowInput)
+    add_executable(TestFolderTreeControls EXCLUDE_FROM_ALL
+        tests/test_folder_tree_controls.cpp
+        src/LucideFont.cpp
+        src/platform/executable_path_win32.cpp src/platform/text_encoding_win32.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestFolderTreeControls PRIVATE src ${IMGUI_DIR})
+    target_compile_features(TestFolderTreeControls PRIVATE cxx_std_17)
+    set_target_properties(TestFolderTreeControls PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/folder-tree-controls-test")
+    add_custom_command(TARGET TestFolderTreeControls POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lucide/lucide.ttf"
+            "$<TARGET_FILE_DIR:TestFolderTreeControls>/lucide.ttf")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/folder-tree-font-cwd")
+    add_test(NAME FolderTreeControls COMMAND TestFolderTreeControls)
+    set_tests_properties(FolderTreeControls PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/folder-tree-font-cwd")
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME FolderTreeControlsBoundary COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_folder_tree_controls_boundary.py")
+    endif()
     # Isolated Dock frame replay: no product settings, database, or legal-flow bypass.
     add_executable(TestDockPerfReplay EXCLUDE_FROM_ALL
         tests/test_dock_hit_test.cpp src/DockLayout.cpp src/DockDragSession.cpp

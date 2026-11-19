@@ -187,12 +187,12 @@ int main() {
               "browser send path builder derives DAW payload from browser selection instead of stale DB rows");
         CHECK(mainCpp.find("SendToDAWForPaths(state, di, browserSendPaths)") != std::string::npos,
               "browser Send to DAW routes through browser-selected paths");
-        CHECK(mainCpp.find("RenderBrowserSystemFolderTree(state)") != std::string::npos,
+        CHECK(mainCpp.find("RenderBrowserSystemFolderTree(state, controls.locate)") != std::string::npos,
               "browser sidebar exposes a dedicated system folder tree surface");
         CHECK(mainCpp.find("harken::results::AlignBrowserPathLabel(emptyLibraryFileTable)") != std::string::npos &&
               mainCpp.find("ImGui::Indent(0.0f);") == std::string::npos,
               "browser path aligns to the first column without indenting the shared results lane");
-        CHECK(mainCpp.find("RenderBrowserFolderTreeSidebarPanel(state);") != std::string::npos,
+        CHECK(mainCpp.find("RenderBrowserFolderTreeSidebarPanel(state, controls);") != std::string::npos,
               "browser system folder tree is mounted from the real folder-tree sidebar section");
         CHECK(mainCpp.find("RunBrowserSystemFolderSearchIfNeeded(") != std::string::npos,
               "browser sidebar runs an explicit folder-search workflow instead of relying on DB folder filters");
@@ -292,8 +292,15 @@ int main() {
                 browserToolbar == std::string::npos || browserHintEnd == std::string::npos || browserHintEnd <= browserToolbar
                     ? std::string{}
                     : mainCpp.substr(browserToolbar, browserHintEnd - browserToolbar);
-            CHECK(!browserHintScope.empty() && browserHintScope.find("L(Filter_SearchFolder)") == std::string::npos,
-                  "browser folder search uses the same empty hint as the database folder tree");
+            const size_t databaseToolbar = mainCpp.find("databaseSource.searchId", browserHintEnd);
+            const size_t databaseHintEnd = mainCpp.find("state.folderSearchBuffer", databaseToolbar);
+            const std::string databaseHintScope =
+                databaseToolbar == std::string::npos || databaseHintEnd == std::string::npos || databaseHintEnd <= databaseToolbar
+                    ? std::string{}
+                    : mainCpp.substr(databaseToolbar, databaseHintEnd - databaseToolbar);
+            CHECK(browserHintScope.find("L(Filter_SearchFolder)") != std::string::npos &&
+                      databaseHintScope.find("L(Filter_SearchFolder)") != std::string::npos,
+                  "browser and database folder searches use the same localized hint");
         }
         {
             const size_t browserList = mainCpp.find("browserSource.treeListChildId");
@@ -310,7 +317,7 @@ int main() {
         CHECK(mainCpp.find("ImGui::TextDisabled(\"%s\", browserSystemTreeLabel.c_str());") == std::string::npos,
               "browser folder tree does not draw an extra System Folder Tree title above the shared list");
         CHECK(mainCpp.find("compactTreePadY") != std::string::npos &&
-              mainCpp.find("RenderBrowserSystemFolderTree(state)") != std::string::npos,
+              mainCpp.find("RenderBrowserSystemFolderTree(state, controls.locate)") != std::string::npos,
               "browser folder tree uses the same compact row and indent spacing as the database tree");
         CHECK(mainCpp.find("BeginTransientScrollbarChild(\"##SidebarContent\"") != std::string::npos &&
               mainCpp.find("ImGuiWindowFlags_NoScrollbar") != std::string::npos,
@@ -331,7 +338,7 @@ int main() {
               "folder-tree list chrome lives in one shared explorer list helper");
         CHECK(mainCpp.find("RenderFolderTreeExplorerList(") != std::string::npos &&
               mainCpp.find("\"##BrowserSystemFolderTree\"") != std::string::npos &&
-              mainCpp.find("RenderBrowserSystemFolderTree(state)") != std::string::npos &&
+              mainCpp.find("RenderBrowserSystemFolderTree(state, controls.locate)") != std::string::npos &&
               mainCpp.find("RenderBrowserSystemFolderSearchTree(state)") != std::string::npos,
               "browser folder tree uses the shared list helper and still renders system/search trees");
         CHECK(mainCpp.find("RenderFolderTreeExplorerList(") != std::string::npos &&
@@ -405,7 +412,7 @@ int main() {
             const size_t browserSrc = mainCpp.find("const ExplorerSource browserSource = BrowserExplorerSource(", section);
             const size_t databaseSrc = mainCpp.find("const ExplorerSource databaseSource = DatabaseExplorerSource(", section);
             const size_t favoritesSrc = mainCpp.find("const ExplorerSource favoritesSource = FavoritesExplorerSource(", section);
-            const size_t browserCall = mainCpp.find("RenderBrowserFolderTreeSidebarPanel(state)", section);
+            const size_t browserCall = mainCpp.find("RenderBrowserFolderTreeSidebarPanel(state, controls)", section);
             CHECK(section != std::string::npos &&
                   browserSrc != std::string::npos &&
                   databaseSrc != std::string::npos &&
@@ -417,8 +424,8 @@ int main() {
         }
         CHECK(mainCpp.find("GetBrowserSystemFolderChildren(g_browserSystemFolderRelatedPath)") != std::string::npos &&
               mainCpp.find("NavigateBrowserToFolder(state, child.first, state.fileBrowser.getScope())") != std::string::npos &&
-              mainCpp.find("LocateBrowserSystemFolderPath(state.fileBrowser.getCurrentPath())") != std::string::npos &&
-              mainCpp.find("RenderBrowserSystemFolderTree(state)") != std::string::npos,
+              mainCpp.find("LocateBrowserSystemFolderPath(currentBrowserPath)") != std::string::npos &&
+              mainCpp.find("RenderBrowserSystemFolderTree(state, controls.locate)") != std::string::npos,
               "File Browser still uses disk Related Paths, disk locate, and the system folder tree");
         CHECK(mainCpp.find("const char* relatedPathsChildId") != std::string::npos &&
               mainCpp.find("const char* relatedPathsSplitterId") != std::string::npos,
@@ -577,10 +584,10 @@ int main() {
         CHECK(mainCpp.find("PrimeBrowserSystemFolderPathChain(") != std::string::npos &&
               mainCpp.find("(void)GetBrowserSystemFolderChildren(part.first);") != std::string::npos,
               "browser locate primes the current path ancestor chain before scrolling");
-        CHECK(mainCpp.find("LocateBrowserSystemFolderPath(state.fileBrowser.getCurrentPath())") != std::string::npos,
+        CHECK(mainCpp.find("LocateBrowserSystemFolderPath(currentBrowserPath)") != std::string::npos,
               "browser locate-current button uses the robust path reveal helper");
         CHECK(mainCpp.find("g_browserSystemFolderSearchBuffer[0] = '\\0';") != std::string::npos &&
-              mainCpp.find("LocateBrowserSystemFolderPath(state.fileBrowser.getCurrentPath())") != std::string::npos,
+              mainCpp.find("LocateBrowserSystemFolderPath(currentBrowserPath)") != std::string::npos,
               "browser locate-current clears folder search so the current path is visible in the normal tree");
         CHECK(mainCpp.find("g_browserSystemFolderTreeCollapseAll = true;") != std::string::npos &&
               mainCpp.find("ClearBrowserSystemFolderSearchState();") != std::string::npos,
@@ -595,10 +602,13 @@ int main() {
               mainCpp.find("ImGui::SetNextItemOpen(false);") != std::string::npos &&
               mainCpp.find("if (!g_browserSystemFolderTreeCollapseAll && currentPathMatches)") != std::string::npos,
               "browser refresh collapse frame suppresses current-path auto-open so refresh stays collapsed like DB tree");
-        CHECK(mainCpp.find("RenderBrowserSystemFolderTree(state);") != std::string::npos &&
+        CHECK(mainCpp.find("RenderBrowserSystemFolderTree(state, controls.locate);") != std::string::npos &&
               mainCpp.find("g_browserSystemFolderTreeCollapseAll = false;") != std::string::npos,
               "browser refresh keeps collapse flag alive through tree rendering before clearing it");
-        CHECK(mainCpp.find("LocateBrowserSystemFolderPath(currentBrowserPath)") == std::string::npos,
+        const size_t browserLocate = mainCpp.find("LocateBrowserSystemFolderPath(currentBrowserPath)");
+        const size_t browserRefresh = mainCpp.find("ResetBrowserSystemFolderTreeCache();");
+        CHECK(browserLocate != std::string::npos && browserRefresh < browserLocate &&
+              mainCpp.find("},", browserRefresh) < browserLocate,
               "browser refresh does not locate the current Browser path; locate remains the separate target button");
         CHECK(mainCpp.find("L(Browser_AddFolderToLibrary)") != std::string::npos,
               "browser add-folder action uses localized Chinese-ready text");

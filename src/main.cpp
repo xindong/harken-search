@@ -23,6 +23,7 @@
 #include "imgui.h"
 #include "HugeFolderIcons.h"
 #include "DatabaseFolderRowInput.h"
+#include "FolderTreeControls.h"
 #include "imgui_internal.h"        // Active-ID control for suggestion selection.
 #include <functional>
 
@@ -1000,7 +1001,6 @@ SwitchDatabase(AppState& state,
                int initialWaveformCacheMode = -1,
                bool overwriteExisting = false,
                std::function<void(bool, const std::string&)> afterDeferredStart = {});
-static bool SidebarRefreshGlyphButton(const char* id_str, const ImVec2& size_arg = ImVec2(30, 24), bool is_busy = false);
 static bool SidebarClearAllGlyphButton(const char* id_str, const ImVec2& size_arg = ImVec2(30, 24), bool is_emphasized = false);
 bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight = 50.0f, float maxHeight = 500.0f, float width = 0.0f, bool growWhenDraggingDown = false);
 void MaybeSkipLeadingSilence(AppState& state);
@@ -11565,11 +11565,6 @@ static void OpenFileInFileBrowser(AppState& state, const std::string& filePath) 
         PathToUtf8Main(Utf8ToPathMain(filePath).filename());
     state.browserLocateSourceUntilMs = ImGui::GetTime() * 1000.0 + 5000.0;
 
-    // Flash the folder in the folder tree sidebar.
-    state.folderTreeHighlightPath = parentDir;
-    state.folderTreeHighlightUntilMs =
-        static_cast<int64_t>(Platform::MonotonicMilliseconds()) + 2000;
-
     state.syncToTab();
 
     // Begin playback immediately.
@@ -13721,7 +13716,8 @@ static void RenderBrowserSystemFolderContextMenu(AppState& state, const std::str
 
 static void RenderBrowserSystemFolderNode(AppState& state,
                                           const std::string& folderPath,
-                                          const std::string& displayName) {
+                                          const std::string& displayName,
+                                          aura::folder_tree::controls::LocateFeedback& locate) {
     BrowserSystemFolderCacheEntry& cache = GetBrowserSystemFolderChildren(folderPath);
     const bool hasChildren = !cache.children.empty();
     const std::string currentPath = state.fileBrowser.getCurrentPath();
@@ -13744,12 +13740,26 @@ static void RenderBrowserSystemFolderNode(AppState& state,
     }
     if (g_browserSystemFolderTreeCollapseAll) {
         ImGui::SetNextItemOpen(false);
+    } else if (canonicalFolder != locate.PendingPath() &&
+               aura::folder_tree::controls::ContainsPath(canonicalFolder, locate.PendingPath())) {
+        ImGui::SetNextItemOpen(true);
     } else if (!g_browserSystemFolderTreeCollapseAll && currentPathMatches) {
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
     }
 
+    const double now = ImGui::GetTime();
+    const float flash = exactCurrentPath ? locate.Strength(canonicalFolder, now) : 0.0f;
+    if (flash > 0.0f) {
+        const ImVec4 tint = ThemeColors::current().filterBrowserLocateTint;
+        for (ImGuiCol color : {ImGuiCol_Header, ImGuiCol_HeaderHovered, ImGuiCol_HeaderActive}) {
+            ImGui::PushStyleColor(color, ImLerp(ImGui::GetStyleColorVec4(color), tint, 0.44f * flash));
+        }
+    }
     ImGui::PushID(folderPath.c_str());
     const bool opened = ImGui::TreeNodeEx(displayName.c_str(), flags);
+    if (flash > 0.0f) {
+        ImGui::PopStyleColor(3);
+    }
     if (ImGui::IsItemToggledOpen() && opened && !folderPath.empty()) {
         g_browserSystemFolderRelatedPath = folderPath;
     }
@@ -13757,6 +13767,7 @@ static void RenderBrowserSystemFolderNode(AppState& state,
         g_browserSystemFolderTreeScrollTarget == canonicalFolder) {
         ImGui::ScrollToItem();
         g_browserSystemFolderTreeScrollTarget.clear();
+        locate.MarkScrolled(canonicalFolder, now);
     }
     if (ImGui::IsItemClicked() && !folderPath.empty()) {
         SetBrowserSystemFolderSearchFocusRoot(folderPath);
@@ -13775,17 +13786,17 @@ static void RenderBrowserSystemFolderNode(AppState& state,
     if (opened && hasChildren) {
         ImGui::Indent();
         for (const auto& child : cache.children) {
-            RenderBrowserSystemFolderNode(state, child.first, child.second);
+            RenderBrowserSystemFolderNode(state, child.first, child.second, locate);
         }
         ImGui::Unindent();
     }
     ImGui::PopID();
 }
 
-static void RenderBrowserSystemFolderTree(AppState& state) {
+static void RenderBrowserSystemFolderTree(AppState& state, aura::folder_tree::controls::LocateFeedback& locate) {
     auto& roots = BrowserSystemFolderRoots();
     for (const auto& root : roots) {
-        RenderBrowserSystemFolderNode(state, root.first, root.second);
+        RenderBrowserSystemFolderNode(state, root.first, root.second, locate);
     }
 }
 
@@ -14013,18 +14024,15 @@ static void RenderFolderTreeExplorerToolbar(
     bool refreshBusy,
     const char* locateId,
     bool canLocate,
-    bool drawLocateRipple,
+    aura::folder_tree::controls::RefreshMotion& refreshMotion,
     const std::function<void()>& onSearchEscape,
     const std::function<void()>& onRefresh,
     const std::function<void()>& onLocate,
-    const std::function<void(bool hovered)>& onLocateHover,
+    const char* locateTooltip,
     AppState* qaState)
 {
-    constexpr float kRefreshW = 26.0f;
-    constexpr float kLocateW = 22.0f;
-    constexpr float kBtnGap = 4.0f;
-    constexpr float kSameLine = 4.0f;
-    const float searchReserve = kSameLine + kRefreshW + kBtnGap + kLocateW + 2.0f;
+    constexpr float kButtonGap = 4.0f;
+    constexpr float searchReserve = 2.0f * (kButtonGap + aura::folder_tree::controls::kButtonSize) + 2.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 3.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(7.0f, 2.0f));
     const float searchWidth = std::max(80.0f, ImGui::GetContentRegionAvail().x - searchReserve);
@@ -14051,60 +14059,26 @@ static void RenderFolderTreeExplorerToolbar(
         onSearchEscape();
         ImGui::ClearActiveID();
     }
-    ImGui::SameLine(0, kSameLine);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 1));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kBtnGap, 2));
-    if (SidebarRefreshGlyphButton(refreshId, ImVec2(kRefreshW, 22.0f), refreshBusy)) {
+    const ThemeColorScheme& theme = ThemeColors::current();
+    const ImVec4 glyphColor = theme.filterBrowserTreeText;
+    ImVec4 hoverFill = theme.filterBrowserTreeSelection;
+    hoverFill.w = 0.26f;
+    ImGui::SameLine(0, kButtonGap);
+    if (aura::folder_tree::controls::DrawButton(refreshId, ICON_LC_REFRESH, true,
+                                               glyphColor, hoverFill, &refreshMotion, refreshBusy)) {
         onRefresh();
     }
     if (HoveredForHelp()) {
         HarkenSearch::SetTooltip("%s", L(Nav_ReloadTree));
     }
-    ImGui::SameLine();
-    if (!canLocate) {
-        ImGui::BeginDisabled();
+    ImGui::SameLine(0, kButtonGap);
+    if (aura::folder_tree::controls::DrawButton(locateId, ICON_LC_FOLDER_OPEN, canLocate,
+                                               glyphColor, hoverFill)) {
+        onLocate();
     }
-    {
-        const float btnSize = kLocateW;
-        const ImVec2 btnPos = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton(locateId, ImVec2(btnSize, btnSize));
-        const bool locHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-        const bool locClicked = ImGui::IsItemClicked();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 center(btnPos.x + btnSize * 0.5f, btnPos.y + btnSize * 0.5f);
-        const float maxR = btnSize * 0.40f;
-        if (drawLocateRipple) {
-            static float rippleStart = -10.f;
-            const float rippleDuration = 0.5f;
-            const float time = (float)ImGui::GetTime();
-            if (locClicked && canLocate) {
-                rippleStart = time;
-            }
-            const float elapsed = time - rippleStart;
-            if (elapsed >= 0.f && elapsed < rippleDuration) {
-                const float t = elapsed / rippleDuration;
-                const float radius = maxR * 0.3f + btnSize * 0.7f * t;
-                const ImU32 rippleCol = IM_COL32(100, 200, 150, (int)(140 * (1.0f - t * t)));
-                dl->AddCircle(center, radius, rippleCol, 20, 1.2f);
-            }
-        }
-        const ImU32 colRing = locHovered && canLocate
-            ? IM_COL32(180, 180, 180, 200)
-            : IM_COL32(90, 90, 90, 140);
-        const ImU32 colDot = locHovered && canLocate
-            ? IM_COL32(220, 220, 220, 255)
-            : IM_COL32(140, 140, 140, 180);
-        dl->AddCircle(center, maxR, colRing, 16, 1.2f);
-        dl->AddCircleFilled(center, maxR * 0.25f, colDot, 8);
-        if (locClicked && canLocate) {
-            onLocate();
-        }
-        onLocateHover(locHovered);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        HarkenSearch::SetTooltip("%s", locateTooltip);
     }
-    if (!canLocate) {
-        ImGui::EndDisabled();
-    }
-    ImGui::PopStyleVar(2);
     ImGui::PopStyleVar(2);
 }
 
@@ -14149,7 +14123,8 @@ static void RenderExplorerShell(
     renderTreeList();
 }
 
-static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
+static void RenderBrowserFolderTreeSidebarPanel(
+    AppState& state, aura::folder_tree::controls::Interaction& controls) {
     constexpr float kBrowserSidebarTreeMinHeight = 140.0f;
     constexpr float kBrowserRelatedPathsMinHeight = 72.0f;
     const std::string currentBrowserPath = state.fileBrowser.getCurrentPath();
@@ -14159,7 +14134,11 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
         kBrowserRelatedPathsMinHeight,
         ImGui::GetContentRegionAvail().y - kBrowserSidebarTreeMinHeight - 8.0f);
 
-    const bool canLocateCurrent = !state.fileBrowser.getCurrentPath().empty();
+    const std::string canonicalCurrent = HarkenSearch::CanonicalFolderPath(currentBrowserPath);
+    const auto& roots = BrowserSystemFolderRoots();
+    const bool canLocateCurrent = std::any_of(roots.begin(), roots.end(), [&canonicalCurrent](const auto& root) {
+        return aura::folder_tree::controls::ContainsPath(HarkenSearch::CanonicalFolderPath(root.first), canonicalCurrent);
+    });
     const ExplorerSource browserSource = BrowserExplorerSource();
     const ExplorerShellCapabilities browserCaps = browserSource.capabilities;
     RenderExplorerShell(
@@ -14208,7 +14187,7 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                     }
                 });
         },
-        [&state, canLocateCurrent, browserSource]() {
+        [&state, &controls, &currentBrowserPath, canLocateCurrent, browserSource]() {
             RenderFolderTreeExplorerToolbar(
                 browserSource.searchId,
                 L(Filter_SearchFolder),
@@ -14218,32 +14197,30 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                 g_browserSystemFolderSearchRuntime.Busy(),
                 browserSource.locateId,
                 canLocateCurrent,
-                false,
+                controls.refresh,
                 []() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
                     RunBrowserSystemFolderSearchIfNeeded(true, g_browserSystemFolderSearchFocusRoot);
                 },
-                []() {
+                [&controls]() {
                     g_browserSystemFolderTreeCollapseAll = true;
                     g_browserSystemFolderSearchBuffer[0] = '\0';
                     g_browserSystemFolderSearchFocusRoot.clear();
                     ResetBrowserSystemFolderTreeCache();
                     ClearBrowserSystemFolderSearchState();
+                    controls.locate = {};
                 },
-                [&state]() {
+                [&controls, &currentBrowserPath]() {
                     g_browserSystemFolderSearchBuffer[0] = '\0';
-                    SetBrowserSystemFolderSearchFocusRoot(state.fileBrowser.getCurrentPath());
+                    SetBrowserSystemFolderSearchFocusRoot(currentBrowserPath);
                     RunBrowserSystemFolderSearchIfNeeded(true, g_browserSystemFolderSearchFocusRoot);
-                    LocateBrowserSystemFolderPath(state.fileBrowser.getCurrentPath());
+                    LocateBrowserSystemFolderPath(currentBrowserPath);
+                    controls.locate.Request(g_browserSystemFolderTreeScrollTarget);
                 },
-                [canLocateCurrent](bool hovered) {
-                    if (!hovered) {
-                        return;
-                    }
-                    HarkenSearch::SetTooltip("%s", canLocateCurrent ? L(Browser_LocateCurrentFolder) : L(Browser_NoCurrentFolderToLocate));
-                }, &state);
+                canLocateCurrent ? L(Browser_LocateCurrentFolder) : L(Browser_NoCurrentFolderToLocate),
+                &state);
         },
-        [&state, browserSource]() {
+        [&state, &controls, browserSource]() {
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
             float treeH = ImGui::GetContentRegionAvail().y;
             if (treeH < 60.0f) {
@@ -14271,15 +14248,18 @@ static void RenderBrowserFolderTreeSidebarPanel(AppState& state) {
                 treeH,
                 g_browserSystemFolderTreeCollapseAll,
                 false,
-                [&state, searchQuery]() {
+                [&state, &controls, searchQuery]() {
                     if (!searchQuery.empty()) {
                         RenderBrowserSystemFolderSearchTree(state);
                     } else {
-                        RenderBrowserSystemFolderTree(state);
+                        RenderBrowserSystemFolderTree(state, controls.locate);
                     }
                 });
             ImGui::PopStyleVar(3);
             g_browserSystemFolderTreeCollapseAll = false;
+            if (g_browserSystemFolderTreeScrollTarget == controls.locate.PendingPath()) {
+                g_browserSystemFolderTreeScrollTarget.clear();
+            }
         });
 }
 
@@ -14334,7 +14314,6 @@ static void RefreshFolderTreeAfterDbRemoval(AppState& state) {
     state.folderSearchExpandPaths.clear();
     state.lastFolderSearch.clear();
     state.folderTreeScrollTarget.clear();
-    state.folderTreeHighlightPath.clear();
     state.folderTreeCollapseAll = true;
 }
 
@@ -14518,7 +14497,8 @@ static void DrawFolderTreeRowModern(ImDrawList* dl,
                                     bool searchFill, ImU32 searchFillCol,
                                     bool stateFill, ImU32 stateFillCol,
                                     ImU32 chevronCol, ImU32 iconCol, ImU32 textCol,
-                                    const char* labelBegin, const char* labelEnd) {
+                                    const char* labelBegin, const char* labelEnd,
+                                    ImU32 locateFillCol = 0) {
     const float x0 = rowMin.x + m.sideInset;
     const float x1 = rowMax.x - m.sideInset;
     if (x1 <= x0 || !ImGui::IsRectVisible(rowMin, rowMax)) return;
@@ -14530,6 +14510,9 @@ static void DrawFolderTreeRowModern(ImDrawList* dl,
     }
     if (stateFill) {
         dl->AddRectFilled(ImVec2(x0, rowMin.y), ImVec2(x1, rowMax.y), stateFillCol, radius);
+    }
+    if (locateFillCol != 0) {
+        dl->AddRectFilled(ImVec2(x0, rowMin.y), ImVec2(x1, rowMax.y), locateFillCol, radius);
     }
 
     const float chevronLeft = x0 + roundf(m.chevronZone * 0.30f);
@@ -14589,12 +14572,33 @@ static void DrawFolderTreeRowModern(ImDrawList* dl,
     }
 }
 
+static const FolderInfo* FindFolderTreeLocateTarget(
+    const FolderInfo& parent, std::string_view target,
+    const std::unordered_set<std::string>* searchHits,
+    const std::unordered_set<std::string>& directHits) {
+    for (const auto& folder : parent.subfolders) {
+        if (!aura::folder_tree::controls::ContainsPath(folder.path, target) ||
+            (searchHits && searchHits->count(folder.path) == 0)) {
+            continue;
+        }
+        if (folder.path == target) {
+            return &folder;
+        }
+        const auto* childHits = searchHits && directHits.count(folder.path) == 0 ? searchHits : nullptr;
+        if (const auto* match = FindFolderTreeLocateTarget(folder, target, childHits, directHits)) {
+            return match;
+        }
+    }
+    return nullptr;
+}
+
 static void RenderFolderTreeNode(AppState& state,
                                  const FolderInfo& folder,
                                  const std::string& search,
                                  FolderTreeSelectionMode mode,
                                  bool revealSubtree = false,
-                                 FolderTreeRowMetrics* modernRow = nullptr, bool nested = false) {
+                                 FolderTreeRowMetrics* modernRow = nullptr, bool nested = false,
+                                 aura::folder_tree::controls::LocateFeedback* locate = nullptr) {
     // Use the precomputed folderSearchHits set for constant-time membership.
     // 杜绝调用 FolderOrChildMatchesSearch 这种每帧递归的"性能黑洞"
     if (!search.empty() && !revealSubtree) {
@@ -14627,10 +14631,13 @@ static void RenderFolderTreeNode(AppState& state,
 
     // 2. 优化展开逻辑
     // 搜索激活时自动展开命中链路（folderSearchHits 包含直接命中节点及其所有祖先）
-    bool shouldAutoOpen = (!state.folderTreeScrollTarget.empty() &&
-                           (aura::browser::IsSystemFolderAncestorOf(
-                                folder.path, state.folderTreeScrollTarget) ||
-                            folder.path == state.folderTreeScrollTarget))
+    const bool locating = locate && !locate->PendingPath().empty();
+    const std::string& scrollTarget = locating ? locate->PendingPath() : state.folderTreeScrollTarget;
+    bool shouldAutoOpen = (locating
+                            ? aura::folder_tree::controls::ContainsPath(folder.path, scrollTarget)
+                            : (!scrollTarget.empty() &&
+                               (aura::browser::IsSystemFolderAncestorOf(folder.path, scrollTarget) ||
+                                folder.path == scrollTarget)))
                        || (!revealSubtree &&
                            state.folderTreeExpandSearchHitsOnce &&
                            (state.folderSearchExpandPaths.count(folder.path) > 0 ||
@@ -14708,33 +14715,33 @@ static void RenderFolderTreeNode(AppState& state,
 
     ImGui::PopStyleColor(4);
 
-    // 定位后高亮：◎ 定位到的文件夹在有效期内用醒目色绘制
-    int64_t nowMs = (int64_t)(ImGui::GetTime() * 1000.0);
-    bool isLocateHighlight = ShouldHighlightFolderNodeForLocate(folder.path, state.folderTreeHighlightPath, state.folderTreeHighlightUntilMs, nowMs);
+    const double now = ImGui::GetTime();
+    const float locateStrength = locate ? locate->Strength(folder.path, now) : 0.0f;
 
     // 手动绘制搜索命中 / 选中 / 待确认(pending) / 定位高亮 / 悬停背景
     const ImVec2 rowMin = ImGui::GetItemRectMin();
     const ImVec2 rowMax = ImGui::GetItemRectMax();
     const bool rowHovered = ImGui::IsItemHovered();
-    const bool hasStateFill = isLocateHighlight || isSelected || isPending || rowHovered;
+    const bool hasStateFill = isSelected || isPending || rowHovered;
     const bool isLightTreeTheme = (tcs.filterBrowserBG.x + tcs.filterBrowserBG.y + tcs.filterBrowserBG.z) > 2.15f;
     const ImVec4 searchCol = withAlpha(
         mixColor(tcs.filterBrowserSearchHitText, tcs.filterBrowserBG, isLightTreeTheme ? 0.64f : 0.78f),
         isLightTreeTheme ? 0.34f : 0.26f);
-    const ImVec4 locateCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserLocateTint, 0.38f), 0.54f);
     const ImVec4 selectedCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.60f), 0.28f);
     const ImVec4 pendingCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.52f), 0.22f);
     const ImVec4 hoverCol = withAlpha(mixColor(tcs.filterBrowserTreeSelection, tcs.filterBrowserBG, 0.78f), 0.14f);
     const bool roseDatabaseRow = modernRow && mode == FolderTreeSelectionMode::DatabaseFilter &&
                                  state.settings.theme == AppTheme::RoseCedar;
     const ImVec4 stateCol = roseDatabaseRow && isSelected ? ImColor(223, 160, 183).Value
-                          : roseDatabaseRow && rowHovered && !isLocateHighlight && !isPending ? ImColor(244, 220, 230).Value
-                          : isLocateHighlight ? locateCol
+                           : roseDatabaseRow && rowHovered && !isPending ? ImColor(244, 220, 230).Value
                           : isSelected ? selectedCol
                           : isPending  ? pendingCol
                           : hoverCol;
 
     if (modernRow) {
+        const ImU32 locateFillCol = locateStrength > 0.0f
+            ? ImGui::GetColorU32(withAlpha(tcs.filterBrowserLocateTint, 0.44f * locateStrength))
+            : 0;
         const ImU32 chevronCol = ImGui::GetColorU32(
             withAlpha(mixColor(tcs.filterBrowserTreeText, tcs.filterBrowserBG, 0.42f), 0.78f));
         const ImU32 iconCol = ImGui::GetColorU32(
@@ -14744,7 +14751,7 @@ static void RenderFolderTreeNode(AppState& state,
                                 matchesSearch, ImGui::GetColorU32(searchCol),
                                 hasStateFill, ImGui::GetColorU32(stateCol),
                                 chevronCol, iconCol, ImGui::GetColorU32(treeTextColor),
-                                labelTextBegin, labelTextEnd);
+                                labelTextBegin, labelTextEnd, locateFillCol);
     } else if (matchesSearch || hasStateFill) {
         const float arrowWidth = ImGui::GetTreeNodeToLabelSpacing();
         ImVec2 rMin = rowMin;
@@ -14763,12 +14770,14 @@ static void RenderFolderTreeNode(AppState& state,
     treeBgSplitter.Merge(treeDrawList);
 
     // 自动滚动：只要绘制到目标节点就滚动到视口中间（不要求已选中，否则定位后不会滚动）
-    if (!state.folderTreeScrollTarget.empty() && folder.path == state.folderTreeScrollTarget) {
+    if (!scrollTarget.empty() && folder.path == scrollTarget) {
         ImGui::SetScrollHereY(0.5f);  // 0.5 = 目标行出现在视口垂直中间
         ImGui::SetScrollX(0.0f);      // 水平滚动到最左，确保深层子文件夹名称可见
-        state.folderTreeScrollTarget.clear();
-        state.folderTreeHighlightPath = folder.path;
-        state.folderTreeHighlightUntilMs = nowMs + 500;  // 高亮持续约 0.5 秒
+        if (locating) {
+            locate->MarkScrolled(folder.path, now);
+        } else {
+            state.folderTreeScrollTarget.clear();
+        }
     }
 
     // 4. 交互优化：防抖与 I/O 优先级抢占
@@ -14843,7 +14852,7 @@ static void RenderFolderTreeNode(AppState& state,
         //    in reveal mode), so the user keeps control of further expansion.
         const bool revealChildren = revealSubtree || isSearchTerminalHit;
         for (const auto& sub : folder.subfolders) {
-            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true);
+            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true, locate);
         }
         ImGui::Unindent();
     }
@@ -16078,7 +16087,26 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
 // SECTION 8 - Sidebar Panel
 
 static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
-    ImGui::PushID(idScope);
+    struct SidebarRenderInstance {
+        std::string_view id;
+        const char* imguiScope;
+        aura::folder_tree::controls::Interaction controls;
+    };
+    static std::array<SidebarRenderInstance, 7> instances{{
+        {"LeftSidebar", "LeftSidebar", {}},
+        {"RightSidebar", "LeftSidebar", {}},
+        {"GroupedDockedSidebar", "LeftSidebar", {}},
+        {"GroupedFloatingSidebar", "FloatSidebar", {}},
+        {"FloatSidebar", "FloatSidebar", {}},
+        {"DockedFilter", "DockedFilter", {}},
+        {"DetachedSidebar", "DetachedSidebar", {}},
+    }};
+    const auto instance = std::find_if(instances.begin(), instances.end(),
+        [idScope](const SidebarRenderInstance& candidate) { return candidate.id == idScope; });
+    IM_ASSERT(instance != instances.end());
+    if (instance == instances.end()) return;
+    ImGui::PushID(instance->imguiScope);
+    const char* metadataScope = instance->imguiScope;
 
     // Layout reservations:
     // No status or content-header bands reserve vertical space.
@@ -16320,8 +16348,12 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const ExplorerSource browserSource = BrowserExplorerSource();
         const ExplorerSource databaseSource = DatabaseExplorerSource();
         (void)browserSource;
+        auto& controls = instance->controls;
+        const ImGuiID controlsPanel = ImGui::GetID("##FolderTreeControls");
+        const int tabId = state.listTabs.empty() ? 0 : state.currentTab().id;
         if (state.viewMode == ViewMode::Browser) {
-            RenderBrowserFolderTreeSidebarPanel(state);
+            controls.BeginFrame(ImGui::GetFrameCount(), controlsPanel, state.currentDbPathUtf8, tabId, -1, true);
+            RenderBrowserFolderTreeSidebarPanel(state, controls);
         } else {
         ListTab* activeTabForFolderTree = state.listTabs.empty() ? nullptr : &state.currentTab();
         const int64_t effectivePlaylistFolderTreeId = ResolvePlaylistScopedFolderTreePlaylistId(
@@ -16331,6 +16363,8 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             state.viewMode == ViewMode::Playlist,
             activeTabForFolderTree && activeTabForFolderTree->viewMode == ViewMode::Playlist);
         const bool playlistScopedFolderTree = (effectivePlaylistFolderTreeId > 0);
+        controls.BeginFrame(ImGui::GetFrameCount(), controlsPanel, state.currentDbPathUtf8, tabId,
+                            effectivePlaylistFolderTreeId, false);
         if (playlistScopedFolderTree) {
             state.selectedPlaylistId = effectivePlaylistFolderTreeId;
             const bool playlistTreeRebuilt =
@@ -16353,10 +16387,22 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             : aura::sidebar_bootstrap::IsFolderTreeLoading();
         const ExplorerShellCapabilities databaseCaps = databaseSource.capabilities;
         auto renderFolderTreeToolbar = [&]() {
-            const bool hasSelectedLocateRow =
-                state.selectedResultIndex >= 0 &&
-                state.selectedResultIndex < (int)state.searchResults.size();
-            const bool canLocateCurrent = hasSelectedLocateRow || state.currentFileId > 0;
+            const FolderInfo* locateTarget = nullptr;
+            if (state.selectedResultIndex >= 0 &&
+                static_cast<size_t>(state.selectedResultIndex) < state.searchResults.size()) {
+                const AudioRecord& selectedRecord = state.searchResults[state.selectedResultIndex];
+                if (!selectedRecord.filePath.empty()) {
+                    const std::string targetPath = HarkenSearch::CanonicalFolderPath(
+                        selectedRecord.folderPath.empty()
+                            ? HarkenSearch::DisplayFolderFromFilePath(selectedRecord.filePath)
+                            : selectedRecord.folderPath);
+                    const auto* searchHits = TrimCopy(state.folderSearchBuffer).empty() ? nullptr : &state.folderSearchHits;
+                    if (!targetPath.empty()) {
+                        locateTarget = FindFolderTreeLocateTarget(
+                            activeFolderHierarchy, targetPath, searchHits, state.folderSearchDirectHits);
+                    }
+                }
+            }
             RenderFolderTreeExplorerToolbar(
                 databaseSource.searchId,
                 L(Filter_SearchFolder),
@@ -16365,56 +16411,27 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 databaseSource.refreshId,
                 folderTreeLoading,
                 databaseSource.locateId,
-                canLocateCurrent,
-                true,
+                locateTarget != nullptr,
+                controls.refresh,
                 []() {},
-                [&state, playlistScopedFolderTree, effectivePlaylistFolderTreeId]() {
+                [&state, &controls, playlistScopedFolderTree, effectivePlaylistFolderTreeId]() {
                     state.folderTreeCollapseAll = true;
                     state.folderSearchBuffer[0] = '\0';
                     state.folderSearchHits.clear();
                     state.lastFolderSearch.clear();
+                    controls.locate = {};
                     if (playlistScopedFolderTree) {
                         LoadPlaylistFiltered(state, effectivePlaylistFolderTreeId, false);
                     } else {
                         StartDeferredSidebarBootstrap(state, true, false);
                     }
                 },
-                [&state, hasSelectedLocateRow, canLocateCurrent]() {
-                    if (hasSelectedLocateRow) {
-                        const AudioRecord& selectedRecord = state.searchResults[(size_t)state.selectedResultIndex];
-                        std::string folderPath = selectedRecord.folderPath;
-                        if (folderPath.empty() && !selectedRecord.filePath.empty()) {
-                            try {
-                                folderPath = PathToUtf8Main(Utf8ToPathMain(selectedRecord.filePath).parent_path());
-                            } catch (...) {
-                            }
-                        }
-                        if (!folderPath.empty()) {
-                            state.folderTreeScrollTarget = HarkenSearch::CanonicalFolderPath(folderPath);
-                        }
-                    }
-                    if (canLocateCurrent && state.folderTreeScrollTarget.empty()) {
-                        AudioRecord rec = state.database.getFileById(state.currentFileId);
-                        if (!rec.filePath.empty()) {
-                            try {
-                                std::string folderPath = PathToUtf8Main(Utf8ToPathMain(rec.filePath).parent_path());
-                                if (!folderPath.empty()) {
-                                    state.folderTreeScrollTarget = HarkenSearch::CanonicalFolderPath(folderPath);
-                                }
-                            } catch (...) {
-                            }
-                        }
-                    }
+                [&state, &controls, locateTarget]() {
+                    state.folderTreeScrollTarget.clear();
+                    controls.locate.Request(locateTarget->path);
                 },
-                [canLocateCurrent](bool hovered) {
-                    if (!hovered) {
-                        return;
-                    }
-                    HarkenSearch::SetTooltip(
-                        "%s",
-                        canLocateCurrent ? L(Main_LocateInTreeTip)
-                                         : L(Main_NoTreeSelTip));
-                }, &state);
+                locateTarget ? L(Main_LocateInTreeTip) : L(Main_NoTreeSelTip),
+                &state);
         };
 
         if (playlistScopedFolderTree) {
@@ -16673,9 +16690,11 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         }
         for (const auto& folder : activeFolderHierarchy.subfolders) {
             if (playlistScopedFolderTree) {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter, false, &treeRowMetrics);
+                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter,
+                                     false, &treeRowMetrics, false, &controls.locate);
             } else {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter, false, &treeRowMetrics);
+                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter,
+                                     false, &treeRowMetrics, false, &controls.locate);
             }
         }
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
@@ -16685,6 +16704,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         }
             });
         }
+        controls.locate.EndFrame(ImGui::GetTime());
     }
 
     // Section 4: 标签云 (常用标签)
@@ -16978,30 +16998,30 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // Artist, album and category share one transactional name picker.
         // Their text is only a list query until a row is selected.
         static std::unordered_map<std::string, SidebarMetadataPickerUiState> artistPickers;
-        auto& artistPicker = artistPickers[idScope];
+        auto& artistPicker = artistPickers[metadataScope];
         drawSidebarFilterLabel(L(Filter_Artist));
         DrawSidebarMetadataPickerField(
-            idScope, "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
+            metadataScope, "Artist", "##ArtistFilter", L(Filter_InputArtist), L(Filter_SelectExistingArtist),
             state.artistFilterBuffer,
             state.currentDbPathUtf8, artistPicker, &state,
             [&]() { return state.database.getUniqueArtists(std::numeric_limits<int>::max()); },
             [&]() { state.artistFilterAlternates.clear(); applyMetaFilters(); });
 
         static std::unordered_map<std::string, SidebarMetadataPickerUiState> albumPickers;
-        auto& albumPicker = albumPickers[idScope];
+        auto& albumPicker = albumPickers[metadataScope];
         drawSidebarFilterLabel(L(Filter_Album));
         DrawSidebarMetadataPickerField(
-            idScope, "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
+            metadataScope, "Album", "##AlbumFilter", L(Filter_InputAlbum), L(Filter_SelectExistingAlbum),
             state.albumFilterBuffer,
             state.currentDbPathUtf8, albumPicker, &state,
             [&]() { return state.database.getUniqueAlbums(std::numeric_limits<int>::max()); },
             [&]() { applyMetaFilters(); });
 
         static std::unordered_map<std::string, SidebarMetadataPickerUiState> categoryPickers;
-        auto& categoryPicker = categoryPickers[idScope];
+        auto& categoryPicker = categoryPickers[metadataScope];
         drawSidebarFilterLabel(L(Filter_CategoryLabel));
         DrawSidebarMetadataPickerField(
-            idScope, "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
+            metadataScope, "Category", "##CategoryFilter", L(Filter_InputCategory), L(Filter_SelectExistingCategory),
             state.categoryFilterBuffer,
             state.currentDbPathUtf8, categoryPicker, &state,
             [&]() { return state.database.getUniqueCategories(std::numeric_limits<int>::max()); },
@@ -25086,109 +25106,6 @@ static bool ReverseIconButton(const char* id_str, bool* is_active, const ImVec2&
     dl->PathClear();
     dl->PathArcTo(ImVec2(cx + 5.0f, cy - 2.5f), 2.5f, 0.0f, IM_PI * 0.75f, 8);
     dl->PathStroke(iconCol, 0, lw);
-
-    return pressed;
-}
-
-// Sidebar compact glyph button: Refresh / reload.
-static bool SidebarRefreshGlyphButton(const char* id_str, const ImVec2& size_arg, bool is_busy) {
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    if (window->SkipItems) return false;
-
-    ImGuiID id = window->GetID(id_str);
-    ImVec2 pos = window->DC.CursorPos;
-    ImRect bb(pos, ImVec2(pos.x + size_arg.x, pos.y + size_arg.y));
-
-    ImGui::ItemSize(size_arg);
-    if (!ImGui::ItemAdd(bb, id)) return false;
-
-    bool hovered, held;
-    bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
-
-    ImGuiStorage* storage = ImGui::GetStateStorage();
-    float animTimer = storage->GetFloat(id + 1, 1.0f);
-    float rotation = storage->GetFloat(id + 2, 0.0f);
-    if (pressed) animTimer = 0.0f;
-
-    const float kSpinDuration = 0.58f;
-    const bool animating = animTimer < kSpinDuration;
-    if (animating) {
-        animTimer += ImGui::GetIO().DeltaTime;
-        float t = ImSaturate(animTimer / kSpinDuration);
-        float ease = 1.0f - powf(1.0f - t, 3.0f);
-        rotation = ease * (IM_PI * 2.0f);
-        if (t >= 0.999f) {
-            animTimer = 1.0f;
-            rotation = 0.0f;
-        }
-    } else {
-        animTimer = 1.0f;
-        rotation = 0.0f;
-    }
-    storage->SetFloat(id + 1, animTimer);
-    storage->SetFloat(id + 2, rotation);
-
-    auto mix = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
-        return ImVec4(
-            a.x + (b.x - a.x) * t,
-            a.y + (b.y - a.y) * t,
-            a.z + (b.z - a.z) * t,
-            a.w + (b.w - a.w) * t);
-    };
-    auto withAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
-
-    const auto& tcs = ThemeColors::current();
-    const bool isLightFilterTheme = (tcs.filterBrowserBG.x + tcs.filterBrowserBG.y + tcs.filterBrowserBG.z) > 2.15f;
-    const ImVec4 cue = mix(tcs.searchButtonBG, tcs.filterBrowserSelection, 0.50f);
-    const ImVec4 baseBg = isLightFilterTheme
-        ? mix(tcs.filterBrowserButtonBG, tcs.filterBrowserBG, 0.10f)
-        : mix(tcs.filterBrowserButtonBG, tcs.filterBrowserBG, 0.32f);
-    const ImVec4 hoverBg = mix(baseBg, cue, isLightFilterTheme ? 0.18f : 0.24f);
-    const ImVec4 busyBg = mix(baseBg, cue, isLightFilterTheme ? 0.12f : 0.18f);
-    const ImVec4 border = mix(tcs.filterBrowserOutline, cue, isLightFilterTheme ? 0.24f : 0.18f);
-    const ImVec4 glyph = isLightFilterTheme
-        ? mix(tcs.filterBrowserText, tcs.mainWindowBG, 0.10f)
-        : mix(tcs.filterBrowserText, cue, 0.26f);
-
-    ImDrawList* dl = window->DrawList;
-    const float rounding = 6.0f;
-    const float busyPulse = is_busy ? (0.5f + 0.5f * sinf((float)ImGui::GetTime() * 5.4f)) : 0.0f;
-    const float spinPulse = animating ? (0.65f + 0.35f * sinf((float)ImGui::GetTime() * 10.0f)) : 0.0f;
-    const float halo = hovered ? 0.08f : 0.0f;
-    const float busyHalo = is_busy ? (isLightFilterTheme ? 0.08f : 0.10f) + busyPulse * 0.05f : 0.0f;
-    const float animHalo = animating ? 0.10f + spinPulse * 0.04f : 0.0f;
-    const float totalHalo = ImMax(halo, ImMax(busyHalo, animHalo));
-    if (totalHalo > 0.0f) {
-        ImVec2 c(bb.GetCenter());
-        dl->AddCircleFilled(c, size_arg.x * (0.34f + (animating ? 0.08f : 0.0f)), ImGui::GetColorU32(withAlpha(cue, totalHalo)), 24);
-    }
-    const ImVec4 fillBg = hovered ? hoverBg : (is_busy ? busyBg : baseBg);
-    dl->AddRectFilled(bb.Min, bb.Max, ImGui::GetColorU32(withAlpha(fillBg, isLightFilterTheme ? 0.985f : 0.96f)), rounding);
-    dl->AddRect(bb.Min, bb.Max, ImGui::GetColorU32(withAlpha(border, hovered ? 0.38f : (is_busy ? 0.32f : 0.24f))), rounding, 0, 1.0f);
-
-    ImVec2 center = bb.GetCenter();
-    float radius = size_arg.x * 0.21f;
-    float aMin = rotation - IM_PI * 0.55f;
-    float aMax = aMin + (300.0f * IM_PI / 180.0f);
-    ImU32 glyphCol = ImGui::GetColorU32(withAlpha(glyph, hovered ? 0.98f : (isLightFilterTheme ? 0.94f : 0.88f)));
-
-    dl->PathClear();
-    dl->PathArcTo(center, radius, aMin, aMax, 24);
-    dl->PathStroke(glyphCol, 0, 1.7f);
-
-    ImVec2 arrowTip(center.x + cosf(aMax) * radius, center.y + sinf(aMax) * radius);
-    float tangent = aMax + IM_PI * 0.5f;
-    float arrowSize = 4.0f;
-    ImVec2 p1(arrowTip.x + cosf(tangent + IM_PI * 0.75f) * arrowSize, arrowTip.y + sinf(tangent + IM_PI * 0.75f) * arrowSize);
-    ImVec2 p2(arrowTip.x + cosf(tangent - IM_PI * 0.75f) * arrowSize, arrowTip.y + sinf(tangent - IM_PI * 0.75f) * arrowSize);
-    dl->AddLine(arrowTip, p1, glyphCol, 1.7f);
-    dl->AddLine(arrowTip, p2, glyphCol, 1.7f);
-
-    if (is_busy) {
-        ImVec2 dotCenter(bb.Max.x - 5.5f, bb.Min.y + 5.5f);
-        dl->AddCircleFilled(dotCenter, 2.0f, ImGui::GetColorU32(withAlpha(cue, 0.92f)), 12);
-        dl->AddCircleFilled(dotCenter, 4.0f, ImGui::GetColorU32(withAlpha(cue, 0.18f + busyPulse * 0.10f)), 16);
-    }
 
     return pressed;
 }
@@ -38936,7 +38853,7 @@ void RenderUI(AppState& state) {
             aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
     };
     const auto renderDockedToolBody = [&](std::string_view module, const DockModuleShellLayout& shell,
-                                          float shellHeight, bool similarPerimeter) {
+                                          float shellHeight, bool similarPerimeter, const char* sidebarScope) {
         const bool isFilter = module == "filter";
         const bool isInfo = module == "info";
         const bool isSimilar = module == "similar-sounds";
@@ -38955,7 +38872,7 @@ void RenderUI(AppState& state) {
             ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
             : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
         const bool bodyVisible = BeginTransientScrollbarChild(childId, bodySize, false, bodyFlags);
-        if (bodyVisible) renderToolContent(module, bodySize.x, "LeftSidebar");
+        if (bodyVisible) renderToolContent(module, bodySize.x, sidebarScope);
         ImGui::EndChild();
         if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
     };
@@ -39016,7 +38933,7 @@ void RenderUI(AppState& state) {
             }
 
             }
-            renderDockedToolBody(displayedTool, leftShell, leftShellHeight, appearance.similarPerimeter);
+            renderDockedToolBody(displayedTool, leftShell, leftShellHeight, appearance.similarPerimeter, "LeftSidebar");
         }
 
         if (displayedTool == "filter" && ThemeInspector::IsCollecting()) {
@@ -44906,7 +44823,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        renderDockedToolBody(displayedTool, rightShell, size.y, appearance.similarPerimeter);
+        renderDockedToolBody(displayedTool, rightShell, size.y, appearance.similarPerimeter, "RightSidebar");
 
         if (displayedTool == "info" && ThemeInspector::IsCollecting()) {
             ImVec2 wp = ImGui::GetWindowPos();
@@ -50549,7 +50466,7 @@ void RenderUI(AppState& state) {
             renderDockTabStrip(group, selected, false);
             const ImVec2 contentPos = ImGui::GetCursorScreenPos();
             const ImVec2 contentSize = ImGui::GetContentRegionAvail();
-            renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "FloatSidebar");
+            renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
             if (selected == "similar-sounds" && useSharedSimilarAppearance())
                 drawSimilarBodyPerimeter(contentPos, contentSize);
         }
@@ -50595,7 +50512,7 @@ void RenderUI(AppState& state) {
                     ImGui::GetWindowDrawList(), bodyPos, bodySize.x, bodySize.y, nullptr, appearance.bodyBg, kTitleText,
                     selected == "filter");
                 renderDockTabsInShell(group, shell);
-                renderDockedToolBody(selected, shell, bodySize.y, appearance.similarPerimeter);
+                renderDockedToolBody(selected, shell, bodySize.y, appearance.similarPerimeter, "GroupedDockedSidebar");
             }
             ImGui::End();
             popDockedToolAppearance(appearance);
