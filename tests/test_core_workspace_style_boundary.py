@@ -611,16 +611,17 @@ def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     assert "s.resultsSecondaryText   = H(0xffd7e3ef);" in read(BUILTIN_THEME_CPP)
 
 
-def test_system_menu_font_keeps_141_proportional_mapping():
+def test_system_menu_font_keeps_161_proportional_mapping():
     settings = read(ROOT / "src" / "AppState.h")
     windows = read(ROOT / "src" / "WindowsMain.cpp")
     mapping = " ".join(between(windows, "float GetMenuFontSizePx()", "ImFont* GetMenuUIFont()").split())
     assert "kChromeFontPx = 14;" in settings
+    assert "kDefaultMenuFontPx = 16;" in settings
     assert "kDefaultReadingFontPx = 18;" in settings
     assert "kMaxReadingFontPx = 32;" in settings
     assert "g_readingRegular ? g_readingRegular->LegacySize : (float)kDefaultReadingFontPx" in mapping
-    assert "(float)kChromeFontPx * (readingPx / (float)kDefaultReadingFontPx)" in mapping
-    assert "return std::clamp(std::round(scaled), (float)kChromeFontPx, (float)kMaxReadingFontPx);" in mapping
+    assert "(float)kDefaultMenuFontPx * (readingPx / (float)kDefaultReadingFontPx)" in mapping
+    assert "return std::clamp(std::round(scaled), (float)kDefaultMenuFontPx, (float)kMaxReadingFontPx);" in mapping
 
 
 def test_top_menu_uses_the_system_font_scope():
@@ -632,7 +633,7 @@ def test_top_menu_uses_the_system_font_scope():
     bar = between(header, "if (ImGui::BeginMainMenuBar())", "ImGui::EndMainMenuBar();")
     assert "ImGuiWindowFlags_MenuBar" not in header
     assert "const float baseMenuFontPx = GetMenuFontSizePx();" in host
-    assert "baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx" in host
+    assert "float menuBarFontPx = baseMenuFontPx;" in host
     assert "std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale" in host
     assert "ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));" in host
     assert "ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);" in bar

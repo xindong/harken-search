@@ -34,7 +34,7 @@ from qa_transport_themes import Driver, window_api
 
 FONT_OPTIONS = (10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32)
 LIST_OPTIONS = FONT_OPTIONS[:10]
-MENU_SIZES = {18: (13, 15), 24: (19, 19), 32: (25, 25)}
+MENU_SIZES = {18: (16, 16), 24: (21, 21), 32: (28, 28)}
 MENU_IDS = ('File', 'Edit', 'View', 'Database', 'Playlist', 'Tools', 'Settings', 'Help')
 STOCK_THEMES = ((0, 'dark'), (10, 'rose-cedar'), (2, 'lapis-blue'), (1, 'ocean'), (3, 'jade-mist'))
 WIDE_SIZE = (1600, 1200)
