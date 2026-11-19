@@ -1,7 +1,9 @@
 #include "update/UpdateRuntime.h"
 
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
 #include "BuildConfig.h"
 #include "DiagnosticsLogger.h"
+#endif
 
 #include <chrono>
 #include <limits>
@@ -79,6 +81,7 @@ std::string ErrorDetail(DownloadErrorKind error) {
     return "update failure";
 }
 
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
 const char* ErrorKindCode(DownloadErrorKind error) {
     switch (error) {
     case DownloadErrorKind::Network: return "network";
@@ -92,7 +95,6 @@ const char* ErrorKindCode(DownloadErrorKind error) {
     return "unknown";
 }
 
-#if AURA_BUILD_DIAGNOSTICS
 void LogUpdateTransition(const UpdateEvent& event) {
     using Clock = std::chrono::steady_clock;
     static Clock::time_point checkStart{};
@@ -378,7 +380,7 @@ bool UpdateRuntime::Apply(
     }
     state_ = transition.state;
     record_ = std::move(nextRecord);
-#if AURA_BUILD_DIAGNOSTICS
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
     LogUpdateTransition(event);
 #endif
     return true;
@@ -388,7 +390,7 @@ UpdateRuntimeResult UpdateRuntime::Terminal(DownloadErrorKind error,
                                             std::string detail) {
     ++record_.failureCount;
     const bool transitioned = Apply(UpdateEvent::DownloadFailed(detail));
-#if AURA_BUILD_DIAGNOSTICS
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
     DiagnosticsLogger::instance().logSystem(
         "AutoUpdate", (std::string("UpdateDownloadReason reason=") + ErrorKindCode(error)).c_str());
 #endif
@@ -541,7 +543,7 @@ UpdateRuntimeResult UpdateRuntime::FailActiveCheck(
     if (!Apply(UpdateEvent::CheckFailed(detail))) {
         return PersistenceFailure("failed to persist update check failure");
     }
-#if AURA_BUILD_DIAGNOSTICS
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
     DiagnosticsLogger::instance().logSystem(
         "AutoUpdate", (std::string("UpdateCheckReason reason=") + ErrorKindCode(error)).c_str());
 #endif
