@@ -1970,6 +1970,64 @@ if(WIN32)
     )
    add_test(NAME PreviewPinyinDatabase COMMAND TestPreviewPinyinDatabase)
    aura_set_test_labels(PreviewPinyinDatabase db)
+    add_executable(TestCoverWallOrderIndex EXCLUDE_FROM_ALL
+        tests/test_cover_wall_order_index.cpp
+        tests/test_database_link_stubs.cpp
+        tests/test_appstate_link_stubs.cpp
+        src/AppState.cpp
+        src/CoverReplacementFoundation.cpp
+        src/Database.cpp
+        src/BackfillQueue.cpp
+        src/BackfillWorkerPool.cpp
+        src/PathUtils.cpp
+        src/platform/file_watcher.cpp
+        src/Utils.cpp
+        src/MetadataReader.cpp
+        src/SearchQuery.cpp
+        src/SimilaritySearch.cpp
+        src/AudioEngine.cpp
+        src/platform/audio_playback_miniaudio.cpp
+        src/TagVocabularyMapper.cpp
+        src/DiagnosticsLogger.cpp
+        src/CenterSenseDataSource.cpp
+        src/CenterSenseDsp.cpp
+        src/TimeStretch.cpp
+        src/WaveformExtractor.cpp
+        src/NativeFloatReader.cpp
+        src/platform/audio_data_source_miniaudio.cpp
+        src/platform/harken_user_data_layout.cpp
+        src/platform/harken_legacy_data_migrator.cpp
+        src/platform/filesystem_win32.cpp
+        src/platform/filesystem_std.cpp
+        src/platform/audio_file_miniaudio.cpp
+        ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+        ${AURO_THREAD_ID_SOURCE}
+        ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+        ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+        ${AURO_AUDIO_TEXT_SOURCE}
+        ${AURO_SEARCH_TEXT_GB2312_SOURCE}
+        ${SQLITE_SOURCES}
+    )
+    target_include_directories(TestCoverWallOrderIndex PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+        ${SQLITE_DIR}
+        ${IMGUI_DIR}
+    )
+    target_link_libraries(TestCoverWallOrderIndex PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid
+    )
+    target_compile_definitions(TestCoverWallOrderIndex PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+        AURO_TEST_EXTERNAL_PATH_ATTRIBUTES
+    )
+    target_compile_options(TestCoverWallOrderIndex PRIVATE /W3 /MP /utf-8)
+    set_target_properties(TestCoverWallOrderIndex PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+    add_test(NAME CoverWallOrderIndex COMMAND TestCoverWallOrderIndex)
+    aura_set_test_labels(CoverWallOrderIndex db)
     add_executable(TestPreviewNasProbe EXCLUDE_FROM_ALL
         tests/test_preview_nas_probe.cpp
         src/platform/filesystem_std.cpp
