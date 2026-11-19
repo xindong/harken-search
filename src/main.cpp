@@ -17030,8 +17030,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // --- Enum filters: single combo trigger, unified popup body ---
         drawSidebarFilterLabel(L(Filter_Format));
         {
-            const char* formatItems[] = { L(Filter_All), "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems, IM_ARRAYSIZE(formatItems),
+            auto formatItems = aura::search::kAudioFormatFilters;
+            formatItems.front() = L(Filter_All);
+            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems.data(), static_cast<int>(formatItems.size()),
                 [&]() { applyMetaFilters(); });
         }
 
@@ -40848,9 +40849,9 @@ void RenderUI(AppState& state) {
 
             // Check format filter
             {
-                const char* fmtNames[] = { "", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-                if (state.formatFilterIndex > 0 && state.formatFilterIndex < 7) {
-                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + fmtNames[state.formatFilterIndex]});
+                const char* formatFilter = aura::search::AudioFormatFilterAt(state.formatFilterIndex);
+                if (*formatFilter != '\0') {
+                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + formatFilter});
                 }
             }
 

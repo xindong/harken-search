@@ -2,6 +2,7 @@
 // WavPack encoder, decode it through the same platform decoder the product
 // uses, and compare PCM plus seek behaviour.
 #include "platform/audio_data_source.h"
+#include "MetadataReader.h"
 
 #include "../thirdparty/wavpack/include/wavpack.h"
 
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -92,6 +94,53 @@ bool EncodeWavPack(const fs::path& path, const std::vector<int16_t>& pcm) {
     WavpackCloseFile(context);
     std::fclose(file);
     return flushed;
+}
+
+constexpr unsigned char kPngCover[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x28,
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x03, 0x9c, 0x2f,
+    0x3a, 0x00, 0x00, 0x00, 0x37, 0x49, 0x44, 0x41,
+    0x54, 0x78, 0xda, 0xed, 0xcd, 0x31, 0x0d, 0x00,
+    0x20, 0x0c, 0x00, 0xb0, 0x59, 0x99, 0x02, 0x9c,
+    0xf2, 0xcc, 0x06, 0x16, 0x49, 0xe6, 0x61, 0x70,
+    0x36, 0xe9, 0xdf, 0xb8, 0x7b, 0x3d, 0xca, 0x3a,
+    0x03, 0x21, 0x16, 0x8b, 0xc5, 0x62, 0xb1, 0x58,
+    0x2c, 0x16, 0x8b, 0xc5, 0x62, 0xb1, 0x58, 0x2c,
+    0x16, 0xff, 0x8b, 0x1b, 0xd0, 0xe8, 0xcd, 0xe8,
+    0x81, 0x3b, 0xf1, 0x6d, 0x00, 0x00, 0x00, 0x00,
+    0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+};
+
+bool WriteFixtureTags(const fs::path& path, bool complete) {
+    const std::unique_ptr<WavpackContext, decltype(&WavpackCloseFile)> context(
+        WavpackOpenFileInput(path.u8string().c_str(), nullptr,
+                             OPEN_TAGS | OPEN_EDIT_TAGS | OPEN_FILE_UTF8, 0),
+        WavpackCloseFile);
+    if (!context) return false;
+
+    auto set = [&](const char* key, const char* value) {
+        return WavpackAppendTagItem(context.get(), key, value, static_cast<int>(std::strlen(value))) != 0;
+    };
+    if (!set("Genre", "Field recording")) return false;
+    if (complete &&
+        !(set("tItLe", u8"雨声 · WV") && set("Artist", "Harken QA") &&
+          set("Album", "WavPack QA") && set("Album Artist", "Harken Search") &&
+          set("Year", "2026") && set("Track", "2/9") && set("Disc", "3/4") &&
+          set("Description", "Outdoor rain") && set("Comment", "Retains separate comment") &&
+          set("Category", "Weather") && set("Tags", "rain;field") &&
+          set("REPLAYGAIN_TRACK_GAIN", "-3.25 dB"))) {
+        return false;
+    }
+    std::string cover = "cover.jpg";
+    if (complete) {
+        cover.push_back('\0');
+        cover.append(reinterpret_cast<const char*>(kPngCover), sizeof(kPngCover));
+    }
+    return WavpackAppendBinaryTagItem(context.get(), "Cover Art (Front)", cover.data(),
+                                      static_cast<int>(cover.size())) != 0 &&
+           WavpackWriteTag(context.get()) != 0;
 }
 
 bool DecodeAll(const std::string& pathUtf8, std::vector<float>& out, std::uint32_t& channels,
@@ -188,7 +237,7 @@ int main() {
     }
 
     {
-        const fs::path unicodePath = temp / fs::u8path("中文样本_音效.wv");
+        const fs::path unicodePath = temp / fs::u8path("中文样本_音效.WV");
         fs::copy_file(wvPath, unicodePath, fs::copy_options::overwrite_existing, ec);
         std::vector<float> unicodeDecoded;
         std::uint32_t unicodeChannels = 0;
@@ -198,6 +247,39 @@ int main() {
               "decoder opens a WV file with a non-ASCII path");
         check(unicodeLength == static_cast<Platform::AudioDataSource::FrameCount>(kFrames),
               "non-ASCII path decodes the full length");
+        check(WriteFixtureTags(unicodePath, true), "fixture writes real APEv2 text and PNG");
+        AudioMetadata tags;
+        check(MetadataReader::readMetadata(unicodePath.u8string(), tags), "read APEv2 from uppercase WV");
+        check(tags.title == u8"雨声 · WV" && tags.artist == "Harken QA" &&
+              tags.album == "WavPack QA" && tags.albumArtist == "Harken Search" &&
+              tags.genre == "Field recording", "read Unicode title and standard APEv2 strings");
+        check(tags.year == 2026 && tags.track == 2 && tags.disc == 3,
+              "read APEv2 year and fractional track/disc numbers");
+        check(tags.description == "Outdoor rain" && tags.comment == "Retains separate comment" &&
+              tags.category == "Weather" && tags.keywords == "rain;field" &&
+              tags.replayGainTrack == -3.25f, "map APEv2 extra fields and ReplayGain");
+        AlbumArt cover;
+        check(MetadataReader::readAlbumArt(unicodePath.u8string(), cover) &&
+              cover.mimeType == "image/png" && cover.data == std::vector<uint8_t>(kPngCover, kPngCover + sizeof(kPngCover)),
+              "read APEv2 front cover bytes without the embedded filename");
+    }
+
+    {
+        const fs::path sparsePath = temp / "sparse_tags.wv";
+        fs::copy_file(wvPath, sparsePath, fs::copy_options::overwrite_existing, ec);
+        AudioMetadata existing;
+        existing.title = "keep on failure";
+        check(!MetadataReader::readMetadata(sparsePath.u8string(), existing) &&
+              existing.title == "keep on failure", "untagged WV leaves the output unchanged");
+        check(WriteFixtureTags(sparsePath, false), "fixture writes genre and a broken cover");
+        AudioMetadata tags;
+        check(MetadataReader::readMetadata(sparsePath.u8string(), tags) &&
+              tags.genre == "Field recording", "genre without title counts as APEv2 metadata");
+        AlbumArt cover;
+        cover.mimeType = "unchanged";
+        check(!MetadataReader::readAlbumArt(sparsePath.u8string(), cover) &&
+              cover.mimeType == "unchanged" && cover.data.empty(),
+              "reject APEv2 cover without filename terminator");
     }
 
     {

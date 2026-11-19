@@ -2850,10 +2850,21 @@ endif()
 add_executable(TestWavPackDecode EXCLUDE_FROM_ALL
     tests/test_wavpack_decode.cpp
     tests/miniaudio_impl.cpp
+    src/MetadataReader.cpp
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/wavpack_decoding_backend.cpp
-    src/platform/text_encoding_win32.cpp
+    src/platform/filesystem_std.cpp
 )
+if(WIN32)
+    target_sources(TestWavPackDecode PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+else()
+    target_sources(TestWavPackDecode PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
 target_include_directories(TestWavPackDecode PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
