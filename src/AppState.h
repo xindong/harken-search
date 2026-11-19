@@ -591,6 +591,22 @@ struct CoverWallTabSnapshot {
     std::unordered_map<std::string, CoverWallFailedTextureEntry> failedTexCache;
 };
 
+// Incremental sort for the file browser. Large roots (hundreds of thousands
+// of entries) are sorted in frame-budgeted blocks and merged across frames so
+// the first load never blocks the UI for seconds.
+struct BrowserSortJob {
+    bool active = false;
+    std::vector<int> indices;
+    std::vector<int> scratch;
+    size_t blockSorted = 0;
+    size_t mergeWidth = 0;
+    size_t mergePos = 0;
+    uint64_t startedMs = 0;
+    int pumps = 0;
+    int sortColumn = 0;
+    bool sortAscending = true;
+};
+
 struct ListTab {
     int id = 0;
     std::string name;
@@ -2946,6 +2962,7 @@ struct AppState {
     // every frame copies every entry name and stalls on huge folders.
     std::vector<int> browserFilteredRows;
     uint64_t browserFilteredRowsKey = 0;
+    BrowserSortJob browserSortJob;
 
     // Browser scope & bridging state
     char browserFilterBuffer[256] = "";                // in-view quick filter

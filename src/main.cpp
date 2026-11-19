@@ -7583,6 +7583,91 @@ static void RebuildBrowserSortedIndices(AppState& state, const std::vector<FileE
     state.browserFilteredRowsKey = 0;
 }
 
+static constexpr size_t kBrowserSortBlockSize = 2048;
+
+// Large roots are sorted in frame-budgeted blocks, then merged across frames.
+// This keeps the first H:\ load from blocking the UI for seconds.
+static void BeginBrowserSortJob(AppState& state, const std::vector<FileEntry>& entries) {
+    auto& job = state.browserSortJob;
+    job.active = true;
+    job.indices.resize(entries.size());
+    for (size_t i = 0; i < entries.size(); ++i) job.indices[i] = (int)i;
+    job.scratch.assign(entries.size(), 0);
+    job.blockSorted = 0;
+    job.mergeWidth = 0;
+    job.mergePos = 0;
+    job.startedMs = (uint64_t)(ImGui::GetTime() * 1000.0);
+    job.pumps = 0;
+    job.sortColumn = (int)state.browserSortColumn;
+    job.sortAscending = state.browserSortAscending;
+}
+
+static bool PumpBrowserSortJob(AppState& state, const std::vector<FileEntry>& entries) {
+    auto& job = state.browserSortJob;
+    if (!job.active) return true;
+    if (job.indices.size() != entries.size()) {
+        job.active = false;
+        state.browserSortEntryCount = -1;
+        return false;
+    }
+    ++job.pumps;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
+    const auto cmp = [&](int ia, int ib) {
+        const FileEntry& a = entries[(size_t)ia];
+        const FileEntry& b = entries[(size_t)ib];
+        const int result = CompareFileEntries(state, a, b, state.browserSortColumn);
+        if (result == 0) return ia < ib;
+        return state.browserSortAscending ? (result < 0) : (result > 0);
+    };
+    const size_t count = job.indices.size();
+    while (job.blockSorted < count) {
+        const size_t end = std::min(job.blockSorted + kBrowserSortBlockSize, count);
+        std::sort(job.indices.begin() + (ptrdiff_t)job.blockSorted,
+                  job.indices.begin() + (ptrdiff_t)end, cmp);
+        job.blockSorted = end;
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+    }
+    if (job.mergeWidth == 0) job.mergeWidth = kBrowserSortBlockSize;
+    while (job.mergeWidth < count) {
+        const size_t width = job.mergeWidth;
+        bool sliced = false;
+        while (job.mergePos < count) {
+            const size_t left = job.mergePos;
+            const size_t mid = std::min(left + width, count);
+            const size_t right = std::min(left + 2 * width, count);
+            std::merge(job.indices.begin() + (ptrdiff_t)left,
+                       job.indices.begin() + (ptrdiff_t)mid,
+                       job.indices.begin() + (ptrdiff_t)mid,
+                       job.indices.begin() + (ptrdiff_t)right,
+                       job.scratch.begin() + (ptrdiff_t)left, cmp);
+            job.mergePos = right;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                sliced = true;
+                break;
+            }
+        }
+        if (sliced) return false;
+        std::swap(job.indices, job.scratch);
+        job.mergeWidth = width * 2;
+        job.mergePos = 0;
+    }
+    state.browserSortedIndices = std::move(job.indices);
+    state.browserSortEntryCount = (int)state.browserSortedIndices.size();
+    state.browserSortPath = state.fileBrowser.getCurrentPath();
+    state.browserFilteredRowsKey = 0;
+    job.active = false;
+    if (job.sortColumn != (int)state.browserSortColumn ||
+        job.sortAscending != state.browserSortAscending) {
+        state.browserSortEntryCount = -1;  // sorting changed while building
+    }
+#if AURA_BUILD_DIAGNOSTICS
+    DiagnosticsLogger::instance().logPerformance(
+        "TabSwitch", "BrowserSortBuild",
+        std::max(0.0, ImGui::GetTime() * 1000.0 - (double)job.startedMs));
+#endif
+    return true;
+}
+
 static std::string FormatDurationMsCompact(int64_t ms) {
     char buffer[32];
     if (ms >= 1000) {
@@ -41813,21 +41898,19 @@ void RenderUI(AppState& state) {
                     // index stale so the post-scan pass always rebuilds it.
                     state.browserSortEntryCount = -1;
                 }
-                if (!browserScanInProgress &&
-                    (browserSortDirty ||
-                     state.browserSortPath != state.fileBrowser.getCurrentPath() ||
-                     state.browserSortEntryCount != (int)entries.size() ||
-                     (int)state.browserSortedIndices.size() != (int)entries.size())) {
-#if AURA_BUILD_DIAGNOSTICS
-                    const auto browserSortStart = std::chrono::steady_clock::now();
-#endif
-                    RebuildBrowserSortedIndices(state, entries);
-#if AURA_BUILD_DIAGNOSTICS
-                    DiagnosticsLogger::instance().logPerformance(
-                        "TabSwitch", "BrowserSortBuild",
-                        std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - browserSortStart).count());
-#endif
+                if (state.browserSortJob.active) {
+                    PumpBrowserSortJob(state, entries);
+                } else if (!browserScanInProgress &&
+                           (browserSortDirty ||
+                            state.browserSortPath != state.fileBrowser.getCurrentPath() ||
+                            state.browserSortEntryCount != (int)entries.size() ||
+                            (int)state.browserSortedIndices.size() != (int)entries.size())) {
+                    if (entries.size() >= 50000) {
+                        BeginBrowserSortJob(state, entries);
+                        PumpBrowserSortJob(state, entries);
+                    } else {
+                        RebuildBrowserSortedIndices(state, entries);
+                    }
                 }
                 const auto& sortedIndices = state.browserSortedIndices;
                 // Build search terms from browser filter buffer (multi-word, space-separated)
