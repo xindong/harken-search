@@ -140,6 +140,9 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WwiseTransferExecute.h"
 #include "WwiseTransferPanel.h"
 #include "ui/ActionButtonStyle.h"
+#if AURA_BUILD_DIAGNOSTICS
+#include "ui/DiagnosticOverlay.h"
+#endif
 #include "nlohmann_json.hpp"
 #include "WwiseTransferPersist.h"
 #include "WaveformPrewarmPolicy.h"
@@ -6823,6 +6826,15 @@ static void PollQaCommandFile(AppState& state) {
             SaveAppSettings(state);
             result = "{\"ok\":true,\"cmd\":\"set_theme\",\"theme\":" + std::to_string(theme) + "}";
         }
+
+    } else if (cmd == "diagnostic_export") {
+#if AURA_BUILD_DIAGNOSTICS
+        const bool started = harken::diagnostic_overlay::StartExportForQa();
+        result = std::string("{\"ok\":true,\"cmd\":\"diagnostic_export\",\"started\":") +
+                 (started ? "true" : "false") + "}";
+#else
+        result = "{\"ok\":false,\"cmd\":\"diagnostic_export\",\"error\":\"diagnostics_disabled\"}";
+#endif
 
     } else if (cmd == "switch_db") {
         std::string path = getStr(raw, "path");

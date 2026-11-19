@@ -61,7 +61,27 @@ constexpr EventRule kEvents[]{
     {Type::Action, "Audio", "LoadFile: ", "LoadFile", true},
     {Type::Performance, "Audio", "loadFile", "loadFile"},
     {Type::Performance, "Audio", "loadFileAsyncApply", "loadFileAsyncApply"},
+    {Type::Performance, "Audio", "loadFileAsyncFastWavHeader", "loadFileAsyncFastWavHeader"},
+    {Type::Performance, "Audio", "loadFileAsyncInitDecoder", "loadFileAsyncInitDecoder"},
+    {Type::Performance, "Audio", "loadFileAsyncLengthProbe", "loadFileAsyncLengthProbe"},
+    {Type::Performance, "Audio", "loadFileAsyncQueueToReady", "loadFileAsyncQueueToReady"},
+    {Type::Performance, "Audio", "loadFileAsyncTotal", "loadFileAsyncTotal"},
     {Type::Performance, "Audio", "play", "play"},
+    {Type::Action, "Audio", "DecoderPrewarmSkippedByForeground: reason=", "DecoderPrewarmSkippedByForeground", true},
+    {Type::Metric, "Memory", "WorkingSetMB", "WorkingSetMB"},
+    {Type::Metric, "Cover", "EmbeddedCacheSize", "EmbeddedCacheSize"},
+    {Type::Metric, "Cover", "FolderKeyCacheSize", "FolderKeyCacheSize"},
+    {Type::Metric, "Cover", "FailedKeysCount", "FailedKeysCount"},
+    {Type::Metric, "Cover", "PendingKeysCount", "PendingKeysCount"},
+    {Type::Metric, "Cover", "UploadQueueSize", "UploadQueueSize"},
+    {Type::Metric, "Cover", "UploadQueuedKeysSize", "UploadQueuedKeysSize"},
+    {Type::Performance, "Cover", "PumpCoverTextureUploads", "CoverTextureUploads"},
+    {Type::Performance, "Cover", "PumpDeferredCoverPriming", "CoverDeferredPriming"},
+    {Type::Action, "MiniWave", "tex hit=", "MiniWaveTextureFlush", true},
+    {Type::Action, "MiniWave", "worker cacheHit=", "MiniWaveWorkerFlush", true},
+    {Type::Performance, "DAW", "AsyncRunningStateProbe", "DawRunningStateProbe"},
+    {Type::Action, "UI", "Click.Left ", "UiClickLeft", true},
+    {Type::Action, "UI", "Click.Right ", "UiClickRight", true},
     {Type::Action, "UI", "Browser All-Select Executed", "BrowserAllSelect"},
     {Type::Action, "UI", "Physical All-Select Executed", "PhysicalAllSelect"},
     {Type::Metric, "Frame", "FPS", "FPS"},
@@ -70,7 +90,8 @@ constexpr EventRule kEvents[]{
 };
 
 constexpr const char* kCategories[]{"Search", "Scan", "Database", "Waveform",
-                                    "Audio", "UI", "Frame", "Pointer", "WebView"};
+                                    "Audio", "Memory", "Cover", "MiniWave", "DAW",
+                                    "UI", "Frame", "Pointer", "WebView"};
 
 template <size_t Size>
 std::string_view boundedString(const char (&value)[Size]) noexcept {
