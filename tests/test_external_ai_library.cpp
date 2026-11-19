@@ -260,6 +260,8 @@ void TestShortMetadataAndLiteralSearch(const fs::path& scratch) {
         fixture.Add(writer.get(), 14, fixture.root / fs::u8path(u8"\u811a\u6b65\u96e8") / "privacy.wav");
 #ifdef _WIN32
         fixture.Add(writer.get(), 15, fixture.root / "wind" / fs::u8path(u8"\u0412\u0435\u0442\u0435\u0440.wav"));
+        fixture.Add(writer.get(), 16, fixture.root / "wind" / fs::u8path(u8"Stra\u1e9ee.wav"));
+        fixture.Add(writer.get(), 17, fixture.root / "wind" / fs::u8path(u8"Stra\u1e9ee%.wav"));
 #endif
         Exec(writer.get(), R"SQL(
             UPDATE audio_files SET keywords=char(26292,38632,22768) WHERE id=13;
@@ -281,6 +283,11 @@ void TestShortMetadataAndLiteralSearch(const fs::path& scratch) {
 #ifdef _WIN32
     Check(Ids(library.SearchAudio(u8"\u0432\u0435\u0442\u0435\u0440", 10)) == std::vector<std::int64_t>({15}),
         "Windows literal verification matches Cyrillic filename case invariantly");
+    Check(Ids(library.SearchAudio(u8"stra\u00dfe", 10)) == std::vector<std::int64_t>({16, 17}),
+        "indexed sharp-S matches survive literal case verification");
+    Check(Ids(library.SearchAudio(u8"stra\u00dfe%", 1)) == std::vector<std::int64_t>({17}) &&
+        Ids(library.SearchAudio(u8"stra\u00dfe%", 10)) == std::vector<std::int64_t>({17}),
+        "sharp-S literal verification preserves percent before limit");
 #endif
 }
 
