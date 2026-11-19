@@ -585,5 +585,29 @@
         "source_offer_required": false
       }
     }
+,
+    {
+      "name": "WavPack",
+      "version": "5.9.0",
+      "source": "https://github.com/dbry/WavPack/tree/5.9.0",
+      "license_expression": "BSD-3-Clause",
+      "purpose": "WV audio decode backend",
+      "distributed": true,
+      "load_mode": "statically linked into HarkenSearch.exe",
+      "license_files": ["LICENSES/WavPack-BSD-3-Clause.txt"],
+      "notice_files": ["THIRD_PARTY_NOTICES.md"],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": true,
+      "approval_reference": "REQ-20261110-WV-FORMAT: owner approved the pinned 5.9.0 source for distribution",
+      "cmake_markers": ["harken_wavpack"],
+      "distribution_paths": ["HarkenSearch.exe"],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "static",
+        "commercial_restriction": false,
+        "source_offer_required": false
+      }
+    }
   ]
 }

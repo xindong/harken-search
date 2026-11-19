@@ -256,7 +256,7 @@ bool CoverWallLabState::pathMatches(const std::string& itemPath, const std::stri
 bool CoverWallLabState::isAudioFile(const std::filesystem::path& path) {
     const std::string ext = lowerExtension(path);
     return ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg" ||
-           ext == ".aif" || ext == ".aiff" || ext == ".wma" || ext == ".m4a";
+           ext == ".aif" || ext == ".aiff" || ext == ".wma" || ext == ".m4a" || ext == ".wv";
 }
 
 bool CoverWallLabState::isCoverImageFile(const std::filesystem::path& path) {

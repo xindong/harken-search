@@ -1023,7 +1023,7 @@ static bool AreWaveformCacheKeysEquivalentForScan(const std::string& storedKey,
 
 // Audio file extensions
 static const std::set<std::string> AUDIO_EXTENSIONS = {
-    ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma"
+    ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma", ".wv"
 };
 
 static bool isAudioFile(const std::string& ext) {
@@ -6365,7 +6365,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
     // Include only known audio extensions
     if (filter.includeOnlyKnownExts) {
         bq.whereClause += " AND " + col_sec("extension") + " COLLATE NOCASE IN ("
-            "'.wav','.wave','.mp3','.flac','.ogg','.aiff','.aif','.m4a','.wma')";
+            "'.wav','.wave','.mp3','.flac','.ogg','.aiff','.aif','.m4a','.wma','.wv')";
     }
 
     return bq;
@@ -6493,7 +6493,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
         IsFileTypeOnlyFilter(filter) &&
         (!filter.excludeExtensions.empty() || filter.includeOnlyKnownExts)) {
         static const char* kKnownExts[] = {
-            ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma"
+            ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma", ".wv"
         };
         auto toLower = [](std::string s) {
             std::transform(s.begin(), s.end(), s.begin(),
@@ -12863,6 +12863,7 @@ static std::string ReaperImportFormatFromExtension(std::string ext) {
     if (ext == ".aiff" || ext == ".aif") return "AIFF";
     if (ext == ".m4a") return "M4A";
     if (ext == ".wma") return "WMA";
+    if (ext == ".wv") return "WV";
     return "Unknown";
 }
 
@@ -14578,6 +14579,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             else if (ext == ".aiff" || ext == ".aif") record.format = "AIFF";
             else if (ext == ".m4a") record.format = "M4A";
             else if (ext == ".wma") record.format = "WMA";
+            else if (ext == ".wv") record.format = "WV";
             else record.format = "Unknown";
         };
 

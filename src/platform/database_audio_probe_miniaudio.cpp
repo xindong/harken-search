@@ -1,4 +1,5 @@
 #include "platform/database_audio_probe_backend.h"
+#include "platform/wavpack_decoding_backend.h"
 
 #include "../../thirdparty/miniaudio.h"
 #ifdef AURO_DATABASE_AUDIO_PROBE_TESTING
@@ -95,7 +96,8 @@ ma_result Init(const std::filesystem::path& path,
 
 bool ProbeMiniaudioCpp(const std::filesystem::path& path, Info& out) {
     ma_decoder decoder;
-    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    Platform::WavPack::ApplyDecodingBackend(config);
     if (Init(path, &config, &decoder) != MA_SUCCESS) {
         return false;
     }

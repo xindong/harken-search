@@ -1263,6 +1263,7 @@ bool AppState::shouldShowFile(const std::string& extension) const {
     if (ext == "aiff" || ext == ".aiff" || ext == "aif" || ext == ".aif") return showAIFF;
     if (ext == "m4a" || ext == ".m4a") return showM4A;
     if (ext == "wma" || ext == ".wma") return showWMA;
+    if (ext == "wv" || ext == ".wv") return showOther;
     return showOther;
 }
 

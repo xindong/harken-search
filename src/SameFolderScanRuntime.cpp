@@ -83,7 +83,7 @@ struct SameFolderScanRuntime::Impl {
                         return static_cast<char>(std::tolower(value));
                     });
                 static const std::unordered_set<std::string> kAudioExtensions = {
-                    ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma"};
+                    ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma", ".wv"};
                 if (kAudioExtensions.find(extension) == kAudioExtensions.end()) {
                     continue;
                 }

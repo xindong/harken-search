@@ -9017,6 +9017,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             dbFiles.push_back(pathUtf8);
                         }
                         else if (ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg" ||
+                            ext == ".wv" ||
                             ext == ".aiff" || ext == ".aif" || ext == ".m4a" || ext == ".wma") {
                             files.push_back(pathUtf8);
                         }
