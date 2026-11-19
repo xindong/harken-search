@@ -1288,9 +1288,10 @@ bool SearchWorker::pollResult(AsyncSearchResult& outResult, uint64_t expectedReq
 void SearchWorker::workerThread() {
     // Warm cover-key indexes on this worker thread instead of in start(), so
     // opening or switching a database never blocks the UI thread on the
-    // COUNT(DISTINCT) scan. stop() can interrupt it through m_db->interrupt().
+    // COUNT(DISTINCT) scan. shouldContinue stops the scan between the two
+    // queries when stop() runs before the worker leaves this prologue.
     if (m_db) {
-        m_db->warmupCoverIndexes();
+        m_db->warmupCoverIndexes([this]() { return m_running.load(); });
     }
 
     struct LegacyCommentCacheEntry {

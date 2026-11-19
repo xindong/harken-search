@@ -23,7 +23,7 @@ def test_search_worker_start_does_not_warm_cover_indexes() -> None:
 
     worker = body[body.index("void SearchWorker::workerThread()"):]
     head = worker[: worker.index("struct LegacyCommentCacheEntry")]
-    assert "warmupCoverIndexes" in head
+    assert "warmupCoverIndexes([this]() { return m_running.load(); })" in head
 
 
 def test_file_player_mount_does_not_warm_cover_indexes_on_ui_thread() -> None:
@@ -41,11 +41,26 @@ def test_cover_warmup_sql_matches_partial_indexes() -> None:
     body = DATABASE.read_text(encoding="utf-8")
     warmup = _between(
         body,
-        "void Database::warmupCoverIndexes()",
+        "void Database::warmupCoverIndexes",
         "bool Database::openReadOnly",
     )
     assert warmup.count("<> ''") == 2
     assert "folder_cover_key > ''" not in warmup
     assert "embedded_cover_key > ''" not in warmup
-    assert "WHERE folder_cover_key <> ''" in body
-    assert "WHERE embedded_cover_key <> ''" in body
+    assert warmup.count("if (!keepGoing()) return;") == 2
+
+    # Compare against the index definitions themselves; the warmup query text
+    # also contains these predicates, so a whole-file search would pass even
+    # after the partial indexes were removed.
+    embedded_index = _between(
+        body,
+        "CREATE INDEX IF NOT EXISTS idx_files_cover_dedup_emb",
+        ";",
+    )
+    folder_index = _between(
+        body,
+        "CREATE INDEX IF NOT EXISTS idx_files_cover_dedup_fold",
+        ";",
+    )
+    assert "WHERE embedded_cover_key <> ''" in embedded_index
+    assert "WHERE folder_cover_key <> ''" in folder_index
