@@ -32382,6 +32382,7 @@ void RenderUI(AppState& state) {
                 case Phase::Waveforms: phase = L(ScanUi_Waveforms); break;
                 case Phase::Saving: phase = L(ScanUi_Saving); break;
                 case Phase::Revoking: phase = L(ScanUi_Revoking); break;
+                case Phase::CancellingKeepingCommitted: phase = L(ScanUi_CancelKeepingCommitted); break;
                 default: break;
             }
             if (scanIsCleanup) phase = state.scanCancelRequested.load() ? L(ScanUi_Saving) : L(ScanPhase_RemoveMissing);
@@ -32451,14 +32452,24 @@ void RenderUI(AppState& state) {
                     ImGui::CloseCurrentPopup();
                 }
                 ThemeInspector::RegisterLastItem("scan.dialog.pause");
-                ScanDialogNextAction(L(ScanUi_RevokeScan));
-                if (aura::ui::ActionButton(L(ScanUi_RevokeScan), ImVec2(0, 32.f), aura::ui::ButtonVariant::Danger)) {
-                    DIAG_ACTION("Scan", "ScanCancelRollbackRequested");
+                const bool keepCommittedOnCancel =
+                    state.scanKeepCommittedOnCancel.load(std::memory_order_acquire);
+                const char* cancelActionLabel = keepCommittedOnCancel
+                    ? L(ScanUi_CancelKeepCommittedAction)
+                    : L(ScanUi_RevokeScan);
+                const char* cancelReminder = keepCommittedOnCancel
+                    ? L(ScanUi_CancelKeepCommittedReminder)
+                    : L(ScanUi_RevokeReminder);
+                ScanDialogNextAction(cancelActionLabel);
+                if (aura::ui::ActionButton(cancelActionLabel, ImVec2(0, 32.f), aura::ui::ButtonVariant::Danger)) {
+                    DIAG_ACTION("Scan", keepCommittedOnCancel
+                        ? "ScanCancelKeepCommittedRequested"
+                        : "ScanCancelRollbackRequested");
                     state.requestCancelScanTask();
                     ImGui::CloseCurrentPopup();
                 }
                 ThemeInspector::RegisterLastItem("scan.dialog.revoke");
-                ImGui::TextWrapped("%s", L(ScanUi_RevokeReminder));
+                ImGui::TextWrapped("%s", cancelReminder);
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 if (aura::ui::ActionButton(L(ScanUi_ContinueScan), ImVec2(-1.f, 32.f), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
                 ThemeInspector::RegisterLastItem("scan.dialog.continue");
@@ -32467,7 +32478,9 @@ void RenderUI(AppState& state) {
         } else if (scanView.surface == HarkenSearch::ScanDialogSurface::Setup) {
             if (DrawScanDialogHeader(L(ScanUi_Title), true) ||
                 (ImGui::IsWindowFocused() && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape))) {
-                state.pendingScanFolders.clear(); state.scanDialogAutoStart = false;
+                state.pendingScanFolders.clear();
+                state.pendingScanIsDirectDriveRootDrop = false;
+                state.scanDialogAutoStart = false;
                 ImGui::CloseCurrentPopup();
             }
             DrawScanDialogSource(state.pendingScanFolders);
@@ -32539,7 +32552,10 @@ void RenderUI(AppState& state) {
                 // 初始化渐进式刷新的节流时间，确保第一次刷新不会被节流
                 state.lastIncrementalRefreshTime = 0.0;
                 state.beginScanWorkflow(state.settings.cacheWaveformsOnScan);
-                const uint64_t scanGeneration = state.beginNewScanTask();
+                const bool keepCommittedOnCancel =
+                    !lightweightInsert && state.pendingScanIsDirectDriveRootDrop;
+                const uint64_t scanGeneration = state.beginNewScanTask(keepCommittedOnCancel);
+                state.pendingScanIsDirectDriveRootDrop = false;
                 std::shared_ptr<std::atomic<bool>> scanCancelToken = state.getActiveScanCancelToken();
                 bool recursive = state.scanRecursive;
                 bool updateExisting = lightweightInsert ? false : state.scanUpdateExisting;
@@ -32774,9 +32790,12 @@ void RenderUI(AppState& state) {
                     bool cancelled = isCancelled();
                     const HarkenSearch::ScanStopDisposition stopDisposition =
                         state.scanStopDisposition.load(std::memory_order_acquire);
-                    bool paused = cancelled &&
-                        (combined.paused || HarkenSearch::IsScanPause(stopDisposition));
-                    bool rollbackCancelled = cancelled && !paused;
+                    const HarkenSearch::ScanStopPlan stopPlan =
+                        HarkenSearch::PlanScanStop(stopDisposition);
+                    bool paused = cancelled && (combined.paused || stopPlan.paused);
+                    bool rollbackCancelled = cancelled && !paused && !stopPlan.keepCommitted;
+                    const bool keepCommittedInterrupted =
+                        paused || (cancelled && stopPlan.keepCommitted);
                     auto zeroCancelledSummary = [&]() {
                         combined.added = 0;
                         combined.updated = 0;
@@ -32794,16 +32813,16 @@ void RenderUI(AppState& state) {
                             if (!scanDb.resetScanForegroundCompletionSession(
                                     static_cast<int64_t>(scanGeneration))) {
                                 combined.addError(
-                                    "Pause kept committed files but failed to clear the foreground completion session.");
+                                    "Keep-committed stop could not clear the foreground completion session.");
                                 DIAG_SYSTEM_FMT(
                                     "Scan",
-                                    "ScanPauseFailed: session=%lld error=%s",
+                                    "ScanKeepCommittedFailed: session=%lld error=%s",
                                     (long long)scanGeneration,
                                     scanDb.getLastError().c_str());
                             } else {
                                 DIAG_SYSTEM_FMT(
                                     "Scan",
-                                    "ScanPauseCommitted: session=%lld added=%d updated=%d skipped=%d",
+                                    "ScanKeepCommitted: session=%lld added=%d updated=%d skipped=%d",
                                     (long long)scanGeneration,
                                     combined.added,
                                     combined.updated,
@@ -32819,8 +32838,8 @@ void RenderUI(AppState& state) {
                             zeroCancelledSummary();
                         }
                     };
-                    if (paused || rollbackCancelled) {
-                        finishInterruptedScanSession(paused);
+                    if (keepCommittedInterrupted || rollbackCancelled) {
+                        finishInterruptedScanSession(keepCommittedInterrupted);
                     }
 
                     if (state.isScanTaskCurrent(scanGeneration)) {
@@ -33184,9 +33203,11 @@ void RenderUI(AppState& state) {
                         if (state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
                             const HarkenSearch::ScanStopDisposition completionStopDisposition =
                                 state.scanStopDisposition.load(std::memory_order_acquire);
-                            paused = HarkenSearch::IsScanPause(completionStopDisposition);
-                            rollbackCancelled = !paused;
-                            finishInterruptedScanSession(paused);
+                            const HarkenSearch::ScanStopPlan completionPlan =
+                                HarkenSearch::PlanScanStop(completionStopDisposition);
+                            paused = completionPlan.paused;
+                            rollbackCancelled = !completionPlan.keepCommitted;
+                            finishInterruptedScanSession(completionPlan.keepCommitted);
                             cancelled = true;
                             if (state.isScanTaskCurrent(scanGeneration)) {
                                 state.scanAddedCount = combined.added;
@@ -33257,9 +33278,10 @@ void RenderUI(AppState& state) {
                         }
                         if (state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
                             const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
-                            paused = HarkenSearch::IsScanPause(disposition);
-                            rollbackCancelled = !paused;
-                            finishInterruptedScanSession(paused);
+                            const auto stopPlan = HarkenSearch::PlanScanStop(disposition);
+                            paused = stopPlan.paused;
+                            rollbackCancelled = !stopPlan.keepCommitted;
+                            finishInterruptedScanSession(stopPlan.keepCommitted);
                             cancelled = true;
                         }
                         if (!cancelled) {
@@ -33275,9 +33297,10 @@ void RenderUI(AppState& state) {
                         }
                         if (!cancelled && state.isScanTaskCancelled(scanGeneration, scanCancelToken)) {
                             const auto disposition = state.scanStopDisposition.load(std::memory_order_acquire);
-                            paused = HarkenSearch::IsScanPause(disposition);
-                            rollbackCancelled = !paused;
-                            finishInterruptedScanSession(paused);
+                            const auto stopPlan = HarkenSearch::PlanScanStop(disposition);
+                            paused = stopPlan.paused;
+                            rollbackCancelled = !stopPlan.keepCommitted;
+                            finishInterruptedScanSession(stopPlan.keepCommitted);
                             cancelled = true;
                         }
                         if (!cancelled) {
@@ -33327,9 +33350,12 @@ void RenderUI(AppState& state) {
                         const bool fatalFailure =
                             state.scanFatalFailure.load(std::memory_order_acquire);
                         const bool paused = pauseRequested && !fatalFailure;
-                        const bool rollbackCancelled = interrupted && !pauseRequested;
+                        const bool rollbackCancelled = interrupted &&
+                            !HarkenSearch::IsScanKeepCommitted(finalStopDisposition);
+                        const bool cancelled = interrupted && !pauseRequested;
                         state.scanWasPaused = paused;
-                        state.scanWasCancelled = rollbackCancelled;
+                        state.scanWasCancelled = cancelled;
+                        state.scanKeepCommittedOnCancel.store(false, std::memory_order_release);
                         state.scanPhase.store(AppState::ScanPhase::Idle);
                         state.scanProgress.store(
                             state.scanProcessedCount.load(std::memory_order_acquire),
@@ -33361,10 +33387,12 @@ void RenderUI(AppState& state) {
                                     "ScanPauseFailed: session=%lld error=fatal_scan_failure",
                                     (long long)scanGeneration);
                             }
-                        } else if (rollbackCancelled) {
-                            state.scanDataCommitted = false;
-                            state.scanMiniWaveformsContinueInBackground.store(
-                                false, std::memory_order_release);
+                        } else if (cancelled) {
+                            if (rollbackCancelled) {
+                                state.scanDataCommitted = false;
+                                state.scanMiniWaveformsContinueInBackground.store(
+                                    false, std::memory_order_release);
+                            }
                             state.resetScanReadyToWorkState();
                         }
                         if (state.scanDataCommitted.load(std::memory_order_acquire) || interrupted) {
@@ -33392,7 +33420,9 @@ void RenderUI(AppState& state) {
                 if (!stackFooter) ImGui::SetCursorPosX(std::max(ImGui::GetStyle().WindowPadding.x,
                     ImGui::GetWindowContentRegionMax().x - primaryWidth - 112.f));
                 if (aura::ui::ActionButton(L(Cancel), ImVec2(stackFooter ? -1.f : 100.f, 32.f), aura::ui::ButtonVariant::Quiet)) {
-                    state.pendingScanFolders.clear(); state.scanDialogAutoStart = false;
+                    state.pendingScanFolders.clear();
+                    state.pendingScanIsDirectDriveRootDrop = false;
+                    state.scanDialogAutoStart = false;
                     ImGui::CloseCurrentPopup();
                 }
                 ThemeInspector::RegisterLastItem("scan.dialog.cancel");
@@ -33447,7 +33477,13 @@ void RenderUI(AppState& state) {
             } else if (rollbackFailed) ImGui::TextUnformatted(L(ScanUi_RollbackFailed));
             else if (networkUnreachable && scanWorkflowSnapshot.discovered == 0) ImGui::TextUnformatted(L(ScanUi_NetworkTitle));
             else if (scanView.phase == Phase::Empty) ImGui::TextUnformatted(L(ScanUi_Empty));
-            else if (scanView.phase == Phase::Cancelled) ImGui::TextUnformatted(L(ScanUi_Revoked));
+            else if (scanView.phase == Phase::Cancelled) {
+                if (HarkenSearch::IsScanKeepCommitted(state.scanStopDisposition.load())) {
+                    ImGui::Text(L(ScanUi_RetainedFmt), scanView.succeeded);
+                } else {
+                    ImGui::TextUnformatted(L(ScanUi_Revoked));
+                }
+            }
             else ImGui::Text(scanView.phase == Phase::Paused ? L(ScanUi_RetainedFmt) : L(ScanUi_ImportedFmt), scanView.succeeded);
             ImGui::PopFont();
             DrawScanDialogMetrics(state.scanUiMetrics.Value(), false);
@@ -33499,6 +33535,7 @@ void RenderUI(AppState& state) {
                     const auto folders = resume ? state.lastScannedFolders : std::vector<std::string>{};
                     ResetScanDialogResult(state);
                     state.pendingScanFolders = folders;
+                    state.pendingScanIsDirectDriveRootDrop = false;
                     state.showScanDialog = true;
                     ImGui::CloseCurrentPopup();
                 }
@@ -51234,6 +51271,7 @@ void RenderUI(AppState& state) {
             else if (scanView.phase == HarkenSearch::ScanDialogPhase::Waveforms) phase = L(ScanUi_Waveforms);
             else if (scanView.phase == HarkenSearch::ScanDialogPhase::Saving) phase = L(ScanUi_Saving);
             else if (scanView.phase == HarkenSearch::ScanDialogPhase::Revoking) phase = L(ScanUi_Revoking);
+            else if (scanView.phase == HarkenSearch::ScanDialogPhase::CancellingKeepingCommitted) phase = L(ScanUi_CancelKeepingCommitted);
             if (scanIsCleanup) phase = state.scanCancelRequested.load() ? L(ScanUi_Saving) : L(ScanPhase_RemoveMissing);
             ImGui::TextUnformatted(phase);
             if (scanView.progressKnown) { ImGui::SameLine(0, 12); ImGui::Text("%d / %d", scanView.current, scanView.total); }

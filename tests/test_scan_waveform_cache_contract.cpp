@@ -5,6 +5,7 @@
 #include "Database.h"
 #include "DiagnosticsLogger.h"
 #include "PathUtils.h"
+#include "ScanInterruption.h"
 #include "WaveformCachePolicy.h"
 #include "WaveformExtractor.h"
 #include "sqlite3.h"
@@ -1988,6 +1989,145 @@ static int testRemoveMissingDeletesWaveformRows() {
 
     db.close();
     removeDbArtifacts(dbPath);
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("cancelled_drive_root_keep_committed");
+    const fs::path dbPath = root / "cancelled_drive_root_keep_committed.db";
+    const fs::path scanRoot = root / "drive_root";
+    const fs::path committedFolder = scanRoot / "committed_folder";
+    fs::create_directories(committedFolder);
+
+    const int inputFileCount = 12;
+    for (int fileIndex = 0; fileIndex < inputFileCount; ++fileIndex) {
+        writeSilentMonoWav(
+            committedFolder / ("stall_cancel_keep_" + std::to_string(fileIndex) + ".wav"),
+            8000,
+            12000);
+    }
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    aura::BackfillQueue queue;
+    queue.onDbOpened(dbPath.u8string(), 19);
+
+    std::atomic<bool> cancelFlag{false};
+    std::atomic<HarkenSearch::ScanStopDisposition> stopDisposition{
+        HarkenSearch::ScanStopDisposition::CancelKeepCommitted};
+    const auto progressCallback = [&cancelFlag](int,
+                                                int,
+                                                const std::string&,
+                                                bool dataCommitted) {
+        if (dataCommitted) cancelFlag.store(true, std::memory_order_release);
+    };
+    const ScanStats stats = db.scanDirectoryEx(scanRoot.u8string(),
+                                               true,
+                                               false,
+                                               false,
+                                               progressCallback,
+                                               &cancelFlag,
+                                               1,
+                                               false,
+                                               true,
+                                               &queue,
+                                               dbPath.u8string(),
+                                               19,
+                                               0,
+                                               &stopDisposition);
+
+    const int committedCount = querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1);
+    check(cancelFlag.load(std::memory_order_acquire),
+          "drive-root scan cancels immediately after a committed batch",
+          failures);
+    check(stats.cancelled && !stats.paused,
+          "keep-committed drive-root cancellation remains cancelled rather than paused",
+          failures);
+    check(committedCount > 0 && committedCount < inputFileCount,
+          "drive-root cancellation keeps only the committed subset",
+          failures);
+    check(stats.added == committedCount,
+          "drive-root cancellation reports committed rows instead of rolling their counts back",
+          failures);
+
+    check(db.rebuildFolderIndex(),
+          "drive-root cancellation rebuilds the folder index from committed rows",
+          failures);
+    const FolderInfo tree = db.getFolderHierarchyFromIndex();
+    const std::string expectedFolderPath =
+        HarkenSearch::CanonicalFolderPath(committedFolder.u8string());
+    std::function<bool(const FolderInfo&)> containsFolder;
+    containsFolder = [&](const FolderInfo& folder) {
+        if (folder.path == expectedFolderPath) return true;
+        return std::any_of(folder.subfolders.begin(), folder.subfolders.end(), containsFolder);
+    };
+    check(containsFolder(tree),
+          "drive-root cancellation leaves the committed folder browseable in the indexed tree",
+          failures);
+
+    queue.shutdown();
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testDriveRootLibraryRootBrowsesIndexedFolders() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("drive_root_library_root");
+    const fs::path dbPath = root / "drive_root_library_root.db";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        return 1;
+    }
+
+    // Rows exactly as a drive-root scan stores them while the drive root is the
+    // registered library root (mergeLibraryRoots keeps the trailing separator).
+    check(execSqlite(db.db(),
+          "INSERT INTO audio_files(file_path, file_name, folder_path) VALUES "
+          "('Z:\\pack-01\\a.wav','a.wav','z:\\pack-01');"),
+          "drive-root fixture row inserts", failures);
+    check(execSqlite(db.db(),
+          "INSERT INTO audio_files(file_path, file_name, folder_path) VALUES "
+          "('Z:\\pack-01\\sub\\b.wav','b.wav','z:\\pack-01\\sub');"),
+          "drive-root nested fixture row inserts", failures);
+    db.mergeLibraryRoots({"Z:\\"});
+    const auto roots = db.getLibraryRoots();
+    check(roots.size() == 1, "drive root registers one library root", failures);
+
+    check(db.rebuildFolderIndex(), "drive-root library rebuilds folder index", failures);
+    const FolderInfo tree = db.getFolderHierarchyFromIndex();
+    const std::string expectedFolderPath = HarkenSearch::CanonicalFolderPath("z:\\pack-01");
+    std::function<bool(const FolderInfo&)> containsFolder;
+    containsFolder = [&](const FolderInfo& folder) {
+        if (folder.path == expectedFolderPath) return true;
+        return std::any_of(folder.subfolders.begin(), folder.subfolders.end(), containsFolder);
+    };
+    check(containsFolder(tree),
+          "drive-root library root keeps indexed folders browseable in the tree",
+          failures);
+    check(db.pruneEntriesOutsideLibraryRoots() == 0,
+          "drive-root library prune keeps rows below the drive root",
+          failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
+          "drive-root library prune leaves both rows in place",
+          failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
     fs::remove_all(root, ec);
     return failures;
 }
@@ -4442,6 +4582,10 @@ int main(int argc, char** argv) {
     failures += testUnchangedFullScanWithConcurrentCacheWrite(true);
     std::cout << "-- testCancelledScanRollsBackCommittedRowsAndQueueDebt\n";
     failures += testCancelledScanRollsBackCommittedRowsAndQueueDebt();
+    std::cout << "-- testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree\n";
+    failures += testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree();
+    std::cout << "-- testDriveRootLibraryRootBrowsesIndexedFolders\n";
+    failures += testDriveRootLibraryRootBrowsesIndexedFolders();
     std::cout << "-- testCoverWallIgnoresStaleOrphanRegistryRows\n";
     failures += testCoverWallIgnoresStaleOrphanRegistryRows();
 

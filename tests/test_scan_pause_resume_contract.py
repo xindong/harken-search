@@ -49,6 +49,16 @@ class ScanPauseResumeContract(unittest.TestCase):
         self.assertIn("state.requestCancelScanTask()", MAIN)
         self.assertNotIn("&state.scanStopDisposition", WINDOWS_MAIN)
 
+    def test_keep_committed_cancel_is_limited_to_direct_drive_root_drops(self):
+        self.assertIn("const bool directDriveRootDrop = !dropTruncated && files.empty()", WINDOWS_MAIN)
+        self.assertIn("std::all_of(folders.begin(), folders.end()", WINDOWS_MAIN)
+        self.assertIn("pendingScanIsDirectDriveRootDrop = directDriveRootDrop", WINDOWS_MAIN)
+        self.assertIn("pendingScanIsDirectDriveRootDrop = false", HELPER)
+        self.assertIn("!lightweightInsert && state.pendingScanIsDirectDriveRootDrop", MAIN)
+        self.assertIn("beginNewScanTask(keepCommittedOnCancel)", MAIN)
+        self.assertIn("scanKeepCommittedOnCancel.load", APP)
+        self.assertIn("ScanStopDisposition::CancelKeepCommitted", APP)
+
     def test_pause_and_cancel_are_distinct_summaries(self):
         self.assertIn("scanWasPaused", MAIN)
         self.assertIn("scanView.phase == Phase::Paused", MAIN)
@@ -57,6 +67,8 @@ class ScanPauseResumeContract(unittest.TestCase):
         self.assertIn("L(ScanUi_Rescan)", MAIN)
         self.assertEqual(LOCALIZED["Main_PauseKeepBtn"]["zh"], "暂停并保留")
         self.assertEqual(LOCALIZED["ScanUi_RevokeScan"]["zh"], "撤销本次入库")
+        self.assertEqual(LOCALIZED["ScanUi_CancelKeepCommittedAction"]["zh"], "取消扫描，保留已入库内容")
+        self.assertIn("已经入库的数据会保留", LOCALIZED["ScanUi_CancelKeepCommittedReminder"]["zh"])
         self.assertIn("原文件不动", LOCALIZED["ScanUi_RevokeReminder"]["zh"])
         self.assertIn("state.lastScannedPath", MAIN)
 
@@ -68,8 +80,10 @@ class ScanPauseResumeContract(unittest.TestCase):
         self.assertNotIn('aura::ui::ActionButton(L(Main_PauseKeepBtn)', active_block)
         self.assertIn('ImGui::OpenPopup((std::string(L(Scan_StopScan)) + "##ScanStopChoice").c_str())', active_block)
         self.assertIn('aura::ui::ActionButton(L(Main_PauseKeepBtn), ImVec2(0, 32.f)', MAIN)
-        self.assertIn('ScanDialogNextAction(L(ScanUi_RevokeScan));', MAIN)
-        self.assertIn('aura::ui::ActionButton(L(ScanUi_RevokeScan), ImVec2(0, 32.f)', MAIN)
+        self.assertIn('ScanDialogNextAction(cancelActionLabel);', MAIN)
+        self.assertIn('aura::ui::ActionButton(cancelActionLabel, ImVec2(0, 32.f)', MAIN)
+        self.assertIn('L(ScanUi_RevokeScan)', MAIN)
+        self.assertIn('L(ScanUi_CancelKeepCommittedAction)', MAIN)
         self.assertIn("L(ScanUi_ContinueScan)", MAIN)
         self.assertEqual(LOCALIZED["Main_StopBtn"]["zh"], "停止…")
         self.assertEqual(LOCALIZED["Scan_StopScan"]["zh"], "停止扫描")

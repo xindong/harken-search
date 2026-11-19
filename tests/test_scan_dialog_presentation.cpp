@@ -143,6 +143,10 @@ int main(int argc, char** argv) {
     input.stopDisposition = ScanStopDisposition::CancelRollback;
     view = BuildScanDialogView(input);
     Check(view.phase == ScanDialogPhase::Revoking && !view.canClose, "revocation is not completion");
+    input.stopDisposition = ScanStopDisposition::CancelKeepCommitted;
+    view = BuildScanDialogView(input);
+    Check(view.phase == ScanDialogPhase::CancellingKeepingCommitted && !view.canClose,
+          "drive-root cancellation keeps committed items without entering pause or rollback");
     input.scanning = false; input.workflow.stage = ScanWorkflowStage::Paused;
     input.stopDisposition = ScanStopDisposition::PauseKeepCommitted;
     input.workflow.processed = 4823; input.workflow.succeeded = 4800;
@@ -154,6 +158,9 @@ int main(int argc, char** argv) {
     input.stopDisposition = ScanStopDisposition::CancelRollback;
     view = BuildScanDialogView(input);
     Check(view.phase == ScanDialogPhase::Cancelled, "rollback terminal");
+    input.stopDisposition = ScanStopDisposition::CancelKeepCommitted;
+    view = BuildScanDialogView(input);
+    Check(view.phase == ScanDialogPhase::Cancelled, "keep-committed cancellation remains a cancelled result");
     input.fatalFailure = true;
     view = BuildScanDialogView(input);
     Check(view.phase == ScanDialogPhase::Failed, "rollback failure cannot say revoked");

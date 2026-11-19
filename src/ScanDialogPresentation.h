@@ -38,7 +38,7 @@ inline std::string ScanDiagnosticTailUtf8(const std::string& text, size_t limit)
 enum class ScanDialogSurface { Setup, Progress, Result };
 enum class ScanDialogPhase {
     Setup, Counting, Ingesting, Waveforms, Finalizing, Saving, Revoking,
-    Completed, Partial, Paused, Cancelled, Empty, Failed
+    Completed, Partial, Paused, Cancelled, Empty, Failed, CancellingKeepingCommitted
 };
 struct ScanDialogInput {
     ScanWorkflowSnapshot workflow;
@@ -166,6 +166,8 @@ inline ScanDialogView BuildScanDialogView(const ScanDialogInput& input) {
         view.canClose = false;
         if (IsScanPause(input.stopDisposition)) {
             view.phase = ScanDialogPhase::Saving;
+        } else if (input.stopDisposition == ScanStopDisposition::CancelKeepCommitted) {
+            view.phase = ScanDialogPhase::CancellingKeepingCommitted;
         } else if (IsScanRollbackCancel(input.stopDisposition)) {
             view.phase = ScanDialogPhase::Revoking;
         } else {
