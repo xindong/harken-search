@@ -1079,10 +1079,14 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
 
 #if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
     const auto tabSwitchStart = std::chrono::steady_clock::now();
+    auto tabSwitchMark = tabSwitchStart;
+    // Each stage reports its own elapsed time; only TabSwitchTotal spans the
+    // whole switch, so exported duration_ms always means one stage.
     const auto logTabSwitchStage = [&](const char* stage) {
-        const double ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - tabSwitchStart).count();
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - tabSwitchMark).count();
         DiagnosticsLogger::instance().logPerformance("TabSwitch", stage, ms);
+        tabSwitchMark = now;
     };
     logTabSwitchStage("TabSwitchBegin");
 #endif
@@ -1114,7 +1118,10 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
     restoreCoverWallDisplaySnapshotForTab(tabIndex);
 #if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
     logTabSwitchStage("TabSwitchCoverWall");
-    logTabSwitchStage("TabSwitchTotal");
+    DiagnosticsLogger::instance().logPerformance(
+        "TabSwitch", "TabSwitchTotal",
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - tabSwitchStart).count());
 #endif
     if (activationTimeSeconds >= 0.0) {
         listTabs[(size_t)tabIndex].lastActivatedAt = activationTimeSeconds;
