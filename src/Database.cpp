@@ -1894,6 +1894,9 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
         }
     }
 
+    m_waveformFailureWritesAllowed = sidecarAttached &&
+        sqlite3_db_readonly(m_db, "main") == 0 &&
+        sqlite3_db_readonly(m_db, "waveforms_db") == 0;
     return true;
 }
 
@@ -2606,6 +2609,7 @@ void Database::clearQueryProgressHandler() {
 }
 
 void Database::close() {
+    m_waveformFailureWritesAllowed = false;
     m_postProcessCancel.store(true, std::memory_order_release);
     m_coverPhashBackfillCancel.store(true, std::memory_order_release);
     if (m_db) {
@@ -11295,6 +11299,101 @@ bool Database::upsertWaveformCacheStateByPath(const std::string& filePath,
 
     const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
     returnStmt(sql, stmt);
+    return ok;
+}
+
+Database::WaveformFailureWritePaths Database::waveformFailureWritePaths() const {
+    if (!m_waveformFailureWritesAllowed) return {};
+    return {m_mainDbPath, m_waveformsDbPath};
+}
+
+Database::WaveformFailureWriter::WaveformFailureWriter(const std::atomic<bool>& cancelled)
+    : m_cancelled(cancelled) {}
+
+Database::WaveformFailureWriter::~WaveformFailureWriter() {
+    sqlite3_finalize(m_statement);
+    if (m_db) sqlite3_close(m_db);
+}
+
+bool Database::WaveformFailureWriter::open(const WaveformFailureWritePaths& paths) {
+    if (m_cancelled.load(std::memory_order_acquire)) return false;
+    if (m_db) return true;
+    if (paths.main.empty() || paths.waveforms.empty() ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(paths.main) ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(paths.waveforms)) {
+        return false;
+    }
+
+    sqlite3* opened = nullptr;
+    const int openResult = sqlite3_open_v2(
+        paths.main.c_str(), &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(opened, sqlite3_close);
+    if (openResult != SQLITE_OK) return false;
+
+    sqlite3_busy_handler(opened, [](void* context, int attempts) -> int {
+        auto& writer = *static_cast<WaveformFailureWriter*>(context);
+        const auto now = std::chrono::steady_clock::now();
+        if (attempts == 0) writer.m_busyDeadline = now + std::chrono::seconds(5);
+        if (now >= writer.m_busyDeadline || writer.m_cancelled.load(std::memory_order_acquire)) {
+            return 0;
+        }
+        sqlite3_sleep(10);
+        return !writer.m_cancelled.load(std::memory_order_acquire);
+    }, this);
+
+    sqlite3_stmt* attach = nullptr;
+    if (sqlite3_prepare_v2(opened, "ATTACH DATABASE ? AS waveforms_db;",
+                           -1, &attach, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    sqlite3_bind_text(attach, 1, paths.waveforms.c_str(), -1, SQLITE_TRANSIENT);
+    const int attachResult = sqlite3_step(attach);
+    sqlite3_finalize(attach);
+    if (attachResult != SQLITE_DONE || sqlite3_db_readonly(opened, "waveforms_db") != 0) {
+        return false;
+    }
+    if (sqlite3_exec(opened, "PRAGMA waveforms_db.synchronous = NORMAL;",
+                     nullptr, nullptr, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    static const char* sql = R"(
+        INSERT INTO waveforms_db.waveforms(file_id, status, error_code, retry_count, updated_at, cache_key)
+        SELECT id, 'failed', ?, ?, ?, ''
+        FROM main.audio_files INDEXED BY idx_files_path
+        WHERE file_path = ?
+        ON CONFLICT(file_id) DO UPDATE SET
+            status = excluded.status,
+            error_code = excluded.error_code,
+            retry_count = excluded.retry_count,
+            updated_at = excluded.updated_at,
+            cache_key = excluded.cache_key
+        WHERE COALESCE(waveforms.updated_at, 0) <= excluded.updated_at
+          AND NOT (waveforms.status IS 'done' AND waveforms.waveform_data IS NOT NULL
+                   AND waveforms.updated_at IS excluded.updated_at)
+          AND (waveforms.status IS NOT excluded.status
+               OR waveforms.error_code IS NOT excluded.error_code
+               OR waveforms.retry_count IS NOT excluded.retry_count
+               OR waveforms.cache_key IS NOT excluded.cache_key)
+    )";
+    if (sqlite3_prepare_v2(opened, sql, -1, &m_statement, nullptr) != SQLITE_OK) return false;
+    m_db = connection.release();
+    return true;
+}
+
+bool Database::WaveformFailureWriter::writeFailure(
+    const std::string& filePath, const std::string& errorCode, int retryCount, int64_t observedAt) {
+    if (!m_statement || filePath.empty() || m_cancelled.load(std::memory_order_acquire)) {
+        return false;
+    }
+    const bool bound =
+        sqlite3_bind_text(m_statement, 1, errorCode.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+        sqlite3_bind_int(m_statement, 2, (std::max)(0, retryCount)) == SQLITE_OK &&
+        sqlite3_bind_int64(m_statement, 3, observedAt) == SQLITE_OK &&
+        sqlite3_bind_text(m_statement, 4, filePath.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
+    const bool ok = bound && sqlite3_step(m_statement) == SQLITE_DONE;
+    sqlite3_reset(m_statement);
+    sqlite3_clear_bindings(m_statement);
     return ok;
 }
 

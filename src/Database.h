@@ -854,6 +854,30 @@ public:
     int fixCompletedPendingWaveformStates();
     bool pruneWaveformCacheRows(int maxRows);
     bool clearWaveformCache();
+
+    struct WaveformFailureWritePaths {
+        std::string main;
+        std::string waveforms;
+    };
+    WaveformFailureWritePaths waveformFailureWritePaths() const;
+
+    class WaveformFailureWriter {
+    public:
+        explicit WaveformFailureWriter(const std::atomic<bool>& cancelled);
+        ~WaveformFailureWriter();
+        WaveformFailureWriter(const WaveformFailureWriter&) = delete;
+        WaveformFailureWriter& operator=(const WaveformFailureWriter&) = delete;
+
+        bool open(const WaveformFailureWritePaths& paths);
+        bool writeFailure(const std::string& filePath, const std::string& errorCode,
+                          int retryCount, int64_t observedAt);
+
+    private:
+        sqlite3* m_db = nullptr;
+        sqlite3_stmt* m_statement = nullptr;
+        const std::atomic<bool>& m_cancelled;
+        std::chrono::steady_clock::time_point m_busyDeadline;
+    };
     
 // Mipmap波形数据结构（金字塔波形）
     struct WaveformMipmapLevel {
@@ -1626,6 +1650,7 @@ public:
     // True only for databases created fresh under the adaptive mini-waveform regime
     // (app_meta 'mini_waveform_density' == "adaptive"). Legacy DBs stay on the fixed
     // 128/160 peak budget so existing waveform caches are not invalidated. Set in createTables().
+    bool m_waveformFailureWritesAllowed = false;
     bool m_usesAdaptiveMiniWaveform = false;
     bool m_needsAdaptiveMiniWaveformFormatUpgrade = false;
     bool m_fastScanModeActive = false;

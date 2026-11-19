@@ -14,6 +14,8 @@ WORKFLOW = (ROOT / "src/WaveformRebuildRecordWorkflow.cpp").read_text(
     encoding="utf-8"
 )
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+WINDOWS_MAIN = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+WORKER = (ROOT / "src/AsyncWorker.cpp").read_text(encoding="utf-8")
 CMAKE = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 BEHAVIOR = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
 
@@ -84,3 +86,67 @@ for forbidden in (
     assert forbidden not in SOURCE, forbidden
 
 print("PASS: waveform rebuild failure persistence boundary contracts")
+
+results_surface = function_body(MAIN, "auto renderResultsSurface =")
+windows_consume = function_body(WINDOWS_MAIN, "for (auto& result : completedResults)")
+for consumer, result, expected in (
+    (results_surface, "res", 2),
+    (windows_consume, "result", 1),
+):
+    assert "state.database.upsertWaveformCacheStateByPath(" not in consumer, (
+        f"UI consumer ({result}) still writes waveform failure state synchronously"
+    )
+    assert consumer.count(f"state.waveformWorker.enqueueFailurePersistence({result})") == expected
+    assert "state.backfillQueue.reportOutcome(" in consumer
+    assert "state.database.clearBackfillPending(" in consumer
+
+enqueue = function_body(WORKER, "void WaveformWorker::enqueueFailurePersistence(")
+for skipped in (
+    "result.success",
+    "result.metersOnlyMerge",
+    '"mini_cache_miss_no_decode"',
+    '"cancelled"',
+    '"deferred_scan_db_write"',
+    '"decode_failed"',
+):
+    assert skipped in enqueue, skipped
+assert "writeFailure(" not in enqueue
+assert "result.failureObservedAt" in enqueue and "std::time(" not in enqueue, (
+    "a delayed UI result must carry the time the worker failed, not the time the UI enqueues it"
+)
+producer = function_body(WORKER, "void WaveformWorker::workerThread()")
+assert "result.failureObservedAt = static_cast<int64_t>(std::time(nullptr))" in producer
+assert "markFailure(mini.errorCode.empty()" in producer
+assert 'markFailure("mini_waveform_empty")' in producer
+assert "markFailure(detail.errorCode.empty()" in producer
+assert 'markFailure("detail_save_db_failed")' in producer
+assert "result.failureBinding != m_failureBinding.load(" in enqueue, (
+    "pre-mount and previous-library results cannot persist into the currently bound library"
+)
+assert "result.generation != m_generation.load(" in enqueue
+
+start = function_body(WORKER, "void WaveformWorker::start(")
+running_start = function_body(start, "if (m_running.load())")
+assert "bindFailureWriter(" in running_start and "stop()" not in running_start, (
+    "interactive mount must bind persistence without restarting existing decode threads"
+)
+assert "bindFailureWriter(" in start.split("m_cancelRequested.store(false", 1)[1]
+binding = function_body(WORKER, "void WaveformWorker::bindFailureWriter(")
+assert binding.index("paths.main.empty()") < binding.index("m_failureBinding.fetch_add(")
+assert binding.index("m_acceptFailureWrites ||") < binding.index("m_failureBinding.fetch_add(")
+submit = function_body(WORKER, "bool WaveformWorker::submitRequestInternal(")
+assert "req.failureBinding = m_failureBinding.load(" in submit
+assert "result.failureBinding = req.failureBinding" in producer
+mount = function_body(MAIN, "static bool MountFilePlayerDatabaseForInteractiveRefresh(")
+assert "state.waveformWorker.start(&state.database," in mount
+
+stop = function_body(WORKER, "void WaveformWorker::stop(")
+assert stop.index("m_cancelRequested.store(true") < stop.index("m_failureThread.join()")
+assert stop.index("m_pendingFailureWrites.clear()") < stop.index("m_failureThread.join()")
+
+writer = function_body(WORKER, "void WaveformWorker::failureWriterThread(")
+assert "Database::WaveformFailureWriter" in writer
+assert "writeFailure(" in writer
+assert "m_db" not in writer, "failure persistence must not use the UI-owned connection"
+
+print("PASS: waveform result failure writes leave the UI consumer")

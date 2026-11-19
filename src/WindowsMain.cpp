@@ -14484,12 +14484,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                         continue;
                     } else {
                         state.waveformFailed.insert(result.filePath);
-                        state.database.upsertWaveformCacheStateByPath(
-                            result.filePath,
-                            "failed",
-                            result.errorCode.empty() ? "decode_failed" : result.errorCode,
-                            1,
-                            "");
+                        state.waveformWorker.enqueueFailurePersistence(result);
                     }
                     state.removePendingWaveform(result.filePath);
                     continue;
