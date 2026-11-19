@@ -55,8 +55,8 @@ LogExport& ExportTask() {
     return task;
 }
 
-void StartLogExport(LogExport& task) {
-    if (task.pending.valid()) return;
+bool StartLogExport(LogExport& task) {
+    if (task.pending.valid()) return false;
     using namespace std::chrono;
     const auto clickedAt = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
     task.path.clear();
@@ -64,7 +64,7 @@ void StartLogExport(LogExport& task) {
     auto directory = std::filesystem::u8path(Platform::GetAppDataDir());
     if (!directory.is_absolute()) {
         task.status = ExportStatus::Failed;
-        return;
+        return false;
     }
     directory /= "diagnostic-exports";
     try {
@@ -83,8 +83,10 @@ void StartLogExport(LogExport& task) {
                 return HarkenSearch::DiagnosticLogBundleResult{};
             });
         task.status = ExportStatus::Writing;
+        return true;
     } catch (...) {
         task.status = ExportStatus::Failed;
+        return false;
     }
 }
 
@@ -486,34 +488,43 @@ void DrawLogs(const Layout& ui, const ViewData& view) {
 
 }
 
-bool StartExportForQa() {
-    auto& task = ExportTask();
-    if (task.pending.valid()) return false;
-    StartLogExport(task);
-    return true;
-}
-
-void PollLogExport() {
-    auto& task = ExportTask();
+bool ConsumeFinishedExport(LogExport& task) {
     if (!task.pending.valid() ||
-        task.pending.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
+        task.pending.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return false;
     try {
         auto result = task.pending.get();
         if (task.busy.load(std::memory_order_relaxed)) {
             task.busy.store(false, std::memory_order_relaxed);
             task.status = ExportStatus::Busy;
-            return;
+            return true;
         }
         if (result.status != HarkenSearch::DiagnosticLogBundleStatus::Written) {
             task.status = ExportStatus::Failed;
-            return;
+            return true;
         }
         task.path = result.path.u8string();
         task.status = result.empty ? ExportStatus::Empty : ExportStatus::Saved;
+        return true;
     } catch (...) {
+        task.busy.store(false, std::memory_order_relaxed);
         task.status = ExportStatus::Failed;
-        return;
+        return true;
     }
+}
+
+bool StartExportForQa() {
+    auto& task = ExportTask();
+    // The host may skip drawing (hidden window), so settle a finished task here
+    // instead of waiting for PollLogExport on the next frame.
+    ConsumeFinishedExport(task);
+    if (task.pending.valid()) return false;
+    return StartLogExport(task);
+}
+
+void PollLogExport() {
+    auto& task = ExportTask();
+    if (!ConsumeFinishedExport(task)) return;
+    if (task.status != ExportStatus::Saved && task.status != ExportStatus::Empty) return;
 #if ARIS_PREVIEW_ISOLATION && defined(_WIN32)
     const char* qaLane = std::getenv("AURA_HARNESS_LANE_KIND");
     if (qaLane && std::string_view(qaLane) == "functional") return;
