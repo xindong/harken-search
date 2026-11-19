@@ -1775,7 +1775,11 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     // Waveform and RMS BLOBs live in the waveforms sidecar.
     {
         const char* migKey = "legacy_blob_purge_v1";
-        if (ReadAppMetaInt(m_db, migKey) != 1) {
+        // The purge drops waveform_data/rms_data from audio_files, so it may
+        // only run once the migration above has really finished; a deferred
+        // migration keeps its source blobs for the next open.
+        if (ReadAppMetaInt(m_db, migKey) != 1 &&
+            ReadAppMetaInt(m_db, "legacy_waveform_blob_migration_v1") == 1) {
             int purged = 0;
             const char* purgeSql =
                 "UPDATE audio_files SET waveform_data = NULL, waveform_detail = NULL, rms_data = NULL "
@@ -18351,21 +18355,103 @@ bool Database::migrateFromSingleDatabase(const std::string& mainDbPath) {
     (void)mainDbPath;
 
     // Move waveform and RMS BLOBs from audio_files into waveforms_db.
-    // Migrate only rows that contain data; this is a one-time operation.
+    // Migrate only rows that contain data; this is a one-time operation per
+    // library. The completion marker keeps every later connection (and every
+    // reopen) from rescanning the whole audio_files table.
+    static const char* kMigrationKey = "legacy_waveform_blob_migration_v1";
+    if (ReadAppMetaInt(m_db, kMigrationKey) == 1) return true;
+
+    // A sidecar row can already hold one of the two columns (a waveform without
+    // RMS, or the reverse). Filling the missing column keeps such rows
+    // migratable instead of leaving them behind on every later open.
     const char* migrateSql = R"(
-        INSERT OR IGNORE INTO waveforms_db.waveforms (file_id, waveform_data, rms_data)
+        INSERT INTO waveforms_db.waveforms (file_id, waveform_data, rms_data)
         SELECT id, waveform_data, rms_data
         FROM audio_files
-        WHERE waveform_data IS NOT NULL AND length(waveform_data) > 0;
+        WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0)
+        ON CONFLICT(file_id) DO UPDATE SET
+            waveform_data = CASE WHEN length(coalesce(waveform_data, x'')) > 0
+                THEN waveform_data ELSE excluded.waveform_data END,
+            rms_data = CASE WHEN length(coalesce(rms_data, x'')) > 0
+                THEN rms_data ELSE excluded.rms_data END;
     )";
-    executeSQL(migrateSql);
 
-    // Clear migrated BLOB columns from the main database to release space.
+    // Clear only the columns that actually landed in the sidecar. A copy that
+    // was silently skipped keeps its source blob, so the probe below stays
+    // positive and the migration is retried on the next open instead of
+    // dropping the data.
     const char* clearSql = R"(
-        UPDATE audio_files SET waveform_data = NULL, rms_data = NULL
-        WHERE waveform_data IS NOT NULL AND length(waveform_data) > 0;
+        UPDATE audio_files SET
+            waveform_data = CASE WHEN waveform_data IS NOT NULL
+                    AND length(waveform_data) > 0
+                    AND EXISTS (SELECT 1 FROM waveforms_db.waveforms w
+                                WHERE w.file_id = audio_files.id
+                                  AND length(w.waveform_data) > 0)
+                THEN NULL ELSE waveform_data END,
+            rms_data = CASE WHEN rms_data IS NOT NULL
+                    AND length(rms_data) > 0
+                    AND EXISTS (SELECT 1 FROM waveforms_db.waveforms w
+                                WHERE w.file_id = audio_files.id
+                                  AND length(w.rms_data) > 0)
+                THEN NULL ELSE rms_data END
+        WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0);
     )";
-    executeSQL(clearSql);
+
+    // The completion marker may only be written once no legacy blob is left in
+    // audio_files. The probe runs inside the same transaction as the copy and
+    // the clear, so a blocked or partial copy rolls back instead of recording
+    // a library that still holds legacy data as migrated.
+    const char* remainingSql = R"(
+        SELECT 1 FROM audio_files
+        WHERE (waveform_data IS NOT NULL AND length(waveform_data) > 0)
+           OR (rms_data IS NOT NULL AND length(rms_data) > 0)
+        LIMIT 1;
+    )";
+    auto probeStep = [&](const char* sql) -> int {
+        sqlite3_stmt* probe = nullptr;
+        if (sqlite3_prepare_v2(m_db, sql, -1, &probe, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            return -1;
+        }
+        const int step = sqlite3_step(probe);
+        sqlite3_finalize(probe);
+        if (step == SQLITE_DONE) return 0;
+        if (step == SQLITE_ROW) return 1;
+        m_lastError = sqlite3_errmsg(m_db);
+        return -1;
+    };
+
+    // Copy and clear must both land before the marker is written; otherwise a
+    // failed copy followed by a successful clear would drop waveform data.
+    const bool ownTransaction = sqlite3_get_autocommit(m_db) != 0;
+    if (ownTransaction && !executeSQL("BEGIN IMMEDIATE")) {
+        DIAG_ACTION_FMT("Database", "LegacyWaveformBlobMigrationDeferred: begin failed: %s", m_lastError.c_str());
+        return true;
+    }
+
+    const bool copied = executeSQL(migrateSql);
+    const bool cleared = copied && executeSQL(clearSql);
+    const int remaining = cleared ? probeStep(remainingSql) : -1;
+    if (!copied || !cleared || remaining != 0) {
+        if (ownTransaction) executeSQL("ROLLBACK");
+        DIAG_ACTION_FMT("Database",
+                        "LegacyWaveformBlobMigrationDeferred: copied=%d cleared=%d remaining=%d error=%s",
+                        copied ? 1 : 0, cleared ? 1 : 0, remaining, m_lastError.c_str());
+        return true;
+    }
+
+    if (ownTransaction && !executeSQL("COMMIT")) {
+        executeSQL("ROLLBACK");
+        DIAG_ACTION_FMT("Database", "LegacyWaveformBlobMigrationDeferred: commit failed: %s", m_lastError.c_str());
+        return true;
+    }
+
+    // Only a fully successful migration records completion, so a failed or
+    // interrupted attempt is retried on the next open.
+    WriteAppMetaInt(m_db, kMigrationKey, 1);
+    DIAG_ACTION("Database", "LegacyWaveformBlobMigrationComplete");
 
     return true;
 }

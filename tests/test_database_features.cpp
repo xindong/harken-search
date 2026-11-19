@@ -244,6 +244,10 @@ static int queryIntPragma(Database& db, const char* pragmaSql, int fallback = -1
     return value;
 }
 
+static int queryIntPragma(Database& db, const std::string& pragmaSql, int fallback = -1) {
+    return queryIntPragma(db, pragmaSql.c_str(), fallback);
+}
+
 static std::string queryTextPragma(Database& db, const char* pragmaSql) {
     std::string value;
     db.execQuery(pragmaSql, [&](sqlite3_stmt* stmt) {
@@ -5601,6 +5605,335 @@ int testLegacyDescriptionDisplay() {
     return ok ? 0 : 1;
 }
 
+// BUG-20261119-LEGACY-WAVEFORM-MIGRATION: old builds kept waveform BLOBs in
+// audio_files. Moving them into the waveforms sidecar is a one-time library
+// operation recorded in app_meta, so background connections and reopens do not
+// rescan the whole audio_files table again.
+int testLegacyWaveformBlobMigrationRunsOncePerLibrary() {
+    printSeparator("Test: legacy waveform blob migration is recorded once");
+
+    const fs::path root = makeTempRoot("legacy_waveform_blob_migration");
+    const std::string dbPath = (root / "legacy_library.db").string();
+    const std::string legacyPath = "C:/t/legacy_blob.wav";
+    const char* markerKey = "legacy_waveform_blob_migration_v1";
+    int failures = 0;
+    auto expect = [&](bool ok, const char* label, long long actual) {
+        std::cout << (ok ? "PASS" : "FAIL") << ": " << label << " actual=" << actual << "\n";
+        if (!ok) ++failures;
+    };
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: open legacy fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        AudioRecord r;
+        r.filePath = legacyPath;
+        r.fileName = "legacy_blob.wav";
+        r.extension = ".wav";
+        r.format = "WAV";
+        r.channels = 1;
+        r.sampleRate = 48000;
+        r.bitDepth = 16;
+        r.durationSeconds = 1.0f;
+        r.fileSize = 1024;
+        r.totalFrames = 48000;
+        if (!db.addFile(r)) {
+            std::cerr << "FAIL: add legacy row: " << db.getLastError() << "\n";
+            return 1;
+        }
+    }
+
+    if (!execSqlOnDbPath(dbPath, {
+            "UPDATE audio_files SET waveform_data = x'0000803F', rms_data = x'0000803F' "
+            "WHERE file_path = 'C:/t/legacy_blob.wav';",
+            std::string("DELETE FROM app_meta WHERE key = '") + markerKey + "';"})) {
+        std::cerr << "FAIL: seed legacy audio_files blob\n";
+        return 1;
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen legacy fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        expect(queryAppMetaInt(db, markerKey) == 1, "completion marker recorded",
+               queryAppMetaInt(db, markerKey));
+        const int sidecarBytes = queryIntPragma(db,
+            "SELECT length(w.waveform_data) FROM waveforms_db.waveforms w "
+            "JOIN audio_files af ON af.id = w.file_id "
+            "WHERE af.file_path = 'C:/t/legacy_blob.wav' LIMIT 1", 0);
+        expect(sidecarBytes == 4, "legacy blob copied into waveforms sidecar", sidecarBytes);
+        const int legacyBytes = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_blob.wav' LIMIT 1", 0);
+        expect(legacyBytes == 0, "legacy column cleared after copy", legacyBytes);
+    }
+
+    // A leftover legacy row must not start another full-table scan: the
+    // persisted marker is the completion record for the whole library.
+    if (!execSqlOnDbPath(dbPath, {
+            "UPDATE audio_files SET waveform_data = x'0000803F' "
+            "WHERE file_path = 'C:/t/legacy_blob.wav';"})) {
+        std::cerr << "FAIL: re-seed leftover legacy blob\n";
+        return 1;
+    }
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen completed library: " << db.getLastError() << "\n";
+            return 1;
+        }
+        const int legacyBytes = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_blob.wav' LIMIT 1", 0);
+        expect(legacyBytes == 4, "completed library is not rescanned or re-cleared", legacyBytes);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+// A copy step that silently skips rows (for example an IGNORE rule on the
+// waveforms side) must not be recorded as complete: rollback keeps the legacy
+// blobs, no marker is written, and the next open retries the migration.
+int testLegacyWaveformMigrationRetriesWhenCopyIsSkipped() {
+    printSeparator("Test: legacy waveform migration retries when copy is skipped");
+
+    const fs::path root = makeTempRoot("legacy_waveform_retry");
+    const std::string dbPath = (root / "legacy_retry.db").string();
+    const std::string sidecarPath = (root / "legacy_retry_waveforms.db").string();
+    const char* markerKey = "legacy_waveform_blob_migration_v1";
+    int failures = 0;
+    auto expect = [&](bool ok, const char* label, long long actual) {
+        std::cout << (ok ? "PASS" : "FAIL") << ": " << label << " actual=" << actual << "\n";
+        if (!ok) ++failures;
+    };
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: open retry fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        const char* paths[] = {"C:/t/legacy_retry_blob.wav", "C:/t/legacy_retry_rms_only.wav"};
+        for (const char* path : paths) {
+            AudioRecord r;
+            r.filePath = path;
+            r.fileName = fs::path(path).filename().string();
+            r.extension = ".wav";
+            r.format = "WAV";
+            r.channels = 1;
+            r.sampleRate = 48000;
+            r.bitDepth = 16;
+            r.durationSeconds = 1.0f;
+            r.fileSize = 1024;
+            r.totalFrames = 48000;
+            if (!db.addFile(r)) {
+                std::cerr << "FAIL: add retry row: " << db.getLastError() << "\n";
+                return 1;
+            }
+        }
+    }
+
+    if (!execSqlOnDbPath(dbPath, {
+            "UPDATE audio_files SET waveform_data = x'0000803F', rms_data = x'0000803F' "
+            "WHERE file_path = 'C:/t/legacy_retry_blob.wav';",
+            "UPDATE audio_files SET rms_data = x'0000803F' "
+            "WHERE file_path = 'C:/t/legacy_retry_rms_only.wav';",
+            std::string("DELETE FROM app_meta WHERE key = '") + markerKey + "';",
+            "DELETE FROM app_meta WHERE key = 'legacy_blob_purge_v1';"})) {
+        std::cerr << "FAIL: seed retry audio_files blobs\n";
+        return 1;
+    }
+
+    // Block the sidecar copy the way a conflicting sidecar row would.
+    if (!execSqlOnDbPath(sidecarPath, {
+            "CREATE TRIGGER IF NOT EXISTS block_legacy_copy BEFORE INSERT ON waveforms "
+            "BEGIN SELECT RAISE(IGNORE); END;"})) {
+        std::cerr << "FAIL: install copy blocker trigger\n";
+        return 1;
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: open blocked fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        expect(queryAppMetaInt(db, markerKey) == 0, "blocked copy does not record completion",
+               queryAppMetaInt(db, markerKey));
+        const int legacyBytes = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_retry_blob.wav' LIMIT 1");
+        expect(legacyBytes == 4, "blocked copy keeps legacy waveform source", legacyBytes);
+        const int rmsBytes = queryIntPragma(db,
+            "SELECT length(rms_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_retry_rms_only.wav' LIMIT 1");
+        expect(rmsBytes == 4, "blocked copy keeps RMS-only source", rmsBytes);
+        const int sidecarRows = queryIntPragma(db,
+            "SELECT COUNT(*) FROM waveforms_db.waveforms");
+        expect(sidecarRows == 0, "blocked copy writes no sidecar rows", sidecarRows);
+    }
+
+    if (!execSqlOnDbPath(sidecarPath, {"DROP TRIGGER IF EXISTS block_legacy_copy;"})) {
+        std::cerr << "FAIL: drop copy blocker trigger\n";
+        return 1;
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen retry fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        expect(queryAppMetaInt(db, markerKey) == 1, "retried migration records completion",
+               queryAppMetaInt(db, markerKey));
+        const int sidecarWave = queryIntPragma(db,
+            "SELECT length(w.waveform_data) FROM waveforms_db.waveforms w "
+            "JOIN audio_files af ON af.id = w.file_id "
+            "WHERE af.file_path = 'C:/t/legacy_retry_blob.wav' LIMIT 1");
+        expect(sidecarWave == 4, "retried migration copies waveform blob", sidecarWave);
+        const int rmsOnly = queryIntPragma(db,
+            "SELECT length(w.rms_data) FROM waveforms_db.waveforms w "
+            "JOIN audio_files af ON af.id = w.file_id "
+            "WHERE af.file_path = 'C:/t/legacy_retry_rms_only.wav' LIMIT 1");
+        expect(rmsOnly == 4, "retried migration copies RMS-only blob", rmsOnly);
+        const int clearedWave = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_retry_blob.wav' LIMIT 1");
+        expect(clearedWave == 0, "retried migration clears waveform source", clearedWave);
+        const int clearedRms = queryIntPragma(db,
+            "SELECT length(rms_data) FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_retry_rms_only.wav' LIMIT 1");
+        expect(clearedRms == 0, "retried migration clears RMS-only source", clearedRms);
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen completed retry fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        const int sidecarRows = queryIntPragma(db,
+            "SELECT COUNT(*) FROM waveforms_db.waveforms");
+        expect(sidecarRows == 2, "completed retry keeps one sidecar row per migrated file", sidecarRows);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+// An existing sidecar row may hold only one of the two blobs. The migration
+// fills the missing column instead of skipping the row for good, so a partial
+// conflict cannot pin a library in a permanent retry loop.
+int testLegacyWaveformMigrationFillsPartialSidecarRow() {
+    printSeparator("Test: legacy waveform migration fills partial sidecar rows");
+
+    const fs::path root = makeTempRoot("legacy_waveform_partial");
+    const std::string dbPath = (root / "legacy_partial.db").string();
+    const std::string sidecarPath = (root / "legacy_partial_waveforms.db").string();
+    const char* markerKey = "legacy_waveform_blob_migration_v1";
+    const char* purgeKey = "legacy_blob_purge_v1";
+    int failures = 0;
+    auto expect = [&](bool ok, const char* label, long long actual) {
+        std::cout << (ok ? "PASS" : "FAIL") << ": " << label << " actual=" << actual << "\n";
+        if (!ok) ++failures;
+    };
+
+    int fileId = 0;
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: open partial fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        AudioRecord r;
+        r.filePath = "C:/t/legacy_partial.wav";
+        r.fileName = "legacy_partial.wav";
+        r.extension = ".wav";
+        r.format = "WAV";
+        r.channels = 1;
+        r.sampleRate = 48000;
+        r.bitDepth = 16;
+        r.durationSeconds = 1.0f;
+        r.fileSize = 1024;
+        r.totalFrames = 48000;
+        if (!db.addFile(r)) {
+            std::cerr << "FAIL: add partial row: " << db.getLastError() << "\n";
+            return 1;
+        }
+        fileId = queryIntPragma(db, "SELECT id FROM audio_files "
+            "WHERE file_path = 'C:/t/legacy_partial.wav' LIMIT 1");
+    }
+    if (fileId <= 0) {
+        std::cerr << "FAIL: partial fixture row id\n";
+        return 1;
+    }
+
+    if (!execSqlOnDbPath(dbPath, {
+            "UPDATE audio_files SET waveform_data = x'0000803F', rms_data = x'3F800000' "
+            "WHERE file_path = 'C:/t/legacy_partial.wav';",
+            std::string("DELETE FROM app_meta WHERE key = '") + markerKey + "';",
+            std::string("DELETE FROM app_meta WHERE key = '") + purgeKey + "';"})) {
+        std::cerr << "FAIL: seed partial fixture\n";
+        return 1;
+    }
+    // The sidecar already stores a waveform for this file but no RMS data.
+    if (!execSqlOnDbPath(sidecarPath, {
+            "INSERT INTO waveforms (file_id, waveform_data) VALUES (" +
+            std::to_string(fileId) + ", x'11223344');"})) {
+        std::cerr << "FAIL: seed partial sidecar row\n";
+        return 1;
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen partial fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        expect(queryAppMetaInt(db, markerKey) == 1, "partial conflict records completion",
+               queryAppMetaInt(db, markerKey));
+        const int sidecarWave = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM waveforms_db.waveforms WHERE file_id = " +
+            std::to_string(fileId));
+        expect(sidecarWave == 4, "partial conflict keeps the existing waveform blob", sidecarWave);
+        const int sidecarRms = queryIntPragma(db,
+            "SELECT length(rms_data) FROM waveforms_db.waveforms WHERE file_id = " +
+            std::to_string(fileId));
+        expect(sidecarRms == 4, "partial conflict fills the missing RMS blob", sidecarRms);
+        const int legacyWave = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM audio_files WHERE id = " +
+            std::to_string(fileId));
+        expect(legacyWave == 0, "partial conflict clears the waveform source", legacyWave);
+        const int legacyRms = queryIntPragma(db,
+            "SELECT length(rms_data) FROM audio_files WHERE id = " + std::to_string(fileId));
+        expect(legacyRms == 0, "partial conflict clears the RMS source", legacyRms);
+        const int purged = queryAppMetaInt(db, purgeKey);
+        expect(purged == 1, "legacy blob purge runs after a completed migration", purged);
+    }
+
+    {
+        Database db;
+        if (!db.open(dbPath)) {
+            std::cerr << "FAIL: reopen completed partial fixture: " << db.getLastError() << "\n";
+            return 1;
+        }
+        const int sidecarWave = queryIntPragma(db,
+            "SELECT length(waveform_data) FROM waveforms_db.waveforms WHERE file_id = " +
+            std::to_string(fileId));
+        expect(sidecarWave == 4, "completed library keeps the migrated waveform blob", sidecarWave);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 int testConcurrentFtsTriggerRefresh();
 
 int main(int argc, char* argv[]) {
@@ -5755,6 +6088,12 @@ int main(int argc, char* argv[]) {
         if (focused == "cover_wall_page_cursor") {
             return testGlobalCoverWallPageApiUsesStableCursor() == 0 ? 0 : 1;
         }
+        if (focused == "legacy_waveform_blob_migration") {
+            const int failures = testLegacyWaveformBlobMigrationRunsOncePerLibrary() +
+                testLegacyWaveformMigrationRetriesWhenCopyIsSkipped() +
+                testLegacyWaveformMigrationFillsPartialSidecarRow();
+            return failures == 0 ? 0 : 1;
+        }
         if (focused == "cover_wall_same_filename_page_cursor") {
             return testSmallCoverWallSameFilenamePageCursorDoesNotSkipOrRepeat() == 0 ? 0 : 1;
         }
@@ -5817,6 +6156,10 @@ int main(int argc, char* argv[]) {
     int waveformCompressionFailures = testWaveformCompressionRoundTripAndLegacyRawCompatibility();
     int tagFacetIndexFailures = testTagFacetIndexPrestoreAndFallback();
     int readOnlyPinyinFailures = testReadOnlyPinyinRecomputeStops();
+    int legacyWaveformBlobMigrationFailures =
+        testLegacyWaveformBlobMigrationRunsOncePerLibrary() +
+        testLegacyWaveformMigrationRetriesWhenCopyIsSkipped() +
+        testLegacyWaveformMigrationFillsPartialSidecarRow();
 
     printSeparator("测试完成");
     if (channelFailures == 0 && audioBoundaryFailures == 0 && coverDedupFailures == 0 &&
@@ -5862,7 +6205,8 @@ int main(int argc, char* argv[]) {
         fastScanModeFailures == 0 &&
         waveformCompressionFailures == 0 &&
         tagFacetIndexFailures == 0 &&
-        readOnlyPinyinFailures == 0 && readOnlySidecarFailures == 0) {
+        readOnlyPinyinFailures == 0 && readOnlySidecarFailures == 0 &&
+        legacyWaveformBlobMigrationFailures == 0) {
         std::cout << "所有测试已完成。\n";
         return 0;
     }
@@ -5916,6 +6260,7 @@ int main(int argc, char* argv[]) {
     std::cerr << "WaveformCompression: " << waveformCompressionFailures << " assertion(s) failed.\n";
     std::cerr << "TagFacetIndex: " << tagFacetIndexFailures << " assertion(s) failed.\n";
     std::cerr << "ReadOnlyPinyinRecompute: " << readOnlyPinyinFailures << " assertion(s) failed.\n";
+    std::cerr << "LegacyWaveformBlobMigration: " << legacyWaveformBlobMigrationFailures << " assertion(s) failed.\n";
     std::cerr << "ReadOnlyLegacySidecars: " << readOnlySidecarFailures << " assertion(s) failed.\n";
     return 1;
 }
