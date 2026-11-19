@@ -4,6 +4,10 @@
 #include "AppState.h"
 #include "Localization.h"   // L(id) used by shortcut preset names (knife-B explicit include)
 #include "Utils.h"
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+#include "DiagnosticsLogger.h"
+#include <chrono>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -1073,22 +1077,45 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
         return true;
     }
 
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    const auto tabSwitchStart = std::chrono::steady_clock::now();
+    const auto logTabSwitchStage = [&](const char* stage) {
+        const double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - tabSwitchStart).count();
+        DiagnosticsLogger::instance().logPerformance("TabSwitch", stage, ms);
+    };
+    logTabSwitchStage("TabSwitchBegin");
+#endif
+
     saveCoverWallDisplaySnapshotForTab(activeTabIndex);
     parkLiveResultsInCurrentTab();
     syncToTab();
     if (currentTab().explicitRefreshPending) {
         currentTab().dataUnloaded = true;
     }
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchPark");
+#endif
     activeTabIndex = tabIndex;
     pendingTabSelectionIndex = tabIndex;
     syncFromTab();
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchRestore");
+#endif
     // Run global cache GC before restoring non-owning cover-wall texture
     // mirrors so the cold-path restore validates against the post-GC texture
     // owner state instead of reviving stale GL ids.
     if (runMemoryGc) {
         performGlobalMemoryGC();
     }
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchGc");
+#endif
     restoreCoverWallDisplaySnapshotForTab(tabIndex);
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchCoverWall");
+    logTabSwitchStage("TabSwitchTotal");
+#endif
     if (activationTimeSeconds >= 0.0) {
         listTabs[(size_t)tabIndex].lastActivatedAt = activationTimeSeconds;
     }
