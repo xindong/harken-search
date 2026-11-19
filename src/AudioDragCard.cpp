@@ -79,10 +79,6 @@ struct CardState {
     float landingX = 0.0f;
     float landingY = 0.0f;
 
-    // 鼠标释放检测：目标处理拖放较慢时也先落地，不让卡片一直挂着
-    ULONGLONG buttonReleasedAt = 0;
-    bool sawButtonDown = false;
-
     // 最近一次呈现的位置（落地动效从这里开始）
     float presentedX = 0.0f;
     float presentedY = 0.0f;
@@ -417,21 +413,6 @@ void Tick() {
     const ULONGLONG now = GetTickCount64();
     POINT cursor = {};
     GetCursorPos(&cursor);
-
-    if (g_card.spec.animationsEnabled && g_card.phase != Phase::Landing) {
-        const bool leftDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-        if (leftDown) {
-            g_card.sawButtonDown = true;
-            g_card.buttonReleasedAt = 0;
-        } else if (!g_card.sawButtonDown) {
-            g_card.buttonReleasedAt = 0;
-        } else if (g_card.buttonReleasedAt == 0) {
-            g_card.buttonReleasedAt = now;
-        } else if (now - g_card.buttonReleasedAt >= 60) {
-            // 目标已经开始处理放下（DoDragDrop 还没返回）时，卡片照旧先落地。
-            BeginLandingFromPresentedPosition();
-        }
-    }
 
     if (g_card.phase == Phase::Morph) {
         const float raw = static_cast<float>(now - g_card.phaseStart) / static_cast<float>(kMorphMs);

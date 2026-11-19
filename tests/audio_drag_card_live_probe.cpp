@@ -16,6 +16,33 @@
 #include <vector>
 
 namespace {
+bool simulatedLeftButtonDown = false;
+}
+
+SHORT WINAPI ProbeGetAsyncKeyState(int key) {
+    return key == VK_LBUTTON && simulatedLeftButtonDown ? static_cast<SHORT>(0x8000) : 0;
+}
+
+BOOL WINAPI ProbeGetCursorPos(LPPOINT cursor) {
+    cursor->x = 400;
+    cursor->y = 300;
+    return TRUE;
+}
+
+namespace HarkenSearch::AudioDragCardProbe {
+using CardSpec = HarkenSearch::AudioDragCard::CardSpec;
+void CancelNow();
+}
+
+#define AudioDragCard AudioDragCardProbe
+#define GetAsyncKeyState ProbeGetAsyncKeyState
+#define GetCursorPos ProbeGetCursorPos
+#include "../src/AudioDragCard.cpp"
+#undef GetCursorPos
+#undef GetAsyncKeyState
+#undef AudioDragCard
+
+namespace {
 
 using namespace Gdiplus;
 
@@ -109,11 +136,77 @@ void Snapshot(const char* label) {
                 rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 }
 
+bool Check(bool condition, const char* description) {
+    std::printf("%s: %s\n", condition ? "PASS" : "FAIL", description);
+    return condition;
+}
+
+bool TestDropResultGating() {
+    namespace card = HarkenSearch::AudioDragCardProbe;
+    bool ok = true;
+    card::CardSpec spec;
+    spec.fileName = L"simulated-drag.wav";
+    spec.animationsEnabled = true;
+
+    auto beginReleasedDrag = [&]() {
+        simulatedLeftButtonDown = true;
+        card::BeginDrag(spec);
+        PumpMessages(35);
+        simulatedLeftButtonDown = false;
+        PumpMessages(140);
+    };
+
+    beginReleasedDrag();
+    ok &= Check(card::IsActive(), "pending rejection: card remains visible");
+    ok &= Check(card::g_card.phase != card::Phase::Landing,
+                "pending rejection: no landing before drop result");
+    card::EndDrag(false);
+    ok &= Check(!card::IsActive(), "rejection: card closes immediately");
+
+    beginReleasedDrag();
+    PumpMessages(300);
+    ok &= Check(card::IsActive(), "long pending result: card remains visible");
+    ok &= Check(card::IsActive() && card::g_card.phase != card::Phase::Landing,
+                "long pending result: still no landing");
+    const bool wasPendingBeforeRejection = card::IsActive();
+    card::EndDrag(false);
+    ok &= Check(wasPendingBeforeRejection && !card::IsActive(),
+                "long pending rejection: card closes immediately");
+
+    beginReleasedDrag();
+    PumpMessages(300);
+    ok &= Check(card::IsActive() && card::g_card.phase != card::Phase::Landing,
+                "pending success: no landing before drop result");
+    const float startY = card::g_card.presentedY;
+    card::EndDrag(true);
+    ok &= Check(card::IsActive() && card::g_card.phase == card::Phase::Landing,
+                "successful drop: starts landing");
+    PumpMessages(90);
+    ok &= Check(card::IsActive() && card::g_card.presentedY > startY,
+                "successful drop: card moves downward");
+    PumpMessages(220);
+    ok &= Check(!card::IsActive(), "successful drop: card closes after landing");
+
+    beginReleasedDrag();
+    card::CancelNow();
+    ok &= Check(!card::IsActive(), "cancellation: card closes immediately");
+
+    spec.animationsEnabled = false;
+    simulatedLeftButtonDown = true;
+    card::BeginDrag(spec);
+    card::EndDrag(true);
+    ok &= Check(!card::IsActive(), "animations disabled: successful drop closes immediately");
+    simulatedLeftButtonDown = false;
+    card::CancelNow();
+    return ok;
+}
+
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    const bool resultGating = argc > 1 && wcscmp(argv[1], L"--result-gating") == 0;
     std::filesystem::path outputDir = argc > 1 ? argv[1] : std::filesystem::current_path();
-    std::filesystem::create_directories(outputDir);
+    if (!resultGating) std::filesystem::create_directories(outputDir);
 
     GdiplusStartupInput input;
     ULONG_PTR token = 0;
@@ -132,6 +225,13 @@ int wmain(int argc, wchar_t** argv) {
     if (!SetThreadDesktop(desktop)) {
         std::printf("FAIL: SetThreadDesktop\n");
         return 1;
+    }
+
+    if (resultGating) {
+        const bool ok = TestDropResultGating();
+        CloseDesktop(desktop);
+        GdiplusShutdown(token);
+        return ok ? 0 : 1;
     }
 
     HarkenSearch::AudioDragCard::CardSpec spec;
