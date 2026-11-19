@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 struct sqlite3;
+struct sqlite3_stmt;
 namespace HarkenSearch {
 struct SimilarityFile {
     int64_t id = -1;
@@ -39,6 +40,7 @@ public:
     bool Publish(const SimilarityAnalysisEntry& entry);
     bool Load(int64_t id, SimilarityAnalysisEntry& entry, bool detailed = true);
     bool LoadSummaries(std::vector<SimilarityAnalysisEntry>& entries);
+    static bool DecodeStoredSummary(sqlite3_stmt* summaryRow, SimilarityAnalysisEntry& entry);
     int64_t SegmentCount();
     bool VisitSegments(const std::function<bool(int64_t, const AudioEmbeddingSegment&)>& visitor);
     bool Invalidate(int64_t id);
