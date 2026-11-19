@@ -186,27 +186,146 @@ std::string ReadOnlyUri(const fs::path& path) {
     return uri + "?mode=ro&readonly_shm=1";
 }
 
+#ifdef _WIN32
+struct CloseWindowsHandle {
+    void operator()(HANDLE handle) const noexcept { CloseHandle(handle); }
+};
+using WindowsHandle = std::unique_ptr<void, CloseWindowsHandle>;
+constexpr DWORD ShareActiveCatalog = FILE_SHARE_READ | FILE_SHARE_WRITE;
+
+WindowsHandle TakeHandle(HANDLE handle) noexcept {
+    return WindowsHandle(handle == INVALID_HANDLE_VALUE ? nullptr : handle);
+}
+
+std::optional<FILE_ID_INFO> DiskIdentity(HANDLE handle, bool directory) noexcept {
+    FILE_ATTRIBUTE_TAG_INFO tag{};
+    FILE_ID_INFO identity{};
+    if (!handle || handle == INVALID_HANDLE_VALUE || GetFileType(handle) != FILE_TYPE_DISK ||
+        !GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &tag, sizeof(tag)) ||
+        (tag.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_DEVICE)) ||
+        static_cast<bool>(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != directory ||
+        !GetFileInformationByHandleEx(handle, FileIdInfo, &identity, sizeof(identity))) {
+        return std::nullopt;
+    }
+    return identity;
+}
+
+bool SameDiskObject(HANDLE left, HANDLE right, bool directory = false) noexcept {
+    const auto first = DiskIdentity(left, directory);
+    const auto second = DiskIdentity(right, directory);
+    return first && second && first->VolumeSerialNumber == second->VolumeSerialNumber &&
+        std::equal(std::begin(first->FileId.Identifier), std::end(first->FileId.Identifier),
+                   std::begin(second->FileId.Identifier));
+}
+
+WindowsHandle GuardDiskPath(const fs::path& path, bool directory) {
+    auto handle = TakeHandle(CreateFileW(path.c_str(), directory ? FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES : GENERIC_READ,
+        directory ? FILE_SHARE_READ : ShareActiveCatalog, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0), nullptr));
+    return DiskIdentity(handle.get(), directory) ? std::move(handle) : WindowsHandle{};
+}
+
+bool HasLocalVolume(HANDLE handle) noexcept {
+    return handle && handle != INVALID_HANDLE_VALUE &&
+        GetFinalPathNameByHandleW(handle, nullptr, 0, VOLUME_NAME_GUID | FILE_NAME_OPENED) != 0;
+}
+
+class WindowsShmOpen final {
+public:
+    WindowsShmOpen(const fs::path& path, HANDLE guard) noexcept
+        : path_(path.c_str()), guard_(guard), previous_(std::exchange(active_, this)) {}
+    ~WindowsShmOpen() { active_ = previous_; }
+    WindowsShmOpen(const WindowsShmOpen&) = delete;
+    WindowsShmOpen& operator=(const WindowsShmOpen&) = delete;
+
+    static bool Installed(sqlite3_vfs* native) {
+        if (!native->xGetSystemCall || !native->xSetSystemCall) {
+            return false;
+        }
+        const auto callback = reinterpret_cast<sqlite3_syscall_ptr>(Open);
+        static const bool installed = [native, callback] {
+            original_ = reinterpret_cast<decltype(original_)>(native->xGetSystemCall(native, "CreateFileW"));
+            return original_ && original_ != Open && native->xSetSystemCall(native, "CreateFileW", callback) == SQLITE_OK;
+        }();
+        return installed && native->xGetSystemCall(native, "CreateFileW") == callback;
+    }
+
+    bool Verified(bool alreadyMapped) const noexcept {
+        constexpr int expectedOpens = SQLITE_VERSION_NUMBER == 3045000 ? 1 :
+            SQLITE_VERSION_NUMBER == 3054001 ? 2 : 0;
+        return !denied_ && expectedOpens != 0 && (opened_ == expectedOpens || (alreadyMapped && opened_ == 0));
+    }
+
+private:
+    static HANDLE WINAPI Open(LPCWSTR path, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES security,
+                              DWORD disposition, DWORD flags, HANDLE templateFile) noexcept {
+        const auto scope = active_;
+        if (!scope) {
+            return original_(path, access, share, security, disposition, flags, templateFile);
+        }
+        if (path && std::wstring_view(path) == scope->path_ && access == GENERIC_READ &&
+            share == ShareActiveCatalog && (disposition == OPEN_ALWAYS || disposition == OPEN_EXISTING) &&
+            !security && !templateFile && !(flags & ~(FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED))) {
+            auto reopened = TakeHandle(ReOpenFile(scope->guard_, access, share, flags & FILE_FLAG_OVERLAPPED));
+            if (reopened && HasLocalVolume(reopened.get()) && SameDiskObject(scope->guard_, reopened.get())) {
+                ++scope->opened_;
+                return reopened.release();
+            }
+        }
+        scope->denied_ = true;
+        SetLastError(ERROR_ACCESS_DENIED);
+        return INVALID_HANDLE_VALUE;
+    }
+
+    static inline decltype(&CreateFileW) original_ = nullptr;
+    static inline thread_local WindowsShmOpen* active_ = nullptr;
+    const wchar_t* path_;
+    HANDLE guard_;
+    WindowsShmOpen* previous_;
+    int opened_ = 0;
+    bool denied_ = false;
+};
+#endif
+
+struct CatalogLocation {
+    explicit CatalogLocation(const fs::path& database) : uri(ReadOnlyUri(database))
+#ifdef _WIN32
+        , path(database)
+#endif
+    {}
+
+    std::string uri;
+#ifdef _WIN32
+    fs::path path;
+    WindowsHandle authorizedDatabase;
+    WindowsHandle authorizedParent;
+#endif
+};
+
 class ReadOnlyVfs final : public sqlite3_vfs {
 public:
+#ifdef _WIN32
+    ReadOnlyVfs() : sqlite3_vfs{}, native_(sqlite3_vfs_find("win32")) {}
+#else
     ReadOnlyVfs() : sqlite3_vfs{}, native_(sqlite3_vfs_find(nullptr)) {}
+#endif
     ~ReadOnlyVfs() {
         if (registered_) {
             sqlite3_vfs_unregister(this);
         }
-#ifdef _WIN32
-        if (wal_ != INVALID_HANDLE_VALUE) {
-            CloseHandle(wal_);
-        }
-        if (shm_ != INVALID_HANDLE_VALUE) {
-            CloseHandle(shm_);
-        }
-#endif
     }
 
-    bool Register() {
+    bool Register(CatalogLocation& catalog) {
         if (!native_) {
             return false;
         }
+#ifdef _WIN32
+        if (!PinWindowsCatalog(catalog)) {
+            return false;
+        }
+#else
+        static_cast<void>(catalog);
+#endif
         name_ = "harken-external-readonly-" + std::to_string(reinterpret_cast<std::uintptr_t>(this));
         static_cast<sqlite3_vfs&>(*this) = *native_;
         zName = name_.c_str();
@@ -223,9 +342,13 @@ private:
         auto& guarded = *static_cast<ReadOnlyVfs*>(vfs);
         file->pMethods = nullptr;
         try {
+#ifdef _WIN32
+            return guarded.OpenWindowsFile(name, file, flags, usedFlags);
+#else
             if (flags & SQLITE_OPEN_WAL) {
                 const char* mainPath = sqlite3_filename_database(name);
-                if (!mainPath || !guarded.OpenExistingSidecars(name, std::string(mainPath) + "-shm")) {
+                if (!mainPath || !LocalEntry(fs::u8path(name), false) ||
+                    !LocalEntry(fs::u8path(std::string(mainPath) + "-shm"), false)) {
                     return SQLITE_CANTOPEN;
                 }
                 flags = (flags & ~(SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)) | SQLITE_OPEN_READONLY;
@@ -236,44 +359,150 @@ private:
                 return SQLITE_CANTOPEN;
             }
             return guarded.native_->xOpen(guarded.native_, name, file, flags, usedFlags);
+#endif
         } catch (...) {
             return SQLITE_CANTOPEN;
         }
     }
 
-    bool OpenExistingSidecars(const char* wal, const std::string& shm) {
-        const auto walPath = fs::u8path(wal);
-        const auto shmPath = fs::u8path(shm);
 #ifdef _WIN32
-        if (wal_ == INVALID_HANDLE_VALUE) {
-            wal_ = OpenExistingDiskFile(walPath);
+    bool PinWindowsCatalog(CatalogLocation& catalog) {
+        auto path = catalog.path.root_path();
+        const auto kind = GetDriveTypeW(path.c_str());
+        if (kind != DRIVE_FIXED && kind != DRIVE_REMOVABLE) {
+            return false;
         }
-        if (shm_ == INVALID_HANDLE_VALUE) {
-            shm_ = OpenExistingDiskFile(shmPath);
+        parents_.push_back(GuardDiskPath(path, true));
+        if (!HasLocalVolume(parents_.back().get())) {
+            return false;
         }
-        return wal_ != INVALID_HANDLE_VALUE && shm_ != INVALID_HANDLE_VALUE;
-#else
-        return LocalEntry(walPath, false) && LocalEntry(shmPath, false);
-#endif
+        const auto parentPath = catalog.path.relative_path().parent_path();
+        for (const auto& component : parentPath) {
+            path /= component;
+            parents_.push_back(GuardDiskPath(path, true));
+            if (!parents_.back()) {
+                return false;
+            }
+        }
+        databasePath_ = catalog.path;
+        shmPath_ = databasePath_;
+        shmPath_ += "-shm";
+        database_ = GuardDiskPath(databasePath_, false);
+        if (!HasLocalVolume(database_.get())) {
+            return false;
+        }
+        const auto parent = parents_.back().get();
+        if (!catalog.authorizedDatabase) {
+            constexpr DWORD share = ShareActiveCatalog | FILE_SHARE_DELETE;
+            auto database = TakeHandle(ReOpenFile(database_.get(), FILE_READ_ATTRIBUTES, share, 0));
+            auto directory = TakeHandle(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+            if (!SameDiskObject(database.get(), database_.get()) || !SameDiskObject(directory.get(), parent, true)) {
+                return false;
+            }
+            catalog.authorizedDatabase = std::move(database);
+            catalog.authorizedParent = std::move(directory);
+        }
+        return SameDiskObject(catalog.authorizedDatabase.get(), database_.get()) &&
+            SameDiskObject(catalog.authorizedParent.get(), parent, true);
     }
 
-#ifdef _WIN32
-    static HANDLE OpenExistingDiskFile(const fs::path& path) {
-        HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-        BY_HANDLE_FILE_INFORMATION info{};
-        if (handle != INVALID_HANDLE_VALUE &&
-            (!GetFileInformationByHandle(handle, &info) || GetFileType(handle) != FILE_TYPE_DISK ||
-             (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT |
-                                      FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_DEVICE)))) {
-            CloseHandle(handle);
-            return INVALID_HANDLE_VALUE;
+    int OpenWindowsFile(const char* name, sqlite3_file* file, int flags, int* usedFlags) {
+        if (!name || (flags & (SQLITE_OPEN_DELETEONCLOSE | SQLITE_OPEN_EXCLUSIVE))) {
+            return SQLITE_CANTOPEN;
         }
-        return handle;
+        const bool mainDatabase = (flags & SQLITE_OPEN_MAIN_DB) != 0;
+        const auto path = fs::u8path(name).make_preferred();
+        auto expected = databasePath_;
+        HANDLE handle = database_.get();
+        if (flags & SQLITE_OPEN_WAL) {
+            expected += "-wal";
+            if (path.native() != expected.native()) {
+                return SQLITE_CANTOPEN;
+            }
+            if (!wal_ || !shm_) {
+                auto wal = GuardDiskPath(expected, false);
+                auto shm = GuardDiskPath(shmPath_, false);
+                if (!HasLocalVolume(wal.get()) || !HasLocalVolume(shm.get())) {
+                    return SQLITE_CANTOPEN;
+                }
+                wal_ = std::move(wal);
+                shm_ = std::move(shm);
+            }
+            handle = wal_.get();
+            flags = (flags & ~(SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)) | SQLITE_OPEN_READONLY;
+        } else if (!(flags & SQLITE_OPEN_READONLY) || (flags & (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE))) {
+            return SQLITE_CANTOPEN;
+        } else if (flags & SQLITE_OPEN_MAIN_JOURNAL) {
+            expected += "-journal";
+            if (path.native() != expected.native()) {
+                return SQLITE_CANTOPEN;
+            }
+            journal_ = GuardDiskPath(expected, false);
+            handle = journal_.get();
+        } else if (!mainDatabase) {
+            return SQLITE_CANTOPEN;
+        }
+        if (!handle || path.native() != expected.native()) {
+            return SQLITE_CANTOPEN;
+        }
+        const int result = native_->xOpen(native_, name, file, flags, usedFlags);
+        if (result != SQLITE_OK) {
+            return result;
+        }
+        const auto* methods = file->pMethods;
+        HANDLE actual = INVALID_HANDLE_VALUE;
+        if (!methods || !methods->xFileControl ||
+            methods->xFileControl(file, SQLITE_FCNTL_WIN32_GET_HANDLE, &actual) != SQLITE_OK ||
+            !HasLocalVolume(actual) || !SameDiskObject(handle, actual) ||
+            (mainDatabase && (methods->iVersion < 2 || !methods->xShmMap))) {
+            if (methods) {
+                methods->xClose(file);
+            }
+            file->pMethods = nullptr;
+            return SQLITE_CANTOPEN;
+        }
+        if (mainDatabase) {
+            static_cast<sqlite3_io_methods&>(shmMethods_) = *methods;
+            shmMethods_.nativeMap = methods->xShmMap;
+            shmMethods_.owner = this;
+            shmMethods_.xShmMap = MapWindowsShm;
+            file->pMethods = &shmMethods_;
+        }
+        return SQLITE_OK;
     }
 
-    HANDLE wal_ = INVALID_HANDLE_VALUE;
-    HANDLE shm_ = INVALID_HANDLE_VALUE;
+    struct WindowsShmMethods : sqlite3_io_methods {
+        decltype(sqlite3_io_methods::xShmMap) nativeMap = nullptr;
+        ReadOnlyVfs* owner = nullptr;
+        bool mapped = false;
+    };
+
+    static int MapWindowsShm(sqlite3_file* file, int page, int size, int, void volatile** region) {
+        const auto& methods = *static_cast<const WindowsShmMethods*>(file->pMethods);
+        auto& owner = *methods.owner;
+        *region = nullptr;
+        if (!owner.shm_ || !WindowsShmOpen::Installed(owner.native_)) {
+            return SQLITE_IOERR_SHMOPEN;
+        }
+        WindowsShmOpen scope(owner.shmPath_, owner.shm_.get());
+        const int result = methods.nativeMap(file, page, size, 0, region);
+        if (!scope.Verified(methods.mapped)) {
+            *region = nullptr;
+            return SQLITE_IOERR_SHMOPEN;
+        }
+        owner.shmMethods_.mapped = methods.mapped || (result == SQLITE_READONLY && *region);
+        return result;
+    }
+
+    fs::path databasePath_;
+    fs::path shmPath_;
+    std::vector<WindowsHandle> parents_;
+    WindowsHandle database_;
+    WindowsHandle journal_;
+    WindowsHandle wal_;
+    WindowsHandle shm_;
+    WindowsShmMethods shmMethods_{};
 #endif
     sqlite3_vfs* native_;
     std::string name_;
@@ -365,14 +594,14 @@ void ParentPath(sqlite3_context* context, int, sqlite3_value** args) noexcept {
 
 class ReadSession final {
 public:
-    bool Open(const std::string& uri, const fs::path& authorizedRoot) {
+    bool Open(CatalogLocation& catalog, const fs::path& authorizedRoot) {
         const auto root = LocalAbsolutePath(authorizedRoot.u8string(), true);
-        if (!root || !vfs_.Register()) {
+        if (!root || !vfs_.Register(catalog)) {
             return false;
         }
         scope_ = {*root, CanFoldRootCase(*root)};
         sqlite3* raw = nullptr;
-        const auto result = sqlite3_open_v2(uri.c_str(), &raw,
+        const auto result = sqlite3_open_v2(catalog.uri.c_str(), &raw,
             SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_NOFOLLOW, vfs_.zName);
         connection_.reset(raw);
         if (result != SQLITE_OK || sqlite3_db_readonly(raw, "main") != 1) {
@@ -490,8 +719,10 @@ Json AudioRow(std::int64_t fileId, std::string_view relative, double duration) {
 }
 
 struct ExternalAiLibrary::Impl {
+    Impl(const fs::path& authorizedRoot, const fs::path& database) : root(authorizedRoot), catalog(database) {}
+
     fs::path root;
-    std::string uri;
+    CatalogLocation catalog;
 };
 
 ExternalAiLibrary::ExternalAiLibrary() = default;
@@ -507,11 +738,9 @@ bool ExternalAiLibrary::Open(const std::string& databasePath, const std::string&
             return false;
         }
         error = "database unavailable for read-only access or not an audio catalog";
-        auto candidate = std::make_unique<Impl>();
-        candidate->root = *root;
-        candidate->uri = ReadOnlyUri(*database);
+        auto candidate = std::make_unique<Impl>(*root, *database);
         ReadSession session;
-        if (!session.Open(candidate->uri, candidate->root) ||
+        if (!session.Open(candidate->catalog, candidate->root) ||
             !HasTable(session.Database(), "audio_files").value_or(false)) {
             return false;
         }
@@ -534,7 +763,7 @@ bool ExternalAiLibrary::Open(const std::string& databasePath, const std::string&
 Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
     ReadSession session;
     if (!implementation_ || !ValidQuery(query, limit) ||
-        !session.Open(implementation_->uri, implementation_->root)) {
+        !session.Open(implementation_->catalog, implementation_->root)) {
         return Payload("query_failed");
     }
     auto* database = session.Database();
@@ -599,7 +828,7 @@ Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
 Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
     ReadSession session;
     if (!implementation_ || !ValidQuery(query, limit) ||
-        !session.Open(implementation_->uri, implementation_->root)) {
+        !session.Open(implementation_->catalog, implementation_->root)) {
         return Payload("query_failed");
     }
     auto* database = session.Database();
@@ -644,7 +873,7 @@ Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
 Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
     ReadSession session;
     if (!implementation_ || referenceId <= 0 || limit < 1 || limit > MaxResults ||
-        !session.Open(implementation_->uri, implementation_->root)) {
+        !session.Open(implementation_->catalog, implementation_->root)) {
         return Payload("query_failed");
     }
     auto* database = session.Database();

@@ -10,7 +10,14 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -326,6 +333,107 @@ void TestWalReadOnly(const fs::path& scratch) {
     Check(before.size() == 1 && fixture.State() == before, "closed WAL never creates persistent sidecars");
 }
 
+#ifdef _WIN32
+decltype(&CreateFileW) originalCreateFile = nullptr;
+const wchar_t* denyReadOnlyShmPath = nullptr;
+int deniedShmPathOpens = 0;
+
+HANDLE WINAPI DenyFixtureShmPathOpen(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES security,
+                                   DWORD disposition, DWORD flags, HANDLE templateFile) noexcept {
+    if (denyReadOnlyShmPath && name && std::wstring_view(name) == denyReadOnlyShmPath && access == GENERIC_READ) {
+        ++deniedShmPathOpens;
+        SetLastError(ERROR_ACCESS_DENIED);
+        return INVALID_HANDLE_VALUE;
+    }
+    return originalCreateFile(name, access, share, security, disposition, flags, templateFile);
+}
+
+void TestWalShmReopensFromGuard(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    fixture.Seed().reset();
+
+    auto* native = sqlite3_vfs_find("win32");
+    originalCreateFile = reinterpret_cast<decltype(originalCreateFile)>(native->xGetSystemCall(native, "CreateFileW"));
+    if (!originalCreateFile ||
+        native->xSetSystemCall(native, "CreateFileW", reinterpret_cast<sqlite3_syscall_ptr>(DenyFixtureShmPathOpen)) != SQLITE_OK) {
+        throw std::runtime_error("Could not install the fixture's read-only path policy");
+    }
+
+    const auto writerPath = R"(\\?\)" + fs::path(fixture.path).make_preferred().u8string();
+    sqlite3* raw = nullptr;
+    const int opened = sqlite3_open_v2(writerPath.c_str(), &raw, SQLITE_OPEN_READWRITE, nullptr);
+    Connection writer(raw, sqlite3_close);
+    if (opened != SQLITE_OK) {
+        throw std::runtime_error("Could not open an independent SQLite name for the fixture writer");
+    }
+    Exec(writer.get(), "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
+    fixture.Add(writer.get(), 45, fixture.root / "wind" / "wal-only.wav");
+    Exec(writer.get(), "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');");
+
+    auto shm = fs::path(fixture.path).make_preferred();
+    shm += "-shm";
+    Check(fs::is_regular_file(shm), "the live writer has an existing SHM file");
+    const auto before = fixture.State();
+    ExternalAiLibrary library;
+    std::string error;
+    denyReadOnlyShmPath = shm.c_str();
+    const bool searched = library.Open(fixture.path.u8string(), fixture.root.u8string(), error) &&
+        Ids(library.SearchAudio("wal-only", 10)) == std::vector<std::int64_t>({45});
+    denyReadOnlyShmPath = nullptr;
+    Check(searched, "an active WAL remains readable when SQLite cannot reopen SHM by path");
+    Check(deniedShmPathOpens == 0, "the readonly connection never asks the original syscall to open SHM by path");
+    Check(fixture.State() == before, "the guarded WAL reader does not modify the catalog or sidecars");
+}
+
+void TestWalShmRejectsUnverifiedCachedMapping(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    auto writer = fixture.Seed();
+    Exec(writer.get(), "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
+    fixture.Add(writer.get(), 46, fixture.root / "wind" / "cached-shm.wav");
+    ExternalAiLibrary library;
+    std::string error;
+    Check(!library.Open(fixture.path.u8string(), fixture.root.u8string(), error) && !error.empty(),
+        "the reader does not trust a same-process SHM mapping with no verified shared handle");
+    fixture.Add(writer.get(), 47, fixture.root / "wind" / "writer-still-active.wav");
+}
+
+void TestCatalogParentGuard(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    fixture.Seed().reset();
+    const auto writer = CreateFileW(fixture.directory.c_str(), FILE_ADD_FILE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (writer == INVALID_HANDLE_VALUE) {
+        throw std::runtime_error("Could not reserve the fixture catalog directory");
+    }
+    std::unique_ptr<void, decltype(&CloseHandle)> reservation(writer, CloseHandle);
+    ExternalAiLibrary library;
+    std::string error;
+    Check(!library.Open(fixture.path.u8string(), fixture.root.u8string(), error) && !error.empty(),
+        "catalog access fails closed when the parent directory cannot be guarded");
+    reservation.reset();
+    Check(library.Open(fixture.path.u8string(), fixture.root.u8string(), error),
+        "catalog access succeeds again after the directory reservation is released");
+}
+
+void TestCatalogIdentityPersistsUntilReauthorized(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    fixture.Seed().reset();
+    ExternalAiLibrary library;
+    std::string error;
+    Check(library.Open(fixture.path.u8string(), fixture.root.u8string(), error),
+        "authorizes the initial catalog");
+    const auto backup = fixture.directory / "catalog-backup.db";
+    fs::rename(fixture.path, backup);
+    fs::copy_file(backup, fixture.path);
+    Check(Empty(library.SearchAudio("wind", 1), "query_failed"),
+        "a catalog copy at the same path requires explicit reauthorization");
+    Check(library.Open(fixture.path.u8string(), fixture.root.u8string(), error) &&
+        Ids(library.SearchAudio("wind", 1)) == std::vector<std::int64_t>({1}),
+        "explicit authorization accepts the replacement catalog");
+}
+#endif
+
 void TestRootRemainsAuthorized(const fs::path& scratch) {
     Fixture fixture(scratch);
     {
@@ -406,9 +514,17 @@ int main(int argc, char** argv) {
     }
     try {
         const auto scratch = fs::absolute(fs::u8path(argv[1]));
+#ifdef _WIN32
+        TestWalShmReopensFromGuard(scratch);
+        TestWalShmRejectsUnverifiedCachedMapping(scratch);
+#endif
         TestReadOnlySearch(scratch);
         TestCachedSimilarity(scratch);
         TestWalReadOnly(scratch);
+#ifdef _WIN32
+        TestCatalogParentGuard(scratch);
+        TestCatalogIdentityPersistsUntilReauthorized(scratch);
+#endif
         TestRootRemainsAuthorized(scratch);
         TestCandidateWindow(scratch);
     } catch (const std::exception& error) {
