@@ -1,6 +1,5 @@
 #include "ExternalAiLibrary.h"
 #include "SimilarityAnalysisStore.h"
-#include "platform/text_encoding.h"
 #include "sqlite3.h"
 
 #include <algorithm>
@@ -594,6 +593,63 @@ void ParentPath(sqlite3_context* context, int, sqlite3_value** args) noexcept {
 }
 
 #ifdef _WIN32
+class LiteralTokenizer final {
+public:
+    bool Initialize(sqlite3* database) {
+        fts5_api* api = nullptr;
+        sqlite3_stmt* raw = nullptr;
+        const int prepared = sqlite3_prepare_v2(database, "SELECT fts5(?1)", -1, &raw, nullptr);
+        const Statement statement(raw, sqlite3_finalize);
+        void* tokenizerContext = nullptr;
+        if (prepared != SQLITE_OK ||
+            sqlite3_bind_pointer(statement.get(), 1, &api, "fts5_api_ptr", nullptr) != SQLITE_OK ||
+            sqlite3_step(statement.get()) != SQLITE_ROW || !api ||
+            api->xFindTokenizer(api, "unicode61", &tokenizerContext, &methods_) != SQLITE_OK) {
+            return false;
+        }
+        const char* options[] = {"categories", "C* L* M* N* P* S* Z*", "remove_diacritics", "0"};
+        Fts5Tokenizer* instance = nullptr;
+        if (methods_.xCreate(tokenizerContext, options, static_cast<int>(std::size(options)), &instance) != SQLITE_OK) {
+            return false;
+        }
+        tokenizer_ = {instance, methods_.xDelete};
+        return tokenizer_ != nullptr;
+    }
+
+    bool Fold(std::string_view input, std::string& folded) const {
+        struct Token {
+            int inputBytes;
+            std::string& folded;
+        } token{static_cast<int>(input.size()), folded};
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, input.data(), token.inputBytes, nullptr, 0)) {
+            return false;
+        }
+        const int status = methods_.xTokenize(tokenizer_.get(), &token, FTS5_TOKENIZE_AUX, input.data(),
+            token.inputBytes, [](void* data, int flags, const char* text, int bytes, int start, int end) noexcept {
+                auto& output = *static_cast<Token*>(data);
+                if (flags || !output.folded.empty() || start != 0 || end != output.inputBytes || bytes <= 0) {
+                    return SQLITE_ERROR;
+                }
+                try {
+                    output.folded.assign(text, static_cast<std::size_t>(bytes));
+                    return SQLITE_OK;
+                } catch (const std::bad_alloc&) {
+                    return SQLITE_NOMEM;
+                } catch (...) {
+                    return SQLITE_ERROR;
+                }
+            });
+        if (status == SQLITE_NOMEM) {
+            throw std::bad_alloc();
+        }
+        return status == SQLITE_OK && !folded.empty();
+    }
+
+private:
+    fts5_tokenizer methods_{};
+    std::unique_ptr<Fts5Tokenizer, decltype(methods_.xDelete)> tokenizer_{nullptr, nullptr};
+};
+
 void LiteralContains(sqlite3_context* context, int, sqlite3_value** args) noexcept {
     try {
         const auto readText = [](sqlite3_value* value) {
@@ -603,6 +659,10 @@ void LiteralContains(sqlite3_context* context, int, sqlite3_value** args) noexce
         };
         const auto value = readText(args[0]);
         const auto needle = readText(args[1]);
+        if (value.empty() || needle.empty()) {
+            sqlite3_result_int(context, 0);
+            return;
+        }
         const auto ascii = [](std::string_view text) {
             return std::all_of(text.begin(), text.end(), [](unsigned char byte) { return byte < 128; });
         };
@@ -613,20 +673,19 @@ void LiteralContains(sqlite3_context* context, int, sqlite3_value** args) noexce
                 value.end());
             return;
         }
-        std::wstring wide, uppercase;
+        const auto& tokenizer = *static_cast<const LiteralTokenizer*>(sqlite3_user_data(context));
         std::string foldedValue;
-        using Platform::TextEncoding::UppercaseWindowsInvariantUtf8;
         auto* foldedNeedle = static_cast<std::string*>(sqlite3_get_auxdata(context, 1));
         std::unique_ptr<std::string> freshNeedle;
         if (!foldedNeedle) {
             freshNeedle = std::make_unique<std::string>();
-            if (!UppercaseWindowsInvariantUtf8(needle, *freshNeedle, wide, uppercase)) {
+            if (!tokenizer.Fold(needle, *freshNeedle)) {
                 sqlite3_result_int(context, 0);
                 return;
             }
             foldedNeedle = freshNeedle.get();
         }
-        sqlite3_result_int(context, UppercaseWindowsInvariantUtf8(value, foldedValue, wide, uppercase) &&
+        sqlite3_result_int(context, tokenizer.Fold(value, foldedValue) &&
             foldedValue.find(*foldedNeedle) != std::string::npos);
         if (freshNeedle) {
             sqlite3_set_auxdata(context, 1, freshNeedle.release(), [](void* data) { delete static_cast<std::string*>(data); });
@@ -668,8 +727,9 @@ public:
             sqlite3_create_function_v2(raw, "harken_parent_path", 1, functionFlags | SQLITE_DETERMINISTIC,
                 nullptr, ParentPath, nullptr, nullptr, nullptr) == SQLITE_OK &&
 #ifdef _WIN32
+            literalTokenizer_.Initialize(raw) &&
             sqlite3_create_function_v2(raw, "harken_literal_contains", 2, functionFlags | SQLITE_DETERMINISTIC,
-                nullptr, LiteralContains, nullptr, nullptr, nullptr) == SQLITE_OK &&
+                &literalTokenizer_, LiteralContains, nullptr, nullptr, nullptr) == SQLITE_OK &&
 #endif
             sqlite3_exec(raw, "BEGIN;", nullptr, nullptr, nullptr) == SQLITE_OK;
     }
@@ -680,6 +740,9 @@ public:
 private:
     LibraryScope scope_;
     ReadOnlyVfs vfs_;
+#ifdef _WIN32
+    LiteralTokenizer literalTokenizer_;
+#endif
     std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection_{nullptr, sqlite3_close};
     const Clock::time_point deadline_ = Clock::now() + QueryBudget;
 };
