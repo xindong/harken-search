@@ -1,5 +1,6 @@
 #include "ExternalAiLibrary.h"
 #include "SimilarityAnalysisStore.h"
+#include "platform/text_encoding.h"
 #include "sqlite3.h"
 
 #include <algorithm>
@@ -592,6 +593,52 @@ void ParentPath(sqlite3_context* context, int, sqlite3_value** args) noexcept {
     sqlite3_result_null(context);
 }
 
+#ifdef _WIN32
+void LiteralContains(sqlite3_context* context, int, sqlite3_value** args) noexcept {
+    try {
+        const auto readText = [](sqlite3_value* value) {
+            const auto* data = sqlite3_value_text(value);
+            return data ? std::string_view(reinterpret_cast<const char*>(data), sqlite3_value_bytes(value)) :
+                std::string_view{};
+        };
+        const auto value = readText(args[0]);
+        const auto needle = readText(args[1]);
+        const auto ascii = [](std::string_view text) {
+            return std::all_of(text.begin(), text.end(), [](unsigned char byte) { return byte < 128; });
+        };
+        if (ascii(needle) && ascii(value)) {
+            const auto upper = [](char byte) { return byte >= 'a' && byte <= 'z' ? byte - ('a' - 'A') : byte; };
+            const auto equal = [&upper](char left, char right) { return upper(left) == upper(right); };
+            sqlite3_result_int(context, std::search(value.begin(), value.end(), needle.begin(), needle.end(), equal) !=
+                value.end());
+            return;
+        }
+        std::wstring wide, uppercase;
+        std::string foldedValue;
+        using Platform::TextEncoding::UppercaseWindowsInvariantUtf8;
+        auto* foldedNeedle = static_cast<std::string*>(sqlite3_get_auxdata(context, 1));
+        std::unique_ptr<std::string> freshNeedle;
+        if (!foldedNeedle) {
+            freshNeedle = std::make_unique<std::string>();
+            if (!UppercaseWindowsInvariantUtf8(needle, *freshNeedle, wide, uppercase)) {
+                sqlite3_result_int(context, 0);
+                return;
+            }
+            foldedNeedle = freshNeedle.get();
+        }
+        sqlite3_result_int(context, UppercaseWindowsInvariantUtf8(value, foldedValue, wide, uppercase) &&
+            foldedValue.find(*foldedNeedle) != std::string::npos);
+        if (freshNeedle) {
+            sqlite3_set_auxdata(context, 1, freshNeedle.release(), [](void* data) { delete static_cast<std::string*>(data); });
+        }
+    } catch (const std::bad_alloc&) {
+        sqlite3_result_error_nomem(context);
+    } catch (...) {
+        sqlite3_result_error(context, "literal comparison failed", -1);
+    }
+}
+#endif
+
 class ReadSession final {
 public:
     bool Open(CatalogLocation& catalog, const fs::path& authorizedRoot) {
@@ -620,6 +667,10 @@ public:
                 &scope_, ScopedPath, nullptr, nullptr, nullptr) == SQLITE_OK &&
             sqlite3_create_function_v2(raw, "harken_parent_path", 1, functionFlags | SQLITE_DETERMINISTIC,
                 nullptr, ParentPath, nullptr, nullptr, nullptr) == SQLITE_OK &&
+#ifdef _WIN32
+            sqlite3_create_function_v2(raw, "harken_literal_contains", 2, functionFlags | SQLITE_DETERMINISTIC,
+                nullptr, LiteralContains, nullptr, nullptr, nullptr) == SQLITE_OK &&
+#endif
             sqlite3_exec(raw, "BEGIN;", nullptr, nullptr, nullptr) == SQLITE_OK;
     }
 
@@ -797,9 +848,15 @@ Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
         "AND instr(audio.file_name,'/')=0 AND instr(audio.file_name,char(92))=0 AND instr(audio.file_name,':')=0 "
         "AND (0";
     for (const auto column : *columns) {
+#ifdef _WIN32
+        sql += " OR harken_literal_contains(audio.";
+        sql += column;
+        sql += ",?1)";
+#else
         sql += " OR instr(lower(audio.";
         sql += column;
         sql += "),lower(?1))>0";
+#endif
     }
     sql += ") AND harken_scoped_path(audio.file_path) IS NOT NULL ORDER BY audio.id LIMIT ?4";
     auto statement = Prepare(database, sql);
@@ -829,17 +886,24 @@ Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
         return Payload("query_failed");
     }
     auto* database = session.Database();
-    std::string sql = "WITH scoped(folder) AS ("
-        "SELECT harken_parent_path(harken_scoped_path(audio.file_path)) "
-        "FROM main.audio_files audio WHERE audio.id>0 ";
-    if (query.find('/') == std::string::npos) {
-        sql += "AND instr(lower(audio.file_path),lower(?1))>0 ";
-    }
-    sql += ") SELECT scoped.folder,COUNT(*) FROM scoped "
+    auto needle = query;
+#ifdef _WIN32
+    std::replace(needle.begin(), needle.end(), '\\', '/');
+#endif
+    const std::string sql = "WITH paths(path,spelling) AS (SELECT file_path,"
+#ifdef _WIN32
+        "replace(file_path,char(92),'/') "
+#else
+        "file_path "
+#endif
+        "FROM main.audio_files WHERE id>0), scoped(folder) AS ("
+        "SELECT harken_parent_path(harken_scoped_path(path)) FROM paths "
+        "WHERE instr(lower(spelling),lower(?1))>0 OR (instr(?1,'/')>0 AND instr(spelling,'//')>0)"
+        ") SELECT scoped.folder,COUNT(*) FROM scoped "
         "WHERE instr(lower(scoped.folder),lower(?1))>0 "
         "GROUP BY scoped.folder ORDER BY scoped.folder COLLATE BINARY LIMIT ?2";
     auto statement = Prepare(database, sql);
-    if (!statement || !BindText(statement.get(), 1, query) ||
+    if (!statement || !BindText(statement.get(), 1, needle) ||
         sqlite3_bind_int(statement.get(), 2, limit) != SQLITE_OK) {
         return Payload("query_failed");
     }
