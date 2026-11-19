@@ -4940,6 +4940,67 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
+    } else if (cmd == "alert_dialog_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string action = getStr(raw, "action");
+            const std::string dialog = getStr(raw, "dialog");
+            auto& ctx = *ImGui::GetCurrentContext();
+            while (ctx.OpenPopupStack.Size > 0)
+                ImGui::ClosePopupToLevel(ctx.OpenPopupStack.Size - 1, false);
+            state.showCloseChoicePopup = false;
+            state.showEditFilenameDialog = false;
+            state.showDeleteConfirmDialog = false;
+            state.showPlaylistDialog = false;
+            state.showCreateFolderDialog = false;
+            if (action == "close") {
+                result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
+            } else if (action == "open") {
+                bool known = true;
+                if (dialog == "close-choice") {
+                    state.closeChoiceSelection = 1;
+                    state.closeChoiceRemember = false;
+                    state.showCloseChoicePopup = true;
+                } else if (dialog == "rename") {
+                    strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
+                              "Impact_Hit_03.wav", _TRUNCATE);
+                    state.showEditFilenameDialog = true;
+                } else if (dialog == "remove-records") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths.clear();
+                    state.deleteFromFileSystem = false;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "delete-files") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths = {
+                        "D:/Harken-QA/preview-samples/impact_metal_01.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_02.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_03.wav"};
+                    state.deleteFromFileSystem = true;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "new-playlist") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistDialog = true;
+                } else if (dialog == "new-folder") {
+                    strncpy_s(state.folderNameBuffer, sizeof(state.folderNameBuffer),
+                              "New Folder", _TRUNCATE);
+                    state.showCreateFolderDialog = true;
+                } else {
+                    known = false;
+                }
+                result = known
+                    ? "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"open\",\"dialog\":\"" + dialog + "\"}"
+                    : R"({"ok":false,"cmd":"alert_dialog_preview","error":"unknown_dialog"})";
+            } else {
+                result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"unsupported_action"})";
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
