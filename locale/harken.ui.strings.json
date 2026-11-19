@@ -1,6 +1,33 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "DiagnosticOverlay_Title", "type": "ui", "zh": "性能监视器", "en": "Performance Monitor", "ja": "パフォーマンスモニター"},
+    {"id": "DiagnosticOverlay_Performance", "type": "ui", "zh": "性能", "en": "Performance", "ja": "性能"},
+    {"id": "DiagnosticOverlay_FpsLabel", "type": "ui", "zh": "帧率", "en": "FPS", "ja": "FPS"},
+    {"id": "DiagnosticOverlay_CpuLabel", "type": "ui", "zh": "处理器", "en": "CPU", "ja": "CPU"},
+    {"id": "DiagnosticOverlay_Logs", "type": "ui", "zh": "日志", "en": "Logs", "ja": "ログ"},
+    {"id": "DiagnosticOverlay_ExportMinute", "type": "ui", "zh": "导出近 1 分钟", "en": "Export Last Minute", "ja": "直近 1 分間を出力"},
+    {"id": "DiagnosticOverlay_ExportHint", "type": "ui", "zh": "将最近一分钟的诊断记录打包为本地压缩包，不上传。", "en": "Save the last minute of diagnostics as a local ZIP. Nothing is uploaded.", "ja": "直近 1 分間の診断をローカル ZIP に保存します。アップロードは行いません。"},
+    {"id": "DiagnosticOverlay_ExportWriting", "type": "ui", "zh": "正在打包…", "en": "Packing…", "ja": "作成中…"},
+    {"id": "DiagnosticOverlay_ExportBusy", "type": "ui", "zh": "日志正忙，请重试", "en": "Logs busy. Try again.", "ja": "ログ処理中です。再試行してください。"},
+    {"id": "DiagnosticOverlay_ExportFailed", "type": "ui", "zh": "无法保存压缩包，请重试", "en": "Can't save ZIP. Try again.", "ja": "ZIP を保存できません。再試行してください。"},
+    {"id": "DiagnosticOverlay_ExportEmpty", "type": "ui", "zh": "已保存压缩包（无日志）", "en": "ZIP saved (no logs)", "ja": "ZIP を保存しました（ログなし）"},
+    {"id": "DiagnosticOverlay_ExportSaved", "type": "ui", "zh": "压缩包已保存", "en": "ZIP saved", "ja": "ZIP を保存しました"},
+    {"id": "DiagnosticOverlay_FrameTime", "type": "ui", "zh": "帧时间 (ms)", "en": "Frame time (ms)", "ja": "フレーム時間 (ms)"},
+    {"id": "DiagnosticOverlay_FrameStatsFmt", "type": "ui", "zh": "平均 %s · 峰值 %s", "en": "Avg %s · Peak %s", "ja": "平均 %s · 最大 %s"},
+    {"id": "DiagnosticOverlay_ChartTenSecondsAgo", "type": "ui", "zh": "10 秒前", "en": "10 s ago", "ja": "10 秒前"},
+    {"id": "DiagnosticOverlay_ChartNow", "type": "ui", "zh": "现在", "en": "Now", "ja": "現在"},
+    {"id": "DiagnosticOverlay_Memory", "type": "ui", "zh": "内存", "en": "Memory", "ja": "メモリ"},
+    {"id": "DiagnosticOverlay_Cache", "type": "ui", "zh": "缓存", "en": "Cache", "ja": "キャッシュ"},
+    {"id": "DiagnosticOverlay_UsedLimit", "type": "ui", "zh": "用量 / 上限", "en": "Used / Limit", "ja": "使用量 / 上限"},
+    {"id": "DiagnosticOverlay_Waveform", "type": "ui", "zh": "波形", "en": "Waveform", "ja": "波形"},
+    {"id": "DiagnosticOverlay_Cover", "type": "ui", "zh": "封面", "en": "Cover", "ja": "カバー"},
+    {"id": "DiagnosticOverlay_Metadata", "type": "ui", "zh": "元数据", "en": "Metadata", "ja": "メタデータ"},
+    {"id": "DiagnosticOverlay_Total", "type": "ui", "zh": "合计", "en": "Total", "ja": "合計"},
+    {"id": "DiagnosticOverlay_Time", "type": "ui", "zh": "时间", "en": "Time", "ja": "時刻"},
+    {"id": "DiagnosticOverlay_Category", "type": "ui", "zh": "分类", "en": "Category", "ja": "分類"},
+    {"id": "DiagnosticOverlay_Event", "type": "ui", "zh": "事件", "en": "Event", "ja": "イベント"},
+    {"id": "DiagnosticOverlay_Empty", "type": "ui", "zh": "暂无日志", "en": "No log entries", "ja": "ログはありません"},
     {"id": "AvatarCropHelp", "type": "ui", "zh": "拖动图片调整位置，滚轮或滑杆缩放", "en": "Drag to position. Scroll or use the slider to zoom.", "ja": "画像をドラッグして移動。ホイールかスライダーで拡大。"},
     {"id": "AvatarCropZoom", "type": "ui", "zh": "缩放", "en": "Zoom", "ja": "拡大"},
     {"id": "AvatarCropReset", "type": "ui", "zh": "重置", "en": "Reset", "ja": "リセット"},
@@ -10011,46 +10038,11 @@
       "ja": "⚠ %s"
     },
     {
-      "id": "Main_DiagOverlayTitle",
-      "type": "ui",
-      "zh": "诊断悬浮窗 [F10]",
-      "en": "Diagnostics overlay [F10]",
-      "ja": "診断オーバーレイ [F10]"
-    },
-    {
-      "id": "Main_FpsFmt",
-      "type": "ui",
-      "zh": "FPS: %.1f",
-      "en": "FPS: %.1f",
-      "ja": "FPS: %.1f"
-    },
-    {
-      "id": "Main_MemoryFmt",
-      "type": "ui",
-      "zh": "Memory: %.1f MB",
-      "en": "Memory: %.1f MB",
-      "ja": "Memory: %.1f MB"
-    },
-    {
       "id": "Main_DroppedFmt",
       "type": "ui",
       "zh": "Dropped: %llu",
       "en": "Dropped: %llu",
       "ja": "Dropped: %llu"
-    },
-    {
-      "id": "Main_CacheBudgetLabel",
-      "type": "ui",
-      "zh": "Cache Budget",
-      "en": "Cache Budget",
-      "ja": "Cache Budget"
-    },
-    {
-      "id": "Main_BracketPairFmt",
-      "type": "ui",
-      "zh": "[%s] %s",
-      "en": "[%s] %s",
-      "ja": "[%s] %s"
     },
     {
       "id": "AITaskStatus_Done",

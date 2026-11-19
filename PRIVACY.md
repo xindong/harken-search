@@ -14,6 +14,13 @@ This document describes the current privacy posture for Harken Search public-rel
 - Whisper model downloads currently use Hugging Face URLs from `src/AIEngine.cpp`
 - Cover generation is currently offline and does not send prompts to a third-party image API
 
+## Shareable diagnostics in developer builds
+
+The F10 log panel can save a local ZIP of the previous minute's retained diagnostics.
+It contains build information and the observed time range, plus reviewed event labels,
+timings and metrics. Free-form messages, paths, search terms, credentials, and other
+local files are not included. Nothing is uploaded or sent automatically.
+
 ## Public-release rules
 
 - Public release builds must not inline API keys into frontend assets or Vite bundles.

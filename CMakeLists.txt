@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.16)
 project(HarkenSearch VERSION 1.0.45 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestPerformanceMonitor EXCLUDE_FROM_ALL tests/test_performance_monitor.cpp)
+target_include_directories(TestPerformanceMonitor PRIVATE src)
+target_compile_features(TestPerformanceMonitor PRIVATE cxx_std_17)
+add_test(NAME PerformanceMonitor COMMAND TestPerformanceMonitor)
+
+add_executable(TestDiagnosticOverlayLayout EXCLUDE_FROM_ALL tests/test_diagnostic_overlay_layout.cpp)
+target_include_directories(TestDiagnosticOverlayLayout PRIVATE src)
+target_compile_features(TestDiagnosticOverlayLayout PRIVATE cxx_std_17)
+add_test(NAME DiagnosticOverlayLayout COMMAND TestDiagnosticOverlayLayout)
+
 add_executable(TestTransportEffectVisibility EXCLUDE_FROM_ALL tests/test_transport_effect_visibility.cpp)
 target_include_directories(TestTransportEffectVisibility PRIVATE src)
 target_compile_features(TestTransportEffectVisibility PRIVATE cxx_std_17)
@@ -1107,8 +1117,49 @@ if(NOT AURO_ENABLE_AUBIO_BPM AND NOT APPLE)
 endif()
 
 # 诊断模块：开发构建用完整实现，上线用 Stub + DevTools 头文件内联空实现
+# This vendored miniz amalgamation appends definitions unconditionally. Use
+# its declarations without introducing a second copy of the product symbols.
+set(DIAGNOSTIC_MINIZ "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/rlottie/src/lottie/zip/miniz.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DIAGNOSTIC_MINIZ}")
+file(READ "${DIAGNOSTIC_MINIZ}" DIAGNOSTIC_MINIZ_SOURCE)
+set(DIAGNOSTIC_MINIZ_DECL_END "#endif /* MINIZ_NO_ARCHIVE_APIS */")
+string(FIND "${DIAGNOSTIC_MINIZ_SOURCE}" "${DIAGNOSTIC_MINIZ_DECL_END}" DIAGNOSTIC_MINIZ_DECL_SIZE)
+if(DIAGNOSTIC_MINIZ_DECL_SIZE LESS 0)
+    message(FATAL_ERROR "Cannot locate the bundled miniz declarations")
+endif()
+string(LENGTH "${DIAGNOSTIC_MINIZ_DECL_END}" DIAGNOSTIC_MINIZ_DECL_END_LENGTH)
+math(EXPR DIAGNOSTIC_MINIZ_DECL_SIZE "${DIAGNOSTIC_MINIZ_DECL_SIZE} + ${DIAGNOSTIC_MINIZ_DECL_END_LENGTH}")
+string(SUBSTRING "${DIAGNOSTIC_MINIZ_SOURCE}" 0 ${DIAGNOSTIC_MINIZ_DECL_SIZE} DIAGNOSTIC_MINIZ_DECLS)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/DiagnosticBundleMinizDecls.h"
+    CONTENT "${DIAGNOSTIC_MINIZ_DECLS}\n")
+
+add_executable(TestDiagnosticLogBundle EXCLUDE_FROM_ALL
+    tests/test_diagnostic_log_bundle.cpp
+    src/DiagnosticLogBundle.cpp
+    src/DiagnosticsLogger.cpp
+    src/platform/diagnostic_log_bundle_file.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+)
+if(WIN32)
+    target_sources(TestDiagnosticLogBundle PRIVATE src/platform/text_encoding_win32.cpp)
+endif()
+target_include_directories(TestDiagnosticLogBundle PRIVATE
+    src thirdparty "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(TestDiagnosticLogBundle PRIVATE Threads::Threads)
+target_compile_definitions(TestDiagnosticLogBundle PRIVATE
+    AURA_BUILD_DIAGNOSTICS=1 UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(TestDiagnosticLogBundle PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME DiagnosticLogBundle COMMAND TestDiagnosticLogBundle)
+aura_set_test_labels(DiagnosticLogBundle core)
+
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
 if(AURA_BUILD_DIAGNOSTICS)
+    list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
+    list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)
     list(APPEND APP_SOURCES src/ScanDatabaseOpenDiagnostics.cpp src/DiagnosticsLogger.cpp src/DevToolsModule.cpp src/GMPanel.cpp src/UserActionLog.cpp src/DevToolsHarkenSearchSmoke.cpp src/FrameBudgetDiagnostics.cpp)
 else()
     list(APPEND APP_SOURCES src/DiagnosticsLoggerStub.cpp src/UserActionLogStub.cpp)

@@ -309,6 +309,9 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "UIRenderer.h"
 #include "ModuleUI.h"
 #include "DiagnosticsLogger.h"
+#if AURA_BUILD_DIAGNOSTICS
+#include "ui/DiagnosticOverlay.h"
+#endif
 #include "UserActionLog.h"
 #include "MemoryBudget.h"
 #include "TagSystem.h"
@@ -51572,80 +51575,20 @@ void RenderUI(AppState& state) {
     // Diagnostics Overlay（仅开发构建，上线不包含）
 
 #if AURA_BUILD_DIAGNOSTICS
-    if (state.settings.diagnosticMode) {
-        if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F10)) {
-            state.settings.showDiagnosticOverlay = !state.settings.showDiagnosticOverlay;
-            SaveAppSettings(state);
-        }
-        if (state.settings.showDiagnosticOverlay) {
-            auto& diag = DiagnosticsLogger::instance();
-            const auto& tcs = ThemeColors::current();
-            ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings |
-                                     ImGuiWindowFlags_AlwaysAutoResize |
-                                     ImGuiWindowFlags_NoFocusOnAppearing |
-                                     ImGuiWindowFlags_NoNav;
-            ImVec2 pos = ImVec2(ImGui::GetIO().DisplaySize.x - 10.0f, 10.0f);
-            ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, tcs.diagnosticOverlayBG);
-            ImGui::PushStyleColor(ImGuiCol_Border, uiWithAlpha(uiMix(tcs.chromeBorder, tcs.diagnosticOverlayAccent, 0.12f), 0.34f));
-            ImGui::PushStyleColor(ImGuiCol_Text, tcs.diagnosticOverlayText);
-            bool overlayOpen = state.settings.showDiagnosticOverlay;
-            if (BeginTransientScrollbarWindow("##DiagOverlay", &overlayOpen, flags)) {
-                ImGui::TextColored(tcs.diagnosticOverlayAccent, L(Main_DiagOverlayTitle));
-                ImGui::Separator();
-                ImGui::Text(L(Main_FpsFmt), diag.currentFps());
-                ImGui::Text(L(Main_MemoryFmt), diag.currentMemoryMb());
-                ImGui::TextColored(tcs.diagnosticOverlayMutedText, L(Main_DroppedFmt), (unsigned long long)diag.droppedCount());
-
-                // Memory Budget visualization
-                if (state.memoryBudget) {
-                    ImGui::Separator();
-                    ImGui::TextColored(tcs.diagnosticOverlayAccent, L(Main_CacheBudgetLabel));
-                    auto mbStats = state.memoryBudget->getStatistics();
-                    auto mbCfg = state.memoryBudget->getBudgetConfig();
-                    auto drawBar = [&](const char* label, uint64_t used, uint64_t budget, size_t cnt) {
-                        float frac = budget > 0 ? (float)((double)used / (double)budget) : 0.0f;
-                        if (frac > 1.0f) frac = 1.0f;
-                        char overlay[128];
-                        snprintf(overlay, sizeof(overlay), "%s: %.1f/%.0f MB (%zu)",
-                                 label, (double)used / (1024.0 * 1024.0),
-                                 (double)budget / (1024.0 * 1024.0), cnt);
-                        ImVec4 col = frac < 0.7f
-                            ? uiWithAlpha(uiMix(tcs.diagnosticOverlayAccent, tcs.volumeColor, 0.28f), 1.0f)
-                            : (frac < 0.9f
-                                ? uiWithAlpha(uiMix(tcs.diagnosticOverlayAccent, tcs.meterWarning, 0.30f), 1.0f)
-                                : uiWithAlpha(uiMix(tcs.diagnosticOverlayAccent, tcs.volumeClipColor, 0.34f), 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-                        ImGui::ProgressBar(frac, ImVec2(-1, 0), overlay);
-                        ImGui::PopStyleColor();
-                    };
-                    drawBar("Waveform", mbStats.waveformUsage, mbCfg.waveformBudget, mbStats.waveformCount);
-                    drawBar("Cover", mbStats.coverUsage, mbCfg.coverBudget, mbStats.coverCount);
-                    drawBar("Metadata", mbStats.metadataUsage, mbCfg.metadataBudget, mbStats.metadataCount);
-                    float totalFrac = mbCfg.totalBudget > 0 ? (float)((double)mbStats.totalUsage / (double)mbCfg.totalBudget) : 0.0f;
-                    if (totalFrac > 1.0f) totalFrac = 1.0f;
-                    char totalBuf[128];
-                    snprintf(totalBuf, sizeof(totalBuf), "Total: %.1f/%.0f MB",
-                             (double)mbStats.totalUsage / (1024.0 * 1024.0),
-                             (double)mbCfg.totalBudget / (1024.0 * 1024.0));
-                    ImGui::ProgressBar(totalFrac, ImVec2(-1, 0), totalBuf);
-                }
-                ImGui::Separator();
-
-                DiagLogEntry recent[12];
-                int count = diag.copyRecent(recent, 12);
-                for (int i = 0; i < count; ++i) {
-                    const DiagLogEntry& e = recent[i];
-                    ImGui::TextColored(tcs.diagnosticOverlayMutedText, L(Main_BracketPairFmt), e.category, e.detail);
-                }
-            }
-            ImGui::End();
-            ImGui::PopStyleColor(3);
-            if (overlayOpen != state.settings.showDiagnosticOverlay) {
-                state.settings.showDiagnosticOverlay = overlayOpen;
-                SaveAppSettings(state);
-            }
-        }
+    harken::diagnostic_overlay::PollLogExport();
+    if (state.settings.diagnosticMode && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F10)) {
+        state.settings.showDiagnosticOverlay = !state.settings.showDiagnosticOverlay;
+        SaveAppSettings(state);
+    }
+    auto& diagnosticOverlay = state.diagnosticOverlayMonitor;
+    const bool showOverlay = state.settings.diagnosticMode && state.settings.showDiagnosticOverlay;
+    const bool justOpened = showOverlay && !diagnosticOverlay.IsOpen();
+    diagnosticOverlay.SetOpen(showOverlay);
+    if (showOverlay && !harken::diagnostic_overlay::DrawWindow(diagnosticOverlay, state.memoryBudget, justOpened,
+                                                               GetUIFontRegular(), GetUIFontEmphasis())) {
+        diagnosticOverlay.SetOpen(false);
+        state.settings.showDiagnosticOverlay = false;
+        SaveAppSettings(state);
     }
 #endif
 
