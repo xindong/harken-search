@@ -1,4 +1,4 @@
-"""REQ-20261117-SPLASH-LOGO-EXPRESSION: loading uses the shared mascot, not the user avatar."""
+"""REQ-20261117-SPLASH-LOGO-EXPRESSION / REQ-20261119-WELCOME-MASCOT: both startup pages use the shared mascot, not the user avatar."""
 
 from pathlib import Path
 import re
@@ -8,7 +8,16 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
 LOADING = SOURCE.split("static std::wstring BuildFlashUiLoadingHtml(", 1)[1].split("\n}\n", 1)[0]
+WELCOME = SOURCE.split(
+    "static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const std::string& userNameUtf8) {",
+    1,
+)[1].split("\n}\n", 1)[0]
+CSS = SOURCE.split("static void AppendStartupMascotCss(std::wstring& html) {", 1)[1].split("\n}\n", 1)[0]
 MASCOT = ".startup-loading-mascot"
+MOUNT = (
+    r'<div class="startup-loading-mascot-slot" aria-hidden="true">'
+    r'[^<]*HarkenSearch::kStartupLoadingMascotArtwork[^<]*</div>'
+)
 ANIMATIONS = {
     f"{MASCOT}-antenna": "startupMascotAntenna",
     f"{MASCOT}-antenna-warmth": "startupMascotWarmth",
@@ -24,13 +33,13 @@ def declarations(block: str) -> dict[str, str]:
 
 
 class StartupLoadingMascotContract(unittest.TestCase):
-    def css_rule(self, selector: str) -> dict[str, str]:
-        match = re.search(re.escape(selector) + r"\s*\{([^{}]*)\}", LOADING)
+    def css_rule(self, selector: str, section: str = CSS) -> dict[str, str]:
+        match = re.search(re.escape(selector) + r"\s*\{([^{}]*)\}", section)
         self.assertIsNotNone(match, f"Missing CSS rule for {selector}")
         return declarations(match[1])
 
-    def css_group(self, prelude: str) -> dict[str, dict[str, str]]:
-        match = re.search(re.escape(prelude) + r"\s*\{((?:[^{}]+\{[^{}]*\})+)\s*\}", LOADING)
+    def css_group(self, prelude: str, section: str = CSS) -> dict[str, dict[str, str]]:
+        match = re.search(re.escape(prelude) + r"\s*\{((?:[^{}]+\{[^{}]*\})+)\s*\}", section)
         self.assertIsNotNone(match, f"Missing CSS group {prelude}")
         return {
             selector.strip(): declarations(block)
@@ -46,21 +55,18 @@ class StartupLoadingMascotContract(unittest.TestCase):
 
     def test_loading_wide_raw_literals_fit_independent_msvc_appends(self) -> None:
         pattern = r'LR"(?P<delimiter>\w*)\((?P<body>.*?)\)(?P=delimiter)"'
-        literals = list(re.finditer(pattern, LOADING, re.DOTALL))
-        self.assertTrue(literals)
-        for literal in literals:
-            delimiter = literal["delimiter"]
-            windows_body = literal["body"].replace("\n", "\r\n")
-            self.assertLessEqual(len(windows_body.encode("utf-16-le")), 16_380, delimiter)
-            self.assertTrue(LOADING[literal.end():].lstrip().startswith(";"), delimiter)
+        for section in (LOADING, CSS):
+            literals = list(re.finditer(pattern, section, re.DOTALL))
+            self.assertTrue(literals)
+            for literal in literals:
+                delimiter = literal["delimiter"]
+                windows_body = literal["body"].replace("\n", "\r\n")
+                self.assertLessEqual(len(windows_body.encode("utf-16-le")), 16_380, delimiter)
+                self.assertTrue(section[literal.end():].lstrip().startswith(";"), delimiter)
 
     def test_mounts_shared_artwork_in_the_centered_unclipped_loading_slot(self) -> None:
         self.assertTrue('#include "StartupLoadingMascotArt.h"' in SOURCE, "Missing shared artwork header")
-        mount = re.search(
-            r'<div class="startup-loading-mascot-slot" aria-hidden="true">'
-            r'[^<]*HarkenSearch::kStartupLoadingMascotArtwork[^<]*</div>',
-            LOADING,
-        )
+        mount = re.search(MOUNT, LOADING)
         self.assertIsNotNone(mount, "The loading slot must render the shared inline SVG")
         slot = self.css_rule(f"{MASCOT}-slot")
         artwork = self.css_rule(MASCOT)
@@ -82,18 +88,18 @@ class StartupLoadingMascotContract(unittest.TestCase):
         self.assertTrue("window.startExitTransition = function" in LOADING)
 
     def test_entry_veil_is_behind_the_loading_information(self) -> None:
-        veil = self.css_rule("body::before")
-        overlay = self.css_rule(".loading-overlay")
+        veil = self.css_rule("body::before", LOADING)
+        overlay = self.css_rule(".loading-overlay", LOADING)
         self.assertLess(int(veil["z-index"]), int(overlay["z-index"]))
 
     def test_loading_card_is_legible_from_the_first_frame(self) -> None:
-        overlay = self.css_rule(".loading-overlay")
+        overlay = self.css_rule(".loading-overlay", LOADING)
         with self.subTest(layer="overlay"):
             self.assertNotIn("animation", overlay)
             self.assertEqual("1", overlay.get("opacity", "1"))
         with self.subTest(layer="card"):
-            fade = self.css_rule(".glass-card")["animation"].split()[0]
-            frames = self.css_group(f"@keyframes {fade}")
+            fade = self.css_rule(".glass-card", LOADING)["animation"].split()[0]
+            frames = self.css_group(f"@keyframes {fade}", LOADING)
             self.assertGreaterEqual(float(frames["from"]["opacity"]), 0.85)
             self.assertEqual("1", frames["to"]["opacity"])
 
@@ -132,6 +138,16 @@ class StartupLoadingMascotContract(unittest.TestCase):
         for seconds in (1.24, 1.47):
             self.assertEqual({"transform": "translateX(2.3px) scaleY(1)"}, eyes[seconds])
         self.assertEqual({"transform": "translateX(0) scaleY(.25)"}, eyes[1.94])
+
+    def test_welcome_surface_mounts_the_same_mascot_without_personal_avatar_hooks(self) -> None:
+        self.assertIsNotNone(
+            re.search(MOUNT, WELCOME), "The welcome slot must render the shared inline SVG"
+        )
+        self.assertIn("AppendStartupMascotCss(html)", WELCOME, "Welcome must reuse the shared mascot CSS")
+        self.assertIn("AppendStartupMascotCss(html)", LOADING, "Loading must reuse the shared mascot CSS")
+        removed = set(re.findall(r"(?i)[\w-]*(?:avatar|dicebear|pulseHalo)[\w-]*", WELCOME))
+        self.assertFalse(removed, f"Welcome still references the personal avatar: {sorted(removed)}")
+        self.assertNotIn("BuildLocalDiceBearAvatarDataUri", SOURCE)
 
     def test_reduced_motion_disables_each_mascot_animation(self) -> None:
         reduced = self.css_group("@media (prefers-reduced-motion: reduce)")

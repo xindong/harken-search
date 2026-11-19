@@ -9780,15 +9780,6 @@ static std::wstring BuildFlashUiLoginHtml(const AppSettings& settings) {
     return BuildFlashUiWelcomeHtml(settings, settings.userName);
 }
 
-static uint32_t StableStartupAvatarHash(const std::string& seed) {
-    uint32_t hash = 2166136261u;
-    for (unsigned char c : seed) {
-        hash ^= c;
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
 static std::string Base64EncodeStartupAsset(const std::string& bytes) {
     static constexpr char kTable[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -9807,14 +9798,6 @@ static std::string Base64EncodeStartupAsset(const std::string& bytes) {
     if (valb > -6) out.push_back(kTable[((val << 8) >> (valb + 8)) & 0x3F]);
     while (out.size() % 4) out.push_back('=');
     return out;
-}
-
-static bool ReadStartupAvatarSvgFile(const std::string& pathUtf8, std::string& outSvg) {
-    outSvg.clear();
-    const auto bytes = Platform::FileSystem::ReadFileBytes(pathUtf8);
-    if (bytes.empty()) return false;
-    outSvg.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-    return true;
 }
 
 static bool ReadBinaryFile(const std::string& pathUtf8, std::string& outBytes) {
@@ -9852,40 +9835,51 @@ static void AppendStartupBrandLogoCss(std::wstring& html, bool useLightStartupCh
         html += L".brand-word{filter:brightness(0)!important;}\n";
 }
 
-static std::string BuildLocalDiceBearAvatarDataUri(const std::string& userNameUtf8,
-                                                    bool hasCustomAvatar = false,
-                                                    int diceBearAvatarIndex = 0) {
-    if (hasCustomAvatar) {
-        const std::string pngPath = GetCustomAvatarPathUtf8();
-        std::string pngBytes;
-        if (ReadBinaryFile(pngPath, pngBytes))
-            return "data:image/png;base64," + Base64EncodeStartupAsset(pngBytes);
-        // fallthrough to DiceBear if file read fails
+// Shared startup mascot: the loading page and the welcome page mount the same
+// inline SVG, so slot metrics and motion live in one place.
+static void AppendStartupMascotCss(std::wstring& html) {
+    html += LR"HTML_MASCOT_CSS(
+    .startup-loading-mascot-slot {
+      position: relative; z-index: 1;
+      width: 86px; height: 86px; margin: 0 0 22px;
+      display: grid; place-items: center;
     }
-    int index;
-    if (diceBearAvatarIndex >= 1 && diceBearAvatarIndex <= 36) {
-        index = diceBearAvatarIndex;
-    } else {
-        const std::string seed = userNameUtf8.empty() ? std::string("Harken Search User") : userNameUtf8;
-        index = 1 + static_cast<int>(StableStartupAvatarHash(seed) % 36u);
+    .startup-loading-mascot {
+      display: block; width: 74px; height: 74px; overflow: visible;
     }
-    char fileName[32] = {};
-    std::snprintf(fileName, sizeof(fileName), "avatar_%03d.svg", index);
-
-    const std::string relPath =
-        std::string("assets\\avatars\\dicebear\\lorelei-neutral\\") + fileName;
-    const std::string candidates[] = {
-        GetExeDirUtf8() + "\\" + relPath,
-        relPath,
-    };
-
-    std::string svg;
-    for (const std::string& path : candidates) {
-        if (ReadStartupAvatarSvgFile(path, svg)) {
-            return "data:image/svg+xml;base64," + Base64EncodeStartupAsset(svg);
-        }
+    .startup-loading-mascot-antenna {
+      animation: startupMascotAntenna 3.2s ease-in-out infinite;
     }
-    return {};
+    .startup-loading-mascot-antenna-warmth {
+      animation: startupMascotWarmth 3.2s ease-in-out infinite;
+    }
+    .startup-loading-mascot-eyes {
+      transform-box: view-box;
+      transform-origin: 50% 47.2%;
+      animation: startupMascotEyes 3.2s ease-in-out infinite;
+    }
+    @keyframes startupMascotAntenna {
+      0%, 53.125%, 100% { transform: translateY(0); }
+      4.6875% { transform: translateY(-1.2px); }
+    }
+    @keyframes startupMascotWarmth {
+      0%, 53.125%, 100% { opacity: 0; }
+      4.6875% { opacity: .93; }
+    }
+    @keyframes startupMascotEyes {
+      0%, 53.125%, 58.125%, 65%, 100% { transform: translateX(0) scaleY(1); }
+      3.75%, 28.75% { transform: translateX(-2.9px) scaleY(1); }
+      38.75%, 45.9375% { transform: translateX(2.3px) scaleY(1); }
+      60.625% { transform: translateX(0) scaleY(.25); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .startup-loading-mascot-antenna,
+      .startup-loading-mascot-antenna-warmth,
+      .startup-loading-mascot-eyes {
+        animation: none;
+      }
+    }
+)HTML_MASCOT_CSS";
 }
 
 // Loading-page HTML: energy-vortex particles and progress updates.
@@ -10191,46 +10185,9 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       transform: scale(1.006);
     }
 )HTML_L1";
+    AppendStartupMascotCss(html);
     html += LR"HTML(
-    .startup-loading-mascot-slot {
-      position: relative; z-index: 1;
-      width: 86px; height: 86px; margin: 0 0 22px;
-      display: grid; place-items: center;
-    }
-    .startup-loading-mascot {
-      display: block; width: 74px; height: 74px; overflow: visible;
-    }
-    .startup-loading-mascot-antenna {
-      animation: startupMascotAntenna 3.2s ease-in-out infinite;
-    }
-    .startup-loading-mascot-antenna-warmth {
-      animation: startupMascotWarmth 3.2s ease-in-out infinite;
-    }
-    .startup-loading-mascot-eyes {
-      transform-box: view-box;
-      transform-origin: 50% 47.2%;
-      animation: startupMascotEyes 3.2s ease-in-out infinite;
-    }
-    @keyframes startupMascotAntenna {
-      0%, 53.125%, 100% { transform: translateY(0); }
-      4.6875% { transform: translateY(-1.2px); }
-    }
-    @keyframes startupMascotWarmth {
-      0%, 53.125%, 100% { opacity: 0; }
-      4.6875% { opacity: .93; }
-    }
-    @keyframes startupMascotEyes {
-      0%, 53.125%, 58.125%, 65%, 100% { transform: translateX(0) scaleY(1); }
-      3.75%, 28.75% { transform: translateX(-2.9px) scaleY(1); }
-      38.75%, 45.9375% { transform: translateX(2.3px) scaleY(1); }
-      60.625% { transform: translateX(0) scaleY(.25); }
-    }
     @media (prefers-reduced-motion: reduce) {
-      .startup-loading-mascot-antenna,
-      .startup-loading-mascot-antenna-warmth,
-      .startup-loading-mascot-eyes {
-        animation: none;
-      }
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
@@ -11607,7 +11564,7 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     }
     const std::string titleUtf8 = GetLocalizedString(greetKey);
     const std::string displayNameUtf8 = greeting.name.empty() ? std::string(L(Splash_DefaultUser)) : greeting.name;
-    const std::string subtitleUtf8 = L(Splash_Subtitle);    const std::string startupAvatarDataUri = BuildLocalDiceBearAvatarDataUri(displayNameUtf8, settings.hasCustomAvatar, settings.diceBearAvatarIndex);
+    const std::string subtitleUtf8 = L(Splash_Subtitle);
     const std::string hintUtf8 = L(Splash_HintEntering);
     const std::string buttonUtf8 = L(Splash_BtnEnter);
 
@@ -11820,11 +11777,6 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L".welcome-layout{position:relative;right:auto;bottom:auto;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;width:min(312px,calc(100vw - 48px));min-height:300px;padding:30px 28px 28px;text-align:center;border-radius:20px;background:linear-gradient(180deg," + tokenCardTop + L"," + tokenCardBottom + L");border:1px solid " + BuildCssRgba(startupTheme.waveformPanelBorder, useLightStartupChrome ? 0.28f : 0.18f) + L";box-shadow:0 14px 38px " + tokenCardShadow + L",inset 0 0 0 1px " + tokenCardSheen + L";backdrop-filter:blur(12px) saturate(108%);-webkit-backdrop-filter:blur(12px) saturate(108%);overflow:hidden;animation:cardIn 520ms cubic-bezier(.16,1,.3,1) both;}\n";
     html += L".welcome-layout::before{content:\"\";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg," + tokenCardSheen + L",transparent 46%);}\n";
     html += L".welcome-layout::after{content:\"\";position:absolute;inset:auto -12% 44% -12%;height:56%;pointer-events:none;background:radial-gradient(circle at 24% 28%," + tokenCardBloomA + L",transparent 58%),radial-gradient(circle at 76% 6%," + tokenCardBloomB + L",transparent 54%);filter:blur(16px);opacity:.98;}\n";
-    html += L".avatar-wrap{position:relative;width:86px;height:86px;margin:0 0 22px;display:grid;place-items:center;}\n";
-    html += L".avatar-ring,.avatar-orbit{display:none!important;}\n";
-    html += L".avatar{position:relative;z-index:1;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;color:rgba(255,255,255,.94);font-family:var(--font-sans);font-size:23px;font-weight:680;letter-spacing:-.03em;background:radial-gradient(circle at 34% 24%,rgba(255,255,255,.18),transparent 30%),linear-gradient(145deg,hsl(var(--avatar-hue),44%,43%),hsl(calc(var(--avatar-hue) + 22),38%,30%));box-shadow:inset 0 0 0 1px rgba(255,255,255,.11),0 6px 16px rgba(0,0,0,.20);animation:avatarPulse 2.8s ease-in-out infinite;}\n";
-    html += L".avatar-img{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover;image-rendering:-webkit-optimize-contrast;display:none;background:rgba(255,255,255,.04);}.avatar.has-image{background:rgba(255,255,255,.045);}.avatar.has-image .avatar-img{display:block;}.avatar.has-image #avatarInitials{display:none;}\n";
-    html += L".avatar::after{content:\"\";position:absolute;inset:-7px;border-radius:50%;background:" + tokenNameGlow + L";z-index:-1;animation:pulseHalo 2.8s ease-in-out infinite;}\n";
     html += L".startup-status{margin-top:18px;color:" + tokenStatusText + L";font-size:12.5px;line-height:1.45;font-weight:420;animation:statusPulse 2.2s ease-in-out infinite;}\n";
     html += L".startup-detail{display:none;}\n";
     html += L".loading-dots{display:none;}.progress-track{display:none;}\n";
@@ -11837,13 +11789,12 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L"@keyframes noteIn{to{opacity:1;transform:translateX(0);filter:blur(0);}}\n";
     html += L"@keyframes shimmer{from{background-position:200% center;}to{background-position:0% center;}}\n";
     html += L"@keyframes lineIn{to{width:min(7vw,80px);opacity:.68;}}\n";
-    html += L"@keyframes avatarPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.018);}}\n";
-    html += L"@keyframes pulseHalo{0%,100%{opacity:.18;transform:scale(.96);}50%{opacity:.34;transform:scale(1.05);}}\n";
     html += L"@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
     html += L"@media (min-width:640px){.welcome-headline{flex-direction:row;gap:14px;}}\n";
     html += L"@media (max-width:900px){.welcome-layout{right:40px;bottom:64px;max-width:calc(100vw - 88px);}.welcome-headline{font-size:clamp(28px,4.4vw,42px);line-height:1.08;}.welcome-copy{min-height:78px;}}\n";
     html += L"@media (max-width:640px){.brand-word{top:32px;left:32px;font-size:20px;}.welcome-layout{right:28px;bottom:52px;max-width:calc(100vw - 56px);padding:16px 4px;}.welcome-headline{gap:8px;}.welcome-lead{letter-spacing:0;}}\n";
     html += L".canvas{opacity:.22!important;}.backdrop{opacity:.74!important;filter:blur(92px)!important;}.brand-word{opacity:.78!important;z-index:90!important;filter:none!important;mix-blend-mode:normal!important;}.welcome-headline{flex-direction:column!important;gap:0!important;}.welcome-layout{right:auto!important;bottom:auto!important;max-width:min(312px,calc(100vw - 48px))!important;}\n";
+    AppendStartupMascotCss(html);
     html += L"@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}\n";
     AppendStartupBrandLogoCss(html, useLightStartupChrome);
     html += L"</style>\n";
@@ -11855,11 +11806,10 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
   <div class="shell">
     <div class="brand-word">Harken Search</div>
     <div class="welcome-layout">
-      <div class="avatar-wrap" aria-hidden="true">
-        <div class="avatar" id="avatarBubble">
-          <img class="avatar-img" id="avatarImage" alt="" />
-          <span id="avatarInitials">AR</span>
-        </div>
+      <div class="startup-loading-mascot-slot" aria-hidden="true">
+)HTML_W2";
+    html += HarkenSearch::kStartupLoadingMascotArtwork;
+    html += LR"HTML_W2(
       </div>
       <div class="welcome-copy">
         <h1 class="welcome-headline">
@@ -11886,7 +11836,6 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L"    const welcomeTitle = \"" + Utf8ToWide(JsonEscape(titleUtf8)) + L"\";\n";
     html += L"    const welcomeName = \"" + Utf8ToWide(JsonEscape(displayNameUtf8)) + L"\";\n";
     html += L"    const welcomeSubtitle = \"" + Utf8ToWide(JsonEscape(subtitleUtf8)) + L"\";\n";
-    html += L"    const startupAvatarDataUri = \"" + Utf8ToWide(JsonEscape(startupAvatarDataUri)) + L"\";\n";
     html += L"    const welcomeHint = \"" + Utf8ToWide(JsonEscape(hintUtf8)) + L"\";\n";
     html += L"    const welcomeButton = \"" + Utf8ToWide(JsonEscape(buttonUtf8)) + L"\";\n";
     html += LR"HTML_W3(
@@ -12040,16 +11989,6 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     titleEl.textContent = welcomeTitle;
     nameLine.textContent = displayName;
     fallbackLine.style.display = "none";
-    const chars = Array.from(displayName);
-    document.getElementById("avatarInitials").textContent =
-      (chars.length > 0 ? chars.slice(0, 2).join("") : "AU").toUpperCase();
-    const hash = chars.reduce((acc, ch) => ((acc * 31) + ch.codePointAt(0)) >>> 0, 2166136261);
-    document.documentElement.style.setProperty("--avatar-hue", String(196 + (hash % 34)));
-    if (startupAvatarDataUri) {
-      const avatarImage = document.getElementById("avatarImage");
-      avatarImage.src = startupAvatarDataUri;
-      document.getElementById("avatarBubble").classList.add("has-image");
-    }
     document.getElementById("statusText").textContent = welcomeSubtitle;
 
     let sent = false;
