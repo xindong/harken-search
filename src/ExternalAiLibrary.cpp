@@ -1103,4 +1103,23 @@ Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
     return Payload("ok", std::move(results));
 }
 
+bool ExternalAiLibrary::RelativePath(std::int64_t fileId, std::string& relativePath) {
+    relativePath.clear();
+    ReadSession session;
+    if (!implementation_ || fileId <= 0 || !session.Open(implementation_->catalog, implementation_->root)) {
+        return false;
+    }
+    auto statement = Prepare(session.Database(),
+        "SELECT harken_scoped_path(file_path) FROM main.audio_files "
+        "WHERE id=?1 AND harken_scoped_path(file_path) IS NOT NULL");
+    if (!statement || sqlite3_bind_int64(statement.get(), 1, fileId) != SQLITE_OK) {
+        return false;
+    }
+    if (sqlite3_step(statement.get()) != SQLITE_ROW) {
+        return false;
+    }
+    relativePath = SqlText(statement.get(), 0);
+    return !relativePath.empty() && !session.Expired();
+}
+
 }

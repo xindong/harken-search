@@ -1,3 +1,4 @@
+#include "ExternalAiAuthorization.h"
 #include "ExternalAiLibrary.h"
 #include "../thirdparty/nlohmann_json.hpp"
 
@@ -6,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
@@ -30,6 +32,7 @@ constexpr std::array<std::string_view, 4> ProtocolVersions{
     "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25",
 };
 constexpr std::size_t MaxLineBytes = 64 * 1024;
+constexpr std::size_t MaxAuthorizationBytes = 256 * 1024;
 constexpr int MaxJsonDepth = 32;
 constexpr int MaxConsecutiveRejections = 16;
 constexpr int MaxQueryLength = 256;
@@ -64,6 +67,104 @@ Json RpcResult(const Json& id, Json result)
 Json RpcError(const Json& id, int code, const char* message)
 {
     return {{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", code}, {"message", message}}}};
+}
+
+struct LaunchConfig {
+    std::string database;
+    std::string root;
+    std::string settings;
+    std::string libraryId;
+
+    std::string AbsolutePath(const std::string& relative) const
+    {
+        std::filesystem::path path = std::filesystem::u8path(root);
+        if (!relative.empty()) {
+            path /= std::filesystem::u8path(relative);
+        }
+        return path.u8string();
+    }
+};
+
+HarkenSearch::ExternalAiCapability CapabilityFor(ToolKind kind)
+{
+    switch (kind) {
+    case ToolKind::FindFolders:
+        return HarkenSearch::ExternalAiCapability::FindFolders;
+    case ToolKind::FindSimilar:
+        return HarkenSearch::ExternalAiCapability::FindSimilar;
+    case ToolKind::SearchAudio:
+    default:
+        return HarkenSearch::ExternalAiCapability::SearchAudio;
+    }
+}
+
+bool CapabilityGranted(const HarkenSearch::ExternalAiAuthorization& authorization,
+    HarkenSearch::ExternalAiCapability capability, const LaunchConfig& config)
+{
+    // A ticked root is always inside itself, so this checks the grant without
+    // widening the managed scope to the whole library.
+    for (const auto& root : authorization.roots()) {
+        if (authorization.Authorize(capability, config.libraryId, root) != HarkenSearch::ExternalAiAccess::Denied) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LoadAuthorization(const LaunchConfig& config, HarkenSearch::ExternalAiAuthorization& authorization, std::string& error)
+{
+    std::ifstream stream(std::filesystem::u8path(config.settings), std::ios::binary);
+    if (!stream) {
+        error = "authorization document is unreadable";
+        return false;
+    }
+    std::string document;
+    document.reserve(4096);
+    for (int byte = stream.get(); byte != std::char_traits<char>::eof(); byte = stream.get()) {
+        if (document.size() == MaxAuthorizationBytes) {
+            error = "authorization document is too large";
+            return false;
+        }
+        document.push_back(static_cast<char>(byte));
+    }
+    if (!HarkenSearch::ExternalAiAuthorization::Parse(document, authorization, error)) {
+        return false;
+    }
+    if (authorization.libraryId() != config.libraryId) {
+        error = "authorization document belongs to another library";
+        return false;
+    }
+    return true;
+}
+
+Json FilterAuthorized(const HarkenSearch::ExternalAiAuthorization& authorization,
+    HarkenSearch::ExternalAiCapability capability, const LaunchConfig& config, Json payload)
+{
+    if (!payload.contains("results") || !payload["results"].is_array()) {
+        return payload;
+    }
+    Json kept = Json::array();
+    for (auto& row : payload["results"]) {
+        if (!row.is_object() || !row.contains("relative_path") || !row["relative_path"].is_string()) {
+            continue;
+        }
+        const auto target = config.AbsolutePath(row["relative_path"].get<std::string>());
+        if (authorization.Authorize(capability, config.libraryId, target) != HarkenSearch::ExternalAiAccess::Denied) {
+            kept.push_back(std::move(row));
+        }
+    }
+    payload["results"] = std::move(kept);
+    return payload;
+}
+
+bool FailedStatus(const Json& payload)
+{
+    if (!payload.is_object() || !payload.contains("status") || !payload["status"].is_string()) {
+        return false;
+    }
+    const auto& status = payload["status"].get_ref<const std::string&>();
+    return status == "query_failed" || status == "not_authorized" || status == "reference_not_authorized"
+        || status == "authorization_unavailable";
 }
 
 bool HasOnlyFields(const Json& object, std::initializer_list<std::string_view> fields)
@@ -143,7 +244,7 @@ Json ListTools()
 
 class Session {
 public:
-    explicit Session(ExternalAiLibrary& library) : library_(library) {}
+    Session(ExternalAiLibrary& library, const LaunchConfig& config) : library_(library), config_(config) {}
 
     std::optional<Json> Dispatch(const Json& message)
     {
@@ -251,6 +352,18 @@ private:
             limit = static_cast<int>(*inputLimit);
         }
 
+        // The document is read for every call, so revoking a root or lowering a
+        // capability applies to the next request in a still-connected client.
+        HarkenSearch::ExternalAiAuthorization authorization;
+        std::string authorizationError;
+        if (!LoadAuthorization(config_, authorization, authorizationError)) {
+            return ToolResult(id, {{"status", "authorization_unavailable"}, {"results", Json::array()}});
+        }
+        const auto capability = CapabilityFor(tool->kind);
+        if (!CapabilityGranted(authorization, capability, config_)) {
+            return ToolResult(id, {{"status", "not_authorized"}, {"results", Json::array()}});
+        }
+
         const Json& input = arguments[required];
         try {
             if (tool->kind == ToolKind::FindSimilar) {
@@ -258,15 +371,25 @@ private:
                 if (!reference) {
                     return RpcError(id, -32602, "Reference ID must be a positive integer");
                 }
-                return ToolResult(id, library_.FindSimilar(*reference, limit));
+                std::string referenceRelative;
+                if (!library_.RelativePath(*reference, referenceRelative)) {
+                    return ToolResult(id, {{"status", "reference_not_found"}, {"results", Json::array()}});
+                }
+                if (authorization.Authorize(capability, config_.libraryId, config_.AbsolutePath(referenceRelative))
+                    == HarkenSearch::ExternalAiAccess::Denied) {
+                    return ToolResult(id, {{"status", "reference_not_authorized"}, {"results", Json::array()}});
+                }
+                return ToolResult(id, FilterAuthorized(authorization, capability, config_,
+                    library_.FindSimilar(*reference, limit)));
             }
             if (!input.is_string() || !ValidQuery(input.get_ref<const std::string&>())) {
                 return RpcError(id, -32602, "Query must be non-empty text of at most 256 characters");
             }
             const auto& query = input.get_ref<const std::string&>();
-            return ToolResult(id, tool->kind == ToolKind::SearchAudio
+            const auto payload = tool->kind == ToolKind::SearchAudio
                 ? library_.SearchAudio(query, limit)
-                : library_.FindFolders(query, limit));
+                : library_.FindFolders(query, limit);
+            return ToolResult(id, FilterAuthorized(authorization, capability, config_, payload));
         } catch (const std::exception&) {
             return ToolResult(id, {{"status", "query_failed"}, {"results", Json::array()}});
         }
@@ -276,7 +399,7 @@ private:
     {
         Json content = {{"type", "text"}, {"text", payload.dump()}};
         Json result = {{"content", Json::array({std::move(content)})}};
-        if (payload["status"] == "query_failed") {
+        if (FailedStatus(payload)) {
             result["isError"] = true;
         }
         if (structuredContent_) {
@@ -286,6 +409,7 @@ private:
     }
 
     ExternalAiLibrary& library_;
+    const LaunchConfig& config_;
     Phase phase_ = Phase::AwaitingInitialize;
     bool structuredContent_ = false;
 };
@@ -331,9 +455,9 @@ std::optional<Json> HandleFrame(Session& session, Frame frame, const std::string
     return session.Dispatch(message);
 }
 
-int Serve(ExternalAiLibrary& library)
+int Serve(ExternalAiLibrary& library, const LaunchConfig& config)
 {
-    Session session(library);
+    Session session(library, config);
     std::string line;
     line.reserve(MaxLineBytes);
     int consecutiveRejections = 0;
@@ -374,26 +498,36 @@ bool IsLocalAbsolutePath(const std::filesystem::path& path)
 }
 
 template <typename Character>
-bool ReadLaunchPaths(int argc, Character** argv, std::string& database, std::string& root)
+bool ReadLaunchPaths(int argc, Character** argv, LaunchConfig& config)
 {
-    if (argc != 5) {
+    if (argc != 9) {
         return false;
     }
     for (int index = 1; index < argc; index += 2) {
         const auto flag = std::filesystem::path(argv[index]).u8string();
         const std::filesystem::path value(argv[index + 1]);
+        if (flag == "--library-id") {
+            const auto id = value.u8string();
+            if (id.empty() || id.size() > 512) {
+                return false;
+            }
+            config.libraryId = id;
+            continue;
+        }
         if (!IsLocalAbsolutePath(value)) {
             return false;
         }
-        if (flag == "--library-db" && database.empty()) {
-            database = value.u8string();
-        } else if (flag == "--library-root" && root.empty()) {
-            root = value.u8string();
+        if (flag == "--library-db" && config.database.empty()) {
+            config.database = value.u8string();
+        } else if (flag == "--library-root" && config.root.empty()) {
+            config.root = value.u8string();
+        } else if (flag == "--settings" && config.settings.empty()) {
+            config.settings = value.u8string();
         } else {
             return false;
         }
     }
-    return !database.empty() && !root.empty();
+    return !config.database.empty() && !config.root.empty() && !config.settings.empty() && !config.libraryId.empty();
 }
 
 }
@@ -414,19 +548,24 @@ int main(int argc, char** argv)
         std::ios::sync_with_stdio(false);
         std::cin.tie(nullptr);
 
-        std::string database;
-        std::string root;
-        if (!ReadLaunchPaths(argc, argv, database, root)) {
-            std::cerr << "HarkenExternalAiMcp: both --library-db and --library-root require explicit local absolute paths.\n";
+        LaunchConfig config;
+        if (!ReadLaunchPaths(argc, argv, config)) {
+            std::cerr << "HarkenExternalAiMcp: --library-db, --library-root, --settings and --library-id are required; paths must be local and absolute.\n";
+            return 1;
+        }
+        HarkenSearch::ExternalAiAuthorization authorization;
+        std::string authorizationError;
+        if (!LoadAuthorization(config, authorization, authorizationError)) {
+            std::cerr << "HarkenExternalAiMcp: " << authorizationError << ".\n";
             return 1;
         }
         ExternalAiLibrary library;
         std::string error;
-        if (!library.Open(database, root, error)) {
+        if (!library.Open(config.database, config.root, error)) {
             std::cerr << "HarkenExternalAiMcp: could not open the authorized library read-only.\n";
             return 1;
         }
-        return Serve(library);
+        return Serve(library, config);
     } catch (const std::exception&) {
         std::cerr << "HarkenExternalAiMcp: failed to serve the authorized library.\n";
         return 1;

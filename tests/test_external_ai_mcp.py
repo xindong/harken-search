@@ -19,6 +19,27 @@ FOLDERS = "harken_find_folders"
 SIMILAR = "harken_find_similar"
 AUDIO_FIELDS = {"file_id", "name", "relative_path", "duration_seconds"}
 RAW_AUDIO = b"synthetic raw audio sentinel"
+LIBRARY_ID = "harken-test-library"
+ALL_READ = {
+    "searchAudio": "read",
+    "findSimilar": "read",
+    "findFolders": "read",
+    "readFileName": "read",
+    "readMetadata": "read",
+    "editMetadata": "none",
+}
+
+
+def write_authorization(path, root, enabled=True, capabilities=None, library_id=LIBRARY_ID):
+    document = {
+        "libraryId": library_id,
+        "enabled": enabled,
+        "sampleLibrary": False,
+        "roots": [str(root)],
+        "capabilities": dict(ALL_READ if capabilities is None else capabilities),
+    }
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
 
 
 def request(method, request_id=None, params=None):
@@ -79,10 +100,12 @@ class ExternalAiMcpTest(unittest.TestCase):
                 [(file_id, str(path), path.name, file_id * 0.75) for file_id, path in tracks],
             )
         connection.close()
+        cls.settings = write_authorization(cls.fixture / "authorization.json", cls.root)
 
     @property
     def launch_flags(self):
-        return ["--library-db", str(self.database), "--library-root", str(self.root)]
+        return ["--library-db", str(self.database), "--library-root", str(self.root),
+                "--settings", str(self.settings), "--library-id", LIBRARY_ID]
 
     def command(self, flags):
         self.assertTrue(EXECUTABLE.is_file(), f"Missing HarkenExternalAiMcp executable: {EXECUTABLE}")
@@ -104,8 +127,8 @@ class ExternalAiMcpTest(unittest.TestCase):
                 self.assertNotIn(spelling, output)
                 self.assertNotIn(json.dumps(spelling)[1:-1], output)
 
-    def exchange(self, *messages):
-        completed = self.launch(messages)
+    def exchange(self, *messages, flags=None):
+        completed = self.launch(messages, flags)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stderr, b"")
         self.assertTrue(completed.stdout.endswith(b"\n"))
@@ -117,8 +140,8 @@ class ExternalAiMcpTest(unittest.TestCase):
             self.assertNotEqual("result" in reply, "error" in reply)
         return replies
 
-    def with_session(self, *messages, version=VERSIONS[-1]):
-        replies = self.exchange(initialize(version), request("notifications/initialized"), *messages)
+    def with_session(self, *messages, version=VERSIONS[-1], flags=None):
+        replies = self.exchange(initialize(version), request("notifications/initialized"), *messages, flags=flags)
         self.assertEqual(replies.pop(0)["id"], "hello")
         return replies
 
@@ -173,7 +196,9 @@ class ExternalAiMcpTest(unittest.TestCase):
                 [initialize(), request("notifications/initialized"),
                  call(SEARCH, {"query": "privatecatalogmarker"}, 1),
                  call(SEARCH, {"query": "forest"}, 2)],
-                ["--library-db", str(catalog), "--library-root", str(private_root)],
+                ["--library-db", str(catalog), "--library-root", str(private_root),
+                 "--settings", str(write_authorization(Path(scratch) / "auth.json", private_root)),
+                 "--library-id", LIBRARY_ID],
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             replies = [json.loads(line) for line in completed.stdout.splitlines()]
@@ -212,7 +237,9 @@ class ExternalAiMcpTest(unittest.TestCase):
                      call(SEARCH, {"query": "unshared"}, 1),
                      call(FOLDERS, {"query": "linked"}, 2),
                      call(SIMILAR, {"reference_id": 95}, 3)],
-                    ["--library-db", str(catalog), "--library-root", str(allowed)],
+                    ["--library-db", str(catalog), "--library-root", str(allowed),
+                     "--settings", str(write_authorization(area / "auth.json", allowed)),
+                     "--library-id", LIBRARY_ID],
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 replies = [json.loads(line) for line in completed.stdout.splitlines()]
@@ -239,13 +266,16 @@ class ExternalAiMcpTest(unittest.TestCase):
                     (55, str(sound), sound.name, 1.25),
                 )
                 writer.commit()
+                authorization = write_authorization(Path(scratch) / "auth.json", self.root)
                 before = self.snapshot()
                 for suffix in ("", "-wal", "-shm"):
                     self.assertTrue(database.with_name(database.name + suffix).is_file())
                 completed = self.launch(
                     [initialize(), request("notifications/initialized"),
                      call(SEARCH, {"query": "wal-only"}, 1)],
-                    ["--library-db", str(database), "--library-root", str(self.root)],
+                    ["--library-db", str(database), "--library-root", str(self.root),
+                     "--settings", str(authorization),
+                     "--library-id", LIBRARY_ID],
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assert_no_echo(completed.stdout, completed.stderr)
@@ -261,17 +291,29 @@ class ExternalAiMcpTest(unittest.TestCase):
         invalid_db = self.fixture / "not-a-database.db"
         invalid_db.write_bytes(b"not a SQLite database")
         self.addCleanup(invalid_db.unlink)
-        db_only = self.launch_flags[:2]
-        root_only = self.launch_flags[2:]
+        malformed = Path(tempfile.mkdtemp(dir=self.fixture)) / "broken.json"
+        malformed.write_text("{not json", encoding="utf-8")
+        database = ["--library-db", str(self.database)]
+        root = ["--library-root", str(self.root)]
+        settings = ["--settings", str(self.settings)]
+        identity = ["--library-id", LIBRARY_ID]
         for flags in (
-            [], db_only, root_only,
-            ["--library-db", self.database.name, *root_only],
-            [*db_only, "--library-root", self.root.name],
-            ["--library-db", str(missing_db), *root_only],
-            ["--library-db", str(invalid_db), *root_only],
-            [*db_only, "--library-root", str(self.fixture / "missing-root")],
-            [*db_only, "--library-root", str(self.database)],
-            [*self.launch_flags, *db_only],
+            [],
+            database, root, settings, identity,
+            [*database, *root],
+            [*database, *root, *settings],
+            [*database, *root, *identity],
+            [*database, *root, *settings, "--library-id", ""],
+            [*database, *root, *settings, "--library-id", "another-library"],
+            [*database, *root, "--settings", str(malformed), *identity],
+            [*database, *root, "--settings", str(self.fixture / "missing-settings.json"), *identity],
+            ["--library-db", self.database.name, *root, *settings, *identity],
+            [*database, "--library-root", self.root.name, *settings, *identity],
+            ["--library-db", str(missing_db), *root, *settings, *identity],
+            ["--library-db", str(invalid_db), *root, *settings, *identity],
+            [*database, "--library-root", str(self.fixture / "missing-root"), *settings, *identity],
+            [*database, "--library-root", str(self.database), *settings, *identity],
+            [*self.launch_flags, *database],
             [*self.launch_flags, "--port", "8080"],
         ):
             with self.subTest(flags=flags):
@@ -466,6 +508,95 @@ class ExternalAiMcpTest(unittest.TestCase):
         self.assertLess(len(errors), 64)
         self.assertTrue(all(reply["error"]["code"] == -32700 for reply in errors))
         self.assert_no_echo(completed.stdout, completed.stderr)
+
+
+    def test_authorization_switch_and_ticked_roots_scope_results(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        base = ["--library-db", str(self.database), "--library-root", str(self.root),
+                "--library-id", LIBRARY_ID]
+        disabled = write_authorization(scratch / "disabled.json", self.root, enabled=False)
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 5}, 1),
+            flags=[*base, "--settings", str(disabled)],
+        )
+        denied = self.tool_payload(replies[0])
+        self.assertEqual(denied, {"status": "not_authorized", "results": []})
+        self.assertTrue(replies[0]["result"]["isError"])
+
+        sub_only = write_authorization(scratch / "sub.json", self.root / "wind")
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 50}, 1),
+            call(FOLDERS, {"query": "wind"}, 2),
+            flags=[*base, "--settings", str(sub_only)],
+        )
+        search = self.tool_payload(replies[0])
+        self.assertEqual(search["status"], "ok")
+        self.assertTrue(search["results"])
+        for row in search["results"]:
+            self.assertTrue(row["relative_path"].startswith("wind/"), row)
+        folders = self.tool_payload(replies[1])
+        self.assertEqual(folders["status"], "ok")
+        self.assertTrue(folders["results"])
+        for row in folders["results"]:
+            self.assertEqual(row["relative_path"], "wind")
+
+        no_folders = write_authorization(
+            scratch / "no-folders.json", self.root, capabilities={**ALL_READ, "findFolders": "none"})
+        replies = self.with_session(
+            call(FOLDERS, {"query": "wind"}, 1),
+            flags=[*base, "--settings", str(no_folders)],
+        )
+        self.assertEqual(self.tool_payload(replies[0]), {"status": "not_authorized", "results": []})
+
+    def test_similar_reference_outside_ticked_roots_is_refused(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(scratch / "sub.json", self.root / "wind")
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        replies = self.with_session(call(SIMILAR, {"reference_id": 40}, 1), flags=flags)
+        self.assertEqual(self.tool_payload(replies[0]),
+                         {"status": "reference_not_authorized", "results": []})
+
+    def test_revocation_applies_to_next_call_in_a_live_session(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(scratch / "live.json", self.root)
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with subprocess.Popen(
+            self.command(flags), cwd=self.fixture,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ) as process:
+            received = Queue()
+
+            def pump():
+                for line in iter(process.stdout.readline, b""):
+                    received.put(line)
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+            try:
+                process.stdin.write(wire_line(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.write(wire_line(call(SEARCH, {"query": "wind", "limit": 3}, 1)))
+                process.stdin.flush()
+                self.assertEqual(json.loads(received.get(timeout=5))["id"], "hello")
+                first = json.loads(received.get(timeout=5))
+                self.assertEqual(self.tool_payload(first)["status"], "ok")
+
+                write_authorization(document, self.root, enabled=False)
+                process.stdin.write(wire_line(call(SEARCH, {"query": "wind", "limit": 3}, 2)))
+                process.stdin.flush()
+                second = json.loads(received.get(timeout=5))
+                self.assertEqual(self.tool_payload(second)["status"], "not_authorized")
+                self.assertTrue(second["result"]["isError"])
+
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), b"")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                reader.join(timeout=5)
 
 
 if __name__ == "__main__":

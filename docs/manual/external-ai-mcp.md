@@ -14,7 +14,7 @@ cmake -S . -B build_debug -G 'Visual Studio 17 2022' -A x64
 cmake --build build_debug --config Debug --target HarkenExternalAiMcp
 ```
 
-In a **local** Codex CLI, add the stdio connector. Replace the three paths.
+In a **local** Codex CLI, add the stdio connector. Replace the four paths.
 The second path is an existing Harken library database. The last path is the
 indexed audio folder you want to share, not the folder that stores the database.
 If the database uses SQLite WAL, keep that library open in Harken while using
@@ -23,6 +23,10 @@ the connector. The connector refuses to recover or create missing WAL sidecars.
 ```powershell
 codex mcp add harken -- 'C:\Harken Dev\HarkenExternalAiMcp.exe' --library-db 'C:\Harken Data\Library.db' --library-root 'D:\Sounds\Selected Library'
 ```
+
+The connector also requires `--settings <authorization document>` and `--library-id <library identity>`.
+It refuses to start when the document is missing, malformed or belongs to another library,
+and re-reads the document for every tool call.
 
 Start a new local session and try: “Find metal door sounds in my Harken library.
 Show me their folders. Pick a result and find three same-kind substitutes.”
@@ -84,7 +88,7 @@ a document copied from another library never matches.
   Sibling folders with a shared name prefix, `..` components, relative paths
   and junctions or symlinks that resolve outside the root are denied.
 - Revoking a root or lowering a capability applies to the next request even
-  while the MCP client keeps the connector process alive.
+  while the MCP client keeps the connector process alive. Results outside a ticked root are dropped from every response.
 - `sampleLibrary` stays read-only; an `edit` grant cannot widen it. The
   connector still exposes no write tool, so configuration never substitutes for
   an unimplemented capability.
