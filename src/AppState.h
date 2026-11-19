@@ -254,6 +254,8 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
 inline constexpr int kDefaultReadingFontPx = 18;
+// 菜单字号基准：系统字号 18 px 时菜单 16 px，再按系统字号比例缩放。
+inline constexpr int kDefaultMenuFontPx = 16;
 inline constexpr int kDefaultListFontPx = 18;
 // Reading/system font can grow to 32 px; the independent list font keeps its 24 px cap.
 inline constexpr int kMaxReadingFontPx = 32;

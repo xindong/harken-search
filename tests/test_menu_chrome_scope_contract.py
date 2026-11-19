@@ -150,7 +150,7 @@ class MenuChromeScopeContract(unittest.TestCase):
         chrome = main.split("// TOP MENU BAR", 1)[1].split("// MAIN LAYOUT", 1)[0]
         self.assertIn("ImFont* menuFont = GetUIFontRegular();", chrome)
         self.assertIn("constexpr float minMenuBarFontPx = kChromeFontPx - 1.0f;", chrome)
-        self.assertIn("baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx", chrome)
+        self.assertIn("float menuBarFontPx = baseMenuFontPx;", chrome)
         self.assertIn("menuBarFontPx -= 1.0f", chrome)
         self.assertIn("std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale", chrome)
         self.assertLess(chrome.index("GetMenuChromeFontPushSize(menuFont, hostFontPx)"),

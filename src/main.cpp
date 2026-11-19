@@ -35611,7 +35611,8 @@ void RenderUI(AppState& state) {
     const float menuScale = ImGui::GetMenuChromeScale();
     const float baseMenuFontPx = GetMenuFontSizePx();
     constexpr float minMenuBarFontPx = kChromeFontPx - 1.0f;
-    float menuBarFontPx = baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx;
+    // 菜单从默认 16 px 起步；窄窗放不下时再由下面的拟合循环逐级缩小。
+    float menuBarFontPx = baseMenuFontPx;
     const char* menuTitles[] = {L(Menu_File), L(Menu_Edit), L(Menu_View), L(Menu_Database),
                                 L(Menu_Playlist), L(Menu_Tools), L(Menu_Settings), L(Menu_Help)};
     const float brandLeading = std::floor(14.0f * menuScale);
