@@ -1,6 +1,7 @@
 add_library(HarkenExternalAiLibrary STATIC EXCLUDE_FROM_ALL
     src/ExternalAiLibrary.cpp
     src/ExternalAiAuthorization.cpp
+    src/ExternalAiAuthorizationStore.cpp
     ${_similarity_store_sources})
 target_include_directories(HarkenExternalAiLibrary PUBLIC src thirdparty PRIVATE "${SQLITE_DIR}")
 target_link_libraries(HarkenExternalAiLibrary PRIVATE Threads::Threads)
@@ -37,8 +38,16 @@ endif()
 
 add_executable(TestExternalAiAuthorization EXCLUDE_FROM_ALL
     tests/test_external_ai_authorization.cpp
-    src/ExternalAiAuthorization.cpp)
+    src/ExternalAiAuthorization.cpp
+    src/ExternalAiAuthorizationStore.cpp
+    src/platform/filesystem_std.cpp)
 target_include_directories(TestExternalAiAuthorization PRIVATE src thirdparty)
+if(WIN32)
+    target_sources(TestExternalAiAuthorization PRIVATE
+        src/platform/filesystem_win32.cpp src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestExternalAiAuthorization PRIVATE shlwapi)
+endif()
 if(MSVC)
     target_compile_options(TestExternalAiAuthorization PRIVATE /W3 /utf-8)
 endif()

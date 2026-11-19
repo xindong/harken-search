@@ -195,6 +195,14 @@ bool ExternalAiAuthorization::Parse(const std::string& json, ExternalAiAuthoriza
     return true;
 }
 
+ExternalAiAccess ExternalAiAuthorization::AccessFor(ExternalAiCapability capability) const
+{
+    const auto grant = std::find_if(grants_.begin(), grants_.end(), [capability](const Grant& entry) {
+        return entry.capability == capability;
+    });
+    return grant == grants_.end() ? ExternalAiAccess::Denied : grant->access;
+}
+
 ExternalAiAccess ExternalAiAuthorization::Authorize(ExternalAiCapability capability, const std::string& libraryId,
     const std::string& targetPath) const
 {

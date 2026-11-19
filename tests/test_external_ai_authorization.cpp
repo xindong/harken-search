@@ -1,7 +1,10 @@
 #include "ExternalAiAuthorization.h"
+#include "ExternalAiAuthorizationStore.h"
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <iostream>
 #include <string>
 
@@ -147,6 +150,85 @@ int main(int argc, char** argv)
     Check(ParseRejected(Document(rootText, "{}", true, false, "library-a", "[\"\"]")), "empty root is rejected");
     Check(ParseRejected("{\"libraryId\":\"a\",\"enabled\":true,\"rootz\":[]}"), "unknown field is rejected");
 
+    // --- Per-library document store used by the settings page ---
+    const std::string settingsDir = (base / "settings-root").u8string();
+    const std::string libraryIdText = "0123456789abcdef0123456789abcdef";
+    const std::string libraryPath = HarkenSearch::ExternalAiSettingsPath(settingsDir, libraryIdText);
+    Check(!libraryPath.empty() && libraryPath.find("external-ai") != std::string::npos &&
+            libraryPath.size() > 5 && libraryPath.substr(libraryPath.size() - 5) == ".json",
+        "settings path places the document under external-ai/<library>.json");
+    Check(HarkenSearch::ExternalAiSettingsPath(settingsDir, "../escape").empty(),
+        "settings path refuses an identity that is not a plain file name");
+    Check(HarkenSearch::ExternalAiSettingsPath("", "library-a").empty(), "settings path needs a settings directory");
+
+    HarkenSearch::ExternalAiSettings defaultSettings;
+    defaultSettings.libraryId = libraryIdText;
+    std::string storeError;
+    bool existed = true;
+    Check(HarkenSearch::LoadExternalAiSettings(libraryPath, libraryIdText, defaultSettings, storeError, &existed),
+        "missing document loads as a usable default");
+    Check(!existed && !defaultSettings.enabled && defaultSettings.roots.empty(),
+        "a library without a document starts disabled with no ticked directory");
+    for (const auto capability : HarkenSearch::ExternalAiCapabilities) {
+        Check(defaultSettings.capability(capability) == ExternalAiAccess::Denied,
+            "a library without a document keeps every capability closed");
+    }
+
+    HarkenSearch::ExternalAiSettings stored;
+    stored.libraryId = libraryIdText;
+    stored.enabled = true;
+    stored.roots = {rootText, prefixText};
+    stored.capabilities[0] = ExternalAiAccess::ReadOnly;
+    stored.capabilities[1] = ExternalAiAccess::ReadOnly;
+    stored.capabilities[3] = ExternalAiAccess::ReadOnly;
+    stored.capabilities[5] = ExternalAiAccess::Editable;
+
+    const std::string serialized = HarkenSearch::SerializeExternalAiSettings(stored);
+    HarkenSearch::ExternalAiSettings reparsed;
+    Check(!serialized.empty() &&
+            HarkenSearch::ParseExternalAiSettings(serialized, libraryIdText, reparsed, storeError),
+        "serialized document parses back for the same library");
+    Check(reparsed.enabled == stored.enabled && reparsed.roots == stored.roots,
+        "round trip keeps the switch and the ticked directories");
+    bool capabilitiesMatch = true;
+    for (const auto capability : HarkenSearch::ExternalAiCapabilities) {
+        capabilitiesMatch = capabilitiesMatch && reparsed.capability(capability) == stored.capability(capability);
+    }
+    Check(capabilitiesMatch, "round trip keeps every capability level");
+    Check(!HarkenSearch::ParseExternalAiSettings(serialized, "library-b", reparsed, storeError),
+        "a document saved for one library is rejected for another");
+
+    Check(HarkenSearch::SaveExternalAiSettings(libraryPath, stored, storeError), "document saves to disk");
+    std::string savedBytes;
+    {
+        std::ifstream saved(libraryPath, std::ios::binary);
+        savedBytes.assign((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
+    }
+    Check(savedBytes == serialized, "saved file matches the serialized document");
+    Check(savedBytes.size() >= 2 && static_cast<unsigned char>(savedBytes[0]) != 0xEF,
+        "saved file has no byte order mark");
+
+    HarkenSearch::ExternalAiSettings reloaded;
+    existed = false;
+    Check(HarkenSearch::LoadExternalAiSettings(libraryPath, libraryIdText, reloaded, storeError, &existed) &&
+            existed && reloaded.enabled && reloaded.roots.size() == 2 &&
+            reloaded.capability(ExternalAiCapability::EditMetadata) == ExternalAiAccess::Editable,
+        "saved document loads back with the same grants");
+
+    const auto connectorView = ParseOk(savedBytes);
+    Check(connectorView.Authorize(ExternalAiCapability::ReadFileName, libraryIdText, insideFile) ==
+            ExternalAiAccess::ReadOnly,
+        "the connector accepts a document written by the settings store");
+
+    {
+        std::ofstream broken(libraryPath, std::ios::binary | std::ios::trunc);
+        broken << "{\"libraryId\":\"" << libraryIdText << "\",\"enabled\":\"yes\"}";
+    }
+    HarkenSearch::ExternalAiSettings afterBroken;
+    existed = false;
+    Check(!HarkenSearch::LoadExternalAiSettings(libraryPath, libraryIdText, afterBroken, storeError, &existed) &&
+            existed && !afterBroken.enabled,
+        "a malformed document is reported instead of granting access");
     std::error_code ignored;
     fs::remove_all(base, ignored);
     std::cout << (failures == 0 ? "ALL PASS" : "FAILURES") << ": " << failures << '\n';

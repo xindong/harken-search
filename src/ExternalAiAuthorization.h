@@ -50,6 +50,10 @@ public:
     // empty for library-wide queries. Containment is resolved on the canonical
     // path, so a junction, symlink, ".." component or shared name prefix cannot
     // step outside a granted root.
+    // Access level recorded for one capability. A document without a grant
+    // for it denies the capability.
+    ExternalAiAccess AccessFor(ExternalAiCapability capability) const;
+
     ExternalAiAccess Authorize(ExternalAiCapability capability, const std::string& libraryId,
         const std::string& targetPath) const;
 
