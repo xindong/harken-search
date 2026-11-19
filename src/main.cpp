@@ -44755,10 +44755,7 @@ void RenderUI(AppState& state) {
                     continue;
                 } else {
                     state.waveformFailed.insert(res.filePath);
-                    state.database.upsertWaveformCacheStateByPath(
-                        res.filePath, "failed",
-                        res.errorCode.empty() ? "decode_failed" : res.errorCode, 1, ""
-                    );
+                    state.waveformWorker.enqueueFailurePersistence(res);
                 }
                 state.removePendingWaveform(res.filePath);
                 continue;
@@ -44831,10 +44828,7 @@ void RenderUI(AppState& state) {
                 }
                 state.waveformFailed.insert(res.filePath);
                 state.meterFollowupPending.erase(res.filePath);
-                state.database.upsertWaveformCacheStateByPath(
-                    res.filePath, "failed",
-                    res.errorCode.empty() ? "decode_failed" : res.errorCode, 1, ""
-                );
+                state.waveformWorker.enqueueFailurePersistence(res);
             }
             state.removePendingWaveform(res.filePath);
         }

@@ -18,7 +18,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <future>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -3383,6 +3385,100 @@ static int testScanWriteFailurePreservesDiagnosticWhenEveryFileAlreadyFailed() {
     return failures;
 }
 
+static int testWaveformFailureWriterKeepsUiConnectionIndependent() {
+    using namespace std::chrono_literals;
+    int failures = 0;
+    const fs::path root = makeTempRoot("failure_writer_lock");
+    const fs::path dbPath = root / "failure_writer_lock.db";
+    Database db;
+    AudioRecord record;
+    record.filePath = (root / "decode_failure.wav").u8string();
+    const bool opened = db.open(dbPath.u8string());
+    const bool added = opened && db.addFile(record);
+    if (!check(opened && added,
+               "failure writer opens a fixture with an indexed audio path", failures)) {
+        std::cerr << "fixture detail: open=" << opened << " add=" << added
+                  << " error=" << db.getLastError() << "\n";
+        return failures;
+    }
+    const auto paths = db.waveformFailureWritePaths();
+    sqlite3* rawBlocker = nullptr;
+    const int openResult = sqlite3_open_v2(paths.waveforms.c_str(), &rawBlocker,
+                                           SQLITE_OPEN_READWRITE, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> blocker(rawBlocker, sqlite3_close);
+    if (!check(openResult == SQLITE_OK && execSqlite(blocker.get(), "BEGIN IMMEDIATE;"),
+               "fixture holds a sidecar write lock", failures)) {
+        return failures;
+    }
+
+    const auto observedAt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::atomic<bool> cancelled{false};
+    auto startWrite = [&](const char* reason) {
+        return std::async(std::launch::async, [&, reason] {
+            Database::WaveformFailureWriter writer(cancelled);
+            return writer.open(paths) &&
+                   writer.writeFailure(record.filePath, reason, 3, observedAt);
+        });
+    };
+    auto pending = startWrite("encode_error");
+    check(pending.wait_for(100ms) == std::future_status::timeout,
+          "failure writer waits while another connection holds the sidecar lock", failures);
+    const auto readStart = std::chrono::steady_clock::now();
+    const auto audio = db.getFileByPath(record.filePath);
+    check(audio.id > 0 && std::chrono::steady_clock::now() - readStart < 1s,
+          "UI connection can read the indexed file while the writer waits", failures);
+    check(execSqlite(blocker.get(), "COMMIT;") && pending.get(),
+          "failure writer succeeds once the competing lock releases", failures);
+    WaveformCacheState state;
+    check(db.getWaveformCacheStateByPath(record.filePath, state) &&
+              state.status == "failed" && state.errorCode == "encode_error" && state.retryCount == 3,
+          "failure writer preserves the reason and count", failures);
+
+    {
+        Database::WaveformFailureWriter writer(cancelled);
+        check(writer.open(paths) &&
+                  writer.writeFailure(record.filePath, "encode_error", 3, observedAt + 1) &&
+                  db.getWaveformCacheStateByPath(record.filePath, state) && state.updatedAt == observedAt,
+              "an identical failure does not update the row again", failures);
+    }
+    check(execSqlite(blocker.get(), "BEGIN IMMEDIATE;"),
+          "fixture reacquires the sidecar write lock", failures);
+    auto exiting = startWrite("decode_failed");
+    check(exiting.wait_for(100ms) == std::future_status::timeout,
+          "second write is waiting before cancellation", failures);
+    cancelled.store(true);
+    check(exiting.wait_for(1s) == std::future_status::ready,
+          "cancellation interrupts the busy wait without the other writer releasing its lock", failures);
+    check(execSqlite(blocker.get(), "ROLLBACK;") && !exiting.get() &&
+              db.getWaveformCacheStateByPath(record.filePath, state) && state.errorCode == "encode_error",
+          "a cancelled write cannot land later", failures);
+
+    cancelled.store(false);
+    {
+        Database::WaveformFailureWriter writer(cancelled);
+        check(db.saveWaveformByPath(record.filePath, {0.25f}) && writer.open(paths),
+              "fixture records a successful mini waveform", failures);
+        check(execSqlite(blocker.get(), "UPDATE waveforms SET updated_at = 101;") &&
+                  writer.writeFailure(record.filePath, "encode_error", 3, 100) &&
+                  db.getWaveformCacheStateByPath(record.filePath, state) &&
+                  state.status == "done" && state.updatedAt == 101,
+              "a failure produced at t100 cannot override a success at t101", failures);
+        check(execSqlite(blocker.get(), "UPDATE waveforms SET updated_at = 100;") &&
+                  writer.writeFailure(record.filePath, "encode_error", 3, 100) &&
+                  db.getWaveformCacheStateByPath(record.filePath, state) &&
+                  state.status == "done" && state.updatedAt == 100,
+              "a usable same-second mini waveform is not replaced by a failure", failures);
+    }
+
+    blocker.reset();
+    db.close();
+    check(db.openReadOnly(dbPath.u8string()) && db.waveformFailureWritePaths().main.empty(),
+          "a read-only library cannot hand out an asynchronous failure write target", failures);
+    db.close();
+    fs::remove_all(root);
+    return failures;
+}
+
 static int testScanBatchRetriesWhenDatabaseIsTemporarilyLocked() {
     int failures = 0;
     const fs::path root = makeTempRoot("write_lock_retry");
@@ -4450,6 +4546,8 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string(argv[1]) == "--missing-root")
         return testMissingScanRootReportsPathFailure() == 0 ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--failure-writer")
+        return testWaveformFailureWriterKeepsUiConnectionIndependent() == 0 ? 0 : 1;
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -4551,6 +4649,8 @@ int main(int argc, char** argv) {
     failures += testScanWriteFailurePreservesDiagnosticWhenEveryFileAlreadyFailed();
     std::cout << "-- testScanBatchRetriesWhenDatabaseIsTemporarilyLocked\n";
     failures += testScanBatchRetriesWhenDatabaseIsTemporarilyLocked();
+    std::cout << "-- testWaveformFailureWriterKeepsUiConnectionIndependent\n";
+    failures += testWaveformFailureWriterKeepsUiConnectionIndependent();
     std::cout << "-- testScanBatchFailsFastWhenDatabaseLockPersists\n";
     failures += testScanBatchFailsFastWhenDatabaseLockPersists();
     std::cout << "-- testSlowScanWorkerDoesNotDropCompletedResultAfterStallWarning\n";

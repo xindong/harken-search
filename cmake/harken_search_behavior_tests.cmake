@@ -983,6 +983,66 @@ endif()
 add_test(NAME TestScanWaveformCacheContract COMMAND TestScanWaveformCacheContract)
 aura_set_test_labels(TestScanWaveformCacheContract db)
 
+# Waveform failure persistence queue: real WaveformWorker against a real Database, so the
+# library binding and the stop() drain are exercised as behaviour instead of string checks.
+add_executable(TestWaveformFailureQueue EXCLUDE_FROM_ALL
+    tests/test_waveform_failure_queue.cpp
+    tests/test_database_link_stubs.cpp
+    tests/test_scan_database_audio_probe_stub.cpp
+    tests/test_appstate_link_stubs.cpp
+    src/AsyncWorker.cpp
+    src/AppState.cpp
+    src/Database.cpp
+    src/BackfillQueue.cpp
+    src/BackfillWorkerPool.cpp
+    src/PathUtils.cpp
+    src/platform/file_watcher.cpp
+    src/Utils.cpp
+    src/MetadataReader.cpp
+    src/SearchQuery.cpp
+    src/AudioEngine.cpp
+    src/platform/audio_playback_miniaudio.cpp
+    src/TagVocabularyMapper.cpp
+    src/DiagnosticsLogger.cpp
+    src/CenterSenseDataSource.cpp
+    src/CenterSenseDsp.cpp
+    src/WaveformExtractor.cpp
+    src/TimeStretch.cpp
+    src/CoverReplacementFoundation.cpp
+    src/NativeFloatReader.cpp
+    src/platform/audio_data_source_miniaudio.cpp
+    src/platform/filesystem_std.cpp
+    src/platform/thread_id_win32.cpp
+    src/platform/search_text_gb2312_win32.cpp
+    src/platform/text_encoding_win32.cpp
+    src/platform/media_foundation_audio_win32.cpp
+    src/platform/audio_file_miniaudio.cpp
+    src/platform/emergency_file_writer_win32.cpp
+    src/platform/metadata_legacy_tag_content_win32.cpp
+    src/platform/filesystem_win32.cpp
+    ${SQLITE_SOURCES}
+)
+target_include_directories(TestWaveformFailureQueue PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${SQLITE_DIR}
+    ${IMGUI_DIR}
+)
+target_link_libraries(TestWaveformFailureQueue PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid)
+target_compile_definitions(TestWaveformFailureQueue PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    AURO_TEST_REAL_ASYNC_WORKER=1
+    AURO_TEST_WAV_DATABASE_AUDIO_PROBE=1
+    AURO_TEST_EXTERNAL_PATH_ATTRIBUTES=1
+)
+if(MSVC)
+    target_compile_options(TestWaveformFailureQueue PRIVATE /W3 /MP /utf-8)
+    set_target_properties(TestWaveformFailureQueue PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE" LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+endif()
+add_test(NAME TestWaveformFailureQueue COMMAND TestWaveformFailureQueue)
+aura_set_test_labels(TestWaveformFailureQueue db)
+
 add_executable(TestScanPauseResume EXCLUDE_FROM_ALL
     tests/test_scan_pause_resume.cpp
     tests/test_database_link_stubs.cpp
@@ -5745,6 +5805,7 @@ foreach(_auro_db_behavior_target
     TestFuzzySearchPrd
     TestBackfillRecoveryWorker
     TestScanWaveformCacheContract
+    TestWaveformFailureQueue
     TestImportPrecomputeWaveform
     TestCoverClickPerf
     TestStartupReconciliation
@@ -6523,6 +6584,7 @@ foreach(_auro_utils_test IN ITEMS
     TestFuzzySearchPrd
     TestBackfillRecoveryWorker
     TestScanWaveformCacheContract
+    TestWaveformFailureQueue
     TestScanPauseResume
     TestImportPrecomputeWaveform
     TestCoverPathNorm
