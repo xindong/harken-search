@@ -52,9 +52,15 @@ else if(id=="themeEditor") {
     }
 }
 else if(id=="language") {int n=(int)draft.language;if(combo(n,{u8"简体中文","English",u8"日本語"}))draft.language=(AppLanguage)n;}
-else if(id=="systemFont"||id=="listFont") {
-    auto& value=id=="systemFont"?draft.readingFontSize:draft.listFontSize;
+else if(id=="systemFont") {
+    auto& value=draft.readingFontSize;
     const int safeValue=ClampSettingsFontSize(value);
+    int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32"}))value=kFontSteps[n];
+}
+else if(id=="listFont") {
+    auto& value=draft.listFontSize;
+    const int safeValue=std::clamp(value,10,kMaxListFontPx);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
     if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
 }
@@ -97,11 +103,11 @@ else if(id=="target") {
     ImGui::EndDisabled();
 }
 else if(id=="fade")ImGui::Checkbox("##value",&draft.fadeInOutEnabled);
-else if(id=="transportMono") {transportSwitch(draft.transportEffectVisibility.mono,editor.app.Baseline().transportEffectVisibility.mono,controlW);su::Observe("transportMono-control");}
-else if(id=="transportReverse") {transportSwitch(draft.transportEffectVisibility.reverse,editor.app.Baseline().transportEffectVisibility.reverse,controlW);su::Observe("transportReverse-control");}
-else if(id=="transportPan") {transportSwitch(draft.transportEffectVisibility.pan,editor.app.Baseline().transportEffectVisibility.pan,controlW);su::Observe("transportPan-control");}
-else if(id=="transportSoundstage") {transportSwitch(draft.transportEffectVisibility.soundstage,editor.app.Baseline().transportEffectVisibility.soundstage,controlW);su::Observe("transportSoundstage-control");}
-else if(id=="transportEQ") {transportSwitch(draft.transportEffectVisibility.eq,editor.app.Baseline().transportEffectVisibility.eq,controlW);su::Observe("transportEQ-control");}
+else if(id=="transportMono") {transportSwitch(draft.transportEffectVisibility.mono,controlW);su::Observe("transportMono-control");}
+else if(id=="transportReverse") {transportSwitch(draft.transportEffectVisibility.reverse,controlW);su::Observe("transportReverse-control");}
+else if(id=="transportPan") {transportSwitch(draft.transportEffectVisibility.pan,controlW);su::Observe("transportPan-control");}
+else if(id=="transportSoundstage") {transportSwitch(draft.transportEffectVisibility.soundstage,controlW);su::Observe("transportSoundstage-control");}
+else if(id=="transportEQ") {transportSwitch(draft.transportEffectVisibility.eq,controlW);su::Observe("transportEQ-control");}
 else if(id=="fadeMs") {ImGui::BeginDisabled(!draft.fadeInOutEnabled);ImGui::SliderInt("##value",&draft.fadeInOutMs,2,50,"%d ms",ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}
 else if(id=="period") {const int values[]{5,10,20,50};int n=1;for(int i=0;i<4;++i)if(values[i]==draft.audioPeriodSizeMs)n=i;if(combo(n,{"5 ms","10 ms","20 ms","50 ms"}))draft.audioPeriodSizeMs=values[n];ImGui::TextDisabled("%s",L(SetUX_AfterRestart));}
 else if(id=="skipSilence")ImGui::Checkbox("##value",&draft.skipLeadingSilence);

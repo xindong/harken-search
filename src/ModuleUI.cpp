@@ -196,6 +196,8 @@ void InitializeModules() {
 
 void RenderToolsMenu(AppState& state) {
     if (ImGui::BeginMenu(L(Menu_Tools))) {
+        // 工具菜单和其他下拉菜单共用菜单栏外壳；这里只接管菜单项颜色、行距和弹层阴影。
+        ThemeMenuPopupStyleScope menuChromeTools;
         ImGui::TextDisabled("%s", L(Module_CategoryTags));
         if (ImGui::MenuItem(L(Module_UCSBrowser))) {
             state.showUCSBrowser = true;
@@ -258,6 +260,7 @@ void RenderToolsMenu(AppState& state) {
             }
         }
 
+        menuChromeTools.reset();
         ImGui::EndMenu();
     }
 }

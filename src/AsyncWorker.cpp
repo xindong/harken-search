@@ -307,8 +307,8 @@ void WaveformWorker::stop() {
         std::lock_guard<std::mutex> lk(m_requestMutex);
         m_requestQueue.clear();
         m_requestSet.clear();
+        m_running.store(false);
     }
-    m_running.store(false);
     m_requestCv.notify_all();
     
     for (auto& t : m_threads) {

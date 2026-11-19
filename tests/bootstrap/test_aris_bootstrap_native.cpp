@@ -10,11 +10,13 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <string>
 
 #if defined(_WIN32)
 namespace aris::bootstrap {
+void SetBootstrapOldProcessCaptureCutForTesting(std::function<void()> cut);
 bool CaptureBootstrapParentIdentityForTesting(
     std::uintptr_t processHandle, BootstrapProcessIdentity& identity);
 }
@@ -176,6 +178,89 @@ void test_exact_old_process_wait_and_substitution() {
            denied.nativeError == ERROR_ACCESS_DENIED) ||
               denied.status == BootstrapProcessStatus::IdentityMismatch,
           "access denial is fail-closed and never classified as process absence");
+}
+
+void test_open_expected_snapshots_old_image_after_exit_during_capture() {
+    const auto fixture = sibling(L"aris_bootstrap_sleep_fixture.exe");
+    auto observer = CreateNativeBootstrapProcessPort();
+    check(!fixture.empty() && observer != nullptr,
+          "exit-during-capture fixture and native observer exist");
+    if (fixture.empty() || observer == nullptr) return;
+
+    for (const bool substituteImage : {false, true}) {
+        const auto sandbox = std::filesystem::current_path() /
+            ("aris-bootstrap-exit-during-capture-" +
+             std::to_string(GetCurrentProcessId()) + '-' +
+             std::to_string(GetTickCount64()) +
+             (substituteImage ? "-substituted" : "-original"));
+        std::error_code createError;
+        const bool created = std::filesystem::create_directory(sandbox, createError);
+        check(created && !createError, "exit-during-capture sandbox is created");
+        if (!created || createError) continue;
+
+        const auto oldImage = sandbox / L"Aris.exe";
+        const auto displacedImage = sandbox / L"Aris.displaced.exe";
+        BootstrapExecutableExpectation original;
+        DWORD hashError = ERROR_SUCCESS;
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION child{};
+        const bool launched =
+            CopyFileW(fixture.c_str(), oldImage.c_str(), TRUE) != FALSE &&
+            signedExpectation(oldImage, original, hashError) &&
+            CreateProcessW(oldImage.c_str(), nullptr, nullptr, nullptr, FALSE,
+                           CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr,
+                           sandbox.c_str(), &startup, &child) != FALSE;
+        check(launched, "old image is hashed and launched suspended");
+        if (launched) {
+            BootstrapProcessIdentity expected;
+            const bool identified = CaptureBootstrapParentIdentityForTesting(
+                reinterpret_cast<std::uintptr_t>(child.hProcess), expected);
+            check(identified, "old image identity is captured while the child is live");
+            if (identified) {
+                SetBootstrapOldProcessCaptureCutForTesting([&] {
+                    DWORD exitCode = 1U;
+                    const bool exited =
+                        ResumeThread(child.hThread) == 1U &&
+                        WaitForSingleObject(child.hProcess, 5000U) == WAIT_OBJECT_0 &&
+                        GetExitCodeProcess(child.hProcess, &exitCode) != FALSE &&
+                        exitCode == 0U;
+                    check(exited, "old child exits cleanly inside the capture cut");
+                    if (exited && substituteImage) {
+                        check(MoveFileExW(oldImage.c_str(), displacedImage.c_str(), 0) != FALSE &&
+                                  CopyFileW(fixture.c_str(), oldImage.c_str(), TRUE) != FALSE,
+                              "exact bytes at the same name get a different FileId");
+                    }
+                });
+                auto opened = observer->OpenExpected(expected);
+                SetBootstrapOldProcessCaptureCutForTesting({});
+                if (substituteImage) {
+                    check(opened.status == BootstrapProcessStatus::IdentityMismatch &&
+                              !opened.executable.valid(),
+                          "a substituted old image is rejected despite clean process exit");
+                } else {
+                    const WindowsFileIdentity exact{
+                        true, expected.imageVolumeSerial, expected.imageFileId};
+                    check(opened.status == BootstrapProcessStatus::NotFound &&
+                              opened.nativeError == ERROR_PROCESS_ABORTED &&
+                              !opened.process.valid() &&
+                              opened.executable.absolutePath == expected.imagePath &&
+                              opened.executable.exactFileIdentity == exact &&
+                              opened.executable.byteSize == original.byteSize &&
+                              opened.executable.sha256 == original.sha256,
+                          "exit during identity capture returns absence with the verified snapshot");
+                }
+                if (opened.process.valid()) observer->Close(opened.process);
+            }
+            if (WaitForSingleObject(child.hProcess, 0U) != WAIT_OBJECT_0) {
+                static_cast<void>(TerminateProcess(child.hProcess, 1U));
+                static_cast<void>(WaitForSingleObject(child.hProcess, 5000U));
+            }
+            CloseHandle(child.hThread);
+            CloseHandle(child.hProcess);
+        }
+        removeSandboxExactly(sandbox);
+    }
 }
 
 void test_open_expected_pins_old_image_snapshot_through_wait() {
@@ -1189,6 +1274,7 @@ void test_authenticated_channel_rejects_pipe_parent_substitution() {
 int main() {
 #if defined(_WIN32)
     test_exact_old_process_wait_and_substitution();
+    test_open_expected_snapshots_old_image_after_exit_during_capture();
     test_open_expected_pins_old_image_snapshot_through_wait();
     test_old_snapshot_rejects_byte_identical_fileid_substitution_before_resume();
     test_terminal_process_rebind_maps_signalled_handle_to_absence();

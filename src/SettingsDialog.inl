@@ -254,7 +254,7 @@
             const auto page=static_cast<su::Page>(i);
             ImGui::PushID(i);
             // Keep the painted row, text alignment and hit rectangle together.
-            if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();}
+            if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();editor.scrollToTop=true;}
             su::Observe(("nav-"+std::to_string(i)).c_str());
             const auto rowMin=ImGui::GetItemRectMin(),rowMax=ImGui::GetItemRectMax();
             const bool selected=editor.page==page,hovered=ImGui::IsItemHovered();
@@ -276,10 +276,15 @@
         }
         ImGui::PopStyleColor(4);ImGui::PopStyleVar(2);ImGui::EndChild();
         ImGui::SetCursorPos(ImVec2(contentX,18));
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K)) ImGui::SetKeyboardFocusHere();
-        ImGui::SetNextItemWidth(contentW-52);
-        HintAwareInputTextWithHint("##settings-search",L(SetUX_SearchSettingsCtrlK),editor.query,sizeof(editor.query)); su::Observe("search");
-        if(ImGui::IsItemActive())editor.recording=false;
+        const auto searchPalette = harken::toolbar::ResolveSearchPalette(
+            preview, preview.dialogBG, preview.frameBgBase, preview.interfaceText);
+        harken::toolbar::SearchFieldOptions searchOptions{};
+        searchOptions.requestFocus = ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_K);
+        searchOptions.minHeight = ImGui::GetFrameHeight();
+        const auto search = harken::toolbar::DrawSearchField("##settings-search", L(SetUX_SearchSettingsCtrlK),
+            editor.query, sizeof(editor.query), contentW-52, searchPalette, searchOptions);
+        su::Observe("search");
+        if (search.active) editor.recording=false;
         ImGui::SameLine();
         // Borderless close glyph, including hovered and pressed states.
         const auto xOrigin=ImGui::GetCursorScreenPos();
@@ -294,7 +299,8 @@
         // The modal already paints this surface. Painting its translucent
         // background again makes a dark rectangle during theme previews.
         ImGui::BeginChild("SettingsBody",ImVec2(contentW,winSize.y-headerH-footerH),false,ImGuiWindowFlags_NoBackground);
-        if(editor.previousPage!=editor.page || editor.previousSearching!=(editor.query[0]!=0))ImGui::SetScrollY(0);
+        if(editor.previousPage!=editor.page || editor.previousSearching!=(editor.query[0]!=0) || editor.scrollToTop)ImGui::SetScrollY(0);
+        editor.scrollToTop=false;
         editor.previousPage=editor.page;editor.previousSearching=editor.query[0]!=0;
         auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
         auto actionButton=[&](const char* label,const char* action){if(aura::ui::ActionButton(label))requestAction(action);};
@@ -326,12 +332,8 @@
             }
             ImGui::PopStyleVar();
         };
-        auto transportSwitch=[&](bool& visible,bool baselineVisible,float width){
+        auto transportSwitch=[&](bool& visible,float width){
             const auto origin=ImGui::GetCursorPos();
-            const char* status=!visible
-                ? (baselineVisible?L(SetUX_TransportBypassOnApply):L(SetUX_TransportBypassed))
-                : (!baselineVisible?L(SetUX_TransportRestoreOnApply):nullptr);
-            if(status)ImGui::TextDisabled("%s",status);
             ImGui::SetCursorPos(ImVec2(origin.x+std::max(0.f,width-44.f),origin.y));
             ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,ImVec4(0,0,0,0));
@@ -348,7 +350,7 @@
             if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
                 dl->AddRect(ImVec2(p.x-2,p.y-2),ImVec2(end.x+2,end.y+2),ImGui::GetColorU32(preview.controlAccent),14.f,0,2.f);
         };
-        auto drawEntry=[&](const su::Entry& entry){
+        auto drawEntry=[&](const su::Entry& entry,bool trailingSeparator=true){
             const auto& id=entry.id;
             if (!su::Available(entry,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection)) return;
             const float rowY=ImGui::GetCursorPosY(), rowX=ImGui::GetCursorPosX();
@@ -369,7 +371,7 @@
             ImGui::PopTextWrapPos();ImGui::EndGroup();
             su::Observe(id.c_str());
             const float bottom=std::max(labelBottom,ImGui::GetCursorPosY());
-            ImGui::SetCursorPos(ImVec2(rowX,std::max(rowY+42.f,bottom)));ImGui::Separator();
+            ImGui::SetCursorPos(ImVec2(rowX,std::max(rowY+42.f,bottom)));if(trailingSeparator)ImGui::Separator();
             ImGui::PopID();
         };
         const bool searching=editor.query[0]!=0;
@@ -397,12 +399,44 @@
                 }
             }else{
                 for(const auto& entry:su::Catalog())if(entry.page==editor.page && entry.group==0){
-                    if(editor.page==su::Page::Audio && entry.id=="transportMono"){
+                    if(entry.id=="transportMono"){
+                        const bool transportFocus = editor.focusId=="transportMono"||editor.focusId=="transportReverse"||editor.focusId=="transportPan"||editor.focusId=="transportSoundstage"||editor.focusId=="transportEQ";
+                        const auto isTransport=[](const std::string& id){
+                            return id=="transportMono"||id=="transportReverse"||id=="transportPan"||id=="transportSoundstage"||id=="transportEQ";
+                        };
                         ImGui::Dummy(ImVec2(0,12));
                         heading(L(SetUX_TransportEffectVisibility));
                         ImGui::TextWrapped("%s",L(SetUX_TransportEffectHint));
+                        ImGui::Dummy(ImVec2(0,2));
+                        if(transportFocus){ImGui::SetScrollHereY(.25f);editor.focusId.clear();}
+                        // The five switches read as one block: a slightly lighter
+                        // surface groups them without adding a border per row.
+                        auto* groupDraw=ImGui::GetWindowDrawList();
+                        groupDraw->ChannelsSplit(2);groupDraw->ChannelsSetCurrent(1);
+                        const ImVec2 groupMin=ImGui::GetCursorScreenPos();
+                        const float groupRight=groupMin.x+ImGui::GetContentRegionAvail().x;
+                        for(const auto& row:su::Catalog())
+                            if(row.page==editor.page&&isTransport(row.id))drawEntry(row,row.id!="transportEQ");
+                        const ImVec2 groupCursor=ImGui::GetCursorScreenPos();
+                        groupDraw->ChannelsSetCurrent(0);
+                        const ImVec4& groupBase=preview.dialogBG;
+                        const ImVec4& groupTint=preview.interfaceText;
+                        const ImVec4 groupFill(groupBase.x+(groupTint.x-groupBase.x)*.07f,groupBase.y+(groupTint.y-groupBase.y)*.07f,groupBase.z+(groupTint.z-groupBase.z)*.07f,1.f);
+                        // Bleed past the content column so the fill reads as a padded card,
+                        // but keep the body's vertical clipping: a short or scrolled body
+                        // must never paint the fill over the search row or footer.
+                        const ImVec2 bodyClipMin=groupDraw->GetClipRectMin();
+                        const ImVec2 bodyClipMax=groupDraw->GetClipRectMax();
+                        const ImVec2 groupFillMin(groupMin.x-14.f,groupMin.y-11.f);
+                        const ImVec2 groupFillMax(groupRight+14.f,groupCursor.y-2.f);
+                        ImGui::PushClipRect(ImVec2(groupMin.x-14.f,bodyClipMin.y),ImVec2(groupRight+14.f,bodyClipMax.y),false);
+                        groupDraw->AddRectFilled(groupFillMin,groupFillMax,ImGui::GetColorU32(groupFill),10.f);
+                        ImGui::PopClipRect();
+                        groupDraw->ChannelsMerge();
                         ImGui::Dummy(ImVec2(0,6));
+                        continue;
                     }
+                    if(entry.id=="transportReverse"||entry.id=="transportPan"||entry.id=="transportSoundstage"||entry.id=="transportEQ")continue;
                     drawEntry(entry);
                 }
                 for(int group=1;group<=6;++group){

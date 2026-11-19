@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct AppState;
@@ -26,6 +27,7 @@ struct PlaylistQuickBarReorderAnimState {
         bool initialized = false;
     };
     std::vector<Item> items;
+    std::unordered_map<int64_t, size_t> indexById;
 };
 
 struct PlaylistQuickDragState {

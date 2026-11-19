@@ -23,6 +23,7 @@ This directory is copied into the public release output and carries verbatim lic
 - `WebView2-LICENSE.txt` - Microsoft WebView2 SDK license
 - `WebView2-NOTICE.txt` - Microsoft WebView2 SDK notice bundle
 - `Lucide-LICENSE.txt` - Lucide upstream LICENSE (includes Feather-derived icon notice)
+- `Hugeicons-MIT.txt` - Hugeicons folder outlines used in the database tree
 - `DiceBear-MIT.txt` - DiceBear core/library MIT license
 - `CC0-1.0.txt` - Creative Commons CC0 1.0 text used for the shipped Lorelei Neutral avatar style
 - `miniaudio-LICENSE.txt` - miniaudio Public Domain / MIT-0 (dual-license)

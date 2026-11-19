@@ -1,4 +1,4 @@
-﻿#include <filesystem>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -117,6 +117,21 @@ void RequireCleanupDrainUnconditional(const std::string& windowsMain) {
         }
     }
 }
+
+void RequireWaveformStopWakesIdleWorkers(const std::string& asyncWorker) {
+    const std::string stop = SliceAfter(asyncWorker, "void WaveformWorker::stop()", 1000);
+    const size_t lock = stop.find("std::lock_guard<std::mutex> lk(m_requestMutex);");
+    const size_t publish = stop.find("m_running.store(false");
+    const size_t unlock = stop.find("\n    }", lock);
+    const size_t notify = stop.find("m_requestCv.notify_all();");
+    const size_t join = stop.find("t.join()");
+    if (!(lock < publish && publish < unlock && unlock < notify &&
+          notify < join && join != std::string::npos)) {
+        std::cerr << "Waveform shutdown must publish stop under the request mutex "
+                     "before notifying and joining the idle workers\n";
+        std::exit(1);
+    }
+}
 } // namespace
 
 int main() {
@@ -152,6 +167,15 @@ int main() {
     RequireContains(closeBlock, "RequestHarkenSearchExit(hwnd, L\"close-button-direct\")", "direct close action exits through helper");
     RequireContains(closeBlock, "MinimizeWindowNoAnimation(hwnd);", "minimize-to-tray preference remains available for close button only");
 
+    const std::string splashBlock = SliceAfter(windowsMain, "static void RunBetaSplashScreen", 12000);
+    RequireContains(splashBlock, "g_explicitExitRequested.load", "beta splash observes startup exit request");
+    RequireContains(splashBlock, "StartupExitRequestedDuringSplash", "beta splash aborts before finalize");
+    const std::string webUiLoading = SliceAfter(windowsMain, "static void RunWebView2LoadingScreen", 12000);
+    RequireContains(webUiLoading, "g_explicitExitRequested.load", "web loading observes startup exit request");
+    RequireContains(webUiLoading, "StartupExitRequestedDuringWebUiLoading", "web loading aborts before finalize");
+    const std::string startupGate = SliceAfter(windowsMain, "if (!bypassStartupLoadingGate && useBetaSplashFallback)", 5000);
+    RequireContains(startupGate, "StartupExitRequestedBeforeMainUi", "startup gate returns before main UI");
+
     RequireContains(mainCpp, "RequestHarkenSearchExit(g_hwnd, L\"close-choice-exit\")", "close-choice Exit uses helper");
     RequireContains(mainCpp, "RequestHarkenSearchExit(g_hwnd, L\"file-menu-exit\")", "File Exit uses helper");
 
@@ -164,6 +188,7 @@ int main() {
     RequireContains(windowsMain, "logShutdownStage(\"Complete\")", "shutdown complete marker");
 
     RequireCleanupDrainUnconditional(windowsMain);
+    RequireWaveformStopWakesIdleWorkers(ReadText(root / "src" / "AsyncWorker.cpp"));
 
     std::cout << "Shutdown exit contract passed\n";
     return 0;

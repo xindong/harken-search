@@ -385,6 +385,7 @@ REVIEWED_CONTRACTS = {
     "src/MiniWaveformRender.h": "tests/test_stage7_platform_contract.py",
     "src/MiniWaveformScheduler.h": "tests/test_stage7_platform_contract.py",
     "src/PlaylistFolderTree.h": "tests/test_stage7_platform_contract.py",
+    "src/PlaylistCollectionIndex.h": "tests/test_playlist_performance_contract.cpp",
     "src/PlaylistDisplayedFileCountPolicy.h": "tests/test_playlist_displayed_file_count_policy_boundary.py",
     "src/PlaylistQuickBarMotion.h": "tests/test_stage7_platform_contract.py",
     "src/SelectedWaveformRebuildQueue.h": "tests/test_stage7_platform_contract.py",
@@ -411,6 +412,7 @@ REVIEWED_CONTRACTS = {
     "src/ScanDialogPresentation.h": "tests/test_scan_dialog_presentation.cpp",
     "src/ScanFailureClassification.h": "tests/test_scan_dialog_presentation.cpp",
     "src/SettingsCatalog.h": "tests/test_preference_draft.cpp",
+    "src/SimilarityIndexCountState.h": "tests/test_similarity_index_count_state.cpp",
     "src/SettingsFileWriter.h": "tests/test_settings_file_atomic_save.cpp",
     "src/SidebarMetadataPicker.h": "tests/test_sidebar_metadata_picker.cpp",
 }

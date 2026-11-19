@@ -207,6 +207,16 @@ def test_only_four_non_dark_builtins_restore_pre_workspace_semantic_surfaces():
     assert "workspacePalette.functionalAccent" in main
 
 
+def test_docked_panels_begin_below_the_rendered_toolbar():
+    main = read(MAIN_CPP)
+    toolbar = between(main, 'BeginTransientScrollbarChild("Toolbar"', "// MAIN CONTENT AREA")
+    assert "toolbarBottomY = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y" in toolbar
+    assert "dockColumnTop = toolbarBottomY" in main
+    for host in ("LeftDockColumn", "RightDockColumn"):
+        child = between(main, f'"{host}",', ");")
+        assert "ImGuiWindowFlags_NoBackground" in child
+
+
 def test_shipping_dock_shell_has_one_perimeter_owner_and_no_decorative_layers():
     main = read(MAIN_CPP)
     title_bar = between(main, "auto drawDockTitleBar", "struct DockModuleShellLayout")
@@ -299,6 +309,8 @@ def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
     assert names
     for name in set(names):
         assert main.count(f"PopStyleColor({name})") == names.count(name)
+    assert main.count("const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) : PushFileInfoShellStyle(theme);") == 1
+    assert main.count("PopStyleColor(dockGroupStyleCount)") == 1
     waveform = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "// FLOATING PANELS")
     assert "ThemeColors::waveformPanelBG(waveformShellTheme)" in waveform
     assert "const ImVec4 waveShellEdge = workspacePalette.perimeter" in waveform
@@ -309,16 +321,14 @@ def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
 
 def test_top_toolbar_search_respects_reserved_width_for_navigation():
     main = read(MAIN_CPP)
-    search_adapter = between(main, "static bool DrawUnifiedSearchInput(", "// Renders [optional search field]")
+    search = between(main, "const bool historyAfterSearch", "float navCapsuleScreenX")
 
-    # The toolbar reserves room for the six navigation actions.  The shared
-    # TextInput adapter must consume the caller's width; otherwise it expands
-    # to the entire child and forces the navigation capsule into icon-only mode.
-    assert "float width = 0.0f" in search_adapter
-    assert "options.width = width" in search_adapter
-    assert "DrawUnifiedSearchInput(\"##SearchBar\"" in main
-    assert "searchInputW" in main
-    assert "state.searchBuffer, sizeof(state.searchBuffer), searchFlags, searchInputW" in main
+    assert "toolbarResultsRightScreenX - resultsHomeLeftScreenX" in search
+    assert "historyReserveW - presetDialReserveW - toolbarDialRightInset - toolbarNavMinGap" in search
+    assert "spaceAfterAnchor - compactNavWidth, searchMinW, searchMaxW" in search
+    assert "spaceAfterAnchor - navReserveW, searchMinW, searchFitMaxW" in search
+    assert 'DrawSearchField("##SearchBar"' in search
+    assert "searchRectMax.x + historyReserveW" in search
 
 
 def test_results_content_edge_is_compact_and_tab_labels_reject_settings_payloads():
@@ -329,14 +339,9 @@ def test_results_content_edge_is_compact_and_tab_labels_reject_settings_payloads
 
     # Tabs, breadcrumb/path, table header and rows share one compact content
     # origin instead of the previous 20 px left moat.
-    assert (
-        "kResultsContentInsetX = "
-        "aura::ui::workspace::kCoreWorkspaceMetrics.space4"
-    ) in center
-    assert (
-        "ImGuiStyleVar_WindowPadding, "
-        "ImVec2(kResultsContentInsetX, 2.0f)"
-    ) in center
+    layout = read(ROOT / "src" / "ui" / "ResultsPanelLayout.h")
+    assert "kContentInsetX = aura::ui::workspace::kCoreWorkspaceMetrics.space8" in layout
+    assert "ImGuiStyleVar_WindowPadding, ImVec2(harken::results::kContentInsetX, 0.0f)" in center
     assert "ImVec2(20.0f, 2.0f)" not in center
     assert "constexpr float kBreadcrumbLabelIndentX = 0.0f" in center
 
@@ -387,18 +392,14 @@ def test_all_resize_handles_share_the_three_dot_grip_logic():
 
 def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
     main = read(MAIN_CPP)
-    toolbar_search = between(
-        main,
-        "const bool kUseLapisBlueSearchChrome",
-        "auto drawToolbarChromeShell",
-    )
+    controls = read(MAIN_CPP.parent / "ui" / "ToolbarSearchControls.h")
+    toolbar_palette = between(controls, "inline Palette ResolveSearchPalette", "struct SearchFieldResult")
 
-    assert "kUseLapisBlueSearchChrome" in main
-    assert "toolbarTheme.historyCapsuleBG" in toolbar_search
-    assert "toolbarTheme.toolbarAccent" in toolbar_search
-    assert "toolbarTheme.controlAccent" in toolbar_search
-    assert "toolbarTheme.chromeBorder" in toolbar_search
-    assert "uiMix(toolbarTheme.toolbarBG, kCurrentTheme.resultsBG" not in toolbar_search
+    assert "toolbarTheme = ThemeColors::current()" in main
+    assert "toolbarTheme, toolbarTheme.toolbarBG, toolbarTheme.frameBgBase, toolbarTheme.interfaceText" in main
+    for token in ("toolbarAccent", "controlAccent", "searchButtonBG", "resultsSelection"):
+        assert f"theme.{token}" in toolbar_palette
+    assert "AppTheme::" not in toolbar_palette and "IM_COL32" not in toolbar_palette
     builtin = read(BUILTIN_THEME_CPP)
     assert "s.transportBarBG         = H(0xff223a52)" in builtin
     assert "s.transportBarBG         = H(0xff000000)" not in builtin
@@ -475,7 +476,7 @@ def test_results_frame_has_one_complete_rounded_two_pixel_waveform_color_owner()
     assert "const ImVec4 centerResultsOutline = centerResultsTheme.waveformColor;" in center_setup
     assert "const ImVec4 centerResultsOutline = workspacePalette.perimeter;" not in center_setup
     assert "ImGuiStyleVar_ChildBorderSize" not in center_setup
-    assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), false,' in center_setup
+    assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), ImGuiChildFlags_AlwaysUseWindowPadding,' in center_setup
     assert center_setup.count("centerResultsDrawList->AddRect(") == 1
     assert "ImGui::GetForegroundDrawList(ImGui::GetMainViewport())" not in center_setup
     assert center_setup.index("centerResultsDrawList->PushClipRectFullScreen();") < center_setup.index("centerResultsDrawList->AddRect(")
@@ -501,31 +502,39 @@ def test_results_frame_uses_the_table_layer_even_when_browser_has_no_rows():
     assert "ImDrawList* centerResultsDrawList = nullptr;" in center_setup
     assert "centerResultsDrawList = ImGui::GetWindowDrawList();" in center_setup
     assert center_setup.count("centerResultsDrawList = ImGui::GetWindowDrawList();") >= 2
-    assert center_setup.index('if (BeginTransientScrollbarTable("FileTableV6"') < center_setup.rindex("centerResultsDrawList = ImGui::GetWindowDrawList();")
+    assert center_setup.index("if (BeginTransientScrollbarTable(resultsTableName,") < center_setup.rindex("centerResultsDrawList = ImGui::GetWindowDrawList();")
     assert center_setup.index("ImGui::EndTable();") < center_setup.index("centerResultsDrawList->AddRect(")
     assert "ImGui::GetForegroundDrawList(ImGui::GetMainViewport())" not in center_setup
     assert "centerResultsDrawList->AddRect(" in center_setup
 
 
-def test_lapis_folder_search_inherits_sidebar_semantic_colors_in_both_views():
+def test_default_docked_results_match_the_side_shell_vertical_insets():
     main = read(MAIN_CPP)
-    widgets_header = read(AURO_WIDGETS_HEADER)
-    widgets_source = read(AURO_WIDGETS_SOURCE)
-    toolbar = between(main, "static void RenderFolderTreeExplorerToolbar", "static void RenderFolderTreeExplorerList")
-    browser_search = between(main, "RenderFolderTreeExplorerToolbar(\n                browserSource.searchId", "RunBrowserSystemFolderSearchIfNeeded")
-    database_search = between(main, "const bool useLapisBlueFolderSearchSurface", "[]() {}")
+    home_results = between(main, "renderLeftColumn(renderDockTabsInShell);", "// Right Column - File Info")
+    assert re.search(
+        r"ImGui::SetCursorScreenPos\(ImVec2\(resultsHomePos\.x,\s*"
+        r"resultsHomePos\.y \+ kDockShellVerticalInset\)\);\s*"
+        r"renderResultsSurface\(centerWidth,\s*availHeight - 2\.0f \* kDockShellVerticalInset\);",
+        home_results,
+    ), "The default results child must inset both vertical edges, not just its drawn frame."
 
-    assert "bool inheritContextColors = false;" in widgets_header
-    assert "opts.inheritContextColors" in widgets_source
-    for color in ("FrameBg", "FrameBgHovered", "FrameBgActive", "Border", "Text"):
-        assert f"ImGuiCol_{color}" in widgets_source
-    assert "const bool useLapisBlueFolderSearchSurface = state.settings.theme == AppTheme::LapisBlue;" in database_search
-    assert "useLapisBlueFolderSearchSurface" in database_search
-    assert "useLapisBlueFolderSearchSurface" not in browser_search
-    assert main.count("useLapisBlueFolderSearchSurface") == 2
-    assert "inheritContextColors);" in toolbar
-    assert "state.settings.theme == AppTheme::LapisBlue,\n                false," in browser_search
-    assert "useLapisBlueFolderSearchSurface,\n                true," in database_search
+    shell_layout = between(main, "struct DockModuleShellLayout", "auto drawDockModuleShell")
+    assert "constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;" in main
+    assert "float insetT = kDockShellVerticalInset;" in shell_layout
+    assert "float insetB = kDockShellVerticalInset;" in shell_layout
+    home_slot = between(main, "const aura::ui::dock::DockRect resultsHomeRect{", "};")
+    assert "resultsHomePos.x, resultsHomePos.y, centerWidth, availHeight" in home_slot
+
+
+def test_folder_search_inherits_sidebar_semantic_colors_in_both_views():
+    main = read(MAIN_CPP)
+    toolbar = between(main, "static void RenderFolderTreeExplorerToolbar", "static void RenderFolderTreeExplorerList")
+    assert "ResolveSearchPalette(ThemeColors::current()," in toolbar
+    for color in ("ChildBg", "FrameBg", "Text"):
+        assert f"ImGui::GetStyleColorVec4(ImGuiCol_{color})" in toolbar
+    assert "harken::toolbar::DrawSearchField(" in toolbar
+    assert "browserSource.searchId,\n                L(Filter_SearchFolder)" in main
+    assert "databaseSource.searchId,\n                L(Filter_SearchFolder)" in main
     assert "ImGuiCol_FrameBg,              leftPanelInput" in main
     assert "ImGuiCol_Border,               leftPanelOutline" in main
     assert "ImGuiCol_Text,                 leftPanelText" in main
@@ -538,7 +547,8 @@ def test_folder_tree_search_preserves_refresh_and_locate_action_width():
 
     assert "kSameLine + kRefreshW + kBtnGap + kLocateW + 2.0f" in toolbar
     assert "ImGui::GetContentRegionAvail().x - searchReserve" in toolbar
-    assert "searchWidth,\n        inheritContextColors);" in toolbar
+    assert "searchBufSize, searchWidth, palette);" in toolbar
+    assert "search.cleared" in toolbar and "onSearchEscape();" in toolbar
     assert "SidebarRefreshGlyphButton(refreshId, ImVec2(kRefreshW, 22.0f), refreshBusy)" in toolbar
     assert "ImGui::InvisibleButton(locateId, ImVec2(btnSize, btnSize))" in toolbar
     assert "ImGui::SetNextItemWidth(-searchReserve)" not in toolbar
@@ -598,10 +608,63 @@ def test_lapis_secondary_results_text_stays_readable_on_navy_surface():
     assert "s.resultsSecondaryText   = H(0xffd7e3ef);" in read(BUILTIN_THEME_CPP)
 
 
-def test_top_menu_dropdowns_use_one_chrome_font_scope():
+def test_system_menu_font_keeps_141_proportional_mapping():
+    settings = read(ROOT / "src" / "AppState.h")
+    windows = read(ROOT / "src" / "WindowsMain.cpp")
+    mapping = " ".join(between(windows, "float GetMenuFontSizePx()", "ImFont* GetMenuUIFont()").split())
+    assert "kChromeFontPx = 14;" in settings
+    assert "kDefaultReadingFontPx = 18;" in settings
+    assert "kMaxReadingFontPx = 32;" in settings
+    assert "g_readingRegular ? g_readingRegular->LegacySize : (float)kDefaultReadingFontPx" in mapping
+    assert "(float)kChromeFontPx * (readingPx / (float)kDefaultReadingFontPx)" in mapping
+    assert "return std::clamp(std::round(scaled), (float)kChromeFontPx, (float)kMaxReadingFontPx);" in mapping
+
+
+def test_top_menu_uses_the_system_font_scope():
     main = read(MAIN_CPP)
-    assert "ReadingTextScope _readingMenu" not in main
-    assert main.count("ChromeTextScope _readingMenu") == 8
+    theme = read(THEME_CPP)
+    windows = read(ROOT / "src" / "WindowsMain.cpp")
+    header = between(main, "// TOP MENU BAR", "// TOP TOOLBAR")
+    host = between(header, "const float baseMenuFontPx", "ImGui::BeginMainMenuBar()")
+    bar = between(header, "if (ImGui::BeginMainMenuBar())", "ImGui::EndMainMenuBar();")
+    assert "ImGuiWindowFlags_MenuBar" not in header
+    assert "const float baseMenuFontPx = GetMenuFontSizePx();" in host
+    assert "baseMenuFontPx == kChromeFontPx ? minMenuBarFontPx : baseMenuFontPx" in host
+    assert "std::max(static_cast<float>(kChromeFontPx), menuBarFontPx) * menuScale" in host
+    assert "ImGui::PushFont(menuFont, GetMenuChromeFontPushSize(menuFont, hostFontPx));" in host
+    assert "ThemeMenuBarStyleScope menuBarChrome(menuFont, menuBarFontPx);" in bar
+    assert "ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);" in bar
+
+    for title in ("File", "Edit", "View", "Database", "Playlist", "Tools", "Settings", "Help"):
+        popup = between(bar, f"ImGui::BeginMenu(L(Menu_{title}))", f"menuChrome{title}.reset();")
+        assert f"ThemeMenuPopupStyleScope menuChrome{title}(GetUIFontRegular());" in popup
+    assert re.search(r"\b(?:ReadingTextScope|MenuTextScope)\s+\w+", bar) is None
+    chrome_scope = between(windows, "ChromeTextScope::ChromeTextScope()", "ChromeTextScope::~ChromeTextScope()")
+    assert re.search(r"if \(!InMenuChromeScope\(\)\)\s*\{\s*ImGui::PushFont\(g_uiFontRegular\);", chrome_scope)
+
+    bar_style = between(theme, "ThemeMenuBarStyleScope::ThemeMenuBarStyleScope", "void ThemeMenuBarStyleScope::reset")
+    assert "const float desiredTextPx = textSizePx * scale;" in bar_style
+    assert re.search(r"PushMenuTextFont\(textFont,[^;]*desiredTextPx[^;]*\);", bar_style)
+    popup_style = between(theme, "ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope",
+                          "ThemeMenuPopupShellScope::ThemeMenuPopupShellScope")
+    assert "const float textSizePx = s_menuPopupTextSizePx;" in popup_style
+    assert "PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), textSizePx * scale, m_pushedFont);" in popup_style
+    popup_shell = between(theme, "ThemeMenuPopupShellScope::ThemeMenuPopupShellScope",
+                          "bool ThemeMenuPopupShellScope::beginContextItem")
+    assert "m_textSizePx(std::max(kMenuPopupMinTextPx, textSizePx))" in popup_shell
+    assert "s_menuPopupTextSizePx = m_textSizePx;" in popup_shell
+
+
+def test_appended_tools_menu_keeps_the_system_popup_font_scope():
+    main = read(MAIN_CPP)
+    shared_shell = between(main, "ThemeMenuPopupShellScope menuPopupShell(true, baseMenuFontPx);", "menuPopupShell.reset();")
+    assert "RenderToolsMenu(state);" in shared_shell
+    module = read(ROOT / "src" / "ModuleUI.cpp")
+    tools = between(module, "void RenderToolsMenu(AppState& state)", "// 1)")
+    assert tools.index("ImGui::BeginMenu(L(Menu_Tools))") < tools.index("ThemeMenuPopupStyleScope menuChromeTools;")
+    assert tools.index("ThemeMenuPopupStyleScope menuChromeTools;") < tools.index("ImGui::MenuItem(")
+    assert re.search(r"menuChromeTools\.reset\(\);\s*ImGui::EndMenu\(\);", tools)
+    assert re.search(r"\b(?:ReadingTextScope|MenuTextScope)\s+\w+", tools) is None
 
 
 def test_results_file_path_column_fills_trailing_width():
@@ -698,10 +761,13 @@ def test_primary_search_uses_the_scoped_toolbar_input_material():
     main = read(MAIN_CPP)
     toolbar = between(main, "// TOP TOOLBAR - Search and Buttons", "// MAIN CONTENT AREA")
 
-    # The toolbar already establishes the search shell colors. The reusable
-    # TextInput must consume that scoped palette instead of replacing it with
-    # the global frame background.
-    assert "state.searchBuffer, sizeof(state.searchBuffer), searchFlags, searchInputW, true);" in toolbar
+    call = between(toolbar, 'DrawSearchField("##SearchBar"', "inputReturn = search.submitted")
+    assert "toolbarSearchPalette, harken::toolbar::SearchFieldOptions{" in call
+    assert "true, state.searchExactModeLocked, searchFocusRequested" in call
+    controls = read(MAIN_CPP.parent / "ui" / "ToolbarSearchControls.h")
+    material = between(controls, "inline SearchFieldResult DrawSearchField(", "const auto iconPressed")
+    assert "AddRectFilled(start, end, ImGui::GetColorU32(palette.searchFill)" in material
+    assert "ImGuiCol_FrameBg, transparent" in controls
 
 
 def test_preset_dial_has_shadow_without_a_perimeter_card():
@@ -829,7 +895,7 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert '"##RelatedPathsBox"' in between(main, 'static ExplorerSource DatabaseExplorerSource()', 'static void RenderRelatedPathsExplorerPane(')
     related_pane = between(main, 'static void RenderRelatedPathsExplorerPane(', 'renderRows();')
     assert re.search(r'BeginTransientScrollbarChild\(\s*childId,', related_pane)
-    assert 'BeginTransientScrollbarTable("FileTableV6"' in main
+    assert "BeginTransientScrollbarTable(resultsTableName," in main
     assert "reportInteraction(ImGui::GetTime())" not in main
 
     vertical_splitter = between(
@@ -853,10 +919,10 @@ def test_browser_cover_column_width_keeps_localized_header_visible():
 
     assert "const float coverHeaderMinW" in cover_column
     assert "ImGui::CalcTextSize(L(Col_Cover)).x" in cover_column
-    assert "ImGui::GetStyle().CellPadding.x * 2.0f" in cover_column
+    assert "fileTableStyle.CellPadding.x * 2.0f" in cover_column
     assert "ImGui::GetFontSize()" in cover_column
-    assert "const float coverColW = std::max(" in cover_column
-    assert "(float)state.settings.rowHeight + kCoverColumnExtra" in cover_column
+    assert "const float coverColW = coverColumnCount ? (std::max)(" in cover_column
+    assert "static_cast<float>(state.settings.rowHeight) + kCoverColumnExtra" in cover_column
     assert "coverHeaderMinW" in cover_column
     assert "ImGuiTableColumnFlags_NoResize" in cover_column
 
@@ -912,37 +978,32 @@ def test_playlist_quickbar_blank_space_is_not_an_invisible_hide_button():
     assert "SetPlaylistQuickBarVisible(state, !state.settings.showPlaylistQuickBar)" in main
 
 
-def test_primary_search_uses_native_caret_without_custom_overlay():
+def test_primary_search_has_a_static_theme_focus_ring_across_the_capsule():
+    controls = read(MAIN_CPP.parent / "ui" / "ToolbarSearchControls.h")
+    ring = between(controls, "if (result.focused)", "const auto iconSurface")
+
+    assert "draw->AddRect(" in ring
+    assert "GetClipRectMin()" in ring and "GetClipRectMax()" in ring
+    assert "start.x - outset" in ring and "end.x + outset" in ring
+    assert "ImGui::GetColorU32(palette.focus)" in ring
+    assert "GetTime" not in ring and "sinf" not in ring
+
+
+def test_primary_search_shares_the_results_left_edge():
     main = read(MAIN_CPP)
-    search = between(main, 'DrawUnifiedSearchInput("##SearchBar"', 'ImGui::PopStyleColor(colorPushes);')
+    layout = between(main, "const float leftDockColumnWidth", "// Right Column - File Info")
 
-    assert "Draw the custom breathing caret" not in search
-    assert "AddRectFilled" not in search
-
-
-def test_primary_search_focus_breathes_across_entire_input_shell():
-    main = read(MAIN_CPP)
-    search = between(
-        main,
-        '// Draw the focused search shell breathing feedback.',
-        'ImGui::PopStyleColor(colorPushes);',
-    )
-
-    assert "if (searchFocused)" in search
-    assert "0.5f + 0.5f * sinf" in search
-    assert "searchRectMin" in search
-    assert "searchRectMax" in search
-    assert "dl->AddRect(" in search
-    assert "focusPulse" in search
-    assert "kCurrentTheme.controlAccent" in search
-    assert "kUseLightSoftChromeTheme" not in search
+    assert "const float resultsHomeLeftScreenX" in layout
+    assert "ImVec2(resultsHomeLeftScreenX, searchY)" in layout
+    assert "ImVec2(resultsHomeLeftScreenX, dockContentTop)" in layout
+    assert "historySlotWidth" not in layout
 
 
 def test_database_tabs_restore_scroll_after_table_extent_is_known():
     main = read(MAIN_CPP)
     table = between(
         main,
-        'if (BeginTransientScrollbarTable("FileTableV6"',
+        "if (BeginTransientScrollbarTable(resultsTableName,",
         'ImGui::EndTable();',
     )
 

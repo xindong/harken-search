@@ -52,7 +52,7 @@ def run(args):
     def check(label,**details):report['checks'].append(dict(case=label,**details));print(label,flush=True)
     def start():
         nonlocal process,identity,verified
-        verified=False;process,pid=desktop.start(exe)
+        verified=False;process,pid=desktop.start(exe,environment_overrides={'AURA_RUNTIME_ROOT':str(root/'profile/runtime')})
         identity=cmd(cmd='magic_eq_identity')
         assert identity['pid']==pid and Path(identity['exe_path']).resolve()==exe and Path(identity['isolation_root']).resolve()==root
         verified=True

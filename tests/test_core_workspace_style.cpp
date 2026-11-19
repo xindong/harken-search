@@ -1,5 +1,7 @@
+#include "TransientScrollbarHost.h"
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/ModuleWindowShell.h"
+#include "ui/ResultsPanelLayout.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -8,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
+#include <string>
 
 namespace {
 
@@ -245,10 +248,10 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
     input.presetDialGap = 12.0f;
     input.navLeadingInset = 3.0f;
     input.navTrailingInset = 3.0f;
-    input.expandedItemWidths = {90.0f, 78.0f, 82.0f, 62.0f, 62.0f, 28.0f};
+    input.expandedItemWidths = {90.0f, 78.0f, 82.0f, 30.0f, 30.0f, 28.0f};
     input.compactItemWidths = {30.0f, 30.0f, 30.0f, 30.0f, 30.0f, 28.0f};
     input.itemGaps = {2.0f, 2.0f, 2.0f, 2.0f, 13.0f};
-    input.minimumVisibleItems = 4;
+    input.minimumVisibleItems = 3;
 
     const ToolbarFlowLayout wide = ResolveToolbarFlowLayout(input);
     CheckToolbarFlowGeometry(wide, input.presetDialGap,
@@ -256,6 +259,11 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
     Check(!wide.compact, "1600 px toolbar preserves navigation labels");
     Check(wide.visibleItemCount == kToolbarFlowItemCount,
           "1600 px toolbar keeps navigation and all actions visible");
+    for (std::size_t actionIndex : {3u, 4u}) {
+        const auto& slot = wide.itemSlots[actionIndex];
+        Check(Near(slot.maxX - slot.minX, input.compactItemWidths[actionIndex]),
+              "expanded navigation keeps the Scan and Refresh hit areas icon-sized");
+    }
 
     input.toolbarMaxX = 1270.0f;
     input.navMinX = 650.0f;
@@ -269,14 +277,49 @@ void TestToolbarFlowLayoutKeepsPresetDialSeparate() {
 
     input.toolbarMinX = 0.0f;
     input.toolbarMaxX = 600.0f;
-    input.navMinX = 280.0f;
-    input.navPreferredX = 280.0f;
+    input.navMinX = 213.0f;
+    input.navPreferredX = 213.0f;
     const ToolbarFlowLayout narrow = ResolveToolbarFlowLayout(input);
     CheckToolbarFlowGeometry(narrow, input.presetDialGap,
                              "narrow toolbar resolves a valid navigation flow");
     Check(narrow.compact, "narrow toolbar uses icon-only navigation");
-    Check(narrow.visibleItemCount == input.minimumVisibleItems,
-          "narrow toolbar hides secondary actions before hiding the preset dial");
+    Check(narrow.visibleItemCount == kToolbarFlowItemCount,
+          "a tight compact fit keeps Scan, Refresh and rightmost Shuffle visible");
+    Check(narrow.itemSlots[3].maxX < narrow.itemSlots[4].minX &&
+          narrow.itemSlots[4].maxX < narrow.itemSlots[5].minX,
+          "Scan, Refresh and Shuffle keep separate hit areas in compact mode");
+
+    input.navMinX = 250.0f;
+    const ToolbarFlowLayout overflow = ResolveToolbarFlowLayout(input);
+    CheckToolbarFlowGeometry(overflow, input.presetDialGap,
+                             "toolbar still fits when only five slots are available");
+    Check(overflow.itemSlots[3].visible && overflow.itemSlots[4].visible &&
+          !overflow.itemSlots[5].visible,
+          "overflow drops rightmost Shuffle before either Scan or Refresh");
+
+    // 132..164 px：五个图标放不下、四个刚好放得下。这里以前直接返回无效布局，
+    // 整组导航（三个视图入口 + 扫描 + 刷新）全部消失。
+    input.rightInset = 0.0f;
+    input.presetDialWidth = 0.0f;
+    input.presetDialGap = 0.0f;
+    input.toolbarMaxX = 140.0f;
+    input.navMinX = 0.0f;
+    input.navPreferredX = 0.0f;
+    const ToolbarFlowLayout iconBand = ResolveToolbarFlowLayout(input);
+    Check(iconBand.valid && SlotInside(iconBand.navCapsule, iconBand.toolbarClip),
+          "one-icon-short toolbar still resolves a navigation capsule");
+    Check(iconBand.navCapsule.visible && iconBand.visibleItemCount == 4,
+          "toolbar short of five icons keeps four instead of hiding navigation");
+    Check(iconBand.itemSlots[3].visible && !iconBand.itemSlots[4].visible,
+          "the missing icon is dropped from the right, not the whole group");
+
+    // 再窄也只能让到三个视图入口。
+    input.toolbarMaxX = 120.0f;
+    const ToolbarFlowLayout viewsOnly = ResolveToolbarFlowLayout(input);
+    Check(viewsOnly.valid && SlotInside(viewsOnly.navCapsule, viewsOnly.toolbarClip),
+          "two-icon-short toolbar still resolves a navigation capsule");
+    Check(viewsOnly.navCapsule.visible && viewsOnly.visibleItemCount == 3,
+          "extreme width floor keeps the three view entries instead of an empty toolbar");
 }
 
 void TestTransientScrollbarVisibilityPolicy() {
@@ -523,6 +566,163 @@ void TestModuleShellScopeBalancesBeginEndAndStyles() {
     ImGui::DestroyContext();
 }
 
+void CreateResultsTestContext() {
+    ImGui::CreateContext();
+    auto& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(800.0f, 600.0f);
+    io.IniFilename = nullptr;
+    unsigned char* pixels = nullptr;
+    int atlasWidth = 0;
+    int atlasHeight = 0;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &atlasWidth, &atlasHeight);
+}
+
+void BeginResultsTestFrame(float panelWidth) {
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f));
+    ImGui::SetNextWindowSize(ImVec2(770.0f, 400.0f));
+    ImGui::Begin("ResultsLayoutTestHost");
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(harken::results::kContentInsetX, 0.0f));
+    const bool visible = BeginTransientScrollbarChild(
+        "CenterFileList", ImVec2(panelWidth, 220.0f), ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    Check(visible, "Results content child is visible");
+}
+
+void EndResultsTestFrame() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::End();
+    ImGui::EndFrame();
+}
+
+void TestResultsPanelPaddingAndBrowserPathAlignment() {
+    using namespace harken::results;
+    CreateResultsTestContext();
+    for (const float panelWidth : {200.0f, 360.0f, 720.0f}) {
+        for (const bool empty : {false, true}) {
+            BeginResultsTestFrame(panelWidth);
+            const ImGuiWindow* panel = ImGui::GetCurrentWindow();
+            const float left = ImGui::GetCursorScreenPos().x;
+            const float right = left + ImGui::GetContentRegionAvail().x;
+            Check(Near(left - panel->Pos.x, kContentInsetX) &&
+                  Near(panel->Pos.x + panel->Size.x - right, kContentInsetX),
+                  "Results child honors equal real left and right padding");
+            Check(Near(panel->WindowBorderSize, 0.0f),
+                  "Results child does not add a border to enable padding");
+
+            AlignBrowserPathLabel(empty);
+            ImGui::TextUnformatted("Path:");
+            const ImVec2 labelPos = ImGui::GetItemRectMin();
+            ImGui::SameLine();
+            ImGui::Button("Parent");
+            Check(Near(labelPos.y, ImGui::GetItemRectMin().y + ImGui::GetStyle().FramePadding.y),
+                  "path label baseline matches the parent button text");
+
+            const bool visible = BeginTransientScrollbarTable(TableName(true), 2,
+                TableOuterFlags(empty) | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX);
+            Check(visible, "empty and populated Results tables render at narrow and wide widths");
+            if (visible) {
+                ImGui::TableSetupColumn("File name", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                ImGui::TableSetupColumn("Waveform", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                ImGui::TableHeadersRow();
+                if (!empty) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted("Example.wav");
+                }
+                const ImGuiTable* table = ImGui::GetCurrentTable();
+                Check(Near(table->OuterRect.Min.x, left) && Near(table->OuterRect.Max.x, right),
+                      "empty and populated tables have the same left and right edges");
+                Check(Near(labelPos.x, table->Columns[0].WorkMinX),
+                      "path label shares the first header's text origin");
+                ImGui::EndTable();
+            }
+            EndResultsTestFrame();
+        }
+    }
+    ImGui::DestroyContext();
+}
+
+void TestBrowserNarrowRowsAndDefaultColumnBudget() {
+    using namespace harken::results;
+    const auto normal = LayoutBrowserSearchRow(700.0f, 400.0f, 70.0f, 8.0f);
+    Check(normal.searchBesideControls && normal.sourceBesideSearch &&
+          Near(normal.searchWidth + 8.0f + normal.sourceWidth, 400.0f),
+          "search and short source share remaining width without overflowing");
+    const auto narrow = LayoutBrowserSearchRow(200.0f, 60.0f, 500.0f, 8.0f);
+    Check(!narrow.searchBesideControls && narrow.sourceBesideSearch &&
+          Near(narrow.searchWidth, 110.0f) && Near(narrow.sourceWidth, 82.0f),
+          "narrow search wraps and keeps usable width beside an elided source");
+    const auto tight = LayoutBrowserSearchRow(128.0f, 15.0f, 500.0f, 8.0f);
+    Check(!tight.sourceBesideSearch && Near(tight.searchWidth, 128.0f) && Near(tight.sourceWidth, 128.0f),
+          "very narrow rows bound search and source on separate lines");
+    const auto noSource = LayoutBrowserSearchRow(350.0f, 200.0f, 0.0f, 8.0f);
+    Check(noSource.searchBesideControls && Near(noSource.searchWidth, 200.0f),
+          "without a source the existing search fills the remaining row");
+
+    const auto narrowColumns = ResolveBrowserColumnDefaults(350.0f, 300.0f);
+    Check(Near(narrowColumns.fileName, 240.0f) && Near(narrowColumns.waveform, 160.0f),
+          "narrow Browser tables keep useful default widths and let the body scroll");
+    const auto wideColumns = ResolveBrowserColumnDefaults(1500.0f, 320.0f);
+    Check(Near(wideColumns.waveform, 300.0f) && Near(wideColumns.fileName, 880.0f),
+          "wide Browser defaults allocate the visible remainder to the file name");
+}
+
+void DrawResultsSettingsTestTable(bool browser, float replacement) {
+    BeginResultsTestFrame(720.0f);
+    const bool visible = BeginTransientScrollbarTable(harken::results::TableName(browser), 3,
+        ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+        ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY, ImVec2(0.0f, 0.0f), 950.0f);
+    Check(visible, "settings fixture renders a results table");
+    if (visible) {
+        ImGui::TableSetupColumn("File name", ImGuiTableColumnFlags_WidthFixed, 300.0f);
+        ImGui::TableSetupColumn("Waveform", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+        ImGui::TableSetupColumn("File path", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        if (replacement > 0.0f) ImGui::TableSetColumnWidth(0, replacement);
+        ImGui::TableHeadersRow();
+        ImGui::EndTable();
+    }
+    EndResultsTestFrame();
+}
+
+void TestBrowserSettingsDoNotOverwriteDatabaseAndPlaylist() {
+    CreateResultsTestContext();
+    BeginResultsTestFrame(720.0f);
+    const ImGuiID legacyId = ImGui::GetID("FileTableV6");
+    const ImGuiID browserId = ImGui::GetID(harken::results::TableName(true));
+    Check(legacyId == ImGui::GetID(harken::results::TableName(false)) && legacyId != browserId,
+          "non-browser settings keep the exact legacy hash in the Results child");
+    EndResultsTestFrame();
+
+    char fixture[256]{};
+    std::snprintf(fixture, sizeof(fixture),
+        "[Table][0x%08X,3]\nColumn 0  Width=451 Order=1\nColumn 1  Width=199 Visible=0 Order=2\n"
+        "Column 2  Weight=0.7500 Order=0\n\n", static_cast<unsigned>(legacyId));
+    ImGui::LoadIniSettingsFromMemory(fixture);
+    DrawResultsSettingsTestTable(true, 0.0f);
+    DrawResultsSettingsTestTable(true, 499.0f);
+    DrawResultsSettingsTestTable(false, 0.0f);
+    const std::string saved = ImGui::SaveIniSettingsToMemory();
+    ImGui::DestroyContext();
+
+    CreateResultsTestContext();
+    ImGui::LoadIniSettingsFromMemory(saved.c_str(), saved.size());
+    DrawResultsSettingsTestTable(false, 0.0f);
+    DrawResultsSettingsTestTable(true, 0.0f);
+    const ImGuiTable* legacyTable = ImGui::TableFindByID(legacyId);
+    const ImGuiTable* browserTable = ImGui::TableFindByID(browserId);
+    Check(legacyTable && Near(legacyTable->Columns[0].WidthRequest, 451.0f) &&
+          Near(legacyTable->Columns[1].WidthRequest, 199.0f) &&
+          Near(legacyTable->Columns[2].StretchWeight, 0.75f) &&
+          legacyTable->Columns[0].DisplayOrder == 1 && !legacyTable->Columns[1].IsUserEnabled,
+          "legacy widths, stretch weight, order and visibility survive Browser resizing and reload");
+    Check(browserTable && Near(browserTable->Columns[0].WidthRequest, 499.0f),
+          "Browser reloads the separately saved width");
+    ImGui::DestroyContext();
+}
+
 } // namespace
 
 int main() {
@@ -536,6 +736,9 @@ int main() {
     TestCoreStyleScopeBalancesStacks();
     TestModuleShellStateResolution();
     TestModuleShellScopeBalancesBeginEndAndStyles();
+    TestResultsPanelPaddingAndBrowserPathAlignment();
+    TestBrowserNarrowRowsAndDefaultColumnBudget();
+    TestBrowserSettingsDoNotOverwriteDatabaseAndPlaylist();
 
     if (g_failures == 0) {
         std::puts("All core workspace style tests passed.");

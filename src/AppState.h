@@ -3,6 +3,7 @@
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
 #include "LibraryStatisticsWorker.h"
+#include "DockTabGroups.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -210,6 +211,7 @@ namespace HarkenSearch {
 }
 #include "FileBrowser.h"
 #include "Database.h"
+#include "PlaylistCollectionIndex.h"
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
@@ -239,7 +241,7 @@ namespace HarkenSearch {
 
 // Typography Scale
 
-inline constexpr int kFontSteps[]      = { 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
+inline constexpr int kFontSteps[]      = { 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32 };
 inline constexpr int kFontStepCount    = (int)(sizeof(kFontSteps) / sizeof(kFontSteps[0]));
 inline constexpr float kTypographyBasePx = 14.0f;
 
@@ -249,10 +251,13 @@ inline constexpr float kTypographyBasePx = 14.0f;
 inline constexpr int kChromeFontPx = 14;
 inline constexpr int kDefaultReadingFontPx = 18;
 inline constexpr int kDefaultListFontPx = 18;
+// Reading/system font can grow to 32 px; the independent list font keeps its 24 px cap.
+inline constexpr int kMaxReadingFontPx = 32;
+inline constexpr int kMaxListFontPx = 24;
 
 // Keep loaded and displayed sizes safe without rewriting the settings file here.
 inline constexpr int ClampSettingsFontSize(int sizePx) {
-    return std::clamp(sizePx, 10, 24);
+    return std::clamp(sizePx, 10, kMaxReadingFontPx);
 }
 
 // Reading-list rows: extra vertical px added to the reading font height before
@@ -2487,15 +2492,27 @@ struct AppState {
     FolderInfo playlistFolderHierarchy;
     bool folderHierarchyShowingPlaylistScope = false;
     int64_t playlistFolderHierarchyPlaylistId = -1;
+    uint64_t playlistFolderHierarchyDataRevision = 0;
     int64_t expandedPlaylistFolderTreePlaylistId = -1;
+    uint64_t playlistQuickBarAppliedOrderSignature = 0;
+    aura::playlist::PlaylistCollectionIndex playlistCollectionIndex;
+    void EnsurePlaylistCollectionIndex() {
+        const uint64_t signature = aura::playlist::PlaylistCollectionSignature(
+            playlists, settings.playlistQuickBarHiddenIds);
+        if (signature == playlistCollectionIndex.signature) return;
+        playlistCollectionIndex.Rebuild(playlists, settings.playlistQuickBarHiddenIds);
+        playlistCollectionIndex.signature = signature;
+    }
     void setFolderHierarchy(FolderInfo&& tree, const std::string& /*dbPath*/) {
         databaseFolderHierarchy = tree;
         folderHierarchy = std::move(tree);
         folderHierarchyShowingPlaylistScope = false;
     }
-    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId) {
+    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId,
+                                    uint64_t dataRevision = 0) {
         playlistFolderHierarchy = std::move(tree);
         playlistFolderHierarchyPlaylistId = playlistId;
+        playlistFolderHierarchyDataRevision = dataRevision;
         folderHierarchy = playlistFolderHierarchy;
         folderHierarchyShowingPlaylistScope = true;
     }
@@ -2510,6 +2527,7 @@ struct AppState {
         playlistFolderHierarchy = FolderInfo{};
         folderHierarchyShowingPlaylistScope = false;
         playlistFolderHierarchyPlaylistId = -1;
+        playlistFolderHierarchyDataRevision = 0;
         expandedPlaylistFolderTreePlaylistId = -1;
     }
     std::string pendingRemoveFolderDbPath;
@@ -2752,6 +2770,7 @@ struct AppState {
     void removePendingWaveform(const std::string& path);
 
     // Panel states
+    aura::ui::dock::DockTabGroups dockTabGroups;
     PanelState panelSidebar;
     PanelState panelFileInfo = [] {
         PanelState panel;
@@ -3292,10 +3311,21 @@ struct AppState {
         std::vector<std::string> listRawNames, listRenderedNames;
         std::vector<bool> listRowDirectories;
         int waveDrawFrame=-1, waveDrawStyle=-1, spectrumDrawFrame=-1;
+        int menuBarFrame = -1, workspaceTopFrame = -1;
+        struct MenuBarItemProbe { std::string label; float x0, y0, x1, y1; };
+        std::vector<MenuBarItemProbe> menuBarItems;
+        float menuBarFontPixels = 0, menuBarHeight = 0, menuBarRight = 0, menuBarTop = 0, menuBarLastItemRight = 0;
+        float workspaceTop = 0;
         ImVec4 waveDrawBounds{};
 #endif
     } qaRegions;
 };
+
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: records one top-level menu-bar item (label + rect) for the
+// acceptance script, so it can assert the real grid instead of guessing clicks.
+void QaProbeMenuBarItem(AppState& state, const char* label);
+#endif
 
 // Global app state pointer
 extern AppState* g_appState;
