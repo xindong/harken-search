@@ -250,6 +250,74 @@ void checkWindowAndPrivacy(DiagnosticsLogger& logger, const fs::path& root) {
         check(file.path() == badRoot || file.path().extension() == ".zip", "no temporary files remain");
 }
 
+void checkDiagnosticsCoverage(DiagnosticsLogger& logger, const fs::path& root) {
+    std::vector<DiagLogEntry> entries{
+        entry(-1, DiagLogType::Metric, "Memory", "WorkingSetMB"),
+        entry(-2, DiagLogType::Performance, "Cover", "PumpCoverTextureUploads"),
+        entry(-3, DiagLogType::Performance, "Cover", "PumpDeferredCoverPriming"),
+        entry(-4, DiagLogType::Performance, "DAW", "AsyncRunningStateProbe"),
+        entry(-5, DiagLogType::Performance, "Audio", "loadFileAsyncInitDecoder"),
+        entry(-6, DiagLogType::Action, "MiniWave", "tex hit=7 miss=2 upload=5 uploadUs=34.50 pendingTex=3"),
+        entry(-7, DiagLogType::Action, "UI", "Click.Left x=10 y=20 win=main item=button"),
+        entry(-8, DiagLogType::Action, "MiniWave", "MiniCacheMiss reason=no_row wantPeaks=800"),
+        entry(-9, DiagLogType::Metric, "private-memory", "private-value"),
+        entry(-10, DiagLogType::Metric, "Cover", "EmbeddedCacheSize"),
+        entry(-11, DiagLogType::Metric, "Cover", "UploadQueuedKeysSize"),
+        entry(-12, DiagLogType::Action, "Audio", "DecoderPrewarmSkippedByForeground: reason=no_anchor"),
+    };
+    entries[0].value = 812.5;
+    entries[1].durationMs = 1.25;
+    entries[2].durationMs = 3.5;
+    entries[3].durationMs = 412.75;
+    entries[4].durationMs = 8.5;
+    entries[8].value = 1;
+    entries[9].value = 42;
+    entries[10].value = 7;
+    DiagnosticsRetentionTestAccess::seed(logger, entries);
+    DiagLogSnapshot snapshot;
+    check(logger.trySnapshotForExport(kClick, snapshot) && snapshot.entries.size() == entries.size(),
+          "coverage fixture captures every seeded row");
+    logger.clear();
+
+    const auto bundle = WriteDiagnosticLogBundle(snapshot, root, {{"1.2.3-test", "test-build"}});
+    check(bundle.status == DiagnosticLogBundleStatus::Written, "coverage snapshot writes a ZIP");
+    if (bundle.status != DiagnosticLogBundleStatus::Written) return;
+    const auto archive = unzip(bundle.path);
+    const auto logs = Json::parse(archive.logs);
+    check(logs.size() == entries.size(), "coverage export keeps every row");
+    const auto at = [&](int offset) -> const Json& {
+        const auto found = std::find_if(logs.begin(), logs.end(), [&](const Json& row) {
+            return row.at("offset_ms") == offset;
+        });
+        if (found == logs.end()) throw std::runtime_error("expected coverage offset missing");
+        return *found;
+    };
+    check(at(-1).at("event") == "WorkingSetMB" && at(-1).at("value") == 812.5,
+          "working-set metric keeps its value");
+    check(at(-2).at("event") == "CoverTextureUploads" && at(-2).at("duration_ms") == 1.25 &&
+          at(-3).at("event") == "CoverDeferredPriming" && at(-3).at("duration_ms") == 3.5,
+          "cover cache pump keeps stable names and durations");
+    check(at(-4).at("event") == "DawRunningStateProbe" && at(-4).at("duration_ms") == 412.75,
+          "DAW running-state probe keeps its duration");
+    check(at(-5).at("event") == "loadFileAsyncInitDecoder" && at(-5).at("duration_ms") == 8.5,
+          "audio decoder init keeps its duration");
+    check(at(-6).at("category") == "MiniWave" && at(-6).at("event") == "MiniWaveTextureFlush",
+          "periodic mini-wave texture flush keeps a stable name");
+    check(at(-7).at("event") == "UiClickLeft" &&
+          at(-8).at("category") == "MiniWave" && !at(-8).contains("event") &&
+          at(-9).at("category") == "Other" && !at(-9).contains("value"),
+          "known UI clicks name the event while unknown labels stay opaque");
+    check(at(-10).at("event") == "EmbeddedCacheSize" && at(-10).at("value") == 42 &&
+          at(-11).at("event") == "UploadQueuedKeysSize" && at(-11).at("value") == 7,
+          "cover cache metrics keep their values");
+    check(at(-12).at("category") == "Audio" &&
+          at(-12).at("event") == "DecoderPrewarmSkippedByForeground",
+          "audio prewarm skips keep a stable name");
+    for (const auto* forbidden : {"hit=7", "x=10", "reason=", "private-memory"})
+        check(archive.logs.find(forbidden) == std::string::npos,
+              "expanded coverage keeps raw details out of the ZIP");
+}
+
 void checkConcurrentPublication(const fs::path& root) {
     DiagLogSnapshot snapshot;
     snapshot.clickMs = kClick + 1000;
@@ -287,6 +355,7 @@ int main() {
         auto& logger = DiagnosticsLogger::instance();
         checkEmpty(logger, root.path);
         checkWindowAndPrivacy(logger, root.path);
+        checkDiagnosticsCoverage(logger, root.path);
         checkConcurrentPublication(root.path);
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
