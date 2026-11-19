@@ -161,14 +161,13 @@ class MenuChromeScopeContract(unittest.TestCase):
         self.assertIn("s_menuPopupTextSizePx = m_previousTextSizePx;", theme)
         self.assertIn("viewportBuild->BuildWorkInsetMin.y", main.split("// MAIN LAYOUT", 1)[1])
 
-    def test_default_wordmark_uses_approved_theme_art(self):
+    def test_menu_wordmark_is_always_orange_whatever_the_system_font_size(self):
         main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
         bar = main.split("if (ImGui::BeginMainMenuBar()) {", 1)[1].split("ImGui::BeginMenu(L(Menu_File))", 1)[0]
-        default_wordmark = bar.split("if (baseMenuFontPx == kChromeFontPx) {", 1)[1].split("\n            }", 1)[0]
-        self.assertIn("barLuma >= 0.5f", default_wordmark)
-        for color in ("black", "white"):
-            self.assertIn(f"harken-search-menu-wordmark-{color}.png", default_wordmark)
-        self.assertIn("aura::ui::DrawMenuBarBrandWordmark(", bar)
+        # 系统字号只影响字标尺寸：顶栏不再按字号或底色挑黑白图，统一走固定橙色的入口。
+        self.assertNotIn("harken-search-menu-wordmark", bar)
+        self.assertNotIn("barLuma", bar)
+        self.assertEqual(bar.count("aura::ui::DrawMenuBarBrandWordmark("), 1)
 
     def test_isolated_menu_diagnostics_track_actual_font_and_all_eight_titles_once(self):
         main = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
