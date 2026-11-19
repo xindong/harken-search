@@ -15,7 +15,9 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -51,7 +53,8 @@ int32_t WriteBlock(void* id, void* data, int32_t byteCount) {
     return static_cast<int32_t>(std::fwrite(data, 1, static_cast<size_t>(byteCount), file));
 }
 
-bool EncodeWavPack(const fs::path& path, const std::vector<int16_t>& pcm) {
+bool EncodeWavPack(const fs::path& path, std::vector<int32_t> samples, int channels,
+                  int channelMask, int floatExponent = 0) {
 #ifdef _WIN32
     std::FILE* file = _wfopen(path.wstring().c_str(), L"wb");
 #else
@@ -66,11 +69,13 @@ bool EncodeWavPack(const fs::path& path, const std::vector<int16_t>& pcm) {
     }
 
     WavpackConfig config{};
-    config.bytes_per_sample = 2;
-    config.bits_per_sample = 16;
-    config.num_channels = kChannels;
-    config.channel_mask = 0x3;
+    config.bytes_per_sample = floatExponent == 0 ? 2 : 4;
+    config.bits_per_sample = config.bytes_per_sample * 8;
+    config.float_norm_exp = floatExponent;
+    config.num_channels = channels;
+    config.channel_mask = channelMask;
     config.sample_rate = kSampleRate;
+    config.block_samples = 1024;
 
     if (!WavpackSetConfiguration64(context, &config, kFrames, nullptr) ||
         !WavpackPackInit(context)) {
@@ -79,10 +84,9 @@ bool EncodeWavPack(const fs::path& path, const std::vector<int16_t>& pcm) {
         return false;
     }
 
-    std::vector<int32_t> staging(pcm.begin(), pcm.end());
     for (int offset = 0; offset < kFrames; offset += 4096) {
         const int frames = std::min(4096, kFrames - offset);
-        if (!WavpackPackSamples(context, staging.data() + static_cast<size_t>(offset) * kChannels,
+        if (!WavpackPackSamples(context, samples.data() + static_cast<size_t>(offset) * channels,
                                 static_cast<uint32_t>(frames))) {
             WavpackCloseFile(context);
             std::fclose(file);
@@ -176,16 +180,33 @@ float ExpectedSample(int frame, int channel) {
     return static_cast<float>(static_cast<int16_t>(value * amplitude) / 32768.0);
 }
 
+fs::path CreateUniqueFixtureDirectory() {
+    const fs::path parent = fs::temp_directory_path();
+    std::random_device entropy;
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        const auto name = "harken_wv_decode_test-" + std::to_string(entropy()) + "-" +
+                          std::to_string(entropy());
+        const fs::path candidate = parent / name;
+        std::error_code error;
+        if (fs::create_directory(candidate, error)) return candidate;
+        if (error && error != std::errc::file_exists) break;
+    }
+    return {};
+}
+
 }  // namespace
 
 int main() {
-    const fs::path temp = fs::temp_directory_path() / "harken_wv_decode_test";
+    const fs::path temp = CreateUniqueFixtureDirectory();
+    check(!temp.empty(), "fixture directory is exclusively created");
+    if (temp.empty()) return 1;
     std::error_code ec;
-    fs::create_directories(temp, ec);
+    std::cout << "fixture directory=" << temp.u8string() << std::endl;
 
     const auto pcm = MakeSine();
     const fs::path wvPath = temp / "sine_441_660.wv";
-    check(EncodeWavPack(wvPath, pcm), "encoder writes a WV fixture");
+    check(EncodeWavPack(wvPath, std::vector<int32_t>(pcm.begin(), pcm.end()), kChannels, 0x3),
+          "encoder writes a WV fixture");
     check(fs::exists(wvPath), "WV fixture exists");
 
     std::vector<float> decoded;
@@ -218,21 +239,67 @@ int main() {
         check(init.Succeeded(), "decoder reopens for seek check");
         if (init.Succeeded()) {
             const auto source = Platform::AudioDataSource::BorrowDataSource(decoder);
-            const auto seek = Platform::AudioDataSource::SeekPcmFrame(source, 24000);
-            check(seek.Succeeded(), "seek to frame 24000 succeeds");
-            std::vector<float> window(static_cast<size_t>(256) * kChannels, 0.0f);
-            const auto read = Platform::AudioDataSource::ReadPcmFrames(source, window.data(), 256);
-            check(read.framesRead == 256, "seeked read returns a full window");
             float worst = 0.0f;
-            for (int frame = 0; frame < static_cast<int>(read.framesRead); ++frame) {
-                for (int channel = 0; channel < kChannels; ++channel) {
-                    const float expected = ExpectedSample(24000 + frame, channel);
-                    const float actual = window[static_cast<size_t>(frame) * kChannels + channel];
-                    worst = std::max(worst, std::fabs(expected - actual));
+            for (const int target : {40234, 897, 24000}) {
+                const auto seek = Platform::AudioDataSource::SeekPcmFrame(source, target);
+                check(seek.Succeeded(), "seek across WV blocks succeeds in both directions");
+                std::vector<float> window(static_cast<size_t>(256) * kChannels, 0.0f);
+                const auto read = Platform::AudioDataSource::ReadPcmFrames(source, window.data(), 256);
+                check(read.framesRead == 256, "read 256 frames after seek");
+                for (int frame = 0; frame < 256; ++frame) {
+                    for (int channel = 0; channel < kChannels; ++channel) {
+                        const float expected = ExpectedSample(target + frame, channel);
+                        const float actual = window[static_cast<size_t>(frame) * kChannels + channel];
+                        worst = std::max(worst, std::fabs(expected - actual));
+                    }
                 }
             }
             check(worst < 0.001f, "samples after seek match the source signal");
+            std::cout << "cross-block seek worst sample delta=" << worst << std::endl;
             Platform::AudioDataSource::UninitializeDecoder(decoder);
+        }
+    }
+
+    {
+        const fs::path floatPath = temp / "nonstandard_full_scale.wv";
+        constexpr float originalSample = 32768.0f;
+        int32_t floatBits = 0;
+        std::memcpy(&floatBits, &originalSample, sizeof(floatBits));
+        check(EncodeWavPack(floatPath, std::vector<int32_t>(kFrames, floatBits), 1, 0x4, 143),
+              "encoder writes a float WV with 65536 full scale");
+        std::vector<float> samples;
+        check(DecodeAll(floatPath.u8string(), samples, channels, sampleRate, length),
+              "decode WV with nonstandard floating-point full scale");
+        if (!samples.empty()) {
+            const float peak = *std::max_element(samples.begin(), samples.end());
+            std::cout << "normalized float peak=" << peak << std::endl;
+            check(std::fabs(peak - 0.5f) < 0.0001f, "float WV decodes at normalized full scale");
+        }
+    }
+
+    {
+        constexpr int surroundChannels = 3;
+        std::vector<int32_t> surround(static_cast<size_t>(kFrames) * surroundChannels, 0);
+        for (int frame = 0; frame < kFrames; ++frame) {
+            surround[static_cast<size_t>(frame) * surroundChannels] = 12288;
+        }
+        const fs::path surroundPath = temp / "front_right_center_lfe.wv";
+        check(EncodeWavPack(surroundPath, std::move(surround), surroundChannels, 0x0e),
+              "encoder writes a WV with front right, center and LFE channel positions");
+        Platform::AudioDataSource::Decoder stereo;
+        const auto init = Platform::AudioDataSource::InitializeDecoderFromFileWithFormat(
+            stereo, surroundPath.u8string(), kChannels, kSampleRate);
+        check(init.Succeeded(), "open multichannel WV for stereo downmix");
+        if (init.Succeeded()) {
+            float firstFrame[kChannels]{};
+            const auto read = Platform::AudioDataSource::ReadPcmFrames(
+                Platform::AudioDataSource::BorrowDataSource(stereo), firstFrame, 1);
+            std::cout << "multichannel WV downmix left=" << firstFrame[0]
+                      << ", right=" << firstFrame[1] << std::endl;
+            check(read.framesRead == 1 && firstFrame[1] > 0.1f &&
+                      firstFrame[1] > 2.0f * std::fabs(firstFrame[0]),
+                  "encoded front right stays on the right side of the stereo downmix");
+            Platform::AudioDataSource::UninitializeDecoder(stereo);
         }
     }
 

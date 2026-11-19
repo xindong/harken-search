@@ -5,10 +5,11 @@
 
 #include "../../thirdparty/wavpack/include/wavpack.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cstdio>
 #include <new>
 #include <string>
 #include <vector>
@@ -45,21 +46,21 @@ int64_t GetPos(void* id) {
 
 int SetPosAbs(void* id, int64_t pos) {
     auto* handle = static_cast<FileHandle*>(id);
-    if (!handle || !handle->file) return 0;
+    if (!handle || !handle->file) return -1;
 #ifdef _WIN32
-    return _fseeki64(handle->file, pos, SEEK_SET) == 0;
+    return _fseeki64(handle->file, pos, SEEK_SET);
 #else
-    return std::fseek(handle->file, static_cast<long>(pos), SEEK_SET) == 0;
+    return std::fseek(handle->file, static_cast<long>(pos), SEEK_SET);
 #endif
 }
 
 int SetPosRel(void* id, int64_t delta, int mode) {
     auto* handle = static_cast<FileHandle*>(id);
-    if (!handle || !handle->file) return 0;
+    if (!handle || !handle->file) return -1;
 #ifdef _WIN32
-    return _fseeki64(handle->file, delta, mode) == 0;
+    return _fseeki64(handle->file, delta, mode);
 #else
-    return std::fseek(handle->file, static_cast<long>(delta), mode) == 0;
+    return std::fseek(handle->file, static_cast<long>(delta), mode);
 #endif
 }
 
@@ -133,7 +134,40 @@ std::FILE* OpenUtf8(const char* path) {
 #endif
 }
 
-constexpr int kOpenFlags = OPEN_DSD_AS_PCM;
+constexpr int kOpenFlags = OPEN_DSD_AS_PCM | OPEN_NORMALIZE;
+
+using ChannelMap = std::array<ma_channel, MA_MAX_CHANNELS>;
+
+ChannelMap BuildChannelMap(WavpackContext* context, ma_uint32 channels) {
+    ChannelMap map{};
+    if (channels == 1) {
+        map.front() = MA_CHANNEL_MONO;
+        return map;
+    }
+
+    std::array<unsigned char, MA_MAX_CHANNELS + 1> identities{};
+    WavpackGetChannelIdentities(context, identities.data());
+    constexpr unsigned char kLastMicrosoftSpeaker = 18;
+    static_assert(MA_CHANNEL_TOP_BACK_RIGHT - MA_CHANNEL_FRONT_LEFT + 1 == kLastMicrosoftSpeaker);
+    for (ma_uint32 index = 0; index < channels; ++index) {
+        const auto speaker = identities[index];
+        if (speaker >= 1 && speaker <= kLastMicrosoftSpeaker) {
+            map[index] = static_cast<ma_channel>(MA_CHANNEL_FRONT_LEFT + speaker - 1);
+        }
+    }
+
+    ChannelMap fallback{};
+    ma_channel_map_init_standard(ma_standard_channel_map_default, fallback.data(), fallback.size(), channels);
+    const auto end = map.begin() + channels;
+    for (auto entry = map.begin(); entry != end; ++entry) {
+        if (*entry != MA_CHANNEL_NONE) continue;
+        const auto unused = std::find_if(fallback.begin(), fallback.begin() + channels, [&](ma_channel speaker) {
+            return speaker != MA_CHANNEL_NONE && std::find(map.begin(), end, speaker) == end;
+        });
+        if (unused != fallback.begin() + channels) *entry = *unused;
+    }
+    return map;
+}
 
 struct Decoder {
     ma_data_source_base base{};
@@ -146,6 +180,7 @@ struct Decoder {
     ma_uint64 lengthInFrames = 0;
     ma_uint32 bitsPerSample = 0;
     bool isFloat = false;
+    ChannelMap channelMap{};
     std::string pathUtf8;
     char openError[128] = {};
     std::vector<int32_t> staging;
@@ -172,10 +207,6 @@ ma_result DecoderRead(ma_data_source* source, void* framesOut, ma_uint64 frameCo
     }
     auto* out = static_cast<float*>(framesOut);
     const size_t count = static_cast<size_t>(decoded) * decoder->channels;
-    if (decoder->isFloat) {
-        std::memcpy(out, decoder->staging.data(), count * sizeof(float));
-        return MA_SUCCESS;
-    }
     const float scale = 1.0f / static_cast<float>(1ULL << (decoder->bitsPerSample - 1));
     for (size_t i = 0; i < count; ++i) {
         out[i] = static_cast<float>(decoder->staging[i]) * scale;
@@ -201,6 +232,16 @@ ma_result DecoderSeek(ma_data_source* source, ma_uint64 frameIndex) {
     decoder->context = WavpackOpenFileInputEx64(
         &decoder->reader, &decoder->handle, nullptr, decoder->openError, kOpenFlags, 0);
     if (!decoder->context) return MA_ERROR;
+    if (WavpackGetNumChannels(decoder->context) != static_cast<int>(decoder->channels) ||
+        WavpackGetSampleRate(decoder->context) != decoder->sampleRate ||
+        WavpackGetBitsPerSample(decoder->context) != static_cast<int>(decoder->bitsPerSample) ||
+        ((WavpackGetMode(decoder->context) & MODE_FLOAT) != 0) != decoder->isFloat ||
+        static_cast<ma_uint64>(WavpackGetNumSamples64(decoder->context)) != decoder->lengthInFrames ||
+        BuildChannelMap(decoder->context, decoder->channels) != decoder->channelMap) {
+        decoder->context = WavpackCloseFile(decoder->context);
+        CloseHandle(&decoder->handle);
+        return MA_ERROR;
+    }
 
     while (WavpackGetSampleIndex64(decoder->context) < static_cast<int64_t>(frameIndex)) {
         const ma_uint64 remaining = frameIndex - static_cast<ma_uint64>(WavpackGetSampleIndex64(decoder->context));
@@ -221,17 +262,8 @@ ma_result DecoderGetDataFormat(ma_data_source* source, ma_format* format,
     if (channels) *channels = decoder->channels;
     if (sampleRate) *sampleRate = decoder->sampleRate;
     if (channelMap != nullptr) {
-        for (ma_uint32 i = 0; i < decoder->channels && i < channelMapCapacity; ++i) {
-            if (decoder->channels == 1) {
-                channelMap[i] = MA_CHANNEL_MONO;
-            } else if (decoder->channels == 2 && i == 0) {
-                channelMap[i] = MA_CHANNEL_FRONT_LEFT;
-            } else if (decoder->channels == 2 && i == 1) {
-                channelMap[i] = MA_CHANNEL_FRONT_RIGHT;
-            } else {
-                channelMap[i] = MA_CHANNEL_NONE;
-            }
-        }
+        const auto count = std::min<size_t>(decoder->channels, channelMapCapacity);
+        std::copy_n(decoder->channelMap.begin(), count, channelMap);
     }
     return MA_SUCCESS;
 }
@@ -284,12 +316,14 @@ ma_result OpenDecoderFromFile(std::FILE* file, ma_data_source** backendOut) {
     decoder->sampleRate = static_cast<ma_uint32>(WavpackGetSampleRate(decoder->context));
     decoder->bitsPerSample = static_cast<ma_uint32>(WavpackGetBitsPerSample(decoder->context));
     decoder->isFloat = (mode & MODE_FLOAT) != 0;
-    if (decoder->channels == 0 || decoder->sampleRate == 0) {
+    if (decoder->channels == 0 || decoder->channels > MA_MAX_CHANNELS || decoder->sampleRate == 0 ||
+        decoder->bitsPerSample == 0 || decoder->bitsPerSample > 32) {
         WavpackCloseFile(decoder->context);
         CloseHandle(&decoder->handle);
         delete decoder;
         return MA_NO_BACKEND;
     }
+    decoder->channelMap = BuildChannelMap(decoder->context, decoder->channels);
     decoder->lengthInFrames = WavpackGetNumSamples64(decoder->context);
     // Custom miniaudio backends feed the decoder output format directly, so
     // hand out f32 like every other call site expects.
