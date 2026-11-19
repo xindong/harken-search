@@ -96,15 +96,10 @@ int main() {
           "Startup welcome entry no longer depends on the old post-login preference gate");
     check(windowsMain.find("welcome_continue") != std::string::npos,
           "Startup welcome entry uses the continue message protocol");
-    check(windowsMain.find("avatarPulse") != std::string::npos &&
-              windowsMain.find("pulseHalo") != std::string::npos &&
-              windowsMain.find("avatarInitials") != std::string::npos &&
-              windowsMain.find("<div class=\"avatar-ring\"") == std::string::npos,
-          "Startup welcome entry shows a minimal avatar pulse without a legacy spinner ring");
-    check(windowsMain.find("BuildLocalDiceBearAvatarDataUri") != std::string::npos &&
-              windowsMain.find("assets\\\\avatars\\\\dicebear\\\\lorelei-neutral") != std::string::npos &&
-              windowsMain.find("startupAvatarDataUri") != std::string::npos,
-          "Startup welcome entry reads the local DiceBear avatar pool without a runtime API request");
+    check(windowsMain.find("AppendStartupMascotCss") != std::string::npos &&
+              windowsMain.find("BuildLocalDiceBearAvatarDataUri") == std::string::npos &&
+              windowsMain.find("startupAvatarDataUri") == std::string::npos,
+          "Startup loading and welcome entries share the brand mascot instead of a personal avatar");
     check(windowsMain.find("HarkenSearch::kStartupLoadingMascotArtwork") != std::string::npos &&
               windowsMain.find("spinner-container{display:none!important;}") != std::string::npos &&
               windowsMain.find(".glass-card{width:min(312px,calc(100vw - 48px));min-height:300px") != std::string::npos,
