@@ -600,7 +600,7 @@
       "policy_category": "permissive",
       "manual_approval_required": true,
       "approval_reference": "REQ-20261110-WV-FORMAT: owner approved the pinned 5.9.0 source for distribution",
-      "cmake_markers": ["harken_wavpack"],
+      "cmake_markers": ["thirdparty/wavpack"],
       "distribution_paths": ["HarkenSearch.exe"],
       "distribution_obligation": {
         "copyleft": false,

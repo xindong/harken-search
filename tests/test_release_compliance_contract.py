@@ -118,6 +118,7 @@ def build_repo(tmp_path: Path) -> Path:
                 "thirdparty/ixwebsocket",
                 "thirdparty/rlottie",
                 "thirdparty/webview2",
+                "thirdparty/wavpack/",
                 "thirdparty/lucide/lucide.ttf",
                 "src/main.cpp",
                 "assets/avatars",

@@ -2868,8 +2868,37 @@ add_test(NAME WavPackDecode COMMAND TestWavPackDecode)
 
 
 # WavPack decoding backend
-foreach(_harken_wavpack_target HarkenSearch TestPreviewPinyinDatabase TestPreviewNasDatabase)
-    if(TARGET ${_harken_wavpack_target})
-        target_link_libraries(${_harken_wavpack_target} PRIVATE harken_wavpack)
+function(_harken_attach_wavpack_decoder target)
+    get_target_property(_harken_sources ${target} SOURCES)
+    if(NOT _harken_sources)
+        return()
     endif()
+    set(_harken_needs_decoder FALSE)
+    foreach(_harken_source IN LISTS _harken_sources)
+        get_filename_component(_harken_source_name "${_harken_source}" NAME)
+        if(_harken_source_name STREQUAL "audio_file_miniaudio.cpp"
+           OR _harken_source_name STREQUAL "audio_data_source_miniaudio.cpp"
+           OR _harken_source_name STREQUAL "database_audio_probe_miniaudio.cpp")
+            set(_harken_needs_decoder TRUE)
+            break()
+        endif()
+    endforeach()
+    if(NOT _harken_needs_decoder)
+        return()
+    endif()
+    foreach(_harken_source IN LISTS _harken_sources)
+        get_filename_component(_harken_source_name "${_harken_source}" NAME)
+        if(_harken_source_name STREQUAL "wavpack_decoding_backend.cpp")
+            return()
+        endif()
+    endforeach()
+    target_sources(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wavpack_decoding_backend.cpp)
+    target_link_libraries(${target} PRIVATE harken_wavpack)
+endfunction()
+
+# Every miniaudio-based test or tool needs the WV decode backend that the shared
+# audio sources call, not just the main application.
+get_property(_harken_build_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_harken_wavpack_target IN LISTS _harken_build_targets)
+    _harken_attach_wavpack_decoder(${_harken_wavpack_target})
 endforeach()
