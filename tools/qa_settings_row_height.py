@@ -93,8 +93,12 @@ def run(args):
         gaps=[b-a for a,b in zip(ys,ys[1:])]
         assert max(gaps)-min(gaps)<1,gaps
         return v,sum(gaps)/len(gaps)
+    def expected_row_height(value,list_font,mono):
+        # Result rows keep at least three whole name lines whenever names wrap.
+        wrapped=3*list_font+4 if value>=2*list_font+2 else 0
+        return max(value,list_font+4,mono+4,wrapped)
     def verify_row(value,list_font=18,system=18,draft=None):
-        v,gap=measured();expected=max(value,list_font+4,v['mono_font_pixels']+4)
+        v,gap=measured();expected=expected_row_height(value,list_font,v['mono_font_pixels'])
         assert v['live_row_height']==value and v['draft_row_height']==(value if draft is None else draft),v
         assert saved('rowHeight')==value and saved('listFontSize')==list_font and saved('readingFontSize')==system
         assert abs(v['drawn_list_font_pixels']-list_font)<.1 and abs(v['reading_font_pixels']-system)<.1,v

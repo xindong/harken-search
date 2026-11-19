@@ -9349,17 +9349,15 @@ static void DrawResultRowFilename(const std::string& displayName,
     const float wrapW = wrap
         ? ((availW > 12.0f) ? (availW - 6.0f) : availW)
         : 0.0f;
-    // Wrapped draw-list text advances by one font height per line. The layout
-    // keeps whole lines inside the row band so the row boundary never cuts
-    // through a line of text.
-    const float naturalLineAdvance = ImGui::GetTextLineHeight();
+    // Wrapped draw-list text advances by one font height per line. The result
+    // row is already raised to three whole lines when names wrap, so this only
+    // bounds names that need more lines than the row can show.
+    const float lineAdvance = ImGui::GetTextLineHeight();
     const float highlightPadX = 2.0f;
     const float highlightPadY = 1.0f;
-    const harken::results::WrappedFilenameLayout filenameLayout = wrap
-        ? harken::results::ResolveWrappedFilenameLayout(drawableHeight, naturalLineAdvance)
-        : harken::results::WrappedFilenameLayout{1, naturalLineAdvance};
-    const int maxLines = filenameLayout.lines;
-    const float lineAdvance = filenameLayout.lineAdvance;
+    const int maxLines = wrap
+        ? harken::results::ResolveWrappedFilenameLineCount(drawableHeight, lineAdvance)
+        : 1;
     const char* const ellipsis = u8"\u2026";
     const float ellipsisWidth = ImGui::CalcTextSize(ellipsis).x;
 
@@ -42960,8 +42958,14 @@ void RenderUI(AppState& state) {
                 }
             } else {
                 // --- Database mode ---
-                // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动
-                const float fixedRowHeight = floorf(targetRowHeight) - listCellPadY * 2.0f;
+                // 行高 = 设定行高 + CellPadding.y*2，像素取整避免滚动抖动。
+                // 名称列启用换行时，结果行至少留出三整行的高度，第三行不再被行底裁掉。
+                const float wrappedNameRowHeightFloor = 3.0f * listFontPx + listCellPadY * 2.0f;
+                const bool wrapsResultNames = targetRowHeight >= listFontPx * 2.0f + 2.0f;
+                const float resultRowTarget = wrapsResultNames
+                    ? (std::max)(targetRowHeight, wrappedNameRowHeightFloor)
+                    : targetRowHeight;
+                const float fixedRowHeight = floorf(resultRowTarget) - listCellPadY * 2.0f;
                 const float actualRowHeight = fixedRowHeight + listCellPadY * 2.0f; // Row height including cell padding.
 
                 {

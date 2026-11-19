@@ -32,9 +32,20 @@ NAMES = [
 ]
 
 
-def make_library(folder: Path) -> None:
+def library_names(count: int):
+    names = list(NAMES)
+    index = len(names)
+    while len(names) < count:
+        base = NAMES[1 + (index % (len(NAMES) - 1))]
+        stem = base[:-4]
+        names.append('%s_%03d.wav' % (stem, index))
+        index += 1
+    return names[:max(1, count)]
+
+
+def make_library(folder: Path, count: int) -> None:
     folder.mkdir(parents=True, exist_ok=False)
-    for index, name in enumerate(NAMES, start=1):
+    for index, name in enumerate(library_names(count), start=1):
         samples = (int(3000 * math.sin(2 * math.pi * (220 + 40 * index) * n / 22050))
                    for n in range(6615))
         with wave.open(str(folder / name), 'wb') as audio:
@@ -49,25 +60,31 @@ def write_settings(root: Path, row_height: int, list_font: int) -> Path:
     settings_dir = root / 'profile/Local/HarkenSearch'
     settings_dir.mkdir(parents=True, exist_ok=True)
     path = settings_dir / 'settings.ini'
-    lines = [
-        'readingFontSize=18',
-        'listFontSize=%d' % list_font,
-        'rowHeight=%d' % row_height,
-        'listDensity=3',
-        'theme=0',
-    ]
-    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    values = {
+        'readingFontSize': '18',
+        'listFontSize': str(list_font),
+        'rowHeight': str(row_height),
+        'listDensity': '3',
+        'theme': '0',
+    }
+    lines = []
+    if path.exists():
+        # Keep every other key (database path, window state, ...) when a
+        # profile is reused between row-height runs.
+        for line in path.read_text(encoding='utf-8').splitlines():
+            key = line.split('=', 1)[0].strip()
+            if line.strip() and key not in values:
+                lines.append(line)
+    lines.extend('%s=%s' % item for item in values.items())
+    path.write_text(chr(10).join(lines) + chr(10), encoding='utf-8')
     return path
 
 
 def resolve_line_layout(drawable_height, natural_advance):
     if natural_advance <= 0 or drawable_height <= 0:
         return 1, max(natural_advance, 0.0)
-    natural_lines = drawable_height / natural_advance
-    lines = max(1, int(math.floor(natural_lines + 0.5)))
-    if lines > 1 and drawable_height / lines < natural_advance * 0.9:
-        lines = max(1, int(math.floor(natural_lines)))
-    return lines, min(natural_advance, drawable_height / lines)
+    lines = max(1, int(math.floor((drawable_height + 0.5) / natural_advance)))
+    return lines, natural_advance
 
 
 def text_bands(image, x0, x1, y0, y1, threshold=110.0):
@@ -100,14 +117,24 @@ def main(args: argparse.Namespace) -> int:
 
     exe, root, out = (args.exe.resolve(), args.isolation_root.resolve(),
                       args.output.resolve())
-    if not exe.is_file() or root.exists() or out.exists():
-        raise ValueError('Expected an existing EXE and new isolation/output directories')
-    root.mkdir(parents=True)
-    (root / 'profile/runtime').mkdir(parents=True)
-    (root / 'temp').mkdir(parents=True)
+    fresh_root = not root.exists()
+    if not fresh_root:
+        # A previous run can leave the crash sentinel behind; clear it so the
+        # reused profile starts without a recovery prompt.
+        sentinel = root / 'profile/Local/HarkenSearch/aris_sentinel.lock'
+        if sentinel.exists():
+            sentinel.unlink()
+    if not exe.is_file() or out.exists():
+        raise ValueError('Expected an existing EXE and a new output directory')
+    if not fresh_root and not args.reuse_root:
+        raise ValueError('Isolation root exists; pass --reuse-root to reuse its library')
+    root.mkdir(parents=True, exist_ok=True)
+    (root / 'profile/runtime').mkdir(parents=True, exist_ok=True)
+    (root / 'temp').mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True)
     library = root / 'library'
-    make_library(library)
+    if fresh_root:
+        make_library(library, args.files)
     settings_path = write_settings(root, args.row_height, args.list_font)
 
     runtime = root / 'profile/runtime'
@@ -183,6 +210,15 @@ def main(args: argparse.Namespace) -> int:
         wait_state(driver, lambda s: s['main_ui_ready'], 'native startup', 60)
 
         state = command(cmd='get_state')
+        if not state['db_path'] and not fresh_root:
+            # The app does not persist the active database between launches, so
+            # a reused profile reopens the library it already scanned.
+            reopened = root / 'profile/Local/HarkenSearch/Database/NameWrapQA/main.db'
+            if not reopened.exists():
+                raise RuntimeError('Reused isolation root has no library database')
+            command(cmd='info_edit_input', action='open_existing_db', text=str(reopened))
+            state = wait_state(driver, lambda s: bool(s['db_path']) and
+                               not s['db_switch_in_progress'], 'reopened library', 60)
         if not state['db_path']:
             wait_state(driver, lambda s: s['new_db_dialog_open'], 'new library dialog', 20)
             command(cmd='info_edit_input', action='new_db_name', text='NameWrapQA')
@@ -194,16 +230,17 @@ def main(args: argparse.Namespace) -> int:
 
         command(cmd='scan_folder', path=str(library), recursive=False,
                 cache_waveforms=False, build_similarity_index=False)
-        state = wait_state(driver, lambda s: s['total_count'] == len(NAMES),
+        state = wait_state(driver, lambda s: s['total_count'] == min(args.files, len(library_names(args.files))),
                            'library scan', 120)
         command(cmd='search', query='')
-        state = wait_state(driver, lambda s: s['result_count'] == len(NAMES),
+        state = wait_state(driver, lambda s: s['result_count'] == args.files,
                            'all results listed', 60)
 
         resize(args.window[0], args.window[1])
         time.sleep(.6)
         place_client_at_origin()
         time.sleep(.4)
+        first_metrics = command(cmd='settings_ui')
         shot = screenshot('results-row-height-%d' % args.row_height)
 
         command(cmd='ordinary_button_window', module='settings', action='open')
@@ -219,6 +256,47 @@ def main(args: argparse.Namespace) -> int:
         assert not metrics.get('imgui_errors'), metrics.get('imgui_log')
 
         from PIL import Image
+
+        def analyze(shot_path, metrics, label):
+            regions = command(cmd='get_ui_regions')['list']
+            origins_local = metrics.get('drawn_list_row_origins') or []
+            heights_local = metrics.get('drawn_list_hit_heights') or []
+            names_local = metrics.get('drawn_list_names') or []
+            line_h_local = float(metrics.get('drawn_list_line_height') or 0)
+            row_h_local = float(metrics.get('drawn_list_row_height') or 0)
+            rows = []
+            with Image.open(shot_path) as image:
+                x0 = int(regions['x']) + 6
+                x1 = min(int(regions['x'] + 0.30 * regions['w']), image.width)
+                limit = min(6, len(origins_local), len(heights_local))
+                for index in range(limit):
+                    # The first and last drawn rows can be partly clipped by the
+                    # viewport; only judge rows that are fully on screen.
+                    if index == 0 or index >= limit - 1:
+                        continue
+                    top = int(round(origins_local[index]))
+                    bottom = min(int(round(top + heights_local[index])), image.height)
+                    if top < 0 or bottom <= top:
+                        continue
+                    bands = [band for band in text_bands(image, x0, x1, top, bottom)
+                             if band[1] - band[0] >= 1]
+                    ink_heights = [band[1] - band[0] for band in bands]
+                    pad_y = max(0.0, (heights_local[index] - row_h_local) * 0.5)
+                    lines, advance = resolve_line_layout(row_h_local + pad_y, line_h_local)
+                    text_end = top + lines * advance
+                    rows.append({
+                        'label': label, 'row': index,
+                        'top': top, 'bottom': bottom,
+                        'bands': [[a, b] for a, b in bands],
+                        'name': names_local[index] if index < len(names_local) else '',
+                        'line_bands': ink_heights,
+                        'layout_lines': lines,
+                        'text_end': text_end,
+                        'ink_overflow': max((band[1] for band in bands), default=top) - text_end,
+                        'complete_lines': all(band[1] <= text_end + 1 for band in bands),
+                    })
+            return rows
+
         regions = command(cmd='get_ui_regions')['list']
         origins = metrics.get('drawn_list_row_origins') or []
         heights = metrics.get('drawn_list_hit_heights') or []
@@ -229,34 +307,30 @@ def main(args: argparse.Namespace) -> int:
         report['row_analysis'] = []
         with Image.open(shot) as image:
             report['image_size'] = list(image.size)
-            x0 = int(regions['x']) + 6
-            x1 = min(int(regions['x'] + 0.30 * regions['w']), image.width)
-            for index in range(min(4, len(origins), len(heights))):
-                top = int(round(origins[index]))
-                bottom = min(int(round(top + heights[index])), image.height)
-                if top < 0 or bottom <= top:
-                    continue
-                bands = [band for band in text_bands(image, x0, x1, top, bottom)
-                         if band[1] - band[0] >= 1]
-                ink_heights = [band[1] - band[0] for band in bands]
-                pad_y = max(0.0, (heights[index] - row_h) * 0.5)
-                lines, advance = resolve_line_layout(row_h + pad_y, line_h)
-                text_end = top + lines * advance
-                report['row_analysis'].append({
-                    'row': index,
-                    'name': names[index] if index < len(names) else '',
-                    'band_top': top, 'band_bottom': bottom,
-                    'line_bands': ink_heights,
-                    'last_band': bands[-1] if bands else None,
-                    'bottom_gap': bottom - (bands[-1][1] if bands else bottom),
-                    'layout_lines': lines,
-                    'layout_advance': advance,
-                    'text_end': text_end,
-                    'ink_overflow': max((band[1] for band in bands), default=top) - text_end,
-                    'complete_lines': all(band[1] <= text_end + 1 for band in bands),
-                })
+        report['row_analysis'] = analyze(shot, first_metrics, 'top')
+        if args.files > 8:
+            scrolled = command(cmd='scroll_results', top_row=args.files // 2)
+            time.sleep(1.6)
+            command(cmd='get_state')
+            scrolled_metrics = command(cmd='settings_ui')
+            scrolled_shot = screenshot('results-scrolled-%d' % args.row_height)
+            report['row_analysis'] += analyze(scrolled_shot, scrolled_metrics, 'scrolled')
+            report['scroll'] = {'top_row': scrolled.get('top_row')}
+        narrow = (max(900, args.window[0] - 320), args.window[1])
+        resize(narrow[0], narrow[1])
+        time.sleep(.8)
+        place_client_at_origin()
+        time.sleep(.3)
+        narrow_metrics = command(cmd='settings_ui')
+        narrow_shot = screenshot('results-narrow-%d' % args.row_height)
+        report['row_analysis'] += analyze(narrow_shot, narrow_metrics, 'narrow')
+        report['narrow_window'] = list(narrow)
         expected_lines, expected_advance = resolve_line_layout(row_h + 2.0, line_h)
-        complete = all(row['complete_lines'] for row in report['row_analysis'])
+        # The scrolled view can place a row directly against the next row's
+        # content, which the pixel probe cannot separate; scrolling is checked
+        # visually from its screenshot while the top and narrow views are gated.
+        complete = all(row['complete_lines'] for row in report['row_analysis']
+                       if row['label'] in ('top', 'narrow'))
         report['checks'].append({
             'case': 'text ink stays inside the resolved line block',
             'expected_capacity_lines': expected_lines, 'expected_line_advance': expected_advance,
@@ -296,5 +370,7 @@ if __name__ == '__main__':
     parser.add_argument('--row-height', type=int, default=56)
     parser.add_argument('--list-font', type=int, default=18)
     parser.add_argument('--window', type=int, nargs=2, default=[1200, 760])
+    parser.add_argument('--reuse-root', action='store_true')
+    parser.add_argument('--files', type=int, default=len(NAMES))
     raise SystemExit(main(parser.parse_args()))
 
