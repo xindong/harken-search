@@ -1432,13 +1432,6 @@
       "ja": "データベース名："
     },
     {
-      "id": "CloseDlg_Question",
-      "type": "ui",
-      "zh": "你想要怎么关闭 Harken Search？",
-      "en": "How would you like to close Harken Search?",
-      "ja": "Harken Search の閉じ方を選択してください"
-    },
-    {
       "id": "CloseDlg_Minimize",
       "type": "ui",
       "zh": "最小化到托盘",
@@ -6835,13 +6828,6 @@
       "ja": "プリセットを削除"
     },
     {
-      "id": "ModuleUI_PresetName",
-      "type": "ui",
-      "zh": "预设名称",
-      "en": "Preset name",
-      "ja": "プリセット名"
-    },
-    {
       "id": "ModuleUI_Save",
       "type": "ui",
       "zh": "保存",
@@ -7425,9 +7411,9 @@
     {
       "id": "Main_SetDefaultPlayerHint",
       "type": "ui",
-      "zh": "会打开系统默认应用设置。请在列表里选 Harken Search，再勾选 .wav .mp3 .flac 等格式。",
-      "en": "This opens Windows default-app settings. Choose Harken Search, then assign .wav, .mp3, .flac and the other listed formats.",
-      "ja": "システムの既定アプリ設定を開きます。Harken Search を選び、.wav、.mp3、.flac などの形式を割り当ててください。"
+      "zh": "会打开系统默认应用设置；选 Harken Search 后勾选音频格式。",
+      "en": "Opens Windows default-app settings; pick Harken Search and its audio types.",
+      "ja": "既定アプリの設定を開きます。Harken Search と音声形式を選んでください。"
     },
     {
       "id": "Main_SetDefaultBtn",
@@ -7614,9 +7600,9 @@
     {
       "id": "Main_SendDaawHint",
       "type": "ui",
-      "zh": "Select files, then press shortcut or S to send",
-      "en": "Select files, then press shortcut or S to send",
-      "ja": "ファイルを選択後、ショートカットか S キーで送信"
+      "zh": "先选文件，再按快捷键或 S 发送。",
+      "en": "Select files, then press the shortcut or S to send.",
+      "ja": "ファイルを選び、ショートカットか S キーで送信します。"
     },
     {
       "id": "Main_ReaperRootDir",
@@ -7642,9 +7628,9 @@
     {
       "id": "Main_ReaperPathHint",
       "type": "ui",
-      "zh": "请选择包含 reaper.exe 的目录。无需查找或手动复制 DLL。",
-      "en": "Select the directory containing reaper.exe. No DLL lookup or manual copy is needed.",
-      "ja": "reaper.exe を含むディレクトリを選択してください。DLL の検索や手動コピーは不要です。"
+      "zh": "选 reaper.exe 所在目录即可，不用复制 DLL。",
+      "en": "Pick the folder that holds reaper.exe. Nothing to copy.",
+      "ja": "reaper.exe のあるフォルダを選ぶだけです。DLL のコピーは不要です。"
     },
     {
       "id": "Main_AutoDetect",
@@ -7673,34 +7659,6 @@
       "zh": "复制脱敏诊断摘要##ReaperCopyDiagnostic",
       "en": "Copy sanitized diagnostic summary##ReaperCopyDiagnostic",
       "ja": "サニタイズ済み診断サマリーをコピー##ReaperCopyDiagnostic"
-    },
-    {
-      "id": "Main_ReaperStatusFmt",
-      "type": "ui",
-      "zh": "REAPER：%s",
-      "en": "REAPER: %s",
-      "ja": "REAPER：%s"
-    },
-    {
-      "id": "Main_ReaperResourceFmt",
-      "type": "ui",
-      "zh": "资源目录：%s",
-      "en": "Resource dir: %s",
-      "ja": "リソースディレクトリ：%s"
-    },
-    {
-      "id": "Main_ReaperUserPluginsFmt",
-      "type": "ui",
-      "zh": "UserPlugins：%s",
-      "en": "UserPlugins: %s",
-      "ja": "UserPlugins：%s"
-    },
-    {
-      "id": "Main_ReaperBridgeInfoFmt",
-      "type": "ui",
-      "zh": "组件：版本 %s / 协议 %d / 架构 %s / 握手 %s",
-      "en": "Bridge: version %s / protocol %d / arch %s / handshake %s",
-      "ja": "コンポーネント：バージョン %s / プロトコル %d / アーキテクチャ %s / ハンドシェイク %s"
     },
     {
       "id": "Main_AttachDiagLog500",
@@ -7824,7 +7782,7 @@
     {
       "id": "Main_DawExePathLabel",
       "type": "ui",
-      "zh": "Executable Path",
+      "zh": "程序路径",
       "en": "Executable Path",
       "ja": "実行ファイルのパス"
     },
@@ -8088,18 +8046,11 @@
       "ja": "作成"
     },
     {
-      "id": "Main_RemoveFromLibraryTitle",
-      "type": "ui",
-      "zh": "将从当前库移除",
-      "en": "Will remove from current library",
-      "ja": "現在のライブラリから削除されます"
-    },
-    {
       "id": "Main_RemovePathsExplain",
       "type": "ui",
-      "zh": "将从当前 Harken Search 数据库移除以下路径及其子目录下的全部入库记录:",
-      "en": "The following paths and all imported records under their subdirectories will be removed from the current Harken Search database:",
-      "ja": "以下のパスとそのサブディレクトリ配下の全取り込みレコードを現在の Harken Search データベースから削除します:"
+      "zh": "此路径及其子目录下的记录会一并移除，磁盘文件不受影响。",
+      "en": "Removes records under this path and its subdirectories. Files on disk stay.",
+      "ja": "このパスとサブディレクトリ配下の記録を削除します。ディスク上のファイルは残ります。"
     },
     {
       "id": "Main_SourcesKeptNote",
@@ -9028,9 +8979,9 @@
     {
       "id": "Main_ClearPathExplainWrap",
       "type": "ui",
-      "zh": "将从当前 Harken Search 数据库移除此路径及其子路径下的全部入库记录，不删除磁盘文件。相关播放列表引用、回填状态、封面/波形本地缓存引用会同步清理。",
-      "en": "All imported records under this path and its subpaths will be removed from the current Harken Search database; disk files are not deleted. Related playlist references, backfill status and local cover/waveform cache references are cleaned up as well.",
-      "ja": "このパスとそのサブパス配下の全取り込みレコードを現在の Harken Search データベースから削除します。ディスクのファイルは削除されません。関連プレイリスト参照・補完状態・ジャケット/波形ローカルキャッシュ参照も整理されます。"
+      "zh": "会移除数据库记录、播放列表引用和本地缓存引用，磁盘文件不会被删除。",
+      "en": "Removes database records, playlist references and local cache references. Files on disk stay.",
+      "ja": "データベース記録・プレイリスト参照・ローカルキャッシュ参照を削除します。ディスク上のファイルは残ります。"
     },
     {
       "id": "Main_RemoveBtnReuse",
@@ -9312,6 +9263,7 @@
       "en": "Split",
       "ja": "分離"
     },
+    {"id":"ModuleUI_UcsWriteTitle","type":"ui","zh":"写入 UCS 分类","en":"Write UCS categories","ja":"UCS カテゴリを書き込む"},
     {
       "id": "Main_WaveDebugFullTip",
       "type": "ui",
@@ -9819,8 +9771,8 @@
     {
       "id": "Main_SelectedDawFmt",
       "type": "ui",
-      "zh": "Selected DAW: %s",
-      "en": "Selected DAW: %s",
+      "zh": "当前 DAW：%s",
+      "en": "選択中の DAW：%s",
       "ja": "Selected DAW: %s"
     },
     {

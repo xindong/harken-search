@@ -58,7 +58,7 @@ for forbidden in (
 
 for required in (
     'ImGui::OpenPopup(kRelinkPromptId)',
-    'BeginDialog(kRelinkPromptId, nullptr, 560.0f, 0.0f)',
+    'aura::ui::BeginAlertDialog(kRelinkPromptId, L(Relink_MissingFileHeader),',
     'ImGui::BeginTable(',
     "RelinkMatchReasonText(paths[0].reason)",
     "RelinkPathUpdateFailureText(failure->second)",

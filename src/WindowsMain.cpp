@@ -4955,6 +4955,9 @@ static void PollQaCommandFile(AppState& state) {
             state.showDeleteConfirmDialog = false;
             state.showPlaylistDialog = false;
             state.showCreateFolderDialog = false;
+            state.showDawTargetSettings = false;
+            state.showFolderAutoRenameDialog = false;
+            state.showPlaylistRenameDialog = false;
             if (action == "close") {
                 result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
             } else if (action == "open") {
@@ -4988,6 +4991,29 @@ static void PollQaCommandFile(AppState& state) {
                     strncpy_s(state.folderNameBuffer, sizeof(state.folderNameBuffer),
                               "New Folder", _TRUNCATE);
                     state.showCreateFolderDialog = true;
+                } else if (dialog == "daw-settings") {
+                    state.settings.dawTargets.clear();
+                    DawTarget previewTarget;
+                    previewTarget.name = "REAPER";
+                    previewTarget.processName = "reaper.exe";
+                    previewTarget.mode = DawSendMode::NamedPipe;
+                    state.settings.dawTargets.push_back(std::move(previewTarget));
+                    state.selectedDAWIndex = 0;
+                    state.showDawTargetSettings = true;
+                } else if (dialog == "folder-auto-rename") {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",
+                             "QA:/preview-samples");
+                    state.folderRenamePreview.clear();
+                    state.folderRenameLog.clear();
+                    state.showFolderAutoRenameDialog = true;
+                } else if (dialog == "playlist-rename") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistRenameDialog = true;
+                } else if (dialog == "default-player") {
+                    state.settings.defaultPlayerPrompted = false;
+                    state.warmupFramesRemaining = 0;
+                    state.filePlayerFastPathActive = false;
                 } else {
                     known = false;
                 }

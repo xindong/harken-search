@@ -1305,52 +1305,8 @@ void EndStandaloneWindow() {
 
 // Modal dialog helpers.
 
-bool BeginDialog(const char* title, bool* open, float width, float height) {
-    using namespace aura::ui::metrics;
-    const ThemeColorScheme& th = ThemeColors::current();
-
-    // One-shot OpenPopup when caller flipped *open to true.
-    if (open && *open) {
-        ImGui::OpenPopup(title);
-        // Consume the flag so the next frame doesn't re-open after dismiss.
-        *open = false;
-    }
-
-    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_FirstUseEver);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,
-        ImGui::ColorConvertFloat4ToU32(ThemeColors::popupModalBG(th)));
-    ImGui::PushStyleColor(ImGuiCol_PopupBg,
-        ImGui::ColorConvertFloat4ToU32(ThemeColors::popupModalBG(th)));
-    ImGui::PushStyleColor(ImGuiCol_Border,
-        ImGui::ColorConvertFloat4ToU32(ThemeColors::popupBorder(th)));
-    ImGui::PushStyleColor(ImGuiCol_BorderShadow,
-        ImGui::ColorConvertFloat4ToU32(ThemeColors::popupShadow(th)));
-    ImGui::PushStyleColor(ImGuiCol_Text,
-        ImGui::ColorConvertFloat4ToU32(th.menuText));
-    ImGui::PushStyleColor(ImGuiCol_TitleBg,
-        ImGui::ColorConvertFloat4ToU32(ThemeColors::popupModalPanelBG(th)));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive,
-        ImGui::ColorConvertFloat4ToU32(ThemeColors::popupModalPanelBG(th)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, kRadiusPanel);
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kRadiusPanel);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kGap24, kGap24));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-
-    // Using nullptr for the ImBool lets ESC close without user tracking flag.
-    const bool visible = ImGui::BeginPopupModal(title, nullptr,
-        ImGuiWindowFlags_NoSavedSettings);
-    if (!visible) {
-        ImGui::PopStyleVar(4);
-        ImGui::PopStyleColor(7);
-    }
-    return visible;
-}
-
-void EndDialog() {
-    ImGui::EndPopup();
-    ImGui::PopStyleVar(4);
-    ImGui::PopStyleColor(7);
-}
+// The single modal surface used by every dialog in the app: one rounded
+// panel, no ImGui title bar, the title drawn inside.
 bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags) {
     using namespace aura::ui::metrics;
     const ThemeColorScheme& th = ThemeColors::current();

@@ -197,16 +197,13 @@ void EndStandaloneWindow();
 
 // Modal dialog API.
 
-// Themed modal dialog. Pass `open` pointing at a bool; set to true to
-// request opening this frame. Returns true if the dialog is currently
-// rendering; caller pairs with EndDialog() when true. size {0,0} = auto.
-bool BeginDialog(const char* title, bool* open,
-                 float width = 480.0f, float height = 0.0f);
-void EndDialog();
-
-// macOS-style alert panel: one rounded surface, no title bar and no rule
-// between title and body. The title is drawn inside the panel, so pass the
-// same popup id to ImGui::OpenPopup. Pair with EndAlertDialog() when true.
+// The one modal surface used by every dialog: 12px rounded panel, no ImGui
+// title bar, no rule between title and body, title drawn inside.
+// `id` is the popup id passed to ImGui::OpenPopup (the visible title part
+// before ## is shown, so `id` and `title` are allowed to be the same string).
+// Dialogs that need a fixed size call ImGui::SetNextWindowSize() first and
+// leave out ImGuiWindowFlags_AlwaysAutoResize. Pair with EndAlertDialog()
+// only when this returns true.
 bool BeginAlertDialog(const char* id, const char* title,
                       ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize);
 void EndAlertDialog();
