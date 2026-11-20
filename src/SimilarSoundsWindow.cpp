@@ -449,8 +449,7 @@ static void DrawSimilarAnalysisReport(AppState& state) {
         state.showSimilarAnalysisReport = false;
     }
     ImGui::SetNextWindowSize(ImVec2(660, 380), ImGuiCond_FirstUseEver);
-    bool open = true;
-    if (ImGui::BeginPopupModal(L(Similar_AnalysisReport), &open)) {
+    if (aura::ui::BeginAlertDialog(L(Similar_AnalysisReport), L(Similar_AnalysisReport))) {
         std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
         const auto& report = state.batchFeatureResult;
         ImGui::Text(L(Similar_AnalysisSummaryFmt), report.progress.saved, report.progress.skipped, report.progress.failed);
@@ -468,7 +467,7 @@ static void DrawSimilarAnalysisReport(AppState& state) {
         }
         ImGui::EndChild();
         if (aura::ui::ActionButton(L(Close), ImVec2(100, 28), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 }
 

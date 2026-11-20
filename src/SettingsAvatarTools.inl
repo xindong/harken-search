@@ -55,8 +55,7 @@
 
                     ImGui::EndGroup();
 
-                    if (BeginTransientScrollbarPopupModal(L(AvatarCropTitle), nullptr,
-                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                    if (aura::ui::BeginAlertDialog(L(AvatarCropTitle), L(AvatarCropTitle))) {
                         const float available = std::max(180.f, std::min(560.f,ImGui::GetIO().DisplaySize.x-96.f));
                         const float kPreviewSize = std::min(320.f,available-108.f);
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+available);
@@ -124,7 +123,7 @@
                         if(aura::ui::ActionButton(L(Main_CancelBtn2),ImVec2(100,0),aura::ui::ButtonVariant::Quiet))finishCrop();
                         su::Observe("avatar-cancel");
 
-                        ImGui::EndPopup();
+                        aura::ui::EndAlertDialog();
                     }
                 }
 
@@ -156,13 +155,11 @@
                     }
 
                     ImGui::SetNextWindowSize(ImVec2(560.0f, 520.0f), ImGuiCond_Appearing);
-                    if (BeginTransientScrollbarPopupModal(L(Set_AvatarPickerTitleZh), nullptr, ImGuiWindowFlags_NoResize)) {
+                    if (aura::ui::BeginAlertDialog(L(Set_AvatarPickerTitleZh), L(Set_AvatarPickerTitleZh),
+                                        ImGuiWindowFlags_NoResize)) {
                         constexpr float kSettingsAvatarPickerCellSize = 72.0f;
                         constexpr float kSettingsAvatarPickerCellGap = 12.0f;
                         constexpr float kSettingsAvatarPendingPreviewSize = 104.0f;
-
-                        ImGui::TextUnformatted(L(Set_AvatarPickerTitleZh));
-                        ImGui::Spacing();
 
                         ImGui::BeginGroup();
                         const ImVec2 pendingTopLeft = ImGui::GetCursorScreenPos();
@@ -219,7 +216,7 @@
                             }                            ImGui::PopID();
                         }
 
-                        ImGui::EndPopup();
+                        aura::ui::EndAlertDialog();
                     }
                 }
                 ImGui::Spacing();
