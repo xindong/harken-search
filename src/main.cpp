@@ -32063,7 +32063,10 @@ void RenderUI(AppState& state) {
             ImGui::SameLine();
 
             ImGui::BeginDisabled(state.aiModelDownloading.load());
-            ImGui::SetNextItemWidth(190.0f);
+            // 模型行固定单行：下拉宽度吃掉剩余空间，给后面的主操作和「模型目录」留位置。
+            const float modelRowWidth = ImGui::GetContentRegionAvail().x;
+            const float modelComboWidth = std::clamp(modelRowWidth - 300.0f, 110.0f, 190.0f);
+            ImGui::SetNextItemWidth(modelComboWidth);
             if (ImGui::Combo("##AIModelSelect", &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
                 state.aiModelName = modelNames[modelIdx];
                 state.aiModelLoaded.store(GetAIEngine().IsModelLoaded() &&
@@ -32120,12 +32123,14 @@ void RenderUI(AppState& state) {
             {
                 const float linkWidth = ImGui::CalcTextSize(L(AI_ModelDirLink)).x + 14.0f;
                 const float remainingWidth = ImGui::GetContentRegionAvail().x;
-                if (remainingWidth > linkWidth) {
+                if (remainingWidth < linkWidth) {
+                    // 面板被拖窄时宁可不画，也不把入口压在裁剪区里。
+                } else {
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + remainingWidth - linkWidth);
-                }
-                if (aura::ui::SmallActionButton(L(AI_ModelDirLink), aura::ui::ButtonVariant::Quiet)) {
-                    const std::string modelDir = GetDefaultModelDir();
-                    Platform::OpenInFileManager(modelDir);
+                    if (aura::ui::SmallActionButton(L(AI_ModelDirLink), aura::ui::ButtonVariant::Quiet)) {
+                        const std::string modelDir = GetDefaultModelDir();
+                        Platform::OpenInFileManager(modelDir);
+                    }
                 }
             }
 
@@ -32214,26 +32219,23 @@ void RenderUI(AppState& state) {
                                     const bool lowConfidence = transcript &&
                                         IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds);
 
-                                    const auto labeledValue = [](const char* label, const char* value) {
+                                    const auto labeledValue = [&](const char* label, const char* value, bool lowConf) {
                                         ImGui::AlignTextToFramePadding();
                                         ImGui::TextDisabled("%s", label);
+                                        if (lowConf) {
+                                            ImGui::SameLine();
+                                            ImGui::TextColored(aiWarnColor, "%s", L(AI_LowConfidenceTag));
+                                        }
                                         ImGui::SameLine();
                                         ImGui::TextUnformatted(value);
                                     };
                                     if (organization && !organization->searchableDescription.empty()) {
-                                        labeledValue(L(AI_DescLabel), organization->searchableDescription.c_str());
-                                        if (lowConfidence) {
-                                            ImGui::SameLine();
-                                            ImGui::TextColored(aiWarnColor, "%s", L(AI_LowConfidenceTag));
-                                        }
+                                        labeledValue(L(AI_DescLabel), organization->searchableDescription.c_str(), lowConfidence);
                                         if (!organization->keywordCsv.empty()) {
-                                            labeledValue(L(AI_KeywordsLabel), organization->keywordCsv.c_str());
+                                            labeledValue(L(AI_KeywordsLabel), organization->keywordCsv.c_str(), false);
                                         }
                                     } else {
                                         ImGui::TextWrapped("%s", it->second.c_str());
-                                        if (lowConfidence) {
-                                            ImGui::TextColored(aiWarnColor, "%s", L(AI_LowConfidenceTag));
-                                        }
                                     }
                                     if (organization && !organization->qualityIssues.empty()) {
                                         ImGui::TextColored(aiWarnColor, L(Main_AsrQualityCheckFmt),
@@ -32330,9 +32332,11 @@ void RenderUI(AppState& state) {
                 std::vector<AITask> queueTasks = GetAIEngine().GetAllTasks();
                 char queueTabLabel[96];
                 if (queueTasks.empty()) {
-                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s", L(Main_QueueTab));
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s###AIQueueTab", L(Main_QueueTab));
                 } else {
-                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s (%d)", L(Main_QueueTab), (int)queueTasks.size());
+                    // ### 后缀固定页签 ID：可清理后计数变化不会把用户踢回其他页签。
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s (%d)###AIQueueTab",
+                        L(Main_QueueTab), (int)queueTasks.size());
                 }
                 if (ImGui::BeginTabItem(queueTabLabel)) {
                     std::vector<AITask>& tasks = queueTasks;

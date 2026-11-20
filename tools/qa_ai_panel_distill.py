@@ -107,12 +107,14 @@ def run(args):
     report = {'exe': str(exe), 'exe_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
               'isolation_root': str(isolation), 'started_at': datetime.now(timezone.utc).isoformat(),
               'captures': [], 'checks': []}
+    identity_verified = False
     try:
         identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
         assert identity['pid'] == process.pid, identity
         assert Path(identity['exe_path']).resolve() == exe, identity
         assert Path(identity['isolation_root']).resolve() == isolation, identity
         report['identity'] = identity
+        identity_verified = True
         hwnd = identity['hwnd']
         user32.ShowWindow(hwnd, 4)
         user32.SetWindowPos(hwnd, None, 20, 30, 1280, 900, 0x0040 | 0x0010 | 0x0004)
@@ -166,12 +168,15 @@ def run(args):
             capture(f'panel-click-{x}-{y}')
         return report
     finally:
-        try:
-            state = driver.command({'cmd': 'get_state'}, timeout=10)
-            if state.get('main_ui_ready'):
-                driver.command({'cmd': 'info_edit_input', 'action': 'exit'}, timeout=10)
-        except Exception:
-            pass
+        # 只在自己确认过身份后走应用内退出；身份不符时可能连着别的 QA 实例，
+        # 发退出命令会打断人家的工作，这时只终止本进程。
+        if identity_verified:
+            try:
+                state = driver.command({'cmd': 'get_state'}, timeout=10)
+                if state.get('main_ui_ready'):
+                    driver.command({'cmd': 'info_edit_input', 'action': 'exit'}, timeout=10)
+            except Exception:
+                pass
         try:
             process.terminate()
             process.wait(timeout=15)

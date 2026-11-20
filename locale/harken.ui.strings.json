@@ -9602,9 +9602,9 @@
     {
       "id": "Main_AsrLocalDownloaded",
       "type": "ui",
-      "zh": "本地已下载，待加载",
-      "en": "Downloaded locally, awaiting load",
-      "ja": "ダウンロード済み、読込待ち"
+      "zh": "待加载",
+      "en": "Not loaded",
+      "ja": "未読み込み"
     },
     {
       "id": "Main_AsrNeedsDownload",
