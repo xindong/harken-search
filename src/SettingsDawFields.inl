@@ -73,7 +73,9 @@ auto drawDawCard=[&](const su::Entry& entry,size_t index) {
     const bool installable=sendReady && canInstallReaper(status);
     const std::string destination=installable
         ? status->configuredRootPath+"\n"+status->targetDirectory : std::string{};
-    if (!installable || editor.reaperConsentDestination!=destination) editor.reaperInstallConsent=false;
+    // Only the REAPER card may drop the consent: the other three cards are never
+    // installable, so clearing it here erased the tick right after the user set it.
+    if (sendReady && (!installable || editor.reaperConsentDestination!=destination)) editor.reaperInstallConsent=false;
     const bool focusPath=sendReady && editor.focusId=="daw-reaper";
     const bool focusSending=sendReady && editor.focusId=="daw-reaper-enabled";
     const bool focusDiagnostic=sendReady && editor.focusId=="daw-reaper-diagnostic";
