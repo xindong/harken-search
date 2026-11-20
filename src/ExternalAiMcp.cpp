@@ -104,7 +104,8 @@ bool CapabilityGranted(const HarkenSearch::ExternalAiAuthorization& authorizatio
     // A ticked root is always inside itself, so this checks the grant without
     // widening the managed scope to the whole library.
     for (const auto& root : authorization.roots()) {
-        if (authorization.Authorize(capability, config.libraryId, root) != HarkenSearch::ExternalAiAccess::Denied) {
+        if (!root.enabled) continue;
+        if (authorization.Authorize(capability, config.libraryId, root.path) != HarkenSearch::ExternalAiAccess::Denied) {
             return true;
         }
     }

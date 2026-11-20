@@ -107,6 +107,25 @@ int main(int argc, char** argv)
     Check(allowed.Authorize(ExternalAiCapability::SearchAudio, "library-b", insideFile) == ExternalAiAccess::Denied,
         "another library identity is denied");
 
+    // A directory the user added but did not tick stays in the document and
+    // grants nothing; the ticked sibling keeps working.
+    const std::string tickedRoots = "[{\"path\":\"" + Escape(rootText) + "\",\"enabled\":true}," +
+        "{\"path\":\"" + Escape(prefixTwin.u8string()) + "\",\"enabled\":false}]";
+    const auto partlyTicked = ParseOk(Document(rootText, allRead, true, false, "library-a", tickedRoots));
+    Check(partlyTicked.roots().size() == 2, "unticked directory stays in the document");
+    Check(partlyTicked.Authorize(ExternalAiCapability::SearchAudio, "library-a", insideFile) == ExternalAiAccess::ReadOnly,
+        "ticked directory still grants");
+    Check(partlyTicked.Authorize(ExternalAiCapability::SearchAudio, "library-a", prefixFile) == ExternalAiAccess::Denied,
+        "unticked directory is not authorized");
+    const std::string allUnticked = "[{\"path\":\"" + Escape(rootText) + "\",\"enabled\":false}]";
+    const auto nothingTicked = ParseOk(Document(rootText, allRead, true, false, "library-a", allUnticked));
+    Check(nothingTicked.Authorize(ExternalAiCapability::SearchAudio, "library-a", insideFile) == ExternalAiAccess::Denied,
+        "no ticked directory denies every capability");
+
+    const auto legacy = ParseOk(Document(rootText, allRead));
+    Check(legacy.roots().size() == 1 && legacy.roots().front().enabled,
+        "legacy string roots still count as ticked");
+
     const auto disabled = ParseOk(Document(rootText, allRead, false));
     Check(disabled.Authorize(ExternalAiCapability::FindFolders, "library-a", rootText) == ExternalAiAccess::Denied,
         "switch off denies every capability");
@@ -177,7 +196,7 @@ int main(int argc, char** argv)
     HarkenSearch::ExternalAiSettings stored;
     stored.libraryId = libraryIdText;
     stored.enabled = true;
-    stored.roots = {rootText, prefixText};
+    stored.roots = {{rootText, true}, {prefixText, false}};
     stored.capabilities[0] = ExternalAiAccess::ReadOnly;
     stored.capabilities[1] = ExternalAiAccess::ReadOnly;
     stored.capabilities[3] = ExternalAiAccess::ReadOnly;

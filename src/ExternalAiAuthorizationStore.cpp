@@ -111,14 +111,15 @@ std::string SerializeExternalAiSettings(const ExternalAiSettings& settings)
     document += std::string("  \"sampleLibrary\": ") + (settings.sampleLibrary ? "true" : "false") + ",\n";
     document += "  \"roots\": [";
     for (std::size_t index = 0; index < settings.roots.size(); ++index) {
-        const std::string root = Quote(settings.roots[index]);
+        const std::string root = Quote(settings.roots[index].path);
         if (root.empty()) {
             return std::string{};
         }
         if (index != 0) {
             document += ", ";
         }
-        document += root;
+        document += "{\"path\": " + root +
+            ", \"enabled\": " + (settings.roots[index].enabled ? "true" : "false") + "}";
     }
     document += "],\n";
     document += "  \"capabilities\": {\n";

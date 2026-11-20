@@ -33,7 +33,7 @@ struct ExternalAiSettings {
     std::string libraryId;
     bool enabled = false;
     bool sampleLibrary = false;
-    std::vector<std::string> roots;
+    std::vector<ExternalAiRoot> roots;
     std::array<ExternalAiAccess, ExternalAiCapabilityCount> capabilities{ {
         ExternalAiAccess::Denied, ExternalAiAccess::Denied, ExternalAiAccess::Denied,
         ExternalAiAccess::Denied, ExternalAiAccess::Denied, ExternalAiAccess::Denied,

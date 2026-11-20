@@ -25,6 +25,16 @@ enum class ExternalAiAccess {
     Editable,
 };
 
+// One authorized directory. A root the user added but did not tick stays in the
+// document so the settings page can show it, and grants nothing.
+struct ExternalAiRoot {
+    std::string path;
+    bool enabled = true;
+    bool operator==(const ExternalAiRoot& other) const {
+        return path == other.path && enabled == other.enabled;
+    }
+};
+
 // Per-library authorization document for the external AI connector.
 //
 // The document is the only source of truth for one library: the master switch,
@@ -42,7 +52,7 @@ public:
     bool enabled() const { return enabled_; }
     bool sampleLibrary() const { return sampleLibrary_; }
     const std::string& libraryId() const { return libraryId_; }
-    const std::vector<std::string>& roots() const { return roots_; }
+    const std::vector<ExternalAiRoot>& roots() const { return roots_; }
 
     // Decides one call. libraryId must be the identity of the database the
     // request actually uses; a document for another library never matches.
@@ -66,7 +76,7 @@ private:
     bool enabled_ = false;
     bool sampleLibrary_ = false;
     std::string libraryId_;
-    std::vector<std::string> roots_;
+    std::vector<ExternalAiRoot> roots_;
     std::vector<Grant> grants_;
 };
 

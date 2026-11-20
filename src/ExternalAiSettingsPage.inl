@@ -62,63 +62,82 @@
         linkTarget.executablePath=GetExeDirUtf8()+"\\HarkenExternalAiMcp.exe";
         linkTarget.libraryId=page.libraryId;
         linkTarget.databasePath=databasePath;
-        linkTarget.rootPath=page.settings.roots.empty()?std::string{}:page.settings.roots.front();
+        linkTarget.rootPath=[&]() {
+            for (const auto& root : page.settings.roots) {
+                if (root.enabled) return root.path;
+            }
+            return std::string{};
+        }();
         linkTarget.settingsPath=page.documentPath;
         const float rowRight=ImGui::GetWindowContentRegionMax().x;
         // 所有右侧控件共用同一条右边缘：内缩 12px，文字先量宽再定位。
         const float edgeRight=rowRight-12.f;
         auto placeRight=[&](float width) { ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-width)); };
-        auto placeTextRight=[&](const char* text) { placeRight(ImGui::CalcTextSize(text).x); };
         auto copyable=[&](const char* label,const std::string& value) {
             ImGui::TextDisabled("%s",label);
             ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-64.f));
             if (aura::ui::SmallActionButton(L(Main_CopyBtn))) ImGui::SetClipboardText(value.c_str());
-            ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(value.c_str()); ImGui::PopTextWrapPos();
+            ImGui::TextWrapped("%s",value.c_str());
         };
 
-        // —— 连接状态横条 ——
+        // —— 连接状态横条：左边当前库，右边开关组，一行放完 ——
         ImVec4 bandBg=ThemeColors::current().popupBG; bandBg.w=1.0f;
         ImGui::PushStyleColor(ImGuiCol_ChildBg,bandBg);
-        BeginTransientScrollbarChild("##ext-ai-status",ImVec2(0,82),false);
-        ImGui::Dummy(ImVec2(0,3));
-        ImGui::SetCursorPosX(12.f);
-        ImGui::TextDisabled("%s",L(ExtAi_CurrentLibrary));
-        ImGui::SameLine();
-        ImGui::TextUnformatted(libraryName.c_str());
-        ImGui::Dummy(ImVec2(0,6));
-        ImGui::SetCursorPosX(12.f);
-        bool enabled=page.settings.enabled;
-        if (ImGui::Checkbox(L(ExtAi_Enabled),&enabled)) { page.settings.enabled=enabled; page.dirty=true; }
-        su::Observe("ext-ai-enabled");
-        const char* stateText=page.settings.enabled?L(ExtAi_StateOn):L(ExtAi_StateOff);
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-ImGui::CalcTextSize(stateText).x));
-        ImGui::TextDisabled("%s",stateText);
+        ImGui::BeginChild("##ext-ai-status",ImVec2(0,52),false,
+            ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+        {
+            const char* stateText=page.settings.enabled?L(ExtAi_StateOn):L(ExtAi_StateOff);
+            const float switchWidth=44.f;
+            const float clusterWidth=ImGui::CalcTextSize(L(ExtAi_Enabled)).x+8.f+
+                ImGui::CalcTextSize(stateText).x+10.f+switchWidth;
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY()+8.f);
+            ImGui::SetCursorPosX(12.f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s",L(ExtAi_CurrentLibrary));
+            ImGui::SameLine();
+            ImGui::TextUnformatted(libraryName.c_str());
+            ImGui::SameLine(std::max(ImGui::GetCursorPosX()+24.f,edgeRight-24.f-clusterWidth));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(L(ExtAi_Enabled));
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s",stateText);
+            ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-24.f-switchWidth));
+            bool enabled=page.settings.enabled;
+            if (aura::ui::Toggle("##ext-ai-enabled",&enabled)) { page.settings.enabled=enabled; page.dirty=true; }
+            su::Observe("ext-ai-enabled");
+        }
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // —— 连接详情（低频信息默认收起）——
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,0.0f);
-        ImGui::PushStyleColor(ImGuiCol_Header,ImVec4(0,0,0,0));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered,ThemeColors::current().popupBG);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive,ThemeColors::current().popupBG);
-        if (ImGui::CollapsingHeader(L(ExtAi_ConnectionDetails))) {
+        // —— 连接详情：右对齐一行，点开才展开低频信息 ——
+        ImGui::Dummy(ImVec2(0,2));
+        char detailsLabel[128];
+        snprintf(detailsLabel,sizeof(detailsLabel),"%s  %s",L(ExtAi_ConnectionDetails),
+            page.detailsOpen?u8"▾":u8"›");
+        const float detailsWidth=ImGui::CalcTextSize(detailsLabel).x;
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),edgeRight-12.f-detailsWidth));
+        if (aura::ui::SmallActionButton(detailsLabel,aura::ui::ButtonVariant::Quiet)) page.detailsOpen=!page.detailsOpen;
+        su::Observe("ext-ai-details");
+        if (page.detailsOpen) {
             copyable(L(ExtAi_LibraryId),page.libraryId);
             copyable(L(ExtAi_Document),page.documentPath);
             ImGui::TextDisabled("%s",L(ExtAi_ConnectorCommand));
             if (hasConnector && aura::ui::SmallActionButton(L(Main_CopyBtn),aura::ui::ButtonVariant::Quiet)) {
                 ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
             }
+            ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());
             ImGui::TextWrapped("%s",L(ExtAi_Intro));
         }
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar();
 
         // —— 可操作目录 ——
         ImGui::Dummy(ImVec2(0,10));
         heading(L(ExtAi_Folders));
         const float addWidth=112.f;
         ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-addWidth-12.f-72.f));
-        ImGui::TextDisabled(L(ExtAi_FolderCountFmt),(int)page.settings.roots.size());
+        const int tickedCount=(int)std::count_if(page.settings.roots.begin(),page.settings.roots.end(),
+            [](const HarkenSearch::ExternalAiRoot& root) { return root.enabled; });
+        ImGui::TextDisabled(L(ExtAi_FolderCountFmt),tickedCount);
         placeRight(addWidth);
         if (aura::ui::ActionButton(L(ExtAi_AddRoot),ImVec2(addWidth,26))) {
             const std::string picked=OpenFolderDialog(g_hwnd);
@@ -126,28 +145,43 @@
                 std::string root=picked;
                 for (char& unit : root) if (unit=='/') unit='\\';
                 while (root.size()>3 && root.back()=='\\') root.pop_back();
-                if (std::find(page.settings.roots.begin(),page.settings.roots.end(),root)==page.settings.roots.end()) {
-                    page.settings.roots.push_back(root);
+                const bool known=std::any_of(page.settings.roots.begin(),page.settings.roots.end(),
+                    [&](const HarkenSearch::ExternalAiRoot& entry) { return entry.path==root; });
+                if (!known) {
+                    page.settings.roots.push_back({root,true});
                     page.dirty=true;
                 }
             }
         }
         su::Observe("ext-ai-add-root");
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize,1.0f);
-        {
-            const float listHeight=std::clamp(30.0f*(float)page.settings.roots.size()+10.0f,48.0f,190.0f);
-            BeginTransientScrollbarChild("##ext-ai-folders",ImVec2(0,listHeight),true);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,ImVec2(10.0f,8.0f));
+        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong,ThemeColors::current().chromeBorder);
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight,ThemeColors::current().chromeBorder);
+        if (ImGui::BeginTable("##ext-ai-folders",3,
+                ImGuiTableFlags_BordersOuter|ImGuiTableFlags_BordersInnerH|
+                ImGuiTableFlags_SizingStretchProp|ImGuiTableFlags_NoSavedSettings)) {
+            ImGui::TableSetupColumn("##folder-tick",ImGuiTableColumnFlags_WidthFixed,26.0f);
+            ImGui::TableSetupColumn("##folder-path",ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##folder-action",ImGuiTableColumnFlags_WidthFixed,64.0f);
             if (page.settings.roots.empty()) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(1);
                 ImGui::TextDisabled("%s",L(ExtAi_NoRoots));
             }
             for (std::size_t index=0; index<page.settings.roots.size(); ++index) {
                 ImGui::PushID(static_cast<int>(index));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                bool ticked=page.settings.roots[index].enabled;
+                if (ImGui::Checkbox("##ticked",&ticked)) {
+                    page.settings.roots[index].enabled=ticked;
+                    page.dirty=true;
+                }
+                su::Observe("ext-ai-root-tick");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("%s",page.settings.roots[index].path.c_str());
+                ImGui::TableSetColumnIndex(2);
                 ImGui::AlignTextToFramePadding();
-                ImGui::PushTextWrapPos(edgeRight-12.f-72.f);
-                ImGui::TextUnformatted(page.settings.roots[index].c_str());
-                ImGui::PopTextWrapPos();
-                placeRight(64.f);
                 if (aura::ui::SmallActionButton(L(Main_RemoveBtn2))) {
                     page.settings.roots.erase(page.settings.roots.begin()+static_cast<std::ptrdiff_t>(index));
                     page.dirty=true;
@@ -156,9 +190,10 @@
                 }
                 ImGui::PopID();
             }
-            ImGui::EndChild();
+            ImGui::EndTable();
         }
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar();
 
         // —— 分项权限 ——
         ImGui::Dummy(ImVec2(0,10));
@@ -189,6 +224,9 @@
                     page.dirty=true;
                 }
                 ImGui::PopID();
+                ImGui::PushStyleColor(ImGuiCol_Separator,ThemeColors::current().chromeBorder);
+                ImGui::Separator();
+                ImGui::PopStyleColor();
             }
             ImGui::PopStyleVar();
         }
@@ -272,16 +310,25 @@
         }
         su::Observe("ext-ai-clients");
 
-        // —— 底部保存 ——
-        ImGui::Dummy(ImVec2(0,12));
-        if (aura::ui::ActionButton(L(ModuleUI_Save),ImVec2(150,32),aura::ui::ButtonVariant::PrimarySearch)) saveDocument();
-        su::Observe("ext-ai-save");
-        ImGui::SameLine();
-        if (aura::ui::ActionButton(L(ExtAi_Reload),ImVec2(130,32),aura::ui::ButtonVariant::Quiet)) loadLibrary(databasePath);
+        // —— 底部页脚：说明在左，保存与重新读取在右 ——
+        ImGui::Dummy(ImVec2(0,14));
+        ImGui::PushStyleColor(ImGuiCol_Separator,ThemeColors::current().chromeBorder);
+        ImGui::Separator();
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0,8));
+        const float saveWidth=132.f;
+        const float reloadWidth=112.f;
+        const char* footerNote=!page.status.empty() && ImGui::GetTime()<page.statusUntil
+            ? page.status.c_str()
+            : (page.dirty?L(ExtAi_Unsaved):L(ExtAi_FooterHint));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s",footerNote);
+        placeRight(reloadWidth+8.f+saveWidth);
+        if (aura::ui::ActionButton(L(ExtAi_Reload),ImVec2(reloadWidth,32),aura::ui::ButtonVariant::Quiet)) loadLibrary(databasePath);
         su::Observe("ext-ai-reload");
-        ImGui::SameLine();
-        if (!page.status.empty() && ImGui::GetTime()<page.statusUntil) ImGui::TextDisabled("%s",page.status.c_str());
-        else if (page.dirty) ImGui::TextDisabled("%s",L(ExtAi_Unsaved));
+        placeRight(saveWidth);
+        if (aura::ui::ActionButton(L(ExtAi_SaveCurrent),ImVec2(saveWidth,32),aura::ui::ButtonVariant::PrimarySearch)) saveDocument();
+        su::Observe("ext-ai-save");
         if (!page.error.empty()) { ImGui::PushTextWrapPos(0.0f); ImGui::TextWrapped("%s",page.error.c_str()); ImGui::PopTextWrapPos(); }
     }
 }

@@ -158,11 +158,38 @@ bool ExternalAiAuthorization::Parse(const std::string& json, ExternalAiAuthoriza
             return false;
         }
         for (const auto& root : *roots) {
-            if (!root.is_string() || root.get<std::string>().empty()) {
-                error = "each root must be a non-empty string";
+            // Legacy documents store a plain path string; the ticked form stores
+            // {path, enabled}. A string means ticked, so old files keep working.
+            if (root.is_string()) {
+                if (root.get<std::string>().empty()) {
+                    error = "each root must be a non-empty string";
+                    return false;
+                }
+                out.roots_.push_back({root.get<std::string>(), true});
+                continue;
+            }
+            if (!root.is_object()) {
+                error = "each root must be a path or an object with path and enabled";
                 return false;
             }
-            out.roots_.push_back(root.get<std::string>());
+            for (auto field = root.begin(); field != root.end(); ++field) {
+                if (field.key() != "path" && field.key() != "enabled") {
+                    error = "unknown root field '" + field.key() + "'";
+                    return false;
+                }
+            }
+            const auto path = root.find("path");
+            const auto ticked = root.find("enabled");
+            if (path == root.end() || !path->is_string() || path->get<std::string>().empty()) {
+                error = "root path must be a non-empty string";
+                return false;
+            }
+            if (ticked != root.end() && !ticked->is_boolean()) {
+                error = "root enabled must be a boolean";
+                return false;
+            }
+            out.roots_.push_back({path->get<std::string>(),
+                ticked == root.end() ? true : ticked->get<bool>()});
         }
     }
     const auto capabilities = document.find("capabilities");
@@ -217,7 +244,9 @@ ExternalAiAccess ExternalAiAuthorization::Authorize(ExternalAiCapability capabil
     }
     // No ticked directory means no authorized scope. Adding a path to the
     // settings document alone never opens the library.
-    if (roots_.empty()) {
+    const auto anyTicked = std::any_of(roots_.begin(), roots_.end(),
+        [](const ExternalAiRoot& root) { return root.enabled; });
+    if (!anyTicked) {
         return ExternalAiAccess::Denied;
     }
     // Every capability is scoped to the ticked directories, so a request
@@ -228,7 +257,8 @@ ExternalAiAccess ExternalAiAuthorization::Authorize(ExternalAiCapability capabil
     }
     bool contained = false;
     for (const auto& rootValue : roots_) {
-        const auto root = Canonical(rootValue);
+        if (!rootValue.enabled) continue;
+        const auto root = Canonical(rootValue.path);
         if (root && InsideRoot(*root, *target)) {
             contained = true;
             break;

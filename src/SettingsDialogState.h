@@ -26,6 +26,7 @@ struct ExternalAiPageState {
     bool dirty = false;
     std::string status;
     std::string error;
+    bool detailsOpen = false;
     std::string linkStatus;
     double linkStatusUntil = 0.0;
     double statusUntil = 0.0;

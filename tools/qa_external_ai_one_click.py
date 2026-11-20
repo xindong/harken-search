@@ -150,7 +150,7 @@ def run(args):
         document = documents[0]
         saved = json.loads(document.read_text(encoding="utf-8"))
         saved["enabled"] = True
-        saved["roots"] = [str(fixtures)]
+        saved["roots"] = [{"path": str(fixtures), "enabled": True}]
         document.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
         click("ext-ai-reload")
         time.sleep(0.3)
