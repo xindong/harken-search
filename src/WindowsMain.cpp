@@ -3898,6 +3898,9 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
 
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
 extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
+#if ARIS_PREVIEW_ISOLATION
+extern std::string ControlDawSendFeedbackPreview(const nlohmann::json&);
+#endif
 
 static void PollQaCommandFile(AppState& state) {
     static int s_pollSkip = 0;
@@ -4850,6 +4853,12 @@ static void PollQaCommandFile(AppState& state) {
             if (action == "resize") {
                 if(auto* window=ImGui::FindWindowByName("###HarkenSettings")) ImGui::SetWindowSize(window,ImVec2((float)std::clamp(getInt(raw,"width",1000),640,1500),(float)std::clamp(getInt(raw,"height",760),480,1100)),ImGuiCond_Always);
             }
+            if (action == "page") {
+                const auto page=getStr(raw,"page");
+                if(page=="daw") { su::SettingsEditor().page=su::Page::DawIntegration; su::SettingsEditor().scrollToTop=true; }
+            }
+            if (action == "daw_reaper_config") su::SettingsEditor().reaperConfigOpen=getBool(raw,"open",true);
+            if (action == "daw_reaper_diagnostics") su::SettingsEditor().reaperDiagnosticsOpen=getBool(raw,"open",true);
             const auto& observation=su::observation;
             const auto& editor=su::SettingsEditor();
             const auto& palette=ThemeColors::current();
@@ -5961,6 +5970,38 @@ static void PollQaCommandFile(AppState& state) {
                     "\",\"id\":" + std::to_string(target.id) + "}";
             }
             result += "]}";
+        } else {
+            result = R"({"ok":false,"error":"unsupported_action"})";
+        }
+#else
+        result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+#endif
+    } else if (cmd == "send_feedback_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            result = ControlDawSendFeedbackPreview(nlohmann::json::parse(raw, nullptr, false));
+        }
+#else
+        result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+#endif
+    } else if (cmd == "send_widget_menu") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string action = getStr(raw, "action");
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (action == "open") {
+            state.qaSendWidgetMenuRequested = true;
+            state.qaSendWidgetMenuRows = 0;
+            state.qaSendWidgetMenuFrame = -1;
+            result = R"({"ok":true,"cmd":"send_widget_menu","queued":true})";
+        } else if (action == "state") {
+            result = "{\"ok\":true,\"cmd\":\"send_widget_menu\",\"rows\":" +
+                std::to_string(state.qaSendWidgetMenuRows) +
+                ",\"frame\":" + std::to_string(state.qaSendWidgetMenuFrame) +
+                ",\"id\":" + std::to_string(state.qaSendWidgetMenuId) +
+                ",\"is_open\":" + (state.qaSendWidgetMenuOpen ? "true" : "false") + "}";
         } else {
             result = R"({"ok":false,"error":"unsupported_action"})";
         }

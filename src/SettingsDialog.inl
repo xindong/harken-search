@@ -56,6 +56,12 @@
         const bool oldHiddenReverseRestore=state.hiddenReverseRestore;
         const bool oldPendingReverseRestore=state.pendingReverseRestore;
         auto next=editor.app.MergeInto(oldSettings,editor.resetAll);
+        next.dawTargets=oldSettings.dawTargets;
+        if (!editor.dawTargets.MergeInto(next.dawTargets)) {
+            editor.error=L(DawPrefs_TooManyTargets);
+            return false;
+        }
+        next.reaperSetupNoticeDismissed=oldSettings.reaperSetupNoticeDismissed;
         next.rowHeight=next.getEffectiveRowHeight();
         const auto nextRuntime=editor.runtime.MergeInto(oldRuntime,editor.resetAll);
         // Device identity is checked again at Apply, since a USB device can
@@ -176,7 +182,20 @@
     };
     if (state.showSettingsDialog) {
         editor.Reset(state); editor.open=true; editor.closePrompt=false; editor.action.clear();
-        editor.page=su::Page::Appearance; editor.query[0]=0; editor.focusId.clear();
+#if defined(_WIN32)
+        editor.reaperConfigOpen=false;
+        editor.reaperDiagnosticsOpen=false;
+        editor.reaperFocusPath=false;
+        editor.reaperDetectedPath.clear();
+        editor.reaperConsentDestination.clear();
+#endif
+        editor.page=state.openDawIntegrationSettings ? su::Page::DawIntegration : su::Page::Appearance;
+        if (state.openDawIntegrationSettings) {
+            editor.highlightId.clear();
+            editor.scrollToTop=true;
+        }
+        state.openDawIntegrationSettings=false;
+        editor.query[0]=0; editor.focusId.clear();
         editor.devices=state.audioEngine.enumerateOutputDevices();
         ImGui::OpenPopup("###HarkenSettings"); state.showSettingsDialog=false;
     }
@@ -247,11 +266,16 @@
                 preview.dialogPanelBG.y+(preview.controlAccent.y-preview.dialogPanelBG.y)*amount,
                 preview.dialogPanelBG.z+(preview.controlAccent.z-preview.dialogPanelBG.z)*amount,1.f);
         };
-        for (int i=1;i<=8;++i) {
+        constexpr su::Page navigationPages[]{
+            su::Page::Appearance, su::Page::Audio, su::Page::DawIntegration, su::Page::Search,
+            su::Page::Library, su::Page::Interaction, su::Page::Personal, su::Page::Backup,
+            su::Page::Diagnostics,
+        };
+        for (const auto page : navigationPages) {
 #if !AURA_BUILD_DIAGNOSTICS
-            if (i==8) continue;
+            if (page==su::Page::Diagnostics) continue;
 #endif
-            const auto page=static_cast<su::Page>(i);
+            const auto i=static_cast<int>(page);
             ImGui::PushID(i);
             // Keep the painted row, text alignment and hit rectangle together.
             if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();editor.scrollToTop=true;}
@@ -350,9 +374,16 @@
             if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
                 dl->AddRect(ImVec2(p.x-2,p.y-2),ImVec2(end.x+2,end.y+2),ImGui::GetColorU32(preview.controlAccent),14.f,0,2.f);
         };
+#include "SettingsDawFields.inl"
         auto drawEntry=[&](const su::Entry& entry,bool trailingSeparator=true){
             const auto& id=entry.id;
             if (!su::Available(entry,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection)) return;
+#if defined(_WIN32)
+            if (id=="daw-reaper-install") { drawReaperInstallAction(); return; }
+            if (const auto dawIndex=su::FindSettingsDawPresetIndex(id); dawIndex<su::kSettingsDawPresets.size()) {
+                drawDawCard(entry,dawIndex); return;
+            }
+#endif
             const float rowY=ImGui::GetCursorPosY(), rowX=ImGui::GetCursorPosX();
             ImGui::PushID(id.c_str());
             if(editor.focusId==id){ImGui::SetScrollHereY(.25f);editor.focusId.clear();}
@@ -367,7 +398,11 @@
             const float labelBottom=ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(controlX,rowY)); ImGui::SetNextItemWidth(controlW-2);
             ImGui::BeginGroup();ImGui::PushTextWrapPos(rowX+rowW-2);
+            if (entry.page==su::Page::DawIntegration) {
+                drawDawFields(id,controlW);
+            } else {
 #include "SettingsFields.inl"
+            }
             ImGui::PopTextWrapPos();ImGui::EndGroup();
             su::Observe(id.c_str());
             const float bottom=std::max(labelBottom,ImGui::GetCursorPosY());
@@ -378,7 +413,10 @@
         if(searching){
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,10));
             ImGui::TextDisabled("%s",L(SetUX_SEARCHRESULTS));
-            const auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection);
+            auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection);
+#if defined(_WIN32)
+            su::AppendReaperFieldSearchResults(results,editor.query);
+#endif
             if(results.empty()) ImGui::TextWrapped("%s",L(SetUX_NoSettingsFoundTryVolumeFontOrShortcut));
             for(const auto* entry:results){
                 ImGui::PushID(entry->id.c_str());

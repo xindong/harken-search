@@ -20,6 +20,7 @@
 #endif
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdlib>
 #include <map>
@@ -522,7 +523,7 @@ std::map<std::string, std::string> ParseKeyValueFields(const std::string& respon
     std::string token;
     while (std::getline(ss, token, '|')) {
         const auto pos = token.find('=');
-        if (pos == std::string::npos || pos == 0 || pos + 1 >= token.size()) {
+        if (pos == std::string::npos || pos == 0 || (pos + 1 == token.size() && token != "count=")) {
             continue;
         }
         fields[token.substr(0, pos)] = token.substr(pos + 1);
@@ -1289,7 +1290,13 @@ BridgeResponse ParseBridgeResponse(const std::string& response) {
         auto itAdjusted = fields.find("adjusted");
         if (itAdjusted != fields.end()) parsed.positionAdjusted = (itAdjusted->second == "1" || itAdjusted->second == "true");
         auto itCount = fields.find("count");
-        if (itCount != fields.end()) parsed.insertedFileCount = std::max(0, std::atoi(itCount->second.c_str()));
+        if (itCount != fields.end()) {
+            const auto& text = itCount->second;
+            const char* end = text.data() + text.size();
+            int count = 0;
+            const auto number = std::from_chars(text.data(), end, count);
+            parsed.insertedFileCount = number.ec == std::errc{} && number.ptr == end && count >= 0 ? count : 0;
+        }
         auto itClips = fields.find("clips");
         if (itClips != fields.end()) parsed.insertedClipIds = SplitCsvField(itClips->second);
         auto itFailed = fields.find("failed");
@@ -1555,6 +1562,7 @@ DispatchResult ExecuteInsertRequest(const InsertRequest& request) {
         ? attachPreparation.remoteSessionId
         : parsed.remoteSessionId;
     result.insertedClipIds = parsed.insertedClipIds;
+    result.insertedFileCount = parsed.insertedFileCount;
     if (parsed.ok) {
         std::string status =
             request.targetName + " direct insert bridge accepted the request" +

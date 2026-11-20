@@ -381,14 +381,15 @@ static std::string WideArgToUtf8(const wchar_t* value) {
     return result;
 }
 
-static int RunRealDoctorUpdate(int argc, wchar_t** argv) {
+static int RunRealDoctorUpdate(int argc, wchar_t** argv, bool installMissingOnly) {
 #ifdef ARIS_REAPER_TEST_DLL_PATH
     if (argc != 4) {
-        std::fprintf(stderr, "usage: --doctor-update <reaper-root> <bundled-dll>\n");
+        std::fprintf(stderr, "usage: --doctor-update|--doctor-install-missing <reaper-root> <bundled-dll>\n");
         return 64;
     }
     HarkenSearch::DawBridge::ReaperBridgeDoctorRequest request;
     request.action = HarkenSearch::DawBridge::ReaperBridgeDoctorAction::Update;
+    request.installMissingOnly = installMissingOnly;
     request.probeOptions.configuredReaperRootPath = WideArgToUtf8(argv[2]);
     request.probeOptions.bundledDllPathOverride = WideArgToUtf8(argv[3]);
     const auto report = HarkenSearch::DawBridge::RunReaperBridgeDoctor(request);
@@ -403,6 +404,7 @@ static int RunRealDoctorUpdate(int argc, wchar_t** argv) {
 #else
     (void)argc;
     (void)argv;
+    (void)installMissingOnly;
     return 3;
 #endif
 }
@@ -430,9 +432,14 @@ static int RunRealSend(int argc, wchar_t** argv) {
     return result.ok && result.sent == result.total ? 0 : 2;
 }
 
+int RunDawIntegrationSettingsChecks(const fs::path& root);
+
 int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && std::wcscmp(argv[1], L"--doctor-update") == 0) {
-        return RunRealDoctorUpdate(argc, argv);
+        return RunRealDoctorUpdate(argc, argv, false);
+    }
+    if (argc > 1 && std::wcscmp(argv[1], L"--doctor-install-missing") == 0) {
+        return RunRealDoctorUpdate(argc, argv, true);
     }
     if (argc > 1 && (std::wcscmp(argv[1], L"--send") == 0 ||
                      std::wcscmp(argv[1], L"--send-pipe") == 0)) {
@@ -442,6 +449,17 @@ int wmain(int argc, wchar_t** argv) {
     TestStateModel();
     TestBuiltExtensionPlacementTransaction();
     TestDoctorTransaction();
+    const auto settingsRoot = TempRoot("settings");
+    if (fs::create_directory(settingsRoot)) {
+        failures += RunDawIntegrationSettingsChecks(settingsRoot);
+        for (const auto* fixture : {"staged.dll", "existing.dll", "empty.dll"}) {
+            fs::remove(settingsRoot / fixture);
+        }
+        fs::remove(settingsRoot);
+    } else {
+        std::fprintf(stderr, "DAW integration scratch directory already exists\n");
+        ++failures;
+    }
     std::printf("\nREAPER bridge contract failures: %d\n", failures);
     return failures == 0 ? 0 : 1;
 }

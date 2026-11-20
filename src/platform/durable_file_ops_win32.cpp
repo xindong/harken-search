@@ -81,7 +81,7 @@ DurableFileOpResult CopyFileExclusiveAndFlush(
 }
 
 DurableFileOpResult ReplaceFileWriteThrough(
-    const std::string& sourcePathUtf8, const std::string& targetPathUtf8) {
+    const std::string& sourcePathUtf8, const std::string& targetPathUtf8, bool replaceExisting) {
     if (sourcePathUtf8.empty() || targetPathUtf8.empty()) {
         return Failure(DurableFileOpStatus::InvalidArgument);
     }
@@ -90,9 +90,14 @@ DurableFileOpResult ReplaceFileWriteThrough(
     if (sourcePath.empty() || targetPath.empty()) {
         return Failure(DurableFileOpStatus::EncodingFailed);
     }
-    if (!MoveFileExW(sourcePath.c_str(), targetPath.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        return Failure(DurableFileOpStatus::ReplaceFailed, GetLastError());
+    const DWORD flags = replaceExisting ? MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                                        : MOVEFILE_WRITE_THROUGH;
+    if (!MoveFileExW(sourcePath.c_str(), targetPath.c_str(), flags)) {
+        const DWORD error = GetLastError();
+        const bool targetExists = !replaceExisting &&
+            (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS);
+        return Failure(targetExists ? DurableFileOpStatus::TargetExists
+                                    : DurableFileOpStatus::ReplaceFailed, error);
     }
     return Failure(DurableFileOpStatus::Success);
 }

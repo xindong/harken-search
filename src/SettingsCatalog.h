@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 namespace harken::settings {
-enum class Page { Common, Appearance, Audio, Search, Library, Interaction, Personal, Backup, Diagnostics };
+enum class Page { Common, Appearance, Audio, Search, Library, Interaction, Personal, Backup, Diagnostics, DawIntegration };
 struct Entry {
     std::string id; Page page; int group;
     std::string zh, en, ja, keywords;
@@ -68,6 +68,11 @@ inline const std::vector<Entry>& Catalog() {
         {u8"surround",Page::Audio,4,LStr::Set_DownmixSurroundDb,u8"环绕 声道 增益"},
         {u8"binaural",Page::Audio,4,LStr::Set_BinauralMonitor,u8"双耳 耳机 binaural"},
         {u8"deviceInfo",Page::Audio,4,LStr::Set_DeviceChannelCap,u8"设备 声道 能力"},
+        {"daw-reaper",Page::DawIntegration,0,LStr::DawPrefs_Reaper,u8"DAW 集成 发送 路径 reaper integration path"},
+        {"daw-reaper-install",Page::DawIntegration,0,LStr::DawPrefs_Component,u8"DAW 集成 安装 组件 发送 插件 reaper bridge install integration"},
+        {"daw-pro-tools",Page::DawIntegration,0,LStr::DawPrefs_ProTools,u8"DAW 集成 发送 路径 avid pro tools integration path"},
+        {"daw-cubase",Page::DawIntegration,0,LStr::DawPrefs_Cubase,u8"DAW 集成 发送 路径 steinberg cubase integration path"},
+        {"daw-nuendo",Page::DawIntegration,0,LStr::DawPrefs_Nuendo,u8"DAW 集成 发送 路径 steinberg nuendo integration path"},
         {u8"searchMode",Page::Search,0,LStr::SetUX_SearchMode,u8"实时 输入 回车 搜索 realtime enter"},
         {u8"suggest",Page::Search,0,LStr::Set_SearchSuggestSource,u8"搜索 建议 联想 补全"},
         {u8"renameTab",Page::Search,0,LStr::Set_AutoRenameTab,u8"搜索 标签 命名"},
