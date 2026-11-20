@@ -14949,7 +14949,7 @@
     {"id":"ExtAi_LibraryId","type":"ui","zh":"库标识","en":"Library ID","ja":"ライブラリ ID"},
     {"id":"ExtAi_Document","type":"ui","zh":"授权文件","en":"Authorization file","ja":"認可ファイル"},
     {"id":"ExtAi_NoRoots","type":"ui","zh":"还没有勾选目录，外部 AI 无法读取任何文件。","en":"No folder is ticked yet, so external AI cannot read any file.","ja":"フォルダーが未選択のため、外部 AI はファイルを読み取れません。"},
-    {"id":"ExtAi_AddRoot","type":"ui","zh":"添加目录…","en":"Add folder…","ja":"フォルダーを追加…"},
+    {"id":"ExtAi_AddRoot","type":"ui","zh":"添加目录","en":"Add folder","ja":"フォルダーを追加"},
     {"id":"ExtAi_Capabilities","type":"ui","zh":"分项权限","en":"Allowed capabilities","ja":"許可する機能"},
     {"id":"ExtAi_CapSearchAudio","type":"ui","zh":"查找音效","en":"Search audio","ja":"音声を検索"},
     {"id":"ExtAi_CapFindSimilar","type":"ui","zh":"相似音效","en":"Similar sounds","ja":"類似音"},
