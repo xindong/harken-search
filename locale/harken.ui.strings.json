@@ -4539,6 +4539,76 @@
       "ja": "AI 音声認識"
     },
     {
+      "id": "AI_ModelDownloaded",
+      "type": "ui",
+      "zh": "已下载",
+      "en": "Downloaded",
+      "ja": "ダウンロード済み"
+    },
+    {
+      "id": "AI_ModelDirLink",
+      "type": "ui",
+      "zh": "模型目录",
+      "en": "Models",
+      "ja": "モデル"
+    },
+    {
+      "id": "AI_SimplifyApplied",
+      "type": "ui",
+      "zh": "统一简体",
+      "en": "Simplified only",
+      "ja": "簡体字に統一"
+    },
+    {
+      "id": "AI_DescLabel",
+      "type": "ui",
+      "zh": "素材描述",
+      "en": "Description",
+      "ja": "説明"
+    },
+    {
+      "id": "AI_KeywordsLabel",
+      "type": "ui",
+      "zh": "关键词",
+      "en": "Keywords",
+      "ja": "キーワード"
+    },
+    {
+      "id": "AI_LowConfidenceTag",
+      "type": "ui",
+      "zh": "低可信",
+      "en": "Low confidence",
+      "ja": "低信頼"
+    },
+    {
+      "id": "AI_SaveToAsset",
+      "type": "ui",
+      "zh": "保存到素材",
+      "en": "Save to asset",
+      "ja": "アセットに保存"
+    },
+    {
+      "id": "AI_CopyMenu",
+      "type": "ui",
+      "zh": "复制",
+      "en": "Copy",
+      "ja": "コピー"
+    },
+    {
+      "id": "AI_DownloadLoad",
+      "type": "ui",
+      "zh": "下载并加载",
+      "en": "Download and load",
+      "ja": "ダウンロードして読み込み"
+    },
+    {
+      "id": "AI_LoadLocal",
+      "type": "ui",
+      "zh": "加载本地模型",
+      "en": "Load local model",
+      "ja": "ローカルモデルを読み込む"
+    },
+    {
       "id": "Dev_ConfigEmpty",
       "type": "ui",
       "zh": "当前配置路径为空。",
