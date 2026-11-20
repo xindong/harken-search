@@ -1306,6 +1306,16 @@ static void testCubaseBridgeResponseSchema() {
     check(ok.insertedClipIds.size() == 2 && ok.insertedClipIds[0] == "clip-a",
           "Cubase bridge response parser extracts inserted clip ids");
 
+    const auto legacy = HarkenSearch::CubaseAdapter::ParseBridgeResponse("OK|INSERT|clips=clip-a");
+    check(legacy.ok && !legacy.insertedFileCount && legacy.insertedClipIds.size() == 1,
+          "Cubase leaves the reported count absent for legacy clip-ID receipts");
+    for (const char* count : {"0", "", "1junk", "-1", "2147483648"}) {
+        const auto unconfirmed = HarkenSearch::CubaseAdapter::ParseBridgeResponse(
+            "OK|INSERT|count=" + std::string(count) + "|clips=clip-a");
+        check(unconfirmed.ok && unconfirmed.insertedFileCount == 0 && unconfirmed.insertedClipIds.size() == 1,
+              "Cubase preserves OK and clip IDs but does not confirm delivery from zero or an invalid count");
+    }
+
     const auto partial = HarkenSearch::CubaseAdapter::ParseBridgeResponse(
         "OK|INSERT|session=auro-session|projectState=ready|trackState=remapped|track=FX 01|remappedTrack=FX ALT|position=next-grid|adjusted=1|count=1|clips=clip-a|failed=C:\\a.wav");
     check(partial.code == HarkenSearch::CubaseAdapter::ResultCode::PartialSuccess,

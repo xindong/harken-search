@@ -47,6 +47,37 @@
     {"id":"SetUX_Common","type":"ui","zh":"常用设置","en":"Common","ja":"よく使う設定"},
     {"id":"SetUX_Appearance","type":"ui","zh":"外观与显示","en":"Appearance","ja":"外観と表示"},
     {"id":"SetUX_AudioPlayback","type":"ui","zh":"音频与播放","en":"Audio & playback","ja":"オーディオと再生"},
+    {"id":"SetUX_DawIntegration","type":"ui","zh":"DAW 集成","en":"DAW integration","ja":"DAW 連携"},
+    {"id":"DawPrefs_Reaper","type":"ui","zh":"REAPER","en":"REAPER","ja":"REAPER"},
+    {"id":"DawPrefs_ProTools","type":"ui","zh":"Pro Tools","en":"Pro Tools","ja":"Pro Tools"},
+    {"id":"DawPrefs_Cubase","type":"ui","zh":"Cubase","en":"Cubase","ja":"Cubase"},
+    {"id":"DawPrefs_Nuendo","type":"ui","zh":"Nuendo","en":"Nuendo","ja":"Nuendo"},
+    {"id":"DawPrefs_EnableSend","type":"ui","zh":"启用发送","en":"Enable sending","ja":"送信を有効にする"},
+    {"id":"DawPrefs_Component","type":"ui","zh":"REAPER 发送组件","en":"REAPER send component","ja":"REAPER 送信コンポーネント"},
+    {"id":"DawPrefs_Consent","type":"ui","zh":"允许安装发送组件","en":"Allow component installation","ja":"コンポーネントのインストールを許可"},
+    {"id":"DawPrefs_InstallSelected","type":"ui","zh":"安装所选","en":"Install selected","ja":"選択項目をインストール"},
+    {"id":"DawPrefs_CloseReaperToInstall","type":"ui","zh":"请关闭 REAPER 后再安装。","en":"Close REAPER before installing.","ja":"REAPER を終了してからインストールしてください。"},
+    {"id":"DawPrefs_Configure","type":"ui","zh":"配置","en":"Configure","ja":"設定"},
+    {"id":"DawPrefs_PathConfigured","type":"ui","zh":"REAPER 路径已配置","en":"REAPER path is configured","ja":"REAPER のパスは設定済みです"},
+    {"id":"DawPrefs_PathConfigurable","type":"ui","zh":"可配置 REAPER 路径","en":"REAPER path can be configured","ja":"REAPER のパスを設定できます"},
+    {"id":"DawPrefs_ManualPath","type":"ui","zh":"手动输入路径","en":"Enter path manually","ja":"パスを手動で入力"},
+    {"id":"DawPrefs_ReaperPath","type":"ui","zh":"REAPER 路径","en":"REAPER path","ja":"REAPER のパス"},
+    {"id":"DawPrefs_ReaperSend","type":"ui","zh":"REAPER 启用发送","en":"REAPER enable sending","ja":"REAPER の送信設定"},
+    {"id":"DawPrefs_ReaperDiagnostics","type":"ui","zh":"REAPER 诊断","en":"REAPER diagnostics","ja":"REAPER の診断"},
+    {"id":"DawPrefs_CopyDiagnostic","type":"ui","zh":"复制诊断","en":"Copy diagnostics","ja":"診断をコピー"},
+    {"id":"DawPrefs_ExecutablePath","type":"ui","zh":"程序路径","en":"Executable path","ja":"実行ファイルのパス"},
+    {"id":"DawPrefs_PathInputHint","type":"ui","zh":"输入或粘贴路径","en":"Type or paste path","ja":"パスを入力または貼り付け"},
+    {"id":"DawPrefs_Browse","type":"ui","zh":"浏览…","en":"Browse…","ja":"参照…"},
+    {"id":"DawPrefs_Clear","type":"ui","zh":"清除","en":"Clear","ja":"クリア"},
+    {"id":"DawPrefs_UseDetectedPath","type":"ui","zh":"使用检测路径","en":"Use detected path","ja":"検出したパスを使用"},
+    {"id":"DawPrefs_ExistingComponent","type":"ui","zh":"已有组件文件，未覆盖。","en":"A component file already exists. It was not replaced.","ja":"既存のファイルは上書きされませんでした。"},
+    {"id":"DawPrefs_Notice","type":"ui","zh":"检测到 REAPER，尚未安装发送组件。","en":"REAPER was found, but its send component is not installed.","ja":"REAPER が見つかりました。送信コンポーネントは未インストールです。"},
+    {"id":"DawPrefs_NoticeAcknowledge","type":"ui","zh":"知道了","en":"Got it","ja":"了解"},
+    {"id":"DawPrefs_GoToSettings","type":"ui","zh":"去设置","en":"Go to settings","ja":"設定を開く"},
+    {"id":"DawPrefs_InstallUnavailable","type":"ui","zh":"当前系统不支持安装发送组件。","en":"This system does not support installing the send component.","ja":"この環境では送信コンポーネントをインストールできません。"},
+    {"id":"DawPrefs_NotFound","type":"ui","zh":"未检测到 REAPER。请选择安装路径。","en":"REAPER was not found. Select its installation path.","ja":"REAPER が見つかりません。インストール先を選択してください。"},
+    {"id":"DawPrefs_TooManyTargets","type":"ui","zh":"DAW 目标已满。请先从原 DAW 设置中移除不需要的目标。","en":"The DAW list is full. Remove a target in the DAW panel settings first.","ja":"DAW の登録上限に達しました。DAW パネルの設定で不要な項目を削除してください。"},
+    {"id":"DawPrefs_InstallError","type":"ui","zh":"未能完成组件安装，请重新检测。","en":"Component installation could not finish. Recheck the status.","ja":"インストールが完了しませんでした。状態を再確認してください。"},
     {"id":"SetUX_TransportEffectVisibility","type":"ui","zh":"播放栏效果显示","en":"Playback bar effects","ja":"再生バーのエフェクト表示"},
     {"id":"SetUX_TransportEffectHint","type":"ui","zh":"应用后，隐藏的效果立即旁通；重新显示会恢复之前的状态和参数。","en":"Hidden effects are bypassed when applied. Showing them again restores their previous state and settings.","ja":"適用後、非表示のエフェクトはバイパスされます。再表示すると以前の状態と設定が戻ります。"},
     {"id":"SetUX_TransportMono","type":"ui","zh":"立体声／单声道","en":"Stereo / mono","ja":"ステレオ／モノラル"},
@@ -1038,6 +1069,55 @@
       "zh": "未配置 DAW 目标",
       "en": "No DAW target configured",
       "ja": "DAW 送信先が設定されていません"
+    },
+    {
+      "id": "DawSend_Sending",
+      "type": "ui",
+      "zh": "正在发送…",
+      "en": "Sending…",
+      "ja": "送信中…"
+    },
+    {
+      "id": "DawSend_Success",
+      "type": "ui",
+      "zh": "发送成功",
+      "en": "Sent to DAW",
+      "ja": "DAW に送信しました"
+    },
+    {
+      "id": "DawSend_Partial",
+      "type": "ui",
+      "zh": "部分发送成功",
+      "en": "Partially sent",
+      "ja": "一部を送信しました"
+    },
+    {
+      "id": "DawSend_Fallback",
+      "type": "ui",
+      "zh": "已用备用方式交付",
+      "en": "Delivered via fallback",
+      "ja": "代替方法で渡しました"
+    },
+    {
+      "id": "DawSend_Failure",
+      "type": "ui",
+      "zh": "发送失败",
+      "en": "Send failed",
+      "ja": "送信できませんでした"
+    },
+    {
+      "id": "DawSend_BridgeFailure",
+      "type": "ui",
+      "zh": "桥接未就绪",
+      "en": "Bridge not ready",
+      "ja": "ブリッジの準備ができていません"
+    },
+    {
+      "id": "DawSend_NoDeliveryConfirmation",
+      "type": "ui",
+      "zh": "DAW 接收了请求，但没有确认音频已送达。请先检查 DAW，再重试。",
+      "en": "The DAW accepted the request but did not confirm delivery. Check the DAW before retrying.",
+      "ja": "DAW は要求を受け付けましたが、音声の受信を確認できませんでした。再試行する前に DAW を確認してください。"
     },
     {
       "id": "DAW_Browse",
