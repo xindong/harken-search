@@ -9236,8 +9236,8 @@ static bool HasFileTypeFilter(const AppState& state) {
 
 // Unified popup typography / hierarchy helpers
 // Shared vocabulary for all popups and modals so title / section / body text
-// reads at a consistent rhythm. Reference: docs .impeccable.md "Keep hierarchy
-// strict" — never let two levels look the same.
+// reads at a consistent rhythm. Keep hierarchy strict: never let two levels
+// look the same.
 
 // Level 1: popup title. Bold font, primary text at full opacity, tight bottom gap.
 static std::string fmtStr(const char* fmt, const char* a) {
