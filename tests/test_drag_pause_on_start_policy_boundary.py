@@ -21,7 +21,7 @@ BEHAVIOR = (ROOT / "cmake" / "harken_search_behavior_tests.cmake").read_text(
 
 
 IN_SCOPE_MARKERS = (
-    "void StartFileDrag(const std::vector<std::string>& files)",
+    "void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* origin = nullptr)",
     "if (ImGui::BeginDragDropSource",
     "g_playlistQuickDrag.active = true",
 )

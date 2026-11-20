@@ -779,6 +779,7 @@ if(WIN32)
     list(APPEND APP_SOURCES
         src/main.cpp
         src/WindowsMain.cpp
+        src/AudioDragCard.cpp
         src/DefaultAudioPlayerAssociation.cpp
         src/platform/filesystem_win32.cpp
         src/platform/floating_window_corners_win32.cpp
@@ -940,6 +941,28 @@ if(WIN32)
     target_link_libraries(TestDetachedViewportInput PRIVATE gdi32 user32 dwmapi)
     add_test(NAME DetachedViewportInput COMMAND TestDetachedViewportInput)
     set_tests_properties(DetachedViewportInput PROPERTIES LABELS "dock" TIMEOUT 30)
+    add_executable(TestAudioDragCard EXCLUDE_FROM_ALL
+        tests/test_audio_drag_card.cpp
+        src/AudioDragCard.cpp)
+    target_include_directories(TestAudioDragCard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestAudioDragCard PRIVATE cxx_std_17)
+    target_compile_definitions(TestAudioDragCard PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(TestAudioDragCard PRIVATE /utf-8)
+    target_link_libraries(TestAudioDragCard PRIVATE gdiplus gdi32 user32)
+    add_test(NAME AudioDragCard COMMAND TestAudioDragCard)
+    set_tests_properties(AudioDragCard PROPERTIES LABELS "ui" TIMEOUT 60)
+    if(Python3_EXECUTABLE)
+        add_test(NAME AudioDragReview COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audio_drag_review.py")
+        set_tests_properties(AudioDragReview PROPERTIES LABELS "ui" TIMEOUT 120)
+    endif()
+    add_executable(AudioDragCardLiveProbe EXCLUDE_FROM_ALL
+        tests/audio_drag_card_live_probe.cpp
+        src/AudioDragCard.cpp)
+    target_include_directories(AudioDragCardLiveProbe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(AudioDragCardLiveProbe PRIVATE cxx_std_17)
+    target_compile_definitions(AudioDragCardLiveProbe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(AudioDragCardLiveProbe PRIVATE /utf-8)
+    target_link_libraries(AudioDragCardLiveProbe PRIVATE gdiplus gdi32 user32)
     add_executable(TestDockDragSession EXCLUDE_FROM_ALL tests/test_dock_drag_session.cpp src/DockLayout.cpp src/DockDragSession.cpp)
     target_include_directories(TestDockDragSession PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_features(TestDockDragSession PRIVATE cxx_std_17)
@@ -1612,6 +1635,7 @@ if(WIN32)
         Threads::Threads
         opengl32
         gdi32
+        gdiplus
         dwmapi
         ole32
         windowscodecs

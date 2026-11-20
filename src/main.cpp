@@ -50,6 +50,7 @@
 #include <shlobj.h>
 #include <commdlg.h>
 #include <ole2.h>
+#include <shobjidl.h>   // IDragSourceHelper：屏蔽系统默认文件拖影
 #include <GL/gl.h>
 #elif defined(__APPLE__)
 #include <OpenGL/gl.h>
@@ -116,6 +117,9 @@
 #include "ui/EmptyStateVisualAudit.h"
 #include "ui/TransportBlendSlider.h"
 #include "HarkenSearchThemeManager.h"   // 次世代视觉管理器
+// Audio drag card (waveform mini card that follows the cursor)
+#include "AudioDragCard.h"
+#include "platform/animation_preferences.h"
 #include "HarkenSearchWidgets.h"        // Aris shared controls for core product flows
 #include "HarkenSearchIcons.h"          // 官方品牌字标（菜单栏/启动页同源）
 #include "../thirdparty/lucide/IconsLucide.h"
@@ -2856,11 +2860,18 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD dwEffect) override {
+        HarkenSearch::AudioDragCard::UpdateDragPosition();
         return DRAGDROP_S_USEDEFAULTCURSORS;
     }
 };
 
 class FileDataObject : public IDataObject {
+    struct StoredFormat {
+        FORMATETC format;
+        STGMEDIUM medium;
+    };
+    std::vector<StoredFormat> m_storedFormats;
+
 public:
     LONG m_refCount = 1;
     std::vector<std::wstring> m_files;
@@ -2877,6 +2888,10 @@ public:
                 m_files.push_back(wstr);
             }
         }
+    }
+
+    ~FileDataObject() {
+        for (auto& stored : m_storedFormats) ReleaseStgMedium(&stored.medium);
     }
 
     // IUnknown
@@ -2902,6 +2917,7 @@ public:
 
     // IDataObject
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* pformatetcIn, STGMEDIUM* pmedium) override {
+        if (!pformatetcIn || !pmedium) return E_INVALIDARG;
         if (pformatetcIn->cfFormat == CF_HDROP && (pformatetcIn->tymed & TYMED_HGLOBAL)) {
             // Calculate size needed
             size_t totalSize = sizeof(DROPFILES);
@@ -2936,6 +2952,22 @@ public:
             pmedium->pUnkForRelease = nullptr;
             return S_OK;
         }
+        for (const auto& stored : m_storedFormats) {
+            if (stored.format.cfFormat != pformatetcIn->cfFormat ||
+                stored.format.dwAspect != pformatetcIn->dwAspect ||
+                stored.format.lindex != pformatetcIn->lindex ||
+                !(pformatetcIn->tymed & stored.medium.tymed)) continue;
+            pmedium->tymed = stored.medium.tymed;
+            if (stored.medium.tymed == TYMED_HGLOBAL) {
+                pmedium->hGlobal = OleDuplicateData(stored.medium.hGlobal, stored.format.cfFormat, 0);
+                if (!pmedium->hGlobal) return E_OUTOFMEMORY;
+            } else {
+                pmedium->pstm = stored.medium.pstm;
+                pmedium->pstm->AddRef();
+            }
+            pmedium->pUnkForRelease = nullptr;
+            return S_OK;
+        }
         return DV_E_FORMATETC;
     }
 
@@ -2949,13 +2981,56 @@ public:
             if (pformatetc->tymed & TYMED_HGLOBAL) return S_OK;
             return DV_E_TYMED;
         }
+        for (const auto& stored : m_storedFormats) {
+            if (stored.format.cfFormat == pformatetc->cfFormat &&
+                stored.format.dwAspect == pformatetc->dwAspect &&
+                stored.format.lindex == pformatetc->lindex) {
+                return (pformatetc->tymed & stored.medium.tymed) ? S_OK : DV_E_TYMED;
+            }
+        }
         return DV_E_FORMATETC;
     }
     HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC* pformatetcOut) override {
         pformatetcOut->ptd = nullptr;
         return E_NOTIMPL;
     }
-    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC* format, STGMEDIUM* medium, BOOL release) override {
+        if (!format || !medium) return E_INVALIDARG;
+        if (format->ptd) return DV_E_DVTARGETDEVICE;
+        if (format->cfFormat == CF_HDROP) return DV_E_FORMATETC;
+        if ((medium->tymed != TYMED_HGLOBAL && medium->tymed != TYMED_ISTREAM) ||
+            !(format->tymed & medium->tymed)) return DV_E_TYMED;
+        if ((medium->tymed == TYMED_HGLOBAL && !medium->hGlobal) ||
+            (medium->tymed == TYMED_ISTREAM && !medium->pstm)) return E_INVALIDARG;
+
+        STGMEDIUM stored = *medium;
+        if (!release) {
+            if (medium->tymed == TYMED_HGLOBAL) {
+                stored.hGlobal = OleDuplicateData(medium->hGlobal, format->cfFormat, 0);
+                if (!stored.hGlobal) return E_OUTOFMEMORY;
+            } else {
+                stored.pstm->AddRef();
+            }
+            stored.pUnkForRelease = nullptr;
+        }
+        for (auto& existing : m_storedFormats) {
+            if (existing.format.cfFormat == format->cfFormat &&
+                existing.format.dwAspect == format->dwAspect &&
+                existing.format.lindex == format->lindex) {
+                ReleaseStgMedium(&existing.medium);
+                existing.format = *format;
+                existing.medium = stored;
+                return S_OK;
+            }
+        }
+        try {
+            m_storedFormats.push_back(StoredFormat{*format, stored});
+        } catch (...) {
+            if (!release) ReleaseStgMedium(&stored);
+            return E_OUTOFMEMORY;
+        }
+        return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC** ppEnumFormatEtc) override {
         // Preserve Pro Tools behavior during custom-frame handling.
         // Pro Tools 会在拖拽前调用 EnumFormatEtc 查询支持的数据格式
@@ -2963,7 +3038,7 @@ public:
         if (ppEnumFormatEtc == nullptr) return E_INVALIDARG;
         if (dwDirection != DATADIR_GET) return E_NOTIMPL;
 
-        static FORMATETC s_formatEtc = {
+        FORMATETC fileFormat = {
             CF_HDROP,
             nullptr,
             DVASPECT_CONTENT,
@@ -2971,7 +3046,9 @@ public:
             TYMED_HGLOBAL
         };
 
-        return SHCreateStdEnumFmtEtc(1, &s_formatEtc, ppEnumFormatEtc);
+        std::vector<FORMATETC> formats{fileFormat};
+        for (const auto& stored : m_storedFormats) formats.push_back(stored.format);
+        return SHCreateStdEnumFmtEtc(static_cast<UINT>(formats.size()), formats.data(), ppEnumFormatEtc);
     }
     HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
@@ -3036,220 +3113,112 @@ void ResetDragState() {
     // g_dragCompleted stays true until next mouse click to prevent selection after drag
 }
 
-// Drag ghost window for visual feedback
-static HWND g_dragGhostWindow = nullptr;
-static std::wstring g_dragGhostText;
+// Drag card state for visual feedback
 static bool g_mainWindowHiddenForDrag = false;
-static const UINT_PTR DRAG_GHOST_TIMER_FOLLOW = 1;
-static const UINT_PTR DRAG_GHOST_TIMER_HIDE_MAIN = 2;
 // g_hideWindowOnDragDelayMs → WindowsMain.h/cpp，由设置中的 hideWindowOnDragDelayMs 同步
-// 悬浮窗内容预渲染到位图，WM_TIMER 只更新位置，避免每帧 GDI 重绘导致卡顿
-static HDC g_dragGhostDC = nullptr;
-static HBITMAP g_dragGhostBitmap = nullptr;
-static SIZE g_dragGhostSize = { 0, 0 };
 // g_savedPlacementForDragHide, g_savedPlacementForDragHideValid → WindowsMain.cpp
 
 // g_showManagerHotkeyRegisterOk, g_trayNid, g_trayIconAdded → WindowsMain.cpp
 
 // AppendDiagLogLine, AppendDiagLogF, EnsureWindowOnScreen → WindowsMain.cpp
 
-// Ghost window procedure
-static LRESULT CALLBACK DragGhostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
+// 拖出小卡：主波形区域、源波形与每根柱子的幅度（由起拖处提供，缺省读可见行缓存）。
+struct DragCardOrigin {
+    bool hasSourceRect = false;
+    RECT sourceRect = { 0, 0, 0, 0 };
+    std::vector<float> peaks;
+    int peakChannels = 1;
+    std::wstring displayName;
+};
 
-        RECT rc;
-        GetClientRect(hwnd, &rc);
+static std::vector<float> BuildDragCardEnvelope(const std::vector<float>& peaks, int channels, int bars) {
+    if (peaks.empty() || bars <= 0) return {};
+    const int safeChannels = (std::max)(1, channels);
+    const int frames = (int)(peaks.size() / (size_t)safeChannels);
+    if (frames <= 0) return {};
 
-        // GDI double buffering prevents drag residue and frame flicker.
-        // 1. 创建隐形的内存画布
-        HDC memDC = CreateCompatibleDC(hdc);
-        HBITMAP memBitmap = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
-        HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
-
-        // 2. 在内存画布上绘制背景
-        HBRUSH brush = CreateSolidBrush(RGB(40, 50, 70));
-        FillRect(memDC, &rc, brush);
-        DeleteObject(brush);
-
-        // 3. 在内存画布上绘制文字
-        SetBkMode(memDC, TRANSPARENT);
-        SetTextColor(memDC, RGB(200, 220, 255));
-        HFONT font = nullptr;
-        const wchar_t* fontNames[] = { L"微软雅黑", L"Microsoft YaHei", L"SimHei", L"SimSun", L"宋体", nullptr };
-        for (int fi = 0; fontNames[fi] && !font; fi++) {
-            HFONT tryFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, fontNames[fi]);
-            if (tryFont) {
-                HFONT prev = (HFONT)SelectObject(memDC, tryFont);
-                TEXTMETRICW tm;
-                GetTextMetricsW(memDC, &tm);
-                if (tm.tmCharSet == GB2312_CHARSET || tm.tmCharSet == CHINESEBIG5_CHARSET || tm.tmCharSet == DEFAULT_CHARSET) {
-                    font = tryFont;
-                } else {
-                    SelectObject(memDC, prev);
-                    DeleteObject(tryFont);
-                }
-            }
+    std::vector<float> envelope((size_t)bars, 0.0f);
+    for (int frame = 0; frame < frames; ++frame) {
+        float framePeak = 0.0f;
+        for (int ch = 0; ch < safeChannels; ++ch) {
+            const size_t index = (size_t)(frame * safeChannels + ch);
+            if (index < peaks.size()) framePeak = (std::max)(framePeak, std::fabs(peaks[index]));
         }
-        if (!font) {
-            font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        const int bar = (int)(((int64_t)frame * bars) / frames);
+        if (bar >= 0 && bar < bars) {
+            envelope[(size_t)bar] = (std::max)(envelope[(size_t)bar], framePeak);
         }
-        HFONT oldFont = (HFONT)SelectObject(memDC, font);
-        DrawTextW(memDC, g_dragGhostText.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(memDC, oldFont);
-        if (font != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(font);
-
-        // 4. 在内存画布上绘制边框
-        HPEN pen = CreatePen(PS_SOLID, 2, RGB(100, 180, 255));
-        HPEN oldPen = (HPEN)SelectObject(memDC, pen);
-        HBRUSH oldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(NULL_BRUSH));
-        RoundRect(memDC, 0, 0, rc.right, rc.bottom, 8, 8);
-        SelectObject(memDC, oldPen);
-        SelectObject(memDC, oldBrush);
-        DeleteObject(pen);
-
-        // 5. 核心：将画好的完整画面一次性"盖章"到屏幕上
-        BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
-
-        // 6. 释放内存资源
-        SelectObject(memDC, oldBitmap);
-        DeleteObject(memBitmap);
-        DeleteDC(memDC);
-
-        EndPaint(hwnd, &ps);
-        return 0;
     }
-    case WM_TIMER: {
-        if (wParam == DRAG_GHOST_TIMER_FOLLOW) {
-            POINT pt;
-            GetCursorPos(&pt);
-            pt.x += 15;
-            pt.y += 15;
-            if (g_dragGhostDC && g_dragGhostBitmap && g_dragGhostSize.cx > 0 && g_dragGhostSize.cy > 0) {
-                POINT ptZero = { 0, 0 };
-                BLENDFUNCTION bf = { AC_SRC_OVER, 0, 200, AC_SRC_ALPHA };
-                UpdateLayeredWindow(hwnd, nullptr, &pt, &g_dragGhostSize, g_dragGhostDC, &ptZero, 0, &bf, ULW_ALPHA);
-            } else {
-                SetWindowPos(hwnd, HWND_TOPMOST, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
-            }
-            return 0;
-        }
-        if (wParam == DRAG_GHOST_TIMER_HIDE_MAIN) {
-            // One-shot: minimize main window after a short delay (confirm drag)
-            KillTimer(hwnd, DRAG_GHOST_TIMER_HIDE_MAIN);
-            if (!g_mainWindowHiddenForDrag && g_isDragging && g_hideWindowOnDrag && g_hwnd) {
-                MinimizeWindowNoAnimation(g_hwnd);
-                g_mainWindowHiddenForDrag = true;
-            }
-            return 0;
-        }
-        return 0;
-    }
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
+    for (float& value : envelope) value = std::clamp(value, 0.0f, 1.0f);
+    return envelope;
 }
 
-static void CreateDragGhostWindow(const std::wstring& text) {
-    static bool classRegistered = false;
-    if (!classRegistered) {
-        WNDCLASSEXW wc = {};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = DragGhostWndProc;
-        wc.hInstance = GetModuleHandle(nullptr);
-        wc.lpszClassName = L"HarkenSearchDragGhost";
-        RegisterClassExW(&wc);
-        classRegistered = true;
+static std::wstring DisplayNameForDragPath(const std::string& pathUtf8) {
+    std::wstring wide = Utf8ToWide(pathUtf8);
+    try {
+        std::wstring name = fs::path(wide).filename().wstring();
+        if (!name.empty()) return name;
+    } catch (...) {
+    }
+    return wide.empty() ? std::wstring(L"(unnamed)") : wide;
+}
+
+static bool TryGetCachedDragPeaks(const std::string& pathUtf8, std::vector<float>& outPeaks, int& outChannels) {
+    if (!g_appState || pathUtf8.empty()) return false;
+    auto it = g_appState->waveformCache.find(pathUtf8);
+    if (it != g_appState->waveformCache.end() && it->second.isReady && !it->second.peaks.empty()) {
+        outPeaks = it->second.peaks;
+        outChannels = (std::max)(1, it->second.numChannels);
+        return true;
     }
 
-    g_dragGhostText = text;
-    HDC hdcScreen = GetDC(nullptr);
-    HFONT measureFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"微软雅黑");
-    if (!measureFont) measureFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    HGDIOBJ oldMF = SelectObject(hdcScreen, measureFont);
-    SIZE textSize;
-    GetTextExtentPoint32W(hdcScreen, text.c_str(), (int)text.length(), &textSize);
-    SelectObject(hdcScreen, oldMF);
-    if (measureFont != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(measureFont);
-    int width = (std::max)(120, (int)textSize.cx + 30);
-    int height = 32;
-    POINT pt;
-    GetCursorPos(&pt);
+    // 行内迷你波形未进内存时，读库里已缓存的真实迷你波形，不用占位波形冒充。
+    Database::MiniWaveformBundle bundle;
+    if (g_appState->database.getMiniWaveformBundleByPath(pathUtf8, bundle, 128) && !bundle.peaks.empty()) {
+        outPeaks = bundle.peaks;
+        outChannels = (std::max)(1, bundle.miniNumChannels);
+        return true;
+    }
+    return false;
+}
 
-    g_dragGhostWindow = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
-        L"HarkenSearchDragGhost", L"", WS_POPUP, pt.x + 15, pt.y + 15, width, height,
-        nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
-
-    if (!g_dragGhostWindow) {
-        ReleaseDC(nullptr, hdcScreen);
-        AppendDiagLogLine(L"CreateDragGhostWindow: CreateWindowExW failed");
+// 拖出小卡已有完整视觉反馈；用 1×1 全透明拖影屏蔽 Windows 默认的文件名浮标。
+static void SuppressDefaultDragImage(IDataObject* dataObject) {
+    if (!dataObject) return;
+    IDragSourceHelper* helper = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&helper))) || !helper) {
         return;
     }
-    g_dragGhostSize.cx = width;
-    g_dragGhostSize.cy = height;
-    g_dragGhostDC = CreateCompatibleDC(hdcScreen);
-    g_dragGhostBitmap = CreateCompatibleBitmap(hdcScreen, width, height);
-    if (g_dragGhostDC && g_dragGhostBitmap) {
-        HBITMAP oldBm = (HBITMAP)SelectObject(g_dragGhostDC, g_dragGhostBitmap);
-        RECT rc = { 0, 0, width, height };
-        HBRUSH brush = CreateSolidBrush(RGB(40, 50, 70));
-        FillRect(g_dragGhostDC, &rc, brush);
-        DeleteObject(brush);
-        SetBkMode(g_dragGhostDC, TRANSPARENT);
-        SetTextColor(g_dragGhostDC, RGB(200, 220, 255));
-        HFONT font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"微软雅黑");
-        if (!font) font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-        SelectObject(g_dragGhostDC, font);
-        DrawTextW(g_dragGhostDC, g_dragGhostText.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        if (font != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(font);
-        HPEN pen = CreatePen(PS_SOLID, 2, RGB(100, 180, 255));
-        SelectObject(g_dragGhostDC, pen);
-        SelectObject(g_dragGhostDC, GetStockObject(NULL_BRUSH));
-        RoundRect(g_dragGhostDC, 0, 0, width, height, 8, 8);
-        DeleteObject(pen);
-        SelectObject(g_dragGhostDC, oldBm);
-        POINT ptZero = { 0, 0 };
-        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 200, AC_SRC_ALPHA };
-        UpdateLayeredWindow(g_dragGhostWindow, hdcScreen, &pt, &g_dragGhostSize, g_dragGhostDC, &ptZero, 0, &bf, ULW_ALPHA);
-    } else {
-        if (g_dragGhostDC) { DeleteDC(g_dragGhostDC); g_dragGhostDC = nullptr; }
-        if (g_dragGhostBitmap) { DeleteObject(g_dragGhostBitmap); g_dragGhostBitmap = nullptr; }
-        SetLayeredWindowAttributes(g_dragGhostWindow, 0, 200, LWA_ALPHA);
-    }
-    ReleaseDC(nullptr, hdcScreen);
-    Platform::WindowShow(g_dragGhostWindow, SW_SHOWNOACTIVATE);
-    SetTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_FOLLOW, 8, nullptr);
-}
 
-static void DestroyDragGhostWindow() {
-    if (g_dragGhostDC && g_dragGhostBitmap) {
-        HBITMAP dummy = (HBITMAP)CreateCompatibleBitmap(g_dragGhostDC, 1, 1);
-        SelectObject(g_dragGhostDC, dummy);
-        DeleteObject(g_dragGhostBitmap);
-        if (dummy) DeleteObject(dummy);
-        DeleteDC(g_dragGhostDC);
-        g_dragGhostBitmap = nullptr;
-        g_dragGhostDC = nullptr;
-        g_dragGhostSize = { 0, 0 };
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 1;
+    info.bmiHeader.biHeight = -1;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP transparentBitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (transparentBitmap && bits) {
+        *static_cast<uint32_t*>(bits) = 0;
+        SHDRAGIMAGE image = {};
+        image.sizeDragImage = { 1, 1 };
+        image.ptOffset = { 0, 0 };
+        image.hbmpDragImage = transparentBitmap;
+        image.crColorKey = CLR_NONE;
+        const HRESULT imageHr = helper->InitializeFromBitmap(&image, dataObject);
+        if (FAILED(imageHr)) {
+            AppendDiagLogF(L"StartFileDrag: InitializeFromBitmap failed hr=0x%08X", (unsigned int)imageHr);
+        }
+    } else if (transparentBitmap) {
+        DeleteObject(transparentBitmap);
     }
-    if (g_dragGhostWindow) {
-        KillTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_FOLLOW);
-        KillTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_HIDE_MAIN);
-        DestroyWindow(g_dragGhostWindow);
-        g_dragGhostWindow = nullptr;
-    }
+    helper->Release();
 }
 
 // Start drag operation for files
-void StartFileDrag(const std::vector<std::string>& files) {
+void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* origin = nullptr) {
     if (files.empty()) return;
     if (g_isDragging) return;  // Prevent re-entry
     if (g_dragInitiated) return;  // Already initiated drag for this click
@@ -3258,7 +3227,6 @@ void StartFileDrag(const std::vector<std::string>& files) {
     WINDOWPLACEMENT savedPlacement = { sizeof(WINDOWPLACEMENT) };
 
     auto finalizeDragState = [&](bool completed) {
-        DestroyDragGhostWindow();
         ImGui::GetIO().AddMouseButtonEvent(0, false);
         ImGui::GetIO().MouseDown[0] = false;
         g_isDragging = false;
@@ -3292,32 +3260,39 @@ void StartFileDrag(const std::vector<std::string>& files) {
         }
         g_mainWindowHiddenForDrag = false;
 
-        // Create ghost window showing filename (use UTF-8 safe conversion).
-        std::wstring ghostText = L"[Audio] ";
-        try {
-            std::wstring wPath = Utf8ToWide(files[0]);
-            if (!wPath.empty()) {
-                fs::path p = fs::path(wPath);
-                std::wstring filename = p.filename().wstring();
-                ghostText += filename.empty() ? L"(unnamed)" : filename;
-            } else {
-                ghostText += L"(unnamed)";
+        // 拖出波形小卡：文件名取源文件，波形优先用起拖处提供的峰值，其次读可见行缓存。
+        HarkenSearch::AudioDragCard::CardSpec card;
+        if (origin && !origin->peaks.empty()) {
+            card.envelope = BuildDragCardEnvelope(origin->peaks, origin->peakChannels, 76);
+        } else {
+            std::vector<float> peaks;
+            int peakChannels = 1;
+            TryGetCachedDragPeaks(files[0], peaks, peakChannels);
+            card.envelope = BuildDragCardEnvelope(peaks, peakChannels, 76);
+        }
+        card.fileName = (origin && !origin->displayName.empty())
+                            ? origin->displayName
+                            : DisplayNameForDragPath(files[0]);
+        card.itemCount = (int)files.size();
+        card.hasSourceRect = origin && origin->hasSourceRect;
+        if (card.hasSourceRect) {
+            card.sourceLeft = origin->sourceRect.left;
+            card.sourceTop = origin->sourceRect.top;
+            card.sourceWidth = origin->sourceRect.right - origin->sourceRect.left;
+            card.sourceHeight = origin->sourceRect.bottom - origin->sourceRect.top;
+        }
+        card.animationsEnabled = Platform::Animation::ClientAreaAnimationEnabled();
+        card.hideMainDelayMs = (shouldHideWindow && g_hwnd) ? g_hideWindowOnDragDelayMs : 0;
+        card.onHideMainDelayElapsed = []() {
+            // One-shot: minimize main window after a short delay (confirm drag)
+            if (!g_mainWindowHiddenForDrag && g_isDragging && g_hideWindowOnDrag && g_hwnd) {
+                MinimizeWindowNoAnimation(g_hwnd);
+                g_mainWindowHiddenForDrag = true;
             }
-        } catch (...) {
-            ghostText += L"(unnamed)";
-        }
-        if (files.size() > 1) {
-            ghostText += L" (+" + std::to_wstring(files.size() - 1) + L")";
-        }
-        CreateDragGhostWindow(ghostText);
-
-        // Hide main window after a short delay to avoid accidental triggers
-        if (shouldHideWindow && g_hwnd && g_dragGhostWindow) {
-            SetTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_HIDE_MAIN, g_hideWindowOnDragDelayMs, nullptr);
-        }
-
+        };
         FileDataObject* pDataObject = new FileDataObject(files);
         DropSource* pDropSource = new DropSource();
+        SuppressDefaultDragImage(pDataObject);
 
         // Diagnostic: log file count and first few paths for drag debugging
         AppendDiagLogF(L"StartFileDrag: fileCount=%d", (int)files.size());
@@ -3328,7 +3303,10 @@ void StartFileDrag(const std::vector<std::string>& files) {
 
         // Advertise COPY only; Pro Tools rejects MOVE for this external drag.
         DWORD dwEffect = 0;
+        HarkenSearch::AudioDragCard::BeginDrag(card);
         HRESULT dragHr = DoDragDrop(pDataObject, pDropSource, DROPEFFECT_COPY, &dwEffect);
+        const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
+        HarkenSearch::AudioDragCard::EndDrag(dropSucceeded);
         if (FAILED(dragHr)) {
             AppendDiagLogF(L"StartFileDrag: DoDragDrop failed hr=0x%08X", (unsigned int)dragHr);
         }
@@ -3338,7 +3316,6 @@ void StartFileDrag(const std::vector<std::string>& files) {
 
         // Drag result: if dropped successfully, keep window hidden so user can start editing in DAW.
         // If cancelled/no drop, restore window (if it was hidden).
-        const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
         AppendDiagLogF(L"StartFileDrag: dropSucceeded=%d shouldHide=%d g_hwnd=%p",
                        (int)dropSucceeded, (int)shouldHideWindow, (void*)g_hwnd);
 
@@ -3392,6 +3369,7 @@ void StartFileDrag(const std::vector<std::string>& files) {
         // Keep g_dragInitiated set until mouse release.
     } catch (...) {
         AppendDiagLogLine(L"StartFileDrag: exception caught, drag aborted");
+        HarkenSearch::AudioDragCard::CancelNow();
         if (shouldHideWindow && g_hwnd && g_mainWindowHiddenForDrag) {
             SetWindowPlacement(g_hwnd, &savedPlacement);
             Platform::WindowShow(g_hwnd, savedPlacement.showCmd);
@@ -3487,9 +3465,38 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
                                            float regionFadeOutNorm,
                                            bool keepHarkenSearchProcessingSuffix = true);
 
+// 主波形区域在屏幕上的位置（用于起拖时把卡片从波形缩成小卡）
+static RECT WaveformScreenRect(float x, float y, float width, float height) {
+    POINT topLeft = { (LONG)std::lround(x), (LONG)std::lround(y) };
+    POINT bottomRight = { (LONG)std::lround(x + width), (LONG)std::lround(y + height) };
+    extern HWND g_hwnd;
+    if (g_hwnd && !(ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
+        ClientToScreen(g_hwnd, &topLeft);
+        ClientToScreen(g_hwnd, &bottomRight);
+    }
+    return RECT{ topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };
+}
+
+// 从当前加载的音频取波形与文件名，供拖出小卡使用。
+static DragCardOrigin MakeRegionDragOrigin(AudioEngine& engine, bool withSourceRect, const RECT& sourceRect) {
+    DragCardOrigin origin;
+    origin.hasSourceRect = withSourceRect;
+    origin.sourceRect = sourceRect;
+    if (auto waveform = engine.getWaveformData(); waveform && !waveform->peaks.empty()) {
+        origin.peaks = waveform->peaks;
+        origin.peakChannels = (std::max)(1, waveform->numChannels);
+    }
+    if (engine.isLoaded()) {
+        origin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
+    }
+    return origin;
+}
+
 // Export region to temp file and start drag
 // Uses unified PrepareCurrentAudioForTransfer — same rules as Send-to-DAW
-void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFadeOutNorm, bool keepHarkenSearchProcessingSuffix = true) {
+void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFadeOutNorm,
+                     bool keepHarkenSearchProcessingSuffix = true,
+                     const DragCardOrigin* origin = nullptr) {
     if (!engine.isLoaded()) return;
     if (g_isDragging) return;
 
@@ -3499,7 +3506,11 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
     std::string error;
     if (PrepareCurrentAudioForTransfer(engine, files, error, regionFadeInNorm, regionFadeOutNorm, keepHarkenSearchProcessingSuffix)) {
         ImGui::ClearActiveID();
-        StartFileDrag(files);
+        DragCardOrigin regionOrigin = origin ? *origin : MakeRegionDragOrigin(engine, false, RECT{ 0, 0, 0, 0 });
+        if (regionOrigin.displayName.empty()) {
+            regionOrigin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
+        }
+        StartFileDrag(files, &regionOrigin);
     } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
         extern HWND g_hwnd;
@@ -3904,7 +3915,15 @@ void StartAudioFileDrag(AppState& state, const std::string& filePath) {
             state.settings.keepHarkenSearchOutputProcessingSuffix,
             files, error) && !files.empty()) {
         ImGui::ClearActiveID();
-        StartFileDrag(files);
+        DragCardOrigin dragOrigin;
+        dragOrigin.displayName = DisplayNameForDragPath(filePath);
+        std::vector<float> dragPeaks;
+        int dragChannels = 1;
+        if (TryGetCachedDragPeaks(filePath, dragPeaks, dragChannels)) {
+            dragOrigin.peaks = std::move(dragPeaks);
+            dragOrigin.peakChannels = dragChannels;
+        }
+        StartFileDrag(files, &dragOrigin);
     } else {
         state.loadErrorToast = error.empty() ? L(Misc_DragFailed) : error;
         state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
@@ -29060,7 +29079,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                                    (mousePos.y - state.uiState.exportDragStart.y) * (mousePos.y - state.uiState.exportDragStart.y));
             if (dragDist > 3.0f) {
                 if (state.audioEngine.isLoaded()) {
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                    const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
+                    DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
@@ -42269,7 +42290,17 @@ void RenderUI(AppState& state) {
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
                                                 dragErr) && !files.empty())
-                                            StartFileDrag(files);
+                                        {
+                                            DragCardOrigin dragOrigin;
+                                            dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
+                                            std::vector<float> dragPeaks;
+                                            int dragChannels = 1;
+                                            if (TryGetCachedDragPeaks(rawPaths.front(), dragPeaks, dragChannels)) {
+                                                dragOrigin.peaks = std::move(dragPeaks);
+                                                dragOrigin.peakChannels = dragChannels;
+                                            }
+                                            StartFileDrag(files, &dragOrigin);
+                                        }
                                         else {
                                             state.loadErrorToast = dragErr.empty() ? L(Misc_DragFailed) : dragErr;
                                             state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
@@ -44065,7 +44096,17 @@ void RenderUI(AppState& state) {
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
                                                 dragErr) && !files.empty())
-                                            StartFileDrag(files);
+                                        {
+                                            DragCardOrigin dragOrigin;
+                                            dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
+                                            std::vector<float> dragPeaks;
+                                            int dragChannels = 1;
+                                            if (TryGetCachedDragPeaks(rawPaths.front(), dragPeaks, dragChannels)) {
+                                                dragOrigin.peaks = std::move(dragPeaks);
+                                                dragOrigin.peakChannels = dragChannels;
+                                            }
+                                            StartFileDrag(files, &dragOrigin);
+                                        }
                                         else {
                                             state.loadErrorToast = dragErr.empty() ? L(Misc_DragFailed) : dragErr;
                                             state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
@@ -49547,7 +49588,9 @@ void RenderUI(AppState& state) {
             if (dragDist > 3.0f) {
                 // Start the drag operation immediately
                 if (state.audioEngine.isLoaded()) {
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                    const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
+                    DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
