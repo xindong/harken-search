@@ -130,6 +130,7 @@ def run(args):
         settle()
         command(cmd="settings_ui", action="resize", width=1160, height=1080)
         settle()
+        screenshot("00-page-top")
         command(cmd="settings_ui", action="scroll", y=100000)
         settle()
         screenshot("01-page")
