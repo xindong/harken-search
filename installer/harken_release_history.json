@@ -2,6 +2,73 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.46",
+      "release_date": "2026-11-20",
+      "headline": "DAW 设置与 REAPER 发送就绪，拖出与大库浏览更顺手",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "新增内容",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "DAW 设置与发送", "description": "设置中新增 DAW 模块，四款 DAW 同一张卡片；REAPER 可一键安装 Harken 组件并把音效发送到工程。", "source": "Harken Search"},
+                {"title": "本机 AI 查找", "description": "外部 AI 通过本机连接器查找音效、目录和同类替代，只读取已授权的库与路径。", "source": "Harken Search"},
+                {"title": "性能监视器", "description": "原 F10 诊断浮窗改为性能与日志两个页签，可缩放查看帧率、单帧时间和进程占用，并一键导出日志。", "source": "Harken Search"},
+                {"title": "WavPack 格式", "description": "支持 WavPack 无损音效的扫描与播放。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        },
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "拖出音效", "description": "从结果里拖出音效时主波形缩成跟手小卡，落点轻轻下沉后迅速淡出。", "source": "Harken Search"},
+                {"title": "顶栏与菜单", "description": "顶部导航改为紧凑布局，菜单字号跟随系统字体，页面菜单与结果右键菜单外观统一。", "source": "Harken Search"},
+                {"title": "文件夹树与侧栏", "description": "侧栏按新的规格局重排，刷新、定位和收起都有明确反馈。", "source": "Harken Search"},
+                {"title": "开屏与设置", "description": "欢迎页与开屏共用同一套机器人头像动效，设置过头像的用户直接看到自己的头像；设置项数值居中，主题色块对齐，AI 语音识别面板的模型区与页签更简洁。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        },
+        {
+          "title": "性能优化",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "大库首屏", "description": "封面墙首屏改读文件序物化索引，波形回写移出界面线程，消除百万级音效库进入主界面后的秒级停顿。", "source": "Harken Search"},
+                {"title": "大目录浏览", "description": "文件浏览器按输入缓存排序结果，大目录改为分帧建索引，扫描期间不再反复全量排序。", "source": "Harken Search"},
+                {"title": "旧库打开", "description": "旧波形数据迁移按库只执行一次，减少旧库首次打开等待。", "source": "Harken Search"},
+                {"title": "播放列表", "description": "计数与排序改用集合索引，打开与更新流程分段可诊断。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {"title": "盘符库根", "description": "以盘符根作为库目录时不再被判成库外，取消扫描保留已汇总的结果。", "source": "Harken Search"},
+                {"title": "面板与对齐", "description": "修复停靠面板被压扁、结果中栏错位和名称第三行被裁切。", "source": "Harken Search"},
+                {"title": "诊断与切换", "description": "修复页签切换卡顿与分段计时不准，F10 导出不再丢字段。", "source": "Harken Search"}
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
+    },
+    {
       "version": "1.0.45",
       "release_date": "2026-11-09",
       "headline": "同类替代模型就绪，升级确认与分析入口更稳",
