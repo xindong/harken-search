@@ -3,10 +3,16 @@
 #include "platform/metadata_legacy_tag_content.h"
 #include "platform/text_encoding.h"
 #include "Id3CommentText.h"
+#include <wavpack.h>
 #include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <ios>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -17,6 +23,7 @@ static constexpr size_t kMaxTagDataBytes   = 32 * 1024 * 1024;  // 32 MB  (ID3 t
 static constexpr size_t kMaxChunkDataBytes = 64 * 1024 * 1024;  // 64 MB  (BWF bext, RIFF chunks)
 static constexpr size_t kMaxCoverDataBytes = 32 * 1024 * 1024;  // 32 MB  (cover art payload)
 static constexpr int    kMaxChunkIter      = 10000;              // max chunk iterations per file
+static constexpr int kMaxWavPackTextTagBytes = 1024 * 1024;
 
 // Private compatibility adapter: the parser keeps its existing stream-shaped
 // control flow while file ownership stays in the opaque filesystem PAL.
@@ -57,6 +64,129 @@ static MetadataFileReader openFile(const std::string& filePath) {
     MetadataFileReader file;
     file.Open(filePath);
     return file;
+}
+
+using WavPackContextHandle = std::unique_ptr<WavpackContext, decltype(&WavpackCloseFile)>;
+
+static WavPackContextHandle OpenWavPackTags(const std::string& filePath) {
+    WavPackContextHandle context(
+        WavpackOpenFileInput(filePath.c_str(), nullptr, OPEN_TAGS | OPEN_FILE_UTF8, 0),
+        WavpackCloseFile);
+    if (context && !(WavpackGetMode(context.get()) & MODE_APETAG)) context.reset();
+    return context;
+}
+
+static std::string ReadWavPackTextTag(WavpackContext* context,
+                                     std::initializer_list<const char*> aliases) {
+    for (const auto* name : aliases) {
+        const int size = WavpackGetTagItem(context, name, nullptr, 0);
+        if (size <= 0 || size > kMaxWavPackTextTagBytes) continue;
+        std::string value(static_cast<size_t>(size) + 1, '\0');
+        if (WavpackGetTagItem(context, name, value.data(), size + 1) != size) continue;
+        value.resize(static_cast<size_t>(size));
+
+        std::string joined;
+        for (size_t offset = 0; offset < value.size();) {
+            const size_t separator = value.find('\0', offset);
+            const size_t end = separator == std::string::npos ? value.size() : separator;
+            const size_t first = value.find_first_not_of(" \t\r\n", offset);
+            if (first < end) {
+                const size_t last = value.find_last_not_of(" \t\r\n", end - 1);
+                if (!joined.empty()) joined += "; ";
+                joined.append(value, first, last - first + 1);
+            }
+            offset = end + 1;
+        }
+        if (!joined.empty()) return joined;
+    }
+    return {};
+}
+
+static bool ReadWavPackMetadata(const std::string& filePath, AudioMetadata& metadata) {
+    const auto context = OpenWavPackTags(filePath);
+    if (!context) return false;
+
+    AudioMetadata tags;
+    bool found = false;
+    auto text = [&](std::string& field, std::initializer_list<const char*> names) {
+        field = ReadWavPackTextTag(context.get(), names);
+        found |= !field.empty();
+    };
+    auto number = [&](int& field, std::initializer_list<const char*> names, int max) {
+        const auto value = ReadWavPackTextTag(context.get(), names);
+        int parsed = 0;
+        const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (result.ec == std::errc{} && parsed > 0 && parsed <= max) {
+            field = parsed;
+            found = true;
+        }
+    };
+    auto gain = [&](float& field, const char* name) {
+        const auto value = ReadWavPackTextTag(context.get(), {name});
+        char* end = nullptr;
+        const float parsed = std::strtof(value.c_str(), &end);
+        if (end != value.c_str() && std::isfinite(parsed)) {
+            field = parsed;
+            found = true;
+        }
+    };
+    text(tags.title, {"Title"});
+    text(tags.artist, {"Artist"});
+    text(tags.album, {"Album"});
+    text(tags.albumArtist, {"Album Artist", "AlbumArtist"});
+    text(tags.genre, {"Genre"});
+    text(tags.comment, {"Comment"});
+    text(tags.description, {"Description", "Comment"});
+    text(tags.keywords, {"Keywords", "Tags"});
+    text(tags.category, {"Category", "Subject"});
+    text(tags.subcategory, {"Subcategory"});
+    text(tags.library, {"Library", "Source"});
+    text(tags.designer, {"Designer", "Engineer"});
+    text(tags.manufacturer, {"Manufacturer"});
+    text(tags.notes, {"Notes"});
+    text(tags.url, {"URL", "Contact"});
+    text(tags.copyright, {"Copyright"});
+    text(tags.software, {"Software", "Tool Name"});
+    text(tags.instruments, {"Instruments", "Instrument"});
+    number(tags.year, {"Year", "Date"}, 9999);
+    number(tags.track, {"Track", "TrackNumber"}, 65535);
+    number(tags.disc, {"Disc", "DiscNumber"}, 65535);
+    gain(tags.replayGainTrack, "REPLAYGAIN_TRACK_GAIN");
+    gain(tags.replayGainAlbum, "REPLAYGAIN_ALBUM_GAIN");
+    if (!found) return false;
+    metadata = std::move(tags);
+    return true;
+}
+
+static bool ReadWavPackAlbumArt(const std::string& filePath, AlbumArt& art) {
+    const auto context = OpenWavPackTags(filePath);
+    if (!context) return false;
+
+    for (const char* name : {"Cover Art (Front)", "Cover Art (Back)"}) {
+        const int size = WavpackGetBinaryTagItem(context.get(), name, nullptr, 0);
+        if (size <= 0 || static_cast<size_t>(size) > kMaxCoverDataBytes) continue;
+        std::vector<uint8_t> payload(static_cast<size_t>(size));
+        if (WavpackGetBinaryTagItem(context.get(), name, reinterpret_cast<char*>(payload.data()), size) != size)
+            continue;
+        const auto separator = std::find(payload.begin(), payload.end(), uint8_t{0});
+        if (separator == payload.begin() || separator == payload.end()) continue;
+        const auto image = separator + 1;
+        const size_t length = static_cast<size_t>(payload.end() - image);
+        const auto* bytes = payload.data() + (image - payload.begin());
+        AlbumArt decoded;
+        if (length >= 33 && std::memcmp(bytes, "\x89PNG\r\n\x1a\n", 8) == 0 &&
+            std::memcmp(bytes + 12, "IHDR", 4) == 0) {
+            decoded.mimeType = "image/png";
+        } else if (length >= 4 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff) {
+            decoded.mimeType = "image/jpeg";
+        } else {
+            continue;
+        }
+        decoded.data.assign(image, payload.end());
+        art = std::move(decoded);
+        return true;
+    }
+    return false;
 }
 
 std::string MetadataReader::trimString(const std::string& str) {
@@ -113,6 +243,8 @@ bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& me
         return readM4A(filePath, metadata);
     } else if (ext == ".aiff" || ext == ".aif") {
         return readID3v2(filePath, metadata);
+    } else if (ext == ".wv") {
+        return ReadWavPackMetadata(filePath, metadata);
     }
     } catch (...) {
 // Tolerate any exception (including SEH with /EHa) from corrupted files
@@ -825,6 +957,8 @@ bool MetadataReader::readAlbumArt(const std::string& filePath, AlbumArt& art) {
             found = readOGGAlbumArt(filePath, art);
         } else if (ext == ".aiff" || ext == ".aif") {
             found = readID3v2AlbumArt(filePath, art);
+        } else if (ext == ".wv") {
+            found = ReadWavPackAlbumArt(filePath, art);
         }
     } catch (...) {
 

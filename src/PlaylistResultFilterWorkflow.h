@@ -11,6 +11,7 @@ namespace aura::playlist {
 struct PlaylistResultFilterRecord {
     std::string folderPath;
     std::string extension;
+    bool wavPackLossless = false;
 };
 
 struct PlaylistResultFilterInput {

@@ -986,6 +986,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
     h = HashCombine64(h, (uint64_t)filter.maxChannels);
     h = HashCombine64(h, (uint64_t)filter.coverFilter);
     h = HashCombine64(h, (uint64_t)filter.includeOnlyKnownExts);
+    h = HashCombine64(h, (uint64_t)filter.losslessWavPackOnly);
     for (const auto& ext : filter.excludeExtensions) {
         h = HashCombine64(h, HashString64Local(ext));
     }
@@ -5983,6 +5984,7 @@ void LoadAppSettings(AppState& state) {
     state.showM4A = ParseBool(kv["showM4A"], state.showM4A);
     state.showWMA = ParseBool(kv["showWMA"], state.showWMA);
     state.showOther = ParseBool(kv["showOther"], state.showOther);
+    state.showLosslessWavPack = ParseBool(kv["showLosslessWavPack"], state.showLosslessWavPack);
 
     // Personal preferences
     auto itUserName = kv.find("userName");
@@ -6657,6 +6659,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"showM4A", state.showM4A ? "1" : "0"});
     items.push_back({"showWMA", state.showWMA ? "1" : "0"});
     items.push_back({"showOther", state.showOther ? "1" : "0"});
+    items.push_back({"showLosslessWavPack", state.showLosslessWavPack ? "1" : "0"});
 
     // Personal preferences
     items.push_back({"userName", state.settings.userName});
@@ -15116,7 +15119,7 @@ void FilterResultsByFileType(AppState& state) {
     filtered.reserve(state.searchResults.size());
 
     for (const auto& record : state.searchResults) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             filtered.push_back(record);
         }
     }
@@ -15148,7 +15151,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
 
     state.resetRandomSampling();
     for (const auto& record : allMatching) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             if (state.playedFileIds.find(record.id) == state.playedFileIds.end())
                 state.randomAvailableIds.push_back(record.id);
         }
@@ -15156,7 +15159,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
     state.randomAllPlayed = state.randomAvailableIds.empty();
     if (state.randomAllPlayed) {
         for (const auto& record : allMatching) {
-            if (state.shouldShowFile(record.extension))
+            if (state.shouldShowFile(record))
                 state.randomAvailableIds.push_back(record.id);
         }
     }
@@ -15355,6 +15358,7 @@ static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
     state.instrumentPillState.clear();
     state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
     state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+    state.showLosslessWavPack = false;
     state.suppressNextRealtimeSearchCommit = true;
 
     // Clear both same-folder and same-name search modes.
@@ -17284,8 +17288,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // --- Enum filters: single combo trigger, unified popup body ---
         drawSidebarFilterLabel(L(Filter_Format));
         {
-            const char* formatItems[] = { L(Filter_All), "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems, IM_ARRAYSIZE(formatItems),
+            auto formatItems = aura::search::kAudioFormatFilters;
+            formatItems.front() = L(Filter_All);
+            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems.data(), static_cast<int>(formatItems.size()),
                 [&]() { applyMetaFilters(); });
         }
 
@@ -17616,25 +17621,52 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
             typesChanged |= ImGui::Checkbox(L(Main_ExtWmaCheck), &state.showWMA);
             ImGui::SameLine(80);
-            typesChanged |= ImGui::Checkbox(L(Filter_OtherType), &state.showOther);
+            if (ImGui::Checkbox(L(Filter_OtherType), &state.showOther)) {
+                state.showLosslessWavPack = false;
+                typesChanged = true;
+            }
 
             // Quick buttons
-            if (ImGui::SmallButton(L(Filter_AllBtn))) {
+#if ARIS_PREVIEW_ISOLATION
+            auto recordTypePresetRect = [&](const char* key) {
+                if (!ImGui::IsItemVisible()) return;
+                const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                state.qaFilterUiRects[key] = ImVec4(
+                    min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+            };
+#endif
+            const bool allTypesPressed = ImGui::SmallButton(L(Filter_AllBtn));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.all");
+#endif
+            if (allTypesPressed) {
                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_WAVOnly))) {
+            const bool wavOnlyPressed = ImGui::SmallButton(L(Filter_WAVOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.wav");
+#endif
+            if (wavOnlyPressed) {
                 state.showWAV = true;
                 state.showMP3 = state.showFLAC = state.showOGG = false;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_LosslessOnly))) {
+            const bool losslessOnlyPressed = ImGui::SmallButton(L(Filter_LosslessOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.lossless");
+#endif
+            if (losslessOnlyPressed) {
                 state.showWAV = state.showFLAC = state.showAIFF = true;
                 state.showMP3 = state.showOGG = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = true;
                 typesChanged = true;
             }
 
@@ -41065,9 +41097,9 @@ void RenderUI(AppState& state) {
 
             // Check format filter
             {
-                const char* fmtNames[] = { "", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-                if (state.formatFilterIndex > 0 && state.formatFilterIndex < 7) {
-                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + fmtNames[state.formatFilterIndex]});
+                const char* formatFilter = aura::search::AudioFormatFilterAt(state.formatFilterIndex);
+                if (*formatFilter != '\0') {
+                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + formatFilter});
                 }
             }
 
@@ -41099,13 +41131,15 @@ void RenderUI(AppState& state) {
                         if (ft.visible) enabledTypes.emplace_back(ft.label);
                         else ++hiddenCount;
                     }
+                    if (state.showLosslessWavPack && !state.showOther) enabledTypes.emplace_back("WV");
 
                     std::string label;
                     if (enabledTypes.empty()) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u5168\u90e8\u9690\u85cf";
                     } else if (enabledTypes.size() == 1) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u4ec5 " + enabledTypes[0];
-                    } else if (enabledTypes.size() <= 3) {
+                    } else if (enabledTypes.size() <= 3 ||
+                               (enabledTypes.size() == 4 && state.showLosslessWavPack)) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: ";
                         for (size_t typeIdx = 0; typeIdx < enabledTypes.size(); ++typeIdx) {
                             if (typeIdx > 0) label += "/";
@@ -41417,6 +41451,7 @@ void RenderUI(AppState& state) {
                             case FilterChipType::FileTypes:
                                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                                state.showLosslessWavPack = false;
                                 break;
                             case FilterChipType::Channels:
                                 state.channelFilterIndex = 0;

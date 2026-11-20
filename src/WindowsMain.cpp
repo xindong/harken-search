@@ -149,6 +149,7 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
 #include "platform/executable_path.h"
+#include "DatabaseSearchFilterBuilder.h"
 #include "platform/filesystem.h"
 #include "platform/text_encoding.h"
 #include "platform/qa_files.h"
@@ -4109,11 +4110,7 @@ static void PollQaCommandFile(AppState& state) {
         }
     };
     auto formatFilterValue = [&](int index) -> std::string {
-        const char* formats[] = {"", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A"};
-        if (index >= 0 && index < (int)(sizeof(formats) / sizeof(formats[0]))) {
-            return formats[index];
-        }
-        return "";
+        return aura::search::AudioFormatFilterAt(index);
     };
     auto coverFilterValue = [&](int index) -> std::string {
         const char* modes[] = {"all", "has", "no"};
@@ -4124,12 +4121,10 @@ static void PollQaCommandFile(AppState& state) {
     };
     auto formatFilterIndexFromValue = [&](std::string value) -> int {
         std::transform(value.begin(), value.end(), value.begin(), ::toupper);
-        if (value == "WAV") return 1;
-        if (value == "MP3") return 2;
-        if (value == "FLAC") return 3;
-        if (value == "OGG") return 4;
-        if (value == "AIFF" || value == "AIF") return 5;
-        if (value == "M4A") return 6;
+        if (value == "AIF") value = "AIFF";
+        for (std::size_t index = 1; index < aura::search::kAudioFormatFilters.size(); ++index) {
+            if (value == aura::search::kAudioFormatFilters[index]) return static_cast<int>(index);
+        }
         return 0;
     };
     auto parseRowSet = [&](const std::string& rowsRaw) {
@@ -6136,8 +6131,11 @@ static void PollQaCommandFile(AppState& state) {
                 state.instrumentPillState["__qa_instrument__"] = 1;
             }
             state.showWAV = !enabled;
-            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
-                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            if (!enabled) {
+                state.showMP3 = state.showFLAC = state.showOGG =
+                    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
+            }
             cancelPendingSearchForQaMutation();
             RefreshSearchResults(state, true);
             state.syncToTab();
@@ -9157,6 +9155,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             dbFiles.push_back(pathUtf8);
                         }
                         else if (ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg" ||
+                            ext == ".wv" ||
                             ext == ".aiff" || ext == ".aif" || ext == ".m4a" || ext == ".wma") {
                             files.push_back(pathUtf8);
                         }
