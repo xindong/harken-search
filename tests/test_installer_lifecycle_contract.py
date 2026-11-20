@@ -12,6 +12,23 @@ class InstallerLifecycleContractTest(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def test_installer_leaves_reaper_component_setup_to_the_app(self) -> None:
+        installer = self.installer.lower()
+        forbidden = (
+            "[components]",
+            "dawsendcomponents",
+            "configurereaper",
+            "installreapercomponent",
+            "harkenreapersetup.exe",
+            "reaper.exe",
+            "extracttemporaryfile('reaper_harken.dll')",
+        )
+        self.assertEqual([marker for marker in forbidden if marker in installer], [])
+        self.assertIn(
+            'Source: "{#SourceDir}\\reaper_harken.dll"; DestDir: "{app}"; Flags: ignoreversion',
+            self._files_section().splitlines(),
+        )
+
     def test_formal_installer_stages_runtime_payload(self) -> None:
         required_entries = (
             'Source: "{#SourceDir}\\lucide.ttf"; DestDir: "{app}";',

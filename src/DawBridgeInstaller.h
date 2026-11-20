@@ -78,6 +78,8 @@ struct InstallStatus {
     bool protocolCompatible = false;
     bool sendChannelAvailable = false;
     bool filePresent = false;
+    bool alternateFilePresent = false;
+    bool legacyFilePresent = false;
     bool correctLocation = false;
     bool hostRunning = false;
     bool handshakeOk = false;
@@ -123,6 +125,7 @@ struct ReaperBridgeProbeOptions {
     std::function<bool()> hostRunningQueryOverride;
     std::wstring pipeNameOverride;
     int handshakeTimeoutMs = 120;
+    bool inspectLegacyComponent = false;
 };
 
 struct ReaperBridgeDoctorRequest {
@@ -135,6 +138,7 @@ struct ReaperBridgeDoctorRequest {
     int hostExitWaitTimeoutMs = 0;
     std::vector<std::string> verificationFilePaths;
     ReaperBridgeInstallObserver installObserver;
+    bool installMissingOnly = false;
 };
 
 struct ReaperBridgeDoctorReport {
@@ -164,6 +168,7 @@ struct Installer {
 };
 
 std::string AutoDetectReaperRootPath();
+bool ReaperProcessDefinitelyStopped();
 BridgeBinaryInfo ProbeBridgeBinary(const std::string& pathUtf8);
 InstallStatus ProbeReaperBridge(const ReaperBridgeProbeOptions& options = {});
 InstallResult InstallReaperBridge(

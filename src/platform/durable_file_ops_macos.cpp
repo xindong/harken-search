@@ -18,7 +18,7 @@ DurableFileOpResult CopyFileExclusiveAndFlush(const std::string&, const std::str
     return result;
 }
 
-DurableFileOpResult ReplaceFileWriteThrough(const std::string&, const std::string&) {
+DurableFileOpResult ReplaceFileWriteThrough(const std::string&, const std::string&, bool) {
     DurableFileOpResult result;
     result.status = DurableFileOpStatus::Unsupported;
     result.systemError = 0;

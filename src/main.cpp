@@ -144,6 +144,7 @@
 #include "AppState.h"
 #include "SidebarMetadataPicker.h"
 #include "SettingsDialogState.h"
+#include "ReaperSetupPolicy.h"
 #include "SettingsFileWriter.h"
 #include "SettingsMigration.h"
 #include "TagCloudContext.h"
@@ -358,6 +359,7 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include <unordered_map>
 #include <unordered_set>
 #include <thread>
+#include <system_error>
 #include <atomic>
 #include <condition_variable>
 #include <future>
@@ -433,17 +435,6 @@ ReaperBridgeUiStatusForTarget(const DawTarget& target) {
     if (found == g_reaperBridgeUiStatusCache.end()) return std::nullopt;
     return found->second;
 }
-
-// H1b: DAW-send failure line rendered by the DAW toast. The send worker
-// stores the keyed InstallStatus; DrawSendToDAWToast resolves it on the UI
-// thread (constraint 4).
-// H2a (#200 P1-1): the trio (this snapshot + AppState.lastSendToDAWKeyed +
-// AppState.lastSendToDAWStatus) is worker-written and UI-read per frame.
-// All writes and the toast's read go through g_lastSendToDAWStatusMutex so
-// no frame can observe a torn/half-updated row even inside the click frame
-// where a new worker starts right after this UI frame read dawSendState.
-static std::mutex g_lastSendToDAWStatusMutex;
-static HarkenSearch::DawBridge::InstallStatus g_lastSendToDAWBridgeStatus;
 
 static void StoreReaperBridgeUiStatus(
     const DawTarget& target,
@@ -748,121 +739,141 @@ std::string ControlUpdateNoticeForQa(AppState& state, const std::string& action)
 }
 #endif
 
-static bool IsSendToDawSuccessStatus(const std::string& status) {
-    // "Created new track" is a legit success outcome (fallback), not a failure.
-    // "Spotted N clips on ..." is the mid/modern success message.
-    return (status.size() >= 4 && status.compare(0, 4, "Sent") == 0) ||
-           status.compare(0, 7, "Spotted") == 0 ||
-           status.compare(0, 17, "Created new track") == 0;
+// One setup surface: DAW entries open the settings page instead of the legacy popup.
+static void OpenDawIntegrationSettings(AppState& state) {
+    state.openDawIntegrationSettings = true;
+    state.showSettingsDialog = true;
 }
 
-// Toast for Send-to-DAW status (above DAW capsule, right-aligned; 3s hold + 0.5s fade)
+#include "DawSendNotice.inl"
+#include "DawSendDeliveryFeedback.h"
+
+using HarkenSearch::UI::DawSendFeedbackClock;
+using HarkenSearch::UI::DawSendFeedbackSnapshot;
+using HarkenSearch::UI::DawSendOutcome;
+
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+static constexpr std::pair<std::string_view, DawSendOutcome> kDawSendPreviewStates[] = {
+    {"sending", DawSendOutcome::Sending},
+    {"success", DawSendOutcome::Success},
+    {"partial", DawSendOutcome::Partial},
+    {"fallback", DawSendOutcome::Fallback},
+    {"failure", DawSendOutcome::Failure},
+    {"bridge_failure", DawSendOutcome::BridgeFailure},
+};
+
+static struct DawSendFeedbackPreview {
+    DawSendFeedbackSnapshot snapshot;
+    std::string_view state = "idle";
+    float width = 0.0f;
+    size_t page = 1;
+    HarkenSearch::UI::DawSendNoticeObservation observation;
+    int frame = -1;
+} g_dawSendFeedbackPreview;
+
+std::string ControlDawSendFeedbackPreview(const nlohmann::json& request) {
+    using Json = nlohmann::json;
+    auto& preview = g_dawSendFeedbackPreview;
+    if (!request.is_object() || !request.contains("action") || !request["action"].is_string())
+        return R"({"ok":false,"error":"invalid_send_feedback_request"})";
+    const std::string action = request["action"].get<std::string>();
+    if (action == "clear") {
+        preview = {};
+    } else if (action == "show") {
+        if (!request.contains("state") || !request["state"].is_string())
+            return R"({"ok":false,"error":"invalid_send_feedback_state"})";
+        const std::string stateName = request["state"].get<std::string>();
+        DawSendFeedbackPreview next;
+        for (const auto& entry : kDawSendPreviewStates) {
+            if (entry.first != stateName) continue;
+            next.state = entry.first;
+            next.snapshot.outcome = entry.second;
+            break;
+        }
+        if (next.snapshot.outcome == DawSendOutcome::Idle)
+            return R"({"ok":false,"error":"invalid_send_feedback_state"})";
+
+        const auto getCount = [&](const char* key, std::optional<int>& value) {
+            if (!request.contains(key) || request[key].is_null()) return true;
+            if (!request[key].is_number_integer()) return false;
+            const double count = request[key].get<double>();
+            if (count < 0 || count > (std::numeric_limits<int>::max)()) return false;
+            value = static_cast<int>(count);
+            return true;
+        };
+        std::optional<int> requestedPage;
+        if (!getCount("sent", next.snapshot.sent) || !getCount("total", next.snapshot.total) ||
+            !getCount("page", requestedPage) || (requestedPage && *requestedPage == 0) ||
+            (next.snapshot.sent && next.snapshot.total && *next.snapshot.sent > *next.snapshot.total))
+            return R"({"ok":false,"error":"invalid_send_feedback_count"})";
+        if (requestedPage) next.page = static_cast<size_t>(*requestedPage);
+        if (request.contains("preview_width")) {
+            if (!request["preview_width"].is_number()) return R"({"ok":false,"error":"invalid_preview_width"})";
+            const double width = request["preview_width"].get<double>();
+            if (!std::isfinite(width) || width < 1.0 || width > 10000.0)
+                return R"({"ok":false,"error":"invalid_preview_width"})";
+            next.width = static_cast<float>(width);
+        }
+        std::string detail;
+        std::string remediation;
+        const auto getText = [&](const char* key, std::string& value) {
+            if (!request.contains(key)) return true;
+            if (!request[key].is_string()) return false;
+            value = request[key].get<std::string>();
+            return value.find('\0') == std::string::npos;
+        };
+        if (!getText("detail", detail) || !getText("remediation", remediation))
+            return R"({"ok":false,"error":"invalid_send_feedback_text"})";
+        if (next.snapshot.outcome == DawSendOutcome::BridgeFailure) {
+            if (detail.empty()) next.snapshot.detail.setKey(LStr::DBst_NeedRestartD);
+            else next.snapshot.detail.setKeyStr(LStr::DBst_HandFailFmt, std::move(detail));
+            if (remediation.empty()) next.snapshot.remediation.setKey(LStr::DBst_NeedRestartR);
+            else next.snapshot.remediation = std::move(remediation);
+        } else {
+            next.snapshot.detail = std::move(detail);
+            next.snapshot.remediation = std::move(remediation);
+        }
+        preview = std::move(next);
+    } else if (action != "state") {
+        return R"({"ok":false,"error":"unsupported_action"})";
+    }
+
+    const auto rect = [](const ImRect& bounds) {
+        return Json::array({bounds.Min.x, bounds.Min.y, bounds.Max.x, bounds.Max.y});
+    };
+    const auto& observation = preview.observation;
+    return Json({
+        {"ok", true}, {"state", std::string(preview.state)}, {"frame", preview.frame},
+        {"rendered", observation.rendered && preview.frame == ImGui::GetFrameCount()},
+        {"rect", rect(observation.rect)}, {"anchor_rect", rect(observation.anchor)},
+        {"viewport_id", observation.viewportId}, {"wrap_width", observation.wrapWidth},
+        {"overflow", observation.overflow}, {"degraded", observation.degraded},
+        {"page", observation.page}, {"page_count", observation.pageCount},
+        {"body_lines", observation.bodyLines}, {"visible_body_lines", observation.visibleBodyLines},
+        {"sent", preview.snapshot.sent ? Json(*preview.snapshot.sent) : Json(nullptr)},
+        {"total", preview.snapshot.total ? Json(*preview.snapshot.total) : Json(nullptr)}
+    }).dump();
+}
+#endif
+
 static void DrawSendToDAWToast(AppState& state, float dawX, float dawY, float dawW, float dawH) {
-    const bool isSending = state.dawSendState.load() == AppState::DawSendState::Sending;
-
-    // H2a: take ONE locked snapshot of the worker-written trio. While
-    // isSending we don't need the payload (progress atomics cover the UI),
-    // but lastSendToDAWStatus may still be mid-refresh by a finished lane;
-    // the snapshot keeps every read below internally consistent.
-    std::string statusSnap;
-    bool keyedSnap = false;
-    HarkenSearch::DawBridge::InstallStatus bridgeSnap;
-    {
-        std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex);
-        keyedSnap = state.lastSendToDAWKeyed;
-        statusSnap = state.lastSendToDAWStatus;
-        if (keyedSnap) bridgeSnap = g_lastSendToDAWBridgeStatus;
-    }
-
-    if (!isSending && statusSnap.empty() && !keyedSnap)
+    if (ImGui::IsPopupOpen("##SendDAWPopup")) return;
+    ImGuiViewport* viewport = ImGui::GetWindowViewport();
+    const ImRect anchor(ImVec2(dawX, dawY), ImVec2(dawX + dawW, dawY + dawH));
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+    auto& preview = g_dawSendFeedbackPreview;
+    if (preview.snapshot.outcome != DawSendOutcome::Idle) {
+        preview.observation = HarkenSearch::UI::DrawDawSendNotice(preview.snapshot, viewport, anchor,
+            0.0, preview.width, preview.page);
+        preview.frame = ImGui::GetFrameCount();
         return;
-
-    float alpha = 1.0f;
-
-    if (!isSending) {
-        const double elapsed = ImGui::GetTime() - state.lastSendToDAWTime;
-        if (elapsed > 3.5) {
-            auto expected = AppState::DawSendState::Done;
-            state.dawSendState.compare_exchange_strong(expected, AppState::DawSendState::Idle);
-            return;
-        }
-        if (elapsed > 3.0)
-            alpha = static_cast<float>(std::max(0.0, 1.0 - (elapsed - 3.0) / 0.5));
     }
-
-    std::string display;
-    bool success;
-
-    if (isSending) {
-        int sent = state.dawSendSent.load();
-        int total = state.dawSendTotal.load();
-        if (total > 1) {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "Sending %d/%d ...", sent, total);
-            display = buf;
-        } else {
-            display = "Sending...";
-        }
-        success = true;
-    } else if (keyedSnap) {
-        // H1b/H2a: render the snapshotted keyed bridge status here (UI thread).
-        display = bridgeSnap.detail.Render();
-        if (!bridgeSnap.remediation.empty()) {
-            if (!display.empty()) display += " ";
-            display += bridgeSnap.remediation.Render();
-        }
-    } else {
-        display = statusSnap;
-        if (IsSendToDawSuccessStatus(display)) {
-            success = true;
-            int& idx = state.selectedDAWIndex;
-            auto& tgts = state.settings.dawTargets;
-            const char* dawName = (idx >= 0 && idx < (int)tgts.size()) ? tgts[idx].name.c_str() : "DAW";
-            int total = state.dawSendTotal.load();
-            char buf[128];
-            if (total > 1)
-                snprintf(buf, sizeof(buf), "Sent %d files to %s", total, dawName);
-            else
-                snprintf(buf, sizeof(buf), "Sent to %s", dawName);
-            display = buf;
-        } else {
-            success = false;
-            const size_t kMaxDisplay = 60;
-            if (display.size() > kMaxDisplay) {
-                display.resize(kMaxDisplay - 3);
-                display += "...";
-            }
-            display = "X " + display;
-        }
-    }
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 textSize = ImGui::CalcTextSize(display.c_str());
-    const float iconW = 18.0f;
-    const float padX = 10.0f;
-    const float padY = 5.0f;
-    const float gapAbove = 6.0f;
-    const float rectW = iconW + textSize.x + padX * 2.0f;
-    const float rectH = textSize.y + padY * 2.0f;
-    const float toastRight = dawX + dawW;
-    const float toastX = toastRight - rectW;
-    const float toastY = dawY - gapAbove - rectH;
-
-    const ImU32 greenCol = ImGui::GetColorU32(ImVec4(0.30f, 0.82f, 0.45f, alpha));
-    const ImU32 redCol   = ImGui::GetColorU32(ImVec4(0.90f, 0.35f, 0.30f, alpha));
-    const ImU32 textCol  = success ? greenCol : redCol;
-    const ImU32 bgCol    = ImGui::GetColorU32(ImVec4(0.06f, 0.06f, 0.08f, 0.88f * alpha));
-    const ImU32 borderCol = ImGui::GetColorU32(ImVec4(
-        success ? 0.20f : 0.40f,
-        success ? 0.50f : 0.15f,
-        success ? 0.25f : 0.12f,
-        0.40f * alpha));
-
-    const ImVec2 r0(toastX, toastY);
-    const ImVec2 r1(toastX + rectW, toastY + rectH);
-    dl->AddRectFilled(r0, r1, bgCol, 6.0f);
-    dl->AddRect(r0, r1, borderCol, 6.0f);
-    dl->AddText(ImVec2(toastX + padX, toastY + padY), textCol, display.c_str());
+#endif
+    const auto snapshot = state.dawSendFeedback.snapshot();
+    if (snapshot.outcome == DawSendOutcome::Idle) return;
+    const double elapsed = std::chrono::duration<double>(DawSendFeedbackClock::now() - snapshot.changedAt).count();
+    if (HarkenSearch::UI::DrawDawSendNotice(snapshot, viewport, anchor, elapsed).expired)
+        state.dawSendFeedback.expire(snapshot.revision);
 }
 
 static bool ResolveUserDefaultConfigPaths(std::string& outSettingsPath, std::string& outImguiPath) {
@@ -4051,10 +4062,54 @@ static bool IsReaperNamedPipeTarget(const DawTarget& target);
 static HarkenSearch::DawBridge::ReaperBridgeProbeOptions BuildReaperBridgeProbeOptions(
     const DawTarget& target);
 
+enum class DawProbePurpose { LiveTarget, ReaperSetupStartup, ReaperSetupPage };
+
+static std::optional<std::string> g_reaperSetupPageProbePath;
+static std::optional<HarkenSearch::DawBridge::InstallStatus> g_reaperSetupPageStatus;
+static std::string g_reaperSetupStatusPath;
+static double g_reaperSetupStatusAt = -999.0;
+static unsigned g_reaperSetupProbeGeneration = 0;
+static bool g_reaperSetupStartupSubmitted = false;
+static bool g_reaperSetupNoticePending = false;
+
+static HarkenSearch::DawBridge::InstallStatus ProbeReaperSetupSnapshot(
+    std::string path, DawProbePurpose purpose) {
+    using namespace HarkenSearch::DawBridge;
+    const bool isolated = Platform::HarkenUserData::PreviewIsolationActive();
+    auto probe = [&](const std::string& root) {
+        if (root.empty() || (isolated &&
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(root))) {
+            return InstallStatus{};
+        }
+        DawTarget target;
+        target.exePath = root;
+        auto options = BuildReaperBridgeProbeOptions(target);
+        options.handshakeTimeoutMs = 20;
+        options.inspectLegacyComponent = true;
+        if (isolated) options.pipeNameOverride = LR"(\\.\pipe\HarkenSearch-PreviewReaperSetup)";
+        auto status = ProbeReaperBridge(options);
+        if (isolated && status.targetResolved &&
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(status.targetDirectory)) {
+            return InstallStatus{};
+        }
+        status.hostRunning = status.hostRunning || !ReaperProcessDefinitelyStopped();
+        return status;
+    };
+    if (!path.empty()) {
+        auto status = probe(path);
+        if (status.hostInstalled || purpose != DawProbePurpose::ReaperSetupStartup || isolated) {
+            return status;
+        }
+    }
+    return isolated ? InstallStatus{} : probe(AutoDetectReaperRootPath());
+}
+
 struct DawRunningProbeRequest {
     std::string targetKey;
     DawTarget targetSnapshot;
     bool autoDetectRoot = false;
+    DawProbePurpose purpose = DawProbePurpose::LiveTarget;
+    unsigned setupGeneration = 0;
 };
 
 struct DawRunningProbeResult {
@@ -4062,6 +4117,8 @@ struct DawRunningProbeResult {
     bool isRunning = false;
     std::optional<HarkenSearch::DawBridge::InstallStatus> reaperStatus;
     bool autoDetectRoot = false;
+    DawProbePurpose purpose = DawProbePurpose::LiveTarget;
+    unsigned setupGeneration = 0;
 };
 
 using DawRunningProbeBatch = std::vector<DawRunningProbeRequest>;
@@ -4086,8 +4143,12 @@ static DawRunningProbeResults ProbeDawRunningStateSnapshots(DawRunningProbeBatch
         DawRunningProbeResult result;
         result.targetKey = requestSnapshot.targetKey;
         result.autoDetectRoot = requestSnapshot.autoDetectRoot;
+        result.purpose = requestSnapshot.purpose;
+        result.setupGeneration = requestSnapshot.setupGeneration;
 
-        if (IsReaperNamedPipeTarget(target)) {
+        if (result.purpose != DawProbePurpose::LiveTarget) {
+            result.reaperStatus = ProbeReaperSetupSnapshot(target.exePath, result.purpose);
+        } else if (IsReaperNamedPipeTarget(target)) {
             DawTarget probeTarget = target;
             if (requestSnapshot.autoDetectRoot) {
                 probeTarget.exePath = HarkenSearch::DawBridge::AutoDetectReaperRootPath();
@@ -4120,10 +4181,31 @@ static DawRunningProbeResults ProbeDawRunningStateSnapshots(DawRunningProbeBatch
 static void UpdateDAWRunningState(AppState& state) {
     static HarkenSearch::AsyncSnapshotWorker<DawRunningProbeBatch, DawRunningProbeResults>
         s_probeWorker(ProbeDawRunningStateSnapshots);
+    const auto setupPagePath = std::exchange(g_reaperSetupPageProbePath, std::nullopt);
 
     try {
         if (auto completed = s_probeWorker.Poll()) {
-            for (const auto& result : *completed) {
+            for (auto& result : *completed) {
+                if (result.purpose != DawProbePurpose::LiveTarget &&
+                    result.setupGeneration != g_reaperSetupProbeGeneration) continue;
+                if (result.purpose == DawProbePurpose::ReaperSetupStartup) {
+                    g_reaperSetupNoticePending =
+                        HarkenSearch::DawBridge::NeedsReaperSetupNotice(*result.reaperStatus);
+                    if (!g_reaperSetupPageStatus &&
+                        (result.targetKey.empty() ||
+                         result.targetKey == result.reaperStatus->configuredRootPath)) {
+                        g_reaperSetupStatusPath = result.targetKey;
+                        g_reaperSetupStatusAt = ImGui::GetTime();
+                        g_reaperSetupPageStatus = std::move(result.reaperStatus);
+                    }
+                    continue;
+                }
+                if (result.purpose == DawProbePurpose::ReaperSetupPage) {
+                    g_reaperSetupStatusPath = result.targetKey;
+                    g_reaperSetupStatusAt = ImGui::GetTime();
+                    g_reaperSetupPageStatus = std::move(result.reaperStatus);
+                    continue;
+                }
                 for (auto& liveTarget : state.settings.dawTargets) {
                     if (DawRunningProbeKey(liveTarget) != result.targetKey) continue;
                     liveTarget.isRunning = result.isRunning;
@@ -4159,6 +4241,31 @@ static void UpdateDAWRunningState(AppState& state) {
     const double now = ImGui::GetTime();
     DawRunningProbeBatch requests;
     std::unordered_set<std::string> submittedKeys;
+    bool submitStartup = false;
+#if defined(_WIN32)
+    if (setupPagePath && (!g_reaperSetupPageStatus || *setupPagePath != g_reaperSetupStatusPath ||
+                         now - g_reaperSetupStatusAt >= kProbeIntervalSeconds)) {
+        DawRunningProbeRequest request;
+        request.targetKey = *setupPagePath;
+        request.targetSnapshot.exePath = *setupPagePath;
+        request.purpose = DawProbePurpose::ReaperSetupPage;
+        request.setupGeneration = g_reaperSetupProbeGeneration;
+        requests.push_back(std::move(request));
+    }
+    submitStartup = !g_reaperSetupStartupSubmitted && !state.settings.reaperSetupNoticeDismissed &&
+        !state.startupNeedsDatabaseSetup && now >= 2.0;
+    if (submitStartup) {
+        const auto& targets = state.settings.dawTargets;
+        const auto target = harken::settings::FindSettingsDawTarget(
+            targets, harken::settings::kSettingsDawPresets.front());
+        DawRunningProbeRequest request;
+        if (target != targets.end()) request.targetSnapshot = *target;
+        request.targetKey = request.targetSnapshot.exePath;
+        request.purpose = DawProbePurpose::ReaperSetupStartup;
+        request.setupGeneration = g_reaperSetupProbeGeneration;
+        requests.push_back(std::move(request));
+    }
+#endif
     for (const auto& target : state.settings.dawTargets) {
         const bool isReaperTarget = IsReaperNamedPipeTarget(target);
         if (!isReaperTarget) {
@@ -4178,6 +4285,7 @@ static void UpdateDAWRunningState(AppState& state) {
     }
 
     if (requests.empty() || !s_probeWorker.Submit(std::move(requests))) return;
+    if (submitStartup) g_reaperSetupStartupSubmitted = true;
     for (auto& target : state.settings.dawTargets) {
         if (submittedKeys.find(DawRunningProbeKey(target)) != submittedKeys.end()) {
             target.lastDetectTime = now;
@@ -4493,30 +4601,39 @@ static HarkenSearch::DawBridge::ReaperBridgeProbeOptions BuildReaperBridgeProbeO
 
 static bool StartReaperBridgeUpdateAfterExit(
     const HarkenSearch::DawBridge::ReaperBridgeProbeOptions& options,
-    bool waitForHostExit)
+    bool waitForHostExit,
+    bool installMissingOnly = false)
 {
     bool expected = false;
     if (!g_dawBridgeInstallInFlight.compare_exchange_strong(expected, true)) {
         return false;
     }
     auto session = std::make_shared<DawBridgeInstallSession>();
-    session->installerName = u8"REAPER 发送组件";
+    session->installerName = installMissingOnly ? L(DawPrefs_Component) : u8"REAPER 发送组件";
     session->phase.store(DawBridgeInstallSession::Phase::Installing);
     g_dawBridgeSession = session;
-    std::thread([session, options, waitForHostExit]() {
-        HarkenSearch::DawBridge::ReaperBridgeDoctorRequest request;
-        request.action = HarkenSearch::DawBridge::ReaperBridgeDoctorAction::Update;
-        request.probeOptions = options;
-        request.waitForHostExit = waitForHostExit;
-        request.hostExitWaitTimeoutMs = waitForHostExit ? 10 * 60 * 1000 : 0;
-        request.recheckIntervalMs = 500;
-        request.recheckTimeoutMs = 750;
-        const auto report = HarkenSearch::DawBridge::RunReaperBridgeDoctor(request);
-        HarkenSearch::DawBridge::InstallResult result = report.install;
-        result.ok = report.ok;
-        result.failureCode = report.failureCode;
-        result.detail = report.summary;
-        result.restartRequired = report.restartRequired;
+    std::thread([session, options, waitForHostExit, installMissingOnly]() {
+        HarkenSearch::DawBridge::InstallResult result;
+        try {
+            HarkenSearch::DawBridge::ReaperBridgeDoctorRequest request;
+            request.action = HarkenSearch::DawBridge::ReaperBridgeDoctorAction::Update;
+            request.probeOptions = options;
+            request.waitForHostExit = waitForHostExit;
+            request.installMissingOnly = installMissingOnly;
+            request.hostExitWaitTimeoutMs = waitForHostExit ? 10 * 60 * 1000 : 0;
+            request.recheckIntervalMs = 500;
+            request.recheckTimeoutMs = 750;
+            const auto report = HarkenSearch::DawBridge::RunReaperBridgeDoctor(request);
+            result = report.install;
+            result.ok = report.ok;
+            result.failureCode = report.failureCode;
+            result.detail = report.summary;
+            result.restartRequired = report.restartRequired;
+        } catch (...) {
+            result = {};
+            result.failureCode = "reaper-install-error";
+            result.detail.setKey(LStr::DawPrefs_InstallError);
+        }
         {
             std::lock_guard<std::mutex> lock(session->resultMutex);
             session->result = std::move(result);
@@ -4604,7 +4721,6 @@ static bool RefreshDawRunningStateNow(DawTarget& target) {
     } else {
         target.isRunning = IsProcessRunning(target.processName);
     }
-    target.lastDetectTime = ImGui::GetTime();
     return target.isRunning;
 }
 
@@ -4866,20 +4982,13 @@ static bool SendFilesToSteinbergLaunchTarget(DawTarget& target,
     return false;
 }
 
-static std::string DescribeSteinbergTransferAction(HarkenSearch::CubaseAdapter::TransferActionKind action) {
-    switch (action) {
-    case HarkenSearch::CubaseAdapter::TransferActionKind::BringIntoHost:
-        return "Bring Into Host";
-    case HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost:
-        return "Spot To Host";
-    }
-    return "Host Handoff";
-}
+using HarkenSearch::UI::ClassifyDawSendResult;
 
 static bool SendFilesToProToolsTarget(
     DawTarget& target,
     const std::vector<std::string>& files,
     std::string& outStatus,
+    DawSendFeedbackSnapshot& feedback,
     HarkenSearch::CubaseAdapter::TransferActionKind transferAction,
     bool keepHarkenSearchProcessingSuffix) {
 #ifdef _WIN32
@@ -5004,6 +5113,7 @@ static bool SendFilesToProToolsTarget(
                     HarkenSearch::ProTools::ResolveProToolsBridgeHelperPath().c_str());
 
     const auto dispatch = HarkenSearch::ProTools::DispatchLivePtslSpotRequest(request);
+    if (dispatch.response.parseOk) feedback.sent = dispatch.response.insertedCount;
     if (!HarkenSearch::ProTools::IsLivePtslSpotSuccess(dispatch)) {
         const std::string errorCode = dispatch.response.errorCode.empty()
             ? "helperUnavailable"
@@ -5031,25 +5141,22 @@ static bool SendFilesToProToolsTarget(
 
     // S10: Rich toast status reflecting pathTaken, track, and fallback state.
     const auto& r = dispatch.response;
-    if (r.errorCode == "clipListFallbackNoSelectedAudioTrack" ||
-        r.errorCode == "clipListFallbackNoTimelineTargetAudioTrack" ||
-        r.errorCode == "clipListFallbackAfterClipIdImportFailed" ||
-        r.errorCode == "clipListModernFallback" ||
-        r.errorCode == "clipListLegacyFallback") {
-        outStatus = "Sent to Clip List — no selected track found. Click a Pro Tools audio track and retry. [" +
-            std::string(kHumanRequiredStatus) + "]";
+    if (HarkenSearch::UI::IsDawSendClipListFallback(r.errorCode)) {
+        feedback.outcome = DawSendOutcome::Fallback;
+        outStatus = "Imported into the Pro Tools Clip List";
+        if (!r.errorMessage.empty()) outStatus += " — " + r.errorMessage;
+        outStatus += " [" + std::string(kHumanRequiredStatus) + "]";
     } else if (r.trackWasCreated) {
+        if (ClassifyDawSendResult(true, feedback.sent, feedback.total) == DawSendOutcome::Success)
+            feedback.outcome = DawSendOutcome::Fallback;
         const std::string trackName = r.trackName.empty() ? "New Track" : r.trackName;
         outStatus = "Created new track '" + trackName + "' — no track was selected (Pro Tools " +
             (r.pathTaken.empty() ? "legacy" : r.pathTaken) + "). " +
             "[" + std::string(kHumanRequiredStatus) + "]";
     } else if (!r.resolvedTrackName.empty()) {
-        char buf[256];
-        snprintf(buf, sizeof(buf), "Spotted %d clip%s on \"%s\" [%s]",
-            r.insertedCount, r.insertedCount == 1 ? "" : "s",
-            r.resolvedTrackName.c_str(),
-            r.pathTaken.empty() ? "modern" : r.pathTaken.c_str());
-        outStatus = buf;
+        outStatus = "Spotted " + std::to_string(r.insertedCount) +
+            (r.insertedCount == 1 ? " clip on \"" : " clips on \"") + r.resolvedTrackName +
+            "\" [" + (r.pathTaken.empty() ? "modern" : r.pathTaken) + "]";
     } else if (!r.trackName.empty()) {
         outStatus = "Sent to Pro Tools: " + r.trackName +
             (r.pathTaken.empty() ? "" : " [" + r.pathTaken + "]");
@@ -5070,6 +5177,7 @@ static bool SendFilesToProToolsTarget(
 #else
     (void)target;
     (void)files;
+    (void)feedback;
     (void)transferAction;
     (void)keepHarkenSearchProcessingSuffix;
     outStatus = "Pro Tools live PTSL spot is only implemented on Windows";
@@ -5081,6 +5189,7 @@ static bool SendFilesToProToolsTarget(
 
 static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& files,
                           std::string& outStatus,
+                          DawSendFeedbackSnapshot& feedback,
                           HarkenSearch::CubaseAdapter::TransferActionKind transferAction = HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost,
                           bool keepHarkenSearchProcessingSuffix = true,
                           HarkenSearch::DawBridge::InstallStatus* outBridge = nullptr,
@@ -5104,7 +5213,8 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
 
     case DawSendMode::LaunchExe:
         if (IsProToolsLaunchTarget(target)) {
-            return SendFilesToProToolsTarget(target, files, outStatus, transferAction, keepHarkenSearchProcessingSuffix);
+            return SendFilesToProToolsTarget(target, files, outStatus, feedback,
+                                             transferAction, keepHarkenSearchProcessingSuffix);
         }
         if (IsSteinbergLaunchTarget(target)) {
             const auto result = HarkenSearch::CubaseAdapter::DispatchToCubaseAdapterDetailed(
@@ -5121,6 +5231,7 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
                 result.code == HarkenSearch::CubaseAdapter::ResultCode::TargetMismatch) {
                 return SendFilesToSteinbergLaunchTarget(target, files, outStatus);
             }
+            HarkenSearch::UI::ApplySteinbergSendReceipt(result, feedback);
             return result.success;
         }
         outStatus = "Direct track insert not available in LaunchExe mode — use NamedPipe for REAPER";
@@ -5143,20 +5254,22 @@ static void DispatchPreparedSendToDAW(AppState& state,
                                       std::vector<std::string> files,
                                       HarkenSearch::CubaseAdapter::TransferActionKind transferAction);
 
+static void PublishDawSendFailure(AppState& state, LedgerText detail) {
+    state.dawSendFeedback.failBeforeSend(std::move(detail));
+}
+
 static void SendToDAW(AppState& state,
                       int dawIndex,
                       HarkenSearch::CubaseAdapter::TransferActionKind transferAction) {
-    if (state.dawSendState.load() == AppState::DawSendState::Sending) return;
+    if (state.dawSendFeedback.isSending()) return;
 
     if (dawIndex < 0 || dawIndex >= (int)state.settings.dawTargets.size()) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
     auto& target = state.settings.dawTargets[dawIndex];
     if (!target.enabled) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
 
@@ -5164,8 +5277,7 @@ static void SendToDAW(AppState& state,
     std::string prepError;
     const bool payloadReady = BuildTransferPayload(state, files, prepError);
     if (!payloadReady) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = prepError; state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, prepError);
         return;
     }
 
@@ -5177,77 +5289,79 @@ static void DispatchPreparedSendToDAW(AppState& state,
                                       std::vector<std::string> files,
                                       HarkenSearch::CubaseAdapter::TransferActionKind transferAction) {
     const bool isReaperPipe = IsReaperNamedPipeTarget(target);
-    const bool multiFile = files.size() > 1;
     const bool keepHarkenSearchProcessingSuffix = state.settings.keepHarkenSearchOutputProcessingSuffix;
-
-    state.dawSendSent.store(0);
-    state.dawSendTotal.store((int)files.size());
-    state.dawSendState.store(AppState::DawSendState::Sending);
-    { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = "Sending " + DescribeSteinbergTransferAction(transferAction) + "..."; state.lastSendToDAWKeyed = false; }
-    state.lastSendToDAWTime = ImGui::GetTime();
+    DawTarget targetCopy = target;
+    if (!state.dawSendFeedback.begin(static_cast<int>(files.size()))) return;
 
     if (state.dawSendThread.joinable())
         state.dawSendThread.join();
 
-    DawTarget targetCopy = target;
-    state.dawSendThread = std::thread([&state, files = std::move(files), targetCopy, isReaperPipe, multiFile, transferAction, keepHarkenSearchProcessingSuffix]() mutable {
+    auto dispatch = [&state, files = std::move(files), targetCopy = std::move(targetCopy),
+                   isReaperPipe, transferAction, keepHarkenSearchProcessingSuffix]() mutable {
+        DawSendFeedbackSnapshot feedback;
+        feedback.total = static_cast<int>(files.size());
         std::string status;
-        HarkenSearch::DawBridge::InstallStatus bridgeSnap;  // H1b: keyed row (UI renders)
+        HarkenSearch::DawBridge::InstallStatus bridgeSnap;
         bool bridgeKeyed = false;
 
         if (isReaperPipe) {
-            if (!PrepareReaperBridgeForSend(targetCopy, status, &bridgeSnap, &bridgeKeyed)) {
-                { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex);  // H2a
-                  if (bridgeKeyed) g_lastSendToDAWBridgeStatus = bridgeSnap;
-                  state.lastSendToDAWKeyed = bridgeKeyed;
-                  state.lastSendToDAWStatus = status; }
-                state.lastSendToDAWTime = ImGui::GetTime();
-                state.dawSendState.store(AppState::DawSendState::Done);
-                return;
+            if (PrepareReaperBridgeForSend(targetCopy, status, &bridgeSnap, &bridgeKeyed)) {
+                auto result = HarkenSearch::ReaperBridge::SendFiles(
+                    files,
+                    [&state](int sent, int total) { state.dawSendFeedback.setProgress(sent, total); });
+                feedback.outcome = ClassifyDawSendResult(result.ok, result.sent, result.total);
+                feedback.sent = result.sent;
+                feedback.total = result.total;
+                status = std::move(result.detail);
+            } else {
+                feedback.outcome = DawSendOutcome::Failure;
             }
-            const auto result = HarkenSearch::ReaperBridge::SendFiles(
-                files,
-                [&state](int sent, int) { state.dawSendSent.store(sent); });
-            status = result.detail;
-            state.dawSendSent.store(result.sent);
         } else {
-            DispatchToDaw(targetCopy, files, status, transferAction, keepHarkenSearchProcessingSuffix,
-                          &bridgeSnap, &bridgeKeyed);
-            state.dawSendSent.store((int)files.size());
+            const bool delivered = DispatchToDaw(targetCopy, files, status, feedback, transferAction,
+                keepHarkenSearchProcessingSuffix, &bridgeSnap, &bridgeKeyed);
+            if (feedback.outcome == DawSendOutcome::Idle)
+                feedback.outcome = ClassifyDawSendResult(delivered, feedback.sent, feedback.total);
         }
-
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex);  // H2a
-          if (bridgeKeyed) g_lastSendToDAWBridgeStatus = bridgeSnap;
-          state.lastSendToDAWKeyed = bridgeKeyed;
-          state.lastSendToDAWStatus = status; }
-        state.lastSendToDAWTime = ImGui::GetTime();
-        state.dawSendState.store(AppState::DawSendState::Done);
-    });
+        if (feedback.detail.empty()) feedback.detail = std::move(status);
+        if (bridgeKeyed) {
+            feedback.outcome = DawSendOutcome::BridgeFailure;
+            feedback.detail = std::move(bridgeSnap.detail);
+            feedback.remediation = std::move(bridgeSnap.remediation);
+        }
+        return feedback;
+    };
+    auto worker = HarkenSearch::UI::MakeDawSendWorker(state.dawSendFeedback, std::move(dispatch),
+        [](const char* message) { DIAG_SYSTEM_FMT("DawSend", "worker exception: %s", message); });
+    try {
+        state.dawSendThread = std::thread(std::move(worker));
+    } catch (const std::system_error& error) {
+        DawSendFeedbackSnapshot failure;
+        failure.outcome = DawSendOutcome::Failure;
+        failure.detail = error.what();
+        state.dawSendFeedback.finish(std::move(failure));
+    }
 }
 
 static void SendToDAWForPaths(AppState& state,
                               int dawIndex,
                               const std::vector<std::string>& sourcePaths,
                               HarkenSearch::CubaseAdapter::TransferActionKind transferAction = HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost) {
-    if (state.dawSendState.load() == AppState::DawSendState::Sending) return;
+    if (state.dawSendFeedback.isSending()) return;
 
     if (dawIndex < 0 || dawIndex >= (int)state.settings.dawTargets.size()) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
     auto& target = state.settings.dawTargets[dawIndex];
     if (!target.enabled) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
 
     std::vector<std::string> files;
     std::string prepError;
     if (!BuildTransferPayloadForSourcePaths(state, target, sourcePaths, files, prepError)) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = prepError; state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, prepError);
         return;
     }
 
@@ -5763,6 +5877,7 @@ void LoadAppSettings(AppState& state) {
     state.settings.threadLimit = ParseInt(kv["threadLimit"], state.settings.threadLimit);
 
     // Send-to-DAW targets
+    state.settings.reaperSetupNoticeDismissed = ParseInt(kv["reaperSetupNoticeDismissed"], 0) != 0;
     state.selectedDAWIndex = ParseInt(kv["selectedDAWIndex"], 0);
     {
         int dawCount = ParseInt(kv["dawTargetCount"], 0);
@@ -6583,6 +6698,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"threadLimit", std::to_string(state.settings.threadLimit)});
 
     // Send-to-DAW targets
+    items.push_back({"reaperSetupNoticeDismissed", state.settings.reaperSetupNoticeDismissed ? "1" : "0"});
     items.push_back({"selectedDAWIndex", std::to_string(state.selectedDAWIndex)});
     items.push_back({"dawTargetCount", std::to_string(state.settings.dawTargets.size())});
     for (int i = 0; i < (int)state.settings.dawTargets.size(); ++i) {
@@ -12729,6 +12845,7 @@ static void RenderForegroundMaintenanceToasts(AppState& state) {
     DrawBackgroundReconcileScanToast(state);
 }
 
+#include "ReaperSetupNotice.inl"
 static bool StartFullWaveformRebuild(AppState& state) {
     if (state.waveformRebuildActive) return false;
     if (state.dbSwitchInProgress) {
@@ -30395,9 +30512,14 @@ void RenderUI(AppState& state) {
         }
         g_dawBridgeSession.reset(); // done consuming
         g_dawBridgeInstallInFlight.store(false);
+        g_reaperSetupStatusAt = -999.0;
 
         char toastBuf[256];
         if (harvested.ok) {
+            ++g_reaperSetupProbeGeneration;
+            g_reaperSetupPageStatus.reset();
+            g_reaperSetupStartupSubmitted = true;
+            g_reaperSetupNoticePending = false;
             snprintf(toastBuf, sizeof(toastBuf), L(Install_StatusOk), installerName.c_str());
             state.loadErrorToast      = toastBuf;
             state.loadErrorToastUntil = ImGui::GetTime() + 5.0; // success: 5s auto-dismiss
@@ -36558,7 +36680,7 @@ void RenderUI(AppState& state) {
                 state.showShortcutsDialog = true;
             }
             if (GatedMenuItem(L(Ctx_ConfigureDAW), ProductEdition::Edition::Pro)) {
-                state.showDawTargetSettings = true;
+                OpenDawIntegrationSettings(state);
             }
             }
             menuChromeSettings.reset();
@@ -43806,7 +43928,7 @@ void RenderUI(AppState& state) {
                                     SendToDAW(state, target.dawIndex);
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Queued host handoff");
                                 } else {
-                                    state.showDawTargetSettings = true;
+                                    OpenDawIntegrationSettings(state);
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::BringIntoHost:
@@ -43814,7 +43936,7 @@ void RenderUI(AppState& state) {
                                     SendToDAW(state, target.dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind::BringIntoHost);
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Queued bring into host");
                                 } else {
-                                    state.showDawTargetSettings = true;
+                                    OpenDawIntegrationSettings(state);
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::SpotToHost:
@@ -43822,7 +43944,7 @@ void RenderUI(AppState& state) {
                                     SendToDAW(state, target.dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost);
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Queued spot to host");
                                 } else {
-                                    state.showDawTargetSettings = true;
+                                    OpenDawIntegrationSettings(state);
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::OpenTransferPanel:
@@ -43836,7 +43958,7 @@ void RenderUI(AppState& state) {
                                 PushHistoryEntry(target, mode.id, localizedModeLabel, "Opened export dialog");
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::ConfigureTargets:
-                                state.showDawTargetSettings = true;
+                                OpenDawIntegrationSettings(state);
                                 break;
                             }
                         };
@@ -51875,6 +51997,7 @@ void RenderUI(AppState& state) {
     // Maintenance feedback is drawn in the final foreground pass so it stays
     // visible without introducing another focusable ImGui window.
     RenderForegroundMaintenanceToasts(state);
+    DrawReaperSetupNotice(state);
 
     if (state.settings.showClickRipple && state.listRipple.time > 0.0f) {
         float elapsed = (float)ImGui::GetTime() - state.listRipple.time;
