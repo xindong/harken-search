@@ -66,7 +66,9 @@ def test_legacy_daw_dialog_keeps_its_install_action():
     old = read("src/main.cpp").split("// DAW Target Configuration Dialog", 1)[1].split(
         '#include "SettingsDialog.inl"', 1
     )[0]
-    assert "BeginTransientScrollbarPopupModal(L(DAW_SettingsTitle)" in old
+    # The shared modal surface replaced the legacy transient popup helper; the
+    # dialog still has to keep its own install action.
+    assert "BeginAlertDialog(L(DAW_SettingsTitle)" in old
     assert "BuildReaperBridgeProbeOptions(selected), true" in old
 
 

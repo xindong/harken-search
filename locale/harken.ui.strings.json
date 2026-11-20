@@ -7741,6 +7741,34 @@
       "ja": "サニタイズ済み診断サマリーをコピー##ReaperCopyDiagnostic"
     },
     {
+      "id": "Main_ReaperStatusFmt",
+      "type": "ui",
+      "zh": "REAPER：%s",
+      "en": "REAPER: %s",
+      "ja": "REAPER：%s"
+    },
+    {
+      "id": "Main_ReaperResourceFmt",
+      "type": "ui",
+      "zh": "资源目录：%s",
+      "en": "Resource dir: %s",
+      "ja": "リソースディレクトリ：%s"
+    },
+    {
+      "id": "Main_ReaperUserPluginsFmt",
+      "type": "ui",
+      "zh": "UserPlugins：%s",
+      "en": "UserPlugins: %s",
+      "ja": "UserPlugins：%s"
+    },
+    {
+      "id": "Main_ReaperBridgeInfoFmt",
+      "type": "ui",
+      "zh": "组件：版本 %s / 协议 %d / 架构 %s / 握手 %s",
+      "en": "Bridge: version %s / protocol %d / arch %s / handshake %s",
+      "ja": "コンポーネント：バージョン %s / プロトコル %d / アーキテクチャ %s / ハンドシェイク %s"
+    },
+    {
       "id": "Main_AttachDiagLog500",
       "type": "ui",
       "zh": "附上诊断日志（最近 500 行）",
