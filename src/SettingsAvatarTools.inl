@@ -55,7 +55,16 @@
 
                     ImGui::EndGroup();
 
-                    if (aura::ui::BeginAlertDialog(L(AvatarCropTitle), L(AvatarCropTitle))) {
+                    // The caption X must release the crop source and preview texture,
+                    // not just close the popup, or the pixels stay alive silently.
+                    const std::function<void()> discardCrop = []() {
+                        s_cropPixels.clear();
+                        if (s_cropPreviewGLTex) { glDeleteTextures(1, &s_cropPreviewGLTex); s_cropPreviewGLTex = 0; }
+                        s_cropSrcW = s_cropSrcH = 0;
+                        s_cropState = AvatarCropState{};
+                        s_cropSaveFailed = false;
+                    };
+                    if (aura::ui::BeginAlertDialog(L(AvatarCropTitle), L(AvatarCropTitle), ImGuiWindowFlags_AlwaysAutoResize, true, &discardCrop)) {
                         const float available = std::max(180.f, std::min(560.f,ImGui::GetIO().DisplaySize.x-96.f));
                         const float kPreviewSize = std::min(320.f,available-108.f);
                         ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+available);
@@ -99,9 +108,7 @@
                         if(s_cropSaveFailed){ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+available);ImGui::TextWrapped("%s",L(AvatarCropSaveFailed));ImGui::PopTextWrapPos();su::Observe("avatar-save-error");}
 
                         auto finishCrop=[&](){
-                            s_cropPixels.clear();
-                            if(s_cropPreviewGLTex){glDeleteTextures(1,&s_cropPreviewGLTex);s_cropPreviewGLTex=0;}
-                            s_cropSrcW=s_cropSrcH=0;s_cropState={};s_cropSaveFailed=false;
+                            discardCrop();
                             ImGui::CloseCurrentPopup();
                         };
                         if(aura::ui::ActionButton(L(Main_SaveBtn2),ImVec2(100,0),aura::ui::ButtonVariant::PrimarySearch)) {

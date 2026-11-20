@@ -1310,7 +1310,7 @@ void EndStandaloneWindow() {
 // title, an optional close button on the right, and it is the drag zone,
 // because ImGui only moves windows by a title bar this surface does not use.
 bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags,
-                      bool showClose) {
+                      bool showClose, const std::function<void()>* onCaptionClose) {
     using namespace aura::ui::metrics;
     const ThemeColorScheme& th = ThemeColors::current();
 
@@ -1403,6 +1403,7 @@ bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags,
                               windowPos.y + kCaptionBorder);
         if (DrawStandaloneCaptionButton("##DialogClose", StandaloneWindowAction::Close,
                                         closePos, barHeight - kCaptionBorder, th, false)) {
+            if (onCaptionClose && *onCaptionClose) (*onCaptionClose)();
             ImGui::CloseCurrentPopup();
         }
     }

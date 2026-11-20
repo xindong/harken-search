@@ -5,6 +5,8 @@ from PIL import Image
 from qa_required_library_setup import PrivateDesktop,capture,wait_state
 from qa_fresh_result_driver import FreshResultDriver as Driver
 
+COMBO_GAP_TOLERANCE=2.0
+THEME_DELTA_TOLERANCE=1.0
 COMBOS=('systemFont','listFont','language')
 
 def _bg(img,box):
@@ -180,6 +182,18 @@ def run(args):
         click('nav-1');settle()
         report['states']=results
         check('captured appearance states',states=len(results))
+        # A recording-only report let a misaligned row pass silently; fail the
+        # run instead when the measured gaps leave the agreed tolerance.
+        gaps=[abs(c['leftGap']-c['rightGap']) for st in results for c in st.get('combos') or []]
+        deltas=[abs(st['themeRow']['delta']) for st in results if st.get('themeRow')]
+        worst_gap=max(gaps) if gaps else None
+        worst_delta=max(deltas) if deltas else None
+        check('combo value centering',worstGapPx=worst_gap,tolerancePx=COMBO_GAP_TOLERANCE)
+        check('theme row midline',worstDeltaPx=worst_delta,tolerancePx=THEME_DELTA_TOLERANCE)
+        assert worst_gap is not None and worst_gap<=COMBO_GAP_TOLERANCE,(
+            f'combo value off center by {worst_gap}px (tolerance {COMBO_GAP_TOLERANCE}px)')
+        assert worst_delta is None or worst_delta<=THEME_DELTA_TOLERANCE,(
+            f'theme swatch and label off the midline by {worst_delta}px (tolerance {THEME_DELTA_TOLERANCE}px)')
         try:
             click('done');settle()
         except Exception:

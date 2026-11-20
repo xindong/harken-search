@@ -9688,8 +9688,8 @@
       "id": "Main_SelectedDawFmt",
       "type": "ui",
       "zh": "当前 DAW：%s",
-      "en": "選択中の DAW：%s",
-      "ja": "Selected DAW: %s"
+      "en": "Selected DAW: %s",
+      "ja": "選択中の DAW：%s"
     },
     {
       "id": "Main_VolHeaderChanLabel",

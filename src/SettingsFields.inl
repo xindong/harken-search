@@ -1,7 +1,6 @@
 // Every row edits the shared draft used by both Common and its full category.
 if(id=="pitch"||id=="pitchRange")draft.pitchRange=std::clamp(std::isfinite(draft.pitchRange)?draft.pitchRange:24.f,1.f,48.f);
 if(id=="device") {
-    const char* label=draft.audioOutputDeviceIndex<0?L(Set_SystemDefault):draft.audioOutputDeviceName.c_str();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
     const bool deviceOpen=ImGui::BeginCombo("##value","");
     if(deviceOpen) {
@@ -16,6 +15,9 @@ if(id=="device") {
         if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
         ImGui::EndCombo();
     }
+    // Read the preview after the popup: picking a device reassigns
+    // audioOutputDeviceName, which would dangle this pointer if taken earlier.
+    const char* label=draft.audioOutputDeviceIndex<0?L(Set_SystemDefault):draft.audioOutputDeviceName.c_str();
     centeredComboText(label);
     ImGui::PopStyleVar();
 }

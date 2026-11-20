@@ -72,7 +72,10 @@ def test_alert_helper_draws_title_inside_a_rounded_surface():
     assert "ImGui::SetWindowPos(" in helper
     assert '"##DialogClose"' in helper
     assert "ImGui::CloseCurrentPopup();" in helper
-    assert "bool showClose" in helper
+    assert "bool showClose" in helper
+    # The caption X runs the same dialog-local cleanup as the cancel button.
+    assert "onCaptionClose" in header
+    assert "if (onCaptionClose && *onCaptionClose) (*onCaptionClose)();" in helper
 
     end = source[source.index("void EndAlertDialog()"):]
     end = end[:end.index("}") + 1]

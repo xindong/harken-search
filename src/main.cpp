@@ -40522,7 +40522,8 @@ void RenderUI(AppState& state) {
 
         // Rename popup
         if (renamingTabIndex >= 0) ImGui::OpenPopup(L(Dlg_RenameTab));
-        if (aura::ui::BeginAlertDialog(L(Dlg_RenameTab), L(Dlg_RenameTab))) {
+        const std::function<void()> cancelTabRename = []() { renamingTabIndex = -1; };
+        if (aura::ui::BeginAlertDialog(L(Dlg_RenameTab), L(Dlg_RenameTab), ImGuiWindowFlags_AlwaysAutoResize, true, &cancelTabRename)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             ImGui::Text(L(Main_TabNameLabel));

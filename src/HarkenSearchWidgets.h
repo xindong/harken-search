@@ -203,11 +203,14 @@ void EndStandaloneWindow();
 // caption bar shows, so `id` and `title` may be the same string.
 // Dialogs that need a fixed size call ImGui::SetNextWindowSize() first and
 // leave out ImGuiWindowFlags_AlwaysAutoResize. Pass showClose = false for
-// dialogs that must be answered instead of dismissed.
+// dialogs that must be answered instead of dismissed. When the caption close
+// button has to undo dialog-local state, pass onCaptionClose so the X runs the
+// same cleanup as the cancel button instead of only closing the popup.
 // Pair with EndAlertDialog() only when this returns true.
 bool BeginAlertDialog(const char* id, const char* title,
                       ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize,
-                      bool showClose = true);
+                      bool showClose = true,
+                      const std::function<void()>* onCaptionClose = nullptr);
 void EndAlertDialog();
 
 // Panel / SectionHeader / Divider (Task 14)
