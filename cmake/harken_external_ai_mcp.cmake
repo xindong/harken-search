@@ -54,3 +54,28 @@ endif()
 add_test(NAME TestExternalAiAuthorization COMMAND TestExternalAiAuthorization "${CMAKE_CURRENT_BINARY_DIR}")
 set_tests_properties(TestExternalAiAuthorization PROPERTIES TIMEOUT 30)
 aura_set_test_labels(TestExternalAiAuthorization core)
+
+# One-click client links (Cindy / Codex) own their own config-file editor, so the
+# test target links only that translation unit and the header-only JSON library.
+add_executable(TestExternalAiClientLink EXCLUDE_FROM_ALL
+    tests/test_external_ai_client_link.cpp
+    src/ExternalAiClientLink.cpp)
+target_include_directories(TestExternalAiClientLink PRIVATE src thirdparty)
+if(MSVC)
+    target_compile_options(TestExternalAiClientLink PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestExternalAiClientLink COMMAND TestExternalAiClientLink "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(TestExternalAiClientLink PROPERTIES TIMEOUT 30)
+aura_set_test_labels(TestExternalAiClientLink core)
+
+# The connector ships beside HarkenSearch.exe, so one-click links can point the
+# client at a path that already exists on the user's machine.
+if(WIN32 AND TARGET HarkenSearch AND TARGET HarkenExternalAiMcp)
+    add_dependencies(HarkenSearch HarkenExternalAiMcp)
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:HarkenExternalAiMcp>"
+            "$<TARGET_FILE_DIR:HarkenSearch>/HarkenExternalAiMcp.exe"
+        COMMENT "Copying HarkenExternalAiMcp.exe beside HarkenSearch.exe..."
+        VERBATIM)
+endif()

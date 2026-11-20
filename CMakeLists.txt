@@ -1181,7 +1181,7 @@ aura_set_test_labels(DiagnosticLogBundle core)
 
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
 # External AI authorization document: the settings page reads and writes it.
-list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp)
+list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp src/ExternalAiClientLink.cpp)
 if(AURA_BUILD_DIAGNOSTICS)
     list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
     list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)

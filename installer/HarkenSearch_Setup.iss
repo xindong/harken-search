@@ -793,6 +793,7 @@ Source: "{#SourceDir}\lucide.ttf"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\splash_beta.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\HarkenSearchProToolsBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\HarkenExternalAiMcp.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; App-local Microsoft VC143 CRT and OpenMP runtime for clean Windows installs.
 Source: "{#SourceDir}\*140*.dll"; DestDir: "{app}"; Flags: ignoreversion
 

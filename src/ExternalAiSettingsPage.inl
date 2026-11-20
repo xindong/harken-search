@@ -121,21 +121,90 @@
         su::Observe("ext-ai-save");
         ImGui::SameLine();
         if (aura::ui::ActionButton(L(ExtAi_Reload),ImVec2(130,32),aura::ui::ButtonVariant::Quiet)) loadLibrary(databasePath);
+        su::Observe("ext-ai-reload");
         ImGui::SameLine();
         if (!page.status.empty() && ImGui::GetTime()<page.statusUntil) ImGui::TextDisabled("%s",page.status.c_str());
         else if (page.dirty) ImGui::TextDisabled("%s",L(ExtAi_Unsaved));
         if (!page.error.empty()) { ImGui::PushTextWrapPos(0.0f); ImGui::TextWrapped("%s",page.error.c_str()); ImGui::PopTextWrapPos(); }
         ImGui::Dummy(ImVec2(0,4));
-        heading(L(ExtAi_Connect));
+        heading(L(ExtAi_Clients));
         ImGui::TextWrapped("%s",L(ExtAi_ConnectHint));
-        if (page.settings.roots.empty()) {
-            ImGui::TextDisabled("%s",L(ExtAi_NoRoots));
-        } else {
-            const std::string command="codex mcp add harken -- \""+GetExeDirUtf8()+"\\HarkenExternalAiMcp.exe\" --library-db \""+databasePath+
-                "\" --library-root \""+page.settings.roots.front()+"\" --settings \""+page.documentPath+"\" --library-id "+page.libraryId;
-            ImGui::PushTextWrapPos(0.0f); ImGui::TextUnformatted(command.c_str()); ImGui::PopTextWrapPos();
-            if (aura::ui::SmallActionButton(L(Main_CopyBtn))) ImGui::SetClipboardText(command.c_str());
-            su::Observe("ext-ai-command");
+        const std::string homePath=[&]() {
+            // 预览隔离构建里把“家目录”固定在隔离根内，QA 永远不碰真实用户配置。
+            if (Platform::HarkenUserData::PreviewIsolationActive()) {
+                const std::string isolatedRoot=Platform::HarkenUserData::PreviewIsolationRootUtf8();
+                if (!isolatedRoot.empty()) return isolatedRoot+"\\profile\\home";
+            }
+            const auto environment=Platform::ReadEnvironmentVariable("USERPROFILE");
+            return environment.status==Platform::EnvironmentStringStatus::Success ? environment.valueUtf8 : std::string{};
+        }();
+        HarkenSearch::ExternalAiLinkTarget linkTarget;
+        linkTarget.executablePath=GetExeDirUtf8()+"\\HarkenExternalAiMcp.exe";
+        linkTarget.libraryId=page.libraryId;
+        linkTarget.databasePath=databasePath;
+        linkTarget.rootPath=page.settings.roots.empty()?std::string{}:page.settings.roots.front();
+        linkTarget.settingsPath=page.documentPath;
+        const bool connectorReady=Platform::FileSystem::Exists(linkTarget.executablePath);
+        const bool linkReady=connectorReady&&!linkTarget.libraryId.empty()&&!linkTarget.databasePath.empty()&&
+            !linkTarget.rootPath.empty()&&!linkTarget.settingsPath.empty();
+        if (!connectorReady) {
+            ImGui::TextDisabled("%s",L(ExtAi_ConnectNoExe));
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s",linkTarget.executablePath.c_str());
+            ImGui::PopTextWrapPos();
+        } else if (!linkReady) {
+            ImGui::TextDisabled("%s",L(ExtAi_ConnectNotReady));
         }
+        const char* clientLabels[]{L(ExtAi_ClientCindy),L(ExtAi_ClientCodex)};
+        const HarkenSearch::ExternalAiClient clients[]{HarkenSearch::ExternalAiClient::Cindy,
+            HarkenSearch::ExternalAiClient::Codex};
+        for (int clientIndex=0; clientIndex<2; ++clientIndex) {
+            ImGui::PushID(clientIndex);
+            const std::string configPath=HarkenSearch::ExternalAiClientConfigPath(clients[clientIndex],homePath);
+            const bool detected=HarkenSearch::ExternalAiClientDetected(clients[clientIndex],homePath);
+            const auto linkState=HarkenSearch::QueryExternalAiClientLink(clients[clientIndex],configPath,linkTarget);
+            const bool connected=linkState.state==HarkenSearch::ExternalAiLinkState::Connected;
+            const float rowRight=ImGui::GetWindowContentRegionMax().x;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(clientLabels[clientIndex]);
+            ImGui::SameLine(rowRight-236.f);
+            if (!detected) ImGui::TextDisabled("%s",L(ExtAi_ClientNotDetected));
+            else if (connected) ImGui::TextDisabled("%s",L(ExtAi_ClientConnected));
+            else if (linkState.state==HarkenSearch::ExternalAiLinkState::Failed) ImGui::TextDisabled("%s",L(ExtAi_ClientUnreadable));
+            else ImGui::TextDisabled("%s",L(ExtAi_ClientDisconnected));
+            ImGui::SameLine(rowRight-100.f);
+            ImGui::BeginDisabled(!linkReady||!detected);
+            if (aura::ui::ActionButton(connected?L(ExtAi_DisconnectBtn):L(ExtAi_ConnectBtn),ImVec2(96,28),
+                    connected?aura::ui::ButtonVariant::Quiet:aura::ui::ButtonVariant::PrimarySearch)) {
+                HarkenSearch::ExternalAiLinkStatus result;
+                const bool changed=connected
+                    ? HarkenSearch::UnlinkExternalAiClient(clients[clientIndex],configPath,result)
+                    : HarkenSearch::LinkExternalAiClient(clients[clientIndex],configPath,linkTarget,result);
+                char message[768];
+                if (changed) {
+                    snprintf(message,sizeof(message),connected?L(ExtAi_DisconnectedFmt):L(ExtAi_ConnectedFmt),configPath.c_str());
+                } else {
+                    snprintf(message,sizeof(message),L(ExtAi_LinkFailedFmt),
+                        result.detail.empty()?L(ExtAi_LinkFailed):result.detail.c_str());
+                }
+                page.linkStatus=message;
+                page.linkStatusUntil=ImGui::GetTime()+6.0;
+            }
+            ImGui::EndDisabled();
+            su::Observe(clientIndex==0?"ext-ai-client-cindy":"ext-ai-client-codex");
+            if (!detected) {
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!linkReady);
+                if (aura::ui::SmallActionButton(L(Main_CopyBtn),aura::ui::ButtonVariant::Quiet)) {
+                    ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
+                }
+                ImGui::EndDisabled();
+            }
+            ImGui::PopID();
+        }
+        if (!page.linkStatus.empty() && ImGui::GetTime()<page.linkStatusUntil) {
+            ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("%s",page.linkStatus.c_str()); ImGui::PopTextWrapPos();
+        }
+        su::Observe("ext-ai-clients");
     }
 }

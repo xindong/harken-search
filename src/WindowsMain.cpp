@@ -4855,6 +4855,14 @@ static void PollQaCommandFile(AppState& state) {
                 const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
+            if (action == "scroll") {
+                // QA helper: jump the settings body to a scroll offset so the
+                // capture script can reach controls below the fold.
+                const float target=(float)getInt(raw,"y",0);
+                for(auto* window:ImGui::GetCurrentContext()->Windows)
+                    if(window->WasActive && std::string(window->Name).find("SettingsBody")!=std::string::npos)
+                        window->Scroll.y=target;
+            }
             if (action == "resize") {
                 if(auto* window=ImGui::FindWindowByName("###HarkenSettings")) ImGui::SetWindowSize(window,ImVec2((float)std::clamp(getInt(raw,"width",1000),640,1500),(float)std::clamp(getInt(raw,"height",760),480,1100)),ImGuiCond_Always);
             }
