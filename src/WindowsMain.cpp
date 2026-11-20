@@ -9882,6 +9882,139 @@ static void AppendStartupMascotCss(std::wstring& html) {
 )HTML_MASCOT_CSS";
 }
 
+// The startup pages show the shared mascot only while the user has no personal
+// avatar. Once an avatar was uploaded or a built-in one was picked, that avatar
+// takes the slot; "automatic" (index 0) still counts as not set.
+static bool StartupHasPersonalAvatar(const AppSettings& settings) {
+    if (settings.hasCustomAvatar) return true;
+    return settings.diceBearAvatarIndex >= 1 && settings.diceBearAvatarIndex <= 36;
+}
+
+static int ResolveStartupAvatarIndex(const AppSettings& settings) {
+    if (settings.diceBearAvatarIndex >= 1 && settings.diceBearAvatarIndex <= 36)
+        return settings.diceBearAvatarIndex;
+    uint32_t h = 2166136261u;
+    const std::string seed = settings.userName.empty() ? std::string("Harken Search") : settings.userName;
+    for (unsigned char c : seed) {
+        h ^= c;
+        h *= 16777619u;
+    }
+    return 1 + (int)(h % 36u);
+}
+
+static std::string StartupSvgRgba(float r, float g, float b, float a) {
+    char buf[64] = {};
+    std::snprintf(buf, sizeof(buf), "rgba(%d,%d,%d,%.3f)",
+                  (int)std::lround(std::clamp(r, 0.0f, 1.0f) * 255.0f),
+                  (int)std::lround(std::clamp(g, 0.0f, 1.0f) * 255.0f),
+                  (int)std::lround(std::clamp(b, 0.0f, 1.0f) * 255.0f),
+                  std::clamp(a, 0.0f, 1.0f));
+    return std::string(buf);
+}
+
+// Mirrors RenderSettingsBuiltinAvatar with the same numbers at 1 px = 1 unit, so
+// the startup page shows exactly the avatar the settings page previews.
+static std::string BuildStartupBuiltinAvatarSvg(int avatarIndex) {
+    const int idx = std::clamp(avatarIndex, 1, 36);
+    const float hue = (float)(idx - 1) / 36.0f;
+    float accentHue = hue + 0.09f;
+    if (accentHue > 1.0f) accentHue -= 1.0f;
+    float br = 0.0f, bg = 0.0f, bb = 0.0f;
+    float ar = 0.0f, ag = 0.0f, ab = 0.0f;
+    ImGui::ColorConvertHSVtoRGB(hue, 0.50f, 0.56f, br, bg, bb);
+    ImGui::ColorConvertHSVtoRGB(accentHue, 0.34f, 0.86f, ar, ag, ab);
+
+    const float cx = 37.0f, cy = 37.0f, R = 35.0f;
+    const std::string bgFill = StartupSvgRgba(br, bg, bb, 1.0f);
+    const std::string faceFill = StartupSvgRgba(ar, ag, ab, 1.0f);
+    const std::string inkFill = StartupSvgRgba(34.0f / 255.0f, 42.0f / 255.0f, 56.0f / 255.0f, 230.0f / 255.0f);
+    const std::string cheekFill = StartupSvgRgba(1.0f, 132.0f / 255.0f, 150.0f / 255.0f, 96.0f / 255.0f);
+    const std::string hairFill = StartupSvgRgba(46.0f / 255.0f, 48.0f / 255.0f, 70.0f / 255.0f, 222.0f / 255.0f);
+    const std::string hiStroke = StartupSvgRgba(1.0f, 1.0f, 1.0f, 58.0f / 255.0f);
+
+    auto pt = [](float x, float y) {
+        char b[40] = {};
+        std::snprintf(b, sizeof(b), "%.2f %.2f", x, y);
+        return std::string(b);
+    };
+    auto circle = [](float x, float y, float r, const std::string& fill) {
+        char b[160] = {};
+        std::snprintf(b, sizeof(b), "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\"/>",
+                      x, y, r, fill.c_str());
+        return std::string(b);
+    };
+
+    std::string svg =
+        "<svg class=\"startup-loading-avatar\" viewBox=\"0 0 74 74\" "
+        "preserveAspectRatio=\"xMidYMid meet\" aria-hidden=\"true\" focusable=\"false\" "
+        "xmlns=\"http://www.w3.org/2000/svg\">";
+    svg += circle(cx, cy, R, bgFill);
+    svg += circle(cx - R * 0.22f, cy + R * 0.04f, R * 0.62f, faceFill);
+    svg += circle(cx + R * 0.18f, cy + R * 0.02f, R * 0.58f, faceFill);
+
+    const float hairSweep = ((idx % 5) - 2) * R * 0.08f;
+    const float hairCx = cx + hairSweep, hairCy = cy - R * 0.02f, hairR = R * 0.70f;
+    std::string hair = "M" + pt(hairCx + std::cos(3.50f) * hairR, hairCy + std::sin(3.50f) * hairR);
+    for (int i = 1; i <= 18; ++i) {
+        const float a = 3.50f + (5.95f - 3.50f) * (float)i / 18.0f;
+        hair += "L" + pt(hairCx + std::cos(a) * hairR, hairCy + std::sin(a) * hairR);
+    }
+    hair += "L" + pt(cx + R * 0.58f, cy - R * 0.08f);
+    hair += "L" + pt(cx - R * 0.56f, cy + R * 0.02f);
+    hair += "Z";
+    svg += "<path d=\"" + hair + "\" fill=\"" + hairFill + "\"/>";
+
+    const float eyeY = cy - R * 0.02f;
+    const float eyeDx = R * (0.20f + (idx % 3) * 0.025f);
+    svg += circle(cx - eyeDx, eyeY, R * 0.055f, inkFill);
+    svg += circle(cx + eyeDx, eyeY, R * 0.055f, inkFill);
+    svg += circle(cx - R * 0.34f, cy + R * 0.18f, R * 0.10f, cheekFill);
+    svg += circle(cx + R * 0.34f, cy + R * 0.18f, R * 0.10f, cheekFill);
+
+    if ((idx % 2) == 0) {
+        svg += "<path d=\"M" + pt(cx - R * 0.16f, cy + R * 0.23f) +
+               "C" + pt(cx - R * 0.06f, cy + R * 0.34f) +
+               " " + pt(cx + R * 0.08f, cy + R * 0.34f) +
+               " " + pt(cx + R * 0.18f, cy + R * 0.23f) +
+               "\" fill=\"none\" stroke=\"" + inkFill + "\" stroke-width=\"1.7\"/>";
+    } else {
+        svg += "<path d=\"M" + pt(cx - R * 0.13f, cy + R * 0.25f) +
+               "L" + pt(cx + R * 0.13f, cy + R * 0.25f) +
+               "\" fill=\"none\" stroke=\"" + inkFill + "\" stroke-width=\"1.6\"/>";
+    }
+    svg += "<circle cx=\"37\" cy=\"37\" r=\"34.2\" fill=\"none\" stroke=\"" + hiStroke +
+           "\" stroke-width=\"1\"/>";
+    svg += "</svg>";
+    return svg;
+}
+
+// Empty markup means "keep the shared mascot".
+static std::string BuildStartupAvatarMarkup(const AppSettings& settings) {
+    if (!StartupHasPersonalAvatar(settings)) return {};
+    if (settings.hasCustomAvatar) {
+        std::string pngBytes;
+        if (ReadBinaryFile(GetCustomAvatarPathUtf8(), pngBytes)) {
+            return "<img class=\"startup-loading-avatar\" alt=\"\" src=\"data:image/png;base64," +
+                   Base64EncodeStartupAsset(pngBytes) + "\">";
+        }
+    }
+    // An explicit pick, or a profile whose picture file is gone: show the face
+    // the settings page would preview for this user.
+    return BuildStartupBuiltinAvatarSvg(ResolveStartupAvatarIndex(settings));
+}
+
+static void AppendStartupAvatarCss(std::wstring& html) {
+    html += LR"HTML_AVATAR_CSS(
+    .startup-loading-avatar {
+      display: block; width: 74px; height: 74px; border-radius: 50%; overflow: hidden;
+    }
+    img.startup-loading-avatar {
+      object-fit: cover; background: rgba(255, 255, 255, .045);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .11);
+    }
+)HTML_AVATAR_CSS";
+}
+
 // Loading-page HTML: energy-vortex particles and progress updates.
 
 static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
@@ -10186,6 +10319,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     }
 )HTML_L1";
     AppendStartupMascotCss(html);
+    AppendStartupAvatarCss(html);
     html += LR"HTML(
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -10237,7 +10371,9 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     <div class="glass-card">
       <div class="startup-loading-mascot-slot" aria-hidden="true">
 )HTML_L2";
-    html += HarkenSearch::kStartupLoadingMascotArtwork;
+    const std::string loadingAvatarMarkup = BuildStartupAvatarMarkup(settings);
+    html += loadingAvatarMarkup.empty() ? std::wstring(HarkenSearch::kStartupLoadingMascotArtwork)
+                                        : Utf8ToWide(loadingAvatarMarkup);
     html += LR"HTML_L2(
       </div>
       <div class="status-text" id="statusText">Preparing your sound workspace...</div>
@@ -11795,6 +11931,7 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L"@media (max-width:640px){.brand-word{top:32px;left:32px;font-size:20px;}.welcome-layout{right:28px;bottom:52px;max-width:calc(100vw - 56px);padding:16px 4px;}.welcome-headline{gap:8px;}.welcome-lead{letter-spacing:0;}}\n";
     html += L".canvas{opacity:.22!important;}.backdrop{opacity:.74!important;filter:blur(92px)!important;}.brand-word{opacity:.78!important;z-index:90!important;filter:none!important;mix-blend-mode:normal!important;}.welcome-headline{flex-direction:column!important;gap:0!important;}.welcome-layout{right:auto!important;bottom:auto!important;max-width:min(312px,calc(100vw - 48px))!important;}\n";
     AppendStartupMascotCss(html);
+    AppendStartupAvatarCss(html);
     html += L"@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}\n";
     AppendStartupBrandLogoCss(html, useLightStartupChrome);
     html += L"</style>\n";
@@ -11808,7 +11945,9 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     <div class="welcome-layout">
       <div class="startup-loading-mascot-slot" aria-hidden="true">
 )HTML_W2";
-    html += HarkenSearch::kStartupLoadingMascotArtwork;
+    const std::string welcomeAvatarMarkup = BuildStartupAvatarMarkup(settings);
+    html += welcomeAvatarMarkup.empty() ? std::wstring(HarkenSearch::kStartupLoadingMascotArtwork)
+                                        : Utf8ToWide(welcomeAvatarMarkup);
     html += LR"HTML_W2(
       </div>
       <div class="welcome-copy">

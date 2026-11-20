@@ -97,9 +97,10 @@ int main() {
     check(windowsMain.find("welcome_continue") != std::string::npos,
           "Startup welcome entry uses the continue message protocol");
     check(windowsMain.find("AppendStartupMascotCss") != std::string::npos &&
-              windowsMain.find("BuildLocalDiceBearAvatarDataUri") == std::string::npos &&
-              windowsMain.find("startupAvatarDataUri") == std::string::npos,
-          "Startup loading and welcome entries share the brand mascot instead of a personal avatar");
+              windowsMain.find("BuildStartupAvatarMarkup") != std::string::npos &&
+              windowsMain.find("StartupHasPersonalAvatar") != std::string::npos &&
+              windowsMain.find("BuildLocalDiceBearAvatarDataUri") == std::string::npos,
+          "Startup loading and welcome entries share the brand mascot and hand the slot to the personal avatar once one is set");
     check(windowsMain.find("HarkenSearch::kStartupLoadingMascotArtwork") != std::string::npos &&
               windowsMain.find("spinner-container{display:none!important;}") != std::string::npos &&
               windowsMain.find(".glass-card{width:min(312px,calc(100vw - 48px));min-height:300px") != std::string::npos,
