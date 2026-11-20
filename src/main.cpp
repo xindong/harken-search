@@ -32020,8 +32020,9 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(560, 620), ImGuiCond_FirstUseEver);
         if (BeginTransientScrollbarWindow(L(AI_PanelTitle), &state.showAIPanel)) {
             if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape)) state.showAIPanel = false;
-            const char* modelItems[] = { "tiny (~75MB)", "base (~142MB)", "small (~466MB)", "medium (~1.5GB)" };
             const char* modelNames[] = { "tiny", "base", "small", "medium" };
+            char modelItemBufs[IM_ARRAYSIZE(modelNames)][96];
+            const char* modelItems[IM_ARRAYSIZE(modelNames)];
             int modelIdx = 1;
             for (int i = 0; i < IM_ARRAYSIZE(modelNames); ++i) {
                 if (state.aiModelName == modelNames[i]) {
@@ -32033,89 +32034,105 @@ void RenderUI(AppState& state) {
             const bool selectedModelExists = Platform::FileSystem::Exists(selectedModelPath);
             const bool selectedModelLoaded = state.aiModelLoaded.load() &&
                 GetAIEngine().GetModelPath() == selectedModelPath;
-            std::string localModelList;
+            const auto& aiPanelTheme = ThemeColors::current();
+            const ImVec4 aiOkColor = aiPanelTheme.volumeColor;
+            const ImVec4 aiWarnColor = aiPanelTheme.meterWarning;
+            const ImVec4 aiErrColor = aiPanelTheme.meterClip;
+            const ImVec4 aiInfoColor = aiPanelTheme.diagnosticOverlayAccent;
             for (int i = 0; i < IM_ARRAYSIZE(modelNames); ++i) {
-                if (Platform::FileSystem::Exists(GetAIModelPath(modelNames[i]))) {
-                    if (!localModelList.empty()) localModelList += ", ";
-                    localModelList += modelNames[i];
-                }
+                const bool modelPresent = Platform::FileSystem::Exists(GetAIModelPath(modelNames[i]));
+                snprintf(modelItemBufs[i], sizeof(modelItemBufs[i]), "%s%s%s",
+                    GetAIModelSizeLabel(modelNames[i]),
+                    modelPresent ? " \xc2\xb7 " : "",
+                    modelPresent ? L(AI_ModelDownloaded) : "");
+                modelItems[i] = modelItemBufs[i];
             }
 
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            BeginTransientScrollbarChild("##AIModelWorkbench", ImVec2(0, 94), true);
-            ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), L(Main_WhisperModelFmt), state.aiModelName.c_str());
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(aiInfoColor, L(Main_WhisperModelFmt), state.aiModelName.c_str());
             ImGui::SameLine();
             if (state.aiModelDownloading.load()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f), L(Main_DownloadingText));
+                ImGui::TextColored(aiWarnColor, "%s", L(Main_DownloadingText));
             } else if (selectedModelLoaded) {
-                ImGui::TextColored(ImVec4(0.34f, 0.92f, 0.52f, 1.0f), L(Main_AsrReady));
+                ImGui::TextColored(aiOkColor, "%s", L(Main_AsrReady));
             } else if (selectedModelExists) {
-                ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), L(Main_AsrLocalDownloaded));
+                ImGui::TextColored(aiInfoColor, "%s", L(Main_AsrLocalDownloaded));
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.32f, 1.0f), L(Main_AsrNeedsDownload));
+                ImGui::TextColored(aiWarnColor, "%s", L(Main_AsrNeedsDownload));
             }
             ImGui::SameLine();
-            ImGui::TextDisabled(L(Main_LocalModelFmt), localModelList.empty() ? L(Main_LocalNone) : localModelList.c_str());
 
             ImGui::BeginDisabled(state.aiModelDownloading.load());
-            ImGui::SetNextItemWidth(165.0f);
-            if (ImGui::Combo(L(Main_CurrentModelCombo), &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
+            // 模型行固定单行：下拉宽度吃掉剩余空间，给后面的主操作和「模型目录」留位置。
+            const float modelRowWidth = ImGui::GetContentRegionAvail().x;
+            const float modelComboWidth = std::clamp(modelRowWidth - 300.0f, 110.0f, 190.0f);
+            ImGui::SetNextItemWidth(modelComboWidth);
+            if (ImGui::Combo("##AIModelSelect", &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
                 state.aiModelName = modelNames[modelIdx];
                 state.aiModelLoaded.store(GetAIEngine().IsModelLoaded() &&
                     GetAIEngine().GetModelPath() == GetAIModelPath(state.aiModelName));
             }
             ImGui::EndDisabled();
 
-            if (state.aiEngineInitialized.load()) {
-                if (selectedModelLoaded) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled(L(Main_CurrentlyUsingFmt), GetAIEngine().GetModelPath().c_str());
-                } else if (state.aiModelDownloading.load()) {
-                    const float downloadProgress = state.aiModelDownloadProgress.load();
-                    char pctBuf[16];
-                    snprintf(pctBuf, sizeof(pctBuf), u8"%.0f%%", downloadProgress * 100.0f);
-                    DrawUnifiedProgressBar(downloadProgress, ImVec2(-1, 0), pctBuf);
-                } else {
-                    const std::string modelPath = selectedModelPath;
-                    const std::string selectedModelName = state.aiModelName;
-                    char modelButtonLabel[128];
-                    snprintf(modelButtonLabel, sizeof(modelButtonLabel),
-                        selectedModelExists ? L(AI_LoadLocalFmt) : L(AI_DownloadLoadFmt),
-                        GetAIModelSizeLabel(selectedModelName));
-                    ImGui::SameLine();
-                    if (aura::ui::ActionButton(modelButtonLabel)) {
-                        state.aiModelDownloading.store(true);
-                        state.aiModelDownloadProgress.store(0.0f);
-                        std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
-                            bool loaded = false;
-                            if (selectedModelExists) {
-                                loaded = GetAIEngine().LoadModel(modelPath);
-                                if (!loaded) {
-                                    Platform::FileSystem::RemoveFile(modelPath);
-                                }
-                            }
+            if (!state.aiEngineInitialized.load()) {
+                ImGui::SameLine();
+                ImGui::TextColored(aiErrColor, "%s", L(AI_EngineNotInit));
+            } else if (state.aiModelDownloading.load()) {
+                ImGui::SameLine();
+                const float downloadProgress = state.aiModelDownloadProgress.load();
+                char pctBuf[16];
+                snprintf(pctBuf, sizeof(pctBuf), u8"%.0f%%", downloadProgress * 100.0f);
+                const float trackWidth = ImGui::GetContentRegionAvail().x - 96.0f;
+                DrawUnifiedProgressBar(downloadProgress, ImVec2(trackWidth > 48.0f ? trackWidth : 48.0f, 0), pctBuf);
+            } else if (!selectedModelLoaded) {
+                const std::string modelPath = selectedModelPath;
+                const std::string selectedModelName = state.aiModelName;
+                char modelButtonLabel[128];
+                snprintf(modelButtonLabel, sizeof(modelButtonLabel), "%s",
+                    selectedModelExists ? L(AI_LoadLocal) : L(AI_DownloadLoad));
+                ImGui::SameLine();
+                if (aura::ui::ActionButton(modelButtonLabel)) {
+                    state.aiModelDownloading.store(true);
+                    state.aiModelDownloadProgress.store(0.0f);
+                    std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
+                        bool loaded = false;
+                        if (selectedModelExists) {
+                            loaded = GetAIEngine().LoadModel(modelPath);
                             if (!loaded) {
-                                bool downloaded = GetAIEngine().DownloadModel(selectedModelName, "",
-                                    [&state](float progress) {
-                                        state.aiModelDownloadProgress.store(progress);
-                                    });
-                                if (downloaded) {
-                                    loaded = GetAIEngine().LoadModel(modelPath);
-                                }
+                                Platform::FileSystem::RemoveFile(modelPath);
                             }
-                            state.aiModelLoaded.store(loaded);
-                            if (loaded) state.aiModelDownloadProgress.store(1.0f);
-                            state.aiModelDownloading.store(false);
-                        }).detach();
-                    }
-                    ImGui::TextDisabled(selectedModelExists ? L(Main_ModelKeptNote) : L(Main_ModelAbsent));
+                        }
+                        if (!loaded) {
+                            bool downloaded = GetAIEngine().DownloadModel(selectedModelName, "",
+                                [&state](float progress) {
+                                    state.aiModelDownloadProgress.store(progress);
+                                });
+                            if (downloaded) {
+                                loaded = GetAIEngine().LoadModel(modelPath);
+                            }
+                        }
+                        state.aiModelLoaded.store(loaded);
+                        if (loaded) state.aiModelDownloadProgress.store(1.0f);
+                        state.aiModelDownloading.store(false);
+                    }).detach();
                 }
-            } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), L(AI_EngineNotInit));
             }
-            ImGui::EndChild();
-            ImGui::PopStyleVar(2);
+
+            // 行尾低频入口：模型目录
+            ImGui::SameLine();
+            {
+                const float linkWidth = ImGui::CalcTextSize(L(AI_ModelDirLink)).x + 14.0f;
+                const float remainingWidth = ImGui::GetContentRegionAvail().x;
+                if (remainingWidth < linkWidth) {
+                    // 面板被拖窄时宁可不画，也不把入口压在裁剪区里。
+                } else {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + remainingWidth - linkWidth);
+                    if (aura::ui::SmallActionButton(L(AI_ModelDirLink), aura::ui::ButtonVariant::Quiet)) {
+                        const std::string modelDir = GetDefaultModelDir();
+                        Platform::OpenInFileManager(modelDir);
+                    }
+                }
+            }
 
             ImGui::Separator();
 
@@ -32142,20 +32159,16 @@ void RenderUI(AppState& state) {
                 if (ImGui::BeginTabItem(L(Main_TranscribeTab))) {
                     const char* langItems[] = { L(Sc_LangAuto), u8"简体中文", "English" };  // 简体中文/English: 语言自名(endonym)豁免=Lead 7-0裁②
                     ImGui::SetNextItemWidth(180.0f);
-                    ImGui::Combo(L(Main_RecognizeLangCombo), &state.aiRecognitionLanguageMode, langItems, IM_ARRAYSIZE(langItems));
+                    ImGui::Combo("##AIRecognitionLanguage", &state.aiRecognitionLanguageMode, langItems, IM_ARRAYSIZE(langItems));
                     if (state.aiRecognitionLanguageMode == 1) {
-                        ImGui::TextDisabled(L(Main_ChineseSimplifyHint));
-                    } else if (state.aiRecognitionLanguageMode == 2) {
-                        ImGui::TextDisabled(L(Main_EnglishMaterialHint));
-                    } else {
-                        ImGui::TextDisabled(L(Main_AutoDetectLangHint));
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(L(AI_SimplifyApplied));
                     }
-                    ImGui::TextDisabled(L(Main_BaseModelHint));
                     ImGui::Separator();
 
                     if (state.audioEngine.isLoaded()) {
                         const AudioFileInfo& aiFileInfo = state.audioEngine.getFileInfo();
-                        ImGui::Text(L(Main_CurrentFileFmt), aiFileInfo.filePath.c_str());
+                        ImGui::Text(L(Main_CurrentFileFmt), aiFileInfo.fileName.c_str());
 
                         if (state.aiModelLoaded.load()) {
                             const bool currentTaskRunning = state.aiCurrentTranscriptionTaskId > 0;
@@ -32197,33 +32210,40 @@ void RenderUI(AppState& state) {
                                 auto it = state.aiTranscriptCache.find(state.currentFileId);
                                 if (it != state.aiTranscriptCache.end() && !it->second.empty()) {
                                     ImGui::Separator();
-                                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), L(AI_TranscribeResult));
                                     auto resultIt = state.aiTranscriptResultCache.find(state.currentFileId);
                                     const TranscriptionResult* transcript =
                                         resultIt != state.aiTranscriptResultCache.end() ? &resultIt->second : nullptr;
-                                    if (transcript &&
-                                        IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds)) {
-                                        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                                            L(Main_AsrLowConfNote));
-                                    }
                                     auto orgIt = state.aiVoiceAssetOrganizationCache.find(state.currentFileId);
                                     const VoiceAssetOrganization* organization =
                                         orgIt != state.aiVoiceAssetOrganizationCache.end() ? &orgIt->second : nullptr;
-                                    if (organization) {
-                                        ImGui::TextDisabled(L(Main_AssetDescriptionFmt), organization->searchableDescription.c_str());
-                                        ImGui::TextDisabled(L(Main_SuggestedKeywordsFmt), organization->keywordCsv.c_str());
-                                        if (!organization->qualityIssues.empty()) {
-                                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                                                L(Main_AsrQualityCheckFmt), (int)organization->qualityIssues.size());
-                                        }
-                                    }
-                                    ImGui::TextWrapped("%s", it->second.c_str());
+                                    const bool lowConfidence = transcript &&
+                                        IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds);
 
-                                    if (aura::ui::ActionButton(L(Main_CopyToClipboardBtn))) {
-                                        ImGui::SetClipboardText(it->second.c_str());
+                                    const auto labeledValue = [&](const char* label, const char* value, bool lowConf) {
+                                        ImGui::AlignTextToFramePadding();
+                                        ImGui::TextDisabled("%s", label);
+                                        if (lowConf) {
+                                            ImGui::SameLine();
+                                            ImGui::TextColored(aiWarnColor, "%s", L(AI_LowConfidenceTag));
+                                        }
+                                        ImGui::SameLine();
+                                        ImGui::TextUnformatted(value);
+                                    };
+                                    if (organization && !organization->searchableDescription.empty()) {
+                                        labeledValue(L(AI_DescLabel), organization->searchableDescription.c_str(), lowConfidence);
+                                        if (!organization->keywordCsv.empty()) {
+                                            labeledValue(L(AI_KeywordsLabel), organization->keywordCsv.c_str(), false);
+                                        }
+                                    } else {
+                                        ImGui::TextWrapped("%s", it->second.c_str());
                                     }
-                                    ImGui::SameLine();
-                                    if (aura::ui::ActionButton(L(Main_SaveOrganizedResultBtn))) {
+                                    if (organization && !organization->qualityIssues.empty()) {
+                                        ImGui::TextColored(aiWarnColor, L(Main_AsrQualityCheckFmt),
+                                            (int)organization->qualityIssues.size());
+                                    }
+
+                                    ImGui::Spacing();
+                                    if (aura::ui::ActionButton(L(AI_SaveToAsset))) {
                                         // 更新数据库描述 - 通过 updateFile
                                         AudioRecord rec = state.database.getFileById(state.currentFileId);
                                         if (rec.id > 0) {
@@ -32240,17 +32260,25 @@ void RenderUI(AppState& state) {
                                             state.database.updateFile(rec);
                                         }
                                     }
-                                    if (transcript) {
-                                        ImGui::SameLine();
-                                        if (aura::ui::ActionButton(L(Main_CopySrtBtn))) {
-                                            std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
-                                            ImGui::SetClipboardText(srt.c_str());
+                                    ImGui::SameLine();
+                                    if (aura::ui::ActionButton(L(AI_CopyMenu))) {
+                                        ImGui::OpenPopup("##AICopyMenu");
+                                    }
+                                    if (aura::ui::BeginPopup("##AICopyMenu")) {
+                                        if (ImGui::MenuItem(L(Main_CopyToClipboardBtn))) {
+                                            ImGui::SetClipboardText(it->second.c_str());
                                         }
-                                        ImGui::SameLine();
-                                        if (aura::ui::ActionButton(L(Main_CopyCsvBtn))) {
-                                            std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
-                                            ImGui::SetClipboardText(csv.c_str());
+                                        if (transcript) {
+                                            if (ImGui::MenuItem(L(Main_CopySrtBtn))) {
+                                                std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
+                                                ImGui::SetClipboardText(srt.c_str());
+                                            }
+                                            if (ImGui::MenuItem(L(Main_CopyCsvBtn))) {
+                                                std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
+                                                ImGui::SetClipboardText(csv.c_str());
+                                            }
                                         }
+                                        aura::ui::EndPopup();
                                     }
 
                                     if (transcript && !transcript->segments.empty()) {
@@ -32264,7 +32292,7 @@ void RenderUI(AppState& state) {
                                                 ImGui::PushID(segIdx);
                                                 const bool selected = state.aiSelectedTranscriptSegment == segIdx;
                                                 if (selected) {
-                                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.85f, 1.0f, 1.0f));
+                                                    ImGui::PushStyleColor(ImGuiCol_Text, aiInfoColor);
                                                 }
                                                 if (ImGui::SmallButton(L(Main_PlayBtn))) {
                                                     if (aiFileInfo.durationSeconds > 0.0f) {
@@ -32276,10 +32304,6 @@ void RenderUI(AppState& state) {
                                                         if (!state.audioEngine.isPlaying()) state.audioEngine.play();
                                                         state.aiSelectedTranscriptSegment = segIdx;
                                                     }
-                                                }
-                                                ImGui::SameLine();
-                                                if (aura::ui::SmallActionButton(L(Main_CopyBtn))) {
-                                                    ImGui::SetClipboardText(seg.text.c_str());
                                                 }
                                                 ImGui::SameLine();
                                                 ImGui::TextDisabled(L(Main_SegmentRangeFmt),
@@ -32296,7 +32320,7 @@ void RenderUI(AppState& state) {
                                 }
                             }
                         } else {
-                            ImGui::TextDisabled(L(Main_PleaseDownloadModel));
+                            // 模型不可用时，面板顶部的「下载并加载」是唯一可执行动作，这里不再重复提示。
                         }
                     } else {
                         ImGui::TextDisabled(L(Main_PleaseLoadAudio));
@@ -32304,15 +32328,28 @@ void RenderUI(AppState& state) {
                     ImGui::EndTabItem();
                 }
 
-                // 任务列表
-                if (ImGui::BeginTabItem(L(Main_QueueTab))) {
-                    std::vector<AITask> tasks = GetAIEngine().GetAllTasks();
+                // 任务列表（计数直接显示在页签上）
+                std::vector<AITask> queueTasks = GetAIEngine().GetAllTasks();
+                char queueTabLabel[96];
+                if (queueTasks.empty()) {
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s###AIQueueTab", L(Main_QueueTab));
+                } else {
+                    // ### 后缀固定页签 ID：可清理后计数变化不会把用户踢回其他页签。
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s (%d)###AIQueueTab",
+                        L(Main_QueueTab), (int)queueTasks.size());
+                }
+                if (ImGui::BeginTabItem(queueTabLabel)) {
+                    std::vector<AITask>& tasks = queueTasks;
 
                     if (tasks.empty()) {
                         ImGui::TextDisabled(L(Main_NoTasks));
                     } else {
-                        ImGui::Text(L(Main_TaskTotalFmt), (int)tasks.size());
-                        ImGui::SameLine();
+                        const float queueToolsWidth = ImGui::CalcTextSize(L(Main_ClearCompletedBtn)).x +
+                            ImGui::CalcTextSize(L(Main_CancelQueuedBtn)).x + 46.0f;
+                        const float queueAvail = ImGui::GetContentRegionAvail().x;
+                        if (queueAvail > queueToolsWidth) {
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + queueAvail - queueToolsWidth);
+                        }
                         if (aura::ui::SmallActionButton(L(Main_ClearCompletedBtn))) {
                             GetAIEngine().ClearCompletedTasks();
                         }
@@ -32328,11 +32365,11 @@ void RenderUI(AppState& state) {
 
                             ImVec4 statusColor;
                             switch (task.status) {
-                                case AITaskStatus::Pending:    statusColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f); break;
-                                case AITaskStatus::Processing: statusColor = ImVec4(0.3f, 0.7f, 1.0f, 1.0f); break;
-                                case AITaskStatus::Completed:  statusColor = ImVec4(0.3f, 0.9f, 0.3f, 1.0f); break;
-                                case AITaskStatus::Failed:     statusColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f); break;
-                                default:                       statusColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); break;
+                                case AITaskStatus::Pending:    statusColor = aiPanelTheme.resultsSecondaryText; break;
+                                case AITaskStatus::Processing: statusColor = aiInfoColor; break;
+                                case AITaskStatus::Completed:  statusColor = aiOkColor; break;
+                                case AITaskStatus::Failed:     statusColor = aiErrColor; break;
+                                default:                       statusColor = aiPanelTheme.resultsSecondaryText; break;
                             }
 
                             ImGui::TextColored(statusColor, L(Main_BracketStatusFmt), GetAITaskStatusName(task.status));
@@ -32354,7 +32391,7 @@ void RenderUI(AppState& state) {
 
                             if (task.status == AITaskStatus::Failed) {
                                 const std::string aiTaskError = task.errorMessage.Render();  // H1b: keyed, render here
-                                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                ImGui::TextColored(aiErrColor,
                                     L(Main_IndentedErrorFmt), aiTaskError.c_str());
                             }
 
@@ -32391,39 +32428,7 @@ void RenderUI(AppState& state) {
                     ImGui::EndTabItem();
                 }
 
-                // 设置
-                if (ImGui::BeginTabItem(L(Main_SettingsTab))) {
-                    ImGui::Text(L(Main_AsrSettingsTitle));
-                    ImGui::Separator();
-                    ImGui::TextWrapped(L(Main_ModelSizeHint));
-
-                    ImGui::Separator();
-
-                    // 模型路径
-                    ImGui::Text(L(Main_ModelDirFmt), GetDefaultModelDir().c_str());
-
-                    if (aura::ui::ActionButton(L(Main_OpenModelDirBtn))) {
-                        std::string modelDir = GetDefaultModelDir();
-                        Platform::OpenInFileManager(modelDir);
-                    }
-
-                    ImGui::EndTabItem();
-                }
-
                 ImGui::EndTabBar();
-
-                const auto aiTasksForSummary = GetAIEngine().GetAllTasks();
-                int aiRunningCount = 0;
-                int aiFailedCount = 0;
-                for (const auto& task : aiTasksForSummary) {
-                    if (task.status == AITaskStatus::Pending || task.status == AITaskStatus::Processing) {
-                        ++aiRunningCount;
-                    } else if (task.status == AITaskStatus::Failed) {
-                        ++aiFailedCount;
-                    }
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled(L(Main_BackgroundTasksFmt), aiRunningCount, aiFailedCount);
             }
             ImGui::PopStyleColor(6);
         }

@@ -2692,13 +2692,6 @@
       "ja": "✗ AI エンジンが初期化されていません"
     },
     {
-      "id": "AI_TranscribeResult",
-      "type": "ui",
-      "zh": "转录结果:",
-      "en": "Transcription result:",
-      "ja": "文字起こし結果:"
-    },
-    {
       "id": "AI_ModelLoaded",
       "type": "ui",
       "zh": "● 模型已加载",
@@ -4537,6 +4530,76 @@
       "zh": "AI 语音识别",
       "en": "AI Speech Recognition",
       "ja": "AI 音声認識"
+    },
+    {
+      "id": "AI_ModelDownloaded",
+      "type": "ui",
+      "zh": "已下载",
+      "en": "Downloaded",
+      "ja": "ダウンロード済み"
+    },
+    {
+      "id": "AI_ModelDirLink",
+      "type": "ui",
+      "zh": "模型目录",
+      "en": "Models",
+      "ja": "モデル"
+    },
+    {
+      "id": "AI_SimplifyApplied",
+      "type": "ui",
+      "zh": "统一简体",
+      "en": "Simplified only",
+      "ja": "簡体字に統一"
+    },
+    {
+      "id": "AI_DescLabel",
+      "type": "ui",
+      "zh": "素材描述",
+      "en": "Description",
+      "ja": "説明"
+    },
+    {
+      "id": "AI_KeywordsLabel",
+      "type": "ui",
+      "zh": "关键词",
+      "en": "Keywords",
+      "ja": "キーワード"
+    },
+    {
+      "id": "AI_LowConfidenceTag",
+      "type": "ui",
+      "zh": "低可信",
+      "en": "Low confidence",
+      "ja": "低信頼"
+    },
+    {
+      "id": "AI_SaveToAsset",
+      "type": "ui",
+      "zh": "保存到素材",
+      "en": "Save to asset",
+      "ja": "アセットに保存"
+    },
+    {
+      "id": "AI_CopyMenu",
+      "type": "ui",
+      "zh": "复制",
+      "en": "Copy",
+      "ja": "コピー"
+    },
+    {
+      "id": "AI_DownloadLoad",
+      "type": "ui",
+      "zh": "下载并加载",
+      "en": "Download and load",
+      "ja": "ダウンロードして読み込み"
+    },
+    {
+      "id": "AI_LoadLocal",
+      "type": "ui",
+      "zh": "加载本地模型",
+      "en": "Load local model",
+      "ja": "ローカルモデルを読み込む"
     },
     {
       "id": "Dev_ConfigEmpty",
@@ -7227,32 +7290,11 @@
       "ja": "選択範囲を書き出し..."
     },
     {
-      "id": "Main_AssetDescriptionFmt",
-      "type": "ui",
-      "zh": "资产描述: %s",
-      "en": "Asset description: %s",
-      "ja": "アセット説明: %s"
-    },
-    {
-      "id": "Main_SuggestedKeywordsFmt",
-      "type": "ui",
-      "zh": "建议关键词: %s",
-      "en": "Suggested keywords: %s",
-      "ja": "推奨キーワード: %s"
-    },
-    {
       "id": "Main_CopyToClipboardBtn",
       "type": "ui",
       "zh": "复制到剪贴板",
       "en": "Copy to clipboard",
       "ja": "クリップボードにコピー"
-    },
-    {
-      "id": "Main_SaveOrganizedResultBtn",
-      "type": "ui",
-      "zh": "保存整理结果",
-      "en": "Save organized result",
-      "ja": "整理結果を保存"
     },
     {
       "id": "Main_CopySrtBtn",
@@ -7283,25 +7325,11 @@
       "ja": "再生"
     },
     {
-      "id": "Main_CopyBtn",
-      "type": "ui",
-      "zh": "复制",
-      "en": "Copy",
-      "ja": "コピー"
-    },
-    {
       "id": "Main_SegmentRangeFmt",
       "type": "ui",
       "zh": "[%s - %s]",
       "en": "[%s - %s]",
       "ja": "[%s - %s]"
-    },
-    {
-      "id": "Main_PleaseDownloadModel",
-      "type": "ui",
-      "zh": "请先下载语音识别模型",
-      "en": "Please download the speech model first",
-      "ja": "先に音声認識モデルをダウンロードしてください"
     },
     {
       "id": "Main_PleaseLoadAudio",
@@ -7386,34 +7414,6 @@
       "zh": "处理后的文件保存在临时目录",
       "en": "Processed files are saved in the temp directory",
       "ja": "処理済みファイルは一時ディレクトリに保存されます"
-    },
-    {
-      "id": "Main_SettingsTab",
-      "type": "ui",
-      "zh": "设置",
-      "en": "Settings",
-      "ja": "設定"
-    },
-    {
-      "id": "Main_ModelSizeHint",
-      "type": "ui",
-      "zh": "模型大小在面板顶部选择。更大的模型识别更准确，但需要更多内存和处理时间。",
-      "en": "Choose the model size at the top of the panel. Larger models recognize more accurately but require more memory and processing time.",
-      "ja": "モデルサイズはパネル上部で選択します。大きいモデルほど精度は上がりますが、メモリと処理時間が増えます。"
-    },
-    {
-      "id": "Main_OpenModelDirBtn",
-      "type": "ui",
-      "zh": "打开模型目录",
-      "en": "Open model directory",
-      "ja": "モデルディレクトリを開く"
-    },
-    {
-      "id": "Main_BackgroundTasksFmt",
-      "type": "ui",
-      "zh": "后台任务: %d 运行中 · %d 失败",
-      "en": "Background tasks: %d running · %d failed",
-      "ja": "バックグラウンドタスク: %d 実行中 · %d 失敗"
     },
     {
       "id": "Main_SetDefaultPlayerPrompt",
@@ -7752,67 +7752,11 @@
       "ja": "(%s)"
     },
     {
-      "id": "Main_LocalModelFmt",
-      "type": "ui",
-      "zh": "本地: %s",
-      "en": "Local: %s",
-      "ja": "ローカル: %s"
-    },
-    {
-      "id": "Main_CurrentModelCombo",
-      "type": "ui",
-      "zh": "当前模型",
-      "en": "Current model",
-      "ja": "現在のモデル"
-    },
-    {
-      "id": "Main_CurrentlyUsingFmt",
-      "type": "ui",
-      "zh": "当前使用: %s",
-      "en": "Currently using: %s",
-      "ja": "使用中: %s"
-    },
-    {
       "id": "Main_TranscribeTab",
       "type": "ui",
       "zh": "转录",
       "en": "Transcription",
       "ja": "文字起こし"
-    },
-    {
-      "id": "Main_RecognizeLangCombo",
-      "type": "ui",
-      "zh": "识别语言",
-      "en": "Recognition language",
-      "ja": "認識言語"
-    },
-    {
-      "id": "Main_ChineseSimplifyHint",
-      "type": "ui",
-      "zh": "中文模式会把结果统一转为简体。",
-      "en": "Chinese mode converts results to Simplified Chinese.",
-      "ja": "中国語モードでは結果を簡体字に統一します。"
-    },
-    {
-      "id": "Main_EnglishMaterialHint",
-      "type": "ui",
-      "zh": "英文素材请显式使用 English，避免被中文模型倾向拉偏。",
-      "en": "For English material, explicitly use English to avoid bias from the Chinese model.",
-      "ja": "英語素材は English を明示的に指定してください。中国語モデルの傾向に引きずられるのを防げます。"
-    },
-    {
-      "id": "Main_AutoDetectLangHint",
-      "type": "ui",
-      "zh": "自动识别适合不确定语言；正式整理建议手动指定。",
-      "en": "Auto-detect suits uncertain languages; for formal cleanup, manual selection is recommended.",
-      "ja": "自動認識は言語が不確定な場合に向きます。正式な整理では手動指定を推奨します。"
-    },
-    {
-      "id": "Main_BaseModelHint",
-      "type": "ui",
-      "zh": "Base 模型适合快速试听；对白整理建议使用 small 或 medium。",
-      "en": "The Base model suits quick listening; use small or medium for dialogue cleanup.",
-      "ja": "Base モデルは素早い試聴向きです。台本整理には small または medium を推奨します。"
     },
     {
       "id": "Main_StartRecognizeBtn",
@@ -9658,9 +9602,9 @@
     {
       "id": "Main_AsrLocalDownloaded",
       "type": "ui",
-      "zh": "本地已下载，待加载",
-      "en": "Downloaded locally, awaiting load",
-      "ja": "ダウンロード済み、読込待ち"
+      "zh": "待加载",
+      "en": "Not loaded",
+      "ja": "未読み込み"
     },
     {
       "id": "Main_AsrNeedsDownload",
@@ -9677,13 +9621,6 @@
       "ja": "現在のファイル: %s"
     },
     {
-      "id": "Main_AsrLowConfNote",
-      "type": "ui",
-      "zh": "低可信：建议人工听校后再写入素材描述。",
-      "en": "Low confidence: manually proof-listen before writing to asset descriptions.",
-      "ja": "信頼度低：素材説明へ書き込む前に人間による試聴確認を推奨します。"
-    },
-    {
       "id": "Main_AsrQualityCheckFmt",
       "type": "ui",
       "zh": "质量检查: %d 个待确认问题",
@@ -9691,32 +9628,11 @@
       "ja": "品質チェック: 確認待ち %d 件"
     },
     {
-      "id": "Main_TaskTotalFmt",
-      "type": "ui",
-      "zh": "共 %d 个任务",
-      "en": "%d tasks in total",
-      "ja": "タスク計 %d 件"
-    },
-    {
       "id": "Main_IndentedErrorFmt",
       "type": "ui",
       "zh": "  错误: %s",
       "en": "  Error: %s",
       "ja": "  エラー: %s"
-    },
-    {
-      "id": "Main_AsrSettingsTitle",
-      "type": "ui",
-      "zh": "语音识别设置",
-      "en": "Speech Recognition Settings",
-      "ja": "音声認識設定"
-    },
-    {
-      "id": "Main_ModelDirFmt",
-      "type": "ui",
-      "zh": "模型目录: %s",
-      "en": "Model directory: %s",
-      "ja": "モデルディレクトリ: %s"
     },
     {
       "id": "Main_IndexedProgressFmt",
@@ -11784,13 +11700,6 @@
       "ja": "最後のヒット"
     },
     {
-      "id": "Main_LocalNone",
-      "type": "ui",
-      "zh": "无",
-      "en": "none",
-      "ja": "なし"
-    },
-    {
       "id": "AddDawEntry",
       "type": "ui",
       "zh": "+ 添加 DAW",
@@ -11810,20 +11719,6 @@
       "zh": "裁剪头像",
       "en": "Crop Avatar",
       "ja": "アバター切り抜き"
-    },
-    {
-      "id": "Main_ModelKeptNote",
-      "type": "ui",
-      "zh": "不会重新下载，除非本地模型损坏。",
-      "en": "Will not re-download unless the local model is corrupted.",
-      "ja": "ローカルモデルが破損しない限り再ダウンロードしません。"
-    },
-    {
-      "id": "Main_ModelAbsent",
-      "type": "ui",
-      "zh": "该模型本地不存在。",
-      "en": "This model is not present locally.",
-      "ja": "このモデルはローカルに存在しません。"
     },
     {
       "id": "Wave_SpectrumGenerating",
@@ -13475,20 +13370,6 @@
       "zh": "删除 \"%s\"",
       "en": "Delete \"%s\"",
       "ja": "「%s」を削除"
-    },
-    {
-      "id": "AI_LoadLocalFmt",
-      "type": "ui",
-      "zh": "加载本地: %s",
-      "en": "Load local: %s",
-      "ja": "ローカル読み込み: %s"
-    },
-    {
-      "id": "AI_DownloadLoadFmt",
-      "type": "ui",
-      "zh": "下载并加载: %s",
-      "en": "Download and load: %s",
-      "ja": "ダウンロードして読み込み: %s"
     },
     {
       "id": "TR_MkdirFailFmt",
