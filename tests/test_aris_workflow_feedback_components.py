@@ -31,7 +31,7 @@ def test_relink_recovery_flow_uses_the_shared_dialog_and_explicit_actions():
     relink = RELINK.read_text(encoding="utf-8")
 
     assert '#include "HarkenSearchWidgets.h"' in relink
-    assert "BeginDialog(kRelinkPromptId" in relink
+    assert "aura::ui::BeginAlertDialog(kRelinkPromptId" in relink
     assert "L(Relink_MissingFileHeader)" in relink
     assert "Button(L(Relink_RemindLaterBtn)" in relink
     assert "Button(L(Relink_OpenSettingsBtn)" in relink

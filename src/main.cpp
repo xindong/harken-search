@@ -986,6 +986,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
     h = HashCombine64(h, (uint64_t)filter.maxChannels);
     h = HashCombine64(h, (uint64_t)filter.coverFilter);
     h = HashCombine64(h, (uint64_t)filter.includeOnlyKnownExts);
+    h = HashCombine64(h, (uint64_t)filter.losslessWavPackOnly);
     for (const auto& ext : filter.excludeExtensions) {
         h = HashCombine64(h, HashString64Local(ext));
     }
@@ -5983,6 +5984,7 @@ void LoadAppSettings(AppState& state) {
     state.showM4A = ParseBool(kv["showM4A"], state.showM4A);
     state.showWMA = ParseBool(kv["showWMA"], state.showWMA);
     state.showOther = ParseBool(kv["showOther"], state.showOther);
+    state.showLosslessWavPack = ParseBool(kv["showLosslessWavPack"], state.showLosslessWavPack);
 
     // Personal preferences
     auto itUserName = kv.find("userName");
@@ -6657,6 +6659,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"showM4A", state.showM4A ? "1" : "0"});
     items.push_back({"showWMA", state.showWMA ? "1" : "0"});
     items.push_back({"showOther", state.showOther ? "1" : "0"});
+    items.push_back({"showLosslessWavPack", state.showLosslessWavPack ? "1" : "0"});
 
     // Personal preferences
     items.push_back({"userName", state.settings.userName});
@@ -14650,7 +14653,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
         state.showRemoveFolderDbConfirm = false;
     }
 
-    if (!BeginTransientScrollbarPopupModal(kPopupTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!aura::ui::BeginAlertDialog(kPopupTitle, kPopupTitle)) {
         return;
     }
     { ReadingTextScope _readingPopup;  // dialog body is a reading surface
@@ -14678,7 +14681,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
     }
 
     }
-    ImGui::EndPopup();
+    aura::ui::EndAlertDialog();
 }
 
 // Flat folder-search results avoid recursive matching during every frame.
@@ -15116,7 +15119,7 @@ void FilterResultsByFileType(AppState& state) {
     filtered.reserve(state.searchResults.size());
 
     for (const auto& record : state.searchResults) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             filtered.push_back(record);
         }
     }
@@ -15148,7 +15151,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
 
     state.resetRandomSampling();
     for (const auto& record : allMatching) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             if (state.playedFileIds.find(record.id) == state.playedFileIds.end())
                 state.randomAvailableIds.push_back(record.id);
         }
@@ -15156,7 +15159,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
     state.randomAllPlayed = state.randomAvailableIds.empty();
     if (state.randomAllPlayed) {
         for (const auto& record : allMatching) {
-            if (state.shouldShowFile(record.extension))
+            if (state.shouldShowFile(record))
                 state.randomAvailableIds.push_back(record.id);
         }
     }
@@ -15355,6 +15358,7 @@ static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
     state.instrumentPillState.clear();
     state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
     state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+    state.showLosslessWavPack = false;
     state.suppressNextRealtimeSearchCommit = true;
 
     // Clear both same-folder and same-name search modes.
@@ -17284,8 +17288,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // --- Enum filters: single combo trigger, unified popup body ---
         drawSidebarFilterLabel(L(Filter_Format));
         {
-            const char* formatItems[] = { L(Filter_All), "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems, IM_ARRAYSIZE(formatItems),
+            auto formatItems = aura::search::kAudioFormatFilters;
+            formatItems.front() = L(Filter_All);
+            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems.data(), static_cast<int>(formatItems.size()),
                 [&]() { applyMetaFilters(); });
         }
 
@@ -17616,25 +17621,52 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
             typesChanged |= ImGui::Checkbox(L(Main_ExtWmaCheck), &state.showWMA);
             ImGui::SameLine(80);
-            typesChanged |= ImGui::Checkbox(L(Filter_OtherType), &state.showOther);
+            if (ImGui::Checkbox(L(Filter_OtherType), &state.showOther)) {
+                state.showLosslessWavPack = false;
+                typesChanged = true;
+            }
 
             // Quick buttons
-            if (ImGui::SmallButton(L(Filter_AllBtn))) {
+#if ARIS_PREVIEW_ISOLATION
+            auto recordTypePresetRect = [&](const char* key) {
+                if (!ImGui::IsItemVisible()) return;
+                const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                state.qaFilterUiRects[key] = ImVec4(
+                    min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+            };
+#endif
+            const bool allTypesPressed = ImGui::SmallButton(L(Filter_AllBtn));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.all");
+#endif
+            if (allTypesPressed) {
                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_WAVOnly))) {
+            const bool wavOnlyPressed = ImGui::SmallButton(L(Filter_WAVOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.wav");
+#endif
+            if (wavOnlyPressed) {
                 state.showWAV = true;
                 state.showMP3 = state.showFLAC = state.showOGG = false;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_LosslessOnly))) {
+            const bool losslessOnlyPressed = ImGui::SmallButton(L(Filter_LosslessOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.lossless");
+#endif
+            if (losslessOnlyPressed) {
                 state.showWAV = state.showFLAC = state.showAIFF = true;
                 state.showMP3 = state.showOGG = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = true;
                 typesChanged = true;
             }
 
@@ -18313,7 +18345,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
     const char* title=L(Info_SaveBeforeLeaving);
     if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
     bool resolved=false;
-    if (BeginTransientScrollbarPopupModal(title,nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)) {
         ImGui::TextUnformatted(L(Info_SaveBeforeLeavingBody));
         if (!state.infoEditError.empty()) ImGui::TextWrapped("%s",state.infoEditError.c_str());
         const bool yes=aura::ui::ActionButton(L(Info_SaveYes),ImVec2(140,0), aura::ui::ButtonVariant::PrimarySearch);
@@ -18327,7 +18359,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
             if(resolved) ImGui::CloseCurrentPopup();
             else if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     if (resolved) {
         state.metadataEditMode=false; state.metadataBatchMode=false; state.metadataBatchIds.clear();
@@ -30633,17 +30665,15 @@ void RenderUI(AppState& state) {
     }
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
-    if (BeginTransientScrollbarPopupModal(L(Dlg_CloseSM), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_CloseSM), L(Dlg_CloseSM))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
-        ImGui::TextWrapped("%s", L(CloseDlg_Question));
-        ImGui::Separator();
         ImGui::RadioButton(L(CloseDlg_Minimize), &state.closeChoiceSelection, 1);
         ImGui::RadioButton(L(CloseDlg_Exit), &state.closeChoiceSelection, 2);
         ImGui::Spacing();
         ImGui::Checkbox(L(CloseDlg_Remember), &state.closeChoiceRemember);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             int sel = std::clamp(state.closeChoiceSelection, 1, 2);
             if (state.closeChoiceRemember) {
@@ -30668,7 +30698,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     ImGui::PopStyleColor(2);
 
@@ -30677,11 +30707,11 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_FolderAutoRename));
         state.showFolderAutoRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_FolderAutoRename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename), L(Dlg_FolderAutoRename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(FolderRename_Rule));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::Text("%s", L(FolderRename_RootDir));
         ImGui::SetNextItemWidth(520);
@@ -30702,7 +30732,7 @@ void RenderUI(AppState& state) {
         ImGui::SameLine();
         ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(Batch_GenPreview), ImVec2(120, 0))) {
             BuildFolderRenamePreview(state);
         }
@@ -30722,7 +30752,7 @@ void RenderUI(AppState& state) {
             ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text("%s", L(FolderRename_PreviewList));
         BeginTransientScrollbarChild("##RenamePreview", ImVec2(760, 320), true);
         if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
@@ -30749,7 +30779,7 @@ void RenderUI(AppState& state) {
         ImGui::EndChild();
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Edit Filename Dialog
@@ -30758,7 +30788,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_EditFilename));
         state.showEditFilenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_EditFilename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_EditFilename), L(Dlg_EditFilename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(Dlg_InputNewFilename));
@@ -30766,7 +30796,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##EditFilename", state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canRename = strlen(state.editFilenameBuffer) > 0;
         ImGui::BeginDisabled(!canRename);
@@ -30786,7 +30816,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete Confirmation Dialog
@@ -30811,12 +30841,12 @@ void RenderUI(AppState& state) {
     }
 
     // Remove from database only
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmRemove), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmRemove), L(Dlg_ConfirmRemove))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_RemoveRecordsAsk), (int)state.pendingDeleteIds.size());
         ImGui::Text(L(Main_RemoveRecordsNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             RemoveRecordsFromDatabase(state, state.pendingDeleteIds);
@@ -30832,17 +30862,17 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete from file system
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDelete), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDelete), L(Dlg_ConfirmDelete))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
         ImGui::Text(L(Main_DeleteWarnLine));
         ImGui::PopStyleColor();
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text(L(Main_DeleteFilesAsk), (int)state.pendingDeleteIds.size());
 
         // Show file list (max 5)
@@ -30856,7 +30886,7 @@ void RenderUI(AppState& state) {
         }
         ImGui::EndChild();
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
@@ -30876,7 +30906,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Transfer / Export Dialog (F-008)
@@ -30888,11 +30918,12 @@ void RenderUI(AppState& state) {
         state.showTransferDialog = false;
     }
     if (!state.panelTransfer.visible &&
-        BeginTransientScrollbarPopupModal((std::string(L(Export_FileTitle)) + "###TransferDlg").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        aura::ui::BeginAlertDialog((std::string(L(Export_FileTitle)) + "###TransferDlg").c_str(),
+                                   L(Export_FileTitle))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Dlg_SelectedNFiles), state.transferTotalCount);
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // Destination folder
         ImGui::Text("%s", L(Export_TargetFolder));
@@ -31102,7 +31133,7 @@ void RenderUI(AppState& state) {
             }
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Batch Rename Dialog
@@ -31111,7 +31142,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_BatchOp));
         state.showBatchRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_BatchOp), nullptr, ImGuiWindowFlags_None)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_BatchOp), L(Dlg_BatchOp), ImGuiWindowFlags_None)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::SetWindowSize(ImVec2(900, 650), ImGuiCond_FirstUseEver);
@@ -31560,7 +31591,7 @@ void RenderUI(AppState& state) {
         }  // End of tab content
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Handle popup dialogs
@@ -31907,7 +31938,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(feedbackDlgId.c_str());
         state.showFeedbackDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(feedbackDlgId.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(feedbackDlgId.c_str(), L(Menu_SendFeedback))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
 
@@ -32011,7 +32042,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // AI 语音识别面板
@@ -32452,12 +32483,11 @@ void RenderUI(AppState& state) {
         state.settings.defaultPlayerPrompted = true;
         SaveAppSettings(state);
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(), nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(),
+                               L(Set_ShellSetDefault))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         ImGui::TextUnformatted(L(Main_SetDefaultPlayerPrompt));
-        ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));        ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));
         ImGui::Spacing();
         if (aura::ui::ActionButton(L(Main_SetDefaultBtn), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             SetAsDefaultPlayer();
@@ -32468,7 +32498,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Scan folder dialog
@@ -33805,7 +33835,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewPlaylist));
         state.showPlaylistDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewPlaylist), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewPlaylist), L(Dlg_NewPlaylist))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -33819,7 +33849,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // 当输入框为空或名称已存在时禁用创建按钮
         bool canCreate = strlen(state.playlistNameBuffer) > 0;
@@ -33860,7 +33890,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // New folder dialog
@@ -33868,7 +33898,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewFolder));
         state.showCreateFolderDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewFolder), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewFolder), L(Dlg_NewFolder))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_FolderNameLabel));
@@ -33880,7 +33910,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canCreate = strlen(state.folderNameBuffer) > 0;
         bool isDuplicateName = false;
@@ -33917,7 +33947,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Remove-folder-from-Aris confirmation modal.
@@ -33932,38 +33962,16 @@ void RenderUI(AppState& state) {
         const ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
-        if (BeginTransientScrollbarPopupModal((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(), nullptr,
-                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        if (aura::ui::BeginAlertDialog((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(),
+                                       L(Misc_ClearFolderCache),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             const ImVec4 warnCol(0.96f, 0.62f, 0.22f, 1.0f);
-            // Hand-drawn warning triangle — font-independent so the glyph
-            // never falls back to a tofu box on CJK builds.
-            {
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                const ImVec2 base = ImGui::GetCursorScreenPos();
-                const float h = ImGui::GetFontSize();
-                const ImU32 col = ImGui::GetColorU32(warnCol);
-                const ImVec2 a(base.x + h * 0.5f, base.y + 1.0f);
-                const ImVec2 b(base.x,           base.y + h - 1.0f);
-                const ImVec2 c(base.x + h,       base.y + h - 1.0f);
-                dl->AddTriangle(a, b, c, col, 1.8f);
-                const float cx = base.x + h * 0.5f;
-                dl->AddRectFilled(ImVec2(cx - 0.9f, base.y + 4.0f),
-                                  ImVec2(cx + 0.9f, base.y + h - 5.0f), col);
-                dl->AddRectFilled(ImVec2(cx - 0.9f, base.y + h - 4.0f),
-                                  ImVec2(cx + 0.9f, base.y + h - 2.0f), col);
-                ImGui::Dummy(ImVec2(h + 6.0f, h));
-                ImGui::SameLine(0.0f, 0.0f);
-            }
             ImGui::PushStyleColor(ImGuiCol_Text, warnCol);
-            ImGui::TextUnformatted(L(Main_RemoveFromLibraryTitle));
+            ImGui::TextWrapped(L(Main_RemovePathsExplain));
             ImGui::PopStyleColor();
             ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::TextWrapped(L(Main_RemovePathsExplain));            ImGui::Spacing();
             // Path in a slightly framed monospace block for clarity.
             ImGui::Indent(8.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.95f, 1.0f));
@@ -33974,8 +33982,6 @@ void RenderUI(AppState& state) {
             ImGui::Spacing();
             ImGui::TextDisabled(L(Main_SourcesKeptNote));
             ImGui::TextDisabled(L(Main_CacheRefsCleanupNote));
-            ImGui::Spacing();
-            ImGui::Separator();
             ImGui::Spacing();
 
             const float btnW = 120.0f;
@@ -34001,7 +34007,7 @@ void RenderUI(AppState& state) {
             }
             ImGui::PopStyleColor(3);
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
     }
 
@@ -34011,7 +34017,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(playlistRenamePopupLabel.c_str());
         state.showPlaylistRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(playlistRenamePopupLabel.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(playlistRenamePopupLabel.c_str(), L(PL_RenameTitle))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -34019,7 +34025,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##PlaylistRenameName", state.playlistNameBuffer,
             sizeof(state.playlistNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
-        ImGui::Separator();
+        ImGui::Spacing();
 
         const std::string renameCandidate = TrimCopy(state.playlistNameBuffer);
         bool canRename = !renameCandidate.empty();
@@ -34051,7 +34057,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // ⚙️ 资产库管理中心
@@ -34062,7 +34068,7 @@ void RenderUI(AppState& state) {
     }
 
     ImGui::SetNextWindowSize(ImVec2(850, 500), ImGuiCond_FirstUseEver);
-    if (BeginTransientScrollbarPopupModal(L(AssetLib_Title), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    if (aura::ui::BeginAlertDialog(L(AssetLib_Title), L(AssetLib_Title), ImGuiWindowFlags_NoCollapse)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
 
@@ -34230,10 +34236,10 @@ void RenderUI(AppState& state) {
             }
             state.showDbDestroyConfirmDialog = false;
         }
-        if (BeginTransientScrollbarPopupModal(L(AssetLib_DeleteConfirm), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (aura::ui::BeginAlertDialog(L(AssetLib_DeleteConfirm), L(AssetLib_DeleteConfirm))) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             ImGui::Text(L(Main_DelLibAsk));
-            ImGui::Separator();
+            ImGui::Spacing();
             ImGui::Text(L(Main_TargetLabel));
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", state.dbManagerSelectedPath.c_str());
             ImGui::Spacing();
@@ -34255,14 +34261,14 @@ void RenderUI(AppState& state) {
             ImGui::SameLine();
             if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 35), aura::ui::ButtonVariant::Quiet)) { state.dbDestroyErrorMsg.clear(); ImGui::CloseCurrentPopup(); }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 38.0f);
         }
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
 // 新建数据库弹窗
@@ -34531,7 +34537,7 @@ void RenderUI(AppState& state) {
         state.showDawTargetSettings = false;
     }
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
-    if (BeginTransientScrollbarPopupModal(L(DAW_SettingsTitle), nullptr, ImGuiWindowFlags_None)) {
+    if (aura::ui::BeginAlertDialog(L(DAW_SettingsTitle), L(DAW_SettingsTitle), ImGuiWindowFlags_None)) {
         {
         ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
@@ -34646,13 +34652,15 @@ void RenderUI(AppState& state) {
                 strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str(), _TRUNCATE);
             }
 
-            ImGui::Separator();
             ImGui::Spacing();
             ImGui::Text(L(Main_SelectedDawFmt), selected.name.c_str());
             ImGui::TextDisabled("%s", GetCapabilityTag(selected));
-            const std::string capabilityDetail = GetCapabilityDetail(selected);
-            if (!capabilityDetail.empty()) {
-                ImGui::TextWrapped("%s", capabilityDetail.c_str());
+            // REAPER 目标的详细状态在下方单独渲染一次，这里不再重复同一句提示。
+            if (!IsReaperNamedPipeTarget(selected)) {
+                const std::string capabilityDetail = GetCapabilityDetail(selected);
+                if (!capabilityDetail.empty()) {
+                    ImGui::TextWrapped("%s", capabilityDetail.c_str());
+                }
             }
             ImGui::Spacing();
 
@@ -34751,17 +34759,7 @@ void RenderUI(AppState& state) {
                     if (!cached->remediation.empty()) {
                         ImGui::TextWrapped("%s", bridgeRemedShown.c_str());
                     }
-                    ImGui::TextDisabled(L(Main_ReaperStatusFmt),
-                        cached->hostExecutablePath.empty() ? "-" : cached->hostExecutablePath.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperResourceFmt),
-                        cached->resourcePath.empty() ? "-" : cached->resourcePath.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperUserPluginsFmt),
-                        cached->targetDirectory.empty() ? "-" : cached->targetDirectory.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperBridgeInfoFmt),
-                        cached->installedVersion.empty() ? "-" : cached->installedVersion.c_str(),
-                        cached->installedProtocolVersion,
-                        cached->installedArchitecture.empty() ? "-" : cached->installedArchitecture.c_str(),
-                        cached->handshakeCode.c_str());
+                    // 路径、版本、协议细节已在“复制诊断摘要”里，界面只留一句话状态。
                 }
             } else {
                 ImGui::TextUnformatted(L(Main_DawExePathLabel));
@@ -34879,7 +34877,7 @@ void RenderUI(AppState& state) {
                     ImGui::OpenPopup(L(PtCloseAfterSave));
                     state.showProToolsCloseConfirm = false;
                 }
-                if (BeginTransientScrollbarPopupModal(L(PtCloseAfterSave), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (aura::ui::BeginAlertDialog(L(PtCloseAfterSave), L(PtCloseAfterSave))) {
                     ImGui::TextWrapped(L(Main_ProToolsCloseWarn));                    ImGui::Spacing();
                     if (aura::ui::ActionButton(L(Main_ProToolsSavedCloseBtn))) {
                         const auto reset = HarkenSearch::ProTools::ResetProToolsConnection(true);
@@ -34893,7 +34891,7 @@ void RenderUI(AppState& state) {
                     if (aura::ui::ActionButton(L(Main_ProToolsCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                         ImGui::CloseCurrentPopup();
                     }
-                    ImGui::EndPopup();
+                    aura::ui::EndAlertDialog();
                 }
                 if (!state.lastProToolsConnectionStatus.empty()) {
                     ImGui::TextWrapped(L(Main_ProToolsLastTestFmt),
@@ -34982,7 +34980,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     #include "SettingsDialog.inl"
@@ -35044,7 +35042,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().dialogPanelBG);
-        if (BeginTransientScrollbarPopupModal("##MetaEditDlg", nullptr, ImGuiWindowFlags_NoResize)) {
+        if (aura::ui::BeginAlertDialog("##MetaEditDlg", L(MetaEdit_DialogTitle),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
 
@@ -35088,14 +35087,12 @@ void RenderUI(AppState& state) {
                 }
             }
 
-            // Title bar with batch indicator
+            // Caption bar carries the title; the body only adds the batch count.
             if (state.metadataBatchMode) {
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                    "%s (%d)", L(MetaEdit_DialogTitle), (int)state.metadataBatchIds.size());
-            } else {
-                ImGui::Text("%s", L(MetaEdit_DialogTitle));
+                    L(Dlg_SelectedNFiles), (int)state.metadataBatchIds.size());
+                ImGui::Spacing();
             }
-            ImGui::Separator();
 
             // Left nav panel
             const float meNavW = 120.0f;
@@ -35251,7 +35248,7 @@ void RenderUI(AppState& state) {
             }
 
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
         ImGui::PopStyleColor(3);
     }
@@ -35680,12 +35677,12 @@ void RenderUI(AppState& state) {
         }
         state.showCoverRemoveConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDeleteCover), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDeleteCover), L(Dlg_ConfirmDeleteCover))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_DelCoverAsk), (int)state.coverRemovePaths.size());
         ImGui::Text(L(Main_DelCoverNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(Delete), ImVec2(120, 0), aura::ui::ButtonVariant::Danger)) {
             // Remove per-file so we can persist exact successes
@@ -35726,7 +35723,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     if (state.showOriginalAudioWriteConfirm) {
@@ -35737,7 +35734,7 @@ void RenderUI(AppState& state) {
         }
         state.showOriginalAudioWriteConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmWriteOriginalAudio), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmWriteOriginalAudio), L(Dlg_ConfirmWriteOriginalAudio))) {
         { ReadingTextScope _readingPopup;
         if (EscClosePopup()) {
             ClearPendingOriginalAudioWrite(state);
@@ -35749,7 +35746,7 @@ void RenderUI(AppState& state) {
                 : (int)state.pendingOriginalAudioWritePaths.size();
         ImGui::Text(L(Main_WriteOriginalAudioAsk), writeCount);
         ImGui::TextUnformatted(L(Main_WriteOriginalAudioNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ApplyPendingOriginalAudioWrite(state);
@@ -35761,7 +35758,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // TOP MENU BAR
@@ -40478,16 +40475,14 @@ void RenderUI(AppState& state) {
                     }
 
                     // Confirm modal lives under this preset row's ID stack
-                    if (BeginTransientScrollbarPopupModal("##ConfirmLoadPreset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    if (aura::ui::BeginAlertDialog("##ConfirmLoadPreset", L(TabPresets_Load))) {
                         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
                         const int curTabs = (int)state.listTabs.size();
                         const int presetTabCount = pendingPresetLoadIndex >= 0
                             && pendingPresetLoadIndex < (int)state.tabPresets.size()
                             ? (int)state.tabPresets[(size_t)pendingPresetLoadIndex].tabs.size()
                             : 0;
-                        PopupTitle(L(TabPresets_Load));
                         PopupMuted(L(TabPresets_SummaryFmt), curTabs, presetTabCount);
-                        PopupDivider();
                         if (aura::ui::ActionButton(L(Main_LoadPresetBtn2), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                             if (pendingPresetLoadIndex >= 0) {
                                 state.syncToTab();
@@ -40505,7 +40500,7 @@ void RenderUI(AppState& state) {
                             ImGui::CloseCurrentPopup();
                         }
                         }
-                        ImGui::EndPopup();
+                        aura::ui::EndAlertDialog();
                     }
 
                     ImGui::PopID();
@@ -40527,7 +40522,8 @@ void RenderUI(AppState& state) {
 
         // Rename popup
         if (renamingTabIndex >= 0) ImGui::OpenPopup(L(Dlg_RenameTab));
-        if (BeginTransientScrollbarPopupModal(L(Dlg_RenameTab), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::function<void()> cancelTabRename = []() { renamingTabIndex = -1; };
+        if (aura::ui::BeginAlertDialog(L(Dlg_RenameTab), L(Dlg_RenameTab), ImGuiWindowFlags_AlwaysAutoResize, true, &cancelTabRename)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             ImGui::Text(L(Main_TabNameLabel));
@@ -40535,7 +40531,7 @@ void RenderUI(AppState& state) {
             bool enter = ImGui::InputText("##RenameTab", renameBuffer, sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
             if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
             if (aura::ui::ActionButton(L(OK), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch) || enter) {
                 if (renamingTabIndex >= 0 && renamingTabIndex < (int)state.listTabs.size()) {
                     state.listTabs[renamingTabIndex].name = renameBuffer;
@@ -40549,7 +40545,7 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         // F-033: When the 专辑 album grid tab is active it fills all available space,
@@ -41102,9 +41098,9 @@ void RenderUI(AppState& state) {
 
             // Check format filter
             {
-                const char* fmtNames[] = { "", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-                if (state.formatFilterIndex > 0 && state.formatFilterIndex < 7) {
-                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + fmtNames[state.formatFilterIndex]});
+                const char* formatFilter = aura::search::AudioFormatFilterAt(state.formatFilterIndex);
+                if (*formatFilter != '\0') {
+                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + formatFilter});
                 }
             }
 
@@ -41136,13 +41132,15 @@ void RenderUI(AppState& state) {
                         if (ft.visible) enabledTypes.emplace_back(ft.label);
                         else ++hiddenCount;
                     }
+                    if (state.showLosslessWavPack && !state.showOther) enabledTypes.emplace_back("WV");
 
                     std::string label;
                     if (enabledTypes.empty()) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u5168\u90e8\u9690\u85cf";
                     } else if (enabledTypes.size() == 1) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u4ec5 " + enabledTypes[0];
-                    } else if (enabledTypes.size() <= 3) {
+                    } else if (enabledTypes.size() <= 3 ||
+                               (enabledTypes.size() == 4 && state.showLosslessWavPack)) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: ";
                         for (size_t typeIdx = 0; typeIdx < enabledTypes.size(); ++typeIdx) {
                             if (typeIdx > 0) label += "/";
@@ -41454,6 +41452,7 @@ void RenderUI(AppState& state) {
                             case FilterChipType::FileTypes:
                                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                                state.showLosslessWavPack = false;
                                 break;
                             case FilterChipType::Channels:
                                 state.channelFilterIndex = 0;

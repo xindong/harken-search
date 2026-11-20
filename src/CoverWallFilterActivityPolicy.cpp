@@ -19,7 +19,7 @@ bool HasActiveDbFilterForCoverWall(const AppState& state) {
     if (filter.minDuration > 0.0f || filter.maxDuration > 0.0f) return true;
     if (filter.minSampleRate != 0 || filter.maxSampleRate != 0) return true;
     if (filter.coverFilter != 0 || !filter.specificCoverKey.empty()) return true;
-    if (!filter.excludeExtensions.empty() || filter.includeOnlyKnownExts) return true;
+    if (!filter.excludeExtensions.empty() || filter.includeOnlyKnownExts || filter.losslessWavPackOnly) return true;
     if (!filter.musicalKey.empty()) return true;
     return false;
 }

@@ -139,6 +139,8 @@ def _run_case(
             "Auro.db-shm": b"shm-must-remain-unchanged",
             "favorite.sentinel": b"favorite-must-remain-unchanged",
             "source.wav": b"source-audio-must-remain-unchanged",
+            "source.wv": b"wavpack-audio-must-remain-unchanged",
+            "source.wvc": b"wavpack-correction-must-remain-unchanged",
         }
         protected_files = {
             root / name: contents
@@ -201,7 +203,9 @@ def _run_case(
                     "sha256": hashlib.sha256(asset_bytes).hexdigest(),
                 }
             )
-            if (install / relative_path).parent.exists():
+            destination = install / relative_path
+            replacing_protected = case.pre_mutation_rejection and destination.is_file()
+            if destination.parent.exists() and not replacing_protected:
                 raise AssertionError("new-directory test must start without install parents")
         if case.install_parent_is_file:
             (install / "assets").write_bytes(b"existing-file-must-not-be-overwritten")
@@ -485,6 +489,18 @@ def main() -> int:
             "protected-db-suffix-denied",
             14,
             inventory_relative_path="Data\\Auro.dbx.db",
+            pre_mutation_rejection=True,
+        ),
+        Case(
+            "protected-wavpack-denied",
+            14,
+            new_inventory_files=("source.WV",),
+            pre_mutation_rejection=True,
+        ),
+        Case(
+            "protected-wavpack-correction-denied",
+            14,
+            new_inventory_files=("source.WVC",),
             pre_mutation_rejection=True,
         ),
         Case(

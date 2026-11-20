@@ -811,16 +811,16 @@
     {
       "id": "Main_WriteOriginalAudioAsk",
       "type": "ui",
-      "zh": "确定要把封面写入这 %d 个原音频文件吗？",
-      "en": "Write cover art into these %d original audio files?",
-      "ja": "この %d 個の元ファイルにジャケットを書き込みますか？"
+      "zh": "把封面写入这 %d 个原音频文件？",
+      "en": "Write cover art into %d original audio files?",
+      "ja": "%d 個の元音声ファイルにカバーを書き込みますか？"
     },
     {
       "id": "Main_WriteOriginalAudioNote",
       "type": "ui",
-      "zh": "这会改原文件。写入失败时原文件保持不变。",
-      "en": "This will change the original file. If writing fails, the original file stays unchanged.",
-      "ja": "これは元ファイルを変更します。書き込みに失敗しても元ファイルはそのまま残ります。"
+      "zh": "会修改原文件；写入失败时保持不变",
+      "en": "Modifies the original files; they stay unchanged if writing fails",
+      "ja": "元ファイルを変更します。失敗時は変更されません"
     },
     {
       "id": "Dlg_RenameTab",
@@ -1432,32 +1432,25 @@
       "ja": "データベース名："
     },
     {
-      "id": "CloseDlg_Question",
-      "type": "ui",
-      "zh": "你想要怎么关闭 Harken Search？",
-      "en": "How would you like to close Harken Search?",
-      "ja": "Harken Search の閉じ方を選択してください"
-    },
-    {
       "id": "CloseDlg_Minimize",
       "type": "ui",
-      "zh": "最小化到托盘（后台运行）",
-      "en": "Minimize to Tray (Background)",
-      "ja": "トレイに最小化（バックグラウンド）"
+      "zh": "最小化到托盘",
+      "en": "Minimize to tray",
+      "ja": "トレイに最小化"
     },
     {
       "id": "CloseDlg_Exit",
       "type": "ui",
-      "zh": "直接退出程序",
-      "en": "Exit Application",
-      "ja": "アプリケーションを終了"
+      "zh": "退出程序",
+      "en": "Exit",
+      "ja": "終了"
     },
     {
       "id": "CloseDlg_Remember",
       "type": "ui",
-      "zh": "记住我的选择（下次点 X 直接执行）",
-      "en": "Remember my choice (apply directly next time)",
-      "ja": "選択を記憶（次回 X クリックで直接実行）"
+      "zh": "记住选择",
+      "en": "Remember this choice",
+      "ja": "この選択を記憶"
     },
     {
       "id": "Batch_RenameTab",
@@ -4149,9 +4142,9 @@
     {
       "id": "Dlg_InputNewFilename",
       "type": "ui",
-      "zh": "输入新的文件名：",
-      "en": "Enter new filename:",
-      "ja": "新しいファイル名を入力："
+      "zh": "新文件名",
+      "en": "New filename",
+      "ja": "新しいファイル名"
     },
     {
       "id": "Dlg_SelectedNFiles",
@@ -6480,9 +6473,9 @@
     {
       "id": "PLQ_DeleteScopeNote",
       "type": "ui",
-      "zh": "只删除播放列表结构；数据库入库记录、波形/封面缓存和原音频文件都不会删除。",
-      "en": "Only the playlist structure is removed; database records, waveform/cover caches, and source audio files are kept.",
-      "ja": "プレイリスト構造のみ削除されます。データベースの登録記録、波形/ジャケットキャッシュ、元のオーディオファイルは削除されません。"
+      "zh": "只删除播放列表结构，不删除入库记录、缓存和原音频。",
+      "en": "Only the playlist structure is removed; library records, caches and source audio stay.",
+      "ja": "プレイリスト構造のみ削除します。ライブラリ記録、キャッシュ、元音声は残ります。"
     },
     {
       "id": "PLQ_DelFolderCancelBtn",
@@ -6896,13 +6889,6 @@
       "zh": "删除预设",
       "en": "Delete preset",
       "ja": "プリセットを削除"
-    },
-    {
-      "id": "ModuleUI_PresetName",
-      "type": "ui",
-      "zh": "预设名称",
-      "en": "Preset name",
-      "ja": "プリセット名"
     },
     {
       "id": "ModuleUI_Save",
@@ -7425,9 +7411,9 @@
     {
       "id": "Main_SetDefaultPlayerHint",
       "type": "ui",
-      "zh": "会打开系统默认应用设置。请在列表里选 Harken Search，再勾选 .wav .mp3 .flac 等格式。",
-      "en": "This opens Windows default-app settings. Choose Harken Search, then assign .wav, .mp3, .flac and the other listed formats.",
-      "ja": "システムの既定アプリ設定を開きます。Harken Search を選び、.wav、.mp3、.flac などの形式を割り当ててください。"
+      "zh": "会打开系统默认应用设置；选 Harken Search 后勾选音频格式。",
+      "en": "Opens Windows default-app settings; pick Harken Search and its audio types.",
+      "ja": "既定アプリの設定を開きます。Harken Search と音声形式を選んでください。"
     },
     {
       "id": "Main_SetDefaultBtn",
@@ -7579,9 +7565,9 @@
     {
       "id": "Main_DeleteScopeWarning",
       "type": "ui",
-      "zh": "此操作只删除 Harken Search 的索引数据库、波形缓存及封面缩略图，不删除任何源音频文件。索引数据删除后无法恢复。",
-      "en": "This only deletes Harken Search's index database, waveform cache and cover thumbnails; no source audio files are deleted. Index data can be rebuilt by rescanning.",
-      "ja": "これは Harken Search のインデックスデータベース、波形キャッシュ、サムネイルのみの削除で、元音频ファイルは削除されません。インデックスデータは再スキャンで再構築できます。"
+      "zh": "只删除索引、波形缓存和封面缩略图，不删除源音频；删除后无法恢复。",
+      "en": "Deletes the index, waveform cache and cover thumbnails; source audio is kept. This cannot be undone.",
+      "ja": "インデックス、波形キャッシュ、カバーサムネイルを削除します。元音声は削除しません。元に戻せません。"
     },
     {
       "id": "Main_ConfirmDeleteBtn",
@@ -7614,9 +7600,9 @@
     {
       "id": "Main_SendDaawHint",
       "type": "ui",
-      "zh": "Select files, then press shortcut or S to send",
-      "en": "Select files, then press shortcut or S to send",
-      "ja": "ファイルを選択後、ショートカットか S キーで送信"
+      "zh": "先选文件，再按快捷键或 S 发送。",
+      "en": "Select files, then press the shortcut or S to send.",
+      "ja": "ファイルを選び、ショートカットか S キーで送信します。"
     },
     {
       "id": "Main_ReaperRootDir",
@@ -7642,9 +7628,9 @@
     {
       "id": "Main_ReaperPathHint",
       "type": "ui",
-      "zh": "请选择包含 reaper.exe 的目录。无需查找或手动复制 DLL。",
-      "en": "Select the directory containing reaper.exe. No DLL lookup or manual copy is needed.",
-      "ja": "reaper.exe を含むディレクトリを選択してください。DLL の検索や手動コピーは不要です。"
+      "zh": "选 reaper.exe 所在目录即可，不用复制 DLL。",
+      "en": "Pick the folder that holds reaper.exe. Nothing to copy.",
+      "ja": "reaper.exe のあるフォルダを選ぶだけです。DLL のコピーは不要です。"
     },
     {
       "id": "Main_AutoDetect",
@@ -7673,34 +7659,6 @@
       "zh": "复制脱敏诊断摘要##ReaperCopyDiagnostic",
       "en": "Copy sanitized diagnostic summary##ReaperCopyDiagnostic",
       "ja": "サニタイズ済み診断サマリーをコピー##ReaperCopyDiagnostic"
-    },
-    {
-      "id": "Main_ReaperStatusFmt",
-      "type": "ui",
-      "zh": "REAPER：%s",
-      "en": "REAPER: %s",
-      "ja": "REAPER：%s"
-    },
-    {
-      "id": "Main_ReaperResourceFmt",
-      "type": "ui",
-      "zh": "资源目录：%s",
-      "en": "Resource dir: %s",
-      "ja": "リソースディレクトリ：%s"
-    },
-    {
-      "id": "Main_ReaperUserPluginsFmt",
-      "type": "ui",
-      "zh": "UserPlugins：%s",
-      "en": "UserPlugins: %s",
-      "ja": "UserPlugins：%s"
-    },
-    {
-      "id": "Main_ReaperBridgeInfoFmt",
-      "type": "ui",
-      "zh": "组件：版本 %s / 协议 %d / 架构 %s / 握手 %s",
-      "en": "Bridge: version %s / protocol %d / arch %s / handshake %s",
-      "ja": "コンポーネント：バージョン %s / プロトコル %d / アーキテクチャ %s / ハンドシェイク %s"
     },
     {
       "id": "Main_AttachDiagLog500",
@@ -7768,7 +7726,7 @@
     {
       "id": "Main_DawExePathLabel",
       "type": "ui",
-      "zh": "Executable Path",
+      "zh": "程序路径",
       "en": "Executable Path",
       "ja": "実行ファイルのパス"
     },
@@ -8032,18 +7990,11 @@
       "ja": "作成"
     },
     {
-      "id": "Main_RemoveFromLibraryTitle",
-      "type": "ui",
-      "zh": "将从当前库移除",
-      "en": "Will remove from current library",
-      "ja": "現在のライブラリから削除されます"
-    },
-    {
       "id": "Main_RemovePathsExplain",
       "type": "ui",
-      "zh": "将从当前 Harken Search 数据库移除以下路径及其子目录下的全部入库记录:",
-      "en": "The following paths and all imported records under their subdirectories will be removed from the current Harken Search database:",
-      "ja": "以下のパスとそのサブディレクトリ配下の全取り込みレコードを現在の Harken Search データベースから削除します:"
+      "zh": "此路径及其子目录下的记录会一并移除，磁盘文件不受影响。",
+      "en": "Removes records under this path and its subdirectories. Files on disk stay.",
+      "ja": "このパスとサブディレクトリ配下の記録を削除します。ディスク上のファイルは残ります。"
     },
     {
       "id": "Main_SourcesKeptNote",
@@ -8972,9 +8923,9 @@
     {
       "id": "Main_ClearPathExplainWrap",
       "type": "ui",
-      "zh": "将从当前 Harken Search 数据库移除此路径及其子路径下的全部入库记录，不删除磁盘文件。相关播放列表引用、回填状态、封面/波形本地缓存引用会同步清理。",
-      "en": "All imported records under this path and its subpaths will be removed from the current Harken Search database; disk files are not deleted. Related playlist references, backfill status and local cover/waveform cache references are cleaned up as well.",
-      "ja": "このパスとそのサブパス配下の全取り込みレコードを現在の Harken Search データベースから削除します。ディスクのファイルは削除されません。関連プレイリスト参照・補完状態・ジャケット/波形ローカルキャッシュ参照も整理されます。"
+      "zh": "会移除数据库记录、播放列表引用和本地缓存引用，磁盘文件不会被删除。",
+      "en": "Removes database records, playlist references and local cache references. Files on disk stay.",
+      "ja": "データベース記録・プレイリスト参照・ローカルキャッシュ参照を削除します。ディスク上のファイルは残ります。"
     },
     {
       "id": "Main_RemoveBtnReuse",
@@ -9256,6 +9207,7 @@
       "en": "Split",
       "ja": "分離"
     },
+    {"id":"ModuleUI_UcsWriteTitle","type":"ui","zh":"写入 UCS 分类","en":"Write UCS categories","ja":"UCS カテゴリを書き込む"},
     {
       "id": "Main_WaveDebugFullTip",
       "type": "ui",
@@ -9469,30 +9421,30 @@
     {
       "id": "Main_RemoveRecordsAsk",
       "type": "ui",
-      "zh": "确定要从数据库中移除选中的 %d 条记录吗？",
-      "en": "Remove the selected %d records from the database?",
-      "ja": "選択中の %d 件のレコードをデータベースから削除しますか？"
+      "zh": "从数据库移除选中的 %d 条记录？",
+      "en": "Remove %d selected records from the database?",
+      "ja": "選択した %d 件のレコードをデータベースから削除しますか？"
     },
     {
       "id": "Main_RemoveRecordsNote",
       "type": "ui",
-      "zh": "（文件不会被删除，只是从索引中移除）",
-      "en": "(Files are not deleted; they are only removed from the index.)",
-      "ja": "（ファイルは削除されず、インデックスから除外されるだけです）"
+      "zh": "只移除索引，不删除文件",
+      "en": "Removes index entries only; files stay on disk",
+      "ja": "インデックスのみ削除します。ファイルは残ります"
     },
     {
       "id": "Main_DeleteWarnLine",
       "type": "ui",
-      "zh": "警告：此操作将永久删除文件！",
-      "en": "Warning: this operation permanently deletes files!",
-      "ja": "警告：この操作はファイルを完全に削除します！"
+      "zh": "永久删除，无法撤销",
+      "en": "Permanently deletes files; cannot be undone",
+      "ja": "完全に削除されます。元に戻せません"
     },
     {
       "id": "Main_DeleteFilesAsk",
       "type": "ui",
-      "zh": "确定要删除选中的 %d 个文件吗？",
-      "en": "Delete the selected %d files?",
-      "ja": "選択中の %d 個のファイルを削除しますか？"
+      "zh": "删除选中的 %d 个文件",
+      "en": "Delete %d selected files",
+      "ja": "選択した %d 個のファイルを削除しますか？"
     },
     {
       "id": "Main_MoreFilesFmt",
@@ -9700,7 +9652,7 @@
     {
       "id": "Main_DelLibAsk",
       "type": "ui",
-      "zh": "确定要永久删除该资产库吗？",
+      "zh": "永久删除此资产库？",
       "en": "Permanently delete this asset library?",
       "ja": "このアセットライブラリを完全に削除しますか？"
     },
@@ -9735,9 +9687,9 @@
     {
       "id": "Main_SelectedDawFmt",
       "type": "ui",
-      "zh": "Selected DAW: %s",
+      "zh": "当前 DAW：%s",
       "en": "Selected DAW: %s",
-      "ja": "Selected DAW: %s"
+      "ja": "選択中の DAW：%s"
     },
     {
       "id": "Main_VolHeaderChanLabel",
@@ -9819,16 +9771,16 @@
     {
       "id": "Main_DelCoverAsk",
       "type": "ui",
-      "zh": "确定要删除 %d 个文件的封面吗？",
-      "en": "Delete covers of the selected %d files?",
-      "ja": "選択中の %d ファイルのジャケットを削除しますか？"
+      "zh": "删除 %d 个文件的封面？",
+      "en": "Remove covers from %d files?",
+      "ja": "%d 個のファイルのカバーを削除しますか？"
     },
     {
       "id": "Main_DelCoverNote",
       "type": "ui",
-      "zh": "注意：此操作不可撤销。",
-      "en": "Note: this action cannot be undone.",
-      "ja": "注意：この操作は取り消せません。"
+      "zh": "移除后不可撤销",
+      "en": "Cannot be undone",
+      "ja": "元に戻せません"
     },
     {
       "id": "Main_TotalFilesFmt",
@@ -12275,16 +12227,16 @@
     {
       "id": "PLQ_DeleteFolderWarn",
       "type": "ui",
-      "zh": "再次确认：删除文件夹会同时删除其中所有播放列表。不会删除源音频文件。",
-      "en": "Confirm again: deleting the folder also deletes every playlist inside it. Source audio files are not deleted.",
-      "ja": "再確認：フォルダを削除すると、中のプレイリストもすべて削除されます。元の音声ファイルは削除されません。"
+      "zh": "删除文件夹及其中所有播放列表？不会删除源音频文件。",
+      "en": "Delete this folder and all playlists inside it? Source audio is not deleted.",
+      "ja": "フォルダと中のプレイリストをすべて削除しますか？元音声は削除しません。"
     },
     {
       "id": "PLQ_DeleteListWarn",
       "type": "ui",
-      "zh": "再次确认：删除此播放列表。不会删除源音频文件。",
-      "en": "Confirm again: delete this playlist. Source audio files are not deleted.",
-      "ja": "再確認：このプレイリストを削除します。元の音声ファイルは削除されません。"
+      "zh": "删除此播放列表？不会删除源音频文件。",
+      "en": "Delete this playlist? Source audio is not deleted.",
+      "ja": "このプレイリストを削除しますか？元音声は削除しません。"
     },
     {
       "id": "PLQ_BulkTitle",

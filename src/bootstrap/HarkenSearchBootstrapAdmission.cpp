@@ -708,9 +708,9 @@ HarkenSearchPackagePolicyResult evaluateHarkenSearchPackagePolicy(
         return result;
     }
 
-    static constexpr std::array<std::string_view, 10U> protectedExtensions{
+    static constexpr std::array<std::string_view, 12U> protectedExtensions{
         ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac",
-        ".wma", ".opus", ".aiff", ".aif"};
+        ".wma", ".opus", ".aiff", ".aif", ".wv", ".wvc"};
     for (const InstallInventoryItem& item : admission.plan->inventory) {
         const std::string path = normalizePathText(item.relativePath);
         const std::size_t slash = path.find_last_of('/');

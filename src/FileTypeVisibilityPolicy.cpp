@@ -35,11 +35,14 @@ FileTypeVisibilityPolicy BuildPolicy(const FileTypeVisibility& visibility) {
     AddExcluded(policy.excludedExtensions, visibility.showAiff, {".aiff", ".aif"});
     AddExcluded(policy.excludedExtensions, visibility.showM4a, {".m4a"});
     AddExcluded(policy.excludedExtensions, visibility.showWma, {".wma"});
+    AddExcluded(policy.excludedExtensions, visibility.showOther || visibility.showLosslessWavPack, {".wv"});
     policy.includeOnlyKnownExtensions = !visibility.showOther;
+    policy.losslessWavPackOnly = !visibility.showOther && visibility.showLosslessWavPack;
     return policy;
 }
 
-bool isVisible(const FileTypeVisibility& visibility, const std::string& extension) {
+bool isVisible(const FileTypeVisibility& visibility, const std::string& extension,
+               bool wavPackLossless) {
     const std::string normalized = Normalize(extension);
     if (normalized == "wav" || normalized == "wave") return visibility.showWav;
     if (normalized == "mp3") return visibility.showMp3;
@@ -48,6 +51,8 @@ bool isVisible(const FileTypeVisibility& visibility, const std::string& extensio
     if (normalized == "aiff" || normalized == "aif") return visibility.showAiff;
     if (normalized == "m4a") return visibility.showM4a;
     if (normalized == "wma") return visibility.showWma;
+    if (normalized == "wv") return visibility.showOther ||
+        (visibility.showLosslessWavPack && wavPackLossless);
     return visibility.showOther;
 }
 

@@ -207,7 +207,8 @@ void test_aris_product_policy_denies_signed_removals_and_user_data_inventory() {
         "audio/source.WAV", "audio/source.mp3", "audio/source.FLAC",
         "audio/source.ogg", "audio/source.M4A", "audio/source.aac",
         "audio/source.WMA", "audio/source.opus", "audio/source.AIFF",
-        "audio/source.aif"};
+        "audio/source.aif", "source.wv", "source.wvc",
+        "audio/mixes/source.WV", "audio\\mixes\\source.WVC"};
     for (const std::string& protectedPath : protectedPaths) {
         const auto binding = aris::bootstrap::VerifyPackagePlanBinding(
             packageWithInventoryPath(protectedPath), std::string(128, 'b'),
@@ -216,9 +217,10 @@ void test_aris_product_policy_denies_signed_removals_and_user_data_inventory() {
               "protected inventory fixture remains structurally signed");
         if (!binding.ok() || !binding.binding.has_value()) continue;
         const auto policy = aris::bootstrap::EvaluateHarkenSearchPackagePolicy(*binding.binding);
+        const std::string message = "case-insensitive slash-normalized user data inventory is denied: " + protectedPath;
         check(policy.status ==
                   aris::bootstrap::HarkenSearchPackagePolicyStatus::ProtectedInventory,
-              "case-insensitive slash-normalized user data inventory is denied");
+              message.c_str());
     }
 }
 

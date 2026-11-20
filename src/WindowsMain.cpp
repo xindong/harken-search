@@ -149,6 +149,7 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
 #include "platform/executable_path.h"
+#include "DatabaseSearchFilterBuilder.h"
 #include "platform/filesystem.h"
 #include "platform/text_encoding.h"
 #include "platform/qa_files.h"
@@ -4109,11 +4110,7 @@ static void PollQaCommandFile(AppState& state) {
         }
     };
     auto formatFilterValue = [&](int index) -> std::string {
-        const char* formats[] = {"", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A"};
-        if (index >= 0 && index < (int)(sizeof(formats) / sizeof(formats[0]))) {
-            return formats[index];
-        }
-        return "";
+        return aura::search::AudioFormatFilterAt(index);
     };
     auto coverFilterValue = [&](int index) -> std::string {
         const char* modes[] = {"all", "has", "no"};
@@ -4124,12 +4121,10 @@ static void PollQaCommandFile(AppState& state) {
     };
     auto formatFilterIndexFromValue = [&](std::string value) -> int {
         std::transform(value.begin(), value.end(), value.begin(), ::toupper);
-        if (value == "WAV") return 1;
-        if (value == "MP3") return 2;
-        if (value == "FLAC") return 3;
-        if (value == "OGG") return 4;
-        if (value == "AIFF" || value == "AIF") return 5;
-        if (value == "M4A") return 6;
+        if (value == "AIF") value = "AIFF";
+        for (std::size_t index = 1; index < aura::search::kAudioFormatFilters.size(); ++index) {
+            if (value == aura::search::kAudioFormatFilters[index]) return static_cast<int>(index);
+        }
         return 0;
     };
     auto parseRowSet = [&](const std::string& rowsRaw) {
@@ -4940,6 +4935,119 @@ static void PollQaCommandFile(AppState& state) {
                 {"mouse",{ImGui::GetIO().MousePos.x,ImGui::GetIO().MousePos.y}},
                 {"mouse_down",ImGui::GetIO().MouseDown[0]},
                 {"nav_window",ImGui::GetCurrentContext()->NavWindow?ImGui::GetCurrentContext()->NavWindow->Name:""}}).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
+    } else if (cmd == "alert_dialog_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string action = getStr(raw, "action");
+            const std::string dialog = getStr(raw, "dialog");
+            auto& ctx = *ImGui::GetCurrentContext();
+            if (action == "open" || action == "close") {
+                while (ctx.OpenPopupStack.Size > 0)
+                    ImGui::ClosePopupToLevel(ctx.OpenPopupStack.Size - 1, false);
+                state.showCloseChoicePopup = false;
+                state.showEditFilenameDialog = false;
+                state.showDeleteConfirmDialog = false;
+                state.showPlaylistDialog = false;
+                state.showCreateFolderDialog = false;
+                state.showDawTargetSettings = false;
+                state.showFolderAutoRenameDialog = false;
+                state.showPlaylistRenameDialog = false;
+            }
+            if (action == "close") {
+                result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
+            } else if (action == "drag") {
+                // Move the open dialog by the requested delta and report the new
+                // rect, so the caption-bar drag path can be checked without
+                // injecting mouse input into the private desktop.
+                ImGuiWindow* dialogWindow = nullptr;
+                for (int level = ctx.OpenPopupStack.Size - 1; level >= 0 && !dialogWindow; --level) {
+                    if (ctx.OpenPopupStack[level].Window)
+                        dialogWindow = ctx.OpenPopupStack[level].Window;
+                }
+                if (!dialogWindow) {
+                    result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"no_dialog_open"})";
+                } else {
+                    const ImVec2 before = dialogWindow->Pos;
+                    ImGui::SetWindowPos(dialogWindow,
+                        ImVec2(before.x + (float)getInt(raw, "dx", 0),
+                               before.y + (float)getInt(raw, "dy", 0)));
+                    const ImVec2 after = dialogWindow->Pos;
+                    char receipt[256];
+                    std::snprintf(receipt, sizeof(receipt),
+                        "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"drag\","
+                        "\"before\":[%.1f,%.1f],\"after\":[%.1f,%.1f]}",
+                        before.x, before.y, after.x, after.y);
+                    result = receipt;
+                }
+            } else if (action == "open") {
+                bool known = true;
+                if (dialog == "close-choice") {
+                    state.closeChoiceSelection = 1;
+                    state.closeChoiceRemember = false;
+                    state.showCloseChoicePopup = true;
+                } else if (dialog == "rename") {
+                    strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
+                              "Impact_Hit_03.wav", _TRUNCATE);
+                    state.showEditFilenameDialog = true;
+                } else if (dialog == "remove-records") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths.clear();
+                    state.deleteFromFileSystem = false;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "delete-files") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths = {
+                        "D:/Harken-QA/preview-samples/impact_metal_01.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_02.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_03.wav"};
+                    state.deleteFromFileSystem = true;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "new-playlist") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistDialog = true;
+                } else if (dialog == "new-folder") {
+                    strncpy_s(state.folderNameBuffer, sizeof(state.folderNameBuffer),
+                              "New Folder", _TRUNCATE);
+                    state.showCreateFolderDialog = true;
+                } else if (dialog == "daw-settings") {
+                    state.settings.dawTargets.clear();
+                    DawTarget previewTarget;
+                    previewTarget.name = "REAPER";
+                    previewTarget.processName = "reaper.exe";
+                    previewTarget.mode = DawSendMode::NamedPipe;
+                    state.settings.dawTargets.push_back(std::move(previewTarget));
+                    state.selectedDAWIndex = 0;
+                    state.showDawTargetSettings = true;
+                } else if (dialog == "folder-auto-rename") {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",
+                             "QA:/preview-samples");
+                    state.folderRenamePreview.clear();
+                    state.folderRenameLog.clear();
+                    state.showFolderAutoRenameDialog = true;
+                } else if (dialog == "playlist-rename") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistRenameDialog = true;
+                } else if (dialog == "default-player") {
+                    state.settings.defaultPlayerPrompted = false;
+                    state.warmupFramesRemaining = 0;
+                    state.filePlayerFastPathActive = false;
+                } else {
+                    known = false;
+                }
+                result = known
+                    ? "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"open\",\"dialog\":\"" + dialog + "\"}"
+                    : R"({"ok":false,"cmd":"alert_dialog_preview","error":"unknown_dialog"})";
+            } else {
+                result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"unsupported_action"})";
+            }
         }
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
@@ -6023,8 +6131,11 @@ static void PollQaCommandFile(AppState& state) {
                 state.instrumentPillState["__qa_instrument__"] = 1;
             }
             state.showWAV = !enabled;
-            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
-                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            if (!enabled) {
+                state.showMP3 = state.showFLAC = state.showOGG =
+                    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
+            }
             cancelPendingSearchForQaMutation();
             RefreshSearchResults(state, true);
             state.syncToTab();
@@ -9023,6 +9134,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 wpath.resize(wcslen(wpath.c_str()));
 
                 std::string pathUtf8 = WideToUtf8(wpath);
+                // A bare drive spec ("D:") resolves to that drive current
+                // directory for the filesystem, but a drop means the drive
+                // itself, so normalise it to "D:\\" before classifying.
+                if (pathUtf8.size() == 2 && pathUtf8[1] == ':' &&
+                    ((pathUtf8[0] >= 'A' && pathUtf8[0] <= 'Z') ||
+                     (pathUtf8[0] >= 'a' && pathUtf8[0] <= 'z'))) {
+                    pathUtf8 += '\\';
+                }
                 if (Platform::FileSystem::Exists(pathUtf8)) {
 
                     if (Platform::FileSystem::IsDirectory(pathUtf8)) {
@@ -9036,6 +9155,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             dbFiles.push_back(pathUtf8);
                         }
                         else if (ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg" ||
+                            ext == ".wv" ||
                             ext == ".aiff" || ext == ".aif" || ext == ".m4a" || ext == ".wma") {
                             files.push_back(pathUtf8);
                         }
