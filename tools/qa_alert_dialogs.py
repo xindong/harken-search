@@ -129,8 +129,11 @@ def analyze(image, bounds, title):
                     near_border += 1
     rounded = bool(refined_ok and top_border and near_border <= 3)
 
+    # Only the band right under the caption bar may hide a stray rule: the bar
+    # owns the title now, so a horizontal line here means the dialog still
+    # divides its title from its body. Lower panel borders are content.
     separators = []
-    for y in range(y0 + 26, min(y1 - 24, y0 + 96)):
+    for y in range(y0 + 40, min(y1 - 24, y0 + 78)):
         row = {}
         for x in range(x0 + 6, x1 - 6):
             pixel = rgb.getpixel((x, y))
@@ -291,6 +294,20 @@ def run(args):
                 entry['themes'].append(row)
                 command(cmd='alert_dialog_preview', action='close')
                 time.sleep(.2)
+
+        # Caption-bar drag: the dialog must let its own caption bar move it.
+        command(cmd='alert_dialog_preview', action='open', dialog='close-choice')
+        popup_for(UI_TEXT['Dlg_CloseSM'])
+        before = popup_for(UI_TEXT['Dlg_CloseSM'])['bounds']
+        moved = command(cmd='alert_dialog_preview', action='drag', dx=64, dy=42)
+        time.sleep(.4)
+        after = popup_for(UI_TEXT['Dlg_CloseSM'])['bounds']
+        drag_ok = (abs((after[0] - before[0]) - 64) <= 4 and abs((after[1] - before[1]) - 42) <= 4)
+        report['caption_drag'] = {'before': before, 'after': after, 'receipt': moved, 'passed': drag_ok}
+        if not drag_ok:
+            failures.append({'dialog': 'close-choice', 'theme': None, 'failed': ['caption_drag']})
+        command(cmd='alert_dialog_preview', action='close')
+        time.sleep(.2)
 
         report['failures'] = failures
         report['passed'] = not failures

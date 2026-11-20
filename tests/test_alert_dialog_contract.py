@@ -64,13 +64,29 @@ def test_alert_helper_draws_title_inside_a_rounded_surface():
     assert "ImGuiStyleVar_WindowRounding, kRadiusDialog" in helper
     assert "ImGuiStyleVar_PopupRounding, kRadiusDialog" in helper
     assert "ImGui::Separator" not in helper
-    assert "ImGui::TextUnformatted(title, end)" in helper
+    # macOS-style caption bar: one filled strip inside the outline, title on
+    # the left, close on the right, and the strip itself is the drag zone.
+    assert "ImDrawFlags_RoundCornersTop" in helper
+    assert "DrawStandaloneCaptionButton" in helper
+    assert '"##DialogCaptionDrag"' in helper
+    assert "ImGui::SetWindowPos(" in helper
+    assert '"##DialogClose"' in helper
+    assert "ImGui::CloseCurrentPopup();" in helper
+    assert "bool showClose" in helper
 
     end = source[source.index("void EndAlertDialog()"):]
     end = end[:end.index("}") + 1]
     assert "ImGui::EndPopup();" in end
     assert "ImGui::PopStyleVar(5);" in end
     assert "ImGui::PopStyleColor(5);" in end
+
+
+def test_dialogs_that_must_be_answered_hide_the_close_button():
+    header = read(ROOT / "src" / "HarkenSearchWidgets.h")
+    assert "bool showClose = true" in header
+    main = read(ROOT / "src" / "main.cpp")
+    marker = "aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)"
+    assert marker in main, "the save-before-leaving prompt must stay un-dismissable"
 
 
 def test_small_confirm_and_input_dialogs_share_the_alert_surface():
@@ -169,7 +185,7 @@ def test_every_dialog_kind_uses_the_shared_surface():
             '"##MetaEditDlg"',
             '"##ConfirmLoadPreset"',
             "kPopupTitle",
-            "aura::ui::BeginAlertDialog(title,title)",
+            "aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)",
         ),
         "src/ModuleUI.cpp": (
             "L(ModuleUI_WorkflowPreviewTitle)",
@@ -222,6 +238,7 @@ def test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body():
 
 if __name__ == "__main__":
     test_alert_helper_draws_title_inside_a_rounded_surface()
+    test_dialogs_that_must_be_answered_hide_the_close_button()
     test_small_confirm_and_input_dialogs_share_the_alert_surface()
     test_playlist_folder_dialogs_use_the_alert_surface()
     test_close_dialog_does_not_repeat_the_title_as_a_question()

@@ -4948,18 +4948,44 @@ static void PollQaCommandFile(AppState& state) {
             const std::string action = getStr(raw, "action");
             const std::string dialog = getStr(raw, "dialog");
             auto& ctx = *ImGui::GetCurrentContext();
-            while (ctx.OpenPopupStack.Size > 0)
-                ImGui::ClosePopupToLevel(ctx.OpenPopupStack.Size - 1, false);
-            state.showCloseChoicePopup = false;
-            state.showEditFilenameDialog = false;
-            state.showDeleteConfirmDialog = false;
-            state.showPlaylistDialog = false;
-            state.showCreateFolderDialog = false;
-            state.showDawTargetSettings = false;
-            state.showFolderAutoRenameDialog = false;
-            state.showPlaylistRenameDialog = false;
+            if (action == "open" || action == "close") {
+                while (ctx.OpenPopupStack.Size > 0)
+                    ImGui::ClosePopupToLevel(ctx.OpenPopupStack.Size - 1, false);
+                state.showCloseChoicePopup = false;
+                state.showEditFilenameDialog = false;
+                state.showDeleteConfirmDialog = false;
+                state.showPlaylistDialog = false;
+                state.showCreateFolderDialog = false;
+                state.showDawTargetSettings = false;
+                state.showFolderAutoRenameDialog = false;
+                state.showPlaylistRenameDialog = false;
+            }
             if (action == "close") {
                 result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
+            } else if (action == "drag") {
+                // Move the open dialog by the requested delta and report the new
+                // rect, so the caption-bar drag path can be checked without
+                // injecting mouse input into the private desktop.
+                ImGuiWindow* dialogWindow = nullptr;
+                for (int level = ctx.OpenPopupStack.Size - 1; level >= 0 && !dialogWindow; --level) {
+                    if (ctx.OpenPopupStack[level].Window)
+                        dialogWindow = ctx.OpenPopupStack[level].Window;
+                }
+                if (!dialogWindow) {
+                    result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"no_dialog_open"})";
+                } else {
+                    const ImVec2 before = dialogWindow->Pos;
+                    ImGui::SetWindowPos(dialogWindow,
+                        ImVec2(before.x + (float)getInt(raw, "dx", 0),
+                               before.y + (float)getInt(raw, "dy", 0)));
+                    const ImVec2 after = dialogWindow->Pos;
+                    char receipt[256];
+                    std::snprintf(receipt, sizeof(receipt),
+                        "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"drag\","
+                        "\"before\":[%.1f,%.1f],\"after\":[%.1f,%.1f]}",
+                        before.x, before.y, after.x, after.y);
+                    result = receipt;
+                }
             } else if (action == "open") {
                 bool known = true;
                 if (dialog == "close-choice") {

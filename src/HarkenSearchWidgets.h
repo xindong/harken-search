@@ -197,15 +197,17 @@ void EndStandaloneWindow();
 
 // Modal dialog API.
 
-// The one modal surface used by every dialog: 12px rounded panel, no ImGui
-// title bar, no rule between title and body, title drawn inside.
-// `id` is the popup id passed to ImGui::OpenPopup (the visible title part
-// before ## is shown, so `id` and `title` are allowed to be the same string).
+// The one modal surface used by every dialog: a rounded panel with a
+// macOS-style caption bar (title left, close right, draggable). `id` is the
+// popup id passed to ImGui::OpenPopup; the visible part before ## is what the
+// caption bar shows, so `id` and `title` may be the same string.
 // Dialogs that need a fixed size call ImGui::SetNextWindowSize() first and
-// leave out ImGuiWindowFlags_AlwaysAutoResize. Pair with EndAlertDialog()
-// only when this returns true.
+// leave out ImGuiWindowFlags_AlwaysAutoResize. Pass showClose = false for
+// dialogs that must be answered instead of dismissed.
+// Pair with EndAlertDialog() only when this returns true.
 bool BeginAlertDialog(const char* id, const char* title,
-                      ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize);
+                      ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize,
+                      bool showClose = true);
 void EndAlertDialog();
 
 // Panel / SectionHeader / Divider (Task 14)

@@ -18039,7 +18039,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
     const char* title=L(Info_SaveBeforeLeaving);
     if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
     bool resolved=false;
-    if (aura::ui::BeginAlertDialog(title,title)) {
+    if (aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)) {
         ImGui::TextUnformatted(L(Info_SaveBeforeLeavingBody));
         if (!state.infoEditError.empty()) ImGui::TextWrapped("%s",state.infoEditError.c_str());
         const bool yes=aura::ui::ActionButton(L(Info_SaveYes),ImVec2(140,0), aura::ui::ButtonVariant::PrimarySearch);
@@ -32286,7 +32286,7 @@ void RenderUI(AppState& state) {
         SaveAppSettings(state);
     }
     if (aura::ui::BeginAlertDialog((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(),
-                               L(Set_ShellSetDefault), ImGuiWindowFlags_NoMove)) {
+                               L(Set_ShellSetDefault))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         ImGui::TextUnformatted(L(Main_SetDefaultPlayerPrompt));
         ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));
@@ -34844,7 +34844,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().dialogPanelBG);
-        if (aura::ui::BeginAlertDialog("##MetaEditDlg", "", ImGuiWindowFlags_NoResize)) {
+        if (aura::ui::BeginAlertDialog("##MetaEditDlg", L(MetaEdit_DialogTitle),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
 
@@ -34888,14 +34889,12 @@ void RenderUI(AppState& state) {
                 }
             }
 
-            // Title bar with batch indicator
+            // Caption bar carries the title; the body only adds the batch count.
             if (state.metadataBatchMode) {
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                    "%s (%d)", L(MetaEdit_DialogTitle), (int)state.metadataBatchIds.size());
-            } else {
-                ImGui::Text("%s", L(MetaEdit_DialogTitle));
+                    L(Dlg_SelectedNFiles), (int)state.metadataBatchIds.size());
+                ImGui::Spacing();
             }
-            ImGui::Spacing();
 
             // Left nav panel
             const float meNavW = 120.0f;

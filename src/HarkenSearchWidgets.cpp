@@ -1306,8 +1306,11 @@ void EndStandaloneWindow() {
 // Modal dialog helpers.
 
 // The single modal surface used by every dialog in the app: one rounded
-// panel, no ImGui title bar, the title drawn inside.
-bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags) {
+// panel with a macOS-style caption bar. The bar carries the left-aligned
+// title, an optional close button on the right, and it is the drag zone,
+// because ImGui only moves windows by a title bar this surface does not use.
+bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags,
+                      bool showClose) {
     using namespace aura::ui::metrics;
     const ThemeColorScheme& th = ThemeColors::current();
 
@@ -1330,16 +1333,84 @@ bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags)
         return false;
     }
 
+    const ImVec2 windowPos = ImGui::GetWindowPos();
+    const ImVec2 windowSize = ImGui::GetWindowSize();
+    constexpr float kCaptionBorder = 1.0f;  // keep the panel outline visible
+    const float barHeight = kHeightLg;
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    // The caption must read as its own strip in every theme, so the step comes
+    // from the panel colour itself instead of one theme's chrome colour.
+    const ImVec4 dialogBG = ThemeColors::popupModalBG(th);
+    const float dialogLuma = 0.2126f * dialogBG.x + 0.7152f * dialogBG.y + 0.0722f * dialogBG.z;
+    const ImVec4 captionStep(1.0f, 1.0f, 1.0f, 1.0f);
+    const float captionMix = dialogLuma > 0.5f ? 0.08f : 0.11f;
+    const ImVec4 captionBG(
+        dialogLuma > 0.5f ? dialogBG.x * (1.0f - captionMix)
+                          : dialogBG.x + (captionStep.x - dialogBG.x) * captionMix,
+        dialogLuma > 0.5f ? dialogBG.y * (1.0f - captionMix)
+                          : dialogBG.y + (captionStep.y - dialogBG.y) * captionMix,
+        dialogLuma > 0.5f ? dialogBG.z * (1.0f - captionMix)
+                          : dialogBG.z + (captionStep.z - dialogBG.z) * captionMix,
+        1.0f);
+
+    // Caption bar sits inside the panel outline and follows the top corners.
+    drawList->AddRectFilled(
+        ImVec2(windowPos.x + kCaptionBorder, windowPos.y + kCaptionBorder),
+        ImVec2(windowPos.x + windowSize.x - kCaptionBorder, windowPos.y + barHeight),
+        ImGui::ColorConvertFloat4ToU32(captionBG),
+        kRadiusDialog - kCaptionBorder, ImDrawFlags_RoundCornersTop);
+
+    ImGui::PushID(title && *title ? title : id);
+    // The caption widgets are placed by screen position, so they must not feed
+    // the auto-fit content size (that would grow the dialog every frame).
+    ImGuiWindow* dialogWindow = ImGui::GetCurrentWindow();
+    const ImVec2 captionCursorMax = dialogWindow->DC.CursorMaxPos;
+    const float actionStripWidth = showClose ? barHeight : 0.0f;
+    float dragWidth = windowSize.x - kCaptionBorder * 2.0f - actionStripWidth;
+    if (dragWidth < kGap24) dragWidth = kGap24;
+
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    ImGui::SetCursorScreenPos(ImVec2(windowPos.x + kCaptionBorder,
+                                     windowPos.y + kCaptionBorder));
+    ImGui::InvisibleButton("##DialogCaptionDrag",
+                           ImVec2(dragWidth, barHeight - kCaptionBorder));
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        const ImVec2 delta = ImGui::GetIO().MouseDelta;
+        ImGui::SetWindowPos(ImVec2(windowPos.x + delta.x, windowPos.y + delta.y));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    ImGui::PopItemFlag();
+
     if (title && *title) {
         const char* end = title;
         while (*end && !(end[0] == '#' && end[1] == '#')) ++end;
         if (end != title) {
-            ImGui::SetWindowFontScale(1.12f);
-            ImGui::TextUnformatted(title, end);
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::Dummy(ImVec2(0.0f, kGap4));
+            const ImVec4 clipRect(
+                windowPos.x + kGap16, windowPos.y,
+                windowPos.x + kGap16 + dragWidth - kGap16 * 2.0f, windowPos.y + barHeight);
+            drawList->AddText(
+                ImGui::GetFont(), ImGui::GetFontSize(),
+                ImVec2(windowPos.x + kGap16,
+                       windowPos.y + (barHeight - ImGui::GetFontSize()) * 0.5f),
+                ImGui::ColorConvertFloat4ToU32(th.menuText),
+                title, end, 0.0f, &clipRect);
         }
     }
+
+    if (showClose) {
+        const ImVec2 closePos(windowPos.x + windowSize.x - kCaptionBorder - barHeight,
+                              windowPos.y + kCaptionBorder);
+        if (DrawStandaloneCaptionButton("##DialogClose", StandaloneWindowAction::Close,
+                                        closePos, barHeight - kCaptionBorder, th, false)) {
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    dialogWindow->DC.CursorMaxPos = captionCursorMax;
+    ImGui::PopID();
+
+    ImGui::SetCursorScreenPos(
+        ImVec2(windowPos.x + kGap24, windowPos.y + barHeight + kGap12));
     return true;
 }
 
