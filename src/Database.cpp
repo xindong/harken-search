@@ -17576,6 +17576,32 @@ static void SortFolderTree(FolderInfo& folder) {
     for (auto& sub : folder.subfolders) SortFolderTree(sub);
 }
 
+// Registered library roots must stay visible even when they hold no indexed
+// files, for example after a drive-root import is cancelled and rolled back.
+// Without this the tree collapses to an empty panel although the library still
+// lists the root the user just dropped.
+static bool FolderTreeContainsPath(const FolderInfo& folder, const std::string& path) {
+    if (folder.path == path) return true;
+    for (const auto& sub : folder.subfolders) {
+        if (FolderTreeContainsPath(sub, path)) return true;
+    }
+    return false;
+}
+
+static void EnsureLibraryRootsInFolderTree(FolderInfo& root,
+                                           const std::vector<std::string>& libraryRoots,
+                                           aura::folder_tree::PathMode pathMode) {
+    for (const std::string& libraryRoot : libraryRoots) {
+        const std::string canonicalRoot = HarkenSearch::CanonicalFolderPath(libraryRoot);
+        if (canonicalRoot.empty()) continue;
+        const auto layers = aura::folder_tree::BuildFolderTreeLayers(
+            NormalizeLibraryPathUtf8(canonicalRoot, false), libraryRoots, pathMode);
+        if (layers.empty()) continue;
+        if (FolderTreeContainsPath(root, layers.back().path)) continue;
+        InsertFolderIntoTree(root, canonicalRoot, 0, libraryRoot, pathMode, libraryRoots);
+    }
+}
+
 FolderInfo Database::getFolderHierarchy(aura::folder_tree::PathMode pathMode) {
     return getFolderHierarchyWithProgress(nullptr, 0, pathMode);
 }
@@ -17611,7 +17637,11 @@ FolderInfo Database::getFolderHierarchyWithProgress(const std::function<void(int
             sqlite3_finalize(stmt);
         }
     }
-    if (folderRows.empty()) return root;
+    if (folderRows.empty()) {
+        EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
+        SortFolderTree(root);
+        return root;
+    }
 
     // Build hierarchical tree
     int total = (int)folderRows.size();
@@ -17625,6 +17655,7 @@ FolderInfo Database::getFolderHierarchyWithProgress(const std::function<void(int
             progress(built, total);
         }
     }
+    EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
     SortFolderTree(root);
     return root;
 }
@@ -17679,6 +17710,8 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
                         static_cast<long long>(liveFolderCount),
                         static_cast<long long>(indexedFolderCount));
         if (sqlite3_db_readonly(m_db, "main") == 1) {
+            EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
+            SortFolderTree(root);
             return root;
         }
         if (!rebuildFolderIndex()) {
@@ -17687,7 +17720,11 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
     }
 
     auto entries = getFolderIndex();
-    if (entries.empty()) return root;
+    if (entries.empty()) {
+        EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
+        SortFolderTree(root);
+        return root;
+    }
 
     // folder_index has no file_path column, so map each canonical folder
     // to one raw-case sample before rendering the fast-startup tree.
@@ -17717,6 +17754,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
         const std::string& sample = (sampleIt != sampleByCanon.end()) ? sampleIt->second : std::string();
         InsertFolderIntoTree(root, e.folderPath, e.fileCount, sample, pathMode, libraryRoots);
     }
+    EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
     SortFolderTree(root);
     return root;
 }

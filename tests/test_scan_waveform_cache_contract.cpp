@@ -2082,6 +2082,102 @@ static int testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree() {
     return failures;
 }
 
+static int testRolledBackDriveRootScanKeepsLibraryRootInFolderTree() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("rolled_back_drive_root_tree");
+    const fs::path dbPath = root / "rolled_back_drive_root_tree.db";
+    const fs::path scanRoot = root / "drive_root";
+    const fs::path audioFolder = scanRoot / "audio_folder";
+    fs::create_directories(audioFolder);
+
+    const int inputFileCount = 12;
+    for (int fileIndex = 0; fileIndex < inputFileCount; ++fileIndex) {
+        writeSilentMonoWav(
+            audioFolder / ("rollback_cancel_" + std::to_string(fileIndex) + ".wav"),
+            8000,
+            12000);
+    }
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    aura::BackfillQueue queue;
+    queue.onDbOpened(dbPath.u8string(), 23);
+
+    // Mirrors the shipping drop path: the dropped root is registered before
+    // the rollback journal opens, then the import is cancelled with
+    // CancelRollback, which discards every imported row but not the root.
+    db.mergeLibraryRoots({scanRoot.u8string()});
+    db.beginScanRollbackSession();
+
+    std::atomic<bool> cancelFlag{false};
+    std::atomic<HarkenSearch::ScanStopDisposition> stopDisposition{
+        HarkenSearch::ScanStopDisposition::CancelRollback};
+    const auto progressCallback = [&cancelFlag](int,
+                                                int,
+                                                const std::string&,
+                                                bool dataCommitted) {
+        if (dataCommitted) cancelFlag.store(true, std::memory_order_release);
+    };
+    const ScanStats stats = db.scanDirectoryEx(scanRoot.u8string(),
+                                               true,
+                                               false,
+                                               false,
+                                               progressCallback,
+                                               &cancelFlag,
+                                               1,
+                                               false,
+                                               true,
+                                               &queue,
+                                               dbPath.u8string(),
+                                               23,
+                                               0,
+                                               &stopDisposition);
+
+    check(stats.cancelled && !stats.paused,
+          "rollback cancellation of a drive-root import reports cancelled",
+          failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 0,
+          "rollback cancellation discards every imported row",
+          failures);
+    const auto roots = db.getLibraryRoots();
+    check(roots.size() == 1,
+          "rollback cancellation keeps the registered library root",
+          failures);
+
+    const std::string expectedRootPath =
+        HarkenSearch::CanonicalFolderPath(scanRoot.u8string());
+    std::function<bool(const FolderInfo&)> containsRoot;
+    containsRoot = [&](const FolderInfo& folder) {
+        if (HarkenSearch::CanonicalFolderPath(folder.path) == expectedRootPath) return true;
+        return std::any_of(folder.subfolders.begin(), folder.subfolders.end(), containsRoot);
+    };
+
+    const FolderInfo fullTree = db.getFolderHierarchy();
+    check(containsRoot(fullTree),
+          "rollback cancellation keeps the registered root in the folder tree",
+          failures);
+
+    check(db.rebuildFolderIndex(),
+          "rollback cancellation rebuilds the empty folder index",
+          failures);
+    const FolderInfo indexedTree = db.getFolderHierarchyFromIndex();
+    check(containsRoot(indexedTree),
+          "rollback cancellation keeps the registered root in the indexed tree",
+          failures);
+
+    queue.shutdown();
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testDriveRootLibraryRootBrowsesIndexedFolders() {
     int failures = 0;
     const fs::path root = makeTempRoot("drive_root_library_root");
@@ -4684,6 +4780,8 @@ int main(int argc, char** argv) {
     failures += testCancelledScanRollsBackCommittedRowsAndQueueDebt();
     std::cout << "-- testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree\n";
     failures += testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree();
+    std::cout << "-- testRolledBackDriveRootScanKeepsLibraryRootInFolderTree\n";
+    failures += testRolledBackDriveRootScanKeepsLibraryRootInFolderTree();
     std::cout << "-- testDriveRootLibraryRootBrowsesIndexedFolders\n";
     failures += testDriveRootLibraryRootBrowsesIndexedFolders();
     std::cout << "-- testCoverWallIgnoresStaleOrphanRegistryRows\n";

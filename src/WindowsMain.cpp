@@ -9023,6 +9023,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 wpath.resize(wcslen(wpath.c_str()));
 
                 std::string pathUtf8 = WideToUtf8(wpath);
+                // A bare drive spec ("D:") resolves to that drive current
+                // directory for the filesystem, but a drop means the drive
+                // itself, so normalise it to "D:\\" before classifying.
+                if (pathUtf8.size() == 2 && pathUtf8[1] == ':' &&
+                    ((pathUtf8[0] >= 'A' && pathUtf8[0] <= 'Z') ||
+                     (pathUtf8[0] >= 'a' && pathUtf8[0] <= 'z'))) {
+                    pathUtf8 += '\\';
+                }
                 if (Platform::FileSystem::Exists(pathUtf8)) {
 
                     if (Platform::FileSystem::IsDirectory(pathUtf8)) {
