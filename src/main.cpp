@@ -2860,6 +2860,7 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD dwEffect) override {
+        HarkenSearch::AudioDragCard::UpdateDragPosition();
         return DRAGDROP_S_USEDEFAULTCURSORS;
     }
 };
@@ -3261,15 +3262,14 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
 
         // 拖出波形小卡：文件名取源文件，波形优先用起拖处提供的峰值，其次读可见行缓存。
         HarkenSearch::AudioDragCard::CardSpec card;
-        std::vector<float> peaks;
-        int peakChannels = 1;
         if (origin && !origin->peaks.empty()) {
-            peaks = origin->peaks;
-            peakChannels = origin->peakChannels;
+            card.envelope = BuildDragCardEnvelope(origin->peaks, origin->peakChannels, 76);
         } else {
+            std::vector<float> peaks;
+            int peakChannels = 1;
             TryGetCachedDragPeaks(files[0], peaks, peakChannels);
+            card.envelope = BuildDragCardEnvelope(peaks, peakChannels, 76);
         }
-        card.envelope = BuildDragCardEnvelope(peaks, peakChannels, 76);
         card.fileName = (origin && !origin->displayName.empty())
                             ? origin->displayName
                             : DisplayNameForDragPath(files[0]);
@@ -3290,8 +3290,6 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
                 g_mainWindowHiddenForDrag = true;
             }
         };
-        HarkenSearch::AudioDragCard::BeginDrag(card);
-
         FileDataObject* pDataObject = new FileDataObject(files);
         DropSource* pDropSource = new DropSource();
         SuppressDefaultDragImage(pDataObject);
@@ -3305,7 +3303,10 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
 
         // Advertise COPY only; Pro Tools rejects MOVE for this external drag.
         DWORD dwEffect = 0;
+        HarkenSearch::AudioDragCard::BeginDrag(card);
         HRESULT dragHr = DoDragDrop(pDataObject, pDropSource, DROPEFFECT_COPY, &dwEffect);
+        const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
+        HarkenSearch::AudioDragCard::EndDrag(dropSucceeded);
         if (FAILED(dragHr)) {
             AppendDiagLogF(L"StartFileDrag: DoDragDrop failed hr=0x%08X", (unsigned int)dragHr);
         }
@@ -3315,12 +3316,8 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
 
         // Drag result: if dropped successfully, keep window hidden so user can start editing in DAW.
         // If cancelled/no drop, restore window (if it was hidden).
-        const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
         AppendDiagLogF(L"StartFileDrag: dropSucceeded=%d shouldHide=%d g_hwnd=%p",
                        (int)dropSucceeded, (int)shouldHideWindow, (void*)g_hwnd);
-
-        // 目标接收后小卡停在松手位置轻轻下沉；取消或拒收直接收起。
-        HarkenSearch::AudioDragCard::EndDrag(dropSucceeded);
 
         // Find the drop target window (the window under cursor, likely DAW)
         HWND dropTargetWnd = nullptr;

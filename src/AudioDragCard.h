@@ -34,6 +34,8 @@ bool RenderToPixels(const CardSpec& spec, float scaleX, float scaleY,
 // 起拖时调用：创建并显示小卡，开始跟手。
 void BeginDrag(const CardSpec& spec);
 
+void UpdateDragPosition();
+
 // OLE 拖放结束：dropped=true 播放轻放动效后收起，false 立即收起。
 void EndDrag(bool dropped);
 

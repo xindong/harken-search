@@ -10,6 +10,7 @@
 #include <gdiplus.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -20,12 +21,11 @@ namespace {
 
 using namespace Gdiplus;
 
-// 卡片尺寸与动效参数来自本卡已确认的预览（168×59 小卡，210ms 缩卡，
-// 松手后 125ms 内下沉 8px，160–245ms 淡出）。
 constexpr wchar_t kWindowClass[] = L"HarkenSearchAudioDragCard";
 constexpr UINT_PTR kTickTimerId = 1;
 constexpr UINT_PTR kHideMainTimerId = 2;
-constexpr UINT kTickIntervalMs = 8;
+constexpr UINT kTickIntervalMs = 10;
+constexpr ULONGLONG kMinFrameGapMs = 8;
 
 constexpr float kCardWidth = 168.0f;
 constexpr float kCardHeight = 59.0f;
@@ -42,11 +42,11 @@ constexpr float kStackSecondY = 6.0f;
 constexpr float kCursorGap = 14.0f;
 constexpr int kWaveBars = 56;
 
-constexpr int kMorphMs = 210;
-constexpr int kSettleMs = 125;
-constexpr int kFadeStartMs = 160;
-constexpr int kLandingEndMs = 245;
-constexpr float kLandingDip = 8.0f;
+constexpr int kMorphMs = 155;
+constexpr int kSettleMs = 78;
+constexpr int kFadeStartMs = 12;
+constexpr int kLandingEndMs = 120;
+constexpr float kLandingDip = 6.0f;
 
 constexpr ARGB kSurfaceFill = 0xFF192737;
 constexpr ARGB kSurfaceBorder = 0xFF3C546E;
@@ -61,6 +61,15 @@ constexpr ARGB kCountText = 0xFFB7D4F0;
 
 enum class Phase { Morph, Follow, Landing };
 
+struct PaintedFrame {
+    int width = 0;
+    int height = 0;
+    float scaleX = 0.0f;
+    float scaleY = 0.0f;
+    BYTE captionOpacity = 0;
+    BYTE stackOpacity = 0;
+};
+
 struct CardState {
     HWND window = nullptr;
     bool active = false;
@@ -68,6 +77,7 @@ struct CardState {
     CardSpec spec;
     Phase phase = Phase::Follow;
     ULONGLONG phaseStart = 0;
+    ULONGLONG lastTick = 0;
 
     // 源波形与目标位置（屏幕像素）
     float morphWide = 1.0f;
@@ -80,8 +90,11 @@ struct CardState {
     float landingY = 0.0f;
 
     // 最近一次呈现的位置（落地动效从这里开始）
-    float presentedX = 0.0f;
-    float presentedY = 0.0f;
+    LONG presentedX = 0;
+    LONG presentedY = 0;
+    BYTE presentedOpacity = 0;
+    bool hasPresented = false;
+    PaintedFrame frame;
 
     // 离屏画布
     HDC memoryDC = nullptr;
@@ -98,10 +111,9 @@ CardState g_card;
 
 float Clamp01(float value) { return std::clamp(value, 0.0f, 1.0f); }
 
-// 与已确认预览一致的收尾速度曲线。
-float EaseOutQuintic(float progress) {
+float EaseOutCubic(float progress) {
     const float remaining = 1.0f - progress;
-    return 1.0f - remaining * remaining * remaining * remaining * (1.0f + 4.0f * progress);
+    return 1.0f - remaining * remaining * remaining;
 }
 
 float SmoothStep(float value) {
@@ -110,6 +122,11 @@ float SmoothStep(float value) {
 }
 
 float Lerp(float from, float to, float t) { return from + (to - from) * t; }
+
+ULONGLONG MotionTimeMs() {
+    using namespace std::chrono;
+    return static_cast<ULONGLONG>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
 
 bool EnsureGdiplus() {
     if (g_card.gdiplusReady) return true;
@@ -165,7 +182,7 @@ void ReleaseSurface() {
 
 bool EnsureSurface(int width, int height) {
     if (width <= 0 || height <= 0) return false;
-    if (g_card.bitmap && g_card.bitmapWidth == width && g_card.bitmapHeight == height) return true;
+    if (g_card.bitmap && g_card.bitmapWidth >= width && g_card.bitmapHeight >= height) return true;
 
     ReleaseSurface();
 
@@ -285,28 +302,8 @@ void DrawCard(Graphics& graphics, const CardSpec& spec, float scaleX, float scal
     }
 }
 
-void ApplyOpacityToPixels(unsigned char* pixels, size_t pixelCount, BYTE opacity);
-
-void ApplyGlobalOpacity(int width, int height, BYTE opacity) {
-    if (opacity == 255) return;
-    ApplyOpacityToPixels(static_cast<unsigned char*>(g_card.bits),
-                         static_cast<size_t>(width) * static_cast<size_t>(height), opacity);
-}
-
-void ApplyOpacityToPixels(unsigned char* pixels, size_t pixelCount, BYTE opacity) {
-    if (opacity == 255 || pixels == nullptr) return;
-    const unsigned int factor = opacity;
-    for (size_t i = 0; i < pixelCount; ++i) {
-        unsigned char* px = pixels + i * 4;
-        px[0] = static_cast<unsigned char>((px[0] * factor) / 255);
-        px[1] = static_cast<unsigned char>((px[1] * factor) / 255);
-        px[2] = static_cast<unsigned char>((px[2] * factor) / 255);
-        px[3] = static_cast<unsigned char>((px[3] * factor) / 255);
-    }
-}
-
 bool RenderCardPixels(const CardSpec& spec, float scaleX, float scaleY, BYTE captionOpacity, BYTE stackOpacity,
-                      BYTE globalOpacity, std::vector<unsigned char>& outPixels, int& outWidth, int& outHeight) {
+                      std::vector<unsigned char>& outPixels, int& outWidth, int& outHeight) {
     if (!EnsureGdiplus()) return false;
     const float stackWidth = spec.itemCount > 1 ? kStackSecondX * scaleX : 0.0f;
     const float stackHeight = spec.itemCount > 1 ? kStackSecondY * scaleY : 0.0f;
@@ -327,7 +324,6 @@ bool RenderCardPixels(const CardSpec& spec, float scaleX, float scaleY, BYTE cap
         DrawCard(graphics, spec, scaleX, scaleY, captionOpacity, stackOpacity);
     }
 
-    ApplyOpacityToPixels(outPixels.data(), static_cast<size_t>(width) * static_cast<size_t>(height), globalOpacity);
     return true;
 }
 
@@ -349,8 +345,37 @@ void ClampToWorkArea(int pointerX, int pointerY, int width, int height, float* o
     *outY = y;
 }
 
-void PresentAt(float x, float y, float scaleX, float scaleY, BYTE captionOpacity, BYTE stackOpacity, BYTE globalOpacity) {
-    if (!g_card.window || !EnsureGdiplus()) return;
+void PresentFrame(float x, float y, BYTE opacity) {
+    if (!g_card.window || !g_card.memoryDC || !g_card.frame.width) return;
+
+    POINT destination = {static_cast<LONG>(std::lround(x)), static_cast<LONG>(std::lround(y))};
+    BOOL updated = FALSE;
+    if (g_card.hasPresented && opacity == g_card.presentedOpacity) {
+        if (destination.x == g_card.presentedX && destination.y == g_card.presentedY) return;
+        updated = UpdateLayeredWindow(g_card.window, nullptr, &destination, nullptr, nullptr, nullptr, 0, nullptr, 0);
+    } else {
+        SIZE size = {g_card.frame.width, g_card.frame.height};
+        POINT source = {0, 0};
+        BLENDFUNCTION blend = {AC_SRC_OVER, 0, opacity, AC_SRC_ALPHA};
+        updated = UpdateLayeredWindow(g_card.window, nullptr, &destination, &size,
+                                      g_card.memoryDC, &source, 0, &blend, ULW_ALPHA);
+    }
+    if (updated) {
+        g_card.hasPresented = true;
+        g_card.presentedX = destination.x;
+        g_card.presentedY = destination.y;
+        g_card.presentedOpacity = opacity;
+    }
+}
+
+void PresentAt(float x, float y, float scaleX, float scaleY, BYTE captionOpacity, BYTE stackOpacity) {
+    if (!g_card.window) return;
+    const auto& frame = g_card.frame;
+    if (frame.width > 0 && frame.scaleX == scaleX && frame.scaleY == scaleY &&
+        frame.captionOpacity == captionOpacity && frame.stackOpacity == stackOpacity) {
+        PresentFrame(x, y, 255);
+        return;
+    }
 
     const float stackWidth = g_card.spec.itemCount > 1 ? kStackSecondX * scaleX : 0.0f;
     const float stackHeight = g_card.spec.itemCount > 1 ? kStackSecondY * scaleY : 0.0f;
@@ -358,10 +383,11 @@ void PresentAt(float x, float y, float scaleX, float scaleY, BYTE captionOpacity
     const int height = (std::max)(1, static_cast<int>(std::lround(kCardHeight * scaleY + stackHeight)));
     if (!EnsureSurface(width, height)) return;
 
-    std::memset(g_card.bits, 0, static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
+    const int stride = g_card.bitmapWidth * 4;
+    std::memset(g_card.bits, 0, static_cast<size_t>(stride) * static_cast<size_t>(height));
 
     {
-        Bitmap canvas(width, height, width * 4, PixelFormat32bppPARGB, static_cast<BYTE*>(g_card.bits));
+        Bitmap canvas(width, height, stride, PixelFormat32bppPARGB, static_cast<BYTE*>(g_card.bits));
         Graphics graphics(&canvas);
         graphics.SetSmoothingMode(SmoothingModeAntiAlias);
         graphics.SetPixelOffsetMode(PixelOffsetModeHighQuality);
@@ -370,18 +396,9 @@ void PresentAt(float x, float y, float scaleX, float scaleY, BYTE captionOpacity
         DrawCard(graphics, g_card.spec, scaleX, scaleY, captionOpacity, stackOpacity);
     }
 
-    ApplyGlobalOpacity(width, height, globalOpacity);
-
-    g_card.presentedX = x;
-    g_card.presentedY = y;
-
-    POINT destination = {static_cast<LONG>(std::lround(x)), static_cast<LONG>(std::lround(y))};
-    SIZE size = {width, height};
-    POINT source = {0, 0};
-    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    HDC screenDC = GetDC(nullptr);
-    UpdateLayeredWindow(g_card.window, screenDC, &destination, &size, g_card.memoryDC, &source, 0, &blend, ULW_ALPHA);
-    ReleaseDC(nullptr, screenDC);
+    g_card.frame = {width, height, scaleX, scaleY, captionOpacity, stackOpacity};
+    g_card.hasPresented = false;
+    PresentFrame(x, y, 255);
 }
 
 void DestroyCard() {
@@ -396,50 +413,24 @@ void DestroyCard() {
     g_card.spec = CardSpec();
     g_card.phase = Phase::Follow;
     g_card.phaseStart = 0;
+    g_card.lastTick = 0;
+    g_card.hasPresented = false;
+    g_card.frame = {};
 }
 
 void BeginLandingFromPresentedPosition() {
     if (g_card.phase == Phase::Landing) return;
     g_card.spec.onHideMainDelayElapsed = nullptr;
     if (g_card.window) KillTimer(g_card.window, kHideMainTimerId);
-    g_card.landingX = g_card.presentedX;
-    g_card.landingY = g_card.presentedY;
+    g_card.landingX = static_cast<float>(g_card.presentedX);
+    g_card.landingY = static_cast<float>(g_card.presentedY);
     g_card.phase = Phase::Landing;
-    g_card.phaseStart = GetTickCount64();
+    g_card.phaseStart = MotionTimeMs();
 }
 
-void Tick() {
+void Tick(ULONGLONG now = MotionTimeMs()) {
     if (!g_card.active) return;
-    const ULONGLONG now = GetTickCount64();
-    POINT cursor = {};
-    GetCursorPos(&cursor);
-
-    if (g_card.phase == Phase::Morph) {
-        const float raw = static_cast<float>(now - g_card.phaseStart) / static_cast<float>(kMorphMs);
-        if (raw >= 1.0f) {
-            g_card.phase = Phase::Follow;
-        } else {
-            const float eased = EaseOutQuintic(Clamp01(raw));
-            const float scaleX = Lerp(g_card.morphWide, 1.0f, eased);
-            const float scaleY = Lerp(g_card.morphTall, 1.0f, eased);
-            const int stackWidth = g_card.spec.itemCount > 1 ? static_cast<int>(kStackSecondX) : 0;
-            const int stackHeight = g_card.spec.itemCount > 1 ? static_cast<int>(kStackSecondY) : 0;
-            float targetX = 0.0f;
-            float targetY = 0.0f;
-            ClampToWorkArea(cursor.x, cursor.y,
-                            static_cast<int>(kCardWidth) + stackWidth,
-                            static_cast<int>(kCardHeight) + stackHeight,
-                            &targetX, &targetY);
-            const float x = Lerp(g_card.sourceOriginX, targetX, eased);
-            const float y = Lerp(g_card.sourceOriginY, targetY, eased);
-            const float captionFade = g_card.spec.itemCount > 1 ? 1.0f : Clamp01((eased - 0.55f) / 0.45f);
-            const BYTE captionOpacity = static_cast<BYTE>(std::lround(captionFade * 255.0f));
-            const BYTE stackOpacity = g_card.spec.itemCount > 1 ? static_cast<BYTE>(std::lround(eased * 255.0f)) : 0;
-            PresentAt(x, y, scaleX, scaleY, captionOpacity, stackOpacity, 255);
-            return;
-        }
-    }
-
+    g_card.lastTick = now;
     if (g_card.phase == Phase::Landing) {
         const float elapsedMs = static_cast<float>(now - g_card.phaseStart);
         if (elapsedMs >= static_cast<float>(kLandingEndMs)) {
@@ -449,28 +440,52 @@ void Tick() {
         const float descent = SmoothStep(elapsedMs / static_cast<float>(kSettleMs));
         const float fade = SmoothStep((elapsedMs - static_cast<float>(kFadeStartMs)) /
                                       static_cast<float>(kLandingEndMs - kFadeStartMs));
-        const BYTE globalOpacity = static_cast<BYTE>(std::lround((1.0f - fade) * 255.0f));
-        PresentAt(g_card.landingX, g_card.landingY + kLandingDip * descent, 1.0f, 1.0f, 255, 255, globalOpacity);
+        const BYTE opacity = static_cast<BYTE>(std::lround((1.0f - fade) * 255.0f));
+        PresentFrame(g_card.landingX, g_card.landingY + kLandingDip * descent, opacity);
         return;
     }
 
-    // 跟手
+    POINT cursor = {};
+    GetCursorPos(&cursor);
+
     const int stackWidth = g_card.spec.itemCount > 1 ? static_cast<int>(kStackSecondX) : 0;
     const int stackHeight = g_card.spec.itemCount > 1 ? static_cast<int>(kStackSecondY) : 0;
-    float x = 0.0f;
-    float y = 0.0f;
-    ClampToWorkArea(cursor.x, cursor.y,
-                    static_cast<int>(kCardWidth) + stackWidth,
-                    static_cast<int>(kCardHeight) + stackHeight,
-                    &x, &y);
-    PresentAt(x, y, 1.0f, 1.0f, 255, 255, 255);
+    float targetX = 0.0f;
+    float targetY = 0.0f;
+    ClampToWorkArea(cursor.x, cursor.y, static_cast<int>(kCardWidth) + stackWidth,
+                    static_cast<int>(kCardHeight) + stackHeight, &targetX, &targetY);
+    if (g_card.phase == Phase::Morph) {
+        const float raw = static_cast<float>(now - g_card.phaseStart) / static_cast<float>(kMorphMs);
+        if (raw >= 1.0f) {
+            g_card.phase = Phase::Follow;
+        } else {
+            const float eased = EaseOutCubic(Clamp01(raw));
+            const float scaleX = Lerp(g_card.morphWide, 1.0f, eased);
+            const float scaleY = Lerp(g_card.morphTall, 1.0f, eased);
+            const float x = Lerp(g_card.sourceOriginX, targetX, eased);
+            const float y = Lerp(g_card.sourceOriginY, targetY, eased);
+            const float captionFade = g_card.spec.itemCount > 1 ? 1.0f : Clamp01((eased - 0.55f) / 0.45f);
+            const BYTE captionOpacity = static_cast<BYTE>(std::lround(captionFade * 255.0f));
+            const BYTE stackOpacity = g_card.spec.itemCount > 1 ? static_cast<BYTE>(std::lround(eased * 255.0f)) : 0;
+            PresentAt(x, y, scaleX, scaleY, captionOpacity, stackOpacity);
+            return;
+        }
+    }
+
+    PresentAt(targetX, targetY, 1.0f, 1.0f, 255, g_card.spec.itemCount > 1 ? 255 : 0);
+}
+
+void TickIfDue() {
+    if (!g_card.active) return;
+    const ULONGLONG now = MotionTimeMs();
+    if (now - g_card.lastTick >= kMinFrameGapMs) Tick(now);
 }
 
 LRESULT CALLBACK CardWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_TIMER:
         if (wParam == kTickTimerId) {
-            Tick();
+            TickIfDue();
             return 0;
         }
         if (wParam == kHideMainTimerId) {
@@ -523,7 +538,7 @@ bool CreateCardWindow() {
 bool RenderToPixels(const CardSpec& spec, float scaleX, float scaleY,
                     unsigned char captionOpacity, unsigned char stackOpacity,
                     std::vector<unsigned char>& outPixels, int& outWidth, int& outHeight) {
-    return RenderCardPixels(spec, scaleX, scaleY, captionOpacity, stackOpacity, 255,
+    return RenderCardPixels(spec, scaleX, scaleY, captionOpacity, stackOpacity,
                             outPixels, outWidth, outHeight);
 }
 
@@ -533,7 +548,6 @@ void BeginDrag(const CardSpec& spec) {
 
     g_card.spec = spec;
     g_card.active = true;
-    g_card.phaseStart = GetTickCount64();
     if (!CreateCardWindow()) {
         DestroyCard();
         return;
@@ -557,13 +571,18 @@ void BeginDrag(const CardSpec& spec) {
         SetTimer(g_card.window, kHideMainTimerId, spec.hideMainDelayMs, nullptr);
     }
 
-    Tick();
+    g_card.phaseStart = MotionTimeMs();
+    Tick(g_card.phaseStart);
+}
+
+void UpdateDragPosition() {
+    if (g_card.phase != Phase::Landing) TickIfDue();
 }
 
 void EndDrag(bool dropped) {
     if (!g_card.active) return;
 
-    if (!dropped || !g_card.spec.animationsEnabled) {
+    if (!dropped || !g_card.spec.animationsEnabled || !g_card.hasPresented) {
         DestroyCard();
         return;
     }

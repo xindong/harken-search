@@ -17,6 +17,11 @@
 
 namespace {
 bool simulatedLeftButtonDown = false;
+POINT simulatedCursor = {400, 300};
+int presentationCount = 0;
+int uploadCount = 0;
+int surfaceAllocationCount = 0;
+BYTE presentedOpacity = 255;
 }
 
 SHORT WINAPI ProbeGetAsyncKeyState(int key) {
@@ -24,9 +29,26 @@ SHORT WINAPI ProbeGetAsyncKeyState(int key) {
 }
 
 BOOL WINAPI ProbeGetCursorPos(LPPOINT cursor) {
-    cursor->x = 400;
-    cursor->y = 300;
+    *cursor = simulatedCursor;
     return TRUE;
+}
+
+HBITMAP WINAPI ProbeCreateDIBSection(HDC dc, const BITMAPINFO* info, UINT usage,
+                                    void** bits, HANDLE section, DWORD offset) {
+    ++surfaceAllocationCount;
+    return CreateDIBSection(dc, info, usage, bits, section, offset);
+}
+
+BOOL WINAPI ProbeUpdateLayeredWindow(HWND window, HDC destinationDC, POINT* position,
+                                     SIZE* size, HDC sourceDC, POINT* origin,
+                                     COLORREF key, BLENDFUNCTION* blend, DWORD flags) {
+    const BOOL updated = UpdateLayeredWindow(window, destinationDC, position, size, sourceDC, origin, key, blend, flags);
+    if (updated) {
+        ++presentationCount;
+        if (sourceDC) ++uploadCount;
+        if (blend) presentedOpacity = blend->SourceConstantAlpha;
+    }
+    return updated;
 }
 
 namespace HarkenSearch::AudioDragCardProbe {
@@ -37,7 +59,11 @@ void CancelNow();
 #define AudioDragCard AudioDragCardProbe
 #define GetAsyncKeyState ProbeGetAsyncKeyState
 #define GetCursorPos ProbeGetCursorPos
+#define CreateDIBSection ProbeCreateDIBSection
+#define UpdateLayeredWindow ProbeUpdateLayeredWindow
 #include "../src/AudioDragCard.cpp"
+#undef UpdateLayeredWindow
+#undef CreateDIBSection
 #undef GetCursorPos
 #undef GetAsyncKeyState
 #undef AudioDragCard
@@ -181,11 +207,14 @@ bool TestDropResultGating() {
     card::EndDrag(true);
     ok &= Check(card::IsActive() && card::g_card.phase == card::Phase::Landing,
                 "successful drop: starts landing");
-    PumpMessages(90);
+    card::g_card.phaseStart -= 45;
+    card::Tick();
     ok &= Check(card::IsActive() && card::g_card.presentedY > startY,
                 "successful drop: card moves downward");
-    PumpMessages(220);
-    ok &= Check(!card::IsActive(), "successful drop: card closes after landing");
+    ok &= Check(presentedOpacity < 255, "successful drop: already fading after 45 ms");
+    card::g_card.phaseStart -= 105;
+    card::Tick();
+    ok &= Check(!card::IsActive() && !FindCardWindow(), "successful drop: closes within 150 ms");
 
     beginReleasedDrag();
     card::CancelNow();
@@ -197,6 +226,62 @@ bool TestDropResultGating() {
     card::EndDrag(true);
     ok &= Check(!card::IsActive(), "animations disabled: successful drop closes immediately");
     simulatedLeftButtonDown = false;
+    card::CancelNow();
+    return ok;
+}
+
+bool TestMotionPresentation() {
+    namespace card = HarkenSearch::AudioDragCardProbe;
+    card::CardSpec spec;
+    spec.fileName = L"drag-motion.wav";
+    spec.itemCount = 3;
+    spec.envelope = {0.25f, 0.8f, 0.4f};
+    bool ok = true;
+
+    card::BeginDrag(spec);
+    const HWND followWindow = FindCardWindow();
+    RECT start = {};
+    ok &= Check(followWindow && GetWindowRect(followWindow, &start), "follow: presents the first frame");
+    const int firstUploads = uploadCount;
+    simulatedCursor.x += 40;
+    simulatedCursor.y += 25;
+    card::g_card.lastTick -= 20;
+    card::UpdateDragPosition();
+    RECT moved = {};
+    ok &= Check(GetWindowRect(followWindow, &moved) && moved.left == start.left + 40 && moved.top == start.top + 25,
+                "follow: window tracks pointer movement");
+    ok &= Check(uploadCount == firstUploads, "follow: moves without uploading unchanged pixels");
+    const int stationaryPresentations = presentationCount;
+    card::g_card.lastTick -= 20;
+    card::UpdateDragPosition();
+    ok &= Check(presentationCount == stationaryPresentations, "follow: stationary pointer causes no window update");
+    card::CancelNow();
+
+    spec.hasSourceRect = true;
+    spec.sourceLeft = 120;
+    spec.sourceTop = 160;
+    spec.sourceWidth = 620;
+    spec.sourceHeight = 96;
+    card::BeginDrag(spec);
+    const HWND morphWindow = FindCardWindow();
+    RECT morphStart = {};
+    ok &= Check(morphWindow && GetWindowRect(morphWindow, &morphStart), "morph: presents the source-sized frame");
+    const int initialAllocations = surfaceAllocationCount;
+    card::g_card.phaseStart -= 60;
+    card::Tick();
+    RECT inFlight = {};
+    ok &= Check(GetWindowRect(morphWindow, &inFlight) && inFlight.right - inFlight.left < morphStart.right - morphStart.left,
+                "morph: shrinks towards the pointer");
+    ok &= Check(surfaceAllocationCount == initialAllocations, "morph: reuses the surface while shrinking");
+
+    card::EndDrag(true);
+    RECT landed = {};
+    ok &= Check(GetWindowRect(morphWindow, &landed) && landed.right - landed.left == inFlight.right - inFlight.left &&
+                landed.bottom - landed.top == inFlight.bottom - inFlight.top,
+                "quick drop: keeps the displayed size without snapping");
+    card::BeginDrag(spec);
+    ok &= Check(card::IsActive() && FindCardWindow() && card::g_card.phase != card::Phase::Landing,
+                "repeat drag: interrupts the previous landing");
     card::CancelNow();
     return ok;
 }
@@ -228,10 +313,11 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     if (resultGating) {
-        const bool ok = TestDropResultGating();
+        const bool gatingOk = TestDropResultGating();
+        const bool motionOk = TestMotionPresentation();
         CloseDesktop(desktop);
         GdiplusShutdown(token);
-        return ok ? 0 : 1;
+        return gatingOk && motionOk ? 0 : 1;
     }
 
     HarkenSearch::AudioDragCard::CardSpec spec;
