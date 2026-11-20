@@ -32264,7 +32264,7 @@ void RenderUI(AppState& state) {
                                     if (aura::ui::ActionButton(L(AI_CopyMenu))) {
                                         ImGui::OpenPopup("##AICopyMenu");
                                     }
-                                    if (ImGui::BeginPopup("##AICopyMenu")) {
+                                    if (aura::ui::BeginPopup("##AICopyMenu")) {
                                         if (ImGui::MenuItem(L(Main_CopyToClipboardBtn))) {
                                             ImGui::SetClipboardText(it->second.c_str());
                                         }
@@ -32278,7 +32278,7 @@ void RenderUI(AppState& state) {
                                                 ImGui::SetClipboardText(csv.c_str());
                                             }
                                         }
-                                        ImGui::EndPopup();
+                                        aura::ui::EndPopup();
                                     }
 
                                     if (transcript && !transcript->segments.empty()) {
