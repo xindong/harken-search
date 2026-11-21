@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <system_error>
 #include <utility>
 
@@ -125,6 +126,11 @@ std::string SerializeExternalAiSettings(const ExternalAiSettings& settings)
             ", \"enabled\": " + (settings.roots[index].enabled ? "true" : "false") + "}";
     }
     document += "],\n";
+    const std::string token = Quote(settings.bridgeToken);
+    if (token.empty()) {
+        return std::string{};
+    }
+    document += "  \"bridgeToken\": " + token + ",\n";
     document += "  \"capabilities\": {\n";
     for (std::size_t index = 0; index < CapabilityKeys.size(); ++index) {
         document += std::string("    \"") + CapabilityKeys[index].key + "\": \"" +
@@ -151,6 +157,7 @@ bool ParseExternalAiSettings(const std::string& json, const std::string& expecte
     settings.enabled = authorization.enabled();
     settings.sampleLibrary = authorization.sampleLibrary();
     settings.roots = authorization.roots();
+    settings.bridgeToken = authorization.bridgeToken();
     for (std::size_t index = 0; index < ExternalAiCapabilities.size(); ++index) {
         settings.capabilities[index] = authorization.AccessFor(ExternalAiCapabilities[index]);
     }
@@ -218,6 +225,26 @@ bool LoadExternalAiSettings(const std::string& path, const std::string& libraryI
     return true;
 }
 
+namespace {
+
+// 32 random bytes as hex. Only the settings page and the connector (which reads
+// the same document) ever see it; it is what the write bridge asks for.
+std::string NewBridgeToken()
+{
+    std::random_device device;
+    static const char* hex = "0123456789abcdef";
+    std::string token;
+    token.reserve(64);
+    for (int index = 0; index < 32; ++index) {
+        const unsigned int byte = device() & 0xFFu;
+        token.push_back(hex[byte >> 4]);
+        token.push_back(hex[byte & 0x0Fu]);
+    }
+    return token;
+}
+
+}  // namespace
+
 bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& settings, std::string& error)
 {
     if (!ValidLibraryId(settings.libraryId)) {
@@ -228,7 +255,11 @@ bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& s
         error = "at most 32 ticked directories are allowed";
         return false;
     }
-    const std::string document = SerializeExternalAiSettings(settings);
+    ExternalAiSettings persisted = settings;
+    if (persisted.bridgeToken.empty()) {
+        persisted.bridgeToken = NewBridgeToken();
+    }
+    const std::string document = SerializeExternalAiSettings(persisted);
     if (document.empty()) {
         error = "authorization document could not be serialized";
         return false;

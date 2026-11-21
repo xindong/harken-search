@@ -80,3 +80,17 @@ if(WIN32 AND TARGET HarkenSearch AND TARGET HarkenExternalAiMcp)
         COMMENT "Copying HarkenExternalAiMcp.exe beside HarkenSearch.exe..."
         VERBATIM)
 endif()
+
+# Harken-side rules for one confirmed Playlist write. The database adapter and the
+# pipe are separate; this target pins the decision logic on its own.
+add_executable(TestExternalAiPlaylistBridge EXCLUDE_FROM_ALL
+    tests/test_external_ai_playlist_bridge.cpp
+    src/ExternalAiPlaylistBridge.cpp
+    src/ExternalAiAuthorization.cpp)
+target_include_directories(TestExternalAiPlaylistBridge PRIVATE src thirdparty)
+if(MSVC)
+    target_compile_options(TestExternalAiPlaylistBridge PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestExternalAiPlaylistBridge COMMAND TestExternalAiPlaylistBridge "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(TestExternalAiPlaylistBridge PROPERTIES TIMEOUT 30)
+aura_set_test_labels(TestExternalAiPlaylistBridge core)

@@ -15,6 +15,12 @@ using HarkenSearch::ExternalAiAccess;
 using HarkenSearch::ExternalAiAuthorization;
 using HarkenSearch::ExternalAiCapability;
 
+std::string ReadText(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+}
+
 int failures = 0;
 
 void Check(bool condition, const char* description)
@@ -196,6 +202,37 @@ int main(int argc, char** argv)
             "a library without a document keeps every capability closed");
     }
 
+    // The write bridge needs a secret the connector can only obtain by reading
+    // the document the user saved. It is generated once and then kept.
+    {
+        HarkenSearch::ExternalAiSettings tokenSettings;
+        tokenSettings.libraryId = libraryIdText;
+        tokenSettings.enabled = true;
+        const fs::path tokenPath = base / "token-document.json";
+        std::string tokenError;
+        Check(HarkenSearch::SaveExternalAiSettings(tokenPath.u8string(), tokenSettings, tokenError),
+            "saving a document without a token succeeds");
+        const std::string saved = ReadText(tokenPath);
+        const auto tokenAt = saved.find("bridgeToken");
+        Check(tokenAt != std::string::npos, "saved document carries a bridge token");
+        HarkenSearch::ExternalAiSettings reloaded;
+        Check(HarkenSearch::ParseExternalAiSettings(saved, libraryIdText, reloaded, tokenError),
+            "document with bridge token parses");
+        Check(reloaded.bridgeToken.size() == 64, "bridge token is 32 bytes of hex");
+        reloaded.enabled = false;
+        Check(HarkenSearch::SaveExternalAiSettings(tokenPath.u8string(), reloaded, tokenError),
+            "resaving keeps the document writable");
+        HarkenSearch::ExternalAiSettings keeps;
+        Check(HarkenSearch::ParseExternalAiSettings(ReadText(tokenPath), libraryIdText, keeps, tokenError) &&
+                keeps.bridgeToken == reloaded.bridgeToken,
+            "resaving does not rotate the bridge token");
+        HarkenSearch::ExternalAiAuthorization legacy;
+        std::string legacyError;
+        Check(HarkenSearch::ExternalAiAuthorization::Parse(Document(rootText, allRead), legacy, legacyError) &&
+                legacy.bridgeToken().empty(),
+            "legacy document without a bridge token still parses");
+    }
+
     HarkenSearch::ExternalAiSettings stored;
     stored.libraryId = libraryIdText;
     stored.enabled = true;
@@ -204,6 +241,8 @@ int main(int argc, char** argv)
     stored.capabilities[1] = ExternalAiAccess::ReadOnly;
     stored.capabilities[3] = ExternalAiAccess::ReadOnly;
     stored.capabilities[5] = ExternalAiAccess::Editable;
+    // Fixed token so the on-disk bytes can be compared with the serializer.
+    stored.bridgeToken = std::string(64, 'a');
     stored.capabilities[6] = ExternalAiAccess::ReadOnly;
 
     const std::string serialized = HarkenSearch::SerializeExternalAiSettings(stored);

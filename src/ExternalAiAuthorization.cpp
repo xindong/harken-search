@@ -134,7 +134,8 @@ bool ExternalAiAuthorization::Parse(const std::string& json, ExternalAiAuthoriza
     }
     for (auto field = document.begin(); field != document.end(); ++field) {
         if (field.key() != "libraryId" && field.key() != "enabled" && field.key() != "sampleLibrary" &&
-            field.key() != "roots" && field.key() != "capabilities") {
+            field.key() != "roots" && field.key() != "capabilities" &&
+            field.key() != "bridgeToken") {
             error = "unknown field '" + field.key() + "'";
             return false;
         }
@@ -194,6 +195,19 @@ bool ExternalAiAuthorization::Parse(const std::string& json, ExternalAiAuthoriza
             out.roots_.push_back({path->get<std::string>(),
                 ticked == root.end() ? true : ticked->get<bool>()});
         }
+    }
+    const auto bridgeToken = document.find("bridgeToken");
+    if (bridgeToken != document.end()) {
+        if (!bridgeToken->is_string()) {
+            error = "bridgeToken must be a string";
+            return false;
+        }
+        const auto value = bridgeToken->get<std::string>();
+        if (value.size() > 128) {
+            error = "bridgeToken is too long";
+            return false;
+        }
+        out.bridgeToken_ = value;
     }
     const auto capabilities = document.find("capabilities");
     if (capabilities != document.end()) {

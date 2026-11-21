@@ -345,13 +345,15 @@
             L(ExtAi_CapReadFileName),L(ExtAi_CapReadMetadata),L(ExtAi_CapEditMetadata),L(ExtAi_CapAiNaming),
             L(ExtAi_CapReadPlaylist),L(ExtAi_CapEditPlaylist)};
         const char* accessLabels[]{L(ExtAi_AccessNone),L(ExtAi_AccessRead),L(ExtAi_AccessEdit)};
-        const int groupStarts[]{0,3};
-        const int groupEnds[]{2,8};
+        const int groupStarts[]{0,3,7};
+        const int groupEnds[]{2,6,8};
+        const int groupCount=3;
         const float accessButtonWidth=62.f;
         const float accessButtonGap=3.f;
         const float accessGroupWidth=accessButtonWidth*3.f+accessButtonGap*2.f;
-        for (int group=0; group<2; ++group) {
-            const char* groupTitle=group==0?L(ExtAi_GroupLookup):L(ExtAi_GroupMetadata);
+        for (int group=0; group<groupCount; ++group) {
+            const char* groupTitle=group==0?L(ExtAi_GroupLookup)
+                :(group==1?L(ExtAi_GroupMetadata):L(ExtAi_GroupPlaylist));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8.f,4.f));
             ImGui::TextColored(theme.controlAccent,"%s",groupTitle);
             ImGui::PopStyleVar();

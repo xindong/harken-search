@@ -56,6 +56,10 @@ public:
     bool sampleLibrary() const { return sampleLibrary_; }
     const std::string& libraryId() const { return libraryId_; }
     const std::vector<ExternalAiRoot>& roots() const { return roots_; }
+    // Shared secret the Harken-side write bridge requires. Empty means the
+    // document predates the bridge, so writes stay unavailable until the page
+    // saves it once.
+    const std::string& bridgeToken() const { return bridgeToken_; }
 
     // Decides one call. libraryId must be the identity of the database the
     // request actually uses; a document for another library never matches.
@@ -80,6 +84,7 @@ private:
     bool sampleLibrary_ = false;
     std::string libraryId_;
     std::vector<ExternalAiRoot> roots_;
+    std::string bridgeToken_;
     std::vector<Grant> grants_;
 };
 

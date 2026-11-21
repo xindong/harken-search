@@ -37,6 +37,8 @@ struct ExternalAiSettings {
     bool enabled = false;
     bool sampleLibrary = false;
     std::vector<ExternalAiRoot> roots;
+    // Empty until the page saves once; SaveExternalAiSettings then generates it.
+    std::string bridgeToken;
     std::array<ExternalAiAccess, ExternalAiCapabilityCount> capabilities{ {
         ExternalAiAccess::Denied, ExternalAiAccess::Denied, ExternalAiAccess::Denied,
         ExternalAiAccess::Denied, ExternalAiAccess::Denied,
