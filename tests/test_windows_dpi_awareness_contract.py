@@ -25,6 +25,17 @@ MANIFEST = ROOT / "resources" / "HarkenSearch.manifest"
 
 
 class WindowsDpiAwarenessContractTests(unittest.TestCase):
+    def test_windows_chrome_uses_native_dpi_without_new_reflow(self) -> None:
+        windows = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
+        main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+        self.assertIn("io.ConfigDpiScaleFonts = true;", windows)
+        shared_scale = (ROOT / "src" / "ui" / "UiScale.h").read_text(encoding="utf-8")
+        self.assertIn("ImGui::GetStyle().FontScaleDpi", shared_scale)
+        self.assertIn("const bool layoutTinyWidth = mainWorkW < 760.0f;", main)
+        self.assertIn("const bool layoutVeryShortHeight = mainWorkH < 520.0f;", main)
+        self.assertNotIn("compactTransportReflow", main)
+        self.assertNotIn("scrollCompactToolbar", main)
+
     def test_aris_target_embeds_manifest_and_registers_focused_test(self) -> None:
         cmake = CMAKE.read_text(encoding="utf-8")
         normalized = cmake.replace("\\", "/")

@@ -2,6 +2,8 @@
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/ModuleWindowShell.h"
 #include "ui/ResultsPanelLayout.h"
+#include "ui/TransportScale.h"
+#include "ui/UiScale.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -24,6 +26,23 @@ void Check(bool condition, const char* message) {
 
 bool Near(float left, float right, float epsilon = 0.0001f) {
     return std::fabs(left - right) <= epsilon;
+}
+
+void TestNativeChromeDimensionsScaleTogether() {
+    using namespace aura::ui::dpi;
+    using namespace aura::ui::transport;
+
+    Check(Near(ScalePx(24.0f, 1.0f), 24.0f), "100 percent keeps the original geometry");
+    Check(Near(ScalePx(24.0f, 1.5f), 36.0f), "height scales at 150 percent");
+    Check(Near(ScalePx(24.0f, 2.0f), 48.0f), "height scales at 200 percent");
+    Check(Near(ScalePx(52.0f, 0.75f), 39.0f), "smaller layouts use the same proportion");
+    Check(Near(ScalePx(24.0f, 0.0f), 24.0f), "invalid DPI uses the original size");
+    Check(Near(ResolveEqualizerWidth(520.0f, 900.0f, 1.5f), 780.0f),
+          "equalizer keeps the user's design width at 150 percent");
+    Check(Near(ResolveEqualizerWidth(520.0f, 435.0f, 1.5f), 435.0f),
+          "the equalizer respects its existing allocation");
+    Check(Near(ReserveEqualizerSlope(148.5f, 337.5f, 67.5f, 1.5f), 187.5f),
+          "space for the full slope label scales with the rail");
 }
 
 bool SameColor(const ImVec4& left, const ImVec4& right) {
@@ -726,6 +745,7 @@ void TestBrowserSettingsDoNotOverwriteDatabaseAndPlaylist() {
 } // namespace
 
 int main() {
+    TestNativeChromeDimensionsScaleTogether();
     TestInvariantMetrics();
     TestPaletteIsCallerSupplied();
     TestSurfaceHierarchyResolver();

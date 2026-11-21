@@ -15,6 +15,7 @@
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
+#include "ui/UiScale.h"
 #include "ui/EmptyStateVisualAudit.h"
 #include "AnnotationBridge.h"
 #include "BackgroundIoPolicy.h"
@@ -9039,11 +9040,36 @@ static ImVec4 GetHybridSeamClearColor() {
     return clearBg;
 }
 
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+static float PreviewUiDpiScale() {
+    static const float previewScale = [] {
+        char value[24]{};
+        const DWORD length = GetEnvironmentVariableA("HARKEN_QA_DPI_SCALE", value, sizeof(value));
+        if (length == 0 || length >= sizeof(value)) return 0.0f;
+        char* end = nullptr;
+        const float scale = std::strtof(value, &end);
+        return end != value && *end == '\0' && std::isfinite(scale) && scale > 0.0f
+            ? aura::ui::dpi::SanitizeScale(scale)
+            : 0.0f;
+    }();
+    return previewScale;
+}
+#endif
+
+static float MainWindowUiDpiScale() {
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (const float previewScale = PreviewUiDpiScale(); previewScale > 0.0f) return previewScale;
+#endif
+    const float nativeScale = g_hwnd ? static_cast<float>(GetDpiForWindow(g_hwnd)) / 96.0f : 1.0f;
+    return aura::ui::dpi::SanitizeScale(nativeScale);
+}
+
 static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     static float s_lastRebuiltReadingPx = -1.0f;
     static float s_lastRebuiltListPx    = -1.0f;
     static int s_lastTheme = -9999;
     static bool s_lastUseCustom = false;
+    static float s_lastDpiScale = 0.0f;
 
     const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, kMaxReadingFontPx));
     const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, kMaxListFontPx));
@@ -9053,7 +9079,9 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     ImGuiIO& io = ImGui::GetIO();
     io.FontGlobalScale = 1.0f;
 
-    const float chromeScale = (float)kChromeFontPx / kTypographyBasePx;
+    const float dpiScale = MainWindowUiDpiScale();
+    const float chromeScale = ((float)kChromeFontPx / kTypographyBasePx) * dpiScale;
+    const bool dpiChanged = dpiScale != s_lastDpiScale;
 
     const bool needFontRebuild = (s_lastRebuiltReadingPx != (float)requestedReading) ||
                                  (s_lastRebuiltListPx    != (float)requestedList);
@@ -9066,9 +9094,9 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     const bool themeChanged = (themeNow != s_lastTheme) || (useCustomNow != s_lastUseCustom);
     const bool chromePending = ThemeColors::hasPendingUiChromeResync();
 
-    if (themeChanged || needFontRebuild || chromePending) {
+    if (themeChanged || needFontRebuild || chromePending || dpiChanged) {
         const bool editorPreviewChromeOnly =
-            chromePending && !themeChanged && !needFontRebuild && state.showThemeEditor &&
+            !themeChanged && !needFontRebuild && state.showThemeEditor &&
             ThemeColors::customized();
         if (editorPreviewChromeOnly) {
             ThemeColors::applyToImGui();
@@ -9079,7 +9107,9 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
         }
         s_lastTheme = themeNow;
         s_lastUseCustom = useCustomNow;
+        s_lastDpiScale = dpiScale;
     }
+    ImGui::GetStyle().FontScaleDpi = dpiScale;
 }
 
 // OpenGL Context Creation
@@ -13242,6 +13272,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.ConfigDpiScaleFonts = true;
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // 禁用：左右方向键不再触发焦点框移动
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
@@ -13327,6 +13358,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 #endif
 
     ImGui_ImplWin32_InitForOpenGL(hwnd);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (const float previewScale = PreviewUiDpiScale(); previewScale > 0.0f) {
+        ImGui::GetPlatformIO().Platform_GetWindowDpiScale = [](ImGuiViewport*) { return PreviewUiDpiScale(); };
+        ImGui::GetMainViewport()->DpiScale = previewScale;
+    }
+#endif
     ImGui_ImplOpenGL3_Init("#version 130");
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {

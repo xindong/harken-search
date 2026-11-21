@@ -1,4 +1,5 @@
 #include "SidebarActivityBar.h"
+#include "ui/UiScale.h"
 
 #include "AppState.h"
 #include "Localization.h"
@@ -115,7 +116,7 @@ static float SidebarSizeFactor(AppSettings::SidebarSize sz) {
 }
 
 float SidebarRailWidth(const AppState& state) {
-    return 52.0f * SidebarSizeFactor(state.settings.sidebarSize);
+    return aura::ui::dpi::Px(52.0f * SidebarSizeFactor(state.settings.sidebarSize));
 }
 
 // Draws the VS Code-style vertical activity bar.
@@ -129,7 +130,7 @@ void DrawSidebarActivityBar(AppState& state) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return;
 
-    const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize);
+    const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize) * aura::ui::dpi::UiScale();
     const float bar_width = 52.0f * sizeFactor;
     const float item_h    = 52.0f * sizeFactor;
     const float icon_size = 20.0f * sizeFactor;

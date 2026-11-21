@@ -450,7 +450,7 @@ def test_browser_path_input_and_hit_area_share_explicit_remaining_row_width():
     assert "ImGui::PushItemWidth(-parentButtonWidth" not in path_row
 
 
-def test_transport_is_36px_and_pitch_group_shares_one_column_center():
+def test_transport_is_36_design_pixels_and_pitch_group_shares_one_column_center():
     main = read(MAIN_CPP)
     waveform = between(
         main,
@@ -459,7 +459,7 @@ def test_transport_is_36px_and_pitch_group_shares_one_column_center():
     )
     pitch = waveform[waveform.index("// PITCH WHEEL") :]
 
-    assert "const float waveTransportH = 36.0f;" in waveform
+    assert "const float waveTransportH = workspacePx(36.0f);" in waveform
     assert "const float kBarH = waveTransportH;" in waveform
     assert "const float waveTransportH = 40.0f;" not in waveform
     assert "const float kBarH    = 40.0f;" not in waveform
