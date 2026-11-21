@@ -52,6 +52,17 @@ def test_root_delegates_sidebar_activity_bar_without_owning_drawing():
     assert "static void RenderSidebarPanelContent(AppState& state, const char* idScope)" in MAIN
 
 
+def test_activity_rail_clips_scrollable_modules_above_its_footer():
+    source = SOURCE_PATH.read_text(encoding="utf-8")
+    assert "window->InnerRect.Max.y - window->WindowPadding.y" in source
+    clip_start = source.index("ImGui::PushClipRect(")
+    modules_end = source.index("ImGui::PopClipRect();", clip_start)
+    reserve = source.index("ImGui::Dummy(ImVec2(bar_width, menuHeight));", modules_end)
+    footer = source.index('window->GetID("##SidebarPanelMenuBtn")')
+    assert clip_start < source.index('##SidebarIcon_%d') < modules_end < reserve < footer
+    assert "const ImVec2 b_min(pos.x, menuY);" in source
+
+
 def test_sidebar_activity_bar_is_built_tested_and_governed():
     assert CMAKE.count("src/SidebarActivityBar.cpp") == 1
     assert BEHAVIOR.count("tests/test_sidebar_activity_bar_boundary.py") == 1

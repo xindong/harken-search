@@ -46,7 +46,8 @@ def test_root_delegates_file_info_panel_shell_without_owning_drawing():
     assert '#include "FileInfoPanel.h"' in MAIN
     assert "static void RenderFileInfoPanelContent(AppState& state, float panelWidth)" not in MAIN
     assert "static int PushFileInfoShellStyle(const ThemeColorScheme& tcs)" not in MAIN
-    assert "RenderFileInfoPanelContent(state, rightContentWidth);" in MAIN
+    assert "RenderFileInfoPanelContent(state, width);" in MAIN
+    assert "RenderFileInfoPanelContent(state, infoContentWidth);" in MAIN
     assert "void RenderFileInfoPanelContent(AppState& state, float panelWidth)" not in MAIN
     assert "LoadGlobalCoverWallPage" in MAIN
     assert "applyMetadataPatchBatch" in MAIN
