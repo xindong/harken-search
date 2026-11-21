@@ -916,7 +916,7 @@ static const char* kRecordColumns =
     "id, file_path, file_name, extension, file_size, folder_path, file_mtime, last_indexed, "
     "sample_rate, bit_depth, channels, total_frames, duration, format, wavpack_lossless, "
     "title, artist, album, description, category, keywords, rating, "
-    "play_count, date_added, last_played, has_cover, "
+    "play_count, use_count, date_added, last_played, has_cover, "
     "embedded_cover_key, embedded_cover_key_mtime, folder_cover_key, folder_cover_src_path, folder_cover_src_mtime, cover_suppressed, "
     "integrated_lufs, momentary_lufs, short_term_lufs, true_peak_dbtp, "
     // Extended library metadata fields
@@ -943,7 +943,7 @@ static const char* kRecordColumnsAf =
     "af.id, af.file_path, af.file_name, af.extension, af.file_size, af.folder_path, af.file_mtime, af.last_indexed, "
     "af.sample_rate, af.bit_depth, af.channels, af.total_frames, af.duration, af.format, af.wavpack_lossless, "
     "af.title, af.artist, af.album, af.description, af.category, af.keywords, af.rating, "
-    "af.play_count, af.date_added, af.last_played, af.has_cover, "
+    "af.play_count, af.use_count, af.date_added, af.last_played, af.has_cover, "
     "af.embedded_cover_key, af.embedded_cover_key_mtime, af.folder_cover_key, af.folder_cover_src_path, af.folder_cover_src_mtime, af.cover_suppressed, "
     "af.integrated_lufs, af.momentary_lufs, af.short_term_lufs, af.true_peak_dbtp, "
     // Extended library metadata fields
@@ -2723,6 +2723,7 @@ bool Database::createTables() {
             rating          INTEGER DEFAULT 0,
 
             play_count      INTEGER DEFAULT 0,
+            use_count       INTEGER DEFAULT 0,
             date_added      INTEGER,
             last_played     INTEGER,
 
@@ -3043,6 +3044,32 @@ bool Database::createTables() {
         if (ok) {
             WriteAppMetaInt(m_db, "sub_playlist_migrated", kSubPlaylistMigrationVersion);
             DIAG_ACTION_FMT("Database", "PlaylistSchemaUpgraded: sub_playlist v=%d", kSubPlaylistMigrationVersion);
+        }
+    }
+
+    // 使用次数：老库补列，只加一次。计数与 play_count 分开，试听不算使用。
+    if (ReadAppMetaInt(m_db, "use_count_migrated") != 1) {
+        bool useCountOk = true;
+        sqlite3_stmt* info = nullptr;
+        bool hasUseCount = false;
+        if (sqlite3_prepare_v2(m_db, "PRAGMA table_info(audio_files)", -1, &info, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(info) == SQLITE_ROW) {
+                const unsigned char* name = sqlite3_column_text(info, 1);
+                if (name && std::strcmp(reinterpret_cast<const char*>(name), "use_count") == 0) {
+                    hasUseCount = true;
+                    break;
+                }
+            }
+        }
+        sqlite3_finalize(info);
+        if (!hasUseCount) {
+            useCountOk = executeSQL("ALTER TABLE audio_files ADD COLUMN use_count INTEGER DEFAULT 0");
+        }
+        if (useCountOk) {
+            WriteAppMetaInt(m_db, "use_count_migrated", 1);
+            DIAG_SYSTEM("Migration", "UseCountSchemaUpgraded");
+        } else {
+            DIAG_SYSTEM("Migration", "UseCountSchemaUpgrade_FAILED");
         }
     }
 
@@ -4123,7 +4150,7 @@ static const std::string& GetAddFileSql() {
             "file_path, file_name, extension, file_size, "
             "sample_rate, bit_depth, channels, total_frames, duration, format, "
             "title, artist, album, description, category, keywords, rating, "
-            "play_count, date_added, last_played, "
+            "play_count, use_count, date_added, last_played, "
             "folder_path, file_mtime, last_indexed, has_cover, "
             "embedded_cover_key, embedded_cover_key_mtime, "
             "folder_cover_key, folder_cover_src_path, folder_cover_src_mtime, "
@@ -5153,7 +5180,7 @@ enum class ColId : uint8_t {
     Id, FilePath, FileName, Extension, FileSize, FolderPath, FileMtime, LastIndexed,
     SampleRate, BitDepth, Channels, TotalFrames, Duration, Format, WavPackLossless,
     Title, Artist, Album, Description, Category, Keywords, Rating,
-    PlayCount, DateAdded, LastPlayed, HasCover,
+    PlayCount, UseCount, DateAdded, LastPlayed, HasCover,
     EmbeddedCoverKey, EmbeddedCoverKeyMtime, FolderCoverKey, FolderCoverSrcPath, FolderCoverSrcMtime, CoverSuppressed,
     MatchSnippet,
     // F-033 music-analysis fields live directly on AudioRecord rather than ExtMeta.
@@ -5182,6 +5209,7 @@ static std::vector<ColMapEntry> buildColumnMap(sqlite3_stmt* stmt, int colCount)
         {"title", ColId::Title}, {"artist", ColId::Artist}, {"album", ColId::Album},
         {"description", ColId::Description}, {"category", ColId::Category}, {"keywords", ColId::Keywords},
         {"rating", ColId::Rating}, {"play_count", ColId::PlayCount},
+        {"use_count", ColId::UseCount},
         {"date_added", ColId::DateAdded}, {"last_played", ColId::LastPlayed}, {"has_cover", ColId::HasCover},
         {"embedded_cover_key", ColId::EmbeddedCoverKey}, {"embedded_cover_key_mtime", ColId::EmbeddedCoverKeyMtime},
         {"folder_cover_key", ColId::FolderCoverKey}, {"folder_cover_src_path", ColId::FolderCoverSrcPath},
@@ -5304,6 +5332,7 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
         case ColId::Keywords:               r.keywords = safeGetText(stmt, i); break;
         case ColId::Rating:                 r.rating = sqlite3_column_int(stmt, i); break;
         case ColId::PlayCount:              r.playCount = sqlite3_column_int(stmt, i); break;
+        case ColId::UseCount:               r.useCount = sqlite3_column_int(stmt, i); break;
         case ColId::DateAdded:              r.dateAdded = sqlite3_column_int64(stmt, i); break;
         case ColId::LastPlayed:             r.lastPlayed = sqlite3_column_int64(stmt, i); break;
         case ColId::HasCover:               r.hasCover = sqlite3_column_int(stmt, i) != 0; break;
@@ -14592,6 +14621,10 @@ int64_t Database::getAggregatedPlaylistFileCount(int64_t parentFolderId) {
 
     sqlite3_finalize(stmt);
     return count;
+}
+
+bool Database::incrementUseCount(int64_t fileId) {
+    return executeSQL("UPDATE audio_files SET use_count = use_count + 1 WHERE id = " + std::to_string(fileId));
 }
 
 bool Database::incrementPlayCount(int64_t fileId) {

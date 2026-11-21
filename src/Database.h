@@ -106,6 +106,7 @@ struct AudioRecord {
     std::string keywords;
     int rating = 0;                    // 应用内评级（仅 DB）
     int playCount = 0;
+    int useCount = 0;   // 真正被拖出/发送/导出使用的次数（试听不算）
     int64_t dateAdded = 0;
     int64_t lastPlayed = 0;
     int64_t fileMtime = 0;
@@ -1108,6 +1109,7 @@ public:
 
     // Play tracking
     bool incrementPlayCount(int64_t fileId);
+    bool incrementUseCount(int64_t fileId);
     bool updateLastPlayed(int64_t fileId);
 
     // CoverKey cache (persistent)
