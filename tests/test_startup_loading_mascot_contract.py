@@ -1,4 +1,6 @@
-"""REQ-20261117-SPLASH-LOGO-EXPRESSION / REQ-20261119-WELCOME-MASCOT: both startup pages use the shared mascot, not the user avatar."""
+"""REQ-20261117-SPLASH-LOGO-EXPRESSION / REQ-20261119-WELCOME-MASCOT / REQ-20261120-STARTUP-AVATAR:
+both startup pages share one slot; it holds the brand mascot until the user sets a
+personal avatar, then that avatar takes the slot."""
 
 from pathlib import Path
 import re
@@ -13,16 +15,29 @@ WELCOME = SOURCE.split(
     1,
 )[1].split("\n}\n", 1)[0]
 CSS = SOURCE.split("static void AppendStartupMascotCss(std::wstring& html) {", 1)[1].split("\n}\n", 1)[0]
+AVATAR_CSS = SOURCE.split("static void AppendStartupAvatarCss(std::wstring& html) {", 1)[1].split("\n}\n", 1)[0]
+GATE = SOURCE.split("static bool StartupHasPersonalAvatar(const AppSettings& settings) {", 1)[1].split("\n}\n", 1)[0]
+AVATAR_MARKUP = SOURCE.split("static std::string BuildStartupAvatarMarkup(const AppSettings& settings) {", 1)[1].split("\n}\n", 1)[0]
+BUILTIN_SVG = SOURCE.split("static std::string BuildStartupBuiltinAvatarSvg(int avatarIndex) {", 1)[1].split("\n}\n", 1)[0]
 MASCOT = ".startup-loading-mascot"
-MOUNT = (
-    r'<div class="startup-loading-mascot-slot" aria-hidden="true">'
-    r'[^<]*HarkenSearch::kStartupLoadingMascotArtwork[^<]*</div>'
-)
+SLOT = '<div class="startup-loading-mascot-slot" aria-hidden="true">'
 ANIMATIONS = {
     f"{MASCOT}-antenna": "startupMascotAntenna",
     f"{MASCOT}-antenna-warmth": "startupMascotWarmth",
     f"{MASCOT}-eyes": "startupMascotEyes",
 }
+
+
+def mount(section: str) -> str:
+    """The avatar slot expression for one startup surface."""
+    match = re.search(
+        re.escape(SLOT)
+        + r'\n\)HTML_[LW]2";\n\s*const std::string (\w+) = BuildStartupAvatarMarkup\(settings\);'
+        + r'\n\s*html \+= \1\.empty\(\) \? std::wstring\(HarkenSearch::kStartupLoadingMascotArtwork\)'
+        + r'\n\s*: Utf8ToWide\(\1\);',
+        section,
+    )
+    return match.group(1) if match else ""
 
 
 def declarations(block: str) -> dict[str, str]:
@@ -66,8 +81,7 @@ class StartupLoadingMascotContract(unittest.TestCase):
 
     def test_mounts_shared_artwork_in_the_centered_unclipped_loading_slot(self) -> None:
         self.assertTrue('#include "StartupLoadingMascotArt.h"' in SOURCE, "Missing shared artwork header")
-        mount = re.search(MOUNT, LOADING)
-        self.assertIsNotNone(mount, "The loading slot must render the shared inline SVG")
+        self.assertTrue(mount(LOADING), "The loading slot must fall back to the shared inline SVG")
         slot = self.css_rule(f"{MASCOT}-slot")
         artwork = self.css_rule(MASCOT)
         expected_slot = {"width": "86px", "height": "86px", "margin": "0 0 22px", "place-items": "center"}
@@ -77,15 +91,45 @@ class StartupLoadingMascotContract(unittest.TestCase):
         self.assertNotIn("animation", slot)
         self.assertNotIn("animation", artwork)
 
-    def test_removes_personal_avatar_hooks_without_leaving_dangling_loading_dom_ids(self) -> None:
-        removed = set(re.findall(r"(?i)[\w-]*(?:avatar|pulseHalo|displayNameUtf8|loadingNameChars|loadingDisplayName)[\w-]*", LOADING))
-        self.assertFalse(removed, f"Loading still references personal avatar hooks: {sorted(removed)}")
+    def test_personal_avatar_requires_an_upload_or_an_explicit_pick(self) -> None:
+        self.assertIn("settings.hasCustomAvatar", GATE)
+        self.assertRegex(GATE, r"settings\.diceBearAvatarIndex >= 1 && settings\.diceBearAvatarIndex <= 36")
+        for surface, name in ((LOADING, "loading"), (WELCOME, "welcome")):
+            with self.subTest(surface=name):
+                self.assertTrue(mount(surface), f"{name} does not route the slot through the avatar rule")
+
+    def test_custom_avatar_mounts_the_saved_picture(self) -> None:
+        self.assertIn("GetCustomAvatarPathUtf8()", AVATAR_MARKUP)
+        self.assertIn('src=\\"data:image/png;base64,', AVATAR_MARKUP)
+        self.assertIn("Base64EncodeStartupAsset(pngBytes)", AVATAR_MARKUP)
+
+    def test_builtin_avatar_reuses_the_settings_preview_numbers(self) -> None:
+        self.assertIn("ImGui::ColorConvertHSVtoRGB(hue, 0.50f, 0.56f", BUILTIN_SVG)
+        self.assertIn("ImGui::ColorConvertHSVtoRGB(accentHue, 0.34f, 0.86f", BUILTIN_SVG)
+        self.assertIn("const float hue = (float)(idx - 1) / 36.0f;", BUILTIN_SVG)
+        for literal in ("0.62f", "0.58f", "0.70f", "0.055f", "0.10f"):
+            self.assertIn(literal, BUILTIN_SVG, literal)
+        self.assertIn("ResolveStartupAvatarIndex(settings)", AVATAR_MARKUP)
+
+    def test_avatar_keeps_the_mascot_slot_metrics(self) -> None:
+        avatar = self.css_rule(".startup-loading-avatar", AVATAR_CSS)
+        slot = self.css_rule(f"{MASCOT}-slot")
+        artwork = self.css_rule(MASCOT)
+        self.assertEqual(artwork["width"], avatar["width"])
+        self.assertEqual(artwork["height"], avatar["height"])
+        self.assertEqual("block", avatar["display"])
+        self.assertIn("AppendStartupAvatarCss(html)", LOADING)
+        self.assertIn("AppendStartupAvatarCss(html)", WELCOME)
+
+    def test_removes_dangling_loading_dom_ids(self) -> None:
         declared_ids = set(re.findall(r'\bid="([^"]+)"', LOADING))
         script_ids = set(re.findall(r'\bgetElementById\("([^"]+)"\)', LOADING))
         self.assertLessEqual({"progressBar", "progressDetail", "statusText"}, script_ids)
         self.assertLessEqual(script_ids, declared_ids)
         self.assertTrue("window.updateProgress = function" in LOADING)
         self.assertTrue("window.startExitTransition = function" in LOADING)
+        self.assertNotIn("avatarInitials", LOADING + WELCOME)
+        self.assertNotIn("pulseHalo", LOADING + WELCOME)
 
     def test_entry_veil_is_behind_the_loading_information(self) -> None:
         veil = self.css_rule("body::before", LOADING)
@@ -139,15 +183,13 @@ class StartupLoadingMascotContract(unittest.TestCase):
             self.assertEqual({"transform": "translateX(2.3px) scaleY(1)"}, eyes[seconds])
         self.assertEqual({"transform": "translateX(0) scaleY(.25)"}, eyes[1.94])
 
-    def test_welcome_surface_mounts_the_same_mascot_without_personal_avatar_hooks(self) -> None:
-        self.assertIsNotNone(
-            re.search(MOUNT, WELCOME), "The welcome slot must render the shared inline SVG"
-        )
+    def test_welcome_surface_uses_the_same_slot_and_avatar_rule(self) -> None:
+        self.assertTrue(mount(WELCOME), "The welcome slot must fall back to the shared inline SVG")
         self.assertIn("AppendStartupMascotCss(html)", WELCOME, "Welcome must reuse the shared mascot CSS")
         self.assertIn("AppendStartupMascotCss(html)", LOADING, "Loading must reuse the shared mascot CSS")
-        removed = set(re.findall(r"(?i)[\w-]*(?:avatar|dicebear|pulseHalo)[\w-]*", WELCOME))
-        self.assertFalse(removed, f"Welcome still references the personal avatar: {sorted(removed)}")
-        self.assertNotIn("BuildLocalDiceBearAvatarDataUri", SOURCE)
+        self.assertNotIn("BuildLocalDiceBearAvatarDataUri", SOURCE, "DiceBear files must not come back")
+        self.assertNotIn("avatarPulse", WELCOME, "The welcome page must not keep its old avatar halo")
+        self.assertNotIn("avatar-wrap", WELCOME, "The welcome page must not keep its old avatar slot")
 
     def test_reduced_motion_disables_each_mascot_animation(self) -> None:
         reduced = self.css_group("@media (prefers-reduced-motion: reduce)")

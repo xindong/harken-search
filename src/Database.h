@@ -82,6 +82,7 @@ struct AudioRecord {
     std::string filePath;
     std::string extension;
     std::string format;
+    std::optional<bool> wavPackLossless;
 
     // 3. 冷数据 (Cold Zone)：右键/详情/搜索/封面时访问
     std::string description;
@@ -407,6 +408,7 @@ struct SearchFilter {
     // (.wav,.wave,.mp3,.flac,.ogg,.aiff,.aif,.m4a,.wma).
     // Used when "show Other" is unchecked.
     bool includeOnlyKnownExts = false;
+    bool losslessWavPackOnly = false;
 
     // F-034: exact search mode — no prefix '*' expansion
     bool exactMode = false;

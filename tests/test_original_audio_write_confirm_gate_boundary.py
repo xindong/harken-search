@@ -104,7 +104,7 @@ assert "state.showOriginalAudioWriteConfirm = true" in prompt_body
 assert "ImGui::OpenPopup(L(Dlg_ConfirmWriteOriginalAudio))" not in prompt_body
 assert "ImGui::OpenPopup(L(Dlg_ConfirmWriteOriginalAudio))" in MAIN
 
-popup_idx = MAIN.index("BeginTransientScrollbarPopupModal(L(Dlg_ConfirmWriteOriginalAudio)")
+popup_idx = MAIN.index("aura::ui::BeginAlertDialog(L(Dlg_ConfirmWriteOriginalAudio)")
 popup_slice = MAIN[popup_idx : popup_idx + 1800]
 assert "EscClosePopup" in popup_slice
 assert "ClearPendingOriginalAudioWrite(state)" in popup_slice

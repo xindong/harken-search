@@ -268,6 +268,49 @@ set_source_files_properties(${SQLITE_DIR}/sqlite3.c PROPERTIES
     COMPILE_DEFINITIONS "SQLITE_ENABLE_FTS5;SQLITE_ENABLE_FTS3_PARENTHESIS"
 )
 
+# WavPack decoder (BSD-3-Clause, see thirdparty/wavpack/COPYING).
+# The vendored 5.9.0 sources are decoding-capable; ENABLE_LEGACY keeps pre-4.0
+# files readable and ENABLE_DSD keeps DSD payloads available as PCM.
+set(WAVPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/wavpack)
+set(WAVPACK_SOURCES
+    ${WAVPACK_DIR}/src/common_utils.c
+    ${WAVPACK_DIR}/src/decorr_utils.c
+    ${WAVPACK_DIR}/src/entropy_utils.c
+    ${WAVPACK_DIR}/src/extra1.c
+    ${WAVPACK_DIR}/src/extra2.c
+    ${WAVPACK_DIR}/src/open_utils.c
+    ${WAVPACK_DIR}/src/open_filename.c
+    ${WAVPACK_DIR}/src/open_legacy.c
+    ${WAVPACK_DIR}/src/open_raw.c
+    ${WAVPACK_DIR}/src/pack.c
+    ${WAVPACK_DIR}/src/pack_dns.c
+    ${WAVPACK_DIR}/src/pack_floats.c
+    ${WAVPACK_DIR}/src/pack_utils.c
+    ${WAVPACK_DIR}/src/read_words.c
+    ${WAVPACK_DIR}/src/tags.c
+    ${WAVPACK_DIR}/src/tag_utils.c
+    ${WAVPACK_DIR}/src/unpack.c
+    ${WAVPACK_DIR}/src/unpack3.c
+    ${WAVPACK_DIR}/src/unpack3_open.c
+    ${WAVPACK_DIR}/src/unpack3_seek.c
+    ${WAVPACK_DIR}/src/unpack_dsd.c
+    ${WAVPACK_DIR}/src/unpack_floats.c
+    ${WAVPACK_DIR}/src/unpack_seek.c
+    ${WAVPACK_DIR}/src/unpack_utils.c
+    ${WAVPACK_DIR}/src/pack_dsd.c
+    ${WAVPACK_DIR}/src/write_words.c
+)
+add_library(harken_wavpack STATIC ${WAVPACK_SOURCES})
+target_include_directories(harken_wavpack PUBLIC
+    ${WAVPACK_DIR}/include
+    ${WAVPACK_DIR}/src
+)
+target_compile_definitions(harken_wavpack PRIVATE ENABLE_LEGACY ENABLE_DSD)
+if(MSVC)
+    target_compile_definitions(harken_wavpack PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(harken_wavpack PRIVATE /W0 /utf-8)
+endif()
+
 # ImGui source files
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
 
@@ -485,6 +528,7 @@ set(APP_SOURCES
     src/AudioEngine.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/audio_data_source_miniaudio.cpp
+    src/platform/wavpack_decoding_backend.cpp
     src/platform/audio_playback_miniaudio.cpp
     src/platform/database_audio_probe.cpp
     src/platform/database_audio_probe_miniaudio.cpp
@@ -779,6 +823,7 @@ if(WIN32)
     list(APPEND APP_SOURCES
         src/main.cpp
         src/WindowsMain.cpp
+        src/AudioDragCard.cpp
         src/DefaultAudioPlayerAssociation.cpp
         src/platform/filesystem_win32.cpp
         src/platform/floating_window_corners_win32.cpp
@@ -940,6 +985,28 @@ if(WIN32)
     target_link_libraries(TestDetachedViewportInput PRIVATE gdi32 user32 dwmapi)
     add_test(NAME DetachedViewportInput COMMAND TestDetachedViewportInput)
     set_tests_properties(DetachedViewportInput PROPERTIES LABELS "dock" TIMEOUT 30)
+    add_executable(TestAudioDragCard EXCLUDE_FROM_ALL
+        tests/test_audio_drag_card.cpp
+        src/AudioDragCard.cpp)
+    target_include_directories(TestAudioDragCard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestAudioDragCard PRIVATE cxx_std_17)
+    target_compile_definitions(TestAudioDragCard PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(TestAudioDragCard PRIVATE /utf-8)
+    target_link_libraries(TestAudioDragCard PRIVATE gdiplus gdi32 user32)
+    add_test(NAME AudioDragCard COMMAND TestAudioDragCard)
+    set_tests_properties(AudioDragCard PROPERTIES LABELS "ui" TIMEOUT 60)
+    if(Python3_EXECUTABLE)
+        add_test(NAME AudioDragReview COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audio_drag_review.py")
+        set_tests_properties(AudioDragReview PROPERTIES LABELS "ui" TIMEOUT 120)
+    endif()
+    add_executable(AudioDragCardLiveProbe EXCLUDE_FROM_ALL
+        tests/audio_drag_card_live_probe.cpp
+        src/AudioDragCard.cpp)
+    target_include_directories(AudioDragCardLiveProbe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(AudioDragCardLiveProbe PRIVATE cxx_std_17)
+    target_compile_definitions(AudioDragCardLiveProbe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(AudioDragCardLiveProbe PRIVATE /utf-8)
+    target_link_libraries(AudioDragCardLiveProbe PRIVATE gdiplus gdi32 user32)
     add_executable(TestDockDragSession EXCLUDE_FROM_ALL tests/test_dock_drag_session.cpp src/DockLayout.cpp src/DockDragSession.cpp)
     target_include_directories(TestDockDragSession PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_features(TestDockDragSession PRIVATE cxx_std_17)
@@ -1614,6 +1681,7 @@ if(WIN32)
         Threads::Threads
         opengl32
         gdi32
+        gdiplus
         dwmapi
         ole32
         windowscodecs
@@ -1936,6 +2004,7 @@ if(WIN32)
         src/WaveformExtractor.cpp
         src/NativeFloatReader.cpp
         src/platform/audio_data_source_miniaudio.cpp
+        src/platform/wavpack_decoding_backend.cpp
         src/platform/harken_user_data_layout.cpp
         src/platform/harken_legacy_data_migrator.cpp
         src/platform/filesystem_win32.cpp
@@ -2077,6 +2146,7 @@ if(WIN32)
         src/WaveformExtractor.cpp
         src/NativeFloatReader.cpp
         src/platform/audio_data_source_miniaudio.cpp
+        src/platform/wavpack_decoding_backend.cpp
         src/platform/harken_user_data_layout.cpp
         src/platform/harken_legacy_data_migrator.cpp
         src/platform/filesystem_win32.cpp
@@ -2863,3 +2933,74 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestLocalizationLinkContract core)
 endif()
+
+add_executable(TestWavPackDecode EXCLUDE_FROM_ALL
+    tests/test_wavpack_decode.cpp
+    tests/miniaudio_impl.cpp
+    src/MetadataReader.cpp
+    src/platform/audio_data_source_miniaudio.cpp
+    src/platform/wavpack_decoding_backend.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestWavPackDecode PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+else()
+    target_sources(TestWavPackDecode PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestWavPackDecode PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestWavPackDecode PRIVATE harken_wavpack)
+target_compile_features(TestWavPackDecode PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestWavPackDecode PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME WavPackDecode COMMAND TestWavPackDecode)
+
+
+# WavPack decoding backend
+function(_harken_attach_wavpack_decoder target)
+    get_target_property(_harken_sources ${target} SOURCES)
+    if(NOT _harken_sources)
+        return()
+    endif()
+    set(_harken_needs_decoder FALSE)
+    set(_harken_reads_metadata FALSE)
+    set(_harken_has_decoder_source FALSE)
+    foreach(_harken_source IN LISTS _harken_sources)
+        get_filename_component(_harken_source_name "${_harken_source}" NAME)
+        if(_harken_source_name STREQUAL "audio_file_miniaudio.cpp"
+           OR _harken_source_name STREQUAL "audio_data_source_miniaudio.cpp"
+           OR _harken_source_name STREQUAL "database_audio_probe_miniaudio.cpp")
+            set(_harken_needs_decoder TRUE)
+        elseif(_harken_source_name STREQUAL "MetadataReader.cpp")
+            set(_harken_reads_metadata TRUE)
+        elseif(_harken_source_name STREQUAL "wavpack_decoding_backend.cpp")
+            set(_harken_has_decoder_source TRUE)
+        endif()
+    endforeach()
+    if(NOT (_harken_needs_decoder OR _harken_reads_metadata OR _harken_has_decoder_source))
+        return()
+    endif()
+    if(_harken_needs_decoder AND NOT _harken_has_decoder_source)
+        target_sources(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wavpack_decoding_backend.cpp)
+    endif()
+    get_target_property(_harken_links ${target} LINK_LIBRARIES)
+    if(NOT _harken_links MATCHES "harken_wavpack")
+        target_link_libraries(${target} PRIVATE harken_wavpack)
+    endif()
+endfunction()
+
+# Every miniaudio-based test or tool needs the WV decode backend that the shared
+# audio sources call, not just the main application.
+get_property(_harken_build_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_harken_wavpack_target IN LISTS _harken_build_targets)
+    _harken_attach_wavpack_decoder(${_harken_wavpack_target})
+endforeach()

@@ -139,7 +139,7 @@
         auto copyable=[&](const char* label,const std::string& value) {
             ImGui::TextDisabled("%s",label);
             ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-64.f));
-            if (aura::ui::SmallActionButton(L(Main_CopyBtn))) ImGui::SetClipboardText(value.c_str());
+            if (aura::ui::SmallActionButton(L(AI_CopyMenu))) ImGui::SetClipboardText(value.c_str());
             ImGui::TextWrapped("%s",value.c_str());
         };
 
@@ -414,7 +414,7 @@
             copyable(L(ExtAi_LibraryId),page.libraryId);
             copyable(L(ExtAi_Document),page.documentPath);
             ImGui::TextDisabled("%s",L(ExtAi_ConnectorCommand));
-            if (hasConnector && aura::ui::SmallActionButton(L(Main_CopyBtn),aura::ui::ButtonVariant::Quiet)) {
+            if (hasConnector && aura::ui::SmallActionButton(L(AI_CopyMenu),aura::ui::ButtonVariant::Quiet)) {
                 ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
             }
             ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());

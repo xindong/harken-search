@@ -2,6 +2,7 @@
 
 #include "HostSendModel.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -313,7 +314,7 @@ struct BridgeResponse {
     bool positionAdjusted = false;
     std::vector<std::string> insertedClipIds;
     std::vector<std::string> failedFilePaths;
-    int insertedFileCount = 0;
+    std::optional<int> insertedFileCount;
 };
 
 struct DispatchResult {
@@ -333,6 +334,7 @@ struct DispatchResult {
     std::string acceptedTrack;
     std::string remoteSessionId;
     std::vector<std::string> insertedClipIds;
+    std::optional<int> insertedFileCount;
 };
 
 struct DispatchPresentation {

@@ -50,6 +50,7 @@
 #include <shlobj.h>
 #include <commdlg.h>
 #include <ole2.h>
+#include <shobjidl.h>   // IDragSourceHelper：屏蔽系统默认文件拖影
 #include <GL/gl.h>
 #elif defined(__APPLE__)
 #include <OpenGL/gl.h>
@@ -116,6 +117,9 @@
 #include "ui/EmptyStateVisualAudit.h"
 #include "ui/TransportBlendSlider.h"
 #include "HarkenSearchThemeManager.h"   // 次世代视觉管理器
+// Audio drag card (waveform mini card that follows the cursor)
+#include "AudioDragCard.h"
+#include "platform/animation_preferences.h"
 #include "HarkenSearchWidgets.h"        // Aris shared controls for core product flows
 #include "HarkenSearchIcons.h"          // 官方品牌字标（菜单栏/启动页同源）
 #include "../thirdparty/lucide/IconsLucide.h"
@@ -140,6 +144,7 @@
 #include "AppState.h"
 #include "SidebarMetadataPicker.h"
 #include "SettingsDialogState.h"
+#include "ReaperSetupPolicy.h"
 #include "SettingsFileWriter.h"
 #include "SettingsMigration.h"
 #include "TagCloudContext.h"
@@ -357,6 +362,7 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include <unordered_map>
 #include <unordered_set>
 #include <thread>
+#include <system_error>
 #include <atomic>
 #include <condition_variable>
 #include <future>
@@ -432,17 +438,6 @@ ReaperBridgeUiStatusForTarget(const DawTarget& target) {
     if (found == g_reaperBridgeUiStatusCache.end()) return std::nullopt;
     return found->second;
 }
-
-// H1b: DAW-send failure line rendered by the DAW toast. The send worker
-// stores the keyed InstallStatus; DrawSendToDAWToast resolves it on the UI
-// thread (constraint 4).
-// H2a (#200 P1-1): the trio (this snapshot + AppState.lastSendToDAWKeyed +
-// AppState.lastSendToDAWStatus) is worker-written and UI-read per frame.
-// All writes and the toast's read go through g_lastSendToDAWStatusMutex so
-// no frame can observe a torn/half-updated row even inside the click frame
-// where a new worker starts right after this UI frame read dawSendState.
-static std::mutex g_lastSendToDAWStatusMutex;
-static HarkenSearch::DawBridge::InstallStatus g_lastSendToDAWBridgeStatus;
 
 static void StoreReaperBridgeUiStatus(
     const DawTarget& target,
@@ -747,121 +742,141 @@ std::string ControlUpdateNoticeForQa(AppState& state, const std::string& action)
 }
 #endif
 
-static bool IsSendToDawSuccessStatus(const std::string& status) {
-    // "Created new track" is a legit success outcome (fallback), not a failure.
-    // "Spotted N clips on ..." is the mid/modern success message.
-    return (status.size() >= 4 && status.compare(0, 4, "Sent") == 0) ||
-           status.compare(0, 7, "Spotted") == 0 ||
-           status.compare(0, 17, "Created new track") == 0;
+// One setup surface: DAW entries open the settings page instead of the legacy popup.
+static void OpenDawIntegrationSettings(AppState& state) {
+    state.openDawIntegrationSettings = true;
+    state.showSettingsDialog = true;
 }
 
-// Toast for Send-to-DAW status (above DAW capsule, right-aligned; 3s hold + 0.5s fade)
+#include "DawSendNotice.inl"
+#include "DawSendDeliveryFeedback.h"
+
+using HarkenSearch::UI::DawSendFeedbackClock;
+using HarkenSearch::UI::DawSendFeedbackSnapshot;
+using HarkenSearch::UI::DawSendOutcome;
+
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+static constexpr std::pair<std::string_view, DawSendOutcome> kDawSendPreviewStates[] = {
+    {"sending", DawSendOutcome::Sending},
+    {"success", DawSendOutcome::Success},
+    {"partial", DawSendOutcome::Partial},
+    {"fallback", DawSendOutcome::Fallback},
+    {"failure", DawSendOutcome::Failure},
+    {"bridge_failure", DawSendOutcome::BridgeFailure},
+};
+
+static struct DawSendFeedbackPreview {
+    DawSendFeedbackSnapshot snapshot;
+    std::string_view state = "idle";
+    float width = 0.0f;
+    size_t page = 1;
+    HarkenSearch::UI::DawSendNoticeObservation observation;
+    int frame = -1;
+} g_dawSendFeedbackPreview;
+
+std::string ControlDawSendFeedbackPreview(const nlohmann::json& request) {
+    using Json = nlohmann::json;
+    auto& preview = g_dawSendFeedbackPreview;
+    if (!request.is_object() || !request.contains("action") || !request["action"].is_string())
+        return R"({"ok":false,"error":"invalid_send_feedback_request"})";
+    const std::string action = request["action"].get<std::string>();
+    if (action == "clear") {
+        preview = {};
+    } else if (action == "show") {
+        if (!request.contains("state") || !request["state"].is_string())
+            return R"({"ok":false,"error":"invalid_send_feedback_state"})";
+        const std::string stateName = request["state"].get<std::string>();
+        DawSendFeedbackPreview next;
+        for (const auto& entry : kDawSendPreviewStates) {
+            if (entry.first != stateName) continue;
+            next.state = entry.first;
+            next.snapshot.outcome = entry.second;
+            break;
+        }
+        if (next.snapshot.outcome == DawSendOutcome::Idle)
+            return R"({"ok":false,"error":"invalid_send_feedback_state"})";
+
+        const auto getCount = [&](const char* key, std::optional<int>& value) {
+            if (!request.contains(key) || request[key].is_null()) return true;
+            if (!request[key].is_number_integer()) return false;
+            const double count = request[key].get<double>();
+            if (count < 0 || count > (std::numeric_limits<int>::max)()) return false;
+            value = static_cast<int>(count);
+            return true;
+        };
+        std::optional<int> requestedPage;
+        if (!getCount("sent", next.snapshot.sent) || !getCount("total", next.snapshot.total) ||
+            !getCount("page", requestedPage) || (requestedPage && *requestedPage == 0) ||
+            (next.snapshot.sent && next.snapshot.total && *next.snapshot.sent > *next.snapshot.total))
+            return R"({"ok":false,"error":"invalid_send_feedback_count"})";
+        if (requestedPage) next.page = static_cast<size_t>(*requestedPage);
+        if (request.contains("preview_width")) {
+            if (!request["preview_width"].is_number()) return R"({"ok":false,"error":"invalid_preview_width"})";
+            const double width = request["preview_width"].get<double>();
+            if (!std::isfinite(width) || width < 1.0 || width > 10000.0)
+                return R"({"ok":false,"error":"invalid_preview_width"})";
+            next.width = static_cast<float>(width);
+        }
+        std::string detail;
+        std::string remediation;
+        const auto getText = [&](const char* key, std::string& value) {
+            if (!request.contains(key)) return true;
+            if (!request[key].is_string()) return false;
+            value = request[key].get<std::string>();
+            return value.find('\0') == std::string::npos;
+        };
+        if (!getText("detail", detail) || !getText("remediation", remediation))
+            return R"({"ok":false,"error":"invalid_send_feedback_text"})";
+        if (next.snapshot.outcome == DawSendOutcome::BridgeFailure) {
+            if (detail.empty()) next.snapshot.detail.setKey(LStr::DBst_NeedRestartD);
+            else next.snapshot.detail.setKeyStr(LStr::DBst_HandFailFmt, std::move(detail));
+            if (remediation.empty()) next.snapshot.remediation.setKey(LStr::DBst_NeedRestartR);
+            else next.snapshot.remediation = std::move(remediation);
+        } else {
+            next.snapshot.detail = std::move(detail);
+            next.snapshot.remediation = std::move(remediation);
+        }
+        preview = std::move(next);
+    } else if (action != "state") {
+        return R"({"ok":false,"error":"unsupported_action"})";
+    }
+
+    const auto rect = [](const ImRect& bounds) {
+        return Json::array({bounds.Min.x, bounds.Min.y, bounds.Max.x, bounds.Max.y});
+    };
+    const auto& observation = preview.observation;
+    return Json({
+        {"ok", true}, {"state", std::string(preview.state)}, {"frame", preview.frame},
+        {"rendered", observation.rendered && preview.frame == ImGui::GetFrameCount()},
+        {"rect", rect(observation.rect)}, {"anchor_rect", rect(observation.anchor)},
+        {"viewport_id", observation.viewportId}, {"wrap_width", observation.wrapWidth},
+        {"overflow", observation.overflow}, {"degraded", observation.degraded},
+        {"page", observation.page}, {"page_count", observation.pageCount},
+        {"body_lines", observation.bodyLines}, {"visible_body_lines", observation.visibleBodyLines},
+        {"sent", preview.snapshot.sent ? Json(*preview.snapshot.sent) : Json(nullptr)},
+        {"total", preview.snapshot.total ? Json(*preview.snapshot.total) : Json(nullptr)}
+    }).dump();
+}
+#endif
+
 static void DrawSendToDAWToast(AppState& state, float dawX, float dawY, float dawW, float dawH) {
-    const bool isSending = state.dawSendState.load() == AppState::DawSendState::Sending;
-
-    // H2a: take ONE locked snapshot of the worker-written trio. While
-    // isSending we don't need the payload (progress atomics cover the UI),
-    // but lastSendToDAWStatus may still be mid-refresh by a finished lane;
-    // the snapshot keeps every read below internally consistent.
-    std::string statusSnap;
-    bool keyedSnap = false;
-    HarkenSearch::DawBridge::InstallStatus bridgeSnap;
-    {
-        std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex);
-        keyedSnap = state.lastSendToDAWKeyed;
-        statusSnap = state.lastSendToDAWStatus;
-        if (keyedSnap) bridgeSnap = g_lastSendToDAWBridgeStatus;
-    }
-
-    if (!isSending && statusSnap.empty() && !keyedSnap)
+    if (ImGui::IsPopupOpen("##SendDAWPopup")) return;
+    ImGuiViewport* viewport = ImGui::GetWindowViewport();
+    const ImRect anchor(ImVec2(dawX, dawY), ImVec2(dawX + dawW, dawY + dawH));
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+    auto& preview = g_dawSendFeedbackPreview;
+    if (preview.snapshot.outcome != DawSendOutcome::Idle) {
+        preview.observation = HarkenSearch::UI::DrawDawSendNotice(preview.snapshot, viewport, anchor,
+            0.0, preview.width, preview.page);
+        preview.frame = ImGui::GetFrameCount();
         return;
-
-    float alpha = 1.0f;
-
-    if (!isSending) {
-        const double elapsed = ImGui::GetTime() - state.lastSendToDAWTime;
-        if (elapsed > 3.5) {
-            auto expected = AppState::DawSendState::Done;
-            state.dawSendState.compare_exchange_strong(expected, AppState::DawSendState::Idle);
-            return;
-        }
-        if (elapsed > 3.0)
-            alpha = static_cast<float>(std::max(0.0, 1.0 - (elapsed - 3.0) / 0.5));
     }
-
-    std::string display;
-    bool success;
-
-    if (isSending) {
-        int sent = state.dawSendSent.load();
-        int total = state.dawSendTotal.load();
-        if (total > 1) {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "Sending %d/%d ...", sent, total);
-            display = buf;
-        } else {
-            display = "Sending...";
-        }
-        success = true;
-    } else if (keyedSnap) {
-        // H1b/H2a: render the snapshotted keyed bridge status here (UI thread).
-        display = bridgeSnap.detail.Render();
-        if (!bridgeSnap.remediation.empty()) {
-            if (!display.empty()) display += " ";
-            display += bridgeSnap.remediation.Render();
-        }
-    } else {
-        display = statusSnap;
-        if (IsSendToDawSuccessStatus(display)) {
-            success = true;
-            int& idx = state.selectedDAWIndex;
-            auto& tgts = state.settings.dawTargets;
-            const char* dawName = (idx >= 0 && idx < (int)tgts.size()) ? tgts[idx].name.c_str() : "DAW";
-            int total = state.dawSendTotal.load();
-            char buf[128];
-            if (total > 1)
-                snprintf(buf, sizeof(buf), "Sent %d files to %s", total, dawName);
-            else
-                snprintf(buf, sizeof(buf), "Sent to %s", dawName);
-            display = buf;
-        } else {
-            success = false;
-            const size_t kMaxDisplay = 60;
-            if (display.size() > kMaxDisplay) {
-                display.resize(kMaxDisplay - 3);
-                display += "...";
-            }
-            display = "X " + display;
-        }
-    }
-
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 textSize = ImGui::CalcTextSize(display.c_str());
-    const float iconW = 18.0f;
-    const float padX = 10.0f;
-    const float padY = 5.0f;
-    const float gapAbove = 6.0f;
-    const float rectW = iconW + textSize.x + padX * 2.0f;
-    const float rectH = textSize.y + padY * 2.0f;
-    const float toastRight = dawX + dawW;
-    const float toastX = toastRight - rectW;
-    const float toastY = dawY - gapAbove - rectH;
-
-    const ImU32 greenCol = ImGui::GetColorU32(ImVec4(0.30f, 0.82f, 0.45f, alpha));
-    const ImU32 redCol   = ImGui::GetColorU32(ImVec4(0.90f, 0.35f, 0.30f, alpha));
-    const ImU32 textCol  = success ? greenCol : redCol;
-    const ImU32 bgCol    = ImGui::GetColorU32(ImVec4(0.06f, 0.06f, 0.08f, 0.88f * alpha));
-    const ImU32 borderCol = ImGui::GetColorU32(ImVec4(
-        success ? 0.20f : 0.40f,
-        success ? 0.50f : 0.15f,
-        success ? 0.25f : 0.12f,
-        0.40f * alpha));
-
-    const ImVec2 r0(toastX, toastY);
-    const ImVec2 r1(toastX + rectW, toastY + rectH);
-    dl->AddRectFilled(r0, r1, bgCol, 6.0f);
-    dl->AddRect(r0, r1, borderCol, 6.0f);
-    dl->AddText(ImVec2(toastX + padX, toastY + padY), textCol, display.c_str());
+#endif
+    const auto snapshot = state.dawSendFeedback.snapshot();
+    if (snapshot.outcome == DawSendOutcome::Idle) return;
+    const double elapsed = std::chrono::duration<double>(DawSendFeedbackClock::now() - snapshot.changedAt).count();
+    if (HarkenSearch::UI::DrawDawSendNotice(snapshot, viewport, anchor, elapsed).expired)
+        state.dawSendFeedback.expire(snapshot.revision);
 }
 
 static bool ResolveUserDefaultConfigPaths(std::string& outSettingsPath, std::string& outImguiPath) {
@@ -985,6 +1000,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
     h = HashCombine64(h, (uint64_t)filter.maxChannels);
     h = HashCombine64(h, (uint64_t)filter.coverFilter);
     h = HashCombine64(h, (uint64_t)filter.includeOnlyKnownExts);
+    h = HashCombine64(h, (uint64_t)filter.losslessWavPackOnly);
     for (const auto& ext : filter.excludeExtensions) {
         h = HashCombine64(h, HashString64Local(ext));
     }
@@ -2859,11 +2875,18 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD dwEffect) override {
+        HarkenSearch::AudioDragCard::UpdateDragPosition();
         return DRAGDROP_S_USEDEFAULTCURSORS;
     }
 };
 
 class FileDataObject : public IDataObject {
+    struct StoredFormat {
+        FORMATETC format;
+        STGMEDIUM medium;
+    };
+    std::vector<StoredFormat> m_storedFormats;
+
 public:
     LONG m_refCount = 1;
     std::vector<std::wstring> m_files;
@@ -2880,6 +2903,10 @@ public:
                 m_files.push_back(wstr);
             }
         }
+    }
+
+    ~FileDataObject() {
+        for (auto& stored : m_storedFormats) ReleaseStgMedium(&stored.medium);
     }
 
     // IUnknown
@@ -2905,6 +2932,7 @@ public:
 
     // IDataObject
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* pformatetcIn, STGMEDIUM* pmedium) override {
+        if (!pformatetcIn || !pmedium) return E_INVALIDARG;
         if (pformatetcIn->cfFormat == CF_HDROP && (pformatetcIn->tymed & TYMED_HGLOBAL)) {
             // Calculate size needed
             size_t totalSize = sizeof(DROPFILES);
@@ -2939,6 +2967,22 @@ public:
             pmedium->pUnkForRelease = nullptr;
             return S_OK;
         }
+        for (const auto& stored : m_storedFormats) {
+            if (stored.format.cfFormat != pformatetcIn->cfFormat ||
+                stored.format.dwAspect != pformatetcIn->dwAspect ||
+                stored.format.lindex != pformatetcIn->lindex ||
+                !(pformatetcIn->tymed & stored.medium.tymed)) continue;
+            pmedium->tymed = stored.medium.tymed;
+            if (stored.medium.tymed == TYMED_HGLOBAL) {
+                pmedium->hGlobal = OleDuplicateData(stored.medium.hGlobal, stored.format.cfFormat, 0);
+                if (!pmedium->hGlobal) return E_OUTOFMEMORY;
+            } else {
+                pmedium->pstm = stored.medium.pstm;
+                pmedium->pstm->AddRef();
+            }
+            pmedium->pUnkForRelease = nullptr;
+            return S_OK;
+        }
         return DV_E_FORMATETC;
     }
 
@@ -2952,13 +2996,56 @@ public:
             if (pformatetc->tymed & TYMED_HGLOBAL) return S_OK;
             return DV_E_TYMED;
         }
+        for (const auto& stored : m_storedFormats) {
+            if (stored.format.cfFormat == pformatetc->cfFormat &&
+                stored.format.dwAspect == pformatetc->dwAspect &&
+                stored.format.lindex == pformatetc->lindex) {
+                return (pformatetc->tymed & stored.medium.tymed) ? S_OK : DV_E_TYMED;
+            }
+        }
         return DV_E_FORMATETC;
     }
     HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC* pformatetcOut) override {
         pformatetcOut->ptd = nullptr;
         return E_NOTIMPL;
     }
-    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC* format, STGMEDIUM* medium, BOOL release) override {
+        if (!format || !medium) return E_INVALIDARG;
+        if (format->ptd) return DV_E_DVTARGETDEVICE;
+        if (format->cfFormat == CF_HDROP) return DV_E_FORMATETC;
+        if ((medium->tymed != TYMED_HGLOBAL && medium->tymed != TYMED_ISTREAM) ||
+            !(format->tymed & medium->tymed)) return DV_E_TYMED;
+        if ((medium->tymed == TYMED_HGLOBAL && !medium->hGlobal) ||
+            (medium->tymed == TYMED_ISTREAM && !medium->pstm)) return E_INVALIDARG;
+
+        STGMEDIUM stored = *medium;
+        if (!release) {
+            if (medium->tymed == TYMED_HGLOBAL) {
+                stored.hGlobal = OleDuplicateData(medium->hGlobal, format->cfFormat, 0);
+                if (!stored.hGlobal) return E_OUTOFMEMORY;
+            } else {
+                stored.pstm->AddRef();
+            }
+            stored.pUnkForRelease = nullptr;
+        }
+        for (auto& existing : m_storedFormats) {
+            if (existing.format.cfFormat == format->cfFormat &&
+                existing.format.dwAspect == format->dwAspect &&
+                existing.format.lindex == format->lindex) {
+                ReleaseStgMedium(&existing.medium);
+                existing.format = *format;
+                existing.medium = stored;
+                return S_OK;
+            }
+        }
+        try {
+            m_storedFormats.push_back(StoredFormat{*format, stored});
+        } catch (...) {
+            if (!release) ReleaseStgMedium(&stored);
+            return E_OUTOFMEMORY;
+        }
+        return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dwDirection, IEnumFORMATETC** ppEnumFormatEtc) override {
         // Preserve Pro Tools behavior during custom-frame handling.
         // Pro Tools 会在拖拽前调用 EnumFormatEtc 查询支持的数据格式
@@ -2966,7 +3053,7 @@ public:
         if (ppEnumFormatEtc == nullptr) return E_INVALIDARG;
         if (dwDirection != DATADIR_GET) return E_NOTIMPL;
 
-        static FORMATETC s_formatEtc = {
+        FORMATETC fileFormat = {
             CF_HDROP,
             nullptr,
             DVASPECT_CONTENT,
@@ -2974,7 +3061,9 @@ public:
             TYMED_HGLOBAL
         };
 
-        return SHCreateStdEnumFmtEtc(1, &s_formatEtc, ppEnumFormatEtc);
+        std::vector<FORMATETC> formats{fileFormat};
+        for (const auto& stored : m_storedFormats) formats.push_back(stored.format);
+        return SHCreateStdEnumFmtEtc(static_cast<UINT>(formats.size()), formats.data(), ppEnumFormatEtc);
     }
     HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
@@ -3039,220 +3128,112 @@ void ResetDragState() {
     // g_dragCompleted stays true until next mouse click to prevent selection after drag
 }
 
-// Drag ghost window for visual feedback
-static HWND g_dragGhostWindow = nullptr;
-static std::wstring g_dragGhostText;
+// Drag card state for visual feedback
 static bool g_mainWindowHiddenForDrag = false;
-static const UINT_PTR DRAG_GHOST_TIMER_FOLLOW = 1;
-static const UINT_PTR DRAG_GHOST_TIMER_HIDE_MAIN = 2;
 // g_hideWindowOnDragDelayMs → WindowsMain.h/cpp，由设置中的 hideWindowOnDragDelayMs 同步
-// 悬浮窗内容预渲染到位图，WM_TIMER 只更新位置，避免每帧 GDI 重绘导致卡顿
-static HDC g_dragGhostDC = nullptr;
-static HBITMAP g_dragGhostBitmap = nullptr;
-static SIZE g_dragGhostSize = { 0, 0 };
 // g_savedPlacementForDragHide, g_savedPlacementForDragHideValid → WindowsMain.cpp
 
 // g_showManagerHotkeyRegisterOk, g_trayNid, g_trayIconAdded → WindowsMain.cpp
 
 // AppendDiagLogLine, AppendDiagLogF, EnsureWindowOnScreen → WindowsMain.cpp
 
-// Ghost window procedure
-static LRESULT CALLBACK DragGhostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
+// 拖出小卡：主波形区域、源波形与每根柱子的幅度（由起拖处提供，缺省读可见行缓存）。
+struct DragCardOrigin {
+    bool hasSourceRect = false;
+    RECT sourceRect = { 0, 0, 0, 0 };
+    std::vector<float> peaks;
+    int peakChannels = 1;
+    std::wstring displayName;
+};
 
-        RECT rc;
-        GetClientRect(hwnd, &rc);
+static std::vector<float> BuildDragCardEnvelope(const std::vector<float>& peaks, int channels, int bars) {
+    if (peaks.empty() || bars <= 0) return {};
+    const int safeChannels = (std::max)(1, channels);
+    const int frames = (int)(peaks.size() / (size_t)safeChannels);
+    if (frames <= 0) return {};
 
-        // GDI double buffering prevents drag residue and frame flicker.
-        // 1. 创建隐形的内存画布
-        HDC memDC = CreateCompatibleDC(hdc);
-        HBITMAP memBitmap = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
-        HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
-
-        // 2. 在内存画布上绘制背景
-        HBRUSH brush = CreateSolidBrush(RGB(40, 50, 70));
-        FillRect(memDC, &rc, brush);
-        DeleteObject(brush);
-
-        // 3. 在内存画布上绘制文字
-        SetBkMode(memDC, TRANSPARENT);
-        SetTextColor(memDC, RGB(200, 220, 255));
-        HFONT font = nullptr;
-        const wchar_t* fontNames[] = { L"微软雅黑", L"Microsoft YaHei", L"SimHei", L"SimSun", L"宋体", nullptr };
-        for (int fi = 0; fontNames[fi] && !font; fi++) {
-            HFONT tryFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, fontNames[fi]);
-            if (tryFont) {
-                HFONT prev = (HFONT)SelectObject(memDC, tryFont);
-                TEXTMETRICW tm;
-                GetTextMetricsW(memDC, &tm);
-                if (tm.tmCharSet == GB2312_CHARSET || tm.tmCharSet == CHINESEBIG5_CHARSET || tm.tmCharSet == DEFAULT_CHARSET) {
-                    font = tryFont;
-                } else {
-                    SelectObject(memDC, prev);
-                    DeleteObject(tryFont);
-                }
-            }
+    std::vector<float> envelope((size_t)bars, 0.0f);
+    for (int frame = 0; frame < frames; ++frame) {
+        float framePeak = 0.0f;
+        for (int ch = 0; ch < safeChannels; ++ch) {
+            const size_t index = (size_t)(frame * safeChannels + ch);
+            if (index < peaks.size()) framePeak = (std::max)(framePeak, std::fabs(peaks[index]));
         }
-        if (!font) {
-            font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        const int bar = (int)(((int64_t)frame * bars) / frames);
+        if (bar >= 0 && bar < bars) {
+            envelope[(size_t)bar] = (std::max)(envelope[(size_t)bar], framePeak);
         }
-        HFONT oldFont = (HFONT)SelectObject(memDC, font);
-        DrawTextW(memDC, g_dragGhostText.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(memDC, oldFont);
-        if (font != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(font);
-
-        // 4. 在内存画布上绘制边框
-        HPEN pen = CreatePen(PS_SOLID, 2, RGB(100, 180, 255));
-        HPEN oldPen = (HPEN)SelectObject(memDC, pen);
-        HBRUSH oldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(NULL_BRUSH));
-        RoundRect(memDC, 0, 0, rc.right, rc.bottom, 8, 8);
-        SelectObject(memDC, oldPen);
-        SelectObject(memDC, oldBrush);
-        DeleteObject(pen);
-
-        // 5. 核心：将画好的完整画面一次性"盖章"到屏幕上
-        BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
-
-        // 6. 释放内存资源
-        SelectObject(memDC, oldBitmap);
-        DeleteObject(memBitmap);
-        DeleteDC(memDC);
-
-        EndPaint(hwnd, &ps);
-        return 0;
     }
-    case WM_TIMER: {
-        if (wParam == DRAG_GHOST_TIMER_FOLLOW) {
-            POINT pt;
-            GetCursorPos(&pt);
-            pt.x += 15;
-            pt.y += 15;
-            if (g_dragGhostDC && g_dragGhostBitmap && g_dragGhostSize.cx > 0 && g_dragGhostSize.cy > 0) {
-                POINT ptZero = { 0, 0 };
-                BLENDFUNCTION bf = { AC_SRC_OVER, 0, 200, AC_SRC_ALPHA };
-                UpdateLayeredWindow(hwnd, nullptr, &pt, &g_dragGhostSize, g_dragGhostDC, &ptZero, 0, &bf, ULW_ALPHA);
-            } else {
-                SetWindowPos(hwnd, HWND_TOPMOST, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
-            }
-            return 0;
-        }
-        if (wParam == DRAG_GHOST_TIMER_HIDE_MAIN) {
-            // One-shot: minimize main window after a short delay (confirm drag)
-            KillTimer(hwnd, DRAG_GHOST_TIMER_HIDE_MAIN);
-            if (!g_mainWindowHiddenForDrag && g_isDragging && g_hideWindowOnDrag && g_hwnd) {
-                MinimizeWindowNoAnimation(g_hwnd);
-                g_mainWindowHiddenForDrag = true;
-            }
-            return 0;
-        }
-        return 0;
-    }
-    }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
+    for (float& value : envelope) value = std::clamp(value, 0.0f, 1.0f);
+    return envelope;
 }
 
-static void CreateDragGhostWindow(const std::wstring& text) {
-    static bool classRegistered = false;
-    if (!classRegistered) {
-        WNDCLASSEXW wc = {};
-        wc.cbSize = sizeof(wc);
-        wc.lpfnWndProc = DragGhostWndProc;
-        wc.hInstance = GetModuleHandle(nullptr);
-        wc.lpszClassName = L"HarkenSearchDragGhost";
-        RegisterClassExW(&wc);
-        classRegistered = true;
+static std::wstring DisplayNameForDragPath(const std::string& pathUtf8) {
+    std::wstring wide = Utf8ToWide(pathUtf8);
+    try {
+        std::wstring name = fs::path(wide).filename().wstring();
+        if (!name.empty()) return name;
+    } catch (...) {
+    }
+    return wide.empty() ? std::wstring(L"(unnamed)") : wide;
+}
+
+static bool TryGetCachedDragPeaks(const std::string& pathUtf8, std::vector<float>& outPeaks, int& outChannels) {
+    if (!g_appState || pathUtf8.empty()) return false;
+    auto it = g_appState->waveformCache.find(pathUtf8);
+    if (it != g_appState->waveformCache.end() && it->second.isReady && !it->second.peaks.empty()) {
+        outPeaks = it->second.peaks;
+        outChannels = (std::max)(1, it->second.numChannels);
+        return true;
     }
 
-    g_dragGhostText = text;
-    HDC hdcScreen = GetDC(nullptr);
-    HFONT measureFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"微软雅黑");
-    if (!measureFont) measureFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    HGDIOBJ oldMF = SelectObject(hdcScreen, measureFont);
-    SIZE textSize;
-    GetTextExtentPoint32W(hdcScreen, text.c_str(), (int)text.length(), &textSize);
-    SelectObject(hdcScreen, oldMF);
-    if (measureFont != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(measureFont);
-    int width = (std::max)(120, (int)textSize.cx + 30);
-    int height = 32;
-    POINT pt;
-    GetCursorPos(&pt);
+    // 行内迷你波形未进内存时，读库里已缓存的真实迷你波形，不用占位波形冒充。
+    Database::MiniWaveformBundle bundle;
+    if (g_appState->database.getMiniWaveformBundleByPath(pathUtf8, bundle, 128) && !bundle.peaks.empty()) {
+        outPeaks = bundle.peaks;
+        outChannels = (std::max)(1, bundle.miniNumChannels);
+        return true;
+    }
+    return false;
+}
 
-    g_dragGhostWindow = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
-        L"HarkenSearchDragGhost", L"", WS_POPUP, pt.x + 15, pt.y + 15, width, height,
-        nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
-
-    if (!g_dragGhostWindow) {
-        ReleaseDC(nullptr, hdcScreen);
-        AppendDiagLogLine(L"CreateDragGhostWindow: CreateWindowExW failed");
+// 拖出小卡已有完整视觉反馈；用 1×1 全透明拖影屏蔽 Windows 默认的文件名浮标。
+static void SuppressDefaultDragImage(IDataObject* dataObject) {
+    if (!dataObject) return;
+    IDragSourceHelper* helper = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&helper))) || !helper) {
         return;
     }
-    g_dragGhostSize.cx = width;
-    g_dragGhostSize.cy = height;
-    g_dragGhostDC = CreateCompatibleDC(hdcScreen);
-    g_dragGhostBitmap = CreateCompatibleBitmap(hdcScreen, width, height);
-    if (g_dragGhostDC && g_dragGhostBitmap) {
-        HBITMAP oldBm = (HBITMAP)SelectObject(g_dragGhostDC, g_dragGhostBitmap);
-        RECT rc = { 0, 0, width, height };
-        HBRUSH brush = CreateSolidBrush(RGB(40, 50, 70));
-        FillRect(g_dragGhostDC, &rc, brush);
-        DeleteObject(brush);
-        SetBkMode(g_dragGhostDC, TRANSPARENT);
-        SetTextColor(g_dragGhostDC, RGB(200, 220, 255));
-        HFONT font = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"微软雅黑");
-        if (!font) font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-        SelectObject(g_dragGhostDC, font);
-        DrawTextW(g_dragGhostDC, g_dragGhostText.c_str(), -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        if (font != (HFONT)GetStockObject(DEFAULT_GUI_FONT)) DeleteObject(font);
-        HPEN pen = CreatePen(PS_SOLID, 2, RGB(100, 180, 255));
-        SelectObject(g_dragGhostDC, pen);
-        SelectObject(g_dragGhostDC, GetStockObject(NULL_BRUSH));
-        RoundRect(g_dragGhostDC, 0, 0, width, height, 8, 8);
-        DeleteObject(pen);
-        SelectObject(g_dragGhostDC, oldBm);
-        POINT ptZero = { 0, 0 };
-        BLENDFUNCTION bf = { AC_SRC_OVER, 0, 200, AC_SRC_ALPHA };
-        UpdateLayeredWindow(g_dragGhostWindow, hdcScreen, &pt, &g_dragGhostSize, g_dragGhostDC, &ptZero, 0, &bf, ULW_ALPHA);
-    } else {
-        if (g_dragGhostDC) { DeleteDC(g_dragGhostDC); g_dragGhostDC = nullptr; }
-        if (g_dragGhostBitmap) { DeleteObject(g_dragGhostBitmap); g_dragGhostBitmap = nullptr; }
-        SetLayeredWindowAttributes(g_dragGhostWindow, 0, 200, LWA_ALPHA);
-    }
-    ReleaseDC(nullptr, hdcScreen);
-    Platform::WindowShow(g_dragGhostWindow, SW_SHOWNOACTIVATE);
-    SetTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_FOLLOW, 8, nullptr);
-}
 
-static void DestroyDragGhostWindow() {
-    if (g_dragGhostDC && g_dragGhostBitmap) {
-        HBITMAP dummy = (HBITMAP)CreateCompatibleBitmap(g_dragGhostDC, 1, 1);
-        SelectObject(g_dragGhostDC, dummy);
-        DeleteObject(g_dragGhostBitmap);
-        if (dummy) DeleteObject(dummy);
-        DeleteDC(g_dragGhostDC);
-        g_dragGhostBitmap = nullptr;
-        g_dragGhostDC = nullptr;
-        g_dragGhostSize = { 0, 0 };
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 1;
+    info.bmiHeader.biHeight = -1;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP transparentBitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (transparentBitmap && bits) {
+        *static_cast<uint32_t*>(bits) = 0;
+        SHDRAGIMAGE image = {};
+        image.sizeDragImage = { 1, 1 };
+        image.ptOffset = { 0, 0 };
+        image.hbmpDragImage = transparentBitmap;
+        image.crColorKey = CLR_NONE;
+        const HRESULT imageHr = helper->InitializeFromBitmap(&image, dataObject);
+        if (FAILED(imageHr)) {
+            AppendDiagLogF(L"StartFileDrag: InitializeFromBitmap failed hr=0x%08X", (unsigned int)imageHr);
+        }
+    } else if (transparentBitmap) {
+        DeleteObject(transparentBitmap);
     }
-    if (g_dragGhostWindow) {
-        KillTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_FOLLOW);
-        KillTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_HIDE_MAIN);
-        DestroyWindow(g_dragGhostWindow);
-        g_dragGhostWindow = nullptr;
-    }
+    helper->Release();
 }
 
 // Start drag operation for files
-void StartFileDrag(const std::vector<std::string>& files) {
+void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* origin = nullptr) {
     if (files.empty()) return;
     if (g_isDragging) return;  // Prevent re-entry
     if (g_dragInitiated) return;  // Already initiated drag for this click
@@ -3261,7 +3242,6 @@ void StartFileDrag(const std::vector<std::string>& files) {
     WINDOWPLACEMENT savedPlacement = { sizeof(WINDOWPLACEMENT) };
 
     auto finalizeDragState = [&](bool completed) {
-        DestroyDragGhostWindow();
         ImGui::GetIO().AddMouseButtonEvent(0, false);
         ImGui::GetIO().MouseDown[0] = false;
         g_isDragging = false;
@@ -3295,32 +3275,39 @@ void StartFileDrag(const std::vector<std::string>& files) {
         }
         g_mainWindowHiddenForDrag = false;
 
-        // Create ghost window showing filename (use UTF-8 safe conversion).
-        std::wstring ghostText = L"[Audio] ";
-        try {
-            std::wstring wPath = Utf8ToWide(files[0]);
-            if (!wPath.empty()) {
-                fs::path p = fs::path(wPath);
-                std::wstring filename = p.filename().wstring();
-                ghostText += filename.empty() ? L"(unnamed)" : filename;
-            } else {
-                ghostText += L"(unnamed)";
+        // 拖出波形小卡：文件名取源文件，波形优先用起拖处提供的峰值，其次读可见行缓存。
+        HarkenSearch::AudioDragCard::CardSpec card;
+        if (origin && !origin->peaks.empty()) {
+            card.envelope = BuildDragCardEnvelope(origin->peaks, origin->peakChannels, 76);
+        } else {
+            std::vector<float> peaks;
+            int peakChannels = 1;
+            TryGetCachedDragPeaks(files[0], peaks, peakChannels);
+            card.envelope = BuildDragCardEnvelope(peaks, peakChannels, 76);
+        }
+        card.fileName = (origin && !origin->displayName.empty())
+                            ? origin->displayName
+                            : DisplayNameForDragPath(files[0]);
+        card.itemCount = (int)files.size();
+        card.hasSourceRect = origin && origin->hasSourceRect;
+        if (card.hasSourceRect) {
+            card.sourceLeft = origin->sourceRect.left;
+            card.sourceTop = origin->sourceRect.top;
+            card.sourceWidth = origin->sourceRect.right - origin->sourceRect.left;
+            card.sourceHeight = origin->sourceRect.bottom - origin->sourceRect.top;
+        }
+        card.animationsEnabled = Platform::Animation::ClientAreaAnimationEnabled();
+        card.hideMainDelayMs = (shouldHideWindow && g_hwnd) ? g_hideWindowOnDragDelayMs : 0;
+        card.onHideMainDelayElapsed = []() {
+            // One-shot: minimize main window after a short delay (confirm drag)
+            if (!g_mainWindowHiddenForDrag && g_isDragging && g_hideWindowOnDrag && g_hwnd) {
+                MinimizeWindowNoAnimation(g_hwnd);
+                g_mainWindowHiddenForDrag = true;
             }
-        } catch (...) {
-            ghostText += L"(unnamed)";
-        }
-        if (files.size() > 1) {
-            ghostText += L" (+" + std::to_wstring(files.size() - 1) + L")";
-        }
-        CreateDragGhostWindow(ghostText);
-
-        // Hide main window after a short delay to avoid accidental triggers
-        if (shouldHideWindow && g_hwnd && g_dragGhostWindow) {
-            SetTimer(g_dragGhostWindow, DRAG_GHOST_TIMER_HIDE_MAIN, g_hideWindowOnDragDelayMs, nullptr);
-        }
-
+        };
         FileDataObject* pDataObject = new FileDataObject(files);
         DropSource* pDropSource = new DropSource();
+        SuppressDefaultDragImage(pDataObject);
 
         // Diagnostic: log file count and first few paths for drag debugging
         AppendDiagLogF(L"StartFileDrag: fileCount=%d", (int)files.size());
@@ -3331,7 +3318,10 @@ void StartFileDrag(const std::vector<std::string>& files) {
 
         // Advertise COPY only; Pro Tools rejects MOVE for this external drag.
         DWORD dwEffect = 0;
+        HarkenSearch::AudioDragCard::BeginDrag(card);
         HRESULT dragHr = DoDragDrop(pDataObject, pDropSource, DROPEFFECT_COPY, &dwEffect);
+        const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
+        HarkenSearch::AudioDragCard::EndDrag(dropSucceeded);
         if (FAILED(dragHr)) {
             AppendDiagLogF(L"StartFileDrag: DoDragDrop failed hr=0x%08X", (unsigned int)dragHr);
         }
@@ -3341,7 +3331,6 @@ void StartFileDrag(const std::vector<std::string>& files) {
 
         // Drag result: if dropped successfully, keep window hidden so user can start editing in DAW.
         // If cancelled/no drop, restore window (if it was hidden).
-        const bool dropSucceeded = (dragHr == DRAGDROP_S_DROP && dwEffect != 0);
         AppendDiagLogF(L"StartFileDrag: dropSucceeded=%d shouldHide=%d g_hwnd=%p",
                        (int)dropSucceeded, (int)shouldHideWindow, (void*)g_hwnd);
 
@@ -3395,6 +3384,7 @@ void StartFileDrag(const std::vector<std::string>& files) {
         // Keep g_dragInitiated set until mouse release.
     } catch (...) {
         AppendDiagLogLine(L"StartFileDrag: exception caught, drag aborted");
+        HarkenSearch::AudioDragCard::CancelNow();
         if (shouldHideWindow && g_hwnd && g_mainWindowHiddenForDrag) {
             SetWindowPlacement(g_hwnd, &savedPlacement);
             Platform::WindowShow(g_hwnd, savedPlacement.showCmd);
@@ -3490,9 +3480,38 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
                                            float regionFadeOutNorm,
                                            bool keepHarkenSearchProcessingSuffix = true);
 
+// 主波形区域在屏幕上的位置（用于起拖时把卡片从波形缩成小卡）
+static RECT WaveformScreenRect(float x, float y, float width, float height) {
+    POINT topLeft = { (LONG)std::lround(x), (LONG)std::lround(y) };
+    POINT bottomRight = { (LONG)std::lround(x + width), (LONG)std::lround(y + height) };
+    extern HWND g_hwnd;
+    if (g_hwnd && !(ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
+        ClientToScreen(g_hwnd, &topLeft);
+        ClientToScreen(g_hwnd, &bottomRight);
+    }
+    return RECT{ topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };
+}
+
+// 从当前加载的音频取波形与文件名，供拖出小卡使用。
+static DragCardOrigin MakeRegionDragOrigin(AudioEngine& engine, bool withSourceRect, const RECT& sourceRect) {
+    DragCardOrigin origin;
+    origin.hasSourceRect = withSourceRect;
+    origin.sourceRect = sourceRect;
+    if (auto waveform = engine.getWaveformData(); waveform && !waveform->peaks.empty()) {
+        origin.peaks = waveform->peaks;
+        origin.peakChannels = (std::max)(1, waveform->numChannels);
+    }
+    if (engine.isLoaded()) {
+        origin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
+    }
+    return origin;
+}
+
 // Export region to temp file and start drag
 // Uses unified PrepareCurrentAudioForTransfer — same rules as Send-to-DAW
-void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFadeOutNorm, bool keepHarkenSearchProcessingSuffix = true) {
+void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFadeOutNorm,
+                     bool keepHarkenSearchProcessingSuffix = true,
+                     const DragCardOrigin* origin = nullptr) {
     if (!engine.isLoaded()) return;
     if (g_isDragging) return;
 
@@ -3502,7 +3521,11 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
     std::string error;
     if (PrepareCurrentAudioForTransfer(engine, files, error, regionFadeInNorm, regionFadeOutNorm, keepHarkenSearchProcessingSuffix)) {
         ImGui::ClearActiveID();
-        StartFileDrag(files);
+        DragCardOrigin regionOrigin = origin ? *origin : MakeRegionDragOrigin(engine, false, RECT{ 0, 0, 0, 0 });
+        if (regionOrigin.displayName.empty()) {
+            regionOrigin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
+        }
+        StartFileDrag(files, &regionOrigin);
     } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
         extern HWND g_hwnd;
@@ -3907,7 +3930,15 @@ void StartAudioFileDrag(AppState& state, const std::string& filePath) {
             state.settings.keepHarkenSearchOutputProcessingSuffix,
             files, error) && !files.empty()) {
         ImGui::ClearActiveID();
-        StartFileDrag(files);
+        DragCardOrigin dragOrigin;
+        dragOrigin.displayName = DisplayNameForDragPath(filePath);
+        std::vector<float> dragPeaks;
+        int dragChannels = 1;
+        if (TryGetCachedDragPeaks(filePath, dragPeaks, dragChannels)) {
+            dragOrigin.peaks = std::move(dragPeaks);
+            dragOrigin.peakChannels = dragChannels;
+        }
+        StartFileDrag(files, &dragOrigin);
     } else {
         state.loadErrorToast = error.empty() ? L(Misc_DragFailed) : error;
         state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
@@ -4035,10 +4066,54 @@ static bool IsReaperNamedPipeTarget(const DawTarget& target);
 static HarkenSearch::DawBridge::ReaperBridgeProbeOptions BuildReaperBridgeProbeOptions(
     const DawTarget& target);
 
+enum class DawProbePurpose { LiveTarget, ReaperSetupStartup, ReaperSetupPage };
+
+static std::optional<std::string> g_reaperSetupPageProbePath;
+static std::optional<HarkenSearch::DawBridge::InstallStatus> g_reaperSetupPageStatus;
+static std::string g_reaperSetupStatusPath;
+static double g_reaperSetupStatusAt = -999.0;
+static unsigned g_reaperSetupProbeGeneration = 0;
+static bool g_reaperSetupStartupSubmitted = false;
+static bool g_reaperSetupNoticePending = false;
+
+static HarkenSearch::DawBridge::InstallStatus ProbeReaperSetupSnapshot(
+    std::string path, DawProbePurpose purpose) {
+    using namespace HarkenSearch::DawBridge;
+    const bool isolated = Platform::HarkenUserData::PreviewIsolationActive();
+    auto probe = [&](const std::string& root) {
+        if (root.empty() || (isolated &&
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(root))) {
+            return InstallStatus{};
+        }
+        DawTarget target;
+        target.exePath = root;
+        auto options = BuildReaperBridgeProbeOptions(target);
+        options.handshakeTimeoutMs = 20;
+        options.inspectLegacyComponent = true;
+        if (isolated) options.pipeNameOverride = LR"(\\.\pipe\HarkenSearch-PreviewReaperSetup)";
+        auto status = ProbeReaperBridge(options);
+        if (isolated && status.targetResolved &&
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(status.targetDirectory)) {
+            return InstallStatus{};
+        }
+        status.hostRunning = status.hostRunning || !ReaperProcessDefinitelyStopped();
+        return status;
+    };
+    if (!path.empty()) {
+        auto status = probe(path);
+        if (status.hostInstalled || purpose != DawProbePurpose::ReaperSetupStartup || isolated) {
+            return status;
+        }
+    }
+    return isolated ? InstallStatus{} : probe(AutoDetectReaperRootPath());
+}
+
 struct DawRunningProbeRequest {
     std::string targetKey;
     DawTarget targetSnapshot;
     bool autoDetectRoot = false;
+    DawProbePurpose purpose = DawProbePurpose::LiveTarget;
+    unsigned setupGeneration = 0;
 };
 
 struct DawRunningProbeResult {
@@ -4046,6 +4121,8 @@ struct DawRunningProbeResult {
     bool isRunning = false;
     std::optional<HarkenSearch::DawBridge::InstallStatus> reaperStatus;
     bool autoDetectRoot = false;
+    DawProbePurpose purpose = DawProbePurpose::LiveTarget;
+    unsigned setupGeneration = 0;
 };
 
 using DawRunningProbeBatch = std::vector<DawRunningProbeRequest>;
@@ -4070,8 +4147,12 @@ static DawRunningProbeResults ProbeDawRunningStateSnapshots(DawRunningProbeBatch
         DawRunningProbeResult result;
         result.targetKey = requestSnapshot.targetKey;
         result.autoDetectRoot = requestSnapshot.autoDetectRoot;
+        result.purpose = requestSnapshot.purpose;
+        result.setupGeneration = requestSnapshot.setupGeneration;
 
-        if (IsReaperNamedPipeTarget(target)) {
+        if (result.purpose != DawProbePurpose::LiveTarget) {
+            result.reaperStatus = ProbeReaperSetupSnapshot(target.exePath, result.purpose);
+        } else if (IsReaperNamedPipeTarget(target)) {
             DawTarget probeTarget = target;
             if (requestSnapshot.autoDetectRoot) {
                 probeTarget.exePath = HarkenSearch::DawBridge::AutoDetectReaperRootPath();
@@ -4104,10 +4185,31 @@ static DawRunningProbeResults ProbeDawRunningStateSnapshots(DawRunningProbeBatch
 static void UpdateDAWRunningState(AppState& state) {
     static HarkenSearch::AsyncSnapshotWorker<DawRunningProbeBatch, DawRunningProbeResults>
         s_probeWorker(ProbeDawRunningStateSnapshots);
+    const auto setupPagePath = std::exchange(g_reaperSetupPageProbePath, std::nullopt);
 
     try {
         if (auto completed = s_probeWorker.Poll()) {
-            for (const auto& result : *completed) {
+            for (auto& result : *completed) {
+                if (result.purpose != DawProbePurpose::LiveTarget &&
+                    result.setupGeneration != g_reaperSetupProbeGeneration) continue;
+                if (result.purpose == DawProbePurpose::ReaperSetupStartup) {
+                    g_reaperSetupNoticePending =
+                        HarkenSearch::DawBridge::NeedsReaperSetupNotice(*result.reaperStatus);
+                    if (!g_reaperSetupPageStatus &&
+                        (result.targetKey.empty() ||
+                         result.targetKey == result.reaperStatus->configuredRootPath)) {
+                        g_reaperSetupStatusPath = result.targetKey;
+                        g_reaperSetupStatusAt = ImGui::GetTime();
+                        g_reaperSetupPageStatus = std::move(result.reaperStatus);
+                    }
+                    continue;
+                }
+                if (result.purpose == DawProbePurpose::ReaperSetupPage) {
+                    g_reaperSetupStatusPath = result.targetKey;
+                    g_reaperSetupStatusAt = ImGui::GetTime();
+                    g_reaperSetupPageStatus = std::move(result.reaperStatus);
+                    continue;
+                }
                 for (auto& liveTarget : state.settings.dawTargets) {
                     if (DawRunningProbeKey(liveTarget) != result.targetKey) continue;
                     liveTarget.isRunning = result.isRunning;
@@ -4143,6 +4245,31 @@ static void UpdateDAWRunningState(AppState& state) {
     const double now = ImGui::GetTime();
     DawRunningProbeBatch requests;
     std::unordered_set<std::string> submittedKeys;
+    bool submitStartup = false;
+#if defined(_WIN32)
+    if (setupPagePath && (!g_reaperSetupPageStatus || *setupPagePath != g_reaperSetupStatusPath ||
+                         now - g_reaperSetupStatusAt >= kProbeIntervalSeconds)) {
+        DawRunningProbeRequest request;
+        request.targetKey = *setupPagePath;
+        request.targetSnapshot.exePath = *setupPagePath;
+        request.purpose = DawProbePurpose::ReaperSetupPage;
+        request.setupGeneration = g_reaperSetupProbeGeneration;
+        requests.push_back(std::move(request));
+    }
+    submitStartup = !g_reaperSetupStartupSubmitted && !state.settings.reaperSetupNoticeDismissed &&
+        !state.startupNeedsDatabaseSetup && now >= 2.0;
+    if (submitStartup) {
+        const auto& targets = state.settings.dawTargets;
+        const auto target = harken::settings::FindSettingsDawTarget(
+            targets, harken::settings::kSettingsDawPresets.front());
+        DawRunningProbeRequest request;
+        if (target != targets.end()) request.targetSnapshot = *target;
+        request.targetKey = request.targetSnapshot.exePath;
+        request.purpose = DawProbePurpose::ReaperSetupStartup;
+        request.setupGeneration = g_reaperSetupProbeGeneration;
+        requests.push_back(std::move(request));
+    }
+#endif
     for (const auto& target : state.settings.dawTargets) {
         const bool isReaperTarget = IsReaperNamedPipeTarget(target);
         if (!isReaperTarget) {
@@ -4162,6 +4289,7 @@ static void UpdateDAWRunningState(AppState& state) {
     }
 
     if (requests.empty() || !s_probeWorker.Submit(std::move(requests))) return;
+    if (submitStartup) g_reaperSetupStartupSubmitted = true;
     for (auto& target : state.settings.dawTargets) {
         if (submittedKeys.find(DawRunningProbeKey(target)) != submittedKeys.end()) {
             target.lastDetectTime = now;
@@ -4477,30 +4605,39 @@ static HarkenSearch::DawBridge::ReaperBridgeProbeOptions BuildReaperBridgeProbeO
 
 static bool StartReaperBridgeUpdateAfterExit(
     const HarkenSearch::DawBridge::ReaperBridgeProbeOptions& options,
-    bool waitForHostExit)
+    bool waitForHostExit,
+    bool installMissingOnly = false)
 {
     bool expected = false;
     if (!g_dawBridgeInstallInFlight.compare_exchange_strong(expected, true)) {
         return false;
     }
     auto session = std::make_shared<DawBridgeInstallSession>();
-    session->installerName = u8"REAPER 发送组件";
+    session->installerName = installMissingOnly ? L(DawPrefs_Component) : u8"REAPER 发送组件";
     session->phase.store(DawBridgeInstallSession::Phase::Installing);
     g_dawBridgeSession = session;
-    std::thread([session, options, waitForHostExit]() {
-        HarkenSearch::DawBridge::ReaperBridgeDoctorRequest request;
-        request.action = HarkenSearch::DawBridge::ReaperBridgeDoctorAction::Update;
-        request.probeOptions = options;
-        request.waitForHostExit = waitForHostExit;
-        request.hostExitWaitTimeoutMs = waitForHostExit ? 10 * 60 * 1000 : 0;
-        request.recheckIntervalMs = 500;
-        request.recheckTimeoutMs = 750;
-        const auto report = HarkenSearch::DawBridge::RunReaperBridgeDoctor(request);
-        HarkenSearch::DawBridge::InstallResult result = report.install;
-        result.ok = report.ok;
-        result.failureCode = report.failureCode;
-        result.detail = report.summary;
-        result.restartRequired = report.restartRequired;
+    std::thread([session, options, waitForHostExit, installMissingOnly]() {
+        HarkenSearch::DawBridge::InstallResult result;
+        try {
+            HarkenSearch::DawBridge::ReaperBridgeDoctorRequest request;
+            request.action = HarkenSearch::DawBridge::ReaperBridgeDoctorAction::Update;
+            request.probeOptions = options;
+            request.waitForHostExit = waitForHostExit;
+            request.installMissingOnly = installMissingOnly;
+            request.hostExitWaitTimeoutMs = waitForHostExit ? 10 * 60 * 1000 : 0;
+            request.recheckIntervalMs = 500;
+            request.recheckTimeoutMs = 750;
+            const auto report = HarkenSearch::DawBridge::RunReaperBridgeDoctor(request);
+            result = report.install;
+            result.ok = report.ok;
+            result.failureCode = report.failureCode;
+            result.detail = report.summary;
+            result.restartRequired = report.restartRequired;
+        } catch (...) {
+            result = {};
+            result.failureCode = "reaper-install-error";
+            result.detail.setKey(LStr::DawPrefs_InstallError);
+        }
         {
             std::lock_guard<std::mutex> lock(session->resultMutex);
             session->result = std::move(result);
@@ -4588,7 +4725,6 @@ static bool RefreshDawRunningStateNow(DawTarget& target) {
     } else {
         target.isRunning = IsProcessRunning(target.processName);
     }
-    target.lastDetectTime = ImGui::GetTime();
     return target.isRunning;
 }
 
@@ -4850,20 +4986,13 @@ static bool SendFilesToSteinbergLaunchTarget(DawTarget& target,
     return false;
 }
 
-static std::string DescribeSteinbergTransferAction(HarkenSearch::CubaseAdapter::TransferActionKind action) {
-    switch (action) {
-    case HarkenSearch::CubaseAdapter::TransferActionKind::BringIntoHost:
-        return "Bring Into Host";
-    case HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost:
-        return "Spot To Host";
-    }
-    return "Host Handoff";
-}
+using HarkenSearch::UI::ClassifyDawSendResult;
 
 static bool SendFilesToProToolsTarget(
     DawTarget& target,
     const std::vector<std::string>& files,
     std::string& outStatus,
+    DawSendFeedbackSnapshot& feedback,
     HarkenSearch::CubaseAdapter::TransferActionKind transferAction,
     bool keepHarkenSearchProcessingSuffix) {
 #ifdef _WIN32
@@ -4988,6 +5117,7 @@ static bool SendFilesToProToolsTarget(
                     HarkenSearch::ProTools::ResolveProToolsBridgeHelperPath().c_str());
 
     const auto dispatch = HarkenSearch::ProTools::DispatchLivePtslSpotRequest(request);
+    if (dispatch.response.parseOk) feedback.sent = dispatch.response.insertedCount;
     if (!HarkenSearch::ProTools::IsLivePtslSpotSuccess(dispatch)) {
         const std::string errorCode = dispatch.response.errorCode.empty()
             ? "helperUnavailable"
@@ -5015,25 +5145,22 @@ static bool SendFilesToProToolsTarget(
 
     // S10: Rich toast status reflecting pathTaken, track, and fallback state.
     const auto& r = dispatch.response;
-    if (r.errorCode == "clipListFallbackNoSelectedAudioTrack" ||
-        r.errorCode == "clipListFallbackNoTimelineTargetAudioTrack" ||
-        r.errorCode == "clipListFallbackAfterClipIdImportFailed" ||
-        r.errorCode == "clipListModernFallback" ||
-        r.errorCode == "clipListLegacyFallback") {
-        outStatus = "Sent to Clip List — no selected track found. Click a Pro Tools audio track and retry. [" +
-            std::string(kHumanRequiredStatus) + "]";
+    if (HarkenSearch::UI::IsDawSendClipListFallback(r.errorCode)) {
+        feedback.outcome = DawSendOutcome::Fallback;
+        outStatus = "Imported into the Pro Tools Clip List";
+        if (!r.errorMessage.empty()) outStatus += " — " + r.errorMessage;
+        outStatus += " [" + std::string(kHumanRequiredStatus) + "]";
     } else if (r.trackWasCreated) {
+        if (ClassifyDawSendResult(true, feedback.sent, feedback.total) == DawSendOutcome::Success)
+            feedback.outcome = DawSendOutcome::Fallback;
         const std::string trackName = r.trackName.empty() ? "New Track" : r.trackName;
         outStatus = "Created new track '" + trackName + "' — no track was selected (Pro Tools " +
             (r.pathTaken.empty() ? "legacy" : r.pathTaken) + "). " +
             "[" + std::string(kHumanRequiredStatus) + "]";
     } else if (!r.resolvedTrackName.empty()) {
-        char buf[256];
-        snprintf(buf, sizeof(buf), "Spotted %d clip%s on \"%s\" [%s]",
-            r.insertedCount, r.insertedCount == 1 ? "" : "s",
-            r.resolvedTrackName.c_str(),
-            r.pathTaken.empty() ? "modern" : r.pathTaken.c_str());
-        outStatus = buf;
+        outStatus = "Spotted " + std::to_string(r.insertedCount) +
+            (r.insertedCount == 1 ? " clip on \"" : " clips on \"") + r.resolvedTrackName +
+            "\" [" + (r.pathTaken.empty() ? "modern" : r.pathTaken) + "]";
     } else if (!r.trackName.empty()) {
         outStatus = "Sent to Pro Tools: " + r.trackName +
             (r.pathTaken.empty() ? "" : " [" + r.pathTaken + "]");
@@ -5054,6 +5181,7 @@ static bool SendFilesToProToolsTarget(
 #else
     (void)target;
     (void)files;
+    (void)feedback;
     (void)transferAction;
     (void)keepHarkenSearchProcessingSuffix;
     outStatus = "Pro Tools live PTSL spot is only implemented on Windows";
@@ -5065,6 +5193,7 @@ static bool SendFilesToProToolsTarget(
 
 static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& files,
                           std::string& outStatus,
+                          DawSendFeedbackSnapshot& feedback,
                           HarkenSearch::CubaseAdapter::TransferActionKind transferAction = HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost,
                           bool keepHarkenSearchProcessingSuffix = true,
                           HarkenSearch::DawBridge::InstallStatus* outBridge = nullptr,
@@ -5088,7 +5217,8 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
 
     case DawSendMode::LaunchExe:
         if (IsProToolsLaunchTarget(target)) {
-            return SendFilesToProToolsTarget(target, files, outStatus, transferAction, keepHarkenSearchProcessingSuffix);
+            return SendFilesToProToolsTarget(target, files, outStatus, feedback,
+                                             transferAction, keepHarkenSearchProcessingSuffix);
         }
         if (IsSteinbergLaunchTarget(target)) {
             const auto result = HarkenSearch::CubaseAdapter::DispatchToCubaseAdapterDetailed(
@@ -5105,6 +5235,7 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
                 result.code == HarkenSearch::CubaseAdapter::ResultCode::TargetMismatch) {
                 return SendFilesToSteinbergLaunchTarget(target, files, outStatus);
             }
+            HarkenSearch::UI::ApplySteinbergSendReceipt(result, feedback);
             return result.success;
         }
         outStatus = "Direct track insert not available in LaunchExe mode — use NamedPipe for REAPER";
@@ -5127,20 +5258,22 @@ static void DispatchPreparedSendToDAW(AppState& state,
                                       std::vector<std::string> files,
                                       HarkenSearch::CubaseAdapter::TransferActionKind transferAction);
 
+static void PublishDawSendFailure(AppState& state, LedgerText detail) {
+    state.dawSendFeedback.failBeforeSend(std::move(detail));
+}
+
 static void SendToDAW(AppState& state,
                       int dawIndex,
                       HarkenSearch::CubaseAdapter::TransferActionKind transferAction) {
-    if (state.dawSendState.load() == AppState::DawSendState::Sending) return;
+    if (state.dawSendFeedback.isSending()) return;
 
     if (dawIndex < 0 || dawIndex >= (int)state.settings.dawTargets.size()) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
     auto& target = state.settings.dawTargets[dawIndex];
     if (!target.enabled) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
 
@@ -5148,8 +5281,7 @@ static void SendToDAW(AppState& state,
     std::string prepError;
     const bool payloadReady = BuildTransferPayload(state, files, prepError);
     if (!payloadReady) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = prepError; state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, prepError);
         return;
     }
 
@@ -5161,77 +5293,79 @@ static void DispatchPreparedSendToDAW(AppState& state,
                                       std::vector<std::string> files,
                                       HarkenSearch::CubaseAdapter::TransferActionKind transferAction) {
     const bool isReaperPipe = IsReaperNamedPipeTarget(target);
-    const bool multiFile = files.size() > 1;
     const bool keepHarkenSearchProcessingSuffix = state.settings.keepHarkenSearchOutputProcessingSuffix;
-
-    state.dawSendSent.store(0);
-    state.dawSendTotal.store((int)files.size());
-    state.dawSendState.store(AppState::DawSendState::Sending);
-    { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = "Sending " + DescribeSteinbergTransferAction(transferAction) + "..."; state.lastSendToDAWKeyed = false; }
-    state.lastSendToDAWTime = ImGui::GetTime();
+    DawTarget targetCopy = target;
+    if (!state.dawSendFeedback.begin(static_cast<int>(files.size()))) return;
 
     if (state.dawSendThread.joinable())
         state.dawSendThread.join();
 
-    DawTarget targetCopy = target;
-    state.dawSendThread = std::thread([&state, files = std::move(files), targetCopy, isReaperPipe, multiFile, transferAction, keepHarkenSearchProcessingSuffix]() mutable {
+    auto dispatch = [&state, files = std::move(files), targetCopy = std::move(targetCopy),
+                   isReaperPipe, transferAction, keepHarkenSearchProcessingSuffix]() mutable {
+        DawSendFeedbackSnapshot feedback;
+        feedback.total = static_cast<int>(files.size());
         std::string status;
-        HarkenSearch::DawBridge::InstallStatus bridgeSnap;  // H1b: keyed row (UI renders)
+        HarkenSearch::DawBridge::InstallStatus bridgeSnap;
         bool bridgeKeyed = false;
 
         if (isReaperPipe) {
-            if (!PrepareReaperBridgeForSend(targetCopy, status, &bridgeSnap, &bridgeKeyed)) {
-                { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex);  // H2a
-                  if (bridgeKeyed) g_lastSendToDAWBridgeStatus = bridgeSnap;
-                  state.lastSendToDAWKeyed = bridgeKeyed;
-                  state.lastSendToDAWStatus = status; }
-                state.lastSendToDAWTime = ImGui::GetTime();
-                state.dawSendState.store(AppState::DawSendState::Done);
-                return;
+            if (PrepareReaperBridgeForSend(targetCopy, status, &bridgeSnap, &bridgeKeyed)) {
+                auto result = HarkenSearch::ReaperBridge::SendFiles(
+                    files,
+                    [&state](int sent, int total) { state.dawSendFeedback.setProgress(sent, total); });
+                feedback.outcome = ClassifyDawSendResult(result.ok, result.sent, result.total);
+                feedback.sent = result.sent;
+                feedback.total = result.total;
+                status = std::move(result.detail);
+            } else {
+                feedback.outcome = DawSendOutcome::Failure;
             }
-            const auto result = HarkenSearch::ReaperBridge::SendFiles(
-                files,
-                [&state](int sent, int) { state.dawSendSent.store(sent); });
-            status = result.detail;
-            state.dawSendSent.store(result.sent);
         } else {
-            DispatchToDaw(targetCopy, files, status, transferAction, keepHarkenSearchProcessingSuffix,
-                          &bridgeSnap, &bridgeKeyed);
-            state.dawSendSent.store((int)files.size());
+            const bool delivered = DispatchToDaw(targetCopy, files, status, feedback, transferAction,
+                keepHarkenSearchProcessingSuffix, &bridgeSnap, &bridgeKeyed);
+            if (feedback.outcome == DawSendOutcome::Idle)
+                feedback.outcome = ClassifyDawSendResult(delivered, feedback.sent, feedback.total);
         }
-
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex);  // H2a
-          if (bridgeKeyed) g_lastSendToDAWBridgeStatus = bridgeSnap;
-          state.lastSendToDAWKeyed = bridgeKeyed;
-          state.lastSendToDAWStatus = status; }
-        state.lastSendToDAWTime = ImGui::GetTime();
-        state.dawSendState.store(AppState::DawSendState::Done);
-    });
+        if (feedback.detail.empty()) feedback.detail = std::move(status);
+        if (bridgeKeyed) {
+            feedback.outcome = DawSendOutcome::BridgeFailure;
+            feedback.detail = std::move(bridgeSnap.detail);
+            feedback.remediation = std::move(bridgeSnap.remediation);
+        }
+        return feedback;
+    };
+    auto worker = HarkenSearch::UI::MakeDawSendWorker(state.dawSendFeedback, std::move(dispatch),
+        [](const char* message) { DIAG_SYSTEM_FMT("DawSend", "worker exception: %s", message); });
+    try {
+        state.dawSendThread = std::thread(std::move(worker));
+    } catch (const std::system_error& error) {
+        DawSendFeedbackSnapshot failure;
+        failure.outcome = DawSendOutcome::Failure;
+        failure.detail = error.what();
+        state.dawSendFeedback.finish(std::move(failure));
+    }
 }
 
 static void SendToDAWForPaths(AppState& state,
                               int dawIndex,
                               const std::vector<std::string>& sourcePaths,
                               HarkenSearch::CubaseAdapter::TransferActionKind transferAction = HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost) {
-    if (state.dawSendState.load() == AppState::DawSendState::Sending) return;
+    if (state.dawSendFeedback.isSending()) return;
 
     if (dawIndex < 0 || dawIndex >= (int)state.settings.dawTargets.size()) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
     auto& target = state.settings.dawTargets[dawIndex];
     if (!target.enabled) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = L(DAW_NoTarget); state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, LedgerText::keyed(LStr::DAW_NoTarget));
         return;
     }
 
     std::vector<std::string> files;
     std::string prepError;
     if (!BuildTransferPayloadForSourcePaths(state, target, sourcePaths, files, prepError)) {
-        { std::lock_guard<std::mutex> lkStat(g_lastSendToDAWStatusMutex); state.lastSendToDAWStatus = prepError; state.lastSendToDAWKeyed = false; }
-        state.lastSendToDAWTime = ImGui::GetTime();
+        PublishDawSendFailure(state, prepError);
         return;
     }
 
@@ -5747,6 +5881,7 @@ void LoadAppSettings(AppState& state) {
     state.settings.threadLimit = ParseInt(kv["threadLimit"], state.settings.threadLimit);
 
     // Send-to-DAW targets
+    state.settings.reaperSetupNoticeDismissed = ParseInt(kv["reaperSetupNoticeDismissed"], 0) != 0;
     state.selectedDAWIndex = ParseInt(kv["selectedDAWIndex"], 0);
     {
         int dawCount = ParseInt(kv["dawTargetCount"], 0);
@@ -5967,6 +6102,7 @@ void LoadAppSettings(AppState& state) {
     state.showM4A = ParseBool(kv["showM4A"], state.showM4A);
     state.showWMA = ParseBool(kv["showWMA"], state.showWMA);
     state.showOther = ParseBool(kv["showOther"], state.showOther);
+    state.showLosslessWavPack = ParseBool(kv["showLosslessWavPack"], state.showLosslessWavPack);
 
     // Personal preferences
     auto itUserName = kv.find("userName");
@@ -6567,6 +6703,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"threadLimit", std::to_string(state.settings.threadLimit)});
 
     // Send-to-DAW targets
+    items.push_back({"reaperSetupNoticeDismissed", state.settings.reaperSetupNoticeDismissed ? "1" : "0"});
     items.push_back({"selectedDAWIndex", std::to_string(state.selectedDAWIndex)});
     items.push_back({"dawTargetCount", std::to_string(state.settings.dawTargets.size())});
     for (int i = 0; i < (int)state.settings.dawTargets.size(); ++i) {
@@ -6641,6 +6778,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"showM4A", state.showM4A ? "1" : "0"});
     items.push_back({"showWMA", state.showWMA ? "1" : "0"});
     items.push_back({"showOther", state.showOther ? "1" : "0"});
+    items.push_back({"showLosslessWavPack", state.showLosslessWavPack ? "1" : "0"});
 
     // Personal preferences
     items.push_back({"userName", state.settings.userName});
@@ -9101,8 +9239,8 @@ static bool HasFileTypeFilter(const AppState& state) {
 
 // Unified popup typography / hierarchy helpers
 // Shared vocabulary for all popups and modals so title / section / body text
-// reads at a consistent rhythm. Reference: docs .impeccable.md "Keep hierarchy
-// strict" — never let two levels look the same.
+// reads at a consistent rhythm. Keep hierarchy strict: never let two levels
+// look the same.
 
 // Level 1: popup title. Bold font, primary text at full opacity, tight bottom gap.
 static std::string fmtStr(const char* fmt, const char* a) {
@@ -12713,6 +12851,7 @@ static void RenderForegroundMaintenanceToasts(AppState& state) {
     DrawBackgroundReconcileScanToast(state);
 }
 
+#include "ReaperSetupNotice.inl"
 static bool StartFullWaveformRebuild(AppState& state) {
     if (state.waveformRebuildActive) return false;
     if (state.dbSwitchInProgress) {
@@ -14634,7 +14773,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
         state.showRemoveFolderDbConfirm = false;
     }
 
-    if (!BeginTransientScrollbarPopupModal(kPopupTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!aura::ui::BeginAlertDialog(kPopupTitle, kPopupTitle)) {
         return;
     }
     { ReadingTextScope _readingPopup;  // dialog body is a reading surface
@@ -14662,7 +14801,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
     }
 
     }
-    ImGui::EndPopup();
+    aura::ui::EndAlertDialog();
 }
 
 // Flat folder-search results avoid recursive matching during every frame.
@@ -15100,7 +15239,7 @@ void FilterResultsByFileType(AppState& state) {
     filtered.reserve(state.searchResults.size());
 
     for (const auto& record : state.searchResults) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             filtered.push_back(record);
         }
     }
@@ -15132,7 +15271,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
 
     state.resetRandomSampling();
     for (const auto& record : allMatching) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             if (state.playedFileIds.find(record.id) == state.playedFileIds.end())
                 state.randomAvailableIds.push_back(record.id);
         }
@@ -15140,7 +15279,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
     state.randomAllPlayed = state.randomAvailableIds.empty();
     if (state.randomAllPlayed) {
         for (const auto& record : allMatching) {
-            if (state.shouldShowFile(record.extension))
+            if (state.shouldShowFile(record))
                 state.randomAvailableIds.push_back(record.id);
         }
     }
@@ -15339,6 +15478,7 @@ static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
     state.instrumentPillState.clear();
     state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
     state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+    state.showLosslessWavPack = false;
     state.suppressNextRealtimeSearchCommit = true;
 
     // Clear both same-folder and same-name search modes.
@@ -17268,8 +17408,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // --- Enum filters: single combo trigger, unified popup body ---
         drawSidebarFilterLabel(L(Filter_Format));
         {
-            const char* formatItems[] = { L(Filter_All), "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems, IM_ARRAYSIZE(formatItems),
+            auto formatItems = aura::search::kAudioFormatFilters;
+            formatItems.front() = L(Filter_All);
+            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems.data(), static_cast<int>(formatItems.size()),
                 [&]() { applyMetaFilters(); });
         }
 
@@ -17600,25 +17741,52 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
             typesChanged |= ImGui::Checkbox(L(Main_ExtWmaCheck), &state.showWMA);
             ImGui::SameLine(80);
-            typesChanged |= ImGui::Checkbox(L(Filter_OtherType), &state.showOther);
+            if (ImGui::Checkbox(L(Filter_OtherType), &state.showOther)) {
+                state.showLosslessWavPack = false;
+                typesChanged = true;
+            }
 
             // Quick buttons
-            if (ImGui::SmallButton(L(Filter_AllBtn))) {
+#if ARIS_PREVIEW_ISOLATION
+            auto recordTypePresetRect = [&](const char* key) {
+                if (!ImGui::IsItemVisible()) return;
+                const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                state.qaFilterUiRects[key] = ImVec4(
+                    min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+            };
+#endif
+            const bool allTypesPressed = ImGui::SmallButton(L(Filter_AllBtn));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.all");
+#endif
+            if (allTypesPressed) {
                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_WAVOnly))) {
+            const bool wavOnlyPressed = ImGui::SmallButton(L(Filter_WAVOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.wav");
+#endif
+            if (wavOnlyPressed) {
                 state.showWAV = true;
                 state.showMP3 = state.showFLAC = state.showOGG = false;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_LosslessOnly))) {
+            const bool losslessOnlyPressed = ImGui::SmallButton(L(Filter_LosslessOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.lossless");
+#endif
+            if (losslessOnlyPressed) {
                 state.showWAV = state.showFLAC = state.showAIFF = true;
                 state.showMP3 = state.showOGG = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = true;
                 typesChanged = true;
             }
 
@@ -18297,7 +18465,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
     const char* title=L(Info_SaveBeforeLeaving);
     if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
     bool resolved=false;
-    if (BeginTransientScrollbarPopupModal(title,nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)) {
         ImGui::TextUnformatted(L(Info_SaveBeforeLeavingBody));
         if (!state.infoEditError.empty()) ImGui::TextWrapped("%s",state.infoEditError.c_str());
         const bool yes=aura::ui::ActionButton(L(Info_SaveYes),ImVec2(140,0), aura::ui::ButtonVariant::PrimarySearch);
@@ -18311,7 +18479,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
             if(resolved) ImGui::CloseCurrentPopup();
             else if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     if (resolved) {
         state.metadataEditMode=false; state.metadataBatchMode=false; state.metadataBatchIds.clear();
@@ -29063,7 +29231,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                                    (mousePos.y - state.uiState.exportDragStart.y) * (mousePos.y - state.uiState.exportDragStart.y));
             if (dragDist > 3.0f) {
                 if (state.audioEngine.isLoaded()) {
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                    const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
+                    DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
@@ -30430,9 +30600,14 @@ void RenderUI(AppState& state) {
         }
         g_dawBridgeSession.reset(); // done consuming
         g_dawBridgeInstallInFlight.store(false);
+        g_reaperSetupStatusAt = -999.0;
 
         char toastBuf[256];
         if (harvested.ok) {
+            ++g_reaperSetupProbeGeneration;
+            g_reaperSetupPageStatus.reset();
+            g_reaperSetupStartupSubmitted = true;
+            g_reaperSetupNoticePending = false;
             snprintf(toastBuf, sizeof(toastBuf), L(Install_StatusOk), installerName.c_str());
             state.loadErrorToast      = toastBuf;
             state.loadErrorToastUntil = ImGui::GetTime() + 5.0; // success: 5s auto-dismiss
@@ -30668,17 +30843,15 @@ void RenderUI(AppState& state) {
     }
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
-    if (BeginTransientScrollbarPopupModal(L(Dlg_CloseSM), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_CloseSM), L(Dlg_CloseSM))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
-        ImGui::TextWrapped("%s", L(CloseDlg_Question));
-        ImGui::Separator();
         ImGui::RadioButton(L(CloseDlg_Minimize), &state.closeChoiceSelection, 1);
         ImGui::RadioButton(L(CloseDlg_Exit), &state.closeChoiceSelection, 2);
         ImGui::Spacing();
         ImGui::Checkbox(L(CloseDlg_Remember), &state.closeChoiceRemember);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             int sel = std::clamp(state.closeChoiceSelection, 1, 2);
             if (state.closeChoiceRemember) {
@@ -30703,7 +30876,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     ImGui::PopStyleColor(2);
 
@@ -30712,11 +30885,11 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_FolderAutoRename));
         state.showFolderAutoRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_FolderAutoRename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename), L(Dlg_FolderAutoRename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(FolderRename_Rule));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::Text("%s", L(FolderRename_RootDir));
         ImGui::SetNextItemWidth(520);
@@ -30737,7 +30910,7 @@ void RenderUI(AppState& state) {
         ImGui::SameLine();
         ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(Batch_GenPreview), ImVec2(120, 0))) {
             BuildFolderRenamePreview(state);
         }
@@ -30757,7 +30930,7 @@ void RenderUI(AppState& state) {
             ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text("%s", L(FolderRename_PreviewList));
         BeginTransientScrollbarChild("##RenamePreview", ImVec2(760, 320), true);
         if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
@@ -30784,7 +30957,7 @@ void RenderUI(AppState& state) {
         ImGui::EndChild();
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Edit Filename Dialog
@@ -30793,7 +30966,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_EditFilename));
         state.showEditFilenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_EditFilename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_EditFilename), L(Dlg_EditFilename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(Dlg_InputNewFilename));
@@ -30801,7 +30974,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##EditFilename", state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canRename = strlen(state.editFilenameBuffer) > 0;
         ImGui::BeginDisabled(!canRename);
@@ -30821,7 +30994,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete Confirmation Dialog
@@ -30846,12 +31019,12 @@ void RenderUI(AppState& state) {
     }
 
     // Remove from database only
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmRemove), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmRemove), L(Dlg_ConfirmRemove))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_RemoveRecordsAsk), (int)state.pendingDeleteIds.size());
         ImGui::Text(L(Main_RemoveRecordsNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             RemoveRecordsFromDatabase(state, state.pendingDeleteIds);
@@ -30867,17 +31040,17 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete from file system
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDelete), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDelete), L(Dlg_ConfirmDelete))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
         ImGui::Text(L(Main_DeleteWarnLine));
         ImGui::PopStyleColor();
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text(L(Main_DeleteFilesAsk), (int)state.pendingDeleteIds.size());
 
         // Show file list (max 5)
@@ -30891,7 +31064,7 @@ void RenderUI(AppState& state) {
         }
         ImGui::EndChild();
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
@@ -30911,7 +31084,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Transfer / Export Dialog (F-008)
@@ -30923,11 +31096,12 @@ void RenderUI(AppState& state) {
         state.showTransferDialog = false;
     }
     if (!state.panelTransfer.visible &&
-        BeginTransientScrollbarPopupModal((std::string(L(Export_FileTitle)) + "###TransferDlg").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        aura::ui::BeginAlertDialog((std::string(L(Export_FileTitle)) + "###TransferDlg").c_str(),
+                                   L(Export_FileTitle))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Dlg_SelectedNFiles), state.transferTotalCount);
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // Destination folder
         ImGui::Text("%s", L(Export_TargetFolder));
@@ -31137,7 +31311,7 @@ void RenderUI(AppState& state) {
             }
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Batch Rename Dialog
@@ -31146,7 +31320,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_BatchOp));
         state.showBatchRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_BatchOp), nullptr, ImGuiWindowFlags_None)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_BatchOp), L(Dlg_BatchOp), ImGuiWindowFlags_None)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::SetWindowSize(ImVec2(900, 650), ImGuiCond_FirstUseEver);
@@ -31595,7 +31769,7 @@ void RenderUI(AppState& state) {
         }  // End of tab content
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Handle popup dialogs
@@ -31942,7 +32116,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(feedbackDlgId.c_str());
         state.showFeedbackDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(feedbackDlgId.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(feedbackDlgId.c_str(), L(Menu_SendFeedback))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
 
@@ -32046,7 +32220,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // AI 语音识别面板
@@ -32055,8 +32229,9 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(560, 620), ImGuiCond_FirstUseEver);
         if (BeginTransientScrollbarWindow(L(AI_PanelTitle), &state.showAIPanel)) {
             if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape)) state.showAIPanel = false;
-            const char* modelItems[] = { "tiny (~75MB)", "base (~142MB)", "small (~466MB)", "medium (~1.5GB)" };
             const char* modelNames[] = { "tiny", "base", "small", "medium" };
+            char modelItemBufs[IM_ARRAYSIZE(modelNames)][96];
+            const char* modelItems[IM_ARRAYSIZE(modelNames)];
             int modelIdx = 1;
             for (int i = 0; i < IM_ARRAYSIZE(modelNames); ++i) {
                 if (state.aiModelName == modelNames[i]) {
@@ -32068,89 +32243,105 @@ void RenderUI(AppState& state) {
             const bool selectedModelExists = Platform::FileSystem::Exists(selectedModelPath);
             const bool selectedModelLoaded = state.aiModelLoaded.load() &&
                 GetAIEngine().GetModelPath() == selectedModelPath;
-            std::string localModelList;
+            const auto& aiPanelTheme = ThemeColors::current();
+            const ImVec4 aiOkColor = aiPanelTheme.volumeColor;
+            const ImVec4 aiWarnColor = aiPanelTheme.meterWarning;
+            const ImVec4 aiErrColor = aiPanelTheme.meterClip;
+            const ImVec4 aiInfoColor = aiPanelTheme.diagnosticOverlayAccent;
             for (int i = 0; i < IM_ARRAYSIZE(modelNames); ++i) {
-                if (Platform::FileSystem::Exists(GetAIModelPath(modelNames[i]))) {
-                    if (!localModelList.empty()) localModelList += ", ";
-                    localModelList += modelNames[i];
-                }
+                const bool modelPresent = Platform::FileSystem::Exists(GetAIModelPath(modelNames[i]));
+                snprintf(modelItemBufs[i], sizeof(modelItemBufs[i]), "%s%s%s",
+                    GetAIModelSizeLabel(modelNames[i]),
+                    modelPresent ? " \xc2\xb7 " : "",
+                    modelPresent ? L(AI_ModelDownloaded) : "");
+                modelItems[i] = modelItemBufs[i];
             }
 
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            BeginTransientScrollbarChild("##AIModelWorkbench", ImVec2(0, 94), true);
-            ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), L(Main_WhisperModelFmt), state.aiModelName.c_str());
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(aiInfoColor, L(Main_WhisperModelFmt), state.aiModelName.c_str());
             ImGui::SameLine();
             if (state.aiModelDownloading.load()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f), L(Main_DownloadingText));
+                ImGui::TextColored(aiWarnColor, "%s", L(Main_DownloadingText));
             } else if (selectedModelLoaded) {
-                ImGui::TextColored(ImVec4(0.34f, 0.92f, 0.52f, 1.0f), L(Main_AsrReady));
+                ImGui::TextColored(aiOkColor, "%s", L(Main_AsrReady));
             } else if (selectedModelExists) {
-                ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), L(Main_AsrLocalDownloaded));
+                ImGui::TextColored(aiInfoColor, "%s", L(Main_AsrLocalDownloaded));
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.32f, 1.0f), L(Main_AsrNeedsDownload));
+                ImGui::TextColored(aiWarnColor, "%s", L(Main_AsrNeedsDownload));
             }
             ImGui::SameLine();
-            ImGui::TextDisabled(L(Main_LocalModelFmt), localModelList.empty() ? L(Main_LocalNone) : localModelList.c_str());
 
             ImGui::BeginDisabled(state.aiModelDownloading.load());
-            ImGui::SetNextItemWidth(165.0f);
-            if (ImGui::Combo(L(Main_CurrentModelCombo), &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
+            // 模型行固定单行：下拉宽度吃掉剩余空间，给后面的主操作和「模型目录」留位置。
+            const float modelRowWidth = ImGui::GetContentRegionAvail().x;
+            const float modelComboWidth = std::clamp(modelRowWidth - 300.0f, 110.0f, 190.0f);
+            ImGui::SetNextItemWidth(modelComboWidth);
+            if (ImGui::Combo("##AIModelSelect", &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
                 state.aiModelName = modelNames[modelIdx];
                 state.aiModelLoaded.store(GetAIEngine().IsModelLoaded() &&
                     GetAIEngine().GetModelPath() == GetAIModelPath(state.aiModelName));
             }
             ImGui::EndDisabled();
 
-            if (state.aiEngineInitialized.load()) {
-                if (selectedModelLoaded) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled(L(Main_CurrentlyUsingFmt), GetAIEngine().GetModelPath().c_str());
-                } else if (state.aiModelDownloading.load()) {
-                    const float downloadProgress = state.aiModelDownloadProgress.load();
-                    char pctBuf[16];
-                    snprintf(pctBuf, sizeof(pctBuf), u8"%.0f%%", downloadProgress * 100.0f);
-                    DrawUnifiedProgressBar(downloadProgress, ImVec2(-1, 0), pctBuf);
-                } else {
-                    const std::string modelPath = selectedModelPath;
-                    const std::string selectedModelName = state.aiModelName;
-                    char modelButtonLabel[128];
-                    snprintf(modelButtonLabel, sizeof(modelButtonLabel),
-                        selectedModelExists ? L(AI_LoadLocalFmt) : L(AI_DownloadLoadFmt),
-                        GetAIModelSizeLabel(selectedModelName));
-                    ImGui::SameLine();
-                    if (aura::ui::ActionButton(modelButtonLabel)) {
-                        state.aiModelDownloading.store(true);
-                        state.aiModelDownloadProgress.store(0.0f);
-                        std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
-                            bool loaded = false;
-                            if (selectedModelExists) {
-                                loaded = GetAIEngine().LoadModel(modelPath);
-                                if (!loaded) {
-                                    Platform::FileSystem::RemoveFile(modelPath);
-                                }
-                            }
+            if (!state.aiEngineInitialized.load()) {
+                ImGui::SameLine();
+                ImGui::TextColored(aiErrColor, "%s", L(AI_EngineNotInit));
+            } else if (state.aiModelDownloading.load()) {
+                ImGui::SameLine();
+                const float downloadProgress = state.aiModelDownloadProgress.load();
+                char pctBuf[16];
+                snprintf(pctBuf, sizeof(pctBuf), u8"%.0f%%", downloadProgress * 100.0f);
+                const float trackWidth = ImGui::GetContentRegionAvail().x - 96.0f;
+                DrawUnifiedProgressBar(downloadProgress, ImVec2(trackWidth > 48.0f ? trackWidth : 48.0f, 0), pctBuf);
+            } else if (!selectedModelLoaded) {
+                const std::string modelPath = selectedModelPath;
+                const std::string selectedModelName = state.aiModelName;
+                char modelButtonLabel[128];
+                snprintf(modelButtonLabel, sizeof(modelButtonLabel), "%s",
+                    selectedModelExists ? L(AI_LoadLocal) : L(AI_DownloadLoad));
+                ImGui::SameLine();
+                if (aura::ui::ActionButton(modelButtonLabel)) {
+                    state.aiModelDownloading.store(true);
+                    state.aiModelDownloadProgress.store(0.0f);
+                    std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
+                        bool loaded = false;
+                        if (selectedModelExists) {
+                            loaded = GetAIEngine().LoadModel(modelPath);
                             if (!loaded) {
-                                bool downloaded = GetAIEngine().DownloadModel(selectedModelName, "",
-                                    [&state](float progress) {
-                                        state.aiModelDownloadProgress.store(progress);
-                                    });
-                                if (downloaded) {
-                                    loaded = GetAIEngine().LoadModel(modelPath);
-                                }
+                                Platform::FileSystem::RemoveFile(modelPath);
                             }
-                            state.aiModelLoaded.store(loaded);
-                            if (loaded) state.aiModelDownloadProgress.store(1.0f);
-                            state.aiModelDownloading.store(false);
-                        }).detach();
-                    }
-                    ImGui::TextDisabled(selectedModelExists ? L(Main_ModelKeptNote) : L(Main_ModelAbsent));
+                        }
+                        if (!loaded) {
+                            bool downloaded = GetAIEngine().DownloadModel(selectedModelName, "",
+                                [&state](float progress) {
+                                    state.aiModelDownloadProgress.store(progress);
+                                });
+                            if (downloaded) {
+                                loaded = GetAIEngine().LoadModel(modelPath);
+                            }
+                        }
+                        state.aiModelLoaded.store(loaded);
+                        if (loaded) state.aiModelDownloadProgress.store(1.0f);
+                        state.aiModelDownloading.store(false);
+                    }).detach();
                 }
-            } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), L(AI_EngineNotInit));
             }
-            ImGui::EndChild();
-            ImGui::PopStyleVar(2);
+
+            // 行尾低频入口：模型目录
+            ImGui::SameLine();
+            {
+                const float linkWidth = ImGui::CalcTextSize(L(AI_ModelDirLink)).x + 14.0f;
+                const float remainingWidth = ImGui::GetContentRegionAvail().x;
+                if (remainingWidth < linkWidth) {
+                    // 面板被拖窄时宁可不画，也不把入口压在裁剪区里。
+                } else {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + remainingWidth - linkWidth);
+                    if (aura::ui::SmallActionButton(L(AI_ModelDirLink), aura::ui::ButtonVariant::Quiet)) {
+                        const std::string modelDir = GetDefaultModelDir();
+                        Platform::OpenInFileManager(modelDir);
+                    }
+                }
+            }
 
             ImGui::Separator();
 
@@ -32177,20 +32368,16 @@ void RenderUI(AppState& state) {
                 if (ImGui::BeginTabItem(L(Main_TranscribeTab))) {
                     const char* langItems[] = { L(Sc_LangAuto), u8"简体中文", "English" };  // 简体中文/English: 语言自名(endonym)豁免=Lead 7-0裁②
                     ImGui::SetNextItemWidth(180.0f);
-                    ImGui::Combo(L(Main_RecognizeLangCombo), &state.aiRecognitionLanguageMode, langItems, IM_ARRAYSIZE(langItems));
+                    ImGui::Combo("##AIRecognitionLanguage", &state.aiRecognitionLanguageMode, langItems, IM_ARRAYSIZE(langItems));
                     if (state.aiRecognitionLanguageMode == 1) {
-                        ImGui::TextDisabled(L(Main_ChineseSimplifyHint));
-                    } else if (state.aiRecognitionLanguageMode == 2) {
-                        ImGui::TextDisabled(L(Main_EnglishMaterialHint));
-                    } else {
-                        ImGui::TextDisabled(L(Main_AutoDetectLangHint));
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(L(AI_SimplifyApplied));
                     }
-                    ImGui::TextDisabled(L(Main_BaseModelHint));
                     ImGui::Separator();
 
                     if (state.audioEngine.isLoaded()) {
                         const AudioFileInfo& aiFileInfo = state.audioEngine.getFileInfo();
-                        ImGui::Text(L(Main_CurrentFileFmt), aiFileInfo.filePath.c_str());
+                        ImGui::Text(L(Main_CurrentFileFmt), aiFileInfo.fileName.c_str());
 
                         if (state.aiModelLoaded.load()) {
                             const bool currentTaskRunning = state.aiCurrentTranscriptionTaskId > 0;
@@ -32232,33 +32419,40 @@ void RenderUI(AppState& state) {
                                 auto it = state.aiTranscriptCache.find(state.currentFileId);
                                 if (it != state.aiTranscriptCache.end() && !it->second.empty()) {
                                     ImGui::Separator();
-                                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), L(AI_TranscribeResult));
                                     auto resultIt = state.aiTranscriptResultCache.find(state.currentFileId);
                                     const TranscriptionResult* transcript =
                                         resultIt != state.aiTranscriptResultCache.end() ? &resultIt->second : nullptr;
-                                    if (transcript &&
-                                        IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds)) {
-                                        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                                            L(Main_AsrLowConfNote));
-                                    }
                                     auto orgIt = state.aiVoiceAssetOrganizationCache.find(state.currentFileId);
                                     const VoiceAssetOrganization* organization =
                                         orgIt != state.aiVoiceAssetOrganizationCache.end() ? &orgIt->second : nullptr;
-                                    if (organization) {
-                                        ImGui::TextDisabled(L(Main_AssetDescriptionFmt), organization->searchableDescription.c_str());
-                                        ImGui::TextDisabled(L(Main_SuggestedKeywordsFmt), organization->keywordCsv.c_str());
-                                        if (!organization->qualityIssues.empty()) {
-                                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                                                L(Main_AsrQualityCheckFmt), (int)organization->qualityIssues.size());
-                                        }
-                                    }
-                                    ImGui::TextWrapped("%s", it->second.c_str());
+                                    const bool lowConfidence = transcript &&
+                                        IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds);
 
-                                    if (aura::ui::ActionButton(L(Main_CopyToClipboardBtn))) {
-                                        ImGui::SetClipboardText(it->second.c_str());
+                                    const auto labeledValue = [&](const char* label, const char* value, bool lowConf) {
+                                        ImGui::AlignTextToFramePadding();
+                                        ImGui::TextDisabled("%s", label);
+                                        if (lowConf) {
+                                            ImGui::SameLine();
+                                            ImGui::TextColored(aiWarnColor, "%s", L(AI_LowConfidenceTag));
+                                        }
+                                        ImGui::SameLine();
+                                        ImGui::TextUnformatted(value);
+                                    };
+                                    if (organization && !organization->searchableDescription.empty()) {
+                                        labeledValue(L(AI_DescLabel), organization->searchableDescription.c_str(), lowConfidence);
+                                        if (!organization->keywordCsv.empty()) {
+                                            labeledValue(L(AI_KeywordsLabel), organization->keywordCsv.c_str(), false);
+                                        }
+                                    } else {
+                                        ImGui::TextWrapped("%s", it->second.c_str());
                                     }
-                                    ImGui::SameLine();
-                                    if (aura::ui::ActionButton(L(Main_SaveOrganizedResultBtn))) {
+                                    if (organization && !organization->qualityIssues.empty()) {
+                                        ImGui::TextColored(aiWarnColor, L(Main_AsrQualityCheckFmt),
+                                            (int)organization->qualityIssues.size());
+                                    }
+
+                                    ImGui::Spacing();
+                                    if (aura::ui::ActionButton(L(AI_SaveToAsset))) {
                                         // 更新数据库描述 - 通过 updateFile
                                         AudioRecord rec = state.database.getFileById(state.currentFileId);
                                         if (rec.id > 0) {
@@ -32275,17 +32469,25 @@ void RenderUI(AppState& state) {
                                             state.database.updateFile(rec);
                                         }
                                     }
-                                    if (transcript) {
-                                        ImGui::SameLine();
-                                        if (aura::ui::ActionButton(L(Main_CopySrtBtn))) {
-                                            std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
-                                            ImGui::SetClipboardText(srt.c_str());
+                                    ImGui::SameLine();
+                                    if (aura::ui::ActionButton(L(AI_CopyMenu))) {
+                                        ImGui::OpenPopup("##AICopyMenu");
+                                    }
+                                    if (aura::ui::BeginPopup("##AICopyMenu")) {
+                                        if (ImGui::MenuItem(L(Main_CopyToClipboardBtn))) {
+                                            ImGui::SetClipboardText(it->second.c_str());
                                         }
-                                        ImGui::SameLine();
-                                        if (aura::ui::ActionButton(L(Main_CopyCsvBtn))) {
-                                            std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
-                                            ImGui::SetClipboardText(csv.c_str());
+                                        if (transcript) {
+                                            if (ImGui::MenuItem(L(Main_CopySrtBtn))) {
+                                                std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
+                                                ImGui::SetClipboardText(srt.c_str());
+                                            }
+                                            if (ImGui::MenuItem(L(Main_CopyCsvBtn))) {
+                                                std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
+                                                ImGui::SetClipboardText(csv.c_str());
+                                            }
                                         }
+                                        aura::ui::EndPopup();
                                     }
 
                                     if (transcript && !transcript->segments.empty()) {
@@ -32299,7 +32501,7 @@ void RenderUI(AppState& state) {
                                                 ImGui::PushID(segIdx);
                                                 const bool selected = state.aiSelectedTranscriptSegment == segIdx;
                                                 if (selected) {
-                                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.85f, 1.0f, 1.0f));
+                                                    ImGui::PushStyleColor(ImGuiCol_Text, aiInfoColor);
                                                 }
                                                 if (ImGui::SmallButton(L(Main_PlayBtn))) {
                                                     if (aiFileInfo.durationSeconds > 0.0f) {
@@ -32311,10 +32513,6 @@ void RenderUI(AppState& state) {
                                                         if (!state.audioEngine.isPlaying()) state.audioEngine.play();
                                                         state.aiSelectedTranscriptSegment = segIdx;
                                                     }
-                                                }
-                                                ImGui::SameLine();
-                                                if (aura::ui::SmallActionButton(L(Main_CopyBtn))) {
-                                                    ImGui::SetClipboardText(seg.text.c_str());
                                                 }
                                                 ImGui::SameLine();
                                                 ImGui::TextDisabled(L(Main_SegmentRangeFmt),
@@ -32331,7 +32529,7 @@ void RenderUI(AppState& state) {
                                 }
                             }
                         } else {
-                            ImGui::TextDisabled(L(Main_PleaseDownloadModel));
+                            // 模型不可用时，面板顶部的「下载并加载」是唯一可执行动作，这里不再重复提示。
                         }
                     } else {
                         ImGui::TextDisabled(L(Main_PleaseLoadAudio));
@@ -32339,15 +32537,28 @@ void RenderUI(AppState& state) {
                     ImGui::EndTabItem();
                 }
 
-                // 任务列表
-                if (ImGui::BeginTabItem(L(Main_QueueTab))) {
-                    std::vector<AITask> tasks = GetAIEngine().GetAllTasks();
+                // 任务列表（计数直接显示在页签上）
+                std::vector<AITask> queueTasks = GetAIEngine().GetAllTasks();
+                char queueTabLabel[96];
+                if (queueTasks.empty()) {
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s###AIQueueTab", L(Main_QueueTab));
+                } else {
+                    // ### 后缀固定页签 ID：可清理后计数变化不会把用户踢回其他页签。
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s (%d)###AIQueueTab",
+                        L(Main_QueueTab), (int)queueTasks.size());
+                }
+                if (ImGui::BeginTabItem(queueTabLabel)) {
+                    std::vector<AITask>& tasks = queueTasks;
 
                     if (tasks.empty()) {
                         ImGui::TextDisabled(L(Main_NoTasks));
                     } else {
-                        ImGui::Text(L(Main_TaskTotalFmt), (int)tasks.size());
-                        ImGui::SameLine();
+                        const float queueToolsWidth = ImGui::CalcTextSize(L(Main_ClearCompletedBtn)).x +
+                            ImGui::CalcTextSize(L(Main_CancelQueuedBtn)).x + 46.0f;
+                        const float queueAvail = ImGui::GetContentRegionAvail().x;
+                        if (queueAvail > queueToolsWidth) {
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + queueAvail - queueToolsWidth);
+                        }
                         if (aura::ui::SmallActionButton(L(Main_ClearCompletedBtn))) {
                             GetAIEngine().ClearCompletedTasks();
                         }
@@ -32363,11 +32574,11 @@ void RenderUI(AppState& state) {
 
                             ImVec4 statusColor;
                             switch (task.status) {
-                                case AITaskStatus::Pending:    statusColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f); break;
-                                case AITaskStatus::Processing: statusColor = ImVec4(0.3f, 0.7f, 1.0f, 1.0f); break;
-                                case AITaskStatus::Completed:  statusColor = ImVec4(0.3f, 0.9f, 0.3f, 1.0f); break;
-                                case AITaskStatus::Failed:     statusColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f); break;
-                                default:                       statusColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); break;
+                                case AITaskStatus::Pending:    statusColor = aiPanelTheme.resultsSecondaryText; break;
+                                case AITaskStatus::Processing: statusColor = aiInfoColor; break;
+                                case AITaskStatus::Completed:  statusColor = aiOkColor; break;
+                                case AITaskStatus::Failed:     statusColor = aiErrColor; break;
+                                default:                       statusColor = aiPanelTheme.resultsSecondaryText; break;
                             }
 
                             ImGui::TextColored(statusColor, L(Main_BracketStatusFmt), GetAITaskStatusName(task.status));
@@ -32389,7 +32600,7 @@ void RenderUI(AppState& state) {
 
                             if (task.status == AITaskStatus::Failed) {
                                 const std::string aiTaskError = task.errorMessage.Render();  // H1b: keyed, render here
-                                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                ImGui::TextColored(aiErrColor,
                                     L(Main_IndentedErrorFmt), aiTaskError.c_str());
                             }
 
@@ -32426,39 +32637,7 @@ void RenderUI(AppState& state) {
                     ImGui::EndTabItem();
                 }
 
-                // 设置
-                if (ImGui::BeginTabItem(L(Main_SettingsTab))) {
-                    ImGui::Text(L(Main_AsrSettingsTitle));
-                    ImGui::Separator();
-                    ImGui::TextWrapped(L(Main_ModelSizeHint));
-
-                    ImGui::Separator();
-
-                    // 模型路径
-                    ImGui::Text(L(Main_ModelDirFmt), GetDefaultModelDir().c_str());
-
-                    if (aura::ui::ActionButton(L(Main_OpenModelDirBtn))) {
-                        std::string modelDir = GetDefaultModelDir();
-                        Platform::OpenInFileManager(modelDir);
-                    }
-
-                    ImGui::EndTabItem();
-                }
-
                 ImGui::EndTabBar();
-
-                const auto aiTasksForSummary = GetAIEngine().GetAllTasks();
-                int aiRunningCount = 0;
-                int aiFailedCount = 0;
-                for (const auto& task : aiTasksForSummary) {
-                    if (task.status == AITaskStatus::Pending || task.status == AITaskStatus::Processing) {
-                        ++aiRunningCount;
-                    } else if (task.status == AITaskStatus::Failed) {
-                        ++aiFailedCount;
-                    }
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled(L(Main_BackgroundTasksFmt), aiRunningCount, aiFailedCount);
             }
             ImGui::PopStyleColor(6);
         }
@@ -32482,12 +32661,11 @@ void RenderUI(AppState& state) {
         state.settings.defaultPlayerPrompted = true;
         SaveAppSettings(state);
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(), nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(),
+                               L(Set_ShellSetDefault))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         ImGui::TextUnformatted(L(Main_SetDefaultPlayerPrompt));
-        ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));        ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));
         ImGui::Spacing();
         if (aura::ui::ActionButton(L(Main_SetDefaultBtn), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             SetAsDefaultPlayer();
@@ -32498,7 +32676,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Scan folder dialog
@@ -33835,7 +34013,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewPlaylist));
         state.showPlaylistDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewPlaylist), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewPlaylist), L(Dlg_NewPlaylist))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -33849,7 +34027,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // 当输入框为空或名称已存在时禁用创建按钮
         bool canCreate = strlen(state.playlistNameBuffer) > 0;
@@ -33890,7 +34068,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // New folder dialog
@@ -33898,7 +34076,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewFolder));
         state.showCreateFolderDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewFolder), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewFolder), L(Dlg_NewFolder))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_FolderNameLabel));
@@ -33910,7 +34088,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canCreate = strlen(state.folderNameBuffer) > 0;
         bool isDuplicateName = false;
@@ -33947,7 +34125,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Remove-folder-from-Aris confirmation modal.
@@ -33962,38 +34140,16 @@ void RenderUI(AppState& state) {
         const ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
-        if (BeginTransientScrollbarPopupModal((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(), nullptr,
-                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        if (aura::ui::BeginAlertDialog((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(),
+                                       L(Misc_ClearFolderCache),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             const ImVec4 warnCol(0.96f, 0.62f, 0.22f, 1.0f);
-            // Hand-drawn warning triangle — font-independent so the glyph
-            // never falls back to a tofu box on CJK builds.
-            {
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                const ImVec2 base = ImGui::GetCursorScreenPos();
-                const float h = ImGui::GetFontSize();
-                const ImU32 col = ImGui::GetColorU32(warnCol);
-                const ImVec2 a(base.x + h * 0.5f, base.y + 1.0f);
-                const ImVec2 b(base.x,           base.y + h - 1.0f);
-                const ImVec2 c(base.x + h,       base.y + h - 1.0f);
-                dl->AddTriangle(a, b, c, col, 1.8f);
-                const float cx = base.x + h * 0.5f;
-                dl->AddRectFilled(ImVec2(cx - 0.9f, base.y + 4.0f),
-                                  ImVec2(cx + 0.9f, base.y + h - 5.0f), col);
-                dl->AddRectFilled(ImVec2(cx - 0.9f, base.y + h - 4.0f),
-                                  ImVec2(cx + 0.9f, base.y + h - 2.0f), col);
-                ImGui::Dummy(ImVec2(h + 6.0f, h));
-                ImGui::SameLine(0.0f, 0.0f);
-            }
             ImGui::PushStyleColor(ImGuiCol_Text, warnCol);
-            ImGui::TextUnformatted(L(Main_RemoveFromLibraryTitle));
+            ImGui::TextWrapped(L(Main_RemovePathsExplain));
             ImGui::PopStyleColor();
             ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::TextWrapped(L(Main_RemovePathsExplain));            ImGui::Spacing();
             // Path in a slightly framed monospace block for clarity.
             ImGui::Indent(8.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.95f, 1.0f));
@@ -34004,8 +34160,6 @@ void RenderUI(AppState& state) {
             ImGui::Spacing();
             ImGui::TextDisabled(L(Main_SourcesKeptNote));
             ImGui::TextDisabled(L(Main_CacheRefsCleanupNote));
-            ImGui::Spacing();
-            ImGui::Separator();
             ImGui::Spacing();
 
             const float btnW = 120.0f;
@@ -34031,7 +34185,7 @@ void RenderUI(AppState& state) {
             }
             ImGui::PopStyleColor(3);
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
     }
 
@@ -34041,7 +34195,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(playlistRenamePopupLabel.c_str());
         state.showPlaylistRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(playlistRenamePopupLabel.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(playlistRenamePopupLabel.c_str(), L(PL_RenameTitle))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -34049,7 +34203,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##PlaylistRenameName", state.playlistNameBuffer,
             sizeof(state.playlistNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
-        ImGui::Separator();
+        ImGui::Spacing();
 
         const std::string renameCandidate = TrimCopy(state.playlistNameBuffer);
         bool canRename = !renameCandidate.empty();
@@ -34081,7 +34235,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // ⚙️ 资产库管理中心
@@ -34092,7 +34246,7 @@ void RenderUI(AppState& state) {
     }
 
     ImGui::SetNextWindowSize(ImVec2(850, 500), ImGuiCond_FirstUseEver);
-    if (BeginTransientScrollbarPopupModal(L(AssetLib_Title), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    if (aura::ui::BeginAlertDialog(L(AssetLib_Title), L(AssetLib_Title), ImGuiWindowFlags_NoCollapse)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
 
@@ -34260,10 +34414,10 @@ void RenderUI(AppState& state) {
             }
             state.showDbDestroyConfirmDialog = false;
         }
-        if (BeginTransientScrollbarPopupModal(L(AssetLib_DeleteConfirm), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (aura::ui::BeginAlertDialog(L(AssetLib_DeleteConfirm), L(AssetLib_DeleteConfirm))) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             ImGui::Text(L(Main_DelLibAsk));
-            ImGui::Separator();
+            ImGui::Spacing();
             ImGui::Text(L(Main_TargetLabel));
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", state.dbManagerSelectedPath.c_str());
             ImGui::Spacing();
@@ -34285,14 +34439,14 @@ void RenderUI(AppState& state) {
             ImGui::SameLine();
             if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 35), aura::ui::ButtonVariant::Quiet)) { state.dbDestroyErrorMsg.clear(); ImGui::CloseCurrentPopup(); }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 38.0f);
         }
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
 // 新建数据库弹窗
@@ -34561,7 +34715,7 @@ void RenderUI(AppState& state) {
         state.showDawTargetSettings = false;
     }
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
-    if (BeginTransientScrollbarPopupModal(L(DAW_SettingsTitle), nullptr, ImGuiWindowFlags_None)) {
+    if (aura::ui::BeginAlertDialog(L(DAW_SettingsTitle), L(DAW_SettingsTitle), ImGuiWindowFlags_None)) {
         {
         ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
@@ -34676,13 +34830,15 @@ void RenderUI(AppState& state) {
                 strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str(), _TRUNCATE);
             }
 
-            ImGui::Separator();
             ImGui::Spacing();
             ImGui::Text(L(Main_SelectedDawFmt), selected.name.c_str());
             ImGui::TextDisabled("%s", GetCapabilityTag(selected));
-            const std::string capabilityDetail = GetCapabilityDetail(selected);
-            if (!capabilityDetail.empty()) {
-                ImGui::TextWrapped("%s", capabilityDetail.c_str());
+            // REAPER 目标的详细状态在下方单独渲染一次，这里不再重复同一句提示。
+            if (!IsReaperNamedPipeTarget(selected)) {
+                const std::string capabilityDetail = GetCapabilityDetail(selected);
+                if (!capabilityDetail.empty()) {
+                    ImGui::TextWrapped("%s", capabilityDetail.c_str());
+                }
             }
             ImGui::Spacing();
 
@@ -34781,17 +34937,7 @@ void RenderUI(AppState& state) {
                     if (!cached->remediation.empty()) {
                         ImGui::TextWrapped("%s", bridgeRemedShown.c_str());
                     }
-                    ImGui::TextDisabled(L(Main_ReaperStatusFmt),
-                        cached->hostExecutablePath.empty() ? "-" : cached->hostExecutablePath.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperResourceFmt),
-                        cached->resourcePath.empty() ? "-" : cached->resourcePath.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperUserPluginsFmt),
-                        cached->targetDirectory.empty() ? "-" : cached->targetDirectory.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperBridgeInfoFmt),
-                        cached->installedVersion.empty() ? "-" : cached->installedVersion.c_str(),
-                        cached->installedProtocolVersion,
-                        cached->installedArchitecture.empty() ? "-" : cached->installedArchitecture.c_str(),
-                        cached->handshakeCode.c_str());
+                    // 路径、版本、协议细节已在“复制诊断摘要”里，界面只留一句话状态。
                 }
             } else {
                 ImGui::TextUnformatted(L(Main_DawExePathLabel));
@@ -34909,7 +35055,7 @@ void RenderUI(AppState& state) {
                     ImGui::OpenPopup(L(PtCloseAfterSave));
                     state.showProToolsCloseConfirm = false;
                 }
-                if (BeginTransientScrollbarPopupModal(L(PtCloseAfterSave), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (aura::ui::BeginAlertDialog(L(PtCloseAfterSave), L(PtCloseAfterSave))) {
                     ImGui::TextWrapped(L(Main_ProToolsCloseWarn));                    ImGui::Spacing();
                     if (aura::ui::ActionButton(L(Main_ProToolsSavedCloseBtn))) {
                         const auto reset = HarkenSearch::ProTools::ResetProToolsConnection(true);
@@ -34923,7 +35069,7 @@ void RenderUI(AppState& state) {
                     if (aura::ui::ActionButton(L(Main_ProToolsCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                         ImGui::CloseCurrentPopup();
                     }
-                    ImGui::EndPopup();
+                    aura::ui::EndAlertDialog();
                 }
                 if (!state.lastProToolsConnectionStatus.empty()) {
                     ImGui::TextWrapped(L(Main_ProToolsLastTestFmt),
@@ -35012,7 +35158,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     #include "SettingsDialog.inl"
@@ -35074,7 +35220,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().dialogPanelBG);
-        if (BeginTransientScrollbarPopupModal("##MetaEditDlg", nullptr, ImGuiWindowFlags_NoResize)) {
+        if (aura::ui::BeginAlertDialog("##MetaEditDlg", L(MetaEdit_DialogTitle),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
 
@@ -35118,14 +35265,12 @@ void RenderUI(AppState& state) {
                 }
             }
 
-            // Title bar with batch indicator
+            // Caption bar carries the title; the body only adds the batch count.
             if (state.metadataBatchMode) {
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                    "%s (%d)", L(MetaEdit_DialogTitle), (int)state.metadataBatchIds.size());
-            } else {
-                ImGui::Text("%s", L(MetaEdit_DialogTitle));
+                    L(Dlg_SelectedNFiles), (int)state.metadataBatchIds.size());
+                ImGui::Spacing();
             }
-            ImGui::Separator();
 
             // Left nav panel
             const float meNavW = 120.0f;
@@ -35281,7 +35426,7 @@ void RenderUI(AppState& state) {
             }
 
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
         ImGui::PopStyleColor(3);
     }
@@ -35710,12 +35855,12 @@ void RenderUI(AppState& state) {
         }
         state.showCoverRemoveConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDeleteCover), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDeleteCover), L(Dlg_ConfirmDeleteCover))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_DelCoverAsk), (int)state.coverRemovePaths.size());
         ImGui::Text(L(Main_DelCoverNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(Delete), ImVec2(120, 0), aura::ui::ButtonVariant::Danger)) {
             // Remove per-file so we can persist exact successes
@@ -35756,7 +35901,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     if (state.showOriginalAudioWriteConfirm) {
@@ -35767,7 +35912,7 @@ void RenderUI(AppState& state) {
         }
         state.showOriginalAudioWriteConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmWriteOriginalAudio), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmWriteOriginalAudio), L(Dlg_ConfirmWriteOriginalAudio))) {
         { ReadingTextScope _readingPopup;
         if (EscClosePopup()) {
             ClearPendingOriginalAudioWrite(state);
@@ -35779,7 +35924,7 @@ void RenderUI(AppState& state) {
                 : (int)state.pendingOriginalAudioWritePaths.size();
         ImGui::Text(L(Main_WriteOriginalAudioAsk), writeCount);
         ImGui::TextUnformatted(L(Main_WriteOriginalAudioNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ApplyPendingOriginalAudioWrite(state);
@@ -35791,7 +35936,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // TOP MENU BAR
@@ -36593,7 +36738,7 @@ void RenderUI(AppState& state) {
                 state.showShortcutsDialog = true;
             }
             if (GatedMenuItem(L(Ctx_ConfigureDAW), ProductEdition::Edition::Pro)) {
-                state.showDawTargetSettings = true;
+                OpenDawIntegrationSettings(state);
             }
             }
             menuChromeSettings.reset();
@@ -40508,16 +40653,14 @@ void RenderUI(AppState& state) {
                     }
 
                     // Confirm modal lives under this preset row's ID stack
-                    if (BeginTransientScrollbarPopupModal("##ConfirmLoadPreset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    if (aura::ui::BeginAlertDialog("##ConfirmLoadPreset", L(TabPresets_Load))) {
                         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
                         const int curTabs = (int)state.listTabs.size();
                         const int presetTabCount = pendingPresetLoadIndex >= 0
                             && pendingPresetLoadIndex < (int)state.tabPresets.size()
                             ? (int)state.tabPresets[(size_t)pendingPresetLoadIndex].tabs.size()
                             : 0;
-                        PopupTitle(L(TabPresets_Load));
                         PopupMuted(L(TabPresets_SummaryFmt), curTabs, presetTabCount);
-                        PopupDivider();
                         if (aura::ui::ActionButton(L(Main_LoadPresetBtn2), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                             if (pendingPresetLoadIndex >= 0) {
                                 state.syncToTab();
@@ -40535,7 +40678,7 @@ void RenderUI(AppState& state) {
                             ImGui::CloseCurrentPopup();
                         }
                         }
-                        ImGui::EndPopup();
+                        aura::ui::EndAlertDialog();
                     }
 
                     ImGui::PopID();
@@ -40557,7 +40700,8 @@ void RenderUI(AppState& state) {
 
         // Rename popup
         if (renamingTabIndex >= 0) ImGui::OpenPopup(L(Dlg_RenameTab));
-        if (BeginTransientScrollbarPopupModal(L(Dlg_RenameTab), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::function<void()> cancelTabRename = []() { renamingTabIndex = -1; };
+        if (aura::ui::BeginAlertDialog(L(Dlg_RenameTab), L(Dlg_RenameTab), ImGuiWindowFlags_AlwaysAutoResize, true, &cancelTabRename)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             ImGui::Text(L(Main_TabNameLabel));
@@ -40565,7 +40709,7 @@ void RenderUI(AppState& state) {
             bool enter = ImGui::InputText("##RenameTab", renameBuffer, sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
             if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
             if (aura::ui::ActionButton(L(OK), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch) || enter) {
                 if (renamingTabIndex >= 0 && renamingTabIndex < (int)state.listTabs.size()) {
                     state.listTabs[renamingTabIndex].name = renameBuffer;
@@ -40579,7 +40723,7 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         // F-033: When the 专辑 album grid tab is active it fills all available space,
@@ -41132,9 +41276,9 @@ void RenderUI(AppState& state) {
 
             // Check format filter
             {
-                const char* fmtNames[] = { "", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-                if (state.formatFilterIndex > 0 && state.formatFilterIndex < 7) {
-                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + fmtNames[state.formatFilterIndex]});
+                const char* formatFilter = aura::search::AudioFormatFilterAt(state.formatFilterIndex);
+                if (*formatFilter != '\0') {
+                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + formatFilter});
                 }
             }
 
@@ -41166,13 +41310,15 @@ void RenderUI(AppState& state) {
                         if (ft.visible) enabledTypes.emplace_back(ft.label);
                         else ++hiddenCount;
                     }
+                    if (state.showLosslessWavPack && !state.showOther) enabledTypes.emplace_back("WV");
 
                     std::string label;
                     if (enabledTypes.empty()) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u5168\u90e8\u9690\u85cf";
                     } else if (enabledTypes.size() == 1) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u4ec5 " + enabledTypes[0];
-                    } else if (enabledTypes.size() <= 3) {
+                    } else if (enabledTypes.size() <= 3 ||
+                               (enabledTypes.size() == 4 && state.showLosslessWavPack)) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: ";
                         for (size_t typeIdx = 0; typeIdx < enabledTypes.size(); ++typeIdx) {
                             if (typeIdx > 0) label += "/";
@@ -41484,6 +41630,7 @@ void RenderUI(AppState& state) {
                             case FilterChipType::FileTypes:
                                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                                state.showLosslessWavPack = false;
                                 break;
                             case FilterChipType::Channels:
                                 state.channelFilterIndex = 0;
@@ -42325,7 +42472,17 @@ void RenderUI(AppState& state) {
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
                                                 dragErr) && !files.empty())
-                                            StartFileDrag(files);
+                                        {
+                                            DragCardOrigin dragOrigin;
+                                            dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
+                                            std::vector<float> dragPeaks;
+                                            int dragChannels = 1;
+                                            if (TryGetCachedDragPeaks(rawPaths.front(), dragPeaks, dragChannels)) {
+                                                dragOrigin.peaks = std::move(dragPeaks);
+                                                dragOrigin.peakChannels = dragChannels;
+                                            }
+                                            StartFileDrag(files, &dragOrigin);
+                                        }
                                         else {
                                             state.loadErrorToast = dragErr.empty() ? L(Misc_DragFailed) : dragErr;
                                             state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
@@ -43831,7 +43988,7 @@ void RenderUI(AppState& state) {
                                     SendToDAW(state, target.dawIndex);
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Queued host handoff");
                                 } else {
-                                    state.showDawTargetSettings = true;
+                                    OpenDawIntegrationSettings(state);
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::BringIntoHost:
@@ -43839,7 +43996,7 @@ void RenderUI(AppState& state) {
                                     SendToDAW(state, target.dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind::BringIntoHost);
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Queued bring into host");
                                 } else {
-                                    state.showDawTargetSettings = true;
+                                    OpenDawIntegrationSettings(state);
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::SpotToHost:
@@ -43847,7 +44004,7 @@ void RenderUI(AppState& state) {
                                     SendToDAW(state, target.dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost);
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Queued spot to host");
                                 } else {
-                                    state.showDawTargetSettings = true;
+                                    OpenDawIntegrationSettings(state);
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::OpenTransferPanel:
@@ -43861,7 +44018,7 @@ void RenderUI(AppState& state) {
                                 PushHistoryEntry(target, mode.id, localizedModeLabel, "Opened export dialog");
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::ConfigureTargets:
-                                state.showDawTargetSettings = true;
+                                OpenDawIntegrationSettings(state);
                                 break;
                             }
                         };
@@ -44121,7 +44278,17 @@ void RenderUI(AppState& state) {
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
                                                 dragErr) && !files.empty())
-                                            StartFileDrag(files);
+                                        {
+                                            DragCardOrigin dragOrigin;
+                                            dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
+                                            std::vector<float> dragPeaks;
+                                            int dragChannels = 1;
+                                            if (TryGetCachedDragPeaks(rawPaths.front(), dragPeaks, dragChannels)) {
+                                                dragOrigin.peaks = std::move(dragPeaks);
+                                                dragOrigin.peakChannels = dragChannels;
+                                            }
+                                            StartFileDrag(files, &dragOrigin);
+                                        }
                                         else {
                                             state.loadErrorToast = dragErr.empty() ? L(Misc_DragFailed) : dragErr;
                                             state.loadErrorToastUntil = ImGui::GetTime() + 6.0;
@@ -49603,7 +49770,9 @@ void RenderUI(AppState& state) {
             if (dragDist > 3.0f) {
                 // Start the drag operation immediately
                 if (state.audioEngine.isLoaded()) {
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                    const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
+                    DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
@@ -51888,6 +52057,7 @@ void RenderUI(AppState& state) {
     // Maintenance feedback is drawn in the final foreground pass so it stays
     // visible without introducing another focusable ImGui window.
     RenderForegroundMaintenanceToasts(state);
+    DrawReaperSetupNotice(state);
 
     if (state.settings.showClickRipple && state.listRipple.time > 0.0f) {
         float elapsed = (float)ImGui::GetTime() - state.listRipple.time;

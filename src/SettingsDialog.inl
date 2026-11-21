@@ -56,6 +56,12 @@
         const bool oldHiddenReverseRestore=state.hiddenReverseRestore;
         const bool oldPendingReverseRestore=state.pendingReverseRestore;
         auto next=editor.app.MergeInto(oldSettings,editor.resetAll);
+        next.dawTargets=oldSettings.dawTargets;
+        if (!editor.dawTargets.MergeInto(next.dawTargets)) {
+            editor.error=L(DawPrefs_TooManyTargets);
+            return false;
+        }
+        next.reaperSetupNoticeDismissed=oldSettings.reaperSetupNoticeDismissed;
         next.rowHeight=next.getEffectiveRowHeight();
         const auto nextRuntime=editor.runtime.MergeInto(oldRuntime,editor.resetAll);
         // Device identity is checked again at Apply, since a USB device can
@@ -176,7 +182,20 @@
     };
     if (state.showSettingsDialog) {
         editor.Reset(state); editor.open=true; editor.closePrompt=false; editor.action.clear();
-        editor.page=su::Page::Appearance; editor.query[0]=0; editor.focusId.clear();
+#if defined(_WIN32)
+        editor.reaperConfigOpen=false;
+        editor.reaperDiagnosticsOpen=false;
+        editor.reaperFocusPath=false;
+        editor.reaperDetectedPath.clear();
+        editor.reaperConsentDestination.clear();
+#endif
+        editor.page=state.openDawIntegrationSettings ? su::Page::DawIntegration : su::Page::Appearance;
+        if (state.openDawIntegrationSettings) {
+            editor.highlightId.clear();
+            editor.scrollToTop=true;
+        }
+        state.openDawIntegrationSettings=false;
+        editor.query[0]=0; editor.focusId.clear();
         editor.devices=state.audioEngine.enumerateOutputDevices();
         ImGui::OpenPopup("###HarkenSettings"); state.showSettingsDialog=false;
     }
@@ -247,11 +266,16 @@
                 preview.dialogPanelBG.y+(preview.controlAccent.y-preview.dialogPanelBG.y)*amount,
                 preview.dialogPanelBG.z+(preview.controlAccent.z-preview.dialogPanelBG.z)*amount,1.f);
         };
-        for (int i=1;i<=9;++i) {
+        constexpr su::Page navigationPages[]{
+            su::Page::Appearance, su::Page::Audio, su::Page::DawIntegration, su::Page::Search,
+            su::Page::Library, su::Page::Interaction, su::Page::Personal, su::Page::Backup,
+            su::Page::Diagnostics, su::Page::ExternalAi,
+        };
+        for (const auto page : navigationPages) {
 #if !AURA_BUILD_DIAGNOSTICS
-            if (i==8) continue;
+            if (page==su::Page::Diagnostics) continue;
 #endif
-            const auto page=static_cast<su::Page>(i);
+            const auto i=static_cast<int>(page);
             ImGui::PushID(i);
             // Keep the painted row, text alignment and hit rectangle together.
             if (ImGui::Selectable(su::PageLabel(page),editor.page==page,ImGuiSelectableFlags_NoPadWithHalfSpacing,ImVec2(ImGui::GetContentRegionAvail().x,navigationRowH))) {editor.page=page;editor.query[0]=0;editor.focusId.clear();editor.highlightId.clear();editor.scrollToTop=true;}
@@ -304,21 +328,41 @@
         editor.previousPage=editor.page;editor.previousSearching=editor.query[0]!=0;
         auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
         auto actionButton=[&](const char* label,const char* action){if(aura::ui::ActionButton(label))requestAction(action);};
+        // Settings values read as one centered column. The native combo preview is
+        // left aligned, so keep the frame and popup and paint the same text centered.
+        auto centeredComboText=[&](const char* text){
+            if(!text||!text[0])return;
+            const ImVec2 min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
+            const float padY=ImGui::GetStyle().FramePadding.y;
+            const float left=min.x+ImGui::GetStyle().FramePadding.x,right=std::max(left,max.x-ImGui::GetFrameHeight());
+            const float avail=right-left;
+            ImVec2 size=ImGui::CalcTextSize(text);
+            const ImVec2 pos(left,min.y+padY);
+            ImGui::PushClipRect(ImVec2(left,min.y),ImVec2(right,max.y),true);
+            if(size.x>avail)ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(),pos,ImVec2(right,pos.y+size.y),right,text,nullptr,&size);
+            else ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x+(avail-size.x)*.5f,pos.y),ImGui::GetColorU32(ImGuiCol_Text),text);
+            ImGui::PopClipRect();
+        };
         auto combo=[&](int& value,std::initializer_list<const char*> options){
             std::vector<const char*> list(options);bool changed=false;
+            const char* preview=value>=0&&value<(int)list.size()?list[value]:"";
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
-            if(ImGui::BeginCombo("##value",value>=0&&value<(int)list.size()?list[value]:"",ImGuiComboFlags_HeightLarge)){
+            const bool open=ImGui::BeginCombo("##value","",ImGuiComboFlags_HeightLarge);
+            if(open){
                 for(int i=0;i<(int)list.size();++i){ImGui::PushID(i);if(ImGui::Selectable(list[i],value==i)){value=i;changed=true;}su::Observe(("option-"+std::to_string(i)).c_str());ImGui::PopID();}
                 if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
                 ImGui::EndCombo();
             }
+            centeredComboText(preview);
             ImGui::PopStyleVar();
             return changed;
         };
         auto stringInput=[&](std::string& value){char buffer[2048]{};std::snprintf(buffer,sizeof(buffer),"%s",value.c_str());if(ImGui::InputText("##value",buffer,sizeof(buffer)))value=buffer;};
         auto themedSelector=[&](int& value,const char* editAction=nullptr){
+            const char* preview=su::StockLabel(value);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
-            if(ImGui::BeginCombo("##value",su::StockLabel(value))){
+            const bool open=ImGui::BeginCombo("##value","");
+            if(open){
                 for(int i=0;i<5;++i){if(ImGui::Selectable(su::StockLabel(i),value==i))value=i;su::Observe(("theme-option-"+std::to_string(i)).c_str());}
 #if AURA_BUILD_DIAGNOSTICS
                 if(editAction && ProductEdition::hasFeature("theme_editor")){
@@ -330,6 +374,7 @@
                 if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
                 ImGui::EndCombo();
             }
+            centeredComboText(preview);
             ImGui::PopStyleVar();
         };
         auto transportSwitch=[&](bool& visible,float width){
@@ -350,9 +395,16 @@
             if(ImGui::IsItemFocused()&&ImGui::GetIO().NavVisible)
                 dl->AddRect(ImVec2(p.x-2,p.y-2),ImVec2(end.x+2,end.y+2),ImGui::GetColorU32(preview.controlAccent),14.f,0,2.f);
         };
+#include "SettingsDawFields.inl"
         auto drawEntry=[&](const su::Entry& entry,bool trailingSeparator=true){
             const auto& id=entry.id;
             if (!su::Available(entry,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection)) return;
+#if defined(_WIN32)
+            if (id=="daw-reaper-install") { drawReaperInstallAction(); return; }
+            if (const auto dawIndex=su::FindSettingsDawPresetIndex(id); dawIndex<su::kSettingsDawPresets.size()) {
+                drawDawCard(entry,dawIndex); return;
+            }
+#endif
             const float rowY=ImGui::GetCursorPosY(), rowX=ImGui::GetCursorPosX();
             ImGui::PushID(id.c_str());
             if(editor.focusId==id){ImGui::SetScrollHereY(.25f);editor.focusId.clear();}
@@ -367,7 +419,11 @@
             const float labelBottom=ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(controlX,rowY)); ImGui::SetNextItemWidth(controlW-2);
             ImGui::BeginGroup();ImGui::PushTextWrapPos(rowX+rowW-2);
+            if (entry.page==su::Page::DawIntegration) {
+                drawDawFields(id,controlW);
+            } else {
 #include "SettingsFields.inl"
+            }
             ImGui::PopTextWrapPos();ImGui::EndGroup();
             su::Observe(id.c_str());
             const float bottom=std::max(labelBottom,ImGui::GetCursorPosY());
@@ -378,7 +434,10 @@
         if(searching){
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,10));
             ImGui::TextDisabled("%s",L(SetUX_SEARCHRESULTS));
-            const auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection);
+            auto results=su::Search(editor.query,AURA_BUILD_DIAGNOSTICS!=0,draft.themeScheduleMode!=schedule::Mode::Off,kEnableLufsUiAndDetection);
+#if defined(_WIN32)
+            su::AppendReaperFieldSearchResults(results,editor.query);
+#endif
             if(results.empty()) ImGui::TextWrapped("%s",L(SetUX_NoSettingsFoundTryVolumeFontOrShortcut));
             for(const auto* entry:results){
                 ImGui::PushID(entry->id.c_str());

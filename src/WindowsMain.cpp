@@ -149,6 +149,7 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
 #include "platform/executable_path.h"
+#include "DatabaseSearchFilterBuilder.h"
 #include "platform/filesystem.h"
 #include "platform/text_encoding.h"
 #include "platform/qa_files.h"
@@ -3910,6 +3911,9 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
 
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
 extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
+#if ARIS_PREVIEW_ISOLATION
+extern std::string ControlDawSendFeedbackPreview(const nlohmann::json&);
+#endif
 
 static void PollQaCommandFile(AppState& state) {
     static int s_pollSkip = 0;
@@ -4113,11 +4117,7 @@ static void PollQaCommandFile(AppState& state) {
         }
     };
     auto formatFilterValue = [&](int index) -> std::string {
-        const char* formats[] = {"", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A"};
-        if (index >= 0 && index < (int)(sizeof(formats) / sizeof(formats[0]))) {
-            return formats[index];
-        }
-        return "";
+        return aura::search::AudioFormatFilterAt(index);
     };
     auto coverFilterValue = [&](int index) -> std::string {
         const char* modes[] = {"all", "has", "no"};
@@ -4128,12 +4128,10 @@ static void PollQaCommandFile(AppState& state) {
     };
     auto formatFilterIndexFromValue = [&](std::string value) -> int {
         std::transform(value.begin(), value.end(), value.begin(), ::toupper);
-        if (value == "WAV") return 1;
-        if (value == "MP3") return 2;
-        if (value == "FLAC") return 3;
-        if (value == "OGG") return 4;
-        if (value == "AIFF" || value == "AIF") return 5;
-        if (value == "M4A") return 6;
+        if (value == "AIF") value = "AIFF";
+        for (std::size_t index = 1; index < aura::search::kAudioFormatFilters.size(); ++index) {
+            if (value == aura::search::kAudioFormatFilters[index]) return static_cast<int>(index);
+        }
         return 0;
     };
     auto parseRowSet = [&](const std::string& rowsRaw) {
@@ -4870,6 +4868,12 @@ static void PollQaCommandFile(AppState& state) {
             if (action == "resize") {
                 if(auto* window=ImGui::FindWindowByName("###HarkenSettings")) ImGui::SetWindowSize(window,ImVec2((float)std::clamp(getInt(raw,"width",1000),640,1500),(float)std::clamp(getInt(raw,"height",760),480,1100)),ImGuiCond_Always);
             }
+            if (action == "page") {
+                const auto page=getStr(raw,"page");
+                if(page=="daw") { su::SettingsEditor().page=su::Page::DawIntegration; su::SettingsEditor().scrollToTop=true; }
+            }
+            if (action == "daw_reaper_config") su::SettingsEditor().reaperConfigOpen=getBool(raw,"open",true);
+            if (action == "daw_reaper_diagnostics") su::SettingsEditor().reaperDiagnosticsOpen=getBool(raw,"open",true);
             const auto& observation=su::observation;
             const auto& editor=su::SettingsEditor();
             const auto& palette=ThemeColors::current();
@@ -4952,6 +4956,119 @@ static void PollQaCommandFile(AppState& state) {
                 {"mouse",{ImGui::GetIO().MousePos.x,ImGui::GetIO().MousePos.y}},
                 {"mouse_down",ImGui::GetIO().MouseDown[0]},
                 {"nav_window",ImGui::GetCurrentContext()->NavWindow?ImGui::GetCurrentContext()->NavWindow->Name:""}}).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
+    } else if (cmd == "alert_dialog_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string action = getStr(raw, "action");
+            const std::string dialog = getStr(raw, "dialog");
+            auto& ctx = *ImGui::GetCurrentContext();
+            if (action == "open" || action == "close") {
+                while (ctx.OpenPopupStack.Size > 0)
+                    ImGui::ClosePopupToLevel(ctx.OpenPopupStack.Size - 1, false);
+                state.showCloseChoicePopup = false;
+                state.showEditFilenameDialog = false;
+                state.showDeleteConfirmDialog = false;
+                state.showPlaylistDialog = false;
+                state.showCreateFolderDialog = false;
+                state.showDawTargetSettings = false;
+                state.showFolderAutoRenameDialog = false;
+                state.showPlaylistRenameDialog = false;
+            }
+            if (action == "close") {
+                result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
+            } else if (action == "drag") {
+                // Move the open dialog by the requested delta and report the new
+                // rect, so the caption-bar drag path can be checked without
+                // injecting mouse input into the private desktop.
+                ImGuiWindow* dialogWindow = nullptr;
+                for (int level = ctx.OpenPopupStack.Size - 1; level >= 0 && !dialogWindow; --level) {
+                    if (ctx.OpenPopupStack[level].Window)
+                        dialogWindow = ctx.OpenPopupStack[level].Window;
+                }
+                if (!dialogWindow) {
+                    result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"no_dialog_open"})";
+                } else {
+                    const ImVec2 before = dialogWindow->Pos;
+                    ImGui::SetWindowPos(dialogWindow,
+                        ImVec2(before.x + (float)getInt(raw, "dx", 0),
+                               before.y + (float)getInt(raw, "dy", 0)));
+                    const ImVec2 after = dialogWindow->Pos;
+                    char receipt[256];
+                    std::snprintf(receipt, sizeof(receipt),
+                        "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"drag\","
+                        "\"before\":[%.1f,%.1f],\"after\":[%.1f,%.1f]}",
+                        before.x, before.y, after.x, after.y);
+                    result = receipt;
+                }
+            } else if (action == "open") {
+                bool known = true;
+                if (dialog == "close-choice") {
+                    state.closeChoiceSelection = 1;
+                    state.closeChoiceRemember = false;
+                    state.showCloseChoicePopup = true;
+                } else if (dialog == "rename") {
+                    strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
+                              "Impact_Hit_03.wav", _TRUNCATE);
+                    state.showEditFilenameDialog = true;
+                } else if (dialog == "remove-records") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths.clear();
+                    state.deleteFromFileSystem = false;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "delete-files") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths = {
+                        "D:/Harken-QA/preview-samples/impact_metal_01.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_02.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_03.wav"};
+                    state.deleteFromFileSystem = true;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "new-playlist") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistDialog = true;
+                } else if (dialog == "new-folder") {
+                    strncpy_s(state.folderNameBuffer, sizeof(state.folderNameBuffer),
+                              "New Folder", _TRUNCATE);
+                    state.showCreateFolderDialog = true;
+                } else if (dialog == "daw-settings") {
+                    state.settings.dawTargets.clear();
+                    DawTarget previewTarget;
+                    previewTarget.name = "REAPER";
+                    previewTarget.processName = "reaper.exe";
+                    previewTarget.mode = DawSendMode::NamedPipe;
+                    state.settings.dawTargets.push_back(std::move(previewTarget));
+                    state.selectedDAWIndex = 0;
+                    state.showDawTargetSettings = true;
+                } else if (dialog == "folder-auto-rename") {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",
+                             "QA:/preview-samples");
+                    state.folderRenamePreview.clear();
+                    state.folderRenameLog.clear();
+                    state.showFolderAutoRenameDialog = true;
+                } else if (dialog == "playlist-rename") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistRenameDialog = true;
+                } else if (dialog == "default-player") {
+                    state.settings.defaultPlayerPrompted = false;
+                    state.warmupFramesRemaining = 0;
+                    state.filePlayerFastPathActive = false;
+                } else {
+                    known = false;
+                }
+                result = known
+                    ? "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"open\",\"dialog\":\"" + dialog + "\"}"
+                    : R"({"ok":false,"cmd":"alert_dialog_preview","error":"unknown_dialog"})";
+            } else {
+                result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"unsupported_action"})";
+            }
         }
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
@@ -6019,6 +6136,38 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
 #endif
+    } else if (cmd == "send_feedback_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            result = ControlDawSendFeedbackPreview(nlohmann::json::parse(raw, nullptr, false));
+        }
+#else
+        result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+#endif
+    } else if (cmd == "send_widget_menu") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string action = getStr(raw, "action");
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (action == "open") {
+            state.qaSendWidgetMenuRequested = true;
+            state.qaSendWidgetMenuRows = 0;
+            state.qaSendWidgetMenuFrame = -1;
+            result = R"({"ok":true,"cmd":"send_widget_menu","queued":true})";
+        } else if (action == "state") {
+            result = "{\"ok\":true,\"cmd\":\"send_widget_menu\",\"rows\":" +
+                std::to_string(state.qaSendWidgetMenuRows) +
+                ",\"frame\":" + std::to_string(state.qaSendWidgetMenuFrame) +
+                ",\"id\":" + std::to_string(state.qaSendWidgetMenuId) +
+                ",\"is_open\":" + (state.qaSendWidgetMenuOpen ? "true" : "false") + "}";
+        } else {
+            result = R"({"ok":false,"error":"unsupported_action"})";
+        }
+#else
+        result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+#endif
     } else if (cmd == "open_row_context_menu") {
         int row = getInt(raw, "row", state.selectedResultIndex);
         if (row >= 0 && row < (int)state.searchResults.size()) {
@@ -6067,8 +6216,11 @@ static void PollQaCommandFile(AppState& state) {
                 state.instrumentPillState["__qa_instrument__"] = 1;
             }
             state.showWAV = !enabled;
-            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
-                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            if (!enabled) {
+                state.showMP3 = state.showFLAC = state.showOGG =
+                    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
+            }
             cancelPendingSearchForQaMutation();
             RefreshSearchResults(state, true);
             state.syncToTab();
@@ -9067,6 +9219,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 wpath.resize(wcslen(wpath.c_str()));
 
                 std::string pathUtf8 = WideToUtf8(wpath);
+                // A bare drive spec ("D:") resolves to that drive current
+                // directory for the filesystem, but a drop means the drive
+                // itself, so normalise it to "D:\\" before classifying.
+                if (pathUtf8.size() == 2 && pathUtf8[1] == ':' &&
+                    ((pathUtf8[0] >= 'A' && pathUtf8[0] <= 'Z') ||
+                     (pathUtf8[0] >= 'a' && pathUtf8[0] <= 'z'))) {
+                    pathUtf8 += '\\';
+                }
                 if (Platform::FileSystem::Exists(pathUtf8)) {
 
                     if (Platform::FileSystem::IsDirectory(pathUtf8)) {
@@ -9080,6 +9240,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             dbFiles.push_back(pathUtf8);
                         }
                         else if (ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg" ||
+                            ext == ".wv" ||
                             ext == ".aiff" || ext == ".aif" || ext == ".m4a" || ext == ".wma") {
                             files.push_back(pathUtf8);
                         }
@@ -9926,6 +10087,139 @@ static void AppendStartupMascotCss(std::wstring& html) {
 )HTML_MASCOT_CSS";
 }
 
+// The startup pages show the shared mascot only while the user has no personal
+// avatar. Once an avatar was uploaded or a built-in one was picked, that avatar
+// takes the slot; "automatic" (index 0) still counts as not set.
+static bool StartupHasPersonalAvatar(const AppSettings& settings) {
+    if (settings.hasCustomAvatar) return true;
+    return settings.diceBearAvatarIndex >= 1 && settings.diceBearAvatarIndex <= 36;
+}
+
+static int ResolveStartupAvatarIndex(const AppSettings& settings) {
+    if (settings.diceBearAvatarIndex >= 1 && settings.diceBearAvatarIndex <= 36)
+        return settings.diceBearAvatarIndex;
+    uint32_t h = 2166136261u;
+    const std::string seed = settings.userName.empty() ? std::string("Harken Search") : settings.userName;
+    for (unsigned char c : seed) {
+        h ^= c;
+        h *= 16777619u;
+    }
+    return 1 + (int)(h % 36u);
+}
+
+static std::string StartupSvgRgba(float r, float g, float b, float a) {
+    char buf[64] = {};
+    std::snprintf(buf, sizeof(buf), "rgba(%d,%d,%d,%.3f)",
+                  (int)std::lround(std::clamp(r, 0.0f, 1.0f) * 255.0f),
+                  (int)std::lround(std::clamp(g, 0.0f, 1.0f) * 255.0f),
+                  (int)std::lround(std::clamp(b, 0.0f, 1.0f) * 255.0f),
+                  std::clamp(a, 0.0f, 1.0f));
+    return std::string(buf);
+}
+
+// Mirrors RenderSettingsBuiltinAvatar with the same numbers at 1 px = 1 unit, so
+// the startup page shows exactly the avatar the settings page previews.
+static std::string BuildStartupBuiltinAvatarSvg(int avatarIndex) {
+    const int idx = std::clamp(avatarIndex, 1, 36);
+    const float hue = (float)(idx - 1) / 36.0f;
+    float accentHue = hue + 0.09f;
+    if (accentHue > 1.0f) accentHue -= 1.0f;
+    float br = 0.0f, bg = 0.0f, bb = 0.0f;
+    float ar = 0.0f, ag = 0.0f, ab = 0.0f;
+    ImGui::ColorConvertHSVtoRGB(hue, 0.50f, 0.56f, br, bg, bb);
+    ImGui::ColorConvertHSVtoRGB(accentHue, 0.34f, 0.86f, ar, ag, ab);
+
+    const float cx = 37.0f, cy = 37.0f, R = 35.0f;
+    const std::string bgFill = StartupSvgRgba(br, bg, bb, 1.0f);
+    const std::string faceFill = StartupSvgRgba(ar, ag, ab, 1.0f);
+    const std::string inkFill = StartupSvgRgba(34.0f / 255.0f, 42.0f / 255.0f, 56.0f / 255.0f, 230.0f / 255.0f);
+    const std::string cheekFill = StartupSvgRgba(1.0f, 132.0f / 255.0f, 150.0f / 255.0f, 96.0f / 255.0f);
+    const std::string hairFill = StartupSvgRgba(46.0f / 255.0f, 48.0f / 255.0f, 70.0f / 255.0f, 222.0f / 255.0f);
+    const std::string hiStroke = StartupSvgRgba(1.0f, 1.0f, 1.0f, 58.0f / 255.0f);
+
+    auto pt = [](float x, float y) {
+        char b[40] = {};
+        std::snprintf(b, sizeof(b), "%.2f %.2f", x, y);
+        return std::string(b);
+    };
+    auto circle = [](float x, float y, float r, const std::string& fill) {
+        char b[160] = {};
+        std::snprintf(b, sizeof(b), "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\"/>",
+                      x, y, r, fill.c_str());
+        return std::string(b);
+    };
+
+    std::string svg =
+        "<svg class=\"startup-loading-avatar\" viewBox=\"0 0 74 74\" "
+        "preserveAspectRatio=\"xMidYMid meet\" aria-hidden=\"true\" focusable=\"false\" "
+        "xmlns=\"http://www.w3.org/2000/svg\">";
+    svg += circle(cx, cy, R, bgFill);
+    svg += circle(cx - R * 0.22f, cy + R * 0.04f, R * 0.62f, faceFill);
+    svg += circle(cx + R * 0.18f, cy + R * 0.02f, R * 0.58f, faceFill);
+
+    const float hairSweep = ((idx % 5) - 2) * R * 0.08f;
+    const float hairCx = cx + hairSweep, hairCy = cy - R * 0.02f, hairR = R * 0.70f;
+    std::string hair = "M" + pt(hairCx + std::cos(3.50f) * hairR, hairCy + std::sin(3.50f) * hairR);
+    for (int i = 1; i <= 18; ++i) {
+        const float a = 3.50f + (5.95f - 3.50f) * (float)i / 18.0f;
+        hair += "L" + pt(hairCx + std::cos(a) * hairR, hairCy + std::sin(a) * hairR);
+    }
+    hair += "L" + pt(cx + R * 0.58f, cy - R * 0.08f);
+    hair += "L" + pt(cx - R * 0.56f, cy + R * 0.02f);
+    hair += "Z";
+    svg += "<path d=\"" + hair + "\" fill=\"" + hairFill + "\"/>";
+
+    const float eyeY = cy - R * 0.02f;
+    const float eyeDx = R * (0.20f + (idx % 3) * 0.025f);
+    svg += circle(cx - eyeDx, eyeY, R * 0.055f, inkFill);
+    svg += circle(cx + eyeDx, eyeY, R * 0.055f, inkFill);
+    svg += circle(cx - R * 0.34f, cy + R * 0.18f, R * 0.10f, cheekFill);
+    svg += circle(cx + R * 0.34f, cy + R * 0.18f, R * 0.10f, cheekFill);
+
+    if ((idx % 2) == 0) {
+        svg += "<path d=\"M" + pt(cx - R * 0.16f, cy + R * 0.23f) +
+               "C" + pt(cx - R * 0.06f, cy + R * 0.34f) +
+               " " + pt(cx + R * 0.08f, cy + R * 0.34f) +
+               " " + pt(cx + R * 0.18f, cy + R * 0.23f) +
+               "\" fill=\"none\" stroke=\"" + inkFill + "\" stroke-width=\"1.7\"/>";
+    } else {
+        svg += "<path d=\"M" + pt(cx - R * 0.13f, cy + R * 0.25f) +
+               "L" + pt(cx + R * 0.13f, cy + R * 0.25f) +
+               "\" fill=\"none\" stroke=\"" + inkFill + "\" stroke-width=\"1.6\"/>";
+    }
+    svg += "<circle cx=\"37\" cy=\"37\" r=\"34.2\" fill=\"none\" stroke=\"" + hiStroke +
+           "\" stroke-width=\"1\"/>";
+    svg += "</svg>";
+    return svg;
+}
+
+// Empty markup means "keep the shared mascot".
+static std::string BuildStartupAvatarMarkup(const AppSettings& settings) {
+    if (!StartupHasPersonalAvatar(settings)) return {};
+    if (settings.hasCustomAvatar) {
+        std::string pngBytes;
+        if (ReadBinaryFile(GetCustomAvatarPathUtf8(), pngBytes)) {
+            return "<img class=\"startup-loading-avatar\" alt=\"\" src=\"data:image/png;base64," +
+                   Base64EncodeStartupAsset(pngBytes) + "\">";
+        }
+    }
+    // An explicit pick, or a profile whose picture file is gone: show the face
+    // the settings page would preview for this user.
+    return BuildStartupBuiltinAvatarSvg(ResolveStartupAvatarIndex(settings));
+}
+
+static void AppendStartupAvatarCss(std::wstring& html) {
+    html += LR"HTML_AVATAR_CSS(
+    .startup-loading-avatar {
+      display: block; width: 74px; height: 74px; border-radius: 50%; overflow: hidden;
+    }
+    img.startup-loading-avatar {
+      object-fit: cover; background: rgba(255, 255, 255, .045);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .11);
+    }
+)HTML_AVATAR_CSS";
+}
+
 // Loading-page HTML: energy-vortex particles and progress updates.
 
 static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
@@ -10230,6 +10524,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     }
 )HTML_L1";
     AppendStartupMascotCss(html);
+    AppendStartupAvatarCss(html);
     html += LR"HTML(
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -10281,7 +10576,9 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     <div class="glass-card">
       <div class="startup-loading-mascot-slot" aria-hidden="true">
 )HTML_L2";
-    html += HarkenSearch::kStartupLoadingMascotArtwork;
+    const std::string loadingAvatarMarkup = BuildStartupAvatarMarkup(settings);
+    html += loadingAvatarMarkup.empty() ? std::wstring(HarkenSearch::kStartupLoadingMascotArtwork)
+                                        : Utf8ToWide(loadingAvatarMarkup);
     html += LR"HTML_L2(
       </div>
       <div class="status-text" id="statusText">Preparing your sound workspace...</div>
@@ -11839,6 +12136,7 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L"@media (max-width:640px){.brand-word{top:32px;left:32px;font-size:20px;}.welcome-layout{right:28px;bottom:52px;max-width:calc(100vw - 56px);padding:16px 4px;}.welcome-headline{gap:8px;}.welcome-lead{letter-spacing:0;}}\n";
     html += L".canvas{opacity:.22!important;}.backdrop{opacity:.74!important;filter:blur(92px)!important;}.brand-word{opacity:.78!important;z-index:90!important;filter:none!important;mix-blend-mode:normal!important;}.welcome-headline{flex-direction:column!important;gap:0!important;}.welcome-layout{right:auto!important;bottom:auto!important;max-width:min(312px,calc(100vw - 48px))!important;}\n";
     AppendStartupMascotCss(html);
+    AppendStartupAvatarCss(html);
     html += L"@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}\n";
     AppendStartupBrandLogoCss(html, useLightStartupChrome);
     html += L"</style>\n";
@@ -11852,7 +12150,9 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     <div class="welcome-layout">
       <div class="startup-loading-mascot-slot" aria-hidden="true">
 )HTML_W2";
-    html += HarkenSearch::kStartupLoadingMascotArtwork;
+    const std::string welcomeAvatarMarkup = BuildStartupAvatarMarkup(settings);
+    html += welcomeAvatarMarkup.empty() ? std::wstring(HarkenSearch::kStartupLoadingMascotArtwork)
+                                        : Utf8ToWide(welcomeAvatarMarkup);
     html += LR"HTML_W2(
       </div>
       <div class="welcome-copy">

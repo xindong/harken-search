@@ -104,10 +104,20 @@ struct LedgerText {
             if (!p.keyed) { out += p.lit; continue; }
             const char* fmt = GetLocalizedString(p.key);
             if (p.argMode == 0) { out += fmt; continue; }
-            char buf[2048];
-            if (p.argMode == 1) std::snprintf(buf, sizeof(buf), fmt, p.n);
-            else std::snprintf(buf, sizeof(buf), fmt, p.arg.c_str());
-            out += buf;
+            const auto appendFormatted = [&](const auto& arg) {
+                char buf[256];
+                const int size = std::snprintf(buf, sizeof(buf), fmt, arg);
+                if (size <= 0) return;
+                if (static_cast<size_t>(size) < sizeof(buf)) {
+                    out.append(buf, static_cast<size_t>(size));
+                } else {
+                    const size_t offset = out.size();
+                    out.resize(offset + static_cast<size_t>(size));
+                    std::snprintf(out.data() + offset, static_cast<size_t>(size) + 1, fmt, arg);
+                }
+            };
+            if (p.argMode == 1) appendFormatted(p.n);
+            else appendFormatted(p.arg.c_str());
         }
         return out;
     }

@@ -185,3 +185,13 @@ TestDefaultAudioPlayerAssociation 直接改真 HKCU，可 BUILD 不可 RUN、不
 ### 未证
 
 不证 GUI/人眼/真机闪动感。测试可推进 elapsed。
+
+## DAW 集成与 REAPER 首次提示
+
+- 「DAW 集成」紧随「音频与播放」，沿用原设置窗口和搜索。四款 DAW 各占一张同一套圆角分组：REAPER 的路径和启用发送在草稿中编辑，点击程序路径标签或输入框均聚焦到路径输入并显示主题色高亮，后台刷新探测，展开诊断仅可复制脱敏摘要；应用只合并改动字段并使用原设置保存路径，撤销不写入。Pro Tools、Cubase、Nuendo 的卡片只显示 DAW 名称和置灰、不可点击或展开的「配置」，无附加说明或悬停提示，不展示路径和开关。旧 DAW/Pro Tools 窗口与发送行为不变。
+- Windows 的 REAPER 组件安装独立于应用按钮。安装许可默认不勾；仅确认路径且组件缺失时允许勾选、点击安装。运行中或运行状态无法确认时拒绝安装，不退出 REAPER，不排队等待。安装前重新检测；有现有组件或路径冲突时不替换、不删除。
+- 首次或升级后启动，在现有工作区可用后异步检查一次。识别到 REAPER 且缺组件才显示非模态提示；启动对话框可见时让位。「知道了」或「去设置」都会通过原设置保存机制记忆，后者只打开 DAW 页。安装成功后丢弃旧探测结果，避免继续显示待安装状态。
+
+定向检查：构建 `TestReaperBridgeContract` 后，运行 `ctest -R "Test(ReaperBridgeContract|DawIntegrationSettingsContract)$"`。覆盖设置草稿、安装条件与不覆盖已有文件。
+
+隔离 UI 检查在测试 profile 中设置 REAPER 夹具路径后，用 `settings_ui` 读取 `nav-9`、`daw-reaper-install-consent`、`daw-reaper-install-button`、`reaper-setup-go-settings`、`reaper-setup-dismiss`。验证关闭/跳转后重启不再提示、未确认安装与运行中的两种情形均无文件变化；不要使用真实 AppData。

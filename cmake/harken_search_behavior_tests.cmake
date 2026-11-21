@@ -460,6 +460,7 @@ add_executable(TestStage6PlaybackLoadSeekProbe EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -508,6 +509,7 @@ add_executable(TestStage6ScanTerminalThroughputProbe EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -555,6 +557,7 @@ add_executable(TestSearchSemanticMatrix EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -706,6 +709,7 @@ add_executable(TestDbSearchFacets EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -760,6 +764,7 @@ add_executable(TestTrigramE2E EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -820,6 +825,7 @@ add_executable(TestFuzzySearchPrd EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -884,6 +890,7 @@ add_executable(TestBackfillRecoveryWorker EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -939,6 +946,7 @@ add_executable(TestScanWaveformCacheContract EXCLUDE_FROM_ALL
     tests/test_scan_database_audio_probe_stub.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -992,6 +1000,7 @@ add_executable(TestWaveformFailureQueue EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     src/AsyncWorker.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -1048,6 +1057,7 @@ add_executable(TestScanPauseResume EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -1114,6 +1124,7 @@ add_executable(TestImportPrecomputeWaveform EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -1219,6 +1230,7 @@ add_executable(TestCoverClickPerf EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -1346,6 +1358,7 @@ add_executable(TestStartupReconciliation EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -2091,6 +2104,7 @@ add_executable(TestProcessedFileExport EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -2144,6 +2158,7 @@ add_executable(TestSingleChannelExport EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -2275,6 +2290,7 @@ add_executable(TestSearchWorkspace EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -4208,6 +4224,7 @@ add_executable(TestShortcutPresets EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     tests/test_shortcut_presets_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
 )
 target_include_directories(TestShortcutPresets PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -4881,6 +4898,7 @@ add_executable(TestSubPlaylists EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -4987,6 +5005,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -5053,6 +5072,7 @@ endif()
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -5133,6 +5153,7 @@ add_executable(TestSetPlaylistParent EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -5562,6 +5583,7 @@ add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     src/AsyncWorker.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -5649,6 +5671,7 @@ add_executable(TestPlaylistPerformanceContract EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     tests/test_get_exe_dir_stub.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -5727,6 +5750,7 @@ add_executable(TestPerfOptimizations EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     tests/test_get_exe_dir_stub.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -5988,6 +6012,7 @@ endif()
 
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
+    tests/test_daw_integration_settings.cpp
     src/ReaperBridgeClient.cpp
     src/ReaperBridgeDoctor.cpp
     src/platform/filesystem_std.cpp
@@ -6023,6 +6048,11 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+
+add_test(NAME TestDawIntegrationSettingsContract
+    COMMAND ${Python3_EXECUTABLE} -m pytest -q
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_daw_integration_settings.py")
+aura_set_test_labels(TestDawIntegrationSettingsContract daw)
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".
@@ -7402,6 +7432,7 @@ add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -8642,3 +8673,12 @@ foreach(_standalone_localized_target IN ITEMS
     target_sources(${_standalone_localized_target} PRIVATE src/Localization.cpp)
     add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)
 endforeach()
+
+add_test(
+    NAME TestAlertDialogContract
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_alert_dialog_contract.py"
+)
+set_tests_properties(TestAlertDialogContract PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+aura_set_test_labels(TestAlertDialogContract core)

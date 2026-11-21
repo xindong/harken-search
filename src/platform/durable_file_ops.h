@@ -32,7 +32,8 @@ DurableFileOpResult FlushExistingFileToDisk(const std::string& pathUtf8);
 DurableFileOpResult CopyFileExclusiveAndFlush(const std::string& sourcePathUtf8,
                                               const std::string& targetPathUtf8);
 DurableFileOpResult ReplaceFileWriteThrough(const std::string& sourcePathUtf8,
-                                            const std::string& targetPathUtf8);
+                                            const std::string& targetPathUtf8,
+                                            bool replaceExisting = true);
 DurableFileOpResult DeleteFileIfPresent(const std::string& pathUtf8);
 
 } // namespace Platform::FileSystem

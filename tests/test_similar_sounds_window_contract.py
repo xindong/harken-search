@@ -168,7 +168,10 @@ for required in (
 ):
     assert required in index_panel, f"Missing migrated index behavior: {required}"
 assert "GetAIEngine().GetAllTasks()" not in index_panel
-assert "L(Main_BackgroundTasksFmt)" in main
+# REQ-20261120-AI-PANEL-DISTILL: AI 任务计数从面板底部统计行移到「队列」页签标签，
+# 标签用 ### 固定 ID，清理已完成任务后 ImGui 不会把用户踢回其他页签。
+assert 'snprintf(queueTabLabel, sizeof(queueTabLabel), "%s (%d)###AIQueueTab",' in main
+assert "L(Main_BackgroundTasksFmt)" not in main
 # Folder-index totals can briefly be stale after switching libraries. The
 # analysis controls must count the same audio records as the extraction task.
 assert "tryGetFeatureIndexCounts" not in index_panel, "Full-library SQL must not execute on the UI thread"

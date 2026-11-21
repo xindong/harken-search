@@ -8,6 +8,7 @@
 #include "PerformanceMonitor.h"
 #endif
 #include "DockTabGroups.h"
+#include "DawSendFeedback.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -230,6 +231,7 @@ namespace HarkenSearch {
 #include "MusicQueue.h"
 #include "GaplessEngine.h"
 #include "ProToolsBridge.h"
+#include "DawTarget.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -658,6 +660,7 @@ struct ListTab {
     bool showM4A = true;
     bool showWMA = true;
     bool showOther = true;
+    bool showLosslessWavPack = false;
     
     // Pagination
     int64_t totalFileCount = 0;
@@ -780,6 +783,7 @@ struct TabPresetEntry {
     bool        showM4A = true;
     bool        showWMA = true;
     bool        showOther = true;
+    bool        showLosslessWavPack = false;
     std::string findSameFilenameQuery;
     bool        findSameFilenameActive = false;
     int64_t     selectedPlaylistId = -1;
@@ -800,36 +804,6 @@ struct SavedSearchEntry {
     int64_t createdAt = 0;   // unix seconds
     int64_t lastUsed = 0;    // unix seconds
     bool pinned = false;
-};
-
-// Send-to-DAW target configuration
-
-// Send mode: unified enum replacing old sendMethod + planned protocol fields
-enum class DawSendMode : int {
-    Clipboard  = 0,   // Copy path to clipboard (fallback, universal)
-    LaunchExe  = 1,   // Launch exe with file args (only when DAW not running)
-    HttpApi    = 2,   // REAPER Web Interface HTTP API (spot to timeline)
-    NamedPipe  = 3,   // Custom extension IPC (reserved)
-};
-
-struct DawTarget {
-    std::string name;           // Display name, e.g. "REAPER"
-    std::string exePath;        // Full path to DAW executable
-    std::string processName;    // Process name for detection, e.g. "reaper.exe"
-    DawSendMode mode = DawSendMode::Clipboard;
-    int httpPort = 8080;              // HttpApi mode: REAPER web interface port
-    std::string reaperActionId;       // REAPER action command ID for Aura_InsertMedia script
-    bool enabled = true;
-    bool fallbackToClipboard = true;  // Legacy field (Send no longer uses clipboard fallback)
-    bool autoDetect = true;           // Auto-detect if process is running
-
-// Pro Tools spot settings (persisted, Pro Tools targets only)
-    HarkenSearch::ProTools::SpotMode ptSpotMode = HarkenSearch::ProTools::SpotMode::AtCursor;
-    HarkenSearch::ProTools::TrackFallback ptTrackFallback = HarkenSearch::ProTools::TrackFallback::AutoCreateNew;
-
-// Runtime state (not persisted)
-    bool isRunning = false;
-    double lastDetectTime = 0.0;
 };
 
 // Application Settings
@@ -1067,6 +1041,7 @@ struct AppSettings {
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位
+    bool reaperSetupNoticeDismissed = false;
 
     // --- Shell integration ---
     bool defaultPlayerPrompted = false; // F-034: one-time "set as default player?" prompt shown
@@ -1710,6 +1685,7 @@ struct AppState {
     bool showPlaylistDialog = false;
     bool showCreateFolderDialog = false;
     bool showSettingsDialog = false;
+    bool openDawIntegrationSettings = false;
 
     // 子播放列表 dialog state (transient, F-017 v2)
     bool   pendingNewSubDialog = false;
@@ -1841,9 +1817,6 @@ struct AppState {
     std::vector<Playlist> playlists;
     bool showPlaylistRenameDialog = false;
     bool showDawTargetSettings = false;   // DAW target configuration dialog
-    std::string lastSendToDAWStatus;      // Status toast after send
-    bool lastSendToDAWKeyed = false;      // H1b: row renders from g_lastSendToDAWBridgeStatus (UI-thread L())
-    double lastSendToDAWTime = 0.0;       // For timed status display
     std::vector<HarkenSearch::UI::SendTargetHistoryItem> sendTargetHistory;
     std::string lastProToolsConnectionStatus;
     std::string lastProToolsConnectionDetail;
@@ -1851,10 +1824,7 @@ struct AppState {
     bool lastProToolsConnectionOk = false;
     bool showProToolsCloseConfirm = false;
 
-    enum class DawSendState { Idle, Sending, Done };
-    std::atomic<DawSendState> dawSendState{DawSendState::Idle};
-    std::atomic<int> dawSendSent{0};
-    std::atomic<int> dawSendTotal{0};
+    HarkenSearch::UI::DawSendFeedback dawSendFeedback;
     std::thread dawSendThread;
     int64_t editingPlaylistId = -1;
     int selectedResultIndex = -1;
@@ -2608,8 +2578,9 @@ struct AppState {
     bool showM4A = true;
     bool showWMA = true;
     bool showOther = true;
+    bool showLosslessWavPack = false;
     
-    bool shouldShowFile(const std::string& extension) const;
+    bool shouldShowFile(const AudioRecord& record) const;
 
     // Playback history tracking
     std::set<std::string> playedFiles;
@@ -3320,6 +3291,12 @@ struct AppState {
     unsigned int qaSendTargetMenuRenderedId = 0;
     int qaSendTargetMenuFrame = -1;
     std::vector<QaSendTargetMenuRow> qaSendTargetMenuRows;
+    // Reads the bottom-bar send widget menu without clicking it.
+    bool qaSendWidgetMenuRequested = false;
+    bool qaSendWidgetMenuOpen = false;
+    int qaSendWidgetMenuRows = 0;
+    int qaSendWidgetMenuFrame = -1;
+    unsigned int qaSendWidgetMenuId = 0;
 #endif
 
     // QA harness: UI region coordinates (client-relative, updated each frame)

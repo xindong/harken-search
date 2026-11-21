@@ -7,6 +7,7 @@ Harken Search public-release builds bundle, link, or intentionally reference the
 | Component | Source / path | License | Usage in Harken Search public release |
 |---|---|---|---|
 | Dear ImGui | `thirdparty/imgui/` | MIT | Immediate-mode desktop UI framework |
+| WavPack | thirdparty/wavpack/ (5.9.0) | BSD-3-Clause | WV (.wv) decode backend linked into the audio decoder |
 | miniaudio | `thirdparty/miniaudio.h` | Public Domain / MIT-0 dual | Audio decode and playback |
 | SQLite | `thirdparty/sqlite/` amalgamation | Public Domain | Database and FTS indexing |
 | stb image headers | `thirdparty/stb_image*.h` | Public Domain / MIT dual | Image decode / resize / write |
