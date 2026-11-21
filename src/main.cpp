@@ -5598,7 +5598,7 @@ void LoadAppSettings(AppState& state) {
         state.settings.fontSize = kChromeFontPx;
         // List font is independently adjustable and keeps its own default.
         state.settings.listFontSize = itList != kv.end()
-            ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, 24)
+            ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)
             : kDefaultListFontPx;
     }
     state.settings.rowHeight = ParseInt(kv["rowHeight"], state.settings.rowHeight);
