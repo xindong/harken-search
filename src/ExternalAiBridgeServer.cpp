@@ -23,6 +23,7 @@ struct PendingRequest {
     std::string request;
     std::string response;
     bool answered = false;
+    bool inProgress = false;
 };
 
 struct ServerState {
@@ -210,19 +211,22 @@ bool ExternalAiBridgeServerRunning()
 void DrainExternalAiBridgeServer(const std::function<std::string(const std::string&)>& handler)
 {
     auto& state = State();
-    std::unique_ptr<PendingRequest> request;
+    std::string request;
     {
         std::lock_guard<std::mutex> lock(state.mutex);
-        if (!state.pending || state.pending->answered) {
+        // Keep the slot owned by the worker: moving it out here used to leave the
+        // response nowhere to go, so every request timed out.
+        if (!state.pending || state.pending->answered || state.pending->inProgress) {
             return;
         }
-        request = std::move(state.pending);
+        state.pending->inProgress = true;
+        request = state.pending->request;
     }
-    const std::string response = handler ? handler(request->request) : std::string("{}");
+    const std::string response = handler ? handler(request) : std::string("{}");
     {
         std::lock_guard<std::mutex> lock(state.mutex);
         // The worker may have timed out while the handler ran; only answer a live one.
-        if (state.pending) {
+        if (state.pending && state.pending->inProgress && !state.pending->answered) {
             state.pending->response = response;
             state.pending->answered = true;
             state.answered.notify_all();

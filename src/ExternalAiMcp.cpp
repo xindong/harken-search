@@ -888,35 +888,25 @@ private:
 #ifdef _WIN32
         const std::string pipePath = "\\\\.\\pipe\\harken-external-ai-" + BridgeHashLibraryId(libraryId);
         const std::wstring name(pipePath.begin(), pipePath.end());
+        // The Harken side reads and writes synchronously, so the client does too;
+        // mixing synchronous and overlapped ends of one pipe does not work.
+        if (!WaitNamedPipeW(name.c_str(), 2000)) {
+            return false;
+        }
         HANDLE pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                                  OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+                                  OPEN_EXISTING, 0, nullptr);
         if (pipe == INVALID_HANDLE_VALUE) {
             return false;
         }
-        auto transfer = [&](bool writing, std::string& buffer, DWORD& moved) {
-            OVERLAPPED overlapped{};
-            overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            if (!overlapped.hEvent) {
-                return false;
-            }
-            const BOOL started = writing
-                ? WriteFile(pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &moved, &overlapped)
-                : ReadFile(pipe, &buffer[0], static_cast<DWORD>(buffer.size()), &moved, &overlapped);
-            bool ok = false;
-            if (!started && GetLastError() == ERROR_IO_PENDING) {
-                ok = WaitForSingleObject(overlapped.hEvent, 15000) == WAIT_OBJECT_0
-                     && GetOverlappedResult(pipe, &overlapped, &moved, FALSE);
-            } else {
-                ok = started != FALSE;
-            }
-            CloseHandle(overlapped.hEvent);
-            return ok && moved > 0;
-        };
-        std::string payload = requestBody + "\n";
+        const std::string payload = requestBody + "\n";
         DWORD written = 0;
         std::string incoming(8192, '\0');
         DWORD read = 0;
-        bool received = transfer(true, payload, written) && transfer(false, incoming, read);
+        const bool sent = WriteFile(pipe, payload.data(), static_cast<DWORD>(payload.size()),
+                                    &written, nullptr) != FALSE;
+        const bool received = sent && ReadFile(pipe, &incoming[0],
+                                               static_cast<DWORD>(incoming.size()), &read, nullptr) != FALSE
+                             && read > 0;
         if (received) {
             incoming.resize(read);
             const auto newline = incoming.find('\n');

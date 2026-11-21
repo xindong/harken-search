@@ -16,6 +16,14 @@
             return false;
         }
         page.dirty=false; page.error.clear();
+        if (page.settings.enabled &&
+            page.settings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)
+                == HarkenSearch::ExternalAiAccess::Editable &&
+            !page.libraryId.empty()) {
+            HarkenSearch::StartExternalAiBridgeServer(page.libraryId);
+        } else {
+            HarkenSearch::StopExternalAiBridgeServer();
+        }
         page.status=L(ExtAi_Saved); page.statusUntil=ImGui::GetTime()+4.0;
         return true;
     };

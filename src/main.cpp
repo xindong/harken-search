@@ -319,6 +319,9 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "TagSystem.h"
 #include "TransferEngine.h"
 #include "ResultActionMenu.h"
+#include "ExternalAiAuthorizationStore.h"
+#include "ExternalAiBridgeServer.h"
+#include "ExternalAiPlaylistService.h"
 #include "SendToTargetSurfaceModel.h"
 #include "HostSendRuntime.h"
 #include "ProToolsBridge.h"
@@ -30210,7 +30213,60 @@ void QaProbeMenuBarItem(AppState& state, const char* label) {
 }
 #endif
 
+// Where the authorization documents live. The settings dialog only knows this
+// after it has opened once, so fall back to the resolved user-data layout.
+static std::string ExternalAiSettingsDirectory() {
+    if (!g_appSettingsPathUtf8.empty()) {
+        const auto separator = g_appSettingsPathUtf8.find_last_of("/\\");
+        return separator == std::string::npos ? std::string{}
+                                             : g_appSettingsPathUtf8.substr(0, separator);
+    }
+    const auto layout = Platform::HarkenUserData::EnsureLayout();
+    if (layout.activeSettingsDir.empty()) {
+        return {};
+    }
+    return Platform::HarkenUserData::WideToUtf8Path(layout.activeSettingsDir);
+}
+
+// External AI write bridge: keep one local pipe per authorized library and run
+// queued Playlist writes here, on the thread that owns the database.
+static void PumpExternalAiWriteBridge(AppState& state) {
+    static int frameSkip = 0;
+    if (++frameSkip % 60 == 0) {
+        const std::string library = state.currentDbPathUtf8;
+        if (library.empty()) {
+            HarkenSearch::StopExternalAiBridgeServer();
+        } else {
+            const std::string settingsDirectory = ExternalAiSettingsDirectory();
+            const std::string libraryId = HarkenSearch::ExternalAiLibraryIdForPath(library);
+            const std::string document =
+                HarkenSearch::ExternalAiSettingsPath(settingsDirectory, libraryId);
+            HarkenSearch::ExternalAiSettings settings;
+            std::string error;
+            if (libraryId.empty() || document.empty()
+                || !HarkenSearch::LoadExternalAiSettings(document, libraryId, settings, error)
+                || !settings.enabled
+                || settings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)
+                       != HarkenSearch::ExternalAiAccess::Editable) {
+                HarkenSearch::StopExternalAiBridgeServer();
+            } else {
+                HarkenSearch::StartExternalAiBridgeServer(libraryId);
+            }
+        }
+    }
+    if (!HarkenSearch::ExternalAiBridgeServerRunning()) return;
+    const std::string settingsDirectory = ExternalAiSettingsDirectory();
+    HarkenSearch::DrainExternalAiBridgeServer([&state, settingsDirectory](const std::string& request) {
+        const std::string libraryId = HarkenSearch::ExternalAiLibraryIdForPath(state.currentDbPathUtf8);
+        const std::string document = HarkenSearch::ExternalAiSettingsPath(settingsDirectory, libraryId);
+        const std::string receipts = HarkenSearch::ExternalAiReceiptsPath(settingsDirectory);
+        return HarkenSearch::HandleExternalAiPlaylistWriteRequest(
+            state.database, libraryId, document, receipts, request);
+    });
+}
+
 void RenderUI(AppState& state) {
+    PumpExternalAiWriteBridge(state);
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
         state.audioEngine.isLoaded()) {
         state.pendingReverseRestore = false;

@@ -5390,6 +5390,38 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_view\":\"" + std::string(viewModeToString(state.viewMode)) + "\",";
         result += "\"active_library\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
         result += "\"db_path\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
+        {
+            // QA: why the external AI write bridge is (not) up.
+            const std::string bridgeId = HarkenSearch::ExternalAiLibraryIdForPath(state.currentDbPathUtf8);
+            const std::string bridgeDir = [&]() {
+                if (!g_appSettingsPathUtf8.empty()) {
+                    const auto separator = g_appSettingsPathUtf8.find_last_of("/\\");
+                    return separator == std::string::npos ? std::string{} : g_appSettingsPathUtf8.substr(0, separator);
+                }
+                const auto layout = Platform::HarkenUserData::EnsureLayout();
+                return layout.activeSettingsDir.empty()
+                    ? std::string{} : Platform::HarkenUserData::WideToUtf8Path(layout.activeSettingsDir);
+            }();
+            const std::string bridgeDoc = HarkenSearch::ExternalAiSettingsPath(bridgeDir, bridgeId);
+            HarkenSearch::ExternalAiSettings bridgeSettings;
+            std::string bridgeError;
+            const bool bridgeLoaded = !bridgeDoc.empty()
+                && HarkenSearch::LoadExternalAiSettings(bridgeDoc, bridgeId, bridgeSettings, bridgeError);
+            result += "\"external_ai_bridge\":{";
+            result += "\"running\":" + std::string(HarkenSearch::ExternalAiBridgeServerRunning() ? "true" : "false");
+            result += ",\"library\":\"" + jsonEscape(bridgeId) + "\"";
+            result += ",\"document\":\"" + jsonEscape(bridgeDoc) + "\"";
+            result += ",\"document_exists\":" + std::string(Platform::FileSystem::Exists(bridgeDoc) ? "true" : "false");
+            result += ",\"loaded\":" + std::string(bridgeLoaded ? "true" : "false");
+            result += ",\"load_error\":\"" + jsonEscape(bridgeError) + "\"";
+            result += ",\"enabled\":" + std::string(bridgeSettings.enabled ? "true" : "false");
+            result += ",\"edit_playlist\":" + std::to_string(static_cast<int>(
+                bridgeSettings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)));
+            result += ",\"settings_dir\":\"" + jsonEscape(bridgeDir) + "\"";
+            result += ",\"settings_path_raw\":\"" + jsonEscape(g_appSettingsPathUtf8) + "\"";
+            result += ",\"settings_path_len\":" + std::to_string(g_appSettingsPathUtf8.size());
+            result += "},";
+        }
 #if ARIS_PREVIEW_ISOLATION
         // Observe the real setup modal without sending desktop input.
         const auto* newDbWindow = ImGui::FindWindowByName(L(Dlg_NewDB));
@@ -12347,46 +12379,6 @@ static void RunWebView2LoadingScreen(
         progressQueue.push_back({ loaded, total, message });
     };
 
-    // 外部 AI 写入桥：授权文档允许 Playlist 写入时开本机管道，写入仍在 UI 线程执行。
-    auto externalAiSettingsDirectory = [&]() {
-        const auto separator = g_appSettingsPathUtf8.find_last_of("\/");
-        return separator == std::string::npos ? std::string{} : g_appSettingsPathUtf8.substr(0, separator);
-    };
-    auto syncExternalAiBridge = [&]() {
-        static int frameSkip = 0;
-        if (++frameSkip % 120 != 0) return;
-        const std::string library = state.currentDbPathUtf8;
-        if (library.empty()) {
-            HarkenSearch::StopExternalAiBridgeServer();
-            return;
-        }
-        const std::string libraryId = HarkenSearch::ExternalAiLibraryIdForPath(library);
-        const std::string document = HarkenSearch::ExternalAiSettingsPath(externalAiSettingsDirectory(), libraryId);
-        HarkenSearch::ExternalAiSettings settings;
-        std::string error;
-        if (libraryId.empty() || document.empty()
-            || !HarkenSearch::LoadExternalAiSettings(document, libraryId, settings, error)
-            || !settings.enabled
-            || settings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)
-                   != HarkenSearch::ExternalAiAccess::Editable) {
-            HarkenSearch::StopExternalAiBridgeServer();
-            return;
-        }
-        HarkenSearch::StartExternalAiBridgeServer(libraryId);
-    };
-    auto drainExternalAiBridge = [&]() {
-        if (!HarkenSearch::ExternalAiBridgeServerRunning()) return;
-        const std::string settingsDirectory = externalAiSettingsDirectory();
-        HarkenSearch::DrainExternalAiBridgeServer([&state, settingsDirectory](const std::string& request) {
-            const std::string libraryId =
-                HarkenSearch::ExternalAiLibraryIdForPath(state.currentDbPathUtf8);
-            const std::string document = HarkenSearch::ExternalAiSettingsPath(settingsDirectory, libraryId);
-            const std::string receipts = HarkenSearch::ExternalAiReceiptsPath(settingsDirectory);
-            return HarkenSearch::HandleExternalAiPlaylistWriteRequest(
-                state.database, libraryId, document, receipts, request);
-        });
-    };
-
     auto pumpUi = [&]() {
         MSG msg = {};
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -12394,8 +12386,6 @@ static void RunWebView2LoadingScreen(
             DispatchMessage(&msg);
         }
         PollQaCommandFile(state);
-        syncExternalAiBridge();
-        drainExternalAiBridge();
         CoverModule::PumpCoverTextureUploads(2, 500);
         if (controller) {
             RECT rc = {};
