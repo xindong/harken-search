@@ -629,8 +629,10 @@ class ExternalAiMcpTest(unittest.TestCase):
                     "proposal_id": preview["proposal_id"], "confirm": True}, 3)))
                 process.stdin.flush()
                 applied = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                # Harken is not running in this test: the connector must stay
+                # fail-closed instead of writing on its own.
                 self.assertEqual(applied["status"], "playlist_write_unavailable")
-                self.assertEqual(applied["blocker"], "external_ai_mcp_has_no_safe_playlist_write_facade")
+                self.assertEqual(applied["blocker"], "harken_write_bridge_unavailable")
                 process.stdin.close()
                 self.assertEqual(process.wait(timeout=5), 0)
                 self.assertEqual(process.stderr.read(), b"")

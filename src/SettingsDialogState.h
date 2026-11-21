@@ -1,6 +1,8 @@
 #pragma once
 #include "AppState.h"
 #include "ExternalAiClientLink.h"
+#include "ExternalAiPlaylistBridge.h"
+#include "ExternalAiPlaylistService.h"
 #include "ExternalAiAuthorizationStore.h"
 #include "Localization.h"
 #include "imgui_internal.h"

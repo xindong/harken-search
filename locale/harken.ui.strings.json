@@ -14972,6 +14972,7 @@
     {"id":"ExtAi_GroupLookup","type":"ui","zh":"查找","en":"Lookup","ja":"検索"},
     {"id":"ExtAi_GroupPlaylist","type":"ui","zh":"播放列表","en":"Playlists","ja":"プレイリスト"},
     {"id":"ExtAi_GroupMetadata","type":"ui","zh":"文件名与元数据","en":"File names and metadata","ja":"ファイル名とメタデータ"},
+    {"id":"ExtAi_LastWriteFmt","type":"ui","zh":"最近一次写入：新增 %d，已有 %d，回执 %s","en":"Last write: added %d, already there %d, receipt %s","ja":"直近の書き込み: 追加 %d、既存 %d、レシート %s"},
     {"id":"ExtAi_SaveCurrent","type":"ui","zh":"保存当前库","en":"Save this library","ja":"このライブラリを保存"},
     {"id":"ExtAi_FooterHint","type":"ui","zh":"只影响当前打开的库","en":"Applies to the open library only","ja":"開いているライブラリにのみ適用"},
     {"id":"ExtAi_Clients","type":"ui","zh":"连接客户端","en":"Connected apps","ja":"接続先"},

@@ -412,6 +412,21 @@
             ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());
         }
 
+        // —— 最近一次写入回执 ——
+        {
+            HarkenSearch::ExternalAiPlaylistReceiptStore receipts;
+            receipts.Load(HarkenSearch::ExternalAiReceiptsPath(settingsDirectory));
+            if (const auto* latest = receipts.Latest()) {
+                char line[512];
+                snprintf(line,sizeof(line),L(ExtAi_LastWriteFmt),
+                    latest->added,latest->skippedExisting,latest->receiptId.c_str());
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s",line);
+                ImGui::PopTextWrapPos();
+                su::Observe("ext-ai-last-write");
+            }
+        }
+
         // —— 底部页脚：说明在左，保存与重新读取在右 ——
         ImGui::Dummy(ImVec2(0,14));
         ImGui::PushStyleColor(ImGuiCol_Separator,ThemeColors::current().chromeBorder);

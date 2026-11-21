@@ -863,6 +863,78 @@ private:
         });
     }
 
+    // Pipe name must match ExternalAiBridgeServer: same FNV-1a fold, 16 hex digits.
+    static std::string BridgeHashLibraryId(const std::string& libraryId)
+    {
+        std::uint64_t value = 1469598103934665603ull;
+        for (const char unit : libraryId) {
+            value ^= static_cast<unsigned char>(unit);
+            value *= 1099511628211ull;
+        }
+        static const char* hex = "0123456789abcdef";
+        std::string out(16, '0');
+        for (int index = 15; index >= 0; --index) {
+            out[static_cast<std::size_t>(index)] = hex[value & 0x0F];
+            value >>= 4;
+        }
+        return out;
+    }
+
+    // One request, one response over the Harken-side pipe. False when Harken is
+    // closed or does not answer in time, so the caller stays fail-closed.
+    static bool CallPlaylistBridge(const std::string& libraryId, const std::string& requestBody,
+                                   std::string& responseBody)
+    {
+#ifdef _WIN32
+        const std::string pipePath = "\\\\.\\pipe\\harken-external-ai-" + BridgeHashLibraryId(libraryId);
+        const std::wstring name(pipePath.begin(), pipePath.end());
+        HANDLE pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                  OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+        auto transfer = [&](bool writing, std::string& buffer, DWORD& moved) {
+            OVERLAPPED overlapped{};
+            overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            if (!overlapped.hEvent) {
+                return false;
+            }
+            const BOOL started = writing
+                ? WriteFile(pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &moved, &overlapped)
+                : ReadFile(pipe, &buffer[0], static_cast<DWORD>(buffer.size()), &moved, &overlapped);
+            bool ok = false;
+            if (!started && GetLastError() == ERROR_IO_PENDING) {
+                ok = WaitForSingleObject(overlapped.hEvent, 15000) == WAIT_OBJECT_0
+                     && GetOverlappedResult(pipe, &overlapped, &moved, FALSE);
+            } else {
+                ok = started != FALSE;
+            }
+            CloseHandle(overlapped.hEvent);
+            return ok && moved > 0;
+        };
+        std::string payload = requestBody + "\n";
+        DWORD written = 0;
+        std::string incoming(8192, '\0');
+        DWORD read = 0;
+        bool received = transfer(true, payload, written) && transfer(false, incoming, read);
+        if (received) {
+            incoming.resize(read);
+            const auto newline = incoming.find('\n');
+            if (newline != std::string::npos) {
+                incoming.resize(newline);
+            }
+            responseBody = incoming;
+        }
+        CloseHandle(pipe);
+        return received;
+#else
+        (void)libraryId;
+        (void)requestBody;
+        (void)responseBody;
+        return false;
+#endif
+    }
+
     Json ApplyPlaylistPack(const Json& id, const Json& arguments)
     {
         if (!HasOnlyFields(arguments, {"proposal_id", "confirm"})
@@ -914,12 +986,38 @@ private:
                 return ToolResult(id, {{"status", "proposal_stale"}});
             }
         }
-        return ToolResult(id, {
-            {"status", "playlist_write_unavailable"},
-            {"proposal_id", proposalId},
-            {"blocker", "external_ai_mcp_has_no_safe_playlist_write_facade"},
-            {"message", "Playlist apply is fail-closed until the connector is linked to Harken's Database Playlist API."},
-        });
+        // Hand the confirmed batch to Harken: it owns the database, its dedupe and
+        // its ordering rules, so the connector only asks and reports the receipt.
+        Json requestedIds = Json::array();
+        for (const auto& selection : pending.selections) {
+            requestedIds.push_back(selection.fileId);
+        }
+        const Json bridgeRequest = {
+            {"token", authorization.bridgeToken()},
+            {"requestId", proposalId},
+            {"libraryId", config_.libraryId},
+            {"playlistPath", pending.playlist},
+            {"fileIds", requestedIds},
+        };
+        std::string bridgeResponse;
+        if (!CallPlaylistBridge(config_.libraryId, bridgeRequest.dump(), bridgeResponse)) {
+            // Harken is closed or did not answer: nothing was written.
+            return ToolResult(id, {
+                {"status", "playlist_write_unavailable"},
+                {"proposal_id", proposalId},
+                {"blocker", "harken_write_bridge_unavailable"},
+                {"message", "Open Harken with this library, then confirm again."},
+            });
+        }
+        Json receipt = Json::parse(bridgeResponse, nullptr, false);
+        if (receipt.is_discarded() || !receipt.is_object()) {
+            return ToolResult(id, {{"status", "write_failed"}, {"proposal_id", proposalId}});
+        }
+        receipt["proposal_id"] = proposalId;
+        if (receipt.value("status", std::string()) == "ok") {
+            playlistProposals_.erase(proposal);
+        }
+        return ToolResult(id, receipt);
     }
 
     Json CallTool(const Json& id, const Json& params)
