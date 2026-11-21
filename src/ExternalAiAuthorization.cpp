@@ -17,13 +17,16 @@ struct CapabilityName {
     ExternalAiCapability capability;
 };
 
-constexpr std::array<CapabilityName, 6> CapabilityNames{{
+constexpr std::array<CapabilityName, 9> CapabilityNames{{
     {"searchAudio", ExternalAiCapability::SearchAudio},
     {"findSimilar", ExternalAiCapability::FindSimilar},
     {"findFolders", ExternalAiCapability::FindFolders},
     {"readFileName", ExternalAiCapability::ReadFileName},
     {"readMetadata", ExternalAiCapability::ReadMetadata},
     {"editMetadata", ExternalAiCapability::EditMetadata},
+    {"aiNamingMetadata", ExternalAiCapability::AiNamingMetadata},
+    {"readPlaylist", ExternalAiCapability::ReadPlaylist},
+    {"editPlaylist", ExternalAiCapability::EditPlaylist},
 }};
 
 constexpr std::size_t MaxRoots = 32;
@@ -268,8 +271,8 @@ ExternalAiAccess ExternalAiAuthorization::Authorize(ExternalAiCapability capabil
         return ExternalAiAccess::Denied;
     }
     if (grant->access == ExternalAiAccess::Editable) {
-        // Sample libraries stay read-only. The connector itself has no write
-        // tool yet, so an editable grant widens nothing until such a tool ships.
+        // Sample libraries stay read-only. An editable grant never widens
+        // access to the shipped sample data.
         return sampleLibrary_ ? ExternalAiAccess::ReadOnly : ExternalAiAccess::Editable;
     }
     return grant->access;

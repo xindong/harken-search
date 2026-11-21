@@ -16,9 +16,11 @@ public:
     ExternalAiLibrary& operator=(const ExternalAiLibrary&) = delete;
 
     bool Open(const std::string& databasePath, const std::string& libraryRoot, std::string& error);
-    nlohmann::json SearchAudio(const std::string& query, int limit);
-    nlohmann::json FindFolders(const std::string& query, int limit);
-    nlohmann::json FindSimilar(std::int64_t referenceId, int limit);
+    nlohmann::json SearchAudio(const std::string& query, int limit, int offset = 0);
+    nlohmann::json FindFolders(const std::string& query, int limit, int offset = 0);
+    nlohmann::json FindSimilar(std::int64_t referenceId, int limit, int offset = 0);
+    nlohmann::json GetMetadata(std::int64_t fileId);
+    bool ApplyMetadata(std::int64_t fileId, const nlohmann::json& fields, std::string& error);
 
     // Resolves a file ID to its path relative to the opened library root so a
     // caller can authorize the reference before running a similarity search.

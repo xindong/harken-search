@@ -1,8 +1,10 @@
-# External AI: local read-only library search
+# External AI: local library search and confirmed metadata edits
 
 The optional Windows `HarkenExternalAiMcp.exe` lets a local MCP client find sounds,
-folders and same-kind substitutes in an explicitly chosen Harken library. Harken
-does not start or enable this connector automatically. It opens no network port.
+folders and same-kind substitutes in an explicitly chosen Harken library. With the
+separate metadata permissions enabled, it can also preview and apply a confirmed
+metadata proposal for one audio file. Harken does not start or enable this
+connector automatically. It opens no network port.
 
 ## Build and connect
 
@@ -42,17 +44,78 @@ sessions that have loaded it.
   compatible same-kind analysis. No results and missing analysis are different
   responses. Match scores rank a bounded set of cached substitutes; they are not
   classification confidence or an exhaustive match across an entire large library.
+- `harken_get_metadata` reads the current title, description, category and keywords
+  for one authorized `file_id`.
+- `harken_preview_metadata_update` accepts one file and a proposed set of those
+  four metadata fields. It returns `before`, `after` and a session-scoped
+  `proposal_id`; it never writes.
+- `harken_apply_metadata_update` accepts only that `proposal_id`. Before writing,
+  it re-reads the authorization document, checks the current database and path,
+  verifies the original values are unchanged, and requires an explicit client
+  confirmation step.
 
-Results contain only the fields needed for search and location. Paths are relative
-to your chosen audio folder, so you can locate a result in Harken or Explorer.
-The connector never sends audio, scans the disk for sounds, or exposes database
-writes, file changes, or playback operations. The **client** determines whether
-returned names and paths are sent to a cloud model. Share only a library section
-whose filenames and directory names you are comfortable returning to that client.
+### Game SFX Playlist preview
 
-This is a local connector, not a Codex Cloud endpoint or a Harken chat panel.
-Automatic tagging, batch metadata edits and direct integration with a cloud
-runner are not included.
+`harken_preview_playlist_pack` is the first `game_sfx` domain workflow. It
+accepts `domain=game_sfx`, a main Playlist name, optional style/theme, and an
+authorized search query or explicit file IDs. It proposes a main Playlist plus
+taxonomy child Playlists using the versioned `game_sfx.v1` profile. The profile
+uses `Gameplay Feedback`, `Character & Creature`, `Combat & Ability`, `World &
+Props`, `UI & System`, `Environment & Foley`, `Cinematic & Transition` and
+`Review Needed`.
+
+The preview reports `playlist_path`, `confidence`, `reason`, `source` and
+`needs_review` for every selected file. Music, stems, BPM/tempo/key material
+and complete tracks are excluded; the connector does not classify by file
+format, duration or frequency alone. Playlist is the output object: files are
+not copied, moved, renamed or exported. The profile and evidence contract live
+in `docs/manual/game-sfx-profile.md`.
+
+`harken_apply_playlist_pack` requires the preview `proposal_id`,
+`confirm=true`, a `readPlaylist` grant and an editable `editPlaylist` grant.
+It rechecks the library, paths, metadata snapshots and authorization, then
+returns `playlist_write_unavailable` without writing: no trusted host
+connection for Playlist writes is available. Opening Harken alongside the
+connector does not enable this operation. The connector never falls back to
+direct writes to Playlist tables.
+
+Search, folder and similar calls use a default `limit` of 5 and accept an
+explicit limit from 1 through 50. Their result rows can be narrowed with an
+optional `fields` array. The allowed fields are:
+
+- Audio search: `file_id`, `name`, `relative_path`, `duration_seconds`.
+- Folder search: `relative_path`, `file_count`.
+- Similar search: the audio search fields plus `match_score`.
+
+An unknown field, duplicate field or empty field list is a JSON-RPC invalid
+parameters error. Field selection only changes the response shape; it never
+changes the database query or authorization checks. The server authorizes rows
+first and paginates second. When more rows are available, the response includes
+an opaque `next_cursor`. Send that cursor with the same tool and query to get
+the next page. Cursors are session-scoped, single-use and cannot be reused for
+another query or tool; invalid, expired or cross-query cursors fail safely.
+Result ordering remains stable: audio and similar rows use their existing
+stable ranking/order, and folders use binary path order.
+
+For protocol versions that support structured tool results (`2025-06-18` and
+newer), the complete payload is returned in `structuredContent` and the text
+content is only a short compatibility summary. Older negotiated versions keep
+the complete JSON payload in `content[].text`. This avoids sending the same
+large result twice while keeping older MCP clients parseable.
+
+Results contain only the fields needed for search, location and the requested
+metadata preview. Paths are relative to your chosen audio folder, so you can
+locate a result in Harken or Explorer. The connector never sends audio, scans
+the disk for sounds, or renames files, embeds tags, edits audio content, or
+changes length, trimming or pitch. The **client** determines whether returned
+names, paths and metadata are sent to a cloud model. Share only a library
+section whose filenames, directory names and metadata you are comfortable
+returning to that client.
+
+The AI suggestion itself is produced by the connected client; the connector
+does not call a model. This is a local connector, not a Codex Cloud endpoint or
+a Harken chat panel. Batch metadata edits, file renaming and direct integration
+with a cloud runner are not included.
 
 ## Authorization document (backend)
 
@@ -72,7 +135,10 @@ a document copied from another library never matches.
     "findFolders": "none",
     "readFileName": "read",
     "readMetadata": "read",
-    "editMetadata": "none"
+    "editMetadata": "none",
+    "aiNamingMetadata": "read",
+    "readPlaylist": "read",
+    "editPlaylist": "none"
   }
 }
 ```
@@ -83,15 +149,20 @@ a document copied from another library never matches.
   grants nothing; adding a path to the file is not the same as authorizing it.
 - Each capability is `none`, `read` or `edit`. File names and library
   metadata are checked separately, so one can be shared while the other stays
-  closed.
+  closed. A preview needs `readMetadata` and `aiNamingMetadata` at least
+  at read level. Applying a proposal needs both `editMetadata` and
+  `aiNamingMetadata` at edit level.
+- A game SFX Playlist preview needs `readPlaylist` plus the filename/metadata
+  reads used for classification. Applying a pack additionally needs
+  `editPlaylist`; `editMetadata` never substitutes for Playlist permission.
 - A request is allowed only if its canonical target stays inside a ticked root.
   Sibling folders with a shared name prefix, `..` components, relative paths
   and junctions or symlinks that resolve outside the root are denied.
 - Revoking a root or lowering a capability applies to the next request even
   while the MCP client keeps the connector process alive. Results outside a ticked root are dropped from every response.
 - `sampleLibrary` stays read-only; an `edit` grant cannot widen it. The
-  connector still exposes no write tool, so configuration never substitutes for
-  an unimplemented capability.
+  connector never applies metadata writes to it, so configuration never
+  substitutes for the sample-library safety boundary.
 
 Malformed documents are rejected as a whole: unknown fields, misspelled
 capability names and unknown access levels fail instead of silently granting
@@ -109,7 +180,8 @@ same document the connector loads:
   master switch off applies to the client's next request, even when the client
   keeps the connector process alive.
 - Each capability is set to not allowed, read-only or editable. File names and
-  metadata are separate switches.
+  metadata are separate switches. The AI naming and metadata path is still
+  preview-first and confirmation-required.
 - A database that has never been authorized starts closed: no folder is ticked and
   every capability is not allowed.
 The library ID is derived from the canonical database path (`lib-` plus a hash).

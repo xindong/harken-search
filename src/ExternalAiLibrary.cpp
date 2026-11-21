@@ -1,4 +1,5 @@
 #include "ExternalAiLibrary.h"
+#include "SearchTextIndex.h"
 #include "SimilarityAnalysisStore.h"
 #include "sqlite3.h"
 
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -770,8 +772,42 @@ std::optional<bool> HasTable(sqlite3* database, const char* name) {
     return step == SQLITE_DONE ? std::optional<bool>(false) : std::nullopt;
 }
 
-bool ValidQuery(const std::string& text, int limit) {
-    return limit >= 1 && limit <= MaxResults && !text.empty() && text.size() <= 1024 &&
+std::optional<bool> HasColumn(sqlite3* database, const char* name) {
+    auto statement = Prepare(database, "PRAGMA main.table_info(audio_files)");
+    if (!statement) {
+        return std::nullopt;
+    }
+    int step = 0;
+    while ((step = sqlite3_step(statement.get())) == SQLITE_ROW) {
+        if (SqlText(statement.get(), 1) == name) {
+            return true;
+        }
+    }
+    return step == SQLITE_DONE ? std::optional<bool>(false) : std::nullopt;
+}
+
+bool ValidMetadataPatch(const Json& fields, std::string& error) {
+    static const std::set<std::string> allowed{"title", "description", "category", "keywords"};
+    if (!fields.is_object() || fields.empty() || fields.size() > allowed.size()) {
+        error = "fields must contain one to four supported metadata values";
+        return false;
+    }
+    for (auto entry = fields.begin(); entry != fields.end(); ++entry) {
+        if (!allowed.count(entry.key())) {
+            error = "unsupported metadata field";
+            return false;
+        }
+        if (!entry.value().is_string() || entry.value().get_ref<const std::string&>().size() > 4096) {
+            error = "metadata values must be text of at most 4096 bytes";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidQuery(const std::string& text, int limit, int offset) {
+    return limit >= 1 && limit <= MaxResults && offset >= 0 && offset <= MaxCandidateRows &&
+        !text.empty() && text.size() <= 1024 &&
         text.find('\0') == std::string::npos && text.find_first_not_of(" \r\n\t") != std::string::npos;
 }
 
@@ -819,9 +855,11 @@ Json AudioRow(std::int64_t fileId, std::string_view relative, double duration) {
 }
 
 struct ExternalAiLibrary::Impl {
-    Impl(const fs::path& authorizedRoot, const fs::path& database) : root(authorizedRoot), catalog(database) {}
+    Impl(const fs::path& authorizedRoot, const fs::path& database)
+        : root(authorizedRoot), databasePath(database), catalog(database) {}
 
     fs::path root;
+    fs::path databasePath;
     CatalogLocation catalog;
 };
 
@@ -860,9 +898,9 @@ bool ExternalAiLibrary::Open(const std::string& databasePath, const std::string&
     }
 }
 
-Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
+Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit, int offset) {
     ReadSession session;
-    if (!implementation_ || !ValidQuery(query, limit) ||
+    if (!implementation_ || !ValidQuery(query, limit, offset) ||
         !session.Open(implementation_->catalog, implementation_->root)) {
         return Payload("query_failed");
     }
@@ -921,13 +959,14 @@ Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
         sql += "),lower(?1))>0";
 #endif
     }
-    sql += ") AND harken_scoped_path(audio.file_path) IS NOT NULL ORDER BY audio.id LIMIT ?4";
+    sql += ") AND harken_scoped_path(audio.file_path) IS NOT NULL ORDER BY audio.id LIMIT ?4 OFFSET ?5";
     auto statement = Prepare(database, sql);
     const auto phrase = useIndex ? SearchPhrase(query) : std::string{};
     if (!statement || !BindText(statement.get(), 1, query) ||
         (useFts && !BindText(statement.get(), 2, "{" + ftsFilter + " } : " + phrase)) ||
         (useTrigram && !BindText(statement.get(), 3, phrase)) ||
-        sqlite3_bind_int(statement.get(), 4, limit) != SQLITE_OK) {
+        sqlite3_bind_int(statement.get(), 4, limit) != SQLITE_OK ||
+        sqlite3_bind_int(statement.get(), 5, offset) != SQLITE_OK) {
         return Payload("query_failed");
     }
     Json results = Json::array();
@@ -942,9 +981,9 @@ Json ExternalAiLibrary::SearchAudio(const std::string& query, int limit) {
     return step == SQLITE_DONE && !session.Expired() ? Payload("ok", std::move(results)) : Payload("query_failed");
 }
 
-Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
+Json ExternalAiLibrary::FindFolders(const std::string& query, int limit, int offset) {
     ReadSession session;
-    if (!implementation_ || !ValidQuery(query, limit) ||
+    if (!implementation_ || !ValidQuery(query, limit, offset) ||
         !session.Open(implementation_->catalog, implementation_->root)) {
         return Payload("query_failed");
     }
@@ -964,10 +1003,11 @@ Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
         "WHERE instr(lower(spelling),lower(?1))>0 OR (instr(?1,'/')>0 AND instr(spelling,'//')>0)"
         ") SELECT scoped.folder,COUNT(*) FROM scoped "
         "WHERE instr(lower(scoped.folder),lower(?1))>0 "
-        "GROUP BY scoped.folder ORDER BY scoped.folder COLLATE BINARY LIMIT ?2";
+        "GROUP BY scoped.folder ORDER BY scoped.folder COLLATE BINARY LIMIT ?2 OFFSET ?3";
     auto statement = Prepare(database, sql);
     if (!statement || !BindText(statement.get(), 1, needle) ||
-        sqlite3_bind_int(statement.get(), 2, limit) != SQLITE_OK) {
+        sqlite3_bind_int(statement.get(), 2, limit) != SQLITE_OK ||
+        sqlite3_bind_int(statement.get(), 3, offset) != SQLITE_OK) {
         return Payload("query_failed");
     }
     Json results = Json::array();
@@ -982,9 +1022,10 @@ Json ExternalAiLibrary::FindFolders(const std::string& query, int limit) {
     return step == SQLITE_DONE && !session.Expired() ? Payload("ok", std::move(results)) : Payload("query_failed");
 }
 
-Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
+Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit, int offset) {
     ReadSession session;
     if (!implementation_ || referenceId <= 0 || limit < 1 || limit > MaxResults ||
+        offset < 0 || offset > MaxCandidateRows || offset > MaxCandidateRows - limit ||
         !session.Open(implementation_->catalog, implementation_->root)) {
         return Payload("query_failed");
     }
@@ -1086,7 +1127,7 @@ Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
             matches.erase(duplicate);
         }
         matches.insert(std::lower_bound(matches.begin(), matches.end(), match, better), std::move(match));
-        if (matches.size() > static_cast<std::size_t>(limit)) {
+        if (matches.size() > static_cast<std::size_t>(offset + limit)) {
             matches.pop_back();
         }
     }
@@ -1097,10 +1138,126 @@ Json ExternalAiLibrary::FindSimilar(std::int64_t referenceId, int limit) {
         return Payload("no_candidates");
     }
     Json results = Json::array();
-    for (auto& match : matches) {
-        results.push_back(std::move(match.row));
+    const auto begin = std::min<std::size_t>(static_cast<std::size_t>(offset), matches.size());
+    const auto end = std::min<std::size_t>(begin + static_cast<std::size_t>(limit), matches.size());
+    for (auto index = begin; index < end; ++index) {
+        results.push_back(std::move(matches[index].row));
     }
     return Payload("ok", std::move(results));
+}
+
+Json ExternalAiLibrary::GetMetadata(std::int64_t fileId) {
+    if (!implementation_ || fileId <= 0) {
+        return {{"status", "query_failed"}};
+    }
+    std::string relativePath;
+    if (!RelativePath(fileId, relativePath)) {
+        return {{"status", "reference_not_found"}};
+    }
+    ReadSession session;
+    if (!session.Open(implementation_->catalog, implementation_->root)) {
+        return {{"status", "query_failed"}};
+    }
+    auto statement = Prepare(session.Database(),
+        "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
+    if (!statement || sqlite3_bind_int64(statement.get(), 1, fileId) != SQLITE_OK) {
+        return {{"status", "query_failed"}};
+    }
+    if (sqlite3_step(statement.get()) != SQLITE_ROW) {
+        return {{"status", "reference_not_found"}};
+    }
+    return {
+        {"status", "ok"},
+        {"file_id", fileId},
+        {"name", std::string(SqlText(statement.get(), 0))},
+        {"relative_path", relativePath},
+        {"metadata", {
+            {"title", std::string(SqlText(statement.get(), 1))},
+            {"description", std::string(SqlText(statement.get(), 2))},
+            {"category", std::string(SqlText(statement.get(), 3))},
+            {"keywords", std::string(SqlText(statement.get(), 4))},
+        }},
+    };
+}
+
+bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, std::string& error) {
+    error.clear();
+    if (!implementation_ || fileId <= 0 || !ValidMetadataPatch(fields, error)) {
+        return false;
+    }
+    const auto current = GetMetadata(fileId);
+    if (!current.is_object() || current.value("status", "") != "ok") {
+        error = "metadata target not found";
+        return false;
+    }
+    const auto currentMetadata = current.value("metadata", Json::object());
+    const auto valueFor = [&](const char* key) {
+        if (fields.contains(key)) {
+            return fields.at(key).get<std::string>();
+        }
+        return currentMetadata.value(key, std::string());
+    };
+    const std::string title = valueFor("title");
+    const std::string description = valueFor("description");
+    const std::string category = valueFor("category");
+    const std::string keywords = valueFor("keywords");
+
+    sqlite3* raw = nullptr;
+    const auto result = sqlite3_open_v2(implementation_->databasePath.u8string().c_str(), &raw,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_PRIVATECACHE | SQLITE_OPEN_NOFOLLOW, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(raw, sqlite3_close);
+    if (result != SQLITE_OK || !raw) {
+        error = "database write unavailable";
+        return false;
+    }
+    sqlite3_busy_timeout(raw, 2000);
+
+    const auto hasSearchData = HasColumn(raw, "search_data");
+    if (!hasSearchData) {
+        error = "metadata schema unavailable";
+        return false;
+    }
+
+    auto existing = Prepare(raw,
+        "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
+    if (!existing || sqlite3_bind_int64(existing.get(), 1, fileId) != SQLITE_OK ||
+        sqlite3_step(existing.get()) != SQLITE_ROW) {
+        error = "metadata target not found";
+        return false;
+    }
+    const std::string fileName = std::string(SqlText(existing.get(), 0));
+
+    const std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(
+        fileName + " " + title + " " + description + " " + category + " " + keywords);
+    char* beginError = nullptr;
+    if (sqlite3_exec(raw, "BEGIN IMMEDIATE", nullptr, nullptr, &beginError) != SQLITE_OK) {
+        sqlite3_free(beginError);
+        error = "database is busy";
+        return false;
+    }
+    const std::string sql = *hasSearchData
+        ? "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4,search_data=?5 WHERE id=?6"
+        : "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4 WHERE id=?5";
+    auto update = Prepare(raw, sql);
+    const int idParameter = *hasSearchData ? 6 : 5;
+    const bool bound = update &&
+        BindText(update.get(), 1, title) &&
+        BindText(update.get(), 2, description) &&
+        BindText(update.get(), 3, category) &&
+        BindText(update.get(), 4, keywords) &&
+        (!*hasSearchData || BindText(update.get(), 5, searchData)) &&
+        sqlite3_bind_int64(update.get(), idParameter, fileId) == SQLITE_OK;
+    if (!bound || sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(raw) != 1) {
+        sqlite3_exec(raw, "ROLLBACK", nullptr, nullptr, nullptr);
+        error = "metadata write failed";
+        return false;
+    }
+    if (sqlite3_exec(raw, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) {
+        sqlite3_exec(raw, "ROLLBACK", nullptr, nullptr, nullptr);
+        error = "metadata write failed";
+        return false;
+    }
+    return true;
 }
 
 bool ExternalAiLibrary::RelativePath(std::int64_t fileId, std::string& relativePath) {

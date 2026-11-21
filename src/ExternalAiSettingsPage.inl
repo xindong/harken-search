@@ -57,22 +57,77 @@
             if (second!=std::string::npos) path=path.substr(second+1);
             return path.empty()?databasePath:path;
         }();
+        const auto& theme=ThemeColors::current();
+        const auto databaseRoots=state.database.getLibraryRoots();
+        const auto displayRootPath=[&](const std::string& root) {
+            if (state.settings.folderTreePathMode==aura::folder_tree::PathMode::Absolute) {
+                return aura::folder_tree::NormalizeFolderPathPreserved(root);
+            }
+            const auto layers=aura::folder_tree::BuildFolderTreeLayers(root,databaseRoots,state.settings.folderTreePathMode);
+            std::string displayed;
+            for (const auto& layer : layers) {
+                if (!displayed.empty()) displayed += " / ";
+                displayed += layer.name;
+            }
+            return displayed.empty()?root:displayed;
+        };
         const bool hasConnector=Platform::FileSystem::Exists(GetExeDirUtf8()+"\\HarkenExternalAiMcp.exe");
         HarkenSearch::ExternalAiLinkTarget linkTarget;
         linkTarget.executablePath=GetExeDirUtf8()+"\\HarkenExternalAiMcp.exe";
         linkTarget.libraryId=page.libraryId;
         linkTarget.databasePath=databasePath;
         linkTarget.rootPath=[&]() {
+            std::string commonPath;
             for (const auto& root : page.settings.roots) {
-                if (root.enabled) return root.path;
+                if (!root.enabled) continue;
+                const std::string preserved=aura::folder_tree::NormalizeFolderPathPreserved(root.path);
+                if (commonPath.empty()) {
+                    commonPath=preserved;
+                    continue;
+                }
+                std::string commonNorm=aura::folder_tree::NormalizeFolderPathForCompare(commonPath);
+                const std::string candidateNorm=aura::folder_tree::NormalizeFolderPathForCompare(preserved);
+                if (aura::folder_tree::PathIsInsideRoot(candidateNorm,commonNorm)) continue;
+                if (aura::folder_tree::PathIsInsideRoot(commonNorm,candidateNorm)) {
+                    commonPath=preserved;
+                    continue;
+                }
+                while (!commonPath.empty() && !aura::folder_tree::PathIsInsideRoot(candidateNorm,commonNorm)) {
+                    const auto cut=commonPath.find_last_of("\\/");
+                    if (cut==std::string::npos || cut<2) {
+                        commonPath.clear();
+                        break;
+                    }
+                    commonPath.erase(cut);
+                    if (commonPath.size()==2) commonPath.push_back('\\');
+                    commonNorm=aura::folder_tree::NormalizeFolderPathForCompare(commonPath);
+                }
             }
-            return std::string{};
+            return commonPath;
         }();
         linkTarget.settingsPath=page.documentPath;
         const float rowRight=ImGui::GetWindowContentRegionMax().x;
         // 所有右侧控件共用同一条右边缘：内缩 12px，文字先量宽再定位。
         const float edgeRight=rowRight-12.f;
         auto placeRight=[&](float width) { ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-width)); };
+        auto sectionHeading=[&](const char* number,const char* title,const char* meta) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8.f,4.f));
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(theme.controlAccent,"%s",number);
+            ImGui::SameLine();
+            ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);
+            ImGui::TextUnformatted(title);
+            ImGui::PopFont();
+            if (meta && *meta) {
+                const float metaWidth=ImGui::CalcTextSize(meta).x;
+                ImGui::SameLine(std::max(ImGui::GetCursorPosX()+16.f,edgeRight-metaWidth));
+                ImGui::TextDisabled("%s",meta);
+            }
+            ImGui::PopStyleVar();
+            ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
+            ImGui::Separator();
+            ImGui::PopStyleColor();
+        };
         auto copyable=[&](const char* label,const std::string& value) {
             ImGui::TextDisabled("%s",label);
             ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-64.f));
@@ -81,7 +136,7 @@
         };
 
         // —— 连接状态横条：左边当前库，右边开关组，一行放完 ——
-        ImVec4 bandBg=ThemeColors::current().popupBG; bandBg.w=1.0f;
+        ImVec4 bandBg=theme.dialogPanelBG; bandBg.w=1.0f;
         ImGui::PushStyleColor(ImGuiCol_ChildBg,bandBg);
         ImGui::BeginChild("##ext-ai-status",ImVec2(0,52),false,
             ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
@@ -110,34 +165,17 @@
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // —— 连接详情：右对齐一行，点开才展开低频信息 ——
-        ImGui::Dummy(ImVec2(0,2));
-        char detailsLabel[128];
-        snprintf(detailsLabel,sizeof(detailsLabel),"%s  %s",L(ExtAi_ConnectionDetails),
-            page.detailsOpen?u8"▾":u8"›");
-        const float detailsWidth=ImGui::CalcTextSize(detailsLabel).x;
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),edgeRight-12.f-detailsWidth));
-        if (aura::ui::SmallActionButton(detailsLabel,aura::ui::ButtonVariant::Quiet)) page.detailsOpen=!page.detailsOpen;
-        su::Observe("ext-ai-details");
-        if (page.detailsOpen) {
-            copyable(L(ExtAi_LibraryId),page.libraryId);
-            copyable(L(ExtAi_Document),page.documentPath);
-            ImGui::TextDisabled("%s",L(ExtAi_ConnectorCommand));
-            if (hasConnector && aura::ui::SmallActionButton(L(Main_CopyBtn),aura::ui::ButtonVariant::Quiet)) {
-                ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
-            }
-            ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());
-            ImGui::TextWrapped("%s",L(ExtAi_Intro));
-        }
-
         // —— 可操作目录 ——
         ImGui::Dummy(ImVec2(0,10));
-        heading(L(ExtAi_Folders));
+        const char* pathModeLabel=state.settings.folderTreePathMode==aura::folder_tree::PathMode::Absolute
+            ?L(Set_FolderTreePathAbsolute):L(Set_FolderTreePathPilot);
+        sectionHeading("01",L(ExtAi_Folders),pathModeLabel);
         const float addWidth=112.f;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-addWidth-12.f-72.f));
         const int tickedCount=(int)std::count_if(page.settings.roots.begin(),page.settings.roots.end(),
             [](const HarkenSearch::ExternalAiRoot& root) { return root.enabled; });
-        ImGui::TextDisabled(L(ExtAi_FolderCountFmt),tickedCount);
+        char folderMeta[128]{};
+        snprintf(folderMeta,sizeof(folderMeta),L(ExtAi_FolderCountFmt),tickedCount);
+        ImGui::TextDisabled("%s · %s：%s",folderMeta,L(Set_FolderTreePathMode),pathModeLabel);
         placeRight(addWidth);
         if (aura::ui::ActionButton(L(ExtAi_AddRoot),ImVec2(addWidth,26))) {
             const std::string picked=OpenFolderDialog(g_hwnd);
@@ -179,7 +217,7 @@
                 }
                 su::Observe("ext-ai-root-tick");
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextWrapped("%s",page.settings.roots[index].path.c_str());
+                ImGui::TextWrapped("%s",displayRootPath(page.settings.roots[index].path).c_str());
                 ImGui::TableSetColumnIndex(2);
                 ImGui::AlignTextToFramePadding();
                 if (aura::ui::SmallActionButton(L(Main_RemoveBtn2))) {
@@ -195,48 +233,9 @@
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar();
 
-        // —— 分项权限 ——
-        ImGui::Dummy(ImVec2(0,10));
-        heading(L(ExtAi_Capabilities));
-        const char* capabilityLabels[]{L(ExtAi_CapSearchAudio),L(ExtAi_CapFindSimilar),L(ExtAi_CapFindFolders),
-            L(ExtAi_CapReadFileName),L(ExtAi_CapReadMetadata),L(ExtAi_CapEditMetadata)};
-        const char* accessLabels[]{L(ExtAi_AccessNone),L(ExtAi_AccessRead),L(ExtAi_AccessEdit)};
-        for (int group=0; group<2; ++group) {
-            const int first=group==0?0:3;
-            const int last=group==0?2:5;
-            const char* groupTitle=group==0?L(ExtAi_GroupLookup):L(ExtAi_GroupMetadata);
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8.f,4.f));
-            ImGui::PushStyleColor(ImGuiCol_Text,ThemeColors::current().resultsSecondaryText);
-            ImGui::TextUnformatted(groupTitle);
-            ImGui::PopStyleColor();
-            ImGui::PushStyleColor(ImGuiCol_Separator,ThemeColors::current().chromeBorder);
-            ImGui::Separator();
-            ImGui::PopStyleColor();
-            for (int index=first; index<=last; ++index) {
-                ImGui::PushID(index);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextUnformatted(capabilityLabels[index]);
-                placeRight(128.f);
-                ImGui::SetNextItemWidth(128.f);
-                int access=static_cast<int>(page.settings.capabilities[static_cast<std::size_t>(index)]);
-                if (combo(access,{accessLabels[0],accessLabels[1],accessLabels[2]})) {
-                    page.settings.capabilities[static_cast<std::size_t>(index)]=static_cast<HarkenSearch::ExternalAiAccess>(access);
-                    page.dirty=true;
-                }
-                ImGui::PopID();
-                ImGui::PushStyleColor(ImGuiCol_Separator,ThemeColors::current().chromeBorder);
-                ImGui::Separator();
-                ImGui::PopStyleColor();
-            }
-            ImGui::PopStyleVar();
-        }
-        ImGui::Dummy(ImVec2(0,4));
-        ImGui::TextWrapped("%s",L(ExtAi_EditNote));
-
         // —— 连接客户端 ——
-        ImGui::Dummy(ImVec2(0,10));
-        heading(L(ExtAi_Clients));
-        ImGui::TextWrapped("%s",L(ExtAi_ConnectHint));
+        ImGui::Dummy(ImVec2(0,12));
+        sectionHeading("02",L(ExtAi_Clients),nullptr);
         const std::string homePath=[&]() {
             // 预览隔离构建里把“家目录”固定在隔离根内，QA 永远不碰真实用户配置。
             if (Platform::HarkenUserData::PreviewIsolationActive()) {
@@ -256,6 +255,34 @@
         } else if (!linkReady) {
             ImGui::TextDisabled("%s",L(ExtAi_ConnectNotReady));
         }
+        auto drawClientLogo=[&](HarkenSearch::ExternalAiClient client,const ImVec2& origin,bool connected) {
+            ImDrawList* draw=ImGui::GetWindowDrawList();
+            const ImVec4 tint=connected?theme.controlAccent:theme.resultsSecondaryText;
+            const ImU32 border=ImGui::ColorConvertFloat4ToU32(theme.chromeBorder);
+            const ImU32 color=ImGui::ColorConvertFloat4ToU32(tint);
+            const ImVec2 max(origin.x+34.f,origin.y+34.f);
+            draw->AddRectFilled(origin,max,ImGui::ColorConvertFloat4ToU32(theme.dialogPanelBG),7.f);
+            draw->AddRect(origin,max,border,7.f,0,1.f);
+            if (client==HarkenSearch::ExternalAiClient::Cindy) {
+                const ImVec2 points[]{
+                    {origin.x+23.f,origin.y+9.f},{origin.x+19.f,origin.y+7.f},
+                    {origin.x+13.f,origin.y+8.f},{origin.x+9.f,origin.y+12.f},
+                    {origin.x+9.f,origin.y+18.f},{origin.x+13.f,origin.y+23.f},
+                    {origin.x+19.f,origin.y+24.f},{origin.x+23.f,origin.y+21.f}};
+                draw->AddPolyline(points,8,color,0,1.8f);
+                draw->AddCircle(ImVec2(origin.x+16.f,origin.y+16.f),2.3f,color,12,1.7f);
+            } else {
+                const ImVec2 hexagon[]{
+                    {origin.x+17.f,origin.y+6.f},{origin.x+25.f,origin.y+11.f},
+                    {origin.x+25.f,origin.y+21.f},{origin.x+17.f,origin.y+27.f},
+                    {origin.x+9.f,origin.y+21.f},{origin.x+9.f,origin.y+11.f}};
+                draw->AddPolyline(hexagon,6,color,ImDrawFlags_Closed,1.6f);
+                draw->AddLine(ImVec2(origin.x+12.f,origin.y+12.f),ImVec2(origin.x+17.f,origin.y+9.f),color,1.5f);
+                draw->AddLine(ImVec2(origin.x+17.f,origin.y+9.f),ImVec2(origin.x+22.f,origin.y+12.f),color,1.5f);
+                draw->AddLine(ImVec2(origin.x+12.f,origin.y+20.f),ImVec2(origin.x+17.f,origin.y+23.f),color,1.5f);
+                draw->AddLine(ImVec2(origin.x+17.f,origin.y+23.f),ImVec2(origin.x+22.f,origin.y+20.f),color,1.5f);
+            }
+        };
         const char* clientLabels[]{L(ExtAi_ClientCindy),L(ExtAi_ClientCodex)};
         const HarkenSearch::ExternalAiClient clients[]{HarkenSearch::ExternalAiClient::Cindy,
             HarkenSearch::ExternalAiClient::Codex};
@@ -265,16 +292,25 @@
             const bool detected=HarkenSearch::ExternalAiClientDetected(clients[clientIndex],homePath);
             const auto linkState=HarkenSearch::QueryExternalAiClientLink(clients[clientIndex],configPath,linkTarget);
             const bool connected=linkState.state==HarkenSearch::ExternalAiLinkState::Connected;
+            if (clientIndex>0) {
+                ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
+                ImGui::Separator();
+                ImGui::PopStyleColor();
+            }
+            const ImVec2 logoOrigin=ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(34.f,34.f));
+            drawClientLogo(clients[clientIndex],logoOrigin,connected);
+            ImGui::SameLine(0.f,12.f);
+            ImGui::BeginGroup();
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(clientLabels[clientIndex]);
             const char* linkStateText=!detected?L(ExtAi_ClientNotDetected)
                 :(connected?L(ExtAi_ClientConnected)
                 :(linkState.state==HarkenSearch::ExternalAiLinkState::Failed?L(ExtAi_ClientUnreadable)
                 :L(ExtAi_ClientDisconnected)));
-            const float linkButtonWidth=96.f;
-            ImGui::SameLine(std::max(ImGui::GetCursorPosX()+12.f,
-                edgeRight-linkButtonWidth-16.f-ImGui::CalcTextSize(linkStateText).x));
             ImGui::TextDisabled("%s",linkStateText);
+            ImGui::EndGroup();
+            const float linkButtonWidth=96.f;
             placeRight(linkButtonWidth);
             ImGui::BeginDisabled(!linkReady||!detected);
             if (aura::ui::ActionButton(connected?L(ExtAi_DisconnectBtn):L(ExtAi_ConnectBtn),ImVec2(linkButtonWidth,28),
@@ -295,20 +331,84 @@
             }
             ImGui::EndDisabled();
             su::Observe(clientIndex==0?"ext-ai-client-cindy":"ext-ai-client-codex");
-            if (!detected) {
-                ImGui::SameLine();
-                ImGui::BeginDisabled(!linkReady);
-                if (aura::ui::SmallActionButton(L(Main_CopyBtn),aura::ui::ButtonVariant::Quiet)) {
-                    ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
-                }
-                ImGui::EndDisabled();
-            }
             ImGui::PopID();
         }
         if (!page.linkStatus.empty() && ImGui::GetTime()<page.linkStatusUntil) {
             ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("%s",page.linkStatus.c_str()); ImGui::PopTextWrapPos();
         }
         su::Observe("ext-ai-clients");
+
+        // —— 分项权限 ——
+        ImGui::Dummy(ImVec2(0,12));
+        sectionHeading("03",L(ExtAi_Capabilities),L(ExtAi_FooterHint));
+        const char* capabilityLabels[]{L(ExtAi_CapSearchAudio),L(ExtAi_CapFindSimilar),L(ExtAi_CapFindFolders),
+            L(ExtAi_CapReadFileName),L(ExtAi_CapReadMetadata),L(ExtAi_CapEditMetadata),L(ExtAi_CapAiNaming),
+            L(ExtAi_CapReadPlaylist),L(ExtAi_CapEditPlaylist)};
+        const char* accessLabels[]{L(ExtAi_AccessNone),L(ExtAi_AccessRead),L(ExtAi_AccessEdit)};
+        const int groupStarts[]{0,3};
+        const int groupEnds[]{2,8};
+        const float accessButtonWidth=62.f;
+        const float accessButtonGap=3.f;
+        const float accessGroupWidth=accessButtonWidth*3.f+accessButtonGap*2.f;
+        for (int group=0; group<2; ++group) {
+            const char* groupTitle=group==0?L(ExtAi_GroupLookup):L(ExtAi_GroupMetadata);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8.f,4.f));
+            ImGui::TextColored(theme.controlAccent,"%s",groupTitle);
+            ImGui::PopStyleVar();
+            for (int index=groupStarts[group]; index<=groupEnds[group]; ++index) {
+                ImGui::PushID(index);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(capabilityLabels[index]);
+                placeRight(accessGroupWidth);
+                const int currentAccess=static_cast<int>(page.settings.capabilities[static_cast<std::size_t>(index)]);
+                for (int option=0; option<3; ++option) {
+                    if (option>0) ImGui::SameLine(0.f,accessButtonGap);
+                    const bool selected=currentAccess==option;
+                    const ImVec4 selectedBg=option==static_cast<int>(HarkenSearch::ExternalAiAccess::Editable)
+                        ?theme.controlAccent:theme.resultsTabActive;
+                    const ImVec4 selectedText=option==static_cast<int>(HarkenSearch::ExternalAiAccess::Editable)
+                        ?theme.mainWindowBG:theme.interfaceText;
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,5.f);
+                    ImGui::PushStyleColor(ImGuiCol_Button,selected?selectedBg:ImVec4(0,0,0,0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,selected?selectedBg:theme.frameBgBase);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,selected?selectedBg:theme.frameBgBase);
+                    ImGui::PushStyleColor(ImGuiCol_Text,selected?selectedText:theme.resultsSecondaryText);
+                    if (ImGui::Button(accessLabels[option],ImVec2(accessButtonWidth,28.f))) {
+                        page.settings.capabilities[static_cast<std::size_t>(index)]=
+                            static_cast<HarkenSearch::ExternalAiAccess>(option);
+                        page.dirty=true;
+                    }
+                    ImGui::PopStyleColor(4);
+                    ImGui::PopStyleVar();
+                    su::Observe((std::string("ext-ai-capability-")+std::to_string(index)+"-"+std::to_string(option)).c_str());
+                }
+                ImGui::PopID();
+                ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
+                ImGui::Separator();
+                ImGui::PopStyleColor();
+            }
+        }
+        ImGui::Dummy(ImVec2(0,4));
+        ImGui::TextWrapped("%s",L(ExtAi_EditNote));
+
+        // —— 连接详情 ——
+        ImGui::Dummy(ImVec2(0,10));
+        char detailsLabel[128];
+        snprintf(detailsLabel,sizeof(detailsLabel),"%s  %s",L(ExtAi_ConnectionDetails),
+            page.detailsOpen?u8"▾":u8"›");
+        const float detailsWidth=ImGui::CalcTextSize(detailsLabel).x;
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),edgeRight-12.f-detailsWidth));
+        if (aura::ui::SmallActionButton(detailsLabel,aura::ui::ButtonVariant::Quiet)) page.detailsOpen=!page.detailsOpen;
+        su::Observe("ext-ai-details");
+        if (page.detailsOpen) {
+            copyable(L(ExtAi_LibraryId),page.libraryId);
+            copyable(L(ExtAi_Document),page.documentPath);
+            ImGui::TextDisabled("%s",L(ExtAi_ConnectorCommand));
+            if (hasConnector && aura::ui::SmallActionButton(L(Main_CopyBtn),aura::ui::ButtonVariant::Quiet)) {
+                ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
+            }
+            ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());
+        }
 
         // —— 底部页脚：说明在左，保存与重新读取在右 ——
         ImGui::Dummy(ImVec2(0,14));

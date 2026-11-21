@@ -2,7 +2,8 @@ add_library(HarkenExternalAiLibrary STATIC EXCLUDE_FROM_ALL
     src/ExternalAiLibrary.cpp
     src/ExternalAiAuthorization.cpp
     src/ExternalAiAuthorizationStore.cpp
-    ${_similarity_store_sources})
+    ${_similarity_store_sources}
+    ${AURO_SEARCH_TEXT_GB2312_SOURCE})
 target_include_directories(HarkenExternalAiLibrary PUBLIC src thirdparty PRIVATE "${SQLITE_DIR}")
 target_link_libraries(HarkenExternalAiLibrary PRIVATE Threads::Threads)
 if(WIN32)

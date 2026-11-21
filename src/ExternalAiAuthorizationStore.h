@@ -11,7 +11,7 @@ namespace HarkenSearch {
 
 // Number of capabilities in an authorization document. Kept next to the enum
 // so the document, the settings page and the tests agree on the set.
-constexpr std::size_t ExternalAiCapabilityCount = 6;
+constexpr std::size_t ExternalAiCapabilityCount = 9;
 
 constexpr std::array<ExternalAiCapability, ExternalAiCapabilityCount> ExternalAiCapabilities{ {
     ExternalAiCapability::SearchAudio,
@@ -20,6 +20,9 @@ constexpr std::array<ExternalAiCapability, ExternalAiCapabilityCount> ExternalAi
     ExternalAiCapability::ReadFileName,
     ExternalAiCapability::ReadMetadata,
     ExternalAiCapability::EditMetadata,
+    ExternalAiCapability::AiNamingMetadata,
+    ExternalAiCapability::ReadPlaylist,
+    ExternalAiCapability::EditPlaylist,
 } };
 
 // Stable document key of one capability, e.g. "searchAudio".
@@ -36,7 +39,9 @@ struct ExternalAiSettings {
     std::vector<ExternalAiRoot> roots;
     std::array<ExternalAiAccess, ExternalAiCapabilityCount> capabilities{ {
         ExternalAiAccess::Denied, ExternalAiAccess::Denied, ExternalAiAccess::Denied,
+        ExternalAiAccess::Denied, ExternalAiAccess::Denied,
         ExternalAiAccess::Denied, ExternalAiAccess::Denied, ExternalAiAccess::Denied,
+        ExternalAiAccess::Denied,
     } };
 
     ExternalAiAccess capability(ExternalAiCapability value) const;

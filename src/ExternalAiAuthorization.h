@@ -17,6 +17,9 @@ enum class ExternalAiCapability {
     ReadFileName,
     ReadMetadata,
     EditMetadata,
+    AiNamingMetadata,
+    ReadPlaylist,
+    EditPlaylist,
 };
 
 enum class ExternalAiAccess {

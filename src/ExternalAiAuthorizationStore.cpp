@@ -27,6 +27,9 @@ constexpr std::array<CapabilityEntry, ExternalAiCapabilityCount> CapabilityKeys{
     {ExternalAiCapability::ReadFileName, "readFileName"},
     {ExternalAiCapability::ReadMetadata, "readMetadata"},
     {ExternalAiCapability::EditMetadata, "editMetadata"},
+    {ExternalAiCapability::AiNamingMetadata, "aiNamingMetadata"},
+    {ExternalAiCapability::ReadPlaylist, "readPlaylist"},
+    {ExternalAiCapability::EditPlaylist, "editPlaylist"},
 } };
 
 // Quotes one JSON string. Control characters and malformed input return an

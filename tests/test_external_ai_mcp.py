@@ -17,6 +17,11 @@ VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 SEARCH = "harken_search_audio"
 FOLDERS = "harken_find_folders"
 SIMILAR = "harken_find_similar"
+METADATA = "harken_get_metadata"
+PREVIEW_METADATA = "harken_preview_metadata_update"
+APPLY_METADATA = "harken_apply_metadata_update"
+PREVIEW_PLAYLIST = "harken_preview_playlist_pack"
+APPLY_PLAYLIST = "harken_apply_playlist_pack"
 AUDIO_FIELDS = {"file_id", "name", "relative_path", "duration_seconds"}
 RAW_AUDIO = b"synthetic raw audio sentinel"
 LIBRARY_ID = "harken-test-library"
@@ -27,6 +32,9 @@ ALL_READ = {
     "readFileName": "read",
     "readMetadata": "read",
     "editMetadata": "none",
+    "aiNamingMetadata": "read",
+    "readPlaylist": "read",
+    "editPlaylist": "none",
 }
 
 
@@ -82,6 +90,7 @@ class ExternalAiMcpTest(unittest.TestCase):
         tracks = [(index, cls.root / "wind" / name) for index, name in enumerate(names, 1)]
         tracks.extend([
             (40, cls.root / "\u5927\u6d77" / "\u6d77\u98ce.wav"),
+            (41, cls.root / "music" / "game-theme.wav"),
             (99, cls.outside / "wind" / "wind-outside.wav"),
         ])
         for file_id, path in tracks:
@@ -99,6 +108,8 @@ class ExternalAiMcpTest(unittest.TestCase):
                 "INSERT INTO audio_files VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
                 [(file_id, str(path), path.name, file_id * 0.75) for file_id, path in tracks],
             )
+            connection.execute(
+                "UPDATE audio_files SET title = 'Game Theme', category = 'Music', keywords = 'score bpm' WHERE id = 41")
         connection.close()
         cls.settings = write_authorization(cls.fixture / "authorization.json", cls.root)
 
@@ -151,13 +162,26 @@ class ExternalAiMcpTest(unittest.TestCase):
         content = result["content"][0]
         self.assertEqual(set(content), {"type", "text"})
         self.assertEqual(content["type"], "text")
-        payload = json.loads(content["text"])
-        self.assertEqual(set(payload), {"status", "results"})
         if structured:
+            self.assertIn("structuredContent", result)
+            payload = result["structuredContent"]
             self.assertEqual(result["structuredContent"], payload)
+            self.assertNotEqual(content["text"], json.dumps(payload, ensure_ascii=False))
         else:
+            payload = json.loads(content["text"])
             self.assertNotIn("structuredContent", result)
+        self.assertIn("status", payload)
+        self.assertIn("results", payload)
         return payload
+
+    def raw_tool_payload(self, reply):
+        result = reply["result"]
+        self.assertEqual(len(result["content"]), 1)
+        content = result["content"][0]
+        self.assertEqual(content["type"], "text")
+        if "structuredContent" in result:
+            return result["structuredContent"]
+        return json.loads(content["text"])
 
     def snapshot(self):
         return {
@@ -391,7 +415,7 @@ class ExternalAiMcpTest(unittest.TestCase):
         self.assertIn(replies[5]["error"]["code"], (-32601, -32602))
         self.assertEqual(replies[-1]["result"], {})
 
-    def test_discovery_exposes_exactly_three_read_only_tools(self):
+    def test_discovery_exposes_read_and_confirm_tools_with_explicit_write_boundary(self):
         discovery, no_resources, no_templates, no_write = self.with_session(
             request("tools/list", 1),
             request("resources/list", 2),
@@ -399,22 +423,366 @@ class ExternalAiMcpTest(unittest.TestCase):
             call("write_file", {"path": str(self.database), "data": "deny"}, 4),
         )
         tools = discovery["result"]["tools"]
-        self.assertEqual(len(tools), 3)
-        self.assertEqual({tool["name"] for tool in tools}, {SEARCH, FOLDERS, SIMILAR})
+        self.assertEqual(len(tools), 8)
+        self.assertEqual({tool["name"] for tool in tools},
+                         {SEARCH, FOLDERS, SIMILAR, METADATA, PREVIEW_METADATA, APPLY_METADATA,
+                          PREVIEW_PLAYLIST, APPLY_PLAYLIST})
         for tool in tools:
+            if tool["name"] in (APPLY_METADATA, APPLY_PLAYLIST):
+                self.assertIs(tool["annotations"]["readOnlyHint"], False)
+                self.assertIs(tool["annotations"]["destructiveHint"], True)
+                required = ["proposal_id"] if tool["name"] == APPLY_METADATA else ["proposal_id", "confirm"]
+                properties = {"proposal_id"} if tool["name"] == APPLY_METADATA else {"proposal_id", "confirm"}
+                self.assertEqual(tool["inputSchema"]["required"], required)
+                self.assertEqual(set(tool["inputSchema"]["properties"]), properties)
+                continue
             self.assertIs(tool["annotations"]["readOnlyHint"], True)
+            if tool["name"] == METADATA:
+                self.assertEqual(tool["inputSchema"]["required"], ["file_id"])
+                self.assertEqual(set(tool["inputSchema"]["properties"]), {"file_id"})
+                continue
+            if tool["name"] == PREVIEW_METADATA:
+                self.assertEqual(tool["inputSchema"]["required"], ["file_id", "fields"])
+                self.assertEqual(set(tool["inputSchema"]["properties"]), {"file_id", "fields"})
+                continue
+            if tool["name"] == PREVIEW_PLAYLIST:
+                self.assertEqual(tool["inputSchema"]["required"], ["domain", "playlist"])
+                self.assertEqual(
+                    set(tool["inputSchema"]["properties"]),
+                    {"domain", "style", "theme", "playlist", "query", "file_ids", "limit"})
+                self.assertEqual(tool["inputSchema"]["properties"]["domain"]["enum"], ["game_sfx"])
+                continue
             schema = tool["inputSchema"]
             required = "reference_id" if tool["name"] == SIMILAR else "query"
             self.assertEqual(schema["required"], [required])
-            self.assertEqual(set(schema["properties"]), {required, "limit"})
+            self.assertEqual(set(schema["properties"]), {required, "limit", "fields", "cursor"})
             self.assertIs(schema["additionalProperties"], False)
             self.assertEqual(
                 {field: schema["properties"]["limit"][field] for field in ("minimum", "maximum", "default")},
-                {"minimum": 1, "maximum": 50, "default": 10},
+                {"minimum": 1, "maximum": 50, "default": 5},
             )
+            self.assertTrue(schema["properties"]["fields"]["items"]["enum"])
+            self.assertTrue(schema["properties"]["fields"]["uniqueItems"])
         self.assertEqual(no_resources["error"]["code"], -32601)
         self.assertEqual(no_templates["error"]["code"], -32601)
         self.assertEqual(no_write["error"]["code"], -32602)
+
+    def test_metadata_preview_then_explicit_apply_updates_one_file(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "editable.json", self.root,
+            capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with subprocess.Popen(
+            self.command(flags), cwd=self.fixture,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ) as process:
+            received = Queue()
+
+            def pump():
+                for line in iter(process.stdout.readline, b""):
+                    received.put(line)
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+            try:
+                process.stdin.write(wire_line(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.write(wire_line(call(METADATA, {"file_id": 1}, 1)))
+                process.stdin.write(wire_line(call(PREVIEW_METADATA, {"file_id": 1, "fields": {
+                    "title": "Wind Metal Door",
+                    "category": "Foley",
+                    "keywords": "wind, metal, door",
+                    "description": "Metal door movement",
+                }}, 2)))
+                process.stdin.flush()
+                self.assertEqual(json.loads(received.get(timeout=5))["id"], "hello")
+                current = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                preview = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                self.assertEqual(current["status"], "ok")
+                self.assertEqual(current["metadata"]["title"], "")
+                self.assertEqual(preview["status"], "ok")
+                self.assertEqual(preview["confirmation"], "required")
+                self.assertEqual(preview["before"]["title"], "")
+                self.assertEqual(preview["after"]["title"], "Wind Metal Door")
+                self.assertEqual(preview["after"]["category"], "Foley")
+                self.assertTrue(preview["proposal_id"])
+
+                process.stdin.write(wire_line(call(
+                    APPLY_METADATA, {"proposal_id": preview["proposal_id"]}, 3)))
+                process.stdin.write(wire_line(call(METADATA, {"file_id": 1}, 4)))
+                process.stdin.flush()
+                applied = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                updated = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                self.assertEqual(applied["status"], "applied")
+                self.assertEqual(updated["status"], "ok")
+                self.assertEqual(updated["metadata"]["title"], "Wind Metal Door")
+                self.assertEqual(updated["metadata"]["category"], "Foley")
+
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), b"")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                reader.join(timeout=5)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            row = connection.execute(
+                "SELECT title, description, category, keywords FROM audio_files WHERE id = 1").fetchone()
+        self.assertEqual(row, (
+            "Wind Metal Door", "Metal door movement", "Foley", "wind, metal, door"))
+
+    def test_game_sfx_preview_is_playlist_first_profiled_and_read_only(self):
+        before = self.snapshot()
+        replies = self.with_session(
+            call(PREVIEW_PLAYLIST, {
+                "domain": "game_sfx",
+                "style": "cartoon",
+                "theme": "forest adventure",
+                "playlist": "Game SFX",
+                "query": "wind",
+                "limit": 5,
+            }, 1),
+            call(PREVIEW_PLAYLIST, {
+                "domain": "game_sfx",
+                "playlist": "Game SFX",
+                "query": "game-theme",
+            }, 2),
+            call(PREVIEW_PLAYLIST, {
+                "domain": "game_sfx",
+                "playlist": "Game SFX",
+                "file_ids": [1, 99],
+            }, 3),
+        )
+        preview = self.raw_tool_payload(replies[0])
+        music = self.raw_tool_payload(replies[1])
+        filtered = self.raw_tool_payload(replies[2])
+        self.assertEqual(preview["status"], "ok")
+        self.assertEqual(preview["domain"], "game_sfx")
+        self.assertEqual(preview["profile"]["version"], "game_sfx.v1")
+        self.assertIn("Review Needed", preview["profile"]["taxonomy"])
+        self.assertEqual(preview["style"], "cartoon")
+        self.assertEqual(preview["theme"], "forest adventure")
+        self.assertEqual(preview["confirmation"], "required")
+        self.assertTrue(preview["proposal_id"])
+        self.assertTrue(preview["selections"])
+        for selection in preview["selections"]:
+            self.assertTrue(selection["playlist_path"].startswith("Game SFX/"))
+            self.assertGreaterEqual(selection["confidence"], 0.0)
+            self.assertLessEqual(selection["confidence"], 1.0)
+            self.assertTrue(selection["reason"])
+            self.assertTrue(selection["source"])
+            self.assertIsInstance(selection["needs_review"], bool)
+        self.assertEqual(music["status"], "ok")
+        self.assertEqual(music["selections"], [])
+        self.assertEqual([selection["file_id"] for selection in filtered["selections"]], [1])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_game_sfx_preview_requires_independent_playlist_read_grant(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "no-playlist-read.json", self.root,
+            capabilities={**ALL_READ, "readPlaylist": "none"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        replies = self.with_session(call(PREVIEW_PLAYLIST, {
+            "domain": "game_sfx", "playlist": "Game SFX", "query": "wind"}, 1), flags=flags)
+        payload = self.raw_tool_payload(replies[0])
+        self.assertEqual(payload["status"], "not_authorized")
+
+    def test_game_sfx_apply_is_confirmation_gated_and_fails_closed_without_playlist_facade(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "playlist-editable.json", self.root,
+            capabilities={**ALL_READ, "editPlaylist": "edit"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        before = self.snapshot()
+        with subprocess.Popen(
+            self.command(flags), cwd=self.fixture,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ) as process:
+            received = Queue()
+
+            def pump():
+                for line in iter(process.stdout.readline, b""):
+                    received.put(line)
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+            try:
+                process.stdin.write(wire_line(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.write(wire_line(call(PREVIEW_PLAYLIST, {
+                    "domain": "game_sfx", "playlist": "Game SFX", "query": "wind"}, 1)))
+                process.stdin.flush()
+                self.assertEqual(json.loads(received.get(timeout=5))["id"], "hello")
+                preview = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                process.stdin.write(wire_line(call(APPLY_PLAYLIST, {
+                    "proposal_id": preview["proposal_id"], "confirm": False}, 2)))
+                process.stdin.flush()
+                self.assertEqual(self.raw_tool_payload(json.loads(received.get(timeout=5)))["status"],
+                                 "confirmation_required")
+                process.stdin.write(wire_line(call(APPLY_PLAYLIST, {
+                    "proposal_id": preview["proposal_id"], "confirm": True}, 3)))
+                process.stdin.flush()
+                applied = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                self.assertEqual(applied["status"], "playlist_write_unavailable")
+                self.assertEqual(applied["blocker"], "external_ai_mcp_has_no_safe_playlist_write_facade")
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), b"")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                reader.join(timeout=5)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_game_sfx_apply_rejects_changed_source_collection(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "playlist-editable.json", self.root,
+            capabilities={**ALL_READ, "editPlaylist": "edit"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with subprocess.Popen(
+            self.command(flags), cwd=self.fixture,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ) as process:
+            received = Queue()
+
+            def pump():
+                for line in iter(process.stdout.readline, b""):
+                    received.put(line)
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+            try:
+                process.stdin.write(wire_line(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.write(wire_line(call(PREVIEW_PLAYLIST, {
+                    "domain": "game_sfx", "playlist": "Game SFX", "file_ids": [1]}, 1)))
+                process.stdin.flush()
+                self.assertEqual(json.loads(received.get(timeout=5))["id"], "hello")
+                preview = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                with closing(sqlite3.connect(self.database)) as connection:
+                    connection.execute("UPDATE audio_files SET title = 'Changed after preview' WHERE id = 1")
+                    connection.commit()
+                process.stdin.write(wire_line(call(APPLY_PLAYLIST, {
+                    "proposal_id": preview["proposal_id"], "confirm": True}, 2)))
+                process.stdin.flush()
+                applied = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                self.assertEqual(applied["status"], "proposal_stale")
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), b"")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                reader.join(timeout=5)
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute("UPDATE audio_files SET title = '' WHERE id = 1")
+            connection.commit()
+
+    def test_metadata_apply_rechecks_permission_after_preview(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "editable.json", self.root,
+            capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with subprocess.Popen(
+            self.command(flags), cwd=self.fixture,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ) as process:
+            received = Queue()
+
+            def pump():
+                for line in iter(process.stdout.readline, b""):
+                    received.put(line)
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+            try:
+                process.stdin.write(wire_line(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.write(wire_line(call(
+                    PREVIEW_METADATA, {"file_id": 1, "fields": {"title": "Revoked"}}, 1)))
+                process.stdin.flush()
+                self.assertEqual(json.loads(received.get(timeout=5))["id"], "hello")
+                preview = json.loads(received.get(timeout=5))
+                proposal = self.raw_tool_payload(preview)["proposal_id"]
+
+                write_authorization(document, self.root, enabled=False,
+                                    capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+                process.stdin.write(wire_line(call(APPLY_METADATA, {"proposal_id": proposal}, 2)))
+                process.stdin.flush()
+                applied = json.loads(received.get(timeout=5))
+                payload = self.raw_tool_payload(applied)
+                self.assertEqual(payload["status"], "not_authorized")
+                self.assertTrue(applied["result"]["isError"])
+
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), b"")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                reader.join(timeout=5)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT title FROM audio_files WHERE id = 1").fetchone()[0], "")
+
+    def test_metadata_apply_requires_edit_grants(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "readonly.json", self.root,
+            capabilities={**ALL_READ, "editMetadata": "read", "aiNamingMetadata": "read"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with subprocess.Popen(
+            self.command(flags), cwd=self.fixture,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ) as process:
+            received = Queue()
+
+            def pump():
+                for line in iter(process.stdout.readline, b""):
+                    received.put(line)
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+            try:
+                process.stdin.write(wire_line(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.write(wire_line(call(
+                    PREVIEW_METADATA, {"file_id": 1, "fields": {"title": "Denied"}}, 1)))
+                process.stdin.flush()
+                self.assertEqual(json.loads(received.get(timeout=5))["id"], "hello")
+                preview = self.raw_tool_payload(json.loads(received.get(timeout=5)))
+                self.assertEqual(preview["status"], "ok")
+
+                process.stdin.write(wire_line(call(
+                    APPLY_METADATA, {"proposal_id": preview["proposal_id"]}, 2)))
+                process.stdin.flush()
+                denied = json.loads(received.get(timeout=5))
+                self.assertEqual(self.raw_tool_payload(denied)["status"], "not_authorized")
+                self.assertTrue(denied["result"]["isError"])
+
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), b"")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                reader.join(timeout=5)
+
+        with closing(sqlite3.connect(self.database)) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT title FROM audio_files WHERE id = 1").fetchone()[0], "")
 
     def test_search_and_folder_results_are_scoped_literal_and_deterministically_limited(self):
         before = self.snapshot()
@@ -439,9 +807,10 @@ class ExternalAiMcpTest(unittest.TestCase):
         for result in (full, default, limited, repeated, literal, injected, unicode, folders):
             self.assertEqual(result["status"], "ok")
         self.assertEqual(len(full["results"]), 14)
-        self.assertEqual(default["results"], full["results"][:10])
+        self.assertEqual(default["results"], full["results"][:5])
+        self.assertTrue(default["next_cursor"])
         self.assertEqual(limited["results"], full["results"][:2])
-        self.assertEqual(repeated, limited)
+        self.assertEqual(repeated["results"], limited["results"])
         self.assertEqual([row["name"] for row in literal["results"]], ["wind%_literal.wav"])
         self.assertEqual(injected["results"], [])
         self.assertEqual([row["relative_path"] for row in unicode["results"]], ["\u5927\u6d77/\u6d77\u98ce.wav"])
@@ -455,6 +824,91 @@ class ExternalAiMcpTest(unittest.TestCase):
             self.assertIn(row["relative_path"], {f"wind/{row['name']}", "\u5927\u6d77/\u6d77\u98ce.wav"})
             self.assertNotIn("\\", row["relative_path"])
             self.assertNotEqual(row["file_id"], 99)
+
+    def test_fields_reduce_rows_and_reject_unknown_selection(self):
+        full_reply = self.with_session(call(SEARCH, {"query": "wind", "limit": 1}, 1))[0]
+        compact_reply = self.with_session(call(
+            SEARCH, {"query": "wind", "limit": 1, "fields": ["name", "relative_path"]}, 1))[0]
+        full = self.tool_payload(full_reply)
+        compact = self.tool_payload(compact_reply)
+        self.assertEqual(set(full["results"][0]), AUDIO_FIELDS)
+        self.assertEqual(set(compact["results"][0]), {"name", "relative_path"})
+        self.assertLess(
+            len(json.dumps(compact, ensure_ascii=False)),
+            len(json.dumps(full, ensure_ascii=False)))
+
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "fields": ["not_a_field"]}, 1),
+            call(FOLDERS, {"query": "wind", "fields": []}, 2),
+            call(SIMILAR, {"reference_id": 1, "fields": ["relative_path", "relative_path"]}, 3),
+        )
+        self.assertEqual([reply["error"]["code"] for reply in replies], [-32602, -32602, -32602])
+
+    def test_cursor_pages_are_stable_and_single_use(self):
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 5}, 1),
+            call(SEARCH, {"query": "wind", "limit": 5, "cursor": "cursor-1"}, 2),
+            call(SEARCH, {"query": "wind", "limit": 5, "cursor": "cursor-2"}, 3),
+        )
+        pages = [self.tool_payload(reply) for reply in replies]
+        ids = [row["file_id"] for page in pages for row in page["results"]]
+        self.assertEqual(ids, list(range(1, 15)))
+        self.assertTrue(pages[0]["next_cursor"])
+        self.assertTrue(pages[1]["next_cursor"])
+        self.assertNotIn("next_cursor", pages[2])
+
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 5}, 1),
+            call(SEARCH, {"query": "wind-01", "limit": 5, "cursor": "cursor-1"}, 2),
+            call(SEARCH, {"query": "wind", "limit": 5, "cursor": "cursor-1"}, 3),
+            call(SEARCH, {"query": "wind", "limit": 5, "cursor": "not-issued"}, 4),
+        )
+        self.assertEqual(replies[1]["error"]["code"], -32602)
+        self.assertEqual(self.tool_payload(replies[2])["results"][0]["file_id"], 6)
+        self.assertEqual(replies[3]["error"]["code"], -32602)
+
+    def test_authorization_filter_happens_before_cursor_paging(self):
+        selected = self.root / "wind" / "selected"
+        selected.mkdir(parents=True, exist_ok=True)
+        sound = selected / "wind-selected.wav"
+        sound.write_bytes(RAW_AUDIO)
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "INSERT INTO audio_files VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
+                (100, str(sound), sound.name, 1.0),
+            )
+            connection.commit()
+        def cleanup_selected():
+            with closing(sqlite3.connect(self.database)) as connection:
+                connection.execute("DELETE FROM audio_files WHERE id = 100")
+                connection.commit()
+            sound.unlink(missing_ok=True)
+            selected.rmdir()
+        self.addCleanup(cleanup_selected)
+        document = write_authorization(self.fixture / "selected.json", selected)
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        replies = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 5}, 1),
+            flags=flags,
+        )
+        payload = self.tool_payload(replies[0])
+        self.assertEqual([row["file_id"] for row in payload["results"]], [100])
+        self.assertNotIn("next_cursor", payload)
+
+    def test_modern_structured_content_does_not_duplicate_full_text_and_legacy_keeps_text(self):
+        modern = self.with_session(call(SEARCH, {"query": "wind", "limit": 1}, 1))[0]
+        modern_result = modern["result"]
+        modern_payload = modern_result["structuredContent"]
+        modern_text = modern_result["content"][0]["text"]
+        self.assertLess(len(modern_text), len(json.dumps(modern_payload, ensure_ascii=False)))
+        self.assertNotIn("wind-01.wav", modern_text)
+
+        legacy = self.with_session(
+            call(SEARCH, {"query": "wind", "limit": 1}, 1), version=VERSIONS[0])[0]
+        legacy_result = legacy["result"]
+        self.assertNotIn("structuredContent", legacy_result)
+        self.assertEqual(json.loads(legacy_result["content"][0]["text"])["status"], "ok")
 
     def test_rejects_paths_unknown_fields_and_out_of_range_arguments(self):
         cases = [

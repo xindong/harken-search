@@ -85,12 +85,15 @@ int main(int argc, char** argv)
     const auto outsideFile = (outside / "wind" / "door.wav").u8string();
 
     const std::string allRead = "{\"searchAudio\":\"read\",\"findSimilar\":\"read\",\"findFolders\":\"read\","
-        "\"readFileName\":\"read\",\"readMetadata\":\"read\",\"editMetadata\":\"none\"}";
+        "\"readFileName\":\"read\",\"readMetadata\":\"read\",\"editMetadata\":\"none\","
+        "\"aiNamingMetadata\":\"read\"}";
 
     const auto allowed = ParseOk(Document(rootText, allRead));
     Check(allowed.enabled() && allowed.libraryId() == "library-a", "parsed switch and library identity");
     Check(allowed.Authorize(ExternalAiCapability::SearchAudio, "library-a", insideFile) == ExternalAiAccess::ReadOnly,
         "granted root returns read-only");
+    Check(allowed.Authorize(ExternalAiCapability::AiNamingMetadata, "library-a", insideFile) == ExternalAiAccess::ReadOnly,
+        "AI naming and tagging permission is independently scoped");
     Check(allowed.Authorize(ExternalAiCapability::SearchAudio, "library-a", rootText) == ExternalAiAccess::ReadOnly,
         "root itself is inside the grant");
     Check(allowed.Authorize(ExternalAiCapability::SearchAudio, "library-a", prefixFile) == ExternalAiAccess::Denied,
@@ -201,6 +204,7 @@ int main(int argc, char** argv)
     stored.capabilities[1] = ExternalAiAccess::ReadOnly;
     stored.capabilities[3] = ExternalAiAccess::ReadOnly;
     stored.capabilities[5] = ExternalAiAccess::Editable;
+    stored.capabilities[6] = ExternalAiAccess::ReadOnly;
 
     const std::string serialized = HarkenSearch::SerializeExternalAiSettings(stored);
     HarkenSearch::ExternalAiSettings reparsed;
