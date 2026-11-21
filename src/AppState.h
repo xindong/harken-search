@@ -247,7 +247,7 @@ namespace HarkenSearch {
 
 // Typography Scale
 
-inline constexpr int kFontSteps[]      = { 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32 };
+inline constexpr int kFontSteps[]      = { 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36 };
 inline constexpr int kFontStepCount    = (int)(sizeof(kFontSteps) / sizeof(kFontSteps[0]));
 inline constexpr float kTypographyBasePx = 14.0f;
 
@@ -259,9 +259,9 @@ inline constexpr int kDefaultReadingFontPx = 18;
 // 菜单字号基准：系统字号 18 px 时菜单 16 px，再按系统字号比例缩放。
 inline constexpr int kDefaultMenuFontPx = 16;
 inline constexpr int kDefaultListFontPx = 18;
-// Reading/system font can grow to 32 px; the independent list font keeps its 24 px cap.
-inline constexpr int kMaxReadingFontPx = 32;
-inline constexpr int kMaxListFontPx = 24;
+// Reading/system font and the independent list font can both grow to 36 px.
+inline constexpr int kMaxReadingFontPx = 36;
+inline constexpr int kMaxListFontPx = 36;
 
 // Keep loaded and displayed sizes safe without rewriting the settings file here.
 inline constexpr int ClampSettingsFontSize(int sizePx) {

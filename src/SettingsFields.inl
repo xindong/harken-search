@@ -66,13 +66,13 @@ else if(id=="systemFont") {
     auto& value=draft.readingFontSize;
     const int safeValue=ClampSettingsFontSize(value);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
-    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32"}))value=kFontSteps[n];
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
 }
 else if(id=="listFont") {
     auto& value=draft.listFontSize;
     const int safeValue=std::clamp(value,10,kMaxListFontPx);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
-    if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);

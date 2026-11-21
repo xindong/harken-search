@@ -649,10 +649,19 @@ def test_system_menu_font_keeps_161_proportional_mapping():
     assert "kChromeFontPx = 14;" in settings
     assert "kDefaultMenuFontPx = 16;" in settings
     assert "kDefaultReadingFontPx = 18;" in settings
-    assert "kMaxReadingFontPx = 32;" in settings
+    assert "kMaxReadingFontPx = 36;" in settings
     assert "g_readingRegular ? g_readingRegular->LegacySize : (float)kDefaultReadingFontPx" in mapping
     assert "(float)kDefaultMenuFontPx * (readingPx / (float)kDefaultReadingFontPx)" in mapping
     assert "return std::clamp(std::round(scaled), (float)kDefaultMenuFontPx, (float)kMaxReadingFontPx);" in mapping
+
+
+def test_list_font_upper_bound_survives_load_and_editing():
+    settings = read(ROOT / "src" / "AppState.h")
+    main = read(MAIN_CPP)
+    fields = read(ROOT / "src" / "SettingsFields.inl")
+    assert "kMaxListFontPx = 36;" in settings
+    assert "std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)" in main
+    assert "std::clamp(value,10,kMaxListFontPx)" in fields
 
 
 def test_top_menu_uses_the_system_font_scope():
