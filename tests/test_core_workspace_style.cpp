@@ -37,6 +37,8 @@ void TestNativeChromeDimensionsScaleTogether() {
     Check(Near(ScalePx(24.0f, 2.0f), 48.0f), "height scales at 200 percent");
     Check(Near(ScalePx(52.0f, 0.75f), 39.0f), "smaller layouts use the same proportion");
     Check(Near(ScalePx(24.0f, 0.0f), 24.0f), "invalid DPI uses the original size");
+    Check(Near(UnscalePx(600.0f, 2.0f), 300.0f), "actual docking width stores a logical width at 200 percent");
+    Check(Near(ScalePx(UnscalePx(497.0f, 1.25f), 1.25f), 497.0f), "docking width round-trips at 125 percent");
     Check(Near(ResolveEqualizerWidth(520.0f, 900.0f, 1.5f), 780.0f),
           "equalizer keeps the user's design width at 150 percent");
     Check(Near(ResolveEqualizerWidth(520.0f, 435.0f, 1.5f), 435.0f),

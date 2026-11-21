@@ -433,6 +433,37 @@ def test_browser_path_hover_uses_results_semantics_without_a_new_border():
     assert "AddRect(" not in path_row
 
 
+def test_dock_widths_round_trip_in_workspace_units():
+    main = read(MAIN_CPP)
+    commit = between(main, "static void MirrorDockCommitToPanel", "static void ApplyDockedPanel(")
+    assert "logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);" in commit
+    assert "ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);" in commit
+    assert "const float logicalWidth = aura::ui::dpi::LogicalPx(rect.width);" in commit
+    assert "state.panelSidebar.dockedWidth = logicalWidth;" in commit
+    assert "state.panelFileInfo.dockedWidth = logicalWidth;" in commit
+    assert "state.panelSimilarSounds.dockedWidth = logicalWidth;" in commit
+    assert "vertical ? panel.dockedHeight : workspacePx(panel.dockedWidth)" in main
+
+
+def test_docked_info_actions_use_the_scaled_title_and_body_boundary():
+    main = read(MAIN_CPP)
+    assert "const float infoDockTitleHeight = workspacePx(24.0f);" in main
+    assert 'displayedTool == "info" ? infoDockTitleHeight : 24.0f' in main
+    assert "false, infoDockTitleHeight);" in main
+    assert "drawFileInfoTitleActions(state, rightShell, rightShell.insetT)" in main
+    assert "drawFileInfoTitleActions(state, shell, shell.insetT)" in main
+
+
+def test_soundstage_sector_uses_the_transport_scale_for_all_geometry():
+    main = read(MAIN_CPP)
+    sector = between(main, 'GetID("##CenterSenseInline")', "PathStroke(colLine, 0, lw);")
+    assert "std::round(csPos.x + workspacePx(20.0f))" in sector
+    assert "const float rIn = workspacePx(4.0f)" in sector
+    assert "rIn + workspacePx(1.8f)" in sector
+    assert "rOut - workspacePx(2.2f)" in sector
+    assert "const float lw = workspacePx(1.5f);" in sector
+
+
 def test_browser_path_input_and_hit_area_share_explicit_remaining_row_width():
     main = read(MAIN_CPP)
     path_row = between(

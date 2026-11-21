@@ -27294,7 +27294,9 @@ static void MirrorDockCommitToPanel(AppState::PanelState& panel,
     mirror.floating = panel.floating;
     mirror.dockedWidth = panel.dockedWidth;
     mirror.dockedHeight = panel.dockedHeight;
-    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, extentSide, incoming);
+    auto logicalRect = incoming;
+    logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);
+    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);
     panel.dockSide = static_cast<DockSide>(mirror.dockSide);
     panel.floating = mirror.floating;
     panel.dockedWidth = mirror.dockedWidth;
@@ -27305,10 +27307,11 @@ static void MirrorDockRootExtent(AppState& state, aura::ui::dock::DockSide root,
                                  const aura::ui::dock::DockRect& rect) {
     using aura::ui::dock::DockSide;
     // These fields own entire columns/bands, never individual split leaves.
-    if (root == DockSide::Left) state.panelSidebar.dockedWidth = rect.width;
+    const float logicalWidth = aura::ui::dpi::LogicalPx(rect.width);
+    if (root == DockSide::Left) state.panelSidebar.dockedWidth = logicalWidth;
     if (root == DockSide::Right) {
-        state.panelFileInfo.dockedWidth = rect.width;
-        state.panelSimilarSounds.dockedWidth = rect.width;
+        state.panelFileInfo.dockedWidth = logicalWidth;
+        state.panelSimilarSounds.dockedWidth = logicalWidth;
     }
     if (root == DockSide::Top || root == DockSide::Bottom) {
         struct Entry { const char* id; AppState::PanelState* panel; };
@@ -38735,6 +38738,7 @@ void RenderUI(AppState& state) {
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
     constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+    const float infoDockTitleHeight = workspacePx(24.0f);
 
     auto drawDockTitleBar = [&](ImDrawList* dl,
                                 const ImVec2& wp,
@@ -38742,7 +38746,8 @@ void RenderUI(AppState& state) {
                                 float h,
                                 const char* title,
                                 ImU32 titleColor,
-                                ImDrawFlags titleRoundFlags = ImDrawFlags_RoundCornersTop) {
+                                ImDrawFlags titleRoundFlags = ImDrawFlags_RoundCornersTop,
+                                float titleTextScale = 1.0f) {
         dl->AddRectFilled(
             wp,
             ImVec2(wp.x + w, wp.y + h),
@@ -38753,10 +38758,10 @@ void RenderUI(AppState& state) {
         ImFont* emph = GetUIFontEmphasis();
         if (emph) {
             ImGui::PushFont(emph);
-            dl->AddText(ImVec2(wp.x + 8, wp.y + 4), titleColor, title);
+            dl->AddText(ImVec2(wp.x + 8.0f * titleTextScale, wp.y + 4.0f * titleTextScale), titleColor, title);
             ImGui::PopFont();
         } else {
-            dl->AddText(ImVec2(wp.x + 8, wp.y + 4), titleColor, title);
+            dl->AddText(ImVec2(wp.x + 8.0f * titleTextScale, wp.y + 4.0f * titleTextScale), titleColor, title);
         }
     };
 
@@ -38786,8 +38791,10 @@ void RenderUI(AppState& state) {
                                    const char* title,
                                    const ImVec4& bodyBg,
                                    ImU32 titleColor,
-                                   bool keepFilterRim = false) {
+                                   bool keepFilterRim = false,
+                                   float titleHeight = 24.0f) {
         DockModuleShellLayout layout;
+        layout.titleHeight = titleHeight;
         layout.shellWidth = (std::max)(120.0f, panelWidth - layout.insetL - layout.insetR);
         layout.shellMin = ImVec2(winPos.x + layout.insetL, winPos.y + layout.insetT);
         layout.shellMax = ImVec2(winPos.x + layout.insetL + layout.shellWidth, winPos.y + panelHeight - layout.insetB);
@@ -38839,7 +38846,8 @@ void RenderUI(AppState& state) {
             ImGui::GetColorU32(bodyBg),
             kFilterInfoShellRadius,
             contentRoundFlags);
-        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title, titleColor, titleRoundFlags);
+        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title, titleColor,
+            titleRoundFlags, layout.titleHeight / 24.0f);
         dl->AddLine(
             ImVec2(layout.contentMin.x + 0.5f, layout.contentMin.y + 0.5f),
             ImVec2(layout.contentMax.x - 0.5f, layout.contentMin.y + 0.5f),
@@ -39404,7 +39412,7 @@ void RenderUI(AppState& state) {
             float dragWidth = previousWidth;
             VerticalSplitter("##LeftSplitter", &dragWidth,
                 leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth, sideColumnHeight);
-            if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = dragWidth / workspaceScale;
+            if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
             ImGui::SameLine(0, 0);
         }
     }
@@ -45289,7 +45297,7 @@ void RenderUI(AppState& state) {
             rightPanelMaxWidth,
             sideColumnHeight,
             true);  // invertDelta for right panel
-        if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = dragWidth / workspaceScale;
+        if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
 
         ImGui::SameLine(0, 0);
         const std::string displayedTool = selectedDockTool(rightTabGroup, "info");
@@ -45310,13 +45318,13 @@ void RenderUI(AppState& state) {
         const ImVec2 size = ImGui::GetWindowSize();
         const DockModuleShellLayout rightShell = drawDockModuleShell(
             dl, pos, size.x, size.y, rightTabGroup ? nullptr : L(View_InfoPanel), appearance.bodyBg, kTitleText,
-            displayedTool == "filter");
+            displayedTool == "filter", displayedTool == "info" ? infoDockTitleHeight : 24.0f);
 
         if (rightTabGroup) {
             renderDockTabsInShell(*rightTabGroup, rightShell);
         } else {
 // 标题栏右上角：编辑元数据图标按钮
-        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, 2.0f);
+        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, rightShell.insetT);
 
         // Right-click menu on title bar (remaining area)
         ImGui::SetCursorPos(ImVec2(rightShell.insetL, rightShell.insetT));
@@ -45346,7 +45354,7 @@ void RenderUI(AppState& state) {
             ImVec2 ws = ImGui::GetWindowSize();
             ThemeInspector::RegisterZone(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), "metadataPanelBG", L(ThemeCol_metadataPanelBG));
             ThemeInspector::RegisterZone(
-                ImVec2(wp.x, wp.y + 24.0f), ImVec2(wp.x + ws.x, wp.y + ws.y),
+                ImVec2(wp.x, rightShell.contentMin.y), ImVec2(wp.x + ws.x, wp.y + ws.y),
                 "metadataPanelText", L(ThemeCol_metadataPanelText));
             ThemeInspector::RegisterZone(
                 ImVec2(wp.x + ws.x - 14.0f, wp.y), ImVec2(wp.x + ws.x, wp.y + ws.y),
@@ -46747,8 +46755,8 @@ void RenderUI(AppState& state) {
                     float angleDeg = 150.0f + csVal * 120.0f;
                     if (angleDeg < 20.0f) angleDeg = 20.0f; // 最小可见角度
                     float angleRad = angleDeg * (3.14159265f / 180.0f);
-                    ImVec2 ctr(std::round(csPos.x + 20.0f), std::round(csPos.y + csH * 0.62f));
-                    float rIn = 4.0f, rOut = csH * 0.44f;
+                    const ImVec2 ctr(std::round(csPos.x + workspacePx(20.0f)), std::round(csPos.y + csH * 0.62f));
+                    const float rIn = workspacePx(4.0f), rOut = csH * 0.44f;
                     float startA = -3.14159265f / 2.0f - angleRad / 2.0f;
                     float endA   = -3.14159265f / 2.0f + angleRad / 2.0f;
                     bool csActive = (csVal > 0.0f);
@@ -46782,8 +46790,8 @@ void RenderUI(AppState& state) {
                     // Fill the annular sector from the outer arc back along the inner arc.
                     {
                         ImU32 colFill = csActive ? colFillActive : colFillIdle;
-                        const float fillIn = rIn + 1.8f;
-                        const float fillOut = rOut - 2.2f;
+                        const float fillIn = rIn + workspacePx(1.8f);
+                        const float fillOut = rOut - workspacePx(2.2f);
                         csDl->PathClear();
                         csDl->PathArcTo(ctr, fillOut, startA, endA, 28);
                         csDl->PathArcTo(ctr, fillIn,  endA, startA, 12);
@@ -46793,7 +46801,7 @@ void RenderUI(AppState& state) {
                     if (!isMonoMode) colLine = ImGui::GetColorU32(TransportContrast::ForSurface(
                         ImGui::ColorConvertU32ToFloat4(colLine), transportBarBg, 3.2));
                     // 圆弧轮廓
-                    float lw = 1.5f;
+                    const float lw = workspacePx(1.5f);
                     csDl->PathArcTo(ctr, rIn,  startA, endA, 24); csDl->PathStroke(colLine, 0, lw);
                     csDl->PathArcTo(ctr, rOut, startA, endA, 24); csDl->PathStroke(colLine, 0, lw);
                     csDl->AddLine({ctr.x+cosf(startA)*rIn, ctr.y+sinf(startA)*rIn},
@@ -50311,7 +50319,7 @@ void RenderUI(AppState& state) {
         const bool vertical = side == aura::ui::dock::DockSide::Top ||
             side == aura::ui::dock::DockSide::Bottom;
         auto extent = [&](const PanelState& panel) {
-            return vertical ? panel.dockedHeight : panel.dockedWidth;
+            return vertical ? panel.dockedHeight : workspacePx(panel.dockedWidth);
         };
         if (std::strcmp(moduleId, "filter") == 0) return extent(state.panelSidebar);
         if (std::strcmp(moduleId, "info") == 0) return extent(state.panelFileInfo);
@@ -51147,8 +51155,8 @@ void RenderUI(AppState& state) {
                     ThemeColors::infoPanelDockBG(ThemeColors::current()), 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(View_InfoPanel), bodyBg, kTitleText);
-                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, 2.0f);
+                    L(View_InfoPanel), bodyBg, kTitleText, false, infoDockTitleHeight);
+                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, shell.insetT);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
                     ImVec2((std::max)(1.0f, shell.shellWidth - kInfoTitleActionsWidth), shell.titleHeight));
@@ -51229,16 +51237,16 @@ void RenderUI(AppState& state) {
                 if (BeginTransientScrollbarPopup("##DockedSimilarSoundsMenu")) {
                     if (ImGui::MenuItem(L(Panel_Float))) {
                         const float originalColumn = aura::ui::dock::RectsOverlap(leaf.rect, rootSlots.right)
-                            ? state.panelFileInfo.dockedWidth
-                            : state.panelSidebar.dockedWidth;
+                            ? workspacePx(state.panelFileInfo.dockedWidth)
+                            : workspacePx(state.panelSidebar.dockedWidth);
                         const aura::ui::dock::DockedFloatBackResult floated =
                             aura::ui::dock::ApplyDockedFloatBack(originalColumn, leaf.rect.width);
                         FloatDockedPanel("similar-sounds", state.panelSimilarSounds, leaf.rect);
                         if (floated.floating) {
                             if (aura::ui::dock::RectsOverlap(leaf.rect, rootSlots.right)) {
-                                state.panelFileInfo.dockedWidth = floated.columnWidth;
+                                state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(floated.columnWidth, workspaceScale);
                             } else {
-                                state.panelSidebar.dockedWidth = floated.columnWidth;
+                                state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(floated.columnWidth, workspaceScale);
                             }
                         }
                     }

@@ -19,8 +19,16 @@ inline float ScalePx(float logical, float scale) noexcept {
     return logical * SanitizeScale(scale);
 }
 
+inline float UnscalePx(float pixels, float scale) noexcept {
+    return pixels / SanitizeScale(scale);
+}
+
 inline float Px(float logical) noexcept {
     return ScalePx(logical, UiScale());
+}
+
+inline float LogicalPx(float pixels) noexcept {
+    return UnscalePx(pixels, UiScale());
 }
 
 } // namespace aura::ui::dpi

@@ -4540,7 +4540,7 @@ static void PollQaCommandFile(AppState& state) {
                 if (width < 180 || width > 800 || s_magicEqQaPointer.held) {
                     result = R"({"ok":false,"error":"invalid_info_layout"})";
                 } else {
-                    state.panelFileInfo.dockedWidth = static_cast<float>(width);
+                    state.panelFileInfo.dockedWidth = aura::ui::dpi::LogicalPx(static_cast<float>(width));
                     state.panelFileInfo.floatW = static_cast<float>(width);
                     state.panelFileInfo.floatH = 600;
                     state.panelFileInfo.floatX = 100;
