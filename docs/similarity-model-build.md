@@ -6,7 +6,7 @@
 
 - 模型：laion/clap-htsat-unfused，固定修订 8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a。
 - 上游模型卡：<https://huggingface.co/laion/clap-htsat-unfused/tree/8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a>，该修订声明 Apache-2.0。
-- ONNX Runtime CPU 1.20.1：<https://github.com/microsoft/onnxruntime/releases/tag/v1.20.1>。
+- ONNX Runtime CPU 1.20.1：<https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.20.1>。
 - hnswlib 0.8.0，提交 3f3429661187e4c24a490a0f148fc6bc89042b3d；不配置时使用精确向量查找。
 
 资源 SHA-256（程序加载时逐个验证）：
@@ -17,7 +17,7 @@
 | clap-mel-filters.f64 | 256b8c586fb0f0ea44c6b2cafa44caa9bf288c1cfe1a05ff2527b73ae123d37a |
 | clap-window.f64 | 0d9c0e8dfb7e477785eaaac6e2082e19a030bc113178a207cb4d1ab8d536a7a9 |
 
-Windows SDK 压缩包 onnxruntime-win-x64-1.20.1.zip 的 SHA-256 为 78d447051e48bd2e1e778bba378bec4ece11191c9e538cf7b2c4a4565e8f5581。运行时及模型许可证和第三方声明随 LICENSES/ 交付。
+Microsoft 官方 NuGet 压缩包 Microsoft.ML.OnnxRuntime.1.20.1.nupkg 的 SHA-256 为 9c32108e9a1c78b090a95c2a219f244dd5f067d4caf68fb0f967103f3f20839c。运行时及模型许可证和第三方声明随 LICENSES/ 交付。
 
 ## 导出和核对
 

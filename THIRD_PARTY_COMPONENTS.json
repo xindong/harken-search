@@ -9,11 +9,11 @@
     {
       "name": "ONNX Runtime",
       "version": "1.20.1",
-      "source": "https://github.com/microsoft/onnxruntime/tree/v1.20.1",
+      "source": "https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.20.1",
       "license_expression": "MIT",
       "purpose": "本地音频语义模型 CPU 推理",
       "distributed": true,
-      "load_mode": "随官方 Windows ZIP 与安装器分发；启用相似功能时与 HarkenSearch.exe 同目录加载",
+      "load_mode": "Distributed with the Microsoft official NuGet-normalized Windows x64 SDK and installer; loaded beside HarkenSearch.exe when similarity is enabled",
       "license_files": [
         "LICENSES/ONNX-Runtime-MIT.txt",
         "LICENSES/ONNX-Runtime-ThirdPartyNotices.txt"
@@ -24,7 +24,7 @@
       "risk_classification": "low",
       "policy_category": "permissive",
       "manual_approval_required": false,
-      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: Microsoft-signed NuGet 1.20.1 pinned at SHA-256 9c32108e9a1c78b090a95c2a219f244dd5f067d4caf68fb0f967103f3f20839c; upstream license and notices retained; official Windows similarity bundle",
       "cmake_markers": [
         "cmake/harken_similarity_runtime.cmake"
       ],
