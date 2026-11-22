@@ -4228,6 +4228,14 @@ static const std::string& GetAddFileSql() {
 bool Database::addFile(const AudioRecord& record) {
     if (!m_db) return false;
 
+    // The extension column is a canonical type key: filters compare it with
+    // COLLATE NOCASE and the metadata refresh path stores it lowercased. Fold
+    // it here so scan and watcher inserts keep the same spelling.
+    std::string canonicalExtension = record.extension;
+    std::transform(canonicalExtension.begin(), canonicalExtension.end(),
+                   canonicalExtension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
     std::string folderPath = record.folderPath;
     if (folderPath.empty()) {
         try {
@@ -4296,7 +4304,7 @@ bool Database::addFile(const AudioRecord& record) {
     // Base columns (params 1-31)
     sqlite3_bind_text(stmt, 1, storageFilePath.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, record.fileName.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, record.extension.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, canonicalExtension.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 4, record.fileSize);
     sqlite3_bind_int(stmt, 5, record.sampleRate);
     sqlite3_bind_int(stmt, 6, record.bitDepth);

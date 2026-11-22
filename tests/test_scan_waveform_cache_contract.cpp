@@ -717,6 +717,56 @@ static int testScanStatsReportIngestSummary() {
     return failures;
 }
 
+static int testScanCollectsUppercaseExtensions() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("uppercase_ext");
+    const fs::path dbPath = root / "uppercase_ext.db";
+    writeSilentMonoWav(root / "UPPER.WAV");
+    writeSilentMonoWav(root / "Mixed.WaV");
+    writeSilentMonoWav(root / "lower.wav");
+    {
+        std::ofstream note(root / "readme.TXT", std::ios::binary | std::ios::trunc);
+        note << "not audio";
+    }
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false, nullptr, nullptr, 1, false);
+    check(stats.added == 3, "scan collects every case spelling of an audio extension", failures);
+
+    const auto records = db.getAllFiles();
+    check(records.size() == 3, "scan stores all three case-spelled audio files", failures);
+    bool sawUpper = false;
+    bool sawMixed = false;
+    for (const auto& record : records) {
+        if (record.fileName == "UPPER.WAV") {
+            sawUpper = true;
+            check(record.extension == ".wav", "uppercase extension is stored lowercased", failures);
+        } else if (record.fileName == "Mixed.WaV") {
+            sawMixed = true;
+            check(record.extension == ".wav", "mixed-case extension is stored lowercased", failures);
+        }
+    }
+    check(sawUpper, "UPPER.WAV record is present", failures);
+    check(sawMixed, "Mixed.WaV record is present", failures);
+
+    SearchFilter knownAudioOnly;
+    knownAudioOnly.includeOnlyKnownExts = true;
+    const auto filtered = db.searchFiles(knownAudioOnly, 100, 0);
+    check(filtered.size() == 3, "file-type filter keeps case-spelled WAV rows", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testCompleteWaveformExtractionReturnsAllScanArtifacts() {
     int failures = 0;
     const fs::path root = makeTempRoot("complete_extract");
@@ -4644,6 +4694,8 @@ int main(int argc, char** argv) {
         return testMissingScanRootReportsPathFailure() == 0 ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--failure-writer")
         return testWaveformFailureWriterKeepsUiConnectionIndependent() == 0 ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--uppercase-ext")
+        return testScanCollectsUppercaseExtensions() == 0 ? 0 : 1;
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -4659,6 +4711,8 @@ int main(int argc, char** argv) {
     failures += testCompleteImportSkipsPersistentDetailForOverFiveMinutes();
     std::cout << "-- testScanStatsReportIngestSummary\n";
     failures += testScanStatsReportIngestSummary();
+    std::cout << "-- testScanCollectsUppercaseExtensions\n";
+    failures += testScanCollectsUppercaseExtensions();
     std::cout << "-- testMultiFolderScanProgressAggregatesLocalCallbacks\n";
     failures += testMultiFolderScanProgressAggregatesLocalCallbacks();
     std::cout << "-- testCompleteWaveformExtractionReturnsAllScanArtifacts\n";
