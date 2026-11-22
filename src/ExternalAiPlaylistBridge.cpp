@@ -163,12 +163,20 @@ ExternalAiPlaylistWriteReceipt ApplyExternalAiPlaylistWrite(
     if (request.requestId.empty() || request.requestId.size() > 128) {
         return Refusal("invalid", "request_id");
     }
-    if (request.fileIds.empty() || request.fileIds.size() > 200) {
+    const bool grouped = !request.items.empty();
+    if (grouped ? request.items.size() > 200 : (request.fileIds.empty() || request.fileIds.size() > 200)) {
         return Refusal("invalid", "file_ids");
     }
     std::string pathReason;
-    if (!IsValidExternalAiPlaylistPath(request.playlistPath, pathReason)) {
+    if (!grouped && !IsValidExternalAiPlaylistPath(request.playlistPath, pathReason)) {
         return Refusal("invalid", pathReason);
+    }
+    if (grouped) {
+        for (const auto& item : request.items) {
+            if (!IsValidExternalAiPlaylistPath(item.playlistPath, pathReason)) {
+                return Refusal("invalid", pathReason);
+            }
+        }
     }
     if (authorization.AccessFor(ExternalAiCapability::ReadPlaylist) == ExternalAiAccess::Denied ||
         authorization.AccessFor(ExternalAiCapability::EditPlaylist) != ExternalAiAccess::Editable) {
@@ -185,18 +193,49 @@ ExternalAiPlaylistWriteReceipt ApplyExternalAiPlaylistWrite(
 
     // Validate every file before touching anything, so a single bad entry cannot
     // leave a half-applied batch.
-    for (const int64_t fileId : request.fileIds) {
+    std::vector<int64_t> allFiles;
+    if (grouped) {
+        for (const auto& item : request.items) allFiles.push_back(item.fileId);
+    } else {
+        allFiles = request.fileIds;
+    }
+    for (const int64_t fileId : allFiles) {
         std::string reason;
         if (!writer.ValidateFile(fileId, reason)) {
             return Refusal("not_authorized", reason.empty() ? "file_not_authorized" : reason);
         }
     }
 
+    // Group by the Playlist each file was classified into, so a confirmed preview
+    // really lands in its child Playlists instead of one flat list.
+    std::vector<std::pair<std::string, std::vector<int64_t>>> batches;
+    if (grouped) {
+        for (const auto& item : request.items) {
+            auto found = std::find_if(batches.begin(), batches.end(),
+                [&](const auto& batch) { return batch.first == item.playlistPath; });
+            if (found == batches.end()) {
+                batches.push_back({item.playlistPath, {item.fileId}});
+            } else {
+                found->second.push_back(item.fileId);
+            }
+        }
+    } else {
+        batches.push_back({request.playlistPath, request.fileIds});
+    }
+
     int added = 0;
     int skippedExisting = 0;
     std::string reason;
-    if (!writer.Apply(request.playlistPath, request.fileIds, added, skippedExisting, reason)) {
-        return Refusal("failed", reason.empty() ? "playlist_write_failed" : reason);
+    for (const auto& batch : batches) {
+        int batchAdded = 0;
+        int batchSkipped = 0;
+        if (!writer.Apply(batch.first, batch.second, batchAdded, batchSkipped, reason)) {
+            // Anything created earlier in this request goes away with the failure.
+            writer.RollbackCreated();
+            return Refusal("failed", reason.empty() ? "playlist_write_failed" : reason);
+        }
+        added += batchAdded;
+        skippedExisting += batchSkipped;
     }
 
     ExternalAiPlaylistWriteReceipt receipt;

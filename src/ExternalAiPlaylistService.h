@@ -24,6 +24,7 @@ public:
     bool ValidateFile(int64_t fileId, std::string& reason) override;
     bool Apply(const std::string& playlistPath, const std::vector<int64_t>& fileIds,
                int& added, int& skippedExisting, std::string& reason) override;
+    void RollbackCreated() override;
 
 private:
     Database& database_;

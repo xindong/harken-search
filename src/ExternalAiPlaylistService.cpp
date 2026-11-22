@@ -127,19 +127,21 @@ bool ExternalAiDatabasePlaylistWriter::Apply(const std::string& playlistPath,
 
     const auto result = database_.addManyToPlaylist(targetId, fileIds);
     if (!result.error.empty()) {
-        // Compensate: drop the playlists this call created so a failed batch does
-        // not leave an empty shell behind.
-        for (auto it = createdPlaylists_.rbegin(); it != createdPlaylists_.rend(); ++it) {
-            database_.deletePlaylist(*it);
-        }
-        createdPlaylists_.clear();
         reason = result.error;
         return false;
     }
     added = result.addedFiles;
     skippedExisting = result.alreadyInPlaylist;
-    createdPlaylists_.clear();
     return true;
+}
+
+void ExternalAiDatabasePlaylistWriter::RollbackCreated()
+{
+    // Reverse order: a child goes before the folder that holds it.
+    for (auto it = createdPlaylists_.rbegin(); it != createdPlaylists_.rend(); ++it) {
+        database_.deletePlaylist(*it);
+    }
+    createdPlaylists_.clear();
 }
 
 std::string ExternalAiReceiptsPath(const std::string& settingsDirectory)
@@ -158,7 +160,7 @@ std::string HandleExternalAiPlaylistWriteRequest(Database& database, const std::
                                                  const std::string& authorizationPath,
                                                  const std::string& receiptsPath,
                                                  const std::string& requestJson)
-{
+try {
     using nlohmann::json;
     auto respond = [](const ExternalAiPlaylistWriteReceipt& receipt) {
         json body = {
@@ -173,26 +175,49 @@ std::string HandleExternalAiPlaylistWriteRequest(Database& database, const std::
         return body.dump();
     };
 
-    const json request = json::parse(requestJson, nullptr, false);
-    if (request.is_discarded() || !request.is_object()) {
+    auto refuse = [&respond](const char* reason) {
         ExternalAiPlaylistWriteReceipt refused;
         refused.status = "invalid";
-        refused.reason = "request_not_an_object";
+        refused.reason = reason;
         return respond(refused);
-    }
+    };
 
+    const json request = json::parse(requestJson, nullptr, false);
+    if (request.is_discarded() || !request.is_object()) {
+        return refuse("request_not_an_object");
+    }
+    // Every field is type-checked before it is read: a malformed request from any
+    // local process must return `invalid`, never throw into the UI thread.
+    for (const char* field : {"token", "requestId", "libraryId", "playlistPath"}) {
+        if (!request.contains(field) || !request[field].is_string()) {
+            return refuse(field);
+        }
+    }
     ExternalAiPlaylistWriteRequest write;
-    write.token = request.value("token", std::string());
-    write.requestId = request.value("requestId", std::string());
-    write.libraryId = request.value("libraryId", std::string());
-    write.playlistPath = request.value("playlistPath", std::string());
-    if (request.contains("fileIds") && request["fileIds"].is_array()) {
+    write.token = request["token"].get<std::string>();
+    write.requestId = request["requestId"].get<std::string>();
+    write.libraryId = request["libraryId"].get<std::string>();
+    write.playlistPath = request["playlistPath"].get<std::string>();
+    if (request.contains("items")) {
+        if (!request["items"].is_array()) {
+            return refuse("items");
+        }
+        for (const auto& item : request["items"]) {
+            if (!item.is_object() || !item.contains("fileId") || !item["fileId"].is_number_integer()
+                || !item.contains("playlistPath") || !item["playlistPath"].is_string()) {
+                return refuse("items");
+            }
+            write.items.push_back({item["fileId"].get<int64_t>(),
+                item["playlistPath"].get<std::string>()});
+        }
+    }
+    if (request.contains("fileIds")) {
+        if (!request["fileIds"].is_array()) {
+            return refuse("file_ids");
+        }
         for (const auto& item : request["fileIds"]) {
             if (!item.is_number_integer()) {
-                ExternalAiPlaylistWriteReceipt refused;
-                refused.status = "invalid";
-                refused.reason = "file_ids";
-                return respond(refused);
+                return refuse("file_ids");
             }
             write.fileIds.push_back(item.get<int64_t>());
         }
@@ -228,6 +253,8 @@ std::string HandleExternalAiPlaylistWriteRequest(Database& database, const std::
         receipts.Save(receiptsPath);
     }
     return respond(receipt);
+} catch (...) {
+    return R"({"status":"invalid","reason":"request_processing_failed"})";
 }
 
 }  // namespace HarkenSearch

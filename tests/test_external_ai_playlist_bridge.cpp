@@ -47,6 +47,10 @@ public:
         return true;
     }
 
+    int rollbacks = 0;
+
+    void RollbackCreated() override { ++rollbacks; }
+
     bool Apply(const std::string&, const std::vector<int64_t>& fileIds, int& added,
                int& skippedExisting, std::string& reason) override
     {

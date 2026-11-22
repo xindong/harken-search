@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <random>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -863,6 +864,25 @@ private:
         });
     }
 
+    // One random tag per connector process, so receipts from an earlier run can
+    // never be matched by a new one.
+    static const std::string& SessionNonce()
+    {
+        static const std::string nonce = []() {
+            std::random_device device;
+            static const char* hex = "0123456789abcdef";
+            std::string value;
+            value.reserve(16);
+            for (int index = 0; index < 8; ++index) {
+                const unsigned int byte = device() & 0xFFu;
+                value.push_back(hex[byte >> 4]);
+                value.push_back(hex[byte & 0x0F]);
+            }
+            return value;
+        }();
+        return nonce;
+    }
+
     // Pipe name must match ExternalAiBridgeServer: same FNV-1a fold, 16 hex digits.
     static std::string BridgeHashLibraryId(const std::string& libraryId)
     {
@@ -978,16 +998,21 @@ private:
         }
         // Hand the confirmed batch to Harken: it owns the database, its dedupe and
         // its ordering rules, so the connector only asks and reports the receipt.
-        Json requestedIds = Json::array();
+        // Send each file with the Playlist the preview classified it into, so the
+        // confirmed child Playlists are what Harken actually creates.
+        Json requestedItems = Json::array();
         for (const auto& selection : pending.selections) {
-            requestedIds.push_back(selection.fileId);
+            const std::string path = selection.selection.value("playlist_path", pending.playlist);
+            requestedItems.push_back({{"fileId", selection.fileId}, {"playlistPath", path}});
         }
         const Json bridgeRequest = {
             {"token", authorization.bridgeToken()},
-            {"requestId", proposalId},
+            // Unique per (process, library, proposal): a restarted client or a
+            // second library must never look like a repeated request.
+            {"requestId", proposalId + "@" + config_.libraryId + "@" + SessionNonce()},
             {"libraryId", config_.libraryId},
             {"playlistPath", pending.playlist},
-            {"fileIds", requestedIds},
+            {"items", requestedItems},
         };
         std::string bridgeResponse;
         if (!CallPlaylistBridge(config_.libraryId, bridgeRequest.dump(), bridgeResponse)) {

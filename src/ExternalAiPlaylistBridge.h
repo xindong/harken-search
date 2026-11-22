@@ -14,12 +14,19 @@ namespace HarkenSearch {
 // and this module decides. Everything except the actual database call lives here
 // so the rules (token, library, capability, idempotency) can be unit tested
 // without a pipe, a database or a running UI.
+// One confirmed file and the Playlist it was classified into.
+struct ExternalAiPlaylistTarget {
+    int64_t fileId = 0;
+    std::string playlistPath;
+};
+
 struct ExternalAiPlaylistWriteRequest {
     std::string token;
     std::string requestId;
     std::string libraryId;
     std::string playlistPath;  // "Game SFX" or "Game SFX/Combat & Ability"
-    std::vector<int64_t> fileIds;
+    std::vector<int64_t> fileIds;                    // legacy: one playlist for all
+    std::vector<ExternalAiPlaylistTarget> items;     // preferred: per-file playlist
 };
 
 struct ExternalAiPlaylistWriteReceipt {
@@ -45,6 +52,9 @@ public:
 
     virtual bool Apply(const std::string& playlistPath, const std::vector<int64_t>& fileIds,
                        int& added, int& skippedExisting, std::string& reason) = 0;
+
+    // Undo every playlist this request created, so a failed batch leaves nothing.
+    virtual void RollbackCreated() = 0;
 };
 
 // Keeps the last write receipts so a retried request cannot add a second copy.

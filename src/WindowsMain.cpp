@@ -9597,6 +9597,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         UnregisterHotKey(hwnd, HOTKEY_ID_SHOW_MANAGER);
         RemoveTrayIconIfAny(hwnd);
+        // The write bridge owns a thread and a pipe: stop it before the process exits.
+        HarkenSearch::StopExternalAiBridgeServer();
         PostQuitMessage(0);
         return 0;
     }
