@@ -8683,3 +8683,28 @@ set_tests_properties(TestAlertDialogContract PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 aura_set_test_labels(TestAlertDialogContract core)
+# Folder subtree removal must cover every textual spelling of one library root:
+# plain UNC, the extended long-path UNC form and the legacy single-backslash
+# rows written by the old folding bug. See BUG-20261122-SCAN-PATH-MATCHING.
+add_executable(TestFolderSubtreeMatchPaths EXCLUDE_FROM_ALL
+    tests/test_folder_subtree_match_paths.cpp
+    ${SQLITE_SOURCES}
+)
+target_include_directories(TestFolderSubtreeMatchPaths PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SQLITE_DIR}
+)
+target_compile_definitions(TestFolderSubtreeMatchPaths PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+)
+target_compile_features(TestFolderSubtreeMatchPaths PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestFolderSubtreeMatchPaths PRIVATE /W3 /utf-8 /UNDEBUG)
+    set_target_properties(TestFolderSubtreeMatchPaths PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestFolderSubtreeMatchPaths COMMAND TestFolderSubtreeMatchPaths)
+aura_set_test_labels(TestFolderSubtreeMatchPaths db)

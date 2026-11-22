@@ -28,6 +28,7 @@
 #include "WaveformPrewarmPolicy.h"
 #include "Utils.h"     // Unicode search-data helpers.
 #include "PathUtils.h" // Canonical folder-path migration.
+#include "FolderPathMatch.h" // Folder-prefix spellings for subtree removal.
 #include "../thirdparty/sqlite/sqlite3.h"
 #define XXH_INLINE_ALL
 #include "../thirdparty/xxhash.h"
@@ -5815,91 +5816,25 @@ AudioRecord Database::getFileById(int64_t id) {
     return r;
 }
 
-// Creates the exclusive upper bound for a folder-prefix range.
-// Appending 0xFF covers valid UTF-8 suffixes without incrementing a multibyte code unit.
+// Path-spelling helpers live in FolderPathMatch.h so they can be unit tested
+// without linking the whole database. These wrappers keep the historical
+// unqualified call sites inside this file working.
 static std::string MakeFolderPathUpperBound(const std::string& folderPath) {
-    if (folderPath.empty()) return folderPath;
-    // 0xFF sorts after every valid UTF-8 byte sequence under SQLite BINARY collation.
-    // The half-open range includes every descendant path.
-    // Incrementing the final byte would corrupt multibyte UTF-8 paths.
-    std::string upper = folderPath + '\xff';
-    return upper;
+    return HarkenSearch::MakeFolderPathUpperBound(folderPath);
 }
 
 static std::string MakeFolderChildPrefix(const std::string& folderPath) {
-    if (folderPath.empty()) return folderPath;
-    std::string prefix = folderPath;
-    if (prefix.back() != '\\' && prefix.back() != '/') {
-#ifdef _WIN32
-        prefix.push_back('\\');
-#else
-        prefix.push_back('/');
-#endif
-    }
-    return prefix;
-}
-
-static bool StartsWithAsciiCaseInsensitiveDb(const std::string& s, const char* prefix) {
-    const size_t n = std::strlen(prefix);
-    if (s.size() < n) return false;
-    for (size_t i = 0; i < n; ++i) {
-        unsigned char a = static_cast<unsigned char>(s[i]);
-        unsigned char b = static_cast<unsigned char>(prefix[i]);
-        if (a >= 'A' && a <= 'Z') a = static_cast<unsigned char>(a - 'A' + 'a');
-        if (b >= 'A' && b <= 'Z') b = static_cast<unsigned char>(b - 'A' + 'a');
-        if (a != b) return false;
-    }
-    return true;
+    return HarkenSearch::MakeFolderChildPrefix(folderPath);
 }
 
 static std::string NormalizeFolderPathPreserveCaseForDbMatch(std::string_view rawPath) {
-    std::string s(rawPath);
-#ifdef _WIN32
-    if (StartsWithAsciiCaseInsensitiveDb(s, "\\\\?\\UNC\\")) {
-        s = std::string("\\\\") + s.substr(8);
-    } else if (StartsWithAsciiCaseInsensitiveDb(s, "\\\\?\\")) {
-        s = s.substr(4);
-    }
-    std::replace(s.begin(), s.end(), '/', '\\');
-    while (s.size() > 3 && (s.back() == '\\' || s.back() == '/')) {
-        s.pop_back();
-    }
-#else
-    std::replace(s.begin(), s.end(), '\\', '/');
-    while (s.size() > 1 && s.back() == '/') {
-        s.pop_back();
-    }
-#endif
-    return s;
-}
-
-static void AddUniqueFolderMatchPath(std::vector<std::string>& paths, std::string path) {
-    if (path.empty()) return;
-    if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
-        paths.push_back(std::move(path));
-    }
+    return HarkenSearch::NormalizeFolderPathPreserveCaseForDbMatch(rawPath);
 }
 
 static std::vector<std::string> BuildFolderSubtreeMatchPaths(const std::string& canonicalPath,
-                                                             const std::string& rawPath) {
-    std::vector<std::string> paths;
-    paths.reserve(4);
-    AddUniqueFolderMatchPath(paths, canonicalPath);
-    AddUniqueFolderMatchPath(paths, rawPath);
-#ifdef _WIN32
-    if (rawPath.size() >= 2 && rawPath[1] == ':') {
-        std::string driveUpper = rawPath;
-        driveUpper[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(driveUpper[0])));
-        AddUniqueFolderMatchPath(paths, std::move(driveUpper));
-
-        std::string driveLower = rawPath;
-        driveLower[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(driveLower[0])));
-        AddUniqueFolderMatchPath(paths, std::move(driveLower));
-    }
-#endif
-    return paths;
+                                                            const std::string& rawPath) {
+    return HarkenSearch::BuildFolderSubtreeMatchPaths(canonicalPath, rawPath);
 }
-
 // ---------------------------------------------------------------------------
 // Shared WHERE-clause builder for searchFiles and searchFilesCount.
 // ---------------------------------------------------------------------------
