@@ -3128,7 +3128,7 @@ static bool corruptIndexPageCellCount(const std::string& dbPath, std::string* in
         return false;
     }
 
-    std::fstream file(dbPath, std::ios::in | std::ios::out | std::ios::binary);
+    std::fstream file(fs::u8path(dbPath), std::ios::in | std::ios::out | std::ios::binary);
     if (!file) {
         return false;
     }
@@ -3213,6 +3213,8 @@ static int testRemoveFolderSubtreeReportsUnrecoverableIndexDamage() {
           "index-damage error names the failing operation", failures);
     check(error.find("malformed") != std::string::npos,
           "index-damage error keeps the underlying sqlite message", failures);
+    check(error.find("reindex=") != std::string::npos,
+          "index-damage error reports the failed REINDEX attempt", failures);
     check(db.fileExists(target.filePath), "index-damage rollback keeps the target row", failures);
     check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
           "index-damage rollback keeps every row", failures);
