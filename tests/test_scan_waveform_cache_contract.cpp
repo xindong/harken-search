@@ -3057,6 +3057,172 @@ static int testRemoveFolderSubtreeRecoversMalformedFtsIndexes() {
     return failures;
 }
 
+static std::string readIntegrityCheck(const std::string& dbPath) {
+    sqlite3* raw = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &raw) != SQLITE_OK) {
+        if (raw) {
+            sqlite3_close(raw);
+        }
+        return "open-failed";
+    }
+    std::string result;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(raw, "PRAGMA integrity_check;", -1, &stmt, nullptr) == SQLITE_OK) {
+        int step = sqlite3_step(stmt);
+        while (step == SQLITE_ROW) {
+            const unsigned char* text = sqlite3_column_text(stmt, 0);
+            if (!result.empty()) {
+                result += " | ";
+            }
+            result += text ? reinterpret_cast<const char*>(text) : "";
+            step = sqlite3_step(stmt);
+        }
+        if (result.empty() && step != SQLITE_DONE) {
+            result = std::string("integrity_check failed: ") + sqlite3_errmsg(raw);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(raw);
+    return result;
+}
+
+// Makes one audio_files index page unreadable by claiming a cell count the page cannot hold,
+// which breaks the b-tree structure without touching the table rows. This records how far the
+// REINDEX-and-retry fallback reaches: damage it cannot rebuild must still surface as a readable
+// error with every row rolled back, never as silent data loss.
+static bool corruptIndexPageCellCount(const std::string& dbPath, std::string* indexName, long long* rootPage) {
+    sqlite3* raw = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &raw) != SQLITE_OK) {
+        if (raw) {
+            sqlite3_close(raw);
+        }
+        return false;
+    }
+    std::string name;
+    long long rootpage = 0;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(raw,
+                           "SELECT name, rootpage FROM sqlite_master "
+                           "WHERE type='index' AND tbl_name='audio_files' AND rootpage>0 "
+                           "ORDER BY name LIMIT 1",
+                           -1,
+                           &stmt,
+                           nullptr) == SQLITE_OK &&
+        sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* text = sqlite3_column_text(stmt, 0);
+        name = text ? reinterpret_cast<const char*>(text) : "";
+        rootpage = sqlite3_column_int64(stmt, 1);
+    }
+    sqlite3_finalize(stmt);
+
+    int pageSize = 0;
+    stmt = nullptr;
+    if (sqlite3_prepare_v2(raw, "PRAGMA page_size;", -1, &stmt, nullptr) == SQLITE_OK &&
+        sqlite3_step(stmt) == SQLITE_ROW) {
+        pageSize = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(raw);
+
+    if (name.empty() || rootpage <= 0 || pageSize <= 0) {
+        return false;
+    }
+
+    std::fstream file(dbPath, std::ios::in | std::ios::out | std::ios::binary);
+    if (!file) {
+        return false;
+    }
+    file.seekp(static_cast<std::streamoff>((rootpage - 1) * pageSize + 3));
+    const unsigned char zeroCells[2] = {0xff, 0xff};
+    file.write(reinterpret_cast<const char*>(zeroCells), sizeof(zeroCells));
+    file.flush();
+    const bool written = file.good();
+    file.close();
+
+    *indexName = name;
+    *rootPage = rootpage;
+    return written;
+}
+
+static int testRemoveFolderSubtreeReportsUnrecoverableIndexDamage() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("remove_folder_unrecoverable_index");
+    const fs::path dbPath = root / "remove_folder_unrecoverable_index.db";
+
+    AudioRecord target;
+    target.filePath = "H:\\Sound effect\\CorruptCase\\hit.wav";
+    target.folderPath = "H:\\Sound effect\\CorruptCase";
+    target.fileName = "hit.wav";
+    target.extension = ".wav";
+    target.format = "WAV";
+    target.fileSize = 10;
+    target.sampleRate = 48000;
+    target.channels = 1;
+    target.totalFrames = 48000;
+    target.durationSeconds = 1.0f;
+
+    AudioRecord sibling = target;
+    sibling.filePath = "I:\\Sound effect\\KeepCase\\keep.wav";
+    sibling.folderPath = "I:\\Sound effect\\KeepCase";
+    sibling.fileName = "keep.wav";
+    sibling.fileSize = 20;
+    sibling.totalFrames = 96000;
+    sibling.durationSeconds = 2.0f;
+
+    {
+        Database seed;
+        if (!seed.open(dbPath.u8string())) {
+            std::cerr << "FAIL: open db: " << seed.getLastError() << "\n";
+            fs::remove_all(root);
+            return 1;
+        }
+        check(seed.addFile(target), "index-damage fixture inserts target row", failures);
+        check(seed.addFile(sibling), "index-damage fixture inserts sibling row", failures);
+        seed.close();
+    }
+
+    std::string indexName;
+    long long rootPage = 0;
+    const bool patched = corruptIndexPageCellCount(dbPath.u8string(), &indexName, &rootPage);
+    check(patched, "index-damage fixture rewrites an audio_files index page header", failures);
+    if (!patched) {
+        removeDbArtifacts(dbPath);
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        return failures;
+    }
+    std::cout << "   index-damage fixture index=" << indexName << " rootpage=" << rootPage << "\n";
+
+    const std::string damagedCheck = readIntegrityCheck(dbPath.u8string());
+    std::cout << "   integrity_check on damaged library: " << damagedCheck << "\n";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: reopen damaged db: " << db.getLastError() << "\n";
+        removeDbArtifacts(dbPath);
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        return failures + 1;
+    }
+
+    const int removed = db.removeFolderSubtreeFromDb("h:\\sound effect\\corruptcase", false);
+    const std::string error = db.getLastError();
+    std::cout << "   removal error: " << error << "\n";
+    check(removed == 0, "index-damage removal reports zero rows removed", failures);
+    check(error.find("removeFolderSubtreeFromDb") != std::string::npos,
+          "index-damage error names the failing operation", failures);
+    check(error.find("malformed") != std::string::npos,
+          "index-damage error keeps the underlying sqlite message", failures);
+    check(db.fileExists(target.filePath), "index-damage rollback keeps the target row", failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
+          "index-damage rollback keeps every row", failures);
+    db.close();
+
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
 static int testRemoveFolderSubtreeDeleteFailureReportsReadableError() {
     int failures = 0;
     const fs::path root = makeTempRoot("remove_folder_delete_failure");
@@ -4841,6 +5007,8 @@ int main(int argc, char** argv) {
     failures += testRemoveFolderSubtreeLeavesPackageCompactable();
     std::cout << "-- testRemoveFolderSubtreeRecoversMalformedFtsIndexes\n";
     failures += testRemoveFolderSubtreeRecoversMalformedFtsIndexes();
+    std::cout << "-- testRemoveFolderSubtreeReportsUnrecoverableIndexDamage" << std::endl;
+    failures += testRemoveFolderSubtreeReportsUnrecoverableIndexDamage();
     std::cout << "-- testRemoveFolderSubtreeDeleteFailureReportsReadableError";
     failures += testRemoveFolderSubtreeDeleteFailureReportsReadableError();
     std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
