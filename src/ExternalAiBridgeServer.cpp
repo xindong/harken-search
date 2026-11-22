@@ -113,8 +113,19 @@ void WorkerLoop(ServerState& state)
             continue;
         }
 
+        // A client that connects and then stays silent must not own the only
+        // instance: bound the read with a peek/timeout loop.
         std::string request;
-        if (ReadRequestLine(pipe, request) && !request.empty()) {
+        bool gotRequest = false;
+        for (int attempt = 0; attempt < 50 && !state.stop.load(); ++attempt) {
+            DWORD available = 0;
+            if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0) {
+                gotRequest = ReadRequestLine(pipe, request) && !request.empty();
+                break;
+            }
+            Sleep(100);
+        }
+        if (gotRequest) {
             std::unique_lock<std::mutex> lock(state.mutex);
             state.pending = std::make_unique<PendingRequest>();
             state.pending->request = std::move(request);

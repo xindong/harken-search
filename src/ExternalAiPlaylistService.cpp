@@ -102,6 +102,7 @@ bool ExternalAiDatabasePlaylistWriter::Apply(const std::string& playlistPath,
         }
     } else {
         int64_t parentId = FindTopLevelPlaylist(database_, segments[0]);
+        bool parentCreatedHere = false;
         if (parentId <= 0) {
             parentId = database_.createPlaylist(segments[0]);
             if (parentId <= 0) {
@@ -109,9 +110,18 @@ bool ExternalAiDatabasePlaylistWriter::Apply(const std::string& playlistPath,
                 return false;
             }
             createdPlaylists_.push_back(parentId);
+            parentCreatedHere = true;
         }
-        if (!database_.isFolder(parentId) && !database_.markAsFolder(parentId)) {
-            reason = "playlist_folder_failed";
+        if (parentCreatedHere) {
+            // Ours, brand new: promoting it is not a change to existing data.
+            if (!database_.isFolder(parentId) && !database_.markAsFolder(parentId)) {
+                reason = "playlist_folder_failed";
+                return false;
+            }
+        } else if (!database_.isFolder(parentId)) {
+            // Converting an existing playlist into a folder silently changes what
+            // the user already had. Refuse instead of mutating it.
+            reason = "playlist_parent_not_folder";
             return false;
         }
         targetId = FindChildPlaylist(database_, parentId, segments[1]);

@@ -172,6 +172,23 @@ std::vector<std::string> SplitLines(const std::string& text) {
     return lines;
 }
 
+// Refuses files whose harken entry cannot be edited without risking the rest of
+// the user's TOML (array-of-tables, inline tables). Failing here is safer than
+// rewriting a file the user depends on.
+bool TomlHasUnsupportedHarkenForm(const std::string& text) {
+    const auto lines = SplitLines(text);
+    for (const auto& line : lines) {
+        const std::string trimmed = Trim(line);
+        if (trimmed.rfind("[[", 0) == 0 || trimmed.rfind("mcp_servers", 0) == 0) {
+            return true;
+        }
+        if (trimmed.rfind("harken", 0) == 0 && trimmed.find('=') != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string JoinLines(const std::vector<std::string>& lines) {
     std::string out;
     for (const auto& line : lines) {
@@ -344,11 +361,27 @@ bool LinkExternalAiClient(ExternalAiClient client, const std::string& configPath
             status.detail = error;
             return false;
         }
+        if (TomlHasUnsupportedHarkenForm(text)) {
+            status.state = ExternalAiLinkState::Failed;
+            status.detail = "existing config uses a form this writer will not edit";
+            return false;
+        }
         std::vector<std::string> lines = RemoveHarkenSections(SplitLines(text));
         const auto section = HarkenSectionLines(target);
         if (!lines.empty()) lines.push_back(std::string());
         lines.insert(lines.end(), section.begin(), section.end());
-        if (!WriteFileUtf8(configPath, JoinLines(lines), error)) {
+        std::string joined = JoinLines(lines);
+        const bool crlfSource = text.find("\r\n") != std::string::npos;
+        if (crlfSource) {
+            std::string crlf;
+            crlf.reserve(joined.size() + lines.size());
+            for (const char unit : joined) {
+                if (unit == '\n') crlf.push_back('\r');
+                crlf.push_back(unit);
+            }
+            joined.swap(crlf);
+        }
+        if (!WriteFileUtf8(configPath, joined, error)) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = error;
             return false;
