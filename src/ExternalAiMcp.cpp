@@ -322,6 +322,35 @@ Json ProjectResultFields(Json payload, const std::vector<std::string>& fields)
     return payload;
 }
 
+// A row whose file name is not authorized must not leak the name or the path:
+// the capability switch has to mean what the settings page says.
+Json WithholdUnauthorizedNames(Json payload, const HarkenSearch::ExternalAiAuthorization& authorization,
+                               const std::string& libraryId, const LaunchConfig& config)
+{
+    if (!payload.contains("results") || !payload["results"].is_array()) {
+        return payload;
+    }
+    for (auto& row : payload["results"]) {
+        if (!row.is_object()) {
+            continue;
+        }
+        std::string relativePath;
+        if (row.contains("relative_path") && row["relative_path"].is_string()) {
+            relativePath = row["relative_path"].get<std::string>();
+        }
+        const bool allowed = !relativePath.empty()
+            && authorization.Authorize(HarkenSearch::ExternalAiCapability::ReadFileName, libraryId,
+                   config.AbsolutePath(relativePath)) != HarkenSearch::ExternalAiAccess::Denied;
+        if (allowed) {
+            continue;
+        }
+        if (row.contains("name")) row["name"] = "";
+        if (row.contains("relative_path")) row["relative_path"] = "";
+        row["name_withheld"] = true;
+    }
+    return payload;
+}
+
 bool FailedStatus(const Json& payload)
 {
     if (!payload.is_object() || !payload.contains("status") || !payload["status"].is_string()) {
@@ -697,7 +726,8 @@ private:
                     Json payload = {{"status", "ok"}, {"results", std::move(pageRows)}};
                     CursorState next{kind, key, fields, offset, std::move(leftover), fullBatch};
                     payload["next_cursor"] = CreateCursor(std::move(next));
-                    return ToolResult(id, ProjectResultFields(std::move(payload), fields));
+                    return ToolResult(id, WithholdUnauthorizedNames(
+                        ProjectResultFields(std::move(payload), fields), authorization, config_.libraryId, config_));
                 }
                 break;
             }
@@ -707,7 +737,8 @@ private:
         }
 
         Json payload = {{"status", "ok"}, {"results", std::move(pageRows)}};
-        return ToolResult(id, ProjectResultFields(std::move(payload), fields));
+        return ToolResult(id, WithholdUnauthorizedNames(
+            ProjectResultFields(std::move(payload), fields), authorization, config_.libraryId, config_));
     }
 
     Json PreviewPlaylistPack(const Json& id, const Json& arguments)

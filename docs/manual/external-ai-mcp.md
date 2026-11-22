@@ -1,12 +1,30 @@
-# External AI: local library search and confirmed metadata edits
+# External AI: local library search, metadata edits and Playlist writing
 
 The optional Windows `HarkenExternalAiMcp.exe` lets a local MCP client find sounds,
 folders and same-kind substitutes in an explicitly chosen Harken library. With the
 separate metadata permissions enabled, it can also preview and apply a confirmed
-metadata proposal for one audio file. Harken does not start or enable this
-connector automatically. It opens no network port.
+metadata proposal for one audio file. With the Playlist permissions enabled it can
+add the files of one confirmed Game SFX classification to Harken Playlists.
+Harken does not start or enable this connector automatically. It opens no network
+port.
 
-## Build and connect
+## Connect from the app (recommended)
+
+1. Open **Settings -> External AI (MCP)** and switch on “allow external AI”.
+2. Add the folders the client may see and tick each one. Unticked folders are never
+   readable and never writable.
+3. Under per-action grants choose the level. For Playlist writing, *read playlists*
+   must be at least readable and *edit playlists* must be editable.
+4. Click **Save this library**.
+5. In **Connected apps**, click **Connect** on Cindy or Codex. That writes one
+   `harken` entry into the client's own config and asks you to open a new session.
+   **Disconnect** removes only that entry and leaves other servers untouched.
+
+Harken keeps a local write bridge for the open library while those grants are
+active; the connector asks Harken to write, so Playlist writes happen in Harken's
+own transaction instead of by editing the database from a second process.
+
+## Build and connect manually
 
 From a Harken checkout with the Windows build prerequisites, build the separate
 connector. This does not install it or change Harken settings:
@@ -39,6 +57,12 @@ sessions that have loaded it.
 
 - `harken_search_audio` matches terms in the existing library; it does not listen
   to audio or generate a new search index.
+- `harken_preview_playlist_pack` returns a Game SFX classification list (target
+  child Playlist, confidence, reason, whether review is needed). It writes nothing.
+- `harken_apply_playlist_pack` applies one confirmed proposal. Harken performs the
+  write in one transaction, so a failure leaves no partial Playlist, and repeating
+  the same confirmation does not add a second copy. It fails closed when Harken is
+  not running or the Playlist grants are closed.
 - `harken_find_folders` searches indexed folders under the authorized root.
 - `harken_find_similar` starts from a returned `file_id` and uses only existing
   compatible same-kind analysis. No results and missing analysis are different

@@ -253,13 +253,32 @@
             const auto environment=Platform::ReadEnvironmentVariable("USERPROFILE");
             return environment.status==Platform::EnvironmentStringStatus::Success ? environment.valueUtf8 : std::string{};
         }();
-        const bool linkReady=hasConnector&&!linkTarget.libraryId.empty()&&!linkTarget.databasePath.empty()&&
-            !linkTarget.rootPath.empty()&&!linkTarget.settingsPath.empty();
+        // The connector resolves paths against a single authorized root. Ticked
+        // folders on different drives cannot both be served, so say so instead of
+        // accepting the grant and then refusing to connect.
+        const auto volumeOf=[](const std::string& path) {
+            if (path.size()>=2 && path[1]==':') return std::string(1,(char)std::toupper((unsigned char)path[0]));
+            return std::string{"?"};
+        };
+        bool rootsShareVolume=true;
+        {
+            std::string volume;
+            for (const auto& root : page.settings.roots) {
+                if (!root.enabled) continue;
+                const std::string current=volumeOf(root.path);
+                if (volume.empty()) volume=current;
+                else if (current!=volume) { rootsShareVolume=false; break; }
+            }
+        }
+        const bool linkReady=hasConnector&&rootsShareVolume&&!linkTarget.libraryId.empty()&&
+            !linkTarget.databasePath.empty()&&!linkTarget.rootPath.empty()&&!linkTarget.settingsPath.empty();
         if (!hasConnector) {
             ImGui::TextDisabled("%s",L(ExtAi_ConnectNoExe));
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("%s",linkTarget.executablePath.c_str());
             ImGui::PopTextWrapPos();
+        } else if (!rootsShareVolume) {
+            ImGui::TextDisabled("%s",L(ExtAi_ConnectMultiVolume));
         } else if (!linkReady) {
             ImGui::TextDisabled("%s",L(ExtAi_ConnectNotReady));
         }
