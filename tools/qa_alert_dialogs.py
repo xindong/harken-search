@@ -334,7 +334,6 @@ def run(args):
                 process.Close()
             except Exception as error:  # noqa: BLE001
                 report['shutdown_error'] = f'{type(error).__name__}: {error}'
-            process = None
         desktop.close()
 
 
