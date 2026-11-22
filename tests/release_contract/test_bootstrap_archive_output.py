@@ -1,4 +1,4 @@
-"""Bootstrap 内部静态库不得和发布程序落在同一输出目录。"""
+"""内部静态库不得和发布程序落在同一输出目录。"""
 
 from __future__ import annotations
 
@@ -7,10 +7,13 @@ import re
 import shutil
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ISOLATED_ROOT = Path("D:/Aris-QA/BUG-20261012-05-release-archive")
 CMAKE_PATH = ROOT / "CMakeLists.txt"
+MCP_CMAKE_PATH = ROOT / "cmake" / "harken_external_ai_mcp.cmake"
 BEHAVIOR_TESTS = ROOT / "cmake" / "harken_search_behavior_tests.cmake"
 COMPLIANCE_PATH = ROOT / "tools" / "check_release_compliance.py"
 
@@ -97,6 +100,25 @@ def test_bootstrap_core_link_relationships_remain_unchanged() -> None:
     assert _BOOTSTRAP_LINK.search(cmake)
     assert "target_link_libraries(TestHarkenSearchBootstrapPlan PRIVATE HarkenSearchBootstrapCore)" in behavior
     assert "src/bootstrap/HarkenSearchBootstrapPlan.cpp" in cmake
+
+
+@pytest.mark.parametrize(
+    ("path", "target"),
+    ((CMAKE_PATH, "harken_wavpack"), (MCP_CMAKE_PATH, "HarkenExternalAiLibrary")),
+)
+def test_internal_static_libraries_are_outside_release_payload_directory(
+    path: Path, target: str
+) -> None:
+    cmake = _read(path)
+    assert re.search(rf"add_library\(\s*{target}\s+STATIC\b", cmake)
+    props = _target_properties(cmake, target)
+    assert props.get("ARCHIVE_OUTPUT_DIRECTORY") == "${CMAKE_BINARY_DIR}/internal-archive"
+    assert props.get("ARCHIVE_OUTPUT_DIRECTORY_DEBUG") == (
+        "${CMAKE_BINARY_DIR}/internal-archive/Debug"
+    )
+    assert props.get("ARCHIVE_OUTPUT_DIRECTORY_RELEASE") == (
+        "${CMAKE_BINARY_DIR}/internal-archive/Release"
+    )
 
 
 def test_release_compliance_still_forbids_static_libraries() -> None:
