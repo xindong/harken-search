@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.45 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.46 LANGUAGES C CXX)
 
 enable_testing()
 add_executable(TestPerformanceMonitor EXCLUDE_FROM_ALL tests/test_performance_monitor.cpp)
