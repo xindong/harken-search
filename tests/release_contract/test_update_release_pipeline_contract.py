@@ -171,7 +171,7 @@ def test_packaging_workflow_builds_the_three_immutable_handoff_artifacts() -> No
         assert artifact in source
 
 
-def test_package_assembly_verifies_the_runtime_receipt_matches_the_official_source_commit() -> None:
+def test_package_assembly_requires_similarity_verification_for_the_official_source_commit() -> None:
     workflow = _package_workflow()
     package = workflow["jobs"]["package"]
     assert package["env"]["BUILD_ID"] == "${{ github.sha }}"
@@ -181,9 +181,18 @@ def test_package_assembly_verifies_the_runtime_receipt_matches_the_official_sour
         for step in package["steps"]
         if step.get("name") == "Assemble payload Bootstrap and installer handoff"
     )
-    command = 'python -B tools/verify_release_assembly.py "$release" --source-commit "$env:BUILD_ID"'
+    command = (
+        'python -B tools/verify_release_assembly.py "$release" '
+        '--source-commit "$env:BUILD_ID" --require-similarity'
+    )
     assert command in assembly
     commands = [line.strip() for line in assembly.splitlines() if line.strip()]
+    verifier_commands = [
+        line for line in commands
+        if line.startswith("python -B tools/verify_release_assembly.py")
+    ]
+    assert verifier_commands == [command]
+    assert verifier_commands[0].endswith(" --require-similarity")
     verifier_index = commands.index(command)
     assert commands[verifier_index + 1] == 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
     command_index = assembly.index(command)
