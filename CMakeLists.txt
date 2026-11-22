@@ -301,6 +301,11 @@ set(WAVPACK_SOURCES
     ${WAVPACK_DIR}/src/write_words.c
 )
 add_library(harken_wavpack STATIC ${WAVPACK_SOURCES})
+set_target_properties(harken_wavpack PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/internal-archive"
+    ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/internal-archive/Debug"
+    ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/internal-archive/Release"
+)
 target_include_directories(harken_wavpack PUBLIC
     ${WAVPACK_DIR}/include
     ${WAVPACK_DIR}/src

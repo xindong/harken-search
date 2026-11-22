@@ -25,6 +25,7 @@ TESTS = (
     "tests/test_public_repo_manifest.py",
     "tests/test_public_ci_opensrc.py",
     "tests/test_release_compliance_contract.py",
+    "tests/release_contract/test_bootstrap_archive_output.py",
     "tests/test_third_party_sbom.py",
     "tests/test_localization_ledger.py",
     "tests/test_localization_purity.py",

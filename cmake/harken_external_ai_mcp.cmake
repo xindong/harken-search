@@ -4,6 +4,11 @@ add_library(HarkenExternalAiLibrary STATIC EXCLUDE_FROM_ALL
     src/ExternalAiAuthorizationStore.cpp
     ${_similarity_store_sources}
     ${AURO_SEARCH_TEXT_GB2312_SOURCE})
+set_target_properties(HarkenExternalAiLibrary PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/internal-archive"
+    ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/internal-archive/Debug"
+    ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/internal-archive/Release"
+)
 target_include_directories(HarkenExternalAiLibrary PUBLIC src thirdparty PRIVATE "${SQLITE_DIR}")
 target_link_libraries(HarkenExternalAiLibrary PRIVATE Threads::Threads)
 if(WIN32)
