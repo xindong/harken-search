@@ -106,7 +106,7 @@ def run(args):
 
     try:
         process, pid = desktop.start(exe)
-        identity = command(cmd="magic_eq_identity")
+        command(cmd="magic_eq_identity")
         wait_state(driver, lambda s: s["main_ui_ready"], "startup", timeout=90)
         state = command(cmd="get_state")
         if state["startup_needs_database_setup"]:
