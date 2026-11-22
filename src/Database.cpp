@@ -5915,11 +5915,15 @@ static std::vector<std::string> BuildFolderSubtreeMatchPaths(const std::string& 
     if (rawPath.size() >= 2 && rawPath[1] == ':') {
         std::string driveUpper = rawPath;
         driveUpper[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(driveUpper[0])));
-        AddUniqueFolderMatchPath(paths, std::move(driveUpper));
+        AddUniqueFolderMatchPath(paths, driveUpper);
+        AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(driveUpper));
+        AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(driveUpper));
 
         std::string driveLower = rawPath;
         driveLower[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(driveLower[0])));
-        AddUniqueFolderMatchPath(paths, std::move(driveLower));
+        AddUniqueFolderMatchPath(paths, driveLower);
+        AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(driveLower));
+        AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(driveLower));
     }
 #endif
     return paths;
@@ -16667,7 +16671,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             // 之前只要根目录里有一个条目报错（网络库），就会直接中断本目录枚举，
             // 后续子目录根本没机会入栈，最终 total=0、errors=1。
             int entriesRead = 0;
-            int entryErrors = 0;
+            int consecutiveEntryErrors = 0;
             while (true) {
                 if (isCancelled() || fatalScanError) break;
 
@@ -16681,21 +16685,23 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     const std::string currentDirUtf8 = pathForScanError(currentDir);
                     const bool networkDir = Platform::FileSystem::IsNetworkPath(currentDirUtf8) ||
                                             Platform::FileSystem::IsNetworkPath(dirPath);
-                    ++entryErrors;
+                    ++consecutiveEntryErrors;
                     stats.addError("Cannot read directory entry in " + currentDirUtf8 + ": " + entryError);
                     m_lastError = entryError;
                     // 只在本目录一条都没读出来且连续失败时才当作整目录不可达（真正的断网）。
-                    if (networkDir && entriesRead == 0 && entryErrors >= 3) {
+                    if (networkDir && entriesRead == 0 && consecutiveEntryErrors >= 3) {
                         stats.unreachable++;
                         stats.addError(std::string("Scan_NetworkLibraryUnreachable"));
                         m_lastError = std::string("Scan_NetworkLibraryUnreachable");
                         (void)Platform::FileSystem::PathStatus::Unreachable;
                         break;
                     }
-                    if (entryErrors > 200) break;
+                    // 用“连续”失败防止死循环；成功读到条目后计数清零，不能累计截断。
+                    if (consecutiveEntryErrors >= 200) break;
                     continue;
                 }
                 ++entriesRead;
+                consecutiveEntryErrors = 0;
                 if (readStatus != Platform::FileSystem::DirectoryReadStatus::Entry) {
                     continue;
                 }
@@ -18287,7 +18293,9 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
         return 0;
     }
-    if (candidateCount == 0) {
+    // 大小写不敏感的补查总是跑一遗：只在前一轮零命中时才补会把「部分命中」的
+    // 其他大小写形式漏在库里（移除了但还剩一半）。INSERT OR IGNORE 保证幂等。
+    {
         const char* insertCandidatesNoCaseSql =
             "INSERT OR IGNORE INTO temp.remove_folder_subtree_candidates(id, file_path) "
             "SELECT id, file_path "
