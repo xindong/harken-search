@@ -98,7 +98,6 @@ def stage(output, model_source_dir=None, model_base_url=None, sdk_archive=None):
     if archive.stat().st_size != SDK_SIZE:
         raise ValueError(f'wrong SDK package size: {archive}: {archive.stat().st_size}')
     verify(archive, SDK_SHA256)
-    sdk_root = output / SDK_ROOT_NAME
     with zipfile.ZipFile(archive) as package:
         sdk_root = _stage_sdk_package(package, output)
     for path in (sdk_root / 'include', sdk_root / 'lib' / 'onnxruntime.lib', sdk_root / 'lib' / 'onnxruntime.dll', sdk_root / 'LICENSE', sdk_root / 'ThirdPartyNotices.txt'):

@@ -4,7 +4,6 @@ from pathlib import Path
 import zipfile
 
 import tools.prepare_similarity_release_assets as asset_stager
-from tools.prepare_similarity_release_assets import PINNED, SDK_SHA256, SDK_SIZE, SDK_URL
 from tools.verify_release_assembly import PINNED_SIMILARITY_SHA256, configured_similarity_files
 
 
@@ -12,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_asset_staging_and_package_gate_pin_identical_hashes():
-    assert {Path(name).name: digest for name, digest in PINNED_SIMILARITY_SHA256.items()} == PINNED
+    assert {Path(name).name: digest for name, digest in PINNED_SIMILARITY_SHA256.items()} == asset_stager.PINNED
 
 
 def test_official_package_fetches_and_requires_pinned_similarity_bundle():
@@ -28,15 +27,15 @@ def test_official_package_fetches_and_requires_pinned_similarity_bundle():
 
 
 def test_official_sdk_source_is_the_versioned_microsoft_nuget_package():
-    assert SDK_URL == (
+    assert asset_stager.SDK_URL == (
         "https://api.nuget.org/v3-flatcontainer/"
         "microsoft.ml.onnxruntime/1.20.1/"
         "microsoft.ml.onnxruntime.1.20.1.nupkg"
     )
-    assert SDK_SHA256 == (
+    assert asset_stager.SDK_SHA256 == (
         "9c32108e9a1c78b090a95c2a219f244dd5f067d4caf68fb0f967103f3f20839c"
     )
-    assert SDK_SIZE == 108611147
+    assert asset_stager.SDK_SIZE == 108611147
 
 
 def test_official_similarity_components_are_declared_as_distributed():
