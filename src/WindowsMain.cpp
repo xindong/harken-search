@@ -5890,6 +5890,15 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"removed\":" + std::to_string(state.scanRemovedCount.load()) + ",";
         result += "\"errors\":" + std::to_string(state.scanErrorCount.load()) + ",";
         result += "\"total\":" + std::to_string(state.scanTotal.load()) + "},";
+        result += "\"scan_error_messages\":[";
+        {
+            const auto messages = state.getScanErrors();
+            for (size_t i = 0; i < messages.size(); ++i) {
+                if (i > 0) result += ",";
+                result += "\"" + jsonEscape(messages[i]) + "\"";
+            }
+        }
+        result += "],";
         result += "\"scan_in_progress\":" + std::string(state.isScanning.load() ? "true" : "false") + ",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
