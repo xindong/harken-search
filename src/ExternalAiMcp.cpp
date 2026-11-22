@@ -324,6 +324,27 @@ Json ProjectResultFields(Json payload, const std::vector<std::string>& fields)
 
 // A row whose file name is not authorized must not leak the name or the path:
 // the capability switch has to mean what the settings page says.
+void WithholdUnauthorizedName(Json& row, const HarkenSearch::ExternalAiAuthorization& authorization,
+                              const std::string& libraryId, const LaunchConfig& config)
+{
+    if (!row.is_object()) {
+        return;
+    }
+    std::string relativePath;
+    if (row.contains("relative_path") && row["relative_path"].is_string()) {
+        relativePath = row["relative_path"].get<std::string>();
+    }
+    const bool allowed = !relativePath.empty()
+        && authorization.Authorize(HarkenSearch::ExternalAiCapability::ReadFileName, libraryId,
+               config.AbsolutePath(relativePath)) != HarkenSearch::ExternalAiAccess::Denied;
+    if (allowed) {
+        return;
+    }
+    if (row.contains("name")) row["name"] = "";
+    if (row.contains("relative_path")) row["relative_path"] = "";
+    row["name_withheld"] = true;
+}
+
 Json WithholdUnauthorizedNames(Json payload, const HarkenSearch::ExternalAiAuthorization& authorization,
                                const std::string& libraryId, const LaunchConfig& config)
 {
@@ -331,22 +352,7 @@ Json WithholdUnauthorizedNames(Json payload, const HarkenSearch::ExternalAiAutho
         return payload;
     }
     for (auto& row : payload["results"]) {
-        if (!row.is_object()) {
-            continue;
-        }
-        std::string relativePath;
-        if (row.contains("relative_path") && row["relative_path"].is_string()) {
-            relativePath = row["relative_path"].get<std::string>();
-        }
-        const bool allowed = !relativePath.empty()
-            && authorization.Authorize(HarkenSearch::ExternalAiCapability::ReadFileName, libraryId,
-                   config.AbsolutePath(relativePath)) != HarkenSearch::ExternalAiAccess::Denied;
-        if (allowed) {
-            continue;
-        }
-        if (row.contains("name")) row["name"] = "";
-        if (row.contains("relative_path")) row["relative_path"] = "";
-        row["name_withheld"] = true;
+        WithholdUnauthorizedName(row, authorization, libraryId, config);
     }
     return payload;
 }
@@ -726,8 +732,8 @@ private:
                     Json payload = {{"status", "ok"}, {"results", std::move(pageRows)}};
                     CursorState next{kind, key, fields, offset, std::move(leftover), fullBatch};
                     payload["next_cursor"] = CreateCursor(std::move(next));
-                    return ToolResult(id, WithholdUnauthorizedNames(
-                        ProjectResultFields(std::move(payload), fields), authorization, config_.libraryId, config_));
+                    return ToolResult(id, ProjectResultFields(
+                        WithholdUnauthorizedNames(std::move(payload), authorization, config_.libraryId, config_), fields));
                 }
                 break;
             }
@@ -737,8 +743,8 @@ private:
         }
 
         Json payload = {{"status", "ok"}, {"results", std::move(pageRows)}};
-        return ToolResult(id, WithholdUnauthorizedNames(
-            ProjectResultFields(std::move(payload), fields), authorization, config_.libraryId, config_));
+        return ToolResult(id, ProjectResultFields(
+            WithholdUnauthorizedNames(std::move(payload), authorization, config_.libraryId, config_), fields));
     }
 
     Json PreviewPlaylistPack(const Json& id, const Json& arguments)
@@ -1141,6 +1147,7 @@ private:
                     {"after", pending.after},
                 };
                 proposals_.erase(proposal);
+                WithholdUnauthorizedName(appliedPayload, authorization, config_.libraryId, config_);
                 return ToolResult(id, std::move(appliedPayload));
             }
 
@@ -1161,7 +1168,11 @@ private:
                         config_.AbsolutePath(relativePath)), false)) {
                     return ToolResult(id, {{"status", "reference_not_authorized"}, {"results", Json::array()}});
                 }
-                return ToolResult(id, library_.GetMetadata(*fileId));
+                // The response carries name and relative_path too, so a client that
+                // is denied ReadFileName must not read them by asking for metadata.
+                Json metadataPayload = library_.GetMetadata(*fileId);
+                WithholdUnauthorizedName(metadataPayload, authorization, config_.libraryId, config_);
+                return ToolResult(id, std::move(metadataPayload));
             }
 
             if (!HasOnlyFields(arguments, {"file_id", "fields"})
@@ -1198,7 +1209,7 @@ private:
             }
             proposals_[proposalId] = PendingMetadataProposal{
                 *fileId, relativePath, arguments["fields"], current["metadata"], after};
-            return ToolResult(id, {
+            Json proposalPayload = {
                 {"status", "ok"},
                 {"confirmation", "required"},
                 {"proposal_id", proposalId},
@@ -1206,7 +1217,9 @@ private:
                 {"relative_path", relativePath},
                 {"before", current["metadata"]},
                 {"after", std::move(after)},
-            });
+            };
+            WithholdUnauthorizedName(proposalPayload, authorization, config_.libraryId, config_);
+            return ToolResult(id, std::move(proposalPayload));
         }
 
         const char* required = tool->requiredArgument();

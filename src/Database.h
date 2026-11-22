@@ -1428,6 +1428,16 @@ private:
     /// Set to true when post-process finishes maintenance so UI can reload cover wall with correct phash values
     std::atomic<bool> m_postProcessCoverRefreshNeeded{false};
 
+    /// 大库文件顺序封面索引构建与 Database 生命周期绑定，禁止使用进程级 detached 线程。
+    std::mutex m_coverWallOrderIndexBuildLifecycleMutex;
+    std::mutex m_coverWallOrderIndexBuildDbMutex;
+    std::thread m_coverWallOrderIndexBuildThread;
+    std::atomic<bool> m_coverWallOrderIndexBuildCancel{false};
+    std::atomic<bool> m_coverWallOrderIndexBuildRunning{false};
+    sqlite3* m_coverWallOrderIndexBuildDb = nullptr;
+    void startCoverWallOrderIndexBuild();
+    void stopCoverWallOrderIndexBuild();
+
     /// 独立渐进式 cover dHash backfill worker（不绑定 heavy maintenance，大库也能跑）
     std::thread m_coverPhashBackfillThread;
     std::atomic<bool> m_coverPhashBackfillCancel{false};

@@ -136,8 +136,8 @@ def main():
             target = args.database.resolve()
             assert target.is_file() and target.is_relative_to(root), target
             cmd(cmd='switch_db', path=str(target))
-            state = wait_state(driver, lambda s: Path(str(s.get('db_path', ''))).resolve() == target
-                               and not s['db_switch_in_progress'], 'library switch', 120)
+            wait_state(driver, lambda s: Path(str(s.get('db_path', ''))).resolve() == target
+                       and not s['db_switch_in_progress'], 'library switch', 120)
             settle(10)
             state = wait_state(driver, lambda s: s['total_count'] > 0, 'library rows', 120)
             # Waveforms and covers load asynchronously; let them settle before capture.

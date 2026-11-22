@@ -644,7 +644,8 @@ int WavpackPackInit (WavpackContext *wpc)
     for (stream_index = 0; stream_index < wpc->num_streams; stream_index++) {
         WavpackStream *wps = wpc->streams [stream_index];
 
-        wps->sample_buffer = malloc (wpc->max_samples * (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
+        wps->sample_buffer = malloc ((size_t) wpc->max_samples *
+            (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
 
 #ifdef ENABLE_DSD
         if (wps->wphdr.flags & DSD_FLAG)
@@ -1241,17 +1242,21 @@ static int pack_streams (WavpackContext *wpc, uint32_t block_samples, int last_b
 
         if (wps->discontinuous && wps->wpc->max_pre_samples) {
             if (!wps->pre_sample_buffer)
-                wps->pre_sample_buffer = malloc (wps->wpc->max_pre_samples * (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
+                wps->pre_sample_buffer = malloc ((size_t) wps->wpc->max_pre_samples *
+                    (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
 
             if (wps->wpc->block_samples > wps->wpc->max_pre_samples) {
                 memcpy (wps->pre_sample_buffer,
                     wps->sample_buffer + (wps->wpc->block_samples - wps->wpc->max_pre_samples) * (wps->wphdr.flags & MONO_FLAG ? 1 : 2),
-                    wps->wpc->max_pre_samples * (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
+                    (size_t) wps->wpc->max_pre_samples *
+                    (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
 
                 wps->num_pre_samples = wps->wpc->max_pre_samples;
             }
             else {
-                memcpy (wps->pre_sample_buffer, wps->sample_buffer, wps->wpc->block_samples * (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
+                memcpy (wps->pre_sample_buffer, wps->sample_buffer,
+                    (size_t) wps->wpc->block_samples *
+                    (wps->wphdr.flags & MONO_FLAG ? 4 : 8));
                 wps->num_pre_samples = wps->wpc->block_samples;
             }
         }

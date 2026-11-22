@@ -111,7 +111,8 @@ uint32_t WavpackUnpackSamples (WavpackContext *wpc, int32_t *buffer, uint32_t sa
     uint32_t bcount, samples_unpacked = 0, samples_to_unpack;
     int32_t *bptr = buffer;
 
-    memset (buffer, 0, (wpc->reduced_channels ? wpc->reduced_channels : num_channels) * samples * sizeof (int32_t));
+    memset (buffer, 0, sizeof (int32_t) *
+        (size_t) (wpc->reduced_channels ? wpc->reduced_channels : num_channels) * samples);
 
 #ifdef ENABLE_THREADS
     if (wpc->num_workers && !wpc->workers)

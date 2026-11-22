@@ -1,4 +1,5 @@
 #include "ExternalAiLibrary.h"
+#include "ExtendedMetadataColumns.h"
 #include "SearchTextIndex.h"
 #include "SimilarityAnalysisStore.h"
 #include "sqlite3.h"
@@ -1218,8 +1219,20 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
         return false;
     }
 
-    auto existing = Prepare(raw,
-        "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
+    std::vector<std::string> searchableExtended;
+    std::string existingSql = "SELECT file_name,title,description,category,keywords";
+    for (const char* column : aura::metadata::SearchableExtendedColumns()) {
+        const auto present = HasColumn(raw, column);
+        if (!present || !*present) {
+            continue;
+        }
+        searchableExtended.emplace_back(column);
+        existingSql += ", IFNULL(";
+        existingSql += column;
+        existingSql += ",'') ";
+    }
+    existingSql += " FROM main.audio_files WHERE id=?1";
+    auto existing = Prepare(raw, existingSql.c_str());
     if (!existing || sqlite3_bind_int64(existing.get(), 1, fileId) != SQLITE_OK ||
         sqlite3_step(existing.get()) != SQLITE_ROW) {
         error = "metadata target not found";
@@ -1227,8 +1240,17 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
     }
     const std::string fileName = std::string(SqlText(existing.get(), 0));
 
-    const std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(
-        fileName + " " + title + " " + description + " " + category + " " + keywords);
+    // Rebuilding search_data from the core fields alone drops the searchable
+    // extended metadata already stored (designer, composer, library, ...), so an
+    // edit that touches nothing else would change what those fields match.
+    std::string searchText =
+        fileName + " " + title + " " + description + " " + category + " " + keywords;
+    for (std::size_t index = 0; index < searchableExtended.size(); ++index) {
+        searchText += " ";
+        searchText += SqlText(existing.get(), static_cast<int>(index) + 5);
+    }
+    const std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(searchText);
+
     char* beginError = nullptr;
     if (sqlite3_exec(raw, "BEGIN IMMEDIATE", nullptr, nullptr, &beginError) != SQLITE_OK) {
         sqlite3_free(beginError);

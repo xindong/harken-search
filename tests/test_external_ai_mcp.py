@@ -471,7 +471,8 @@ class ExternalAiMcpTest(unittest.TestCase):
         scratch = Path(tempfile.mkdtemp(dir=self.fixture))
         document = write_authorization(
             scratch / "editable.json", self.root,
-            capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+            capabilities={**ALL_READ, "readFileName": "none",
+                         "editMetadata": "edit", "aiNamingMetadata": "edit"})
         flags = ["--library-db", str(self.database), "--library-root", str(self.root),
                  "--settings", str(document), "--library-id", LIBRARY_ID]
         with subprocess.Popen(
@@ -501,9 +502,14 @@ class ExternalAiMcpTest(unittest.TestCase):
                 current = self.raw_tool_payload(json.loads(received.get(timeout=5)))
                 preview = self.raw_tool_payload(json.loads(received.get(timeout=5)))
                 self.assertEqual(current["status"], "ok")
+                self.assertEqual(current["name"], "")
+                self.assertEqual(current["relative_path"], "")
+                self.assertTrue(current["name_withheld"])
                 self.assertEqual(current["metadata"]["title"], "")
                 self.assertEqual(preview["status"], "ok")
                 self.assertEqual(preview["confirmation"], "required")
+                self.assertEqual(preview["relative_path"], "")
+                self.assertTrue(preview["name_withheld"])
                 self.assertEqual(preview["before"]["title"], "")
                 self.assertEqual(preview["after"]["title"], "Wind Metal Door")
                 self.assertEqual(preview["after"]["category"], "Foley")
@@ -516,7 +522,12 @@ class ExternalAiMcpTest(unittest.TestCase):
                 applied = self.raw_tool_payload(json.loads(received.get(timeout=5)))
                 updated = self.raw_tool_payload(json.loads(received.get(timeout=5)))
                 self.assertEqual(applied["status"], "applied")
+                self.assertEqual(applied["relative_path"], "")
+                self.assertTrue(applied["name_withheld"])
                 self.assertEqual(updated["status"], "ok")
+                self.assertEqual(updated["name"], "")
+                self.assertEqual(updated["relative_path"], "")
+                self.assertTrue(updated["name_withheld"])
                 self.assertEqual(updated["metadata"]["title"], "Wind Metal Door")
                 self.assertEqual(updated["metadata"]["category"], "Foley")
 
@@ -831,10 +842,14 @@ class ExternalAiMcpTest(unittest.TestCase):
         full_reply = self.with_session(call(SEARCH, {"query": "wind", "limit": 1}, 1))[0]
         compact_reply = self.with_session(call(
             SEARCH, {"query": "wind", "limit": 1, "fields": ["name", "relative_path"]}, 1))[0]
+        name_only_reply = self.with_session(call(
+            SEARCH, {"query": "wind", "limit": 1, "fields": ["name"]}, 1))[0]
         full = self.tool_payload(full_reply)
         compact = self.tool_payload(compact_reply)
+        name_only = self.tool_payload(name_only_reply)
         self.assertEqual(set(full["results"][0]), AUDIO_FIELDS)
         self.assertEqual(set(compact["results"][0]), {"name", "relative_path"})
+        self.assertEqual(name_only["results"][0], {"name": "wind-01.wav"})
         self.assertLess(
             len(json.dumps(compact, ensure_ascii=False)),
             len(json.dumps(full, ensure_ascii=False)))

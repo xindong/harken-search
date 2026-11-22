@@ -1984,6 +1984,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -2046,6 +2047,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -2125,6 +2127,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp

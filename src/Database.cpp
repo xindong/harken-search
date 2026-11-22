@@ -19,6 +19,7 @@
 #include "TagVocabularyMapper.h"
 #include "SearchQuery.h"
 #include "SearchTextIndex.h"
+#include "ExtendedMetadataColumns.h"
 #include "platform/filesystem.h"
 #include "platform/harken_user_data_layout.h"
 #include "platform/file_watcher.h"
@@ -288,7 +289,6 @@ constexpr const char* kCoverWallOrderIndexStateKey = "cover_wall_order_index_sta
 constexpr const char* kCoverWallOrderIndexRowsKey = "cover_wall_order_index_rows";
 constexpr int kCoverWallOrderIndexBatchSize = 20000;
 static void RegisterAuraNaturalCollation(sqlite3* db);
-static void StartCoverWallOrderIndexBuild(const std::string& dbPath);
 
 template<typename T>
 static void AppendPod(std::vector<uint8_t>& out, const T& value) {
@@ -814,86 +814,8 @@ static void AccumulateSemicolonFacetTokens(const std::string& rawValue,
     }
 }
 
-// Extended metadata column policy.
-// rescanOverwrite fields refresh on rescan; false preserves user edits.
-// searchable fields contribute to the aggregated search_data column.
-struct ExtMetaCol { const char* col; bool rescanOverwrite; bool searchable; };
-static const ExtMetaCol kExtMetaCols[] = {
-    // Basic / Common
-    {"subcategory",        true,  true },
-    {"source",             true,  false},
-    {"cat_id",             true,  false},
-    {"category_full",      true,  false},
-    {"fx_name",            true,  true },
-    {"notes",              true,  false},
-    {"user_comments",      false, true },
-    {"url",                true,  false},
-    {"user_category",      false, false},
-    {"vendor_category",    true,  false},
-    {"open_tier",          true,  false},
-    {"genre",              true,  false},
-    {"comment",            true,  false},
-    {"copyright",          true,  false},
-    {"software",           true,  false},
-    // Library / Album
-    {"library",            true,  true },
-    {"volume",             true,  false},
-    {"cd_title",           true,  true },
-    {"cd_description",     true,  false},
-    {"manufacturer",       true,  false},
-    // Music
-    {"composer",           true,  true },
-    {"arranger",           true,  false},
-    {"conductor",          true,  false},
-    {"performer",          true,  false},
-    {"publisher",          true,  false},
-    {"bpm",                true,  false},
-    {"musical_key",        true,  false},
-    {"tempo",              true,  false},
-    {"mood",               false, true },
-    {"usage",              false, false},
-    {"featured_instrument",true,  false},
-    {"version_tag",        true,  false},
-    {"era",                true,  false},
-    {"track_year",         true,  false},
-    {"isrc",               true,  false},
-    {"iswc",               true,  false},
-    {"lyrics",             true,  false},
-    // SFX / Post
-    {"show_name",          true,  true },
-    {"show_category",      true,  false},
-    {"show_subcategory",   true,  false},
-    {"designer",           true,  true },
-    {"location",           true,  false},
-    {"microphone",         true,  false},
-    {"mic_perspective",    true,  false},
-    {"rec_type",           true,  false},
-    {"rec_medium",         true,  false},
-    {"short_id",           true,  true },
-    {"long_id",            true,  false},
-    // Production
-    {"scene",              true,  false},
-    {"take_num",           true,  false},
-    {"tape",               true,  false},
-    // BWF / BEXT
-    {"bw_description",     true,  false},
-    {"bw_originator",      true,  false},
-    {"bw_originator_ref",  true,  false},
-    {"bw_date",            true,  false},
-    {"bw_time",            true,  false},
-    {"bw_umid",            true,  false},
-    {"bw_coding_history",  true,  false},
-    // iXML
-    {"ixml_project",       true,  false},
-    {"ixml_note",          true,  false},
-    {"ixml_file_uid",      true,  false},
-    {"ixml_track_layout",  true,  false},
-    // Location
-    {"shoot_date",         true,  false},
-    // System / User
-    {"track_colour",       false, false},
-};
-static constexpr size_t kExtMetaCount = sizeof(kExtMetaCols) / sizeof(kExtMetaCols[0]);
+// Extended metadata column policy lives in ExtendedMetadataColumns.h so that
+// every writer of search_data shares one field list.
 
 // Columns that MetadataEditPatch may update after whitelist validation.
 static const std::unordered_set<std::string>& EditableTextColumns() {
@@ -1918,7 +1840,7 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             std::free(disableWallOrderBuild);
             if (!wallOrderReady && !wallOrderBuildDisabled) {
                 DIAG_ACTION("Database", "Cover wall file-order index building in background.");
-                StartCoverWallOrderIndexBuild(dbPath);
+                startCoverWallOrderIndexBuild();
             }
             const int registryEntries = countCoverRegistryEntries();
             if (RearmCoverRegistryMaintenanceForEmptyLargeLibrary(m_db, registryEntries, totalFiles)) {
@@ -2649,6 +2571,7 @@ void Database::close() {
     m_waveformFailureWritesAllowed = false;
     m_postProcessCancel.store(true, std::memory_order_release);
     m_coverPhashBackfillCancel.store(true, std::memory_order_release);
+    stopCoverWallOrderIndexBuild();
     if (m_db) {
         sqlite3_interrupt(m_db);
     }
@@ -8082,10 +8005,15 @@ static GlobalCoverAggregationReadiness AssessGlobalCoverAggregationReadiness(sql
     return readiness;
 }
 
-static bool RebuildCoverWallOrderIndexOnConnection(sqlite3* db, int batchSize) {
+static bool RebuildCoverWallOrderIndexOnConnection(
+    sqlite3* db, int batchSize, const std::atomic<bool>* cancelFlag = nullptr) {
     if (!db) return false;
     if (sqlite3_db_readonly(db, "main") == 1) return false;
     if (batchSize <= 0) batchSize = kCoverWallOrderIndexBatchSize;
+    const auto cancelled = [&]() {
+        return cancelFlag && cancelFlag->load(std::memory_order_acquire);
+    };
+    if (cancelled()) return false;
 
     WriteAppMetaString(db, kCoverWallOrderIndexStateKey, "building");
     if (sqlite3_exec(db, "DELETE FROM cover_wall_order_index; DELETE FROM cover_wall_order_dirty;",
@@ -8159,6 +8087,10 @@ static bool RebuildCoverWallOrderIndexOnConnection(sqlite3* db, int batchSize) {
     bool ok = true;
     int64_t lastId = 0;
     while (ok) {
+        if (cancelled()) {
+            ok = false;
+            break;
+        }
         int64_t maxId = 0;
         sqlite3_stmt* rangeStmt = nullptr;
         if (sqlite3_prepare_v2(db,
@@ -8175,6 +8107,11 @@ static bool RebuildCoverWallOrderIndexOnConnection(sqlite3* db, int batchSize) {
         sqlite3_finalize(rangeStmt);
         if (maxId <= 0) break;
 
+        if (cancelled()) {
+            ok = false;
+            break;
+        }
+
         if (sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr) != SQLITE_OK) {
             ok = false;
             break;
@@ -8189,10 +8126,16 @@ static bool RebuildCoverWallOrderIndexOnConnection(sqlite3* db, int batchSize) {
     }
     sqlite3_finalize(batchStmt);
 
-    if (ok) {
+    if (ok && !cancelled()) {
         for (int round = 0; round < 8 && CoverWallOrderDirtyCount(db) > 0; ++round) {
+            if (cancelled()) {
+                ok = false;
+                break;
+            }
             if (!FlushCoverWallOrderDirty(db, 4096)) break;
         }
+    }
+    if (ok && !cancelled()) {
         const int64_t rows = CountRows64FromTable(db, "cover_wall_order_index");
         WriteAppMetaInt(db, kCoverWallOrderIndexRowsKey, static_cast<int>(rows));
         WriteAppMetaInt(db, kCoverWallOrderIndexVersionKey, kCoverWallOrderIndexVersion);
@@ -8205,26 +8148,71 @@ static bool RebuildCoverWallOrderIndexOnConnection(sqlite3* db, int batchSize) {
     return ok;
 }
 
-static void StartCoverWallOrderIndexBuild(const std::string& dbPath) {
-    static std::atomic<bool> running{false};
-    if (dbPath.empty() || running.exchange(true)) return;
-    std::thread([dbPath]() {
+void Database::startCoverWallOrderIndexBuild() {
+    if (!m_db || !m_isPrimaryConnection) return;
+    const std::string dbPath = m_mainDbPath;
+    if (dbPath.empty()) return;
+
+    std::lock_guard<std::mutex> lifecycleLock(m_coverWallOrderIndexBuildLifecycleMutex);
+    if (m_coverWallOrderIndexBuildRunning.load(std::memory_order_acquire)) return;
+    if (m_coverWallOrderIndexBuildThread.joinable()) {
+        m_coverWallOrderIndexBuildThread.join();
+    }
+
+    m_coverWallOrderIndexBuildCancel.store(false, std::memory_order_release);
+    m_coverWallOrderIndexBuildRunning.store(true, std::memory_order_release);
+    try {
+        m_coverWallOrderIndexBuildThread = std::thread([this, dbPath]() {
         sqlite3* db = nullptr;
 #ifdef _WIN32
         const fs::path path = Utf8ToPath(dbPath);
         const std::wstring widePath = path.wstring();
-        sqlite3_open16(widePath.c_str(), &db);
+        const int openResult = sqlite3_open16(widePath.c_str(), &db);
 #else
-        sqlite3_open(dbPath.c_str(), &db);
+        const int openResult = sqlite3_open(dbPath.c_str(), &db);
 #endif
-        if (db) {
+        if (openResult == SQLITE_OK && db) {
+            {
+                std::lock_guard<std::mutex> dbLock(m_coverWallOrderIndexBuildDbMutex);
+                m_coverWallOrderIndexBuildDb = db;
+            }
             sqlite3_busy_timeout(db, 5000);
             RegisterAuraNaturalCollation(db);
-            RebuildCoverWallOrderIndexOnConnection(db, kCoverWallOrderIndexBatchSize);
-            sqlite3_close(db);
+            if (!m_coverWallOrderIndexBuildCancel.load(std::memory_order_acquire)) {
+                RebuildCoverWallOrderIndexOnConnection(
+                    db, kCoverWallOrderIndexBatchSize, &m_coverWallOrderIndexBuildCancel);
+            }
         }
-        running.store(false);
-    }).detach();
+        {
+            std::lock_guard<std::mutex> dbLock(m_coverWallOrderIndexBuildDbMutex);
+            if (db) {
+                sqlite3_close(db);
+            }
+            if (m_coverWallOrderIndexBuildDb == db) {
+                m_coverWallOrderIndexBuildDb = nullptr;
+            }
+        }
+        m_coverWallOrderIndexBuildRunning.store(false, std::memory_order_release);
+        });
+    } catch (...) {
+        m_coverWallOrderIndexBuildRunning.store(false, std::memory_order_release);
+        m_coverWallOrderIndexBuildCancel.store(true, std::memory_order_release);
+    }
+}
+
+void Database::stopCoverWallOrderIndexBuild() {
+    std::lock_guard<std::mutex> lifecycleLock(m_coverWallOrderIndexBuildLifecycleMutex);
+    m_coverWallOrderIndexBuildCancel.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> dbLock(m_coverWallOrderIndexBuildDbMutex);
+        if (m_coverWallOrderIndexBuildDb) {
+            sqlite3_interrupt(m_coverWallOrderIndexBuildDb);
+        }
+    }
+    if (m_coverWallOrderIndexBuildThread.joinable()) {
+        m_coverWallOrderIndexBuildThread.join();
+    }
+    m_coverWallOrderIndexBuildRunning.store(false, std::memory_order_release);
 }
 
 static std::string EncodeCoverWallOrderCursor(const std::string& name,
@@ -16071,7 +16059,7 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     FlushCoverWallOrderDirty(m_db, 512);
                 } else if (getFileCount() > kGlobalCoverWallFallbackMaxFiles &&
                            !m_mainDbPath.empty()) {
-                    StartCoverWallOrderIndexBuild(m_mainDbPath);
+                    startCoverWallOrderIndexBuild();
                 }
 
                 backfillWriteGuard.reset();

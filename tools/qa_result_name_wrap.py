@@ -24,10 +24,10 @@ from qa_transport_themes import Driver
 NAMES = [
     "Kick_01.wav",
     "\u754c\u9762_\u73af\u5883\u5faa\u73af_Ambient_Loop_Medium_Name_2026.wav",
-    "\u754c\u9762\u6750\u8d28_\u73af\u5883\u6c1b\u56f4_\u5faa\u73af\u7d20\u6750_"
+    "\u754c\u9762\u6750\u8d28_\u73af\u5883\u6c1b\u56f4_\u5faa\u73af\u7d20\u6750_" +
     "\u4e09\u6bb5\u6362\u884c\u9a8c\u8bc1_Ambient_Loop_Long_Name_Alpha_Beta_Gamma_2026_v1.wav",
-    "\u754c\u9762\u6750\u8d28\u5e93_\u73af\u5883\u6c1b\u56f4_\u5faa\u73af\u7d20\u6750_\u4e09\u6bb5\u6362\u884c\u9a8c\u8bc1_"
-    "\u8d85\u957f\u540d\u79f0_Ambient_Loop_Very_Long_Name_Alpha_Beta_Gamma_Delta_"
+    "\u754c\u9762\u6750\u8d28\u5e93_\u73af\u5883\u6c1b\u56f4_\u5faa\u73af\u7d20\u6750_\u4e09\u6bb5\u6362\u884c\u9a8c\u8bc1_" +
+    "\u8d85\u957f\u540d\u79f0_Ambient_Loop_Very_Long_Name_Alpha_Beta_Gamma_Delta_" +
     "Epsilon_2026_v1_final_mastered.wav",
 ]
 
@@ -230,8 +230,8 @@ def main(args: argparse.Namespace) -> int:
 
         command(cmd='scan_folder', path=str(library), recursive=False,
                 cache_waveforms=False, build_similarity_index=False)
-        state = wait_state(driver, lambda s: s['total_count'] == min(args.files, len(library_names(args.files))),
-                           'library scan', 120)
+        wait_state(driver, lambda s: s['total_count'] == min(args.files, len(library_names(args.files))),
+                   'library scan', 120)
         command(cmd='search', query='')
         state = wait_state(driver, lambda s: s['result_count'] == args.files,
                            'all results listed', 60)

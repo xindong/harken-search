@@ -154,12 +154,12 @@ static void win_average_buffer (float *samples, int sample_count, int half_width
         if (j < 0) j = 0;
 
         while (m < j) {
-            if ((sum -= samples [m] * samples [m]) < 0.0) sum = 0.0;
+            if ((sum -= (double) samples [m] * samples [m]) < 0.0) sum = 0.0;
             m++;
         }
 
         while (n < k) {
-            sum += samples [n] * samples [n];
+            sum += (double) samples [n] * samples [n];
             n++;
         }
 

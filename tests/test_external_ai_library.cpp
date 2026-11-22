@@ -291,6 +291,40 @@ void TestShortMetadataAndLiteralSearch(const fs::path& scratch) {
 #endif
 }
 
+void TestApplyMetadataPreservesSearchableExtendedMetadata(const fs::path& scratch) {
+    Fixture fixture(scratch);
+    {
+        const auto writer = fixture.Seed();
+        Exec(writer.get(), R"SQL(
+            ALTER TABLE audio_files ADD COLUMN description TEXT;
+            ALTER TABLE audio_files ADD COLUMN category TEXT;
+            ALTER TABLE audio_files ADD COLUMN keywords TEXT;
+            ALTER TABLE audio_files ADD COLUMN composer TEXT;
+            UPDATE audio_files
+            SET composer='Persistent Composer', search_data='wind Persistent Composer'
+            WHERE id=1;
+        )SQL");
+    }
+
+    ExternalAiLibrary library;
+    std::string error;
+    Check(library.Open(fixture.path.u8string(), fixture.root.u8string(), error),
+        "opens a catalog with a searchable extended metadata column");
+    Check(library.ApplyMetadata(1, Json{{"title", "Updated Title"}}, error) && error.empty(),
+        "metadata updates succeed when the catalog has searchable extended metadata");
+
+    const auto reader = fixture.Connect();
+    sqlite3_stmt* raw = nullptr;
+    const int prepared = sqlite3_prepare_v2(reader.get(),
+        "SELECT title,search_data FROM audio_files WHERE id=1", -1, &raw, nullptr);
+    Statement statement(raw, sqlite3_finalize);
+    Check(prepared == SQLITE_OK && sqlite3_step(statement.get()) == SQLITE_ROW &&
+        std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement.get(), 0))) == "Updated Title" &&
+        std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement.get(), 1))).find(
+            "persistent composer") != std::string::npos,
+        "metadata updates keep existing searchable extended fields in search_data");
+}
+
 void TestFoldersWithStaleIndex(const fs::path& scratch) {
     Fixture fixture(scratch);
     {
@@ -628,6 +662,7 @@ int main(int argc, char** argv) {
 #endif
         TestReadOnlySearch(scratch);
         TestShortMetadataAndLiteralSearch(scratch);
+        TestApplyMetadataPreservesSearchableExtendedMetadata(scratch);
         TestFoldersWithStaleIndex(scratch);
         TestSimilarContentDeduplication(scratch);
         TestCachedSimilarity(scratch);

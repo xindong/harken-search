@@ -89,16 +89,20 @@ std::wstring Fold(const std::wstring& value)
 }
 #endif
 
-std::vector<std::wstring> Components(const fs::path& path)
+// Native path characters: std::wstring on Windows, std::string elsewhere. The
+// comparison below must not assume wchar_t, or non-Windows builds stop compiling.
+using PathString = fs::path::string_type;
+
+std::vector<PathString> Components(const fs::path& path)
 {
-    std::vector<std::wstring> parts;
+    std::vector<PathString> parts;
     for (const auto& part : path) {
         parts.push_back(part.native());
     }
     return parts;
 }
 
-bool SameComponent(const std::wstring& left, const std::wstring& right)
+bool SameComponent(const PathString& left, const PathString& right)
 {
 #ifdef _WIN32
     return Fold(left) == Fold(right);

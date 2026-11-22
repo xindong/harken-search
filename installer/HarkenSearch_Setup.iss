@@ -491,6 +491,7 @@ begin
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearch.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearchBootstrap.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'HarkenSearchProToolsBridge.exe') or
+    IsFileLocked(AddBackslash(InstallLocation) + 'HarkenExternalAiMcp.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'Auro.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'Aris.exe') or
     IsFileLocked(AddBackslash(InstallLocation) + 'ArisBootstrap.exe');
