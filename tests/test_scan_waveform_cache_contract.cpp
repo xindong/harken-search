@@ -717,6 +717,56 @@ static int testScanStatsReportIngestSummary() {
     return failures;
 }
 
+static int testScanCollectsUppercaseExtensions() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("uppercase_ext");
+    const fs::path dbPath = root / "uppercase_ext.db";
+    writeSilentMonoWav(root / "UPPER.WAV");
+    writeSilentMonoWav(root / "Mixed.WaV");
+    writeSilentMonoWav(root / "lower.wav");
+    {
+        std::ofstream note(root / "readme.TXT", std::ios::binary | std::ios::trunc);
+        note << "not audio";
+    }
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false, nullptr, nullptr, 1, false);
+    check(stats.added == 3, "scan collects every case spelling of an audio extension", failures);
+
+    const auto records = db.getAllFiles();
+    check(records.size() == 3, "scan stores all three case-spelled audio files", failures);
+    bool sawUpper = false;
+    bool sawMixed = false;
+    for (const auto& record : records) {
+        if (record.fileName == "UPPER.WAV") {
+            sawUpper = true;
+            check(record.extension == ".wav", "uppercase extension is stored lowercased", failures);
+        } else if (record.fileName == "Mixed.WaV") {
+            sawMixed = true;
+            check(record.extension == ".wav", "mixed-case extension is stored lowercased", failures);
+        }
+    }
+    check(sawUpper, "UPPER.WAV record is present", failures);
+    check(sawMixed, "Mixed.WaV record is present", failures);
+
+    SearchFilter knownAudioOnly;
+    knownAudioOnly.includeOnlyKnownExts = true;
+    const auto filtered = db.searchFiles(knownAudioOnly, 100, 0);
+    check(filtered.size() == 3, "file-type filter keeps case-spelled WAV rows", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testCompleteWaveformExtractionReturnsAllScanArtifacts() {
     int failures = 0;
     const fs::path root = makeTempRoot("complete_extract");
@@ -3007,6 +3057,70 @@ static int testRemoveFolderSubtreeRecoversMalformedFtsIndexes() {
     return failures;
 }
 
+static int testRemoveFolderSubtreeDeleteFailureReportsReadableError() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("remove_folder_delete_failure");
+    const fs::path dbPath = root / "remove_folder_delete_failure.db";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    AudioRecord target;
+    target.filePath = "H:\\Sound effect\\综合\\BoomLibrary\\hit.wav";
+    target.folderPath = "H:\\Sound effect\\综合\\BoomLibrary";
+    target.fileName = "hit.wav";
+    target.extension = ".wav";
+    target.format = "WAV";
+    target.fileSize = 10;
+    target.sampleRate = 48000;
+    target.channels = 1;
+    target.totalFrames = 48000;
+    target.durationSeconds = 1.0f;
+    check(db.addFile(target), "delete-failure fixture inserts target row", failures);
+
+    AudioRecord sibling = target;
+    sibling.filePath = "I:\\Sound effect\\KeepCase\\keep.wav";
+    sibling.folderPath = "I:\\Sound effect\\KeepCase";
+    sibling.fileName = "keep.wav";
+    sibling.fileSize = 20;
+    sibling.totalFrames = 96000;
+    sibling.durationSeconds = 2.0f;
+    check(db.addFile(sibling), "delete-failure fixture inserts sibling row", failures);
+
+    check(execSqlite(db.db(),
+                     "CREATE TRIGGER fail_audio_delete BEFORE DELETE ON audio_files "
+                     "BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END;"),
+          "delete-failure fixture installs blocking delete trigger", failures);
+
+    const int removed = db.removeFolderSubtreeFromDb("h:\\sound effect\\综合", false);
+    check(removed == 0, "delete-failure removal reports zero rows removed", failures);
+    const std::string error = db.getLastError();
+    check(error.find("removeFolderSubtreeFromDb") != std::string::npos,
+          "delete-failure error names the failing operation", failures);
+    check(error.find("injected delete failure") != std::string::npos,
+          "delete-failure error keeps the underlying sqlite message", failures);
+    check(db.fileExists(target.filePath),
+          "delete-failure rollback keeps the target row", failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
+          "delete-failure rollback keeps every row", failures);
+
+    check(execSqlite(db.db(), "DROP TRIGGER fail_audio_delete;"),
+          "delete-failure fixture drops the blocking trigger", failures);
+    const int retried = db.removeFolderSubtreeFromDb("h:\\sound effect\\综合", false);
+    check(retried == 1, "delete-failure removal succeeds after the trigger is gone", failures);
+    check(!db.fileExists(target.filePath), "delete-failure retry deletes the target row", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testClearWaveformCacheByFolderUsesCanonicalFolderPath() {
     int failures = 0;
     const fs::path root = makeTempRoot("clear_waveform_folder_canon");
@@ -4659,6 +4773,8 @@ int main(int argc, char** argv) {
     failures += testCompleteImportSkipsPersistentDetailForOverFiveMinutes();
     std::cout << "-- testScanStatsReportIngestSummary\n";
     failures += testScanStatsReportIngestSummary();
+    std::cout << "-- testScanCollectsUppercaseExtensions";
+    failures += testScanCollectsUppercaseExtensions();
     std::cout << "-- testMultiFolderScanProgressAggregatesLocalCallbacks\n";
     failures += testMultiFolderScanProgressAggregatesLocalCallbacks();
     std::cout << "-- testCompleteWaveformExtractionReturnsAllScanArtifacts\n";
@@ -4725,6 +4841,8 @@ int main(int argc, char** argv) {
     failures += testRemoveFolderSubtreeLeavesPackageCompactable();
     std::cout << "-- testRemoveFolderSubtreeRecoversMalformedFtsIndexes\n";
     failures += testRemoveFolderSubtreeRecoversMalformedFtsIndexes();
+    std::cout << "-- testRemoveFolderSubtreeDeleteFailureReportsReadableError";
+    failures += testRemoveFolderSubtreeDeleteFailureReportsReadableError();
     std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
     failures += testPilotFolderHierarchyKeepsNestedRootsTogether();
     failures += testFolderHierarchyFromIndexRepairsStaleIndex();
