@@ -395,6 +395,15 @@
             ImGui::PushTextWrapPos(controlX-20);aura::ui::DrawSettingsSearchableLabel(entryLabel);ImGui::PopTextWrapPos();
             if(id=="systemFont")su::Observe("system-font-preview");
             aura::ui::EndSettingsSearchHighlight();
+            if(id=="themeEditor"){
+                ImGui::SameLine(0,12);
+                ImGui::PushStyleColor(ImGuiCol_Text,preview.controlAccent);
+                ImGui::TextUnformatted(L(SetUX_ThemeDownloadLink));
+                if(ImGui::IsItemHovered())ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if(ImGui::IsItemClicked())Platform::OpenUrl("https://harkensearch.xd.com");
+                su::Observe("theme-download-link");
+                ImGui::PopStyleColor();
+            }
             const float labelBottom=ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(controlX,rowY)); ImGui::SetNextItemWidth(controlW-2);
             ImGui::BeginGroup();ImGui::PushTextWrapPos(rowX+rowW-2);
