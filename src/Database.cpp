@@ -817,6 +817,17 @@ static void AccumulateSemicolonFacetTokens(const std::string& rawValue,
 // Extended metadata column policy lives in ExtendedMetadataColumns.h so that
 // every writer of search_data shares one field list.
 
+template <typename ColumnExpression>
+static std::string BuildSearchableExtendedSearchSql(ColumnExpression&& columnExpression) {
+    std::string result;
+    for (size_t i = 0; i < kExtMetaCount; ++i) {
+        if (!kExtMetaCols[i].searchable) continue;
+        result += " || ' ' || IFNULL(" +
+            columnExpression(kExtMetaCols[i].col) + ",'')";
+    }
+    return result;
+}
+
 // Columns that MetadataEditPatch may update after whitelist validation.
 static const std::unordered_set<std::string>& EditableTextColumns() {
     static const std::unordered_set<std::string> s = []() {
@@ -4338,10 +4349,13 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     }
     std::sort(sortedTextKeys.begin(), sortedTextKeys.end());
 
+    std::unordered_map<std::string, int> textParamIndices;
+
     for (const auto& col : sortedTextKeys) {
         if (!setClauses.empty()) setClauses += ", ";
         setClauses += col + " = ?" + std::to_string(paramIdx);
         plan.bindOrder.push_back({col, false});
+        textParamIndices[col] = paramIdx;
         // Update search_data expressions for the big 3
         if (col == "description") searchDescExpr = "?" + std::to_string(paramIdx);
         else if (col == "keywords") searchKwExpr = "?" + std::to_string(paramIdx);
@@ -4367,11 +4381,13 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     if (setClauses.empty()) return false;
 
     // Build search_data expression including searchable extended fields
-    std::string searchExtra;
-    for (size_t i = 0; i < kExtMetaCount; ++i) {
-        if (!kExtMetaCols[i].searchable) continue;
-        searchExtra += " || ' ' || IFNULL(" + std::string(kExtMetaCols[i].col) + ",'')";
-    }
+    const std::string searchExtra = BuildSearchableExtendedSearchSql(
+        [&textParamIndices](const char* column) {
+            const auto it = textParamIndices.find(column);
+            return it == textParamIndices.end()
+                ? std::string(column)
+                : "?" + std::to_string(it->second);
+        });
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
         ", search_data = aura_search_data(file_name || ' ' || IFNULL(title,'') || ' ' || " +
@@ -10124,9 +10140,12 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
         "INSERT INTO temp.search_data_recompute_work (id, old_search_data, new_search_data) "
         "SELECT id, search_data, aura_search_data("
         "file_name || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || "
-        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')) "
-        "FROM audio_files WHERE id > ? ORDER BY id LIMIT ?;";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')";
+    const std::string searchableExtended = BuildSearchableExtendedSearchSql(
+        [](const char* column) { return std::string(column); });
+    const std::string sqlWithExtended = sql + searchableExtended +
+        ") FROM audio_files WHERE id > ? ORDER BY id LIMIT ?;";
+    if (sqlite3_prepare_v2(db, sqlWithExtended.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         DiscardSearchDataRecomputeScratch(db);
         return SearchDataRecomputeStep::Failed;
     }
@@ -12393,11 +12412,16 @@ bool Database::updateFilePath(
     newFolderPath = HarkenSearch::CanonicalFolderPath(newFolderPath);
 
     // Update path fields and clear folder artwork in one statement to keep list and detail views aligned.
-    const char* sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
-                      "folder_path = ?, folder_cover_key = NULL, folder_cover_src_path = NULL, folder_cover_src_mtime = 0, "
-                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')) WHERE file_path = ?;";
+    const std::string searchableExtended = BuildSearchableExtendedSearchSql(
+        [](const char* column) { return std::string(column); });
+    const std::string sql =
+        "UPDATE audio_files SET file_path = ?, file_name = ?, "
+        "folder_path = ?, folder_cover_key = NULL, folder_cover_src_path = NULL, folder_cover_src_mtime = 0, "
+        "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || "
+        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')" + searchableExtended +
+        ") WHERE file_path = ?;";
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         m_lastError = sqlite3_errmsg(m_db);
         return false;
     }

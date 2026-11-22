@@ -21,8 +21,6 @@ constexpr std::size_t kMaxRequestBytes = 64 * 1024;
 constexpr int kResponseTimeoutMs = 15000;
 // A whole request line must arrive inside this window.
 constexpr int kRequestTimeoutMs = 5000;
-// Connect waits forever, but in 100 ms slices so a stop request is noticed.
-constexpr DWORD kConnectWaitMs = 24u * 60u * 60u * 1000u;
 
 struct PendingRequest {
     std::string request;
@@ -54,6 +52,15 @@ ServerState& State()
     return state;
 }
 
+void MarkWorkerStopped(ServerState& state)
+{
+    std::lock_guard<std::mutex> lock(state.mutex);
+    state.running = false;
+#ifdef _WIN32
+    state.handle = INVALID_HANDLE_VALUE;
+#endif
+}
+
 std::string HashLibraryId(const std::string& libraryId)
 {
     // FNV-1a, rendered as 16 hex digits: stable pipe name per library, no path leak.
@@ -72,6 +79,10 @@ std::string HashLibraryId(const std::string& libraryId)
 }
 
 #ifdef _WIN32
+
+// Connect waits a long time, but in 100 ms slices so a stop request is noticed.
+constexpr DWORD kConnectWaitMs = 24u * 60u * 60u * 1000u;
+constexpr DWORD kResponseDrainTimeoutMs = 1000;
 
 std::wstring WidePipeName(const std::string& pipeName)
 {
@@ -160,6 +171,25 @@ bool WriteResponse(HANDLE pipe, HANDLE ioEvent, const std::atomic<bool>& stop, c
     return written == payload.size();
 }
 
+// The client reads the response and closes its one-request connection. Wait
+// briefly for that close so DisconnectNamedPipe does not discard unread bytes,
+// while keeping shutdown bounded and cancellable.
+void WaitForClientClose(HANDLE pipe, HANDLE ioEvent, const std::atomic<bool>& stop)
+{
+    OVERLAPPED overlapped{};
+    overlapped.hEvent = ioEvent;
+    ResetEvent(ioEvent);
+    char discarded = 0;
+    DWORD read = 0;
+    if (ReadFile(pipe, &discarded, 1, &read, &overlapped)) {
+        return;
+    }
+    if (GetLastError() != ERROR_IO_PENDING) {
+        return;
+    }
+    AwaitPipeIo(pipe, overlapped, kResponseDrainTimeoutMs, stop, read);
+}
+
 // The worker is the only owner of the pipe handle: the stop path never closes
 // it, so a cancelled wait cannot close a handle Windows already reused.
 void WorkerLoop(ServerState& state)
@@ -167,6 +197,7 @@ void WorkerLoop(ServerState& state)
     const std::wstring name = WidePipeName(state.pipeName);
     HANDLE ioEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!ioEvent) {
+        MarkWorkerStopped(state);
         return;
     }
     while (!state.stop.load()) {
@@ -216,10 +247,11 @@ void WorkerLoop(ServerState& state)
                 state.pending.reset();
                 lock.unlock();
                 response.push_back('\n');
-                WriteResponse(pipe, ioEvent, state.stop, response);
+                if (WriteResponse(pipe, ioEvent, state.stop, response)) {
+                    WaitForClientClose(pipe, ioEvent, state.stop);
+                }
             }
         }
-        FlushFileBuffers(pipe);
         DisconnectNamedPipe(pipe);
         {
             std::lock_guard<std::mutex> lock(state.mutex);
@@ -230,6 +262,7 @@ void WorkerLoop(ServerState& state)
         CloseHandle(pipe);
     }
     CloseHandle(ioEvent);
+    MarkWorkerStopped(state);
 }
 
 #endif  // _WIN32
@@ -248,8 +281,11 @@ void StartExternalAiBridgeServer(const std::string& libraryId)
         return;
     }
     auto& state = State();
-    if (state.running && state.libraryId == libraryId) {
-        return;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (state.running && state.libraryId == libraryId) {
+            return;
+        }
     }
     StopExternalAiBridgeServer();
 #ifdef _WIN32
@@ -260,17 +296,21 @@ void StartExternalAiBridgeServer(const std::string& libraryId)
         state.pipeName = ExternalAiBridgePipeName(libraryId);
         state.running = true;
     }
-    state.worker = std::thread(WorkerLoop, std::ref(state));
+    try {
+        state.worker = std::thread(WorkerLoop, std::ref(state));
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.stop.store(true);
+        state.running = false;
+        state.pending.reset();
+        throw;
+    }
 #endif
 }
 
 void StopExternalAiBridgeServer()
 {
     auto& state = State();
-    if (!state.running) {
-        return;
-    }
-#ifdef _WIN32
     {
         std::lock_guard<std::mutex> lock(state.mutex);
         state.stop.store(true);
@@ -280,6 +320,7 @@ void StopExternalAiBridgeServer()
         state.answered.notify_all();
         state.queued.notify_all();
     }
+#ifdef _WIN32
     if (state.worker.joinable()) {
         state.worker.join();
     }
@@ -287,11 +328,16 @@ void StopExternalAiBridgeServer()
     std::lock_guard<std::mutex> lock(state.mutex);
     state.running = false;
     state.pending.reset();
+#ifdef _WIN32
+    state.handle = INVALID_HANDLE_VALUE;
+#endif
 }
 
 bool ExternalAiBridgeServerRunning()
 {
-    return State().running;
+    auto& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    return state.running;
 }
 
 void DrainExternalAiBridgeServer(const std::function<std::string(const std::string&)>& handler)

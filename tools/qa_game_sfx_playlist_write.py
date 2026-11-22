@@ -112,17 +112,6 @@ def run(args):
             time.sleep(0.05)
         raise AssertionError("no fresh settings frame")
 
-    def click(item_id):
-        observed = settle()
-        found = [x for x in observed["items"] if x["id"] == item_id]
-        assert found, item_id
-        a, b, c, d = found[0]["bounds"]
-        offset_x, offset_y = win32gui.ClientToScreen(identity["hwnd"], (0, 0))
-        for phase in ("hover", "down", "up"):
-            command(cmd="theme_schedule", action="pointer", phase=phase,
-                    x=a + (c - a) / 2 - offset_x, y=(b + d) / 2 - offset_y)
-            settle()
-
     def check(name, **details):
         report["checks"].append(dict(case=name, **details))
 

@@ -94,3 +94,16 @@ endif()
 add_test(NAME TestExternalAiPlaylistBridge COMMAND TestExternalAiPlaylistBridge "${CMAKE_CURRENT_BINARY_DIR}")
 set_tests_properties(TestExternalAiPlaylistBridge PROPERTIES TIMEOUT 30)
 aura_set_test_labels(TestExternalAiPlaylistBridge core)
+
+add_executable(TestExternalAiBridgeServer EXCLUDE_FROM_ALL
+    tests/test_external_ai_bridge_server.cpp
+    src/ExternalAiBridgeServer.cpp)
+target_include_directories(TestExternalAiBridgeServer PRIVATE src)
+target_compile_features(TestExternalAiBridgeServer PRIVATE cxx_std_17)
+target_link_libraries(TestExternalAiBridgeServer PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(TestExternalAiBridgeServer PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME TestExternalAiBridgeServer COMMAND TestExternalAiBridgeServer)
+set_tests_properties(TestExternalAiBridgeServer PROPERTIES TIMEOUT 30)
+aura_set_test_labels(TestExternalAiBridgeServer core)
