@@ -101,16 +101,6 @@ def run(args):
     def command(**payload):
         return driver.command(payload)
 
-    def settle():
-        first = command(cmd="settings_ui")["frame"]
-        deadline = time.monotonic() + 8
-        while time.monotonic() < deadline:
-            value = command(cmd="settings_ui")
-            if value["frame"] > first + 2:
-                return value
-            time.sleep(0.05)
-        raise AssertionError("no fresh settings frame")
-
     def check(name, **details):
         report["checks"].append(dict(case=name, **details))
 
