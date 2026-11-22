@@ -27192,6 +27192,10 @@ std::string SetupDockGestureFixtureForQa(AppState& state) {
 }
 #endif
 
+// 开发/自测入口（Dock 压测窗口、ImGui Demo 窗口）不在正式版菜单里露出。
+// 只隐藏菜单入口，窗口与布局测试代码保持完整；需要调试时把它改成 true 即可恢复。
+static constexpr bool kShowDevTestMenuEntries = false;
+
 static bool g_dockTestWindowOpen = false;
 static bool g_dockTestBandHintsVisible = false;
 static constexpr int kDockTestPanelCapacity = 12;
@@ -36500,9 +36504,11 @@ void RenderUI(AppState& state) {
                 ImGui::EndMenu();
             }
 
-            ImGui::Separator();
 #if AURA_BUILD_DIAGNOSTICS
-            ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
+            if (kShowDevTestMenuEntries) {
+                ImGui::Separator();
+                ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
+            }
 #endif
             }
             menuChromeView.reset();
@@ -36633,9 +36639,11 @@ void RenderUI(AppState& state) {
         if (toolsMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeTools(GetUIFontRegular());
             { ChromeTextScope _readingMenuTools;
-            if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
-            if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
-                ResetDockTestLayout();
+            if (kShowDevTestMenuEntries) {
+                if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
+                if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
+                    ResetDockTestLayout();
+                }
             }
             if (ImGui::MenuItem(L(Tools_FolderAutoRename))) {
                 state.showFolderAutoRenameDialog = true;
