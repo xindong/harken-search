@@ -269,7 +269,7 @@
         constexpr su::Page navigationPages[]{
             su::Page::Appearance, su::Page::Audio, su::Page::DawIntegration, su::Page::Search,
             su::Page::Library, su::Page::Interaction, su::Page::Personal, su::Page::Backup,
-            su::Page::Diagnostics,
+            su::Page::Diagnostics, su::Page::ExternalAi,
         };
         for (const auto page : navigationPages) {
 #if !AURA_BUILD_DIAGNOSTICS
@@ -328,21 +328,41 @@
         editor.previousPage=editor.page;editor.previousSearching=editor.query[0]!=0;
         auto heading=[&](const char* title){ImGui::PushFont(GetUIFontEmphasis(),settingsBodyPx);ImGui::TextUnformatted(title);ImGui::PopFont();ImGui::Separator();};
         auto actionButton=[&](const char* label,const char* action){if(aura::ui::ActionButton(label))requestAction(action);};
+        // Settings values read as one centered column. The native combo preview is
+        // left aligned, so keep the frame and popup and paint the same text centered.
+        auto centeredComboText=[&](const char* text){
+            if(!text||!text[0])return;
+            const ImVec2 min=ImGui::GetItemRectMin(),max=ImGui::GetItemRectMax();
+            const float padY=ImGui::GetStyle().FramePadding.y;
+            const float left=min.x+ImGui::GetStyle().FramePadding.x,right=std::max(left,max.x-ImGui::GetFrameHeight());
+            const float avail=right-left;
+            ImVec2 size=ImGui::CalcTextSize(text);
+            const ImVec2 pos(left,min.y+padY);
+            ImGui::PushClipRect(ImVec2(left,min.y),ImVec2(right,max.y),true);
+            if(size.x>avail)ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(),pos,ImVec2(right,pos.y+size.y),right,text,nullptr,&size);
+            else ImGui::GetWindowDrawList()->AddText(ImVec2(pos.x+(avail-size.x)*.5f,pos.y),ImGui::GetColorU32(ImGuiCol_Text),text);
+            ImGui::PopClipRect();
+        };
         auto combo=[&](int& value,std::initializer_list<const char*> options){
             std::vector<const char*> list(options);bool changed=false;
+            const char* preview=value>=0&&value<(int)list.size()?list[value]:"";
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
-            if(ImGui::BeginCombo("##value",value>=0&&value<(int)list.size()?list[value]:"",ImGuiComboFlags_HeightLarge)){
+            const bool open=ImGui::BeginCombo("##value","",ImGuiComboFlags_HeightLarge);
+            if(open){
                 for(int i=0;i<(int)list.size();++i){ImGui::PushID(i);if(ImGui::Selectable(list[i],value==i)){value=i;changed=true;}su::Observe(("option-"+std::to_string(i)).c_str());ImGui::PopID();}
                 if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
                 ImGui::EndCombo();
             }
+            centeredComboText(preview);
             ImGui::PopStyleVar();
             return changed;
         };
         auto stringInput=[&](std::string& value){char buffer[2048]{};std::snprintf(buffer,sizeof(buffer),"%s",value.c_str());if(ImGui::InputText("##value",buffer,sizeof(buffer)))value=buffer;};
         auto themedSelector=[&](int& value,const char* editAction=nullptr){
+            const char* preview=su::StockLabel(value);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
-            if(ImGui::BeginCombo("##value",su::StockLabel(value))){
+            const bool open=ImGui::BeginCombo("##value","");
+            if(open){
                 for(int i=0;i<5;++i){if(ImGui::Selectable(su::StockLabel(i),value==i))value=i;su::Observe(("theme-option-"+std::to_string(i)).c_str());}
 #if AURA_BUILD_DIAGNOSTICS
                 if(editAction && ProductEdition::hasFeature("theme_editor")){
@@ -354,6 +374,7 @@
                 if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
                 ImGui::EndCombo();
             }
+            centeredComboText(preview);
             ImGui::PopStyleVar();
         };
         auto transportSwitch=[&](bool& visible,float width){
@@ -437,7 +458,9 @@
         }else{
             ImGui::TextDisabled("%s",L(SetUX_PREFERENCES));
             ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(su::PageLabel(editor.page));su::Observe("page-title");ImGui::PopFont();ImGui::Dummy(ImVec2(0,8));
-            if(editor.page==su::Page::Common){
+            if(editor.page==su::Page::ExternalAi){
+#include "ExternalAiSettingsPage.inl"
+            }else if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
                     {L(SetUX_Listening),{"device","volume","normalize"}},
                     {L(SetUX_Interface),{"theme","systemFont"}},
@@ -483,6 +506,7 @@
                         ImGui::Dummy(ImVec2(0,6));
                         continue;
                     }
+                    if(entry.id=="externalAi")continue;
                     if(entry.id=="transportReverse"||entry.id=="transportPan"||entry.id=="transportSoundstage"||entry.id=="transportEQ")continue;
                     drawEntry(entry);
                 }

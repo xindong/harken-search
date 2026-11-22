@@ -111,6 +111,7 @@
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
+#include "ui/TransportScale.h"
 #include "ui/TransportContrast.h"
 #include "ui/MistBlueChrome.h"
 #include "ui/EmptyStatePalette.h"
@@ -325,6 +326,9 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "TagSystem.h"
 #include "TransferEngine.h"
 #include "ResultActionMenu.h"
+#include "ExternalAiAuthorizationStore.h"
+#include "ExternalAiBridgeServer.h"
+#include "ExternalAiPlaylistService.h"
 #include "SendToTargetSurfaceModel.h"
 #include "HostSendRuntime.h"
 #include "ProToolsBridge.h"
@@ -998,6 +1002,7 @@ static uint64_t BuildSearchFilterSignature(const AppState& state, const SearchFi
     h = HashCombine64(h, (uint64_t)filter.maxChannels);
     h = HashCombine64(h, (uint64_t)filter.coverFilter);
     h = HashCombine64(h, (uint64_t)filter.includeOnlyKnownExts);
+    h = HashCombine64(h, (uint64_t)filter.losslessWavPackOnly);
     for (const auto& ext : filter.excludeExtensions) {
         h = HashCombine64(h, HashString64Local(ext));
     }
@@ -5597,7 +5602,7 @@ void LoadAppSettings(AppState& state) {
         state.settings.fontSize = kChromeFontPx;
         // List font is independently adjustable and keeps its own default.
         state.settings.listFontSize = itList != kv.end()
-            ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, 24)
+            ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)
             : kDefaultListFontPx;
     }
     state.settings.rowHeight = ParseInt(kv["rowHeight"], state.settings.rowHeight);
@@ -6099,6 +6104,7 @@ void LoadAppSettings(AppState& state) {
     state.showM4A = ParseBool(kv["showM4A"], state.showM4A);
     state.showWMA = ParseBool(kv["showWMA"], state.showWMA);
     state.showOther = ParseBool(kv["showOther"], state.showOther);
+    state.showLosslessWavPack = ParseBool(kv["showLosslessWavPack"], state.showLosslessWavPack);
 
     // Personal preferences
     auto itUserName = kv.find("userName");
@@ -6774,6 +6780,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"showM4A", state.showM4A ? "1" : "0"});
     items.push_back({"showWMA", state.showWMA ? "1" : "0"});
     items.push_back({"showOther", state.showOther ? "1" : "0"});
+    items.push_back({"showLosslessWavPack", state.showLosslessWavPack ? "1" : "0"});
 
     // Personal preferences
     items.push_back({"userName", state.settings.userName});
@@ -9236,8 +9243,8 @@ static bool HasFileTypeFilter(const AppState& state) {
 
 // Unified popup typography / hierarchy helpers
 // Shared vocabulary for all popups and modals so title / section / body text
-// reads at a consistent rhythm. Reference: docs .impeccable.md "Keep hierarchy
-// strict" — never let two levels look the same.
+// reads at a consistent rhythm. Keep hierarchy strict: never let two levels
+// look the same.
 
 // Level 1: popup title. Bold font, primary text at full opacity, tight bottom gap.
 static std::string fmtStr(const char* fmt, const char* a) {
@@ -14777,7 +14784,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
         state.showRemoveFolderDbConfirm = false;
     }
 
-    if (!BeginTransientScrollbarPopupModal(kPopupTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!aura::ui::BeginAlertDialog(kPopupTitle, kPopupTitle)) {
         return;
     }
     { ReadingTextScope _readingPopup;  // dialog body is a reading surface
@@ -14805,7 +14812,7 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
     }
 
     }
-    ImGui::EndPopup();
+    aura::ui::EndAlertDialog();
 }
 
 // Flat folder-search results avoid recursive matching during every frame.
@@ -15243,7 +15250,7 @@ void FilterResultsByFileType(AppState& state) {
     filtered.reserve(state.searchResults.size());
 
     for (const auto& record : state.searchResults) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             filtered.push_back(record);
         }
     }
@@ -15275,7 +15282,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
 
     state.resetRandomSampling();
     for (const auto& record : allMatching) {
-        if (state.shouldShowFile(record.extension)) {
+        if (state.shouldShowFile(record)) {
             if (state.playedFileIds.find(record.id) == state.playedFileIds.end())
                 state.randomAvailableIds.push_back(record.id);
         }
@@ -15283,7 +15290,7 @@ void PumpInitRandomSamplingPoolIfPending(AppState& state) {
     state.randomAllPlayed = state.randomAvailableIds.empty();
     if (state.randomAllPlayed) {
         for (const auto& record : allMatching) {
-            if (state.shouldShowFile(record.extension))
+            if (state.shouldShowFile(record))
                 state.randomAvailableIds.push_back(record.id);
         }
     }
@@ -15482,6 +15489,7 @@ static void ClearAllFiltersForShowAll(AppState& state, bool explicitRefresh) {
     state.instrumentPillState.clear();
     state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
     state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+    state.showLosslessWavPack = false;
     state.suppressNextRealtimeSearchCommit = true;
 
     // Clear both same-folder and same-name search modes.
@@ -17372,8 +17380,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         // --- Enum filters: single combo trigger, unified popup body ---
         drawSidebarFilterLabel(L(Filter_Format));
         {
-            const char* formatItems[] = { L(Filter_All), "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems, IM_ARRAYSIZE(formatItems),
+            auto formatItems = aura::search::kAudioFormatFilters;
+            formatItems.front() = L(Filter_All);
+            DrawSidebarEnumFilter("Format", &state.formatFilterIndex, formatItems.data(), static_cast<int>(formatItems.size()),
                 [&]() { applyMetaFilters(); });
         }
 
@@ -17704,25 +17713,52 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
             typesChanged |= ImGui::Checkbox(L(Main_ExtWmaCheck), &state.showWMA);
             ImGui::SameLine(80);
-            typesChanged |= ImGui::Checkbox(L(Filter_OtherType), &state.showOther);
+            if (ImGui::Checkbox(L(Filter_OtherType), &state.showOther)) {
+                state.showLosslessWavPack = false;
+                typesChanged = true;
+            }
 
             // Quick buttons
-            if (ImGui::SmallButton(L(Filter_AllBtn))) {
+#if ARIS_PREVIEW_ISOLATION
+            auto recordTypePresetRect = [&](const char* key) {
+                if (!ImGui::IsItemVisible()) return;
+                const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                state.qaFilterUiRects[key] = ImVec4(
+                    min.x - origin.x, min.y - origin.y, max.x - origin.x, max.y - origin.y);
+            };
+#endif
+            const bool allTypesPressed = ImGui::SmallButton(L(Filter_AllBtn));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.all");
+#endif
+            if (allTypesPressed) {
                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_WAVOnly))) {
+            const bool wavOnlyPressed = ImGui::SmallButton(L(Filter_WAVOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.wav");
+#endif
+            if (wavOnlyPressed) {
                 state.showWAV = true;
                 state.showMP3 = state.showFLAC = state.showOGG = false;
                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = false;
                 typesChanged = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(L(Filter_LosslessOnly))) {
+            const bool losslessOnlyPressed = ImGui::SmallButton(L(Filter_LosslessOnly));
+#if ARIS_PREVIEW_ISOLATION
+            recordTypePresetRect("filter.files.lossless");
+#endif
+            if (losslessOnlyPressed) {
                 state.showWAV = state.showFLAC = state.showAIFF = true;
                 state.showMP3 = state.showOGG = state.showM4A = state.showWMA = state.showOther = false;
+                state.showLosslessWavPack = true;
                 typesChanged = true;
             }
 
@@ -18399,7 +18435,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
     const char* title=L(Info_SaveBeforeLeaving);
     if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
     bool resolved=false;
-    if (BeginTransientScrollbarPopupModal(title,nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)) {
         ImGui::TextUnformatted(L(Info_SaveBeforeLeavingBody));
         if (!state.infoEditError.empty()) ImGui::TextWrapped("%s",state.infoEditError.c_str());
         const bool yes=aura::ui::ActionButton(L(Info_SaveYes),ImVec2(140,0), aura::ui::ButtonVariant::PrimarySearch);
@@ -18413,7 +18449,7 @@ void RenderInfoMetadataLeavePrompt(AppState& state) {
             if(resolved) ImGui::CloseCurrentPopup();
             else if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     if (resolved) {
         state.metadataEditMode=false; state.metadataBatchMode=false; state.metadataBatchIds.clear();
@@ -25551,9 +25587,11 @@ static bool SidebarClearAllGlyphButton(const char* id_str, const ImVec2& size_ar
 // 独立组件：PAN 旋钮 (半圆弧 + 白点 + 蓝字 + 左右排版)
 // 布局：左侧 "PAN" 标签 → 中间半圆弧旋钮 → 右侧数值 (L/R/C)
 // 拖拽改值、双击归零、右键归零
-static bool PanKnob(const char* label, float* v, float v_min, float v_max, const ImVec4& transportSurface, const ImVec2& size_arg = ImVec2(110, 32)) {
+static bool PanKnob(const char* label, float* v, float v_min, float v_max, const ImVec4& transportSurface,
+                    const ImVec2& size_arg, float scale) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
+    const auto px = [scale](float value) { return value * scale; };
 
     ImGuiID id = window->GetID(label);
     ImVec2 pos = window->DC.CursorPos;
@@ -25568,7 +25606,7 @@ static bool PanKnob(const char* label, float* v, float v_min, float v_max, const
 
     // 1. 拖拽逻辑 (水平+垂直混合)
     if (held && ImGui::IsMouseDragging(0)) {
-        float drag_delta = ImGui::GetIO().MouseDelta.x - ImGui::GetIO().MouseDelta.y;
+        float drag_delta = (ImGui::GetIO().MouseDelta.x - ImGui::GetIO().MouseDelta.y) / scale;
         float range = v_max - v_min;
         *v += drag_delta * (range * 0.005f);
         if (*v < v_min) *v = v_min;
@@ -25651,13 +25689,13 @@ static bool PanKnob(const char* label, float* v, float v_min, float v_max, const
     ImDrawList* dl = window->DrawList;
 
     // 4. 绘制半圆弧旋钮（左侧居中，右侧留给数值文字）
-    ImVec2 arc_center = ImVec2(bb.Min.x + 20.0f, bb.Min.y + size_arg.y * 0.5f + 6.0f);
-    float radius = 12.0f;
-    float thickness = 2.5f;
+    ImVec2 arc_center = ImVec2(bb.Min.x + px(20.0f), bb.Min.y + size_arg.y * 0.5f + px(6.0f));
+    float radius = px(12.0f);
+    float thickness = px(2.5f);
 
     // 4.0 轻微底盘 (单层淡圆)
     if (!is_disabled) {
-        dl->AddCircleFilled(arc_center, radius + 2.0f,
+        dl->AddCircleFilled(arc_center, radius + px(2.0f),
             ImGui::GetColorU32(isLightTheme ? ImVec4(0.0f, 0.0f, 0.0f, 0.04f) : ImVec4(0.0f, 0.0f, 0.0f, 0.12f)), 24);
     }
 
@@ -25672,9 +25710,9 @@ static bool PanKnob(const char* label, float* v, float v_min, float v_max, const
     dl->PathStroke(bg_arc_col, 0, thickness);
 
     // 4.2 中心刻度线 (顶部垂直短线)
-    ImVec2 tick_p1 = ImVec2(arc_center.x, arc_center.y - radius - 3.0f);
-    ImVec2 tick_p2 = ImVec2(arc_center.x, arc_center.y - radius + 2.0f);
-    dl->AddLine(tick_p1, tick_p2, tick_col, 1.5f);
+    ImVec2 tick_p1 = ImVec2(arc_center.x, arc_center.y - radius - px(3.0f));
+    ImVec2 tick_p2 = ImVec2(arc_center.x, arc_center.y - radius + px(2.0f));
+    dl->AddLine(tick_p1, tick_p2, tick_col, px(1.5f));
 
     // 4.3 填充圆弧 (从中心向当前值方向延伸, 加粗)
     float percentage = (*v - v_min) / (v_max - v_min);
@@ -25693,7 +25731,7 @@ static bool PanKnob(const char* label, float* v, float v_min, float v_max, const
 
     // 4.4 当前位置指示点
     ImVec2 dot_pos = ImVec2(arc_center.x + radius * cosf(angle_val), arc_center.y + radius * sinf(angle_val));
-    dl->AddCircleFilled(dot_pos, 3.0f, dot_col, 16);
+    dl->AddCircleFilled(dot_pos, px(3.0f), dot_col, 16);
 
     // 5. 绘制数值 — 右下角（与 BM 风格一致），居中时不显示
     if (!is_center) {
@@ -25706,7 +25744,7 @@ static bool PanKnob(const char* label, float* v, float v_min, float v_max, const
         ImVec2 tsFull = ImGui::CalcTextSize(val_buf);
         const float relScale = knobFontPx / ImGui::GetFontSize();
         float tw = tsFull.x * relScale, th = tsFull.y * relScale;
-        ImVec2 tPos(bb.Max.x - tw - 1.0f, bb.Max.y - th);
+        ImVec2 tPos(bb.Max.x - tw - px(1.0f), bb.Max.y - th);
         dl->AddText(ImGui::GetFont(), knobFontPx, tPos, text_col, val_buf);
     }
 
@@ -25835,14 +25873,14 @@ int g_magicEqQaActiveDragPart = 0;
 #endif
 
 static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sampleRate,
-                           bool& saveSettingsNow, const ImVec4& transportSurface, bool navyStateContrast) {
+                           float width, float eqScale, bool& saveSettingsNow,
+                           const ImVec4& transportSurface, bool navyStateContrast) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (!window || window->SkipItems) return false;
-    settings.widgetWidth = std::clamp(settings.widgetWidth, 120.0f, 1600.0f);
+    const auto eqPx = [eqScale](float value) { return value * eqScale; };
     const MagicEQSettings originalSettings = settings;
-    const float width = settings.widgetWidth;
     const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const ImVec2 size(width, 32.0f);
+    const ImVec2 size(width, eqPx(32.0f));
     const ImGuiID id = window->GetID(strId);
     const ImRect bounds(pos, ImVec2(pos.x + width, pos.y + size.y));
     ImGui::ItemSize(size);
@@ -25863,30 +25901,48 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     ImGui::ButtonBehavior(bounds, id, &hovered, &held);
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
-    const float statusWidth = std::min(60.0f, std::max(54.0f, width * 0.34f));
-    const ImVec2 markMin(pos.x + 5.0f, pos.y + 4.0f);
-    const ImVec2 markMax(markMin.x + 46.0f, markMin.y + 24.0f);
-    const float steepnessLeft = markMax.x + 3.0f;
+    const float statusWidth = std::min(aura::ui::dpi::ScalePx(60.0f, eqScale),
+        std::max(aura::ui::dpi::ScalePx(54.0f, eqScale), width * 0.34f));
+    const ImVec2 markMin(pos.x + aura::ui::dpi::ScalePx(5.0f, eqScale),
+                         pos.y + aura::ui::dpi::ScalePx(4.0f, eqScale));
+    const ImVec2 markMax(markMin.x + aura::ui::dpi::ScalePx(46.0f, eqScale),
+                         markMin.y + aura::ui::dpi::ScalePx(24.0f, eqScale));
+    const float steepnessLeft = markMax.x + aura::ui::dpi::ScalePx(3.0f, eqScale);
     const float steepnessRight = pos.x + width - statusWidth;
-    const bool detailedRuler = width >= 440.0f;
+    // The whole equalizer is laid out in design pixels, so every constant here is
+    // multiplied by the interface scale. Otherwise the rail keeps its 100% width
+    // while the labels grow, and ten labels get crammed into the same run.
+    const bool detailedRuler = width >= eqPx(440.0f);
     const float railInset = std::max(
-        std::clamp((width - 180.0f) * (88.0f / 260.0f), 0.0f, 88.0f),
-        std::clamp((width - 180.0f) * (80.0f / 140.0f), 0.0f, 80.0f));
-    const float railLeft = pos.x + std::max({53.0f + railInset,
-                                            width >= 180.0f ? 80.0f : 53.0f,
-                                            width >= 600.0f ? 190.0f : 0.0f});
-    const float railRight = std::max(railLeft + 12.0f, pos.x + width - statusWidth - 5.0f);
-    const float railWidth = std::max(1.0f, railRight - railLeft);
+        std::clamp((width - aura::ui::dpi::ScalePx(180.0f, eqScale)) *
+                       (88.0f / 260.0f),
+                   0.0f, aura::ui::dpi::ScalePx(88.0f, eqScale)),
+        std::clamp((width - aura::ui::dpi::ScalePx(180.0f, eqScale)) *
+                       (80.0f / 140.0f),
+                   0.0f, aura::ui::dpi::ScalePx(80.0f, eqScale)));
+    const float baseRailLeft = std::max({
+        aura::ui::dpi::ScalePx(53.0f, eqScale) + railInset,
+        width >= aura::ui::dpi::ScalePx(180.0f, eqScale)
+            ? aura::ui::dpi::ScalePx(80.0f, eqScale) : aura::ui::dpi::ScalePx(53.0f, eqScale),
+        width >= aura::ui::dpi::ScalePx(600.0f, eqScale)
+            ? aura::ui::dpi::ScalePx(190.0f, eqScale) : 0.0f});
+    const float railEnd = std::max(baseRailLeft + eqPx(12.0f), width - statusWidth - eqPx(5.0f));
+    const float slopeTextWidth = std::max(ImGui::CalcTextSize("48 dB/oct").x,
+                                         ImGui::CalcTextSize(L(MagicEQ_BrickwallApprox)).x);
+    const float railLeft = pos.x + aura::ui::transport::ReserveEqualizerSlope(
+        baseRailLeft, railEnd, slopeTextWidth, eqScale);
+    const float railRight = pos.x + railEnd;
+    const float railWidth = railRight - railLeft;
     // At 120 px the mark, mode cell and rail leave a 10 px top-row slot.
     // Keep a menu hitbox there; the rail itself occupies the lower row.
-    const float steepnessMinimumHitWidth = 10.0f;
-    const float steepnessRulerRight = std::min(steepnessRight, railLeft - 4.0f);
+    const float steepnessMinimumHitWidth = eqPx(10.0f);
+    const float steepnessRulerRight = std::min(steepnessRight, railLeft - eqPx(4.0f));
     const float steepnessVisibleRight = steepnessRulerRight > steepnessLeft
         ? steepnessRulerRight
         : std::min(steepnessRight, steepnessLeft + steepnessMinimumHitWidth);
-    const float railY = pos.y + 21.5f;
-    const float gripTop = pos.y + 13.0f;
-    const float gripBottom = pos.y + 29.0f;
+    const float railY = pos.y + aura::ui::dpi::ScalePx(21.5f, eqScale);
+    const float gripTop = pos.y + aura::ui::dpi::ScalePx(13.0f, eqScale);
+    const float gripBottom = pos.y + aura::ui::dpi::ScalePx(29.0f, eqScale);
     float lowHz = 0.0f, highHz = 0.0f;
     CenterSenseDsp::magicEQEdges(settings.centerFreq, settings.halfWidthPercent, lowHz, highHz);
     float centerPercent = CenterSenseDsp::magicEQFrequencyToPercent(settings.centerFreq);
@@ -25895,8 +25951,8 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     float centerX = railLeft + railWidth * centerPercent * 0.01f;
     float leftX = railLeft + railWidth * lowPercent * 0.01f;
     float rightX = railLeft + railWidth * highPercent * 0.01f;
-    const bool leftResizeHit = hovered && mouse.x <= pos.x + 5.0f;
-    const bool rightResizeHit = hovered && mouse.x >= pos.x + width - 5.0f;
+    const bool leftResizeHit = hovered && mouse.x <= pos.x + eqPx(5.0f);
+    const bool rightResizeHit = hovered && mouse.x >= pos.x + width - eqPx(5.0f);
     const bool toggleHit = hovered && mouse.x >= markMin.x && mouse.x < markMax.x &&
                            mouse.y >= markMin.y && mouse.y < markMax.y;
     const bool modeHit = hovered && mouse.x >= pos.x + width - statusWidth;
@@ -25905,8 +25961,8 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                               mouse.y < gripTop;
     const float leftDistance = std::fabs(mouse.x - leftX);
     const float rightDistance = std::fabs(mouse.x - rightX);
-    const bool leftEndpointHit = hovered && leftDistance <= 7.0f && mouse.y >= gripTop && mouse.y <= gripBottom;
-    const bool rightEndpointHit = hovered && rightDistance <= 7.0f && mouse.y >= gripTop && mouse.y <= gripBottom;
+    const bool leftEndpointHit = hovered && leftDistance <= eqPx(7.0f) && mouse.y >= gripTop && mouse.y <= gripBottom;
+    const bool rightEndpointHit = hovered && rightDistance <= eqPx(7.0f) && mouse.y >= gripTop && mouse.y <= gripBottom;
     const bool widthModifier = io.KeyCtrl || io.KeySuper;
     bool changed = false;
     bool dragLimited = false;
@@ -25915,7 +25971,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered) {
         drag.startX = mouse.x;
         drag.startY = mouse.y;
-        drag.startWidth = width;
+        drag.startWidth = width / eqScale;
         drag.startCenterPercent = centerPercent;
         drag.startHalfWidthPercent = std::clamp(settings.halfWidthPercent, 1.0f, 50.0f);
         drag.startLowPercent = lowPercent;
@@ -26049,19 +26105,19 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
         std::snprintf(display.detail, sizeof(display.detail), "%s\n%s", lowDetail, highDetail);
         return display;
     };
-    const auto drawSteepnessCurve = [](ImDrawList* target, ImVec2 origin, MagicEQMode mode,
+    const auto drawSteepnessCurve = [eqPx](ImDrawList* target, ImVec2 origin, MagicEQMode mode,
                                         CenterSenseDsp::MagicEQSteepness grade, ImU32 color) {
-        const float depth = grade == CenterSenseDsp::MagicEQSteepness::Soft ? 3.0f
-            : (grade == CenterSenseDsp::MagicEQSteepness::Steep ? 5.0f : 7.0f);
+        const float depth = eqPx(grade == CenterSenseDsp::MagicEQSteepness::Soft ? 3.0f
+            : (grade == CenterSenseDsp::MagicEQSteepness::Steep ? 5.0f : 7.0f));
         const float direction = mode == MagicEQMode::Notch ? 1.0f : -1.0f;
         if (grade == CenterSenseDsp::MagicEQSteepness::VerySteep ||
             grade == CenterSenseDsp::MagicEQSteepness::Brickwall) {
             const ImVec2 sharpCurve[5] = {
-                ImVec2(origin.x, origin.y), ImVec2(origin.x + 6.0f, origin.y),
-                ImVec2(origin.x + 9.0f, origin.y + direction * depth),
-                ImVec2(origin.x + 12.0f, origin.y), ImVec2(origin.x + 18.0f, origin.y)
+                ImVec2(origin.x, origin.y), ImVec2(origin.x + eqPx(6.0f), origin.y),
+                ImVec2(origin.x + eqPx(9.0f), origin.y + direction * depth),
+                ImVec2(origin.x + eqPx(12.0f), origin.y), ImVec2(origin.x + eqPx(18.0f), origin.y)
             };
-            target->AddPolyline(sharpCurve, 5, color, 0, 1.5f);
+            target->AddPolyline(sharpCurve, 5, color, 0, eqPx(1.5f));
             return;
         }
         ImVec2 curve[7];
@@ -26069,9 +26125,9 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
             const float t = static_cast<float>(point) / 6.0f;
             const float arc = 1.0f - std::pow(std::fabs(2.0f * t - 1.0f),
                 grade == CenterSenseDsp::MagicEQSteepness::Soft ? 2.0f : 4.0f);
-            curve[point] = ImVec2(origin.x + t * 18.0f, origin.y + direction * depth * arc);
+            curve[point] = ImVec2(origin.x + t * eqPx(18.0f), origin.y + direction * depth * arc);
         }
-        target->AddPolyline(curve, 7, color, 0, 1.5f);
+        target->AddPolyline(curve, 7, color, 0, eqPx(1.5f));
     };
     if (BeginTransientScrollbarPopup("MagicEQSteepnessPopup")) {
         ImGui::TextUnformatted(L(MagicEQ_NominalEdgeSlope));
@@ -26160,7 +26216,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
         const float deltaY = mouse.y - drag.startY;
         if (drag.part == DragPart::ResizeLeft || drag.part == DragPart::ResizeRight) {
             const float direction = drag.part == DragPart::ResizeLeft ? -1.0f : 1.0f;
-            settings.widgetWidth = std::clamp(drag.startWidth + deltaX * direction, 120.0f, 1600.0f);
+            settings.widgetWidth = std::clamp(drag.startWidth + deltaX / eqScale * direction, 120.0f, 1600.0f);
         } else {
             settings.enabled = true;
             if (drag.part == DragPart::LeftEndpoint) {
@@ -26171,7 +26227,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                 CenterSenseDsp::magicEQSetHighEdgePercent(nextHigh, settings.centerFreq, settings.halfWidthPercent);
             } else {
                 float nextHalf = drag.startHalfWidthPercent;
-                if (widthModifier) nextHalf = std::clamp(nextHalf - deltaY * 0.25f, 1.0f, 50.0f);
+                if (widthModifier) nextHalf = std::clamp(nextHalf - deltaY / eqScale * 0.25f, 1.0f, 50.0f);
                 const float nextCenter = std::clamp(drag.startCenterPercent + deltaX / railWidth * 100.0f,
                                                    nextHalf, 100.0f - nextHalf);
                 settings.centerFreq = CenterSenseDsp::magicEQPercentToFrequency(nextCenter);
@@ -26267,9 +26323,12 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
         ? ImLerp(theme.controlAccent, primaryText, markHover && !markPressed ? .23f : 0.f)
         : ImGui::ColorConvertU32ToFloat4(muted),
         TransportContrast::Over(markBackground, transportSurface), 4.7));
-    draw->AddRectFilled(markMin, markMax, ImGui::GetColorU32(markBackground), 3.0f);
-    const ImVec2 magicEqStar(markMin.x + 9.5f, markMin.y + 12.0f);
-    const float starOuter = 5.5f, starInner = 2.2f;
+    draw->AddRectFilled(markMin, markMax, ImGui::GetColorU32(markBackground),
+                        aura::ui::dpi::ScalePx(3.0f, eqScale));
+    const ImVec2 magicEqStar(markMin.x + aura::ui::dpi::ScalePx(9.5f, eqScale),
+                             markMin.y + aura::ui::dpi::ScalePx(12.0f, eqScale));
+    const float starOuter = aura::ui::dpi::ScalePx(5.5f, eqScale);
+    const float starInner = aura::ui::dpi::ScalePx(2.2f, eqScale);
     draw->PathClear();
     for (int point = 0; point < 8; ++point) {
         const float angle = -3.14159265f * 0.5f + static_cast<float>(point) * 3.14159265f / 4.0f;
@@ -26279,51 +26338,57 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     }
     draw->PathFillConcave(markColor);
     ImFont* markFont = GetUIFontEmphasis();
-    draw->AddText(markFont ? markFont : ImGui::GetFont(), 14.0f,
-                  ImVec2(markMin.x + 18.0f, markMin.y + 3.5f), markColor, "EQ");
+    const float markTextPx = 14.0f * eqScale;
+    draw->AddText(markFont ? markFont : ImGui::GetFont(), markTextPx,
+                  ImVec2(markMin.x + aura::ui::dpi::ScalePx(18.0f, eqScale),
+                         markMin.y + aura::ui::dpi::ScalePx(3.5f, eqScale)), markColor, "EQ");
     const ImU32 markLineColor = settings.enabled
         ? ImGui::GetColorU32(ImLerp(theme.controlAccent, transportSurface,
                                    markPressed ? 0.12f : (markHover ? 0.04f : 0.0f)))
         : ImGui::GetColorU32(ImVec4(theme.interfaceText.x, theme.interfaceText.y,
                                     theme.interfaceText.z, 0.22f));
-    draw->AddLine(ImVec2(markMin.x + 3.0f, markMax.y - 1.0f),
-                  ImVec2(markMax.x - 3.0f, markMax.y - 1.0f), markLineColor,
-                  markPressed ? 2.0f : 1.5f);
+    draw->AddLine(ImVec2(markMin.x + aura::ui::dpi::ScalePx(3.0f, eqScale),
+                         markMax.y - aura::ui::dpi::ScalePx(1.0f, eqScale)),
+                  ImVec2(markMax.x - aura::ui::dpi::ScalePx(3.0f, eqScale),
+                         markMax.y - aura::ui::dpi::ScalePx(1.0f, eqScale)), markLineColor,
+                  (markPressed ? 2.0f : 1.5f) * eqScale);
     TransportVisualAudit::RecordGlyphs("eq.label", markColor, ImGui::GetColorU32(markBackground),
-        ImVec2(markMin.x + 18.0f, markMin.y + 3.5f), "EQ", markFont, 14.0f);
+        ImVec2(markMin.x + aura::ui::dpi::ScalePx(18.0f, eqScale),
+               markMin.y + aura::ui::dpi::ScalePx(3.5f, eqScale)), "EQ", markFont, markTextPx);
     const SlopeDisplay steepnessLabel = slopeDisplay(settings.steepness);
     const float slopeAvailableWidth = std::max(0.0f, steepnessVisibleRight - steepnessLeft);
     const ImVec2 fullSlopeSize = ImGui::CalcTextSize(steepnessLabel.compact);
     const ImVec2 shortSlopeSize = ImGui::CalcTextSize(steepnessLabel.shortValue);
-    if (slopeAvailableWidth >= 4.0f) {
-        const float slopeClipHeight = std::max(13.0f, 1.0f + std::max(fullSlopeSize.y, shortSlopeSize.y));
+    if (slopeAvailableWidth >= eqPx(4.0f)) {
+        const float slopeClipHeight = std::max(eqPx(13.0f), eqPx(1.0f) + std::max(fullSlopeSize.y, shortSlopeSize.y));
         draw->PushClipRect(ImVec2(steepnessLeft, pos.y),
                            ImVec2(steepnessVisibleRight, pos.y + slopeClipHeight), true);
-        if (slopeAvailableWidth >= 22.0f + fullSlopeSize.x) {
-            drawSteepnessCurve(draw, ImVec2(steepnessLeft + 1.0f, pos.y + 8.0f), settings.mode,
+        if (slopeAvailableWidth >= eqPx(22.0f) + fullSlopeSize.x) {
+            drawSteepnessCurve(draw, ImVec2(steepnessLeft + eqPx(1.0f), pos.y + eqPx(8.0f)), settings.mode,
                                settings.steepness, settings.enabled ? status : muted);
-            draw->AddText(ImVec2(steepnessLeft + 22.0f, pos.y + 1.0f), muted,
+            draw->AddText(ImVec2(steepnessLeft + eqPx(22.0f), pos.y + eqPx(1.0f)), muted,
                           steepnessLabel.compact);
             TransportVisualAudit::RecordGlyphs("eq.slope", muted, ImGui::GetColorU32(transportSurface),
-                ImVec2(steepnessLeft + 22.0f, pos.y + 1.0f), steepnessLabel.compact);
-        } else if (slopeAvailableWidth >= shortSlopeSize.x + 2.0f) {
-            draw->AddText(ImVec2(steepnessLeft + 1.0f, pos.y + 1.0f), muted,
+                 ImVec2(steepnessLeft + eqPx(22.0f), pos.y + eqPx(1.0f)), steepnessLabel.compact);
+        } else if (slopeAvailableWidth >= shortSlopeSize.x + eqPx(2.0f)) {
+            draw->AddText(ImVec2(steepnessLeft + eqPx(1.0f), pos.y + eqPx(1.0f)), muted,
                           steepnessLabel.shortValue);
             TransportVisualAudit::RecordGlyphs("eq.slope", muted, ImGui::GetColorU32(transportSurface),
-                ImVec2(steepnessLeft + 1.0f, pos.y + 1.0f), steepnessLabel.shortValue);
-        } else if (slopeAvailableWidth >= 18.0f) {
-            drawSteepnessCurve(draw, ImVec2(steepnessLeft, pos.y + 8.0f), settings.mode,
+                 ImVec2(steepnessLeft + eqPx(1.0f), pos.y + eqPx(1.0f)), steepnessLabel.shortValue);
+        } else if (slopeAvailableWidth >= eqPx(18.0f)) {
+            drawSteepnessCurve(draw, ImVec2(steepnessLeft, pos.y + eqPx(8.0f)), settings.mode,
                                settings.steepness, settings.enabled ? status : muted);
             TransportVisualAudit::Record("eq.slope", false, settings.enabled ? status : muted,
                 ImGui::GetColorU32(transportSurface), ImVec2(steepnessLeft, pos.y),
-                ImVec2(steepnessVisibleRight, pos.y + 13.0f));
+                 ImVec2(steepnessVisibleRight, pos.y + eqPx(13.0f)));
         } else {
             const float arrowX = steepnessLeft + slopeAvailableWidth * 0.5f;
-            draw->AddTriangleFilled(ImVec2(arrowX - 3.0f, pos.y + 4.0f),
-                                    ImVec2(arrowX + 3.0f, pos.y + 4.0f),
-                                    ImVec2(arrowX, pos.y + 8.0f), muted);
+            draw->AddTriangleFilled(ImVec2(arrowX - eqPx(3.0f), pos.y + eqPx(4.0f)),
+                                    ImVec2(arrowX + eqPx(3.0f), pos.y + eqPx(4.0f)),
+                                    ImVec2(arrowX, pos.y + eqPx(8.0f)), muted);
             TransportVisualAudit::Record("eq.slope", false, muted, ImGui::GetColorU32(transportSurface),
-                ImVec2(arrowX - 3.0f, pos.y + 4.0f), ImVec2(arrowX + 3.0f, pos.y + 8.0f));
+                 ImVec2(arrowX - eqPx(3.0f), pos.y + eqPx(4.0f)),
+                 ImVec2(arrowX + eqPx(3.0f), pos.y + eqPx(8.0f)));
         }
         draw->PopClipRect();
     }
@@ -26346,22 +26411,22 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     const ImVec2 centerLabelSize = ImGui::CalcTextSize(centerLabel);
     const float frequencyInfoLeft = railLeft;
     const float frequencyInfoWidth = railRight - railLeft;
-    const bool rangeFitsSelection = rangeSize.x + 16.0f <= rightX - leftX;
-    const bool centerFitsSelection = centerLabelSize.x + 12.0f <= rightX - leftX;
+    const bool rangeFitsSelection = rangeSize.x + eqPx(16.0f) <= rightX - leftX;
+    const bool centerFitsSelection = centerLabelSize.x + eqPx(12.0f) <= rightX - leftX;
     const bool showFrequencyFallback = !rangeFitsSelection && !centerFitsSelection;
     const char* compactFrequencyFallback = "i";
     const ImVec2 compactFrequencyFallbackSize = ImGui::CalcTextSize(compactFrequencyFallback);
-    const char* frequencyInfoText = rangeSize.x + 8.0f <= frequencyInfoWidth ? rangeText
-        : (centerLabelSize.x + 8.0f <= frequencyInfoWidth ? centerLabel
-            : (compactFrequencyFallbackSize.x + 4.0f <= frequencyInfoWidth
+    const char* frequencyInfoText = rangeSize.x + eqPx(8.0f) <= frequencyInfoWidth ? rangeText
+        : (centerLabelSize.x + eqPx(8.0f) <= frequencyInfoWidth ? centerLabel
+            : (compactFrequencyFallbackSize.x + eqPx(4.0f) <= frequencyInfoWidth
                 ? compactFrequencyFallback : ""));
     const ImVec2 frequencyInfoSize = ImGui::CalcTextSize(frequencyInfoText);
     const float frequencyInfoX = std::clamp(centerX - frequencyInfoSize.x * 0.5f,
-                                            frequencyInfoLeft + 2.0f,
-                                            railRight - frequencyInfoSize.x - 2.0f);
-    const float frequencyLabelMinX = frequencyInfoX - 2.0f;
-    const float frequencyLabelMaxX = frequencyInfoX + frequencyInfoSize.x + 2.0f;
-    if (detailedRuler && railWidth >= 220.0f) {
+                                            frequencyInfoLeft + 2.0f * eqScale,
+                                            railRight - frequencyInfoSize.x - 2.0f * eqScale);
+    const float frequencyLabelMinX = frequencyInfoX - 2.0f * eqScale;
+    const float frequencyLabelMaxX = frequencyInfoX + frequencyInfoSize.x + 2.0f * eqScale;
+    if (detailedRuler) {
         for (float decade = 10.0f; decade <= 10000.0f; decade *= 10.0f) {
             for (int multiple = 2; multiple <= 9; ++multiple) {
                 if (multiple == 2 || multiple == 5) continue;
@@ -26369,74 +26434,96 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                 if (frequency < 20.0f || frequency > 20000.0f) continue;
                 const float x = railLeft + railWidth *
                     CenterSenseDsp::magicEQFrequencyToPercent(frequency) * 0.01f;
-                draw->AddLine(ImVec2(x, railY - 2.5f), ImVec2(x, railY + 2.5f), tickColor);
+                draw->AddLine(ImVec2(x, railY - eqPx(2.5f)), ImVec2(x, railY + eqPx(2.5f)),
+                              tickColor, eqPx(1.0f));
             }
         }
     }
-    float lastLabelRight = railLeft - 4.0f;
+    // Even thinning: keep a label only when it is at least one label-width plus a
+    // gap away from the previous one, so the surviving ticks stay evenly spread
+    // instead of clustering on the left.
+    float widestLabel = 0.0f;
+    for (const RulerTick& tick : majorTicks) {
+        widestLabel = std::max(widestLabel, ImGui::CalcTextSize(tick.label).x);
+    }
+    const float labelStride = widestLabel + aura::ui::dpi::ScalePx(10.0f, eqScale);
+    float lastLabelCenter = -1.0e9f;
     for (const RulerTick& tick : majorTicks) {
         const float x = railLeft + railWidth *
             CenterSenseDsp::magicEQFrequencyToPercent(tick.frequencyHz) * 0.01f;
-        draw->AddLine(ImVec2(x, railY - 5.0f), ImVec2(x, railY + 5.0f), tickColor);
-        if (detailedRuler && railWidth >= 220.0f) {
-            const ImVec2 labelSize = ImGui::CalcTextSize(tick.label);
+        draw->AddLine(ImVec2(x, railY - eqPx(5.0f)), ImVec2(x, railY + eqPx(5.0f)),
+                      tickColor, eqPx(1.0f));
+        const ImVec2 labelSize = ImGui::CalcTextSize(tick.label);
+        if (labelSize.x + eqPx(4.0f) <= railWidth &&
+            (detailedRuler || tick.frequencyHz == 20.0f || tick.frequencyHz == 1000.0f ||
+             tick.frequencyHz == 20000.0f)) {
             const float labelLeft = std::clamp(x - labelSize.x * 0.5f,
                                                railLeft, railRight - labelSize.x);
             const bool frequencyLabelOverlap = frequencyInfoText[0] != '\0' &&
-                labelLeft < frequencyLabelMaxX + 2.0f &&
-                labelLeft + labelSize.x > frequencyLabelMinX - 2.0f;
-            if (!frequencyLabelOverlap && labelLeft >= lastLabelRight + 4.0f) {
-                draw->AddText(ImVec2(labelLeft, pos.y + 2.0f), muted, tick.label);
+                labelLeft < frequencyLabelMaxX + eqPx(2.0f) &&
+                labelLeft + labelSize.x > frequencyLabelMinX - eqPx(2.0f);
+            if (!frequencyLabelOverlap && (x - lastLabelCenter) >= labelStride) {
+                draw->AddText(ImVec2(labelLeft, pos.y + 2.0f * eqScale), muted, tick.label);
                 TransportVisualAudit::RecordGlyphs("eq.tick_label", muted, ImGui::GetColorU32(transportSurface),
-                    ImVec2(labelLeft, pos.y + 2.0f), tick.label);
-                lastLabelRight = labelLeft + labelSize.x;
+                    ImVec2(labelLeft, pos.y + 2.0f * eqScale), tick.label);
+                lastLabelCenter = x;
             }
         }
     }
     draw->AddLine(ImVec2(railLeft, railY), ImVec2(railRight, railY),
                   navyStateContrast && !settings.enabled ? status : muted,
-                  navyStateContrast && !settings.enabled ? 1.0f : 2.0f);
+                  eqPx(navyStateContrast && !settings.enabled ? 1.0f : 2.0f));
+    TransportVisualAudit::Record("eq.rail", false, navyStateContrast && !settings.enabled ? status : muted,
+        ImGui::GetColorU32(transportSurface), ImVec2(railLeft, railY - eqPx(1.0f)),
+        ImVec2(railRight, railY + eqPx(1.0f)));
     const float bandAlpha = navyStateContrast && !settings.enabled ? 0.f
         : (settings.enabled ? (navyStateContrast ? .60f : .42f) : .20f);
-    draw->AddRectFilled(ImVec2(leftX, railY - 4.5f), ImVec2(rightX, railY + 4.5f),
+    draw->AddRectFilled(ImVec2(leftX, railY - eqPx(4.5f)), ImVec2(rightX, railY + eqPx(4.5f)),
                         ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z,
-                                                   bandAlpha)), 4.5f);
+                                                   bandAlpha)), eqPx(4.5f));
     draw->AddLine(ImVec2(leftX, railY), ImVec2(rightX, railY), status,
-                  navyStateContrast ? (settings.enabled ? 3.0f : 1.0f) : 2.0f);
+                  eqPx(navyStateContrast ? (settings.enabled ? 3.0f : 1.0f) : 2.0f));
     const ImVec4 bandSurface = TransportContrast::Over(
         ImVec4(statusColor.x, statusColor.y, statusColor.z, bandAlpha), transportSurface);
     const ImU32 centerDotColor = ImGui::GetColorU32(TransportContrast::ForSurface(primaryText, bandSurface, 3.2));
     if (navyStateContrast && !settings.enabled)
-        draw->AddCircle(ImVec2(centerX, railY), 3.2f, centerDotColor, 12, 1.0f);
+        draw->AddCircle(ImVec2(centerX, railY), eqPx(3.2f), centerDotColor, 12, eqPx(1.0f));
     else
-        draw->AddCircleFilled(ImVec2(centerX, railY), 3.2f, centerDotColor, 12);
+        draw->AddCircleFilled(ImVec2(centerX, railY), eqPx(3.2f), centerDotColor, 12);
     const auto drawVerticalGrip = [&](float x, bool highlighted, const char* auditId) {
         const ImU32 gripFill = highlighted ? ImGui::GetColorU32(TransportContrast::ForSurface(
             theme.controlAccent, transportSurface, 3.2)) : status;
-        draw->AddRectFilled(ImVec2(x - 3.5f, gripTop), ImVec2(x + 3.5f, gripBottom),
-                            ImGui::GetColorU32(transportSurface), 2.0f);
-        draw->AddRect(ImVec2(x - 3.5f, gripTop), ImVec2(x + 3.5f, gripBottom), gripFill, 2.0f);
-        draw->AddLine(ImVec2(x, gripTop + 3.0f), ImVec2(x, gripBottom - 3.0f), gripFill, 1.5f);
+        const ImVec2 gripMin(x - eqPx(3.5f), gripTop);
+        const ImVec2 gripMax(x + eqPx(3.5f), gripBottom);
+        draw->AddRectFilled(gripMin, gripMax, ImGui::GetColorU32(transportSurface), eqPx(2.0f));
+        draw->AddRect(gripMin, gripMax, gripFill, eqPx(2.0f), 0, eqPx(1.0f));
+        draw->AddLine(ImVec2(x, gripTop + eqPx(3.0f)), ImVec2(x, gripBottom - eqPx(3.0f)),
+                      gripFill, eqPx(1.5f));
         TransportVisualAudit::Record(auditId, false, gripFill, ImGui::GetColorU32(transportSurface),
-            ImVec2(x - 3.5f, gripTop), ImVec2(x + 3.5f, gripBottom));
+            gripMin, gripMax);
     };
     drawVerticalGrip(leftX, leftEndpointHit || drag.part == DragPart::LeftEndpoint, "eq.grip");
     drawVerticalGrip(rightX, rightEndpointHit || drag.part == DragPart::RightEndpoint, "eq.grip.right");
-    TransportVisualAudit::Record("eq.center", false, centerDotColor, ImGui::GetColorU32(bandSurface), ImVec2(centerX - 3.2f, railY - 3.2f), ImVec2(centerX + 3.2f, railY + 3.2f));
+    TransportVisualAudit::Record("eq.center", false, centerDotColor, ImGui::GetColorU32(bandSurface),
+        ImVec2(centerX - 3.2f * eqScale, railY - 3.2f * eqScale),
+        ImVec2(centerX + 3.2f * eqScale, railY + 3.2f * eqScale));
     // Frequency detail lives above the rail so the chosen band and grips stay clear.
     if (frequencyInfoText[0] != '\0') {
-        draw->AddRectFilled(ImVec2(frequencyLabelMinX, pos.y + 1.0f),
-                            ImVec2(frequencyLabelMaxX, pos.y + 14.0f),
-                            ImGui::GetColorU32(transportSurface), 2.0f);
-        draw->AddText(ImVec2(frequencyInfoX, pos.y + 1.0f),
+        // The readout owns a real pill: tall enough for the scaled glyphs, wide
+        // enough that no tick label can peek out underneath it.
+        draw->AddRectFilled(ImVec2(frequencyLabelMinX, pos.y),
+                            ImVec2(frequencyLabelMaxX,
+                                   pos.y + ImGui::GetTextLineHeight() + 2.0f * eqScale),
+                            ImGui::GetColorU32(transportSurface), 2.0f * eqScale);
+        draw->AddText(ImVec2(frequencyInfoX, pos.y + eqPx(1.0f)),
                       showFrequencyFallback ? baseText : muted, frequencyInfoText);
         TransportVisualAudit::RecordGlyphs("eq.frequency", showFrequencyFallback ? baseText : muted,
-            ImGui::GetColorU32(transportSurface), ImVec2(frequencyInfoX, pos.y + 1), frequencyInfoText);
+            ImGui::GetColorU32(transportSurface), ImVec2(frequencyInfoX, pos.y + eqPx(1.0f)), frequencyInfoText);
     } else {
         const float indicatorX = frequencyInfoLeft + frequencyInfoWidth * 0.5f;
-        draw->AddTriangleFilled(ImVec2(indicatorX - 3.0f, pos.y + 4.0f),
-                                ImVec2(indicatorX + 3.0f, pos.y + 4.0f),
-                                ImVec2(indicatorX, pos.y + 10.0f), status);
+        draw->AddTriangleFilled(ImVec2(indicatorX - eqPx(3.0f), pos.y + eqPx(4.0f)),
+                                ImVec2(indicatorX + eqPx(3.0f), pos.y + eqPx(4.0f)),
+                                ImVec2(indicatorX, pos.y + eqPx(10.0f)), status);
     }
     const bool draggingFrequency = ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
         ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
@@ -26478,49 +26565,60 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     }
 
     const float modeLeft = pos.x + width - statusWidth;
+    // The mode pill must hold the current reading font at any DPI; a fixed
+    // 24 px capsule let the label spill out of its own background at 200%.
+    const float modeScale = aura::ui::dpi::UiScale();
+    const float modeCapsuleTop = pos.y + aura::ui::dpi::ScalePx(4.0f, modeScale);
+    const float modeCapsuleBottom = std::max(pos.y + aura::ui::dpi::ScalePx(28.0f, modeScale),
+        modeCapsuleTop + std::min(ImGui::GetTextLineHeight() + aura::ui::dpi::ScalePx(2.0f, modeScale),
+                                  aura::ui::dpi::ScalePx(24.0f, modeScale)));
+    const float modeTextY = modeCapsuleTop +
+        std::max(0.0f, (modeCapsuleBottom - modeCapsuleTop - ImGui::GetTextLineHeight()) * 0.5f);
     const auto navyMode = MistBlueChrome::EqModeState(theme, transportSurface, settings.enabled,
         settings.mode == MagicEQMode::Notch, modeHit, modeHit && held);
     const ImVec4 modeBackground = navyStateContrast ? navyMode.button : TransportContrast::Over(
         ImVec4(statusColor.x, statusColor.y, statusColor.z, settings.enabled ? .16f : .10f), transportSurface);
-    draw->AddRectFilled(ImVec2(modeLeft + 1.0f, pos.y + 4.0f),
-                        ImVec2(pos.x + width - 4.0f, pos.y + 28.0f),
+    draw->AddRectFilled(ImVec2(modeLeft + eqPx(1.0f), modeCapsuleTop),
+                        ImVec2(pos.x + width - eqPx(4.0f), modeCapsuleBottom),
                         navyStateContrast ? ImGui::GetColorU32(modeBackground) : ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z,
-                                                   settings.enabled ? 0.16f : 0.10f)), 4.0f);
+                                                   settings.enabled ? 0.16f : 0.10f)), eqPx(4.0f));
     if (navyStateContrast && settings.enabled && settings.mode == MagicEQMode::Pass)
-        draw->AddRect(ImVec2(modeLeft + 1.0f, pos.y + 4.0f),
-                      ImVec2(pos.x + width - 4.0f, pos.y + 28.0f),
-                      ImGui::GetColorU32(theme.chromeBorder), 4.0f);
+        draw->AddRect(ImVec2(modeLeft + eqPx(1.0f), modeCapsuleTop),
+                      ImVec2(pos.x + width - eqPx(4.0f), modeCapsuleBottom),
+                      ImGui::GetColorU32(theme.chromeBorder), eqPx(4.0f), 0, eqPx(1.0f));
     const ImU32 modeInk = navyStateContrast ? ImGui::GetColorU32(navyMode.ink) : ImGui::GetColorU32(TransportContrast::ForSurface(
         settings.enabled ? statusColor : ImGui::ColorConvertU32ToFloat4(muted), modeBackground, 4.7));
     const char* modeLabel = GetMagicEQModeLabel(settings.enabled, static_cast<int>(settings.mode));
     const float modeTextWidth = ImGui::CalcTextSize(modeLabel).x;
-    if (modeTextWidth + 8.0f > statusWidth) {
+    if (modeTextWidth + eqPx(8.0f) > statusWidth) {
         modeLabel = !settings.enabled ? L(MagicEQ_ModeBypassCompact)
             : (settings.mode == MagicEQMode::Notch
                 ? L(MagicEQ_ModeNotchCompact) : L(MagicEQ_ModePassCompact));
     }
     // The current language's compact word normally fits even at 120 px.
     // At enlarged font scales use a language-neutral shape, never an English initial.
-    const bool modeIconOnly = ImGui::CalcTextSize(modeLabel).x + 8.0f > statusWidth;
+    const bool modeIconOnly = ImGui::CalcTextSize(modeLabel).x + eqPx(8.0f) > statusWidth;
     const ImVec2 labelSize = modeIconOnly ? ImVec2(0.0f, 0.0f) : ImGui::CalcTextSize(modeLabel);
-    draw->PushClipRect(ImVec2(modeLeft + 3.0f, pos.y + 4.0f),
-                       ImVec2(pos.x + width - 3.0f, pos.y + 28.0f), true);
+    draw->PushClipRect(ImVec2(modeLeft + eqPx(3.0f), modeCapsuleTop),
+                       ImVec2(pos.x + width - eqPx(3.0f), modeCapsuleBottom), true);
     if (modeIconOnly) {
-        const float iconX = modeLeft + (statusWidth - 18.0f) * 0.5f;
+        const float iconX = modeLeft + (statusWidth - eqPx(18.0f)) * 0.5f;
         const ImU32 modeShape = navyStateContrast ? modeInk : (settings.enabled ? status : muted);
         TransportVisualAudit::Record("eq.mode", false, modeShape,
-            ImGui::GetColorU32(modeBackground), ImVec2(iconX, pos.y + 8), ImVec2(iconX + 18, pos.y + 24));
+            ImGui::GetColorU32(modeBackground), ImVec2(iconX, modeTextY),
+            ImVec2(iconX + eqPx(18.0f), modeTextY + eqPx(16.0f)));
         if (settings.enabled)
-            drawSteepnessCurve(draw, ImVec2(iconX, pos.y + 16.0f), settings.mode,
+            drawSteepnessCurve(draw, ImVec2(iconX, (modeCapsuleTop + modeCapsuleBottom) * 0.5f), settings.mode,
                                settings.steepness, modeShape);
         else
-            draw->AddLine(ImVec2(iconX, pos.y + 16.0f),
-                          ImVec2(iconX + 18.0f, pos.y + 16.0f), modeShape, 1.5f);
+            draw->AddLine(ImVec2(iconX, (modeCapsuleTop + modeCapsuleBottom) * 0.5f),
+                          ImVec2(iconX + eqPx(18.0f), (modeCapsuleTop + modeCapsuleBottom) * 0.5f),
+                          modeShape, eqPx(1.5f));
     } else {
-        draw->AddText(ImVec2(modeLeft + std::max(4.0f, (statusWidth - labelSize.x) * 0.5f), pos.y + 8.0f),
+        draw->AddText(ImVec2(modeLeft + std::max(eqPx(4.0f), (statusWidth - labelSize.x) * 0.5f), modeTextY),
                       modeInk, modeLabel);
         TransportVisualAudit::RecordGlyphs("eq.mode", modeInk, ImGui::GetColorU32(modeBackground),
-            ImVec2(modeLeft + std::max(4.0f, (statusWidth - labelSize.x) * 0.5f), pos.y + 8.0f), modeLabel);
+            ImVec2(modeLeft + std::max(eqPx(4.0f), (statusWidth - labelSize.x) * 0.5f), modeTextY), modeLabel);
     }
     draw->PopClipRect();
     draw->AddLine(ImVec2(pos.x + 1.5f, pos.y + 9.0f), ImVec2(pos.x + 1.5f, pos.y + 23.0f), status, 1.5f);
@@ -27079,6 +27177,10 @@ std::string SetupDockGestureFixtureForQa(AppState& state) {
 }
 #endif
 
+// 开发/自测入口（Dock 压测窗口、ImGui Demo 窗口）不在正式版菜单里露出。
+// 只隐藏菜单入口，窗口与布局测试代码保持完整；需要调试时把它改成 true 即可恢复。
+static constexpr bool kShowDevTestMenuEntries = false;
+
 static bool g_dockTestWindowOpen = false;
 static bool g_dockTestBandHintsVisible = false;
 static constexpr int kDockTestPanelCapacity = 12;
@@ -27184,7 +27286,9 @@ static void MirrorDockCommitToPanel(AppState::PanelState& panel,
     mirror.floating = panel.floating;
     mirror.dockedWidth = panel.dockedWidth;
     mirror.dockedHeight = panel.dockedHeight;
-    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, extentSide, incoming);
+    auto logicalRect = incoming;
+    logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);
+    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);
     panel.dockSide = static_cast<DockSide>(mirror.dockSide);
     panel.floating = mirror.floating;
     panel.dockedWidth = mirror.dockedWidth;
@@ -27195,10 +27299,11 @@ static void MirrorDockRootExtent(AppState& state, aura::ui::dock::DockSide root,
                                  const aura::ui::dock::DockRect& rect) {
     using aura::ui::dock::DockSide;
     // These fields own entire columns/bands, never individual split leaves.
-    if (root == DockSide::Left) state.panelSidebar.dockedWidth = rect.width;
+    const float logicalWidth = aura::ui::dpi::LogicalPx(rect.width);
+    if (root == DockSide::Left) state.panelSidebar.dockedWidth = logicalWidth;
     if (root == DockSide::Right) {
-        state.panelFileInfo.dockedWidth = rect.width;
-        state.panelSimilarSounds.dockedWidth = rect.width;
+        state.panelFileInfo.dockedWidth = logicalWidth;
+        state.panelSimilarSounds.dockedWidth = logicalWidth;
     }
     if (root == DockSide::Top || root == DockSide::Bottom) {
         struct Entry { const char* id; AppState::PanelState* panel; };
@@ -30338,7 +30443,60 @@ void QaProbeMenuBarItem(AppState& state, const char* label) {
 }
 #endif
 
+// Where the authorization documents live. The settings dialog only knows this
+// after it has opened once, so fall back to the resolved user-data layout.
+static std::string ExternalAiSettingsDirectory() {
+    if (!g_appSettingsPathUtf8.empty()) {
+        const auto separator = g_appSettingsPathUtf8.find_last_of("/\\");
+        return separator == std::string::npos ? std::string{}
+                                             : g_appSettingsPathUtf8.substr(0, separator);
+    }
+    const auto layout = Platform::HarkenUserData::EnsureLayout();
+    if (layout.activeSettingsDir.empty()) {
+        return {};
+    }
+    return Platform::HarkenUserData::WideToUtf8Path(layout.activeSettingsDir);
+}
+
+// External AI write bridge: keep one local pipe per authorized library and run
+// queued Playlist writes here, on the thread that owns the database.
+static void PumpExternalAiWriteBridge(AppState& state) {
+    static int frameSkip = 0;
+    if (++frameSkip % 60 == 0) {
+        const std::string library = state.currentDbPathUtf8;
+        if (library.empty()) {
+            HarkenSearch::StopExternalAiBridgeServer();
+        } else {
+            const std::string settingsDirectory = ExternalAiSettingsDirectory();
+            const std::string libraryId = HarkenSearch::ExternalAiLibraryIdForPath(library);
+            const std::string document =
+                HarkenSearch::ExternalAiSettingsPath(settingsDirectory, libraryId);
+            HarkenSearch::ExternalAiSettings settings;
+            std::string error;
+            if (libraryId.empty() || document.empty()
+                || !HarkenSearch::LoadExternalAiSettings(document, libraryId, settings, error)
+                || !settings.enabled
+                || settings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)
+                       != HarkenSearch::ExternalAiAccess::Editable) {
+                HarkenSearch::StopExternalAiBridgeServer();
+            } else {
+                HarkenSearch::StartExternalAiBridgeServer(libraryId);
+            }
+        }
+    }
+    if (!HarkenSearch::ExternalAiBridgeServerRunning()) return;
+    const std::string settingsDirectory = ExternalAiSettingsDirectory();
+    HarkenSearch::DrainExternalAiBridgeServer([&state, settingsDirectory](const std::string& request) {
+        const std::string libraryId = HarkenSearch::ExternalAiLibraryIdForPath(state.currentDbPathUtf8);
+        const std::string document = HarkenSearch::ExternalAiSettingsPath(settingsDirectory, libraryId);
+        const std::string receipts = HarkenSearch::ExternalAiReceiptsPath(settingsDirectory);
+        return HarkenSearch::HandleExternalAiPlaylistWriteRequest(
+            state.database, libraryId, document, receipts, request);
+    });
+}
+
 void RenderUI(AppState& state) {
+    PumpExternalAiWriteBridge(state);
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
         state.audioEngine.isLoaded()) {
         state.pendingReverseRestore = false;
@@ -30746,17 +30904,15 @@ void RenderUI(AppState& state) {
     }
     ImGui::PushStyleColor(ImGuiCol_PopupBg, kCurrentModules.overlay.background);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, kCurrentModules.overlay.background);
-    if (BeginTransientScrollbarPopupModal(L(Dlg_CloseSM), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_CloseSM), L(Dlg_CloseSM))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
-        ImGui::TextWrapped("%s", L(CloseDlg_Question));
-        ImGui::Separator();
         ImGui::RadioButton(L(CloseDlg_Minimize), &state.closeChoiceSelection, 1);
         ImGui::RadioButton(L(CloseDlg_Exit), &state.closeChoiceSelection, 2);
         ImGui::Spacing();
         ImGui::Checkbox(L(CloseDlg_Remember), &state.closeChoiceRemember);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             int sel = std::clamp(state.closeChoiceSelection, 1, 2);
             if (state.closeChoiceRemember) {
@@ -30781,7 +30937,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
     ImGui::PopStyleColor(2);
 
@@ -30790,11 +30946,11 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_FolderAutoRename));
         state.showFolderAutoRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_FolderAutoRename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename), L(Dlg_FolderAutoRename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(FolderRename_Rule));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::Text("%s", L(FolderRename_RootDir));
         ImGui::SetNextItemWidth(520);
@@ -30815,7 +30971,7 @@ void RenderUI(AppState& state) {
         ImGui::SameLine();
         ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(Batch_GenPreview), ImVec2(120, 0))) {
             BuildFolderRenamePreview(state);
         }
@@ -30835,7 +30991,7 @@ void RenderUI(AppState& state) {
             ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text("%s", L(FolderRename_PreviewList));
         BeginTransientScrollbarChild("##RenamePreview", ImVec2(760, 320), true);
         if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
@@ -30862,7 +31018,7 @@ void RenderUI(AppState& state) {
         ImGui::EndChild();
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Edit Filename Dialog
@@ -30871,7 +31027,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_EditFilename));
         state.showEditFilenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_EditFilename), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_EditFilename), L(Dlg_EditFilename))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(Dlg_InputNewFilename));
@@ -30879,7 +31035,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##EditFilename", state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canRename = strlen(state.editFilenameBuffer) > 0;
         ImGui::BeginDisabled(!canRename);
@@ -30899,7 +31055,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete Confirmation Dialog
@@ -30924,12 +31080,12 @@ void RenderUI(AppState& state) {
     }
 
     // Remove from database only
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmRemove), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmRemove), L(Dlg_ConfirmRemove))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_RemoveRecordsAsk), (int)state.pendingDeleteIds.size());
         ImGui::Text(L(Main_RemoveRecordsNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(100, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             RemoveRecordsFromDatabase(state, state.pendingDeleteIds);
@@ -30945,17 +31101,17 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Delete from file system
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDelete), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDelete), L(Dlg_ConfirmDelete))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
         ImGui::Text(L(Main_DeleteWarnLine));
         ImGui::PopStyleColor();
-        ImGui::Separator();
+        ImGui::Spacing();
         ImGui::Text(L(Main_DeleteFilesAsk), (int)state.pendingDeleteIds.size());
 
         // Show file list (max 5)
@@ -30969,7 +31125,7 @@ void RenderUI(AppState& state) {
         }
         ImGui::EndChild();
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
@@ -30989,7 +31145,7 @@ void RenderUI(AppState& state) {
         }
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Transfer / Export Dialog (F-008)
@@ -31001,11 +31157,12 @@ void RenderUI(AppState& state) {
         state.showTransferDialog = false;
     }
     if (!state.panelTransfer.visible &&
-        BeginTransientScrollbarPopupModal((std::string(L(Export_FileTitle)) + "###TransferDlg").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        aura::ui::BeginAlertDialog((std::string(L(Export_FileTitle)) + "###TransferDlg").c_str(),
+                                   L(Export_FileTitle))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Dlg_SelectedNFiles), state.transferTotalCount);
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // Destination folder
         ImGui::Text("%s", L(Export_TargetFolder));
@@ -31215,7 +31372,7 @@ void RenderUI(AppState& state) {
             }
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Batch Rename Dialog
@@ -31224,7 +31381,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_BatchOp));
         state.showBatchRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_BatchOp), nullptr, ImGuiWindowFlags_None)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_BatchOp), L(Dlg_BatchOp), ImGuiWindowFlags_None)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::SetWindowSize(ImVec2(900, 650), ImGuiCond_FirstUseEver);
@@ -31673,7 +31830,7 @@ void RenderUI(AppState& state) {
         }  // End of tab content
 
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Handle popup dialogs
@@ -32021,7 +32178,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(feedbackDlgId.c_str());
         state.showFeedbackDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(feedbackDlgId.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(feedbackDlgId.c_str(), L(Menu_SendFeedback))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
 
@@ -32125,7 +32282,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // AI 语音识别面板
@@ -32134,8 +32291,9 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(560, 620), ImGuiCond_FirstUseEver);
         if (BeginTransientScrollbarWindow(L(AI_PanelTitle), &state.showAIPanel)) {
             if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape)) state.showAIPanel = false;
-            const char* modelItems[] = { "tiny (~75MB)", "base (~142MB)", "small (~466MB)", "medium (~1.5GB)" };
             const char* modelNames[] = { "tiny", "base", "small", "medium" };
+            char modelItemBufs[IM_ARRAYSIZE(modelNames)][96];
+            const char* modelItems[IM_ARRAYSIZE(modelNames)];
             int modelIdx = 1;
             for (int i = 0; i < IM_ARRAYSIZE(modelNames); ++i) {
                 if (state.aiModelName == modelNames[i]) {
@@ -32147,89 +32305,105 @@ void RenderUI(AppState& state) {
             const bool selectedModelExists = Platform::FileSystem::Exists(selectedModelPath);
             const bool selectedModelLoaded = state.aiModelLoaded.load() &&
                 GetAIEngine().GetModelPath() == selectedModelPath;
-            std::string localModelList;
+            const auto& aiPanelTheme = ThemeColors::current();
+            const ImVec4 aiOkColor = aiPanelTheme.volumeColor;
+            const ImVec4 aiWarnColor = aiPanelTheme.meterWarning;
+            const ImVec4 aiErrColor = aiPanelTheme.meterClip;
+            const ImVec4 aiInfoColor = aiPanelTheme.diagnosticOverlayAccent;
             for (int i = 0; i < IM_ARRAYSIZE(modelNames); ++i) {
-                if (Platform::FileSystem::Exists(GetAIModelPath(modelNames[i]))) {
-                    if (!localModelList.empty()) localModelList += ", ";
-                    localModelList += modelNames[i];
-                }
+                const bool modelPresent = Platform::FileSystem::Exists(GetAIModelPath(modelNames[i]));
+                snprintf(modelItemBufs[i], sizeof(modelItemBufs[i]), "%s%s%s",
+                    GetAIModelSizeLabel(modelNames[i]),
+                    modelPresent ? " \xc2\xb7 " : "",
+                    modelPresent ? L(AI_ModelDownloaded) : "");
+                modelItems[i] = modelItemBufs[i];
             }
 
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            BeginTransientScrollbarChild("##AIModelWorkbench", ImVec2(0, 94), true);
-            ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), L(Main_WhisperModelFmt), state.aiModelName.c_str());
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(aiInfoColor, L(Main_WhisperModelFmt), state.aiModelName.c_str());
             ImGui::SameLine();
             if (state.aiModelDownloading.load()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.28f, 1.0f), L(Main_DownloadingText));
+                ImGui::TextColored(aiWarnColor, "%s", L(Main_DownloadingText));
             } else if (selectedModelLoaded) {
-                ImGui::TextColored(ImVec4(0.34f, 0.92f, 0.52f, 1.0f), L(Main_AsrReady));
+                ImGui::TextColored(aiOkColor, "%s", L(Main_AsrReady));
             } else if (selectedModelExists) {
-                ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f), L(Main_AsrLocalDownloaded));
+                ImGui::TextColored(aiInfoColor, "%s", L(Main_AsrLocalDownloaded));
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.32f, 1.0f), L(Main_AsrNeedsDownload));
+                ImGui::TextColored(aiWarnColor, "%s", L(Main_AsrNeedsDownload));
             }
             ImGui::SameLine();
-            ImGui::TextDisabled(L(Main_LocalModelFmt), localModelList.empty() ? L(Main_LocalNone) : localModelList.c_str());
 
             ImGui::BeginDisabled(state.aiModelDownloading.load());
-            ImGui::SetNextItemWidth(165.0f);
-            if (ImGui::Combo(L(Main_CurrentModelCombo), &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
+            // 模型行固定单行：下拉宽度吃掉剩余空间，给后面的主操作和「模型目录」留位置。
+            const float modelRowWidth = ImGui::GetContentRegionAvail().x;
+            const float modelComboWidth = std::clamp(modelRowWidth - 300.0f, 110.0f, 190.0f);
+            ImGui::SetNextItemWidth(modelComboWidth);
+            if (ImGui::Combo("##AIModelSelect", &modelIdx, modelItems, IM_ARRAYSIZE(modelItems))) {
                 state.aiModelName = modelNames[modelIdx];
                 state.aiModelLoaded.store(GetAIEngine().IsModelLoaded() &&
                     GetAIEngine().GetModelPath() == GetAIModelPath(state.aiModelName));
             }
             ImGui::EndDisabled();
 
-            if (state.aiEngineInitialized.load()) {
-                if (selectedModelLoaded) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled(L(Main_CurrentlyUsingFmt), GetAIEngine().GetModelPath().c_str());
-                } else if (state.aiModelDownloading.load()) {
-                    const float downloadProgress = state.aiModelDownloadProgress.load();
-                    char pctBuf[16];
-                    snprintf(pctBuf, sizeof(pctBuf), u8"%.0f%%", downloadProgress * 100.0f);
-                    DrawUnifiedProgressBar(downloadProgress, ImVec2(-1, 0), pctBuf);
-                } else {
-                    const std::string modelPath = selectedModelPath;
-                    const std::string selectedModelName = state.aiModelName;
-                    char modelButtonLabel[128];
-                    snprintf(modelButtonLabel, sizeof(modelButtonLabel),
-                        selectedModelExists ? L(AI_LoadLocalFmt) : L(AI_DownloadLoadFmt),
-                        GetAIModelSizeLabel(selectedModelName));
-                    ImGui::SameLine();
-                    if (aura::ui::ActionButton(modelButtonLabel)) {
-                        state.aiModelDownloading.store(true);
-                        state.aiModelDownloadProgress.store(0.0f);
-                        std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
-                            bool loaded = false;
-                            if (selectedModelExists) {
-                                loaded = GetAIEngine().LoadModel(modelPath);
-                                if (!loaded) {
-                                    Platform::FileSystem::RemoveFile(modelPath);
-                                }
-                            }
+            if (!state.aiEngineInitialized.load()) {
+                ImGui::SameLine();
+                ImGui::TextColored(aiErrColor, "%s", L(AI_EngineNotInit));
+            } else if (state.aiModelDownloading.load()) {
+                ImGui::SameLine();
+                const float downloadProgress = state.aiModelDownloadProgress.load();
+                char pctBuf[16];
+                snprintf(pctBuf, sizeof(pctBuf), u8"%.0f%%", downloadProgress * 100.0f);
+                const float trackWidth = ImGui::GetContentRegionAvail().x - 96.0f;
+                DrawUnifiedProgressBar(downloadProgress, ImVec2(trackWidth > 48.0f ? trackWidth : 48.0f, 0), pctBuf);
+            } else if (!selectedModelLoaded) {
+                const std::string modelPath = selectedModelPath;
+                const std::string selectedModelName = state.aiModelName;
+                char modelButtonLabel[128];
+                snprintf(modelButtonLabel, sizeof(modelButtonLabel), "%s",
+                    selectedModelExists ? L(AI_LoadLocal) : L(AI_DownloadLoad));
+                ImGui::SameLine();
+                if (aura::ui::ActionButton(modelButtonLabel)) {
+                    state.aiModelDownloading.store(true);
+                    state.aiModelDownloadProgress.store(0.0f);
+                    std::thread([&state, selectedModelExists, modelPath, selectedModelName]() {
+                        bool loaded = false;
+                        if (selectedModelExists) {
+                            loaded = GetAIEngine().LoadModel(modelPath);
                             if (!loaded) {
-                                bool downloaded = GetAIEngine().DownloadModel(selectedModelName, "",
-                                    [&state](float progress) {
-                                        state.aiModelDownloadProgress.store(progress);
-                                    });
-                                if (downloaded) {
-                                    loaded = GetAIEngine().LoadModel(modelPath);
-                                }
+                                Platform::FileSystem::RemoveFile(modelPath);
                             }
-                            state.aiModelLoaded.store(loaded);
-                            if (loaded) state.aiModelDownloadProgress.store(1.0f);
-                            state.aiModelDownloading.store(false);
-                        }).detach();
-                    }
-                    ImGui::TextDisabled(selectedModelExists ? L(Main_ModelKeptNote) : L(Main_ModelAbsent));
+                        }
+                        if (!loaded) {
+                            bool downloaded = GetAIEngine().DownloadModel(selectedModelName, "",
+                                [&state](float progress) {
+                                    state.aiModelDownloadProgress.store(progress);
+                                });
+                            if (downloaded) {
+                                loaded = GetAIEngine().LoadModel(modelPath);
+                            }
+                        }
+                        state.aiModelLoaded.store(loaded);
+                        if (loaded) state.aiModelDownloadProgress.store(1.0f);
+                        state.aiModelDownloading.store(false);
+                    }).detach();
                 }
-            } else {
-                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), L(AI_EngineNotInit));
             }
-            ImGui::EndChild();
-            ImGui::PopStyleVar(2);
+
+            // 行尾低频入口：模型目录
+            ImGui::SameLine();
+            {
+                const float linkWidth = ImGui::CalcTextSize(L(AI_ModelDirLink)).x + 14.0f;
+                const float remainingWidth = ImGui::GetContentRegionAvail().x;
+                if (remainingWidth < linkWidth) {
+                    // 面板被拖窄时宁可不画，也不把入口压在裁剪区里。
+                } else {
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + remainingWidth - linkWidth);
+                    if (aura::ui::SmallActionButton(L(AI_ModelDirLink), aura::ui::ButtonVariant::Quiet)) {
+                        const std::string modelDir = GetDefaultModelDir();
+                        Platform::OpenInFileManager(modelDir);
+                    }
+                }
+            }
 
             ImGui::Separator();
 
@@ -32256,20 +32430,16 @@ void RenderUI(AppState& state) {
                 if (ImGui::BeginTabItem(L(Main_TranscribeTab))) {
                     const char* langItems[] = { L(Sc_LangAuto), u8"简体中文", "English" };  // 简体中文/English: 语言自名(endonym)豁免=Lead 7-0裁②
                     ImGui::SetNextItemWidth(180.0f);
-                    ImGui::Combo(L(Main_RecognizeLangCombo), &state.aiRecognitionLanguageMode, langItems, IM_ARRAYSIZE(langItems));
+                    ImGui::Combo("##AIRecognitionLanguage", &state.aiRecognitionLanguageMode, langItems, IM_ARRAYSIZE(langItems));
                     if (state.aiRecognitionLanguageMode == 1) {
-                        ImGui::TextDisabled(L(Main_ChineseSimplifyHint));
-                    } else if (state.aiRecognitionLanguageMode == 2) {
-                        ImGui::TextDisabled(L(Main_EnglishMaterialHint));
-                    } else {
-                        ImGui::TextDisabled(L(Main_AutoDetectLangHint));
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(L(AI_SimplifyApplied));
                     }
-                    ImGui::TextDisabled(L(Main_BaseModelHint));
                     ImGui::Separator();
 
                     if (state.audioEngine.isLoaded()) {
                         const AudioFileInfo& aiFileInfo = state.audioEngine.getFileInfo();
-                        ImGui::Text(L(Main_CurrentFileFmt), aiFileInfo.filePath.c_str());
+                        ImGui::Text(L(Main_CurrentFileFmt), aiFileInfo.fileName.c_str());
 
                         if (state.aiModelLoaded.load()) {
                             const bool currentTaskRunning = state.aiCurrentTranscriptionTaskId > 0;
@@ -32311,33 +32481,40 @@ void RenderUI(AppState& state) {
                                 auto it = state.aiTranscriptCache.find(state.currentFileId);
                                 if (it != state.aiTranscriptCache.end() && !it->second.empty()) {
                                     ImGui::Separator();
-                                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), L(AI_TranscribeResult));
                                     auto resultIt = state.aiTranscriptResultCache.find(state.currentFileId);
                                     const TranscriptionResult* transcript =
                                         resultIt != state.aiTranscriptResultCache.end() ? &resultIt->second : nullptr;
-                                    if (transcript &&
-                                        IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds)) {
-                                        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                                            L(Main_AsrLowConfNote));
-                                    }
                                     auto orgIt = state.aiVoiceAssetOrganizationCache.find(state.currentFileId);
                                     const VoiceAssetOrganization* organization =
                                         orgIt != state.aiVoiceAssetOrganizationCache.end() ? &orgIt->second : nullptr;
-                                    if (organization) {
-                                        ImGui::TextDisabled(L(Main_AssetDescriptionFmt), organization->searchableDescription.c_str());
-                                        ImGui::TextDisabled(L(Main_SuggestedKeywordsFmt), organization->keywordCsv.c_str());
-                                        if (!organization->qualityIssues.empty()) {
-                                            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f),
-                                                L(Main_AsrQualityCheckFmt), (int)organization->qualityIssues.size());
-                                        }
-                                    }
-                                    ImGui::TextWrapped("%s", it->second.c_str());
+                                    const bool lowConfidence = transcript &&
+                                        IsLowConfidenceTranscript(*transcript, aiFileInfo.durationSeconds);
 
-                                    if (aura::ui::ActionButton(L(Main_CopyToClipboardBtn))) {
-                                        ImGui::SetClipboardText(it->second.c_str());
+                                    const auto labeledValue = [&](const char* label, const char* value, bool lowConf) {
+                                        ImGui::AlignTextToFramePadding();
+                                        ImGui::TextDisabled("%s", label);
+                                        if (lowConf) {
+                                            ImGui::SameLine();
+                                            ImGui::TextColored(aiWarnColor, "%s", L(AI_LowConfidenceTag));
+                                        }
+                                        ImGui::SameLine();
+                                        ImGui::TextUnformatted(value);
+                                    };
+                                    if (organization && !organization->searchableDescription.empty()) {
+                                        labeledValue(L(AI_DescLabel), organization->searchableDescription.c_str(), lowConfidence);
+                                        if (!organization->keywordCsv.empty()) {
+                                            labeledValue(L(AI_KeywordsLabel), organization->keywordCsv.c_str(), false);
+                                        }
+                                    } else {
+                                        ImGui::TextWrapped("%s", it->second.c_str());
                                     }
-                                    ImGui::SameLine();
-                                    if (aura::ui::ActionButton(L(Main_SaveOrganizedResultBtn))) {
+                                    if (organization && !organization->qualityIssues.empty()) {
+                                        ImGui::TextColored(aiWarnColor, L(Main_AsrQualityCheckFmt),
+                                            (int)organization->qualityIssues.size());
+                                    }
+
+                                    ImGui::Spacing();
+                                    if (aura::ui::ActionButton(L(AI_SaveToAsset))) {
                                         // 更新数据库描述 - 通过 updateFile
                                         AudioRecord rec = state.database.getFileById(state.currentFileId);
                                         if (rec.id > 0) {
@@ -32354,17 +32531,25 @@ void RenderUI(AppState& state) {
                                             state.database.updateFile(rec);
                                         }
                                     }
-                                    if (transcript) {
-                                        ImGui::SameLine();
-                                        if (aura::ui::ActionButton(L(Main_CopySrtBtn))) {
-                                            std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
-                                            ImGui::SetClipboardText(srt.c_str());
+                                    ImGui::SameLine();
+                                    if (aura::ui::ActionButton(L(AI_CopyMenu))) {
+                                        ImGui::OpenPopup("##AICopyMenu");
+                                    }
+                                    if (aura::ui::BeginPopup("##AICopyMenu")) {
+                                        if (ImGui::MenuItem(L(Main_CopyToClipboardBtn))) {
+                                            ImGui::SetClipboardText(it->second.c_str());
                                         }
-                                        ImGui::SameLine();
-                                        if (aura::ui::ActionButton(L(Main_CopyCsvBtn))) {
-                                            std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
-                                            ImGui::SetClipboardText(csv.c_str());
+                                        if (transcript) {
+                                            if (ImGui::MenuItem(L(Main_CopySrtBtn))) {
+                                                std::string srt = VoiceAssetOrganizer::BuildSrt(*transcript);
+                                                ImGui::SetClipboardText(srt.c_str());
+                                            }
+                                            if (ImGui::MenuItem(L(Main_CopyCsvBtn))) {
+                                                std::string csv = VoiceAssetOrganizer::BuildCsv(*transcript);
+                                                ImGui::SetClipboardText(csv.c_str());
+                                            }
                                         }
+                                        aura::ui::EndPopup();
                                     }
 
                                     if (transcript && !transcript->segments.empty()) {
@@ -32378,7 +32563,7 @@ void RenderUI(AppState& state) {
                                                 ImGui::PushID(segIdx);
                                                 const bool selected = state.aiSelectedTranscriptSegment == segIdx;
                                                 if (selected) {
-                                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.85f, 1.0f, 1.0f));
+                                                    ImGui::PushStyleColor(ImGuiCol_Text, aiInfoColor);
                                                 }
                                                 if (ImGui::SmallButton(L(Main_PlayBtn))) {
                                                     if (aiFileInfo.durationSeconds > 0.0f) {
@@ -32390,10 +32575,6 @@ void RenderUI(AppState& state) {
                                                         if (!state.audioEngine.isPlaying()) state.audioEngine.play();
                                                         state.aiSelectedTranscriptSegment = segIdx;
                                                     }
-                                                }
-                                                ImGui::SameLine();
-                                                if (aura::ui::SmallActionButton(L(Main_CopyBtn))) {
-                                                    ImGui::SetClipboardText(seg.text.c_str());
                                                 }
                                                 ImGui::SameLine();
                                                 ImGui::TextDisabled(L(Main_SegmentRangeFmt),
@@ -32410,7 +32591,7 @@ void RenderUI(AppState& state) {
                                 }
                             }
                         } else {
-                            ImGui::TextDisabled(L(Main_PleaseDownloadModel));
+                            // 模型不可用时，面板顶部的「下载并加载」是唯一可执行动作，这里不再重复提示。
                         }
                     } else {
                         ImGui::TextDisabled(L(Main_PleaseLoadAudio));
@@ -32418,15 +32599,28 @@ void RenderUI(AppState& state) {
                     ImGui::EndTabItem();
                 }
 
-                // 任务列表
-                if (ImGui::BeginTabItem(L(Main_QueueTab))) {
-                    std::vector<AITask> tasks = GetAIEngine().GetAllTasks();
+                // 任务列表（计数直接显示在页签上）
+                std::vector<AITask> queueTasks = GetAIEngine().GetAllTasks();
+                char queueTabLabel[96];
+                if (queueTasks.empty()) {
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s###AIQueueTab", L(Main_QueueTab));
+                } else {
+                    // ### 后缀固定页签 ID：可清理后计数变化不会把用户踢回其他页签。
+                    snprintf(queueTabLabel, sizeof(queueTabLabel), "%s (%d)###AIQueueTab",
+                        L(Main_QueueTab), (int)queueTasks.size());
+                }
+                if (ImGui::BeginTabItem(queueTabLabel)) {
+                    std::vector<AITask>& tasks = queueTasks;
 
                     if (tasks.empty()) {
                         ImGui::TextDisabled(L(Main_NoTasks));
                     } else {
-                        ImGui::Text(L(Main_TaskTotalFmt), (int)tasks.size());
-                        ImGui::SameLine();
+                        const float queueToolsWidth = ImGui::CalcTextSize(L(Main_ClearCompletedBtn)).x +
+                            ImGui::CalcTextSize(L(Main_CancelQueuedBtn)).x + 46.0f;
+                        const float queueAvail = ImGui::GetContentRegionAvail().x;
+                        if (queueAvail > queueToolsWidth) {
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + queueAvail - queueToolsWidth);
+                        }
                         if (aura::ui::SmallActionButton(L(Main_ClearCompletedBtn))) {
                             GetAIEngine().ClearCompletedTasks();
                         }
@@ -32442,11 +32636,11 @@ void RenderUI(AppState& state) {
 
                             ImVec4 statusColor;
                             switch (task.status) {
-                                case AITaskStatus::Pending:    statusColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f); break;
-                                case AITaskStatus::Processing: statusColor = ImVec4(0.3f, 0.7f, 1.0f, 1.0f); break;
-                                case AITaskStatus::Completed:  statusColor = ImVec4(0.3f, 0.9f, 0.3f, 1.0f); break;
-                                case AITaskStatus::Failed:     statusColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f); break;
-                                default:                       statusColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); break;
+                                case AITaskStatus::Pending:    statusColor = aiPanelTheme.resultsSecondaryText; break;
+                                case AITaskStatus::Processing: statusColor = aiInfoColor; break;
+                                case AITaskStatus::Completed:  statusColor = aiOkColor; break;
+                                case AITaskStatus::Failed:     statusColor = aiErrColor; break;
+                                default:                       statusColor = aiPanelTheme.resultsSecondaryText; break;
                             }
 
                             ImGui::TextColored(statusColor, L(Main_BracketStatusFmt), GetAITaskStatusName(task.status));
@@ -32468,7 +32662,7 @@ void RenderUI(AppState& state) {
 
                             if (task.status == AITaskStatus::Failed) {
                                 const std::string aiTaskError = task.errorMessage.Render();  // H1b: keyed, render here
-                                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                                ImGui::TextColored(aiErrColor,
                                     L(Main_IndentedErrorFmt), aiTaskError.c_str());
                             }
 
@@ -32505,39 +32699,7 @@ void RenderUI(AppState& state) {
                     ImGui::EndTabItem();
                 }
 
-                // 设置
-                if (ImGui::BeginTabItem(L(Main_SettingsTab))) {
-                    ImGui::Text(L(Main_AsrSettingsTitle));
-                    ImGui::Separator();
-                    ImGui::TextWrapped(L(Main_ModelSizeHint));
-
-                    ImGui::Separator();
-
-                    // 模型路径
-                    ImGui::Text(L(Main_ModelDirFmt), GetDefaultModelDir().c_str());
-
-                    if (aura::ui::ActionButton(L(Main_OpenModelDirBtn))) {
-                        std::string modelDir = GetDefaultModelDir();
-                        Platform::OpenInFileManager(modelDir);
-                    }
-
-                    ImGui::EndTabItem();
-                }
-
                 ImGui::EndTabBar();
-
-                const auto aiTasksForSummary = GetAIEngine().GetAllTasks();
-                int aiRunningCount = 0;
-                int aiFailedCount = 0;
-                for (const auto& task : aiTasksForSummary) {
-                    if (task.status == AITaskStatus::Pending || task.status == AITaskStatus::Processing) {
-                        ++aiRunningCount;
-                    } else if (task.status == AITaskStatus::Failed) {
-                        ++aiFailedCount;
-                    }
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled(L(Main_BackgroundTasksFmt), aiRunningCount, aiFailedCount);
             }
             ImGui::PopStyleColor(6);
         }
@@ -32561,12 +32723,11 @@ void RenderUI(AppState& state) {
         state.settings.defaultPlayerPrompted = true;
         SaveAppSettings(state);
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(), nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(Set_ShellSetDefault)) + "##f034").c_str(),
+                               L(Set_ShellSetDefault))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         ImGui::TextUnformatted(L(Main_SetDefaultPlayerPrompt));
-        ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));        ImGui::Spacing();
-        ImGui::Separator();
+        ImGui::TextDisabled(L(Main_SetDefaultPlayerHint));
         ImGui::Spacing();
         if (aura::ui::ActionButton(L(Main_SetDefaultBtn), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             SetAsDefaultPlayer();
@@ -32577,7 +32738,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Scan folder dialog
@@ -33914,7 +34075,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewPlaylist));
         state.showPlaylistDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewPlaylist), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewPlaylist), L(Dlg_NewPlaylist))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -33928,7 +34089,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         // 当输入框为空或名称已存在时禁用创建按钮
         bool canCreate = strlen(state.playlistNameBuffer) > 0;
@@ -33969,7 +34130,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // New folder dialog
@@ -33977,7 +34138,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_NewFolder));
         state.showCreateFolderDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_NewFolder), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_NewFolder), L(Dlg_NewFolder))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_FolderNameLabel));
@@ -33989,7 +34150,7 @@ void RenderUI(AppState& state) {
             ImGui::SetKeyboardFocusHere(-1);
         }
 
-        ImGui::Separator();
+        ImGui::Spacing();
 
         bool canCreate = strlen(state.folderNameBuffer) > 0;
         bool isDuplicateName = false;
@@ -34026,7 +34187,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Remove-folder-from-Aris confirmation modal.
@@ -34041,38 +34202,16 @@ void RenderUI(AppState& state) {
         const ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
-        if (BeginTransientScrollbarPopupModal((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(), nullptr,
-                                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        if (aura::ui::BeginAlertDialog((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(),
+                                       L(Misc_ClearFolderCache),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             const ImVec4 warnCol(0.96f, 0.62f, 0.22f, 1.0f);
-            // Hand-drawn warning triangle — font-independent so the glyph
-            // never falls back to a tofu box on CJK builds.
-            {
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                const ImVec2 base = ImGui::GetCursorScreenPos();
-                const float h = ImGui::GetFontSize();
-                const ImU32 col = ImGui::GetColorU32(warnCol);
-                const ImVec2 a(base.x + h * 0.5f, base.y + 1.0f);
-                const ImVec2 b(base.x,           base.y + h - 1.0f);
-                const ImVec2 c(base.x + h,       base.y + h - 1.0f);
-                dl->AddTriangle(a, b, c, col, 1.8f);
-                const float cx = base.x + h * 0.5f;
-                dl->AddRectFilled(ImVec2(cx - 0.9f, base.y + 4.0f),
-                                  ImVec2(cx + 0.9f, base.y + h - 5.0f), col);
-                dl->AddRectFilled(ImVec2(cx - 0.9f, base.y + h - 4.0f),
-                                  ImVec2(cx + 0.9f, base.y + h - 2.0f), col);
-                ImGui::Dummy(ImVec2(h + 6.0f, h));
-                ImGui::SameLine(0.0f, 0.0f);
-            }
             ImGui::PushStyleColor(ImGuiCol_Text, warnCol);
-            ImGui::TextUnformatted(L(Main_RemoveFromLibraryTitle));
+            ImGui::TextWrapped(L(Main_RemovePathsExplain));
             ImGui::PopStyleColor();
             ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            ImGui::TextWrapped(L(Main_RemovePathsExplain));            ImGui::Spacing();
             // Path in a slightly framed monospace block for clarity.
             ImGui::Indent(8.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.95f, 1.0f));
@@ -34083,8 +34222,6 @@ void RenderUI(AppState& state) {
             ImGui::Spacing();
             ImGui::TextDisabled(L(Main_SourcesKeptNote));
             ImGui::TextDisabled(L(Main_CacheRefsCleanupNote));
-            ImGui::Spacing();
-            ImGui::Separator();
             ImGui::Spacing();
 
             const float btnW = 120.0f;
@@ -34110,7 +34247,7 @@ void RenderUI(AppState& state) {
             }
             ImGui::PopStyleColor(3);
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
     }
 
@@ -34120,7 +34257,7 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(playlistRenamePopupLabel.c_str());
         state.showPlaylistRenameDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal(playlistRenamePopupLabel.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(playlistRenamePopupLabel.c_str(), L(PL_RenameTitle))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text("%s", L(PL_PlaylistName));
@@ -34128,7 +34265,7 @@ void RenderUI(AppState& state) {
         bool enterPressed = ImGui::InputText("##PlaylistRenameName", state.playlistNameBuffer,
             sizeof(state.playlistNameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
-        ImGui::Separator();
+        ImGui::Spacing();
 
         const std::string renameCandidate = TrimCopy(state.playlistNameBuffer);
         bool canRename = !renameCandidate.empty();
@@ -34160,7 +34297,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // ⚙️ 资产库管理中心
@@ -34171,7 +34308,7 @@ void RenderUI(AppState& state) {
     }
 
     ImGui::SetNextWindowSize(ImVec2(850, 500), ImGuiCond_FirstUseEver);
-    if (BeginTransientScrollbarPopupModal(L(AssetLib_Title), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    if (aura::ui::BeginAlertDialog(L(AssetLib_Title), L(AssetLib_Title), ImGuiWindowFlags_NoCollapse)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
 
@@ -34339,10 +34476,10 @@ void RenderUI(AppState& state) {
             }
             state.showDbDestroyConfirmDialog = false;
         }
-        if (BeginTransientScrollbarPopupModal(L(AssetLib_DeleteConfirm), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (aura::ui::BeginAlertDialog(L(AssetLib_DeleteConfirm), L(AssetLib_DeleteConfirm))) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             ImGui::Text(L(Main_DelLibAsk));
-            ImGui::Separator();
+            ImGui::Spacing();
             ImGui::Text(L(Main_TargetLabel));
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", state.dbManagerSelectedPath.c_str());
             ImGui::Spacing();
@@ -34364,14 +34501,14 @@ void RenderUI(AppState& state) {
             ImGui::SameLine();
             if (aura::ui::ActionButton(L(Cancel), ImVec2(100, 35), aura::ui::ButtonVariant::Quiet)) { state.dbDestroyErrorMsg.clear(); ImGui::CloseCurrentPopup(); }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 38.0f);
         }
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
 // 新建数据库弹窗
@@ -34640,7 +34777,7 @@ void RenderUI(AppState& state) {
         state.showDawTargetSettings = false;
     }
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
-    if (BeginTransientScrollbarPopupModal(L(DAW_SettingsTitle), nullptr, ImGuiWindowFlags_None)) {
+    if (aura::ui::BeginAlertDialog(L(DAW_SettingsTitle), L(DAW_SettingsTitle), ImGuiWindowFlags_None)) {
         {
         ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
@@ -34755,13 +34892,15 @@ void RenderUI(AppState& state) {
                 strncpy_s(s_dawExePathBuf, sizeof(s_dawExePathBuf), selected.exePath.c_str(), _TRUNCATE);
             }
 
-            ImGui::Separator();
             ImGui::Spacing();
             ImGui::Text(L(Main_SelectedDawFmt), selected.name.c_str());
             ImGui::TextDisabled("%s", GetCapabilityTag(selected));
-            const std::string capabilityDetail = GetCapabilityDetail(selected);
-            if (!capabilityDetail.empty()) {
-                ImGui::TextWrapped("%s", capabilityDetail.c_str());
+            // REAPER 目标的详细状态在下方单独渲染一次，这里不再重复同一句提示。
+            if (!IsReaperNamedPipeTarget(selected)) {
+                const std::string capabilityDetail = GetCapabilityDetail(selected);
+                if (!capabilityDetail.empty()) {
+                    ImGui::TextWrapped("%s", capabilityDetail.c_str());
+                }
             }
             ImGui::Spacing();
 
@@ -34860,17 +34999,7 @@ void RenderUI(AppState& state) {
                     if (!cached->remediation.empty()) {
                         ImGui::TextWrapped("%s", bridgeRemedShown.c_str());
                     }
-                    ImGui::TextDisabled(L(Main_ReaperStatusFmt),
-                        cached->hostExecutablePath.empty() ? "-" : cached->hostExecutablePath.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperResourceFmt),
-                        cached->resourcePath.empty() ? "-" : cached->resourcePath.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperUserPluginsFmt),
-                        cached->targetDirectory.empty() ? "-" : cached->targetDirectory.c_str());
-                    ImGui::TextDisabled(L(Main_ReaperBridgeInfoFmt),
-                        cached->installedVersion.empty() ? "-" : cached->installedVersion.c_str(),
-                        cached->installedProtocolVersion,
-                        cached->installedArchitecture.empty() ? "-" : cached->installedArchitecture.c_str(),
-                        cached->handshakeCode.c_str());
+                    // 路径、版本、协议细节已在“复制诊断摘要”里，界面只留一句话状态。
                 }
             } else {
                 ImGui::TextUnformatted(L(Main_DawExePathLabel));
@@ -34988,7 +35117,7 @@ void RenderUI(AppState& state) {
                     ImGui::OpenPopup(L(PtCloseAfterSave));
                     state.showProToolsCloseConfirm = false;
                 }
-                if (BeginTransientScrollbarPopupModal(L(PtCloseAfterSave), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (aura::ui::BeginAlertDialog(L(PtCloseAfterSave), L(PtCloseAfterSave))) {
                     ImGui::TextWrapped(L(Main_ProToolsCloseWarn));                    ImGui::Spacing();
                     if (aura::ui::ActionButton(L(Main_ProToolsSavedCloseBtn))) {
                         const auto reset = HarkenSearch::ProTools::ResetProToolsConnection(true);
@@ -35002,7 +35131,7 @@ void RenderUI(AppState& state) {
                     if (aura::ui::ActionButton(L(Main_ProToolsCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) {
                         ImGui::CloseCurrentPopup();
                     }
-                    ImGui::EndPopup();
+                    aura::ui::EndAlertDialog();
                 }
                 if (!state.lastProToolsConnectionStatus.empty()) {
                     ImGui::TextWrapped(L(Main_ProToolsLastTestFmt),
@@ -35091,7 +35220,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     #include "SettingsDialog.inl"
@@ -35153,7 +35282,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_PopupBg, kCurrentModules.overlay.background);
         ImGui::PushStyleColor(ImGuiCol_WindowBg, kCurrentModules.overlay.background);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, kCurrentModules.overlay.panel);
-        if (BeginTransientScrollbarPopupModal("##MetaEditDlg", nullptr, ImGuiWindowFlags_NoResize)) {
+        if (aura::ui::BeginAlertDialog("##MetaEditDlg", L(MetaEdit_DialogTitle),
+                                       ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
 
@@ -35197,14 +35327,12 @@ void RenderUI(AppState& state) {
                 }
             }
 
-            // Title bar with batch indicator
+            // Caption bar carries the title; the body only adds the batch count.
             if (state.metadataBatchMode) {
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                    "%s (%d)", L(MetaEdit_DialogTitle), (int)state.metadataBatchIds.size());
-            } else {
-                ImGui::Text("%s", L(MetaEdit_DialogTitle));
+                    L(Dlg_SelectedNFiles), (int)state.metadataBatchIds.size());
+                ImGui::Spacing();
             }
-            ImGui::Separator();
 
             // Left nav panel
             const float meNavW = 120.0f;
@@ -35360,7 +35488,7 @@ void RenderUI(AppState& state) {
             }
 
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
         ImGui::PopStyleColor(3);
     }
@@ -35789,12 +35917,12 @@ void RenderUI(AppState& state) {
         }
         state.showCoverRemoveConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmDeleteCover), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmDeleteCover), L(Dlg_ConfirmDeleteCover))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
         ImGui::Text(L(Main_DelCoverAsk), (int)state.coverRemovePaths.size());
         ImGui::Text(L(Main_DelCoverNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(Delete), ImVec2(120, 0), aura::ui::ButtonVariant::Danger)) {
             // Remove per-file so we can persist exact successes
@@ -35835,7 +35963,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     if (state.showOriginalAudioWriteConfirm) {
@@ -35846,7 +35974,7 @@ void RenderUI(AppState& state) {
         }
         state.showOriginalAudioWriteConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal(L(Dlg_ConfirmWriteOriginalAudio), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(Dlg_ConfirmWriteOriginalAudio), L(Dlg_ConfirmWriteOriginalAudio))) {
         { ReadingTextScope _readingPopup;
         if (EscClosePopup()) {
             ClearPendingOriginalAudioWrite(state);
@@ -35858,7 +35986,7 @@ void RenderUI(AppState& state) {
                 : (int)state.pendingOriginalAudioWritePaths.size();
         ImGui::Text(L(Main_WriteOriginalAudioAsk), writeCount);
         ImGui::TextUnformatted(L(Main_WriteOriginalAudioNote));
-        ImGui::Separator();
+        ImGui::Spacing();
 
         if (aura::ui::ActionButton(L(OK), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
             ApplyPendingOriginalAudioWrite(state);
@@ -35870,7 +35998,7 @@ void RenderUI(AppState& state) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // TOP MENU BAR
@@ -36368,9 +36496,11 @@ void RenderUI(AppState& state) {
                 ImGui::EndMenu();
             }
 
-            ImGui::Separator();
 #if AURA_BUILD_DIAGNOSTICS
-            ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
+            if (kShowDevTestMenuEntries) {
+                ImGui::Separator();
+                ImGui::MenuItem(L(View_DemoWindow), nullptr, &state.showDemoWindow);
+            }
 #endif
             }
             menuChromeView.reset();
@@ -36501,9 +36631,11 @@ void RenderUI(AppState& state) {
         if (toolsMenuOpen) {
             ThemeMenuPopupStyleScope menuChromeTools(GetUIFontRegular());
             { ChromeTextScope _readingMenuTools;
-            if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
-            if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
-                ResetDockTestLayout();
+            if (kShowDevTestMenuEntries) {
+                if (ImGui::MenuItem(L(Tools_DockTestWindow), nullptr, &g_dockTestWindowOpen)) {}
+                if (ImGui::MenuItem(L(Tools_ResetDockTestLayout))) {
+                    ResetDockTestLayout();
+                }
             }
             if (ImGui::MenuItem(L(Tools_FolderAutoRename))) {
                 state.showFolderAutoRenameDialog = true;
@@ -36861,6 +36993,8 @@ void RenderUI(AppState& state) {
 
     const float mainWorkW = frameWorkSize.x > 0.0f ? frameWorkSize.x : ImGui::GetIO().DisplaySize.x;
     const float mainWorkH = frameWorkSize.y > 0.0f ? frameWorkSize.y : ImGui::GetIO().DisplaySize.y;
+    const float workspaceScale = aura::ui::dpi::UiScale();
+    const auto workspacePx = [workspaceScale](float logical) { return logical * workspaceScale; };
     // desktop-resize: content-driven breakpoints. Do not scale the whole UI down;
     // progressively reflow secondary chrome away from the central workspace.
     const bool layoutCompactWidth = mainWorkW < 1100.0f;
@@ -37056,23 +37190,23 @@ void RenderUI(AppState& state) {
     const auto splitResizeMinimum = aura::ui::dock::DockMinimumPurpose::Resize;
     const float leftSidebarMinWidth = leftRegionSplit
         ? aura::ui::dock::DockSubtreeMinimum(leftRegionRoot, viewport->DpiScale, splitResizeMinimum).width
-        : (layoutCompactWidth ? 96.0f : 160.0f);
+        : workspacePx(layoutCompactWidth ? 96.0f : 160.0f);
     const float rightPanelMinWidth = rightRegionSplit
-        ? aura::ui::dock::DockSubtreeMinimum(rightRegionRoot, viewport->DpiScale, splitResizeMinimum).width : 150.0f;
+        ? aura::ui::dock::DockSubtreeMinimum(rightRegionRoot, viewport->DpiScale, splitResizeMinimum).width : workspacePx(150.0f);
     const float rightPanelMaxWidth = std::max(
-        std::max(260.0f, rightPanelMinWidth),
+        std::max(workspacePx(260.0f), rightPanelMinWidth),
         mainWorkW -
             (leftDockSlotRequired ? (leftSidebarMinWidth + leftCenterSplitterWidth + splitterWidth) : splitterWidth) -
             minReadableCenterWidth);
     // Use stored panel widths (resizable).
     float rightPanelWidth = showRightColumn
-        ? std::clamp(state.panelFileInfo.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth)
+        ? std::clamp(workspacePx(state.panelFileInfo.dockedWidth), rightPanelMinWidth, rightPanelMaxWidth)
         : 0.0f;
     const float leftSidebarMaxWidth = std::max(
-        std::max(leftSidebarMinWidth, layoutCompactWidth ? 220.0f : 400.0f),
+        std::max(leftSidebarMinWidth, workspacePx(layoutCompactWidth ? 220.0f : 400.0f)),
         mainWorkW - (rightDockSlotRequired ? (rightPanelWidth + splitterWidth) : 0.0f) - minReadableCenterWidth);
     float leftPanelWidth = showLeftColumn
-        ? std::clamp(state.panelSidebar.dockedWidth, leftSidebarMinWidth, leftSidebarMaxWidth)
+        ? std::clamp(workspacePx(state.panelSidebar.dockedWidth), leftSidebarMinWidth, leftSidebarMaxWidth)
         : 0.0f;
     // The column extent stays owned by ##LeftSplitter (panelSidebar.dockedWidth).
     // Only the shell inside the column shrinks to the filter leaf while the
@@ -37095,11 +37229,11 @@ void RenderUI(AppState& state) {
         rightRegionSplit, rightPanelWidth, infoLeafWidth, rightPanelMinWidth, std::max(rightPanelMaxWidth, rightPanelWidth));
     const float requestedLeftDockWidth = leftDockSlotRequired
         ? (showLeftColumn ? leftPanelWidth
-                          : std::clamp(state.panelSidebar.dockedWidth, leftSidebarMinWidth, leftSidebarMaxWidth))
+                          : std::clamp(workspacePx(state.panelSidebar.dockedWidth), leftSidebarMinWidth, leftSidebarMaxWidth))
         : 0.0f;
     const float requestedRightDockWidth = rightDockSlotRequired
         ? (showRightColumn ? rightPanelWidth
-                           : std::clamp(state.panelFileInfo.dockedWidth, rightPanelMinWidth, rightPanelMaxWidth))
+                           : std::clamp(workspacePx(state.panelFileInfo.dockedWidth), rightPanelMinWidth, rightPanelMaxWidth))
         : 0.0f;
     const aura::ui::dock::DockColumnBudget dockColumnBudget =
         aura::ui::dock::ResolveDockColumnBudget(
@@ -37113,7 +37247,7 @@ void RenderUI(AppState& state) {
     const float resultsHomeLeftScreenX = std::trunc(viewport->WorkPos.x +
         (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f));
 
-    constexpr float toolbarHeight = 40.0f;
+    const float toolbarHeight = workspacePx(40.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, workspaceToolbarSurface);
     BeginTransientScrollbarChild("Toolbar", ImVec2(0, toolbarHeight), false);
@@ -37204,12 +37338,12 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_Text, kToolbarChromeText);
 
         // --- Unified vertical centering for ALL toolbar elements ---
-        const float kCapsuleH = 34.0f;   // unified capsule height for both pill groups
+        const float kCapsuleH = workspacePx(34.0f);   // unified capsule height for both pill groups
         const float kToolbarCenterY = (toolbarHeight - kCapsuleH) * 0.5f;
         // The main search bar must never read thinner than the history capsule
         // beside it, so it takes the capsule thickness as its floor.
         const float kMainSearchH = std::max(harken::toolbar::SearchFieldHeight(), kCapsuleH);
-        const float kToolbarLeftGutter = layoutTinyWidth ? 8.0f : 14.0f;
+        const float kToolbarLeftGutter = workspacePx(layoutTinyWidth ? 8.0f : 14.0f);
         constexpr float kPresetDialWidth = 160.0f;
         constexpr float kPresetDialGap = 12.0f;
         const bool showPresetDial = !state.columnPresets.empty();
@@ -37252,22 +37386,22 @@ void RenderUI(AppState& state) {
 
         const auto toolbarSearchPalette = harken::toolbar::ResolveSearchPalette(
             toolbarTheme, toolbarTheme.toolbarBG, toolbarTheme.frameBgBase, toolbarTheme.interfaceText);
-        constexpr float kHistoryButtonWidth = 46.0f;
-        constexpr float kHistoryInnerPad = 3.0f;
-        constexpr float kHistoryDividerGap = 2.0f;
-        constexpr float kHistoryCapsuleWidth =
-            2.0f * (kHistoryButtonWidth + kHistoryInnerPad + kHistoryDividerGap) + 1.0f;
-        constexpr float searchHistoryGap = 8.0f;
+        const float kHistoryButtonWidth = workspacePx(46.0f);
+        const float kHistoryInnerPad = workspacePx(3.0f);
+        const float kHistoryDividerGap = workspacePx(2.0f);
+        const float kHistoryCapsuleWidth =
+            2.0f * (kHistoryButtonWidth + kHistoryInnerPad + kHistoryDividerGap) + workspacePx(1.0f);
+        const float searchHistoryGap = workspacePx(8.0f);
         const float leadingHistoryX = toolbarWindowPos.x + kToolbarLeftGutter;
         const bool historyAfterSearch =
             resultsHomeLeftScreenX < leadingHistoryX + kHistoryCapsuleWidth + searchHistoryGap;
         const float historyReserveW = historyAfterSearch ? kHistoryCapsuleWidth + searchHistoryGap : 0.0f;
-        const float navReserveW = layoutTinyWidth ? 252.0f : (layoutCompactWidth ? 276.0f : 620.0f);
+        const float navReserveW = workspacePx(layoutTinyWidth ? 252.0f : (layoutCompactWidth ? 276.0f : 620.0f));
         const float spaceAfterAnchor = toolbarResultsRightScreenX - resultsHomeLeftScreenX -
             historyReserveW - presetDialReserveW - toolbarDialRightInset - toolbarNavMinGap;
         const float searchMinW = harken::toolbar::SearchWidthWithModeLabel(
-            layoutTinyWidth ? 156.0f : (layoutCompactWidth ? 216.0f : 256.0f));
-        const float searchMaxW = std::max(searchMinW, layoutCompactWidth ? 356.0f : 456.0f);
+            workspacePx(layoutTinyWidth ? 156.0f : (layoutCompactWidth ? 216.0f : 256.0f)));
+        const float searchMaxW = std::max(searchMinW, workspacePx(layoutCompactWidth ? 356.0f : 456.0f));
         const float searchFitMaxW = std::clamp(
             spaceAfterAnchor - compactNavWidth, searchMinW, searchMaxW);
         const float searchWidth = std::clamp(
@@ -38549,7 +38683,7 @@ void RenderUI(AppState& state) {
     const float statusBottomLayoutReserve =
         showDockedWaveform ? 0.0f : std::max(2.0f, ImGui::GetStyle().FramePadding.y + 1.0f);
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
-    const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? 36.0f : 0.0f;
+    const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? workspacePx(36.0f) : 0.0f;
     const float baseOverhead = workspaceHeaderHeight + reservedStatusBarHeight +
         waveformSplitterReserve + statusBottomLayoutReserve + startupListOffsetReserve +
         startupWaveformOffsetReserve + 13.0f;
@@ -38584,14 +38718,14 @@ void RenderUI(AppState& state) {
     const float topDockReserve = topDockBandHeight > 0.0f ? topDockBandHeight + dockBandSplitter : 0.0f;
     const float bottomDockReserve = bottomDockBandHeight > 0.0f ? bottomDockBandHeight + dockBandSplitter : 0.0f;
     float fixedOverhead = baseOverhead + topDockReserve + bottomDockReserve;
-    float maxWaveformH = std::max(layoutShortHeight ? 96.0f : 150.0f,
+    float maxWaveformH = std::max(workspacePx(layoutShortHeight ? 96.0f : 150.0f),
         mainWorkH - fixedOverhead - playlistQuickBarHeight - minContentHeight);
-    const float minWaveformH = 96.0f;
+    const float minWaveformH = workspacePx(96.0f);
     float waveformPanelHeight = 0.0f;
     if (showDockedWaveform) {
         const float desiredWaveformH = layoutShortHeight
-            ? std::min(state.panelWaveform.dockedHeight, 132.0f)
-            : state.panelWaveform.dockedHeight;
+            ? workspacePx(std::min(state.panelWaveform.dockedHeight, 132.0f))
+            : workspacePx(state.panelWaveform.dockedHeight);
         waveformPanelHeight = std::min(desiredWaveformH, maxWaveformH);
     }
     const float waveBandHeight = waveformPanelHeight + playlistQuickBarHeight;
@@ -38660,6 +38794,7 @@ void RenderUI(AppState& state) {
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
     constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+    const float infoDockTitleHeight = workspacePx(24.0f);
 
     auto drawDockTitleBar = [&](ImDrawList* dl,
                                 const ImVec2& wp,
@@ -38667,7 +38802,8 @@ void RenderUI(AppState& state) {
                                 float h,
                                 const char* title,
                                 ImU32 titleColor,
-                                ImDrawFlags titleRoundFlags = ImDrawFlags_RoundCornersTop) {
+                                ImDrawFlags titleRoundFlags = ImDrawFlags_RoundCornersTop,
+                                float titleTextScale = 1.0f) {
         dl->AddRectFilled(
             wp,
             ImVec2(wp.x + w, wp.y + h),
@@ -38678,10 +38814,10 @@ void RenderUI(AppState& state) {
         ImFont* emph = GetUIFontEmphasis();
         if (emph) {
             ImGui::PushFont(emph);
-            dl->AddText(ImVec2(wp.x + 8, wp.y + 4), titleColor, title);
+            dl->AddText(ImVec2(wp.x + 8.0f * titleTextScale, wp.y + 4.0f * titleTextScale), titleColor, title);
             ImGui::PopFont();
         } else {
-            dl->AddText(ImVec2(wp.x + 8, wp.y + 4), titleColor, title);
+            dl->AddText(ImVec2(wp.x + 8.0f * titleTextScale, wp.y + 4.0f * titleTextScale), titleColor, title);
         }
     };
 
@@ -38711,8 +38847,10 @@ void RenderUI(AppState& state) {
                                    const char* title,
                                    const ImVec4& bodyBg,
                                    ImU32 titleColor,
-                                   bool keepFilterRim = false) {
+                                   bool keepFilterRim = false,
+                                   float titleHeight = 24.0f) {
         DockModuleShellLayout layout;
+        layout.titleHeight = titleHeight;
         layout.shellWidth = (std::max)(120.0f, panelWidth - layout.insetL - layout.insetR);
         layout.shellMin = ImVec2(winPos.x + layout.insetL, winPos.y + layout.insetT);
         layout.shellMax = ImVec2(winPos.x + layout.insetL + layout.shellWidth, winPos.y + panelHeight - layout.insetB);
@@ -38764,7 +38902,8 @@ void RenderUI(AppState& state) {
             ImGui::GetColorU32(bodyBg),
             kFilterInfoShellRadius,
             contentRoundFlags);
-        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title, titleColor, titleRoundFlags);
+        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title, titleColor,
+            titleRoundFlags, layout.titleHeight / 24.0f);
         dl->AddLine(
             ImVec2(layout.contentMin.x + 0.5f, layout.contentMin.y + 0.5f),
             ImVec2(layout.contentMax.x - 0.5f, layout.contentMin.y + 0.5f),
@@ -39325,8 +39464,11 @@ void RenderUI(AppState& state) {
         // splitter remains the owner of the whole left-column width.
         ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
         if (!hideLeftSplitterInBrowser) {
-            VerticalSplitter("##LeftSplitter", &state.panelSidebar.dockedWidth,
-                leftRegionSplit ? leftSidebarMinWidth : 120.0f, leftSidebarMaxWidth, sideColumnHeight);
+            const float previousWidth = workspacePx(state.panelSidebar.dockedWidth);
+            float dragWidth = previousWidth;
+            VerticalSplitter("##LeftSplitter", &dragWidth,
+                leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth, sideColumnHeight);
+            if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
             ImGui::SameLine(0, 0);
         }
     }
@@ -40590,16 +40732,14 @@ void RenderUI(AppState& state) {
                     }
 
                     // Confirm modal lives under this preset row's ID stack
-                    if (BeginTransientScrollbarPopupModal("##ConfirmLoadPreset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    if (aura::ui::BeginAlertDialog("##ConfirmLoadPreset", L(TabPresets_Load))) {
                         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
                         const int curTabs = (int)state.listTabs.size();
                         const int presetTabCount = pendingPresetLoadIndex >= 0
                             && pendingPresetLoadIndex < (int)state.tabPresets.size()
                             ? (int)state.tabPresets[(size_t)pendingPresetLoadIndex].tabs.size()
                             : 0;
-                        PopupTitle(L(TabPresets_Load));
                         PopupMuted(L(TabPresets_SummaryFmt), curTabs, presetTabCount);
-                        PopupDivider();
                         if (aura::ui::ActionButton(L(Main_LoadPresetBtn2), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                             if (pendingPresetLoadIndex >= 0) {
                                 state.syncToTab();
@@ -40617,7 +40757,7 @@ void RenderUI(AppState& state) {
                             ImGui::CloseCurrentPopup();
                         }
                         }
-                        ImGui::EndPopup();
+                        aura::ui::EndAlertDialog();
                     }
 
                     ImGui::PopID();
@@ -40639,7 +40779,8 @@ void RenderUI(AppState& state) {
 
         // Rename popup
         if (renamingTabIndex >= 0) ImGui::OpenPopup(L(Dlg_RenameTab));
-        if (BeginTransientScrollbarPopupModal(L(Dlg_RenameTab), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::function<void()> cancelTabRename = []() { renamingTabIndex = -1; };
+        if (aura::ui::BeginAlertDialog(L(Dlg_RenameTab), L(Dlg_RenameTab), ImGuiWindowFlags_AlwaysAutoResize, true, &cancelTabRename)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
             ImGui::Text(L(Main_TabNameLabel));
@@ -40647,7 +40788,7 @@ void RenderUI(AppState& state) {
             bool enter = ImGui::InputText("##RenameTab", renameBuffer, sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
             if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
 
-        ImGui::Separator();
+        ImGui::Spacing();
             if (aura::ui::ActionButton(L(OK), ImVec2(80, 0), aura::ui::ButtonVariant::PrimarySearch) || enter) {
                 if (renamingTabIndex >= 0 && renamingTabIndex < (int)state.listTabs.size()) {
                     state.listTabs[renamingTabIndex].name = renameBuffer;
@@ -40661,7 +40802,7 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         // F-033: When the 专辑 album grid tab is active it fills all available space,
@@ -41214,9 +41355,9 @@ void RenderUI(AppState& state) {
 
             // Check format filter
             {
-                const char* fmtNames[] = { "", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A" };
-                if (state.formatFilterIndex > 0 && state.formatFilterIndex < 7) {
-                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + fmtNames[state.formatFilterIndex]});
+                const char* formatFilter = aura::search::AudioFormatFilterAt(state.formatFilterIndex);
+                if (*formatFilter != '\0') {
+                    activeFilters.push_back({FilterChipType::Format, std::string(u8"格式: ") + formatFilter});
                 }
             }
 
@@ -41248,13 +41389,15 @@ void RenderUI(AppState& state) {
                         if (ft.visible) enabledTypes.emplace_back(ft.label);
                         else ++hiddenCount;
                     }
+                    if (state.showLosslessWavPack && !state.showOther) enabledTypes.emplace_back("WV");
 
                     std::string label;
                     if (enabledTypes.empty()) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u5168\u90e8\u9690\u85cf";
                     } else if (enabledTypes.size() == 1) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: \u4ec5 " + enabledTypes[0];
-                    } else if (enabledTypes.size() <= 3) {
+                    } else if (enabledTypes.size() <= 3 ||
+                               (enabledTypes.size() == 4 && state.showLosslessWavPack)) {
                         label = u8"\u6587\u4ef6\u7c7b\u578b: ";
                         for (size_t typeIdx = 0; typeIdx < enabledTypes.size(); ++typeIdx) {
                             if (typeIdx > 0) label += "/";
@@ -41566,6 +41709,7 @@ void RenderUI(AppState& state) {
                             case FilterChipType::FileTypes:
                                 state.showWAV = state.showMP3 = state.showFLAC = state.showOGG = true;
                                 state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                                state.showLosslessWavPack = false;
                                 break;
                             case FilterChipType::Channels:
                                 state.channelFilterIndex = 0;
@@ -41740,13 +41884,14 @@ void RenderUI(AppState& state) {
         ImFont* listFont = GetUIListFont();
         // Keep list text vertically centered, but cap vertical padding so large row heights
         // do not create oversized visual gaps between adjacent rows.
-        const float listFontPx = listFont ? listFont->LegacySize : ImGui::GetFontSize();
+        const float listFontPx = listFont ? workspacePx(listFont->LegacySize) : ImGui::GetFontSize();
         ImFont* numericFont = GetUIFontMono();
-        const float numericFontPx = numericFont ? numericFont->LegacySize : listFontPx;
+        const float numericFontPx = numericFont ? workspacePx(numericFont->LegacySize) : listFontPx;
         const float minimumTextHeight = (std::max)(listFontPx, numericFontPx);
-        const float targetRowHeight = (std::max)((float)state.settings.rowHeight, minimumTextHeight + 4.0f);
+        const float targetRowHeight = (std::max)(workspacePx(static_cast<float>(state.settings.rowHeight)),
+                                                minimumTextHeight + workspacePx(4.0f));
         const float idealListCellPadY = (std::max)(0.0f, floorf((targetRowHeight - listFontPx) * 0.5f));
-        const float listCellPadY = (std::min)(idealListCellPadY, 2.0f);
+        const float listCellPadY = (std::min)(idealListCellPadY, workspacePx(2.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, listCellPadY));
         if (listFont) ImGui::PushFont(listFont);
         auto DrawListFontText = [&](const char* text) {
@@ -41843,26 +41988,26 @@ void RenderUI(AppState& state) {
             // 1. 设置表头
             ImGui::TableSetupColumn(L(Col_FileName), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_NoHide, fileNameColW, (ImGuiID)SortColumn::FileName);
             ImGui::TableSetupColumn(L(Col_Waveform), ImGuiTableColumnFlags_WidthFixed, waveformColW, 0);
-            ImGui::TableSetupColumn(L(Col_Duration), ImGuiTableColumnFlags_WidthFixed, 88.0f, (ImGuiID)SortColumn::Duration);
-            ImGui::TableSetupColumn(L(Col_Format), ImGuiTableColumnFlags_WidthFixed, 72.0f, (ImGuiID)SortColumn::Format);
-            ImGui::TableSetupColumn(L(Col_Size), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 84.0f, (ImGuiID)SortColumn::Size);
-            ImGui::TableSetupColumn(L(Col_SampleRate), ImGuiTableColumnFlags_WidthFixed, 76.0f, (ImGuiID)SortColumn::SampleRate);
-            ImGui::TableSetupColumn(L(Col_Description), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 140.0f, (ImGuiID)SortColumn::Description);
-            ImGui::TableSetupColumn(L(Col_Keywords), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 160.0f, (ImGuiID)SortColumn::Keywords);
-            ImGui::TableSetupColumn(L(Col_Channels), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 52.0f, (ImGuiID)SortColumn::Channels);
-            ImGui::TableSetupColumn(L(Col_Category), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 116.0f, (ImGuiID)SortColumn::Category);
-            ImGui::TableSetupColumn(L(Col_Artist), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 116.0f, (ImGuiID)SortColumn::Artist);
+            ImGui::TableSetupColumn(L(Col_Duration), ImGuiTableColumnFlags_WidthFixed, workspacePx(88.0f), (ImGuiID)SortColumn::Duration);
+            ImGui::TableSetupColumn(L(Col_Format), ImGuiTableColumnFlags_WidthFixed, workspacePx(72.0f), (ImGuiID)SortColumn::Format);
+            ImGui::TableSetupColumn(L(Col_Size), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(84.0f), (ImGuiID)SortColumn::Size);
+            ImGui::TableSetupColumn(L(Col_SampleRate), ImGuiTableColumnFlags_WidthFixed, workspacePx(76.0f), (ImGuiID)SortColumn::SampleRate);
+            ImGui::TableSetupColumn(L(Col_Description), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(140.0f), (ImGuiID)SortColumn::Description);
+            ImGui::TableSetupColumn(L(Col_Keywords), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(160.0f), (ImGuiID)SortColumn::Keywords);
+            ImGui::TableSetupColumn(L(Col_Channels), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(52.0f), (ImGuiID)SortColumn::Channels);
+            ImGui::TableSetupColumn(L(Col_Category), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(116.0f), (ImGuiID)SortColumn::Category);
+            ImGui::TableSetupColumn(L(Col_Artist), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(116.0f), (ImGuiID)SortColumn::Artist);
             ImGuiTableColumnFlags musicColumnFlags = ImGuiTableColumnFlags_WidthFixed;
             if (state.settings.productMode != ProductMode::Music) {
                 musicColumnFlags |= ImGuiTableColumnFlags_DefaultHide;
             }
-            ImGui::TableSetupColumn(L(Col_Album), musicColumnFlags, 120.0f, (ImGuiID)SortColumn::Album);
+            ImGui::TableSetupColumn(L(Col_Album), musicColumnFlags, workspacePx(120.0f), (ImGuiID)SortColumn::Album);
             // BPM/Key/Mood: always register (data rows always emit them).
             // Hidden via TableSetColumnEnabled below when music_analysis is off.
-            ImGui::TableSetupColumn(L(Col_BPM), musicColumnFlags, 64.0f, (ImGuiID)SortColumn::BPM);
-            ImGui::TableSetupColumn(L(Col_MusicalKey), musicColumnFlags, 72.0f, (ImGuiID)SortColumn::MusicalKey);
-            ImGui::TableSetupColumn(L(Col_Mood), musicColumnFlags | ImGuiTableColumnFlags_DefaultHide, 96.0f, (ImGuiID)SortColumn::Mood);
-            ImGui::TableSetupColumn(L(Col_DateAdded), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 108.0f, (ImGuiID)SortColumn::DateAdded);
+            ImGui::TableSetupColumn(L(Col_BPM), musicColumnFlags, workspacePx(64.0f), (ImGuiID)SortColumn::BPM);
+            ImGui::TableSetupColumn(L(Col_MusicalKey), musicColumnFlags, workspacePx(72.0f), (ImGuiID)SortColumn::MusicalKey);
+            ImGui::TableSetupColumn(L(Col_Mood), musicColumnFlags | ImGuiTableColumnFlags_DefaultHide, workspacePx(96.0f), (ImGuiID)SortColumn::Mood);
+            ImGui::TableSetupColumn(L(Col_DateAdded), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(108.0f), (ImGuiID)SortColumn::DateAdded);
             // UX-112: Folder path column — shows parent_path of file_path, tooltip shows full path
             // The path column is the natural trailing field: when enabled it
             // absorbs the remaining results-list width instead of leaving a
@@ -41873,10 +42018,10 @@ void RenderUI(AppState& state) {
                 ImGui::TableSetupColumn(L(Col_Cover), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoResize, coverColW, (ImGuiID)SortColumn::Cover);
             }
             // 响度分析列：始终注册（DefaultHide），用户通过右键表头控制显示
-            ImGui::TableSetupColumn(u8"LUFS", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 64.0f, (ImGuiID)SortColumn::Loudness);
-            ImGui::TableSetupColumn(u8"RMS", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 64.0f, (ImGuiID)SortColumn::RMS);
-            ImGui::TableSetupColumn(u8"TruePeak", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 82.0f, (ImGuiID)SortColumn::TruePeak);
-            ImGui::TableSetupColumn(L(Col_Rating), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, 72.0f, (ImGuiID)SortColumn::Rating);
+            ImGui::TableSetupColumn(u8"LUFS", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(64.0f), (ImGuiID)SortColumn::Loudness);
+            ImGui::TableSetupColumn(u8"RMS", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(64.0f), (ImGuiID)SortColumn::RMS);
+            ImGui::TableSetupColumn(u8"TruePeak", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(82.0f), (ImGuiID)SortColumn::TruePeak);
+            ImGui::TableSetupColumn(L(Col_Rating), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(72.0f), (ImGuiID)SortColumn::Rating);
 
             // Older FileTableV6 settings could leave a meter/rating column holding the
             // trailing stretch width. Repair only that unmistakable outlier; all saved
@@ -45208,13 +45353,16 @@ void RenderUI(AppState& state) {
         ImGui::SetCursorScreenPos(ImVec2(
             viewport->WorkPos.x + mainWorkW - rightPanelWidth - splitterWidth,
             dockColumnTop));
+        const float previousWidth = workspacePx(state.panelFileInfo.dockedWidth);
+        float dragWidth = previousWidth;
         VerticalSplitter(
             "##RightSplitter",
-            &state.panelFileInfo.dockedWidth,
+            &dragWidth,
             rightPanelMinWidth,
             rightPanelMaxWidth,
             sideColumnHeight,
             true);  // invertDelta for right panel
+        if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
 
         ImGui::SameLine(0, 0);
         const std::string displayedTool = selectedDockTool(rightTabGroup, "info");
@@ -45235,13 +45383,13 @@ void RenderUI(AppState& state) {
         const ImVec2 size = ImGui::GetWindowSize();
         const DockModuleShellLayout rightShell = drawDockModuleShell(
             dl, pos, size.x, size.y, rightTabGroup ? nullptr : L(View_InfoPanel), appearance.bodyBg, kTitleText,
-            displayedTool == "filter");
+            displayedTool == "filter", displayedTool == "info" ? infoDockTitleHeight : 24.0f);
 
         if (rightTabGroup) {
             renderDockTabsInShell(*rightTabGroup, rightShell);
         } else {
 // 标题栏右上角：编辑元数据图标按钮
-        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, 2.0f);
+        const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, rightShell, rightShell.insetT);
 
         // Right-click menu on title bar (remaining area)
         ImGui::SetCursorPos(ImVec2(rightShell.insetL, rightShell.insetT));
@@ -45271,7 +45419,7 @@ void RenderUI(AppState& state) {
             ImVec2 ws = ImGui::GetWindowSize();
             ThemeInspector::RegisterZone(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), "metadataPanelBG", L(ThemeCol_metadataPanelBG));
             ThemeInspector::RegisterZone(
-                ImVec2(wp.x, wp.y + 24.0f), ImVec2(wp.x + ws.x, wp.y + ws.y),
+                ImVec2(wp.x, rightShell.contentMin.y), ImVec2(wp.x + ws.x, wp.y + ws.y),
                 "metadataPanelText", L(ThemeCol_metadataPanelText));
             ThemeInspector::RegisterZone(
                 ImVec2(wp.x + ws.x - 14.0f, wp.y), ImVec2(wp.x + ws.x, wp.y + ws.y),
@@ -45470,8 +45618,10 @@ void RenderUI(AppState& state) {
 
     // Three-dot results/waveform boundary handle. Only the main waveform's
     // dockedHeight is mutated; drag up grows, drag down shrinks.
-    if (HorizontalSplitter("##WaveformSplitter", &state.panelWaveform.dockedHeight,
+    float waveformSplitHeight = workspacePx(state.panelWaveform.dockedHeight);
+    if (HorizontalSplitter("##WaveformSplitter", &waveformSplitHeight,
                            minWaveformH, maxWaveformH, 0.0f, false)) {
+        state.panelWaveform.dockedHeight = waveformSplitHeight / workspaceScale;
         state.settings.waveformPanelHeight = state.panelWaveform.dockedHeight;
         MarkSettingsDirty(state);
     }
@@ -45499,8 +45649,8 @@ void RenderUI(AppState& state) {
         const float waveShellPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         const float waveShellInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         const float waveQuickBarH = state.settings.showPlaylistQuickBar ? playlistQuickBarHeight : 0.0f;
-        const float waveQuickBarGap = waveQuickBarH > 0.0f ? 4.0f : 0.0f;
-        const float waveTransportH = 36.0f;
+        const float waveQuickBarGap = waveQuickBarH > 0.0f ? workspacePx(4.0f) : 0.0f;
+        const float waveTransportH = workspacePx(36.0f);
         const float waveShellShelfH = waveQuickBarH + waveQuickBarGap + waveTransportH;
         const ImVec2 waveShellMin(winPos.x + waveShellPad, winPos.y + waveShellPad);
         const ImVec2 waveShellMax(winPos.x + panelWidth - waveShellPad, winPos.y + panelHeight - waveShellPad);
@@ -45626,8 +45776,8 @@ void RenderUI(AppState& state) {
 
 // [原则1] 统一顶部底板
         const float kBarH = waveTransportH; // 底板总高度；控件尺寸不变，只收紧上下留白
-        const float kBarPadX = 8.0f;      // 左右内边距
-        const float kModGap  = 16.0f;     // 模块间统一间距
+        const float kBarPadX = workspacePx(8.0f);      // 左右内边距
+        const float kModGap  = workspacePx(16.0f);     // 模块间统一间距
         const bool kDockTransportModeInWaveFooter = true; // Low-priority playback/mode controls live mini + centered in footer.
         ImDrawList* barDl    = ImGui::GetWindowDrawList();
         ImVec2 barOrigin     = ImGui::GetCursorScreenPos();
@@ -45743,7 +45893,7 @@ void RenderUI(AppState& state) {
 
         {
             ImDrawList* dl = barDl;
-            float tcWidth = 195.0f, tcHeight = 30.0f;
+            float tcWidth = workspacePx(195.0f), tcHeight = workspacePx(30.0f);
 
             // Static state for time input popup
             static bool showTimeInputPopup = false;
@@ -45782,7 +45932,7 @@ void RenderUI(AppState& state) {
             char tcText[32];
             snprintf(tcText, sizeof(tcText), "%02d:%02d:%02d.%02d", hours, mins, secs, frames);
             ImFont* mono = GetUIFontMono();
-            const float tcFontSize = (float)kChromeFontPx * 1.57f;
+            const float tcFontSize = workspacePx((float)kChromeFontPx * 1.57f);
             ImVec2 tcTextSize = mono ? mono->CalcTextSizeA(tcFontSize, FLT_MAX, 0.0f, tcText) : ImGui::CalcTextSize(tcText);
             ImVec2 tcTextPos(
                 tcPos.x + (tcWidth - tcTextSize.x) * 0.5f,
@@ -45941,7 +46091,7 @@ void RenderUI(AppState& state) {
             }
         }
         // 推进 curX
-        curX += 195.0f;
+            curX += workspacePx(195.0f);
 
         // [原则4] 分割线 — timecode 与 transport 之间
         if (!kDockTransportModeInWaveFooter) {
@@ -46193,8 +46343,8 @@ void RenderUI(AppState& state) {
                 ? std::to_string(static_cast<int>(s_keyBpmBpm))
                 : "--";
 
-            const float kKeyBpmWidth  = 122.0f;
-            const float kKeyBpmHeight = (std::max)(24.0f, ImGui::GetTextLineHeight() + 6.0f);
+            const float kKeyBpmWidth  = workspacePx(122.0f);
+            const float kKeyBpmHeight = (std::max)(workspacePx(24.0f), ImGui::GetTextLineHeight() + workspacePx(6.0f));
             ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(kKeyBpmHeight)));
 
             // Theme-adaptive badge colors with confidence-based hue (mirrors table column logic)
@@ -46275,9 +46425,9 @@ void RenderUI(AppState& state) {
             bool isOverdriven = volume > 100.0f;
 
             ImDrawList* volDl = barDl;
-            float volWidth = 260.0f;
-            float volHeight = 32.0f;
-            float fireSpace = 45.0f;
+            const float volWidth = workspacePx(260.0f);
+            const float volHeight = workspacePx(32.0f);
+            const float fireSpace = workspacePx(45.0f);
 
             // [原则2] 强制垂直居中
             ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(volHeight)));
@@ -46484,14 +46634,14 @@ void RenderUI(AppState& state) {
             }
 
             // 推进 curX
-            curX += volWidth + 10.0f;
+            curX += volWidth + workspacePx(10.0f);
 
             // Mono/Stereo toggle — Duality dual-circle animation
             // AUDITION_NATIVE_EXCEPTION: mono
             bool isMonoMode = state.audioEngine.isMono();
             if (state.settings.transportEffectVisibility.mono) {
                 bool isStereo = !isMonoMode;
-                const float stW = 30.0f, stH = 32.0f;
+                const float stW = workspacePx(30.0f), stH = workspacePx(32.0f);
 
                 // Smooth animation (exponential decay, frame-rate independent)
                 static float sDualOff = 0.0f, sDualScl = 1.0f;
@@ -46526,7 +46676,7 @@ void RenderUI(AppState& state) {
                 borderCol = ImGui::GetColorU32(TransportContrast::ForSurface(
                     ImGui::ColorConvertU32ToFloat4(borderCol), ImGui::ColorConvertU32ToFloat4(stereoSurface), 3.2));
                 float cx = sp.x + stW * 0.5f, cy = sp.y + stH * 0.5f;
-                float r  = 7.0f * sDualScl, lw = 1.4f;
+                float r  = workspacePx(7.0f * sDualScl), lw = workspacePx(1.4f);
                 barDl->AddCircleFilled(ImVec2(cx - sDualOff, cy), r, fillCol, 24);
                 barDl->AddCircle(      ImVec2(cx - sDualOff, cy), r, borderCol, 24, lw);
                 barDl->AddCircleFilled(ImVec2(cx + sDualOff, cy), r, fillCol, 24);
@@ -46538,14 +46688,14 @@ void RenderUI(AppState& state) {
                     sp, ImVec2(sp.x + stW, sp.y + stH));
                 if (stClk) state.audioEngine.setMono(!isMonoMode);
                 if (stHov) HarkenSearch::SetTooltip("%s", isStereo ? L(Player_TooltipStereo) : L(Player_TooltipMono));
-                curX += stW + 10.0f;
+                curX += stW + workspacePx(10.0f);
             }
 
             // Reverse toggle — Fibonacci Swoosh 动画
             if (state.settings.transportEffectVisibility.reverse) {
                 // AUDITION_BOUNDARY_INTENT: reverse-preserving-region
                 bool isReversed = auditionSnapshot.reversed;
-                const float revW = 36.0f, revH = 32.0f;
+                const float revW = workspacePx(36.0f), revH = workspacePx(32.0f);
 
                 // 动画进度 t: 0=forward, 1=reverse
                 static float s_revT = isReversed ? 1.0f : 0.0f;
@@ -46578,7 +46728,7 @@ void RenderUI(AppState& state) {
                     const float fibRev[] = {3, 5, 8, 13, 21};
                     const int nBars = 5;
                     float baseY = rp.y + revH * 0.78f;
-                    float barW = 1.5f, barGap = 2.5f;
+                    float barW = workspacePx(1.5f), barGap = workspacePx(2.5f);
                     float totalW = nBars * barW + (nBars - 1) * barGap;
                     float startX = rp.x + (revW - totalW) * 0.5f;
                     float hScale = revH * 0.45f / 21.0f;
@@ -46618,25 +46768,25 @@ void RenderUI(AppState& state) {
                 if (revHov) {
                     HarkenSearch::SetTooltip("%s", isReversed ? L(Player_TooltipReverseOn) : L(Player_TooltipReverseOff));
                 }
-                curX += revW + 10.0f;
+                curX += revW + workspacePx(10.0f);
             }
 
             // Pan — 半圆弧旋钮 (PanKnob)
             if (state.settings.transportEffectVisibility.pan) {
             ImGui::BeginDisabled(isMonoMode);
             {
-                const float panW = 52.0f, panH = 32.0f;
+                const float panW = workspacePx(52.0f), panH = workspacePx(32.0f);
                 ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(panH)));
                 float panEngine = state.audioEngine.getPan();
                 float panUI = panEngine * 50.0f;
-                if (PanKnob("##Pan", &panUI, -50.0f, 50.0f, transportBarBg, ImVec2(panW, panH))) {
+                if (PanKnob("##Pan", &panUI, -50.0f, 50.0f, transportBarBg, ImVec2(panW, panH), workspaceScale)) {
                     // AUDITION_NATIVE_EXCEPTION: pan-center-sense
                     state.audioEngine.setPan(panUI / 50.0f);
                 }
                 ThemeInspector::RegisterLastItem(
                     "transport.pan", "Pan", "src/main.cpp:51212");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Player_TooltipPan));
-                curX += panW + 10.0f;
+                curX += panW + workspacePx(10.0f);
             }
             ImGui::EndDisabled();
             }
@@ -46646,7 +46796,7 @@ void RenderUI(AppState& state) {
             if (state.settings.transportEffectVisibility.soundstage) {
             ImGui::BeginDisabled(isMonoMode);
             {
-                const float csW = 52.0f, csH = 32.0f;
+                const float csW = workspacePx(52.0f), csH = workspacePx(32.0f);
                 ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(csH)));
                 ImVec2 csPos = ImGui::GetCursorScreenPos();
                 ImRect csBb(csPos, ImVec2(csPos.x + csW, csPos.y + csH));
@@ -46672,8 +46822,8 @@ void RenderUI(AppState& state) {
                     float angleDeg = 150.0f + csVal * 120.0f;
                     if (angleDeg < 20.0f) angleDeg = 20.0f; // 最小可见角度
                     float angleRad = angleDeg * (3.14159265f / 180.0f);
-                    ImVec2 ctr(std::round(csPos.x + 20.0f), std::round(csPos.y + csH * 0.62f));
-                    float rIn = 4.0f, rOut = csH * 0.44f;
+                    const ImVec2 ctr(std::round(csPos.x + workspacePx(20.0f)), std::round(csPos.y + csH * 0.62f));
+                    const float rIn = workspacePx(4.0f), rOut = csH * 0.44f;
                     float startA = -3.14159265f / 2.0f - angleRad / 2.0f;
                     float endA   = -3.14159265f / 2.0f + angleRad / 2.0f;
                     bool csActive = (csVal > 0.0f);
@@ -46707,8 +46857,8 @@ void RenderUI(AppState& state) {
                     // Fill the annular sector from the outer arc back along the inner arc.
                     {
                         ImU32 colFill = csActive ? colFillActive : colFillIdle;
-                        const float fillIn = rIn + 1.8f;
-                        const float fillOut = rOut - 2.2f;
+                        const float fillIn = rIn + workspacePx(1.8f);
+                        const float fillOut = rOut - workspacePx(2.2f);
                         csDl->PathClear();
                         csDl->PathArcTo(ctr, fillOut, startA, endA, 28);
                         csDl->PathArcTo(ctr, fillIn,  endA, startA, 12);
@@ -46718,7 +46868,7 @@ void RenderUI(AppState& state) {
                     if (!isMonoMode) colLine = ImGui::GetColorU32(TransportContrast::ForSurface(
                         ImGui::ColorConvertU32ToFloat4(colLine), transportBarBg, 3.2));
                     // 圆弧轮廓
-                    float lw = 1.5f;
+                    const float lw = workspacePx(1.5f);
                     csDl->PathArcTo(ctr, rIn,  startA, endA, 24); csDl->PathStroke(colLine, 0, lw);
                     csDl->PathArcTo(ctr, rOut, startA, endA, 24); csDl->PathStroke(colLine, 0, lw);
                     csDl->AddLine({ctr.x+cosf(startA)*rIn, ctr.y+sinf(startA)*rIn},
@@ -46770,7 +46920,7 @@ void RenderUI(AppState& state) {
                             HarkenSearch::SetTooltip("%s", L(Audio_BassMonoOffClick));
                     }
                 }
-                curX += csW + 10.0f;
+                curX += csW + workspacePx(10.0f);
 
                 // Bass Mono 弹窗（用 InputText 代替 InputFloat 避免断言）
                 if (bmWantOpen) { ImGui::OpenPopup("##BassMonoPopup"); bmWantOpen = false; }
@@ -46818,10 +46968,11 @@ void RenderUI(AppState& state) {
 
             if (state.settings.transportEffectVisibility.eq) {
                 MagicEQSettings magicEQ = state.audioEngine.getMagicEQ();
-                const float magicEqPreferredWidth = magicEQ.widgetWidth;
-                const float trailingMinimumWidth = 260.0f;
-                const float magicEqAvailableWidth = std::max(120.0f, barOrigin.x + barW - kBarPadX - curX - trailingMinimumWidth);
-                magicEQ.widgetWidth = std::clamp(std::min(magicEqPreferredWidth, magicEqAvailableWidth), 120.0f, 1600.0f);
+                const float trailingMinimumWidth = workspacePx(260.0f);
+                const float magicEqAvailableWidth = barOrigin.x + barW - kBarPadX - curX - trailingMinimumWidth;
+                const float magicEqWidth = aura::ui::transport::ResolveEqualizerWidth(
+                    magicEQ.widgetWidth, magicEqAvailableWidth, workspaceScale);
+                const float magicEqHeight = workspacePx(32.0f);
                 const auto magicEqFileInfo = state.audioEngine.getFileInfo();
                 const uint32_t magicEqFileRate = magicEqFileInfo.sampleRate;
                 const uint32_t magicEqEngineRate = state.audioEngine.getEngineSampleRate();
@@ -46833,19 +46984,18 @@ void RenderUI(AppState& state) {
                     : (state.audioEngine.isLoaded() && magicEqEngineRate > 0
                         ? static_cast<int>(magicEqEngineRate) : 0);
                 bool saveMagicEQSettings = false;
-                const ImVec2 magicEQPos(curX, TB_CENTER_Y(32.0f));
+                const ImVec2 magicEQPos(curX, TB_CENTER_Y(magicEqHeight));
                 ImGui::SetCursorScreenPos(magicEQPos);
                 if (DrawMagicEQBar("##MagicEQ", magicEQ,
-                                   magicEqSampleRate,
+                                   magicEqSampleRate, magicEqWidth, workspaceScale,
                                    saveMagicEQSettings, transportBarBg,
                                    state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized()))
                     state.audioEngine.setMagicEQ(magicEQ);
-                magicEQ.widgetWidth = magicEqPreferredWidth;
                 if (saveMagicEQSettings) SaveAppSettings(state);
                 ThemeInspector::RegisterZone(
-                    magicEQPos, ImVec2(magicEQPos.x + magicEQ.widgetWidth, magicEQPos.y + 32.0f),
+                    magicEQPos, ImVec2(magicEQPos.x + magicEqWidth, magicEQPos.y + magicEqHeight),
                     "transport.magicEQ", "Magic EQ", "src/main.cpp:MagicEQ");
-                curX += magicEQ.widgetWidth + 10.0f;
+                curX += magicEqWidth + workspacePx(10.0f);
             }
 
             // Channel solo controls live on the main waveform lane labels.
@@ -50249,7 +50399,7 @@ void RenderUI(AppState& state) {
         const bool vertical = side == aura::ui::dock::DockSide::Top ||
             side == aura::ui::dock::DockSide::Bottom;
         auto extent = [&](const PanelState& panel) {
-            return vertical ? panel.dockedHeight : panel.dockedWidth;
+            return vertical ? panel.dockedHeight : workspacePx(panel.dockedWidth);
         };
         if (std::strcmp(moduleId, "filter") == 0) return extent(state.panelSidebar);
         if (std::strcmp(moduleId, "info") == 0) return extent(state.panelFileInfo);
@@ -51085,8 +51235,8 @@ void RenderUI(AppState& state) {
                     ThemeColors::infoPanelDockBG(ThemeColors::current()), 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(View_InfoPanel), bodyBg, kTitleText);
-                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, 2.0f);
+                    L(View_InfoPanel), bodyBg, kTitleText, false, infoDockTitleHeight);
+                const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, shell.insetT);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
                     ImVec2((std::max)(1.0f, shell.shellWidth - kInfoTitleActionsWidth), shell.titleHeight));
@@ -51167,16 +51317,16 @@ void RenderUI(AppState& state) {
                 if (BeginTransientScrollbarPopup("##DockedSimilarSoundsMenu")) {
                     if (ImGui::MenuItem(L(Panel_Float))) {
                         const float originalColumn = aura::ui::dock::RectsOverlap(leaf.rect, rootSlots.right)
-                            ? state.panelFileInfo.dockedWidth
-                            : state.panelSidebar.dockedWidth;
+                            ? workspacePx(state.panelFileInfo.dockedWidth)
+                            : workspacePx(state.panelSidebar.dockedWidth);
                         const aura::ui::dock::DockedFloatBackResult floated =
                             aura::ui::dock::ApplyDockedFloatBack(originalColumn, leaf.rect.width);
                         FloatDockedPanel("similar-sounds", state.panelSimilarSounds, leaf.rect);
                         if (floated.floating) {
                             if (aura::ui::dock::RectsOverlap(leaf.rect, rootSlots.right)) {
-                                state.panelFileInfo.dockedWidth = floated.columnWidth;
+                                state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(floated.columnWidth, workspaceScale);
                             } else {
-                                state.panelSidebar.dockedWidth = floated.columnWidth;
+                                state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(floated.columnWidth, workspaceScale);
                             }
                         }
                     }

@@ -1,9 +1,9 @@
 // Every row edits the shared draft used by both Common and its full category.
 if(id=="pitch"||id=="pitchRange")draft.pitchRange=std::clamp(std::isfinite(draft.pitchRange)?draft.pitchRange:24.f,1.f,48.f);
 if(id=="device") {
-    const char* label=draft.audioOutputDeviceIndex<0?L(Set_SystemDefault):draft.audioOutputDeviceName.c_str();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(12,8));
-    if(ImGui::BeginCombo("##value",label)) {
+    const bool deviceOpen=ImGui::BeginCombo("##value","");
+    if(deviceOpen) {
         if(ImGui::Selectable(L(Set_SystemDefault),draft.audioOutputDeviceIndex<0)){draft.audioOutputDeviceIndex=-1;draft.audioOutputDeviceName.clear();editor.deviceIdentity.clear();editor.deviceEdited=true;}
         su::Observe("device-default");
         for(int i=0;i<(int)editor.devices.size();++i){
@@ -15,11 +15,20 @@ if(id=="device") {
         if(ImGui::IsKeyPressed(ImGuiKey_Escape))ImGui::CloseCurrentPopup();
         ImGui::EndCombo();
     }
+    // Read the preview after the popup: picking a device reassigns
+    // audioOutputDeviceName, which would dangle this pointer if taken earlier.
+    const char* label=draft.audioOutputDeviceIndex<0?L(Set_SystemDefault):draft.audioOutputDeviceName.c_str();
+    centeredComboText(label);
     ImGui::PopStyleVar();
 }
 else if(id=="theme") {
     int current=-1;for(int i=0;i<5;++i)if(su::StockThemes[i]==draft.theme)current=i;
     const float swatch=26.f,gap=8.f;
+    // Swatch group and label share one optical midline; the stock name stays below
+    // and the row keeps its previous height by taking the shift out of that gap.
+    const float rowStartY=ImGui::GetCursorPosY();
+    const float swatchShift=std::max(0.f,ImGui::GetStyle().FramePadding.y+ImGui::GetTextLineHeight()*.5f-swatch*.5f);
+    ImGui::SetCursorPosY(rowStartY+swatchShift);
     for(int i=0;i<5;++i){
         if(i)ImGui::SameLine(0,gap);
         ImGui::PushID(i);const auto p=ImGui::GetCursorScreenPos();
@@ -31,6 +40,7 @@ else if(id=="theme") {
         if(current==i){const auto c=ImVec2(p.x+7,p.y+13);dl->AddLine(c,ImVec2(c.x+4,c.y+4),ImGui::GetColorU32(theme.interfaceText),1.6f);dl->AddLine(ImVec2(c.x+4,c.y+4),ImVec2(c.x+12,c.y-4),ImGui::GetColorU32(theme.interfaceText),1.6f);}
         if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",su::StockLabel(i));ImGui::PopID();
     }
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY()-std::min(swatchShift,std::max(0.f,ImGui::GetStyle().ItemSpacing.y-4.f)));
     ImGui::TextDisabled("%s",su::StockLabel(current));
     if(draft.themeScheduleMode!=schedule::Mode::Off)ImGui::TextDisabled("%s",L(SetUX_UsedWhenScheduleIsOff));
 }
@@ -56,13 +66,13 @@ else if(id=="systemFont") {
     auto& value=draft.readingFontSize;
     const int safeValue=ClampSettingsFontSize(value);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
-    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32"}))value=kFontSteps[n];
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
 }
 else if(id=="listFont") {
     auto& value=draft.listFontSize;
     const int safeValue=std::clamp(value,10,kMaxListFontPx);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
-    if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);

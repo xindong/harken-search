@@ -814,7 +814,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::OpenPopup((std::string(L(Dlg_NewPlaylist)) + "##plnewsub").c_str());
         state.pendingNewSubDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(Dlg_NewPlaylist)) + "##plnewsub").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(Dlg_NewPlaylist)) + "##plnewsub").c_str(), L(Dlg_NewPlaylist), ImGuiWindowFlags_AlwaysAutoResize)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         int64_t pid = state.pendingNewSubParentId;
         const Playlist* parent = nullptr;
@@ -875,7 +875,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             if (aura::ui::ActionButton(L(PLQ_NewSubCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Dialog B: Promote orphan with files (two-stage from Dialog A)
@@ -883,7 +883,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::OpenPopup((std::string(L(PLQ_PromoteTitle)) + "##plpromote").c_str());
         state.pendingPromoteOrphanDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(PLQ_PromoteTitle)) + "##plpromote").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(PLQ_PromoteTitle)) + "##plpromote").c_str(), L(PLQ_PromoteTitle), ImGuiWindowFlags_AlwaysAutoResize)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         int64_t fileCount = state.database.getPlaylistFileCount(state.pendingPromoteOrphanId);
         ImGui::TextWrapped(L(PLQ_PromoteHint),
@@ -904,7 +904,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::SameLine();
         if (aura::ui::ActionButton(L(PLQ_PromoteCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Dialog C: Move playlist to other folder
@@ -912,7 +912,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::OpenPopup((std::string(L(PLQ_MoveTitle)) + "##plmovesub").c_str());
         state.pendingMoveSubDialog = false;
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(PLQ_MoveTitle)) + "##plmovesub").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(PLQ_MoveTitle)) + "##plmovesub").c_str(), L(PLQ_MoveTitle), ImGuiWindowFlags_AlwaysAutoResize)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         ImGui::Text(L(PLQ_ChooseTargetFolder));
         if (ImGui::Selectable(L(PLQ_NoParentFolder))) {
@@ -936,10 +936,10 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             }
             ImGui::PopID();
         }
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(PLQ_MoveSubCancelBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // Dialog D: Delete playlist / folder confirmation.
@@ -955,7 +955,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         const ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Appearing);
-        if (BeginTransientScrollbarPopupModal((std::string(L(PLQ_DeleteTitle)) + "##pldelfolder").c_str(), nullptr,
+        if (aura::ui::BeginAlertDialog((std::string(L(PLQ_DeleteTitle)) + "##pldelfolder").c_str(), L(PLQ_DeleteTitle),
                                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
             EscClosePopup();
@@ -973,7 +973,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
                 ImGui::TextUnformatted(L(PLQ_CannotUndoWarn));
                 ImGui::PopStyleColor();
                 ImGui::Spacing();
-                ImGui::Separator();
+                ImGui::Spacing();
                 ImGui::Spacing();
 
                 // Body — what gets deleted, in plain wording.
@@ -999,7 +999,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
                 ImGui::Spacing();
                 ImGui::TextDisabled(L(PLQ_DeleteScopeNote));
                 ImGui::Spacing();
-                ImGui::Separator();
+                ImGui::Spacing();
                 ImGui::Spacing();
 
                 // Right-aligned button row: [取消] [确认删除] (destructive on right, red).
@@ -1021,7 +1021,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
                 ImGui::PopStyleColor(3);
             }
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
     }
 
@@ -1030,7 +1030,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
         ImGui::OpenPopup((std::string(L(PLQ_DeleteAgain)) + "##pldelete_second").c_str());
         state.pendingDeleteFolderSecondConfirm = false;
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(PLQ_DeleteAgain)) + "##pldelete_second").c_str(), nullptr,
+    if (aura::ui::BeginAlertDialog((std::string(L(PLQ_DeleteAgain)) + "##pldelete_second").c_str(), L(PLQ_DeleteAgain),
                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
@@ -1047,7 +1047,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
                 : L(PLQ_DeleteListWarn));
             ImGui::Spacing();
             ImGui::Text("%s", target->name.c_str());
-            ImGui::Separator();
+            ImGui::Spacing();
             if (aura::ui::ActionButton(L(PLQ_Del2ndCancelBtn), ImVec2(110, 0), aura::ui::ButtonVariant::Quiet)) {
                 ImGui::CloseCurrentPopup();
             }
@@ -1073,14 +1073,14 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             ImGui::PopStyleColor(3);
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     if (state.pendingBulkAddPrompt) {
         ImGui::OpenPopup((std::string(L(PLQ_BulkTitle)) + "##plbulk").c_str());
         state.pendingBulkAddPrompt = false;
     }
-    if (BeginTransientScrollbarPopupModal((std::string(L(PLQ_BulkTitle)) + "##plbulk").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog((std::string(L(PLQ_BulkTitle)) + "##plbulk").c_str(), L(PLQ_BulkTitle), ImGuiWindowFlags_AlwaysAutoResize)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         ImGui::TextWrapped(L(PLQ_BulkAddConfirmFmt),
                            state.pendingBulkAddFileIds.size(),
@@ -1113,7 +1113,7 @@ void RenderPlaylistQuickBar(AppState& state, float height) {
             ImGui::CloseCurrentPopup();
         }
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 }
 

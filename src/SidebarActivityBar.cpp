@@ -1,4 +1,5 @@
 #include "SidebarActivityBar.h"
+#include "ui/UiScale.h"
 
 #include "AppState.h"
 #include "Localization.h"
@@ -116,7 +117,7 @@ static float SidebarSizeFactor(AppSettings::SidebarSize sz) {
 }
 
 float SidebarRailWidth(const AppState& state) {
-    return 52.0f * SidebarSizeFactor(state.settings.sidebarSize);
+    return aura::ui::dpi::Px(52.0f * SidebarSizeFactor(state.settings.sidebarSize));
 }
 
 // Draws the VS Code-style vertical activity bar.
@@ -130,14 +131,17 @@ void DrawSidebarActivityBar(AppState& state) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return;
 
-    const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize);
+    const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize) * aura::ui::dpi::UiScale();
     const float bar_width = 52.0f * sizeFactor;
     const float item_h    = 52.0f * sizeFactor;
     const float icon_size = 20.0f * sizeFactor;
 
     const ImVec2 pos = window->DC.CursorPos;
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    const float availY = ImGui::GetContentRegionAvail().y;
+    const float footerBottomY = window->InnerRect.Max.y - window->WindowPadding.y;
+    const float menuY = std::max(window->InnerRect.Min.y + window->WindowPadding.y, footerBottomY - item_h);
+    const float menuHeight = footerBottomY - menuY;
+    if (menuHeight <= 0.0f) return;
 
     // Rail is chrome-less by design: no background fill, no right-edge divider.
     // The icons float directly on the outer LeftDockColumn gradient so the rail
@@ -152,6 +156,8 @@ void DrawSidebarActivityBar(AppState& state) {
 
     float cursorY = pos.y;
     int visibleCount = 0;  // Counts icons actually rendered, drives the 3+3 group divider.
+    ImGui::PushClipRect(window->ClipRect.Min,
+        ImVec2(window->ClipRect.Max.x, std::max(window->ClipRect.Min.y, menuY)), true);
     for (int pos_idx = 0; pos_idx < n; ++pos_idx) {
         int sectionId = ord[pos_idx];
         if (sectionId < 0 || sectionId >= n) continue;
@@ -182,6 +188,7 @@ void DrawSidebarActivityBar(AppState& state) {
         ImRect bb(item_min, item_max);
         char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "##SidebarIcon_%d", sectionId);
         ImGuiID id = window->GetID(idbuf);
+        ImGui::SetCursorScreenPos(item_min);
         ImGui::ItemSize(bb);
         if (!ImGui::ItemAdd(bb, id)) continue;
 
@@ -311,15 +318,19 @@ void DrawSidebarActivityBar(AppState& state) {
         }
     }
 
+    ImGui::PopClipRect();
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, cursorY));
+    ImGui::Dummy(ImVec2(bar_width, menuHeight));
+
 // Bottom-docked panel menu (≡) — replaces the old top-strip hamburger
     // Renders a hamburger icon at the bottom of the rail that opens Float / Hide /
-    // module visibility toggles. Anchored to availY so it stays bottom-aligned.
+    // module visibility toggles.
     {
-        const float bottomY = pos.y + availY - item_h;
-        const ImVec2 b_min(pos.x, bottomY);
-        const ImVec2 b_max(pos.x + bar_width, bottomY + item_h);
+        const ImVec2 b_min(pos.x, menuY);
+        const ImVec2 b_max(pos.x + bar_width, footerBottomY);
         ImRect bb(b_min, b_max);
         ImGuiID bid = window->GetID("##SidebarPanelMenuBtn");
+        ImGui::SetCursorScreenPos(b_min);
         ImGui::ItemSize(bb);
         if (ImGui::ItemAdd(bb, bid)) {
             bool bhovered = false, bheld = false;
@@ -338,7 +349,7 @@ void DrawSidebarActivityBar(AppState& state) {
                 LerpSidebarValue(modules.sidebar.inactive.z, modules.sidebar.hover.z, bhover),
                 LerpSidebarValue(modules.sidebar.inactive.w, modules.sidebar.hover.w, bhover));
             const ImU32 bcol = ImGui::GetColorU32(bIconV4);
-            const ImVec2 bcen(b_min.x + bar_width * 0.5f, b_min.y + item_h * 0.5f);
+            const ImVec2 bcen(b_min.x + bar_width * 0.5f, b_min.y + menuHeight * 0.5f);
             const float s = icon_size * 0.5f;
             // 3 horizontal lines (hamburger)
             draw_list->AddLine(ImVec2(bcen.x - s, bcen.y - s*0.5f), ImVec2(bcen.x + s, bcen.y - s*0.5f), bcol, 1.5f);

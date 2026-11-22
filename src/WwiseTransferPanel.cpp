@@ -1448,12 +1448,10 @@ void RenderWwiseTransferPanel() {
 
     ImGui::Spacing();
 
-    if (ImGui::BeginPopupModal("presetNameModal", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        const char* title = (g_ps.pendingPresetAction == 2)
-            ? wz("Rename preset to:", u8"重命名预设为：")
-            : wz("Save as preset:", u8"另存为预设：");
-        ImGui::TextUnformatted(title);
+    const char* presetNameTitle = (g_ps.pendingPresetAction == 2)
+        ? wz("Rename preset", u8"重命名预设")
+        : wz("Save as preset", u8"另存为预设");
+    if (aura::ui::BeginAlertDialog("presetNameModal", presetNameTitle)) {
         ImGui::SetNextItemWidth(260);
         ImGui::InputText("##presetName", g_ps.presetNameBuf, sizeof(g_ps.presetNameBuf),
                          ImGuiInputTextFlags_AutoSelectAll);
@@ -1485,13 +1483,11 @@ void RenderWwiseTransferPanel() {
             g_ps.pendingPresetAction = 0;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
-    if (ImGui::BeginPopupModal("presetDeleteConfirm", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(wz("Delete this preset?", u8"确认删除此预设？"));
-        ImGui::Spacing();
+    if (aura::ui::BeginAlertDialog("presetDeleteConfirm",
+                                   wz("Delete preset", u8"删除预设"))) {
         ImGui::PushStyleColor(ImGuiCol_Text,
             ImGui::ColorConvertFloat4ToU32(withAlpha(modules.wwise.labelText, 0.65f)));
         ImGui::TextUnformatted(g_ps.presetNameBuf);
@@ -1513,7 +1509,7 @@ void RenderWwiseTransferPanel() {
             g_ps.pendingPresetAction = 0;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     auto& cfg = activeTransferConfig();

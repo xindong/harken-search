@@ -286,9 +286,9 @@ bool RenderRelinkBanner(AppState& state) {
     }
 
     bool refreshSearch = false;
-    if (BeginDialog(kRelinkPromptId, nullptr, 560.0f, 0.0f)) {
-        ImGui::TextWrapped(L(Relink_MissingFileHeader));
-        ImGui::Spacing();
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_FirstUseEver);
+    if (aura::ui::BeginAlertDialog(kRelinkPromptId, L(Relink_MissingFileHeader),
+                                   ImGuiWindowFlags_None)) {
         ImGui::TextWrapped("%s", state.relinkBanner.missingPath.c_str());
         ImGui::Spacing();
         ImGui::TextWrapped(L(Relink_ChooseActionHint));
@@ -327,7 +327,7 @@ bool RenderRelinkBanner(AppState& state) {
             state.relinkBanner.visible = false;
             ImGui::CloseCurrentPopup();
         }
-        EndDialog();
+        aura::ui::EndAlertDialog();
     }
     return refreshSearch;
 }

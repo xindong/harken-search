@@ -1031,14 +1031,15 @@ static void checkFolderTreeRemovePathClearsAllLocalUiStateContract() {
           "BDD: Secondary folder remove path entry deletes all Aris DB records for the subtree");
     const std::string ledger = readFirstExistingTextFile({"locale/harken.ui.strings.json"});
     check(removeDbPopupBody.find("L(Main_ClearPathExplainWrap)") != std::string::npos &&
-              ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"Harken Search 数据库移除此路径"),
-          "BDD: Secondary folder remove path entry uses Harken Search product wording");
-    check(!ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"从数据库移除此路径"),
-          "BDD: Secondary folder remove path entry does not regress to database-only wording");
-    check(ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"全部入库记录"),
+              ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"数据库记录"),
+          "BDD: Secondary folder remove path entry names the database records it removes");
+    check(removeDbPopupBody.find("L(Main_ClearPathExplainWrap)") != std::string::npos &&
+              ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"播放列表引用"),
           "BDD: Secondary folder remove path entry explains record removal scope");
-    check(ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"封面/波形本地缓存引用"),
+    check(ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"本地缓存引用"),
           "BDD: Secondary folder remove path entry explains related cache cleanup");
+    check(ledgerEntryContains(ledger, "Main_ClearPathExplainWrap", u8"磁盘文件不会被删除"),
+          "BDD: Secondary folder remove path entry keeps the on-disk files warning");
 
     std::string finalizerBody =
         extractFunctionBody(source, "static void FinalizeFolderSubtreeDbRemoval");
