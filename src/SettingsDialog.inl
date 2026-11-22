@@ -269,7 +269,7 @@
         constexpr su::Page navigationPages[]{
             su::Page::Appearance, su::Page::Audio, su::Page::DawIntegration, su::Page::Search,
             su::Page::Library, su::Page::Interaction, su::Page::Personal, su::Page::Backup,
-            su::Page::Diagnostics,
+            su::Page::Diagnostics, su::Page::ExternalAi,
         };
         for (const auto page : navigationPages) {
 #if !AURA_BUILD_DIAGNOSTICS
@@ -449,7 +449,9 @@
         }else{
             ImGui::TextDisabled("%s",L(SetUX_PREFERENCES));
             ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(su::PageLabel(editor.page));su::Observe("page-title");ImGui::PopFont();ImGui::Dummy(ImVec2(0,8));
-            if(editor.page==su::Page::Common){
+            if(editor.page==su::Page::ExternalAi){
+#include "ExternalAiSettingsPage.inl"
+            }else if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
                     {L(SetUX_Listening),{"device","volume","normalize"}},
                     {L(SetUX_Interface),{"theme","systemFont"}},
@@ -495,6 +497,7 @@
                         ImGui::Dummy(ImVec2(0,6));
                         continue;
                     }
+                    if(entry.id=="externalAi")continue;
                     if(entry.id=="transportReverse"||entry.id=="transportPan"||entry.id=="transportSoundstage"||entry.id=="transportEQ")continue;
                     drawEntry(entry);
                 }

@@ -1,5 +1,9 @@
 #pragma once
 #include "AppState.h"
+#include "ExternalAiClientLink.h"
+#include "ExternalAiPlaylistBridge.h"
+#include "ExternalAiPlaylistService.h"
+#include "ExternalAiAuthorizationStore.h"
 #include "Localization.h"
 #include "imgui_internal.h"
 #include "PreferenceDraft.h"
@@ -12,6 +16,25 @@
 
 namespace harken::settings {
 inline unsigned avatarImageRevision=0;
+
+// External AI page: the authorization document is saved on its own, not through
+// the preferences draft, so the page keeps the loaded library and its edited
+// grants here between frames.
+struct ExternalAiPageState {
+    std::string databasePath;
+    std::string libraryId;
+    std::string documentPath;
+    HarkenSearch::ExternalAiSettings settings;
+    bool loaded = false;
+    bool dirty = false;
+    std::string status;
+    std::string error;
+    bool detailsOpen = false;
+    std::string linkStatus;
+    double linkStatusUntil = 0.0;
+    double statusUntil = 0.0;
+};
+inline ExternalAiPageState& ExternalAiPage() { static ExternalAiPageState state; return state; }
 inline const char* PageLabel(Page page) {
     switch (page) {
     case Page::Common: return L(SetUX_Common);
@@ -23,6 +46,7 @@ inline const char* PageLabel(Page page) {
     case Page::Interaction: return L(SetUX_ControlsShortcuts);
     case Page::Personal: return L(SetUX_ProfileExport);
     case Page::Backup: return L(SetUX_BackupRestore);
+    case Page::ExternalAi: return L(SetUX_ExternalAiMcp);
     case Page::Diagnostics: return L(SetUX_DiagnosticsLogs);
     }
     return "";

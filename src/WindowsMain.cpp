@@ -224,6 +224,10 @@ static void AcknowledgeBootstrapHealthAfterUiPresented() {
 #define WM_COPYGLOBALDATA 0x0049
 #endif
 
+#include "ExternalAiAuthorizationStore.h"
+#include "ExternalAiBridgeServer.h"
+#include "ExternalAiPlaylistService.h"
+
 // Forward declaration for ImGui Win32 handler
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -4854,6 +4858,14 @@ static void PollQaCommandFile(AppState& state) {
                 const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
+            if (action == "scroll") {
+                // QA helper: jump the settings body to a scroll offset so the
+                // capture script can reach controls below the fold.
+                const float target=(float)getInt(raw,"y",0);
+                for(auto* window:ImGui::GetCurrentContext()->Windows)
+                    if(window->WasActive && std::string(window->Name).find("SettingsBody")!=std::string::npos)
+                        window->Scroll.y=target;
+            }
             if (action == "resize") {
                 if(auto* window=ImGui::FindWindowByName("###HarkenSettings")) ImGui::SetWindowSize(window,ImVec2((float)std::clamp(getInt(raw,"width",1000),640,1500),(float)std::clamp(getInt(raw,"height",760),480,1100)),ImGuiCond_Always);
             }
@@ -5496,6 +5508,38 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_view\":\"" + std::string(viewModeToString(state.viewMode)) + "\",";
         result += "\"active_library\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
         result += "\"db_path\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
+        {
+            // QA: why the external AI write bridge is (not) up.
+            const std::string bridgeId = HarkenSearch::ExternalAiLibraryIdForPath(state.currentDbPathUtf8);
+            const std::string bridgeDir = [&]() {
+                if (!g_appSettingsPathUtf8.empty()) {
+                    const auto separator = g_appSettingsPathUtf8.find_last_of("/\\");
+                    return separator == std::string::npos ? std::string{} : g_appSettingsPathUtf8.substr(0, separator);
+                }
+                const auto layout = Platform::HarkenUserData::EnsureLayout();
+                return layout.activeSettingsDir.empty()
+                    ? std::string{} : Platform::HarkenUserData::WideToUtf8Path(layout.activeSettingsDir);
+            }();
+            const std::string bridgeDoc = HarkenSearch::ExternalAiSettingsPath(bridgeDir, bridgeId);
+            HarkenSearch::ExternalAiSettings bridgeSettings;
+            std::string bridgeError;
+            const bool bridgeLoaded = !bridgeDoc.empty()
+                && HarkenSearch::LoadExternalAiSettings(bridgeDoc, bridgeId, bridgeSettings, bridgeError);
+            result += "\"external_ai_bridge\":{";
+            result += "\"running\":" + std::string(HarkenSearch::ExternalAiBridgeServerRunning() ? "true" : "false");
+            result += ",\"library\":\"" + jsonEscape(bridgeId) + "\"";
+            result += ",\"document\":\"" + jsonEscape(bridgeDoc) + "\"";
+            result += ",\"document_exists\":" + std::string(Platform::FileSystem::Exists(bridgeDoc) ? "true" : "false");
+            result += ",\"loaded\":" + std::string(bridgeLoaded ? "true" : "false");
+            result += ",\"load_error\":\"" + jsonEscape(bridgeError) + "\"";
+            result += ",\"enabled\":" + std::string(bridgeSettings.enabled ? "true" : "false");
+            result += ",\"edit_playlist\":" + std::to_string(static_cast<int>(
+                bridgeSettings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)));
+            result += ",\"settings_dir\":\"" + jsonEscape(bridgeDir) + "\"";
+            result += ",\"settings_path_raw\":\"" + jsonEscape(g_appSettingsPathUtf8) + "\"";
+            result += ",\"settings_path_len\":" + std::to_string(g_appSettingsPathUtf8.size());
+            result += "},";
+        }
 #if ARIS_PREVIEW_ISOLATION
         // Observe the real setup modal without sending desktop input.
         const auto* newDbWindow = ImGui::FindWindowByName(L(Dlg_NewDB));
@@ -9583,6 +9627,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         UnregisterHotKey(hwnd, HOTKEY_ID_SHOW_MANAGER);
         RemoveTrayIconIfAny(hwnd);
+        // The write bridge owns a thread and a pipe: stop it before the process exits.
+        HarkenSearch::StopExternalAiBridgeServer();
         PostQuitMessage(0);
         return 0;
     }
