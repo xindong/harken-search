@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import re
-import shutil
 from pathlib import Path
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ISOLATED_ROOT = Path("D:/Aris-QA/BUG-20261012-05-release-archive")
 CMAKE_PATH = ROOT / "CMakeLists.txt"
 MCP_CMAKE_PATH = ROOT / "cmake" / "harken_external_ai_mcp.cmake"
 BEHAVIOR_TESTS = ROOT / "cmake" / "harken_search_behavior_tests.cmake"
@@ -121,16 +119,14 @@ def test_internal_static_libraries_are_outside_release_payload_directory(
     )
 
 
-def test_release_compliance_still_forbids_static_libraries() -> None:
+def test_release_compliance_still_forbids_static_libraries(tmp_path: Path) -> None:
     source = _read(COMPLIANCE_PATH)
     assert '"*.lib"' in source
 
     module = _load_compliance_module()
     assert "*.lib" in module.RELEASE_FORBIDDEN_GLOBS
 
-    fixture_root = ISOLATED_ROOT / "fixtures" / "synthetic-release-lib-ban"
-    if fixture_root.exists():
-        shutil.rmtree(fixture_root)
+    fixture_root = tmp_path / "synthetic-release-lib-ban"
     fixture_root.mkdir(parents=True, exist_ok=True)
     (fixture_root / "internal.lib").write_bytes(b"synthetic-static-library")
     nested = fixture_root / "nested"
