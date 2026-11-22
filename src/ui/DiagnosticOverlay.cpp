@@ -8,6 +8,7 @@
 #include "MemoryBudget.h"
 #include "PerformanceMonitor.h"
 #include "Theme.h"
+#include "../ThemeModuleColors.h"
 #include "TransientScrollbarHost.h"
 #include "platform/system.h"
 #include "ui/CloseIconButton.h"
@@ -255,6 +256,7 @@ void Refresh(ViewData& view, Monitor::TimePoint now, const MemoryBudget* memoryB
 }
 
 bool DrawHeader(const Layout& ui, ViewData& view, const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     constexpr float titleSize = 16.0f;
     constexpr float top = 8.0f;
     const float height = ui.LineHeight(kBodySize) + 12.0f;
@@ -278,7 +280,7 @@ bool DrawHeader(const Layout& ui, ViewData& view, const ThemeColorScheme& theme)
         }
         const bool selected = view.tab == tab;
         if (selected || ImGui::IsItemHovered()) {
-            const auto fill = ImLerp(theme.diagnosticOverlayBG, theme.diagnosticOverlayAccent, selected ? 0.20f : 0.11f);
+            const auto fill = ImLerp(modules.diagnostic.background, modules.diagnostic.accent, selected ? 0.20f : 0.11f);
             ui.draw->AddRectFilled(ui.Point(x, top), ui.Point(x + width, top + height),
                 ImGui::GetColorU32(fill), 5.0f * ui.scale);
         }
@@ -290,7 +292,7 @@ bool DrawHeader(const Layout& ui, ViewData& view, const ThemeColorScheme& theme)
     ImGui::SetCursorPos(ImVec2(closeX * ui.scale, top * ui.scale));
     ui.PushFont(kLogSize);
     const bool closed = aura::ui::CloseIconButton::Draw(ICON_LC_X "###CloseDiagnosticOverlay",
-        ImVec2(24.0f * ui.scale, height * ui.scale), ui.muted, theme.diagnosticOverlayBG);
+        ImVec2(24.0f * ui.scale, height * ui.scale), ui.muted, modules.diagnostic.background);
     ImGui::PopFont();
     return !closed;
 }
@@ -343,6 +345,7 @@ void DrawFrameChart(const Layout& ui, const Monitor& monitor, ImU32 accent, floa
 
 void DrawPerformance(const Layout& ui, const ViewData& view, const Monitor& monitor,
                      const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     constexpr float fpsSize = 28.0f;
     constexpr float metricsY = 44.0f;
     const float right = ui.size.width - kPadding;
@@ -384,16 +387,16 @@ void DrawPerformance(const Layout& ui, const ViewData& view, const Monitor& moni
         std::snprintf(usage, sizeof(usage), "%.1f / %.0f MB", used / kBytesPerMiB, limit / kBytesPerMiB);
         ui.Right(right, y, usage, kBodySize, ui.ink, total);
         const float fraction = limit ? static_cast<float>(std::min(1.0, static_cast<double>(used) / limit)) : 0.0f;
-        auto barColor = theme.diagnosticOverlayAccent;
-        if (fraction >= 0.9f) barColor = ImLerp(barColor, theme.meterClip, 0.62f);
-        else if (fraction >= 0.7f) barColor = ImLerp(barColor, theme.meterWarning, 0.64f);
-        else if (!total) barColor = ImLerp(barColor, theme.volumeColor, 0.14f);
+        auto barColor = modules.diagnostic.accent;
+        if (fraction >= 0.9f) barColor = ImLerp(barColor, modules.meter.clip, 0.62f);
+        else if (fraction >= 0.7f) barColor = ImLerp(barColor, modules.meter.warning, 0.64f);
+        else if (!total) barColor = ImLerp(barColor, modules.signal.level, 0.14f);
         const float left = std::max(82.0f * ui.typeScale, kPadding + ui.Width(label, kBodySize, total) + 8.0f);
         const float end = right - std::max(105.0f * ui.typeScale, ui.Width(usage, kBodySize, total) + 10.0f);
         if (end <= left) return;
         ImGui::SetCursorPos(ImVec2(left * ui.scale, (y + (ui.LineHeight(kBodySize) - 6.0f) * 0.5f) * ui.scale));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * ui.scale);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImLerp(theme.diagnosticOverlayBG, theme.diagnosticOverlayAccent, 0.22f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImLerp(modules.diagnostic.background, modules.diagnostic.accent, 0.22f));
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
         ImGui::ProgressBar(fraction, ImVec2((end - left) * ui.scale, 6.0f * ui.scale), "");
         ImGui::PopStyleColor(2);
@@ -405,7 +408,7 @@ void DrawPerformance(const Layout& ui, const ViewData& view, const Monitor& moni
     cacheRow(firstRowY + 2.0f * rowStep, L(DiagnosticOverlay_Metadata), stats.metadataUsage, view.budgets.metadataBudget);
     cacheRow(totalY, L(DiagnosticOverlay_Total), stats.totalUsage, view.budgets.totalBudget, true);
 
-    DrawFrameChart(ui, monitor, ImGui::GetColorU32(theme.diagnosticOverlayAccent), totalY + rowStep + 6.0f);
+    DrawFrameChart(ui, monitor, ImGui::GetColorU32(modules.diagnostic.accent), totalY + rowStep + 6.0f);
 }
 
 float DrawExportAction(const Layout& ui) {
@@ -559,11 +562,12 @@ bool DrawWindow(Monitor& monitor, const MemoryBudget* memoryBudget, bool justOpe
     ImGui::SetNextWindowSizeConstraints(minimum, ImVec2(workSize.width, workSize.height), LimitNativeResize, &limits);
     const float scale = bounds.scale;
     const auto& theme = ThemeColors::current();
-    auto surface = theme.diagnosticOverlayBG;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
+    auto surface = modules.diagnostic.background;
     surface.w = std::min(surface.w, 0.96f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, surface);
-    ImGui::PushStyleColor(ImGuiCol_Border, ImLerp(theme.chromeBorder, theme.diagnosticOverlayAccent, 0.18f));
-    ImGui::PushStyleColor(ImGuiCol_Text, theme.diagnosticOverlayText);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImLerp(modules.overlay.border, modules.diagnostic.accent, 0.18f));
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.diagnostic.text);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 9.0f * scale);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
@@ -584,7 +588,7 @@ bool DrawWindow(Monitor& monitor, const MemoryBudget* memoryBudget, bool justOpe
         const layout::Size logicalSize{actualSize.x / scale, actualSize.y / scale};
         const Layout ui{regular, emphasisFont ? emphasisFont : regular, ImGui::GetWindowDrawList(),
                         actualPos, logicalSize, scale, layout::FontScale(logicalSize),
-                        theme.diagnosticOverlayText, theme.diagnosticOverlayMutedText};
+                         modules.diagnostic.text, modules.diagnostic.mutedText};
         open = DrawHeader(ui, view, theme);
         if (open) {
             const auto now = Monitor::Clock::now();

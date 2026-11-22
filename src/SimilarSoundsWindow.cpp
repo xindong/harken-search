@@ -123,8 +123,10 @@ static bool DrawSimilarSoundsActionRow(
         }
         ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
         aura::ui::ButtonOptions options;
-        options.variant = aura::ui::ButtonVariant::PrimarySearch;
         options.disabled = indexing || !hasReference;
+        options.variant = options.disabled
+            ? aura::ui::ButtonVariant::DisabledSearch
+            : aura::ui::ButtonVariant::PrimarySearch;
         if (searching && !changed) {
             if (aura::ui::ActionButton(L(Cancel), ImVec2(0,height), aura::ui::ButtonVariant::Quiet)) {
                 workflow.CancelSearch(); state.similarSoundsSelectedRow = -1; changed = true;
@@ -588,8 +590,17 @@ void RenderSimilarSoundsWindow(AppState& state) {
     HarkenSearch::SimilarityWorkflow& workflow = *state.similarSoundsWorkflow;
 
     const bool windowWasOpen = state.similarSoundsWindow.open;
+    aura::ui::StandaloneWindowOptions windowOptions;
+    const bool customTheme = state.settings.theme == AppTheme::Custom ||
+        state.settings.useCustomColors || ThemeColors::customized();
+    if (customTheme) {
+        const auto& theme = ThemeColors::current();
+        windowOptions.windowBackground = ImLerp(
+            theme.metadataPanelBG, theme.resultsBG, 0.45f);
+    }
     if (!aura::ui::BeginStandaloneWindow(
-            L(Similar_Title), "##SimilarSoundsWindow", &state.similarSoundsWindow)) {
+            L(Similar_Title), "##SimilarSoundsWindow", &state.similarSoundsWindow,
+            windowOptions)) {
         if (windowWasOpen && !state.similarSoundsWindow.open) {
             workflow.Invalidate();
             state.similarSoundsSelectedRow = -1;

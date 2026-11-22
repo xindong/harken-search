@@ -1176,8 +1176,10 @@ bool BeginStandaloneWindow(const char* title, const char* stableId,
     windowLabel += normalizedId;
     if (state->maximized) windowLabel += "__Maximized";
 
+    const ImVec4 windowBackground = options.windowBackground.x >= 0.0f
+        ? options.windowBackground : th.mainWindowBG;
     ImGui::PushStyleColor(ImGuiCol_WindowBg,
-        ImGui::ColorConvertFloat4ToU32(th.mainWindowBG));
+        ImGui::ColorConvertFloat4ToU32(windowBackground));
     ImGui::PushStyleColor(ImGuiCol_Border,
         ImGui::ColorConvertFloat4ToU32(th.chromeBorder));
     ImGui::PushStyleColor(ImGuiCol_Text,

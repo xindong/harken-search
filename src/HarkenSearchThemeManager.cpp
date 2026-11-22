@@ -2,6 +2,7 @@
 // 整合主题配色、ImGui 样式、波形渲染的统一管理器
 
 #include "HarkenSearchThemeManager.h"
+#include "ThemeModuleColors.h"
 #include <algorithm>
 
 // 单例
@@ -83,16 +84,17 @@ void HarkenSearchThemeManager::initialize(const ThemeColorScheme& scheme) {
     m_colorScheme  = scheme;
     m_styleConfig  = getElectricBlueStyle();
     m_waveformStyle = getElectricBlueWaveform();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(scheme);
 
     // 从 ThemeColorScheme 派生波形颜色
-    m_waveformStyle.primaryColor    = toImU32(scheme.waveformColor);
-    m_waveformStyle.backgroundColor = toImU32(scheme.waveformBG);
-    m_waveformStyle.borderColor     = toImU32(scheme.resultsOutline);
-    m_waveformStyle.secondaryColor  = toImU32(scheme.waveformSecondaryColor);
-    m_waveformStyle.rmsColor        = withAlpha(toImU32(scheme.waveformSecondaryColor), 180);
-    m_waveformStyle.playheadColor   = toImU32(scheme.waveformPositionLine);
-    m_waveformStyle.playheadGlowColor = withAlpha(toImU32(scheme.waveformPositionLine), 40);
-    m_waveformStyle.playheadDotColor  = toImU32(scheme.waveformPositionLine);
+    m_waveformStyle.primaryColor    = toImU32(modules.waveform.primary);
+    m_waveformStyle.backgroundColor = toImU32(modules.waveform.background);
+    m_waveformStyle.borderColor     = toImU32(modules.results.outline);
+    m_waveformStyle.secondaryColor  = toImU32(modules.waveform.secondary);
+    m_waveformStyle.rmsColor        = withAlpha(toImU32(modules.waveform.secondary), 180);
+    m_waveformStyle.playheadColor   = toImU32(modules.waveform.playhead);
+    m_waveformStyle.playheadGlowColor = withAlpha(toImU32(modules.waveform.playhead), 40);
+    m_waveformStyle.playheadDotColor  = toImU32(modules.waveform.playhead);
 }
 
 // 应用 ImGui 样式

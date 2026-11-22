@@ -6332,6 +6332,7 @@ aura_set_test_labels(TestTransportBlendInput ui)
 add_executable(TestThemeColors EXCLUDE_FROM_ALL
     tests/test_theme_colors.cpp
     src/Theme.cpp
+    src/BuiltinThemeScheme.cpp
     src/ui/CoreWorkspaceStyle.cpp
     src/platform/filesystem_std.cpp
     ${AURO_AUDIO_TEXT_SOURCE}
