@@ -5880,12 +5880,37 @@ static void AddUniqueFolderMatchPath(std::vector<std::string>& paths, std::strin
     }
 }
 
+// 长路径前缀与普通写法的等价形式。
+// 同一个库里可能出现 `\\nas\share\x` 与 `\\?\UNC\nas\share\x` 两种记录，
+// 删除/过滤子树时必须都能命中，否则会出现「移除了但还剩一半」。
+static std::string FolderMatchExtendedVariant(const std::string& path) {
+#ifdef _WIN32
+    if (path.empty()) return path;
+    if (path.rfind("\\\\?\\", 0) == 0) return path;
+    if (path.rfind("\\\\", 0) == 0) return "\\\\?\\UNC\\" + path.substr(2);
+    if (path.size() >= 2 && path[1] == ':') return "\\\\?\\" + path;
+#endif
+    return path;
+}
+
+static std::string FolderMatchPlainVariant(const std::string& path) {
+#ifdef _WIN32
+    if (path.rfind("\\\\?\\UNC\\", 0) == 0) return "\\\\" + path.substr(8);
+    if (path.rfind("\\\\?\\", 0) == 0) return path.substr(4);
+#endif
+    return path;
+}
+
 static std::vector<std::string> BuildFolderSubtreeMatchPaths(const std::string& canonicalPath,
                                                              const std::string& rawPath) {
     std::vector<std::string> paths;
-    paths.reserve(4);
+    paths.reserve(8);
     AddUniqueFolderMatchPath(paths, canonicalPath);
     AddUniqueFolderMatchPath(paths, rawPath);
+    AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(canonicalPath));
+    AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(rawPath));
+    AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(canonicalPath));
+    AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(rawPath));
 #ifdef _WIN32
     if (rawPath.size() >= 2 && rawPath[1] == ':') {
         std::string driveUpper = rawPath;
@@ -16638,6 +16663,11 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (!iterator.Open(PathToUtf8(currentDir), false, true)) {
                 return;
             }
+            // 单个条目读失败不应该把整个目录当成不可达：
+            // 之前只要根目录里有一个条目报错（网络库），就会直接中断本目录枚举，
+            // 后续子目录根本没机会入栈，最终 total=0、errors=1。
+            int entriesRead = 0;
+            int entryErrors = 0;
             while (true) {
                 if (isCancelled() || fatalScanError) break;
 
@@ -16649,18 +16679,23 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 }
                if (readStatus == Platform::FileSystem::DirectoryReadStatus::Error) {
                     const std::string currentDirUtf8 = pathForScanError(currentDir);
-                    if (Platform::FileSystem::IsNetworkPath(currentDirUtf8) ||
-                        Platform::FileSystem::IsNetworkPath(dirPath)) {
+                    const bool networkDir = Platform::FileSystem::IsNetworkPath(currentDirUtf8) ||
+                                            Platform::FileSystem::IsNetworkPath(dirPath);
+                    ++entryErrors;
+                    stats.addError("Cannot read directory entry in " + currentDirUtf8 + ": " + entryError);
+                    m_lastError = entryError;
+                    // 只在本目录一条都没读出来且连续失败时才当作整目录不可达（真正的断网）。
+                    if (networkDir && entriesRead == 0 && entryErrors >= 3) {
                         stats.unreachable++;
                         stats.addError(std::string("Scan_NetworkLibraryUnreachable"));
                         m_lastError = std::string("Scan_NetworkLibraryUnreachable");
                         (void)Platform::FileSystem::PathStatus::Unreachable;
                         break;
                     }
-                    stats.addError("Cannot read directory entry in " + currentDirUtf8 + ": " + entryError);
-                    m_lastError = entryError;
+                    if (entryErrors > 200) break;
                     continue;
                 }
+                ++entriesRead;
                 if (readStatus != Platform::FileSystem::DirectoryReadStatus::Entry) {
                     continue;
                 }
@@ -16671,6 +16706,10 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     continue;
                 }
 
+                // 单个条目的名称转码失败（例如 macOS 残留文件的无配对代字符）不能中断
+                // 整个目录：之前它会抛 ERROR_NO_UNICODE_TRANSLATION 冒到外层 catch，
+                // 导致整个根目录 total=0、errors=1，看起来就像整个文件夹被漏收。
+                try {
                 // Skip hidden, system, and temporary files or directories.
                 if (isHiddenPath(rawPath)) {
                     continue;
@@ -16737,6 +16776,14 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                             if (fatalScanError) break;
                         }
                     }
+                }
+                } catch (const std::exception& e) {
+                    stats.addError("Cannot read entry under " + pathForScanError(currentDir) + ": " + e.what());
+                    m_lastError = e.what();
+                    continue;
+                } catch (...) {
+                    stats.addError("Cannot read entry under " + pathForScanError(currentDir));
+                    continue;
                 }
 
             }
@@ -18379,6 +18426,33 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         const std::string deleteErr = sqlite3_errmsg(m_db);
         const int deleteErrorCode = sqlite3_extended_errcode(m_db);
         static thread_local bool s_retryingAfterSearchIndexRepair = false;
+        static thread_local bool s_retryingAfterReindex = false;
+        // 索引与表不一致时 SQLite 会拒绝删除并报 database disk image is malformed。
+        // 这在实际库里出现过（idx_* 报 row missing from index / wrong # of entries），
+        // 先重建索引再重试一次，而不是把错误直接丢给界面。
+        if (!s_retryingAfterReindex &&
+            (deleteErrorCode == SQLITE_CORRUPT || deleteErrorCode == SQLITE_CORRUPT_INDEX)) {
+            rollbackTransaction();
+            executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
+            const char* reindexSql = "REINDEX;";
+            const bool reindexed = executeSQL(reindexSql);
+            if (reindexed) {
+                DIAG_ACTION_FMT("Database",
+                                "RemoveFolderSubtreeRecoveredIndexCorruption path=%s err=%s",
+                                targetPath.c_str(),
+                                deleteErr.c_str());
+                writerLk.unlock();
+                s_retryingAfterReindex = true;
+                const int retried = removeFolderSubtreeFromDb(folderPath, deleteFilesFromDisk);
+                s_retryingAfterReindex = false;
+                return retried;
+            }
+            m_lastError = std::string("removeFolderSubtreeFromDb: audio row batch delete failed err=")
+                + deleteErr
+                + " reindex="
+                + (m_lastError.empty() ? std::string("failed") : m_lastError);
+            return 0;
+        }
         if (!s_retryingAfterSearchIndexRepair &&
             (deleteErrorCode == SQLITE_CORRUPT_VTAB ||
              IsRecoverableSearchIndexMalformedError(deleteErr))) {
