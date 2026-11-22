@@ -1673,10 +1673,14 @@ int main(int argc, char** argv) {
         ThemeColorScheme plain = ThemeColors::getClassicDark();
         plain.colorMixing = false;
         ThemeColors::resolveDerivedColors(plain);
-        const ImVec4 declaredStart = plain.resultsGradientStart;
-        const ImVec4 declaredEnd = plain.resultsGradientEnd;
-        CHECK(approxEqual(plain.resultsGradientStart, declaredStart) &&
-              approxEqual(plain.resultsGradientEnd, declaredEnd),
+        // 用与派生结果不同的显式端点，确认关闭混合后不会被重算覆盖。
+        ThemeColorScheme declared = ThemeColors::getClassicDark();
+        declared.colorMixing = false;
+        declared.resultsGradientStart = ImVec4(0.11f, 0.22f, 0.33f, 1.0f);
+        declared.resultsGradientEnd = ImVec4(0.44f, 0.33f, 0.22f, 1.0f);
+        ThemeColors::resolveDerivedColors(declared);
+        CHECK(approxEqual(declared.resultsGradientStart, ImVec4(0.11f, 0.22f, 0.33f, 1.0f)) &&
+              approxEqual(declared.resultsGradientEnd, ImVec4(0.44f, 0.33f, 0.22f, 1.0f)),
               "mixing off keeps the declared gradient endpoints so the gradient still works");
         CHECK(approxEqual(plain.historyCapsuleActiveBG, plain.frameBgBase) &&
               approxEqual(plain.modeCapsuleActiveBG, plain.frameBgBase),
@@ -1686,9 +1690,9 @@ int main(int argc, char** argv) {
         CHECK(approxEqual(plain.dialogBG, plain.popupBG) &&
               approxEqual(plain.dialogPanelBG, plain.dialogBG),
               "mixing off stops the dialog chain from blending the canvas");
-        CHECK(approxEqual(plain.wwiseDiffNew, plain.menuText) ||
-              approxEqual(plain.wwiseOkAnchor, plain.wwiseOkAnchor),
-              "mixing off leaves wwise anchors as declared colors");
+        CHECK(approxEqual(plain.wwiseConnectOk, plain.volumeColor) &&
+              approxEqual(plain.wwiseDiffNew, plain.wwiseNewAnchor),
+              "mixing off leaves wwise status colors on their own axes");
         CHECK(!approxEqual(mixed.resultsGradientEnd, mixed.resultsBG),
               "mixing on still derives a gradient end from the selection color");
         ThemeColorScheme flat = ThemeColors::getClassicDark();

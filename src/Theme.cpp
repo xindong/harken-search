@@ -859,7 +859,8 @@ bool ThemeColors::loadAndApplyThemeFile(
     if (source && source[0]) {
         armImportDiagnostics(source, pathUtf8, startThemeValue, startThemeLabel, livePreview);
     }
-    if (!loaded.colorMixing) resolveDerivedColors(loaded);
+    // 注意：不要在这里重算派生色。导入的主题每个字段都是显式值，
+    // 重算会把用户单独调过的颜色覆盖掉（关闭混色时更明显）。
     activateCustomScheme(loaded);
     if (applyNow) {
         applyToImGui();

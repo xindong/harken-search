@@ -19,6 +19,8 @@ template<class Fn> void ForEachColor(Fn fn) {
     COLOR(wwiseConnectOk); COLOR(wwiseConnectFail); COLOR(wwiseDiffNeutral);
     COLOR(wwiseDiffNew); COLOR(wwiseDiffReplaced); COLOR(wwiseDiffUnresolved);
     COLOR(wwiseLeafBadge); COLOR(wwiseParentBadge);
+    // 新增的可选颜色字段：日夜配色必须一起存，否则切换后会丢。
+    COLOR(searchFieldOutline); COLOR(transportText);
 #undef COLOR
 }
 bool ValidChannel(float value) { return std::isfinite(value) && value >= 0.f && value <= 1.f; }

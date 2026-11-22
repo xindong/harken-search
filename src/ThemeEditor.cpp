@@ -291,10 +291,16 @@ static bool LoadEditorThemeFile(const std::string& pathUtf8, ThemeColorScheme& i
         const auto value = document.find(field.key());
         if (value == document.end()) continue;
         if (!value->is_string()) return false;
-        const auto color = value->get<std::string>();
-        if ((color.size() != 6 && color.size() != 8) || color.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+        const auto text = value->get<std::string>();
+        // colorMixing / resultsGradient 是开关，不是颜色：原样透传，不按十六进制校验。
+        if (field.key() == "colorMixing" || field.key() == "resultsGradient") {
+            if (text != "0" && text != "1") return false;
+            colors[field.key()] = text;
+            continue;
+        }
+        if ((text.size() != 6 && text.size() != 8) || text.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
             return false;
-        colors[field.key()] = color;
+        colors[field.key()] = text;
     }
     if (colors.empty()) return false;
     ThemeColorScheme loaded{};
@@ -579,6 +585,7 @@ static void DrawEditorLayer(ThemeEditorLayer layer) {
         return;
 
     ImGui::Indent(8.0f);
+    ImGui::PushID(static_cast<int>(layer));
     DrawGroup(ThemeEditorGroup::Foundation, layer);
     DrawGroup(ThemeEditorGroup::TopBar, layer);
     DrawGroup(ThemeEditorGroup::Results, layer);
@@ -588,6 +595,7 @@ static void DrawEditorLayer(ThemeEditorLayer layer) {
     DrawGroup(ThemeEditorGroup::ButtonsAndStatus, layer);
     DrawGroup(ThemeEditorGroup::PresetDial, layer);
     DrawGroup(ThemeEditorGroup::Wwise, layer);
+    ImGui::PopID();
     ImGui::Unindent(8.0f);
 }
 
@@ -813,19 +821,27 @@ void RenderThemeEditor(AppState& state) {
     }
 
     ImGui::SameLine();
-    if (ImGui::Checkbox(L(ThemeEditor_ColorMixing), &g_ed.draft.colorMixing)) {
-        // 关闭时不再派生混色，只保留渐变两端插值。
-        PushUndo();
-        ThemeColors::resolveDerivedColors(g_ed.draft);
-        g_ed.relationState.ResetToValues(g_ed.draft);
-        if (g_ed.livePreview) ApplyDraftToLive(state);
+    {
+        // Checkbox 会直接改草稿：先留一份切换前的副本，撤销才能回到原来的开关状态。
+        bool mixing = g_ed.draft.colorMixing;
+        if (ImGui::Checkbox(L(ThemeEditor_ColorMixing), &mixing)) {
+            PushUndo();
+            g_ed.draft.colorMixing = mixing;
+            ThemeColors::resolveDerivedColors(g_ed.draft);
+            g_ed.relationState.ResetToValues(g_ed.draft);
+            if (g_ed.livePreview) ApplyDraftToLive(state);
+        }
     }
     ObserveEditorItem("color-mixing");
 
     ImGui::SameLine();
-    if (ImGui::Checkbox(L(ThemeEditor_ResultsGradient), &g_ed.draft.resultsGradient)) {
-        PushUndo();
-        if (g_ed.livePreview) ApplyDraftToLive(state);
+    {
+        bool gradient = g_ed.draft.resultsGradient;
+        if (ImGui::Checkbox(L(ThemeEditor_ResultsGradient), &gradient)) {
+            PushUndo();
+            g_ed.draft.resultsGradient = gradient;
+            if (g_ed.livePreview) ApplyDraftToLive(state);
+        }
     }
     ObserveEditorItem("results-gradient");
 
