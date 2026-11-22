@@ -1272,6 +1272,34 @@ static bool IsRecoverableSearchIndexMalformedError(const std::string& error) {
            lower.find("malformed inverted index for fts5 table") != std::string::npos;
 }
 
+static bool IsCorruptPrimaryErrorCode(int extendedCode) {
+    return (extendedCode & 0xFF) == SQLITE_CORRUPT;
+}
+
+static std::string SummarizeIntegrityCheck(sqlite3* db) {
+    if (!db) return "unavailable";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "PRAGMA integrity_check(3);", -1, &stmt, nullptr) != SQLITE_OK) {
+        return sqlite3_errmsg(db);
+    }
+    std::string summary;
+    int rows = 0;
+    int rc = SQLITE_OK;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW && rows < 3) {
+        const unsigned char* text = sqlite3_column_text(stmt, 0);
+        if (rows > 0) summary += " | ";
+        summary += text ? reinterpret_cast<const char*>(text) : "";
+        ++rows;
+    }
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        if (!summary.empty()) summary += " | ";
+        summary += sqlite3_errmsg(db);
+    }
+    sqlite3_finalize(stmt);
+    if (summary.empty()) summary = "no detail";
+    return summary;
+}
+
 static bool DropSearchIndexTablesForRecovery(sqlite3* db, std::string* outError) {
     const char* sql = R"(
         DROP TRIGGER IF EXISTS audio_files_ai;
@@ -18126,6 +18154,69 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
 
     std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
 
+    static thread_local bool s_retryingAfterDatabaseRepair = false;
+    auto tryRepairCorruptDatabase = [&](const std::string& operationError,
+                                        int operationCode,
+                                        const char* operationContext,
+                                        int* outResult) -> bool {
+        const bool searchIndexCorruption =
+            operationCode == SQLITE_CORRUPT_VTAB || IsRecoverableSearchIndexMalformedError(operationError);
+        const bool databaseCorruption = IsCorruptPrimaryErrorCode(operationCode);
+        if (!searchIndexCorruption && !databaseCorruption) {
+            return false;
+        }
+
+        if (sqlite3_get_autocommit(m_db) == 0) {
+            rollbackTransaction();
+        }
+        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
+
+        bool repaired = false;
+        std::string reindexError;
+        std::string searchIndexRepairError;
+        if (!s_retryingAfterDatabaseRepair) {
+            if (searchIndexCorruption) {
+                const bool dropped = DropSearchIndexTablesForRecovery(m_db, &searchIndexRepairError);
+                repaired = dropped && ensureFtsSchema();
+            } else {
+                // A plain SQLITE_CORRUPT is often a damaged index rather than the FTS
+                // shadow tables. Rebuild every index first, then rebuild the search
+                // index so the retry starts from consistent bookkeeping.
+                const bool reindexed = executeSQL("REINDEX;");
+                if (!reindexed) reindexError = sqlite3_errmsg(m_db);
+                const bool dropped = DropSearchIndexTablesForRecovery(m_db, &searchIndexRepairError);
+                const bool searchIndexRebuilt = dropped && ensureFtsSchema();
+                repaired = reindexed || searchIndexRebuilt;
+            }
+        }
+        if (repaired) {
+            DIAG_ACTION_FMT("Database",
+                            "RemoveFolderSubtreeRecoveredDatabaseCorruption path=%s err=%s",
+                            targetPath.c_str(),
+                            operationError.c_str());
+            writerLk.unlock();
+            s_retryingAfterDatabaseRepair = true;
+            const int retried = removeFolderSubtreeFromDb(folderPath, deleteFilesFromDisk);
+            s_retryingAfterDatabaseRepair = false;
+            *outResult = retried;
+            return true;
+        }
+
+        std::string repairDetail;
+        if (!reindexError.empty()) repairDetail = "REINDEX failed: " + reindexError;
+        if (!searchIndexRepairError.empty()) {
+            if (!repairDetail.empty()) repairDetail += "; ";
+            repairDetail += searchIndexRepairError;
+        }
+        m_lastError = std::string(operationContext) + " err=" + operationError
+            + " integrity=" + SummarizeIntegrityCheck(m_db)
+            + " repair=" + (repairDetail.empty() ? std::string("already attempted") : repairDetail)
+            + "; rebuild the database from Database settings and retry";
+        *outResult = 0;
+        return true;
+    };
+
+
     const char* createCandidateTableSql =
         "CREATE TEMP TABLE IF NOT EXISTS temp.remove_folder_subtree_candidates ("
         "id INTEGER PRIMARY KEY, "
@@ -18137,6 +18228,8 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         return 0;
     }
 
+    std::string candidateError;
+    int candidateErrorCode = SQLITE_OK;
     const char* insertCandidatesSql =
         "INSERT OR IGNORE INTO temp.remove_folder_subtree_candidates(id, file_path) "
         "SELECT id, file_path "
@@ -18147,7 +18240,11 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
     auto insertCandidatesForMatchPaths = [&](const char* sql, const char* errorContext) -> bool {
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            m_lastError = sqlite3_errmsg(m_db);
+            candidateErrorCode = sqlite3_extended_errcode(m_db);
+            candidateError = sqlite3_errmsg(m_db);
+            m_lastError = std::string(errorContext && *errorContext ? errorContext
+                                                                   : "removeFolderSubtreeFromDb: candidate prepare failed")
+                + " err=" + candidateError;
             return false;
         }
         for (const std::string& matchPath : matchPaths) {
@@ -18161,7 +18258,11 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
             sqlite3_bind_text(stmt, 4, childPrefix.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 5, childUpper.c_str(), -1, SQLITE_TRANSIENT);
             if (sqlite3_step(stmt) != SQLITE_DONE) {
-                m_lastError = errorContext && *errorContext ? errorContext : sqlite3_errmsg(m_db);
+                candidateErrorCode = sqlite3_extended_errcode(m_db);
+                candidateError = sqlite3_errmsg(m_db);
+                m_lastError = std::string(errorContext && *errorContext ? errorContext
+                                                                       : "removeFolderSubtreeFromDb: candidate insert failed")
+                    + " err=" + candidateError;
                 sqlite3_finalize(stmt);
                 return false;
             }
@@ -18171,6 +18272,13 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
     };
     if (!insertCandidatesForMatchPaths(insertCandidatesSql,
                                        "removeFolderSubtreeFromDb: fast candidate insert failed")) {
+        int recoveredResult = 0;
+        if (tryRepairCorruptDatabase(candidateError,
+                                     candidateErrorCode,
+                                     "removeFolderSubtreeFromDb: fast candidate insert failed",
+                                     &recoveredResult)) {
+            return recoveredResult;
+        }
         executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
         return 0;
     }
@@ -18193,6 +18301,13 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
             "   OR (file_path >= ? COLLATE NOCASE AND file_path < ? COLLATE NOCASE);";
         if (!insertCandidatesForMatchPaths(insertCandidatesNoCaseSql,
                                            "removeFolderSubtreeFromDb: nocase fallback candidate insert failed")) {
+            int recoveredResult = 0;
+            if (tryRepairCorruptDatabase(candidateError,
+                                         candidateErrorCode,
+                                         "removeFolderSubtreeFromDb: nocase fallback candidate insert failed",
+                                         &recoveredResult)) {
+                return recoveredResult;
+            }
             executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
             return 0;
         }
@@ -18321,31 +18436,12 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
     if (!executeSQL("DELETE FROM audio_files WHERE id IN (SELECT id FROM temp.remove_folder_subtree_candidates)")) {
         const std::string deleteErr = sqlite3_errmsg(m_db);
         const int deleteErrorCode = sqlite3_extended_errcode(m_db);
-        static thread_local bool s_retryingAfterSearchIndexRepair = false;
-        if (!s_retryingAfterSearchIndexRepair &&
-            (deleteErrorCode == SQLITE_CORRUPT_VTAB ||
-             IsRecoverableSearchIndexMalformedError(deleteErr))) {
-            rollbackTransaction();
-            executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-            std::string repairError;
-            const bool dropped = DropSearchIndexTablesForRecovery(m_db, &repairError);
-            const bool rebuilt = dropped && ensureFtsSchema();
-            if (rebuilt) {
-                DIAG_ACTION_FMT("Database",
-                                "RemoveFolderSubtreeRecoveredSearchIndexCorruption path=%s err=%s",
-                                targetPath.c_str(),
-                                deleteErr.c_str());
-                writerLk.unlock();
-                s_retryingAfterSearchIndexRepair = true;
-                const int retried = removeFolderSubtreeFromDb(folderPath, deleteFilesFromDisk);
-                s_retryingAfterSearchIndexRepair = false;
-                return retried;
-            }
-            m_lastError = std::string("removeFolderSubtreeFromDb: audio row batch delete failed err=")
-                + deleteErr
-                + " repair="
-                + (repairError.empty() ? m_lastError : repairError);
-            return 0;
+        int recoveredResult = 0;
+        if (tryRepairCorruptDatabase(deleteErr,
+                                     deleteErrorCode,
+                                     "removeFolderSubtreeFromDb: audio row batch delete failed",
+                                     &recoveredResult)) {
+            return recoveredResult;
         }
         m_lastError = std::string("removeFolderSubtreeFromDb: audio row batch delete failed err=")
             + deleteErr;
