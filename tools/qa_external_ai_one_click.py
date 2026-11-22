@@ -137,7 +137,6 @@ def run(args):
 
         # The page writes the document; give it the authorized root the dialog would
         # normally add, then let the page reload it so "Connect" becomes available.
-        expected = root.rglob("external-ai/" + library_id(database) + ".json")
         for attempt in range(8):
             click("ext-ai-save")
             time.sleep(0.4)
