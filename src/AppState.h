@@ -1,8 +1,14 @@
 #pragma once
+#include "BuildConfig.h"
 #include "InfoPageNavigation.h"
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
 #include "LibraryStatisticsWorker.h"
+#if AURA_BUILD_DIAGNOSTICS
+#include "PerformanceMonitor.h"
+#endif
+#include "DockTabGroups.h"
+#include "DawSendFeedback.h"
 // SoundManager - 应用状态模块
 // AppState.h - 应用状态、设置、标签页结构
 // 注意：这是权威定义，main.cpp 中不再重复定义这些类型
@@ -210,6 +216,7 @@ namespace HarkenSearch {
 }
 #include "FileBrowser.h"
 #include "Database.h"
+#include "PlaylistCollectionIndex.h"
 #include "AsyncWorker.h"
 #include "SimilaritySearch.h"
 #include "SimilarityWorkflow.h"
@@ -224,6 +231,7 @@ namespace HarkenSearch {
 #include "MusicQueue.h"
 #include "GaplessEngine.h"
 #include "ProToolsBridge.h"
+#include "DawTarget.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -239,7 +247,7 @@ namespace HarkenSearch {
 
 // Typography Scale
 
-inline constexpr int kFontSteps[]      = { 10, 11, 12, 13, 14, 16, 18, 20, 22, 24 };
+inline constexpr int kFontSteps[]      = { 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36 };
 inline constexpr int kFontStepCount    = (int)(sizeof(kFontSteps) / sizeof(kFontSteps[0]));
 inline constexpr float kTypographyBasePx = 14.0f;
 
@@ -247,8 +255,18 @@ inline constexpr float kTypographyBasePx = 14.0f;
 // style.ScaleAllSizes(kChromeFontPx / kTypographyBasePx) == ScaleAllSizes(1.0),
 // i.e. chrome geometry is byte-for-byte identical regardless of reading font.
 inline constexpr int kChromeFontPx = 14;
-inline constexpr int kDefaultReadingFontPx = 16;
+inline constexpr int kDefaultReadingFontPx = 18;
+// 菜单字号基准：系统字号 18 px 时菜单 16 px，再按系统字号比例缩放。
+inline constexpr int kDefaultMenuFontPx = 16;
 inline constexpr int kDefaultListFontPx = 18;
+// Reading/system font and the independent list font can both grow to 36 px.
+inline constexpr int kMaxReadingFontPx = 36;
+inline constexpr int kMaxListFontPx = 36;
+
+// Keep loaded and displayed sizes safe without rewriting the settings file here.
+inline constexpr int ClampSettingsFontSize(int sizePx) {
+    return std::clamp(sizePx, 10, kMaxReadingFontPx);
+}
 
 // Reading-list rows: extra vertical px added to the reading font height before
 // comparing against the density floor. Matches the existing list cell padding.
@@ -260,10 +278,8 @@ inline int ResolveReadingFontSize(bool hasReading, int readingVal,
                                   bool hasList, int listVal,
                                   bool hasFont, int fontVal,
                                   int defaultPx) {
-    if (hasReading) return readingVal;
-    if (hasList)    return listVal;
-    if (hasFont)    return fontVal;
-    return defaultPx;
+    const int value = hasReading ? readingVal : hasList ? listVal : hasFont ? fontVal : defaultPx;
+    return ClampSettingsFontSize(value);
 }
 
 // Reading-surface row height: never shorter than the density floor, grows with
@@ -577,6 +593,22 @@ struct CoverWallTabSnapshot {
     std::unordered_map<std::string, CoverWallFailedTextureEntry> failedTexCache;
 };
 
+// Incremental sort for the file browser. Large roots (hundreds of thousands
+// of entries) are sorted in frame-budgeted blocks and merged across frames so
+// the first load never blocks the UI for seconds.
+struct BrowserSortJob {
+    bool active = false;
+    std::vector<int> indices;
+    std::vector<int> scratch;
+    size_t blockSorted = 0;
+    size_t mergeWidth = 0;
+    size_t mergePos = 0;
+    uint64_t startedMs = 0;
+    int pumps = 0;
+    int sortColumn = 0;
+    bool sortAscending = true;
+};
+
 struct ListTab {
     int id = 0;
     std::string name;
@@ -628,6 +660,7 @@ struct ListTab {
     bool showM4A = true;
     bool showWMA = true;
     bool showOther = true;
+    bool showLosslessWavPack = false;
     
     // Pagination
     int64_t totalFileCount = 0;
@@ -750,6 +783,7 @@ struct TabPresetEntry {
     bool        showM4A = true;
     bool        showWMA = true;
     bool        showOther = true;
+    bool        showLosslessWavPack = false;
     std::string findSameFilenameQuery;
     bool        findSameFilenameActive = false;
     int64_t     selectedPlaylistId = -1;
@@ -770,36 +804,6 @@ struct SavedSearchEntry {
     int64_t createdAt = 0;   // unix seconds
     int64_t lastUsed = 0;    // unix seconds
     bool pinned = false;
-};
-
-// Send-to-DAW target configuration
-
-// Send mode: unified enum replacing old sendMethod + planned protocol fields
-enum class DawSendMode : int {
-    Clipboard  = 0,   // Copy path to clipboard (fallback, universal)
-    LaunchExe  = 1,   // Launch exe with file args (only when DAW not running)
-    HttpApi    = 2,   // REAPER Web Interface HTTP API (spot to timeline)
-    NamedPipe  = 3,   // Custom extension IPC (reserved)
-};
-
-struct DawTarget {
-    std::string name;           // Display name, e.g. "REAPER"
-    std::string exePath;        // Full path to DAW executable
-    std::string processName;    // Process name for detection, e.g. "reaper.exe"
-    DawSendMode mode = DawSendMode::Clipboard;
-    int httpPort = 8080;              // HttpApi mode: REAPER web interface port
-    std::string reaperActionId;       // REAPER action command ID for Aura_InsertMedia script
-    bool enabled = true;
-    bool fallbackToClipboard = true;  // Legacy field (Send no longer uses clipboard fallback)
-    bool autoDetect = true;           // Auto-detect if process is running
-
-// Pro Tools spot settings (persisted, Pro Tools targets only)
-    HarkenSearch::ProTools::SpotMode ptSpotMode = HarkenSearch::ProTools::SpotMode::AtCursor;
-    HarkenSearch::ProTools::TrackFallback ptTrackFallback = HarkenSearch::ProTools::TrackFallback::AutoCreateNew;
-
-// Runtime state (not persisted)
-    bool isRunning = false;
-    double lastDetectTime = 0.0;
 };
 
 // Application Settings
@@ -1037,6 +1041,7 @@ struct AppSettings {
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位
+    bool reaperSetupNoticeDismissed = false;
 
     // --- Shell integration ---
     bool defaultPlayerPrompted = false; // F-034: one-time "set as default player?" prompt shown
@@ -1615,6 +1620,9 @@ struct AppState {
     aura::BackfillQueue backfillQueue;
     int64_t backfillDbGeneration = 0;
     AppSettings settings;
+#if AURA_BUILD_DIAGNOSTICS
+    harken::performance_monitor::Monitor diagnosticOverlayMonitor;
+#endif
     UILocalState uiState;  // [Unified UI State]
     CoverWallState coverWall;  // 封面墙集中状态（原 main.cpp 46+ static）
 
@@ -1677,6 +1685,7 @@ struct AppState {
     bool showPlaylistDialog = false;
     bool showCreateFolderDialog = false;
     bool showSettingsDialog = false;
+    bool openDawIntegrationSettings = false;
 
     // 子播放列表 dialog state (transient, F-017 v2)
     bool   pendingNewSubDialog = false;
@@ -1808,9 +1817,6 @@ struct AppState {
     std::vector<Playlist> playlists;
     bool showPlaylistRenameDialog = false;
     bool showDawTargetSettings = false;   // DAW target configuration dialog
-    std::string lastSendToDAWStatus;      // Status toast after send
-    bool lastSendToDAWKeyed = false;      // H1b: row renders from g_lastSendToDAWBridgeStatus (UI-thread L())
-    double lastSendToDAWTime = 0.0;       // For timed status display
     std::vector<HarkenSearch::UI::SendTargetHistoryItem> sendTargetHistory;
     std::string lastProToolsConnectionStatus;
     std::string lastProToolsConnectionDetail;
@@ -1818,10 +1824,7 @@ struct AppState {
     bool lastProToolsConnectionOk = false;
     bool showProToolsCloseConfirm = false;
 
-    enum class DawSendState { Idle, Sending, Done };
-    std::atomic<DawSendState> dawSendState{DawSendState::Idle};
-    std::atomic<int> dawSendSent{0};
-    std::atomic<int> dawSendTotal{0};
+    HarkenSearch::UI::DawSendFeedback dawSendFeedback;
     std::thread dawSendThread;
     int64_t editingPlaylistId = -1;
     int selectedResultIndex = -1;
@@ -1939,6 +1942,7 @@ struct AppState {
     std::atomic<HarkenSearch::ScanStopDisposition> scanStopDisposition{
         HarkenSearch::ScanStopDisposition::None
     };
+    std::atomic<bool> scanKeepCommittedOnCancel{false};
     bool scanWasCancelled = false;
     bool scanWasPaused = false;
     double scanSummaryToastUntil = 0.0;
@@ -2071,6 +2075,7 @@ struct AppState {
     std::string lastScannedPath;
     std::vector<std::string> lastScannedFolders; // UI retry retains every selected root.
     std::vector<std::string> pendingScanFolders; // 拖入但尚未开始扫描的文件夹
+    bool pendingScanIsDirectDriveRootDrop = false;
     std::string pendingOpenFilePath;             // argv/IPC 传入的音频文件路径，主循环消费后清空
     bool filePlayerFastPathActive = false;       // 双击音频/IPC 打开时跳过素材库预热，优先进入播放
     std::thread scanThread;
@@ -2332,7 +2337,7 @@ struct AppState {
     std::function<void(AppState&, const std::string&, uint64_t)> relinkBannerSearchFn;
     std::function<void(AppState&, const std::vector<std::string>&, uint64_t)> relinkToolSearchFn;
 
-    uint64_t beginNewScanTask() {
+    uint64_t beginNewScanTask(bool keepCommittedOnCancel = false) {
         std::lock_guard<std::mutex> lk(scanTaskMutex);
         // 废弃当前任务：置 cancel，并把线程句柄转入待回收列表（避免 UI 线程 join 卡顿）
         scanStopDisposition.store(
@@ -2349,6 +2354,7 @@ struct AppState {
         scanStopDisposition.store(
             HarkenSearch::ScanStopDisposition::None,
             std::memory_order_release);
+        scanKeepCommittedOnCancel.store(keepCommittedOnCancel, std::memory_order_release);
         scanTaskCancelToken = std::make_shared<std::atomic<bool>>(false);
         beginScanTiming();
         return scanTaskGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -2366,8 +2372,12 @@ struct AppState {
         return token && token->load(std::memory_order_acquire);
     }
     void requestCancelScanTask() {
+        const HarkenSearch::ScanStopDisposition cancelDisposition =
+            scanKeepCommittedOnCancel.load(std::memory_order_acquire)
+                ? HarkenSearch::ScanStopDisposition::CancelKeepCommitted
+                : HarkenSearch::ScanStopDisposition::CancelRollback;
         scanStopDisposition.store(
-            HarkenSearch::ScanStopDisposition::CancelRollback,
+            cancelDisposition,
             std::memory_order_release);
         scanCancelRequested.store(true, std::memory_order_release);
         std::shared_ptr<std::atomic<bool>> token;
@@ -2477,15 +2487,27 @@ struct AppState {
     FolderInfo playlistFolderHierarchy;
     bool folderHierarchyShowingPlaylistScope = false;
     int64_t playlistFolderHierarchyPlaylistId = -1;
+    uint64_t playlistFolderHierarchyDataRevision = 0;
     int64_t expandedPlaylistFolderTreePlaylistId = -1;
+    uint64_t playlistQuickBarAppliedOrderSignature = 0;
+    aura::playlist::PlaylistCollectionIndex playlistCollectionIndex;
+    void EnsurePlaylistCollectionIndex() {
+        const uint64_t signature = aura::playlist::PlaylistCollectionSignature(
+            playlists, settings.playlistQuickBarHiddenIds);
+        if (signature == playlistCollectionIndex.signature) return;
+        playlistCollectionIndex.Rebuild(playlists, settings.playlistQuickBarHiddenIds);
+        playlistCollectionIndex.signature = signature;
+    }
     void setFolderHierarchy(FolderInfo&& tree, const std::string& /*dbPath*/) {
         databaseFolderHierarchy = tree;
         folderHierarchy = std::move(tree);
         folderHierarchyShowingPlaylistScope = false;
     }
-    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId) {
+    void setPlaylistFolderHierarchy(FolderInfo&& tree, int64_t playlistId,
+                                    uint64_t dataRevision = 0) {
         playlistFolderHierarchy = std::move(tree);
         playlistFolderHierarchyPlaylistId = playlistId;
+        playlistFolderHierarchyDataRevision = dataRevision;
         folderHierarchy = playlistFolderHierarchy;
         folderHierarchyShowingPlaylistScope = true;
     }
@@ -2500,6 +2522,7 @@ struct AppState {
         playlistFolderHierarchy = FolderInfo{};
         folderHierarchyShowingPlaylistScope = false;
         playlistFolderHierarchyPlaylistId = -1;
+        playlistFolderHierarchyDataRevision = 0;
         expandedPlaylistFolderTreePlaylistId = -1;
     }
     std::string pendingRemoveFolderDbPath;
@@ -2555,8 +2578,9 @@ struct AppState {
     bool showM4A = true;
     bool showWMA = true;
     bool showOther = true;
+    bool showLosslessWavPack = false;
     
-    bool shouldShowFile(const std::string& extension) const;
+    bool shouldShowFile(const AudioRecord& record) const;
 
     // Playback history tracking
     std::set<std::string> playedFiles;
@@ -2742,6 +2766,7 @@ struct AppState {
     void removePendingWaveform(const std::string& path);
 
     // Panel states
+    aura::ui::dock::DockTabGroups dockTabGroups;
     PanelState panelSidebar;
     PanelState panelFileInfo = [] {
         PanelState panel;
@@ -2904,6 +2929,11 @@ struct AppState {
     std::string browserSortPath;
     int browserSortEntryCount = 0;
     std::vector<int> browserSortedIndices;
+    // Cached display rows for the file browser quick filter. Rebuilding these
+    // every frame copies every entry name and stalls on huge folders.
+    std::vector<int> browserFilteredRows;
+    uint64_t browserFilteredRowsKey = 0;
+    BrowserSortJob browserSortJob;
 
     // Browser scope & bridging state
     char browserFilterBuffer[256] = "";                // in-view quick filter
@@ -3151,6 +3181,7 @@ struct AppState {
     std::atomic<bool> batchFeatureCancelRequested{false};
     std::atomic<bool> batchFeatureCompletionNotice{false}; // Dismissed on the next window opening.
     std::atomic<uint64_t> batchFeatureStartGeneration{0}; // Advances only when a new batch starts.
+    uint64_t similarityAnalysisClearGeneration = 0; // UI-thread-only; invalidate displayed coverage after maintenance.
     std::atomic<int>  batchFeatureProgress{0};
     std::atomic<int>  batchFeatureTotal{0};
     std::atomic<int>  batchFeatureSkipped{0};
@@ -3260,6 +3291,12 @@ struct AppState {
     unsigned int qaSendTargetMenuRenderedId = 0;
     int qaSendTargetMenuFrame = -1;
     std::vector<QaSendTargetMenuRow> qaSendTargetMenuRows;
+    // Reads the bottom-bar send widget menu without clicking it.
+    bool qaSendWidgetMenuRequested = false;
+    bool qaSendWidgetMenuOpen = false;
+    int qaSendWidgetMenuRows = 0;
+    int qaSendWidgetMenuFrame = -1;
+    unsigned int qaSendWidgetMenuId = 0;
 #endif
 
     // QA harness: UI region coordinates (client-relative, updated each frame)
@@ -3281,10 +3318,21 @@ struct AppState {
         std::vector<std::string> listRawNames, listRenderedNames;
         std::vector<bool> listRowDirectories;
         int waveDrawFrame=-1, waveDrawStyle=-1, spectrumDrawFrame=-1;
+        int menuBarFrame = -1, workspaceTopFrame = -1;
+        struct MenuBarItemProbe { std::string label; float x0, y0, x1, y1; };
+        std::vector<MenuBarItemProbe> menuBarItems;
+        float menuBarFontPixels = 0, menuBarHeight = 0, menuBarRight = 0, menuBarTop = 0, menuBarLastItemRight = 0;
+        float workspaceTop = 0;
         ImVec4 waveDrawBounds{};
 #endif
     } qaRegions;
 };
+
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: records one top-level menu-bar item (label + rect) for the
+// acceptance script, so it can assert the real grid instead of guessing clicks.
+void QaProbeMenuBarItem(AppState& state, const char* label);
+#endif
 
 // Global app state pointer
 extern AppState* g_appState;

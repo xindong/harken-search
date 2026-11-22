@@ -109,6 +109,7 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
     ImGui::Separator();
     if(aura::ui::ActionButton(L(Main_CloseBtn),ImVec2(100,38),aura::ui::ButtonVariant::Quiet)) {
         editor.action.clear();editor.error.clear();
+        editor.clearSimilarTarget.clear();editor.clearSimilarConfirm=false;editor.clearSimilarResult=-2;
         if(!editor.resetAll)editor.Reset(state);
         ImGui::CloseCurrentPopup();
     }

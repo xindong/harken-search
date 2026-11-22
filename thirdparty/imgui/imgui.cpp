@@ -8155,7 +8155,8 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
             SetWindowPos(window, window->SetWindowPosVal - window->Size * window->SetWindowPosPivot, 0); // Position given a pivot (e.g. for centering)
         else if ((flags & ImGuiWindowFlags_ChildMenu) != 0)
             window->Pos = FindBestWindowPosForPopup(window);
-        else if ((flags & ImGuiWindowFlags_Popup) != 0 && !window_pos_set_by_api && window_just_appearing_after_hidden_for_resize)
+        else if ((flags & ImGuiWindowFlags_Popup) != 0 && !window_pos_set_by_api &&
+                 ((flags & ImGuiWindowFlags_MenuChrome) || window_just_appearing_after_hidden_for_resize))
             window->Pos = FindBestWindowPosForPopup(window);
         else if ((flags & ImGuiWindowFlags_Tooltip) != 0 && !window_pos_set_by_api && !window_is_child_tooltip)
             window->Pos = FindBestWindowPosForPopup(window);
@@ -13011,6 +13012,8 @@ void ImGui::CloseCurrentPopup()
         window->DC.NavHideHighlightOneFrame = true;
 }
 
+static bool BeginMenuChromePopup(const char* name, ImGuiWindowFlags flags);
+
 // Attention! BeginPopup() adds default flags when calling BeginPopupEx()!
 bool ImGui::BeginPopupEx(ImGuiID id, ImGuiWindowFlags extra_window_flags)
 {
@@ -13025,10 +13028,82 @@ bool ImGui::BeginPopupEx(ImGuiID id, ImGuiWindowFlags extra_window_flags)
     IM_ASSERT((extra_window_flags & ImGuiWindowFlags_ChildMenu) == 0); // Use BeginPopupMenuEx()
     ImFormatString(name, IM_COUNTOF(name), "##Popup_%08x", id); // No recycling, so we can close/open during the same frame
 
-    bool is_open = Begin(name, NULL, extra_window_flags | ImGuiWindowFlags_Popup | ImGuiWindowFlags_NoDocking);
+    const ImGuiWindowFlags flags = extra_window_flags | ImGuiWindowFlags_Popup | ImGuiWindowFlags_NoDocking;
+    if (flags & ImGuiWindowFlags_MenuChrome)
+        SetNextWindowViewport(g.CurrentWindow->ViewportId);
+    bool is_open = (flags & ImGuiWindowFlags_MenuChrome) ? BeginMenuChromePopup(name, flags) : Begin(name, NULL, flags);
     if (!is_open) // NB: Begin can return false when the popup is completely clipped (e.g. zero size display)
         EndPopup();
     //g.CurrentWindow->FocusRouteParentWindow = g.CurrentWindow->ParentWindowInBeginStack;
+    return is_open;
+}
+
+static ImRect MenuChromeViewportBounds(const ImGuiWindow* window)
+{
+    ImRect bounds = window->Viewport->GetMainRect();
+    const ImVec2 padding = GImGui->Style.DisplaySafeAreaPadding;
+    bounds.Expand(ImVec2(bounds.GetWidth() > padding.x * 2.0f ? -padding.x : 0.0f,
+                         bounds.GetHeight() > padding.y * 2.0f ? -padding.y : 0.0f));
+    return bounds;
+}
+
+static float MenuChromeScale(const ImGuiWindow* window)
+{
+    const ImGuiStyle& style = GImGui->Style;
+    return ImMax(window->Viewport->DpiScale, style.FontScaleDpi) * style.FontScaleMain;
+}
+
+float ImGui::GetMenuChromeScale()
+{
+    return MenuChromeScale(GImGui->CurrentWindow);
+}
+
+static float MenuChromeTop(const ImGuiWindow* parent)
+{
+    return parent->MenuBarRect().Max.y + ImTrunc(2.0f * MenuChromeScale(parent));
+}
+
+static float MenuChromeOverlap(const ImGuiWindow* parent)
+{
+    return ImTrunc(2.0f * MenuChromeScale(parent));
+}
+
+static bool BeginMenuChromePopup(const char* name, ImGuiWindowFlags flags)
+{
+    ImGuiContext& g = *GImGui;
+    const ImGuiWindow* parent = g.CurrentWindow;
+    const ImRect bounds = MenuChromeViewportBounds(parent);
+    const float scale = MenuChromeScale(parent);
+    const bool child_menu = (flags & ImGuiWindowFlags_ChildMenu) != 0;
+    const bool from_bar = child_menu && parent->DC.MenuBarAppending;
+    float width = ImMax(1.0f, ImMin(332.0f * scale, bounds.GetWidth()));
+    if (child_menu && !from_bar)
+    {
+        const float side_width = ImMax(parent->Pos.x - bounds.Min.x, bounds.Max.x - parent->Rect().Max.x)
+            + MenuChromeOverlap(parent);
+        if (side_width >= 156.0f * scale)
+            width = ImMin(width, side_width);
+    }
+    const float top = from_bar ? ImMax(bounds.Min.y, MenuChromeTop(parent)) : bounds.Min.y;
+    const float min_width = (from_bar ? 270.0f : child_menu ? 205.0f : 292.0f) * scale;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(ImMin(min_width, width), 0.0f),
+                                        ImVec2(width, ImMax(1.0f, bounds.Max.y - top)));
+
+    ImVec4 background = g.Style.Colors[ImGuiCol_PopupBg];
+    ImVec4 border = g.Style.Colors[ImGuiCol_Border];
+    if (g.MenuChromeGetPopupColors)
+        g.MenuChromeGetPopupColors(background, border);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, background);
+    ImGui::PushStyleColor(ImGuiCol_Border, border);
+    const float rounding = ImTrunc(10.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, rounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, rounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImTrunc(ImVec2(14.0f, 9.0f) * scale));
+    const bool is_open = ImGui::Begin(name, NULL, flags);
+    ImGui::PopStyleVar(5);
+    ImGui::PopStyleColor(2);
     return is_open;
 }
 
@@ -13044,7 +13119,8 @@ bool ImGui::BeginPopupMenuEx(ImGuiID id, const char* label, ImGuiWindowFlags ext
     char name[128];
     IM_ASSERT(extra_window_flags & ImGuiWindowFlags_ChildMenu);
     ImFormatString(name, IM_COUNTOF(name), "%s###Menu_%02d", label, g.BeginMenuDepth); // Recycle windows based on depth
-    bool is_open = Begin(name, NULL, extra_window_flags | ImGuiWindowFlags_Popup);
+    const ImGuiWindowFlags flags = extra_window_flags | ImGuiWindowFlags_Popup;
+    bool is_open = (flags & ImGuiWindowFlags_MenuChrome) ? BeginMenuChromePopup(name, flags) : Begin(name, NULL, flags);
     if (!is_open) // NB: Begin can return false when the popup is completely clipped (e.g. zero size display)
         EndPopup();
     //g.CurrentWindow->FocusRouteParentWindow = g.CurrentWindow->ParentWindowInBeginStack;
@@ -13317,6 +13393,24 @@ ImVec2 ImGui::FindBestWindowPosForPopup(ImGuiWindow* window)
         // Child menus typically request _any_ position within the parent menu item, and then we move the new menu outside the parent bounds.
         // This is how we end up with child menus appearing (most-commonly) on the right of the parent menu.
         ImGuiWindow* parent_window = window->ParentWindow;
+        if (window->Flags & ImGuiWindowFlags_MenuChrome)
+        {
+            r_outer = MenuChromeViewportBounds(window);
+            const ImVec2 limit = ImMax(r_outer.Min, r_outer.Max - window->Size);
+            if (parent_window->DC.MenuBarAppending)
+                return ImClamp(ImVec2(window->Pos.x, MenuChromeTop(parent_window)), r_outer.Min, limit);
+
+            const float overlap = MenuChromeOverlap(parent_window);
+            const float right = parent_window->Pos.x + parent_window->Size.x - overlap;
+            const float left = parent_window->Pos.x + overlap - window->Size.x;
+            const bool fits_right = right <= limit.x;
+            const bool fits_left = left >= r_outer.Min.x;
+            const bool use_left = fits_left
+                ? !fits_right || window->AutoPosLastDirection == ImGuiDir_Left
+                : !fits_right && parent_window->Pos.x - r_outer.Min.x > r_outer.Max.x - right;
+            window->AutoPosLastDirection = use_left ? ImGuiDir_Left : ImGuiDir_Right;
+            return ImClamp(ImVec2(use_left ? left : right, window->Pos.y), r_outer.Min, limit);
+        }
         float horizontal_overlap = g.Style.ItemInnerSpacing.x; // We want some overlap to convey the relative depth of each menu (currently the amount of overlap is hard-coded to style.ItemSpacing.x).
         ImRect r_avoid;
         if (parent_window->DC.MenuBarAppending)
@@ -13327,6 +13421,14 @@ ImVec2 ImGui::FindBestWindowPosForPopup(ImGuiWindow* window)
     }
     if (window->Flags & ImGuiWindowFlags_Popup)
     {
+        if (window->Flags & ImGuiWindowFlags_MenuChrome)
+        {
+            r_outer = MenuChromeViewportBounds(window);
+            const ImVec2 anchor = g.BeginPopupStack.back().OpenPopupPos;
+            const ImVec2 position = FindBestWindowPosForPopupEx(anchor, window->Size, &window->AutoPosLastDirection,
+                r_outer, ImRect(anchor, anchor), ImGuiPopupPositionPolicy_Default);
+            return ImClamp(position, r_outer.Min, ImMax(r_outer.Min, r_outer.Max - window->Size));
+        }
         return FindBestWindowPosForPopupEx(window->Pos, window->Size, &window->AutoPosLastDirection, r_outer, ImRect(window->Pos, window->Pos), ImGuiPopupPositionPolicy_Default); // Ideally we'd disable r_avoid here
     }
     if (window->Flags & ImGuiWindowFlags_Tooltip)

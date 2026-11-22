@@ -31,3 +31,16 @@ def test_main_only_consumes_database_filter_builder():
     assert '#include "DatabaseSearchFilterBuilder.h"' in main
     assert "static SearchFilter BuildCurrentDbFilter(" not in main
     assert "using aura::search::BuildCurrentDbFilter;" in main
+
+
+def test_wv_format_filter_uses_one_order_for_sidebar_query_and_qa():
+    header = HEADER.read_text(encoding="utf-8")
+    builder = SOURCE.read_text(encoding="utf-8")
+    main = MAIN.read_text(encoding="utf-8")
+    windows = (ROOT / "src/WindowsMain.cpp").read_text(encoding="utf-8")
+    assert '"M4A", "WV"' in header
+    assert "AudioFormatFilterAt(state.formatFilterIndex)" in builder
+    assert "aura::search::kAudioFormatFilters" in main
+    assert "AudioFormatFilterAt(state.formatFilterIndex)" in main
+    assert "aura::search::AudioFormatFilterAt(index)" in windows
+    assert "aura::search::kAudioFormatFilters" in windows

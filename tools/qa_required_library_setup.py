@@ -47,7 +47,7 @@ class PrivateDesktop:
         startup = win32process.STARTUPINFO()
         startup.lpDesktop = 'WinSta0\\' + self.name
         startup.dwFlags = win32con.STARTF_USESHOWWINDOW
-        startup.wShowWindow = win32con.SW_HIDE
+        startup.wShowWindow = win32con.SW_SHOWNORMAL
         environment = dict(os.environ, AURA_HARNESS_MULTI_INSTANCE='1',
             AURA_HARNESS_LANE_KIND='functional', AURA_DISABLE_SINGLE_INSTANCE='1')
         environment.update(environment_overrides or {})

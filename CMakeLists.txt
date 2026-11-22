@@ -1,7 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.45 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.46 LANGUAGES C CXX)
 
 enable_testing()
+add_executable(TestPerformanceMonitor EXCLUDE_FROM_ALL tests/test_performance_monitor.cpp)
+target_include_directories(TestPerformanceMonitor PRIVATE src)
+target_compile_features(TestPerformanceMonitor PRIVATE cxx_std_17)
+add_test(NAME PerformanceMonitor COMMAND TestPerformanceMonitor)
+
+add_executable(TestDiagnosticOverlayLayout EXCLUDE_FROM_ALL tests/test_diagnostic_overlay_layout.cpp)
+target_include_directories(TestDiagnosticOverlayLayout PRIVATE src)
+target_compile_features(TestDiagnosticOverlayLayout PRIVATE cxx_std_17)
+add_test(NAME DiagnosticOverlayLayout COMMAND TestDiagnosticOverlayLayout)
+
 add_executable(TestTransportEffectVisibility EXCLUDE_FROM_ALL tests/test_transport_effect_visibility.cpp)
 target_include_directories(TestTransportEffectVisibility PRIVATE src)
 target_compile_features(TestTransportEffectVisibility PRIVATE cxx_std_17)
@@ -25,6 +35,32 @@ if(MSVC)
     target_compile_options(TestSidebarMetadataPicker PRIVATE /utf-8)
 endif()
 add_test(NAME SidebarMetadataPicker COMMAND TestSidebarMetadataPicker)
+
+add_executable(TestAITaskQueueStop EXCLUDE_FROM_ALL
+    tests/test_ai_task_queue_stop.cpp
+    src/AITaskQueueStopGate.cpp)
+target_include_directories(TestAITaskQueueStop PRIVATE src)
+target_compile_features(TestAITaskQueueStop PRIVATE cxx_std_17)
+target_compile_definitions(TestAITaskQueueStop PRIVATE ARIS_TASK_QUEUE_TESTING=1)
+if(MSVC)
+    target_compile_options(TestAITaskQueueStop PRIVATE /utf-8)
+endif()
+add_test(NAME AITaskQueueStop COMMAND TestAITaskQueueStop)
+
+add_executable(TestAITaskQueueStopLegacyWindow EXCLUDE_FROM_ALL
+    tests/test_ai_task_queue_stop.cpp
+    src/AITaskQueueStopGate.cpp)
+target_include_directories(TestAITaskQueueStopLegacyWindow PRIVATE src)
+target_compile_features(TestAITaskQueueStopLegacyWindow PRIVATE cxx_std_17)
+target_compile_definitions(TestAITaskQueueStopLegacyWindow PRIVATE
+    ARIS_TASK_QUEUE_TESTING=1
+    ARIS_TASK_QUEUE_REGRESSION_LEGACY_STOP=1)
+if(MSVC)
+    target_compile_options(TestAITaskQueueStopLegacyWindow PRIVATE /utf-8)
+endif()
+add_test(NAME AITaskQueueStopLegacyWindow COMMAND TestAITaskQueueStopLegacyWindow --expect-legacy-hang)
+set_tests_properties(AITaskQueueStop AITaskQueueStopLegacyWindow PROPERTIES TIMEOUT 30)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_package(Threads REQUIRED)
 
@@ -232,8 +268,67 @@ set_source_files_properties(${SQLITE_DIR}/sqlite3.c PROPERTIES
     COMPILE_DEFINITIONS "SQLITE_ENABLE_FTS5;SQLITE_ENABLE_FTS3_PARENTHESIS"
 )
 
+# WavPack decoder (BSD-3-Clause, see thirdparty/wavpack/COPYING).
+# The vendored 5.9.0 sources are decoding-capable; ENABLE_LEGACY keeps pre-4.0
+# files readable and ENABLE_DSD keeps DSD payloads available as PCM.
+set(WAVPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/wavpack)
+set(WAVPACK_SOURCES
+    ${WAVPACK_DIR}/src/common_utils.c
+    ${WAVPACK_DIR}/src/decorr_utils.c
+    ${WAVPACK_DIR}/src/entropy_utils.c
+    ${WAVPACK_DIR}/src/extra1.c
+    ${WAVPACK_DIR}/src/extra2.c
+    ${WAVPACK_DIR}/src/open_utils.c
+    ${WAVPACK_DIR}/src/open_filename.c
+    ${WAVPACK_DIR}/src/open_legacy.c
+    ${WAVPACK_DIR}/src/open_raw.c
+    ${WAVPACK_DIR}/src/pack.c
+    ${WAVPACK_DIR}/src/pack_dns.c
+    ${WAVPACK_DIR}/src/pack_floats.c
+    ${WAVPACK_DIR}/src/pack_utils.c
+    ${WAVPACK_DIR}/src/read_words.c
+    ${WAVPACK_DIR}/src/tags.c
+    ${WAVPACK_DIR}/src/tag_utils.c
+    ${WAVPACK_DIR}/src/unpack.c
+    ${WAVPACK_DIR}/src/unpack3.c
+    ${WAVPACK_DIR}/src/unpack3_open.c
+    ${WAVPACK_DIR}/src/unpack3_seek.c
+    ${WAVPACK_DIR}/src/unpack_dsd.c
+    ${WAVPACK_DIR}/src/unpack_floats.c
+    ${WAVPACK_DIR}/src/unpack_seek.c
+    ${WAVPACK_DIR}/src/unpack_utils.c
+    ${WAVPACK_DIR}/src/pack_dsd.c
+    ${WAVPACK_DIR}/src/write_words.c
+)
+add_library(harken_wavpack STATIC ${WAVPACK_SOURCES})
+target_include_directories(harken_wavpack PUBLIC
+    ${WAVPACK_DIR}/include
+    ${WAVPACK_DIR}/src
+)
+target_compile_definitions(harken_wavpack PRIVATE ENABLE_LEGACY ENABLE_DSD)
+if(MSVC)
+    target_compile_definitions(harken_wavpack PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(harken_wavpack PRIVATE /W0 /utf-8)
+endif()
+
 # ImGui source files
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui)
+
+add_executable(TestToolbarSearchControls EXCLUDE_FROM_ALL
+    tests/test_toolbar_search_controls.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(TestToolbarSearchControls PRIVATE src ${IMGUI_DIR})
+target_compile_features(TestToolbarSearchControls PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestToolbarSearchControls PRIVATE /utf-8)
+endif()
+add_test(NAME ToolbarSearchControls COMMAND TestToolbarSearchControls)
+aura_set_test_labels(ToolbarSearchControls core)
+
 set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
@@ -433,6 +528,7 @@ set(APP_SOURCES
     src/AudioEngine.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/audio_data_source_miniaudio.cpp
+    src/platform/wavpack_decoding_backend.cpp
     src/platform/audio_playback_miniaudio.cpp
     src/platform/database_audio_probe.cpp
     src/platform/database_audio_probe_miniaudio.cpp
@@ -578,6 +674,7 @@ set(APP_SOURCES
     src/stb_image_impl.cpp
     src/ExternalLibraryCover.cpp
     src/AIEngine.cpp
+    src/AITaskQueueStopGate.cpp
     src/VoiceDeliveryAcceptance.cpp
     src/VoiceAssetOrganizer.cpp
     src/ThemeMascot.cpp
@@ -700,6 +797,7 @@ set(APP_SOURCES
     src/WwiseTransferPanel.cpp
     # Aris UI v1 (F-035) - shared widget library for all windows
     src/HarkenSearchIcons.cpp
+    src/LucideFont.cpp
     src/HarkenSearchWidgets.cpp
     src/HarkenSearchWidgetsFocus.cpp
     src/ui/CoreWorkspaceStyle.cpp
@@ -725,6 +823,7 @@ if(WIN32)
     list(APPEND APP_SOURCES
         src/main.cpp
         src/WindowsMain.cpp
+        src/AudioDragCard.cpp
         src/DefaultAudioPlayerAssociation.cpp
         src/platform/filesystem_win32.cpp
         src/platform/floating_window_corners_win32.cpp
@@ -821,6 +920,35 @@ if(WIN32)
     target_compile_features(TestDockHitTest PRIVATE cxx_std_17)
     target_compile_options(TestDockHitTest PRIVATE /utf-8)
     add_test(NAME DockHitTest COMMAND TestDockHitTest)
+    add_executable(TestDatabaseFolderRowInput EXCLUDE_FROM_ALL
+        tests/test_database_folder_row_input.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestDatabaseFolderRowInput PRIVATE src ${IMGUI_DIR})
+    target_compile_features(TestDatabaseFolderRowInput PRIVATE cxx_std_17)
+    add_test(NAME DatabaseFolderRowInput COMMAND TestDatabaseFolderRowInput)
+    add_executable(TestFolderTreeControls EXCLUDE_FROM_ALL
+        tests/test_folder_tree_controls.cpp
+        src/LucideFont.cpp
+        src/platform/executable_path_win32.cpp src/platform/text_encoding_win32.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestFolderTreeControls PRIVATE src ${IMGUI_DIR})
+    target_compile_features(TestFolderTreeControls PRIVATE cxx_std_17)
+    set_target_properties(TestFolderTreeControls PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/folder-tree-controls-test")
+    add_custom_command(TARGET TestFolderTreeControls POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lucide/lucide.ttf"
+            "$<TARGET_FILE_DIR:TestFolderTreeControls>/lucide.ttf")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/folder-tree-font-cwd")
+    add_test(NAME FolderTreeControls COMMAND TestFolderTreeControls)
+    set_tests_properties(FolderTreeControls PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/Testing/folder-tree-font-cwd")
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME FolderTreeControlsBoundary COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_folder_tree_controls_boundary.py")
+    endif()
     # Isolated Dock frame replay: no product settings, database, or legal-flow bypass.
     add_executable(TestDockPerfReplay EXCLUDE_FROM_ALL
         tests/test_dock_hit_test.cpp src/DockLayout.cpp src/DockDragSession.cpp
@@ -857,6 +985,28 @@ if(WIN32)
     target_link_libraries(TestDetachedViewportInput PRIVATE gdi32 user32 dwmapi)
     add_test(NAME DetachedViewportInput COMMAND TestDetachedViewportInput)
     set_tests_properties(DetachedViewportInput PROPERTIES LABELS "dock" TIMEOUT 30)
+    add_executable(TestAudioDragCard EXCLUDE_FROM_ALL
+        tests/test_audio_drag_card.cpp
+        src/AudioDragCard.cpp)
+    target_include_directories(TestAudioDragCard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestAudioDragCard PRIVATE cxx_std_17)
+    target_compile_definitions(TestAudioDragCard PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(TestAudioDragCard PRIVATE /utf-8)
+    target_link_libraries(TestAudioDragCard PRIVATE gdiplus gdi32 user32)
+    add_test(NAME AudioDragCard COMMAND TestAudioDragCard)
+    set_tests_properties(AudioDragCard PROPERTIES LABELS "ui" TIMEOUT 60)
+    if(Python3_EXECUTABLE)
+        add_test(NAME AudioDragReview COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audio_drag_review.py")
+        set_tests_properties(AudioDragReview PROPERTIES LABELS "ui" TIMEOUT 120)
+    endif()
+    add_executable(AudioDragCardLiveProbe EXCLUDE_FROM_ALL
+        tests/audio_drag_card_live_probe.cpp
+        src/AudioDragCard.cpp)
+    target_include_directories(AudioDragCardLiveProbe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(AudioDragCardLiveProbe PRIVATE cxx_std_17)
+    target_compile_definitions(AudioDragCardLiveProbe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(AudioDragCardLiveProbe PRIVATE /utf-8)
+    target_link_libraries(AudioDragCardLiveProbe PRIVATE gdiplus gdi32 user32)
     add_executable(TestDockDragSession EXCLUDE_FROM_ALL tests/test_dock_drag_session.cpp src/DockLayout.cpp src/DockDragSession.cpp)
     target_include_directories(TestDockDragSession PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_features(TestDockDragSession PRIVATE cxx_std_17)
@@ -878,6 +1028,16 @@ if(WIN32)
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_imgui_docking_viewport_contract.py")
     set_tests_properties(TestImguiDockingViewportContract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME TestMenuChromeScopeContract
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_menu_chrome_scope_contract.py")
+
+    add_executable(TestMenuChromeLayout EXCLUDE_FROM_ALL
+        tests/test_menu_chrome_layout.cpp
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+    target_include_directories(TestMenuChromeLayout PRIVATE ${IMGUI_DIR})
+    target_compile_features(TestMenuChromeLayout PRIVATE cxx_std_17)
+    add_test(NAME MenuChromeLayout COMMAND TestMenuChromeLayout)
 
     add_executable(TestPreviewIsolationGuard EXCLUDE_FROM_ALL
         tests/test_preview_isolation_guard.cpp
@@ -1047,8 +1207,51 @@ if(NOT AURO_ENABLE_AUBIO_BPM AND NOT APPLE)
 endif()
 
 # 诊断模块：开发构建用完整实现，上线用 Stub + DevTools 头文件内联空实现
+# This vendored miniz amalgamation appends definitions unconditionally. Use
+# its declarations without introducing a second copy of the product symbols.
+set(DIAGNOSTIC_MINIZ "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/rlottie/src/lottie/zip/miniz.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DIAGNOSTIC_MINIZ}")
+file(READ "${DIAGNOSTIC_MINIZ}" DIAGNOSTIC_MINIZ_SOURCE)
+set(DIAGNOSTIC_MINIZ_DECL_END "#endif /* MINIZ_NO_ARCHIVE_APIS */")
+string(FIND "${DIAGNOSTIC_MINIZ_SOURCE}" "${DIAGNOSTIC_MINIZ_DECL_END}" DIAGNOSTIC_MINIZ_DECL_SIZE)
+if(DIAGNOSTIC_MINIZ_DECL_SIZE LESS 0)
+    message(FATAL_ERROR "Cannot locate the bundled miniz declarations")
+endif()
+string(LENGTH "${DIAGNOSTIC_MINIZ_DECL_END}" DIAGNOSTIC_MINIZ_DECL_END_LENGTH)
+math(EXPR DIAGNOSTIC_MINIZ_DECL_SIZE "${DIAGNOSTIC_MINIZ_DECL_SIZE} + ${DIAGNOSTIC_MINIZ_DECL_END_LENGTH}")
+string(SUBSTRING "${DIAGNOSTIC_MINIZ_SOURCE}" 0 ${DIAGNOSTIC_MINIZ_DECL_SIZE} DIAGNOSTIC_MINIZ_DECLS)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/DiagnosticBundleMinizDecls.h"
+    CONTENT "${DIAGNOSTIC_MINIZ_DECLS}\n")
+
+add_executable(TestDiagnosticLogBundle EXCLUDE_FROM_ALL
+    tests/test_diagnostic_log_bundle.cpp
+    src/DiagnosticLogBundle.cpp
+    src/DiagnosticsLogger.cpp
+    src/platform/diagnostic_log_bundle_file.cpp
+    src/platform/filesystem_std.cpp
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+)
+if(WIN32)
+    target_sources(TestDiagnosticLogBundle PRIVATE src/platform/text_encoding_win32.cpp)
+endif()
+target_include_directories(TestDiagnosticLogBundle PRIVATE
+    src thirdparty "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(TestDiagnosticLogBundle PRIVATE Threads::Threads)
+target_compile_definitions(TestDiagnosticLogBundle PRIVATE
+    AURA_BUILD_DIAGNOSTICS=1 UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+if(MSVC)
+    target_compile_options(TestDiagnosticLogBundle PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME DiagnosticLogBundle COMMAND TestDiagnosticLogBundle)
+aura_set_test_labels(DiagnosticLogBundle core)
+
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
+# External AI authorization document: the settings page reads and writes it.
+list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp src/ExternalAiClientLink.cpp src/ExternalAiPlaylistBridge.cpp src/ExternalAiPlaylistService.cpp src/ExternalAiBridgeServer.cpp)
 if(AURA_BUILD_DIAGNOSTICS)
+    list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
+    list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)
     list(APPEND APP_SOURCES src/ScanDatabaseOpenDiagnostics.cpp src/DiagnosticsLogger.cpp src/DevToolsModule.cpp src/GMPanel.cpp src/UserActionLog.cpp src/DevToolsHarkenSearchSmoke.cpp src/FrameBudgetDiagnostics.cpp)
 else()
     list(APPEND APP_SOURCES src/DiagnosticsLoggerStub.cpp src/UserActionLogStub.cpp)
@@ -1326,6 +1529,8 @@ endif()
 
 target_compile_definitions(HarkenSearch PRIVATE
     AURA_BUILD_DIAGNOSTICS=$<IF:$<BOOL:${AURA_BUILD_DIAGNOSTICS}>,1,0>
+    AURA_UPDATE_DIAGNOSTICS=$<IF:$<BOOL:${AURA_BUILD_DIAGNOSTICS}>,1,0>
+    AURA_TAB_SWITCH_DIAGNOSTICS=$<IF:$<BOOL:${AURA_BUILD_DIAGNOSTICS}>,1,0>
     AURA_INTERNAL_BETA=$<IF:$<BOOL:${AURA_INTERNAL_BETA}>,1,0>
     AURA_EDITION=${AURA_EDITION}
     ARIS_ENABLE_IMGUI_VIEWPORTS=$<IF:$<BOOL:${ARIS_ENABLE_IMGUI_VIEWPORTS}>,1,0>
@@ -1476,6 +1681,7 @@ if(WIN32)
         Threads::Threads
         opengl32
         gdi32
+        gdiplus
         dwmapi
         ole32
         windowscodecs
@@ -1798,6 +2004,7 @@ if(WIN32)
         src/WaveformExtractor.cpp
         src/NativeFloatReader.cpp
         src/platform/audio_data_source_miniaudio.cpp
+        src/platform/wavpack_decoding_backend.cpp
         src/platform/harken_user_data_layout.cpp
         src/platform/harken_legacy_data_migrator.cpp
         src/platform/filesystem_win32.cpp
@@ -1834,6 +2041,64 @@ if(WIN32)
     )
    add_test(NAME PreviewPinyinDatabase COMMAND TestPreviewPinyinDatabase)
    aura_set_test_labels(PreviewPinyinDatabase db)
+    add_executable(TestCoverWallOrderIndex EXCLUDE_FROM_ALL
+        tests/test_cover_wall_order_index.cpp
+        tests/test_database_link_stubs.cpp
+        tests/test_appstate_link_stubs.cpp
+        src/AppState.cpp
+        src/CoverReplacementFoundation.cpp
+        src/Database.cpp
+        src/BackfillQueue.cpp
+        src/BackfillWorkerPool.cpp
+        src/PathUtils.cpp
+        src/platform/file_watcher.cpp
+        src/Utils.cpp
+        src/MetadataReader.cpp
+        src/SearchQuery.cpp
+        src/SimilaritySearch.cpp
+        src/AudioEngine.cpp
+        src/platform/audio_playback_miniaudio.cpp
+        src/TagVocabularyMapper.cpp
+        src/DiagnosticsLogger.cpp
+        src/CenterSenseDataSource.cpp
+        src/CenterSenseDsp.cpp
+        src/TimeStretch.cpp
+        src/WaveformExtractor.cpp
+        src/NativeFloatReader.cpp
+        src/platform/audio_data_source_miniaudio.cpp
+        src/platform/harken_user_data_layout.cpp
+        src/platform/harken_legacy_data_migrator.cpp
+        src/platform/filesystem_win32.cpp
+        src/platform/filesystem_std.cpp
+        src/platform/audio_file_miniaudio.cpp
+        ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+        ${AURO_THREAD_ID_SOURCE}
+        ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+        ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+        ${AURO_AUDIO_TEXT_SOURCE}
+        ${AURO_SEARCH_TEXT_GB2312_SOURCE}
+        ${SQLITE_SOURCES}
+    )
+    target_include_directories(TestCoverWallOrderIndex PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+        ${SQLITE_DIR}
+        ${IMGUI_DIR}
+    )
+    target_link_libraries(TestCoverWallOrderIndex PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid
+    )
+    target_compile_definitions(TestCoverWallOrderIndex PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+        AURO_TEST_EXTERNAL_PATH_ATTRIBUTES
+    )
+    target_compile_options(TestCoverWallOrderIndex PRIVATE /W3 /MP /utf-8)
+    set_target_properties(TestCoverWallOrderIndex PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+    add_test(NAME CoverWallOrderIndex COMMAND TestCoverWallOrderIndex)
+    aura_set_test_labels(CoverWallOrderIndex db)
     add_executable(TestPreviewNasProbe EXCLUDE_FROM_ALL
         tests/test_preview_nas_probe.cpp
         src/platform/filesystem_std.cpp
@@ -1881,6 +2146,7 @@ if(WIN32)
         src/WaveformExtractor.cpp
         src/NativeFloatReader.cpp
         src/platform/audio_data_source_miniaudio.cpp
+        src/platform/wavpack_decoding_backend.cpp
         src/platform/harken_user_data_layout.cpp
         src/platform/harken_legacy_data_migrator.cpp
         src/platform/filesystem_win32.cpp
@@ -2089,13 +2355,38 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestInstallerLifecycleContract core)
 
+    if(WIN32)
+        find_program(HARKEN_ISCC_EXECUTABLE NAMES ISCC.exe ISCC
+            PATHS
+                "$ENV{LOCALAPPDATA}/Programs/Inno Setup 6"
+                "$ENV{ProgramFiles}/../Program Files (x86)/Inno Setup 6"
+                "$ENV{ProgramFiles}/Inno Setup 6")
+        if(HARKEN_ISCC_EXECUTABLE)
+            add_test(
+                NAME TestInstallerExistingInstall
+                COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_installer_existing_install.py"
+                    --iscc "${HARKEN_ISCC_EXECUTABLE}"
+            )
+            set_tests_properties(TestInstallerExistingInstall PROPERTIES
+                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                TIMEOUT 180
+            )
+            aura_set_test_labels(TestInstallerExistingInstall core)
+        else()
+            message(STATUS "Inno Setup compiler not found; installer integration test omitted")
+        endif()
+    endif()
+
     add_test(
         NAME TestQaExePackagingContract
         COMMAND ${Python3_EXECUTABLE} -m pytest -q
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qa_exe_packaging_contract.py"
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
     set_tests_properties(TestQaExePackagingContract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
     )
     aura_set_test_labels(TestQaExePackagingContract core)
 
@@ -2557,8 +2848,10 @@ if(Python3_Interpreter_FOUND)
             tests/test_stage7_platform_contract.py
             -q
     )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
     set_tests_properties(TestStage7ApiContract PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
     )
     aura_set_test_labels(TestStage7ApiContract core)
 endif()
@@ -2640,3 +2933,74 @@ if(Python3_Interpreter_FOUND)
     )
     aura_set_test_labels(TestLocalizationLinkContract core)
 endif()
+
+add_executable(TestWavPackDecode EXCLUDE_FROM_ALL
+    tests/test_wavpack_decode.cpp
+    tests/miniaudio_impl.cpp
+    src/MetadataReader.cpp
+    src/platform/audio_data_source_miniaudio.cpp
+    src/platform/wavpack_decoding_backend.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestWavPackDecode PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+else()
+    target_sources(TestWavPackDecode PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestWavPackDecode PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestWavPackDecode PRIVATE harken_wavpack)
+target_compile_features(TestWavPackDecode PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestWavPackDecode PRIVATE /W3 /utf-8)
+endif()
+add_test(NAME WavPackDecode COMMAND TestWavPackDecode)
+
+
+# WavPack decoding backend
+function(_harken_attach_wavpack_decoder target)
+    get_target_property(_harken_sources ${target} SOURCES)
+    if(NOT _harken_sources)
+        return()
+    endif()
+    set(_harken_needs_decoder FALSE)
+    set(_harken_reads_metadata FALSE)
+    set(_harken_has_decoder_source FALSE)
+    foreach(_harken_source IN LISTS _harken_sources)
+        get_filename_component(_harken_source_name "${_harken_source}" NAME)
+        if(_harken_source_name STREQUAL "audio_file_miniaudio.cpp"
+           OR _harken_source_name STREQUAL "audio_data_source_miniaudio.cpp"
+           OR _harken_source_name STREQUAL "database_audio_probe_miniaudio.cpp")
+            set(_harken_needs_decoder TRUE)
+        elseif(_harken_source_name STREQUAL "MetadataReader.cpp")
+            set(_harken_reads_metadata TRUE)
+        elseif(_harken_source_name STREQUAL "wavpack_decoding_backend.cpp")
+            set(_harken_has_decoder_source TRUE)
+        endif()
+    endforeach()
+    if(NOT (_harken_needs_decoder OR _harken_reads_metadata OR _harken_has_decoder_source))
+        return()
+    endif()
+    if(_harken_needs_decoder AND NOT _harken_has_decoder_source)
+        target_sources(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wavpack_decoding_backend.cpp)
+    endif()
+    get_target_property(_harken_links ${target} LINK_LIBRARIES)
+    if(NOT _harken_links MATCHES "harken_wavpack")
+        target_link_libraries(${target} PRIVATE harken_wavpack)
+    endif()
+endfunction()
+
+# Every miniaudio-based test or tool needs the WV decode backend that the shared
+# audio sources call, not just the main application.
+get_property(_harken_build_targets DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_harken_wavpack_target IN LISTS _harken_build_targets)
+    _harken_attach_wavpack_decoder(${_harken_wavpack_target})
+endforeach()

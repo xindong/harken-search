@@ -4,6 +4,11 @@
 #include "bootstrap/HarkenSearchBootstrapRuntime.h"
 #include "bootstrap/WindowsBootstrapLaunchBroker.h"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <algorithm>
 #if defined(ARIS_BOOTSTRAP_TEST_DIAGNOSTICS) || \
     (defined(ARIS_UPDATE_LOCAL_DEMO) && ARIS_UPDATE_LOCAL_DEMO)
@@ -140,6 +145,59 @@ public:
 };
 
 namespace {
+
+class InstallMutationGuard final {
+public:
+    ~InstallMutationGuard() {
+        if (owned_) ReleaseMutex(handle_);
+        if (handle_ != nullptr) CloseHandle(handle_);
+    }
+
+    bool acquire(const std::string& installRoot) {
+        if (installRoot.empty() || handle_ != nullptr) return false;
+        const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                                installRoot.data(),
+                                                static_cast<int>(installRoot.size()),
+                                                nullptr, 0);
+        if (length <= 0) return false;
+        std::wstring wideRoot(static_cast<std::size_t>(length), L'\0');
+        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                installRoot.data(),
+                                static_cast<int>(installRoot.size()),
+                                wideRoot.data(), length) != length) return false;
+        const HANDLE directory = CreateFileW(
+            wideRoot.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (directory == INVALID_HANDLE_VALUE) return false;
+        FILE_ID_INFO identity{};
+        const BOOL observed = GetFileInformationByHandleEx(
+            directory, FileIdInfo, &identity, sizeof(identity));
+        CloseHandle(directory);
+        if (!observed || identity.VolumeSerialNumber == 0U) return false;
+        constexpr wchar_t hex[] = L"0123456789ABCDEF";
+        std::wstring name = L"Global\\HarkenSearchInstallMutation_";
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            name.push_back(hex[(identity.VolumeSerialNumber >> shift) & 0xFU]);
+        }
+        bool nonzeroFileId = false;
+        for (const BYTE byte : identity.FileId.Identifier) {
+            nonzeroFileId = nonzeroFileId || byte != 0U;
+            name.push_back(hex[byte >> 4U]);
+            name.push_back(hex[byte & 0xFU]);
+        }
+        if (!nonzeroFileId) return false;
+        handle_ = CreateMutexW(nullptr, FALSE, name.c_str());
+        if (handle_ == nullptr) return false;
+        const DWORD waited = WaitForSingleObject(handle_, 0U);
+        owned_ = waited == WAIT_OBJECT_0 || waited == WAIT_ABANDONED;
+        return owned_;
+    }
+
+private:
+    HANDLE handle_ = nullptr;
+    bool owned_ = false;
+};
 
 constexpr std::uint32_t kMaximumChannelWaitMs = 60'000U;
 constexpr std::uint32_t kMaximumOldProcessWaitMs = 300'000U;
@@ -596,6 +654,11 @@ int RunHarkenSearchBootstrapEntrypoint(
             "roots-or-trusted-hosts", BootstrapExitCode::AuthorityRejected,
             rootsValid ? "trusted-hosts" : "roots");
         return static_cast<int>(BootstrapExitCode::AuthorityRejected);
+    }
+    InstallMutationGuard installMutation;
+    if (!installMutation.acquire(plan.identity.targetRoot)) {
+        ARIS_DEMO_STAGE("install-mutation-busy", BootstrapExitCode::FilesystemRejected, "");
+        return static_cast<int>(BootstrapExitCode::FilesystemRejected);
     }
     WindowsBootstrapLaunchBrokerCapability brokerCapability;
     if (!makeLaunchBrokerCapability(handoff.launchBroker, brokerCapability)) {

@@ -12,8 +12,8 @@
       "source": "https://github.com/microsoft/onnxruntime/tree/v1.20.1",
       "license_expression": "MIT",
       "purpose": "本地音频语义模型 CPU 推理",
-      "distributed": false,
-      "load_mode": "可选动态链接；仅配置 HARKEN_ONNXRUNTIME_ROOT 时加入",
+      "distributed": true,
+      "load_mode": "随官方 Windows ZIP 与安装器分发；启用相似功能时与 HarkenSearch.exe 同目录加载",
       "license_files": [
         "LICENSES/ONNX-Runtime-MIT.txt",
         "LICENSES/ONNX-Runtime-ThirdPartyNotices.txt"
@@ -24,7 +24,7 @@
       "risk_classification": "low",
       "policy_category": "permissive",
       "manual_approval_required": false,
-      "approval_reference": "REQ-20261101-SIMILAR-DEEP: pinned upstream license and notices retained; optional local similarity bundle",
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
       "cmake_markers": [
         "cmake/harken_similarity_runtime.cmake"
       ],
@@ -75,8 +75,8 @@
       "source": "https://huggingface.co/laion/clap-htsat-unfused/tree/8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
       "license_expression": "Apache-2.0",
       "purpose": "本机音效类别与动作向量；无音频上传",
-      "distributed": false,
-      "load_mode": "可选音频编码器转换为 ONNX，固定预处理，仅打包配置的模型文件",
+      "distributed": true,
+      "load_mode": "随官方 Windows ZIP 与安装器分发；固定预处理资源与 ONNX 模型随包提供",
       "license_files": [
         "LICENSES/CLAP-Apache-2.0.txt"
       ],
@@ -86,7 +86,7 @@
       "risk_classification": "low",
       "policy_category": "permissive",
       "manual_approval_required": false,
-      "approval_reference": "REQ-20261101-SIMILAR-DEEP: pinned upstream license and notices retained; optional local similarity bundle",
+      "approval_reference": "BUG-20261108-ONNX-PACKAGE-RUNTIME: pinned upstream license and notices retained; official Windows similarity bundle",
       "cmake_markers": [
         "cmake/harken_similarity_runtime.cmake"
       ],
@@ -173,7 +173,7 @@
     },
     {
       "name": "SQLite",
-      "version": "3.46.1",
+      "version": "3.54.1",
       "source": "https://www.sqlite.org/",
       "license_expression": "LicenseRef-Public-Domain",
       "purpose": "本地数据库与全文索引",
@@ -352,6 +352,29 @@
         "copyleft": false,
         "link_mode": "static",
         "commercial_restriction": true,
+        "source_offer_required": false
+      }
+    },
+    {
+      "name": "Hugeicons folder outlines",
+      "version": "Iconify SVG snapshot 2026-11-19",
+      "source": "https://icon-sets.iconify.design/hugeicons/",
+      "license_expression": "MIT",
+      "purpose": "Database folder tree icons",
+      "distributed": true,
+      "load_mode": "Compiled SVG contours",
+      "license_files": ["LICENSES/Hugeicons-MIT.txt"],
+      "notice_files": ["THIRD_PARTY_NOTICES.md"],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": false,
+      "approval_reference": "REQ-20261118-FOLDER-TREE-SPEC",
+      "cmake_markers": ["src/main.cpp"],
+      "distribution_paths": ["HarkenSearch.exe"],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "none",
+        "commercial_restriction": false,
         "source_offer_required": false
       }
     },
@@ -559,6 +582,30 @@
         "copyleft": false,
         "link_mode": "none",
         "commercial_restriction": true,
+        "source_offer_required": false
+      }
+    }
+,
+    {
+      "name": "WavPack",
+      "version": "5.9.0",
+      "source": "https://github.com/dbry/WavPack/tree/5.9.0",
+      "license_expression": "BSD-3-Clause",
+      "purpose": "WV audio decode backend",
+      "distributed": true,
+      "load_mode": "statically linked into HarkenSearch.exe",
+      "license_files": ["LICENSES/WavPack-BSD-3-Clause.txt"],
+      "notice_files": ["THIRD_PARTY_NOTICES.md"],
+      "risk_classification": "low",
+      "policy_category": "permissive",
+      "manual_approval_required": true,
+      "approval_reference": "Project approval on 2026-11-19: pinned WavPack 5.9.0 source, Windows static link, and distribution with the installer and update packages",
+      "cmake_markers": ["thirdparty/wavpack"],
+      "distribution_paths": ["HarkenSearch.exe"],
+      "distribution_obligation": {
+        "copyleft": false,
+        "link_mode": "static",
+        "commercial_restriction": false,
         "source_offer_required": false
       }
     }

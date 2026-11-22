@@ -123,8 +123,10 @@ static bool DrawSimilarSoundsActionRow(
         }
         ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
         aura::ui::ButtonOptions options;
-        options.variant = aura::ui::ButtonVariant::PrimarySearch;
         options.disabled = indexing || !hasReference;
+        options.variant = options.disabled
+            ? aura::ui::ButtonVariant::DisabledSearch
+            : aura::ui::ButtonVariant::PrimarySearch;
         if (searching && !changed) {
             if (aura::ui::ActionButton(L(Cancel), ImVec2(0,height), aura::ui::ButtonVariant::Quiet)) {
                 workflow.CancelSearch(); state.similarSoundsSelectedRow = -1; changed = true;
@@ -418,6 +420,12 @@ void OpenSimilarSoundsWindow(AppState& state) {
                 HarkenSearch::MakeSimilarityQueryV2Handler(GetExeDirUtf8() + "/models/clap"));
     }
     state.panelSimilarSounds.visible = true;
+    if (const auto* group = state.dockTabGroups.Find("similar-sounds")) {
+        state.dockTabGroups.Select(group->id, "similar-sounds");
+        state.settingsDirty = true;
+        state.settingsDirtyAt = ImGui::GetTime();
+        return;
+    }
     state.panelSimilarSounds.floating = true;
     state.panelSimilarSounds.wasDragging = false;
     if (state.panelSimilarSounds.floatW < 220.0f) state.panelSimilarSounds.floatW = 640.0f;
@@ -443,8 +451,7 @@ static void DrawSimilarAnalysisReport(AppState& state) {
         state.showSimilarAnalysisReport = false;
     }
     ImGui::SetNextWindowSize(ImVec2(660, 380), ImGuiCond_FirstUseEver);
-    bool open = true;
-    if (ImGui::BeginPopupModal(L(Similar_AnalysisReport), &open)) {
+    if (aura::ui::BeginAlertDialog(L(Similar_AnalysisReport), L(Similar_AnalysisReport))) {
         std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
         const auto& report = state.batchFeatureResult;
         ImGui::Text(L(Similar_AnalysisSummaryFmt), report.progress.saved, report.progress.skipped, report.progress.failed);
@@ -462,7 +469,7 @@ static void DrawSimilarAnalysisReport(AppState& state) {
         }
         ImGui::EndChild();
         if (aura::ui::ActionButton(L(Close), ImVec2(100, 28), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 }
 
@@ -582,8 +589,17 @@ void RenderSimilarSoundsWindow(AppState& state) {
     HarkenSearch::SimilarityWorkflow& workflow = *state.similarSoundsWorkflow;
 
     const bool windowWasOpen = state.similarSoundsWindow.open;
+    aura::ui::StandaloneWindowOptions windowOptions;
+    const bool customTheme = state.settings.theme == AppTheme::Custom ||
+        state.settings.useCustomColors || ThemeColors::customized();
+    if (customTheme) {
+        const auto& theme = ThemeColors::current();
+        windowOptions.windowBackground = ImLerp(
+            theme.metadataPanelBG, theme.resultsBG, 0.45f);
+    }
     if (!aura::ui::BeginStandaloneWindow(
-            L(Similar_Title), "##SimilarSoundsWindow", &state.similarSoundsWindow)) {
+            L(Similar_Title), "##SimilarSoundsWindow", &state.similarSoundsWindow,
+            windowOptions)) {
         if (windowWasOpen && !state.similarSoundsWindow.open) {
             workflow.Invalidate();
             state.similarSoundsSelectedRow = -1;

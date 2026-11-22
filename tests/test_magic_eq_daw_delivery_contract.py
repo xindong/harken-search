@@ -1,3 +1,7 @@
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -162,9 +166,87 @@ class MagicEqDawDeliveryContractTests(unittest.TestCase):
                       "static void SendToDAW(AppState& state,\n                      int dawIndex,",
                       "static void DispatchPreparedSendToDAW(AppState& state,")
         self.assertIn("Platform::ShowMessageBox(g_hwnd", region_drag)
-        self.assertIn("state.lastSendToDAWStatus = prepError;", send)
+        self.assertIn("PublishDawSendFailure(state, prepError);", send)
         self.assertLess(send.index("return;", send.index("if (!payloadReady)")),
                         send.index("DispatchPreparedSendToDAW"))
+
+    def test_send_feedback_reads_one_snapshot_and_does_not_trim_detail(self) -> None:
+        toast = region(self.main, "static void DrawSendToDAWToast(", "static bool ResolveUserDefaultConfigPaths(")
+        require_text(self, toast, "state.dawSendFeedback.snapshot()", "worker results are not read as one snapshot")
+        self.assertIn("ImGui::GetWindowViewport()", toast)
+        self.assertNotIn("display.resize(", toast)
+        self.assertNotIn("ImGui::GetWindowDrawList()", toast)
+
+    def test_worker_uses_real_results_and_no_imgui(self) -> None:
+        send = definition_after_prototype(
+            self.main, "static void DispatchPreparedSendToDAW(AppState& state,",
+            "static void SendToDAWForPaths(",
+        )
+        require_text(self, send, "if (!state.dawSendFeedback.begin(", "dispatch has no synchronized re-entry guard")
+        self.assertIn("state.dawSendFeedback.setProgress(sent, total)", send)
+        self.assertIn("ClassifyDawSendResult(result.ok, result.sent, result.total)", send)
+        self.assertIn("state.dawSendFeedback.finish(", send)
+        self.assertNotIn("ImGui::", send)
+        self.assertNotIn("dawSendSent.store", send)
+
+    def test_other_host_feedback_distinguishes_partial_and_fallback_from_insert(self) -> None:
+        dispatch = region(self.main, "static bool SendFilesToProToolsTarget(", "// Top-level: Send =")
+        require_text(self, dispatch, "ApplySteinbergSendReceipt(result, feedback)", "Steinberg feedback bypassed the real receipt classifier")
+        self.assertIn("DawSendOutcome::Fallback", dispatch)
+        self.assertIn("IsDawSendClipListFallback(r.errorCode)", dispatch)
+        self.assertNotIn("CopyPathsToClipboard(files)", dispatch)
+
+    def test_feedback_fixture_only_enters_via_the_fixed_preview_diagnostic_lane(self) -> None:
+        windows = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
+        start = '} else if (cmd == "send_feedback_preview")'
+        require_text(self, windows, start, "the feedback renderer has no isolated fixture")
+        fixture = region(windows, start, '} else if (cmd == "send_widget_menu")')
+        self.assertIn("#if ARIS_PREVIEW_ISOLATION", fixture)
+        self.assertIn("MagicEqQaIsolationReady()", fixture)
+        self.assertIn("ControlDawSendFeedbackPreview", fixture)
+        self.assertNotIn("DispatchToDaw", fixture)
+        self.assertNotIn("PrepareReaperBridgeForSend", fixture)
+
+    def test_feedback_lifecycle_and_utf8_foreground_layout_with_real_imgui(self) -> None:
+        if not shutil.which("cmake"):
+            self.skipTest("CMake is required for the headless DAW notice regression")
+        with tempfile.TemporaryDirectory(prefix="harken-daw-send-notice-") as scratch:
+            folder = Path(scratch)
+            generated = folder / "generated"
+            vendor = ROOT / "thirdparty" / "imgui"
+            test_source = ROOT / "tests" / "test_daw_send_notice.cpp"
+            localization = ROOT / "src" / "Localization.cpp"
+            (folder / "CMakeLists.txt").write_text("\n".join([
+                "cmake_minimum_required(VERSION 3.20)",
+                "project(DawSendNoticeRegression LANGUAGES CXX)",
+                "set(CMAKE_CXX_STANDARD 17)",
+                "add_executable(daw_send_notice",
+                f'  "{test_source.as_posix()}" "{localization.as_posix()}"',
+                *(f'  "{(vendor / name).as_posix()}"' for name in
+                  ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp")),
+                ")",
+                f'target_include_directories(daw_send_notice PRIVATE "{vendor.as_posix()}"'
+                f' "{(ROOT / "src").as_posix()}" "{generated.as_posix()}")',
+                "target_compile_definitions(daw_send_notice PRIVATE IMGUI_DISABLE_DEFAULT_IME_FUNCTIONS IMGUI_DISABLE_DEFAULT_CLIPBOARD_FUNCTIONS)",
+                "if(MSVC)",
+                "  target_compile_options(daw_send_notice PRIVATE /utf-8)",
+                "endif()",
+            ]), encoding="utf-8")
+            for command in (
+                [sys.executable, str(ROOT / "tools" / "generate_localization.py"),
+                 "--generate", "--output-dir", str(generated)],
+                ["cmake", "-S", str(folder), "-B", str(folder / "build"), "-DCMAKE_BUILD_TYPE=Release"],
+                ["cmake", "--build", str(folder / "build"), "--config", "Release", "--parallel", "2"],
+            ):
+                result = subprocess.run(command, cwd=folder, capture_output=True, text=True, errors="replace", timeout=180)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            executable = next(path for path in (
+                folder / "build" / "Release" / "daw_send_notice.exe",
+                folder / "build" / "daw_send_notice.exe",
+                folder / "build" / "daw_send_notice",
+            ) if path.is_file())
+            result = subprocess.run([str(executable)], cwd=folder, capture_output=True, text=True, errors="replace", timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

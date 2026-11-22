@@ -541,17 +541,29 @@ int main() {
         if (!plan.accepted || plan.tooSmall || plan.hit.kind != DockHitKind::Module ||
             plan.hit.resultRect.width < 480.0f || plan.slots.left.width < 720.0f) return 323;
     }
-    // A splitter stops at each child's content floor, in either direction.
     {
         DockLayout layout;
         layout.InsertModule("info", DockSide::Right, .24f);
         layout.InsertAdjacent("info", "similar-sounds", DockSide::Right, .5f);
-        if (!DragAdjacentLeafGrip(layout, "info", "similar-sounds", -10000, 1000, 1)) return 318;
-        if (std::fabs(layout.RegionAsSplit(DockSide::Right)->ratio - .3f) > .001f) return 319;
-        if (!DragAdjacentLeafGrip(layout, "info", "similar-sounds", 10000, 1000, 1)) return 320;
-        if (std::fabs(layout.RegionAsSplit(DockSide::Right)->ratio - .58f) > .001f) return 321;
-        // At this ratio a narrower outer column would make Similar < 420px.
-        if (std::fabs(DockSubtreeMinimum(layout.RegionRoot(DockSide::Right)).width - 1000) > .1f) return 322;
+        constexpr float extent = 600.0f;
+        const auto* split = layout.RegionAsSplit(DockSide::Right);
+        if (!DragAdjacentLeafGrip(layout, "info", "similar-sounds", 30.0f, extent, 1)) return 318;
+        if (std::fabs(split->ratio * extent - 330.0f) > .001f) return 319;
+        if (!DragAdjacentLeafGrip(layout, "info", "similar-sounds", -10000.0f, extent, 1)) return 320;
+        if (std::fabs(split->ratio * extent - 150.0f) > .001f) return 321;
+        if (!DragAdjacentLeafGrip(layout, "info", "similar-sounds", 10000.0f, extent, 1)) return 322;
+        if (std::fabs((1.0f - split->ratio) * extent - 220.0f) > .001f) return 324;
+    }
+    {
+        DockLayout layout;
+        layout.InsertModule("filter", DockSide::Left, .24f);
+        layout.InsertAdjacent("filter", "info", DockSide::Bottom, .5f);
+        constexpr float extent = 320.0f;
+        const auto* split = layout.RegionAsSplit(DockSide::Left);
+        if (!DragAdjacentLeafGrip(layout, "filter", "info", 30.0f, extent, 1)) return 325;
+        if (std::fabs(split->ratio * extent - 190.0f) > .001f) return 326;
+        if (!DragAdjacentLeafGrip(layout, "filter", "info", -30.0f, extent, 1)) return 327;
+        if (std::fabs(split->ratio * extent - 160.0f) > .001f) return 328;
     }
     if (!opened.opened) return 71;
     if (!opened.visible || !opened.floating) return 72;

@@ -1,4 +1,5 @@
 #include "SimilarityAnalysisStore.h"
+#include "LibraryStatisticsWorker.h"
 #include "sqlite3.h"
 #include <filesystem>
 #include <iostream>
@@ -46,8 +47,31 @@ int main() {
     check(store.PendingFiles(pending,true) && pending.size()==2 && store.PendingFiles(pending,false) && pending.size()==1,
         "an obsolete semantic model is pending only when semantic analysis is available");
     check(store.Publish(entry), "restores complete current analysis after model-version check");
+    const auto availableCount = MakeFeatureIndexCountHandler(true, [] { return true; });
+    const auto unavailableCount = MakeFeatureIndexCountHandler(true, [] { return false; });
+    auto available = availableCount(path, [] { return false; });
+    auto unavailable = unavailableCount(path, [] { return false; });
+    check(available.success && available.total == 2 && available.indexed == 1 &&
+          available.semanticIndexed == 1 && available.pending == 1,
+        "statistics agree with valid indexed coverage while semantic analysis is available");
+    check(unavailable.success && unavailable.indexed == 1 && unavailable.pending == 1,
+        "statistics agree with valid acoustic coverage when semantic analysis is unavailable");
+    sqlite3_exec(db,"UPDATE harken_similarity_v2 SET fingerprint='invalid-identity' WHERE file_id=1",nullptr,nullptr,nullptr);
+    available = availableCount(path, [] { return false; });
+    unavailable = unavailableCount(path, [] { return false; });
+    check(available.success && available.indexed == 0 && available.semanticIndexed == 0 && available.pending == 2,
+        "malformed identity remains pending with semantic analysis available");
+    check(unavailable.success && unavailable.indexed == 0 && unavailable.pending == 2,
+        "malformed identity remains pending with semantic analysis unavailable");
+    check(store.Publish(entry), "restores valid identity after malformed-identity check");
     sqlite3_exec(db,"UPDATE harken_similarity_v2 SET summary=X'00' WHERE file_id=1",nullptr,nullptr,nullptr);
     check(store.PendingFiles(pending,false) && pending.size()==2, "malformed acoustic records are included in pending work");
+    available = availableCount(path, [] { return false; });
+    unavailable = unavailableCount(path, [] { return false; });
+    check(available.success && available.indexed == 0 && available.semanticIndexed == 0 && available.pending == 2,
+        "malformed acoustic summary remains pending with semantic analysis available");
+    check(unavailable.success && unavailable.indexed == 0 && unavailable.pending == 2,
+        "malformed acoustic summary remains pending with semantic analysis unavailable");
     check(store.Publish(entry), "restores complete analysis after malformed-record check");
     sqlite3_stmt* statement = nullptr;
     sqlite3_prepare_v2(db, "SELECT hex(audio_features),features_version FROM audio_files WHERE id=1", -1, &statement,nullptr);
@@ -56,6 +80,29 @@ int main() {
     sqlite3_finalize(statement);
     sqlite3_exec(db, "UPDATE audio_files SET file_path='changed.wav' WHERE id=1", nullptr,nullptr,nullptr);
     check(!store.Load(1,loaded) && store.Coverage().acoustic == 0, "changed library identity invalidates old analysis");
+    sqlite3_exec(db, "UPDATE audio_files SET file_path='a.wav' WHERE id=1", nullptr,nullptr,nullptr);
+    check(store.Publish(entry) && store.Load(1, loaded), "analysis fixture is republished after path change");
+    const auto otherPath = (root / "other-library.db").u8string();
+    sqlite3* otherDb = nullptr; sqlite3_open(otherPath.c_str(), &otherDb);
+    sqlite3_exec(otherDb, "DROP TABLE IF EXISTS audio_files; CREATE TABLE audio_files(id INTEGER PRIMARY KEY,file_path TEXT,file_name TEXT,format TEXT,duration REAL,file_size INTEGER); INSERT INTO audio_files VALUES(1,'a.wav','a','wav',2,100);",nullptr,nullptr,nullptr);
+    SimilarityAnalysisStore otherStore;
+    check(otherStore.Open(otherPath) && otherStore.Publish(entry), "separate library has independent analysis");
+    const auto beforeRejectedClear = store.Revision();
+    sqlite3_exec(db, "CREATE TRIGGER reject_similarity_clear BEFORE DELETE ON harken_similarity_v2 BEGIN SELECT RAISE(ABORT,'blocked'); END;",nullptr,nullptr,nullptr);
+    check(store.ClearAll() < 0 && store.Revision() == beforeRejectedClear &&
+          store.Load(1,loaded) && store.SegmentCount() == 1,
+          "failed clear rolls back both analysis records and segments");
+    sqlite3_exec(db, "DROP TRIGGER reject_similarity_clear;",nullptr,nullptr,nullptr);
+    check(store.ClearAll() == 1 && store.Coverage().total == 2 && store.Coverage().acoustic == 0 &&
+          store.SegmentCount() == 0 && otherStore.Load(1,loaded),
+          "clear removes only the current library similarity results");
+    sqlite3_prepare_v2(db, "SELECT COUNT(*),hex(MAX(audio_features)) FROM audio_files", -1, &statement,nullptr);
+    check(sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_int(statement,0) == 2 &&
+          std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement,1))) == "1234",
+          "clear preserves audio records and legacy feature bytes");
+    sqlite3_finalize(statement);
+    check(store.ClearAll() == 0, "repeating clear on an empty analysis is harmless");
+    otherStore.Close(); sqlite3_close(otherDb);
     check(!store.Open(path, [] { return true; }), "cancelled open does not retain an old connection");
     store.Close(); sqlite3_close(db);
     return failures ? 1 : 0;

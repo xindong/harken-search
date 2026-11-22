@@ -2,7 +2,9 @@
 
 #include "filesystem.h"
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 namespace Platform::QaFiles {
 namespace {
@@ -50,8 +52,15 @@ bool WriteResultAtomically(const std::string& resultPathUtf8,
         RemoveTemporary(temporaryPathUtf8);
         return false;
     }
-    if (Platform::FileSystem::AtomicFileReplace(resultPathUtf8, temporaryPathUtf8))
-        return true;
+    // The QA driver polls the result file while it runs. A poll that opens the
+    // destination at the same moment as MoveFileEx can make the replace fail
+    // even though the command itself succeeded. Retry briefly so a transient
+    // reader does not discard the result and stall the driver until timeout.
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (Platform::FileSystem::AtomicFileReplace(resultPathUtf8, temporaryPathUtf8))
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     RemoveTemporary(temporaryPathUtf8);
     return false;
 }

@@ -1576,8 +1576,19 @@ static BootstrapApplicationResult runBootstrapApplicationCore(
             old.process, options.oldProcessWaitMs);
         dependencies.process.Close(old.process);
         if (waited.status == BootstrapProcessStatus::TimedOut) {
-            return {BootstrapApplicationStatus::OldProcessTimedOut,
-                    "old-process-timeout", false};
+            // A real 21 leaves no evidence of which process was still
+            // running, so an exit stack can never be matched to the update
+            // transaction. Record the authenticated identity that outlived
+            // the wait; it contains numbers only.
+            BootstrapApplicationResult timedOut{
+                BootstrapApplicationStatus::OldProcessTimedOut,
+                "old-process-timeout", false};
+            timedOut.detail =
+                "old-pid=" + std::to_string(plan.oldProcessId) +
+                ";old-created=" +
+                std::to_string(plan.invocation.oldProcess.creationTime) +
+                ";waited-ms=" + std::to_string(options.oldProcessWaitMs);
+            return timedOut;
         }
         if (!waited.ok()) {
             return {BootstrapApplicationStatus::OldProcessRejected,

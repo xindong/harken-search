@@ -272,6 +272,10 @@ ProcessMemoryUsageResult QueryCurrentProcessMemoryUsage() {
     return {};
 }
 
+std::optional<ProcessCpuTimeResult> QueryCurrentProcessCpuTime() {
+    return {};
+}
+
 void CloseNativeHandle(void* /*handle*/) {}
 
 uint32_t LastSystemError() {

@@ -3,6 +3,7 @@
 #include "BuiltinThemeScheme.h"
 #include "AppState.h"
 #include "HarkenSearchWidgets.h"
+#include "ThemeModuleColors.h"
 #include "Localization.h"
 #ifdef _WIN32
 #include "WindowsMain.h"
@@ -52,9 +53,10 @@ bool PaletteSelector(Period period, float width) {
         ? L(ThemeSchedule_DayThemeFmt) : L(ThemeSchedule_NightThemeFmt),
         preset ? GetLocalizedString(preset->label) : L(Set_ThemeCustom));
     const auto& colors = ThemeColors::current();
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, colors.frameBgBase);
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, colors.frameBgBase);
-    ImGui::PushStyleColor(ImGuiCol_Border, colors.chromeBorder);
+    const ThemeModuleColors modules = ResolveThemeModuleColors(colors);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, modules.controls.frame);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, modules.controls.frame);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.controls.border);
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::popupComboBG(colors));
     ImGui::PushStyleColor(ImGuiCol_Text, colors.menuText);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.f);

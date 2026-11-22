@@ -196,6 +196,8 @@ void InitializeModules() {
 
 void RenderToolsMenu(AppState& state) {
     if (ImGui::BeginMenu(L(Menu_Tools))) {
+        // 工具菜单和其他下拉菜单共用菜单栏外壳；这里只接管菜单项颜色、行距和弹层阴影。
+        ThemeMenuPopupStyleScope menuChromeTools;
         ImGui::TextDisabled("%s", L(Module_CategoryTags));
         if (ImGui::MenuItem(L(Module_UCSBrowser))) {
             state.showUCSBrowser = true;
@@ -258,6 +260,7 @@ void RenderToolsMenu(AppState& state) {
             }
         }
 
+        menuChromeTools.reset();
         ImGui::EndMenu();
     }
 }
@@ -399,11 +402,10 @@ void RenderUCSBrowserContent(AppState& state) {
             ImGui::OpenPopup(u8"##UCSOverwriteConfirm");
             s_ucsConfirmOverwrite = false;
         }
-        if (ImGui::BeginPopupModal(u8"##UCSOverwriteConfirm", nullptr,
-                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        if (aura::ui::BeginAlertDialog(u8"##UCSOverwriteConfirm", L(ModuleUI_UcsWriteTitle))) {
             ImGui::Text(L(ModuleUI_UcsPendingCatCount), s_ucsPendingTotal, s_ucsPendingWithCat);
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), L(ModuleUI_UcsNewCategoryFmt), s_ucsPendingCatValue.c_str());
-            ImGui::Separator();
+            ImGui::Spacing();
 
             // mode: 0=overwrite all, 1=fill empty only, 2=append suffix
             auto applyUcs = [&](int mode) {
@@ -470,7 +472,7 @@ void RenderUCSBrowserContent(AppState& state) {
                 s_ucsApplyMsg.clear();
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            aura::ui::EndAlertDialog();
         }
 
         if (!s_ucsApplyMsg.empty()) {
@@ -828,8 +830,7 @@ static void RenderNamingDialog(AppState& state) {
         SaveAppSettings(state);
     }
     ImGui::EndDisabled();
-    if (ImGui::BeginPopupModal("##SaveNamingPreset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(L(ModuleUI_PresetName));
+    if (aura::ui::BeginAlertDialog("##SaveNamingPreset", L(ModuleUI_SavePreset))) {
         ImGui::SetNextItemWidth(280.0f);
         ImGui::InputText("##NamingPresetName", s_namingPresetNameBuffer, sizeof(s_namingPresetNameBuffer));
         if (!s_namingPresetMsg.empty()) {
@@ -879,7 +880,7 @@ static void RenderNamingDialog(AppState& state) {
             s_namingPresetMsg.clear();
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     // 可用字段列表
@@ -1579,7 +1580,7 @@ void RenderWorkflowDialogContent(AppState& state) {
         ImGui::OpenPopup(L(ModuleUI_WorkflowPreviewTitle));
         s_showWorkflowPreview = false;
     }
-    if (ImGui::BeginPopupModal(L(ModuleUI_WorkflowPreviewTitle), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (aura::ui::BeginAlertDialog(L(ModuleUI_WorkflowPreviewTitle), L(ModuleUI_WorkflowPreviewTitle))) {
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         if (!s_workflowPreviewError.empty()) {
             ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), L(ModuleUI_ErrorFmt), s_workflowPreviewError.c_str());
@@ -1603,11 +1604,11 @@ void RenderWorkflowDialogContent(AppState& state) {
                 ImGui::EndTable();
             }
         }
-        ImGui::Separator();
+        ImGui::Spacing();
         if (aura::ui::ActionButton(L(ModuleUI_Close), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
 }

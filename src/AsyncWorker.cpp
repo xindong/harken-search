@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <cstdarg>
 #include <cstdlib>
 #include <filesystem>
@@ -189,6 +190,7 @@ uint64_t BuildSearchFilterSignature(const SearchFilter& filter, int viewMode, in
     h ^= (uint64_t)filter.coverFilter; h *= 0x100000001B3ull;
     hashCombine(filter.specificCoverKey);
     h ^= (uint64_t)filter.includeOnlyKnownExts; h *= 0x100000001B3ull;
+    h ^= (uint64_t)filter.losslessWavPackOnly; h *= 0x100000001B3ull;
     for (const auto& artist : filter.artists) hashCombine(artist);
     for (const auto& ext : filter.excludeExtensions) hashCombine(ext);
     return h;
@@ -230,6 +232,7 @@ static std::string BuildFacetCacheKey(const AsyncSearchRequest& req, int64_t tot
         << req.filter.coverFilter << '|'
         << req.filter.specificCoverKey << '|'
         << req.filter.includeOnlyKnownExts << '|'
+        << req.filter.losslessWavPackOnly << '|'
         << req.filter.exactMode << '|'
         << req.filter.sortColumn << '|'      // Sorting is part of the facet-cache key.
         << req.filter.sortAscending << '|'
@@ -275,9 +278,13 @@ WaveformWorker::~WaveformWorker() {
 }
 
 void WaveformWorker::start(Database* db, int threadCount) {
-    if (m_running.load()) return;
+    if (m_running.load()) {
+        if (db && db == m_db) bindFailureWriter(*db);
+        return;
+    }
     m_db = db;
     m_cancelRequested.store(false, std::memory_order_release);
+    if (db) bindFailureWriter(*db);
     m_running.store(true);
     
     for (int i = 0; i < threadCount; ++i) {
@@ -302,19 +309,26 @@ void WaveformWorker::stop() {
     if (!m_running.load()) return;
     const auto stopStart = std::chrono::steady_clock::now();
     m_cancelRequested.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(m_failureMutex);
+        m_acceptFailureWrites = false;
+        m_pendingFailureWrites.clear();
+    }
+    m_failureCv.notify_one();
     m_generation.fetch_add(1, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lk(m_requestMutex);
         m_requestQueue.clear();
         m_requestSet.clear();
+        m_running.store(false);
     }
-    m_running.store(false);
     m_requestCv.notify_all();
     
     for (auto& t : m_threads) {
         if (t.joinable()) t.join();
     }
     m_threads.clear();
+    if (m_failureThread.joinable()) m_failureThread.join();
     {
         std::lock_guard<std::mutex> lk(m_processingMutex);
         m_processingSet.clear();
@@ -370,6 +384,7 @@ bool WaveformWorker::submitRequestInternal(const std::string& filePath,
         req.filePath = filePath;
         req.fileId = fileId;
         req.generation = m_generation.load(std::memory_order_relaxed);
+        req.failureBinding = m_failureBinding.load(std::memory_order_acquire);
         req.buildDetail = buildDetail;
         req.priority = priority;
         req.allowSourceDecode = allowSourceDecode;
@@ -483,6 +498,64 @@ int WaveformWorker::pendingCount() const {
     std::lock_guard<std::mutex> lk(m_requestMutex);
     return (int)m_requestQueue.size() +
            m_activeWorkers.load(std::memory_order_acquire);
+}
+
+void WaveformWorker::bindFailureWriter(Database& db) {
+    std::lock_guard<std::mutex> lock(m_failureMutex);
+    if (m_acceptFailureWrites || m_cancelRequested.load(std::memory_order_acquire)) return;
+    auto paths = db.waveformFailureWritePaths();
+    if (paths.main.empty()) return;
+    m_failureThread = std::thread(&WaveformWorker::failureWriterThread, this, std::move(paths));
+    m_failureBinding.fetch_add(1, std::memory_order_release);
+    m_acceptFailureWrites = true;
+}
+
+void WaveformWorker::enqueueFailurePersistence(const WaveformResult& result) {
+    if (result.success || result.metersOnlyMerge || result.filePath.empty() ||
+        result.failureObservedAt <= 0 ||
+        result.errorCode == "mini_cache_miss_no_decode" ||
+        result.errorCode == "cancelled" || result.errorCode == "deferred_scan_db_write" ||
+        result.errorCode == "db_unavailable") {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_failureMutex);
+        if (!m_acceptFailureWrites ||
+            result.failureBinding != m_failureBinding.load(std::memory_order_relaxed) ||
+            (!result.hasBackfillJob &&
+             result.generation != m_generation.load(std::memory_order_relaxed))) {
+            return;
+        }
+        const auto pending = m_pendingFailureWrites.find(result.filePath);
+        if (pending != m_pendingFailureWrites.end() &&
+            pending->second.observedAt > result.failureObservedAt) return;
+        m_pendingFailureWrites.insert_or_assign(result.filePath, PendingFailureWrite{
+            result.errorCode.empty() ? "decode_failed" : result.errorCode,
+            result.failureObservedAt});
+    }
+    m_failureCv.notify_one();
+}
+
+void WaveformWorker::failureWriterThread(Database::WaveformFailureWritePaths paths) {
+    Database::WaveformFailureWriter writer(m_cancelRequested);
+    for (;;) {
+        decltype(m_pendingFailureWrites)::node_type failure;
+        {
+            std::unique_lock<std::mutex> lock(m_failureMutex);
+            m_failureCv.wait(lock, [this] {
+                return !m_acceptFailureWrites || !m_pendingFailureWrites.empty();
+            });
+            if (!m_acceptFailureWrites) return;
+            failure = m_pendingFailureWrites.extract(m_pendingFailureWrites.begin());
+        }
+        if ((!writer.open(paths) ||
+             !writer.writeFailure(failure.key(), failure.mapped().errorCode, 1,
+                                  failure.mapped().observedAt)) &&
+            !m_cancelRequested.load(std::memory_order_acquire)) {
+            DIAG_SYSTEM_FMT("Waveform", "WaveformFailureStateWriteFailed: path=%s",
+                            failure.key().c_str());
+        }
+    }
 }
 
 void WaveformWorker::workerThread() {
@@ -609,6 +682,11 @@ void WaveformWorker::workerThread() {
         result.fromCache = false;
         result.errorCode = "unknown";
         result.generation = req.generation;
+        result.failureBinding = req.failureBinding;
+        auto markFailure = [&result](std::string reason) {
+            result.failureObservedAt = static_cast<int64_t>(std::time(nullptr));
+            result.errorCode = std::move(reason);
+        };
 
         if (m_db && req.meterOnly) {
             result.metersOnlyMerge = true;
@@ -799,11 +877,11 @@ void WaveformWorker::workerThread() {
                         pushResult(std::move(result));
                     }
                 } else {
-                    result.errorCode = "detail_save_db_failed";
+                    markFailure("detail_save_db_failed");
                     pushResult(std::move(result));
                 }
             } else {
-                result.errorCode = detail.errorCode.empty() ? "detail_extract_failed" : detail.errorCode;
+                markFailure(detail.errorCode.empty() ? "detail_extract_failed" : detail.errorCode);
                 pushResult(std::move(result));
                 DIAG_ACTION_FMT("Waveform",
                     "AOTMainDetailFailed: id=%lld path=%s error=%s",
@@ -1137,9 +1215,9 @@ void WaveformWorker::workerThread() {
                     }
 #endif
                 } else if (!genOk) {
-                    result.errorCode = mini.errorCode.empty() ? "mini_extract_failed" : mini.errorCode;
+                    markFailure(mini.errorCode.empty() ? "mini_extract_failed" : mini.errorCode);
                 } else {
-                    result.errorCode = "mini_waveform_empty";
+                    markFailure("mini_waveform_empty");
                 }
             }
         } else {
@@ -1206,12 +1284,6 @@ void SearchWorker::start(const std::string& dbPath) {
                 return self->m_latestRequestId.load(std::memory_order_acquire)
                      > self->m_currentProcessingId.load(std::memory_order_relaxed) ? 1 : 0;
             }, this);
-    }
-
-    // Pre-warm cover key indexes: touch root/first pages of cover filter indexes
-    // so subsequent cover clicks don't hit cold mmap pages.
-    if (m_db) {
-        m_db->warmupCoverIndexes();
     }
 
     m_running.store(true);
@@ -1292,6 +1364,14 @@ bool SearchWorker::pollResult(AsyncSearchResult& outResult, uint64_t expectedReq
 }
 
 void SearchWorker::workerThread() {
+    // Warm cover-key indexes on this worker thread instead of in start(), so
+    // opening or switching a database never blocks the UI thread on the
+    // COUNT(DISTINCT) scan. shouldContinue stops the scan between the two
+    // queries when stop() runs before the worker leaves this prologue.
+    if (m_db) {
+        m_db->warmupCoverIndexes([this]() { return m_running.load(); });
+    }
+
     struct LegacyCommentCacheEntry {
         int64_t fileMtime = 0;
         uint64_t fileSize = 0;

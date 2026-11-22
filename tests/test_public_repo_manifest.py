@@ -470,7 +470,7 @@ SKIP_SUFFIXES = {
 
 SQLITE3_ATTA_FALSE_POSITIVE = {
     "path": "thirdparty/sqlite/sqlite3.c",
-    "line": 176523,
+    "line": 186662,
     "match": "ATTACHBETWEENOTHING" "ROUPSCASCADEFAULT",
     "reason": "SQLite 关键字粘连，不是 Trello token",
 }

@@ -142,7 +142,7 @@ inline ScanWorkflowStage ResolveTerminalScanWorkflowStage(
     bool fatalFailure) {
     if (fatalFailure) return ScanWorkflowStage::Failed;
     if (IsScanPause(stopDisposition)) return ScanWorkflowStage::Paused;
-    if (IsScanRollbackCancel(stopDisposition)) {
+    if (IsScanCancel(stopDisposition)) {
         return ScanWorkflowStage::Cancelled;
     }
     if (snapshot.processed < snapshot.discovered) {

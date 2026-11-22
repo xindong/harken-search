@@ -1,6 +1,13 @@
 #include "update/UpdateRuntime.h"
 
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
+#include "BuildConfig.h"
+#include "DiagnosticsLogger.h"
+#endif
+
+#include <chrono>
 #include <limits>
+#include <string>
 #include <utility>
 
 namespace aris::update {
@@ -73,6 +80,80 @@ std::string ErrorDetail(DownloadErrorKind error) {
     }
     return "update failure";
 }
+
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
+const char* ErrorKindCode(DownloadErrorKind error) {
+    switch (error) {
+    case DownloadErrorKind::Network: return "network";
+    case DownloadErrorKind::Http4xx: return "http_4xx";
+    case DownloadErrorKind::Http5xx: return "http_5xx";
+    case DownloadErrorKind::Checksum: return "checksum";
+    case DownloadErrorKind::Disk: return "disk";
+    case DownloadErrorKind::Aborted: return "cancelled";
+    case DownloadErrorKind::InvalidArgument: return "protocol";
+    }
+    return "unknown";
+}
+
+void LogUpdateTransition(const UpdateEvent& event) {
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point checkStart{};
+    static Clock::time_point downloadStart{};
+    static Clock::time_point lastProgress{};
+    const auto now = Clock::now();
+    const auto since = [&](Clock::time_point from) {
+        if (from == Clock::time_point{}) return 0.0;
+        return std::chrono::duration<double, std::milli>(now - from).count();
+    };
+    auto& log = DiagnosticsLogger::instance();
+    switch (event.kind()) {
+    case UpdateEventKind::CheckRequested:
+        checkStart = now;
+        log.logPerformance("AutoUpdate", "UpdateCheckStart", 0.0);
+        break;
+    case UpdateEventKind::CheckSucceeded:
+        log.logPerformance("AutoUpdate", "UpdateCheckSucceeded", since(checkStart));
+        break;
+    case UpdateEventKind::CheckCompletedNoUpdate:
+        log.logPerformance("AutoUpdate", "UpdateNoUpdate", since(checkStart));
+        break;
+    case UpdateEventKind::CheckFailed:
+        log.logPerformance("AutoUpdate", "UpdateCheckFailed", since(checkStart));
+        break;
+    case UpdateEventKind::DownloadCandidateAccepted:
+        // The accepted candidate is the actual download entry; resumes reuse it,
+        // so the stage clock must start here as well as on an explicit request.
+        downloadStart = now;
+        lastProgress = now;
+        log.logSystem("AutoUpdate", "UpdateCandidateAccepted");
+        break;
+    case UpdateEventKind::DownloadRequested:
+        downloadStart = now;
+        lastProgress = now;
+        log.logPerformance("AutoUpdate", "UpdateDownloadStart", 0.0);
+        break;
+    case UpdateEventKind::DownloadProgressed:
+        if (since(lastProgress) >= 2000.0) {
+            lastProgress = now;
+            log.logMetric("AutoUpdate", "UpdateDownloadProgressMB",
+                          static_cast<double>(event.downloadedBytes()) / (1024.0 * 1024.0));
+        }
+        break;
+    case UpdateEventKind::DownloadCompleted:
+        log.logPerformance("AutoUpdate", "UpdateDownloadCompleted", since(downloadStart));
+        break;
+    case UpdateEventKind::DownloadFailed:
+        log.logPerformance("AutoUpdate", "UpdateDownloadFailed", since(downloadStart));
+        break;
+    case UpdateEventKind::DownloadCancelled:
+        log.logPerformance("AutoUpdate", "UpdateDownloadCancelled", since(downloadStart));
+        break;
+    case UpdateEventKind::RestartConfirmed:
+        log.logSystem("AutoUpdate", "UpdateRestartConfirmed");
+        break;
+    }
+}
+#endif
 
 class AttemptGuard {
 public:
@@ -304,6 +385,9 @@ bool UpdateRuntime::Apply(
     }
     state_ = transition.state;
     record_ = std::move(nextRecord);
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
+    LogUpdateTransition(event);
+#endif
     return true;
 }
 
@@ -311,6 +395,10 @@ UpdateRuntimeResult UpdateRuntime::Terminal(DownloadErrorKind error,
                                             std::string detail) {
     ++record_.failureCount;
     const bool transitioned = Apply(UpdateEvent::DownloadFailed(detail));
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
+    DiagnosticsLogger::instance().logSystem(
+        "AutoUpdate", (std::string("UpdateDownloadReason reason=") + ErrorKindCode(error)).c_str());
+#endif
     if (!transitioned) Persist();
     pendingRetrySerial_ = 0;
     pendingRetryCompletedAttempts_ = 0;
@@ -460,6 +548,10 @@ UpdateRuntimeResult UpdateRuntime::FailActiveCheck(
     if (!Apply(UpdateEvent::CheckFailed(detail))) {
         return PersistenceFailure("failed to persist update check failure");
     }
+#if defined(AURA_UPDATE_DIAGNOSTICS) && AURA_UPDATE_DIAGNOSTICS
+    DiagnosticsLogger::instance().logSystem(
+        "AutoUpdate", (std::string("UpdateCheckReason reason=") + ErrorKindCode(error)).c_str());
+#endif
     activeCheckGeneration_ = 0;
     pendingCandidateHandoff_.reset();
     return Result(state_.phase == UpdatePhase::Ready

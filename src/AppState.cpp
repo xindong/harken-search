@@ -2,8 +2,13 @@
 // AppState.cpp - 应用状态、设置、标签页结构实现
 
 #include "AppState.h"
+#include "FileTypeVisibilityPolicy.h"
 #include "Localization.h"   // L(id) used by shortcut preset names (knife-B explicit include)
 #include "Utils.h"
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+#include "DiagnosticsLogger.h"
+#include <chrono>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -339,6 +344,7 @@ int AppState::saveTabPresetFromCurrent(const std::string& name) {
         e.showM4A                 = t.showM4A;
         e.showWMA                 = t.showWMA;
         e.showOther               = t.showOther;
+        e.showLosslessWavPack      = t.showLosslessWavPack;
         e.findSameFilenameQuery   = t.findSameFilenameQuery;
         e.findSameFilenameActive  = t.findSameFilenameActive;
         e.selectedPlaylistId      = t.selectedPlaylistId;
@@ -414,6 +420,7 @@ bool AppState::loadTabPreset(int presetIdx) {
         t.showM4A                 = e.showM4A;
         t.showWMA                 = e.showWMA;
         t.showOther               = e.showOther;
+        t.showLosslessWavPack      = e.showLosslessWavPack;
         t.findSameFilenameQuery   = e.findSameFilenameQuery;
         t.findSameFilenameActive  = e.findSameFilenameActive;
         t.selectedPlaylistId      = e.selectedPlaylistId;
@@ -601,6 +608,7 @@ void AppState::syncFromTab() {
     showM4A = tab.showM4A;
     showWMA = tab.showWMA;
     showOther = tab.showOther;
+    showLosslessWavPack = tab.showLosslessWavPack;
     if (!coverFilterActive) {
         coverFilterPath.clear();
         coverFilterMatchSig = 0;
@@ -670,6 +678,7 @@ void AppState::syncToTab() {
     tab.showM4A = showM4A;
     tab.showWMA = showWMA;
     tab.showOther = showOther;
+    tab.showLosslessWavPack = showLosslessWavPack;
     tab.totalFileCount = totalFileCount;
     tab.loadedCount = loadedCount;
     tab.hasMoreResults = hasMoreResults;
@@ -1073,22 +1082,52 @@ bool AppState::activateTab(int tabIndex, double activationTimeSeconds, bool runM
         return true;
     }
 
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    const auto tabSwitchStart = std::chrono::steady_clock::now();
+    auto tabSwitchMark = tabSwitchStart;
+    // Each stage reports its own elapsed time; only TabSwitchTotal spans the
+    // whole switch, so exported duration_ms always means one stage.
+    const auto logTabSwitchStage = [&](const char* stage) {
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - tabSwitchMark).count();
+        DiagnosticsLogger::instance().logPerformance("TabSwitch", stage, ms);
+        tabSwitchMark = now;
+    };
+    logTabSwitchStage("TabSwitchBegin");
+#endif
+
     saveCoverWallDisplaySnapshotForTab(activeTabIndex);
     parkLiveResultsInCurrentTab();
     syncToTab();
     if (currentTab().explicitRefreshPending) {
         currentTab().dataUnloaded = true;
     }
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchPark");
+#endif
     activeTabIndex = tabIndex;
     pendingTabSelectionIndex = tabIndex;
     syncFromTab();
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchRestore");
+#endif
     // Run global cache GC before restoring non-owning cover-wall texture
     // mirrors so the cold-path restore validates against the post-GC texture
     // owner state instead of reviving stale GL ids.
     if (runMemoryGc) {
         performGlobalMemoryGC();
     }
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchGc");
+#endif
     restoreCoverWallDisplaySnapshotForTab(tabIndex);
+#if defined(AURA_TAB_SWITCH_DIAGNOSTICS) && AURA_TAB_SWITCH_DIAGNOSTICS
+    logTabSwitchStage("TabSwitchCoverWall");
+    DiagnosticsLogger::instance().logPerformance(
+        "TabSwitch", "TabSwitchTotal",
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - tabSwitchStart).count());
+#endif
     if (activationTimeSeconds >= 0.0) {
         listTabs[(size_t)tabIndex].lastActivatedAt = activationTimeSeconds;
     }
@@ -1253,17 +1292,11 @@ bool AppState::viewStateForward() {
     return true;
 }
 
-bool AppState::shouldShowFile(const std::string& extension) const {
-    std::string ext = extension;
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    if (ext == "wav" || ext == ".wav") return showWAV;
-    if (ext == "mp3" || ext == ".mp3") return showMP3;
-    if (ext == "flac" || ext == ".flac") return showFLAC;
-    if (ext == "ogg" || ext == ".ogg") return showOGG;
-    if (ext == "aiff" || ext == ".aiff" || ext == "aif" || ext == ".aif") return showAIFF;
-    if (ext == "m4a" || ext == ".m4a") return showM4A;
-    if (ext == "wma" || ext == ".wma") return showWMA;
-    return showOther;
+bool AppState::shouldShowFile(const AudioRecord& record) const {
+    return aura::file_types::isVisible(
+        {showWAV, showMP3, showFLAC, showOGG, showAIFF, showM4A, showWMA, showOther,
+         showLosslessWavPack},
+        record.extension, record.wavPackLossless.value_or(false));
 }
 
 void AppState::resetRandomSampling() {
@@ -1531,8 +1564,9 @@ std::vector<PlaylistChipPlanItem> ComputePlaylistChipPlan(
     const std::vector<Playlist>& all,
     const std::vector<int64_t>& hiddenIds) {
 
+    std::unordered_set<int64_t> hidden(hiddenIds.begin(), hiddenIds.end());
     auto isHidden = [&](int64_t id) {
-        return std::find(hiddenIds.begin(), hiddenIds.end(), id) != hiddenIds.end();
+        return hidden.find(id) != hidden.end();
     };
 
     // Build id -> Playlist* index
@@ -1542,6 +1576,11 @@ std::vector<PlaylistChipPlanItem> ComputePlaylistChipPlan(
 
     std::vector<PlaylistChipPlanItem> out;
     out.reserve(all.size());
+    std::unordered_map<int64_t, int> visibleChildCounts;
+    visibleChildCounts.reserve(all.size());
+    for (const auto& p : all) {
+        if (p.parent_id > 0 && !isHidden(p.id)) ++visibleChildCounts[p.parent_id];
+    }
 
     for (const auto& p : all) {
         if (isHidden(p.id)) continue;
@@ -1569,11 +1608,7 @@ std::vector<PlaylistChipPlanItem> ComputePlaylistChipPlan(
         item.name = p.name;
         if (p.is_folder) {
             item.kind = ChipKind::Folder;
-            int n = 0;
-            for (const auto& q : all) {
-                if (q.parent_id == p.id && !isHidden(q.id)) ++n;
-            }
-            item.visibleChildCount = n;
+            item.visibleChildCount = visibleChildCounts[p.id];
         } else {
             item.kind = ChipKind::Orphan;
         }

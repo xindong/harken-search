@@ -772,7 +772,7 @@ std::string GetPinyinInitials(const std::string& utf8_str) {
 
 bool IsAudioFileSupported(const std::string& path) {
     static const std::vector<std::string> exts = {
-        ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"
+        ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus", ".wv"
     };
     fs::path p(path);
     std::string ext = p.extension().string();

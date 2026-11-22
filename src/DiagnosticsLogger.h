@@ -23,6 +23,7 @@
 #include <thread>
 #include <cstdio>
 #include <array>
+#include <limits>
 
 // Log Entry Types
 
@@ -42,6 +43,23 @@ struct DiagLogEntry {
     int64_t     timestampMs = 0;  // Unix 时间戳 (ms)
     uint32_t    threadId = 0;     // 线程标识
     uint32_t    repeatCount = 1;  // 智能去重后合并次数（1=未合并）
+};
+
+struct DiagLogSnapshot {
+    static constexpr int64_t kWindowMs = 60000;
+    static constexpr size_t kCapacityLimit = 50000;
+
+    static constexpr int64_t windowStart(int64_t clickMs) noexcept {
+        constexpr auto minimum = (std::numeric_limits<int64_t>::min)();
+        return clickMs < minimum + kWindowMs ? minimum : clickMs - kWindowMs;
+    }
+
+    int64_t clickMs = 0;
+    uint64_t processDroppedEntries = 0;
+    size_t ringCapacity = 0;
+    bool enabled = false;
+    bool categoryFilterEnabled = false;
+    std::vector<DiagLogEntry> entries;
 };
 
 // DiagnosticsLogger — Singleton
@@ -76,6 +94,11 @@ public:
     bool exportJson(const std::string& pathUtf8) const;
     // 导出到字符串（用于 UI 预览或剪贴板）
     std::string exportJsonString() const;
+
+    // Captures only rows already in the full ring. False means busy: retry
+    // with the same clickMs. Reserve kCapacityLimit entries off the UI thread
+    // to avoid allocating when capturing on the UI thread.
+    [[nodiscard]] bool trySnapshotForExport(int64_t clickMs, DiagLogSnapshot& snapshot) const;
 
     // ---- 查询 ----
     size_t entryCount() const;
@@ -146,8 +169,8 @@ private:
     void stopWriter();
 
     std::atomic<bool>          m_enabled{false};
-    static constexpr int64_t   kRetentionWindowMs = 60000;
-    static constexpr size_t    kMemorySafetyEntries = 50000;
+    static constexpr int64_t   kRetentionWindowMs = DiagLogSnapshot::kWindowMs;
+    static constexpr size_t    kMemorySafetyEntries = DiagLogSnapshot::kCapacityLimit;
     size_t                     m_maxEntries = kMemorySafetyEntries;
     std::vector<DiagLogEntry>  m_ring;       // 导出缓冲（由后台线程写入）
     size_t                     m_head = 0;   // 写入位置

@@ -894,6 +894,9 @@ PROTECTED_ROW_TOKENS = {
     # Lead 7-A mix ruling tier 3: Reverse/Mono/Tap look like ordinary English
     # words, so they are bound to their exact keys instead of the global
     # package — the same anti-smuggling logic that created this registry.
+    # 2026-11-20 external AI page: the nav row names the feature by its
+    # domain acronyms; no other row may carry them.
+    "SetUX_ExternalAiMcp": {"ai", "mcp"},
     "Sc_ToggleReverse": {"reverse"},
     "Sc_ToggleMono": {"mono"},
     "ScDesc_TapTempo": {"tap"},

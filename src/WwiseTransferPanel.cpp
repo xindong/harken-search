@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "HarkenSearchWidgets.h"
 #include "Theme.h"
+#include "ThemeModuleColors.h"
 #include "Localization.h"
 #include "DiagnosticsLogger.h"
 #include "../thirdparty/lucide/IconsLucide.h"
@@ -295,7 +296,7 @@ void drawFieldLabel(const char* label, const char* hint = nullptr) {
     const ThemeColorScheme& th = ThemeColors::current();
     ImGui::PushStyleColor(ImGuiCol_Text,
         ImGui::ColorConvertFloat4ToU32(withAlpha(
-            mixColor(th.interfaceText, th.menuText, 0.24f), 0.88f)));
+            mixColor(kWwiseBodyTextColor.Resolve(th), kWwiseLabelTextColor.Resolve(th), 0.24f), 0.88f)));
     ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
     if (hint && hint[0]) {
@@ -309,7 +310,7 @@ void drawSectionHint(const char* text) {
     const ThemeColorScheme& th = ThemeColors::current();
     ImGui::PushStyleColor(ImGuiCol_Text,
         ImGui::ColorConvertFloat4ToU32(withAlpha(
-            mixColor(th.interfaceText, th.chromeBorder, 0.30f), 0.82f)));
+            mixColor(kWwiseBodyTextColor.Resolve(th), th.chromeBorder, 0.30f), 0.82f)));
     ImGui::TextWrapped("%s", text);
     ImGui::PopStyleColor();
 }
@@ -327,7 +328,7 @@ ImVec4 wwiseTextTone(const ImVec4& accent,
                      float accentMix = 0.24f,
                      float alpha = 0.96f) {
     const ThemeColorScheme& th = ThemeColors::current();
-    return withAlpha(mixColor(th.menuText, accent, accentMix), alpha);
+    return withAlpha(mixColor(kWwiseLabelTextColor.Resolve(th), accent, accentMix), alpha);
 }
 
 void drawWwiseSectionTitle(const char* title,
@@ -520,7 +521,7 @@ void drawStatChip(const char* label,
     const ImVec4 chipBase = mixColor(th.frameBgBase, th.resultsBG, 0.18f);
     const ImVec4 bg = withAlpha(mixColor(chipBase, tone, 0.24f), 0.96f);
     const ImVec4 border = withAlpha(mixColor(th.chromeBorder, tone, 0.56f), 0.94f);
-    const ImVec4 textColor = withAlpha(mixColor(th.menuText, tone, 0.42f), 0.98f);
+    const ImVec4 textColor = withAlpha(mixColor(kWwiseLabelTextColor.Resolve(th), tone, 0.42f), 0.98f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p0, p1, ImGui::ColorConvertFloat4ToU32(bg), style.FrameRounding);
@@ -898,6 +899,7 @@ struct ObjTypeVisual {
 };
 ObjTypeVisual objectTypeVisual(WwiseObjectType t) {
     const ThemeColorScheme& th = ThemeColors::current();
+    const auto wwise = ResolveThemeModuleColors(th).wwise;
     // F-034 /colorize: anchor on wwiseParentBadge / wwiseLeafBadge so badges stay
     // distinguishable across all 5 themes. Mix toward interfaceText at constant 0.18f
     // (was 0.08–0.24 scattered) so containers look harmonious as a family.
@@ -905,23 +907,23 @@ ObjTypeVisual objectTypeVisual(WwiseObjectType t) {
     const float kAlpha = 0.92f;
     switch (t) {
         case WwiseObjectType::WorkUnit:
-            return {"WU", withAlpha(mixColor(th.wwiseParentBadge, th.menuText, kMix), kAlpha)};
+            return {"WU", withAlpha(mixColor(wwise.parentBadge, wwise.labelText, kMix), kAlpha)};
         case WwiseObjectType::VirtualFolder:
-            return {"VF", withAlpha(mixColor(th.wwiseParentBadge, th.interfaceText, kMix), kAlpha)};
+            return {"VF", withAlpha(mixColor(wwise.parentBadge, wwise.bodyText, kMix), kAlpha)};
         case WwiseObjectType::ActorMixer:
-            return {"AM", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseLeafBadge, kMix), kAlpha)};
+            return {"AM", withAlpha(mixColor(wwise.parentBadge, wwise.leafBadge, kMix), kAlpha)};
         case WwiseObjectType::RandomContainer:
-            return {"Rnd", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseDiffReplaced, kMix), kAlpha)};
+            return {"Rnd", withAlpha(mixColor(wwise.parentBadge, wwise.replaced, kMix), kAlpha)};
         case WwiseObjectType::SequenceContainer:
-            return {"Seq", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseConnectOk, kMix), kAlpha)};
+            return {"Seq", withAlpha(mixColor(wwise.parentBadge, wwise.connected, kMix), kAlpha)};
         case WwiseObjectType::SwitchContainer:
-            return {"Swt", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseDiffNew, kMix), kAlpha)};
+            return {"Swt", withAlpha(mixColor(wwise.parentBadge, wwise.newItem, kMix), kAlpha)};
         case WwiseObjectType::BlendContainer:
-            return {"Bld", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseDiffUnresolved, kMix), kAlpha)};
+            return {"Bld", withAlpha(mixColor(wwise.parentBadge, wwise.unresolved, kMix), kAlpha)};
         case WwiseObjectType::SoundSFX:
-            return {"SFX", withAlpha(th.wwiseLeafBadge, kWwiseBadgeAlpha)};
+            return {"SFX", withAlpha(wwise.leafBadge, kWwiseBadgeAlpha)};
     }
-    return {"??", withAlpha(th.wwiseDiffNeutral, kWwiseAlphaMid)};
+    return {"??", withAlpha(wwise.neutral, kWwiseAlphaMid)};
 }
 
 // ---------- Async dispatchers ---------------------------------------------
@@ -1080,13 +1082,14 @@ ImVec4 statusColorFor(DiffStatus s) {
     // F-034 /colorize: per-theme semantic tokens; no more inline mixing on volatile
     // base tokens (e.g. LapisBlue's controlAccent=#FFFFFF would collapse New→NoChange).
     const ThemeColorScheme& th = ThemeColors::current();
+    const auto wwise = ResolveThemeModuleColors(th).wwise;
     switch (s) {
-        case DiffStatus::NoChange:   return withAlpha(th.wwiseDiffNeutral,    kWwiseAlphaLow);
-        case DiffStatus::New:        return withAlpha(th.wwiseDiffNew,        kWwiseAlphaStrong);
-        case DiffStatus::Replaced:   return withAlpha(th.wwiseDiffReplaced,   kWwiseAlphaStrong);
-        case DiffStatus::Unresolved: return withAlpha(th.wwiseDiffUnresolved, kWwiseAlphaStrong);
+        case DiffStatus::NoChange:   return withAlpha(wwise.neutral,   kWwiseAlphaLow);
+        case DiffStatus::New:        return withAlpha(wwise.newItem,   kWwiseAlphaStrong);
+        case DiffStatus::Replaced:   return withAlpha(wwise.replaced,  kWwiseAlphaStrong);
+        case DiffStatus::Unresolved: return withAlpha(wwise.unresolved, kWwiseAlphaStrong);
     }
-    return th.menuText;
+    return wwise.labelText;
 }
 
 void renderDiffNode(const WwiseDiffNode& node) {
@@ -1298,13 +1301,14 @@ void RenderWwiseTransferPanel() {
     runLocalPreview();
 
     const ThemeColorScheme& th = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(th);
     static bool showProjectSettings = false;
     static bool showStagedSources = false;
     static bool showDiagnostics = false;
 
     // F-034 /colorize: anchor on theme-defined semantic tokens, not inline mixes.
-    const ImVec4 connectedColor    = withAlpha(th.wwiseConnectOk,   kWwiseAlphaStrong);
-    const ImVec4 disconnectedColor = withAlpha(th.wwiseConnectFail, kWwiseAlphaStrong);
+    const ImVec4 connectedColor    = withAlpha(modules.wwise.connected, kWwiseAlphaStrong);
+    const ImVec4 disconnectedColor = withAlpha(modules.wwise.failed, kWwiseAlphaStrong);
     const bool connected = g_ps.client && g_ps.client->isConnected();
 
     ImGui::SetNextWindowSize(ImVec2(1060, 640), ImGuiCond_FirstUseEver);
@@ -1315,6 +1319,8 @@ void RenderWwiseTransferPanel() {
         g_ps.visible = open;
         return;
     }
+    const bool hasBodyTextOverride = th.wwiseBodyText.has_value();
+    if (hasBodyTextOverride) ImGui::PushStyleColor(ImGuiCol_Text, modules.wwise.bodyText);
 
     auto& presets = presetList();
     const std::string& activeName = activePresetName();
@@ -1442,12 +1448,10 @@ void RenderWwiseTransferPanel() {
 
     ImGui::Spacing();
 
-    if (ImGui::BeginPopupModal("presetNameModal", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        const char* title = (g_ps.pendingPresetAction == 2)
-            ? wz("Rename preset to:", u8"重命名预设为：")
-            : wz("Save as preset:", u8"另存为预设：");
-        ImGui::TextUnformatted(title);
+    const char* presetNameTitle = (g_ps.pendingPresetAction == 2)
+        ? wz("Rename preset", u8"重命名预设")
+        : wz("Save as preset", u8"另存为预设");
+    if (aura::ui::BeginAlertDialog("presetNameModal", presetNameTitle)) {
         ImGui::SetNextItemWidth(260);
         ImGui::InputText("##presetName", g_ps.presetNameBuf, sizeof(g_ps.presetNameBuf),
                          ImGuiInputTextFlags_AutoSelectAll);
@@ -1479,15 +1483,13 @@ void RenderWwiseTransferPanel() {
             g_ps.pendingPresetAction = 0;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
-    if (ImGui::BeginPopupModal("presetDeleteConfirm", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(wz("Delete this preset?", u8"确认删除此预设？"));
-        ImGui::Spacing();
+    if (aura::ui::BeginAlertDialog("presetDeleteConfirm",
+                                   wz("Delete preset", u8"删除预设"))) {
         ImGui::PushStyleColor(ImGuiCol_Text,
-            ImGui::ColorConvertFloat4ToU32(withAlpha(ThemeColors::current().menuText, 0.65f)));
+            ImGui::ColorConvertFloat4ToU32(withAlpha(modules.wwise.labelText, 0.65f)));
         ImGui::TextUnformatted(g_ps.presetNameBuf);
         ImGui::PopStyleColor();
         ImGui::Spacing();
@@ -1507,7 +1509,7 @@ void RenderWwiseTransferPanel() {
             g_ps.pendingPresetAction = 0;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        aura::ui::EndAlertDialog();
     }
 
     auto& cfg = activeTransferConfig();
@@ -1534,7 +1536,7 @@ void RenderWwiseTransferPanel() {
             ImGui::PopFont();
             ImGui::SameLine(0, 10.0f);
             drawStatChip(wz("Target", u8"目标"), g_ps.bufImportDest[0] ? wz("Set", u8"已设置") : wz("Missing", u8"缺失"),
-                         withAlpha(th.wwiseDiffNeutral, kWwiseAlphaMid),
+                         withAlpha(modules.wwise.neutral, kWwiseAlphaMid),
                          90.0f);
             aura::ui::Divider(aura::ui::DividerVariant::Inset);
 
@@ -1655,7 +1657,7 @@ void RenderWwiseTransferPanel() {
 
             drawWwiseSectionTitle(
                 wz("Wwise Structures", u8"Wwise 结构"),
-                th.wwiseParentBadge,
+                modules.wwise.parentBadge,
                 wz("Build the hierarchy, then refine the selected row below.",
                    u8"先搭建层级，再在下方细化当前选中行。"));
             ImGui::Spacing();
@@ -1724,12 +1726,12 @@ void RenderWwiseTransferPanel() {
                 const float splitGapLocal = 10.0f;
                 const float tableHeight = (std::max)(170.0f, structurePanelHeight * 0.38f);
                 const float tableWidth = (std::max)(260.0f, ImGui::GetContentRegionAvail().x - toolbarW - splitGapLocal);
-                const ImVec4 structureAccent = th.wwiseParentBadge;
+                const ImVec4 structureAccent = modules.wwise.parentBadge;
                 const ImVec4 structureTableHeader = wwiseSurfaceTone(structureAccent, 0.18f, 0.10f, 0.98f);
                 const ImVec4 structureTableRow = wwiseSurfaceTone(structureAccent, 0.05f, 0.04f, 0.96f);
                 const ImVec4 structureTableRowAlt = wwiseSurfaceTone(structureAccent, 0.09f, 0.16f, 0.98f);
                 const ImVec4 structureTableBorder = wwiseSurfaceTone(structureAccent, 0.34f, 0.06f, 0.95f);
-                const ImVec4 structureSelection = withAlpha(mixColor(th.resultsSelection, structureAccent, 0.42f), 0.26f);
+                const ImVec4 structureSelection = withAlpha(mixColor(modules.results.selection, structureAccent, 0.42f), 0.26f);
 
                 ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImGui::ColorConvertFloat4ToU32(structureTableHeader));
                 ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, ImGui::ColorConvertFloat4ToU32(structureTableBorder));
@@ -1738,7 +1740,7 @@ void RenderWwiseTransferPanel() {
                 ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImGui::ColorConvertFloat4ToU32(structureTableRowAlt));
                 ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertFloat4ToU32(structureSelection));
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::ColorConvertFloat4ToU32(withAlpha(mixColor(structureSelection, structureAccent, 0.28f), 0.34f)));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::ColorConvertFloat4ToU32(withAlpha(mixColor(structureSelection, th.resultsSelection, 0.40f), 0.42f)));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::ColorConvertFloat4ToU32(withAlpha(mixColor(structureSelection, modules.results.selection, 0.40f), 0.42f)));
 
                 if (ImGui::BeginTable("wwiseStructureTable", 3,
                                       ImGuiTableFlags_BordersInnerH |
@@ -2051,7 +2053,7 @@ void RenderWwiseTransferPanel() {
             if (!g_ps.lastActionMessage.empty()) {
                 ImGui::Spacing();
                 ImGui::PushStyleColor(ImGuiCol_Text,
-                    ImGui::ColorConvertFloat4ToU32(withAlpha(th.menuText, 0.65f)));
+                    ImGui::ColorConvertFloat4ToU32(withAlpha(modules.wwise.labelText, 0.65f)));
                 ImGui::TextWrapped("%s", localizedActionMessage(g_ps.lastActionMessage).c_str());
                 ImGui::PopStyleColor();
             }
@@ -2094,7 +2096,7 @@ void RenderWwiseTransferPanel() {
                     const bool canReveal = g_ps.client && g_ps.client->isConnected();
                     for (std::size_t i = 0; i < g_ps.lastResult.items.size(); ++i) {
                         const auto& it = g_ps.lastResult.items[i];
-                        ImVec4 col = withAlpha(th.menuText, 0.92f);
+                        ImVec4 col = withAlpha(modules.wwise.labelText, 0.92f);
                         bool isSuccess = false;
                         switch (it.status) {
                             case ItemStatus::Imported:
@@ -2198,6 +2200,7 @@ void RenderWwiseTransferPanel() {
         aura::ui::EndPanel();
     }
 
+    if (hasBodyTextOverride) ImGui::PopStyleColor();
     ImGui::End();
     g_ps.visible = open;
 }

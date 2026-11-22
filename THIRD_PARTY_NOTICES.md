@@ -7,6 +7,7 @@ Harken Search public-release builds bundle, link, or intentionally reference the
 | Component | Source / path | License | Usage in Harken Search public release |
 |---|---|---|---|
 | Dear ImGui | `thirdparty/imgui/` | MIT | Immediate-mode desktop UI framework |
+| WavPack | thirdparty/wavpack/ (5.9.0) | BSD-3-Clause | WV (.wv) decode backend linked into the audio decoder |
 | miniaudio | `thirdparty/miniaudio.h` | Public Domain / MIT-0 dual | Audio decode and playback |
 | SQLite | `thirdparty/sqlite/` amalgamation | Public Domain | Database and FTS indexing |
 | stb image headers | `thirdparty/stb_image*.h` | Public Domain / MIT dual | Image decode / resize / write |
@@ -19,6 +20,7 @@ Harken Search public-release builds bundle, link, or intentionally reference the
 | REAPER Plug-in API header subset | `reaper_extension/reaper_plugin.h` | REAPER SDK zlib-style notice | Altered minimal ABI declarations used by the Harken Search REAPER extension; the source header retains the upstream notice and marks the alteration |
 | TweetNaCl verify-only subset | `src/ed25519/tweetnacl.c` + `.h` | Public domain | Ed25519 signature verification; Harken Search removed keypair generation and signing and retains the original author attribution |
 | Lucide icon font | `thirdparty/lucide/lucide.ttf` + generated `IconsLucide.h` | ISC | Shipped icon font used by the desktop UI |
+| Hugeicons folder outlines | https://api.iconify.design/hugeicons/folder-01.svg and https://api.iconify.design/hugeicons/folder-open.svg | MIT | Database tree only. The original 24-unit SVG centerlines are flattened into local draw paths (0.05-unit tolerance); the viewport and 1.5-unit stroke scale together. See `LICENSES/Hugeicons-MIT.txt`. |
 | DiceBear Lorelei Neutral avatar pool | `assets/avatars/dicebear/lorelei-neutral/*.svg` | DiceBear core MIT; generated style assets described below | Local avatar pool shipped beside `HarkenSearch.exe`; startup must not call the public DiceBear API |
 | Unicode Unihan kMandarin | generated `src/generated/mandarin_pinyin_table.inc` | Unicode Terms of Use | Mandarin syllable lookup for Chinese filename search; generated from Unicode 18.0.0, file date 2026-07-31, first listed reading only |
 | Lorelei Neutral | Embedded metadata inside `assets/avatars/dicebear/lorelei-neutral/*.svg` | CC0 1.0 by Lisa Wischofsky | Source avatar style used for the shipped DiceBear-derived SVG pool |

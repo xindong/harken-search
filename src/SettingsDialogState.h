@@ -1,26 +1,52 @@
 #pragma once
 #include "AppState.h"
+#include "ExternalAiClientLink.h"
+#include "ExternalAiPlaylistBridge.h"
+#include "ExternalAiPlaylistService.h"
+#include "ExternalAiAuthorizationStore.h"
 #include "Localization.h"
 #include "imgui_internal.h"
 #include "PreferenceDraft.h"
 #include "PreferencePreview.h"
 #include "SettingsCatalog.h"
+#include "SettingsDawTargets.h"
 #include "BuiltinThemeScheme.h"
 #include "ThemeSchedule.h"
 #include "ThemeSchedulePaletteCodec.h"
 
 namespace harken::settings {
 inline unsigned avatarImageRevision=0;
+
+// External AI page: the authorization document is saved on its own, not through
+// the preferences draft, so the page keeps the loaded library and its edited
+// grants here between frames.
+struct ExternalAiPageState {
+    std::string databasePath;
+    std::string libraryId;
+    std::string documentPath;
+    HarkenSearch::ExternalAiSettings settings;
+    bool loaded = false;
+    bool dirty = false;
+    std::string status;
+    std::string error;
+    bool detailsOpen = false;
+    std::string linkStatus;
+    double linkStatusUntil = 0.0;
+    double statusUntil = 0.0;
+};
+inline ExternalAiPageState& ExternalAiPage() { static ExternalAiPageState state; return state; }
 inline const char* PageLabel(Page page) {
     switch (page) {
     case Page::Common: return L(SetUX_Common);
     case Page::Appearance: return L(SetUX_Appearance);
     case Page::Audio: return L(SetUX_AudioPlayback);
+    case Page::DawIntegration: return L(SetUX_DawIntegration);
     case Page::Search: return L(SetUX_SearchThesaurus);
     case Page::Library: return L(SetUX_LibraryScanning);
     case Page::Interaction: return L(SetUX_ControlsShortcuts);
     case Page::Personal: return L(SetUX_ProfileExport);
     case Page::Backup: return L(SetUX_BackupRestore);
+    case Page::ExternalAi: return L(SetUX_ExternalAiMcp);
     case Page::Diagnostics: return L(SetUX_DiagnosticsLogs);
     }
     return "";
@@ -92,19 +118,51 @@ struct Editor {
     };
     PreferenceDraft<RuntimeValues> runtime{Field(&RuntimeValues::spectrum),Field(&RuntimeValues::fft),Field(&RuntimeValues::blend),
         Field(&RuntimeValues::split),Field(&RuntimeValues::threads),Field(&RuntimeValues::day),Field(&RuntimeValues::night)};
+    DawTargetDraft dawTargets;
+    bool reaperInstallConsent=false;
+#if defined(_WIN32)
+    bool reaperConfigOpen=false, reaperDiagnosticsOpen=false, reaperFocusPath=false;
+    std::string reaperDetectedPath, reaperConsentDestination;
+#endif
     bool open=false, closePrompt=false, closeAfterPrompt=false, recording=false, resetAll=false;
     Page page=Page::Common;
     Page previousPage=Page::Common;
-    bool previousSearching=false, hadChildPopup=false;
+    bool previousSearching=false, hadChildPopup=false, scrollToTop=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
+    std::string clearSimilarTarget;
+    bool clearSimilarConfirm=false;
+    int64_t clearSimilarResult=-2;
     std::vector<OutputDeviceInfo> devices;
     std::vector<uint8_t> deviceIdentity, baselineDeviceIdentity;
     bool deviceEdited=false;
-    void Reset(const AppState& state) { app.Begin(CaptureSettings(state)); runtime.Begin(CaptureRuntime(state)); deviceIdentity=state.audioEngine.getCurrentOutputDeviceId(); baselineDeviceIdentity=deviceIdentity; deviceEdited=false; error.clear(); recording=false; resetAll=false; }
-    size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+(resetAll ? 1 : 0)+(deviceEdited&&deviceIdentity!=baselineDeviceIdentity ? 1 : 0); }
+    void Reset(const AppState& state) { app.Begin(CaptureSettings(state)); runtime.Begin(CaptureRuntime(state)); dawTargets.Begin(state.settings.dawTargets); reaperInstallConsent=false; deviceIdentity=state.audioEngine.getCurrentOutputDeviceId(); baselineDeviceIdentity=deviceIdentity; deviceEdited=false; error.clear(); recording=false; resetAll=false; clearSimilarTarget.clear(); clearSimilarConfirm=false; clearSimilarResult=-2; }
+    size_t ChangedCount() const { return app.ChangedCount()+runtime.ChangedCount()+dawTargets.ChangedCount()+(resetAll ? 1 : 0)+(deviceEdited&&deviceIdentity!=baselineDeviceIdentity ? 1 : 0); }
 };
 inline Editor& SettingsEditor() { static Editor editor; return editor; }
+#if defined(_WIN32)
+inline void AppendReaperFieldSearchResults(std::vector<const Entry*>& results,const char* query) {
+    static const Entry fields[]{
+        {"daw-reaper",Page::DawIntegration,0,LStr::DawPrefs_ReaperPath,u8"路径 根目录 path folder パス"},
+        {"daw-reaper-enabled",Page::DawIntegration,0,LStr::DawPrefs_ReaperSend,u8"启用 发送 enable send 送信"},
+        {"daw-reaper-diagnostic",Page::DawIntegration,0,LStr::DawPrefs_ReaperDiagnostics,u8"诊断 脱敏 检测 diagnostic check 診断"},
+        {"daw-reaper-install",Page::DawIntegration,0,LStr::DawPrefs_Component,u8"安装 组件 插件 install component インストール"},
+    };
+    std::istringstream stream(FoldAscii(query));
+    std::vector<std::string> tokens;
+    for (std::string token;stream>>token;) tokens.push_back(std::move(token));
+    for (const auto& field:fields) {
+        const auto keywords=FoldAscii(field.keywords);
+        const auto haystack=FoldAscii(field.zh+" "+field.en+" "+field.ja+" "+keywords);
+        const auto matches=[&](const auto& token){return haystack.find(token)!=std::string::npos;};
+        if (!std::any_of(tokens.begin(),tokens.end(),[&](const auto& token){return keywords.find(token)!=std::string::npos;}) ||
+            !std::all_of(tokens.begin(),tokens.end(),matches)) continue;
+        const auto existing=std::find_if(results.begin(),results.end(),[&](const Entry* entry){return entry->id==field.id;});
+        if (existing==results.end()) results.push_back(&field);
+        else *existing=&field;
+    }
+}
+#endif
 inline void BeginAppearancePreview(AppState& state) {
     auto& editor=SettingsEditor();
     if(editor.open)AppearancePreview().Begin(state.settings,editor.app.Baseline(),editor.app.Value());

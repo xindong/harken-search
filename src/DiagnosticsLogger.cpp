@@ -681,6 +681,33 @@ bool DiagnosticsLogger::exportJson(const std::string& pathUtf8) const {
     return Platform::FileSystem::WriteFileText(pathUtf8, json);
 }
 
+bool DiagnosticsLogger::trySnapshotForExport(int64_t clickMs, DiagLogSnapshot& snapshot) const {
+    snapshot.entries.reserve(kMemorySafetyEntries);
+    std::unique_lock<std::mutex> ringLock(m_mutex, std::try_to_lock);
+    if (!ringLock.owns_lock()) return false;
+    std::unique_lock<std::mutex> filterLock(m_filterMutex, std::try_to_lock);
+    if (!filterLock.owns_lock()) return false;
+
+    snapshot.clickMs = clickMs;
+    snapshot.processDroppedEntries = droppedCount();
+    snapshot.ringCapacity = m_maxEntries;
+    snapshot.enabled = isEnabled();
+    snapshot.categoryFilterEnabled = !m_categoryFilter.empty();
+    filterLock.unlock();
+
+    snapshot.entries.clear();
+    if (!m_count) return true;
+    const auto startMs = DiagLogSnapshot::windowStart(clickMs);
+    size_t slot = (m_head + m_maxEntries - m_count) % m_maxEntries;
+    for (size_t index = 0; index < m_count; ++index) {
+        const auto& entry = m_ring[slot];
+        if (entry.timestampMs >= startMs && entry.timestampMs <= clickMs)
+            snapshot.entries.push_back(entry);
+        if (++slot == m_maxEntries) slot = 0;
+    }
+    return true;
+}
+
 int DiagnosticsLogger::copyRecent(DiagLogEntry* out, int maxOut) const {
     if (!out || maxOut <= 0) return 0;
     size_t head = m_overlayHead.load(std::memory_order_relaxed);

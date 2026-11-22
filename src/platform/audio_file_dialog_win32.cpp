@@ -20,7 +20,7 @@ std::string OpenAudioFileDialogUtf8(void* ownerWindow) {
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = static_cast<HWND>(ownerWindow);
     const std::wstring filterBuf =
-        std::wstring(Lw(Dlg_FilterAudioFiles)) + L"\0*.wav;*.mp3;*.flac;*.aiff;*.aif;*.ogg;*.m4a;*.wma\0"s +
+        std::wstring(Lw(Dlg_FilterAudioFiles)) + L"\0*.wav;*.mp3;*.flac;*.aiff;*.aif;*.ogg;*.m4a;*.wma;*.wv\0"s +
         std::wstring(Lw(Dlg_FilterAllFiles)) + L"\0*.*\0"s;
     ofn.lpstrFilter = filterBuf.c_str();
     ofn.lpstrFile = fileName;

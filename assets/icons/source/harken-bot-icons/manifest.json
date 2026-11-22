@@ -1,0 +1,32 @@
+{
+  "received": "2026-11-18",
+  "source": "User-supplied Harken bot icon package (Harken 上线群发布附件 Harken bot icon.zip)",
+  "product": "Search",
+  "files": [
+    {
+      "path": "Search/search bot 64.png",
+      "bytes": 7803,
+      "sha256": "8ec3c9185a9f8dc615df7789f8765d7bd0ec45b6eb43dc7bf2d607eb8ba49650"
+    },
+    {
+      "path": "Search/search bot 128.png",
+      "bytes": 24508,
+      "sha256": "edd6ad828f2dc34534774961dc0ec4ba5a217cdc61b88baab0a0315ce2907969"
+    },
+    {
+      "path": "Search/search bot 256.png",
+      "bytes": 76940,
+      "sha256": "ae68b52fe85ce54e4db0f7c5aecbb5aa014ada9baf081b0bed741da3feef9574"
+    },
+    {
+      "path": "Search/search bot 512.png",
+      "bytes": 261691,
+      "sha256": "dee869ae758d93a1e66f7e76d06816c83e36bc015be02e16b7937e9eb6f3ada7"
+    },
+    {
+      "path": "Search/search bot 1024.png",
+      "bytes": 931889,
+      "sha256": "f8c80e2f0397d7108bde825ef5f090d98f10534f3e52c3776d82edcce2f2c79e"
+    }
+  ]
+}

@@ -49,6 +49,85 @@
                     }
                     ImGui::Spacing();
 
+                    ImGui::TextUnformatted(L(Set_SimilarAnalysisMaintenance));
+                    ImGui::Separator();
+                    const bool similarClearReady = state.database.isOpen() &&
+                        !state.currentDbPathUtf8.empty() && !state.dbSwitchInProgress &&
+                        !state.isScanning.load() && !state.scanCompletionPending.load() &&
+                        !state.pendingPostScanSimilarityIndex.load() &&
+                        !state.batchFeatureExtracting.load() &&
+                        !state.cleanupInvalidRecordsActive && !state.coverRebuildActive;
+                    if (editor.clearSimilarConfirm &&
+                        editor.clearSimilarTarget != state.currentDbPathUtf8) {
+                        editor.clearSimilarConfirm = false;
+                        editor.clearSimilarTarget.clear();
+                        editor.clearSimilarResult = -3;
+                    }
+                    ImGui::BeginDisabled(!similarClearReady || editor.clearSimilarConfirm);
+                    if (aura::ui::ActionButton(L(Set_ClearSimilarAnalysis), ImVec2(240, 28),
+                                               aura::ui::ButtonVariant::Danger)) {
+                        editor.clearSimilarTarget = state.currentDbPathUtf8;
+                        editor.clearSimilarConfirm = true;
+                        editor.clearSimilarResult = -2;
+                    }
+                    su::Observe("similar-clear-request");
+                    ImGui::EndDisabled();
+                    if (HoveredForHelp()) aura::ui::Tooltip(L(Set_ClearSimilarAnalysisHint));
+                    if (editor.clearSimilarConfirm) {
+                        const auto libraryName = GetDatabaseDisplayNameUtf8(editor.clearSimilarTarget);
+                        ImGui::TextWrapped(L(Set_ClearSimilarConfirmFmt), libraryName.c_str());
+                        if (HoveredForHelp()) aura::ui::Tooltip(editor.clearSimilarTarget.c_str());
+                        ImGui::BeginDisabled(!similarClearReady ||
+                                             editor.clearSimilarTarget != state.currentDbPathUtf8);
+                        if (aura::ui::ActionButton(L(Set_ConfirmClearSimilar), ImVec2(180, 28),
+                                                   aura::ui::ButtonVariant::Danger)) {
+                            HarkenSearch::SimilarityAnalysisStore store;
+                            editor.clearSimilarResult = store.Open(editor.clearSimilarTarget)
+                                ? store.ClearAll() : -1;
+                            if (editor.clearSimilarResult >= 0) {
+                                aura::ui::InvalidateSimilarSoundsWindow(state);
+                                if (state.featureIndexStatistics)
+                                    state.featureIndexStatistics->SetDatabase("", -1);
+                                ++state.similarityAnalysisClearGeneration;
+                                state.batchFeatureCompletionNotice.store(false);
+                                state.batchFeatureProgress.store(0);
+                                state.batchFeatureTotal.store(0);
+                                state.batchFeatureSkipped.store(0);
+                                state.batchFeatureSaved.store(0);
+                                state.batchFeatureResults.Reset(0);
+                                state.showSimilarAnalysisReport = false;
+                                state.showPostScanSimilarityIndexNotice = false;
+                                {
+                                    std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                                    state.batchFeatureResult = {};
+                                }
+                                DIAG_ACTION_FMT("Similarity", "ManualClear: rows=%lld",
+                                    static_cast<long long>(editor.clearSimilarResult));
+                            } else {
+                                DIAG_ACTION_FMT("Similarity", "ManualClearFailed: %s", store.Error().c_str());
+                            }
+                            editor.clearSimilarConfirm = false;
+                            editor.clearSimilarTarget.clear();
+                        }
+                        su::Observe("similar-clear-confirm");
+                        ImGui::EndDisabled();
+                        ImGui::SameLine();
+                        if (aura::ui::ActionButton(L(Set_CancelClearSimilar), ImVec2(100, 28),
+                                                   aura::ui::ButtonVariant::Quiet)) {
+                            editor.clearSimilarConfirm = false;
+                            editor.clearSimilarTarget.clear();
+                        }
+                        su::Observe("similar-clear-cancel");
+                    }
+                    if (editor.clearSimilarResult >= 0)
+                        ImGui::Text(L(Set_ClearSimilarDoneFmt),
+                                    static_cast<long long>(editor.clearSimilarResult));
+                    else if (editor.clearSimilarResult == -1)
+                        ImGui::TextWrapped("%s", L(Set_ClearSimilarFailed));
+                    else if (editor.clearSimilarResult == -3)
+                        ImGui::TextWrapped("%s", L(Set_ClearSimilarChanged));
+                    ImGui::Spacing();
+
                     ImGui::BeginDisabled(state.cleanupInvalidRecordsActive);
                     if (aura::ui::ActionButton(L(Set_CleanInvalid2), ImVec2(180, 28))) {
                         if (!state.cleanupInvalidRecordsActive) {

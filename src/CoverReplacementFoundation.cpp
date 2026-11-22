@@ -183,6 +183,7 @@ bool HasPersistentFacetFilterSemantics(const SearchFilter& filter) {
            !filter.excludeInstruments.empty() ||
            filter.synonyms != nullptr ||
            filter.includeOnlyKnownExts ||
+           filter.losslessWavPackOnly ||
            filter.exactMode;
 }
 
