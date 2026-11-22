@@ -119,14 +119,11 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
         s.wwiseParentBadge       = H(0xff7898c0); // 钢蓝 — parent 层标识
 
 // Sidebar Activity Bar — Dark (玄夜)
-        s.sidebarRailBG          = H(0xff070c14);  // slightly darker than filterBrowserBG
         s.sidebarRailDivider     = H(0x246f98c1);  // accent @ 14% alpha
         s.sidebarIconInactive    = H(0xff6f7f96);  // muted blue-gray
         s.sidebarIconHover       = H(0xffb1bccb);
         s.sidebarIconActive      = H(0xff6f98c1);  // = filterBrowserSelection
         s.sidebarActiveStrip     = H(0xff6f98c1);
-        s.sidebarHeaderBG        = H(0xff070c14);  // = sidebarRailBG (unified frame)
-        s.sidebarStatusBarBG     = H(0xff0a1119);  // filterBrowserBG x 0.925
         s.sidebarSubpaneBG       = H(0xff141d29);
         s.sidebarSubpaneDivider  = H(0xff243244);
         s.sidebarSubHeaderLine   = H(0x246f98c1);
@@ -135,7 +132,9 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
 
 // 极光 · Aurora
     case AppTheme::Ocean:
-        s.mainWindowBG           = H(0xff141516);
+        // 画布色 = 面板之间的缝隙。原来是从默认深色主题遗留的中性灰 #141516，
+        // 在极光的蓝调面板之间会露出三条发灰的缝；取工具栏与结果区之间的蓝调。
+        s.mainWindowBG           = H(0xff0c1522);
         s.menuBarBG              = H(0xff0b131f);
         s.menuText               = H(0xffe2ebf4);
         s.frameBgBase            = H(0xff182739);
@@ -237,14 +236,11 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
         s.wwiseParentBadge       = H(0xff7098c0);
 
         // ?? Sidebar Activity Bar ? Ocean / Aurora ??
-        s.sidebarRailBG          = H(0xff081018);
         s.sidebarRailDivider     = H(0x2638a8be);
         s.sidebarIconInactive    = H(0xff5e7a8e);
         s.sidebarIconHover       = H(0xff9dbdd0);
         s.sidebarIconActive      = H(0xff38a8be);
         s.sidebarActiveStrip     = H(0xff38a8be);
-        s.sidebarHeaderBG        = H(0xff081018);
-        s.sidebarStatusBarBG     = H(0xff0d1522);
         s.sidebarSubpaneBG       = H(0xff2e384a);
         s.sidebarSubpaneDivider  = H(0xff475263);
         s.sidebarSubHeaderLine   = H(0x2638a8be);
@@ -361,14 +357,11 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
         s.wwiseParentBadge       = H(0xff7c6570); // parent badge
 
         // ?? Sidebar Activity Bar ? RoseCedar: light chrome, muted mauve icons ??
-        s.sidebarRailBG          = H(0xffefe2e7);
         s.sidebarRailDivider     = H(0x26d8c4cd);
         s.sidebarIconInactive    = H(0xff9c828d);
         s.sidebarIconHover       = H(0xff6a4b58);
         s.sidebarIconActive      = H(0xffb85c7a);
         s.sidebarActiveStrip     = H(0xffb85c7a);
-        s.sidebarHeaderBG        = H(0xffefe2e7);
-        s.sidebarStatusBarBG     = H(0xffe6d6dd);
         s.sidebarSubHeaderLine   = H(0x26000000);
         s.waveformSelectionDim       = H(0x38503f4a);
         s.waveformSelectionHearthTop = H(0x42b85c7a);
@@ -476,14 +469,11 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
         s.wwiseLeafBadge         = H(0xff278293); // 琉璃青 — leaf 层标识
         s.wwiseParentBadge       = H(0xff486491); // 深琉璃 — parent 层标识
 
-        s.sidebarRailBG          = H(0xfff4f7fa);
         s.sidebarRailDivider     = H(0xff8195a9);
         s.sidebarIconInactive    = H(0xff5c7489);
         s.sidebarIconHover       = H(0xff325472);
         s.sidebarIconActive      = H(0xff4176a4);
         s.sidebarActiveStrip     = H(0xff4176a4);
-        s.sidebarHeaderBG        = H(0xffffffff);
-        s.sidebarStatusBarBG     = H(0xffffffff);
         s.sidebarSubpaneBG       = H(0xffedf3f8);
         s.sidebarSubpaneDivider  = H(0xff8195a9);
         s.sidebarSubHeaderLine   = H(0xff8195a9);
@@ -588,14 +578,11 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
         s.wwiseParentBadge       = H(0xff7a6080); // 雾紫 — parent 层标识
 
 // Sidebar Activity Bar — JadeMist (霁翠) — light theme, dark icons
-        s.sidebarRailBG          = H(0xfff2ede7);  // warm ivory, darker than pure white
         s.sidebarRailDivider     = H(0x26246e68);
         s.sidebarIconInactive    = H(0xff98a59f);  // sage gray
         s.sidebarIconHover       = H(0xff4d655f);  // deeper sage
         s.sidebarIconActive      = H(0xff246e68);  // jade teal
         s.sidebarActiveStrip     = H(0xff246e68);
-        s.sidebarHeaderBG        = H(0xfff2ede7);
-        s.sidebarStatusBarBG     = H(0xffeceae5);  // off-white warm
         s.sidebarSubpaneBG       = H(0xfff4efe7);
         s.sidebarSubpaneDivider  = H(0xffc9c8bd);
         s.sidebarSubHeaderLine   = H(0x26000000);
@@ -604,10 +591,44 @@ ThemeColorScheme MakeBuiltinScheme(AppTheme t) {
         s.waveformSelectionHearthTop = H(0x4778dc8c);  // 翠 rgba(120,220,140, 0.28)
         s.waveformSelectionHearthBot = H(0x47f0dc64);  // 黄绿 rgba(240,220,100, 0.28)
         s.waveformSelectionEdge      = H(0xfffff08c);  // 亮黄绿 rgba(255,240,140, 1.0)
+
+        // 2026-11-22 颜色精调：整体压暗一档、线条加深、修正不达标文字对比度。
+        s.mainWindowBG             = H(0xfff2efe8);
+        s.resultsBG                = H(0xfffaf8f3);
+        s.metadataPanelBG          = H(0xfff4f1ea);
+        s.filterBrowserBG          = H(0xfffaf8f3);
+        s.toolbarBG                = H(0xfff0dfc0);
+        s.resultsHeaderBG          = H(0xfff1e0c1);
+        s.resultsTabBG             = H(0xfff0e7d2);
+        s.resultsTabHover          = H(0xffe8dcc2);
+        s.resultsTabActive         = H(0xffdfd0b1);
+        s.filterBrowserSectionBG   = H(0xfff6f2e8);
+        s.filterBrowserButtonBG    = H(0xfffdfbf6);
+        s.sidebarSubpaneBG         = H(0xfff6f2e8);
+        s.menuBarBG                = H(0xfff0dfc0);
+        s.resultsOutline           = H(0xff9fb1c6);
+        s.filterBrowserOutline     = H(0xff9fb1c6);
+        s.chromeBorder             = H(0xffb6c2d4);
+        s.sidebarSubHeaderLine     = H(0xff5b7f96);
+        s.sidebarRailDivider       = H(0xff5b7f96);
+        s.sidebarSubpaneDivider    = H(0xffb3c0cf);
+        s.resultsSecondaryText     = H(0xff4f5f7d);
+        s.resultsPlayedText        = H(0xff8a5a44);
+        s.resultsSelection         = H(0xffb9d4d4);
+        s.filterBrowserSelection   = H(0xffb9d4d4);
+        s.filterBrowserTreeSelection = H(0xffb9d4d4);
+        // 输入类控件：靠底色差异区分，不加描边（沿用原来的做法）。
+        // 面板压深后，输入框用更亮的米白，形成"凹进去的白框"。
+        s.frameBgBase            = H(0xfffffdf6);
+        s.filterBrowserBG        = H(0xfff4f1e8);
+        // 轻描边：只用 30% 的冷灰蓝，起个界定作用，不要抢眼。
+        s.searchFieldOutline     = H(0x4d9fb1c6);
         break;
 
     default: break;
     }
+    // 同类色块只做关系标记，不改写各主题自己的取值：
+    // 编辑器里仍显示为一条轴，取值保持主题原本定义的颜色。
     return s;
 }
 

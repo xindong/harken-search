@@ -3,6 +3,7 @@
 // All ThemeColorScheme fields mapped to 7 editor groups via member pointers.
 
 #include "Theme.h"
+#include "ThemeEditorRelations.h"
 #include "Localization.h"   // L(id) macro used by inline group-name helper (knife-B fix)
 #include "imgui.h"
 #include <cstddef>
@@ -24,6 +25,7 @@ enum class ThemeEditorGroup {
     FilterBrowser,     // 左侧筛选区
     ButtonsAndStatus,  // 按钮/状态
     PresetDial,        // 预设拨盘
+    Wwise,
 };
 
 // Field Entry: one color field in the editor
@@ -32,7 +34,17 @@ struct ThemeEditorItem {
     const char*        key;        // field identifier (e.g. "mainWindowBG")
     LStr               labelId;    // 10-D: display copy lives in the JSON ledger (zh/en/ja)
     ThemeEditorGroup   group;      // which group this belongs to
-    ImVec4 ThemeColorScheme::* member;  // pointer-to-member for direct access
+    ImVec4 ThemeColorScheme::* member;
+    const ThemeColorOverride* colorOverride = nullptr;
+
+    ImVec4 Color(const ThemeColorScheme& scheme) const {
+        return colorOverride ? colorOverride->Resolve(scheme) : scheme.*member;
+    }
+
+    void SetColor(ThemeColorScheme& scheme, const ImVec4& color) const {
+        if (colorOverride) scheme.*(colorOverride->member) = color;
+        else scheme.*member = color;
+    }
 };
 
 // Group display names
@@ -47,6 +59,7 @@ inline const char* ThemeEditorGroupNameZh(ThemeEditorGroup g) {
     case ThemeEditorGroup::FilterBrowser:    return L(TEGroupName_LeftFilter);
     case ThemeEditorGroup::ButtonsAndStatus: return L(TEGroupName_Buttons);
     case ThemeEditorGroup::PresetDial:        return L(TEGroupName_PresetDial);
+    case ThemeEditorGroup::Wwise:             return L(TEGroupName_Wwise);
     default:                                 return L(TEGroupName_Ungrouped);
     }
 }
@@ -166,8 +179,21 @@ inline const ThemeEditorItem* GetThemeEditorItems(size_t& count) {
         {"presetDialCardActiveText", LStr::ThemeCol_presetDialCardActiveText, ThemeEditorGroup::PresetDial, &ThemeColorScheme::presetDialCardActiveText},
         {"presetDialCardInactiveText", LStr::ThemeCol_presetDialCardInactiveText, ThemeEditorGroup::PresetDial, &ThemeColorScheme::presetDialCardInactiveText},
         {"presetDialAccent", LStr::ThemeCol_presetDialAccent, ThemeEditorGroup::PresetDial, &ThemeColorScheme::presetDialAccent},
+        {kWwiseLabelTextColor.key, LStr::ThemeCol_wwiseLabelText, ThemeEditorGroup::Wwise, nullptr, &kWwiseLabelTextColor},
+        {kWwiseBodyTextColor.key, LStr::ThemeCol_wwiseBodyText, ThemeEditorGroup::Wwise, nullptr, &kWwiseBodyTextColor},
     };
 
     count = sizeof(kItems) / sizeof(kItems[0]);
     return kItems;
+}
+
+inline const ThemeEditorItem* FindThemeEditorItem(const char* key) {
+    if (!key || !key[0]) return nullptr;
+    size_t count = 0;
+    const ThemeEditorItem* items = GetThemeEditorItems(count);
+    for (size_t i = 0; i < count; ++i) {
+        if (std::strcmp(items[i].key, key) == 0)
+            return &items[i];
+    }
+    return nullptr;
 }

@@ -35,6 +35,7 @@
     {"id": "AvatarCropSaveFailed", "type": "ui", "zh": "保存失败，裁剪已保留，请检查头像目录后重试。", "en": "Save failed. Your crop is kept; check the avatar folder and retry.", "ja": "保存できません。切り抜きは保持されています。保存先を確認してください。"},
     {"id":"SetUX_OutputRestoreFailed","type":"ui","zh":"未能恢复原输出设备，请重新选择。修改仍保留。","en":"Could not restore the previous output device. Select a device again; your changes are kept.","ja":"元の出力デバイスを復元できません。選択し直してください。変更は保持されています。"},
     {"id":"SetUX_Theme","type":"ui","zh":"界面主题","en":"Interface theme","ja":"画面テーマ"},
+    {"id":"SetUX_ThemeDownloadLink","type":"ui","zh":"下载主题","en":"Download themes","ja":"テーマをダウンロード"},
     {"id":"SetUX_Day","type":"ui","zh":"白天主题 · 08:00–16:00","en":"Day theme · 08:00–16:00","ja":"昼のテーマ · 08:00–16:00"},
     {"id":"SetUX_Night","type":"ui","zh":"黑夜主题 · 16:00–08:00","en":"Night theme · 16:00–08:00","ja":"夜のテーマ · 16:00–08:00"},
     {"id":"SetUX_SilenceThreshold","type":"ui","zh":"静音判断阈值","en":"Silence threshold","ja":"無音のしきい値"},
@@ -6621,6 +6622,83 @@
       "ja": "高度なテーマエディター"
     },
     {
+      "id": "ThemeEditor_LayerBase",
+      "type": "ui",
+      "zh": "基础颜色",
+      "en": "Base colors",
+      "ja": "基本色"
+    },
+    {
+      "id": "ThemeEditor_LayerRegions",
+      "type": "ui",
+      "zh": "区域颜色",
+      "en": "Region colors",
+      "ja": "領域色"
+    },
+    {
+      "id": "ThemeEditor_LayerAdvanced",
+      "type": "ui",
+      "zh": "高级与兼容",
+      "en": "Advanced and compatibility",
+      "ja": "高度な設定と互換"
+    },
+    {
+      "id": "ThemeEditor_RelationShared",
+      "type": "ui",
+      "zh": "共享",
+      "en": "Shared",
+      "ja": "共有"
+    },
+    {
+      "id": "ThemeEditor_RelationLinked",
+      "type": "ui",
+      "zh": "跟随",
+      "en": "Linked",
+      "ja": "連動"
+    },
+    {
+      "id": "ThemeEditor_RelationIndependent",
+      "type": "ui",
+      "zh": "独立",
+      "en": "Independent",
+      "ja": "独立"
+    },
+    {
+      "id": "ThemeEditor_RelationDetach",
+      "type": "ui",
+      "zh": "独立编辑",
+      "en": "Edit independently",
+      "ja": "個別に編集"
+    },
+    {
+      "id": "ThemeEditor_RelationRelink",
+      "type": "ui",
+      "zh": "恢复跟随",
+      "en": "Relink",
+      "ja": "連動に戻す"
+    },
+    {
+      "id": "ThemeEditor_RelationDerived",
+      "type": "ui",
+      "zh": "派生",
+      "en": "Derived",
+      "ja": "派生"
+    },
+    {
+      "id": "ThemeEditor_RelationLegacy",
+      "type": "ui",
+      "zh": "兼容",
+      "en": "Compatibility",
+      "ja": "互換"
+    },
+    {
+      "id": "ThemeEditor_RelationCoupling",
+      "type": "ui",
+      "zh": "疑似耦合",
+      "en": "Suspected coupling",
+      "ja": "要確認の結合"
+    },
+    {
       "id": "ThemeEditor_PresetSectionHint",
       "type": "ui",
       "zh": "当前主题草案与预设操作",
@@ -6633,6 +6711,20 @@
       "zh": "实时预览",
       "en": "Live preview",
       "ja": "ライブプレビュー"
+    },
+    {
+      "id": "ThemeEditor_ColorMixing",
+      "type": "ui",
+      "zh": "颜色混合效果",
+      "en": "Color mixing",
+      "ja": "色のブレンド"
+    },
+    {
+      "id": "ThemeEditor_ResultsGradient",
+      "type": "ui",
+      "zh": "列表渐变",
+      "en": "List gradient",
+      "ja": "リストのグラデーション"
     },
     {
       "id": "ThemeEditor_RestoreOnOpen",
@@ -10430,6 +10522,13 @@
       "ja": "プリセットダイヤル"
     },
     {
+      "id": "TEGroupName_Wwise",
+      "type": "ui",
+      "zh": "Wwise",
+      "en": "Wwise",
+      "ja": "Wwise"
+    },
+    {
       "id": "TEGroupName_Buttons",
       "type": "ui",
       "zh": "按钮/状态",
@@ -13250,6 +13349,20 @@
       "ja": "Spotting パネル文字"
     },
     {
+      "id": "ThemeCol_wwiseLabelText",
+      "type": "ui",
+      "zh": "标签文字",
+      "en": "Label text",
+      "ja": "ラベル文字"
+    },
+    {
+      "id": "ThemeCol_wwiseBodyText",
+      "type": "ui",
+      "zh": "正文文字",
+      "en": "Body text",
+      "ja": "本文の文字"
+    },
+    {
       "id": "ThemeCol_diagnosticOverlayBG",
       "type": "ui",
       "zh": "诊断悬浮窗背景",
@@ -13521,20 +13634,6 @@
       "zh": "无法删除 %s 个文件（可能被其他程序占用）",
       "en": "Could not delete %s files (possibly locked by another program)",
       "ja": "%s 個のファイルを削除できません（他プロセス占用の可能性）"
-    },
-    {
-      "id": "Status_LibFilteredFmt",
-      "type": "ui",
-      "zh": "库 %lld   过滤 %lld",
-      "en": "Library %lld   filtered %lld",
-      "ja": "ライブラリ %lld   フィルタ %lld"
-    },
-    {
-      "id": "Status_LibFmt",
-      "type": "ui",
-      "zh": "库 %lld",
-      "en": "Library %lld",
-      "ja": "ライブラリ %lld"
     },
     {
       "id": "Ren_HitWord",

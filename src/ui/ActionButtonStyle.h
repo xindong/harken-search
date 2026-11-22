@@ -50,11 +50,14 @@ struct Palette {
 inline Palette Make(ImVec4 surface, ImVec4 accent, ImVec4 body,
                     ImVec4 primaryText, ButtonVariant variant) {
     const bool primary = variant == ButtonVariant::PrimarySearch ||
+                         variant == ButtonVariant::DisabledSearch ||
                          variant == ButtonVariant::PrimaryTransfer ||
                          variant == ButtonVariant::Danger;
+    const bool disabledSearch = variant == ButtonVariant::DisabledSearch;
     const bool quiet = variant == ButtonVariant::Quiet;
     accent = ImLerp(TransportContrast::Over(accent, surface), ImVec4(1, 1, 1, 1),
                     TransportContrast::Luminance(surface) > .5 ? 0.0f : .10f);
+    if (disabledSearch) accent = ImLerp(accent, surface, .46f);
     Palette p;
     p.fill = (primary || variant == ButtonVariant::Selected)
         ? accent : ImLerp(surface, accent, quiet ? .07f : .24f);

@@ -43,6 +43,7 @@ inline float SearchFieldHeight()
 struct Palette {
     ImVec4 searchFill, searchIcon, preciseIcon, iconHover, iconActive;
     ImVec4 text, hint, selection, focus;
+    ImVec4 frame;   // 可选描边；alpha 为 0 时不画
 };
 
 inline ImVec4 BlendTint(ImVec4 base, ImVec4 tint, float amount)
@@ -67,6 +68,7 @@ inline Palette ResolveSearchPalette(const ThemeColorScheme& theme, ImVec4 surfac
     palette.selection = theme.resultsSelection;
     palette.selection.w *= 0.32f;
     palette.focus = ForSurface(theme.controlAccent, palette.searchFill, 3.0);
+    palette.frame = theme.searchFieldOutline;
     return palette;
 }
 
@@ -113,6 +115,8 @@ inline SearchFieldResult DrawSearchField(const char* label, const char* placehol
     const bool enabled = !(context.CurrentItemFlags & ImGuiItemFlags_Disabled);
 
     draw->AddRectFilled(start, end, ImGui::GetColorU32(palette.searchFill), radius);
+    if (palette.frame.w > 0.001f)
+        draw->AddRect(start, end, ImGui::GetColorU32(palette.frame), radius, 0, 1.0f);
 
     ImGui::PushID(label);
     ImGui::BeginGroup();

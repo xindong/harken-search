@@ -106,6 +106,7 @@
 #include "AITranscriptionResultStateAdapter.h"
 #include "VoiceAssetOrganizer.h"
 #include "Theme.h"              // 主题颜色系统
+#include "ThemeModuleColors.h"
 #include "ThemeSchedule.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
@@ -8618,25 +8619,26 @@ struct SidebarMetadataPickerUiState {
 // layouts. The shared TextInput itself remains unchanged for other pages.
 static void PushSidebarMetadataInputColors() {
     const auto& t = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(t);
     const auto mix = [](const ImVec4& a, const ImVec4& b, float amount) {
         return ImVec4(a.x + (b.x - a.x) * amount,
                       a.y + (b.y - a.y) * amount,
                       a.z + (b.z - a.z) * amount, 1.0f);
     };
     const ImVec4 warmWhite(0.988f, 0.978f, 0.952f, 1.0f);
-    const bool light = (t.filterBrowserBG.x + t.filterBrowserBG.y + t.filterBrowserBG.z) > 2.15f;
-    const ImVec4 panel = mix(mix(t.filterBrowserBG, warmWhite, light ? 0.09f : 0.075f), t.mainWindowBG, 0.05f);
-    const ImVec4 section = mix(mix(t.filterBrowserSectionBG, panel, 0.18f), warmWhite,
+    const bool light = (modules.filterBrowser.background.x + modules.filterBrowser.background.y + modules.filterBrowser.background.z) > 2.15f;
+    const ImVec4 panel = mix(mix(modules.filterBrowser.background, warmWhite, light ? 0.09f : 0.075f), modules.surface.canvas, 0.05f);
+    const ImVec4 section = mix(mix(modules.filterBrowser.section, panel, 0.18f), warmWhite,
                                (light ? 0.11f : 0.098f) + 0.05f);
-    const ImVec4 frame = mix(section, t.filterBrowserButtonBG, 0.40f);
-    const ImVec4 text = mix(t.filterBrowserText, t.filterBrowserSelection, 0.03f);
+    const ImVec4 frame = mix(section, modules.filterBrowser.button, 0.40f);
+    const ImVec4 text = mix(modules.filterBrowser.text, modules.filterBrowser.selection, 0.03f);
     const ImVec4 hint = TransportContrast::ForSurface(mix(text, frame, 0.38f), frame, 4.5);
-    ImVec4 border = mix(mix(t.filterBrowserOutline, panel, light ? 0.18f : 0.14f),
-                        t.filterBrowserSelection, light ? 0.12f : 0.22f);
+    ImVec4 border = mix(mix(modules.filterBrowser.outline, panel, light ? 0.18f : 0.14f),
+                        modules.filterBrowser.selection, light ? 0.12f : 0.22f);
     border.w = light ? 0.82f : 0.62f;
     ImGui::PushStyleColor(ImGuiCol_FrameBg, frame);
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, mix(frame, t.filterBrowserSelection, 0.16f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, mix(frame, t.searchButtonBG, 0.24f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, mix(frame, modules.filterBrowser.selection, 0.16f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, mix(frame, modules.controls.searchAction, 0.24f));
     ImGui::PushStyleColor(ImGuiCol_Border, border);
     ImGui::PushStyleColor(ImGuiCol_Text, text);
     ImGui::PushStyleColor(ImGuiCol_TextDisabled, hint);
@@ -8756,10 +8758,11 @@ static void DrawSidebarMetadataPickerField(
     if (arrowClicked) ImGui::SetNextWindowFocus();
 
     const auto& theme = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const ImVec4 popupBg(
-        theme.filterBrowserBG.x * 0.90f + theme.mainWindowBG.x * 0.10f,
-        theme.filterBrowserBG.y * 0.90f + theme.mainWindowBG.y * 0.10f,
-        theme.filterBrowserBG.z * 0.90f + theme.mainWindowBG.z * 0.10f, 1.0f);
+        modules.filterBrowser.background.x * 0.90f + modules.surface.canvas.x * 0.10f,
+        modules.filterBrowser.background.y * 0.90f + modules.surface.canvas.y * 0.10f,
+        modules.filterBrowser.background.z * 0.90f + modules.surface.canvas.z * 0.10f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, popupBg);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
@@ -9350,10 +9353,11 @@ static void RenderInlineHighlightedText(const std::string& s, const ImVec4& high
     ImFont* font = ImGui::GetFont();
     const float fontSize = ImGui::GetFontSize();
     const ImVec2 startPos = ImGui::GetCursorScreenPos();
-    const ImVec4 baseColor4 = ThemeColors::current().resultsText;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+    const ImVec4 baseColor4 = modules.results.text;
     const ImU32 textColor = ImGui::GetColorU32(baseColor4);
     const ImU32 highlightTextColor = textColor;
-    const ImVec4 selectionColor = ThemeColors::current().resultsSelection;
+    const ImVec4 selectionColor = modules.results.selection;
     const ImVec4 highlightBg4 = ImVec4(selectionColor.x, selectionColor.y, selectionColor.z, 0.38f);
     const ImU32 highlightBgColor = ImGui::GetColorU32(highlightBg4);
     const float wrapWidth = (std::max)(ImGui::GetContentRegionAvail().x, fontSize * 8.0f);
@@ -9485,7 +9489,8 @@ static void DrawResultRowFilename(const std::string& displayName,
     ImFont* font = ImGui::GetFont();
     const float fontSize = ImGui::GetFontSize();
     const ImU32 textColor = ImGui::GetColorU32(ImGuiCol_Text);
-    const ImVec4 selectionColor = ThemeColors::current().resultsSelection;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+    const ImVec4 selectionColor = modules.results.selection;
     const ImU32 highlightBgColor = ImGui::GetColorU32(ImVec4(selectionColor.x, selectionColor.y, selectionColor.z, 0.38f));
     const bool wrap = wrapFileName && availW > 0.0f;
     const float wrapW = wrap
@@ -14120,7 +14125,8 @@ static void RenderBrowserSystemFolderNode(AppState& state,
     const double now = ImGui::GetTime();
     const float flash = exactCurrentPath ? locate.Strength(canonicalFolder, now) : 0.0f;
     if (flash > 0.0f) {
-        const ImVec4 tint = ThemeColors::current().filterBrowserLocateTint;
+        const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+        const ImVec4 tint = modules.filterBrowser.locate;
         for (ImGuiCol color : {ImGuiCol_Header, ImGuiCol_HeaderHovered, ImGuiCol_HeaderActive}) {
             ImGui::PushStyleColor(color, ImLerp(ImGui::GetStyleColorVec4(color), tint, 0.44f * flash));
         }
@@ -14193,8 +14199,9 @@ static void RenderBrowserSystemFolderSearchNode(AppState& state,
     }
 
     const ThemeColorScheme& theme = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     if (node.directHit) {
-        ImGui::PushStyleColor(ImGuiCol_Text, theme.filterBrowserSearchHitText);
+        ImGui::PushStyleColor(ImGuiCol_Text, modules.filterBrowser.searchHitText);
     }
     ImGui::PushID(node.path.c_str());
     const bool opened = ImGui::TreeNodeEx(node.displayName.c_str(), flags);
@@ -14202,9 +14209,9 @@ static void RenderBrowserSystemFolderSearchNode(AppState& state,
         ImVec2 rMin = ImGui::GetItemRectMin();
         ImVec2 rMax = ImGui::GetItemRectMax();
         rMin.x += ImGui::GetTreeNodeToLabelSpacing();
-        const ImVec4 hitBg(theme.filterBrowserSearchHitText.x,
-                           theme.filterBrowserSearchHitText.y,
-                           theme.filterBrowserSearchHitText.z,
+        const ImVec4 hitBg(modules.filterBrowser.searchHitText.x,
+                           modules.filterBrowser.searchHitText.y,
+                           modules.filterBrowser.searchHitText.z,
                            0.16f);
         ImGui::GetWindowDrawList()->AddRectFilled(rMin, rMax, ImGui::GetColorU32(hitBg), 3.0f);
     }
@@ -14357,8 +14364,9 @@ static void RenderRelatedPathsExplorerPane(
         minHeight,
         maxHeight);
     const ThemeColorScheme& theme = ThemeColors::current();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.filterBrowserBG);
-    ImGui::PushStyleColor(ImGuiCol_Border, theme.filterBrowserOutline);
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.filterBrowser.background);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.filterBrowser.outline);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 7.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
     BeginTransientScrollbarChild(
@@ -14430,8 +14438,9 @@ static void RenderFolderTreeExplorerToolbar(
         ImGui::ClearActiveID();
     }
     const ThemeColorScheme& theme = ThemeColors::current();
-    const ImVec4 glyphColor = theme.filterBrowserTreeText;
-    ImVec4 hoverFill = theme.filterBrowserTreeSelection;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
+    const ImVec4 glyphColor = modules.filterBrowser.treeText;
+    ImVec4 hoverFill = modules.filterBrowser.treeSelection;
     hoverFill.w = 0.26f;
     ImGui::SameLine(0, kButtonGap);
     if (aura::folder_tree::controls::DrawButton(refreshId, ICON_LC_REFRESH, true,
@@ -14460,8 +14469,9 @@ static void RenderFolderTreeExplorerList(
     const std::function<void()>& renderRows)
 {
     const ThemeColorScheme& theme = ThemeColors::current();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.filterBrowserBG);
-    ImGui::PushStyleColor(ImGuiCol_Border, theme.filterBrowserOutline);
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.filterBrowser.background);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.filterBrowser.outline);
     int styleVars = 0;
     if (useRoundedChrome) {
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 7.0f);
@@ -16290,47 +16300,6 @@ static void DrawSidebarContentHeader(AppState& state, int sectionId) {
     ImGui::Dummy(ImVec2(availW, h));
 }
 
-// Draws a 22px compact status bar anchored at the bottom of the panel:
-// total files | filtered count (when a search narrows results).
-static void DrawSidebarStatusBar(AppState& state) {
-    const ThemeColorScheme& th = ThemeColors::current();
-    const float h = 22.0f;
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    const float availW = ImGui::GetContentRegionAvail().x;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    // Background + 1px top border
-    dl->AddRectFilled(start, ImVec2(start.x + availW, start.y + h),
-                      ImGui::GetColorU32(th.sidebarStatusBarBG));
-    dl->AddLine(start, ImVec2(start.x + availW, start.y),
-                ImGui::GetColorU32(th.sidebarSubHeaderLine), 1.0f);
-
-    const int64_t totalFiles = (int64_t)state.database.getFileCount();
-    const int64_t filtered   = (int64_t)state.searchResults.size();
-
-    ImVec4 textColor = ThemeColors::peerPanelHeading(th);
-    textColor.w = 0.72f;
-    const float textH = ImGui::GetTextLineHeight();
-
-    // Render text via draw list (bypass cursor positioning) to avoid the
-    // imgui.cpp SetCursorPos/parent-boundary assertion.
-    //
-    // Use plain CJK labels — the earlier Unicode glyphs (◉/●, U+25C9/U+25CF)
-    // are missing from the SimHei/embedded CJK font, so they rendered as tofu /
-    // fallback shapes. "库 N  过滤 M" reads clearly in every theme + font combo.
-    char buf[128];
-    if (filtered > 0 && filtered < totalFiles) {
-        snprintf(buf, sizeof(buf), L(Status_LibFilteredFmt), totalFiles, filtered);
-    } else {
-        snprintf(buf, sizeof(buf), L(Status_LibFmt), totalFiles);
-    }
-    dl->AddText(ImVec2(start.x + 10.0f, start.y + (h - textH) * 0.5f),
-                ImGui::GetColorU32(textColor), buf);
-
-    // Reserve the 22px space so ImGui's layout cursor advances correctly.
-    ImGui::Dummy(ImVec2(availW, h));
-}
-
 static void SelectPlaylistFolderFilter(AppState& state, const std::string& folderPath) {
     if (state.selectedPlaylistId <= 0 || folderPath.empty()) return;
 
@@ -17248,6 +17217,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         } else {
             ImGuiStyle& style = ImGui::GetStyle();
             ImVec4* colors = style.Colors;
+            const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
 
             float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
 
@@ -17269,7 +17239,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
                 ImVec4 baseCol = mixCol(colors[ImGuiCol_FrameBg], COLOR_ACCENT, 0.15f + heat * 0.35f);
                 ImVec4 hoverCol = mixCol(colors[ImGuiCol_FrameBgHovered], COLOR_ACCENT, 0.3f + heat * 0.4f);
-                const auto& tagTextBase = ThemeColors::current().filterBrowserTagText;
+                const auto& tagTextBase = modules.filterBrowser.tagText;
                 ImVec4 textCol = mixCol(tagTextBase, COLOR_ACCENT, heat * 0.5f);
 
                 ImGui::PushStyleColor(ImGuiCol_Button, baseCol);
@@ -17353,8 +17323,9 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 a.w + (b.w - a.w) * t);
         };
         auto withAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
-        const ImVec4 kSidebarFilterLabel = withAlpha(mix(ThemeColors::current().filterBrowserText, ThemeColors::current().filterBrowserSelection, 0.10f), 0.98f);
-        const ImVec4 kSidebarFilterHint = withAlpha(mix(ThemeColors::current().filterBrowserText, ThemeColors::current().metadataPanelLabel, 0.18f), 0.72f);
+        const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+        const ImVec4 kSidebarFilterLabel = withAlpha(mix(modules.filterBrowser.text, modules.filterBrowser.selection, 0.10f), 0.98f);
+        const ImVec4 kSidebarFilterHint = withAlpha(mix(modules.filterBrowser.text, modules.metadata.label, 0.18f), 0.72f);
         auto drawSidebarFilterLabel = [&](const char* text) {
             ImGui::TextColored(kSidebarFilterLabel, "%s", text);
         };
@@ -18391,9 +18362,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
     }
     ImGui::EndChild(); // ##SidebarContent
 
-    // The rail uses all vertical space; no redundant count status bar is drawn.
-    // with counts already shown in the top search bar. DrawSidebarStatusBar()
-    // function kept around unused so it can be reinstated if needed later.
+    // The rail uses all vertical space; counts already live in the top search bar.
 
     ImGui::PopID();
 }
@@ -20142,7 +20111,8 @@ void RenderFileInfoPanelTabContents(
                 cw.qaCandidateLastQueryTime = 0.0;
             }
 
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().coverWallBG);
+            const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.metadata.coverWall);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
             // Reserve a stable gutter: auto scrollbar visibility otherwise changes
@@ -20643,7 +20613,7 @@ void RenderFileInfoPanelTabContents(
                                 } else {
                                     // ⏳ 加载中的呼吸占位符 (Skeleton)
                                     float pulse = 0.5f + 0.5f * sinf((float)ImGui::GetTime() * 3.2f);
-                                    ImVec4 skelBase = mix(ThemeColors::current().metadataPanelBG, ThemeColors::current().metadataPanelText, 0.10f);
+                                     ImVec4 skelBase = mix(modules.metadata.background, modules.metadata.text, 0.10f);
                                     ImVec4 skelGlow = mix(skelBase, COLOR_ACCENT, 0.08f);
                                     ImGui::GetWindowDrawList()->AddRectFilled(
                                         cellScreenPos,
@@ -20653,7 +20623,7 @@ void RenderFileInfoPanelTabContents(
                                     ImGui::GetWindowDrawList()->AddRect(
                                         cellScreenPos,
                                         ImVec2(cellScreenPos.x + thumb, cellScreenPos.y + thumb),
-                                        ImGui::GetColorU32(withAlpha(mix(skelBase, ThemeColors::current().metadataPanelText, 0.12f), 0.20f)),
+                                         ImGui::GetColorU32(withAlpha(mix(skelBase, modules.metadata.text, 0.12f), 0.20f)),
                                         4.0f,
                                         0,
                                         1.0f);
@@ -20901,6 +20871,7 @@ void RenderFileInfoPanelTabContents(
                 ImGui::SetCursorScreenPos(ImVec2(stripPos.x + 8.0f, stripPos.y + 4.0f));
                 {
                     const auto& tcsArt = ThemeColors::current();
+                    const ThemeModuleColors coverWallModules = ResolveThemeModuleColors(tcsArt);
                     float trackW = std::max(120.0f, stripW - 16.0f);
                     const float thumbSliderMax =
                         aura::coverwall::ResolveThumbSizeSliderMaxPx(panelWidth);
@@ -20908,7 +20879,7 @@ void RenderFileInfoPanelTabContents(
                         aura::coverwall::kMinThumbSizePx,
                         thumbSliderMax,
                         trackW, kArtworkFaderTrackH,
-                        tcsArt.controlAccent, ThemeColors::isLightChromeTheme(tcsArt));
+                        coverWallModules.controls.accent, ThemeColors::isLightChromeTheme(tcsArt));
                 }
                 cw.thumbSize = aura::coverwall::ClampThumbSize(
                     cw.thumbSize,
@@ -20931,9 +20902,10 @@ void RenderFileInfoPanelTabContents(
             BeginTransientScrollbarChild("##TransferHistoryScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             ImGui::Indent(10.0f);
             const auto& theme = ThemeColors::current();
+            const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
 
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.transferHistoryBG);
-            ImGui::PushStyleColor(ImGuiCol_Text, theme.transferHistoryText);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.transfer.historyBackground);
+            ImGui::PushStyleColor(ImGuiCol_Text, modules.transfer.historyText);
             BeginTransientScrollbarChild("##TransferHistoryCard", ImVec2(0, 92.0f), true);
             ImGui::TextUnformatted(L(Main_TransferHistoryTitle));
             ImGui::Separator();
@@ -21022,7 +20994,8 @@ void RenderFileInfoPanelTabContents(
 }
 
 static bool IsLightWaveThemeActive() {
-    const ImVec4& waveformBg = ThemeColors::current().waveformBG;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+    const ImVec4& waveformBg = modules.waveform.background;
     return (waveformBg.x + waveformBg.y + waveformBg.z) >= ((220.0f / 255.0f) * 3.0f);
 }
 
@@ -21030,7 +21003,7 @@ static bool IsLightCustomChromeThemeActive() {
     return ThemeColors::isLightChromeTheme(ThemeColors::current());
 }
 
-static ImVec4 ResolveWaveformFooterSurface(const ThemeColorScheme& scheme) {
+static ImVec4 ResolveWaveformFooterSurface(const ThemeModuleColors::Waveform& waveform, bool isLightTheme) {
     auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -21041,17 +21014,22 @@ static ImVec4 ResolveWaveformFooterSurface(const ThemeColorScheme& scheme) {
     auto luminance = [](const ImVec4& c) -> float {
         return c.x * 0.299f + c.y * 0.587f + c.z * 0.114f;
     };
-    ImVec4 footer = scheme.waveformFooterBG;
-    if (ThemeColors::isLightChromeTheme(scheme)) {
-        const float waveLuma = luminance(scheme.waveformBG);
+    ImVec4 footer = waveform.footer;
+    if (isLightTheme) {
+        const float waveLuma = luminance(waveform.background);
         const float footerLuma = luminance(footer);
         if (waveLuma >= 0.72f && footerLuma + 0.18f < waveLuma) {
-            const ImVec4 seamBlend = mixColor(scheme.waveformSplitterBG, scheme.waveformPanelBorder, 0.22f);
-            footer = mixColor(scheme.waveformBG, seamBlend, 0.16f);
+            const ImVec4 seamBlend = mixColor(waveform.splitter, waveform.border, 0.22f);
+            footer = mixColor(waveform.background, seamBlend, 0.16f);
             footer.w = 1.0f;
         }
     }
     return footer;
+}
+
+static ImVec4 ResolveWaveformFooterSurface(const ThemeColorScheme& scheme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(scheme);
+    return ResolveWaveformFooterSurface(modules.waveform, ThemeColors::isLightChromeTheme(scheme));
 }
 
 // Light-theme waveform chrome (list row height slider, H-scroll under waveform, V-amplitude zoom):
@@ -21068,6 +21046,7 @@ struct WaveLightChromePack {
 
 static WaveLightChromePack MakeWaveLightChromePack() {
     const ThemeColorScheme& s = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(s);
     auto M = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -21077,52 +21056,52 @@ static WaveLightChromePack MakeWaveLightChromePack() {
     };
     auto U = [](const ImVec4& c, float a) { return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, a)); };
 
-    const ImVec4 accentMix = M(s.controlAccent, s.waveformColor, 0.35f);
-    const ImVec4 softBorder = M(s.waveformPanelBorder, s.controlAccent, 0.28f);
-    const ImVec4 trackBase = M(s.waveformBG, s.waveformSplitterBG, 0.18f);
-    const ImVec4 trackDeep = M(s.waveformBG, s.waveformSplitterBG, 0.42f);
-    const ImVec4 thumbFace = M(accentMix, s.waveformSecondaryColor, 0.22f);
-    const ImVec4 thumbDark = M(accentMix, s.interfaceText, 0.45f);
-    const ImVec4 iconMuted = M(s.interfaceText, s.waveformSecondaryColor, 0.40f);
+    const ImVec4 accentMix = M(modules.controls.accent, modules.waveform.primary, 0.35f);
+    const ImVec4 softBorder = M(modules.waveform.border, modules.controls.accent, 0.28f);
+    const ImVec4 trackBase = M(modules.waveform.background, modules.waveform.splitter, 0.18f);
+    const ImVec4 trackDeep = M(modules.waveform.background, modules.waveform.splitter, 0.42f);
+    const ImVec4 thumbFace = M(accentMix, modules.waveform.secondary, 0.22f);
+    const ImVec4 thumbDark = M(accentMix, modules.transport.text, 0.45f);
+    const ImVec4 iconMuted = M(modules.transport.text, modules.waveform.secondary, 0.40f);
 
     WaveLightChromePack p{};
-    p.listVzShellBg = U(M(s.waveformBG, s.dialogBG, 0.08f), 0.96f);
+    p.listVzShellBg = U(M(modules.waveform.background, modules.overlay.background, 0.08f), 0.96f);
     p.listVzShellBorder = U(softBorder, 0.66f);
-    p.listVzHoverBg = U(M(accentMix, s.waveformBG, 0.85f), 0.13f);
-    p.listVzTrackBg = U(M(s.waveformSplitterBG, softBorder, 0.35f), 0.59f);
+    p.listVzHoverBg = U(M(accentMix, modules.waveform.background, 0.85f), 0.13f);
+    p.listVzTrackBg = U(M(modules.waveform.splitter, softBorder, 0.35f), 0.59f);
     p.listVzTrackFill = U(M(thumbFace, accentMix, 0.20f), 0.89f);
-    p.listVzKnobCore = U(M(s.interfaceText, accentMix, 0.35f), 1.0f);
-    p.listVzKnobGlow = U(M(accentMix, s.waveformBG, 0.50f), 0.28f);
+    p.listVzKnobCore = U(M(modules.transport.text, accentMix, 0.35f), 1.0f);
+    p.listVzKnobGlow = U(M(accentMix, modules.waveform.background, 0.50f), 0.28f);
     p.listVzIconIdle = U(M(iconMuted, accentMix, 0.25f), 0.82f);
-    p.listVzIconHover = U(M(s.interfaceText, accentMix, 0.15f), 0.94f);
+    p.listVzIconHover = U(M(modules.transport.text, accentMix, 0.15f), 0.94f);
 
-    p.wScrollTL = p.wScrollTR = U(M(trackBase, s.waveformBG, 0.20f), 0.97f);
+    p.wScrollTL = p.wScrollTR = U(M(trackBase, modules.waveform.background, 0.20f), 0.97f);
     p.wScrollBL = p.wScrollBR = U(trackDeep, 0.99f);
     p.wScrollBorder = U(softBorder, 0.47f);
     p.wScrollLineTop = U(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.36f);
-    p.wScrollLineBot = U(M(softBorder, s.waveformSecondaryColor, 0.40f), 0.38f);
+    p.wScrollLineBot = U(M(softBorder, modules.waveform.secondary, 0.40f), 0.38f);
     p.wThumbHi = U(M(thumbFace, accentMix, 0.15f), 0.93f);
     p.wThumbLo = U(M(thumbFace, accentMix, 0.40f), 0.89f);
     p.wThumbOutHi = U(M(thumbDark, accentMix, 0.30f), 0.45f);
     p.wThumbOutLo = U(M(thumbDark, accentMix, 0.45f), 0.36f);
-    p.wZoomLabel = U(M(s.interfaceText, accentMix, 0.22f), 0.80f);
+    p.wZoomLabel = U(M(modules.transport.text, accentMix, 0.22f), 0.80f);
 
-    p.waShellBg = U(M(s.waveformBG, ImVec4(1.0f, 1.0f, 1.0f,       1.0f), 0.04f), 0.99f);
+    p.waShellBg = U(M(modules.waveform.background, ImVec4(1.0f, 1.0f, 1.0f,       1.0f), 0.04f), 0.99f);
     p.waShellBorder = U(softBorder, 0.69f);
     p.waShellInner = U(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.38f);
-    p.waTroughBg = U(M(s.waveformSplitterBG, s.waveformBG, 0.25f), 0.96f);
-    p.waTroughBorder = U(M(softBorder, s.waveformSecondaryColor, 0.30f), 0.54f);
-    p.waGrabBgHi = U(M(s.waveformBG, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.12f), 0.99f);
-    p.waGrabBgLo = U(M(s.waveformSplitterBG, s.waveformBG, 0.35f), 0.94f);
+    p.waTroughBg = U(M(modules.waveform.splitter, modules.waveform.background, 0.25f), 0.96f);
+    p.waTroughBorder = U(M(softBorder, modules.waveform.secondary, 0.30f), 0.54f);
+    p.waGrabBgHi = U(M(modules.waveform.background, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.12f), 0.99f);
+    p.waGrabBgLo = U(M(modules.waveform.splitter, modules.waveform.background, 0.35f), 0.94f);
     p.waGrabBrHi = U(M(thumbDark, accentMix, 0.20f), 0.91f);
     p.waGrabBrLo = U(M(softBorder, accentMix, 0.38f), 0.82f);
     p.waNotch = U(M(iconMuted, accentMix, 0.35f), 0.67f);
     p.waTrackRgb = M(softBorder, accentMix, 0.35f);
-    p.waFillRgb = M(accentMix, s.waveformSecondaryColor, 0.20f);
-    p.waMarkRgb = M(s.interfaceText, accentMix, 0.40f);
-    p.waGlowRgb = M(accentMix, s.waveformBG, 0.55f);
-    p.waAmpTextRgb = M(s.interfaceText, accentMix, 0.28f);
-    p.waIconHiRgb = M(s.interfaceText, accentMix, 0.12f);
+    p.waFillRgb = M(accentMix, modules.waveform.secondary, 0.20f);
+    p.waMarkRgb = M(modules.transport.text, accentMix, 0.40f);
+    p.waGlowRgb = M(accentMix, modules.waveform.background, 0.55f);
+    p.waAmpTextRgb = M(modules.transport.text, accentMix, 0.28f);
+    p.waIconHiRgb = M(modules.transport.text, accentMix, 0.12f);
     p.waIconLoRgb = M(iconMuted, accentMix, 0.20f);
     return p;
 }
@@ -21132,6 +21111,7 @@ static WaveLightChromePack MakeWaveLightChromePack() {
 bool VerticalZoomSliderFloat(const char* label, float* v, float v_min, float v_max, const ImVec2& size_arg) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
 
     const ImGuiID id = window->GetID(label);
 
@@ -21155,9 +21135,9 @@ bool VerticalZoomSliderFloat(const char* label, float* v, float v_min, float v_m
     const ImU32 shellBg = wch ? wch->listVzShellBg : IM_COL32(18, 22, 28, 235);
     const ImU32 shellBorder = wch ? wch->listVzShellBorder : IM_COL32(86, 110, 140, 110);
     const ImU32 hoverBg = isLightWaveTheme ? ImGui::GetColorU32(ImVec4(
-        ThemeColors::current().controlAccent.x,
-        ThemeColors::current().controlAccent.y,
-        ThemeColors::current().controlAccent.z,
+        modules.controls.accent.x,
+        modules.controls.accent.y,
+        modules.controls.accent.z,
         0.13f)) : IM_COL32(255, 255, 255, 6);
     const ImU32 trackBg = wch ? wch->listVzTrackBg : IM_COL32(52, 58, 68, 220);
     const ImU32 trackFill = wch ? wch->listVzTrackFill : IM_COL32(160, 170, 182, 255);
@@ -21420,6 +21400,7 @@ static float CoverImgSize(int rowHeight) {
 void DrawMiniWaveform(const WaveformData& waveform, float playbackPos, float width, float height) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
 
     if (waveform.isReady && !waveform.peaks.empty()) {
         int miniCh = waveform.numChannels;
@@ -21517,7 +21498,7 @@ void DrawMiniWaveform(const WaveformData& waveform, float playbackPos, float wid
         // 播放头
         if (playbackPos >= 0.0f) {
             float playheadX = pos.x + playbackPos * width;
-            const ImVec4 themePlayhead = ThemeColors::current().waveformPositionLine;
+            const ImVec4 themePlayhead = modules.waveform.playhead;
             drawList->AddLine(ImVec2(playheadX, pos.y), ImVec2(playheadX, pos.y + height),
                               ImGui::GetColorU32(ImVec4(themePlayhead.x, themePlayhead.y, themePlayhead.z, 0.86f)), 1.5f);
         }
@@ -22602,7 +22583,8 @@ static void DrawScanActivityIndicatorGlyph(
     const float centerX = cursor.x + 8.0f;
     const float centerY = cursor.y + statusTextHeight * 0.5f;
     const float phase = static_cast<float>(std::fmod(ImGui::GetTime() * kTau, kTau));
-    const ImVec4 accent = ThemeColors::current().controlAccent;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+    const ImVec4 accent = modules.controls.accent;
     for (int i = 0; i < 8; ++i) {
         const float angle = phase + static_cast<float>(i) * (kTau / 8.0f);
         const float alpha = 0.22f + 0.78f * (static_cast<float>(i + 1) / 8.0f);
@@ -24191,6 +24173,7 @@ inline void DrawLoudnessMeter(float peakL, float peakR, float rmsL, float rmsR,
 
 static void DrawWaveformLoadingPlaceholder(ImVec2 pos, float width, float height) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
     // Match DrawMainWaveform ruler offset so placeholder → live has no layout shift
     const float rulerH = 16.0f;
     const ImVec2 bgMin = pos;
@@ -24204,8 +24187,8 @@ static void DrawWaveformLoadingPlaceholder(ImVec2 pos, float width, float height
             a.z + (b.z - a.z) * t,
             a.w + (b.w - a.w) * t);
     };
-    const ImVec4 waveBg = ThemeColors::current().waveformBG;
-    const ImVec4 waveAccent = ThemeColors::current().waveformColor;
+    const ImVec4 waveBg = modules.waveform.background;
+    const ImVec4 waveAccent = modules.waveform.primary;
     const float bgLuma = waveBg.x * 0.299f + waveBg.y * 0.587f + waveBg.z * 0.114f;
     const bool isLightWaveTheme = bgLuma >= 0.70f;
     const ImVec4 placeholderBg = waveBg;
@@ -24330,6 +24313,7 @@ void DrawMainWaveform(const WaveformData& waveform, float playbackPos, float wid
                              float waveformAlpha = 1.0f, float volumeScale = 1.0f, bool isReversed = false,
                              int waveformStyle = 0, float regionFadeInNorm = 0.0f,
                              float regionFadeOutNorm = 0.0f, float amplitudeFocusBoost = 1.0f) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
 #if ARIS_PREVIEW_ISOLATION
     if (g_appState) {
         auto& qr=g_appState->qaRegions;const auto p=ImGui::GetCursorScreenPos();
@@ -24387,8 +24371,8 @@ void DrawMainWaveform(const WaveformData& waveform, float playbackPos, float wid
     // 波形的有效绘制高度（减去标尺区域）
     const float waveHeight = height - rulerH;
 
-    const ImVec4 themeWaveBg = ThemeColors::current().waveformBG;
-    const ImVec4 themePlayhead = ThemeColors::current().waveformPositionLine;
+    const ImVec4 themeWaveBg = modules.waveform.background;
+    const ImVec4 themePlayhead = modules.waveform.playhead;
     auto waveMix = [](const ImVec4& a, const ImVec4& b, float t) {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -25207,7 +25191,8 @@ static bool WaveformChannelSoloCapsule(const char* id_str,
     }
     if (outHovered) *outHovered = hovered;
 
-    const ImVec4 accent = ThemeColors::current().controlAccent;
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+    const ImVec4 accent = modules.controls.accent;
     const ImVec4 textBase = ImGui::GetStyle().Colors[ImGuiCol_Text];
     const bool chromeVisible = revealChrome || hovered || isActive || !enabled;
 
@@ -25234,7 +25219,7 @@ static bool WaveformChannelSoloCapsule(const char* id_str,
         : (isActive ? 1.0f : (hovered ? 0.96f : 0.82f));
 
     if (chromeVisible) {
-        const ImU32 fill = ImGui::GetColorU32(withAlpha(mix(ThemeColors::current().waveformBG, accent, 0.34f), fillAlpha));
+        const ImU32 fill = ImGui::GetColorU32(withAlpha(mix(modules.waveform.background, accent, 0.34f), fillAlpha));
         const ImU32 border = ImGui::GetColorU32(withAlpha(accent, borderAlpha));
         dl->AddRectFilled(min, max, fill, size.y * 0.5f);
         dl->AddRect(min, max, border, size.y * 0.5f, 0, 1.0f);
@@ -25251,7 +25236,7 @@ static bool WaveformChannelSoloCapsule(const char* id_str,
     const ImU32 textCol = ImGui::GetColorU32(withAlpha(mix(textBase, accent, isActive ? 0.20f : 0.08f), textAlpha));
     const ImVec2 ts = ImGui::CalcTextSize(label);
     const ImVec2 textPos(min.x + (size.x - ts.x) * 0.5f, min.y + (size.y - ts.y) * 0.5f - 0.5f);
-    const ImU32 textHalo = ImGui::GetColorU32(withAlpha(ThemeColors::current().waveformBG, 0.82f));
+    const ImU32 textHalo = ImGui::GetColorU32(withAlpha(modules.waveform.background, 0.82f));
     dl->AddText(ImVec2(textPos.x - 1.0f, textPos.y), textHalo, label);
     dl->AddText(ImVec2(textPos.x + 1.0f, textPos.y), textHalo, label);
     dl->AddText(ImVec2(textPos.x, textPos.y - 1.0f), textHalo, label);
@@ -28324,6 +28309,7 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                                      ThemeColors::customized());
     ImGuiStyle& themeStyle = ImGui::GetStyle();
     ImVec4* themeColors = themeStyle.Colors;
+    const ThemeModuleColors waveformModules = ResolveThemeModuleColors(ThemeColors::current());
     auto wfWithAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
     auto wfMix = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
@@ -28334,13 +28320,13 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
     };
 
     const bool kUseLightSoftChromeTheme = useSoftChromeTheme && ThemeColors::isLightChromeTheme(ThemeColors::current());
-    ImVec4 waveformPanelBg = ThemeColors::current().waveformBG;
+    ImVec4 waveformPanelBg = waveformModules.waveform.background;
     ImU32 panelBorder = ImGui::GetColorU32(
         wfWithAlpha(
-            ThemeColors::current().waveformPanelBorder,
+            waveformModules.waveform.border,
             kUseLightSoftChromeTheme ? 0.30f : (useSoftChromeTheme ? 0.58f : 0.34f)));
     // Gradient overlay derived from waveformBG token (slightly lighter top, slightly darker bottom)
-    ImVec4 wbg = ThemeColors::current().waveformBG;
+    ImVec4 wbg = waveformModules.waveform.background;
     ImU32 panelTop = IM_COL32(
         std::min((int)(wbg.x * 255 + 12), 255), std::min((int)(wbg.y * 255 + 12), 255),
         std::min((int)(wbg.z * 255 + 12), 255), 245);
@@ -28348,7 +28334,7 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
         std::max((int)(wbg.x * 255 - 6), 0), std::max((int)(wbg.y * 255 - 6), 0),
         std::max((int)(wbg.z * 255 - 6), 0), 250);
     ImU32 accentLine = useSoftChromeTheme
-        ? ImGui::GetColorU32(wfWithAlpha(ThemeColors::current().waveformSplitterLine, 0.85f))
+        ? ImGui::GetColorU32(wfWithAlpha(waveformModules.waveform.splitterLine, 0.85f))
         : IM_COL32(59, 130, 246, 150);
     ImVec4 controlBg = useSoftChromeTheme
         ? wfWithAlpha(wfMix(themeColors[ImGuiCol_FrameBg], themeColors[ImGuiCol_WindowBg], 0.20f), 0.90f)
@@ -28362,12 +28348,12 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
     ImVec4 controlAccent = useSoftChromeTheme
         ? wfWithAlpha(wfMix(COLOR_ACCENT, themeColors[ImGuiCol_Text], 0.12f), 0.95f)
         : ImVec4(0.37f, 0.64f, 0.98f, 0.95f);
-    const ImVec4 kLightSoftHudBg = wfWithAlpha(wfMix(ThemeColors::current().dialogBG, ThemeColors::current().waveformBG, 0.42f), 0.92f);
-    const ImVec4 kLightSoftHudLine = wfWithAlpha(wfMix(ThemeColors::current().controlAccent, ThemeColors::current().resultsSelection, 0.28f), 0.72f);
-    const ImVec4 kLightSoftHudZone = wfWithAlpha(wfMix(ThemeColors::current().resultsSelection, ThemeColors::current().controlAccent, 0.30f), 0.52f);
-    const ImVec4 kLightSoftHudText = wfWithAlpha(wfMix(themeColors[ImGuiCol_Text], ThemeColors::current().controlAccent, 0.10f), 1.0f);
-    const ImVec4 kLightSoftRegionTop = wfWithAlpha(wfMix(ThemeColors::current().resultsSelection, ThemeColors::current().controlAccent, 0.32f), 0.14f);
-    const ImVec4 kLightSoftRegionMid = wfWithAlpha(wfMix(ThemeColors::current().resultsSelection, ThemeColors::current().waveformSecondaryColor, 0.26f), 0.09f);
+    const ImVec4 kLightSoftHudBg = wfWithAlpha(wfMix(waveformModules.overlay.background, waveformModules.waveform.background, 0.42f), 0.92f);
+    const ImVec4 kLightSoftHudLine = wfWithAlpha(wfMix(waveformModules.controls.accent, waveformModules.results.selection, 0.28f), 0.72f);
+    const ImVec4 kLightSoftHudZone = wfWithAlpha(wfMix(waveformModules.results.selection, waveformModules.controls.accent, 0.30f), 0.52f);
+    const ImVec4 kLightSoftHudText = wfWithAlpha(wfMix(themeColors[ImGuiCol_Text], waveformModules.controls.accent, 0.10f), 1.0f);
+    const ImVec4 kLightSoftRegionTop = wfWithAlpha(wfMix(waveformModules.results.selection, waveformModules.controls.accent, 0.32f), 0.14f);
+    const ImVec4 kLightSoftRegionMid = wfWithAlpha(wfMix(waveformModules.results.selection, waveformModules.waveform.secondary, 0.26f), 0.09f);
     ImU32 spectHintColor = useSoftChromeTheme
         ? ImGui::GetColorU32(wfWithAlpha(wfMix(themeColors[ImGuiCol_TextDisabled], COLOR_ACCENT, 0.24f), 0.92f))
         : IM_COL32(160, 176, 196, 220);
@@ -28408,7 +28394,7 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
         dlBg->AddRectFilledMultiColor(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), panelTop, panelTop, panelBottom, panelBottom);
         if (kUseLightSoftChromeTheme) {
             const ImU32 seamFill = ImGui::GetColorU32(
-                wfWithAlpha(wfMix(ThemeColors::current().waveformSplitterBG, waveformPanelBg, 0.46f), 1.0f));
+                wfWithAlpha(wfMix(waveformModules.waveform.splitter, waveformPanelBg, 0.46f), 1.0f));
             // In hybrid mode the dock touches the WebView edge directly; avoid drawing a hard top outline.
             dlBg->AddRectFilled(
                 wp,
@@ -28975,7 +28961,7 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                 if (playPos >= (float)startNormD && playPos <= (float)endNormD) {
                     float playX = waveformPos.x + (float)(((double)playPos - startNormD) / windowSizeD) * waveformWidth;
                     ImDrawList* dl = ImGui::GetWindowDrawList();
-                    const ImVec4 themePlayhead = ThemeColors::current().waveformPositionLine;
+                    const ImVec4 themePlayhead = waveformModules.waveform.playhead;
                     ImU32 glowCol = ImGui::GetColorU32(ImVec4(themePlayhead.x, themePlayhead.y, themePlayhead.z, 0.24f));
                     ImU32 coreCol = ImGui::GetColorU32(ImVec4(themePlayhead.x, themePlayhead.y, themePlayhead.z, 0.78f));
                     dl->AddLine(ImVec2(playX, waveformPos.y), ImVec2(playX, waveformPos.y + spectHeight), glowCol, 4.0f);
@@ -30124,12 +30110,13 @@ void DrawSimilarityIndexPanel(AppState& state) {
         ThemeInspector::RegisterLastItem("similar.index.progress");
         if (sharedSimilarStyle) {
             const auto& colors = ThemeColors::current();
-            ImGui::PushStyleColor(ImGuiCol_Button, colors.toolbarBG);
+            const ThemeModuleColors modules = ResolveThemeModuleColors(colors);
+            ImGui::PushStyleColor(ImGuiCol_Button, modules.surface.toolbar);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                ImLerp(colors.toolbarBG, colors.metadataPanelText, 0.10f));
+                ImLerp(modules.surface.toolbar, modules.metadata.text, 0.10f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                ImLerp(colors.toolbarBG, colors.metadataPanelText, 0.14f));
-            ImGui::PushStyleColor(ImGuiCol_Border, colors.chromeBorder);
+                ImLerp(modules.surface.toolbar, modules.metadata.text, 0.14f));
+            ImGui::PushStyleColor(ImGuiCol_Border, modules.surface.border);
             ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
         }
         if (aura::ui::ActionButton(L(Cancel), ImVec2(-1, 30), aura::ui::ButtonVariant::Quiet)) {
@@ -30172,8 +30159,9 @@ void DrawSimilarityIndexPanel(AppState& state) {
                    !state.batchFeatureCancelRequested.load()) {
             ImGui::Spacing();
             const ImVec4 success(0.3f, 0.9f, 0.3f, 1.0f);
+            const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
             ImGui::TextColored(sharedSimilarStyle ? TransportContrast::ForSurface(
-                success, ThemeColors::current().metadataPanelBG, 6.0) : success, L(Main_IndexAllDone));
+                success, modules.metadata.background, 6.0) : success, L(Main_IndexAllDone));
             ThemeInspector::RegisterLastItem("similar.index.done");
         }
         std::lock_guard<std::mutex> reportLock(state.batchFeatureResultMutex);
@@ -30216,9 +30204,10 @@ static void DrawScanWaitingBar() {
     const float segment = width * .24f;
     const float offset = (width - segment) * (.5f + .5f * std::sin(float(ImGui::GetTime()) * 2.f));
     auto* draw = ImGui::GetWindowDrawList();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
     draw->AddRectFilled(start, ImVec2(start.x + width, start.y + 8.f), ImGui::GetColorU32(ImGuiCol_FrameBg), 4.f);
     draw->AddRectFilled(ImVec2(start.x + offset, start.y), ImVec2(start.x + offset + segment, start.y + 8.f),
-        ImGui::GetColorU32(ThemeColors::current().controlAccent), 4.f);
+        ImGui::GetColorU32(modules.controls.accent), 4.f);
     ImGui::Dummy(ImVec2(width, 8.f));
 }
 
@@ -30312,9 +30301,10 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     const auto result = state.batchFeatureResults.Snapshot();
     if (!result.available) return;
     const auto& colors = ThemeColors::current();
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, colors.dialogBG);
-    ImGui::PushStyleColor(ImGuiCol_Text, colors.interfaceText);
-    ImGui::PushStyleColor(ImGuiCol_Border, colors.chromeBorder);
+    const ThemeModuleColors modules = ResolveThemeModuleColors(colors);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, modules.surface.elevated);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.topBar.text);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.surface.border);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22.f, 18.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12.f, 12.f));
     const float width = std::min(520.f, std::max(300.f, ImGui::GetMainViewport()->WorkSize.x - 32.f));
@@ -30728,10 +30718,12 @@ void RenderUI(AppState& state) {
             AppendThemeTraceLineMain(std::string("Theme ") + buf);
         }
     }
+    const ThemeColorScheme& kCurrentTheme = ThemeColors::current();
+    const ThemeModuleColors kCurrentModules = ResolveThemeModuleColors(kCurrentTheme);
     const ImVec4 kThemeTextStrong = uiColors[ImGuiCol_Text];
     const ImVec4 kThemeTextMuted = uiMix(uiColors[ImGuiCol_TextDisabled], uiColors[ImGuiCol_Text], 0.32f);
     const ImVec4 kThemeTextSubtle = state.settings.theme == AppTheme::LapisBlue
-        ? ThemeColors::current().resultsSecondaryText
+        ? kCurrentModules.results.secondaryText
         : uiMix(uiColors[ImGuiCol_TextDisabled], uiColors[ImGuiCol_ChildBg], 0.18f);
     const ImVec4 kThemeTextChrome = uiMix(kThemeTextMuted, kThemeTextStrong, 0.16f);
     const ImVec4 kThemeTextMinor = uiMix(kThemeTextSubtle, kThemeTextMuted, 0.58f);
@@ -30744,8 +30736,7 @@ void RenderUI(AppState& state) {
                                                     : ImVec4(0.70f, 0.76f, 0.86f, 1.0f);
     const ImVec4 kThemeWarningText = uiMix(ImVec4(0.95f, 0.76f, 0.38f, 1.0f), uiColors[ImGuiCol_Text], 0.22f);
     // "已播放"文件文字色 — 直接读 resultsPlayedText token
-    const ImVec4 kThemePlayedText = ThemeColors::current().resultsPlayedText;
-    const ThemeColorScheme& kCurrentTheme = ThemeColors::current();
+    const ImVec4 kThemePlayedText = kCurrentModules.results.playedText;
     const bool kUsePreWorkspaceSemanticColors =
         state.settings.theme == AppTheme::Ocean ||
         state.settings.theme == AppTheme::LapisBlue ||
@@ -30769,15 +30760,15 @@ void RenderUI(AppState& state) {
     workspacePaletteInput.perimeter = kCurrentTheme.chromeBorder;
     workspacePaletteInput.splitter = kCurrentTheme.waveformSplitterLine;
     workspacePaletteInput.primaryText = kCurrentTheme.interfaceText;
-    workspacePaletteInput.mutedText = kCurrentTheme.resultsSecondaryText;
-    workspacePaletteInput.functionalAccent = kCurrentTheme.controlAccent;
+    workspacePaletteInput.mutedText = kCurrentModules.results.secondaryText;
+    workspacePaletteInput.functionalAccent = kCurrentModules.controls.accent;
     workspacePaletteInput.error = kCurrentTheme.wwiseConnectFail;
     const aura::ui::workspace::CoreWorkspacePalette workspacePalette =
         aura::ui::workspace::BuildCoreWorkspacePalette(workspacePaletteInput);
     const bool kUseLightSoftChromeTheme = kUseSoftChromeTheme && ThemeColors::isLightChromeTheme(kCurrentTheme);
-    const float kResultsBgLuma = kCurrentTheme.resultsBG.x * 0.299f +
-                                 kCurrentTheme.resultsBG.y * 0.587f +
-                                 kCurrentTheme.resultsBG.z * 0.114f;
+    const float kResultsBgLuma = kCurrentModules.results.background.x * 0.299f +
+                                 kCurrentModules.results.background.y * 0.587f +
+                                 kCurrentModules.results.background.z * 0.114f;
     const bool kUseLightResultsChrome = kResultsBgLuma >= 0.72f;
     const ImVec4 kThemeDockBase = uiMix(
         uiMix(kCurrentTheme.dialogPanelBG, kCurrentTheme.mainWindowBG, 0.28f),
@@ -30853,7 +30844,7 @@ void RenderUI(AppState& state) {
     const ImU32 kThemeControlBorderOuter = ImGui::GetColorU32(kUseSoftChromeTheme
         ? uiWithAlpha(uiMix(uiColors[ImGuiCol_WindowBg], uiColors[ImGuiCol_Border], 0.10f), 0.70f)
         : ImVec4(12.0f / 255.0f, 14.0f / 255.0f, 18.0f / 255.0f, 220.0f / 255.0f));
-    const ImU32 kThemeTimecodeTextHover = ImGui::GetColorU32(ThemeColors::current().timecodeTextHover);
+    const ImU32 kThemeTimecodeTextHover = ImGui::GetColorU32(kCurrentModules.transport.timecodeHover);
     if (state.settings.diagnosticMode) {
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             MarkUiLeftClickNow();
@@ -30911,8 +30902,8 @@ void RenderUI(AppState& state) {
         ImGui::OpenPopup(L(Dlg_CloseSM));
         state.showCloseChoicePopup = false;
     }
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, kCurrentModules.overlay.background);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, kCurrentModules.overlay.background);
     if (aura::ui::BeginAlertDialog(L(Dlg_CloseSM), L(Dlg_CloseSM))) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
         EscClosePopup();
@@ -31866,7 +31857,7 @@ void RenderUI(AppState& state) {
             ImGui::SetWindowFontScale(1.55f);
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
             const float contentW = ImGui::GetContentRegionAvail().x;
-            const ImVec4 aboutBG = ThemeColors::current().dialogBG;
+            const ImVec4 aboutBG = kCurrentModules.overlay.background;
             const float aboutLuma = aboutBG.x * 0.299f + aboutBG.y * 0.587f + aboutBG.z * 0.114f;
             const ImVec4 aboutAccent(0.94f, 0.62f, 0.16f, 1.0f);
             const char* wordmarkAsset = aboutLuma >= 0.5f
@@ -31952,7 +31943,8 @@ void RenderUI(AppState& state) {
                     ImGui::TextDisabled("%s", label);
                     ImGui::SameLine();
                     ImGui::SetCursorPosX(startX + 75.0f);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().controlAccent);
+                    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
+                    ImGui::PushStyleColor(ImGuiCol_Text, modules.controls.accent);
                     ImGui::TextUnformatted(url);
                     ImGui::PopStyleColor();
                     if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -35287,9 +35279,9 @@ void RenderUI(AppState& state) {
         static std::string sMeSaveMsg;
 
         ImGui::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_Appearing);
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, ThemeColors::current().dialogBG);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ThemeColors::current().dialogBG);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().dialogPanelBG);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, kCurrentModules.overlay.background);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, kCurrentModules.overlay.background);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, kCurrentModules.overlay.panel);
         if (aura::ui::BeginAlertDialog("##MetaEditDlg", L(MetaEdit_DialogTitle),
                                        ImGuiWindowFlags_NoResize)) {
             { ReadingTextScope _readingPopup;  // dialog body is a reading surface
@@ -37421,9 +37413,9 @@ void RenderUI(AppState& state) {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImVec4 kWarmWhite = ImVec4(0.988f, 0.978f, 0.952f, 1.0f);
             const bool isLightHistoryCapsuleTheme =
-                (ThemeColors::current().historyCapsuleBG.x +
-                 ThemeColors::current().historyCapsuleBG.y +
-                 ThemeColors::current().historyCapsuleBG.z) > 2.10f;
+                (kCurrentModules.navigation.historyBackground.x +
+                 kCurrentModules.navigation.historyBackground.y +
+                 kCurrentModules.navigation.historyBackground.z) > 2.10f;
             const bool useTokenHistoryCapsuleChrome =
                 kUseSoftChromeTheme || state.settings.theme == AppTheme::Custom || ThemeColors::customized();
             ImVec2 capsulePos = ImGui::GetCursorScreenPos();
@@ -37454,7 +37446,7 @@ void RenderUI(AppState& state) {
             const bool fwdClk = ImGui::IsItemClicked(ImGuiMouseButton_Left);
 
             const ImVec4 historyCapsuleFill = useTokenHistoryCapsuleChrome
-                ? uiWithAlpha(ThemeColors::current().historyCapsuleBG, 0.99f)
+                ? uiWithAlpha(kCurrentModules.navigation.historyBackground, 0.99f)
                 : ImVec4(18.0f / 255.0f, 24.0f / 255.0f, 38.0f / 255.0f, 210.0f / 255.0f);
             drawToolbarChromeShell(
                 dl,
@@ -37465,7 +37457,7 @@ void RenderUI(AppState& state) {
 
             {
                 ImU32 bg = useTokenHistoryCapsuleChrome && canBack
-                    ? ImGui::GetColorU32(uiWithAlpha(ThemeColors::current().historyCapsuleActiveBG, 0.90f))
+                    ? ImGui::GetColorU32(uiWithAlpha(kCurrentModules.navigation.historyActive, 0.90f))
                     : IM_COL32(0, 0, 0, 0);
                 if (backHov && canBack) {
                     bg = useTokenHistoryCapsuleChrome
@@ -37478,7 +37470,7 @@ void RenderUI(AppState& state) {
 
             {
                 ImU32 bg     = canFwd
-                    ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(ThemeColors::current().historyCapsuleActiveBG, 0.98f))
+                    ? (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(kCurrentModules.navigation.historyActive, 0.98f))
                                          : IM_COL32(255, 255, 255, 245))
                     : (useTokenHistoryCapsuleChrome ? ImGui::GetColorU32(uiWithAlpha(uiMix(kThemeDockBg, uiColors[ImGuiCol_Border], 0.20f), 0.80f))
                                          : IM_COL32(56, 68, 92, 200));
@@ -37494,7 +37486,7 @@ void RenderUI(AppState& state) {
                 if (canFwd)
                     dl->AddLine(ImVec2(fwdMin.x + 5.0f, fwdMin.y + 1.0f), ImVec2(fwdMax.x - 5.0f, fwdMin.y + 1.0f),
                         useTokenHistoryCapsuleChrome
-                            ? ImGui::GetColorU32(uiWithAlpha(uiMix(uiColors[ImGuiCol_Border], ThemeColors::current().toolbarBG, 0.12f), isLightHistoryCapsuleTheme ? 0.05f : 0.14f))
+                            ? ImGui::GetColorU32(uiWithAlpha(uiMix(uiColors[ImGuiCol_Border], kCurrentModules.topBar.background, 0.12f), isLightHistoryCapsuleTheme ? 0.05f : 0.14f))
                             : IM_COL32(0, 0, 0, 30), 1.0f);
                 dl->AddRect(fwdMin, fwdMax, bord, innerR, 0, 1.0f);
             }
@@ -37652,18 +37644,18 @@ void RenderUI(AppState& state) {
             const bool useSoftNavChrome =
                 kUseSoftChromeTheme || state.settings.theme == AppTheme::Custom || ThemeColors::customized();
             const bool isLightModeCapsuleTheme =
-                (ThemeColors::current().modeCapsuleBG.x +
-                 ThemeColors::current().modeCapsuleBG.y +
-                 ThemeColors::current().modeCapsuleBG.z) > 2.10f;
+                (kCurrentModules.navigation.modeBackground.x +
+                 kCurrentModules.navigation.modeBackground.y +
+                 kCurrentModules.navigation.modeBackground.z) > 2.10f;
             const bool layeredNavyNav = state.settings.theme == AppTheme::LapisBlue && !state.settings.useCustomColors && !ThemeColors::customized();
             const ImU32 navShellCol = useSoftNavChrome
-                ? ImGui::GetColorU32(uiWithAlpha(ThemeColors::current().modeCapsuleBG, layeredNavyNav ? 1.0f : 0.92f))
+                ? ImGui::GetColorU32(uiWithAlpha(kCurrentModules.navigation.modeBackground, layeredNavyNav ? 1.0f : 0.92f))
                 : IM_COL32(18, 24, 38, 215);
             const ImU32 navActiveBgCol = useSoftNavChrome
-                ? ImGui::GetColorU32(layeredNavyNav ? ThemeColors::current().modeCapsuleActiveBG : uiWithAlpha(uiMix(ThemeColors::current().modeCapsuleActiveBG, kToolbarAccent, 0.12f), 0.98f))
+                ? ImGui::GetColorU32(layeredNavyNav ? kCurrentModules.navigation.modeActive : uiWithAlpha(uiMix(kCurrentModules.navigation.modeActive, kToolbarAccent, 0.12f), 0.98f))
                 : IM_COL32(255, 255, 255, 245);
             const ImU32 navActiveHoverBgCol = useSoftNavChrome
-                ? ImGui::GetColorU32(layeredNavyNav ? ThemeColors::current().resultsTabHover : uiWithAlpha(uiMix(uiColors[ImGuiCol_TabHovered], uiColors[ImGuiCol_WindowBg], 0.66f), 0.98f))
+                ? ImGui::GetColorU32(layeredNavyNav ? kCurrentModules.results.tabHover : uiWithAlpha(uiMix(uiColors[ImGuiCol_TabHovered], uiColors[ImGuiCol_WindowBg], 0.66f), 0.98f))
                 : IM_COL32(240, 244, 255, 252);
             const ImU32 navActiveShadowCol = useSoftNavChrome
                 ? ImGui::GetColorU32(uiWithAlpha(uiMix(uiColors[ImGuiCol_Border], uiColors[ImGuiCol_WindowBg], 0.10f), isLightModeCapsuleTheme ? 0.08f : 0.20f))
@@ -38797,7 +38789,7 @@ void RenderUI(AppState& state) {
         rightRegionSplit ? infoLeafHeight : sideColumnHeight};
 
     const ImU32 kTitleText = ImGui::GetColorU32(state.settings.theme == AppTheme::LapisBlue
-        ? ThemeColors::current().interfaceText
+        ? kCurrentModules.transport.text
         : ThemeColors::peerPanelHeading(ThemeColors::current()));
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
@@ -39103,7 +39095,7 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleColor(ImGuiCol_WindowBg,
             infoFamily ? ThemeColors::infoPanelDockBG(ThemeColors::current())
-                       : uiWithAlpha(ThemeColors::current().filterBrowserBG, 1.0f));
+                       : uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_TitleBg, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, floatingTitleSurface);
@@ -39175,7 +39167,7 @@ void RenderUI(AppState& state) {
         if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
             const ImVec2 pos = ImGui::GetWindowPos();
             const ImVec2 size = ImGui::GetWindowSize();
-            const ImVec4 bodyBg = uiWithAlpha(ThemeColors::current().filterBrowserBG, 1.0f);
+            const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
             const DockModuleShellLayout shell = drawDockModuleShell(
                 ImGui::GetWindowDrawList(), pos, size.x, size.y, title, bodyBg, kTitleText);
             ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
@@ -39721,34 +39713,35 @@ void RenderUI(AppState& state) {
     auto renderResultsSurface = [&](float surfaceWidth, float surfaceHeight) {
     // Center list: results* tokens (always valid — synced by ApplyTheme)
     const auto& centerResultsTheme = ThemeColors::current();
+    const ThemeModuleColors centerResultsModules = ResolveThemeModuleColors(centerResultsTheme);
+    const auto& centerResults = centerResultsModules.results;
     // The Results frame uses the active theme's waveform color directly so
     // the visual center and the waveform speak the same color language.
-    const ImVec4 centerResultsOutline = centerResultsTheme.waveformColor;
+    const ImVec4 centerResultsOutline = centerResults.frameOutline;
     // Results is the workspace's visual focus. Preserve the stronger frame
     // weight it had before workspace normalization instead of inheriting the
     // generic 1 px dock-shell perimeter width.
     constexpr float kResultsPerimeterWidth = 2.0f;
     constexpr float kResultsPerimeterRounding = 7.0f;
     {
-        const auto& tcs = centerResultsTheme;
-        const float centerResultsLuma = tcs.resultsBG.x * 0.299f + tcs.resultsBG.y * 0.587f + tcs.resultsBG.z * 0.114f;
+        const float centerResultsLuma = centerResults.background.x * 0.299f + centerResults.background.y * 0.587f + centerResults.background.z * 0.114f;
         const bool useLightCenterResults = centerResultsLuma >= 0.72f;
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,              uiWithAlpha(uiMix(tcs.resultsBG, tcs.mainWindowBG, useLightCenterResults ? 0.06f : 0.02f), 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text,                 tcs.resultsText);
-        ImGui::PushStyleColor(ImGuiCol_TableHeaderBg,        tcs.resultsHeaderBG);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,              uiWithAlpha(uiMix(centerResults.background, centerResultsModules.surface.canvas, useLightCenterResults ? 0.06f : 0.02f), 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text,                 centerResults.text);
+        ImGui::PushStyleColor(ImGuiCol_TableHeaderBg,        centerResults.header);
         ImGui::PushStyleColor(ImGuiCol_Border,               centerResultsOutline);
         ImGui::PushStyleColor(ImGuiCol_Separator,            workspacePalette.splitter);
         ImGui::PushStyleColor(ImGuiCol_SeparatorHovered,     workspacePalette.splitter);
         ImGui::PushStyleColor(ImGuiCol_SeparatorActive,      workspacePalette.functionalAccent);
         ImGui::PushStyleColor(ImGuiCol_TableBorderStrong,    ImVec4(centerResultsOutline.x, centerResultsOutline.y, centerResultsOutline.z, useLightCenterResults ? 0.03f : 0.08f));
         ImGui::PushStyleColor(ImGuiCol_TableBorderLight,     ImVec4(centerResultsOutline.x, centerResultsOutline.y, centerResultsOutline.z, useLightCenterResults ? 0.02f : 0.05f));
-        ImGui::PushStyleColor(ImGuiCol_Header,               ImVec4(tcs.resultsSelection.x, tcs.resultsSelection.y, tcs.resultsSelection.z, 0.25f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered,        ImVec4(tcs.resultsSelection.x, tcs.resultsSelection.y, tcs.resultsSelection.z, 0.40f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive,         ImVec4(tcs.resultsSelection.x, tcs.resultsSelection.y, tcs.resultsSelection.z, 0.80f));
+        ImGui::PushStyleColor(ImGuiCol_Header,               ImVec4(centerResults.selection.x, centerResults.selection.y, centerResults.selection.z, 0.25f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered,        ImVec4(centerResults.selection.x, centerResults.selection.y, centerResults.selection.z, 0.40f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,         ImVec4(centerResults.selection.x, centerResults.selection.y, centerResults.selection.z, 0.80f));
         aura::ui::workspace::PushTransientScrollbarColors(
-            ImVec4(tcs.resultsScrollbar.x, tcs.resultsScrollbar.y, tcs.resultsScrollbar.z, 0.40f),
-            ImVec4(tcs.resultsScrollbar.x, tcs.resultsScrollbar.y, tcs.resultsScrollbar.z, 0.60f),
-            ImVec4(tcs.resultsScrollbar.x, tcs.resultsScrollbar.y, tcs.resultsScrollbar.z, 0.80f));
+            ImVec4(centerResults.scrollbar.x, centerResults.scrollbar.y, centerResults.scrollbar.z, 0.40f),
+            ImVec4(centerResults.scrollbar.x, centerResults.scrollbar.y, centerResults.scrollbar.z, 0.60f),
+            ImVec4(centerResults.scrollbar.x, centerResults.scrollbar.y, centerResults.scrollbar.z, 0.80f));
     }
     // 启动动画：列表微升起
     float listOffY = 15.0f * (1.0f - t);
@@ -39787,11 +39780,13 @@ void RenderUI(AppState& state) {
 
         // Tab bar styling
         const auto& resultsTheme = ThemeColors::current();
-        ImGui::PushStyleColor(ImGuiCol_Tab, resultsTheme.resultsTabBG);
-        ImGui::PushStyleColor(ImGuiCol_TabHovered, resultsTheme.resultsTabHover);
-        ImGui::PushStyleColor(ImGuiCol_TabActive, resultsTheme.resultsTabActive);
-        ImGui::PushStyleColor(ImGuiCol_TabUnfocused, uiWithAlpha(uiMix(resultsTheme.resultsTabBG, resultsTheme.resultsBG, 0.48f), 0.96f));
-        ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive, uiWithAlpha(uiMix(resultsTheme.resultsTabActive, resultsTheme.resultsTabBG, 0.36f), 0.98f));
+        const ThemeModuleColors resultsModules = ResolveThemeModuleColors(resultsTheme);
+        const auto& results = resultsModules.results;
+        ImGui::PushStyleColor(ImGuiCol_Tab, results.tabBackground);
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, results.tabHover);
+        ImGui::PushStyleColor(ImGuiCol_TabActive, results.tabActive);
+        ImGui::PushStyleColor(ImGuiCol_TabUnfocused, uiWithAlpha(uiMix(results.tabBackground, results.background, 0.48f), 0.96f));
+        ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive, uiWithAlpha(uiMix(results.tabActive, results.tabBackground, 0.36f), 0.98f));
 
         int tabToClose = -1;
         static int renamingTabIndex = -1;
@@ -39801,11 +39796,11 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, 5.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_TabBorderSize, 0.0f);
         const bool useLightResultsTabs =
-            (resultsTheme.resultsTabActive.x + resultsTheme.resultsTabActive.y + resultsTheme.resultsTabActive.z) > 1.80f;
+            (results.tabActive.x + results.tabActive.y + results.tabActive.z) > 1.80f;
         const ImVec4 kListTabText = state.settings.theme == AppTheme::LapisBlue
             ? MistBlueChrome::ResultsTabText(resultsTheme) : useLightResultsTabs
-            ? uiWithAlpha(uiMix(resultsTheme.resultsText, resultsTheme.chromeBorder, 0.18f), 0.995f)
-            : uiWithAlpha(uiMix(resultsTheme.resultsText, resultsTheme.resultsSelection, 0.12f), 0.96f);
+            ? uiWithAlpha(uiMix(results.text, resultsModules.surface.border, 0.18f), 0.995f)
+            : uiWithAlpha(uiMix(results.text, results.selection, 0.12f), 0.96f);
         ImGui::PushStyleColor(ImGuiCol_Text, kListTabText);
         ImFont* listTabFont = GetUIFontRegular();
         if (listTabFont) ImGui::PushFont(listTabFont);
@@ -39815,25 +39810,25 @@ void RenderUI(AppState& state) {
             const float tabShelfW = ImGui::GetContentRegionAvail().x;
             const float tabShelfH = 32.0f;
             const bool tabShelfIsLight =
-                (resultsTheme.resultsTabBG.x + resultsTheme.resultsTabBG.y + resultsTheme.resultsTabBG.z) > 1.85f;
+                (results.tabBackground.x + results.tabBackground.y + results.tabBackground.z) > 1.85f;
             const ImVec4 tabShelfBase = uiMix(
-                resultsTheme.resultsBG,
-                resultsTheme.resultsHeaderBG,
+                results.background,
+                results.header,
                 tabShelfIsLight ? 0.72f : 0.58f);
             const ImVec4 tabShelfBg = uiWithAlpha(
-                uiMix(tabShelfBase, resultsTheme.resultsTabBG, tabShelfIsLight ? 0.18f : 0.14f),
+                uiMix(tabShelfBase, results.tabBackground, tabShelfIsLight ? 0.18f : 0.14f),
                 tabShelfIsLight ? 0.95f : 0.90f);
             const ImVec4 tabShelfShadow = uiWithAlpha(
-                uiMix(resultsTheme.mainWindowBG, tabShelfBg, tabShelfIsLight ? 0.44f : 0.22f),
+                uiMix(resultsModules.surface.canvas, tabShelfBg, tabShelfIsLight ? 0.44f : 0.22f),
                 tabShelfIsLight ? 0.08f : 0.18f);
             const ImVec4 tabShelfTopSheen = uiWithAlpha(
-                uiMix(resultsTheme.resultsText, tabShelfBg, tabShelfIsLight ? 0.94f : 0.86f),
+                uiMix(results.text, tabShelfBg, tabShelfIsLight ? 0.94f : 0.86f),
                 tabShelfIsLight ? 0.07f : 0.12f);
             const ImVec4 tabShelfBottomShade = uiWithAlpha(
-                uiMix(resultsTheme.resultsHeaderBG, tabShelfBg, tabShelfIsLight ? 0.58f : 0.32f),
+                uiMix(results.header, tabShelfBg, tabShelfIsLight ? 0.58f : 0.32f),
                 tabShelfIsLight ? 0.06f : 0.11f);
             const ImVec4 tabShelfRim = uiWithAlpha(
-                uiMix(resultsTheme.resultsOutline, tabShelfBg, tabShelfIsLight ? 0.54f : 0.26f),
+                uiMix(results.outline, tabShelfBg, tabShelfIsLight ? 0.54f : 0.26f),
                 tabShelfIsLight ? 0.09f : 0.16f);
             if (tabShelfW > 40.0f) {
                 tabShelfDl->AddRectFilled(
@@ -39993,7 +39988,7 @@ void RenderUI(AppState& state) {
                         if (tabAlpha > 0.0f) {
                             tabDl->AddRectFilled(
                                 tMin, tMax,
-                                ImGui::GetColorU32(uiWithAlpha(uiMix(resultsTheme.resultsTabBG, resultsTheme.resultsSelection, 0.24f), tabAlpha)),
+                                ImGui::GetColorU32(uiWithAlpha(uiMix(results.tabBackground, results.selection, 0.24f), tabAlpha)),
                                 5.0f);
                         }
                         const float cueAlpha = tabOpen ? 0.66f : (tabHovered ? 0.26f : 0.0f);
@@ -40001,12 +39996,12 @@ void RenderUI(AppState& state) {
                             tabDl->AddLine(
                                 ImVec2(tMin.x + 7.0f, tMax.y - 1.0f),
                                 ImVec2(tMax.x - 7.0f, tMax.y - 1.0f),
-                                ImGui::GetColorU32(uiWithAlpha(uiMix(resultsTheme.resultsSelection, resultsTheme.resultsOutline, 0.10f), cueAlpha)),
+                                ImGui::GetColorU32(uiWithAlpha(uiMix(results.selection, results.outline, 0.10f), cueAlpha)),
                                 tabOpen ? 2.5f : 1.25f);
                             tabDl->AddRect(
                                 ImVec2(tMin.x + 0.5f, tMin.y + 0.5f),
                                 ImVec2(tMax.x - 0.5f, tMax.y - 1.5f),
-                                ImGui::GetColorU32(uiWithAlpha(uiMix(resultsTheme.resultsSelection, resultsTheme.resultsOutline, 0.14f), tabOpen ? 0.36f : 0.12f)),
+                                ImGui::GetColorU32(uiWithAlpha(uiMix(results.selection, results.outline, 0.14f), tabOpen ? 0.36f : 0.12f)),
                                 5.0f, 0, 1.0f);
                         }
                     }
@@ -40123,7 +40118,7 @@ void RenderUI(AppState& state) {
                             int trackTotal = 0;
                             for (auto& a : state.albumGrid.albums) trackTotal += a.trackCount;
 
-                            ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().resultsBG);
+                            ImGui::PushStyleColor(ImGuiCol_ChildBg, kCurrentModules.results.background);
                             BeginTransientScrollbarChild("##AlbumStats", ImVec2(0.f, 48.f), false);
 
                             auto StatBlock = [&](const char* num, const char* label) {
@@ -40878,14 +40873,14 @@ void RenderUI(AppState& state) {
                 ImGui::GetActiveID() == ImGui::GetID("##in");
             ImGui::PopID();
             const ImVec4 browserPathHoverBg = uiWithAlpha(
-                uiMix(kCurrentTheme.resultsHeaderBG, kCurrentTheme.resultsSelection, 0.14f), 1.0f);
+                uiMix(kCurrentModules.results.header, kCurrentModules.results.selection, 0.14f), 1.0f);
             const ImVec4 browserPathActiveBg = uiWithAlpha(
-                uiMix(kCurrentTheme.resultsHeaderBG, kCurrentTheme.resultsSelection, 0.22f), 1.0f);
+                uiMix(kCurrentModules.results.header, kCurrentModules.results.selection, 0.22f), 1.0f);
             const ImVec4 browserPathFrameBg = browserPathInputFocused
                 ? browserPathActiveBg
                 : (browserPathHitHovered ? browserPathHoverBg : uiColors[ImGuiCol_FrameBg]);
             const ImVec4 browserPathText = (browserPathHitHovered || browserPathInputFocused)
-                ? kCurrentTheme.resultsText
+                ? kCurrentModules.results.text
                 : uiColors[ImGuiCol_Text];
             ImGui::PushStyleColor(ImGuiCol_FrameBg, browserPathFrameBg);
             ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, browserPathHoverBg);
@@ -40988,7 +40983,7 @@ void RenderUI(AppState& state) {
                 if (filterLayout.searchBesideControls) ImGui::SameLine();
                 {
                     const auto palette = harken::toolbar::ResolveSearchPalette(kCurrentTheme,
-                        kCurrentTheme.resultsBG, uiColors[ImGuiCol_FrameBg], uiColors[ImGuiCol_Text]);
+                        kCurrentModules.results.background, uiColors[ImGuiCol_FrameBg], uiColors[ImGuiCol_Text]);
                     const auto search = harken::toolbar::DrawSearchField("##BrowserSearch", L(Search_FileHint),
                         state.browserFilterBuffer, sizeof(state.browserFilterBuffer), filterLayout.searchWidth, palette);
                     if (search.focused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -41480,9 +41475,9 @@ void RenderUI(AppState& state) {
                      IsLightCustomChromeThemeActive());
                 const bool useLightThemeFilterChips =
                     kIsRoseCedarOrSakura ||
-                    ((ThemeColors::current().resultsBG.x +
-                      ThemeColors::current().resultsBG.y +
-                      ThemeColors::current().resultsBG.z) > 2.20f);
+                    ((kCurrentModules.results.background.x +
+                      kCurrentModules.results.background.y +
+                      kCurrentModules.results.background.z) > 2.20f);
                 ImFont* filterFont = GetUIListFont();
                 if (filterFont) ImGui::PushFont(filterFont);
                 const ImVec2 filterFramePadding(8.0f, 4.0f);
@@ -41863,8 +41858,12 @@ void RenderUI(AppState& state) {
 
             if (tableMax.y > tableMin.y + 20.0f) {
                 bg->PushClipRect(tableMin, tableMax, true);
-                const ImVec4 listBgLeft = uiWithAlpha(kCurrentTheme.resultsGradientStart, 1.0f);
-                const ImVec4 listBgRight = uiWithAlpha(kCurrentTheme.resultsGradientEnd, 1.0f);
+                const ImVec4 listBgLeft = uiWithAlpha(kCurrentModules.results.gradientStart, 1.0f);
+                // 主题可关闭列表渐变：关闭时左右同色，整片纯色。
+                const ImVec4 listBgRight = uiWithAlpha(
+                    ThemeColors::current().resultsGradient
+                        ? kCurrentModules.results.gradientEnd
+                        : kCurrentModules.results.gradientStart, 1.0f);
                 bg->AddRectFilledMultiColor(
                     tableMin, tableMax,
                     ImGui::GetColorU32(listBgLeft), ImGui::GetColorU32(listBgRight),
@@ -41878,7 +41877,9 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(
             ImGuiCol_ChildBg,
             kUseLightResultsChrome
-                ? uiWithAlpha(uiMix(kCurrentTheme.resultsGradientStart, kCurrentTheme.resultsGradientEnd, 0.50f), 1.0f)
+                ? uiWithAlpha(ThemeColors::current().resultsGradient
+                      ? uiMix(kCurrentModules.results.gradientStart, kCurrentModules.results.gradientEnd, 0.50f)
+                      : kCurrentModules.results.gradientStart, 1.0f)
                 : ImVec4(0, 0, 0, 0));
         ImFont* listFont = GetUIListFont();
         // Keep list text vertically centered, but cap vertical padding so large row heights
@@ -41958,16 +41959,16 @@ void RenderUI(AppState& state) {
                 rowMax.y = floorf(rowMax.y);
                 // Row chrome colors — derived from resultsSelection token
                 // Light themes (high-luma BG) need higher alpha for visible contrast.
-                const auto& _sel = ThemeColors::current().resultsSelection;
-                const auto& _bg  = ThemeColors::current().resultsBG;
+                const auto& _sel = results.selection;
+                const auto& _bg  = results.background;
                 const float bgLuma = _bg.x * 0.299f + _bg.y * 0.587f + _bg.z * 0.114f;
                 const bool lightBg = (bgLuma >= 0.72f);
                 const ImU32 rowSelFill = IM_COL32((int)(_sel.x*255), (int)(_sel.y*255), (int)(_sel.z*255), lightBg ? 82 : 48);
                 const ImU32 rowSelCue = IM_COL32((int)(_sel.x*255), (int)(_sel.y*255), (int)(_sel.z*255), lightBg ? 208 : 148);
                 const ImU32 rowHoverFill = IM_COL32((int)(_sel.x*255), (int)(_sel.y*255), (int)(_sel.z*255), lightBg ? 38 : 22);
-                const auto& _activeBdr = ThemeColors::current().resultsActiveBorder;
+                const auto& _activeBdr = results.activeBorder;
                 const ImU32 rowSelOutline = IM_COL32((int)(_activeBdr.x*255), (int)(_activeBdr.y*255), (int)(_activeBdr.z*255), lightBg ? 120 : 104);
-                const auto& _bdr = ThemeColors::current().resultsOutline;
+                const auto& _bdr = results.outline;
                 const ImU32 rowSep = IM_COL32((int)(_bdr.x*255), (int)(_bdr.y*255), (int)(_bdr.z*255), 16);
                 // Table rows are split into per-column draw channels. Drawing a full-width
                 // rect from column 0 can be clipped to the file-name/waveform area on some
@@ -42101,7 +42102,7 @@ void RenderUI(AppState& state) {
             {
             ChromeTextScope _chromeHeader;
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-            const ImVec4 kListHeaderText = uiWithAlpha(uiMix(ThemeColors::current().resultsText, ThemeColors::current().resultsSecondaryText, 0.66f), 0.95f);
+            const ImVec4 kListHeaderText = uiWithAlpha(uiMix(results.text, results.secondaryText, 0.66f), 0.95f);
             ImGui::PushFont(GetUIFontEmphasis());
             ImGui::PushStyleColor(ImGuiCol_Text, kListHeaderText);
             for (int col = 0; col < totalColumns; col++) {
@@ -42786,7 +42787,7 @@ void RenderUI(AppState& state) {
                                 // Only draw playhead for currently playing file
                                 if (isCurrentFile && playPos > 0.0f) {
                                 float x = wavePos.x + playPos * waveWidth;
-                                const ImVec4 themePlayhead = ThemeColors::current().waveformPositionLine;
+                                const ImVec4 themePlayhead = kCurrentModules.waveform.playhead;
                                 ImGui::GetWindowDrawList()->AddLine(
                                     ImVec2(x, wavePos.y),
                                     ImVec2(x, wavePos.y + waveHeight),
@@ -42898,10 +42899,10 @@ void RenderUI(AppState& state) {
                     // Browser rows follow the same hierarchy as database rows:
                     // primary filename > secondary metadata > subtle placeholders.
                     const ImVec4 kBL2 = isSelected
-                        ? uiWithAlpha(uiMix(kThemeTextMuted, ThemeColors::current().resultsText, 0.26f), 0.98f)
+                        ? uiWithAlpha(uiMix(kThemeTextMuted, kCurrentModules.results.text, 0.26f), 0.98f)
                         : kThemeTextMuted;
                     const ImVec4 kBL3 = isSelected
-                        ? uiWithAlpha(uiMix(kBL2, ThemeColors::current().resultsText, 0.12f), 0.80f)
+                        ? uiWithAlpha(uiMix(kBL2, kCurrentModules.results.text, 0.12f), 0.80f)
                         : uiWithAlpha(kThemeTextSubtle, 0.92f);
 
                     // Duration — look up from DB metadata cache
@@ -44286,8 +44287,8 @@ void RenderUI(AppState& state) {
                         ImGui::IsMouseHoveringRect(snippetHoverRectMin, snippetHoverRectMax, true);
                     if (canShowSearchTooltip) {
                         if (HasSearchExplainability(record, state.lastAppliedSearchText) && BeginSearchExplainabilityTooltip()) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().resultsText);
-                        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ThemeColors::current().resultsSecondaryText);
+                        ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
+                        ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 54.0f);
                         RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
                         LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
@@ -44559,11 +44560,11 @@ void RenderUI(AppState& state) {
                     // L2 (#8B949E) = metadata: format, size, description, category
                     // L3 (#484F58) = unit suffixes (implicit in TextDisabled)
                     const ImVec4 kL2 = isSelected
-                        ? uiWithAlpha(uiMix(ThemeColors::current().resultsSecondaryText, ThemeColors::current().resultsText, 0.28f), 0.98f)
-                        : ThemeColors::current().resultsSecondaryText;
-                    const ImVec4 kL3Base = uiMix(ThemeColors::current().resultsSecondaryText, ThemeColors::current().resultsBG, 0.24f);
+                        ? uiWithAlpha(uiMix(kCurrentModules.results.secondaryText, kCurrentModules.results.text, 0.28f), 0.98f)
+                        : kCurrentModules.results.secondaryText;
+                    const ImVec4 kL3Base = uiMix(kCurrentModules.results.secondaryText, kCurrentModules.results.background, 0.24f);
                     const ImVec4 kL3 = isSelected
-                        ? uiWithAlpha(uiMix(kL2, ThemeColors::current().resultsText, 0.10f), 0.82f)
+                        ? uiWithAlpha(uiMix(kL2, kCurrentModules.results.text, 0.10f), 0.82f)
                         : uiWithAlpha(kL3Base, 0.90f);
 
                     // Duration (Mono, L2 gray)
@@ -44635,8 +44636,8 @@ void RenderUI(AppState& state) {
                         ImGui::IsMouseHoveringRect(descriptionHoverRectMin, descriptionHoverRectMax, true);
                     if (canShowDescriptionTooltip) {
                         if (BeginSearchExplainabilityTooltip()) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ThemeColors::current().resultsText);
-                        ImGui::PushStyleColor(ImGuiCol_TextDisabled, ThemeColors::current().resultsSecondaryText);
+                        ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
+                        ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 56.0f);
                         ImGui::TextDisabled("%s", L(Info_Description));
                         ImGui::TextUnformatted(listDescription.empty() ? L(Info_NoDescription) : listDescription.c_str());
@@ -45603,7 +45604,7 @@ void RenderUI(AppState& state) {
     float offsetY = 40.0f * (1.0f - t);
         ImVec2 currentPos = ImGui::GetCursorPos();
         const ImVec4 transportSeamBg = uiWithAlpha(
-            uiMix(ThemeColors::current().transportBarBG, ThemeColors::current().waveformBG, 0.38f),
+            uiMix(kCurrentModules.transport.background, kCurrentModules.waveform.background, 0.38f),
             1.0f);
         if (offsetY > 0.5f) {
             ImVec2 gapMin = ImGui::GetCursorScreenPos();
@@ -45628,7 +45629,7 @@ void RenderUI(AppState& state) {
     // 波形 / 传输与筛选器、Info 视为同级面板，先统一外壳底色；内部波形区域仍单独走 waveformBG。
     const float waveformDockHeight = waveformPanelHeight + playlistQuickBarHeight;
     const ImVec4 kLegacyWaveDockSurface = uiWithAlpha(
-        uiMix(ThemeColors::waveformPanelBG(kCurrentTheme), kCurrentTheme.resultsBG, 0.20f),
+        uiMix(kCurrentModules.waveform.background, kCurrentModules.results.background, 0.20f),
         1.0f);
     const ImVec4 workspaceWaveDockSurface = kUsePreWorkspaceSemanticColors
         ? kLegacyWaveDockSurface
@@ -45785,11 +45786,13 @@ void RenderUI(AppState& state) {
         barOrigin.y = std::floor(barOrigin.y);
 
         const ThemeColorScheme& tcsTransport = ThemeColors::current();
+        const ThemeModuleColors transportModules = ResolveThemeModuleColors(tcsTransport);
+        const auto& transportColors = transportModules.transport;
         // Transport bar: stay on theme tokens; playing used to blend two very different mixes + navy
         // text pull-in → muddy low-contrast slab on Cloud Sea / custom JSON. Keep one stable base from
         // transport + waveform, then a tiny controlAccent tint while playing (readability > spectacle).
         const ImVec4 kLegacyTransportSurface = uiWithAlpha(
-            tcsTransport.transportBarBG, 1.0f);
+            transportColors.background, 1.0f);
         const ImVec4 transportBarBg = kUsePreWorkspaceSemanticColors
             ? kLegacyTransportSurface
             : workspacePalette.dockedSurface;
@@ -45797,12 +45800,12 @@ void RenderUI(AppState& state) {
             transportBarBg.x * 0.299f + transportBarBg.y * 0.587f + transportBarBg.z * 0.114f;
         const bool transportBarIsDark = transportBarLuma < 0.50f;
         const ImU32 tbIconIdle = ImGui::GetColorU32(transportBarIsDark
-            ? uiWithAlpha(uiMix(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), tcsTransport.controlAccent, 0.08f), 0.98f)
-            : uiWithAlpha(uiMix(tcsTransport.interfaceText, tcsTransport.controlAccent, 0.18f), 0.98f));
+            ? uiWithAlpha(uiMix(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), transportColors.accent, 0.08f), 0.98f)
+            : uiWithAlpha(uiMix(transportColors.text, transportColors.accent, 0.18f), 0.98f));
         const ImU32 tbIconHover = ImGui::GetColorU32(transportBarIsDark
             ? uiWithAlpha(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 1.0f)
-            : uiWithAlpha(uiMix(tcsTransport.interfaceText, tcsTransport.controlAccent, 0.42f), 1.0f));
-        const ImU32 tbIconActive = ImGui::GetColorU32(uiWithAlpha(tcsTransport.controlAccent, 1.0f));
+            : uiWithAlpha(uiMix(transportColors.text, transportColors.accent, 0.42f), 1.0f));
+        const ImU32 tbIconActive = ImGui::GetColorU32(uiWithAlpha(transportColors.accent, 1.0f));
         const ImU32 transportDividerStrongCol = ImGui::GetColorU32(
             uiWithAlpha(workspacePalette.splitter, 0.50f));
 
@@ -45938,8 +45941,8 @@ void RenderUI(AppState& state) {
             ImU32 tcColor = tcHovered
                 ? kThemeTimecodeTextHover
                 : ImGui::GetColorU32(transportBarIsDark
-                    ? uiWithAlpha(uiMix(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), tcsTransport.timecodeText, 0.20f), 0.96f)
-                    : uiWithAlpha(tcsTransport.timecodeText, transportIdleVisual ? 0.92f : 1.0f));
+                    ? uiWithAlpha(uiMix(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), transportColors.timecodeText, 0.20f), 0.96f)
+                    : uiWithAlpha(transportColors.timecodeText, transportIdleVisual ? 0.92f : 1.0f));
             tcColor = ImGui::GetColorU32(TransportContrast::ForSurface(
                 ImGui::ColorConvertU32ToFloat4(tcColor), transportBarBg, 4.7));
             if (mono) {
@@ -46345,8 +46348,8 @@ void RenderUI(AppState& state) {
             ImGui::SetCursorScreenPos(ImVec2(curX, TB_CENTER_Y(kKeyBpmHeight)));
 
             // Theme-adaptive badge colors with confidence-based hue (mirrors table column logic)
-            const ImVec4 kbBadgeBg   = uiMix(tcsTransport.frameBgBase, transportBarBg, 0.35f);
-            const ImVec4 kbNeutral   = tcsTransport.interfaceText;
+            const ImVec4 kbBadgeBg   = uiMix(transportModules.controls.frame, transportBarBg, 0.35f);
+            const ImVec4 kbNeutral   = transportColors.text;
             // Key: greenish at high conf, neutral at mid, dimmed at low, neutral when no data
             ImVec4 kbKeyColor;
             if (s_keyBpmKeyConf >= 0.7f)
@@ -46356,14 +46359,14 @@ void RenderUI(AppState& state) {
             else if (s_keyBpmKeyConf > 0.0f)
                 kbKeyColor = uiWithAlpha(kbNeutral, 0.55f);
             else
-                kbKeyColor = tcsTransport.controlAccent; // no confidence data — use accent as fallback
+                kbKeyColor = transportColors.accent; // no confidence data — use accent as fallback
             // BPM: warm amber at high conf, neutral otherwise
             const ImVec4 kbNumColor  = (s_keyBpmBpmConf > 0.0f)
                 ? ImVec4(0.7f + s_keyBpmBpmConf * 0.3f, 0.55f + s_keyBpmBpmConf * 0.35f, 0.2f, 1.0f)
-                : tcsTransport.timecodeText;
+                : transportColors.timecodeText;
             const ImVec4 kbUnitColor = uiWithAlpha(kbNumColor, 0.52f);
-            const ImVec4 kbDotColor  = uiWithAlpha(tcsTransport.interfaceText, 0.30f);
-            const ImVec4 kbBorderCol = uiWithAlpha(tcsTransport.chromeBorder, 0.45f);
+            const ImVec4 kbDotColor  = uiWithAlpha(transportColors.text, 0.30f);
+            const ImVec4 kbBorderCol = uiWithAlpha(transportColors.border, 0.45f);
 
             const ImVec2 kbBadgePos = ImGui::GetCursorScreenPos();
             ImGui::Dummy(ImVec2(kKeyBpmWidth, kKeyBpmHeight));
@@ -46442,7 +46445,7 @@ void RenderUI(AppState& state) {
             // 2. 绘制基础底座与「能量余晖」
             // 信号越强，底座边缘越会透出微弱的主题色光芒
             ImU32 energyGlow = ImGui::GetColorU32(uiWithAlpha(
-                ImVec4(tcsTransport.controlAccent.x, tcsTransport.controlAccent.y, tcsTransport.controlAccent.z, 1.0f),
+                ImVec4(transportColors.accent.x, transportColors.accent.y, transportColors.accent.z, 1.0f),
                 (transportIdleVisual ? 0.06f : 0.15f) * signalLevel));
             volDl->AddRectFilled(ImVec2(volPos.x - 2, volPos.y - 2), ImVec2(volPos.x + volWidth + 2, volPos.y + volHeight + 2), energyGlow, 6.0f);
 
@@ -46454,7 +46457,7 @@ void RenderUI(AppState& state) {
             if (signalWidth > 1.0f) {
                 const float phantomAlpha = transportIdleVisual ? 0.06f : 0.12f;
                 ImU32 phantomCol = ImGui::GetColorU32(uiWithAlpha(
-                    ImVec4(tcsTransport.controlAccent.x, tcsTransport.controlAccent.y, tcsTransport.controlAccent.z, 1.0f),
+                    ImVec4(transportColors.accent.x, transportColors.accent.y, transportColors.accent.z, 1.0f),
                     phantomAlpha + 0.06f * sinf(time * 12.0f)));
                 volDl->AddRectFilled(
                     ImVec2(volPos.x + 2, volPos.y + volHeight * 0.75f), // 只占底部 1/4 高度，显得精致
@@ -46493,21 +46496,21 @@ void RenderUI(AppState& state) {
                         ? ImGui::GetColorU32(uiWithAlpha(uiMix(COLOR_SELECTED, kThemeTextStrong, 0.18f), 1.0f))
                         : fillMid;
                 } else if (kUseLightSoftChromeTheme) {
-                    const ImVec4 vc = tcsTransport.volumeColor;
-                    const ImVec4 accentGold = tcsTransport.toolbarAccent;
+                    const ImVec4 vc = transportColors.level;
+                    const ImVec4 accentGold = transportModules.topBar.accent;
                     fillStart = ImGui::GetColorU32(uiWithAlpha(vc, 1.0f));
                     ImU32 fillMid =
-                        ImGui::GetColorU32(uiWithAlpha(uiMix(vc, tcsTransport.waveformColor, 0.28f), 1.0f));
+                        ImGui::GetColorU32(uiWithAlpha(uiMix(vc, transportColors.waveform, 0.28f), 1.0f));
                     fillEnd = (volume > 80.0f)
                         ? ImGui::GetColorU32(uiWithAlpha(uiMix(vc, accentGold, 0.42f), 1.0f))
                         : fillMid;
                 } else {
-                    const ImVec4 vc = tcsTransport.volumeColor;
+                    const ImVec4 vc = transportColors.level;
                     fillStart = ImGui::GetColorU32(uiWithAlpha(vc, 1.0f));
                     ImU32 fillMid =
-                        ImGui::GetColorU32(uiWithAlpha(uiMix(vc, tcsTransport.waveformColor, 0.30f), 1.0f));
+                        ImGui::GetColorU32(uiWithAlpha(uiMix(vc, transportColors.waveform, 0.30f), 1.0f));
                     fillEnd = (volume > 80.0f)
-                        ? ImGui::GetColorU32(uiWithAlpha(uiMix(tcsTransport.meterWarning, tcsTransport.waveformColor, 0.16f), 1.0f))
+                        ? ImGui::GetColorU32(uiWithAlpha(uiMix(transportColors.meterWarning, transportColors.waveform, 0.16f), 1.0f))
                         : fillMid;
                 }
                 volumeFillStart=fillStart;volumeFillEnd=fillEnd;
@@ -46566,7 +46569,7 @@ void RenderUI(AppState& state) {
                 const auto b=ImGui::ColorConvertU32ToFloat4(normal ? volumeFillEnd : volumeOverEnd);
                 return TransportContrast::Over(ImLerp(a,b,t),volumeShellSurface);
             };
-            TransportValueText::Draw(volDl,textDrawPos,volText,tcsTransport.interfaceText,
+            TransportValueText::Draw(volDl,textDrawPos,volText,transportColors.text,
                 volumeSurfaceAt,"volume.label");
             if (TransportVisualAudit::Collecting()) {
                 TransportVisualAudit::Record("volume.outline", false, borderColor, ImGui::GetColorU32(transportBarBg),
@@ -46826,7 +46829,7 @@ void RenderUI(AppState& state) {
                     bool csActive = (csVal > 0.0f);
                     // 自适应：按传输栏背景亮度决定线条色（JadeMist 等浅窗主题下传输栏仍是深色，
                     // 若直接查 WindowBg 会误判为浅底 → 线条在深底上几乎不可见）
-                    const ImVec4& tbBg = ThemeColors::current().transportBarBG;
+                    const ImVec4& tbBg = transportColors.background;
                     const bool csLight = (tbBg.x + tbBg.y + tbBg.z) > 2.0f;
                     // Wide is blue, narrow is amber, and neutral follows the transport background.
                     ImU32 colLine, colFillActive, colFillIdle;
@@ -47513,7 +47516,7 @@ void RenderUI(AppState& state) {
         const ImVec4 spectrumFrame = TransportContrast::Over(ImGui::GetStyleColorVec4(ImGuiCol_FrameBg), transportBarBg);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
         ImGui::PushStyleColor(ImGuiCol_Text, TransportContrast::ForSurface(
-            tcsTransport.interfaceText, transportBarBg, 4.7));
+            transportColors.text, transportBarBg, 4.7));
         ImGui::PushStyleColor(ImGuiCol_Border, TransportContrast::ForSurface(
             ImGui::GetStyleColorVec4(ImGuiCol_Border), transportBarBg, 3.2));
         ImGui::PushStyleColor(ImGuiCol_CheckMark, TransportContrast::ForSurface(
@@ -47538,7 +47541,7 @@ void RenderUI(AppState& state) {
                 ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x * 0.18f));
                 float blendPercent = state.spectrogramBlend * 100.0f;
                 const ImU32 blendInk = ImGui::GetColorU32(TransportContrast::ForSurface(
-                    tcsTransport.interfaceText, spectrumFrame, 4.7));
+                    transportColors.text, spectrumFrame, 4.7));
                 if (TransportBlendSlider::Draw(u8"##SpectrogramBlend", &blendPercent,
                     blendInk, ImGui::GetColorU32(transportBarBg))) {
                     state.spectrogramBlend = blendPercent / 100.0f;
@@ -47562,7 +47565,7 @@ void RenderUI(AppState& state) {
                 else if (state.spectrogramFFTSize == 8192) fftIdx = 4;
                 else fftIdx = 5;
                 ImGui::PushStyleColor(ImGuiCol_Text, TransportContrast::ForSurface(
-                    tcsTransport.interfaceText, spectrumFrame, 4.7));
+                    transportColors.text, spectrumFrame, 4.7));
                 ImGui::PushStyleColor(ImGuiCol_Button, spectrumFrame);
                 if (ImGui::Combo(u8"##FFTSize", &fftIdx, fftSizes, 6)) {
                     const int sizes[] = { 512, 1024, 2048, 4096, 8192, 16384 };
@@ -47652,7 +47655,7 @@ void RenderUI(AppState& state) {
             const float statusTextY = barOrigin.y + std::floor((kBarH - statusTextSize.y) * 0.5f);
             const float statusTextX = topBarStatusMinX + 8.0f;
             const ImVec4 statusTone = uiWithAlpha(
-                uiMix(tcsTransport.interfaceText, tcsTransport.waveformColor, transportBarIsDark ? 0.10f : 0.18f),
+                uiMix(transportColors.text, transportColors.waveform, transportBarIsDark ? 0.10f : 0.18f),
                 transportIdleVisual ? 0.72f : 0.86f);
             const ImVec2 clipMin(statusTextX, barOrigin.y + 2.0f);
             const ImVec2 clipMax(topBarStatusMaxX, barOrigin.y + kBarH - 2.0f);
@@ -47722,8 +47725,11 @@ void RenderUI(AppState& state) {
         {
             ImDrawList* playerFooterStripDrawList = ImGui::GetWindowDrawList();
             const ThemeColorScheme& playerFooterStripTheme = ThemeColors::current();
+            const ThemeModuleColors playerFooterStripModules = ResolveThemeModuleColors(playerFooterStripTheme);
             const ImVec4 playerFooterStripBase =
-                ResolveWaveformFooterSurface(playerFooterStripTheme);
+                ResolveWaveformFooterSurface(
+                    playerFooterStripModules.waveform,
+                    ThemeColors::isLightChromeTheme(playerFooterStripTheme));
             const bool playerFooterStripIsLight =
                 ThemeColors::isLightChromeTheme(playerFooterStripTheme);
             const ImVec2 playerFooterStripMin(
@@ -47783,7 +47789,7 @@ void RenderUI(AppState& state) {
             // 这里不能只看主题枚举；当前界面已经是浅色波形区时，也必须强制走浅色 pitch 壳层，
             // 否则会出现"整体粉白，但 pitch 仍是旧黑条"的漏网情况。
             const bool useSoftPitchChrome = kUseSoftChromeTheme || IsLightWaveThemeActive();
-            const ImVec4 freqShiftGold = ThemeColors::current().wwiseDiffReplaced;
+            const ImVec4 freqShiftGold = kCurrentModules.wwise.replaced;
             const ImVec4 pitchAccent = freqShiftMode ? freqShiftGold : COLOR_ACCENT;
             const ImU32 pitchHousingOuter = useSoftPitchChrome
                 ? ImGui::GetColorU32(uiWithAlpha(uiMix(uiColors[ImGuiCol_WindowBg], uiColors[ImGuiCol_FrameBg], 0.78f), 1.0f))
@@ -48395,7 +48401,7 @@ void RenderUI(AppState& state) {
                     float playPos = GetPlayheadDrawPosition(state);
                     float playX = waveformPos.x + (float)((playPos - startNorm) / windowSize) * waveformWidth;
                     if (playX >= waveformPos.x && playX <= waveformPos.x + waveformWidth) {
-                        const ImVec4 themePlayhead = ThemeColors::current().waveformPositionLine;
+                        const ImVec4 themePlayhead = kCurrentModules.waveform.playhead;
                         ImU32 playGlow = ImGui::GetColorU32(ImVec4(themePlayhead.x, themePlayhead.y, themePlayhead.z, 0.38f));
                         ImU32 playCore = ImGui::GetColorU32(ImVec4(themePlayhead.x, themePlayhead.y, themePlayhead.z, 1.0f));
                         dl->AddLine(ImVec2(playX, waveformPos.y),
@@ -48536,8 +48542,12 @@ void RenderUI(AppState& state) {
 
         {
             ImDrawList* scrollDl = ImGui::GetWindowDrawList();
-            const ImVec4 footerShelfBase = ResolveWaveformFooterSurface(ThemeColors::current());
-            const bool footerShelfIsLight = ThemeColors::isLightChromeTheme(ThemeColors::current());
+            const ThemeColorScheme& footerShelfTheme = ThemeColors::current();
+            const ThemeModuleColors footerShelfModules = ResolveThemeModuleColors(footerShelfTheme);
+            const ImVec4 footerShelfBase = ResolveWaveformFooterSurface(
+                footerShelfModules.waveform,
+                ThemeColors::isLightChromeTheme(footerShelfTheme));
+            const bool footerShelfIsLight = ThemeColors::isLightChromeTheme(footerShelfTheme);
             const float meterFooterExtraW = state.showLoudnessMeter ? (5.0f + meterWidth) : 0.0f;
             const float footerShelfTopY = waveformPos.y + waveformHeight + 1.0f;
             const float footerShelfBottomY = footerShelfTopY + waveFileNameBarHeight + 2.0f;
@@ -48563,7 +48573,7 @@ void RenderUI(AppState& state) {
                 ImVec2(footerShelfMin.x + 0.5f, footerShelfMin.y + 0.5f),
                 ImVec2(footerShelfVisualMax.x - 0.5f, footerShelfVisualMax.y - 0.5f),
                 ImGui::GetColorU32(uiWithAlpha(
-                    uiMix(ThemeColors::waveformFrameBorder(ThemeColors::current()), footerShelfBase, footerShelfIsLight ? 0.56f : 0.34f),
+                    uiMix(footerShelfModules.waveform.border, footerShelfBase, footerShelfIsLight ? 0.56f : 0.34f),
                     footerShelfIsLight ? 0.16f : 0.24f)),
                 5.0f,
                 ImDrawFlags_RoundCornersBottom,
@@ -48572,7 +48582,7 @@ void RenderUI(AppState& state) {
                 ImVec2(footerShelfMin.x + 1.0f, footerShelfMin.y + 0.5f),
                 ImVec2(footerShelfVisualMax.x - 1.0f, footerShelfMin.y + 0.5f),
                 ImGui::GetColorU32(uiWithAlpha(
-                    uiMix(ThemeColors::current().waveformSplitterLine, footerShelfBase, 0.22f),
+                    uiMix(footerShelfModules.waveform.splitterLine, footerShelfBase, 0.22f),
                     footerShelfIsLight ? 0.18f : 0.22f)),
                 1.0f);
 
@@ -48735,7 +48745,10 @@ void RenderUI(AppState& state) {
             }
 
             const ThemeColorScheme& footerSch = ThemeColors::current();
-            const ImVec4 footerBase = ResolveWaveformFooterSurface(footerSch);
+            const ThemeModuleColors footerModules = ResolveThemeModuleColors(footerSch);
+            const ImVec4 footerBase = ResolveWaveformFooterSurface(
+                footerModules.waveform,
+                ThemeColors::isLightChromeTheme(footerSch));
             const bool footerIsLight = ThemeColors::isLightChromeTheme(footerSch);
             const float footerPadX = 8.0f;
             const float footerMiniBtnH = 22.0f;
@@ -48779,7 +48792,7 @@ void RenderUI(AppState& state) {
                 ImVec2(p0.x + 4.0f, p1.y - 0.5f),
                 ImVec2(p1Visual.x - 4.0f, p1.y - 0.5f),
                 ImGui::GetColorU32(uiWithAlpha(
-                    uiMix(footerSch.waveformSplitterLine, footerBase, footerIsLight ? 0.48f : 0.30f),
+                    uiMix(footerModules.waveform.splitterLine, footerBase, footerIsLight ? 0.48f : 0.30f),
                     footerIsLight ? 0.10f : 0.14f)),
                 1.0f);
 
@@ -48823,7 +48836,7 @@ void RenderUI(AppState& state) {
             ImVec2 nameTextSize = ImGui::CalcTextSize(footerLeadingText.c_str());
             float nameY = p0.y + std::floor(std::max(3.0f, (waveFileNameBarHeight - nameTextSize.y) * 0.5f));
             ImU32 textCol = ImGui::GetColorU32(uiWithAlpha(
-                uiMix(footerSch.interfaceText, footerBase, footerIsLight ? 0.22f : 0.28f),
+                uiMix(footerModules.transport.text, footerBase, footerIsLight ? 0.22f : 0.28f),
                 footerIsLight ? 0.84f : 0.92f));
             float nameClipRight = p0.x + waveformWidth - footerPadX - dawReservedW;
             if (footerCenterReserveW > 0.0f) {
@@ -48845,16 +48858,16 @@ void RenderUI(AppState& state) {
             if (footerHasRegionSelection) {
                 const float regionR = 6.0f;
                 const ImVec4 regionFill = uiWithAlpha(
-                    uiMix(footerSch.controlAccent, footerBase, footerIsLight ? 0.84f : 0.88f),
+                    uiMix(footerModules.controls.accent, footerBase, footerIsLight ? 0.84f : 0.88f),
                     footerIsLight ? 0.20f : 0.16f);
                 const ImVec4 regionFillTop = uiWithAlpha(
-                    uiMix(footerSch.controlAccent, footerBase, footerIsLight ? 0.70f : 0.78f),
+                    uiMix(footerModules.controls.accent, footerBase, footerIsLight ? 0.70f : 0.78f),
                     footerIsLight ? 0.14f : 0.10f);
                 const ImVec4 regionBorder = uiWithAlpha(
-                    uiMix(footerSch.controlAccent, footerSch.chromeBorder, footerIsLight ? 0.28f : 0.46f),
+                    uiMix(footerModules.controls.accent, footerModules.surface.border, footerIsLight ? 0.28f : 0.46f),
                     footerIsLight ? 0.34f : 0.22f);
                 const ImVec4 regionText = uiWithAlpha(
-                    uiMix(footerSch.interfaceText, footerSch.controlAccent, footerIsLight ? 0.44f : 0.68f),
+                    uiMix(footerModules.transport.text, footerModules.controls.accent, footerIsLight ? 0.44f : 0.68f),
                     0.96f);
                 footerDl->AddRectFilled(regionCapsuleMin, regionCapsuleMax, ImGui::GetColorU32(regionFill), regionR);
                 footerDl->AddRectFilledMultiColor(
@@ -48917,11 +48930,14 @@ void RenderUI(AppState& state) {
                 bx = std::clamp(bx, p0.x + 8.0f, std::max(p0.x + 8.0f, maxX));
                 const float by = p0.y + std::floor((waveFileNameBarHeight - btnH) * 0.5f);
                 const ThemeColorScheme& miniSch = ThemeColors::current();
-                const ImVec4 miniFooter = ResolveWaveformFooterSurface(miniSch);
+                const ThemeModuleColors miniModules = ResolveThemeModuleColors(miniSch);
+                const ImVec4 miniFooter = ResolveWaveformFooterSurface(
+                    miniModules.waveform,
+                    ThemeColors::isLightChromeTheme(miniSch));
                 const bool miniIsLight = ThemeColors::isLightChromeTheme(miniSch);
-                const ImVec4 miniInk = uiMix(miniSch.interfaceText, miniFooter, 0.28f);
-                const ImVec4 miniInkHover = uiMix(miniSch.interfaceText, miniSch.controlAccent, 0.10f);
-                const ImVec4 miniInkActive = uiMix(miniSch.interfaceText, miniSch.controlAccent, 0.18f);
+                const ImVec4 miniInk = uiMix(miniModules.transport.text, miniFooter, 0.28f);
+                const ImVec4 miniInkHover = uiMix(miniModules.transport.text, miniModules.controls.accent, 0.10f);
+                const ImVec4 miniInkActive = uiMix(miniModules.transport.text, miniModules.controls.accent, 0.18f);
                 const ImU32 cIcon = ImGui::GetColorU32(uiWithAlpha(miniInk, 0.58f));
                 const ImU32 cIconHov = ImGui::GetColorU32(uiWithAlpha(miniInkHover, 0.78f));
                 const ImU32 cActiveOn = ImGui::GetColorU32(uiWithAlpha(miniInkActive, 0.86f));
@@ -48929,13 +48945,13 @@ void RenderUI(AppState& state) {
                     ? uiWithAlpha(uiMix(uiColors[ImGuiCol_ButtonHovered], miniFooter, 0.38f), 0.18f)
                     : ImVec4(37/255.f, 49/255.f, 62/255.f, 0.24f));
                 const ImU32 cFlatAct = ImGui::GetColorU32(kUseSoftChromeTheme
-                    ? uiWithAlpha(uiMix(miniSch.controlAccent, miniFooter, 0.42f), 0.18f)
+                    ? uiWithAlpha(uiMix(miniModules.controls.accent, miniFooter, 0.42f), 0.18f)
                     : ImVec4(45/255.f, 180/255.f, 255/255.f, 0.16f));
-                const ImU32 cModeDefaultBg = ImGui::GetColorU32(uiWithAlpha(uiMix(miniFooter, miniSch.frameBgBase, 0.34f), 0.18f));
-                const ImU32 cModeRail = ImGui::GetColorU32(uiWithAlpha(uiMix(miniFooter, miniSch.frameBgBase, 0.48f), 0.24f));
-                const ImU32 cModeRailBorder = ImGui::GetColorU32(uiWithAlpha(uiMix(miniSch.chromeBorder, miniFooter, 0.42f), 0.20f));
+                const ImU32 cModeDefaultBg = ImGui::GetColorU32(uiWithAlpha(uiMix(miniFooter, miniModules.controls.frame, 0.34f), 0.18f));
+                const ImU32 cModeRail = ImGui::GetColorU32(uiWithAlpha(uiMix(miniFooter, miniModules.controls.frame, 0.48f), 0.24f));
+                const ImU32 cModeRailBorder = ImGui::GetColorU32(uiWithAlpha(uiMix(miniModules.surface.border, miniFooter, 0.42f), 0.20f));
                 const ImU32 cModeActiveGlow = ImGui::GetColorU32(kUseSoftChromeTheme
-                    ? uiWithAlpha(uiMix(miniSch.controlAccent, miniFooter, 0.62f), 0.24f)
+                    ? uiWithAlpha(uiMix(miniModules.controls.accent, miniFooter, 0.62f), 0.24f)
                     : ImVec4(1.0f, 1.0f, 1.0f, 14.0f / 255.0f));
                 const float flatR = 5.0f;
                 const float clusterX = bx;
@@ -48945,14 +48961,14 @@ void RenderUI(AppState& state) {
                     clusterPlateMin,
                     clusterPlateMax,
                     ImGui::GetColorU32(uiWithAlpha(
-                        uiMix(miniFooter, miniSch.frameBgBase, miniIsLight ? 0.20f : 0.28f),
+                        uiMix(miniFooter, miniModules.controls.frame, miniIsLight ? 0.20f : 0.28f),
                         miniIsLight ? 0.20f : 0.14f)),
                     6.0f);
                 miniDl->AddRect(
                     clusterPlateMin,
                     clusterPlateMax,
                     ImGui::GetColorU32(uiWithAlpha(
-                        uiMix(miniSch.chromeBorder, miniFooter, miniIsLight ? 0.42f : 0.34f),
+                        uiMix(miniModules.surface.border, miniFooter, miniIsLight ? 0.42f : 0.34f),
                         miniIsLight ? 0.16f : 0.10f)),
                     6.0f,
                     0,
@@ -51122,7 +51138,7 @@ void RenderUI(AppState& state) {
                 const DockModuleShellLayout resultsShell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), ImGui::GetWindowPos(), leaf.rect.width, leaf.rect.height,
                     L(Misc_AllFiles),
-                    uiWithAlpha(ThemeColors::current().resultsBG, 1.0f),
+                    uiWithAlpha(kCurrentModules.results.background, 1.0f),
                     kTitleText);
                 ImGui::SetCursorPos(ImVec2(resultsShell.insetL, resultsShell.insetT));
                 ImGui::InvisibleButton("##DockedSearchResultsTitleBar",
@@ -51161,7 +51177,7 @@ void RenderUI(AppState& state) {
                     dockFlags)) {
                 const ImVec2 pos = ImGui::GetWindowPos();
                 const ImVec2 size = ImGui::GetWindowSize();
-                const ImVec4 bodyBg = uiWithAlpha(ThemeColors::current().filterBrowserBG, 1.0f);
+                const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
                     L(Panel_FilterTitle), bodyBg, kTitleText, true);
@@ -51416,7 +51432,7 @@ void RenderUI(AppState& state) {
         if (beginSharedDockWindowHost(
                 (std::string(testTitle) + "##DockTestPanel").c_str(),
                 &open, dockFlags)) {
-            const ImVec4 bodyBg = uiWithAlpha(ThemeColors::current().filterBrowserBG, 1.0f);
+            const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
             const DockModuleShellLayout shell = drawDockModuleShell(
                 ImGui::GetWindowDrawList(), ImGui::GetWindowPos(),
                 leaf.rect.width, leaf.rect.height, testTitle, bodyBg, kTitleText);
@@ -51666,8 +51682,8 @@ void RenderUI(AppState& state) {
     const bool useTokenStatusBar = kUseSoftChromeTheme || ThemeColors::isLightChromeTheme(ThemeColors::current());
     const ImVec4 statusBarBg = uiWithAlpha(
         uiMix(
-            uiMix(ThemeColors::current().transportBarBG, ThemeColors::current().frameBgBase, useTokenStatusBar ? 0.58f : 0.34f),
-            ThemeColors::current().mainWindowBG,
+            uiMix(kCurrentModules.transport.background, kCurrentModules.controls.frame, useTokenStatusBar ? 0.58f : 0.34f),
+            kCurrentModules.surface.canvas,
             useTokenStatusBar ? 0.18f : 0.10f),
         1.0f);
     if (mergeWaveformAndStatusShell) {
@@ -51688,20 +51704,23 @@ void RenderUI(AppState& state) {
             const bool isLightStatusTheme = (statusBarBg.x + statusBarBg.y + statusBarBg.z) > 2.15f;
             if (mergeWaveformAndStatusShell) {
                 const ThemeColorScheme& statusSch = ThemeColors::current();
-                const ImVec4 footerBase = ResolveWaveformFooterSurface(statusSch);
+                const ThemeModuleColors statusModules = ResolveThemeModuleColors(statusSch);
+                const ImVec4 footerBase = ResolveWaveformFooterSurface(
+                    statusModules.waveform,
+                    ThemeColors::isLightChromeTheme(statusSch));
                 const ImVec2 shellMin(sbMin.x + 2.0f, sbMin.y);
                 const ImVec2 shellMax(sbMax.x - 2.0f, sbMax.y);
                 const ImVec4 shellBgTop = uiWithAlpha(
                     uiMix(footerBase, statusBarBg, isLightStatusTheme ? 0.64f : 0.74f),
                     1.0f);
                 const ImVec4 shellBgBot = uiWithAlpha(
-                    uiMix(ThemeColors::waveformPanelBG(statusSch), statusBarBg, isLightStatusTheme ? 0.28f : 0.16f),
+                    uiMix(statusModules.waveform.background, statusBarBg, isLightStatusTheme ? 0.28f : 0.16f),
                     1.0f);
                 const ImVec4 shellEdge = uiWithAlpha(
                     uiMix(ThemeColors::waveformFrameBorder(statusSch), footerBase, isLightStatusTheme ? 0.56f : 0.34f),
                     isLightStatusTheme ? 0.14f : 0.22f);
                 const ImVec4 shellSeam = uiWithAlpha(
-                    uiMix(statusSch.waveformSplitterLine, footerBase, isLightStatusTheme ? 0.52f : 0.28f),
+                    uiMix(statusModules.waveform.splitterLine, footerBase, isLightStatusTheme ? 0.52f : 0.28f),
                     isLightStatusTheme ? 0.10f : 0.16f);
                 statusDl->AddRectFilledMultiColor(
                     shellMin,
@@ -51724,7 +51743,7 @@ void RenderUI(AppState& state) {
                     1.0f);
             } else if (kUseSoftChromeTheme) {
                 const ImVec4 statusSeamBase = uiMix(
-                    uiMix(ThemeColors::current().waveformSplitterLine, ThemeColors::current().chromeBorder, 0.42f),
+                    uiMix(kCurrentModules.waveform.splitterLine, kCurrentModules.surface.border, 0.42f),
                     statusBarBg,
                     isLightStatusTheme ? 0.58f : 0.24f);
                 ImU32 sbTopLine = ImGui::GetColorU32(uiWithAlpha(
@@ -51912,8 +51931,8 @@ void RenderUI(AppState& state) {
             const bool useTokenStatusBar = kUseSoftChromeTheme || ThemeColors::isLightChromeTheme(ThemeColors::current());
             const ImVec4 statusBarBg = uiWithAlpha(
                 uiMix(
-                    uiMix(ThemeColors::current().transportBarBG, ThemeColors::current().frameBgBase, useTokenStatusBar ? 0.58f : 0.34f),
-                    ThemeColors::current().mainWindowBG,
+                    uiMix(kCurrentModules.transport.background, kCurrentModules.controls.frame, useTokenStatusBar ? 0.58f : 0.34f),
+                    kCurrentModules.surface.canvas,
                     useTokenStatusBar ? 0.18f : 0.10f),
                 1.0f);
             ImDrawList* viewportBgDl = ImGui::GetBackgroundDrawList(viewport);

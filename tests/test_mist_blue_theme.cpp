@@ -33,7 +33,7 @@ int main() {
     check(Ratio(s.chromeBorder,s.metadataPanelBG)>=3.0,"info boundary against panel");
     check(Ratio(s.chromeBorder,s.resultsBG)>=3.0,"info boundary against workspace");
     check(Ratio(s.filterBrowserText,s.filterBrowserBG)>=4.5,"filter text");
-    check(Ratio(s.filterBrowserHeading,s.sidebarHeaderBG)>=4.5,"filter heading");
+    check(Ratio(s.filterBrowserHeading,s.filterBrowserBG)>=4.5,"filter heading");
     check(Ratio(s.metadataPanelLabel,s.metadataPanelBG)>=4.5,"metadata labels");
     check(Ratio(s.resultsSecondaryText,s.resultsBG)>=4.5,"secondary result labels");
     ImVec4 colors[ImGuiCol_COUNT]{};

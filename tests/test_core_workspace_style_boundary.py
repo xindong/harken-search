@@ -163,8 +163,8 @@ def test_shipping_imgui_composes_the_workspace_palette_from_current_theme_tokens
         "perimeter = kCurrentTheme.chromeBorder",
         "splitter = kCurrentTheme.waveformSplitterLine",
         "primaryText = kCurrentTheme.interfaceText",
-        "mutedText = kCurrentTheme.resultsSecondaryText",
-        "functionalAccent = kCurrentTheme.controlAccent",
+        "mutedText = kCurrentModules.results.secondaryText",
+        "functionalAccent = kCurrentModules.controls.accent",
         "error = kCurrentTheme.wwiseConnectFail",
     ):
         assert mapping in main
@@ -200,7 +200,7 @@ def test_only_four_non_dark_builtins_restore_pre_workspace_semantic_surfaces():
     assert "kLegacyWaveShellSurface" in waveform
     assert "ThemeColors::waveformPanelBG(waveformShellTheme)" in waveform
     assert "kLegacyTransportSurface" in waveform
-    assert "tcsTransport.transportBarBG" in waveform
+    assert "transportColors.background" in waveform
 
     # Splitter ownership and interaction colors are deliberately not rolled back.
     assert "workspacePalette.splitter" in module_shell
@@ -421,9 +421,9 @@ def test_browser_path_hover_uses_results_semantics_without_a_new_border():
     path_call = path_row[path_call_start : path_call_start + 420]
 
     assert "browserPathHoverBg" in path_row
-    assert "kCurrentTheme.resultsHeaderBG" in path_row
-    assert "kCurrentTheme.resultsSelection" in path_row
-    assert "kCurrentTheme.resultsText" in path_row
+    assert "kCurrentModules.results.header" in path_row
+    assert "kCurrentModules.results.selection" in path_row
+    assert "kCurrentModules.results.text" in path_row
     assert "const ImVec4 browserPathFrameBg" in path_row
     assert "browserPathInputFocused" in path_row
     assert "browserPathHitHovered ? browserPathHoverBg" in path_row
@@ -504,7 +504,7 @@ def test_transport_is_36_design_pixels_and_pitch_group_shares_one_column_center(
 def test_results_frame_has_one_complete_rounded_two_pixel_waveform_color_owner():
     main = read(MAIN_CPP)
     center_setup = between(main, "// Center list: results* tokens", "// Right Column - File Info")
-    assert "const ImVec4 centerResultsOutline = centerResultsTheme.waveformColor;" in center_setup
+    assert "const ImVec4 centerResultsOutline = centerResults.frameOutline;" in center_setup
     assert "const ImVec4 centerResultsOutline = workspacePalette.perimeter;" not in center_setup
     assert "ImGuiStyleVar_ChildBorderSize" not in center_setup
     assert 'BeginTransientScrollbarChild("CenterFileList", ImVec2(surfaceWidth, surfaceHeight), ImGuiChildFlags_AlwaysUseWindowPadding,' in center_setup
