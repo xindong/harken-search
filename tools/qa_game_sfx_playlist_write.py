@@ -12,7 +12,6 @@ import sqlite3
 import subprocess
 import sys
 import time
-import win32gui
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qa_external_ai_settings import library_id  # noqa: E402
