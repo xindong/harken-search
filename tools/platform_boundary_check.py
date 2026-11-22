@@ -881,8 +881,27 @@ BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
     'src/bootstrap/WindowsBootstrapWebView.cpp|native-symbol|CoTaskMemFree|2f6f35dbc21206c2|1',
     'src/bootstrap/WindowsBootstrapWebView.h|native-include|windows.h|d395cd89463e8f58|1',
 })
+# The bootstrap launcher guards a single install directory. Reviewed 2026-11-18:
+# the eight findings are the InstallMutationGuard identity probe and mutex wait.
+BOOTSTRAP_MAIN_PLATFORM_ADAPTER_EVIDENCE = "docs/architecture/bootstrap-main-native-audit.md"
+APPROVED_BOOTSTRAP_MAIN_PLATFORM_ADAPTER_FINGERPRINTS = frozenset({
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-include|windows.h|d395cd89463e8f58|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CloseHandle|97c6d24b6ef1dcfe|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|MultiByteToWideChar|4c3018a8eb2b8db2|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|MultiByteToWideChar|5bfb8a7166f50da5|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CreateFileW|233b50a7454c3fec|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|GetFileInformationByHandleEx|532e0fb6cb253794|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|CloseHandle|fbda12bae9f177bb|1',
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp|native-symbol|WaitForSingleObject|fe8dd7054cfd75c4|1',
+})
+
 
 PLATFORM_ADAPTER_PROFILES = {
+    'src/bootstrap/HarkenSearchBootstrapMain.cpp': (
+        "S6-02", BOOTSTRAP_MAIN_PLATFORM_ADAPTER_EVIDENCE,
+        frozenset({"native-include", "native-symbol"}),
+        APPROVED_BOOTSTRAP_MAIN_PLATFORM_ADAPTER_FINGERPRINTS,
+    ),
     'src/bootstrap/WindowsBootstrapProgress.cpp': (
         "BOOTSTRAP-PROGRESS", BOOTSTRAP_PROGRESS_PLATFORM_ADAPTER_EVIDENCE,
         frozenset({"native-include", "native-symbol", "filesystem-io"}),

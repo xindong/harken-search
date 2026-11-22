@@ -8,7 +8,7 @@ namespace {
 
 const wchar_t* kAudioExts[] = {
     L".wav", L".mp3", L".flac", L".aiff", L".aif",
-    L".ogg", L".m4a", L".wma", nullptr
+    L".ogg", L".m4a", L".wma", L".wv", nullptr
 };
 
 const char* kChoiceLeaves[] = {"UserChoice", "UserChoiceLatest", nullptr};

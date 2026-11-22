@@ -2486,7 +2486,8 @@ void TestGlobalCoverWallCacheStoresOnlyCompletePagedWallContract() {
           "BDD: Global cover-wall cache refuses partial paged walls that still have more DB pages or in-flight entries");
     Check(storeBody.find("cw.globalItemsCacheValid = true;") != std::string::npos,
           "BDD: Complete global cover-wall cache is still available after the final page");
-    Check(source.find("!cw.preloadFullList.empty() && cw.items.empty()") != std::string::npos &&
+    Check(source.find("if (preloadReadyForReuse) {") != std::string::npos &&
+          source.find("cw.items = cw.preloadFullList;") != std::string::npos &&
           source.find("cw.preloadFullList.clear();") != std::string::npos,
           "BDD: Preloaded first global cover-wall page is consumed once and cannot overwrite appended pages every frame");
     Check(appStateSource.find("std::string entriesRequestedCursor;") != std::string::npos &&

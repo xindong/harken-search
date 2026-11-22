@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
 CMAKE = (ROOT / "cmake/harken_search_behavior_tests.cmake").read_text(encoding="utf-8")
+LAYOUT = (ROOT / "src/ui/ResultsPanelLayout.h").read_text(encoding="utf-8")
 
 
 def _file_table_surface_block() -> str:
@@ -33,16 +34,17 @@ def test_zero_result_lists_reserve_no_standalone_empty_surface() -> None:
 
 def test_zero_result_table_keeps_full_height() -> None:
     surface = _file_table_surface_block()
-    assert "ImVec2 adjustedFileTableOuterSize = ImVec2(0.0f, 0.0f);" in surface
+    assert "tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth" in surface
 
 
 def test_truly_empty_list_does_not_keep_table_outer_border() -> None:
     surface = _file_table_surface_block()
     flags_start = surface.index("ImGuiTableFlags tableFlags")
-    table_start = surface.index('BeginTransientScrollbarTable("FileTableV6"')
+    table_start = surface.index("BeginTransientScrollbarTable(resultsTableName,")
     flags = surface[flags_start:table_start]
-    assert "ImGuiTableFlags_BordersOuter" in flags
-    assert "totalFileCount == 0" in flags
+    assert "harken::results::TableOuterFlags(emptyLibraryFileTable)" in flags
+    assert "emptyLibraryFileTable = (state.totalFileCount == 0)" in MAIN
+    assert "emptyLibrary ? ImGuiTableFlags_PadOuterX : ImGuiTableFlags_BordersOuter" in LAYOUT
 
 
 def test_zero_result_layer_renders_no_guidance_messages() -> None:

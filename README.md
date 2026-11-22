@@ -30,7 +30,7 @@ Windows desktop application for audio library browsing, search, preview, metadat
 python tools/remove_card_directory.py --workspace-root "<absolute-parent>" --card-name "<card-directory>" --card-prefix "<card-prefix>" --main-repository "<absolute-main-repository>" --repository xindong/harken-search --integration-ref qa/current --dry-run
 ```
 
-预检会刷新远端集成分支，拒绝链接、错误仓库、关联的其他 Git worktree、未保存或被 Git 忽略的文件（包括构建与测试产物）、隐藏修改的索引标记、stash，以及未合入的本地分支或标签。核对输出的目标与完整 HEAD 后，使用同一组参数，将 `--dry-run` 换成 `--execute --expected-head <HEAD>` 才会删除。脚本只处理指定目录；已有清理锁须人工核验，执行期间不要再向该目录写入文件。
+预检会刷新远端集成分支，拒绝链接、错误仓库、未保存或被 Git 忽略的文件（包括构建与测试产物）、隐藏修改的索引标记、stash，以及未合入的本地分支或标签。卡目录是独立 clone 时，还会拒绝同一仓库关联的其他 Git worktree；卡目录是 Git worktree 时，则要求它唯一登记在 `--main-repository` 指定的主仓、停在本卡功能分支，并且只证明本卡 HEAD 已合入（同仓其他卡的分支和标签不参与判定），删除时用 `git worktree remove` 注销登记。核对输出的目标与完整 HEAD 后，使用同一组参数，将 `--dry-run` 换成 `--execute --expected-head <HEAD>` 才会删除。卡目录根部遗留的 `_cuevi-session.json` 这类已知运行期文件，只有在未跟踪或被忽略时才按名字放行，并随目录一起删除；已暂存、已跟踪但有改动的同名文件仍然拒绝，避免把真实改动一起删掉。其他未跟踪或被忽略的文件同样拒绝。脚本只处理指定目录；已有清理锁须人工核验，执行期间不要再向该目录写入文件。
 
 ## Build
 

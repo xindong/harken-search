@@ -76,8 +76,14 @@ def main() -> int:
     check(bool(contract), "folder-browser behavior contract is readable")
 
     render_panel = extract_function(
-        source, "static void RenderBrowserFolderTreeSidebarPanel(AppState& state)"
+        source, "static void RenderBrowserFolderTreeSidebarPanel("
     )
+    toolbar = render_panel.partition("RenderFolderTreeExplorerToolbar(")[2]
+    refresh_action = extract_function(toolbar, "[&controls]() {")
+    locate_action = extract_function(toolbar, "[&controls, &currentBrowserPath]() {")
+    clear_search = "g_browserSystemFolderSearchBuffer[0] = '\\0';"
+    locate_current = "LocateBrowserSystemFolderPath(currentBrowserPath);"
+    render_system_tree = "RenderBrowserSystemFolderTree(state, controls.locate);"
     system_node = extract_function(
         source,
         "static void RenderBrowserSystemFolderNode(AppState& state,",
@@ -146,7 +152,7 @@ def main() -> int:
     check(
         "if (!searchQuery.empty())" in render_panel
         and "RenderBrowserSystemFolderSearchTree(state)" in render_panel
-        and "RenderBrowserSystemFolderTree(state)" in render_panel,
+        and render_system_tree in render_panel,
         "Browser search filters the lower system tree instead of the related-paths pane",
     )
 
@@ -280,16 +286,25 @@ def main() -> int:
         "Locate current folder primes the current path ancestor chain before scrolling",
     )
     check(
-        "LocateBrowserSystemFolderPath(state.fileBrowser.getCurrentPath())" in render_panel
-        and "g_browserSystemFolderSearchBuffer[0] = '\\0';" in render_panel,
+        "currentBrowserPath = state.fileBrowser.getCurrentPath();" in render_panel
+        and clear_search in locate_action
+        and locate_current in locate_action
+        and locate_action.index(clear_search) < locate_action.index(locate_current)
+        and "controls.locate.Request(g_browserSystemFolderTreeScrollTarget);" in locate_action,
         "Locate current folder clears folder search and reveals the Browser current path in the normal tree",
     )
     check(
-        "g_browserSystemFolderTreeCollapseAll = true;" in render_panel
-        and "ClearBrowserSystemFolderSearchState();" in render_panel
-        and "g_browserSystemFolderSearchBuffer[0] = '\\0';" in render_panel
-        and "g_browserSystemFolderSearchFocusRoot.clear();" in render_panel
-        and "LocateBrowserSystemFolderPath(currentBrowserPath)" not in render_panel,
+        "g_browserSystemFolderTreeCollapseAll = true;" in refresh_action
+        and "ClearBrowserSystemFolderSearchState();" in refresh_action
+        and clear_search in refresh_action
+        and "g_browserSystemFolderSearchFocusRoot.clear();" in refresh_action
+        and "ResetBrowserSystemFolderTreeCache();" in refresh_action
+        and "controls.locate = {};" in refresh_action
+        and "LocateBrowserSystemFolderPath(" not in refresh_action
+        and "QueueBrowserSystemFolderTreeLocate(" not in refresh_action
+        and "controls.locate.Request(" not in refresh_action
+        and render_panel.count("LocateBrowserSystemFolderPath(") == 1
+        and 0 <= toolbar.find(refresh_action) < toolbar.find(locate_action),
         "Refresh button mirrors DB refresh: clear search/scope, collapse tree, and do not locate current path",
     )
     tree_list = extract_function(source, "static void RenderFolderTreeExplorerList(")
@@ -308,7 +323,7 @@ def main() -> int:
     )
     check(
         "RenderFolderTreeExplorerList(" in render_panel
-        and "RenderBrowserSystemFolderTree(state);" in render_panel
+        and render_system_tree in render_panel
         and render_panel.find("RenderFolderTreeExplorerList(")
         < render_panel.find("g_browserSystemFolderTreeCollapseAll = false;"),
         "Refresh collapse flag remains alive through tree rendering before being cleared",

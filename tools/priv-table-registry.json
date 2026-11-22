@@ -2064,6 +2064,30 @@
     "血肉"
    ],
    "rationale": "AI 封面词库（侦察⑨正册）"
+  },
+  {
+   "path": "src/WwiseTransferPanel.cpp",
+   "pair": [
+    "Rename preset",
+    "重命名预设"
+   ],
+   "rationale": "wz Wwise 传输面板私有对照表；弹窗标题改用面板内标题后沿用"
+  },
+  {
+   "path": "src/WwiseTransferPanel.cpp",
+   "pair": [
+    "Save as preset",
+    "另存为预设"
+   ],
+   "rationale": "wz Wwise 传输面板私有对照表；弹窗标题改用面板内标题后沿用"
+  },
+  {
+   "path": "src/WwiseTransferPanel.cpp",
+   "pair": [
+    "Delete preset",
+    "删除预设"
+   ],
+   "rationale": "wz Wwise 传输面板私有对照表；弹窗标题改用面板内标题后沿用"
   }
  ]
 }

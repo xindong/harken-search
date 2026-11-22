@@ -447,6 +447,11 @@ std::string AutoDetectReaperRootPath() {
     return {};
 }
 
+bool ReaperProcessDefinitelyStopped() {
+    return Platform::FindProcessByImageName("reaper.exe").status ==
+           Platform::ProcessImageLookupStatus::NotFound;
+}
+
 BridgeBinaryInfo ProbeBridgeBinary(const std::string& pathUtf8) {
     BridgeBinaryInfo info;
     info.path = pathUtf8;
@@ -564,6 +569,9 @@ InstallStatus ProbeReaperBridge(const ReaperBridgeProbeOptions& options) {
     status.protocolCompatible = handshake.code == ReaperBridge::HandshakeCode::Ready;
     status.sendChannelAvailable = handshake.code == ReaperBridge::HandshakeCode::Ready;
     status.filePresent = installed.exists;
+    status.alternateFilePresent = fileAtOtherLocation;
+    status.legacyFilePresent = options.inspectLegacyComponent && target.targetResolved &&
+        FileExists(target.pluginDirectory / Utf8ToWideLocal(Platform::HarkenUserData::LegacyReaperPluginFileName()));
     status.correctLocation = target.targetResolved && installed.exists;
     status.hostRunning = target.hostRunning;
     status.handshakeOk = handshake.code == ReaperBridge::HandshakeCode::Ready;
@@ -573,12 +581,13 @@ InstallStatus ProbeReaperBridge(const ReaperBridgeProbeOptions& options) {
     return status;
 }
 
-InstallResult InstallReaperBridgeBinary(
+static InstallResult InstallReaperBridgeBinaryWithPolicy(
     const std::string& sourceDllUtf8,
     const std::string& targetDirectoryUtf8,
     bool hostRunning,
     bool dryRun,
-    ReaperBridgeInstallObserver observer)
+    ReaperBridgeInstallObserver observer,
+    bool installMissingOnly)
 {
     InstallResult result;
     const BridgeBinaryInfo source = ProbeBridgeBinary(sourceDllUtf8);
@@ -622,6 +631,11 @@ InstallResult InstallReaperBridgeBinary(
         existing.architecture == source.architecture &&
         existing.manifest == source.manifest &&
         existing.sha256 == source.sha256;
+    if (installMissingOnly && ((existing.exists && !alreadyCurrent) || FileExists(legacyTarget))) {
+        result.failureCode = "target-already-exists";
+        result.detail.setKey(LStr::DawPrefs_ExistingComponent);
+        return result;
+    }
     if (dryRun) {
         result.ok = true;
         result.changed = !alreadyCurrent;
@@ -631,7 +645,8 @@ InstallResult InstallReaperBridgeBinary(
         return result;
     }
     auto retireLegacyPlugin = [&]() {
-        if (hostRunning || !FileExists(legacyTarget) || SamePath(legacyTarget, target)) return;
+        if (installMissingOnly || hostRunning || !FileExists(legacyTarget) ||
+            SamePath(legacyTarget, target)) return;
         const BridgeBinaryInfo legacy = ProbeBridgeBinary(WideToUtf8Local(legacyTarget.wstring()));
         if (!legacy.exists || (!legacy.trustedSource && !legacy.legacySignature)) return;
         RemoveFileQuiet(legacyTarget);
@@ -646,7 +661,7 @@ InstallResult InstallReaperBridgeBinary(
         retireLegacyPlugin();
         return result;
     }
-    if (hostRunning) {
+    if (hostRunning || (installMissingOnly && !ReaperProcessDefinitelyStopped())) {
         result.failureCode = "reaper-close-required";
         result.detail.setKey(LStr::DBflow_CloseReaper);
         return result;
@@ -660,12 +675,15 @@ InstallResult InstallReaperBridgeBinary(
 
     const fs::path sourcePath(Utf8ToWideLocal(sourceDllUtf8));
     const fs::path temporary = UniqueTransactionPath(target, L".tmp");
-    RemoveFileQuiet(temporary);
+    if (!installMissingOnly) RemoveFileQuiet(temporary);
     const auto stagedCopy = Platform::FileSystem::CopyFileExclusiveAndFlush(
         sourcePath.u8string(), temporary.u8string());
     if (stagedCopy.status != Platform::FileSystem::DurableFileOpStatus::Success) {
         const uint32_t error = stagedCopy.systemError;
-        RemoveFileQuiet(temporary);
+        if (!installMissingOnly ||
+            stagedCopy.status != Platform::FileSystem::DurableFileOpStatus::TargetExists) {
+            RemoveFileQuiet(temporary);
+        }
         result.failureCode = "stage-failed-" + std::to_string(error);
         result.detail.setKeyInt(LStr::DBflow_StageFailFmt, error);
         return result;
@@ -711,20 +729,29 @@ InstallResult InstallReaperBridgeBinary(
         }
     }
 
+    if (installMissingOnly && !ReaperProcessDefinitelyStopped()) {
+        RemoveFileQuiet(temporary);
+        result.failureCode = "reaper-close-required";
+        result.detail.setKey(LStr::DBflow_CloseReaper);
+        return result;
+    }
     const auto replaced = Platform::FileSystem::ReplaceFileWriteThrough(
-        temporary.u8string(), target.u8string());
+        temporary.u8string(), target.u8string(), !installMissingOnly);
     if (replaced.status != Platform::FileSystem::DurableFileOpStatus::Success) {
         const uint32_t error = replaced.systemError;
         RemoveFileQuiet(temporary);
-        result.failureCode = "replace-failed-" + std::to_string(error);
-        result.detail.setKey(LStr::DBflow_AtomicFail);
+        const bool conflict = replaced.status == Platform::FileSystem::DurableFileOpStatus::TargetExists;
+        result.failureCode = conflict ? "target-already-exists" : "replace-failed-" + std::to_string(error);
+        result.detail.setKey(conflict ? LStr::DawPrefs_ExistingComponent : LStr::DBflow_AtomicFail);
         return result;
     }
     result.changed = true;
     auto failAfterReplacement = [&](const std::string& code, const LedgerText& detail) {
         result.failureCode = code;
         result.detail = detail;
-        if (RestorePreviousBridge(target, backup, hadExistingTarget, result, observer)) {
+        const bool stillOwnsTarget = !installMissingOnly || ComputeSha256(target) == source.sha256;
+        if (stillOwnsTarget &&
+            RestorePreviousBridge(target, backup, hadExistingTarget, result, observer)) {
             result.changed = false;
             result.detail += LedgerText::keyed(LStr::DBflow_RolledBackSuffix);
         } else {
@@ -751,16 +778,35 @@ InstallResult InstallReaperBridgeBinary(
     return result;
 }
 
-InstallResult InstallReaperBridge(
-    const ReaperBridgeProbeOptions& options,
+InstallResult InstallReaperBridgeBinary(
+    const std::string& sourceDllUtf8,
+    const std::string& targetDirectoryUtf8,
+    bool hostRunning,
     bool dryRun,
     ReaperBridgeInstallObserver observer)
+{
+    return InstallReaperBridgeBinaryWithPolicy(
+        sourceDllUtf8, targetDirectoryUtf8, hostRunning, dryRun, std::move(observer), false);
+}
+
+static InstallResult InstallReaperBridgeWithPolicy(
+    const ReaperBridgeProbeOptions& options,
+    bool dryRun,
+    ReaperBridgeInstallObserver observer,
+    bool installMissingOnly)
 {
     const ResolvedReaperTarget target = ResolveReaperTarget(options);
     if (!target.targetResolved) {
         InstallResult result;
         result.failureCode = "target-path-unresolved";
         result.detail.setKey(LStr::DBflow_UserPluginsUnlocatable);
+        return result;
+    }
+    if (installMissingOnly && !target.alternatePlugin.empty() &&
+        FileExists(target.alternatePlugin)) {
+        InstallResult result;
+        result.failureCode = "target-already-exists";
+        result.detail.setKey(LStr::DawPrefs_ExistingComponent);
         return result;
     }
     const fs::path bundledPath = options.bundledDllPathOverride.empty()
@@ -774,12 +820,21 @@ InstallResult InstallReaperBridge(
         result.detail.setKey(LStr::DBflow_BundleArchMismatch);
         return result;
     }
-    return InstallReaperBridgeBinary(
+    return InstallReaperBridgeBinaryWithPolicy(
         WideToUtf8Local(bundledPath.wstring()),
         WideToUtf8Local(target.pluginDirectory.wstring()),
         target.hostRunning,
         dryRun,
-        std::move(observer));
+        std::move(observer),
+        installMissingOnly);
+}
+
+InstallResult InstallReaperBridge(
+    const ReaperBridgeProbeOptions& options,
+    bool dryRun,
+    ReaperBridgeInstallObserver observer)
+{
+    return InstallReaperBridgeWithPolicy(options, dryRun, std::move(observer), false);
 }
 
 ReaperBridgeDoctorReport RunReaperBridgeDoctor(const ReaperBridgeDoctorRequest& request) {
@@ -805,10 +860,10 @@ ReaperBridgeDoctorReport RunReaperBridgeDoctor(const ReaperBridgeDoctorRequest& 
 
     if (request.action == ReaperBridgeDoctorAction::Repair ||
         request.action == ReaperBridgeDoctorAction::Update) {
-        report.install = InstallReaperBridge(
-            request.probeOptions, request.dryRun, request.installObserver);
+        report.install = InstallReaperBridgeWithPolicy(
+            request.probeOptions, request.dryRun, request.installObserver, request.installMissingOnly);
         if (!report.install.ok && report.install.failureCode == "reaper-close-required" &&
-            request.waitForHostExit) {
+            request.waitForHostExit && !request.installMissingOnly) {
             report.steps.push_back("waiting_for_reaper_exit");
             const int waitTimeoutMs = (std::max)(0, request.hostExitWaitTimeoutMs);
             const int waitIntervalMs = (std::max)(50, request.recheckIntervalMs);

@@ -31,6 +31,7 @@ void DrawFocusRing();
 
 enum class ButtonVariant {
     PrimarySearch,   // orange - local query / processing (Search, Scan, Rebuild)
+    DisabledSearch,  // muted search action that remains legible while unavailable
     PrimaryTransfer, // green  - outbound send / export (Transfer, Send, Export)
     Secondary,       // neutral fill (Save, Rename, Apply)
     Ghost,           // transparent background, label only
@@ -187,6 +188,7 @@ struct StandaloneWindowState {
 struct StandaloneWindowOptions {
     ImVec2 defaultSize{1040.0f, 514.0f};
     ImVec2 minimumSize{720.0f, 360.0f};
+    ImVec4 windowBackground{-1.0f, -1.0f, -1.0f, -1.0f};
 };
 
 void OpenStandaloneWindow(StandaloneWindowState* state);
@@ -197,12 +199,21 @@ void EndStandaloneWindow();
 
 // Modal dialog API.
 
-// Themed modal dialog. Pass `open` pointing at a bool; set to true to
-// request opening this frame. Returns true if the dialog is currently
-// rendering; caller pairs with EndDialog() when true. size {0,0} = auto.
-bool BeginDialog(const char* title, bool* open,
-                 float width = 480.0f, float height = 0.0f);
-void EndDialog();
+// The one modal surface used by every dialog: a rounded panel with a
+// macOS-style caption bar (title left, close right, draggable). `id` is the
+// popup id passed to ImGui::OpenPopup; the visible part before ## is what the
+// caption bar shows, so `id` and `title` may be the same string.
+// Dialogs that need a fixed size call ImGui::SetNextWindowSize() first and
+// leave out ImGuiWindowFlags_AlwaysAutoResize. Pass showClose = false for
+// dialogs that must be answered instead of dismissed. When the caption close
+// button has to undo dialog-local state, pass onCaptionClose so the X runs the
+// same cleanup as the cancel button instead of only closing the popup.
+// Pair with EndAlertDialog() only when this returns true.
+bool BeginAlertDialog(const char* id, const char* title,
+                      ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize,
+                      bool showClose = true,
+                      const std::function<void()>* onCaptionClose = nullptr);
+void EndAlertDialog();
 
 // Panel / SectionHeader / Divider (Task 14)
 

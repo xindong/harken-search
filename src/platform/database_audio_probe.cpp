@@ -69,6 +69,9 @@ const char* FormatName(const std::string& path) {
     if (extension == ".m4a") {
         return "M4A";
     }
+    if (extension == ".wv") {
+        return "WV";
+    }
     if (extension == ".aac") {
         return "AAC";
     }

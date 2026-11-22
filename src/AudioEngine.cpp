@@ -2761,6 +2761,7 @@ bool AudioEngine::loadFile(const std::string& filePath) {
     else if (ext == ".m4a") m_fileInfo.format = "M4A";
     else if (ext == ".aac") m_fileInfo.format = "AAC";
     else if (ext == ".wma") m_fileInfo.format = "WMA";
+    else if (ext == ".wv") m_fileInfo.format = "WV";
     else m_fileInfo.format = "Unknown";
 
     Platform::AudioPlayback::SetVolume(m_sound->Borrow(), std::max(0.0f, std::min(1.2f, m_volume * m_replayGain)));
@@ -3176,6 +3177,7 @@ void AudioEngine::loadFileWorkerLoop() {
             else if (ext == ".m4a") result.fileInfo.format = "M4A";
             else if (ext == ".aac") result.fileInfo.format = "AAC";
             else if (ext == ".wma") result.fileInfo.format = "WMA";
+            else if (ext == ".wv") result.fileInfo.format = "WV";
             else result.fileInfo.format = "Unknown";
             result.decodeCompletedAt = std::chrono::steady_clock::now();
             DIAG_SYSTEM_FMT("Audio",

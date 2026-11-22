@@ -56,6 +56,13 @@ int main() {
     const auto theme = std::find_if(entries.begin(), entries.end(), [](const auto& e) { return e.id == "theme"; });
     const auto automatic = std::find_if(entries.begin(), entries.end(), [](const auto& e) { return e.id == "automatic"; });
     assert(theme != entries.end() && automatic != entries.end());
+    const auto overlay = std::find_if(entries.begin(), entries.end(), [](const auto& entry) { return entry.id == "overlay"; });
+    if (overlay == entries.end() || Available(*overlay, false, true, true) ||
+        !Available(*overlay, true, true, true) ||
+        std::any_of(entries.begin(), entries.end(), [](const auto& entry) { return entry.id == "performanceMonitor"; })) {
+        std::fputs("FAIL the original diagnostic overlay is the only monitor entry\n", stderr);
+        return 1;
+    }
     assert(Available(*theme, true, false, true));
     assert(!Available(*theme, true, true, true));
     assert(Available(*automatic, true, false, true) && Available(*automatic, true, true, true));

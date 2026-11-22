@@ -3,6 +3,8 @@ from pathlib import Path
 import contextlib
 import io
 import os
+import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +19,14 @@ REF = "qa/current"
 
 def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def force_remove(path):
+    def make_writable_and_retry(function, target, error):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+
+    shutil.rmtree(path, onexc=make_writable_and_retry)
 
 
 class CardDirectoryCleanupTests(unittest.TestCase):
@@ -44,14 +54,21 @@ class CardDirectoryCleanupTests(unittest.TestCase):
         git(self.card, "remote", "set-url", "origin", "https://github.com/" + REPOSITORY + ".git")
         actual_git = cleanup.git
 
+        def same_path(repo, expected):
+            return os.path.normcase(str(Path(repo).resolve(strict=False))) == os.path.normcase(
+                str(Path(expected).resolve(strict=False))
+            )
+
         def local_fetch(repo, *args):
             if args and args[0] == "fetch":
-                if repo.samefile(self.card) and args[:3] == ("fetch", "--no-tags", "origin"):
+                if same_path(repo, self.card) and args[:3] == ("fetch", "--no-tags", "origin"):
                     return actual_git(repo, "fetch", "--no-tags", str(self.origin), *args[3:])
                 raise AssertionError("unexpected fetch outside the isolated bare repository")
-            if args[:3] == ("ls-remote", "--heads", "origin") and repo.samefile(self.card):
+            if args[:3] == ("ls-remote", "--heads", "origin") and same_path(repo, self.card):
                 return actual_git(repo, "ls-remote", "--heads", str(self.origin), *args[3:])
-            if args and args[0] == "push" and "origin" in args and repo.samefile(self.card):
+            if args and args[0] == "push" and "origin" in args and (
+                same_path(repo, self.card) or same_path(repo, self.main_repo)
+            ):
                 rewritten = tuple(str(self.origin) if part == "origin" else part for part in args)
                 return actual_git(repo, *rewritten)
             if args and args[0] in {"ls-remote", "push"}:
@@ -435,6 +452,140 @@ class CardDirectoryCleanupTests(unittest.TestCase):
             with self.assertRaises(cleanup.CleanupRefused):
                 cleanup.main(self.args("--dry-run", "--feature-branch", branch))
             self.assertTrue((self.card / ".git").exists())
+
+    # --- Git worktree card directory ---
+
+    def make_worktree_card(self, merge=True, main_reference=None):
+        force_remove(self.card)
+        main = main_reference or self.main_repo
+        git(main, "config", "user.name", "CI")
+        git(main, "config", "user.email", "ci@example.invalid")
+        if main_reference is None:
+            git(main, "remote", "set-url", "origin", "https://github.com/" + REPOSITORY + ".git")
+        git(main, "worktree", "add", str(self.card), "-b", "feature/one-menu", "HEAD")
+        git(self.card, "config", "user.name", "CI")
+        git(self.card, "config", "user.email", "ci@example.invalid")
+        (self.card / "tracked.txt").write_text("merged feature\\n", encoding="utf-8")
+        git(self.card, "commit", "-am", "merged feature")
+        git(self.card, "push", str(self.origin), "HEAD:refs/heads/feature/one-menu")
+        if merge:
+            git(main, "merge", "--no-ff", "-m", "merge feature", "feature/one-menu")
+        git(main, "push", str(self.origin), "HEAD:" + REF)
+        return "feature/one-menu"
+
+    def worktree_paths(self):
+        output = git(self.main_repo, "worktree", "list", "--porcelain")
+        return [line.removeprefix("worktree ") for line in output.splitlines() if line.startswith("worktree ")]
+
+    def test_clean_merged_worktree_is_removed_with_its_registration(self):
+        self.assertEqual(self.make_worktree_card(), "feature/one-menu")
+        self.assertTrue((self.card / ".git").is_file())
+        head = git(self.card, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+        self.assertIn("worktree", output.getvalue())
+        self.assertTrue(self.card.exists())
+        self.refused("--execute", "--expected-head", "0" * 40)
+        self.assertEqual(cleanup.main(self.args("--execute", "--expected-head", head)), 0)
+        self.assertFalse(self.card.exists())
+        self.assertEqual([Path(p).resolve() for p in self.worktree_paths()], [self.main_repo.resolve()])
+        self.assertFalse(self.ref_exists(self.main_repo, "refs/heads/feature/one-menu"))
+        self.assertFalse(self.ref_exists(self.origin, "refs/heads/feature/one-menu"))
+        self.assertTrue(self.ref_exists(self.main_repo, "refs/heads/" + REF))
+
+    def test_worktree_of_another_repository_is_refused(self):
+        other = self.root / "other-repository"
+        subprocess.run(["git", "clone", str(self.origin), str(other)], check=True, capture_output=True)
+        self.make_worktree_card(main_reference=other)
+        with self.assertRaisesRegex(cleanup.CleanupRefused, "worktree"):
+            cleanup.main(self.args("--dry-run"))
+        self.assertTrue((self.card / ".git").is_file())
+        self.assertTrue((other / ".git/worktrees").is_dir())
+
+    def test_unrelated_branch_in_main_repository_does_not_block_worktree_cleanup(self):
+        self.make_worktree_card()
+        git(self.main_repo, "switch", "-c", "backup/unfinished")
+        (self.main_repo / "tracked.txt").write_text("unrelated work\\n", encoding="utf-8")
+        git(self.main_repo, "commit", "-am", "unrelated unfinished")
+        git(self.main_repo, "switch", REF)
+        self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+
+    def test_worktree_with_untracked_file_is_preserved(self):
+        self.make_worktree_card()
+        (self.card / "untracked.txt").write_text("work", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertTrue((self.card / "untracked.txt").exists())
+
+    def test_unmerged_worktree_head_is_preserved(self):
+        self.make_worktree_card(merge=False)
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--dry-run")
+        self.refused("--execute", "--expected-head", head)
+        self.assertTrue((self.card / "tracked.txt").exists())
+        self.assertIn(self.card.resolve(), [Path(p).resolve() for p in self.worktree_paths()])
+
+
+    def test_known_runtime_file_at_card_root_does_not_block_cleanup(self):
+        runtime = self.card / next(iter(cleanup.ALLOWED_RUNTIME_FILES))
+        runtime.write_text("{\"workItemId\":\"card\"}", encoding="utf-8")
+        head = git(self.card, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+        self.assertEqual(cleanup.main(self.args("--execute", "--expected-head", head)), 0)
+        self.assertFalse(self.card.exists())
+
+    def test_known_runtime_file_name_inside_subdirectory_still_blocks(self):
+        nested = self.card / "docs" / "_cuevi-session.json"
+        nested.parent.mkdir(exist_ok=True)
+        nested.write_text("{}", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertTrue(nested.exists())
+
+    def test_unknown_untracked_file_next_to_runtime_file_still_blocks(self):
+        (self.card / "_cuevi-session.json").write_text("{}", encoding="utf-8")
+        (self.card / "notes.txt").write_text("scratch", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertTrue((self.card / "notes.txt").exists())
+
+    def test_known_runtime_file_does_not_block_worktree_cleanup(self):
+        self.make_worktree_card()
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        head = git(self.card, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cleanup.main(self.args("--dry-run")), 0)
+        self.assertEqual(cleanup.main(self.args("--execute", "--expected-head", head)), 0)
+        self.assertFalse(self.card.exists())
+        self.assertEqual([Path(p).resolve() for p in self.worktree_paths()], [self.main_repo.resolve()])
+
+
+    def test_staged_runtime_file_is_refused(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        head = git(self.card, "rev-parse", "HEAD")
+        self.refused("--dry-run")
+        self.refused("--execute", "--expected-head", head)
+        self.assertTrue(runtime.exists())
+
+    def test_modified_tracked_runtime_file_is_refused(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        git(self.card, "commit", "-m", "track runtime file")
+        git(self.card, "push", str(self.origin), "HEAD:" + REF)
+        runtime.write_text("modified", encoding="utf-8")
+        self.refused("--dry-run")
+        self.assertEqual(runtime.read_text(encoding="utf-8"), "modified")
+
+    def test_clean_tracked_runtime_file_is_never_deleted_early(self):
+        runtime = self.card / "_cuevi-session.json"
+        runtime.write_text("{}", encoding="utf-8")
+        git(self.card, "add", "_cuevi-session.json")
+        git(self.card, "commit", "-m", "track runtime file")
+        cleanup.delete_allowed_runtime_files(self.card)
+        self.assertTrue(runtime.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

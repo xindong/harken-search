@@ -9,6 +9,7 @@ ports are traversed in one child process.
 from __future__ import annotations
 
 import hashlib
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,45 @@ class Case:
     new_inventory_files: tuple[str, ...] = ()
     install_parent_is_file: bool = False
     removals: tuple[str, ...] = ()
+    installer_mutex_held: bool = False
+
+
+def _hold_installer_mutex(install: Path):
+    class FileIdInfo(ctypes.Structure):
+        _fields_ = [("volume_serial", ctypes.c_uint64),
+                    ("file_id", ctypes.c_ubyte * 16)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32,
+                                   ctypes.c_uint32, ctypes.c_void_p,
+                                   ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.GetFileInformationByHandleEx.argtypes = [ctypes.c_void_p, ctypes.c_int,
+                                                    ctypes.c_void_p, ctypes.c_uint32]
+    kernel.GetFileInformationByHandleEx.restype = ctypes.c_int
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel.ReleaseMutex.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    directory = kernel.CreateFileW(str(install), 0x80, 7, None, 3, 0x02000000, None)
+    if directory == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_last_error(), "open install directory")
+    try:
+        identity = FileIdInfo()
+        if not kernel.GetFileInformationByHandleEx(directory, 18,
+                                                   ctypes.byref(identity), ctypes.sizeof(identity)):
+            raise OSError(ctypes.get_last_error(), "read install directory identity")
+    finally:
+        kernel.CloseHandle(directory)
+    name = ("Global\\HarkenSearchInstallMutation_" +
+            f"{identity.volume_serial:016X}" +
+            "".join(f"{byte:02X}" for byte in identity.file_id))
+    mutex = kernel.CreateMutexW(None, False, name)
+    if not mutex or kernel.WaitForSingleObject(mutex, 0) not in (0, 0x80):
+        raise OSError(ctypes.get_last_error(), "hold installer mutex")
+    return kernel, mutex
 
 
 def _case_payload(case: Case, health_fixture: Path, sleep_fixture: Path) -> bytes:
@@ -99,6 +139,8 @@ def _run_case(
             "Auro.db-shm": b"shm-must-remain-unchanged",
             "favorite.sentinel": b"favorite-must-remain-unchanged",
             "source.wav": b"source-audio-must-remain-unchanged",
+            "source.wv": b"wavpack-audio-must-remain-unchanged",
+            "source.wvc": b"wavpack-correction-must-remain-unchanged",
         }
         protected_files = {
             root / name: contents
@@ -161,7 +203,9 @@ def _run_case(
                     "sha256": hashlib.sha256(asset_bytes).hexdigest(),
                 }
             )
-            if (install / relative_path).parent.exists():
+            destination = install / relative_path
+            replacing_protected = case.pre_mutation_rejection and destination.is_file()
+            if destination.parent.exists() and not replacing_protected:
                 raise AssertionError("new-directory test must start without install parents")
         if case.install_parent_is_file:
             (install / "assets").write_bytes(b"existing-file-must-not-be-overwritten")
@@ -187,30 +231,37 @@ def _run_case(
             child_environment["ARIS_BOOTSTRAP_SLEEP_MS"] = str(case.sleep_ms)
         run_started = time.monotonic()
         result_path.unlink(missing_ok=True)
-        completed = subprocess.run(
-            [
-                str(updater_executable),
-                "--handoff",
-                str(updater_executable),
-                str(bootstrap),
-                str(package_path),
-                str(signature_path),
-                str(target_root),
-                str(updates),
-                str(staging),
-                str(transaction),
-                str(data),
-                str(result_path),
-                case.mode,
-                str(installed_executable),
-            ],
-            cwd=str(sandbox),
-            capture_output=True,
-            text=True,
-            timeout=helper_timeout,
-            check=False,
-            env=child_environment,
-        )
+        mutex = _hold_installer_mutex(install) if case.installer_mutex_held else None
+        try:
+            completed = subprocess.run(
+                [
+                    str(updater_executable),
+                    "--handoff",
+                    str(updater_executable),
+                    str(bootstrap),
+                    str(package_path),
+                    str(signature_path),
+                    str(target_root),
+                    str(updates),
+                    str(staging),
+                    str(transaction),
+                    str(data),
+                    str(result_path),
+                    case.mode,
+                    str(installed_executable),
+                ],
+                cwd=str(sandbox),
+                capture_output=True,
+                text=True,
+                timeout=helper_timeout,
+                check=False,
+                env=child_environment,
+            )
+        finally:
+            if mutex is not None:
+                kernel, handle = mutex
+                kernel.ReleaseMutex(handle)
+                kernel.CloseHandle(handle)
         run_elapsed = time.monotonic() - run_started
         if completed.returncode != 0:
             diagnostic = (
@@ -420,6 +471,8 @@ def main() -> int:
             expected_install="new",
         ),
         Case("bad-signature", 11, signature_valid=False),
+        Case("installer-mutex-held", 30, installer_mutex_held=True,
+             pre_mutation_rejection=True),
         Case(
             "signed-removal-denied",
             14,
@@ -436,6 +489,18 @@ def main() -> int:
             "protected-db-suffix-denied",
             14,
             inventory_relative_path="Data\\Auro.dbx.db",
+            pre_mutation_rejection=True,
+        ),
+        Case(
+            "protected-wavpack-denied",
+            14,
+            new_inventory_files=("source.WV",),
+            pre_mutation_rejection=True,
+        ),
+        Case(
+            "protected-wavpack-correction-denied",
+            14,
+            new_inventory_files=("source.WVC",),
             pre_mutation_rejection=True,
         ),
         Case(

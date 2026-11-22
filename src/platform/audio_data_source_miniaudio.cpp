@@ -2,6 +2,7 @@
 
 #include "../../thirdparty/miniaudio.h"
 #include "text_encoding.h"
+#include "wavpack_decoding_backend.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -199,7 +200,8 @@ OperationResult InitializeDecoderFromFile(
     void* decoderStorage, const std::string& pathUtf8) noexcept {
     if (!decoderStorage || pathUtf8.empty()) return {};
     auto* decoder = static_cast<ma_decoder*>(decoderStorage);
-    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    Platform::WavPack::ApplyDecodingBackend(config);
     ma_result result = MA_ERROR;
 #ifdef _WIN32
     const std::wstring widePath = Platform::TextEncoding::Utf8ToWidePermissive(pathUtf8);
@@ -231,8 +233,9 @@ OperationResult InitializeDecoderFromFileWithFormat(
     std::uint32_t sampleRate) noexcept {
     if (!decoderStorage || pathUtf8.empty()) return {};
     auto* decoder = static_cast<ma_decoder*>(decoderStorage);
-    const ma_decoder_config config = ma_decoder_config_init(
+    ma_decoder_config config = ma_decoder_config_init(
         ma_format_f32, channels, sampleRate);
+    Platform::WavPack::ApplyDecodingBackend(config);
     ma_result result = MA_ERROR;
 #ifdef _WIN32
     const std::wstring widePath = Platform::TextEncoding::Utf8ToWidePermissive(pathUtf8);
@@ -270,6 +273,7 @@ OperationResult InitializeDecoderFromFileWithFormatAndChannelMap(
     auto* decoder = static_cast<ma_decoder*>(decoderStorage);
     ma_decoder_config config = ma_decoder_config_init(
         ma_format_f32, channels, sampleRate);
+    Platform::WavPack::ApplyDecodingBackend(config);
     ma_channel channelMap[1] = {MA_CHANNEL_NONE};
     switch (channelSoloMode) {
     case 1: channelMap[0] = MA_CHANNEL_FRONT_LEFT; break;

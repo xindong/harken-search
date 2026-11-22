@@ -7,6 +7,7 @@
 
 #include "DAWPanel.h"
 #include "AppState.h"
+#include "HarkenSearchWidgets.h"
 #include "Localization.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -100,9 +101,9 @@ static void DrawCheckmark(ImDrawList* dl, ImVec2 c, ImU32 col) {
     dl->AddLine({c.x-3.5f,c.y+.5f}, {c.x-.5f,c.y+3.f}, col, 1.6f);
     dl->AddLine({c.x-.5f,c.y+3.f}, {c.x+4.5f,c.y-3.f}, col, 1.6f);
 }
-static void DrawChevronDown(ImDrawList* dl, ImVec2 c, ImU32 col, float s = 1.f) {
-    dl->AddLine({c.x-3*s,c.y-1.5f*s}, {c.x,c.y+1.5f*s}, col, 1.3f);
-    dl->AddLine({c.x,c.y+1.5f*s}, {c.x+3*s,c.y-1.5f*s}, col, 1.3f);
+static void DrawChevronDown(ImDrawList* dl, ImVec2 c, ImU32 col, float s = 1.f, float stroke = 1.3f) {
+    dl->AddLine({c.x-3*s,c.y-1.5f*s}, {c.x,c.y+1.5f*s}, col, stroke);
+    dl->AddLine({c.x,c.y+1.5f*s}, {c.x+3*s,c.y-1.5f*s}, col, stroke);
 }
 
 // Status dot color
@@ -205,8 +206,14 @@ bool DrawSendToDAWWidget(AppState& state) {
 
     const float btnH     = 24.0f;
     const float arrowW   = 22.0f;
-    const float rounding = 4.0f;
+    // MacKit baseline: rounded field/button surfaces; keep the existing bottom-bar height.
+    const float rounding = 7.0f;
     const float itemH    = 42.0f;  // taller to fit secondary line
+    const float menuPad  = 6.0f;   // MacKit menu padding
+    const float menuRounding = 9.0f;
+    const float menuRowRounding = 6.0f;
+    const float menuActionH = 30.0f;
+    const float menuGap  = 6.0f;
 
     int& selIdx = state.selectedDAWIndex;
     if (selIdx < 0 || selIdx >= (int)targets.size()) selIdx = 0;
@@ -229,15 +236,19 @@ bool DrawSendToDAWWidget(AppState& state) {
     const ImVec2 pos   = ImGui::GetCursorScreenPos();
     bool sendClicked   = false;
 
-    const bool isSending = state.dawSendState.load() == AppState::DawSendState::Sending;
+    const bool isSending = state.dawSendFeedback.isSending();
+    bool mainFocused = false, arrowFocused = false;
 
 // Main button (click = send)
     {
         ImRect rc(pos, {pos.x+mainW, pos.y+btnH});
         ImGuiID id = window->GetID("##SendMainBtn");
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0,0,0,0));
         ImGui::ItemAdd(rc, id);
+        ImGui::PopStyleColor();
         bool hov, held;
         if (ImGui::ButtonBehavior(rc, id, &hov, &held) && !isSending) sendClicked = true;
+        mainFocused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
         dl->AddRectFilled(rc.Min,rc.Max,held?pal.btnA:(hov?pal.btnH:pal.btnBg),rounding,ImDrawFlags_RoundCornersLeft);
         dl->AddRect(rc.Min,rc.Max,pal.bdr,rounding,ImDrawFlags_RoundCornersLeft);
 
@@ -275,35 +286,58 @@ bool DrawSendToDAWWidget(AppState& state) {
         ImVec2 p2(pos.x+mainW, pos.y);
         ImRect rc(p2, {p2.x+arrowW, p2.y+btnH});
         ImGuiID id = window->GetID("##SendArrowBtn");
+        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0,0,0,0));
         ImGui::ItemAdd(rc, id);
+        ImGui::PopStyleColor();
         bool hov, held;
         if (ImGui::ButtonBehavior(rc, id, &hov, &held))
             ImGui::OpenPopup("##SendDAWPopup");
+        arrowFocused = ImGui::IsItemFocused() && ImGui::GetIO().NavVisible;
         dl->AddRectFilled(rc.Min,rc.Max,held?pal.btnA:(hov?pal.btnH:pal.btnBg),rounding,ImDrawFlags_RoundCornersRight);
         dl->AddRect(rc.Min,rc.Max,pal.bdr,rounding,ImDrawFlags_RoundCornersRight);
-        dl->AddLine({rc.Min.x,rc.Min.y+4},{rc.Min.x,rc.Max.y-4},pal.bdr);
-        DrawChevronDown(dl,{rc.Min.x+arrowW*.5f,rc.Min.y+btnH*.5f},pal.txt,.85f);
+        dl->AddLine({rc.Min.x,rc.Min.y+5},{rc.Min.x,rc.Max.y-5},pal.bdr);
+        DrawChevronDown(dl,{rc.Min.x+arrowW*.5f,rc.Min.y+btnH*.5f},pal.txt,1.15f,1.5f);
     }
     ImGui::ItemSize({totalW, btnH});
+    if (mainFocused || arrowFocused) {
+        const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_NavCursor);
+        dl->AddRect({pos.x-2,pos.y-2},{pos.x+totalW+2,pos.y+btnH+2},
+            ImGui::GetColorU32(ImVec4(accent.x,accent.y,accent.z,.7f)),rounding+2,0,1.5f);
+    }
 
-// Dropdown popup
+// Dropdown popup — MacKit menu shell (padding, rounding, 1 px border, tight rows)
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ImColor(pal.popBg).Value);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    state.qaSendWidgetMenuOpen = false;
+    if (state.qaSendWidgetMenuRequested) {
+        state.qaSendWidgetMenuRequested = false;
+        ImGui::OpenPopup("##SendDAWPopup");
+    }
+#endif
     ImGui::PushStyleColor(ImGuiCol_Border,  ImColor(pal.bdr).Value);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,6});
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{menuPad,menuPad});
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,menuRounding);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{0,0});
     ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize,1.0f);
 
     int enabledCount = 0;
     for (auto& dt : targets) if (dt.enabled && IsSupportedDawDisplayTarget(dt)) enabledCount++;
-    float popH = enabledCount * itemH + 44.0f;
-    ImGui::SetNextWindowPos({pos.x, pos.y - popH - 4}, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize({std::max(totalW, 260.0f), 0});
+    float popH = enabledCount * itemH + 2.0f * menuActionH + 2.0f * menuPad + 8.0f;
+    ImGui::SetNextWindowPos({pos.x, pos.y - popH - menuGap}, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize({std::max(totalW, 260.0f) + 2.0f * menuPad, 0});
 
     if (ImGui::BeginPopup("##SendDAWPopup")) {
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+        state.qaSendWidgetMenuOpen = true;
+#endif
         ImDrawList* pdl = ImGui::GetWindowDrawList();
         ImGuiWindow* pw = ImGui::GetCurrentWindow();
-        float popW = ImGui::GetWindowWidth();
+        const float popW = ImGui::GetContentRegionAvail().x;
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+        state.qaSendWidgetMenuRows = 0;
+        state.qaSendWidgetMenuFrame = ImGui::GetFrameCount();
+        state.qaSendWidgetMenuId = ImGui::GetID("##SendDAWPopup");
+#endif
 
         for (int i = 0; i < (int)targets.size(); ++i) {
             const auto& dt = targets[i];
@@ -318,16 +352,20 @@ bool DrawSendToDAWWidget(AppState& state) {
             ImGui::PushID(i);
             ImGuiID iid = pw->GetID("##di");
             ImGui::ItemAdd(irc, iid);
+            if (isSel) ImGui::SetItemDefaultFocus();
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+            state.qaSendWidgetMenuRows++;
+#endif
             bool ih, iheld;
             if (ImGui::ButtonBehavior(irc, iid, &ih, &iheld)) {
                 selIdx = i; ImGui::CloseCurrentPopup();
             }
             ImGui::PopID();
 
-            // Row background
+            // Row background — MacKit menu hover/selected rounding
             ImU32 rowBg = isSel ? pal.selBg : (ih ? pal.hovBg : IM_COL32(0,0,0,0));
             if (rowBg & 0xFF000000)
-                pdl->AddRectFilled(ip,{ip.x+isz.x,ip.y+isz.y},rowBg,3.0f);
+                pdl->AddRectFilled(ip,{ip.x+isz.x,ip.y+isz.y},rowBg,menuRowRounding);
 
             // Status dot (left edge)
             ImU32 dotCol = GetStatusDotColor(dt);
@@ -350,7 +388,7 @@ bool DrawSendToDAWWidget(AppState& state) {
             if (i < 3) {
                 char hint[20]; snprintf(hint, sizeof(hint), "Ctrl+Shift+%d", i+1);
                 ImVec2 hsz = ImGui::CalcTextSize(hint);
-                float hx = ip.x + isz.x - 18 - hsz.x;
+                float hx = ip.x + isz.x - 34 - hsz.x;  // leave room for the checkmark
                 pdl->AddText({hx, ip.y+(itemH-hsz.y)*.5f}, pal.txtSub, hint);
             }
 
@@ -369,15 +407,15 @@ bool DrawSendToDAWWidget(AppState& state) {
         // "Configure..." row
         auto drawMenuAction = [&](const char* label, bool* clicked) {
             ImVec2 ap = ImGui::GetCursorScreenPos();
-            ImVec2 asz(popW, 26.0f);
+            ImVec2 asz(popW, menuActionH);
             ImRect arc(ap,{ap.x+asz.x,ap.y+asz.y});
             ImGuiID aid = pw->GetID(label);
             ImGui::ItemAdd(arc, aid);
             bool ah, aheld;
             if (ImGui::ButtonBehavior(arc,aid,&ah,&aheld)) *clicked = true;
-            if (ah) pdl->AddRectFilled(ap,{ap.x+asz.x,ap.y+asz.y},pal.hovBg,3.0f);
+            if (ah) pdl->AddRectFilled(ap,{ap.x+asz.x,ap.y+asz.y},pal.hovBg,menuRowRounding);
             ImVec2 tsz = ImGui::CalcTextSize(label);
-            pdl->AddText({ap.x+12,ap.y+(26-tsz.y)*.5f}, pal.txtD, label);
+            pdl->AddText({ap.x+12,ap.y+(menuActionH-tsz.y)*.5f}, pal.txtD, label);
             ImGui::ItemSize(asz);
         };
 
@@ -386,7 +424,8 @@ bool DrawSendToDAWWidget(AppState& state) {
         drawMenuAction("Refresh Status", &doRefresh);
 
         if (openCfg) {
-            state.showDawTargetSettings = true;
+            state.openDawIntegrationSettings = true;
+            state.showSettingsDialog = true;
             ImGui::CloseCurrentPopup();
         }
         if (doRefresh) {

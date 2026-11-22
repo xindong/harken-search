@@ -57,6 +57,8 @@ struct WaveformResult {
     // Set for meterOnly follow-up results. The main thread must merge metric
     // fields into an existing mini waveform instead of replacing the mini data.
     bool metersOnlyMerge = false;
+    uint64_t failureBinding = 0;
+    int64_t failureObservedAt = 0;
 };
 
 class WaveformWorker {
@@ -89,6 +91,7 @@ public:
     // maxResults: 每帧最多处理的结果数
     // 返回实际取出的结果数
     int pollResults(std::vector<WaveformResult>& outResults, int maxResults = 3);
+    void enqueueFailurePersistence(const WaveformResult& result);
     
     // 检查是否有待处理的请求
     bool hasPendingRequests() const;
@@ -109,6 +112,7 @@ private:
         std::string filePath;
         int64_t fileId = 0;
         uint64_t generation = 0;
+        uint64_t failureBinding = 0;
         bool buildDetail = false;
         int priority = 0;
         int miniTargetPeaks = 128;
@@ -124,6 +128,8 @@ private:
     };
 
     void workerThread();
+    void bindFailureWriter(Database& db);
+    void failureWriterThread(Database::WaveformFailureWritePaths paths);
     void pushResult(WaveformResult&& res);
     bool submitRequestInternal(const std::string& filePath,
                                int64_t fileId,
@@ -135,6 +141,17 @@ private:
                                bool meterOnly = false);
 
     Database* m_db = nullptr;
+
+    struct PendingFailureWrite {
+        std::string errorCode;
+        int64_t observedAt;
+    };
+    std::unordered_map<std::string, PendingFailureWrite> m_pendingFailureWrites;
+    std::mutex m_failureMutex;
+    std::condition_variable m_failureCv;
+    std::thread m_failureThread;
+    bool m_acceptFailureWrites = false;
+    std::atomic<uint64_t> m_failureBinding{0};
     
     // 请求队列
     std::deque<WaveformRequest> m_requestQueue;

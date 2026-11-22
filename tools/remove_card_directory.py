@@ -1,4 +1,4 @@
-"""Remove exactly one clean, merged card clone and its merged feature branch after task closeout."""
+"""Remove exactly one clean, merged card checkout (clone or Git worktree) and its merged feature branch after task closeout."""
 
 from __future__ import annotations
 
@@ -18,6 +18,10 @@ REPOSITORY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_
 CARD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*$")
 BRANCH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*$")
 COMMIT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+# Agent runtime files belong outside the card directory; these names are tolerated at its
+# root as a safety net so a leftover one never blocks a proven-clean closeout.
+ALLOWED_RUNTIME_FILES = frozenset({"_cuevi-session.json"})
+WORKTREE_POINTER = re.compile(r"gitdir: (.+)$")
 
 
 class CleanupRefused(RuntimeError):
@@ -127,7 +131,14 @@ def assert_no_local_content(root: Path) -> None:
     indexed = git_output(root, "ls-files", "-v", "-z")
     if any(entry and (entry[0] == "S" or entry[0].islower()) for entry in indexed.split("\0")):
         refuse("索引含 assume-unchanged 或 skip-worktree 标记；无法证明文件未修改")
-    if git_output(root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"):
+    status = git_output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
+    for entry in (item for item in status.split("\0") if item):
+        if len(entry) < 4 or entry[2] != " ":
+            refuse("无法解析 Git 状态输出")
+        # Only an untracked or ignored runtime file may pass; a staged or modified one is
+        # real work and must never be discarded with the directory.
+        if entry[3:] in ALLOWED_RUNTIME_FILES and entry[:2] in {"??", "!!"}:
+            continue
         refuse("目录还有未保存或被 Git 忽略的文件")
 
 
@@ -138,6 +149,60 @@ def assert_no_linked_worktrees(root: Path) -> None:
         refuse("目录关联其他 Git worktree；请先单独核验并保留其工作和提交")
 
 
+def worktree_gitdir(root: Path) -> Path | None:
+    pointer = root / ".git"
+    if pointer.is_dir():
+        return None
+    if not pointer.is_file() or is_reparse(pointer):
+        refuse("卡目录的 .git 既不是目录也不是普通文件")
+    match = WORKTREE_POINTER.fullmatch(pointer.read_text(encoding="utf-8").strip())
+    if not match:
+        refuse("卡目录的 .git 指针内容无法识别")
+    git_directory = Path(match.group(1))
+    if not git_directory.is_absolute():
+        git_directory = root / git_directory
+    return git_directory.resolve(strict=True)
+
+
+def worktree_records(main_repo: Path) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in git_output(main_repo, "worktree", "list", "--porcelain").splitlines():
+        if not line.strip():
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        key, _, value = line.partition(" ")
+        current[key] = value
+    if current:
+        records.append(current)
+    return records
+
+
+def assert_registered_worktree(root: Path, main_repo: Path, branch: str) -> None:
+    gitdir = worktree_gitdir(root)
+    if gitdir is None:
+        refuse("目标不是 Git worktree")
+    if not (main_repo / ".git").is_dir():
+        refuse("主仓目录不是独立主工作树")
+    if Path(git_output(main_repo, "rev-parse", "--show-toplevel")).resolve(strict=True) != main_repo:
+        refuse("主仓目录不是独立主工作树")
+    if not gitdir.is_relative_to((main_repo / ".git").resolve(strict=True) / "worktrees"):
+        refuse("卡目录的 Git worktree 不属于指定主仓")
+    records = worktree_records(main_repo)
+    if not records or Path(records[0].get("worktree", "")).resolve(strict=True) != main_repo:
+        refuse("主仓目录不是登记的第一个 Git worktree")
+    matching = [record for record in records
+                if Path(record.get("worktree", "")).resolve(strict=True) == root]
+    if len(matching) != 1:
+        refuse("卡目录没有唯一登记在指定主仓的 Git worktree")
+    if matching[0].get("branch") != "refs/heads/" + branch:
+        refuse("卡目录的 Git worktree 没有停在指定的功能分支")
+    if any(record.get("branch") == "refs/heads/" + branch for record in records if record is not matching[0]):
+        refuse("同一功能分支被多个 Git worktree 占用")
+
+
 def assert_no_submodules(root: Path) -> None:
     if (root / ".git/modules").exists():
         refuse("目录保留子模块仓库数据；拒绝删除")
@@ -146,11 +211,17 @@ def assert_no_submodules(root: Path) -> None:
         refuse("目录含 Git 子模块；拒绝删除")
 
 
-def assert_merged_and_clean(root: Path, repository: str, integration_ref: str) -> str:
-    if not (root / ".git").is_dir() or Path(git_output(root, "rev-parse", "--show-toplevel")).resolve(strict=True) != root:
+def assert_merged_and_clean(root: Path, repository: str, integration_ref: str, main_repo: Path, branch: str) -> str:
+    linked_worktree = worktree_gitdir(root) is not None
+    if Path(git_output(root, "rev-parse", "--show-toplevel")).resolve(strict=True) != root:
         refuse("目标不是独立的卡目录仓库")
+    if linked_worktree:
+        assert_registered_worktree(root, main_repo, branch)
+    else:
+        if not (root / ".git").is_dir():
+            refuse("目标不是独立的卡目录仓库")
+        assert_no_linked_worktrees(root)
     assert_origin(root, repository)
-    assert_no_linked_worktrees(root)
     assert_no_submodules(root)
     assert_no_local_content(root)
     if git_output(root, "stash", "list", "--format=%gd"):
@@ -163,7 +234,10 @@ def assert_merged_and_clean(root: Path, repository: str, integration_ref: str) -
         refuse("无法核验集成分支提交")
     head = git_output(root, "rev-parse", "--verify", "HEAD^{commit}")
     saved_refs = git_output(root, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/tags")
-    for ref in ("HEAD", *saved_refs.splitlines()):
+    # A Git worktree shares branches and tags with its main repository, so only this card's
+    # own HEAD can be proved safe to remove; a clone holds no other card's refs.
+    refs = ["HEAD"] if linked_worktree else ["HEAD", *saved_refs.splitlines()]
+    for ref in refs:
         if git(root, "merge-base", "--is-ancestor", ref + "^{commit}", qa_head).returncode:
             refuse("HEAD、本地分支或标签无法证明已进入最新集成分支：" + ref)
     return head
@@ -297,8 +371,35 @@ def delete_feature_branches(card: Path, main_repo: Path, branch: str, remote_sha
             refuse("删除主仓功能分支失败")
 
 
-def print_cleanup_plan(target: Path, head: str, branch: str, integration_ref: str, remote_sha: str | None, main_sha: str | None) -> None:
+def delete_allowed_runtime_files(root: Path) -> None:
+    for name in ALLOWED_RUNTIME_FILES:
+        path = root / name
+        if not path.exists():
+            continue
+        if is_reparse(path) or not path.is_file():
+            refuse("运行期文件是链接、重解析点或目录")
+        if git(root, "ls-files", "--error-unmatch", "--", name).returncode == 0:
+            # A tracked file belongs to the committed tree; git removes it with the worktree.
+            continue
+        path.unlink()
+
+
+def remove_registered_worktree(main_repo: Path, root: Path) -> None:
+    # Git refuses to drop a worktree holding even a tolerated untracked runtime file.
+    delete_allowed_runtime_files(root)
+    if git(main_repo, "worktree", "remove", str(root)).returncode:
+        refuse("git worktree remove 失败；请人工核验卡目录和登记状态")
+    git(main_repo, "worktree", "prune")
+    remaining = [record for record in worktree_records(main_repo)
+                 if os.path.normcase(str(Path(record.get("worktree", "")).resolve(strict=False)))
+                 == os.path.normcase(str(root))]
+    if root.exists() or remaining:
+        refuse("Git worktree 目录或登记仍然存在")
+
+
+def print_cleanup_plan(target: Path, head: str, branch: str, integration_ref: str, remote_sha: str | None, main_sha: str | None, linked_worktree: bool) -> None:
     print("预检通过；目标：" + str(target))
+    print("卡目录类型：" + ("Git worktree（登记在主仓）" if linked_worktree else "独立 clone"))
     print("HEAD：" + head)
     print("功能分支：" + branch)
     print("主仓本地分支：" + ("将删除" if main_sha else "已不在"))
@@ -337,17 +438,22 @@ def main(argv: list[str] | None = None) -> int:
         refuse("执行删除必须给出预检得到的完整 HEAD SHA")
     with target_lock(workspace_root, args.card_name):
         assert_no_links(target)
-        head = assert_merged_and_clean(target, args.repository, args.integration_ref)
+        linked_worktree = worktree_gitdir(target) is not None
+        head = assert_merged_and_clean(target, args.repository, args.integration_ref, main_repo, args.feature_branch)
         remote_sha, main_sha = prove_feature_branches(target, main_repo, args.feature_branch, args.integration_ref)
         if args.dry_run:
-            print_cleanup_plan(target, head, args.feature_branch, args.integration_ref, remote_sha, main_sha)
+            print_cleanup_plan(target, head, args.feature_branch, args.integration_ref, remote_sha, main_sha, linked_worktree)
             return 0
         if head != args.expected_head:
             refuse("HEAD 已变化，与预检结果不符")
         assert_no_links(target)
         remote_sha, main_sha = prove_feature_branches(target, main_repo, args.feature_branch, args.integration_ref)
-        delete_feature_branches(target, main_repo, args.feature_branch, remote_sha, main_sha)
-        delete_tree(target)
+        if linked_worktree:
+            remove_registered_worktree(main_repo, target)
+            delete_feature_branches(main_repo, main_repo, args.feature_branch, remote_sha, main_sha)
+        else:
+            delete_feature_branches(target, main_repo, args.feature_branch, remote_sha, main_sha)
+            delete_tree(target)
         print("已删除这一张卡目录：" + str(target))
         if remote_sha or main_sha:
             print("已删除功能分支：" + args.feature_branch)

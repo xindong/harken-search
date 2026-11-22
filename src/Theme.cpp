@@ -3,6 +3,8 @@
 // Aris-owned preset and custom color definitions
 
 #include "Theme.h"
+#include "ThemeModuleColors.h"
+#include "imgui_internal.h"
 #include "ui/MistBlueChrome.h"
 #include "ThemeEditorSchema.h"
 #include <cstring>
@@ -14,6 +16,7 @@
 #include "Utils.h"
 #include "ui/CoreWorkspaceStyle.h"
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <iomanip>
 #include <cstdlib>
@@ -67,6 +70,12 @@ static ImVec4 MixThemeColor(const ImVec4& a, const ImVec4& b, float t) {
         a.w + (b.w - a.w) * t);
 }
 
+// 关闭颜色混合效果时，派生公式直接取主色，不再向第二色靠拢。
+static ImVec4 MixOrA(const ThemeColorScheme& s, const ImVec4& a, const ImVec4& b, float t) {
+    if (!s.colorMixing) return a;
+    return MixThemeColor(a, b, t);
+}
+
 static ImVec4 ClampThemeColor(ImVec4 c) {
     c.x = std::clamp(c.x, 0.0f, 1.0f);
     c.y = std::clamp(c.y, 0.0f, 1.0f);
@@ -89,30 +98,160 @@ static ImVec4 ToThemeColor(const aris::design::Rgba& token) {
     return ImVec4(token.r, token.g, token.b, token.a);
 }
 
+ThemeModuleColors ResolveThemeModuleColors(const ThemeColorScheme& scheme) {
+    ThemeModuleColors modules;
+
+    modules.surface.canvas = scheme.mainWindowBG;
+    modules.surface.toolbar = scheme.toolbarBG;
+    modules.surface.panel = scheme.resultsBG;
+    modules.surface.elevated = scheme.popupBG;
+    modules.surface.input = scheme.frameBgBase;
+    modules.surface.border = scheme.chromeBorder;
+
+    modules.topBar.background = scheme.toolbarBG;
+    modules.topBar.accent = scheme.toolbarAccent;
+    modules.topBar.controlAccent = scheme.controlAccent;
+    modules.topBar.text = scheme.interfaceText;
+    modules.topBar.border = scheme.chromeBorder;
+
+    modules.controls.accent = scheme.controlAccent;
+    modules.controls.frame = scheme.frameBgBase;
+    modules.controls.border = scheme.chromeBorder;
+    modules.controls.searchAction = scheme.searchButtonBG;
+    modules.controls.transferAction = scheme.transferButtonBG;
+
+    modules.results.background = scheme.resultsBG;
+    modules.results.header = scheme.resultsHeaderBG;
+    modules.results.text = scheme.resultsText;
+    modules.results.secondaryText = scheme.resultsSecondaryText;
+    modules.results.outline = scheme.resultsOutline;
+    modules.results.frameOutline = scheme.waveformColor;
+    modules.results.selection = scheme.resultsSelection;
+    modules.results.activeBorder = scheme.resultsActiveBorder;
+    modules.results.scrollbar = scheme.resultsScrollbar;
+    modules.results.tabBackground = scheme.resultsTabBG;
+    modules.results.tabHover = scheme.resultsTabHover;
+    modules.results.tabActive = scheme.resultsTabActive;
+    modules.results.gradientStart = scheme.resultsGradientStart;
+    modules.results.gradientEnd = scheme.resultsGradientEnd;
+    modules.results.playedText = scheme.resultsPlayedText;
+
+    modules.metadata.background = scheme.metadataPanelBG;
+    modules.metadata.text = scheme.metadataPanelText;
+    modules.metadata.label = scheme.metadataPanelLabel;
+    modules.metadata.scrollbar = scheme.metadataPanelScrollbar;
+    modules.metadata.coverWall = scheme.coverWallBG;
+
+    modules.filterBrowser.background = scheme.filterBrowserBG;
+    modules.filterBrowser.section = scheme.filterBrowserSectionBG;
+    modules.filterBrowser.button = scheme.filterBrowserButtonBG;
+    modules.filterBrowser.outline = scheme.filterBrowserOutline;
+    modules.filterBrowser.text = scheme.filterBrowserText;
+    modules.filterBrowser.heading = scheme.filterBrowserHeading;
+    modules.filterBrowser.treeText = scheme.filterBrowserTreeText;
+    modules.filterBrowser.selection = scheme.filterBrowserSelection;
+    modules.filterBrowser.treeSelection = scheme.filterBrowserTreeSelection;
+    modules.filterBrowser.locate = scheme.filterBrowserLocateTint;
+    modules.filterBrowser.searchHitText = scheme.filterBrowserSearchHitText;
+    modules.filterBrowser.tagText = scheme.filterBrowserTagText;
+
+    modules.waveform.background = scheme.waveformBG;
+    modules.waveform.primary = scheme.waveformColor;
+    modules.waveform.secondary = scheme.waveformSecondaryColor;
+    modules.waveform.playhead = scheme.waveformPositionLine;
+    modules.waveform.border = scheme.waveformPanelBorder;
+    modules.waveform.splitter = scheme.waveformSplitterBG;
+    modules.waveform.splitterLine = scheme.waveformSplitterLine;
+    modules.waveform.footer = scheme.waveformFooterBG;
+
+    modules.transfer.action = scheme.transferButtonBG;
+    modules.transfer.historyBackground = scheme.transferHistoryBG;
+    modules.transfer.historyText = scheme.transferHistoryText;
+
+    modules.navigation.historyBackground = scheme.historyCapsuleBG;
+    modules.navigation.historyActive = scheme.historyCapsuleActiveBG;
+    modules.navigation.modeBackground = scheme.modeCapsuleBG;
+    modules.navigation.modeActive = scheme.modeCapsuleActiveBG;
+
+    modules.signal.level = scheme.volumeColor;
+    modules.signal.clip = scheme.volumeClipColor;
+    modules.signal.playhead = scheme.waveformPositionLine;
+
+    modules.transport.background = scheme.transportBarBG;
+    modules.transport.accent = scheme.controlAccent;
+    modules.transport.text = scheme.transportText.w > 0.0f ? scheme.transportText : scheme.interfaceText;
+    modules.transport.timecodeText = scheme.timecodeText;
+    modules.transport.timecodeHover = scheme.timecodeTextHover;
+    modules.transport.level = scheme.volumeColor;
+    modules.transport.waveform = scheme.waveformColor;
+    modules.transport.meterWarning = scheme.meterWarning;
+    modules.transport.border = scheme.chromeBorder;
+
+    modules.meter.background = scheme.meterBg;
+    modules.meter.base = scheme.meterBase;
+    modules.meter.mid = scheme.meterMid;
+    modules.meter.warning = scheme.meterWarning;
+    modules.meter.clip = scheme.meterClip;
+    modules.meter.scaleText = scheme.meterScaleText;
+
+    modules.diagnostic.background = scheme.diagnosticOverlayBG;
+    modules.diagnostic.text = scheme.diagnosticOverlayText;
+    modules.diagnostic.accent = scheme.diagnosticOverlayAccent;
+    modules.diagnostic.mutedText = scheme.diagnosticOverlayMutedText;
+
+    modules.overlay.background = scheme.dialogBG;
+    modules.overlay.panel = scheme.dialogPanelBG;
+    modules.overlay.border = scheme.chromeBorder;
+
+    modules.sidebar.railDivider = scheme.sidebarRailDivider;
+    modules.sidebar.inactive = scheme.sidebarIconInactive;
+    modules.sidebar.hover = scheme.sidebarIconHover;
+    modules.sidebar.active = scheme.sidebarIconActive;
+    modules.sidebar.activeStrip = scheme.sidebarActiveStrip;
+    modules.sidebar.subpane = scheme.sidebarSubpaneBG;
+    modules.sidebar.divider = scheme.sidebarSubpaneDivider;
+
+    modules.wwise.connected = scheme.wwiseConnectOk;
+    modules.wwise.failed = scheme.wwiseConnectFail;
+    modules.wwise.neutral = scheme.wwiseDiffNeutral;
+    modules.wwise.newItem = scheme.wwiseDiffNew;
+    modules.wwise.replaced = scheme.wwiseDiffReplaced;
+    modules.wwise.unresolved = scheme.wwiseDiffUnresolved;
+    modules.wwise.leafBadge = scheme.wwiseLeafBadge;
+    modules.wwise.parentBadge = scheme.wwiseParentBadge;
+    modules.wwise.labelText = kWwiseLabelTextColor.Resolve(scheme);
+    modules.wwise.bodyText = kWwiseBodyTextColor.Resolve(scheme);
+
+    return modules;
+}
+
 static ImVec4 DeriveMeterBg(const ThemeColorScheme& s) {
     ImVec4 source = s.waveformBG.w > 0.0f ? s.waveformBG : s.toolbarBG;
     return OpaqueThemeColor(MixThemeColor(source, s.chromeBorder, 0.16f));
 }
 
 static ImVec4 DeriveMeterBase(const ThemeColorScheme& s, const ImVec4& meterBg) {
-    ImVec4 quietNeutral = MixThemeColor(meterBg, s.resultsSecondaryText, 0.30f);
-    ImVec4 softened = MixThemeColor(s.volumeColor, quietNeutral, 0.58f);
-    softened = MixThemeColor(softened, ThemeGray(0.62f), 0.14f);
+    ImVec4 quietNeutral = MixOrA(s, meterBg, s.resultsSecondaryText, 0.30f);
+    ImVec4 softened = MixOrA(s, s.volumeColor, quietNeutral, 0.58f);
+    softened = MixOrA(s, softened, s.meterNeutralAnchor, 0.14f);
     return OpaqueThemeColor(softened);
 }
 
 static ImVec4 DeriveMeterWarning(const ThemeColorScheme& s, const ImVec4& meterBase) {
-    ImVec4 warmTarget = MixThemeColor(s.waveformPositionLine, ImVec4(0.96f, 0.88f, 0.72f, 1.0f), 0.55f);
-    return OpaqueThemeColor(MixThemeColor(meterBase, warmTarget, 0.62f));
+    ImVec4 warmTarget = MixOrA(s, s.waveformPositionLine, s.meterWarnAnchor, 0.55f);
+    return OpaqueThemeColor(MixOrA(s, meterBase, warmTarget, 0.62f));
 }
 
-static ImVec4 DeriveMeterMid(const ImVec4& meterBase, const ImVec4& meterWarning) {
-    return OpaqueThemeColor(MixThemeColor(meterBase, meterWarning, 0.46f));
+static ImVec4 DeriveMeterMid(const ThemeColorScheme& s, const ImVec4& meterBase, const ImVec4& meterWarning) {
+    return OpaqueThemeColor(MixOrA(s, meterBase, meterWarning, 0.46f));
 }
 
 static ImVec4 DeriveMeterClip(const ThemeColorScheme& s) {
-    ImVec4 coralTarget = MixThemeColor(s.volumeClipColor, ImVec4(0.84f, 0.67f, 0.64f, 1.0f), 0.58f);
-    coralTarget = MixThemeColor(coralTarget, ThemeGray(0.70f), 0.10f);
+    ImVec4 coralTarget = MixOrA(s, s.volumeClipColor, s.meterClipAnchor, 0.58f);
+    // 与 meterBase 共用同一个中性锚点，保持原来的深浅比例。
+    const ImVec4 neutralStrong = MixOrA(s, s.meterNeutralAnchor, ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+                                               (0.70f - 0.62f) / (1.0f - 0.62f));
+    coralTarget = MixOrA(s, coralTarget, neutralStrong, 0.10f);
     return OpaqueThemeColor(coralTarget);
 }
 
@@ -120,14 +259,14 @@ static ImVec4 DeriveMeterScaleText(const ThemeColorScheme& s) {
     ImVec4 base = s.resultsSecondaryText.w > 0.0f
         ? s.resultsSecondaryText
         : (s.timecodeText.w > 0.0f ? s.timecodeText : s.interfaceText);
-    return OpaqueThemeColor(MixThemeColor(base, s.interfaceText, 0.22f));
+    return OpaqueThemeColor(MixOrA(s, base, s.interfaceText, 0.22f));
 }
 
 static void ApplyMeterThemeDefaults(ThemeColorScheme& s) {
     s.meterBg = DeriveMeterBg(s);
     s.meterBase = DeriveMeterBase(s, s.meterBg);
     s.meterWarning = DeriveMeterWarning(s, s.meterBase);
-    s.meterMid = DeriveMeterMid(s.meterBase, s.meterWarning);
+    s.meterMid = DeriveMeterMid(s, s.meterBase, s.meterWarning);
     s.meterClip = DeriveMeterClip(s);
     s.meterScaleText = DeriveMeterScaleText(s);
 }
@@ -137,36 +276,36 @@ static void ApplySemanticThemeDefaults(ThemeColorScheme& s) {
     s.chromeBorder = s.resultsOutline;
     s.popupBG = ImVec4(s.toolbarBG.x, s.toolbarBG.y, s.toolbarBG.z, 0.98f);
     s.menuPopupBG = s.popupBG;
-    s.dialogBG = MixThemeColor(s.popupBG, s.mainWindowBG, 0.08f);
-    s.dialogPanelBG = MixThemeColor(s.dialogBG, s.frameBgBase, 0.16f);
-    s.historyCapsuleBG = MixThemeColor(s.toolbarBG, s.mainWindowBG, 0.10f);
-    s.historyCapsuleActiveBG = MixThemeColor(s.frameBgBase, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.72f);
-    s.modeCapsuleBG = MixThemeColor(s.toolbarBG, s.mainWindowBG, 0.08f);
-    s.modeCapsuleActiveBG = MixThemeColor(s.frameBgBase, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.72f);
+    s.dialogBG = MixOrA(s, s.popupBG, s.mainWindowBG, 0.08f);
+    s.dialogPanelBG = MixOrA(s, s.dialogBG, s.frameBgBase, 0.16f);
+    s.historyCapsuleBG = MixOrA(s, s.toolbarBG, s.mainWindowBG, 0.10f);
+    s.historyCapsuleActiveBG = MixOrA(s, s.frameBgBase, s.themeHighlight, 0.72f);
+    s.modeCapsuleBG = MixOrA(s, s.toolbarBG, s.mainWindowBG, 0.08f);
+    s.modeCapsuleActiveBG = MixOrA(s, s.frameBgBase, s.themeHighlight, 0.72f);
     s.toolbarAccent = s.resultsSelection;
     s.controlAccent = s.toolbarAccent;
     s.resultsGradientStart = s.resultsBG;
-    s.resultsGradientEnd = MixThemeColor(s.resultsBG, s.resultsSelection, 0.10f);
-    s.playlistGradientHighlight = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    s.resultsGradientEnd = MixOrA(s, s.resultsBG, s.resultsSelection, 0.10f);
+    s.playlistGradientHighlight = s.themeHighlight;
     s.playlistGradientShadow = s.resultsBG;
     s.coverWallBG = s.metadataPanelBG;
-    s.waveformPanelBorder = MixThemeColor(
+    s.waveformPanelBorder = MixOrA(s, 
         s.waveformBG,
-        MixThemeColor(s.chromeBorder, s.controlAccent, 0.18f),
+        MixOrA(s, s.chromeBorder, s.controlAccent, 0.18f),
         0.44f);
-    s.waveformSplitterBG = MixThemeColor(s.resultsBG, s.waveformBG, 0.18f);
-    s.waveformSplitterLine = MixThemeColor(
+    s.waveformSplitterBG = MixOrA(s, s.resultsBG, s.waveformBG, 0.18f);
+    s.waveformSplitterLine = MixOrA(s, 
         s.waveformSplitterBG,
-        MixThemeColor(s.waveformPanelBorder, s.controlAccent, 0.14f),
+        MixOrA(s, s.waveformPanelBorder, s.controlAccent, 0.14f),
         0.24f);
-    s.waveformFooterBG = MixThemeColor(s.waveformBG, s.mainWindowBG, 0.28f);
+    s.waveformFooterBG = MixOrA(s, s.waveformBG, s.mainWindowBG, 0.28f);
     s.diagnosticOverlayBG = ImVec4(s.dialogPanelBG.x, s.dialogPanelBG.y, s.dialogPanelBG.z, 0.92f);
     s.diagnosticOverlayText = s.interfaceText;
     s.diagnosticOverlayAccent = s.toolbarAccent;
-    s.diagnosticOverlayMutedText = MixThemeColor(s.interfaceText, s.diagnosticOverlayBG, 0.42f);
+    s.diagnosticOverlayMutedText = MixOrA(s, s.interfaceText, s.diagnosticOverlayBG, 0.42f);
     // F-034: Preset dial — derive from existing capsule/toolbar tokens
     // Bg: pull toward mainWindowBG so it reads as a recessed trough inside the toolbar
-    s.presetDialBg               = MixThemeColor(s.mainWindowBG, s.toolbarBG, 0.22f);
+    s.presetDialBg               = MixOrA(s, s.mainWindowBG, s.toolbarBG, 0.22f);
     s.presetDialCardActiveBg     = s.modeCapsuleActiveBG;
     // Active text: interfaceText (cool blue-white ~#b8cbe4) — matches reference design, reads
     // well on dark toolbar. No filled card in v2, so must contrast with toolbar bg, not card bg.
@@ -175,15 +314,15 @@ static void ApplySemanticThemeDefaults(ThemeColorScheme& s) {
     s.presetDialCardInactiveText = s.interfaceText;
     // Accent: derive from cool interfaceText, NOT controlAccent (which may be amber/gold)
     // This gives electric-blue-gray lines consistent with the workstation aesthetic
-    s.presetDialAccent           = MixThemeColor(s.interfaceText, s.modeCapsuleActiveBG, 0.30f);
-    s.filterBrowserSearchHitText = MixThemeColor(s.controlAccent, s.filterBrowserTreeText, 0.25f);
+    s.presetDialAccent           = MixOrA(s, s.interfaceText, s.modeCapsuleActiveBG, 0.30f);
+    s.filterBrowserSearchHitText = MixOrA(s, s.controlAccent, s.filterBrowserTreeText, 0.25f);
     s.filterBrowserLocateTint = s.transferButtonBG;
-    s.filterBrowserTagText = MixThemeColor(s.filterBrowserText, s.controlAccent, 0.3f);
+    s.filterBrowserTagText = MixOrA(s, s.filterBrowserText, s.controlAccent, 0.3f);
     s.miniWaveColor = s.waveformColor;
     s.miniWaveBG = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
     // Results panel border — derive from theme accent so light themes don't get warm gold
     {
-        ImVec4 base = MixThemeColor(s.controlAccent, s.resultsSelection, 0.5f);
+        ImVec4 base = MixOrA(s, s.controlAccent, s.resultsSelection, 0.5f);
         s.resultsActiveBorder = ImVec4(base.x, base.y, base.z, 0.85f);
     }
     // F-034 Wwise semantic tokens — four distinct hue axes, all theme-rooted.
@@ -198,23 +337,37 @@ static void ApplySemanticThemeDefaults(ThemeColorScheme& s) {
     // diffNew uses a separate cyan axis so status chips keep clearly distinct meanings.
     // This keeps connected/new-node status chips visually distinct in drawStatChip.
     {
-        const ImVec4 themeGreen  = MixThemeColor(s.volumeColor,
-                                       ImVec4(0.42f, 0.88f, 0.48f, 1.0f), 0.32f); // pull toward vivid green
-        const ImVec4 themeCyan   = MixThemeColor(ImVec4(0.38f, 0.76f, 0.90f, 1.0f),
-                                       s.menuText, 0.10f);                          // sky-teal, softened toward theme temp
+        const ImVec4 themeGreen  = MixOrA(s, s.volumeColor, s.wwiseOkAnchor, 0.32f); // pull toward vivid green
+        const ImVec4 themeCyan   = MixOrA(s, s.wwiseNewAnchor, s.menuText, 0.10f); // sky-teal, softened toward theme temp
         const ImVec4 warmAnchor  = s.resultsSelection;                               // amber/gold
         const ImVec4 dangerAnchor = s.volumeClipColor;                               // red
         const ImVec4 textBase    = s.interfaceText;                                  // theme text
-        s.wwiseConnectOk      = MixThemeColor(themeGreen,   textBase,       0.18f); // green axis
-        s.wwiseConnectFail    = MixThemeColor(dangerAnchor, textBase,       0.18f); // red axis
-        s.wwiseDiffNeutral    = MixThemeColor(textBase,     s.chromeBorder, 0.40f); // neutral
-        s.wwiseDiffNew        = MixThemeColor(themeCyan,    textBase,       0.15f); // cyan axis — ≠ green
-        s.wwiseDiffReplaced   = MixThemeColor(warmAnchor,   textBase,       0.10f); // amber axis
-        s.wwiseDiffUnresolved = MixThemeColor(dangerAnchor, textBase,       0.12f); // red axis
-        s.wwiseLeafBadge      = MixThemeColor(themeGreen,   themeCyan,      0.38f); // green+cyan
-        s.wwiseParentBadge    = MixThemeColor(themeCyan,    textBase,       0.28f); // cyan axis
+        s.wwiseConnectOk      = MixOrA(s, themeGreen,   textBase,       0.18f); // green axis
+        s.wwiseConnectFail    = MixOrA(s, dangerAnchor, textBase,       0.18f); // red axis
+        s.wwiseDiffNeutral    = MixOrA(s, textBase,     s.chromeBorder, 0.40f); // neutral
+        s.wwiseDiffNew        = MixOrA(s, themeCyan,    textBase,       0.15f); // cyan axis — ≠ green
+        s.wwiseDiffReplaced   = MixOrA(s, warmAnchor,   textBase,       0.10f); // amber axis
+        s.wwiseDiffUnresolved = MixOrA(s, dangerAnchor, textBase,       0.12f); // red axis
+        s.wwiseLeafBadge      = MixOrA(s, themeGreen,   themeCyan,      0.38f); // green+cyan
+        s.wwiseParentBadge    = MixOrA(s, themeCyan,    textBase,       0.28f); // cyan axis
     }
     ApplyMeterThemeDefaults(s);
+}
+
+void ThemeColors::resolveDerivedColors(ThemeColorScheme& scheme) {
+    // 关闭混合时：派生公式只做纯拷贝，混色结果一律退回主色；
+    // 渐变两端属于用户明确给的颜色，保留不动。
+    const ImVec4 gradientStart = scheme.resultsGradientStart;
+    const ImVec4 gradientEnd = scheme.resultsGradientEnd;
+    ApplySemanticThemeDefaults(scheme);
+    if (!scheme.colorMixing) {
+        scheme.resultsGradientStart = gradientStart;
+        scheme.resultsGradientEnd = gradientEnd;
+    }
+}
+
+bool ThemeColors::colorMixingEnabled() {
+    return s_currentScheme.colorMixing;
 }
 
 bool& ThemeColors::customized() {
@@ -361,6 +514,269 @@ ThemeDialogStyleScope::~ThemeDialogStyleScope() {
     reset();
 }
 
+namespace {
+
+float MenuColorLuminance(const ImVec4& color) {
+    auto channel = [](float value) {
+        return value <= 0.03928f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * channel(color.x) + 0.7152f * channel(color.y) + 0.0722f * channel(color.z);
+}
+
+float MenuContrastRatio(const ImVec4& a, const ImVec4& b) {
+    const float la = MenuColorLuminance(a);
+    const float lb = MenuColorLuminance(b);
+    const float lighter = std::max(la, lb);
+    const float darker = std::min(la, lb);
+    return (lighter + 0.05f) / (darker + 0.05f);
+}
+
+ImVec4 FlatMenuSurface(const ThemeColorScheme& scheme) {
+    const bool light = ThemeColors::isLightChromeTheme(scheme);
+    return OpaqueThemeColor(MixThemeColor(ThemeColors::menuBarFillBG(scheme),
+        light ? ThemeColors::popupMenuBG(scheme) : scheme.chromeBorder, light ? 0.65f : 0.20f));
+}
+
+ImVec4 MenuSelectionFill(const ThemeColorScheme& scheme, const ImVec4& surface) {
+    const bool light = ThemeColors::isLightChromeTheme(scheme);
+    return OpaqueThemeColor(MixThemeColor(surface, scheme.controlAccent, light ? 0.46f : 0.40f));
+}
+
+ImVec4 MenuSelectionText(const ThemeColorScheme& scheme, const ImVec4& fill) {
+    const ImVec4 text = OpaqueThemeColor(scheme.menuText);
+    if (MenuContrastRatio(fill, text) >= 4.5f)
+        return text;
+    const ImVec4 white(1.0f, 1.0f, 1.0f, 1.0f);
+    return MenuContrastRatio(fill, white) >= 4.5f ? white : ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+ImVec4 MenuSecondaryText(const ThemeColorScheme& scheme) {
+    const ImVec4 text = OpaqueThemeColor(scheme.menuText);
+    return OpaqueThemeColor(MixThemeColor(text, FlatMenuSurface(scheme), 0.36f));
+}
+
+constexpr float kMenuPopupMinTextPx = 15.0f;
+float s_menuPopupTextSizePx = kMenuPopupMinTextPx;
+#if ARIS_PREVIEW_ISOLATION
+const ImGuiID kMenuPopupFontPixelsKey = ImHashStr("##MenuChromeFontPixels");
+#endif
+
+void PushMenuTextFont(ImFont* textFont, float textSizePx, bool& pushed) {
+    if (!textFont || textSizePx <= 0.0f) return;
+    ImGui::PushFont(textFont, GetMenuChromeFontPushSize(textFont, textSizePx));
+    pushed = true;
+}
+
+void GetFlatMenuPopupColors(ImVec4& background, ImVec4& border) {
+    const ThemeColorScheme& scheme = ThemeColors::current();
+    background = ClampThemeColor(FlatMenuSurface(scheme));
+    border = MixThemeColor(background, ClampThemeColor(ThemeColors::popupBorder(scheme)), 0.39f);
+}
+
+}  // namespace
+
+float GetMenuChromeFontPushSize(ImFont* textFont, float textPixels) {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImGuiWindow* window = ImGui::GetCurrentWindowRead();
+    float appliedScale = style.FontScaleMain * style.FontScaleDpi * (window ? window->FontWindowScale : 1.0f);
+#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+    appliedScale *= ImGui::GetIO().FontGlobalScale * textFont->Scale;
+#endif
+    return textPixels / std::max(0.01f, appliedScale);
+}
+
+#if ARIS_PREVIEW_ISOLATION
+float GetMenuPopupFontPixelsForQa(const ImGuiWindow& window) {
+    return (window.Flags & ImGuiWindowFlags_MenuChrome)
+        ? window.StateStorage.GetFloat(kMenuPopupFontPixelsKey, window.FontRefSize)
+        : window.FontRefSize;
+}
+#endif
+
+bool InMenuChromeScope() {
+    const ImGuiContext* context = ImGui::GetCurrentContext();
+    if (!context || !context->CurrentWindow) return false;
+    const ImGuiWindow& window = *context->CurrentWindow;
+    return ((window.Flags & ImGuiWindowFlags_MenuChrome) && context->MenuChromeTextStackSize >= 0)
+        || (window.DC.MenuBarAppending && (context->CurrentItemFlags & ImGuiItemFlags_MenuChrome));
+}
+
+ThemeMenuBarStyleScope::ThemeMenuBarStyleScope(ImFont* textFont, float textSizePx) {
+    if (!ImGui::GetCurrentContext() || !ImGui::GetCurrentWindowRead()) return;
+    m_active = true;
+
+    const float legacyTitleSpacing = ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    const ThemeColorScheme& scheme = ThemeColors::current();
+    const bool light = ThemeColors::isLightChromeTheme(scheme);
+    const float scale = ImGui::GetMenuChromeScale();
+    const ImVec4 bar = ThemeColors::menuBarFillBG(scheme);
+    const ImVec4 pill = OpaqueThemeColor(MixThemeColor(
+        MixThemeColor(bar, scheme.menuText, light ? 0.10f : 0.14f), scheme.controlAccent, 0.10f));
+
+    auto pushColor = [&](ImGuiCol idx, const ImVec4& color) {
+        ImGui::PushStyleColor(idx, ClampThemeColor(color));
+        ++m_colorCount;
+    };
+    auto pushVar = [&](ImGuiStyleVar idx, float value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+    auto pushVar2 = [&](ImGuiStyleVar idx, const ImVec2& value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+
+    pushColor(ImGuiCol_Text, OpaqueThemeColor(scheme.menuText));
+    pushColor(ImGuiCol_TextDisabled, MenuSecondaryText(scheme));
+    pushColor(ImGuiCol_Header, pill);
+    pushColor(ImGuiCol_HeaderHovered, OpaqueThemeColor(MixThemeColor(bar, pill, 0.74f)));
+    pushColor(ImGuiCol_HeaderActive, pill);
+
+    const float height = ImGui::GetCurrentWindow()->MenuBarHeight;
+    const float desiredTextPx = textSizePx * scale;
+    PushMenuTextFont(textFont, height > 0.0f ? std::min(desiredTextPx, height) : desiredTextPx, m_pushedFont);
+    const float padY = std::max(0.0f, std::floor((height - ImGui::GetFontSize()) * 0.5f));
+    pushVar(ImGuiStyleVar_FrameRounding, 5.0f * scale);
+    pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(legacyTitleSpacing, std::min(6.0f * scale, padY * 2.0f)));
+    pushVar2(ImGuiStyleVar_FramePadding, ImVec2(7.0f * scale, padY));
+    ImGui::PushItemFlag(ImGuiItemFlags_MenuChrome, true);
+}
+
+void ThemeMenuBarStyleScope::reset() {
+    if (!m_active) return;
+    m_active = false;
+    ImGui::PopItemFlag();
+    if (m_pushedFont) {
+        ImGui::PopFont();
+        m_pushedFont = false;
+    }
+    if (m_varCount > 0) {
+        ImGui::PopStyleVar(m_varCount);
+        m_varCount = 0;
+    }
+    if (m_colorCount > 0) {
+        ImGui::PopStyleColor(m_colorCount);
+        m_colorCount = 0;
+    }
+}
+
+ThemeMenuBarStyleScope::~ThemeMenuBarStyleScope() {
+    reset();
+}
+
+ThemeMenuPopupStyleScope::ThemeMenuPopupStyleScope(ImFont* textFont, bool enabled) {
+    if (!enabled || !ImGui::GetCurrentContext() || !ImGui::GetCurrentWindowRead()) return;
+    m_active = true;
+
+    const ThemeColorScheme& scheme = ThemeColors::current();
+    const ImVec4 hairline = ThemeColors::popupBorder(scheme);
+    const ImVec4 surface = FlatMenuSurface(scheme);
+    const ImVec4 selection = MenuSelectionFill(scheme, surface);
+    const ImVec4 activeText = MenuSelectionText(scheme, selection);
+    const float scale = ImGui::GetMenuChromeScale();
+
+    auto pushColor = [&](ImGuiCol idx, const ImVec4& color) {
+        ImGui::PushStyleColor(idx, ClampThemeColor(color));
+        ++m_colorCount;
+    };
+    auto pushVar = [&](ImGuiStyleVar idx, float value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+    auto pushVar2 = [&](ImGuiStyleVar idx, const ImVec2& value) {
+        ImGui::PushStyleVar(idx, value);
+        ++m_varCount;
+    };
+
+    pushColor(ImGuiCol_Text, OpaqueThemeColor(scheme.menuText));
+    pushColor(ImGuiCol_TextDisabled, MenuSecondaryText(scheme));
+    pushColor(ImGuiCol_Header, OpaqueThemeColor(MixThemeColor(surface, selection, 0.35f)));
+    pushColor(ImGuiCol_HeaderHovered, selection);
+    pushColor(ImGuiCol_HeaderActive, selection);
+    pushColor(ImGuiCol_Separator, hairline);
+    pushColor(ImGuiCol_SeparatorHovered, hairline);
+    pushColor(ImGuiCol_SeparatorActive, hairline);
+    pushColor(ImGuiCol_NavCursor, MixThemeColor(selection, activeText, 0.38f));
+
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    m_previousActiveText = context.MenuChromeActiveText;
+    m_previousTextStackSize = context.MenuChromeTextStackSize;
+    context.MenuChromeActiveText = activeText;
+    context.MenuChromeTextStackSize = context.ColorStack.Size;
+
+    pushVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
+    const float textSizePx = s_menuPopupTextSizePx;
+    PushMenuTextFont(textFont ? textFont : ImGui::GetFont(), textSizePx * scale, m_pushedFont);
+    const float rowPitch = std::max(27.0f, textSizePx + 8.0f) * scale;
+    pushVar2(ImGuiStyleVar_ItemSpacing, ImVec2(16.0f * scale, std::max(0.0f, rowPitch - ImGui::GetTextLineHeight())));
+#if ARIS_PREVIEW_ISOLATION
+    ImGui::GetCurrentWindow()->StateStorage.SetFloat(kMenuPopupFontPixelsKey, ImGui::GetFontSize());
+#endif
+}
+
+ThemeMenuPopupShellScope::ThemeMenuPopupShellScope(bool enabled, float textSizePx)
+    : m_textSizePx(std::max(kMenuPopupMinTextPx, textSizePx)) {
+    if (enabled) activate();
+}
+
+void ThemeMenuPopupShellScope::activate() {
+    if (m_active || !ImGui::GetCurrentContext()) return;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    m_previousPopupColors = context.MenuChromeGetPopupColors;
+    context.MenuChromeGetPopupColors = GetFlatMenuPopupColors;
+    m_previousTextSizePx = s_menuPopupTextSizePx;
+    s_menuPopupTextSizePx = m_textSizePx;
+    m_active = true;
+}
+
+bool ThemeMenuPopupShellScope::beginContextItem(const char* id, bool useMenuChrome) {
+    if (!useMenuChrome) return ImGui::BeginPopupContextItem(id);
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return false;
+    ImGui::OpenPopupOnItemClick(id);
+    const ImGuiID popupId = id ? window->GetID(id) : ImGui::GetItemID();
+    if (ImGui::IsPopupOpen(popupId, ImGuiPopupFlags_None)) activate();
+    return ImGui::BeginPopupEx(popupId, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar
+        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuChrome);
+}
+
+void ThemeMenuPopupShellScope::reset() {
+    if (!m_active) return;
+    m_active = false;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    context.MenuChromeGetPopupColors = m_previousPopupColors;
+    s_menuPopupTextSizePx = m_previousTextSizePx;
+}
+
+ThemeMenuPopupShellScope::~ThemeMenuPopupShellScope() {
+    reset();
+}
+
+
+void ThemeMenuPopupStyleScope::reset() {
+    if (!m_active) return;
+    m_active = false;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    context.MenuChromeActiveText = m_previousActiveText;
+    context.MenuChromeTextStackSize = m_previousTextStackSize;
+    if (m_pushedFont) {
+        ImGui::PopFont();
+        m_pushedFont = false;
+    }
+    if (m_varCount > 0) {
+        ImGui::PopStyleVar(m_varCount);
+        m_varCount = 0;
+    }
+    if (m_colorCount > 0) {
+        ImGui::PopStyleColor(m_colorCount);
+        m_colorCount = 0;
+    }
+}
+
+ThemeMenuPopupStyleScope::~ThemeMenuPopupStyleScope() {
+    reset();
+}
+
 void ThemeColors::activateCustomScheme(const ThemeColorScheme& scheme) {
     s_currentScheme = scheme;
     s_customized = true;
@@ -443,6 +859,8 @@ bool ThemeColors::loadAndApplyThemeFile(
     if (source && source[0]) {
         armImportDiagnostics(source, pathUtf8, startThemeValue, startThemeLabel, livePreview);
     }
+    // 注意：不要在这里重算派生色。导入的主题每个字段都是显式值，
+    // 重算会把用户单独调过的颜色覆盖掉（关闭混色时更明显）。
     activateCustomScheme(loaded);
     if (applyNow) {
         applyToImGui();
@@ -980,14 +1398,11 @@ ThemeColorScheme ThemeColors::getHarkenSearchProductDark() {
     s.volumeColor = success;
     s.volumeClipColor = danger;
 
-    s.sidebarRailBG = canvas;
     s.sidebarRailDivider = borderSubtle;
     s.sidebarIconInactive = textMuted;
     s.sidebarIconHover = textSecondary;
     s.sidebarIconActive = actionPrimary;
     s.sidebarActiveStrip = actionPrimary;
-    s.sidebarHeaderBG = canvas;
-    s.sidebarStatusBarBG = panel;
     s.sidebarSubpaneBG = elevated;
     s.sidebarSubpaneDivider = borderStrong;
     s.sidebarSubHeaderLine = borderSubtle;
@@ -1071,14 +1486,11 @@ ThemeColorScheme ThemeColors::getClassicDark() {
     s.tabBG              = ImVec4(0.20f, 0.20f, 0.20f, 1.0f);
 
 // Sidebar Activity Bar (Classic Dark)
-    s.sidebarRailBG          = fromARGBHex("ff1c1c1c");
     s.sidebarRailDivider     = fromARGBHex("0dffffff");
     s.sidebarIconInactive    = fromARGBHex("ff808080");
     s.sidebarIconHover       = fromARGBHex("ffb3b3b3");
     s.sidebarIconActive      = fromARGBHex("ff4cb34c");
     s.sidebarActiveStrip     = fromARGBHex("ff4cb34c");
-    s.sidebarHeaderBG        = s.sidebarRailBG;
-    s.sidebarStatusBarBG     = fromARGBHex("ff1d1d1d"); // filterBrowserBG(#232323) × 0.925
     s.sidebarSubHeaderLine   = fromARGBHex("26ffffff");
 
     ApplySemanticThemeDefaults(s);
@@ -1176,14 +1588,11 @@ ThemeColorScheme ThemeColors::getOceanBlue() {
     s.presetDialAccent        = MixThemeColor(s.interfaceText, s.modeCapsuleActiveBG, 0.30f);
 
 // Sidebar Activity Bar (Ocean Blue)
-    s.sidebarRailBG          = fromARGBHex("ff080d14");
     s.sidebarRailDivider     = fromARGBHex("2600bcd3");
     s.sidebarIconInactive    = fromARGBHex("ff506680");
     s.sidebarIconHover       = fromARGBHex("ff80aacc");
     s.sidebarIconActive      = fromARGBHex("ff00bcd3");
     s.sidebarActiveStrip     = fromARGBHex("ff00bcd3");
-    s.sidebarHeaderBG        = s.sidebarRailBG;
-    s.sidebarStatusBarBG     = fromARGBHex("ff0d1522"); // filterBrowserBG(#0E1725) × 0.925
     s.sidebarSubHeaderLine   = fromARGBHex("2600bcd3");
 
     return s;
@@ -1235,14 +1644,11 @@ ThemeColorScheme ThemeColors::getSunsetWarm() {
     s.tabBG              = ImVec4(0.30f, 0.18f, 0.12f, 1.0f);
 
 // Sidebar Activity Bar (Sunset Warm)
-    s.sidebarRailBG          = fromARGBHex("ff23140f");
     s.sidebarRailDivider     = fromARGBHex("26e68019");
     s.sidebarIconInactive    = fromARGBHex("ff8a726a");
     s.sidebarIconHover       = fromARGBHex("ffc2a59b");
     s.sidebarIconActive      = fromARGBHex("ffe68019");
     s.sidebarActiveStrip     = fromARGBHex("ffe68019");
-    s.sidebarHeaderBG        = s.sidebarRailBG;
-    s.sidebarStatusBarBG     = fromARGBHex("ff2a1812"); // filterBrowserBG(#2E1A14) × 0.925
     s.sidebarSubHeaderLine   = fromARGBHex("26e68019");
 
     ApplySemanticThemeDefaults(s);
@@ -1362,14 +1768,11 @@ ThemeColorScheme ThemeColors::getElectricBlue() {
     s.volumeClipColor      = ImVec4(0.937f, 0.267f, 0.267f, 1.0f);  // ffef4444
 
 // Sidebar Activity Bar (Electric Blue)
-    s.sidebarRailBG          = fromARGBHex("ff0b0d12");
     s.sidebarRailDivider     = fromARGBHex("263b82f6");
     s.sidebarIconInactive    = fromARGBHex("ff545a6e");
     s.sidebarIconHover       = fromARGBHex("ff8c96b3");
     s.sidebarIconActive      = fromARGBHex("ff3b82f6");
     s.sidebarActiveStrip     = fromARGBHex("ff3b82f6");
-    s.sidebarHeaderBG        = s.sidebarRailBG;
-    s.sidebarStatusBarBG     = fromARGBHex("ff111317"); // filterBrowserBG(#12141A) × 0.925
     s.sidebarSubHeaderLine   = fromARGBHex("263b82f6");
 
     ApplySemanticThemeDefaults(s);
@@ -1444,14 +1847,11 @@ ThemeColorScheme ThemeColors::getPowderedPastels() {
     s.meterScaleText          = fromARGBHex("ff9299a3");
 
     // Sidebar Activity Bar (Powdered Pastels light-theme variant)
-    s.sidebarRailBG          = fromARGBHex("ffeadfd6");
     s.sidebarRailDivider     = fromARGBHex("0d000000");
     s.sidebarIconInactive    = fromARGBHex("ff8b7e74");
     s.sidebarIconHover       = fromARGBHex("ff5a4e44");
     s.sidebarIconActive      = fromARGBHex("ff4a6984");
     s.sidebarActiveStrip     = fromARGBHex("ff4a6984");
-    s.sidebarHeaderBG        = s.sidebarRailBG;
-    s.sidebarStatusBarBG     = fromARGBHex("ffddd5ce"); // filterBrowserBG(#EFE7E1) × 0.925
     s.sidebarSubHeaderLine   = fromARGBHex("26000000");
 
     ApplySemanticThemeDefaults(s);
@@ -1536,6 +1936,12 @@ std::string ThemeColors::exportToJSON(const ThemeColorScheme& s) {
     j << "  \"filterBrowserButtonBG\": \"" << toARGBHex(s.filterBrowserButtonBG) << "\",\n";
     j << "  \"sidebarSubpaneBG\": \"" << toARGBHex(s.sidebarSubpaneBG) << "\",\n";
     j << "  \"sidebarSubpaneDivider\": \"" << toARGBHex(s.sidebarSubpaneDivider) << "\",\n";
+    j << "  \"sidebarRailDivider\": \"" << toARGBHex(s.sidebarRailDivider) << "\",\n";
+    j << "  \"sidebarIconInactive\": \"" << toARGBHex(s.sidebarIconInactive) << "\",\n";
+    j << "  \"sidebarIconHover\": \"" << toARGBHex(s.sidebarIconHover) << "\",\n";
+    j << "  \"sidebarIconActive\": \"" << toARGBHex(s.sidebarIconActive) << "\",\n";
+    j << "  \"sidebarActiveStrip\": \"" << toARGBHex(s.sidebarActiveStrip) << "\",\n";
+    j << "  \"sidebarSubHeaderLine\": \"" << toARGBHex(s.sidebarSubHeaderLine) << "\",\n";
     j << "  \"filterBrowserTreeText\": \"" << toARGBHex(s.filterBrowserTreeText) << "\",\n";
     j << "  \"filterBrowserTreeSelection\": \"" << toARGBHex(s.filterBrowserTreeSelection) << "\",\n";
     j << "  \"filterBrowserSearchHitText\": \"" << toARGBHex(s.filterBrowserSearchHitText) << "\",\n";
@@ -1561,6 +1967,25 @@ std::string ThemeColors::exportToJSON(const ThemeColorScheme& s) {
     j << "  \"wwiseDiffReplaced\": \"" << toARGBHex(s.wwiseDiffReplaced) << "\",\n";
     j << "  \"wwiseDiffUnresolved\": \"" << toARGBHex(s.wwiseDiffUnresolved) << "\",\n";
     j << "  \"wwiseLeafBadge\": \"" << toARGBHex(s.wwiseLeafBadge) << "\",\n";
+    j << "  \"presetDialBg\": \"" << toARGBHex(s.presetDialBg) << "\",\n";
+    j << "  \"presetDialCardActiveBg\": \"" << toARGBHex(s.presetDialCardActiveBg) << "\",\n";
+    j << "  \"presetDialCardActiveText\": \"" << toARGBHex(s.presetDialCardActiveText) << "\",\n";
+    j << "  \"presetDialCardInactiveText\": \"" << toARGBHex(s.presetDialCardInactiveText) << "\",\n";
+    j << "  \"presetDialAccent\": \"" << toARGBHex(s.presetDialAccent) << "\",\n";
+    j << "  \"themeHighlight\": \"" << toARGBHex(s.themeHighlight) << "\",\n";
+    j << "  \"meterWarnAnchor\": \"" << toARGBHex(s.meterWarnAnchor) << "\",\n";
+    j << "  \"meterClipAnchor\": \"" << toARGBHex(s.meterClipAnchor) << "\",\n";
+    j << "  \"meterNeutralAnchor\": \"" << toARGBHex(s.meterNeutralAnchor) << "\",\n";
+    j << "  \"wwiseOkAnchor\": \"" << toARGBHex(s.wwiseOkAnchor) << "\",\n";
+    j << "  \"wwiseNewAnchor\": \"" << toARGBHex(s.wwiseNewAnchor) << "\",\n";
+    j << "  \"colorMixing\": \"" << (s.colorMixing ? "1" : "0") << "\",\n";
+    j << "  \"resultsGradient\": \"" << (s.resultsGradient ? "1" : "0") << "\",\n";
+    j << "  \"searchFieldOutline\": \"" << toARGBHex(s.searchFieldOutline) << "\",\n";
+    j << "  \"transportText\": \"" << toARGBHex(s.transportText) << "\",\n";
+    for (const auto* field : kOptionalThemeColors) {
+        if (const auto& color = s.*(field->member))
+            j << "  \"" << field->key << "\": \"" << toARGBHex(*color) << "\",\n";
+    }
     j << "  \"wwiseParentBadge\": \"" << toARGBHex(s.wwiseParentBadge) << "\"\n";
     j << "}";
     return j.str();
@@ -1659,6 +2084,12 @@ bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outS
     tryParse("filterBrowserButtonBG", outScheme.filterBrowserButtonBG);
     tryParse("sidebarSubpaneBG", outScheme.sidebarSubpaneBG);
     tryParse("sidebarSubpaneDivider", outScheme.sidebarSubpaneDivider);
+    tryParse("sidebarRailDivider", outScheme.sidebarRailDivider);
+    tryParse("sidebarIconInactive", outScheme.sidebarIconInactive);
+    tryParse("sidebarIconHover", outScheme.sidebarIconHover);
+    tryParse("sidebarIconActive", outScheme.sidebarIconActive);
+    tryParse("sidebarActiveStrip", outScheme.sidebarActiveStrip);
+    tryParse("sidebarSubHeaderLine", outScheme.sidebarSubHeaderLine);
     tryParse("filterBrowserTreeText", outScheme.filterBrowserTreeText);
     tryParse("filterBrowserTreeSelection", outScheme.filterBrowserTreeSelection);
     tryParse("filterBrowserSearchHitText", outScheme.filterBrowserSearchHitText);
@@ -1687,6 +2118,32 @@ bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outS
     tryParse("wwiseDiffUnresolved", outScheme.wwiseDiffUnresolved);
     tryParse("wwiseLeafBadge", outScheme.wwiseLeafBadge);
     tryParse("wwiseParentBadge", outScheme.wwiseParentBadge);
+    tryParse("presetDialBg", outScheme.presetDialBg);
+    tryParse("presetDialCardActiveBg", outScheme.presetDialCardActiveBg);
+    tryParse("presetDialCardActiveText", outScheme.presetDialCardActiveText);
+    tryParse("presetDialCardInactiveText", outScheme.presetDialCardInactiveText);
+    tryParse("presetDialAccent", outScheme.presetDialAccent);
+    tryParse("themeHighlight", outScheme.themeHighlight);
+    tryParse("meterWarnAnchor", outScheme.meterWarnAnchor);
+    tryParse("meterClipAnchor", outScheme.meterClipAnchor);
+    tryParse("meterNeutralAnchor", outScheme.meterNeutralAnchor);
+    tryParse("wwiseOkAnchor", outScheme.wwiseOkAnchor);
+    tryParse("wwiseNewAnchor", outScheme.wwiseNewAnchor);
+    if (hasValue("colorMixing"))
+        outScheme.colorMixing = findValue("colorMixing") != "0";
+    if (hasValue("resultsGradient"))
+        outScheme.resultsGradient = findValue("resultsGradient") != "0";
+    tryParse("searchFieldOutline", outScheme.searchFieldOutline);
+    tryParse("transportText", outScheme.transportText);
+    for (const auto* field : kOptionalThemeColors) {
+        auto& color = outScheme.*(field->member);
+        const std::string value = findValue(field->key);
+        if ((value.size() == 6 || value.size() == 8) &&
+            value.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos)
+            color = fromARGBHex(value);
+        else
+            color.reset();
+    }
 
     if (!hasValue("frameBgBase")) {
         outScheme.frameBgBase = outScheme.toolbarBG;
@@ -1729,13 +2186,13 @@ bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outS
         outScheme.historyCapsuleBG = MixThemeColor(outScheme.toolbarBG, outScheme.mainWindowBG, 0.10f);
     }
     if (!hasValue("historyCapsuleActiveBG")) {
-        outScheme.historyCapsuleActiveBG = MixThemeColor(outScheme.frameBgBase, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.72f);
+        outScheme.historyCapsuleActiveBG = MixThemeColor(outScheme.frameBgBase, outScheme.themeHighlight, 0.72f);
     }
     if (!hasValue("modeCapsuleBG")) {
         outScheme.modeCapsuleBG = MixThemeColor(outScheme.toolbarBG, outScheme.mainWindowBG, 0.08f);
     }
     if (!hasValue("modeCapsuleActiveBG")) {
-        outScheme.modeCapsuleActiveBG = MixThemeColor(outScheme.frameBgBase, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), 0.72f);
+        outScheme.modeCapsuleActiveBG = MixThemeColor(outScheme.frameBgBase, outScheme.themeHighlight, 0.72f);
     }
     if (!hasValue("toolbarAccent")) {
         outScheme.toolbarAccent = outScheme.resultsSelection;
@@ -1768,7 +2225,7 @@ bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outS
         outScheme.meterWarning = DeriveMeterWarning(outScheme, outScheme.meterBase);
     }
     if (!hasValue("meterMid")) {
-        outScheme.meterMid = DeriveMeterMid(outScheme.meterBase, outScheme.meterWarning);
+        outScheme.meterMid = DeriveMeterMid(outScheme, outScheme.meterBase, outScheme.meterWarning);
     }
     if (!hasValue("meterClip")) {
         outScheme.meterClip = DeriveMeterClip(outScheme);
@@ -1783,7 +2240,7 @@ bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outS
         outScheme.resultsGradientEnd = MixThemeColor(outScheme.resultsBG, outScheme.resultsSelection, 0.10f);
     }
     if (!hasValue("playlistGradientHighlight")) {
-        outScheme.playlistGradientHighlight = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        outScheme.playlistGradientHighlight = outScheme.themeHighlight;
     }
     if (!hasValue("playlistGradientShadow")) {
         outScheme.playlistGradientShadow = outScheme.resultsBG;

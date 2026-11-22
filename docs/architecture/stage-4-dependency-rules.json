@@ -520,6 +520,7 @@
         "src/WaveformRebuildPumpGate.h",
         "src/OriginalAudioWriteConfirmGate.cpp",
         "src/OriginalAudioWriteConfirmGate.h",
+        "src/PlaylistCollectionIndex.h",
         "src/CoverBrowseSurfaceState.h"
       ],
       "may_depend_on": [

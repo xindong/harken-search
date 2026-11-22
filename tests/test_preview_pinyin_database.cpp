@@ -207,6 +207,80 @@ bool InstallFtsRebuildFailTrigger(Database& db, std::string* used) {
     return false;
 }
 
+bool TestExtendedSearchDataWriters(const fs::path& root) {
+    const fs::path dbPath = root / "extended-search-data-writers.db";
+    const fs::path oldFile = root / "extended-original.wav";
+    const fs::path newFile = root / "moved" / "extended-moved.wav";
+    std::error_code ec;
+    fs::remove(dbPath, ec);
+    fs::remove(fs::u8path(dbPath.u8string() + "-wal"), ec);
+    fs::remove(fs::u8path(dbPath.u8string() + "-shm"), ec);
+    TouchFile(oldFile);
+
+    Database db;
+    if (!db.open(dbPath.u8string(), false)) {
+        std::cout << "FAIL: open extended-search-data-writers err=" << db.getLastError() << std::endl;
+        return false;
+    }
+    db.stopCoverPhashBackfillWorker();
+
+    const std::string oldPath = oldFile.u8string();
+    const std::string insertSql =
+        "INSERT INTO audio_files(file_path, file_name, composer, designer, search_data) VALUES(" +
+        SqlQuote(oldPath) + ", 'extended-original.wav', 'initialcomposer', 'initialdesigner', " +
+        SqlQuote("initialcomposer initialdesigner") + ");";
+    bool ok = Expect(db.executeRawQuery(insertSql.c_str()).success,
+                     "extended search writer fixture inserts the row");
+    const int64_t fileId = ScalarInt(db.executeRawQuery(
+        (std::string("SELECT id FROM audio_files WHERE file_path = ") + SqlQuote(oldPath) + ";").c_str()));
+    ok &= Expect(fileId > 0, "extended search writer fixture gets the row id");
+
+    MetadataEditPatch patch;
+    patch.set("composer", "patchedcomposer");
+    patch.set("designer", "patcheddesigner");
+    const auto patchResult = db.applyMetadataPatchBatch({fileId}, patch);
+    const std::string patchedSearch = Scalar(db.executeRawQuery(
+        (std::string("SELECT search_data FROM audio_files WHERE id = ") + std::to_string(fileId) + ";").c_str()));
+    ok &= Expect(patchResult.success == 1 && patchResult.failed == 0,
+                 "extended metadata patch succeeds");
+    ok &= Expect(Contains(patchedSearch, "patchedcomposer") && Contains(patchedSearch, "patcheddesigner"),
+                 "metadata patch rebuilds search_data from new extended values");
+    ok &= Expect(MatchCount(db, "patchedcomposer") == 1 && MatchCount(db, "patcheddesigner") == 1,
+                 "metadata patch keeps new extended values searchable in FTS");
+
+    ok &= Expect(db.executeRawQuery(
+        (std::string("UPDATE audio_files SET composer = 'recomputedcomposer', designer = 'recomputeddesigner', search_data = 'stale' WHERE id = ") +
+         std::to_string(fileId) + ";").c_str()).success,
+                 "extended metadata recompute fixture writes stale search_data");
+    ok &= Expect(db.executeRawQuery(
+        (std::string("INSERT INTO app_meta(key, value) VALUES('search_data_migrated', '1') ON CONFLICT(key) DO UPDATE SET value = '1';")).c_str()).success,
+                 "extended metadata recompute fixture marks migration pending");
+    db.executeRawQuery("DELETE FROM app_meta WHERE key = 'search_data_recompute_cursor';");
+    std::atomic<float> progress{-2.0f};
+    std::atomic<bool> cancel{false};
+    ok &= Expect(db.rebuildFtsIndexBatched(64, &progress, &cancel),
+                 "extended metadata recompute publishes successfully");
+    const std::string recomputedSearch = Scalar(db.executeRawQuery(
+        (std::string("SELECT search_data FROM audio_files WHERE id = ") + std::to_string(fileId) + ";").c_str()));
+    ok &= Expect(Contains(recomputedSearch, "recomputedcomposer") && Contains(recomputedSearch, "recomputeddesigner"),
+                 "search_data recompute preserves searchable extended values");
+    ok &= Expect(MatchCount(db, "recomputedcomposer") == 1 && MatchCount(db, "recomputeddesigner") == 1,
+                 "search_data recompute keeps extended values searchable in FTS");
+
+    fs::create_directories(newFile.parent_path());
+    const std::string newPath = newFile.u8string();
+    ok &= Expect(db.updateFilePath(oldPath, newPath, "extended-moved.wav"),
+                 "extended metadata path update succeeds");
+    const std::string movedSearch = Scalar(db.executeRawQuery(
+        (std::string("SELECT search_data FROM audio_files WHERE file_path = ") + SqlQuote(newPath) + ";").c_str()));
+    ok &= Expect(Contains(movedSearch, "recomputedcomposer") && Contains(movedSearch, "recomputeddesigner"),
+                 "path update preserves searchable extended values");
+    ok &= Expect(MatchCount(db, "recomputedcomposer") == 1 && MatchCount(db, "recomputeddesigner") == 1,
+                 "path update keeps extended values searchable in FTS");
+    db.close();
+    return ok;
+}
+
 } // namespace
 
 int main() {
@@ -221,6 +295,8 @@ int main() {
         ("bug07-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directories(root);
     const fs::path audioDir = root / "audio";
+
+    ok &= TestExtendedSearchDataWriters(root);
 
     {
         const fs::path dbPath = root / "product-small.db";

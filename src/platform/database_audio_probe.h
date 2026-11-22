@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 
 namespace Platform::DatabaseAudioProbe {
 
@@ -17,6 +18,7 @@ struct Info {
     uint32_t channels = 0;
     uint64_t totalFrames = 0;
     float durationSeconds = 0.0f;
+    std::optional<bool> wavPackLossless;
 };
 
 bool Probe(const std::filesystem::path& path, Info& out);

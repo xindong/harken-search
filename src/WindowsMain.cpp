@@ -15,10 +15,12 @@
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
+#include "ui/UiScale.h"
 #include "ui/EmptyStateVisualAudit.h"
 #include "AnnotationBridge.h"
 #include "BackgroundIoPolicy.h"
 #include "BetaFeatureFlags.h"
+#include "StartupLoadingMascotArt.h"
 #include "WelcomeGreeting.h"
 #include "WaveformCachePolicy.h"
 #include "platform/system.h"
@@ -139,11 +141,16 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #include "WwiseTransferExecute.h"
 #include "WwiseTransferPanel.h"
 #include "ui/ActionButtonStyle.h"
+#if AURA_BUILD_DIAGNOSTICS
+#include "ui/DiagnosticOverlay.h"
+#include "update/HarkenSearchUpdateComposition.h"
+#endif
 #include "nlohmann_json.hpp"
 #include "WwiseTransferPersist.h"
 #include "WaveformPrewarmPolicy.h"
 #include "platform/audio_data_source.h"
 #include "platform/executable_path.h"
+#include "DatabaseSearchFilterBuilder.h"
 #include "platform/filesystem.h"
 #include "platform/text_encoding.h"
 #include "platform/qa_files.h"
@@ -216,6 +223,10 @@ static void AcknowledgeBootstrapHealthAfterUiPresented() {
 #ifndef WM_COPYGLOBALDATA
 #define WM_COPYGLOBALDATA 0x0049
 #endif
+
+#include "ExternalAiAuthorizationStore.h"
+#include "ExternalAiBridgeServer.h"
+#include "ExternalAiPlaylistService.h"
 
 // Forward declaration for ImGui Win32 handler
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -3835,6 +3846,7 @@ struct MagicEqQaPointer {
     float x = 0.0f;
     float y = 0.0f;
     unsigned int viewport = 0;
+    ImGuiMouseButton button = ImGuiMouseButton_Left;
 };
 static MagicEqQaPointer s_magicEqQaPointer;
 #if ARIS_PREVIEW_ISOLATION
@@ -3889,14 +3901,20 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
     io.AddMousePosEvent(s_magicEqQaPointer.x, s_magicEqQaPointer.y);
     if (s_magicEqQaPointer.viewport) io.AddMouseViewportEvent(s_magicEqQaPointer.viewport);
     if (s_magicEqQaPointer.pending) {
-        io.AddMouseButtonEvent(ImGuiMouseButton_Left, s_magicEqQaPointer.held);
+        io.AddMouseButtonEvent(s_magicEqQaPointer.button, s_magicEqQaPointer.held);
         s_magicEqQaPointer.pending = false;
-        if (!s_magicEqQaPointer.held) s_magicEqQaPointer.active = false;
+        if (!s_magicEqQaPointer.held) {
+            s_magicEqQaPointer.active = false;
+            s_magicEqQaPointer.button = ImGuiMouseButton_Left;
+        }
     }
 }
 
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
 extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
+#if ARIS_PREVIEW_ISOLATION
+extern std::string ControlDawSendFeedbackPreview(const nlohmann::json&);
+#endif
 
 static void PollQaCommandFile(AppState& state) {
     static int s_pollSkip = 0;
@@ -4100,11 +4118,7 @@ static void PollQaCommandFile(AppState& state) {
         }
     };
     auto formatFilterValue = [&](int index) -> std::string {
-        const char* formats[] = {"", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A"};
-        if (index >= 0 && index < (int)(sizeof(formats) / sizeof(formats[0]))) {
-            return formats[index];
-        }
-        return "";
+        return aura::search::AudioFormatFilterAt(index);
     };
     auto coverFilterValue = [&](int index) -> std::string {
         const char* modes[] = {"all", "has", "no"};
@@ -4115,12 +4129,10 @@ static void PollQaCommandFile(AppState& state) {
     };
     auto formatFilterIndexFromValue = [&](std::string value) -> int {
         std::transform(value.begin(), value.end(), value.begin(), ::toupper);
-        if (value == "WAV") return 1;
-        if (value == "MP3") return 2;
-        if (value == "FLAC") return 3;
-        if (value == "OGG") return 4;
-        if (value == "AIFF" || value == "AIF") return 5;
-        if (value == "M4A") return 6;
+        if (value == "AIF") value = "AIFF";
+        for (std::size_t index = 1; index < aura::search::kAudioFormatFilters.size(); ++index) {
+            if (value == aura::search::kAudioFormatFilters[index]) return static_cast<int>(index);
+        }
         return 0;
     };
     auto parseRowSet = [&](const std::string& rowsRaw) {
@@ -4532,7 +4544,7 @@ static void PollQaCommandFile(AppState& state) {
                 if (width < 180 || width > 800 || s_magicEqQaPointer.held) {
                     result = R"({"ok":false,"error":"invalid_info_layout"})";
                 } else {
-                    state.panelFileInfo.dockedWidth = static_cast<float>(width);
+                    state.panelFileInfo.dockedWidth = aura::ui::dpi::LogicalPx(static_cast<float>(width));
                     state.panelFileInfo.floatW = static_cast<float>(width);
                     state.panelFileInfo.floatH = 600;
                     state.panelFileInfo.floatX = 100;
@@ -4846,9 +4858,23 @@ static void PollQaCommandFile(AppState& state) {
                 const ImGuiKey key=name=="Escape"?ImGuiKey_Escape:name=="Enter"?ImGuiKey_Enter:name=="A"?ImGuiKey_A:name=="K"?ImGuiKey_K:name=="O"?ImGuiKey_O:name=="F9"?ImGuiKey_F9:name=="Ctrl"?ImGuiMod_Ctrl:name=="Right"?ImGuiKey_RightArrow:name=="Tab"?ImGuiKey_Tab:ImGuiKey_None;
                 if(key!=ImGuiKey_None) ImGui::GetIO().AddKeyEvent(key,down);
             }
+            if (action == "scroll") {
+                // QA helper: jump the settings body to a scroll offset so the
+                // capture script can reach controls below the fold.
+                const float target=(float)getInt(raw,"y",0);
+                for(auto* window:ImGui::GetCurrentContext()->Windows)
+                    if(window->WasActive && std::string(window->Name).find("SettingsBody")!=std::string::npos)
+                        window->Scroll.y=target;
+            }
             if (action == "resize") {
                 if(auto* window=ImGui::FindWindowByName("###HarkenSettings")) ImGui::SetWindowSize(window,ImVec2((float)std::clamp(getInt(raw,"width",1000),640,1500),(float)std::clamp(getInt(raw,"height",760),480,1100)),ImGuiCond_Always);
             }
+            if (action == "page") {
+                const auto page=getStr(raw,"page");
+                if(page=="daw") { su::SettingsEditor().page=su::Page::DawIntegration; su::SettingsEditor().scrollToTop=true; }
+            }
+            if (action == "daw_reaper_config") su::SettingsEditor().reaperConfigOpen=getBool(raw,"open",true);
+            if (action == "daw_reaper_diagnostics") su::SettingsEditor().reaperDiagnosticsOpen=getBool(raw,"open",true);
             const auto& observation=su::observation;
             const auto& editor=su::SettingsEditor();
             const auto& palette=ThemeColors::current();
@@ -4903,6 +4929,150 @@ static void PollQaCommandFile(AppState& state) {
         }
 #else
         result=R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
+    } else if (cmd == "menu_ui") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const auto& qa = state.qaRegions;
+            auto menuItems = nlohmann::json::array();
+            for (const auto& item : qa.menuBarItems) menuItems.push_back({{"label",item.label},{"bounds",{item.x0,item.y0,item.x1,item.y1}}});
+            auto popups = nlohmann::json::array();
+            for (const auto* w : ImGui::GetCurrentContext()->Windows) {
+                if (!w->WasActive || !(w->Flags & ImGuiWindowFlags_Popup)) continue;
+                popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}},{"font_pixels",GetMenuPopupFontPixelsForQa(*w)}});
+            }
+            result = nlohmann::json({{"ok",true},{"popups",popups},{"items",menuItems},
+                {"frame",qa.menuBarFrame},{"current_frame",ImGui::GetFrameCount()},
+                {"workspace_frame",qa.workspaceTopFrame},
+                {"font_pixels",qa.menuBarFontPixels},{"bar_height",qa.menuBarHeight},
+                {"bar_right",qa.menuBarRight},{"bar_top",qa.menuBarTop},{"last_item_right",qa.menuBarLastItemRight},
+                {"workspace_top",qa.workspaceTop},
+                {"work_pos",{ImGui::GetMainViewport()->WorkPos.x,ImGui::GetMainViewport()->WorkPos.y}},
+                {"work_size",{ImGui::GetMainViewport()->WorkSize.x,ImGui::GetMainViewport()->WorkSize.y}},
+                {"reading_font",state.settings.readingFontSize},
+                {"theme",(int)state.settings.theme},
+                {"hovered_window",ImGui::GetCurrentContext()->HoveredWindow?ImGui::GetCurrentContext()->HoveredWindow->Name:""},
+                {"mouse",{ImGui::GetIO().MousePos.x,ImGui::GetIO().MousePos.y}},
+                {"mouse_down",ImGui::GetIO().MouseDown[0]},
+                {"nav_window",ImGui::GetCurrentContext()->NavWindow?ImGui::GetCurrentContext()->NavWindow->Name:""}}).dump();
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
+    } else if (cmd == "alert_dialog_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string action = getStr(raw, "action");
+            const std::string dialog = getStr(raw, "dialog");
+            auto& ctx = *ImGui::GetCurrentContext();
+            if (action == "open" || action == "close") {
+                while (ctx.OpenPopupStack.Size > 0)
+                    ImGui::ClosePopupToLevel(ctx.OpenPopupStack.Size - 1, false);
+                state.showCloseChoicePopup = false;
+                state.showEditFilenameDialog = false;
+                state.showDeleteConfirmDialog = false;
+                state.showPlaylistDialog = false;
+                state.showCreateFolderDialog = false;
+                state.showDawTargetSettings = false;
+                state.showFolderAutoRenameDialog = false;
+                state.showPlaylistRenameDialog = false;
+            }
+            if (action == "close") {
+                result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
+            } else if (action == "drag") {
+                // Move the open dialog by the requested delta and report the new
+                // rect, so the caption-bar drag path can be checked without
+                // injecting mouse input into the private desktop.
+                ImGuiWindow* dialogWindow = nullptr;
+                for (int level = ctx.OpenPopupStack.Size - 1; level >= 0 && !dialogWindow; --level) {
+                    if (ctx.OpenPopupStack[level].Window)
+                        dialogWindow = ctx.OpenPopupStack[level].Window;
+                }
+                if (!dialogWindow) {
+                    result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"no_dialog_open"})";
+                } else {
+                    const ImVec2 before = dialogWindow->Pos;
+                    ImGui::SetWindowPos(dialogWindow,
+                        ImVec2(before.x + (float)getInt(raw, "dx", 0),
+                               before.y + (float)getInt(raw, "dy", 0)));
+                    const ImVec2 after = dialogWindow->Pos;
+                    char receipt[256];
+                    std::snprintf(receipt, sizeof(receipt),
+                        "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"drag\","
+                        "\"before\":[%.1f,%.1f],\"after\":[%.1f,%.1f]}",
+                        before.x, before.y, after.x, after.y);
+                    result = receipt;
+                }
+            } else if (action == "open") {
+                bool known = true;
+                if (dialog == "close-choice") {
+                    state.closeChoiceSelection = 1;
+                    state.closeChoiceRemember = false;
+                    state.showCloseChoicePopup = true;
+                } else if (dialog == "rename") {
+                    strncpy_s(state.editFilenameBuffer, sizeof(state.editFilenameBuffer),
+                              "Impact_Hit_03.wav", _TRUNCATE);
+                    state.showEditFilenameDialog = true;
+                } else if (dialog == "remove-records") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths.clear();
+                    state.deleteFromFileSystem = false;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "delete-files") {
+                    state.pendingDeleteIds.assign(3, -1);
+                    state.pendingDeletePaths = {
+                        "D:/Harken-QA/preview-samples/impact_metal_01.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_02.wav",
+                        "D:/Harken-QA/preview-samples/impact_metal_03.wav"};
+                    state.deleteFromFileSystem = true;
+                    state.showDeleteConfirmDialog = true;
+                } else if (dialog == "new-playlist") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistDialog = true;
+                } else if (dialog == "new-folder") {
+                    strncpy_s(state.folderNameBuffer, sizeof(state.folderNameBuffer),
+                              "New Folder", _TRUNCATE);
+                    state.showCreateFolderDialog = true;
+                } else if (dialog == "daw-settings") {
+                    state.settings.dawTargets.clear();
+                    DawTarget previewTarget;
+                    previewTarget.name = "REAPER";
+                    previewTarget.processName = "reaper.exe";
+                    previewTarget.mode = DawSendMode::NamedPipe;
+                    state.settings.dawTargets.push_back(std::move(previewTarget));
+                    state.selectedDAWIndex = 0;
+                    state.showDawTargetSettings = true;
+                } else if (dialog == "folder-auto-rename") {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",
+                             "QA:/preview-samples");
+                    state.folderRenamePreview.clear();
+                    state.folderRenameLog.clear();
+                    state.showFolderAutoRenameDialog = true;
+                } else if (dialog == "playlist-rename") {
+                    strncpy_s(state.playlistNameBuffer, sizeof(state.playlistNameBuffer),
+                              "Foley Selects", _TRUNCATE);
+                    state.showPlaylistRenameDialog = true;
+                } else if (dialog == "default-player") {
+                    state.settings.defaultPlayerPrompted = false;
+                    state.warmupFramesRemaining = 0;
+                    state.filePlayerFastPathActive = false;
+                } else {
+                    known = false;
+                }
+                result = known
+                    ? "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"open\",\"dialog\":\"" + dialog + "\"}"
+                    : R"({"ok":false,"cmd":"alert_dialog_preview","error":"unknown_dialog"})";
+            } else {
+                result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"unsupported_action"})";
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
     } else if (cmd == "ordinary_button_audit" || cmd == "ordinary_button_window") {
 #if ARIS_PREVIEW_ISOLATION
@@ -5144,7 +5314,7 @@ static void PollQaCommandFile(AppState& state) {
                 state.similarSoundsWindow.open = false;
                 aura::ui::InvalidateSimilarSoundsWindow(state);
             } else if (action == "start") {
-                StartBatchFeatureExtraction(state);
+                StartBatchFeatureExtraction(state, true);
             } else if (action == "recheck") {
                 StartBatchFeatureExtraction(state, true);
             } else if (action == "cancel") {
@@ -5338,6 +5508,38 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"active_view\":\"" + std::string(viewModeToString(state.viewMode)) + "\",";
         result += "\"active_library\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
         result += "\"db_path\":\"" + jsonEscape(state.currentDbPathUtf8) + "\",";
+        {
+            // QA: why the external AI write bridge is (not) up.
+            const std::string bridgeId = HarkenSearch::ExternalAiLibraryIdForPath(state.currentDbPathUtf8);
+            const std::string bridgeDir = [&]() {
+                if (!g_appSettingsPathUtf8.empty()) {
+                    const auto separator = g_appSettingsPathUtf8.find_last_of("/\\");
+                    return separator == std::string::npos ? std::string{} : g_appSettingsPathUtf8.substr(0, separator);
+                }
+                const auto layout = Platform::HarkenUserData::EnsureLayout();
+                return layout.activeSettingsDir.empty()
+                    ? std::string{} : Platform::HarkenUserData::WideToUtf8Path(layout.activeSettingsDir);
+            }();
+            const std::string bridgeDoc = HarkenSearch::ExternalAiSettingsPath(bridgeDir, bridgeId);
+            HarkenSearch::ExternalAiSettings bridgeSettings;
+            std::string bridgeError;
+            const bool bridgeLoaded = !bridgeDoc.empty()
+                && HarkenSearch::LoadExternalAiSettings(bridgeDoc, bridgeId, bridgeSettings, bridgeError);
+            result += "\"external_ai_bridge\":{";
+            result += "\"running\":" + std::string(HarkenSearch::ExternalAiBridgeServerRunning() ? "true" : "false");
+            result += ",\"library\":\"" + jsonEscape(bridgeId) + "\"";
+            result += ",\"document\":\"" + jsonEscape(bridgeDoc) + "\"";
+            result += ",\"document_exists\":" + std::string(Platform::FileSystem::Exists(bridgeDoc) ? "true" : "false");
+            result += ",\"loaded\":" + std::string(bridgeLoaded ? "true" : "false");
+            result += ",\"load_error\":\"" + jsonEscape(bridgeError) + "\"";
+            result += ",\"enabled\":" + std::string(bridgeSettings.enabled ? "true" : "false");
+            result += ",\"edit_playlist\":" + std::to_string(static_cast<int>(
+                bridgeSettings.capability(HarkenSearch::ExternalAiCapability::EditPlaylist)));
+            result += ",\"settings_dir\":\"" + jsonEscape(bridgeDir) + "\"";
+            result += ",\"settings_path_raw\":\"" + jsonEscape(g_appSettingsPathUtf8) + "\"";
+            result += ",\"settings_path_len\":" + std::to_string(g_appSettingsPathUtf8.size());
+            result += "},";
+        }
 #if ARIS_PREVIEW_ISOLATION
         // Observe the real setup modal without sending desktop input.
         const auto* newDbWindow = ImGui::FindWindowByName(L(Dlg_NewDB));
@@ -5935,6 +6137,38 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
 #endif
+    } else if (cmd == "send_feedback_preview") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            result = ControlDawSendFeedbackPreview(nlohmann::json::parse(raw, nullptr, false));
+        }
+#else
+        result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+#endif
+    } else if (cmd == "send_widget_menu") {
+#if ARIS_PREVIEW_ISOLATION
+        const std::string action = getStr(raw, "action");
+        if (!MagicEqQaIsolationReady()) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else if (action == "open") {
+            state.qaSendWidgetMenuRequested = true;
+            state.qaSendWidgetMenuRows = 0;
+            state.qaSendWidgetMenuFrame = -1;
+            result = R"({"ok":true,"cmd":"send_widget_menu","queued":true})";
+        } else if (action == "state") {
+            result = "{\"ok\":true,\"cmd\":\"send_widget_menu\",\"rows\":" +
+                std::to_string(state.qaSendWidgetMenuRows) +
+                ",\"frame\":" + std::to_string(state.qaSendWidgetMenuFrame) +
+                ",\"id\":" + std::to_string(state.qaSendWidgetMenuId) +
+                ",\"is_open\":" + (state.qaSendWidgetMenuOpen ? "true" : "false") + "}";
+        } else {
+            result = R"({"ok":false,"error":"unsupported_action"})";
+        }
+#else
+        result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+#endif
     } else if (cmd == "open_row_context_menu") {
         int row = getInt(raw, "row", state.selectedResultIndex);
         if (row >= 0 && row < (int)state.searchResults.size()) {
@@ -5983,8 +6217,11 @@ static void PollQaCommandFile(AppState& state) {
                 state.instrumentPillState["__qa_instrument__"] = 1;
             }
             state.showWAV = !enabled;
-            if (!enabled) state.showMP3 = state.showFLAC = state.showOGG =
-                state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+            if (!enabled) {
+                state.showMP3 = state.showFLAC = state.showOGG =
+                    state.showAIFF = state.showM4A = state.showWMA = state.showOther = true;
+                state.showLosslessWavPack = false;
+            }
             cancelPendingSearchForQaMutation();
             RefreshSearchResults(state, true);
             state.syncToTab();
@@ -6047,6 +6284,8 @@ static void PollQaCommandFile(AppState& state) {
     } else if (cmd == "folder_search_pointer") {
 #if ARIS_PREVIEW_ISOLATION
         const std::string phase = getStr(raw, "phase");
+        const std::string buttonName = getStr(raw, "button");
+        const ImGuiMouseButton button = buttonName == "right" ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
         const float x = static_cast<float>(getDouble(raw, "x", -1.0));
         const float y = static_cast<float>(getDouble(raw, "y", -1.0));
         const ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -6057,10 +6296,12 @@ static void PollQaCommandFile(AppState& state) {
             !Platform::WindowIsVisible(g_hwnd) || IsIconic(g_hwnd) ||
             !std::isfinite(x) || !std::isfinite(y) ||
             x < 0.0f || y < 0.0f || x >= display.x || y >= display.y ||
+            (!buttonName.empty() && buttonName != "left" && buttonName != "right") ||
             s_magicEqQaPointer.pending ||
-            (phase == "down" && s_magicEqQaPointer.active) ||
-            (phase == "up" && !s_magicEqQaPointer.active) ||
-            (phase != "down" && phase != "up")) {
+            ((phase == "hover" || phase == "down") && s_magicEqQaPointer.held) ||
+            (phase == "up" && (!s_magicEqQaPointer.active || !s_magicEqQaPointer.held ||
+                               s_magicEqQaPointer.button != button)) ||
+            (phase != "hover" && phase != "down" && phase != "up")) {
             result = "{\"ok\":false,\"error\":\"invalid_folder_search_pointer\",\"display\":[" +
                 std::to_string(display.x) + "," + std::to_string(display.y) +
                 "],\"point\":[" + std::to_string(x) + "," + std::to_string(y) +
@@ -6074,8 +6315,9 @@ static void PollQaCommandFile(AppState& state) {
             s_magicEqQaPointer.x = viewportPos.x + x;
             s_magicEqQaPointer.y = viewportPos.y + y;
             s_magicEqQaPointer.held = phase == "down";
-            s_magicEqQaPointer.pending = true;
+            s_magicEqQaPointer.pending = phase != "hover";
             s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+            s_magicEqQaPointer.button = button;
             result = "{\"ok\":true,\"cmd\":\"folder_search_pointer\",\"phase\":\"" + phase +
                 "\",\"display\":[" + std::to_string(display.x) + "," + std::to_string(display.y) +
                 "],\"viewport\":[" + std::to_string(ImGui::GetMainViewport()->Pos.x) + "," +
@@ -6783,6 +7025,33 @@ static void PollQaCommandFile(AppState& state) {
             result = "{\"ok\":true,\"cmd\":\"set_theme\",\"theme\":" + std::to_string(theme) + "}";
         }
 
+    } else if (cmd == "diagnostic_export") {
+#if AURA_BUILD_DIAGNOSTICS
+        const bool started = harken::diagnostic_overlay::StartExportForQa();
+        result = std::string("{\"ok\":true,\"cmd\":\"diagnostic_export\",\"started\":") +
+                 (started ? "true" : "false") + "}";
+#else
+        result = "{\"ok\":false,\"cmd\":\"diagnostic_export\",\"error\":\"diagnostics_disabled\"}";
+#endif
+
+    } else if (cmd == "playlist_open_library") {
+#if AURA_BUILD_DIAGNOSTICS
+        extern void LoadPlaylistLibraryFilteredForQa(AppState& state);
+        LoadPlaylistLibraryFilteredForQa(state);
+        result = "{\"ok\":true,\"cmd\":\"playlist_open_library\"}";
+#else
+        result = "{\"ok\":false,\"cmd\":\"playlist_open_library\",\"error\":\"diagnostics_disabled\"}";
+#endif
+
+    } else if (cmd == "update_check") {
+#if AURA_BUILD_DIAGNOSTICS
+        const bool accepted = aris::update::RequestHarkenSearchUpdateCheck();
+        result = std::string("{\"ok\":true,\"cmd\":\"update_check\",\"accepted\":") +
+                 (accepted ? "true" : "false") + "}";
+#else
+        result = "{\"ok\":false,\"cmd\":\"update_check\",\"error\":\"diagnostics_disabled\"}";
+#endif
+
     } else if (cmd == "switch_db") {
         std::string path = getStr(raw, "path");
         if (path.empty()) {
@@ -6897,6 +7166,7 @@ static void PollQaCommandFile(AppState& state) {
                 ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) {
                 result = R"({"ok":false,"error":"invalid_scan_setup_or_task_active"})";
             } else {
+                state.pendingScanIsDirectDriveRootDrop = false;
                 state.pendingScanFolders = folders;
                 state.settings.cacheWaveformsOnScan = !getBool(raw, "fast", false);
                 state.scanBuildSimilarityIndexAfterScan = getBool(raw, "similar", false);
@@ -6934,7 +7204,10 @@ static void PollQaCommandFile(AppState& state) {
                 state.scanCompletionPending.load(), state.scanStopDisposition.load(), state.scanFatalFailure.load(), state.scanErrorCount.load(), cleanup});
             const char* surfaces[] = {"setup", "progress", "result"};
             const char* phases[] = {"setup", "counting", "ingesting", "waveforms", "finalizing", "saving", "revoking",
-                "completed", "partial", "paused", "cancelled", "empty", "failed"};
+                "completed", "partial", "paused", "cancelled", "empty", "failed", "cancelling_keeping_committed"};
+            static_assert(static_cast<int>(HarkenSearch::ScanDialogPhase::CancellingKeepingCommitted) + 1 ==
+                              static_cast<int>(sizeof(phases) / sizeof(phases[0])),
+                          "phase names must cover every ScanDialogPhase value");
             auto windows = nlohmann::json::array();
             for (const auto* window : ImGui::GetCurrentContext()->Windows) {
                 if (!window->WasActive || (std::strstr(window->Name, "Scan") == nullptr && std::strcmp(window->Name, L(Dlg_ScanFolder)) != 0)) continue;
@@ -8673,9 +8946,43 @@ ReadingTextScope::~ReadingTextScope() {
 
 ChromeTextScope::ChromeTextScope() : prev(g_inReadingScope) {
     g_inReadingScope = false;
-    ImGui::PushFont(g_uiFontRegular);
+    // 菜单作用域已经按 macOS 菜单字号换过字体，这里不要再撞回常规界面字号。
+    if (!InMenuChromeScope()) {
+        ImGui::PushFont(g_uiFontRegular);
+        pushedFont = true;
+    }
 }
 ChromeTextScope::~ChromeTextScope() {
+    if (pushedFont) {
+        ImGui::PopFont();
+        pushedFont = false;
+    }
+    g_inReadingScope = prev;
+}
+
+float GetMenuFontSizePx() {
+    // The menu uses 16 px at the default system font (18 px) and scales
+    // proportionally from there: 24 px -> 21 px, 32 px -> 28 px.
+    const float readingPx = g_readingRegular ? g_readingRegular->LegacySize
+                                             : (float)kDefaultReadingFontPx;
+    const float scaled = (float)kDefaultMenuFontPx * (readingPx / (float)kDefaultReadingFontPx);
+    return std::clamp(std::round(scaled), (float)kDefaultMenuFontPx, (float)kMaxReadingFontPx);
+}
+
+ImFont* GetMenuUIFont() {
+    return g_readingRegular ? g_readingRegular : g_uiFontRegular;
+}
+
+ImFont* GetMenuUIFontEmphasis() {
+    if (g_readingEmphasis) return g_readingEmphasis;
+    return GetMenuUIFont();
+}
+
+MenuTextScope::MenuTextScope() : prev(g_inReadingScope) {
+    g_inReadingScope = true;
+    ImGui::PushFont(GetMenuUIFont(), GetMenuFontSizePx());
+}
+MenuTextScope::~MenuTextScope() {
     ImGui::PopFont();
     g_inReadingScope = prev;
 }
@@ -8777,21 +9084,48 @@ static ImVec4 GetHybridSeamClearColor() {
     return clearBg;
 }
 
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+static float PreviewUiDpiScale() {
+    static const float previewScale = [] {
+        char value[24]{};
+        const DWORD length = GetEnvironmentVariableA("HARKEN_QA_DPI_SCALE", value, sizeof(value));
+        if (length == 0 || length >= sizeof(value)) return 0.0f;
+        char* end = nullptr;
+        const float scale = std::strtof(value, &end);
+        return end != value && *end == '\0' && std::isfinite(scale) && scale > 0.0f
+            ? aura::ui::dpi::SanitizeScale(scale)
+            : 0.0f;
+    }();
+    return previewScale;
+}
+#endif
+
+static float MainWindowUiDpiScale() {
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (const float previewScale = PreviewUiDpiScale(); previewScale > 0.0f) return previewScale;
+#endif
+    const float nativeScale = g_hwnd ? static_cast<float>(GetDpiForWindow(g_hwnd)) / 96.0f : 1.0f;
+    return aura::ui::dpi::SanitizeScale(nativeScale);
+}
+
 static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     static float s_lastRebuiltReadingPx = -1.0f;
     static float s_lastRebuiltListPx    = -1.0f;
     static int s_lastTheme = -9999;
     static bool s_lastUseCustom = false;
+    static float s_lastDpiScale = 0.0f;
 
-    const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, 24));
-    const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, 24));
+    const int requestedReading = SnapUiFontSizePx(std::clamp(state.settings.readingFontSize, 10, kMaxReadingFontPx));
+    const int requestedList    = SnapUiFontSizePx(std::clamp(state.settings.listFontSize, 10, kMaxListFontPx));
     const int themeNow = (int)state.settings.theme;
     const bool useCustomNow = state.settings.useCustomColors;
 
     ImGuiIO& io = ImGui::GetIO();
     io.FontGlobalScale = 1.0f;
 
-    const float chromeScale = (float)kChromeFontPx / kTypographyBasePx;
+    const float dpiScale = MainWindowUiDpiScale();
+    const float chromeScale = ((float)kChromeFontPx / kTypographyBasePx) * dpiScale;
+    const bool dpiChanged = dpiScale != s_lastDpiScale;
 
     const bool needFontRebuild = (s_lastRebuiltReadingPx != (float)requestedReading) ||
                                  (s_lastRebuiltListPx    != (float)requestedList);
@@ -8804,9 +9138,9 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     const bool themeChanged = (themeNow != s_lastTheme) || (useCustomNow != s_lastUseCustom);
     const bool chromePending = ThemeColors::hasPendingUiChromeResync();
 
-    if (themeChanged || needFontRebuild || chromePending) {
+    if (themeChanged || needFontRebuild || chromePending || dpiChanged) {
         const bool editorPreviewChromeOnly =
-            chromePending && !themeChanged && !needFontRebuild && state.showThemeEditor &&
+            !themeChanged && !needFontRebuild && state.showThemeEditor &&
             ThemeColors::customized();
         if (editorPreviewChromeOnly) {
             ThemeColors::applyToImGui();
@@ -8817,7 +9151,9 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
         }
         s_lastTheme = themeNow;
         s_lastUseCustom = useCustomNow;
+        s_lastDpiScale = dpiScale;
     }
+    ImGui::GetStyle().FontScaleDpi = dpiScale;
 }
 
 // OpenGL Context Creation
@@ -8913,6 +9249,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 wpath.resize(wcslen(wpath.c_str()));
 
                 std::string pathUtf8 = WideToUtf8(wpath);
+                // A bare drive spec ("D:") resolves to that drive current
+                // directory for the filesystem, but a drop means the drive
+                // itself, so normalise it to "D:\\" before classifying.
+                if (pathUtf8.size() == 2 && pathUtf8[1] == ':' &&
+                    ((pathUtf8[0] >= 'A' && pathUtf8[0] <= 'Z') ||
+                     (pathUtf8[0] >= 'a' && pathUtf8[0] <= 'z'))) {
+                    pathUtf8 += '\\';
+                }
                 if (Platform::FileSystem::Exists(pathUtf8)) {
 
                     if (Platform::FileSystem::IsDirectory(pathUtf8)) {
@@ -8926,6 +9270,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             dbFiles.push_back(pathUtf8);
                         }
                         else if (ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg" ||
+                            ext == ".wv" ||
                             ext == ".aiff" || ext == ".aif" || ext == ".m4a" || ext == ".wma") {
                             files.push_back(pathUtf8);
                         }
@@ -8991,6 +9336,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     return 0;
                 }
                 // 不立即扫描，保存待扫描路径并弹出对话框让用户确认选项
+                const bool directDriveRootDrop = !dropTruncated && files.empty() &&
+                    std::all_of(folders.begin(), folders.end(), [](const std::string& folder) {
+                        try {
+                            const std::filesystem::path normalizedPath =
+                                std::filesystem::path(Utf8ToWide(folder)).lexically_normal();
+                            const std::wstring driveName = normalizedPath.root_name().wstring();
+                            return normalizedPath.has_root_directory() &&
+                                driveName.size() == 2 && driveName[1] == L':' &&
+                                normalizedPath == normalizedPath.root_path();
+                        } catch (...) {
+                            return false;
+                        }
+                    });
+                g_appState->pendingScanIsDirectDriveRootDrop = directDriveRootDrop;
                 g_appState->pendingScanFolders = folders;
                 g_appState->scanDialogAutoStart = false;
                 g_appState->showScanDialog = true;
@@ -9140,6 +9499,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         aura::ui::dock::NativeCaptionModuleId().clear();
     }
 
+#if AURA_BUILD_DIAGNOSTICS
+    if (((msg == WM_SIZE && wParam == SIZE_MINIMIZED) || (msg == WM_SHOWWINDOW && !wParam) ||
+         msg == WM_EXITSIZEMOVE ||
+         (msg == WM_POWERBROADCAST && (wParam == PBT_APMSUSPEND || wParam == PBT_APMRESUMEAUTOMATIC))) &&
+        g_appState && g_appState->diagnosticOverlayMonitor.IsOpen()) {
+        g_appState->diagnosticOverlayMonitor.Pause();
+    }
+#endif
+
     // Let ImGui handle other messages
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
         return true;
@@ -9259,6 +9627,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         UnregisterHotKey(hwnd, HOTKEY_ID_SHOW_MANAGER);
         RemoveTrayIconIfAny(hwnd);
+        // The write bridge owns a thread and a pipe: stop it before the process exits.
+        HarkenSearch::StopExternalAiBridgeServer();
         PostQuitMessage(0);
         return 0;
     }
@@ -9647,15 +10017,6 @@ static std::wstring BuildFlashUiLoginHtml(const AppSettings& settings) {
     return BuildFlashUiWelcomeHtml(settings, settings.userName);
 }
 
-static uint32_t StableStartupAvatarHash(const std::string& seed) {
-    uint32_t hash = 2166136261u;
-    for (unsigned char c : seed) {
-        hash ^= c;
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
 static std::string Base64EncodeStartupAsset(const std::string& bytes) {
     static constexpr char kTable[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -9674,14 +10035,6 @@ static std::string Base64EncodeStartupAsset(const std::string& bytes) {
     if (valb > -6) out.push_back(kTable[((val << 8) >> (valb + 8)) & 0x3F]);
     while (out.size() % 4) out.push_back('=');
     return out;
-}
-
-static bool ReadStartupAvatarSvgFile(const std::string& pathUtf8, std::string& outSvg) {
-    outSvg.clear();
-    const auto bytes = Platform::FileSystem::ReadFileBytes(pathUtf8);
-    if (bytes.empty()) return false;
-    outSvg.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-    return true;
 }
 
 static bool ReadBinaryFile(const std::string& pathUtf8, std::string& outBytes) {
@@ -9719,40 +10072,184 @@ static void AppendStartupBrandLogoCss(std::wstring& html, bool useLightStartupCh
         html += L".brand-word{filter:brightness(0)!important;}\n";
 }
 
-static std::string BuildLocalDiceBearAvatarDataUri(const std::string& userNameUtf8,
-                                                    bool hasCustomAvatar = false,
-                                                    int diceBearAvatarIndex = 0) {
-    if (hasCustomAvatar) {
-        const std::string pngPath = GetCustomAvatarPathUtf8();
-        std::string pngBytes;
-        if (ReadBinaryFile(pngPath, pngBytes))
-            return "data:image/png;base64," + Base64EncodeStartupAsset(pngBytes);
-        // fallthrough to DiceBear if file read fails
+// Shared startup mascot: the loading page and the welcome page mount the same
+// inline SVG, so slot metrics and motion live in one place.
+static void AppendStartupMascotCss(std::wstring& html) {
+    html += LR"HTML_MASCOT_CSS(
+    .startup-loading-mascot-slot {
+      position: relative; z-index: 1;
+      width: 86px; height: 86px; margin: 0 0 22px;
+      display: grid; place-items: center;
     }
-    int index;
-    if (diceBearAvatarIndex >= 1 && diceBearAvatarIndex <= 36) {
-        index = diceBearAvatarIndex;
-    } else {
-        const std::string seed = userNameUtf8.empty() ? std::string("Harken Search User") : userNameUtf8;
-        index = 1 + static_cast<int>(StableStartupAvatarHash(seed) % 36u);
+    .startup-loading-mascot {
+      display: block; width: 74px; height: 74px; overflow: visible;
     }
-    char fileName[32] = {};
-    std::snprintf(fileName, sizeof(fileName), "avatar_%03d.svg", index);
+    .startup-loading-mascot-antenna {
+      animation: startupMascotAntenna 3.2s ease-in-out infinite;
+    }
+    .startup-loading-mascot-antenna-warmth {
+      animation: startupMascotWarmth 3.2s ease-in-out infinite;
+    }
+    .startup-loading-mascot-eyes {
+      transform-box: view-box;
+      transform-origin: 50% 47.2%;
+      animation: startupMascotEyes 3.2s ease-in-out infinite;
+    }
+    @keyframes startupMascotAntenna {
+      0%, 53.125%, 100% { transform: translateY(0); }
+      4.6875% { transform: translateY(-1.2px); }
+    }
+    @keyframes startupMascotWarmth {
+      0%, 53.125%, 100% { opacity: 0; }
+      4.6875% { opacity: .93; }
+    }
+    @keyframes startupMascotEyes {
+      0%, 53.125%, 58.125%, 65%, 100% { transform: translateX(0) scaleY(1); }
+      3.75%, 28.75% { transform: translateX(-2.9px) scaleY(1); }
+      38.75%, 45.9375% { transform: translateX(2.3px) scaleY(1); }
+      60.625% { transform: translateX(0) scaleY(.25); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .startup-loading-mascot-antenna,
+      .startup-loading-mascot-antenna-warmth,
+      .startup-loading-mascot-eyes {
+        animation: none;
+      }
+    }
+)HTML_MASCOT_CSS";
+}
 
-    const std::string relPath =
-        std::string("assets\\avatars\\dicebear\\lorelei-neutral\\") + fileName;
-    const std::string candidates[] = {
-        GetExeDirUtf8() + "\\" + relPath,
-        relPath,
+// The startup pages show the shared mascot only while the user has no personal
+// avatar. Once an avatar was uploaded or a built-in one was picked, that avatar
+// takes the slot; "automatic" (index 0) still counts as not set.
+static bool StartupHasPersonalAvatar(const AppSettings& settings) {
+    if (settings.hasCustomAvatar) return true;
+    return settings.diceBearAvatarIndex >= 1 && settings.diceBearAvatarIndex <= 36;
+}
+
+static int ResolveStartupAvatarIndex(const AppSettings& settings) {
+    if (settings.diceBearAvatarIndex >= 1 && settings.diceBearAvatarIndex <= 36)
+        return settings.diceBearAvatarIndex;
+    uint32_t h = 2166136261u;
+    const std::string seed = settings.userName.empty() ? std::string("Harken Search") : settings.userName;
+    for (unsigned char c : seed) {
+        h ^= c;
+        h *= 16777619u;
+    }
+    return 1 + (int)(h % 36u);
+}
+
+static std::string StartupSvgRgba(float r, float g, float b, float a) {
+    char buf[64] = {};
+    std::snprintf(buf, sizeof(buf), "rgba(%d,%d,%d,%.3f)",
+                  (int)std::lround(std::clamp(r, 0.0f, 1.0f) * 255.0f),
+                  (int)std::lround(std::clamp(g, 0.0f, 1.0f) * 255.0f),
+                  (int)std::lround(std::clamp(b, 0.0f, 1.0f) * 255.0f),
+                  std::clamp(a, 0.0f, 1.0f));
+    return std::string(buf);
+}
+
+// Mirrors RenderSettingsBuiltinAvatar with the same numbers at 1 px = 1 unit, so
+// the startup page shows exactly the avatar the settings page previews.
+static std::string BuildStartupBuiltinAvatarSvg(int avatarIndex) {
+    const int idx = std::clamp(avatarIndex, 1, 36);
+    const float hue = (float)(idx - 1) / 36.0f;
+    float accentHue = hue + 0.09f;
+    if (accentHue > 1.0f) accentHue -= 1.0f;
+    float br = 0.0f, bg = 0.0f, bb = 0.0f;
+    float ar = 0.0f, ag = 0.0f, ab = 0.0f;
+    ImGui::ColorConvertHSVtoRGB(hue, 0.50f, 0.56f, br, bg, bb);
+    ImGui::ColorConvertHSVtoRGB(accentHue, 0.34f, 0.86f, ar, ag, ab);
+
+    const float cx = 37.0f, cy = 37.0f, R = 35.0f;
+    const std::string bgFill = StartupSvgRgba(br, bg, bb, 1.0f);
+    const std::string faceFill = StartupSvgRgba(ar, ag, ab, 1.0f);
+    const std::string inkFill = StartupSvgRgba(34.0f / 255.0f, 42.0f / 255.0f, 56.0f / 255.0f, 230.0f / 255.0f);
+    const std::string cheekFill = StartupSvgRgba(1.0f, 132.0f / 255.0f, 150.0f / 255.0f, 96.0f / 255.0f);
+    const std::string hairFill = StartupSvgRgba(46.0f / 255.0f, 48.0f / 255.0f, 70.0f / 255.0f, 222.0f / 255.0f);
+    const std::string hiStroke = StartupSvgRgba(1.0f, 1.0f, 1.0f, 58.0f / 255.0f);
+
+    auto pt = [](float x, float y) {
+        char b[40] = {};
+        std::snprintf(b, sizeof(b), "%.2f %.2f", x, y);
+        return std::string(b);
+    };
+    auto circle = [](float x, float y, float r, const std::string& fill) {
+        char b[160] = {};
+        std::snprintf(b, sizeof(b), "<circle cx=\"%.2f\" cy=\"%.2f\" r=\"%.2f\" fill=\"%s\"/>",
+                      x, y, r, fill.c_str());
+        return std::string(b);
     };
 
-    std::string svg;
-    for (const std::string& path : candidates) {
-        if (ReadStartupAvatarSvgFile(path, svg)) {
-            return "data:image/svg+xml;base64," + Base64EncodeStartupAsset(svg);
+    std::string svg =
+        "<svg class=\"startup-loading-avatar\" viewBox=\"0 0 74 74\" "
+        "preserveAspectRatio=\"xMidYMid meet\" aria-hidden=\"true\" focusable=\"false\" "
+        "xmlns=\"http://www.w3.org/2000/svg\">";
+    svg += circle(cx, cy, R, bgFill);
+    svg += circle(cx - R * 0.22f, cy + R * 0.04f, R * 0.62f, faceFill);
+    svg += circle(cx + R * 0.18f, cy + R * 0.02f, R * 0.58f, faceFill);
+
+    const float hairSweep = ((idx % 5) - 2) * R * 0.08f;
+    const float hairCx = cx + hairSweep, hairCy = cy - R * 0.02f, hairR = R * 0.70f;
+    std::string hair = "M" + pt(hairCx + std::cos(3.50f) * hairR, hairCy + std::sin(3.50f) * hairR);
+    for (int i = 1; i <= 18; ++i) {
+        const float a = 3.50f + (5.95f - 3.50f) * (float)i / 18.0f;
+        hair += "L" + pt(hairCx + std::cos(a) * hairR, hairCy + std::sin(a) * hairR);
+    }
+    hair += "L" + pt(cx + R * 0.58f, cy - R * 0.08f);
+    hair += "L" + pt(cx - R * 0.56f, cy + R * 0.02f);
+    hair += "Z";
+    svg += "<path d=\"" + hair + "\" fill=\"" + hairFill + "\"/>";
+
+    const float eyeY = cy - R * 0.02f;
+    const float eyeDx = R * (0.20f + (idx % 3) * 0.025f);
+    svg += circle(cx - eyeDx, eyeY, R * 0.055f, inkFill);
+    svg += circle(cx + eyeDx, eyeY, R * 0.055f, inkFill);
+    svg += circle(cx - R * 0.34f, cy + R * 0.18f, R * 0.10f, cheekFill);
+    svg += circle(cx + R * 0.34f, cy + R * 0.18f, R * 0.10f, cheekFill);
+
+    if ((idx % 2) == 0) {
+        svg += "<path d=\"M" + pt(cx - R * 0.16f, cy + R * 0.23f) +
+               "C" + pt(cx - R * 0.06f, cy + R * 0.34f) +
+               " " + pt(cx + R * 0.08f, cy + R * 0.34f) +
+               " " + pt(cx + R * 0.18f, cy + R * 0.23f) +
+               "\" fill=\"none\" stroke=\"" + inkFill + "\" stroke-width=\"1.7\"/>";
+    } else {
+        svg += "<path d=\"M" + pt(cx - R * 0.13f, cy + R * 0.25f) +
+               "L" + pt(cx + R * 0.13f, cy + R * 0.25f) +
+               "\" fill=\"none\" stroke=\"" + inkFill + "\" stroke-width=\"1.6\"/>";
+    }
+    svg += "<circle cx=\"37\" cy=\"37\" r=\"34.2\" fill=\"none\" stroke=\"" + hiStroke +
+           "\" stroke-width=\"1\"/>";
+    svg += "</svg>";
+    return svg;
+}
+
+// Empty markup means "keep the shared mascot".
+static std::string BuildStartupAvatarMarkup(const AppSettings& settings) {
+    if (!StartupHasPersonalAvatar(settings)) return {};
+    if (settings.hasCustomAvatar) {
+        std::string pngBytes;
+        if (ReadBinaryFile(GetCustomAvatarPathUtf8(), pngBytes)) {
+            return "<img class=\"startup-loading-avatar\" alt=\"\" src=\"data:image/png;base64," +
+                   Base64EncodeStartupAsset(pngBytes) + "\">";
         }
     }
-    return {};
+    // An explicit pick, or a profile whose picture file is gone: show the face
+    // the settings page would preview for this user.
+    return BuildStartupBuiltinAvatarSvg(ResolveStartupAvatarIndex(settings));
+}
+
+static void AppendStartupAvatarCss(std::wstring& html) {
+    html += LR"HTML_AVATAR_CSS(
+    .startup-loading-avatar {
+      display: block; width: 74px; height: 74px; border-radius: 50%; overflow: hidden;
+    }
+    img.startup-loading-avatar {
+      object-fit: cover; background: rgba(255, 255, 255, .045);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .11);
+    }
+)HTML_AVATAR_CSS";
 }
 
 // Loading-page HTML: energy-vortex particles and progress updates.
@@ -9799,13 +10296,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const std::wstring tokenCardSheen = BuildCssRgba(
         mixColor(startupTheme.interfaceText, startupTheme.dialogBG, 0.76f),
         useLightStartupChrome ? 0.10f : 0.04f);
-    const std::wstring tokenAvatarHalo = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.62f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.56f)
-                : mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.48f)),
-        useLightStartupChrome ? (isJadeMistStartup ? 0.26f : 0.24f) : 0.16f);
     const std::wstring tokenStatusText = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.18f)
@@ -9905,7 +10395,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
                 ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.50f)
                 : mixColor(startupTheme.resultsSecondaryText, startupTheme.waveformColor, 0.30f)),
         useLightStartupChrome ? (isJadeMistStartup ? 0.18f : 0.14f) : 0.06f);
-    const std::string displayNameUtf8 = settings.userName.empty() ? std::string(L(Splash_DefaultUser)) : settings.userName;    const std::string startupAvatarDataUri = BuildLocalDiceBearAvatarDataUri(displayNameUtf8, settings.hasCustomAvatar, settings.diceBearAvatarIndex);
     std::wstring html;
 
     // ---- Part 1: head + CSS ----
@@ -9958,7 +10447,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       content: "";
       position: fixed;
       inset: 0;
-      z-index: 60;
+      z-index: 5;
       pointer-events: none;
       background:
         radial-gradient(circle at 66% 76%, rgba(18, 30, 46, 0.42), transparent 52%),
@@ -9969,7 +10458,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       position: absolute; inset: 0; z-index: 10;
       display: flex; flex-direction: column;
       justify-content: center; align-items: center;
-      animation: overlayIn 220ms ease-out both;
       transition: opacity 320ms cubic-bezier(0.22, 0.0, 0.12, 1), transform 320ms cubic-bezier(0.22, 0.0, 0.12, 1);
       will-change: opacity, transform;
     }
@@ -9988,7 +10476,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
       display: flex; flex-direction: column; align-items: center; gap: 24px;
       overflow: hidden;
-      animation: cardIn 420ms ease-out both;
+      animation: cardIn 120ms ease-out;
       transition: opacity 180ms cubic-bezier(0.19, 1, 0.22, 1), transform 180ms cubic-bezier(0.19, 1, 0.22, 1);
       will-change: opacity, transform;
     }
@@ -10001,8 +10489,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       pointer-events: none; opacity: 0.8;
     }
     @keyframes entryVeilOut { to { opacity: 0; } }
-    @keyframes overlayIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes cardIn { from { opacity: 0; transform: scale(0.965) translateY(14px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    @keyframes cardIn { from { opacity: .9; } to { opacity: 1; } }
     .spinner-container { width: 70px; height: 70px; position: relative; }
     .spinner-ring {
       position: absolute; inset: 0;
@@ -10067,6 +10554,10 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
       opacity: 0.58;
       transform: scale(1.006);
     }
+)HTML_L1";
+    AppendStartupMascotCss(html);
+    AppendStartupAvatarCss(html);
+    html += LR"HTML(
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -10076,7 +10567,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     }
   </style>
 </head>
-)HTML_L1";
+)HTML";
     html += L"<style>\n";
     html += L":root{--bg-dark:" + tokenMainBg +
             L";--startup-card:" + tokenCardBg +
@@ -10098,9 +10589,8 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     html += L".loading-overlay{z-index:10;}.glass-card{width:min(312px,calc(100vw - 48px));min-height:300px;padding:30px 28px 28px;border-radius:20px;background:linear-gradient(180deg," + tokenCardTop + L"," + tokenCardBottom + L");border:1px solid " + BuildCssRgba(startupTheme.waveformPanelBorder, useLightStartupChrome ? 0.28f : 0.18f) + L";box-shadow:0 14px 38px " + tokenCardShadowSoft + L",inset 0 0 0 1px " + tokenCardSheen + L";backdrop-filter:blur(12px) saturate(108%);-webkit-backdrop-filter:blur(12px) saturate(108%);gap:0;justify-content:center;}\n";
     html += L".glass-card::before{border-radius:20px;padding:0;background:linear-gradient(135deg," + tokenCardSheen + L",transparent 46%);-webkit-mask:none;mask:none;opacity:1;}\n";
     html += L".glass-card::after{content:\"\";position:absolute;inset:auto -10% 42% -10%;height:54%;pointer-events:none;background:radial-gradient(circle at 24% 28%," + tokenCardBloomA + L",transparent 58%),radial-gradient(circle at 76% 6%," + tokenCardBloomB + L",transparent 54%);filter:blur(14px);opacity:.98;}\n";
-    html += L".avatar-wrap{position:relative;width:86px;height:86px;margin:0 0 22px;display:grid;place-items:center;}.avatar{position:relative;z-index:1;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;color:rgba(255,255,255,.94);font-family:var(--font-sans);font-size:23px;font-weight:680;letter-spacing:-.03em;background:radial-gradient(circle at 34% 24%,rgba(255,255,255,.18),transparent 30%),linear-gradient(145deg,hsl(var(--avatar-hue),44%,43%),hsl(calc(var(--avatar-hue) + 22),38%,30%));box-shadow:inset 0 0 0 1px rgba(255,255,255,.11),0 6px 16px " + tokenCardShadowSoft + L";animation:avatarPulse 2.8s ease-in-out infinite;}.avatar::after{content:\"\";position:absolute;inset:-7px;border-radius:50%;background:" + tokenAvatarHalo + L";z-index:-1;animation:pulseHalo 2.8s ease-in-out infinite;}.avatar-img{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover;image-rendering:-webkit-optimize-contrast;display:none;background:rgba(255,255,255,.04);}.avatar.has-image{background:rgba(255,255,255,.045);}.avatar.has-image .avatar-img{display:block;}.avatar.has-image #loadingAvatarInitials{display:none;}\n";
     html += L".spinner-container{display:none!important;}.status-text{position:relative;z-index:1;margin:0;color:" + tokenStatusText + L";font-size:12.5px;line-height:1.45;font-weight:420;min-height:1.45em;animation:statusPulse 2.2s ease-in-out infinite;}.progress-detail{position:relative;z-index:1;margin-top:8px;font-size:11px;color:" + tokenDetailText + L";}.progress-bar-track{position:relative;z-index:1;width:104px;height:1px;margin-top:16px;background:" + tokenProgressTrack + L";border-radius:999px;}.progress-bar-fill{height:100%;background:linear-gradient(90deg," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L"," + tokenProgressCore + L"," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L");box-shadow:none;transition:width .28s ease-out;}\n";
-    html += L".version-footer{display:none!important;}@keyframes avatarPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.018);}}@keyframes pulseHalo{0%,100%{opacity:.18;transform:scale(.96);}50%{opacity:.34;transform:scale(1.05);}}@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
+    html += L".version-footer{display:none!important;}@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
     AppendStartupBrandLogoCss(html, useLightStartupChrome);
     html += L"</style>\n";
 
@@ -10116,11 +10606,12 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
   <div class="brand-word">Harken Search</div>
   <div class="loading-overlay">
     <div class="glass-card">
-      <div class="avatar-wrap" aria-hidden="true">
-        <div class="avatar" id="loadingAvatarBubble">
-          <img class="avatar-img" id="loadingAvatarImage" alt="" />
-          <span id="loadingAvatarInitials">AR</span>
-        </div>
+      <div class="startup-loading-mascot-slot" aria-hidden="true">
+)HTML_L2";
+    const std::string loadingAvatarMarkup = BuildStartupAvatarMarkup(settings);
+    html += loadingAvatarMarkup.empty() ? std::wstring(HarkenSearch::kStartupLoadingMascotArtwork)
+                                        : Utf8ToWide(loadingAvatarMarkup);
+    html += LR"HTML_L2(
       </div>
       <div class="status-text" id="statusText">Preparing your sound workspace...</div>
       <div class="progress-bar-track">
@@ -10148,8 +10639,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     html += L"    const themeTextGlow = \"" + themeTextGlow + L"\";\n";
     html += L"    const canvasWash = \"" + tokenCanvasWash + L"\";\n";
     html += L"    const themedParticleChance = " + themedParticleChance + L";\n";
-    html += L"    const loadingDisplayName = \"" + Utf8ToWide(JsonEscape(displayNameUtf8)) + L"\";\n";
-    html += L"    const loadingAvatarDataUri = \"" + Utf8ToWide(JsonEscape(startupAvatarDataUri)) + L"\";\n";
     html += LR"HTML_L3(
     const canvas = document.getElementById("fx");
     const ctx = canvas.getContext("2d");
@@ -10289,17 +10778,6 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     animate();
 
     let exitStarted = false;
-
-    const loadingNameChars = Array.from(loadingDisplayName || "Harken Search User");
-    document.getElementById("loadingAvatarInitials").textContent =
-      (loadingNameChars.length > 0 ? loadingNameChars.slice(0, 2).join("") : "AU").toUpperCase();
-    const loadingAvatarHash = loadingNameChars.reduce((acc, ch) => ((acc * 31) + ch.codePointAt(0)) >>> 0, 2166136261);
-    document.documentElement.style.setProperty("--avatar-hue", String(196 + (loadingAvatarHash % 34)));
-    if (loadingAvatarDataUri) {
-      const loadingAvatarImage = document.getElementById("loadingAvatarImage");
-      loadingAvatarImage.src = loadingAvatarDataUri;
-      document.getElementById("loadingAvatarBubble").classList.add("has-image");
-    }
 
     // 进度更新 API —— C++ 通过 ExecuteScript 调用
     // loaded/total：进度数值，message：阶段说明
@@ -11459,7 +11937,7 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     }
     const std::string titleUtf8 = GetLocalizedString(greetKey);
     const std::string displayNameUtf8 = greeting.name.empty() ? std::string(L(Splash_DefaultUser)) : greeting.name;
-    const std::string subtitleUtf8 = L(Splash_Subtitle);    const std::string startupAvatarDataUri = BuildLocalDiceBearAvatarDataUri(displayNameUtf8, settings.hasCustomAvatar, settings.diceBearAvatarIndex);
+    const std::string subtitleUtf8 = L(Splash_Subtitle);
     const std::string hintUtf8 = L(Splash_HintEntering);
     const std::string buttonUtf8 = L(Splash_BtnEnter);
 
@@ -11672,11 +12150,6 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L".welcome-layout{position:relative;right:auto;bottom:auto;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;width:min(312px,calc(100vw - 48px));min-height:300px;padding:30px 28px 28px;text-align:center;border-radius:20px;background:linear-gradient(180deg," + tokenCardTop + L"," + tokenCardBottom + L");border:1px solid " + BuildCssRgba(startupTheme.waveformPanelBorder, useLightStartupChrome ? 0.28f : 0.18f) + L";box-shadow:0 14px 38px " + tokenCardShadow + L",inset 0 0 0 1px " + tokenCardSheen + L";backdrop-filter:blur(12px) saturate(108%);-webkit-backdrop-filter:blur(12px) saturate(108%);overflow:hidden;animation:cardIn 520ms cubic-bezier(.16,1,.3,1) both;}\n";
     html += L".welcome-layout::before{content:\"\";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg," + tokenCardSheen + L",transparent 46%);}\n";
     html += L".welcome-layout::after{content:\"\";position:absolute;inset:auto -12% 44% -12%;height:56%;pointer-events:none;background:radial-gradient(circle at 24% 28%," + tokenCardBloomA + L",transparent 58%),radial-gradient(circle at 76% 6%," + tokenCardBloomB + L",transparent 54%);filter:blur(16px);opacity:.98;}\n";
-    html += L".avatar-wrap{position:relative;width:86px;height:86px;margin:0 0 22px;display:grid;place-items:center;}\n";
-    html += L".avatar-ring,.avatar-orbit{display:none!important;}\n";
-    html += L".avatar{position:relative;z-index:1;width:74px;height:74px;border-radius:50%;display:grid;place-items:center;color:rgba(255,255,255,.94);font-family:var(--font-sans);font-size:23px;font-weight:680;letter-spacing:-.03em;background:radial-gradient(circle at 34% 24%,rgba(255,255,255,.18),transparent 30%),linear-gradient(145deg,hsl(var(--avatar-hue),44%,43%),hsl(calc(var(--avatar-hue) + 22),38%,30%));box-shadow:inset 0 0 0 1px rgba(255,255,255,.11),0 6px 16px rgba(0,0,0,.20);animation:avatarPulse 2.8s ease-in-out infinite;}\n";
-    html += L".avatar-img{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover;image-rendering:-webkit-optimize-contrast;display:none;background:rgba(255,255,255,.04);}.avatar.has-image{background:rgba(255,255,255,.045);}.avatar.has-image .avatar-img{display:block;}.avatar.has-image #avatarInitials{display:none;}\n";
-    html += L".avatar::after{content:\"\";position:absolute;inset:-7px;border-radius:50%;background:" + tokenNameGlow + L";z-index:-1;animation:pulseHalo 2.8s ease-in-out infinite;}\n";
     html += L".startup-status{margin-top:18px;color:" + tokenStatusText + L";font-size:12.5px;line-height:1.45;font-weight:420;animation:statusPulse 2.2s ease-in-out infinite;}\n";
     html += L".startup-detail{display:none;}\n";
     html += L".loading-dots{display:none;}.progress-track{display:none;}\n";
@@ -11689,13 +12162,13 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L"@keyframes noteIn{to{opacity:1;transform:translateX(0);filter:blur(0);}}\n";
     html += L"@keyframes shimmer{from{background-position:200% center;}to{background-position:0% center;}}\n";
     html += L"@keyframes lineIn{to{width:min(7vw,80px);opacity:.68;}}\n";
-    html += L"@keyframes avatarPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.018);}}\n";
-    html += L"@keyframes pulseHalo{0%,100%{opacity:.18;transform:scale(.96);}50%{opacity:.34;transform:scale(1.05);}}\n";
     html += L"@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
     html += L"@media (min-width:640px){.welcome-headline{flex-direction:row;gap:14px;}}\n";
     html += L"@media (max-width:900px){.welcome-layout{right:40px;bottom:64px;max-width:calc(100vw - 88px);}.welcome-headline{font-size:clamp(28px,4.4vw,42px);line-height:1.08;}.welcome-copy{min-height:78px;}}\n";
     html += L"@media (max-width:640px){.brand-word{top:32px;left:32px;font-size:20px;}.welcome-layout{right:28px;bottom:52px;max-width:calc(100vw - 56px);padding:16px 4px;}.welcome-headline{gap:8px;}.welcome-lead{letter-spacing:0;}}\n";
     html += L".canvas{opacity:.22!important;}.backdrop{opacity:.74!important;filter:blur(92px)!important;}.brand-word{opacity:.78!important;z-index:90!important;filter:none!important;mix-blend-mode:normal!important;}.welcome-headline{flex-direction:column!important;gap:0!important;}.welcome-layout{right:auto!important;bottom:auto!important;max-width:min(312px,calc(100vw - 48px))!important;}\n";
+    AppendStartupMascotCss(html);
+    AppendStartupAvatarCss(html);
     html += L"@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}\n";
     AppendStartupBrandLogoCss(html, useLightStartupChrome);
     html += L"</style>\n";
@@ -11707,11 +12180,12 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
   <div class="shell">
     <div class="brand-word">Harken Search</div>
     <div class="welcome-layout">
-      <div class="avatar-wrap" aria-hidden="true">
-        <div class="avatar" id="avatarBubble">
-          <img class="avatar-img" id="avatarImage" alt="" />
-          <span id="avatarInitials">AR</span>
-        </div>
+      <div class="startup-loading-mascot-slot" aria-hidden="true">
+)HTML_W2";
+    const std::string welcomeAvatarMarkup = BuildStartupAvatarMarkup(settings);
+    html += welcomeAvatarMarkup.empty() ? std::wstring(HarkenSearch::kStartupLoadingMascotArtwork)
+                                        : Utf8ToWide(welcomeAvatarMarkup);
+    html += LR"HTML_W2(
       </div>
       <div class="welcome-copy">
         <h1 class="welcome-headline">
@@ -11738,7 +12212,6 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     html += L"    const welcomeTitle = \"" + Utf8ToWide(JsonEscape(titleUtf8)) + L"\";\n";
     html += L"    const welcomeName = \"" + Utf8ToWide(JsonEscape(displayNameUtf8)) + L"\";\n";
     html += L"    const welcomeSubtitle = \"" + Utf8ToWide(JsonEscape(subtitleUtf8)) + L"\";\n";
-    html += L"    const startupAvatarDataUri = \"" + Utf8ToWide(JsonEscape(startupAvatarDataUri)) + L"\";\n";
     html += L"    const welcomeHint = \"" + Utf8ToWide(JsonEscape(hintUtf8)) + L"\";\n";
     html += L"    const welcomeButton = \"" + Utf8ToWide(JsonEscape(buttonUtf8)) + L"\";\n";
     html += LR"HTML_W3(
@@ -11892,16 +12365,6 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     titleEl.textContent = welcomeTitle;
     nameLine.textContent = displayName;
     fallbackLine.style.display = "none";
-    const chars = Array.from(displayName);
-    document.getElementById("avatarInitials").textContent =
-      (chars.length > 0 ? chars.slice(0, 2).join("") : "AU").toUpperCase();
-    const hash = chars.reduce((acc, ch) => ((acc * 31) + ch.codePointAt(0)) >>> 0, 2166136261);
-    document.documentElement.style.setProperty("--avatar-hue", String(196 + (hash % 34)));
-    if (startupAvatarDataUri) {
-      const avatarImage = document.getElementById("avatarImage");
-      avatarImage.src = startupAvatarDataUri;
-      document.getElementById("avatarBubble").classList.add("has-image");
-    }
     document.getElementById("statusText").textContent = welcomeSubtitle;
 
     let sent = false;
@@ -12124,6 +12587,15 @@ static void RunBetaSplashScreen(
 
     if (worker.joinable()) worker.join();
 
+    // WM_CLOSE during startup destroys the window and posts WM_QUIT, but the
+    // splash loop consumes that message. Do not walk on into finalize/main UI
+    // after the user already asked to exit.
+    if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+        DIAG_SYSTEM("Shutdown", "StartupExitRequestedDuringSplash");
+        if (splashTex) glDeleteTextures(1, &splashTex);
+        return;
+    }
+
     auto pumpBetaStartupUi = [&]() {
         MSG msg;
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -12292,6 +12764,7 @@ static void RunWebView2LoadingScreen(
     // UI 线程仅做消息泵 + 进度同步（确保 WebView2 丝滑渲染）
     while (true) {
         pumpUi();
+        if (g_explicitExitRequested.load(std::memory_order_acquire)) break;
         const std::vector<ProgressEvent> local = flushProgressQueue();
 
         if (loadDone.load(std::memory_order_acquire)) {
@@ -12301,6 +12774,10 @@ static void RunWebView2LoadingScreen(
     }
 
     if (worker.joinable()) worker.join();
+    if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+        DIAG_SYSTEM("Shutdown", "StartupExitRequestedDuringWebUiLoading");
+        return;
+    }
     flushProgressQueue();
 
     // 等待首包搜索结果（含 facet），以便进主界面时封面墙已有列表
@@ -12841,6 +13318,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.ConfigDpiScaleFonts = true;
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // 禁用：左右方向键不再触发焦点框移动
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
@@ -12926,6 +13404,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
 #endif
 
     ImGui_ImplWin32_InitForOpenGL(hwnd);
+#if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
+    if (const float previewScale = PreviewUiDpiScale(); previewScale > 0.0f) {
+        ImGui::GetPlatformIO().Platform_GetWindowDpiScale = [](ImGuiViewport*) { return PreviewUiDpiScale(); };
+        ImGui::GetMainViewport()->DpiScale = previewScale;
+    }
+#endif
     ImGui_ImplOpenGL3_Init("#version 130");
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -13016,6 +13500,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                         }
                 } else {
                     // Directory or other path: existing scan-dialog behavior.
+                    state.pendingScanIsDirectDriveRootDrop = false;
                     state.pendingScanFolders.push_back(cmdPath);
                     state.scanDialogAutoStart = false;
                     state.showScanDialog = true;
@@ -13361,6 +13846,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 CloseWebView2(wv2Controller, wv2Webview, wv2Loader);
                 RunBetaSplashScreen(hwnd, hdc, state, runStartupPhases, finalizeStartupOnUi);
                 startupEntryTransitionActive = false;
+                if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+                    DIAG_SYSTEM("Shutdown", "StartupExitRequestedBeforeMainUi");
+                    return 0;
+                }
                 if (dbOpenFailed.load(std::memory_order_acquire)) {
                     std::lock_guard<std::mutex> lock(dbOpenMutex);
                     std::wstring wDb = Utf8ToWide(dbOpenPathUtf8);
@@ -13373,6 +13862,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 // Loading 完成后直接关闭启动门面，避免再出现一次“Entering Library...”过场。
                 CloseWebView2(wv2Controller, wv2Webview, wv2Loader);
                 startupEntryTransitionActive = false;
+                if (g_explicitExitRequested.load(std::memory_order_acquire)) {
+                    DIAG_SYSTEM("Shutdown", "StartupExitRequestedBeforeMainUi");
+                    return 0;
+                }
                 // 若数据库挂载失败，主线程安全弹窗并退出
                 if (dbOpenFailed.load(std::memory_order_acquire)) {
                     std::string errUtf8;
@@ -13647,6 +14140,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         // 窗口最小化或隐藏时不进行主窗口 OpenGL 呈现，避免 NVIDIA 驱动在 DrvPresentBuffers 内空指针崩溃 (ACCESS_VIOLATION 0x4)
         // 已拖出的平台视口仍要继续刷新，否则副屏面板会跟着主窗口一起冻住。
         const bool mainWindowHidden = IsIconic(hwnd) || !Platform::WindowIsVisible(hwnd);
+#if AURA_BUILD_DIAGNOSTICS
+        if (mainWindowHidden && state.diagnosticOverlayMonitor.IsOpen()) state.diagnosticOverlayMonitor.Pause();
+#endif
         if (mainWindowHidden && !HarkenSearchHasHostedPlatformViewports()) {
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
             AbortFrameBudgetCapture(state, "window_hidden", "visibility");
@@ -14371,12 +14867,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                         continue;
                     } else {
                         state.waveformFailed.insert(result.filePath);
-                        state.database.upsertWaveformCacheStateByPath(
-                            result.filePath,
-                            "failed",
-                            result.errorCode.empty() ? "decode_failed" : result.errorCode,
-                            1,
-                            "");
+                        state.waveformWorker.enqueueFailurePersistence(result);
                     }
                     state.removePendingWaveform(result.filePath);
                     continue;

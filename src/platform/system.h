@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -65,6 +66,13 @@ struct ProcessMemoryUsageResult {
 };
 
 ProcessMemoryUsageResult QueryCurrentProcessMemoryUsage();
+
+struct ProcessCpuTimeResult {
+    uint64_t userAndKernel100ns;
+    uint32_t logicalProcessorCount;
+};
+
+std::optional<ProcessCpuTimeResult> QueryCurrentProcessCpuTime();
 
 void CloseNativeHandle(void* handle);
 

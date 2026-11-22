@@ -460,6 +460,7 @@ add_executable(TestStage6PlaybackLoadSeekProbe EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -508,6 +509,7 @@ add_executable(TestStage6ScanTerminalThroughputProbe EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -555,6 +557,7 @@ add_executable(TestSearchSemanticMatrix EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -706,6 +709,7 @@ add_executable(TestDbSearchFacets EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -760,6 +764,7 @@ add_executable(TestTrigramE2E EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -820,6 +825,7 @@ add_executable(TestFuzzySearchPrd EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -884,6 +890,7 @@ add_executable(TestBackfillRecoveryWorker EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -939,6 +946,7 @@ add_executable(TestScanWaveformCacheContract EXCLUDE_FROM_ALL
     tests/test_scan_database_audio_probe_stub.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -983,11 +991,73 @@ endif()
 add_test(NAME TestScanWaveformCacheContract COMMAND TestScanWaveformCacheContract)
 aura_set_test_labels(TestScanWaveformCacheContract db)
 
+# Waveform failure persistence queue: real WaveformWorker against a real Database, so the
+# library binding and the stop() drain are exercised as behaviour instead of string checks.
+add_executable(TestWaveformFailureQueue EXCLUDE_FROM_ALL
+    tests/test_waveform_failure_queue.cpp
+    tests/test_database_link_stubs.cpp
+    tests/test_scan_database_audio_probe_stub.cpp
+    tests/test_appstate_link_stubs.cpp
+    src/AsyncWorker.cpp
+    src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
+    src/Database.cpp
+    src/BackfillQueue.cpp
+    src/BackfillWorkerPool.cpp
+    src/PathUtils.cpp
+    src/platform/file_watcher.cpp
+    src/Utils.cpp
+    src/MetadataReader.cpp
+    src/SearchQuery.cpp
+    src/AudioEngine.cpp
+    src/platform/audio_playback_miniaudio.cpp
+    src/TagVocabularyMapper.cpp
+    src/DiagnosticsLogger.cpp
+    src/CenterSenseDataSource.cpp
+    src/CenterSenseDsp.cpp
+    src/WaveformExtractor.cpp
+    src/TimeStretch.cpp
+    src/CoverReplacementFoundation.cpp
+    src/NativeFloatReader.cpp
+    src/platform/audio_data_source_miniaudio.cpp
+    src/platform/filesystem_std.cpp
+    src/platform/thread_id_win32.cpp
+    src/platform/search_text_gb2312_win32.cpp
+    src/platform/text_encoding_win32.cpp
+    src/platform/media_foundation_audio_win32.cpp
+    src/platform/audio_file_miniaudio.cpp
+    src/platform/emergency_file_writer_win32.cpp
+    src/platform/metadata_legacy_tag_content_win32.cpp
+    src/platform/filesystem_win32.cpp
+    ${SQLITE_SOURCES}
+)
+target_include_directories(TestWaveformFailureQueue PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${SQLITE_DIR}
+    ${IMGUI_DIR}
+)
+target_link_libraries(TestWaveformFailureQueue PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid)
+target_compile_definitions(TestWaveformFailureQueue PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    AURO_TEST_REAL_ASYNC_WORKER=1
+    AURO_TEST_WAV_DATABASE_AUDIO_PROBE=1
+    AURO_TEST_EXTERNAL_PATH_ATTRIBUTES=1
+)
+if(MSVC)
+    target_compile_options(TestWaveformFailureQueue PRIVATE /W3 /MP /utf-8)
+    set_target_properties(TestWaveformFailureQueue PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE" LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE")
+endif()
+add_test(NAME TestWaveformFailureQueue COMMAND TestWaveformFailureQueue)
+aura_set_test_labels(TestWaveformFailureQueue db)
+
 add_executable(TestScanPauseResume EXCLUDE_FROM_ALL
     tests/test_scan_pause_resume.cpp
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -1054,6 +1124,7 @@ add_executable(TestImportPrecomputeWaveform EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -1159,6 +1230,7 @@ add_executable(TestCoverClickPerf EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -1286,6 +1358,7 @@ add_executable(TestStartupReconciliation EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -2031,6 +2104,7 @@ add_executable(TestProcessedFileExport EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -2084,6 +2158,7 @@ add_executable(TestSingleChannelExport EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -2167,6 +2242,16 @@ set_tests_properties(TestDeferredSidebarBootstrapWorkflowBoundary PROPERTIES
 aura_set_test_labels(TestDeferredSidebarBootstrapWorkflowBoundary core stage4)
 
 add_test(
+    NAME TestCoverWarmupOffUiThreadBoundary
+    COMMAND ${Python3_EXECUTABLE} -m pytest -q
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cover_warmup_off_ui_thread_boundary.py
+)
+set_tests_properties(TestCoverWarmupOffUiThreadBoundary PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+aura_set_test_labels(TestCoverWarmupOffUiThreadBoundary core stage4)
+
+add_test(
     NAME TestReaperFileListImportWorkflowBoundary
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reaper_file_list_import_workflow_boundary.py
@@ -2205,6 +2290,7 @@ add_executable(TestSearchWorkspace EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/CoverReplacementFoundation.cpp
     src/BackfillQueue.cpp
@@ -4138,6 +4224,7 @@ add_executable(TestShortcutPresets EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     tests/test_shortcut_presets_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
 )
 target_include_directories(TestShortcutPresets PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -4811,6 +4898,7 @@ add_executable(TestSubPlaylists EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -4917,6 +5005,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -4978,6 +5067,71 @@ if(WIN32)
     aura_set_test_labels(PreviewPlaylistDatabase db)
 endif()
 
+    add_executable(TestPlaylistFolderTreeRealLibrary EXCLUDE_FROM_ALL
+        tests/test_playlist_folder_tree_real_library.cpp
+        tests/test_database_link_stubs.cpp
+        tests/test_appstate_link_stubs.cpp
+        src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
+        src/CoverReplacementFoundation.cpp
+        src/Database.cpp
+        src/BackfillQueue.cpp
+        src/BackfillWorkerPool.cpp
+        src/PathUtils.cpp
+        src/platform/file_watcher.cpp
+        src/Utils.cpp
+        src/MetadataReader.cpp
+        src/SearchQuery.cpp
+        src/SimilaritySearch.cpp
+        src/AudioEngine.cpp
+        src/platform/audio_playback_miniaudio.cpp
+        src/TagVocabularyMapper.cpp
+        src/DiagnosticsLogger.cpp
+        src/CenterSenseDataSource.cpp
+        src/CenterSenseDsp.cpp
+        src/TimeStretch.cpp
+        src/WaveformExtractor.cpp
+        src/NativeFloatReader.cpp
+        src/platform/audio_data_source_miniaudio.cpp
+        src/platform/harken_user_data_layout.cpp
+        src/platform/harken_legacy_data_migrator.cpp
+        src/platform/filesystem_win32.cpp
+        src/platform/filesystem_std.cpp
+        src/platform/audio_file_miniaudio.cpp
+        ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+        ${AURO_THREAD_ID_SOURCE}
+        ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+        ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+        ${AURO_AUDIO_TEXT_SOURCE}
+        ${AURO_SEARCH_TEXT_GB2312_SOURCE}
+        ${SQLITE_SOURCES}
+    )
+    target_include_directories(TestPlaylistFolderTreeRealLibrary PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+        ${SQLITE_DIR}
+        ${IMGUI_DIR}
+    )
+    target_link_libraries(TestPlaylistFolderTreeRealLibrary PRIVATE
+        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid
+    )
+    target_compile_definitions(TestPlaylistFolderTreeRealLibrary PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+        AURO_TEST_EXTERNAL_PATH_ATTRIBUTES
+    )
+    if(MSVC)
+        target_compile_options(TestPlaylistFolderTreeRealLibrary PRIVATE
+            /W3 /MP /utf-8
+        )
+        set_target_properties(TestPlaylistFolderTreeRealLibrary PROPERTIES
+            LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+    add_test(NAME TestPlaylistFolderTreeRealLibrary COMMAND TestPlaylistFolderTreeRealLibrary)
+    aura_set_test_labels(TestPlaylistFolderTreeRealLibrary core)
+
+
 add_test(
     NAME TestPreviewPlaylistContract
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_preview_playlist_contract.py --build-dir ${CMAKE_CURRENT_BINARY_DIR}
@@ -4999,6 +5153,7 @@ add_executable(TestSetPlaylistParent EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
     src/BackfillWorkerPool.cpp
@@ -5428,6 +5583,7 @@ add_executable(TestDatabaseFeatures EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     src/AsyncWorker.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -5515,6 +5671,7 @@ add_executable(TestPlaylistPerformanceContract EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     tests/test_get_exe_dir_stub.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -5593,6 +5750,7 @@ add_executable(TestPerfOptimizations EXCLUDE_FROM_ALL
     tests/test_appstate_link_stubs.cpp
     tests/test_get_exe_dir_stub.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -5671,6 +5829,7 @@ foreach(_auro_db_behavior_target
     TestFuzzySearchPrd
     TestBackfillRecoveryWorker
     TestScanWaveformCacheContract
+    TestWaveformFailureQueue
     TestImportPrecomputeWaveform
     TestCoverClickPerf
     TestStartupReconciliation
@@ -5853,6 +6012,7 @@ endif()
 
 add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
     tests/test_reaper_bridge_contract.cpp
+    tests/test_daw_integration_settings.cpp
     src/ReaperBridgeClient.cpp
     src/ReaperBridgeDoctor.cpp
     src/platform/filesystem_std.cpp
@@ -5888,6 +6048,11 @@ if(MSVC)
 endif()
 add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
 aura_set_test_labels(TestReaperBridgeContract daw)
+
+add_test(NAME TestDawIntegrationSettingsContract
+    COMMAND ${Python3_EXECUTABLE} -m pytest -q
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_daw_integration_settings.py")
+aura_set_test_labels(TestDawIntegrationSettingsContract daw)
 
 # AUR-P1-047 Slice 2 - REAPER extension stub DLL (reaper_harken.dll).
 # REAPER scans UserPlugins\ for files whose name starts with "reaper_".
@@ -5985,6 +6150,22 @@ if(MSVC)
 endif()
 add_test(NAME TestMiniWaveformPresentation COMMAND TestMiniWaveformPresentation)
 aura_set_test_labels(TestMiniWaveformPresentation core)
+
+add_executable(TestResultRowFilenameLayout EXCLUDE_FROM_ALL
+    tests/test_result_row_filename_layout.cpp
+)
+target_include_directories(TestResultRowFilenameLayout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+if(MSVC)
+    target_compile_options(TestResultRowFilenameLayout PRIVATE /W3 /utf-8)
+    set_target_properties(TestResultRowFilenameLayout PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestResultRowFilenameLayout COMMAND TestResultRowFilenameLayout)
+aura_set_test_labels(TestResultRowFilenameLayout core)
 
 add_executable(TestMiniRenderMath EXCLUDE_FROM_ALL
     tests/test_mini_render_math.cpp
@@ -6175,6 +6356,7 @@ aura_set_test_labels(TestTransportBlendInput ui)
 add_executable(TestThemeColors EXCLUDE_FROM_ALL
     tests/test_theme_colors.cpp
     src/Theme.cpp
+    src/BuiltinThemeScheme.cpp
     src/ui/CoreWorkspaceStyle.cpp
     src/platform/filesystem_std.cpp
     ${AURO_AUDIO_TEXT_SOURCE}
@@ -6204,6 +6386,7 @@ aura_set_test_labels(TestThemeColors nightly)
 
 add_executable(TestCoreWorkspaceStyle EXCLUDE_FROM_ALL
     tests/test_core_workspace_style.cpp
+    src/TransientScrollbarHost.cpp
     src/ui/CoreWorkspaceStyle.cpp
     src/ui/ModuleWindowShell.cpp
     ${IMGUI_DIR}/imgui.cpp
@@ -6448,6 +6631,7 @@ foreach(_auro_utils_test IN ITEMS
     TestFuzzySearchPrd
     TestBackfillRecoveryWorker
     TestScanWaveformCacheContract
+    TestWaveformFailureQueue
     TestScanPauseResume
     TestImportPrecomputeWaveform
     TestCoverPathNorm
@@ -6945,8 +7129,10 @@ add_test(
     NAME TestStage4DependencyAudit
     COMMAND ${Python3_EXECUTABLE} -m pytest tests/test_stage4_dependency_audit.py -q
 )
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/pytest-temp")
 set_tests_properties(TestStage4DependencyAudit PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENVIRONMENT "TEMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMP=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp;TMPDIR=${CMAKE_CURRENT_BINARY_DIR}/pytest-temp"
 )
 aura_set_test_labels(TestStage4DependencyAudit core)
 
@@ -7139,8 +7325,10 @@ aura_set_test_labels(TestAcousticSimilarityFile core)
 set(HARKEN_ONNXRUNTIME_ROOT "" CACHE PATH "Pinned ONNX Runtime C++ SDK, optional for audio similarity")
 add_executable(TestSimilarityAnalysisStore EXCLUDE_FROM_ALL
     tests/test_similarity_analysis_store.cpp src/SimilarityAnalysisStore.cpp
+    src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE}
     src/AcousticSimilarity.cpp src/AudioEmbeddingService.cpp ${_acoustic_file_sources} ${SQLITE_SOURCES})
 target_include_directories(TestSimilarityAnalysisStore PRIVATE src ${SQLITE_DIR})
+target_link_libraries(TestSimilarityAnalysisStore PRIVATE Threads::Threads)
 if(WIN32)
     target_sources(TestSimilarityAnalysisStore PRIVATE src/platform/file_hash_win32.cpp)
     target_link_libraries(TestSimilarityAnalysisStore PRIVATE bcrypt)
@@ -7154,6 +7342,15 @@ add_test(NAME TestSimilarityAnalysisStore COMMAND TestSimilarityAnalysisStore)
 aura_set_test_labels(TestSimilarityAnalysisStore core)
 get_target_property(_similarity_store_sources TestSimilarityAnalysisStore SOURCES)
 list(REMOVE_ITEM _similarity_store_sources tests/test_similarity_analysis_store.cpp)
+set(_statistics_worker_store_sources ${_similarity_store_sources})
+list(REMOVE_ITEM _statistics_worker_store_sources
+    src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE} ${SQLITE_SOURCES})
+# Keep the worker test linked to the same row decoder used to select indexer work.
+target_sources(TestLibraryStatisticsWorker PRIVATE ${_statistics_worker_store_sources})
+if(WIN32)
+    target_link_libraries(TestLibraryStatisticsWorker PRIVATE bcrypt)
+endif()
+list(REMOVE_ITEM _similarity_store_sources src/LibraryStatisticsWorker.cpp ${AURO_THREAD_ID_SOURCE})
 add_executable(TestSimilarityIndexer EXCLUDE_FROM_ALL tests/test_similarity_indexer.cpp
     src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
 target_include_directories(TestSimilarityIndexer PRIVATE src ${SQLITE_DIR})
@@ -7236,6 +7433,7 @@ add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     tests/test_database_link_stubs.cpp
     tests/test_appstate_link_stubs.cpp
     src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
     src/CoverReplacementFoundation.cpp
     src/Database.cpp
     src/BackfillQueue.cpp
@@ -8476,3 +8674,12 @@ foreach(_standalone_localized_target IN ITEMS
     target_sources(${_standalone_localized_target} PRIVATE src/Localization.cpp)
     add_dependencies(${_standalone_localized_target} ArisLocalizationGenerated)
 endforeach()
+
+add_test(
+    NAME TestAlertDialogContract
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_alert_dialog_contract.py"
+)
+set_tests_properties(TestAlertDialogContract PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+aura_set_test_labels(TestAlertDialogContract core)

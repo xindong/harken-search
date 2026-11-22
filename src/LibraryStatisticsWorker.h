@@ -13,6 +13,7 @@ struct LibraryStatisticsResult {
     bool success = false;
     int indexed = 0, total = 0;
     int semanticIndexed = 0;
+    int pending = 0;
     int64_t missingWaveforms = 0, pendingAssets = 0;
     double startedWallMs = 0, queryMilliseconds = 0;
     unsigned long threadId = 0;
@@ -55,5 +56,6 @@ private:
     uint64_t activeEpoch_ = 0;
     std::thread worker_;
 };
-LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler(bool version2 = false);
+LibraryStatisticsWorker::Handler MakeFeatureIndexCountHandler(
+    bool version2 = false, std::function<bool()> semanticAvailable = {});
 } // namespace HarkenSearch

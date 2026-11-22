@@ -17,12 +17,12 @@ extern double transientScrollbarNow;
 bool BeginTransientScrollbarChild(
     const char* strId,
     const ImVec2& size,
-    bool childBorder = false,
+    ImGuiChildFlags childFlags = ImGuiChildFlags_None,
     ImGuiWindowFlags flags = 0);
 bool BeginTransientScrollbarChild(
     ImGuiID id,
     const ImVec2& size,
-    bool childBorder = false,
+    ImGuiChildFlags childFlags = ImGuiChildFlags_None,
     ImGuiWindowFlags flags = 0);
 bool BeginTransientScrollbarTable(
     const char* strId,

@@ -82,6 +82,7 @@ struct AudioRecord {
     std::string filePath;
     std::string extension;
     std::string format;
+    std::optional<bool> wavPackLossless;
 
     // 3. 冷数据 (Cold Zone)：右键/详情/搜索/封面时访问
     std::string description;
@@ -407,6 +408,7 @@ struct SearchFilter {
     // (.wav,.wave,.mp3,.flac,.ogg,.aiff,.aif,.m4a,.wma).
     // Used when "show Other" is unchecked.
     bool includeOnlyKnownExts = false;
+    bool losslessWavPackOnly = false;
 
     // F-034: exact search mode — no prefix '*' expansion
     bool exactMode = false;
@@ -439,6 +441,14 @@ struct FolderInfo {
     std::string displayName;   // T2.5: raw-case basename for UI rendering (derived from sample file_path)
     int fileCount = 0;
     std::vector<FolderInfo> subfolders;
+};
+
+// Lightweight playlist folder aggregation row so the playlist folder tree can
+// show folder names and counts without loading complete AudioRecord rows.
+struct PlaylistFolderCount {
+    std::string folderPath;   // Canonical folder path used as the tree key.
+    std::string displayPath;  // Representative display folder path from a member file.
+    int fileCount = 0;
 };
 
 // 启动健康检查结果 (F-009)
@@ -573,7 +583,9 @@ public:
     /// 启动预热：ANALYZE + 预编译热门 SQL + FTS5 索引预加载，应在 loading screen 期间调用
     void preheat();
     /// 预热封面索引：让 cover_key 复合索引页进入 mmap/page cache，加速首次封面点击
-    void warmupCoverIndexes();
+    // Optional shouldContinue lets a worker abort between the two warmup
+    // queries when its thread is being stopped.
+    void warmupCoverIndexes(const std::function<bool()>& shouldContinue = {});
 
     // File indexing
     bool addFile(const AudioRecord& record);
@@ -844,6 +856,30 @@ public:
     int fixCompletedPendingWaveformStates();
     bool pruneWaveformCacheRows(int maxRows);
     bool clearWaveformCache();
+
+    struct WaveformFailureWritePaths {
+        std::string main;
+        std::string waveforms;
+    };
+    WaveformFailureWritePaths waveformFailureWritePaths() const;
+
+    class WaveformFailureWriter {
+    public:
+        explicit WaveformFailureWriter(const std::atomic<bool>& cancelled);
+        ~WaveformFailureWriter();
+        WaveformFailureWriter(const WaveformFailureWriter&) = delete;
+        WaveformFailureWriter& operator=(const WaveformFailureWriter&) = delete;
+
+        bool open(const WaveformFailureWritePaths& paths);
+        bool writeFailure(const std::string& filePath, const std::string& errorCode,
+                          int retryCount, int64_t observedAt);
+
+    private:
+        sqlite3* m_db = nullptr;
+        sqlite3_stmt* m_statement = nullptr;
+        const std::atomic<bool>& m_cancelled;
+        std::chrono::steady_clock::time_point m_busyDeadline;
+    };
     
 // Mipmap波形数据结构（金字塔波形）
     struct WaveformMipmapLevel {
@@ -1009,6 +1045,7 @@ public:
     std::vector<Playlist> getAllPlaylists(bool includeFileCounts = true);
     bool addToPlaylist(int64_t playlistId, int64_t fileId);
     PlaylistBulkAddResult addManyToPlaylist(int64_t playlistId, const std::vector<int64_t>& fileIds);
+    PlaylistBulkAddResult addFolderToPlaylist(int64_t playlistId, const std::string& folderPath);
     PlaylistImportResult importReaperFileListToPlaylist(const std::string& fileListPath,
                                                         const std::string& playlistName,
                                                         ScanProgressCallback callback = nullptr,
@@ -1025,6 +1062,11 @@ public:
     int64_t searchAllPlaylistFileCount(const SearchFilter& filter);
     /** 极速获取播放列表文件总数（百万级 <1ms，命中主键索引） */
     int64_t getPlaylistFileCount(int64_t playlistId);
+
+    // Playlist-scoped folder aggregation that only reads folder_path/file_path
+    // and counts members instead of building complete AudioRecord rows.
+    std::vector<PlaylistFolderCount> getPlaylistFolderCounts(int64_t playlistId);
+    std::vector<PlaylistFolderCount> getAggregatedPlaylistFolderCounts(int64_t parentFolderId);
 
     // 子播放列表 API (F-017 v2)
     bool markAsFolder(int64_t playlistId);                                   // 升级为 folder
@@ -1109,6 +1151,10 @@ public:
     };
     CoverWallPage getGlobalCoverWallEntriesPage(const std::string& afterCursor = {}, int limit = 512,
                                                 bool followFileListOrder = false);
+    bool rebuildCoverWallOrderIndex(int batchSize = 20000);
+    bool flushCoverWallOrderIndexDirty(int maxTiles = 4096);
+    bool isCoverWallOrderIndexReady() const;
+    static bool flushCoverWallOrderIndexDirtyAtPath(const std::string& dbPath, int maxTiles = 4096);
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
     std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);
@@ -1382,6 +1428,16 @@ private:
     /// Set to true when post-process finishes maintenance so UI can reload cover wall with correct phash values
     std::atomic<bool> m_postProcessCoverRefreshNeeded{false};
 
+    /// 大库文件顺序封面索引构建与 Database 生命周期绑定，禁止使用进程级 detached 线程。
+    std::mutex m_coverWallOrderIndexBuildLifecycleMutex;
+    std::mutex m_coverWallOrderIndexBuildDbMutex;
+    std::thread m_coverWallOrderIndexBuildThread;
+    std::atomic<bool> m_coverWallOrderIndexBuildCancel{false};
+    std::atomic<bool> m_coverWallOrderIndexBuildRunning{false};
+    sqlite3* m_coverWallOrderIndexBuildDb = nullptr;
+    void startCoverWallOrderIndexBuild();
+    void stopCoverWallOrderIndexBuild();
+
     /// 独立渐进式 cover dHash backfill worker（不绑定 heavy maintenance，大库也能跑）
     std::thread m_coverPhashBackfillThread;
     std::atomic<bool> m_coverPhashBackfillCancel{false};
@@ -1610,6 +1666,7 @@ public:
     // True only for databases created fresh under the adaptive mini-waveform regime
     // (app_meta 'mini_waveform_density' == "adaptive"). Legacy DBs stay on the fixed
     // 128/160 peak budget so existing waveform caches are not invalidated. Set in createTables().
+    bool m_waveformFailureWritesAllowed = false;
     bool m_usesAdaptiveMiniWaveform = false;
     bool m_needsAdaptiveMiniWaveformFormatUpgrade = false;
     bool m_fastScanModeActive = false;

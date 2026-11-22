@@ -3,6 +3,7 @@
 #include "text_encoding.inl"
 
 #include "../../thirdparty/miniaudio.h"
+#include "wavpack_decoding_backend.h"
 #ifdef AURO_AUDIO_FILE_TESTING
 #include "audio_file_miniaudio_test_seam.h"
 #endif
@@ -108,8 +109,9 @@ Status MonoFloatReader::Open(const std::string& utf8Path,
                              MonoSampleRate sampleRate) {
     Close();
     auto next = std::make_unique<Impl>();
-    const auto config = ma_decoder_config_init(
+    auto config = ma_decoder_config_init(
         ma_format_f32, 1, static_cast<ma_uint32>(sampleRate));
+    Platform::WavPack::ApplyDecodingBackend(config);
     ma_result result = MA_ERROR;
 #ifdef _WIN32
     std::wstring widePath;

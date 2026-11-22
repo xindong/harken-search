@@ -25,7 +25,7 @@ static fs::path Utf8ToPath(const std::string& str) {
 
 // Supported audio extensions
 static const std::set<std::string> AUDIO_EXTENSIONS = {
-    ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma"
+    ".wav", ".wave", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma", ".wv"
 };
 
 FileBrowser::FileBrowser() {

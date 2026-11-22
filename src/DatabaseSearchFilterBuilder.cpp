@@ -22,10 +22,7 @@ SearchFilter BuildCurrentDbFilter(const AppState& state) {
     filter.album = state.albumFilterBuffer;
     filter.category = state.categoryFilterBuffer;
 
-    const char* formats[] = {"", "WAV", "MP3", "FLAC", "OGG", "AIFF", "M4A"};
-    if (state.formatFilterIndex > 0 && state.formatFilterIndex < 7) {
-        filter.format = formats[state.formatFilterIndex];
-    }
+    filter.format = AudioFormatFilterAt(state.formatFilterIndex);
 
     using ChannelCategory = SearchFilter::ChannelCategory;
     static constexpr ChannelCategory kChannelCategoryMap[] = {
