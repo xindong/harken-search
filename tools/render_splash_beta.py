@@ -10,7 +10,9 @@ preserved unchanged). The old lettermark and white wordmark are removed by
 fitting a smooth background model on the untouched pixels, then the brand
 assets are composited back in. No recolouring of the brand artwork.
 
-Run from the repository root (needs Pillow and numpy):
+Run from the repository root. Both dependencies are listed in
+``tools/requirements-manual.txt`` (Pillow for the image work, numpy for the
+background model):
 
     python tools/render_splash_beta.py
     python tools/render_splash_beta.py --check
