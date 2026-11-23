@@ -20,6 +20,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <thread>
@@ -2306,6 +2307,242 @@ static int testCoverWallIgnoresStaleOrphanRegistryRows() {
     return failures;
 }
 
+static std::string readRemovalFixtureBytes(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+static bool hasRegisteredRemovalRoot(const Database& db, const fs::path& path) {
+    const auto key = HarkenSearch::CanonicalFolderPath(path.u8string());
+    const auto roots = db.getLibraryRoots();
+    return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
+        return HarkenSearch::CanonicalFolderPath(root) == key;
+    });
+}
+
+static bool hasRemovalTreeFolder(const FolderInfo& tree, const std::string& key) {
+    return tree.path == key || std::any_of(tree.subfolders.begin(), tree.subfolders.end(), [&](const auto& child) {
+        return hasRemovalTreeFolder(child, key);
+    });
+}
+
+static int testRemoveRegisteredFolderSubtreePreservesOtherRoots(bool useWorker = false) {
+    int failures = 0;
+    const auto root = makeTempRoot("remove_registered_root");
+    const auto target = root / "Outsourcer";
+    const auto nearby = root / "Outsourcer Database";
+    const auto nested = target / "AnotherRoot";
+    fs::create_directories(target / "Child");
+    fs::create_directories(nearby);
+    fs::create_directories(nested);
+    const auto targetFile = target / "Remove.wav";
+    const auto childFile = target / "Child" / "RemoveChild.wav";
+    const auto nearbyFile = nearby / "Keep.wav";
+    const auto nestedFile = nested / "KeepNested.wav";
+    for (const auto& path : {targetFile, childFile, nearbyFile, nestedFile}) {
+        writeSilentMonoWav(path);
+    }
+    const auto source = readRemovalFixtureBytes(targetFile);
+    const auto childSource = readRemovalFixtureBytes(childFile);
+    check(!source.empty() && !childSource.empty(), "registered-root fixture has real WAV bytes", failures);
+
+    Database db;
+    Database otherDb;
+    if (!db.open((root / "active.db").u8string()) || !otherDb.open((root / "other.db").u8string())) {
+        std::cerr << "FAIL: fixture databases did not open\n";
+        return 1;
+    }
+    db.mergeLibraryRoots({target.u8string(), nearby.u8string(), nested.u8string()});
+    otherDb.mergeLibraryRoots({target.u8string()});
+    check(db.scanDirectoryEx(root.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 4,
+          "registered-root fixture indexed four WAVs", failures);
+    check(otherDb.scanDirectoryEx(target.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 3,
+          "other library indexed the same physical files independently", failures);
+    check(otherDb.saveWaveformByPath(targetFile.u8string(), {0.4f}, -20.0f, 1),
+          "other library has its own waveform", failures);
+    check(db.saveWaveformByPath(targetFile.u8string(), {0.2f}, -22.0f, 1) &&
+          db.saveWaveformByPath(nestedFile.u8string(), {0.3f}, -24.0f, 1),
+          "target and nested root have independent waveform rows", failures);
+    const auto targetId = db.getFileByPath(targetFile.u8string()).id;
+    const auto nestedId = db.getFileByPath(nestedFile.u8string()).id;
+    const auto playlist = db.createPlaylist("Keep other roots");
+    check(db.addToPlaylist(playlist, targetId) && db.addToPlaylist(playlist, nestedId),
+          "playlist refers to the target and nested-root files", failures);
+    const std::string targetKey = HarkenSearch::CanonicalFolderPath(target.u8string());
+    const std::string equivalentPath = "\\\\?\\" + targetKey + "\\";
+    const auto revision = db.dataRevision();
+    const auto removed = useWorker ? db.removeFolderSubtreeFromLibraryOnWorker(equivalentPath)
+                                   : db.removeFolderSubtreeFromLibrary(equivalentPath);
+    check(removed.status == FolderSubtreeRemovalStatus::Removed && removed.removedFiles == 2 &&
+          removed.removedPaths.size() == 2 && removed.error.empty() && db.dataRevision() > revision,
+          "extended mixed-case equivalent removes the target without touching a nested independent root", failures);
+    check(!hasRegisteredRemovalRoot(db, target) && hasRegisteredRemovalRoot(db, nearby) &&
+          hasRegisteredRemovalRoot(db, nested) && db.getLibraryRoots().size() == 2,
+          "exact registration is removed but other roots stay registered", failures);
+    check(!db.fileExists(targetFile.u8string()) && !db.fileExists(childFile.u8string()) &&
+          db.fileExists(nearbyFile.u8string()) && db.fileExists(nestedFile.u8string()),
+          "target rows are gone and nested and same-prefix neighbors are retained", failures);
+    check(db.getWaveformByPath(targetFile.u8string()).empty() &&
+          !db.getWaveformByPath(nestedFile.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1,
+          "target cache and playlist reference clear without removing the nested file references", failures);
+    check(hasRegisteredRemovalRoot(otherDb, target) && otherDb.fileExists(targetFile.u8string()) &&
+          !otherDb.getWaveformByPath(targetFile.u8string()).empty(),
+          "other library retains its roots, indexed files and cache", failures);
+    check(readRemovalFixtureBytes(targetFile) == source && readRemovalFixtureBytes(childFile) == childSource,
+          "registered removal leaves source WAV bytes unchanged", failures);
+    check(db.removeFolderSubtreeFromDb(target.u8string()) == 0 && db.getLastError().empty() &&
+          db.fileExists(nestedFile.u8string()),
+          "repeating removal does not remove an independent nested root", failures);
+
+    db.close();
+    otherDb.close();
+    return failures;
+}
+
+static int testRemoveLastEmptyRegisteredFolderRoot() {
+    int failures = 0;
+    const auto root = makeTempRoot("remove_last_empty_root");
+    const auto emptyRoot = root / "EmptyRoot";
+    fs::create_directories(emptyRoot);
+    const auto dbPath = root / "empty.db";
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    db.mergeLibraryRoots({emptyRoot.u8string()});
+    const auto key = HarkenSearch::CanonicalFolderPath(emptyRoot.u8string());
+    check(db.getFileCount() == 0 && hasRemovalTreeFolder(db.getFolderHierarchyFromIndex(), key),
+          "empty registered root is initially visible", failures);
+    const auto removed = db.removeFolderSubtreeFromLibrary(emptyRoot.u8string());
+    check(removed.status == FolderSubtreeRemovalStatus::Removed && removed.removedFiles == 0 &&
+          removed.unregisteredRoot && removed.error.empty() && db.getLibraryRoots().empty(),
+          "remove unregisters the last root even with zero indexed files", failures);
+    check(!hasRemovalTreeFolder(db.getFolderHierarchyFromIndex(), key) &&
+          !hasRemovalTreeFolder(db.getFolderHierarchy(), key), "both tree paths omit the unregistered empty root", failures);
+    check(execSqlite(db.db(), "INSERT INTO waveforms_db.waveforms(file_id, status) VALUES(99999991, 'done')"),
+          "repeat fixture has an unrelated orphan waveform", failures);
+    const auto repeated = db.removeFolderSubtreeFromLibrary(emptyRoot.u8string());
+    check(repeated.status == FolderSubtreeRemovalStatus::NoMatch && repeated.removedFiles == 0 &&
+          !repeated.unregisteredRoot && repeated.error.empty() &&
+          querySingleInt(db.db(), "SELECT count(*) FROM waveforms_db.waveforms WHERE file_id=99999991") == 1,
+          "no match leaves even unrelated stale cache data unmodified", failures);
+    db.close();
+    check(db.open(dbPath.u8string()) && db.getLibraryRoots().empty() &&
+          !hasRemovalTreeFolder(db.getFolderHierarchyFromIndex(), key),
+          "reopen does not restore the last unregistered root", failures);
+    db.close();
+    return failures;
+}
+
+static int testRemoveRegisteredFolderRollbackOnRootWriteFailure() {
+    int failures = 0;
+    const auto root = makeTempRoot("remove_registered_root_rollback");
+    const auto target = root / "Target";
+    fs::create_directories(target);
+    const auto file = target / "Keep.wav";
+    writeSilentMonoWav(file);
+    const auto original = readRemovalFixtureBytes(file);
+    Database db;
+    if (!db.open((root / "rollback.db").u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    db.mergeLibraryRoots({target.u8string()});
+    check(db.scanDirectoryEx(target.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 1,
+          "rollback fixture indexed target WAV", failures);
+    check(db.rebuildFolderIndex(), "rollback fixture stores a folder index row", failures);
+    const auto fileId = db.getFileByPath(file.u8string()).id;
+    const auto playlist = db.createPlaylist("Rollback fixture");
+    check(db.saveWaveformByPath(file.u8string(), {0.4f}, -18.0f, 1) &&
+          db.addToPlaylist(playlist, fileId) && db.addTagToFile(fileId, "rollback") &&
+          db.markBackfillPending(fileId, static_cast<int>(aura::BackfillJobKind::WaveformL1Overview)),
+          "rollback fixture stores waveform, playlist, tag and backfill references", failures);
+    check(execSqlite(db.db(),
+                     "CREATE TRIGGER fail_root_update BEFORE UPDATE ON app_meta "
+                     "WHEN old.key='library_roots_v1' "
+                     "BEGIN SELECT RAISE(ABORT, 'injected root update failure'); END;"),
+          "rollback fixture installs a root-registration write failure", failures);
+    const auto result = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(result.status == FolderSubtreeRemovalStatus::Failed && result.removedFiles == 0 &&
+          !result.unregisteredRoot &&
+          result.error.find("injected root update failure") != std::string::npos &&
+          db.getLastError() == result.error,
+          "root-registration write failure keeps the database error and reports no removal", failures);
+    check(hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          querySingleInt(db.db(), "SELECT count(*) FROM folder_index") == 1,
+          "registration, audio file and folder index survive the failed transaction", failures);
+    check(!db.getWaveformByPath(file.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1 &&
+          querySingleInt(db.db(), "SELECT count(*) FROM file_tags") == 1 && db.countBackfillPending() == 1,
+          "failed transaction preserves waveform, playlist, tag and backfill on disk", failures);
+    check(!original.empty() && readRemovalFixtureBytes(file) == original,
+          "failed transaction leaves WAV bytes unchanged", failures);
+    const auto workerResult = db.removeFolderSubtreeFromLibraryOnWorker(target.u8string());
+    check(workerResult.status == FolderSubtreeRemovalStatus::Failed &&
+          workerResult.error.find("injected root update failure") != std::string::npos &&
+          hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          !db.getWaveformByPath(file.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1 &&
+          readRemovalFixtureBytes(file) == original,
+          "background connection reports transaction failure and leaves primary rows and caches intact", failures);
+    check(execSqlite(db.db(),
+                     "DROP TRIGGER fail_root_update; "
+                     "CREATE TRIGGER fail_folder_index_clear BEFORE DELETE ON folder_index "
+                     "WHEN (SELECT value FROM app_meta WHERE key='library_roots_v1')='' "
+                     "BEGIN SELECT RAISE(ABORT, 'injected failure after unregister'); END;"),
+          "rollback fixture installs an error after the root was already cleared", failures);
+    const auto lateFailure = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(lateFailure.status == FolderSubtreeRemovalStatus::Failed && lateFailure.removedFiles == 0 &&
+          !lateFailure.unregisteredRoot &&
+          lateFailure.error.find("injected failure after unregister") != std::string::npos,
+          "failure after root write is not reported as success", failures);
+    check(hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          querySingleInt(db.db(), "SELECT count(*) FROM folder_index") == 1 &&
+          !db.getWaveformByPath(file.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1 &&
+          querySingleInt(db.db(), "SELECT count(*) FROM file_tags") == 1 && db.countBackfillPending() == 1 &&
+          readRemovalFixtureBytes(file) == original,
+          "late failure restores the registration, index and all references without changing the WAV", failures);
+    check(execSqlite(db.db(),
+                     "DROP TRIGGER fail_folder_index_clear; "
+                     "UPDATE audio_files SET embedded_cover_key='E|remove-root-fixture'; "
+                     "CREATE TRIGGER fail_backfill_cleanup BEFORE DELETE ON backfill_pending "
+                     "BEGIN SELECT RAISE(ABORT, 'injected backfill cleanup failure'); END;"),
+          "rollback fixture installs an error on an existing backfill table", failures);
+    db.upsertCoverRegistry("E|remove-root-fixture", file.u8string(), true, "E|remove-root-fixture");
+    check(db.saveCoverThumb("E|remove-root-fixture", std::vector<uint8_t>(64, 0x42), "image/png"),
+          "rollback fixture stores an attached cover thumbnail", failures);
+    const auto backfillFailure = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(backfillFailure.status == FolderSubtreeRemovalStatus::Failed &&
+          backfillFailure.error.find("injected backfill cleanup failure") != std::string::npos &&
+          hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) && db.countBackfillPending() == 1,
+          "existing backfill table errors roll back instead of using the missing-table compatibility path", failures);
+    check(execSqlite(db.db(),
+                     "DROP TRIGGER fail_backfill_cleanup; "
+                     "CREATE TRIGGER blobs_db.fail_cover_prune BEFORE DELETE ON cover_thumbs "
+                     "BEGIN SELECT RAISE(ABORT, 'injected cover cleanup failure'); END;"),
+          "rollback fixture installs a failure in the cover sidecar", failures);
+    const auto coverFailure = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(coverFailure.status == FolderSubtreeRemovalStatus::Failed &&
+          coverFailure.error.find("injected cover cleanup failure") != std::string::npos &&
+          hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          querySingleInt(db.db(), "SELECT count(*) FROM cover_cache_registry WHERE cover_key='E|remove-root-fixture'") == 1 &&
+          querySingleInt(db.db(), "SELECT count(*) FROM blobs_db.cover_thumbs WHERE cover_key='E|remove-root-fixture'") == 1 &&
+          db.getPlaylistFileCount(playlist) == 1 && readRemovalFixtureBytes(file) == original,
+          "cover-sidecar failure restores the main library, associated cache and reference changes", failures);
+    db.close();
+    return failures;
+}
+
+static int testRemoveFolderRootRegistrations() {
+    std::cout << "-- testRemoveRegisteredFolderSubtreePreservesOtherRoots\n";
+    int failures = testRemoveRegisteredFolderSubtreePreservesOtherRoots();
+    std::cout << "-- testRemoveRegisteredFolderSubtreePreservesOtherRoots (worker connection)\n";
+    failures += testRemoveRegisteredFolderSubtreePreservesOtherRoots(true);
+    std::cout << "-- testRemoveLastEmptyRegisteredFolderRoot\n";
+    failures += testRemoveLastEmptyRegisteredFolderRoot();
+    std::cout << "-- testRemoveRegisteredFolderRollbackOnRootWriteFailure\n";
+    return failures + testRemoveRegisteredFolderRollbackOnRootWriteFailure();
+}
+
 static int testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault() {
     int failures = 0;
     const fs::path root = makeTempRoot("remove_folder_db_only");
@@ -2366,6 +2603,7 @@ static int testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault() {
     check(db.getFolderFileCount(targetCanon) == 2, "target subtree starts with two db rows", failures);
     const int removed = db.removeFolderSubtreeFromDb(target.u8string(), false);
     check(removed == 2, "db-only folder subtree removal reports two rows", failures);
+    check(hasRegisteredRemovalRoot(db, root), "removing an ordinary subdirectory preserves its registered ancestor", failures);
     check(db.getFileCount() == 1, "db-only folder subtree removal invalidates total file count immediately", failures);
     check(!db.fileExists(targetFile.u8string()), "target root file db row removed", failures);
     check(!db.fileExists(childFile.u8string()), "target child file db row removed", failures);
@@ -4918,6 +5156,9 @@ static int testUnchangedFullScanWithConcurrentCacheWrite(bool cached) {
 int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::cout << "=== Scan/Waveform Cache Contract Tests ===\n";
+    if (argc == 2 && std::string(argv[1]) == "--remove-root-registrations") {
+        return testRemoveFolderRootRegistrations() == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string(argv[1]) == "--concurrent-rescan") {
         return testUnchangedFullScanWithConcurrentCacheWrite(false) +
                testUnchangedFullScanWithConcurrentCacheWrite(true) == 0 ? 0 : 1;
@@ -4997,6 +5238,7 @@ int main(int argc, char** argv) {
     failures += testRemoveMissingDeletesWaveformRows();
     std::cout << "-- testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault\n";
     failures += testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault();
+    failures += testRemoveFolderRootRegistrations();
     std::cout << "-- testRemoveDriveRootSubtreeCleansHiddenIndexedRows\n";
     failures += testRemoveDriveRootSubtreeCleansHiddenIndexedRows();
     std::cout << "-- testRemoveFolderSubtreeMatchesLegacyCaseFolderPaths\n";

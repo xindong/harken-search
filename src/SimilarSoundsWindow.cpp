@@ -452,6 +452,7 @@ static void DrawSimilarAnalysisReport(AppState& state) {
     }
     ImGui::SetNextWindowSize(ImVec2(660, 380), ImGuiCond_FirstUseEver);
     if (aura::ui::BeginAlertDialog(L(Similar_AnalysisReport), L(Similar_AnalysisReport))) {
+        if (state.manualSimilarityTask) state.manualSimilarityResultVisibleFrame = ImGui::GetFrameCount();
         std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
         const auto& report = state.batchFeatureResult;
         ImGui::Text(L(Similar_AnalysisSummaryFmt), report.progress.saved, report.progress.skipped, report.progress.failed);

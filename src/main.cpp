@@ -459,6 +459,7 @@ static void EraseReaperBridgeUiStatus(const std::string& cacheKey) {
 // in RenderUI and consumes it. This action must not remove audio DB rows.
 static std::string g_pendingClearCachePath;
 static bool g_pendingClearCacheConfirm = false;
+static int64_t g_pendingClearCacheDbGeneration = -1;
 
 // Guided Mode tooltip helpers 定义见 AppState.h；此处仅提供存储。
 bool g_showGuidedTooltips = true;
@@ -11472,6 +11473,7 @@ static bool SwitchDatabase(AppState& state,
     }
     if (state.isScanning.load()) return failNow(L(Db_SwitchBusyScan));
     if (state.dbSwitchInProgress) return failNow(L(Db_SwitchBusy));
+    if (state.folderRemoval.Active()) return failNow(L(Task_RemoveBusy));
     const auto libraryState = ClassifyDatabaseLibraryPath(effectiveDbPathUtf8);
     if (!allowCreate && !IsDatabaseLibrarySelectable(libraryState)) {
         return failNow(std::string("database path is not available: ") +
@@ -11494,6 +11496,11 @@ static bool SwitchDatabase(AppState& state,
     state.showPostScanSimilarityIndexNotice = false;
     state.scanSimilarityOwned = false;
     state.showScanSimilarityDialog = false;
+    state.manualSimilarityTask = false;
+    state.manualSimilarityProgressVisibleFrame = -2;
+    state.manualSimilarityResultVisibleFrame = -2;
+    state.folderRemovalPhase = HarkenSearch::LibraryTaskPhase::Idle;
+    state.folderRemovalDetails = false;
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
 
 // 主线程必须做的事：GPU 资源释放 + UI 数据结构清理（一帧内完成）
@@ -14684,14 +14691,35 @@ static void ResetPlaylistCoverWallScope(AppState& state) {
 static void RequestRemoveFolderFromDatabase(AppState& state, const std::string& folderPath) {
     if (folderPath.empty()) return;
     state.pendingRemoveFolderDbPath = folderPath;
+    state.pendingRemoveFolderDbGeneration = state.backfillDbGeneration;
     state.showRemoveFolderDbConfirm = true;
 }
 
-static void RefreshFolderTreeAfterDbRemoval(AppState& state) {
-    state.database.rebuildFolderIndex();
+static void RefreshFolderTreeAfterDbRemoval(AppState& state, const std::string& target) {
     FolderInfo refreshedTree = state.database.getFolderHierarchyFromIndex(state.settings.folderTreePathMode);
     if (refreshedTree.subfolders.empty()) {
         refreshedTree = state.database.getFolderHierarchy(state.settings.folderTreePathMode);
+    }
+    const auto removedFolder = [&](const std::string& path) {
+        const auto canonical = HarkenSearch::CanonicalFolderPath(path);
+        if (canonical.empty() ||
+            (canonical != target && !aura::browser::IsSystemFolderAncestorOf(target, canonical))) return false;
+        const auto contains = [&](auto&& self, const FolderInfo& node) -> bool {
+            return HarkenSearch::CanonicalFolderPath(node.path) == canonical ||
+                std::any_of(node.subfolders.begin(), node.subfolders.end(),
+                    [&](const FolderInfo& child) { return self(self, child); });
+        };
+        return !contains(contains, refreshedTree);
+    };
+    if (state.folderFilterActive && removedFolder(state.selectedFolderPath)) {
+        state.folderFilterActive = false;
+        state.selectedFolderPath.clear();
+        state.currentTab().folderFilterActive = false;
+        state.currentTab().selectedFolderPath.clear();
+    }
+    if (removedFolder(state.uiState.pendingFolderPath)) {
+        state.uiState.pendingFolderPath.clear();
+        state.uiState.pendingFolderTime = 0.0;
     }
     state.setFolderHierarchy(std::move(refreshedTree), state.currentDbPathUtf8);
     state.folderSearchHits.clear();
@@ -14742,44 +14770,88 @@ static void ScheduleDatabasePackageCompactAfterFolderRemoval(const std::string& 
 
 void FinalizeFolderSubtreeDbRemoval(AppState& state,
                                     const std::string& targetPath,
-                                    int removed) {
-    const std::string canonTarget = HarkenSearch::CanonicalFolderPath(targetPath);
-    const std::string loadedPath = state.audioEngine.getLoadedFilePath();
-    const bool loadedFileRemoved = IsFileUnderFolderForCacheClear(loadedPath, targetPath);
-    const bool currentRecordRemoved =
-        state.currentFileId > 0 && state.database.getFileById(state.currentFileId).id <= 0;
-    if (state.folderFilterActive &&
-        (state.selectedFolderPath == canonTarget ||
-         aura::browser::IsSystemFolderAncestorOf(canonTarget, state.selectedFolderPath))) {
-        state.folderFilterActive = false;
-        state.selectedFolderPath.clear();
-        state.currentTab().folderFilterActive = false;
-        state.currentTab().selectedFolderPath.clear();
+                                    const FolderSubtreeRemovalResult& result) {
+    using Phase = HarkenSearch::LibraryTaskPhase;
+    state.folderRemovalDetails = false;
+    state.folderRemovalCount = result.removedFiles;
+    state.folderRemovalError = result.error;
+    if (result.status == FolderSubtreeRemovalStatus::NoMatch) {
+        state.folderRemovalPhase = Phase::NoMatch;
+        return;
+    }
+    if (result.status == FolderSubtreeRemovalStatus::Failed) {
+        state.folderRemovalPhase = Phase::Failed;
+        return;
     }
 
-    state.clearSelection();
-    ClearAllWaveformUiCaches(state);
+    state.folderRemovalPhase = Phase::Succeeded;
+    const std::string canonTarget = HarkenSearch::CanonicalFolderPath(targetPath);
+    const std::string loadedPath = state.audioEngine.getLoadedFilePath();
+    const auto removedPath = [&](const std::string& path) {
+        return std::binary_search(result.removedPaths.begin(), result.removedPaths.end(), path);
+    };
+    const bool loadedFileRemoved = removedPath(loadedPath);
+    const bool currentRecordRemoved =
+        result.removedFiles > 0 && state.currentFileId > 0 &&
+        state.database.getFileById(state.currentFileId).id <= 0;
+    if (std::any_of(state.selectedIndicesSet.begin(), state.selectedIndicesSet.end(),
+            [&](int index) {
+                return index >= 0 && static_cast<size_t>(index) < state.searchResults.size() &&
+                    removedPath(state.searchResults[index].filePath);
+            })) {
+        state.clearSelection();
+    }
+    for (const auto& path : result.removedPaths) ClearWaveformUiCachesForPath(state, path);
     if (loadedFileRemoved || currentRecordRemoved) {
         state.audioEngine.stop();
         state.audioEngine.clearCurrentWaveformVisual();
         state.currentFileId = -1;
     }
 
-    RefreshFolderTreeAfterDbRemoval(state);
+    state.database.discardFolderRemovalReadCaches();
+    RefreshFolderTreeAfterDbRemoval(state, canonTarget);
     state.currentCoverFacets.clear();
     state.currentPathFacets.clear();
     state.bumpFacetsGen();
     ForceCoverWallReload(state);
-    state.needsDatabaseRefresh = false;
     RefreshSearchResults(state, true);
-    if (removed > 0) {
+    if (result.removedFiles > 0) {
         ScheduleDatabasePackageCompactAfterFolderRemoval(state.currentDbPathUtf8);
     }
+}
 
-    state.loadErrorToast = std::string(u8"已从 Harken Search 移除 ")
-        + std::to_string(removed)
-        + u8" 条入库记录";
-    state.loadErrorToastUntil = ImGui::GetTime() + 4.0;
+static void StartFolderSubtreeRemoval(AppState& state, const std::string& path, int64_t generation) {
+    if (path.empty() || state.folderRemoval.Active()) return;
+    ++state.folderRemovalSerial;
+    if (state.dbSwitchInProgress || !state.database.isOpen() || generation != state.backfillDbGeneration) {
+        FinalizeFolderSubtreeDbRemoval(state, path,
+            {FolderSubtreeRemovalStatus::Failed, 0, false, L(Task_RemoveLibraryChanged)});
+        return;
+    }
+    try {
+        if (state.folderRemoval.Start(generation, path, [database = &state.database](const std::string& target) {
+                try {
+                    return database->removeFolderSubtreeFromLibraryOnWorker(target);
+                } catch (const std::exception& error) {
+                    return FolderSubtreeRemovalResult{FolderSubtreeRemovalStatus::Failed, 0, false, error.what()};
+                } catch (...) {
+                    return FolderSubtreeRemovalResult{FolderSubtreeRemovalStatus::Failed};
+                }
+            })) {
+            state.folderRemovalPhase = HarkenSearch::LibraryTaskPhase::Running;
+            state.folderRemovalDetails = false;
+            state.folderRemovalError.clear();
+        }
+    } catch (const std::exception& error) {
+        FinalizeFolderSubtreeDbRemoval(state, path,
+            {FolderSubtreeRemovalStatus::Failed, 0, false, error.what()});
+    }
+}
+
+void PumpFolderSubtreeRemoval(AppState& state) {
+    if (auto completed = state.folderRemoval.Poll(state.backfillDbGeneration)) {
+        FinalizeFolderSubtreeDbRemoval(state, completed->path, completed->result);
+    }
 }
 
 static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
@@ -14789,10 +14861,15 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
         state.showRemoveFolderDbConfirm = false;
     }
 
+    const auto* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(520.0f, viewport->WorkSize.x - 24.0f), 0.0f), ImGuiCond_Appearing);
     if (!aura::ui::BeginAlertDialog(kPopupTitle, kPopupTitle)) {
         return;
     }
     { ReadingTextScope _readingPopup;  // dialog body is a reading surface
+    EscClosePopup();
 
     const std::string targetPath = state.pendingRemoveFolderDbPath;
     ImGui::TextWrapped(L(Main_ClearPathExplainWrap));    ImGui::Spacing();
@@ -14803,11 +14880,11 @@ static void RenderRemoveFolderDbConfirmPopup(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.17f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.12f, 0.10f, 1.0f));
     if (aura::ui::ActionButton(L(Main_RemoveBtnReuse), ImVec2(96, 0), aura::ui::ButtonVariant::Danger)) {
-        const int removed = state.database.removeFolderSubtreeFromDb(targetPath);
-        FinalizeFolderSubtreeDbRemoval(state, targetPath, removed);
+        StartFolderSubtreeRemoval(state, targetPath, state.pendingRemoveFolderDbGeneration);
         state.pendingRemoveFolderDbPath.clear();
         ImGui::CloseCurrentPopup();
     }
+    ThemeInspector::RegisterLastItem("folder.remove.confirm.library");
     ImGui::PopStyleColor(3);
 
     ImGui::SameLine();
@@ -15154,6 +15231,14 @@ static void RenderFolderTreeNode(AppState& state,
 
     treeBgSplitter.Merge(treeDrawList);
 
+#if ARIS_PREVIEW_ISOLATION
+    if (ThemeInspector::IsCollecting() && ImGui::IsItemVisible()) {
+        const std::string marker = (mode == FolderTreeSelectionMode::DatabaseFilter
+            ? "folder.remove.node.library:" : "folder.remove.node.playlist:") + folder.path;
+        ThemeInspector::RegisterLastItem(marker.c_str());
+    }
+#endif
+
     // 自动滚动：只要绘制到目标节点就滚动到视口中间（不要求已选中，否则定位后不会滚动）
     if (!scrollTarget.empty() && folder.path == scrollTarget) {
         ImGui::SetScrollHereY(0.5f);  // 0.5 = 目标行出现在视口垂直中间
@@ -15211,10 +15296,18 @@ static void RenderFolderTreeNode(AppState& state,
         if (ImGui::MenuItem(L(Scan_QuickScan))) {
             PrepareQuickScanDialogForPath(state, folder.path);
         }
-        if (ImGui::MenuItem(L(Misc_ClearFolderCache))) {
-            g_pendingClearCachePath = folder.path;
-            g_pendingClearCacheConfirm = true;
+        if (ImGui::MenuItem(L(Misc_ClearFolderCache), nullptr, false,
+                            !state.folderRemoval.Active() && !state.dbSwitchInProgress)) {
+            if (mode == FolderTreeSelectionMode::DatabaseFilter) {
+                RequestRemoveFolderFromDatabase(state, folder.path);
+            } else {
+                g_pendingClearCachePath = folder.path;
+                g_pendingClearCacheConfirm = true;
+                g_pendingClearCacheDbGeneration = state.backfillDbGeneration;
+            }
         }
+        ThemeInspector::RegisterLastItem(mode == FolderTreeSelectionMode::DatabaseFilter
+            ? "folder.remove.menu.library" : "folder.remove.menu.playlist");
         if (ImGui::MenuItem(L(Misc_AddToQuickNav))) {
             // T2.5: shortcut name uses display name so user sees raw case
             const std::string& shortcutName =
@@ -18117,6 +18210,12 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
 
                 ImGui::SetCursorScreenPos(p0);
                 ImGui::InvisibleButton("##PlTrigger", ImVec2(itemW, itemH));
+#if ARIS_PREVIEW_ISOLATION
+                if (ThemeInspector::IsCollecting() && ImGui::IsItemVisible()) {
+                    const std::string marker = "folder.remove.playlist:" + std::to_string(pl.id);
+                    ThemeInspector::RegisterLastItem(marker.c_str());
+                }
+#endif
                 const bool rowQuickDragHover = g_playlistQuickDrag.active &&
                     !rowIsFolder &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
@@ -29994,7 +30093,7 @@ static void PublishBatchSimilarityOutcome(AppState& state,
     state.batchFeatureResults.Publish(snapshot);
 }
 
-void StartBatchFeatureExtraction(AppState& state, bool recheckAll) {
+void StartBatchFeatureExtraction(AppState& state, bool recheckAll, bool manual) {
     if (state.batchFeatureExtracting.load() || state.dbSwitchInProgress) return;
     if (state.batchFeatureThread.joinable()) state.batchFeatureThread.join();
     aura::ui::InvalidateSimilarSoundsWindow(state);
@@ -30005,6 +30104,9 @@ void StartBatchFeatureExtraction(AppState& state, bool recheckAll) {
     state.batchFeatureSkipped.store(0);
     state.batchFeatureSaved.store(0);
     state.batchFeatureResults.Reset(0);
+    state.manualSimilarityTask = manual;
+    state.manualSimilarityProgressVisibleFrame = -2;
+    state.manualSimilarityResultVisibleFrame = -2;
     state.scanSimilarityOwned = false;
     state.showScanSimilarityDialog = false;
     {
@@ -30112,6 +30214,8 @@ void DrawSimilarityIndexPanel(AppState& state) {
         snprintf(progressLabel, sizeof(progressLabel), "%d / %d", progress, total);
         ImGui::Text(L(Main_SimIndexBuildingFmt), progress, total, reused, saved);
         DrawUnifiedProgressBar(fraction, ImVec2(-1, 18), progressLabel, true);
+        if (state.manualSimilarityTask && ImGui::IsItemVisible())
+            state.manualSimilarityProgressVisibleFrame = ImGui::GetFrameCount();
         ThemeInspector::RegisterLastItem("similar.index.progress");
         if (sharedSimilarStyle) {
             const auto& colors = ThemeColors::current();
@@ -30167,6 +30271,8 @@ void DrawSimilarityIndexPanel(AppState& state) {
             const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
             ImGui::TextColored(sharedSimilarStyle ? TransportContrast::ForSurface(
                 success, modules.metadata.background, 6.0) : success, L(Main_IndexAllDone));
+            if (state.manualSimilarityTask && ImGui::IsItemVisible())
+                state.manualSimilarityResultVisibleFrame = ImGui::GetFrameCount();
             ThemeInspector::RegisterLastItem("similar.index.done");
         }
         std::lock_guard<std::mutex> reportLock(state.batchFeatureResultMutex);
@@ -30203,17 +30309,17 @@ static bool DrawScanDialogHeader(const char* title, bool closable) {
     return close;
 }
 
-static void DrawScanWaitingBar() {
+static void DrawScanWaitingBar(float requestedWidth = -1.0f, float height = 8.0f) {
     const ImVec2 start = ImGui::GetCursorScreenPos();
-    const float width = ImGui::GetContentRegionAvail().x;
+    const float width = requestedWidth > 0.0f ? requestedWidth : ImGui::GetContentRegionAvail().x;
     const float segment = width * .24f;
     const float offset = (width - segment) * (.5f + .5f * std::sin(float(ImGui::GetTime()) * 2.f));
     auto* draw = ImGui::GetWindowDrawList();
     const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
-    draw->AddRectFilled(start, ImVec2(start.x + width, start.y + 8.f), ImGui::GetColorU32(ImGuiCol_FrameBg), 4.f);
-    draw->AddRectFilled(ImVec2(start.x + offset, start.y), ImVec2(start.x + offset + segment, start.y + 8.f),
-        ImGui::GetColorU32(modules.controls.accent), 4.f);
-    ImGui::Dummy(ImVec2(width, 8.f));
+    draw->AddRectFilled(start, ImVec2(start.x + width, start.y + height), ImGui::GetColorU32(ImGuiCol_FrameBg), height * 0.5f);
+    draw->AddRectFilled(ImVec2(start.x + offset, start.y), ImVec2(start.x + offset + segment, start.y + height),
+        ImGui::GetColorU32(modules.controls.accent), height * 0.5f);
+    ImGui::Dummy(ImVec2(width, height));
 }
 
 static void DrawScanDialogSource(const std::vector<std::string>& folders) {
@@ -30294,7 +30400,7 @@ static void PlaceScanDialogInMainViewport(const char* name, float width, float m
 static void DrawScanSimilarityDialogs(AppState& state) {
     constexpr const char* progressId = "##ScanSimilarityProgress";
     constexpr const char* resultId = "##ScanSimilarityResult";
-    if (!state.scanSimilarityOwned) {
+    if (!state.scanSimilarityOwned && !state.manualSimilarityTask) {
         // A database switch must not leave an unrendered modal on the stack.
         for (const char* id : {progressId, resultId}) {
             if (BeginTransientScrollbarPopupModal(id, nullptr, ImGuiWindowFlags_NoTitleBar)) {
@@ -30326,12 +30432,13 @@ static void DrawScanSimilarityDialogs(AppState& state) {
         if (!result.running) {
             ImGui::CloseCurrentPopup(); openResult = true;
         } else {
+            if (state.manualSimilarityTask) state.manualSimilarityProgressVisibleFrame = ImGui::GetFrameCount();
             DrawScanDialogHeader(L(ScanUi_SimilarTitle), false);
             const bool stopping = state.batchFeatureCancelRequested.load();
             ImGui::PushFont(GetUIFontEmphasis());
             ImGui::TextUnformatted(stopping ? L(ScanUi_StoppingAnalysis) : L(ScanUi_Analyzing));
             ImGui::PopFont();
-            ImGui::TextDisabled("%s", L(ScanUi_ImportComplete));
+            if (!state.manualSimilarityTask) ImGui::TextDisabled("%s", L(ScanUi_ImportComplete));
             if (result.total > 0 && !stopping) {
                 const float fraction = std::clamp(float(result.Processed()) / result.total, 0.f, 1.f);
                 DrawUnifiedProgressBar(fraction, ImVec2(-1, 8.f));
@@ -30354,6 +30461,7 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     if (openResult) ImGui::OpenPopup(resultId);
     PlaceScanDialogInMainViewport(resultId, width, maxHeight);
     if (BeginTransientScrollbarPopupModal(resultId, nullptr, flags)) {
+        if (state.manualSimilarityTask) state.manualSimilarityResultVisibleFrame = ImGui::GetFrameCount();
         { ReadingTextScope reading;
         const bool analysisError = !result.error.empty() || !result.modelError.empty();
         if (DrawScanDialogHeader(result.stopped ? L(ScanUi_AnalysisStopped)
@@ -30382,6 +30490,333 @@ static void DrawScanSimilarityDialogs(AppState& state) {
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
+}
+
+enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update };
+
+struct LibraryTaskRow {
+    LibraryTaskKind kind;
+    HarkenSearch::LibraryTaskPhase phase;
+    const char* title;
+    std::string detail;
+    float fraction = -1.0f;
+};
+
+static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
+    AppState& state, const HarkenSearch::ScanDialogView& scan, bool scanIsCleanup, bool scanVisible) {
+    using Phase = HarkenSearch::LibraryTaskPhase;
+    using ScanPhase = HarkenSearch::ScanDialogPhase;
+    using Surface = HarkenSearch::ScanDialogSurface;
+    const double now = ImGui::GetTime();
+    std::vector<LibraryTaskRow> rows;
+    if (state.folderRemovalNotice.Update(state.folderRemovalSerial, state.folderRemovalPhase, false, now)) {
+        char count[96];
+        std::snprintf(count, sizeof(count), L(Task_RemoveDoneFmt), state.folderRemovalCount);
+        const char* detail = state.folderRemovalPhase == Phase::Running ? L(Task_RemoveRunning) :
+            state.folderRemovalPhase == Phase::Failed ? L(Task_Failed) :
+            state.folderRemovalPhase == Phase::NoMatch ? L(Task_RemoveNoMatch) :
+            state.folderRemovalCount == 0 ? L(Task_RemoveEmptyRoot) : count;
+        rows.push_back({LibraryTaskKind::Removal, state.folderRemovalPhase, L(Task_RemovePath), detail});
+    }
+    const Phase scanPhase = scanIsCleanup || scan.surface == Surface::Setup ? Phase::Idle :
+        scan.surface == Surface::Progress ? Phase::Running :
+        scan.phase == ScanPhase::Failed || scan.phase == ScanPhase::Partial ? Phase::Failed :
+        scan.phase == ScanPhase::Paused || scan.phase == ScanPhase::Cancelled ? Phase::Stopped :
+        scan.phase == ScanPhase::Empty ? Phase::NoMatch : Phase::Succeeded;
+    if (state.scanTaskNotice.Update(state.scanTaskGeneration.load(), scanPhase, scanVisible, now)) {
+        std::string detail;
+        if (scanPhase == Phase::Running) {
+            const char* stage = L(ScanUi_Finalizing);
+            switch (scan.phase) {
+                case ScanPhase::Counting: stage = L(ScanUi_Counting); break;
+                case ScanPhase::Ingesting: stage = L(ScanUi_Ingesting); break;
+                case ScanPhase::Waveforms: stage = L(ScanUi_Waveforms); break;
+                case ScanPhase::Saving: stage = L(ScanUi_Saving); break;
+                case ScanPhase::Revoking: stage = L(ScanUi_Revoking); break;
+                case ScanPhase::CancellingKeepingCommitted: stage = L(ScanUi_CancelKeepingCommitted); break;
+                default: break;
+            }
+            detail = stage;
+            if (scan.progressKnown) {
+                detail += "  " + std::to_string(scan.current) + " / " + std::to_string(scan.total);
+            } else if (scan.phase == ScanPhase::Ingesting || scan.phase == ScanPhase::Counting) {
+                detail += "  " + std::to_string(scan.current);
+            }
+        } else if (scanPhase == Phase::Succeeded) {
+            char count[96];
+            std::snprintf(count, sizeof(count), L(ScanUi_ImportedFmt), scan.succeeded);
+            detail = count;
+        } else {
+            detail = scanPhase == Phase::Stopped ? L(Task_Stopped) :
+                scanPhase == Phase::NoMatch ? L(ScanUi_Empty) : L(Task_Failed);
+        }
+        rows.push_back({LibraryTaskKind::Scan, scanPhase, L(ScanUi_Title), std::move(detail),
+            scanPhase == Phase::Running && scan.progressKnown ? scan.fraction : -1.0f});
+    }
+
+    const auto similar = state.manualSimilarityTask ? state.batchFeatureResults.Snapshot()
+                                                     : HarkenSearch::BatchFeatureResultSnapshot{};
+    const Phase similarPhase = !similar.available ? Phase::Idle :
+        similar.running ? Phase::Running :
+        !similar.error.empty() || !similar.modelError.empty() || similar.Failed() > 0 ? Phase::Failed :
+        similar.stopped ? Phase::Stopped : Phase::Succeeded;
+    const int similarVisibleFrame = similarPhase == Phase::Running
+        ? state.manualSimilarityProgressVisibleFrame : state.manualSimilarityResultVisibleFrame;
+    const bool similarVisible = similarVisibleFrame >= ImGui::GetFrameCount() - 1;
+    if (state.manualSimilarityNotice.Update(state.batchFeatureStartGeneration.load(), similarPhase, similarVisible, now)) {
+        std::string detail;
+        float fraction = -1.0f;
+        if (similar.running) {
+            detail = state.batchFeatureCancelRequested.load() ? L(ScanUi_StoppingAnalysis) : L(ScanUi_Analyzing);
+            if (similar.total > 0) {
+                detail += "  " + std::to_string(similar.Processed()) + " / " + std::to_string(similar.total);
+                fraction = std::clamp(static_cast<float>(similar.Processed()) / similar.total, 0.0f, 1.0f);
+            }
+        } else {
+            detail = similarPhase == Phase::Stopped ? L(Task_Stopped) :
+                similarPhase == Phase::Failed ? L(Task_Failed) : L(ScanUi_AnalysisComplete);
+        }
+        rows.push_back({LibraryTaskKind::Similarity, similarPhase, L(ScanUi_SimilarTitle), std::move(detail), fraction});
+    }
+
+    // 波形重建 / 封面重建 / 补波形封面：没有独立提示生成器，用状态边沿做 3 秒成功短报。
+    const auto pushDerivedRow = [&](LibraryTaskKind kind, bool active, int64_t done, int64_t total,
+                                    const char* title, bool* wasActive, double* doneAt,
+                                    HarkenSearch::LibraryTaskPhase* lastPhase,
+                                    bool cancelled = false) {
+        if (active) {
+            *wasActive = true;
+            *doneAt = 0.0;
+            std::string detail;
+            float fraction = -1.0f;
+            if (total > 0) {
+                detail = std::to_string(done) + " / " + std::to_string(total);
+                fraction = std::clamp(static_cast<float>(done) / static_cast<float>(total), 0.0f, 1.0f);
+            } else {
+                detail = std::to_string(done);
+            }
+            rows.push_back({kind, Phase::Running, title, std::move(detail), fraction});
+            return;
+        }
+        if (*wasActive) {
+            *wasActive = false;
+            *doneAt = now;
+            *lastPhase = cancelled ? Phase::Stopped : Phase::Succeeded;
+        }
+        if (*doneAt > 0.0 && now - *doneAt < 3.0) {
+            rows.push_back({kind, *lastPhase, title,
+                            *lastPhase == Phase::Stopped ? L(Task_Stopped) : L(Task_Done), -1.0f});
+        }
+    };
+
+    const bool waveformMenuVisible = state.waveformMenuVisibleFrame >= ImGui::GetFrameCount() - 1;
+    pushDerivedRow(LibraryTaskKind::Waveform, state.waveformRebuildActive && !waveformMenuVisible,
+                   state.waveformRebuildProgress, state.waveformRebuildTotal,
+                   L(Ctx_RebuildWaveform), &state.waveformTaskWasActive, &state.waveformTaskDoneAt,
+                   &state.waveformTaskLastPhase,
+                   state.waveformRebuildCancel && !state.waveformRebuildActive);
+    pushDerivedRow(LibraryTaskKind::Cover, state.coverRebuildActive,
+                   state.coverRebuildProgress, state.coverRebuildTotal,
+                   L(Set_RebuildCoverIndex), &state.coverTaskWasActive, &state.coverTaskDoneAt,
+                   &state.coverTaskLastPhase, state.coverRebuildCancel && !state.coverRebuildActive);
+
+    int pendingAssets = 0;
+    try {
+        const auto backfill = state.backfillQueue.snapshot();
+        for (int i = 0; i < aura::kBackfillJobKindCount; ++i) pendingAssets += std::max(0, backfill.byKind[i]);
+        pendingAssets += std::max(0, backfill.inFlight);
+    } catch (...) {
+        pendingAssets = 0;
+    }
+    const bool backfillActive = pendingAssets > 0 && !state.isScanning.load();
+    pushDerivedRow(LibraryTaskKind::Backfill, backfillActive, pendingAssets, 0,
+                   L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
+                   &state.backfillTaskLastPhase);
+
+    // 应用更新下载：读取更新模块的字节计数，更新中心窗口可见时不重复显示。
+    {
+        using HarkenSearch::LibraryTaskPhase;
+        const auto update = aris::update::GetHarkenSearchUpdateUiState();
+        const bool updateDownloading = update.phase == aris::update::HarkenSearchUpdateUiPhase::Downloading;
+        const bool updateVisible = state.showUpdateCenter;
+        if (update.phase != aris::update::HarkenSearchUpdateUiPhase::Error) state.updateTaskDismissed = false;
+        if (updateDownloading) {
+            state.updateTaskWasActive = true;
+            state.updateTaskDoneAt = 0.0;
+            std::string detail;
+            float fraction = -1.0f;
+            if (update.totalBytes > 0) {
+                const double doneMb = static_cast<double>(update.downloadedBytes) / (1024.0 * 1024.0);
+                const double totalMb = static_cast<double>(update.totalBytes) / (1024.0 * 1024.0);
+                char buffer[96];
+                std::snprintf(buffer, sizeof(buffer), "%.1f / %.1f MB", doneMb, totalMb);
+                detail = buffer;
+                fraction = std::clamp(static_cast<float>(doneMb / totalMb), 0.0f, 1.0f);
+            } else {
+                char buffer[64];
+                std::snprintf(buffer, sizeof(buffer), "%.1f MB",
+                              static_cast<double>(update.downloadedBytes) / (1024.0 * 1024.0));
+                detail = buffer;
+            }
+            if (!updateVisible) {
+                rows.push_back({LibraryTaskKind::Update, Phase::Running, L(Task_DownloadUpdate),
+                                std::move(detail), fraction});
+            }
+        } else {
+            if (state.updateTaskWasActive) {
+                state.updateTaskWasActive = false;
+                state.updateTaskDoneAt = now;
+            }
+            const bool failed = update.phase == aris::update::HarkenSearchUpdateUiPhase::Error;
+            if (!updateVisible && !state.updateTaskDismissed &&
+                (failed || (state.updateTaskDoneAt > 0.0 && now - state.updateTaskDoneAt < 3.0))) {
+                rows.push_back({LibraryTaskKind::Update, failed ? Phase::Failed : Phase::Succeeded,
+                                L(Task_DownloadUpdate),
+                                failed ? (update.lastError.empty() ? L(Task_Failed) : update.lastError.c_str())
+                                       : L(Task_Done),
+                                -1.0f});
+            }
+        }
+    }
+
+    // 最多显示 3 条：运行中优先，其次失败，最后完成。
+    // 被挤掉的完成态派生任务不开始 3 秒倒计时，等它有位置时再显示。
+    if (rows.size() > 3) {
+        const auto priority = [](HarkenSearch::LibraryTaskPhase phase) {
+            if (phase == Phase::Running) return 0;
+            if (phase == Phase::Failed) return 1;
+            if (phase == Phase::Stopped) return 2;
+            return 3;
+        };
+        std::stable_sort(rows.begin(), rows.end(),
+            [&](const LibraryTaskRow& a, const LibraryTaskRow& b) {
+                return priority(a.phase) < priority(b.phase);
+            });
+        rows.resize(3);
+    }
+
+    return rows;
+}
+
+static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTaskRow>& rows) {
+    using Phase = HarkenSearch::LibraryTaskPhase;
+    if (rows.empty()) return;
+
+    const auto* viewport = ImGui::GetMainViewport();
+    const float inset = 16.0f;
+    const float width = 300.0f;
+    const float rowHeight = 46.0f;
+    const float padding = 10.0f;
+    const size_t shown = std::min<size_t>(rows.size(), 3);
+    const float spacing = ImGui::GetStyle().ItemSpacing.y;
+    const float height = padding * 2.0f + rowHeight * static_cast<float>(shown) +
+        spacing * static_cast<float>(shown > 0 ? shown - 1 : 0);
+
+    ImGui::SetNextWindowPos(
+        ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - inset,
+               viewport->WorkPos.y + viewport->WorkSize.y - inset),
+        ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+
+    const auto modules = ResolveThemeModuleColors(ThemeColors::current());
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, modules.surface.toolbar);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.surface.border);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.results.text);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, spacing));
+    ImGui::PushFont(GetUIFontRegular());
+
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoDocking;
+
+    if (BeginTransientScrollbarWindow("##LibraryTaskToasts", nullptr, flags)) {
+        for (size_t index = 0; index < shown; ++index) {
+            const auto& row = rows[index];
+            ImGui::PushID(static_cast<int>(row.kind));
+            const bool running = row.phase == Phase::Running;
+            const bool failed = row.phase == Phase::Failed;
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const float rowWidth = ImGui::GetContentRegionAvail().x;
+            auto* draw = ImGui::GetWindowDrawList();
+
+            // 标题行：标题 + 右侧状态（失败时可点 ×）
+            const float textWidth = rowWidth - (failed ? 18.0f : 0.0f);
+            draw->PushClipRect(ImVec2(origin.x, origin.y),
+                               ImVec2(std::max(origin.x, origin.x + textWidth), origin.y + 20.0f), true);
+            draw->AddText(origin, ImGui::GetColorU32(ImGuiCol_Text), row.title);
+            const float titleWidth = ImGui::CalcTextSize(row.title).x;
+            if (titleWidth + 8.0f < textWidth) {
+                draw->AddText(ImVec2(origin.x + titleWidth + 8.0f, origin.y),
+                              ImGui::GetColorU32(ImGuiCol_TextDisabled), row.detail.c_str());
+            }
+            draw->PopClipRect();
+
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::InvisibleButton("##row", ImVec2(rowWidth, 20.0f));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
+            if (ImGui::IsItemClicked() && !failed) {
+                if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
+                else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
+            }
+            if (failed) {
+                ImGui::SetCursorScreenPos(ImVec2(origin.x + rowWidth - 16.0f, origin.y + 2.0f));
+                if (ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f))) {
+                    if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
+                    else if (row.kind == LibraryTaskKind::Similarity) state.manualSimilarityNotice.Dismiss();
+                    else if (row.kind == LibraryTaskKind::Update) state.updateTaskDismissed = true;
+                    else state.folderRemovalNotice.Dismiss();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
+                const ImVec2 closeMin = ImGui::GetItemRectMin();
+                const ImVec2 closeMax = ImGui::GetItemRectMax();
+                const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                draw->AddLine(ImVec2(closeMin.x + 4.0f, closeMin.y + 4.0f),
+                              ImVec2(closeMax.x - 4.0f, closeMax.y - 4.0f), color, 1.2f);
+                draw->AddLine(ImVec2(closeMax.x - 4.0f, closeMin.y + 4.0f),
+                              ImVec2(closeMin.x + 4.0f, closeMax.y - 4.0f), color, 1.2f);
+            }
+
+            // 进度条
+            const float barY = origin.y + 26.0f;
+            const float barWidth = rowWidth - 44.0f;
+            ImGui::SetCursorScreenPos(ImVec2(origin.x, barY));
+            if (running) {
+                if (row.fraction >= 0.0f) DrawUnifiedProgressBar(row.fraction, ImVec2(barWidth, 4.0f));
+                else DrawScanWaitingBar(barWidth, 4.0f);
+            } else {
+                draw->AddRectFilled(ImVec2(origin.x, barY),
+                                    ImVec2(origin.x + barWidth, barY + 4.0f),
+                    failed ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
+                           : ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.35f), 2.0f);
+            }
+            if (running && row.fraction >= 0.0f) {
+                char percent[16];
+                std::snprintf(percent, sizeof(percent), "%d%%", static_cast<int>(row.fraction * 100.0f + 0.5f));
+                ImGui::SetCursorScreenPos(ImVec2(origin.x + barWidth + 8.0f, barY - 7.0f));
+                ImGui::TextUnformatted(percent);
+            }
+
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::Dummy(ImVec2(rowWidth, rowHeight));
+            ThemeInspector::RegisterLastItem(row.kind == LibraryTaskKind::Removal ? "task.toast.remove" :
+                row.kind == LibraryTaskKind::Scan ? "task.toast.scan" :
+                row.kind == LibraryTaskKind::Similarity ? "task.toast.similarity" :
+                row.kind == LibraryTaskKind::Waveform ? "task.toast.waveform" :
+                row.kind == LibraryTaskKind::Cover ? "task.toast.cover" :
+                row.kind == LibraryTaskKind::Update ? "task.toast.update" : "task.toast.backfill");
+            ImGui::PopID();
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopFont();
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(3);
 }
 
 static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& bounds) {
@@ -30537,7 +30972,7 @@ void RenderUI(AppState& state) {
             state.dbSwitchInProgress,
             state.batchFeatureExtracting.load())) {
         state.pendingPostScanSimilarityIndex.store(false, std::memory_order_release);
-        StartBatchFeatureExtraction(state);
+        StartBatchFeatureExtraction(state, false, false);
         if (state.batchFeatureResults.Snapshot().available) {
             state.showPostScanSimilarityIndexNotice = true;
             state.scanSimilarityOwned = true;
@@ -32808,12 +33243,14 @@ void RenderUI(AppState& state) {
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings;
     PlaceScanDialogInMainViewport(L(Dlg_ScanFolder), scanDialogWidth, scanDialogMaxHeight);
     bool openScanResult = false;
+    bool scanOriginalVisible = false;
     if (BeginTransientScrollbarPopupModal(L(Dlg_ScanFolder), nullptr, scanDialogFlags)) {
         { ReadingTextScope readingScan;
         if (scanView.surface == HarkenSearch::ScanDialogSurface::Result) {
             ImGui::CloseCurrentPopup();
             openScanResult = true;
         } else if (scanView.surface == HarkenSearch::ScanDialogSurface::Progress) {
+            scanOriginalVisible = true;
             DrawScanDialogHeader(scanIsCleanup ? L(ScanUi_CleanupTitle) : L(ScanUi_Title), false);
             const char* phase = L(ScanUi_Finalizing);
             using Phase = HarkenSearch::ScanDialogPhase;
@@ -33891,6 +34328,7 @@ void RenderUI(AppState& state) {
     if (openScanResult) ImGui::OpenPopup(scanResultPopup);
     PlaceScanDialogInMainViewport(scanResultPopup, scanDialogWidth, scanDialogMaxHeight);
     if (BeginTransientScrollbarPopupModal(scanResultPopup, nullptr, scanDialogFlags)) {
+        scanOriginalVisible = true;
         { ReadingTextScope readingResult;
         using Phase = HarkenSearch::ScanDialogPhase;
         const auto [scanErrorSnapshot, scanErrorCounts] = state.getScanErrorSnapshot();
@@ -34199,12 +34637,14 @@ void RenderUI(AppState& state) {
     // Triggered from the file browser tree and the playlist scope tree's
     // right-click remove-path item. It removes DB-owned records and local
     // cache references for the subtree, but never deletes source audio files.
+    RenderRemoveFolderDbConfirmPopup(state);
     if (g_pendingClearCacheConfirm) {
         ImGui::OpenPopup((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str());
         g_pendingClearCacheConfirm = false;
     }
     {
         const ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
         ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
         if (aura::ui::BeginAlertDialog((std::string(L(Misc_ClearFolderCache)) + "##clrcache").c_str(),
@@ -34243,13 +34683,11 @@ void RenderUI(AppState& state) {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.50f, 0.13f, 0.11f, 1.0f));
             if (aura::ui::ActionButton(L(Main_ClearCacheConfirmBtn), ImVec2(btnW, 0), aura::ui::ButtonVariant::Danger)) {
                 const std::string targetPath = g_pendingClearCachePath;
-                const int removed = state.database.removeFolderSubtreeFromDb(targetPath);
-                FinalizeFolderSubtreeDbRemoval(state, targetPath, removed);
-                std::printf("[FolderTree] Removed %d Harken Search records under: %s\n",
-                            removed, targetPath.c_str());
+                StartFolderSubtreeRemoval(state, targetPath, g_pendingClearCacheDbGeneration);
                 g_pendingClearCachePath.clear();
                 ImGui::CloseCurrentPopup();
             }
+            ThemeInspector::RegisterLastItem("folder.remove.confirm.playlist");
             ImGui::PopStyleColor(3);
             }
             aura::ui::EndAlertDialog();
@@ -36132,6 +36570,8 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndDisabled();
                 if (state.waveformRebuildActive) {
+                    // 菜单里已经画了进度与取消按钮，浮层这一帧不要重复显示。
+                    state.waveformMenuVisibleFrame = ImGui::GetFrameCount();
                     const int64_t displayProgress = state.waveformRebuildTotal > 0
                         ? std::min(state.waveformRebuildProgress, state.waveformRebuildTotal)
                         : state.waveformRebuildProgress;
@@ -38684,7 +39124,11 @@ void RenderUI(AppState& state) {
     const float startupListOffsetReserve = 15.0f * (1.0f - t);
     const float startupWaveformOffsetReserve =
         showDockedWaveform ? 40.0f * (1.0f - t) : 0.0f;
-    const float reservedStatusBarHeight = showDockedWaveform ? 0.0f : statusBarHeight;
+    const auto libraryTaskRows = BuildLibraryTaskRows(state, scanView, scanIsCleanup, scanOriginalVisible);
+    // 任务进度改为右下角浮层，不再在底栏预留一行高度。
+    const float reservedTaskRowsHeight = 0.0f;
+    const float reservedStatusBarHeight = (showDockedWaveform ? 0.0f : statusBarHeight) +
+        reservedTaskRowsHeight;
     const float statusBottomLayoutReserve =
         showDockedWaveform ? 0.0f : std::max(2.0f, ImGui::GetStyle().FramePadding.y + 1.0f);
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
@@ -47438,7 +47882,8 @@ void RenderUI(AppState& state) {
             std::string currentDbDisplay = GetDatabaseDisplayNameUtf8(state.currentDbPathUtf8);
 
             if (transportActivityVisible) {
-                DrawScanActivityIndicator(state, ImGui::GetTextLineHeight());
+                if (scanIsCleanup || scanView.surface != HarkenSearch::ScanDialogSurface::Progress)
+                    DrawScanActivityIndicator(state, ImGui::GetTextLineHeight());
             }
 
             if (!transportItemCountText.empty()) {
@@ -51684,8 +52129,9 @@ void RenderUI(AppState& state) {
         ImGui::End();
     }
 
-    // STATUS BAR with Panel Toggle Buttons
+    DrawLibraryTaskToasts(state, libraryTaskRows);
 
+    // STATUS BAR with Panel Toggle Buttons
     if (!showDockedWaveform) {
     const bool mergeWaveformAndStatusShell = showDockedWaveform;
     const bool useTokenStatusBar = kUseSoftChromeTheme || ThemeColors::isLightChromeTheme(ThemeColors::current());
@@ -51772,16 +52218,12 @@ void RenderUI(AppState& state) {
                                                         statusTopPad,
                                                         statusTextYMax));
         ImGui::SetCursorPos(ImVec2(mergeWaveformAndStatusShell ? 14.0f : 10.0f, statusTextY));
-        auto textMonoValue = [](const char* v) {
-            ImGui::PushFont(GetUIFontMono());
-            ImGui::TextUnformatted(v);
-            ImGui::PopFont();
-        };
         const bool statusBarScanningNow = bottomStatusScanningNow;
-        DrawScanActivityIndicator(state, statusTextH);
+        if (scanIsCleanup || scanView.surface != HarkenSearch::ScanDialogSurface::Progress)
+            DrawScanActivityIndicator(state, statusTextH);
 
         // Compact background controls share the foreground's real counters.
-        if (statusBarScanningNow || state.scanCompletionPending.load()) {
+        if (scanIsCleanup && (statusBarScanningNow || state.scanCompletionPending.load())) {
             const char* phase = L(ScanUi_Finalizing);
             if (scanView.phase == HarkenSearch::ScanDialogPhase::Counting) phase = L(ScanUi_Counting);
             else if (scanView.phase == HarkenSearch::ScanDialogPhase::Ingesting) phase = L(ScanUi_Ingesting);
@@ -51820,28 +52262,6 @@ void RenderUI(AppState& state) {
             if (result.running && !state.batchFeatureCancelRequested.load()) {
                 ImGui::SameLine(0, 8);
                 if (aura::ui::SmallActionButton(L(ScanUi_StopAnalysis), aura::ui::ButtonVariant::Quiet)) state.batchFeatureCancelRequested.store(true);
-            }
-        } else if (state.scanSummaryToastUntil > ImGui::GetTime() && state.scanTotal.load() > 0) {
-            ImGui::TextColored(kUseLightSoftChromeTheme ? kThemeAccentText : kThemeSuccessText, L(Main_ScanDoneShort));
-            ImGui::SameLine(0, 8);
-            ImGui::TextUnformatted(L(Main_ImportRunLabel));
-            ImGui::SameLine(0, 6);
-            char ingestCountBuf[24];
-            snprintf(ingestCountBuf, sizeof(ingestCountBuf), "%d", state.scanIngestedCount.load());
-            textMonoValue(ingestCountBuf);
-            ImGui::SameLine(0, 12);
-            ImGui::TextUnformatted(L(Main_ElapsedLabel));
-            ImGui::SameLine(0, 6);
-            const std::string statusIngestDuration =
-                FormatDurationMsCompact(state.scanCompletionDurationMs.load(std::memory_order_acquire));
-            textMonoValue(statusIngestDuration.c_str());
-            if (!state.settings.cacheWaveformsOnScan) {
-                ImGui::SameLine(0, 12);
-                ImGui::TextDisabled(L(Main_MiniWaveBackfillNote));
-            }
-            if (state.showPostScanSimilarityIndexNotice) {
-                ImGui::SameLine(0, 12);
-                ImGui::TextDisabled(L(Scan_SimIndexRunningBg));
             }
         } else if (state.showPostScanSimilarityIndexNotice) {
             ImGui::TextDisabled(L(Scan_SimIndexRunningBg));
