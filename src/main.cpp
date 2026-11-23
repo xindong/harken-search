@@ -273,6 +273,7 @@
 #include "CueviFeedbackBuildConfig.h"
 #include "Version.h"
 #include "update/HarkenSearchUpdateComposition.h"
+#include "update/UpdateReleaseConfig.h"
 #include "update/HarkenSearchUpdateNoticeUi.h"
 
 static void ApplyDefaultTransferSettingsToDialog(AppState& state);
@@ -5520,6 +5521,23 @@ static bool RemoveKeyValueFileEntry(const std::string& pathUtf8, const std::stri
 
 // SECTION 3 - App Settings IO
 
+
+// 预发布（QA）通道：只有白名单用户能看到 aris/qa/preview/ 上的构建。
+static void ApplyPrereleaseChannelForUserName(const std::string& userName) {
+    auto lower = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        return value;
+    };
+    static const char* kAllowlist[] = {"zhongziyu001", "zhongziyu"};
+    const std::string normalized = lower(userName);
+    bool allowed = false;
+    for (const char* name : kAllowlist) {
+        if (normalized == name) { allowed = true; break; }
+    }
+    aris::update::SetPrereleaseChannel(allowed && aris::update::PrereleaseChannelAvailable());
+}
+
 void LoadAppSettings(AppState& state) {
     // Seed the built-in dial presets before either first-launch early return.
     // A clean open-source profile must show the preset switcher without
@@ -6114,6 +6132,7 @@ void LoadAppSettings(AppState& state) {
     // Personal preferences
     auto itUserName = kv.find("userName");
     if (itUserName != kv.end()) state.settings.userName = itUserName->second;
+    ApplyPrereleaseChannelForUserName(state.settings.userName);
     auto itHasCustomAvatar = kv.find("hasCustomAvatar");
     if (itHasCustomAvatar != kv.end()) state.settings.hasCustomAvatar = (itHasCustomAvatar->second == "1");
     {
@@ -6981,6 +7000,8 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"coverWallIntegratedMode", state.settings.coverWallIntegratedMode ? "1" : "0"});
 
     const bool settingsFileSaved = SaveAppSettingsKeyValueFile(g_appSettingsPathUtf8, items);
+    // 用户名可能在设置里被改过：保存后立即重算更新通道。
+    ApplyPrereleaseChannelForUserName(state.settings.userName);
 
     // F-034 S3: persist Send-to-Wwise transfer config alongside settings.ini.
     // Errors here only warrant a log line — losing the JSON on save just

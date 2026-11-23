@@ -41,10 +41,37 @@
 #define ARIS_UPDATE_MIRROR_BASE_URL "https://harkensearch.xd.com/aris/"
 #endif
 
+// 预发布（QA）通道：只有白名单用户在运行时打开，读取公司云的 aris/qa/preview/。
+// 为空表示这个构建没有预发布通道，所有人仍然走正式通道。
+#ifndef ARIS_UPDATE_PRERELEASE_BASE_URL
+#define ARIS_UPDATE_PRERELEASE_BASE_URL ""
+#endif
+
 namespace aris::update {
 
+inline bool& PrereleaseChannelFlag() {
+    static bool enabled = false;
+    return enabled;
+}
+
+inline void SetPrereleaseChannel(bool enabled) {
+    PrereleaseChannelFlag() = enabled;
+}
+
+inline bool PrereleaseChannelAvailable() {
+    return std::string_view(ARIS_UPDATE_PRERELEASE_BASE_URL).size() > 0;
+}
+
+// 当前生效的公司云基址：白名单用户读预发布前缀，其余人读正式前缀。
+inline std::string_view ActiveMirrorBaseUrl() {
+    if (PrereleaseChannelFlag() && PrereleaseChannelAvailable()) {
+        return ARIS_UPDATE_PRERELEASE_BASE_URL;
+    }
+    return ARIS_UPDATE_MIRROR_BASE_URL;
+}
+
 inline std::string CompanyCloudStableManifestUrl() {
-    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
+    const std::string_view mirror = ActiveMirrorBaseUrl();
     constexpr std::string_view file =
         "releases/latest/download/manifest-harken-search-win-x64-stable.json";
     if (mirror.empty()) {
@@ -64,7 +91,7 @@ inline bool IsSafeUpdatePathToken(std::string_view value) {
 }
 
 inline std::string ResolveUpdateDownloadUrl(std::string_view trustedUrl) {
-    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
+    const std::string_view mirror = ActiveMirrorBaseUrl();
     if (mirror.empty()) return std::string(trustedUrl);
 
     constexpr std::string_view release =

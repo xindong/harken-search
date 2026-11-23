@@ -103,7 +103,7 @@ bool IsCompanyCloudBootstrapPackageUrl(const std::string& url) {
 
 
 bool IsCompanyCloudStableManifestUrl(const std::string& url) {
-    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
+    const std::string_view mirror = ActiveMirrorBaseUrl();
     if (mirror.empty() ||
         url.find('\\') != std::string::npos ||
         url.find("..") != std::string::npos ||
