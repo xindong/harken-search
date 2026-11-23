@@ -30377,6 +30377,40 @@ static void ResetScanDialogResult(AppState& state) {
     state.scanDialogAutoStart = false; state.scanDataCommitted = false;
     // A paused scan stays paused after dismissing its result. Only the next
     // beginNewScanTask clears this latch and permits background work again.
+    // 暂停后由 UI 线程接棒：等扫描线程完全停下（isScanning=false）再按库重建队列，
+    // 避免与下一次扫描同时启停工作池；队列重建也会丢掉上一轮扫描的 sessionId。
+    if (!state.isScanning.load() && state.scanWasPaused && !state.pauseBackfillResumeDone) {
+        state.pauseBackfillResumeDone = true;
+        const std::string resumeDbPath = state.backfillQueue.currentDbPath();
+        int queuedJobs = 0;
+        if (!resumeDbPath.empty()) {
+            Database resumeDb;
+            if (resumeDb.open(resumeDbPath)) {
+                state.backfillQueue.rebuildFromDatabase(&resumeDb, 4096);
+                const auto snapshot = state.backfillQueue.snapshot();
+                for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
+                    queuedJobs += std::max(0, snapshot.byKind[i]);
+                }
+                if (queuedJobs > 0) {
+                    const int resumeThreads = (std::min)(
+                        aura::ResolveScanBackfillWorkerThreads(
+                            state.scanWorkerThreads, std::thread::hardware_concurrency()),
+                        2);
+                    aura::GlobalBackfillWorkerPool().start(
+                        state.backfillQueue.currentDbPath(),
+                        state.backfillQueue.currentGeneration(),
+                        &state.backfillQueue,
+                        resumeThreads);
+                    DIAG_SYSTEM_FMT("Scan", "ScanPauseBackfillResume: queued=%d threads=%d",
+                                    queuedJobs, resumeThreads);
+                } else {
+                    DIAG_SYSTEM("Scan", "ScanPauseBackfillIdle: queued=0");
+                }
+            } else {
+                DIAG_SYSTEM_FMT("Scan", "ScanPauseBackfillSeedFailed: path=%s", resumeDbPath.c_str());
+            }
+        }
+    }
 }
 
 static void ScanDialogNextAction(const char* label, float minimumWidth = 0.f) {
@@ -33532,6 +33566,7 @@ void RenderUI(AppState& state) {
                 state.scanCancelRequested = false;
                 state.scanWasCancelled = false;
                 state.scanWasPaused = false;
+                state.pauseBackfillResumeDone = false;
                 state.scanDataCommitted = false;
                 state.needsDatabaseRefresh = false;
                 // 初始化渐进式刷新的节流时间，确保第一次刷新不会被节流
@@ -34372,50 +34407,10 @@ void RenderUI(AppState& state) {
                                     "ScanPauseFailed: session=%lld error=fatal_scan_failure",
                                     (long long)scanGeneration);
                             } else {
-                                // 暂停只停扫描本身：已经落进 backfill_pending 的补封面/补波形继续跑，
-                                // 不再等用户重新开始扫描才接棒。内存队列此刻可能是空的，先按库补齐。
-                                const std::string pauseDbPath = state.backfillQueue.currentDbPath();
-                                if (!pauseDbPath.empty()) {
-                                    Database pauseSeedDb;
-                                    if (pauseSeedDb.open(pauseDbPath)) {
-                                        state.backfillQueue.refillFromDatabaseIfBelowWaterMark(&pauseSeedDb, 4096, 4096);
-                                    } else {
-                                        DIAG_SYSTEM_FMT(
-                                            "Scan",
-                                            "ScanPauseBackfillSeedFailed: session=%lld path=%s",
-                                            (long long)scanGeneration,
-                                            pauseDbPath.c_str());
-                                    }
-                                }
-                                const auto queuedSnapshot = state.backfillQueue.snapshot();
-                                int queuedJobs = 0;
-                                for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
-                                    queuedJobs += std::max(0, queuedSnapshot.byKind[i]);
-                                }
-                                if (queuedJobs > 0 || queuedSnapshot.inFlight > 0) {
-                                    const int resumeThreads =
-                                        (std::min)(aura::ResolveScanBackfillWorkerThreads(
-                                                       state.scanWorkerThreads,
-                                                       std::thread::hardware_concurrency()),
-                                                   2);
-                                    aura::GlobalBackfillWorkerPool().start(
-                                        state.backfillQueue.currentDbPath(),
-                                        state.backfillQueue.currentGeneration(),
-                                        &state.backfillQueue,
-                                        resumeThreads);
-                                    DIAG_SYSTEM_FMT(
-                                        "Scan",
-                                        "ScanPauseBackfillResume: session=%lld queued=%d inFlight=%d threads=%d",
-                                        (long long)scanGeneration,
-                                        queuedJobs,
-                                        queuedSnapshot.inFlight,
-                                        resumeThreads);
-                                } else {
-                                    DIAG_SYSTEM_FMT(
-                                        "Scan",
-                                        "ScanPauseBackfillIdle: session=%lld queued=0 inFlight=0",
-                                        (long long)scanGeneration);
-                                }
+                                DIAG_SYSTEM_FMT(
+                                    "Scan",
+                                    "ScanPausedAwaitBackfillResume: session=%lld",
+                                    (long long)scanGeneration);
                             }
                         } else if (cancelled) {
                             if (rollbackCancelled) {
