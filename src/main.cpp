@@ -7432,6 +7432,8 @@ static bool StartSingleChannelExport(AppState& state, const AudioRecord& record,
     DIAG_ACTION_FMT("Export", "SingleChannelExportStart file=%s channel=%d label=%s",
                     record.filePath.c_str(), channelIndex, label.c_str());
     state.channelExportJobs.push_back(std::move(job));
+    state.channelExportTaskDismissed = false;
+    state.channelExportTaskLastError.clear();
     return true;
 }
 
@@ -30492,7 +30494,7 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
 }
 
-enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update };
+enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update, Export };
 
 struct LibraryTaskRow {
     LibraryTaskKind kind;
@@ -30679,6 +30681,38 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         }
     }
 
+    {
+        const HarkenSearch::LibraryTaskPhase exportPhase =
+            !state.channelExportJobs.empty() ? Phase::Running :
+            state.channelExportTaskWasActive ? Phase::Running :
+            state.channelExportTaskLastError.empty() ? Phase::Succeeded : Phase::Failed;
+        if (!state.channelExportJobs.empty()) {
+            state.channelExportTaskWasActive = true;
+            state.channelExportTaskDoneAt = 0.0;
+            const auto& job = state.channelExportJobs.front();
+            std::string detail = job.channelLabel;
+            if (!job.sourceName.empty()) detail += "  " + job.sourceName;
+            if (state.channelExportJobs.size() > 1) {
+                detail += "  +" + std::to_string(state.channelExportJobs.size() - 1);
+            }
+            rows.push_back({LibraryTaskKind::Export, exportPhase, L(Task_ExportChannel),
+                            std::move(detail), -1.0f});
+        } else {
+            if (state.channelExportTaskWasActive) {
+                state.channelExportTaskWasActive = false;
+                state.channelExportTaskDoneAt = now;
+            }
+            const bool failed = exportPhase == Phase::Failed;
+            if (!state.channelExportTaskDismissed &&
+                (failed || (state.channelExportTaskDoneAt > 0.0 && now - state.channelExportTaskDoneAt < 3.0))) {
+                const std::string detail = failed
+                    ? (state.channelExportTaskLastError.empty() ? std::string(L(Task_Failed)) : state.channelExportTaskLastError)
+                    : std::string(L(Task_Done));
+                rows.push_back({LibraryTaskKind::Export, exportPhase, L(Task_ExportChannel), detail, -1.0f});
+            }
+        }
+    }
+
     // 最多显示 3 条：运行中优先，其次失败，最后完成。
     // 被挤掉的完成态派生任务不开始 3 秒倒计时，等它有位置时再显示。
     if (rows.size() > 3) {
@@ -30769,6 +30803,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                     if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Similarity) state.manualSimilarityNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Update) state.updateTaskDismissed = true;
+                    else if (row.kind == LibraryTaskKind::Export) state.channelExportTaskDismissed = true;
                     else state.folderRemovalNotice.Dismiss();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
@@ -30808,6 +30843,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                 row.kind == LibraryTaskKind::Similarity ? "task.toast.similarity" :
                 row.kind == LibraryTaskKind::Waveform ? "task.toast.waveform" :
                 row.kind == LibraryTaskKind::Cover ? "task.toast.cover" :
+                row.kind == LibraryTaskKind::Export ? "task.toast.export" :
                 row.kind == LibraryTaskKind::Update ? "task.toast.update" : "task.toast.backfill");
             ImGui::PopID();
         }
@@ -31031,6 +31067,7 @@ void RenderUI(AppState& state) {
          aura::audio_export::PollChannelExportCompletions(state.channelExportJobs)) {
         const auto& result = completion.result;
         if (result.ok) {
+            state.channelExportTaskLastError.clear();
             std::string shownPath = result.outputPath;
             try {
                 shownPath = PathToUtf8Main(Utf8ToPathMain(result.outputPath).filename());
@@ -31039,6 +31076,7 @@ void RenderUI(AppState& state) {
             DIAG_ACTION_FMT("Export", "SingleChannelExportComplete label=%s path=%s",
                             completion.channelLabel.c_str(), result.outputPath.c_str());
         } else {
+            state.channelExportTaskLastError = result.errorMessage.empty() ? std::string(L(Task_Failed)) : result.errorMessage;
             state.loadErrorToast = "Channel export failed: " + result.errorMessage;
             DIAG_ACTION_FMT("Export", "SingleChannelExportFailed label=%s error=%s",
                             completion.channelLabel.c_str(), result.errorMessage.c_str());

@@ -2738,6 +2738,11 @@ struct AppState {
     bool updateTaskWasActive = false;
     double updateTaskDoneAt = 0.0;
     bool updateTaskDismissed = false;
+    // 单通道导出：右下角任务浮层的运行/完成/失败状态
+    bool channelExportTaskWasActive = false;
+    double channelExportTaskDoneAt = 0.0;
+    bool channelExportTaskDismissed = false;
+    std::string channelExportTaskLastError;
     HarkenSearch::LibraryTaskPhase waveformTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
     HarkenSearch::LibraryTaskPhase coverTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
     HarkenSearch::LibraryTaskPhase backfillTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
