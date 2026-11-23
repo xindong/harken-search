@@ -241,7 +241,11 @@
         const float navW=std::min(winSize.x*.34f,std::max(212.f,navTextW+60.f));
         const float contentX=navW+28.f,contentW=winSize.x-contentX-28.f;
         const float errorHeight=editor.error.empty()?0.f:ImGui::CalcTextSize(editor.error.c_str(),nullptr,false,contentW).y;
-        const float headerH=std::max(68.f,ImGui::GetFrameHeight()+30.f),footerH=editor.error.empty()?72.f:std::max(106.f,errorHeight+82.f);
+        const float settingsScale=aura::ui::dpi::UiScale();
+        const float headerH=std::max(aura::ui::dpi::ScalePx(68.f,settingsScale),ImGui::GetFrameHeight()+aura::ui::dpi::ScalePx(30.f,settingsScale));
+        const float footerH=editor.error.empty()
+            ? aura::ui::dpi::ScalePx(72.f,settingsScale)
+            : std::max(aura::ui::dpi::ScalePx(106.f,settingsScale), errorHeight+aura::ui::dpi::ScalePx(82.f,settingsScale));
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
         su::observation.open=true; su::observation.page=(int)editor.page; su::observation.pending=editor.ChangedCount();
         su::observation.draftVolume=draft.defaultVolume; su::observation.draftRealtime=draft.searchRealtime; su::observation.draftTheme=(int)draft.theme;
@@ -463,7 +467,7 @@
             }else if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
                     {L(SetUX_Listening),{"device","volume","normalize"}},
-                    {L(SetUX_Interface),{"theme","systemFont"}},
+                    {L(SetUX_Interface),{"theme","uiScale","systemFont"}},
                     {L(SetUX_YourWorkflow),{"searchMode","remember","closeAction"}}}){
                     heading(group.first);for(const auto& id:group.second){const auto it=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==id;});if(it!=su::Catalog().end())drawEntry(*it);}
                 }
@@ -520,17 +524,22 @@
         }
         ImGui::Dummy(ImVec2(0,20));ImGui::EndChild();
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-footerH));ImGui::Separator();
-        const float buttonsW=editor.ChangedCount()?320.f:100.f;
+        const float settingsUiScale=aura::ui::dpi::UiScale();
+        const float buttonsW=aura::ui::dpi::ScalePx(editor.ChangedCount()?320.f:100.f,settingsUiScale);
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-50));
         if(!editor.error.empty()){ImGui::SetCursorPosY(winSize.y-footerH+10);ImGui::PushTextWrapPos(winSize.x-28);ImGui::TextWrapped("%s",editor.error.c_str());su::Observe("save-error");ImGui::PopTextWrapPos();}
         else if(editor.ChangedCount())ImGui::Text(L(SetUX_DChangesPending),(int)editor.ChangedCount());
         else ImGui::TextDisabled("%s",L(SetUX_NoPendingChanges));
-        ImGui::SetCursorPos(ImVec2(winSize.x-buttonsW-28,winSize.y-56));
+        // Footer buttons are logical sizes: at a large interface scale the body text
+        // grows, and a fixed 38 px button would clip the label it was sized for.
+        const float footerButtonH = std::max(aura::ui::dpi::ScalePx(38.0f, settingsUiScale), ImGui::GetFrameHeight());
+        ImGui::SetCursorPos(ImVec2(winSize.x-buttonsW-aura::ui::dpi::ScalePx(28.0f,settingsUiScale),
+                                   winSize.y-aura::ui::dpi::ScalePx(56.0f,settingsUiScale)));
         if(editor.ChangedCount()){
-            if(aura::ui::ActionButton(L(SetUX_Revert),ImVec2(140,38),aura::ui::ButtonVariant::Quiet))editor.Reset(state);su::Observe("revert");
+            if(aura::ui::ActionButton(L(SetUX_Revert),ImVec2(aura::ui::dpi::ScalePx(140.0f,settingsUiScale),footerButtonH),aura::ui::ButtonVariant::Quiet))editor.Reset(state);su::Observe("revert");
             ImGui::SameLine();
-            if(aura::ui::ActionButton(L(SetUX_Apply),ImVec2(168,38),aura::ui::ButtonVariant::PrimarySearch))apply();su::Observe("apply");
-        }else{if(aura::ui::ActionButton(L(Done),ImVec2(100,38)))requestClose();su::Observe("done");}
+            if(aura::ui::ActionButton(L(SetUX_Apply),ImVec2(aura::ui::dpi::ScalePx(168.0f,settingsUiScale),footerButtonH),aura::ui::ButtonVariant::PrimarySearch))apply();su::Observe("apply");
+        }else{if(aura::ui::ActionButton(L(Done),ImVec2(aura::ui::dpi::ScalePx(100.0f,settingsUiScale),footerButtonH)))requestClose();su::Observe("done");}
         if(editor.closePrompt)ImGui::OpenPopup("###SettingsUnsaved");
         ImGui::SetNextWindowSize(ImVec2(520,0),ImGuiCond_Appearing);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(24,24));

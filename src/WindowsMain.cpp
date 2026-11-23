@@ -9133,7 +9133,21 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     io.FontGlobalScale = 1.0f;
 
     const float dpiScale = MainWindowUiDpiScale();
-    const float chromeScale = ((float)kChromeFontPx / kTypographyBasePx) * dpiScale;
+
+    // Application-level interface scale. Published before NewFrame so the whole
+    // UI reads one composed multiplier; FontScaleMain is ImGui's own "the app was
+    // scaled" knob, which keeps text crisp at any ratio.
+    static int s_lastInterfacePercent = -1;
+    const int interfacePercent =
+        aura::ui::dpi::ResolveInterfaceScalePercent(state.settings.uiScalePercent);
+    const float interfaceScale = aura::ui::dpi::InterfaceScaleFactor(interfacePercent);
+    aura::ui::dpi::SetInterfaceScalePercent(interfacePercent);
+    ImGui::GetStyle().FontScaleMain = interfaceScale;
+    const bool interfaceChanged = s_lastInterfacePercent != interfacePercent;
+    s_lastInterfacePercent = interfacePercent;
+
+    const float chromeScale =
+        ((float)kChromeFontPx / kTypographyBasePx) * dpiScale * interfaceScale;
     const bool dpiChanged = dpiScale != s_lastDpiScale;
 
     const bool needFontRebuild = (s_lastRebuiltReadingPx != (float)requestedReading) ||
@@ -9147,7 +9161,7 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     const bool themeChanged = (themeNow != s_lastTheme) || (useCustomNow != s_lastUseCustom);
     const bool chromePending = ThemeColors::hasPendingUiChromeResync();
 
-    if (themeChanged || needFontRebuild || chromePending || dpiChanged) {
+    if (themeChanged || needFontRebuild || chromePending || dpiChanged || interfaceChanged) {
         const bool editorPreviewChromeOnly =
             !themeChanged && !needFontRebuild && state.showThemeEditor &&
             ThemeColors::customized();
