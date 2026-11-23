@@ -6346,6 +6346,17 @@ aura_set_test_labels(TestTransportContrast ui)
 add_test(NAME TestTransportThemeAudit COMMAND ${Python3_EXECUTABLE} -m unittest discover
     -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_transport_theme_audit.py)
 aura_set_test_labels(TestTransportThemeAudit ui)
+add_executable(TestLibraryTaskToastHitOrder EXCLUDE_FROM_ALL
+    tests/test_library_task_toast_hit_order.cpp
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(TestLibraryTaskToastHitOrder PRIVATE src ${IMGUI_DIR})
+if(MSVC)
+    target_compile_options(TestLibraryTaskToastHitOrder PRIVATE /utf-8)
+endif()
+add_test(NAME TestLibraryTaskToastHitOrder COMMAND TestLibraryTaskToastHitOrder)
+aura_set_test_labels(TestLibraryTaskToastHitOrder ui)
+
 add_executable(TestTransportBlendInput EXCLUDE_FROM_ALL tests/test_transport_blend_input.cpp
     ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)

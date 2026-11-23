@@ -1,21 +1,33 @@
-// Headless regression check for the task-toast failure row:
-// the 16x16 close button sits fully inside the 20px-tall full-row item, so the
-// submission order decides which item owns ImGui's single HoveredId.
+// Headless regression check for the task-toast failure row.
+//
+// The 16x16 dismiss button and the full-row item used to share the same rect,
+// and ImGui only gives one item the hover for a frame. That made the close
+// button unreachable and let the row tooltip replace the dismiss tooltip.
+// The row item is now 18px narrower on failed rows, so the two rects never
+// overlap; these cases lock that geometry down.
 #include "imgui.h"
 
 #include <cstdio>
 
 namespace {
 
-constexpr bool kTrace = false;
+enum class Hit {
+    None,
+    Close,
+    Row,
+};
 
 struct ScenarioResult {
     bool rowHovered = false;
     bool closeHovered = false;
     bool closeClicked = false;
+    bool rowClicked = false;
 };
 
-ScenarioResult RunScenario(bool closeFirst) {
+constexpr float kRowWidth = 360.0f;
+constexpr float kCloseInset = 18.0f;
+
+ScenarioResult RunScenario(bool failed, ImVec2 mouse, bool pressAndRelease) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
@@ -27,51 +39,42 @@ ScenarioResult RunScenario(bool closeFirst) {
     io.Fonts->GetTexDataAsRGBA32(&pixels, &atlasWidth, &atlasHeight);
 
     const ImVec2 windowPos(60.0f, 60.0f);
-    const float rowWidth = 360.0f;
+    const ImVec2 closeTopLeft(windowPos.x + kRowWidth - 16.0f, windowPos.y + 2.0f);
     ScenarioResult result;
-    const ImVec2 closeTopLeft(windowPos.x + rowWidth - 16.0f, windowPos.y + 2.0f);
-    const ImVec2 closeCenter(closeTopLeft.x + 8.0f, closeTopLeft.y + 8.0f);
 
     auto frame = [&](bool mouseDown) {
-        io.AddMousePosEvent(closeCenter.x, closeCenter.y);
+        io.AddMousePosEvent(mouse.x, mouse.y);
         io.AddMouseButtonEvent(0, mouseDown);
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(windowPos);
-        ImGui::SetNextWindowSize(ImVec2(400.0f, 120.0f));
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 120.0f));
         ImGui::Begin("task toast fixture", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
         ImGui::SetCursorScreenPos(windowPos);
 
-        auto submitClose = [&] {
+        if (failed) {
             ImGui::SetCursorScreenPos(closeTopLeft);
             result.closeClicked =
                 ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f)) || result.closeClicked;
             result.closeHovered = ImGui::IsItemHovered();
-            if (kTrace) std::printf("  close hover=%d\n", result.closeHovered ? 1 : 0);
-        };
-        auto submitRow = [&] {
-            ImGui::SetCursorScreenPos(windowPos);
-            ImGui::InvisibleButton("##row", ImVec2(rowWidth, 20.0f));
-            result.rowHovered = ImGui::IsItemHovered();
-            if (kTrace) std::printf("  row hover=%d\n", result.rowHovered ? 1 : 0);
-        };
-
-        if (closeFirst) {
-            submitClose();
-            submitRow();
-        } else {
-            submitRow();
-            submitClose();
         }
+
+        ImGui::SetCursorScreenPos(windowPos);
+        ImGui::InvisibleButton("##row", ImVec2(failed ? kRowWidth - kCloseInset : kRowWidth, 20.0f));
+        result.rowHovered = ImGui::IsItemHovered();
+        result.rowClicked = ImGui::IsItemClicked() || result.rowClicked;
+
         ImGui::End();
         ImGui::Render();
     };
 
     frame(false);  // settle the window so hover is not blocked by "appearing" state
     frame(false);
-    frame(true);   // press on the close rect
-    frame(false);  // release -> a reachable close reports a click
+    if (pressAndRelease) {
+        frame(true);
+        frame(false);
+    }
     frame(false);
 
     ImGui::DestroyContext();
@@ -89,18 +92,31 @@ void Check(bool condition, const char* message) {
 }  // namespace
 
 int main() {
-    const ScenarioResult closeFirst = RunScenario(true);
-    const ScenarioResult rowFirst = RunScenario(false);
+    const ImVec2 closeCenter(60.0f + kRowWidth - 8.0f, 60.0f + 10.0f);
+    const ImVec2 rowCenter(60.0f + 40.0f, 60.0f + 10.0f);
 
-    // The fix: the close button is submitted before the full-row item.
-    Check(closeFirst.closeHovered, "close submitted before the row was not hovered");
-    Check(closeFirst.closeClicked, "close submitted before the row did not receive the click");
+    // Hovering the dismiss button: it owns the hover, the row must keep quiet
+    // so the dismiss tooltip is not replaced by the row tooltip.
+    const ScenarioResult onClose = RunScenario(true, closeCenter, true);
+    Check(onClose.closeHovered, "the dismiss button did not take the hover");
+    Check(!onClose.rowHovered, "the row still hovered under the dismiss button");
+    Check(onClose.closeClicked, "clicking the dismiss button did nothing");
 
-    // The bug being fixed: the row grabbed HoveredId first, so the close was dead.
-    Check(!rowFirst.closeClicked, "row-first fixture unexpectedly clicked the close");
+    // Hovering the row itself still works, and the row click is still reported.
+    const ScenarioResult onRow = RunScenario(true, rowCenter, true);
+    Check(onRow.rowHovered, "the row stopped hovering on failed rows");
+    Check(onRow.rowClicked, "the row stopped reporting clicks on failed rows");
+    Check(!onRow.closeHovered, "the dismiss button hovered while the row was hovered");
 
-    std::printf("close-first: hovered=%d clicked=%d | row-first: hovered=%d clicked=%d\n",
-                closeFirst.closeHovered, closeFirst.closeClicked,
-                rowFirst.closeHovered, rowFirst.closeClicked);
+    // Rows without a dismiss button keep the full clickable width.
+    const ScenarioResult plainRow = RunScenario(false, closeCenter, true);
+    Check(plainRow.rowHovered, "a running row lost hover near its right edge");
+    Check(plainRow.rowClicked, "a running row lost clicks near its right edge");
+
+    std::printf("close: hover=%d clicked=%d rowHover=%d | row: hover=%d clicked=%d | "
+                "plain row: hover=%d clicked=%d\n",
+                onClose.closeHovered, onClose.closeClicked, onClose.rowHovered,
+                onRow.rowHovered, onRow.rowClicked,
+                plainRow.rowHovered, plainRow.rowClicked);
     return failures == 0 ? 0 : 1;
 }

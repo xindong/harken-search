@@ -30843,8 +30843,9 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
             }
             draw->PopClipRect();
 
-            // 失败行的 × 必须先于整行按钮提交：ImGui 里先提交并被悬停的 item 会锁住
-            // HoveredId，后提交且矩形被它整个包住的 × 就永远拿不到 hover 与点击。
+            // 失败行的 × 与整行按钮不能叠在一起：ImGui 里同一块矩形只能有一个 item
+            // 拿到 hover，谁先谁后都会让提示文案互相覆盖，点击也会跟着飘。
+            // 所以 × 先提交，整行按钮在失败行缩短 18px，两边矩形不重叠。
             if (failed) {
                 ImGui::SetCursorScreenPos(ImVec2(origin.x + rowWidth - 16.0f, origin.y + 2.0f));
                 if (ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f))) {
@@ -30865,7 +30866,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
             }
 
             ImGui::SetCursorScreenPos(origin);
-            ImGui::InvisibleButton("##row", ImVec2(rowWidth, 20.0f));
+            ImGui::InvisibleButton("##row", ImVec2(failed ? rowWidth - 18.0f : rowWidth, 20.0f));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
             if (ImGui::IsItemClicked() && !failed) {
                 if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;

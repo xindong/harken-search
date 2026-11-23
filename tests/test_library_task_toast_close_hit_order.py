@@ -18,7 +18,7 @@ def toast_block(text):
 
 
 def test_failed_row_close_is_submitted_before_full_row_button():
-    """失败行的 × 必须先于整行按钮提交，否则整行按钮会锁住 hover，× 点不动。"""
+    """失败行的 × 先提交，避免整行按钮先把 hover 拿走。"""
     block = toast_block(read(MAIN_CPP))
     close_index = block.index('ImGui::InvisibleButton("##close"')
     row_index = block.index('ImGui::InvisibleButton("##row"')
@@ -26,6 +26,15 @@ def test_failed_row_close_is_submitted_before_full_row_button():
         "##close must be submitted before ##row: ImGui locks HoveredId on the "
         "first hovered item, so a later 16x16 close fully covered by the row "
         "button can never receive hover or clicks"
+    )
+
+
+def test_failed_row_button_leaves_the_close_rect_alone():
+    """失败行的整行按钮必须缩短 18px，两块矩形不能重叠。"""
+    block = toast_block(read(MAIN_CPP))
+    assert 'ImGui::InvisibleButton("##row", ImVec2(failed ? rowWidth - 18.0f : rowWidth, 20.0f))' in block, (
+        "the row button must stop before the 16px dismiss button on failed rows; "
+        "overlapping rects make the hover and the tooltip flip between the two items"
     )
 
 
