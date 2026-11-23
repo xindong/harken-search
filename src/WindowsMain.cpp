@@ -10135,7 +10135,7 @@ static bool ReadBinaryFile(const std::string& pathUtf8, std::string& outBytes) {
 
 static std::string BuildStartupBrandLogoDataUri() {
     const std::string relativePath =
-        "assets\\logos\\brand\\harken-search-menu-wordmark-white.png";
+        "assets\\logos\\brand\\harken-search-menu-wordmark-orange.png";
     const std::string candidates[] = {
         GetExeDirUtf8() + "\\" + relativePath,
         relativePath,
@@ -10148,7 +10148,7 @@ static std::string BuildStartupBrandLogoDataUri() {
     return {};
 }
 
-static void AppendStartupBrandLogoCss(std::wstring& html, bool useLightStartupChrome) {
+static void AppendStartupBrandLogoCss(std::wstring& html) {
     const std::string logoDataUri = BuildStartupBrandLogoDataUri();
     if (logoDataUri.empty()) return; // Preserve the visible Harken Search text.
     html += L".brand-word{background-image:url('" + Utf8ToWide(logoDataUri) +
@@ -10156,8 +10156,6 @@ static void AppendStartupBrandLogoCss(std::wstring& html, bool useLightStartupCh
         L"background-size:290px auto;width:290px;height:44px;"
         L"color:transparent!important;font-size:0!important;text-shadow:none!important;}\n";
     html += L"@media(max-width:640px){.brand-word{background-size:220px auto;width:220px;height:36px;}}\n";
-    if (useLightStartupChrome)
-        html += L".brand-word{filter:brightness(0)!important;}\n";
 }
 
 // Shared startup mascot: the loading page and the welcome page mount the same
@@ -10679,7 +10677,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     html += L".glass-card::after{content:\"\";position:absolute;inset:auto -10% 42% -10%;height:54%;pointer-events:none;background:radial-gradient(circle at 24% 28%," + tokenCardBloomA + L",transparent 58%),radial-gradient(circle at 76% 6%," + tokenCardBloomB + L",transparent 54%);filter:blur(14px);opacity:.98;}\n";
     html += L".spinner-container{display:none!important;}.status-text{position:relative;z-index:1;margin:0;color:" + tokenStatusText + L";font-size:12.5px;line-height:1.45;font-weight:420;min-height:1.45em;animation:statusPulse 2.2s ease-in-out infinite;}.progress-detail{position:relative;z-index:1;margin-top:8px;font-size:11px;color:" + tokenDetailText + L";}.progress-bar-track{position:relative;z-index:1;width:104px;height:1px;margin-top:16px;background:" + tokenProgressTrack + L";border-radius:999px;}.progress-bar-fill{height:100%;background:linear-gradient(90deg," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L"," + tokenProgressCore + L"," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L");box-shadow:none;transition:width .28s ease-out;}\n";
     html += L".version-footer{display:none!important;}@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
-    AppendStartupBrandLogoCss(html, useLightStartupChrome);
+    AppendStartupBrandLogoCss(html);
     html += L"</style>\n";
 
     // ---- Part 2: body HTML ----
@@ -12258,7 +12256,7 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     AppendStartupMascotCss(html);
     AppendStartupAvatarCss(html);
     html += L"@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}\n";
-    AppendStartupBrandLogoCss(html, useLightStartupChrome);
+    AppendStartupBrandLogoCss(html);
     html += L"</style>\n";
     html += LR"HTML_W2(
 <body>
