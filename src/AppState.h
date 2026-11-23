@@ -2744,6 +2744,13 @@ struct AppState {
     bool exportTaskWasActive = false;
     double exportTaskDoneAt = 0.0;
     bool pauseBackfillResumeDone = false;
+    double lastBackfillWatchdogSeconds = -1000.0;
+    bool backfillWatchdogArmed = false;
+    int backfillWatchdogAttempts = 0;
+    int backfillWatchdogStarts = 0;
+    int backfillWatchdogLastQueued = 0;
+    std::string backfillWatchdogLastPath;
+    int64_t backfillWatchdogLastGeneration = 0;
     bool wwiseTaskWasActive = false;
     double wwiseTaskDoneAt = 0.0;
     bool wwiseTaskDismissed = false;

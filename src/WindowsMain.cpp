@@ -5962,6 +5962,11 @@ static void PollQaCommandFile(AppState& state) {
             result += "\"backfill_queued\":" + std::to_string(queued) + ",";
             result += "\"backfill_inflight\":" + std::to_string(std::max(0, backfill.inFlight)) + ",";
             result += "\"backfill_pool_running\":" + std::string(aura::GlobalBackfillWorkerPool().running() ? "true" : "false") + ",";
+            result += "\"backfill_watchdog_attempts\":" + std::to_string(state.backfillWatchdogAttempts) + ",";
+            result += "\"backfill_watchdog_starts\":" + std::to_string(state.backfillWatchdogStarts) + ",";
+            result += "\"backfill_watchdog_last_queued\":" + std::to_string(state.backfillWatchdogLastQueued) + ",";
+            result += "\"backfill_watchdog_last_gen\":" + std::to_string((long long)state.backfillWatchdogLastGeneration) + ",";
+            result += "\"backfill_watchdog_last_path\":\"" + jsonEscape(state.backfillWatchdogLastPath) + "\",";
         }
         const ScanReadyToWorkSnapshot readyToWork = GetScanReadyToWorkSnapshotForQa(state);
         result += "\"ready_to_work_pending\":" + std::string(readyToWork.pending ? "true" : "false") + ",";
