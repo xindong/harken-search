@@ -39675,12 +39675,20 @@ void RenderUI(AppState& state) {
             !state.settings.useCustomColors && !ThemeColors::customized() &&
             (std::strcmp(moduleId, "info") == 0 ||
              std::strcmp(moduleId, "similar-sounds") == 0);
-        const ImVec4 floatingTitleSurface = infoFamily
-            ? uiWithAlpha(workspaceDockTitleSurface, 1.0f) : workspaceDockTitleSurface;
-        const ImVec4 floatingTitleInk = infoFamily
-            ? TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(kTitleText),
-                floatingTitleSurface, 4.7)
-            : ImGui::ColorConvertU32ToFloat4(kTitleText);
+        // Floating shells keep the docked palette. The native platform window
+        // sits on an unthemed surface, so a translucent dock title loses the body
+        // color behind it and reads as a white bar with light ink. Force every
+        // floating surface opaque and re-derive ink against the surface it lands on.
+        const ImVec4 floatingBody = infoFamily
+            ? ThemeColors::infoPanelDockBG(ThemeColors::current())
+            : uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
+        const ImVec4 floatingTitleSurface = uiWithAlpha(workspaceDockTitleSurface, 1.0f);
+        const ImVec4 floatingTitleInk = TransportContrast::ForSurface(
+            ImGui::ColorConvertU32ToFloat4(kTitleText), floatingTitleSurface, 4.7);
+        const ImVec4 floatingBodyInk = TransportContrast::ForSurface(
+            infoFamily ? ImGui::ColorConvertU32ToFloat4(kTitleText)
+                       : kCurrentModules.filterBrowser.text,
+            floatingBody, 4.5);
         ImFont* emph = GetUIFontEmphasis();
         if (emph) ImGui::PushFont(emph);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
@@ -39691,9 +39699,7 @@ void RenderUI(AppState& state) {
         // Draw the one rounded perimeter below. Native viewport decorations
         // otherwise force their perimeter to square even with WindowRounding.
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg,
-            infoFamily ? ThemeColors::infoPanelDockBG(ThemeColors::current())
-                       : uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, floatingBody);
         ImGui::PushStyleColor(ImGuiCol_TitleBg, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, floatingTitleSurface);
@@ -39714,6 +39720,10 @@ void RenderUI(AppState& state) {
         ImGui::PopStyleVar(4);
         if (emph) ImGui::PopFont();
         if (visible) {
+            // The native title already used the title ink; body content needs its
+            // own so a light docked surface (LapisBlue filters are pure white)
+            // never inherits the light title colour.
+            ImGui::PushStyleColor(ImGuiCol_Text, floatingBodyInk);
             const ImVec2 pos = ImGui::GetWindowPos();
             const ImVec2 size = ImGui::GetWindowSize();
 #ifdef _WIN32
@@ -51406,6 +51416,7 @@ void RenderUI(AppState& state) {
             RememberFloatingPanelMonitor(state, panel);
             driveFloatingDockDrag(moduleId, panel, pos, size);
             ImGui::TextUnformatted(title);
+            ImGui::PopStyleColor();
         }
         if (!open) {
             panel.visible = false;
@@ -51464,6 +51475,7 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
             renderContent(state);
+            ImGui::PopStyleColor();
         }
         if (!open || !*show) {
             panel.visible = false;
@@ -51509,6 +51521,7 @@ void RenderUI(AppState& state) {
             driveFloatingDockDrag("search-results", g_searchResultsDockPanel, resultsPos, resultsSize);
             const ImVec2 content = ImGui::GetContentRegionAvail();
             renderResultsSurface((std::max)(200.0f, content.x), (std::max)(100.0f, content.y));
+            ImGui::PopStyleColor();
         }
         if (!resultsOpen) {
             g_searchResultsDockPanel.visible = false;
@@ -51556,6 +51569,7 @@ void RenderUI(AppState& state) {
             }
 
             RenderSidebarPanelContent(state, "FloatSidebar");
+            ImGui::PopStyleColor();
         }
         if (!open) state.panelSidebar.visible = false;
         ImGui::End();
@@ -51602,6 +51616,7 @@ void RenderUI(AppState& state) {
                 RenderFileInfoPanelContent(state, size.x);
             }
             DevTools_EndFramePhase();
+            ImGui::PopStyleColor();
         }
         if (!open) state.panelFileInfo.visible = false;
         ImGui::End();
@@ -51656,6 +51671,7 @@ void RenderUI(AppState& state) {
                     kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
                     aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
             }
+            ImGui::PopStyleColor();
         }
         if (!similarOpen) {
             state.panelSimilarSounds.visible = false;
@@ -51714,6 +51730,7 @@ void RenderUI(AppState& state) {
             renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
             if (selected == "similar-sounds" && useSharedSimilarAppearance())
                 drawSimilarBodyPerimeter(contentPos, contentSize);
+            ImGui::PopStyleColor();
         }
         if (!open) {
             for (const auto& member : group.members) tabPanel(member)->visible = false;
