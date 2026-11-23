@@ -1,4 +1,4 @@
-// Headless regression harness for the task-toast failure row:
+// Headless regression check for the task-toast failure row:
 // the 16x16 close button sits fully inside the 20px-tall full-row item, so the
 // submission order decides which item owns ImGui's single HoveredId.
 #include "imgui.h"
