@@ -205,31 +205,18 @@ def run(args):
             list_mono_font_pixels=v['list_mono_font_pixels'],
             list_emphasis_font_pixels=v['list_emphasis_font_pixels'],
             drawn_list_font_pixels=v['drawn_list_font_pixels'],
+            drawn_numeric_font_pixels=main.get('drawn_list_numeric_font_pixels'),
+            drawn_header_font_pixels=main.get('drawn_list_header_font_pixels'),
+            drawn_numeric_sample=main.get('drawn_list_numeric_sample'),
+            drawn_header_sample=main.get('drawn_list_header_sample'),
+            duration_column_width=main.get('drawn_duration_column_width'),
+            sample_rate_column_width=main.get('drawn_sample_rate_column_width'),
             total_count=main.get('total_count'),
         )
         capture(driver, out / f'main-listfont-{size}.png')
         return metrics
 
-    def seed_column_widths():
-        # Give the narrow numeric columns a layout a real user would have tuned
-        # at the default 18px list font, so the 24px capture shows the same
-        # proportional layout instead of the untouched first-run defaults.
-        ini = root / 'profile/Local/HarkenSearch/imgui.ini'
-        ini.parent.mkdir(parents=True, exist_ok=True)
-        block = [
-            '[Table][0x1A9D093B,22]',
-            'RefScale=18',
-            'Column 0  Width=520 Sort=0v',
-            'Column 1  Width=150',
-            'Column 2  Width=132',
-            'Column 3  Width=64',
-            'Column 5  Width=90',
-            'Column 8  Width=56',
-        ]
-        ini.write_text(chr(10).join(block) + chr(10), encoding='utf-8')
-
     try:
-        seed_column_widths()
         start()
         ensure_library()
         scan()
@@ -243,8 +230,15 @@ def run(args):
             assert abs(metrics['list_mono_font_pixels'] - (size + 1)) <= 0.25, metrics
             assert abs(metrics['list_emphasis_font_pixels'] - size) <= 0.25, metrics
             assert abs(metrics['drawn_list_font_pixels'] - size) <= 0.25, metrics
-            check(f'list font {size}px: numeric cells and headers use the list size',
-                  **{k: metrics[k] for k in ('list_mono_font_pixels', 'list_emphasis_font_pixels', 'drawn_list_font_pixels')})
+            # Draw-time probes: what the numeric cell and the header actually rendered with.
+            assert abs(metrics['drawn_numeric_font_pixels'] - (size + 1)) <= 0.25, metrics
+            assert abs(metrics['drawn_header_font_pixels'] - size) <= 0.25, metrics
+            # A fresh layout must still fit the widest values at this font.
+            assert metrics['sample_rate_column_width'] >= 6 * (size + 1) * 0.5, metrics
+            assert metrics['duration_column_width'] >= 11 * (size + 1) * 0.5, metrics
+            check(f'list font {size}px: drawn numeric, header fonts and column widths follow the list size',
+                  **{k: metrics[k] for k in ('drawn_numeric_font_pixels', 'drawn_header_font_pixels',
+                                             'duration_column_width', 'sample_rate_column_width')})
 
         mono_sizes = {k: round(v['list_mono_font_pixels'], 2) for k, v in report['sizes'].items()}
         assert len(set(mono_sizes.values())) == len(mono_sizes), mono_sizes

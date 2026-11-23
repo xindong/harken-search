@@ -5504,6 +5504,14 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"last_clicked_index\":" + std::to_string(state.lastClickedIndex) + ",";
         result += "\"window_width\":" + std::to_string((int)ImGui::GetIO().DisplaySize.x) + ",";
         result += "\"window_height\":" + std::to_string((int)ImGui::GetIO().DisplaySize.y) + ",";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"drawn_list_numeric_font_pixels\":" + std::to_string(state.qaRegions.listNumericFontPixels) + ",";
+        result += "\"drawn_list_header_font_pixels\":" + std::to_string(state.qaRegions.listHeaderFontPixels) + ",";
+        result += "\"drawn_list_numeric_sample\":\"" + jsonEscape(state.qaRegions.listNumericSample) + "\",";
+        result += "\"drawn_list_header_sample\":\"" + jsonEscape(state.qaRegions.listHeaderSample) + "\",";
+        result += "\"drawn_duration_column_width\":" + std::to_string(state.qaRegions.listDurationColWidth) + ",";
+        result += "\"drawn_sample_rate_column_width\":" + std::to_string(state.qaRegions.listSampleRateColWidth) + ",";
+#endif
         result += "\"webui_active\":false,";
         result += "\"webui_bridge_active\":false,";
         result += "\"memory_profile\":" + std::to_string(state.settings.memoryProfile) + ",";

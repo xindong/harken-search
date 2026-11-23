@@ -42520,15 +42520,27 @@ void RenderUI(AppState& state) {
             };
 
             // 1. 设置表头
+            // Numeric columns must stay readable when the list font grows: the default
+            // width is the larger of the tuned width and the widest value at this font,
+            // so a fresh layout still fits e.g. duration 00:00:00.00 or 192000 Hz.
+            const auto numericDefaultWidth = [&](float tunedLogical, const char* widestValue) {
+                float width = tunedLogical;
+                if (numericFont) {
+                    const float textWidth = numericFont->CalcTextSizeA(
+                        numericFont->LegacySize, FLT_MAX, 0.0f, widestValue).x;
+                    width = (std::max)(width, textWidth + 16.0f);
+                }
+                return workspacePx(width);
+            };
             ImGui::TableSetupColumn(L(Col_FileName), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_NoHide, fileNameColW, (ImGuiID)SortColumn::FileName);
             ImGui::TableSetupColumn(L(Col_Waveform), ImGuiTableColumnFlags_WidthFixed, waveformColW, 0);
-            ImGui::TableSetupColumn(L(Col_Duration), ImGuiTableColumnFlags_WidthFixed, workspacePx(88.0f), (ImGuiID)SortColumn::Duration);
+            ImGui::TableSetupColumn(L(Col_Duration), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(88.0f, "00:00:00.00"), (ImGuiID)SortColumn::Duration);
             ImGui::TableSetupColumn(L(Col_Format), ImGuiTableColumnFlags_WidthFixed, workspacePx(72.0f), (ImGuiID)SortColumn::Format);
-            ImGui::TableSetupColumn(L(Col_Size), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(84.0f), (ImGuiID)SortColumn::Size);
-            ImGui::TableSetupColumn(L(Col_SampleRate), ImGuiTableColumnFlags_WidthFixed, workspacePx(76.0f), (ImGuiID)SortColumn::SampleRate);
+            ImGui::TableSetupColumn(L(Col_Size), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(84.0f, "1023.9 MB"), (ImGuiID)SortColumn::Size);
+            ImGui::TableSetupColumn(L(Col_SampleRate), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(76.0f, "192000"), (ImGuiID)SortColumn::SampleRate);
             ImGui::TableSetupColumn(L(Col_Description), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(140.0f), (ImGuiID)SortColumn::Description);
             ImGui::TableSetupColumn(L(Col_Keywords), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(160.0f), (ImGuiID)SortColumn::Keywords);
-            ImGui::TableSetupColumn(L(Col_Channels), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(52.0f), (ImGuiID)SortColumn::Channels);
+            ImGui::TableSetupColumn(L(Col_Channels), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(52.0f, "16"), (ImGuiID)SortColumn::Channels);
             ImGui::TableSetupColumn(L(Col_Category), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(116.0f), (ImGuiID)SortColumn::Category);
             ImGui::TableSetupColumn(L(Col_Artist), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(116.0f), (ImGuiID)SortColumn::Artist);
             ImGuiTableColumnFlags musicColumnFlags = ImGuiTableColumnFlags_WidthFixed;
@@ -42538,10 +42550,10 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(L(Col_Album), musicColumnFlags, workspacePx(120.0f), (ImGuiID)SortColumn::Album);
             // BPM/Key/Mood: always register (data rows always emit them).
             // Hidden via TableSetColumnEnabled below when music_analysis is off.
-            ImGui::TableSetupColumn(L(Col_BPM), musicColumnFlags, workspacePx(64.0f), (ImGuiID)SortColumn::BPM);
+            ImGui::TableSetupColumn(L(Col_BPM), musicColumnFlags, numericDefaultWidth(64.0f, "128.00"), (ImGuiID)SortColumn::BPM);
             ImGui::TableSetupColumn(L(Col_MusicalKey), musicColumnFlags, workspacePx(72.0f), (ImGuiID)SortColumn::MusicalKey);
             ImGui::TableSetupColumn(L(Col_Mood), musicColumnFlags | ImGuiTableColumnFlags_DefaultHide, workspacePx(96.0f), (ImGuiID)SortColumn::Mood);
-            ImGui::TableSetupColumn(L(Col_DateAdded), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(108.0f), (ImGuiID)SortColumn::DateAdded);
+            ImGui::TableSetupColumn(L(Col_DateAdded), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(108.0f, "2026-11-23"), (ImGuiID)SortColumn::DateAdded);
             // UX-112: Folder path column — shows parent_path of file_path, tooltip shows full path
             // The path column is the natural trailing field: when enabled it
             // absorbs the remaining results-list width instead of leaving a
@@ -42635,12 +42647,29 @@ void RenderUI(AppState& state) {
             // 2. 绘制表头（列头跟随「列表字体大小」，与行文本同一档字号）
             {
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+#if ARIS_PREVIEW_ISOLATION
+            // Record the header font actually in effect for this frame together
+            // with the numeric column widths the table settled on.
+            if (ImGuiTable* qaHeaderTable = GImGui->CurrentTable) {
+                auto& qaList = state.qaRegions;
+                qaList.listDurationColWidth =
+                    qaHeaderTable->Columns[2].WidthGiven;
+                qaList.listSampleRateColWidth =
+                    qaHeaderTable->Columns[5].WidthGiven;
+            }
+#endif
             const ImVec4 kListHeaderText = uiWithAlpha(uiMix(results.text, results.secondaryText, 0.66f), 0.95f);
             ImGui::PushFont(GetUIListEmphasis());
             ImGui::PushStyleColor(ImGuiCol_Text, kListHeaderText);
             for (int col = 0; col < totalColumns; col++) {
                 ImGui::TableSetColumnIndex(col);
                 const char* colName = ImGui::TableGetColumnName(col);
+#if ARIS_PREVIEW_ISOLATION
+                if (col == 0) {
+                    state.qaRegions.listHeaderFontPixels = ImGui::GetFontSize();
+                    state.qaRegions.listHeaderSample = colName ? colName : "";
+                }
+#endif
                 bool needsPop = false;
                 if (strcmp(colName, u8"LUFS") == 0) { ImGui::PushStyleColor(ImGuiCol_Text, kThemeSuccessText); needsPop = true; }
                 else if (strcmp(colName, u8"RMS") == 0) { ImGui::PushStyleColor(ImGuiCol_Text, kThemeInfoText); needsPop = true; }
@@ -45104,6 +45133,12 @@ void RenderUI(AppState& state) {
                     ImGui::TableNextColumn();
                     if (record.durationSeconds > 0) {
                         ImGui::PushFont(GetUIListMono());
+#if ARIS_PREVIEW_ISOLATION
+                        // Draw-time probe: the numeric cell's real font size.
+                        state.qaRegions.listNumericFontPixels = ImGui::GetFontSize();
+                        state.qaRegions.listNumericSample =
+                            FormatTime(record.durationSeconds);
+#endif
                         ImGui::PushStyleColor(ImGuiCol_Text, kL2);
                         ImGui::Text("%s", FormatTime(record.durationSeconds).c_str());
                         ImGui::PopStyleColor();

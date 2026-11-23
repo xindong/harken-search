@@ -3598,6 +3598,20 @@ void TestResultListFormatColumnUsesListFontContract() {
     Check(windowsSource.find("ImFont* GetUIListMono() {") != std::string::npos &&
           windowsSource.find("ImFont* GetUIListEmphasis() {") != std::string::npos,
           "BDD: List mono and list emphasis faces are exposed through accessors");
+
+    // A fresh layout must keep the widest numeric value readable at any list size.
+    Check(source.find("numericDefaultWidth(88.0f, \"00:00:00.00\")") != std::string::npos &&
+          source.find("numericDefaultWidth(76.0f, \"192000\")") != std::string::npos,
+          "BDD: Duration and sample-rate columns size their default width from the list mono font");
+
+    // Acceptance must observe the font the cells and headers really render with.
+    Check(source.find("state.qaRegions.listNumericFontPixels = ImGui::GetFontSize();") != std::string::npos &&
+          source.find("state.qaRegions.listHeaderFontPixels = ImGui::GetFontSize();") != std::string::npos,
+          "BDD: Result list records draw-time font sizes for numeric cells and headers");
+    Check(windowsSource.find("drawn_list_numeric_font_pixels") != std::string::npos &&
+          windowsSource.find("drawn_list_header_font_pixels") != std::string::npos &&
+          windowsSource.find("drawn_sample_rate_column_width") != std::string::npos,
+          "BDD: Harness state exposes the drawn numeric/header font sizes and numeric column widths");
 }
 
 void TestNaturalFilenameSortUsesSharedComparatorContract() {
