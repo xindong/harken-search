@@ -3,6 +3,7 @@
 // Aris-owned preset and custom color definitions
 
 #include "Theme.h"
+#include "TooltipHoverDelay.h"
 #include "ThemeModuleColors.h"
 #include "imgui_internal.h"
 #include "ui/MistBlueChrome.h"
@@ -398,6 +399,7 @@ void ThemeColors::applyStyleBaseline(ImGuiStyle& style) {
     style.ScrollbarSize     = 12.0f;
     style.GrabMinSize       = 12.0f;
     style.WindowBorderHoverPadding = 4.0f;
+    style.HoverDelayNormal = HarkenSearch::kTooltipHoverDelaySeconds;
 
     style.WindowBorderSize  = 0.0f;
     style.FrameBorderSize   = 0.0f;

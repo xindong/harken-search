@@ -38,7 +38,7 @@ else if(id=="theme") {
         dl->AddRectFilled(p,ImVec2(p.x+swatch,p.y+swatch),ImGui::GetColorU32(theme.dialogBG),6);
         dl->AddRect(p,ImVec2(p.x+swatch,p.y+swatch),ImGui::GetColorU32(current==i?preview.controlAccent:preview.chromeBorder),6,0,current==i?2.f:1.f);
         if(current==i){const auto c=ImVec2(p.x+7,p.y+13);dl->AddLine(c,ImVec2(c.x+4,c.y+4),ImGui::GetColorU32(theme.interfaceText),1.6f);dl->AddLine(ImVec2(c.x+4,c.y+4),ImVec2(c.x+12,c.y-4),ImGui::GetColorU32(theme.interfaceText),1.6f);}
-        if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",su::StockLabel(i));ImGui::PopID();
+        if(ImGui::IsItemHovered())HarkenSearch::SetTooltipUngated("%s",su::StockLabel(i));ImGui::PopID();
     }
     ImGui::SetCursorPosY(ImGui::GetCursorPosY()-std::min(swatchShift,std::max(0.f,ImGui::GetStyle().ItemSpacing.y-4.f)));
     ImGui::TextDisabled("%s",su::StockLabel(current));

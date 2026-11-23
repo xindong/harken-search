@@ -11,6 +11,7 @@
 #include "SettingsSearchHighlightSpans.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "TooltipHoverDelay.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -287,7 +288,7 @@ bool Button(const char* label, const ButtonOptions& opts) {
     }
     if (opts.disabled) ImGui::EndDisabled();
     ImGui::PopStyleVar();
-    if (opts.tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", opts.tooltip);
+    if (opts.tooltip && ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", opts.tooltip);
     return clicked && !opts.disabled && !opts.loading;
 }
 
@@ -810,7 +811,7 @@ void Tooltip(const char* text) {
         ImGui::ColorConvertFloat4ToU32(th.menuText));
     ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kRadiusDefault);
     ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
-    ImGui::SetTooltip("%s", text);
+    HarkenSearch::SetTooltipUngated("%s", text);
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(4);
 }
@@ -1004,7 +1005,7 @@ void TooltipRich(const std::function<void()>& body) {
     ImGui::PushStyleColor(ImGuiCol_Text,
         ImGui::ColorConvertFloat4ToU32(th.menuText));
     ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kRadiusDefault);
-    if (ImGui::BeginTooltip()) {
+    if (HarkenSearch::BeginTooltip()) {
         body();
         ImGui::EndTooltip();
     }
