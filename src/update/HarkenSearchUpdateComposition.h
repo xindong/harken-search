@@ -101,6 +101,10 @@ void StartHarkenSearchAutomaticUpdate();
 // any time without touching updater internals.
 HarkenSearchUpdateUiState GetHarkenSearchUpdateUiState();
 
+// 运行中切换了更新通道（用户名变化）时为真：需要重启应用才生效。
+bool PrereleaseChannelRestartRequired();
+void MarkPrereleaseChannelRestartRequired();
+
 // Starts a manual check when the updater is provisioned and idle. Returns
 // false for developer builds, active checks, or an update awaiting restart.
 bool RequestHarkenSearchUpdateCheck();

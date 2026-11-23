@@ -1290,6 +1290,8 @@ void handleTransfer() {
     WwiseTransferConfig transferCfg = cfg;
     waapi::WaapiClient* clientPtr = g_ps.client.get();
     g_ps.lastActionMessage = "Transfer started in background: " + std::to_string(imports.size()) + " items";
+    // 上一轮传输线程可能已经结束但还没 join：直接赋值会 std::terminate。
+    if (g_async.transferThread.joinable()) g_async.transferThread.join();
     g_async.transferThread = std::thread([transferCfg, imports = std::move(imports), clientPtr]() mutable {
         TransferResult result;
         try {
