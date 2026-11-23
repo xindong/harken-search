@@ -1,6 +1,8 @@
 """REQ-20261123-BRAND-ORANGE-WORDMARK: 文字 logo 一律橙色版，品牌图标一律橙色机器人。"""
 
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 from PIL import Image
@@ -53,6 +55,19 @@ class BrandOrangeUnification(unittest.TestCase):
             tile = icon.ico.getimage((128, 128)).convert("RGBA")
         self.assertEqual(tile.size, artwork.size)
         self.assertEqual(tile.tobytes(), artwork.tobytes())
+
+    def test_beta_splash_is_reproduced_from_the_orange_brand_assets(self) -> None:
+        # 启动回退画面也必须是橙色机器人 + 橙色字标，并且能从留档原图重出。
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "render_splash_beta.py"), "--check"],
+            cwd=ROOT, capture_output=True, text=True, timeout=300)
+        self.assertEqual(0, result.returncode, result.stderr)
+        with Image.open(ROOT / "resources" / "splash_beta.png") as splash:
+            self.assertEqual((1024, 645), splash.size)
+        renderer = (ROOT / "tools" / "render_splash_beta.py").read_text(encoding="utf-8")
+        self.assertIn("harken-search-menu-wordmark-orange.png", renderer)
+        self.assertIn("bot_tile", renderer)
+        self.assertTrue((ROOT / "assets" / "splash" / "splash_beta-source.png").is_file())
 
 
 if __name__ == "__main__":
