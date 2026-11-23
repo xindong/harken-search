@@ -10282,6 +10282,29 @@ void PumpDeferredWaveformDetail(AppState& state) {
 
 }
 
+// 移除整个目录后用它一次清完，避免逐个文件查表/删纹理造成的界面卡顿。
+static void ClearWaveformUiCachesForFolderPrefix(AppState& state, const std::string& folderPrefix) {
+    if (folderPrefix.empty()) return;
+    const auto hasPrefix = [&](const std::string& path) {
+        return path.size() >= folderPrefix.size() &&
+            _strnicmp(path.c_str(), folderPrefix.c_str(), folderPrefix.size()) == 0;
+    };
+    for (auto it = state.waveformCache.begin(); it != state.waveformCache.end();) {
+        it = hasPrefix(it->first) ? state.waveformCache.erase(it) : std::next(it);
+    }
+    for (auto it = state.waveformFailed.begin(); it != state.waveformFailed.end();) {
+        it = hasPrefix(*it) ? state.waveformFailed.erase(it) : std::next(it);
+    }
+    for (auto it = state.waveformMiniCacheMiss.begin(); it != state.waveformMiniCacheMiss.end();) {
+        it = hasPrefix(*it) ? state.waveformMiniCacheMiss.erase(it) : std::next(it);
+    }
+    for (auto it = g_miniWaveTextureCache.begin(); it != g_miniWaveTextureCache.end();) {
+        if (!hasPrefix(it->first)) { ++it; continue; }
+        if (it->second.textureId != 0) DeleteMiniWaveTexture(it->second.textureId);
+        it = g_miniWaveTextureCache.erase(it);
+    }
+}
+
 static void ClearWaveformUiCachesForPath(AppState& state, const std::string& filePath) {
     if (filePath.empty()) return;
     state.waveformCache.erase(filePath);
@@ -14810,7 +14833,8 @@ void FinalizeFolderSubtreeDbRemoval(AppState& state,
             })) {
         state.clearSelection();
     }
-    for (const auto& path : result.removedPaths) ClearWaveformUiCachesForPath(state, path);
+    // 目录移除：按前缀一次清完，逐条遍历在万级文件时会明显卡一下。
+    ClearWaveformUiCachesForFolderPrefix(state, canonTarget + "\\");
     if (loadedFileRemoved || currentRecordRemoved) {
         state.audioEngine.stop();
         state.audioEngine.clearCurrentWaveformVisual();
@@ -30632,9 +30656,15 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
 
     int pendingAssets = 0;
     int inFlightAssets = 0;
+    int queuedCovers = 0;
+    int queuedWaveforms = 0;
+    int queuedMetadata = 0;
     try {
         const auto backfill = state.backfillQueue.snapshot();
         for (int i = 0; i < aura::kBackfillJobKindCount; ++i) pendingAssets += std::max(0, backfill.byKind[i]);
+        queuedCovers = std::max(0, backfill.byKind[static_cast<int>(aura::BackfillJobKind::CoverResolveAndThumb)]);
+        queuedWaveforms = std::max(0, backfill.byKind[static_cast<int>(aura::BackfillJobKind::WaveformL1Overview)]);
+        queuedMetadata = std::max(0, backfill.byKind[static_cast<int>(aura::BackfillJobKind::MetadataRefresh)]);
         inFlightAssets = std::max(0, backfill.inFlight);
         pendingAssets += inFlightAssets;
     } catch (...) {
@@ -30642,6 +30672,11 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         inFlightAssets = 0;
     }
     const bool backfillActive = pendingAssets > 0 && !state.isScanning.load();
+    // 标题按队列里真实存在的活来写，避免只补封面时也写「波形与封面」。
+    const char* backfillTitle = L(Task_BackfillAssets);
+    if (queuedWaveforms <= 0 && queuedCovers > 0 && queuedMetadata <= 0) backfillTitle = L(Task_BackfillCovers);
+    else if (queuedCovers <= 0 && queuedWaveforms > 0 && queuedMetadata <= 0) backfillTitle = L(Task_BackfillWaveforms);
+    else if (queuedCovers <= 0 && queuedWaveforms <= 0 && queuedMetadata > 0) backfillTitle = L(Task_BackfillMetadata);
     if (backfillActive) {
         // 只有真的有任务在跑才叫「处理中」；队列里躺着没动就是排队。
         char detail[96];
@@ -30652,11 +30687,11 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         }
         state.backfillTaskWasActive = true;
         state.backfillTaskDoneAt = 0.0;
-        rows.push_back({LibraryTaskKind::Backfill, Phase::Running, L(Task_BackfillAssets),
+        rows.push_back({LibraryTaskKind::Backfill, Phase::Running, backfillTitle,
                         detail, -1.0f});
     } else {
         pushDerivedRow(LibraryTaskKind::Backfill, false, 0, 0,
-                       L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
+                       backfillTitle, &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
                        &state.backfillTaskLastPhase);
     }
 
