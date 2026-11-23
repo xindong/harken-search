@@ -463,7 +463,7 @@
             }else if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
                     {L(SetUX_Listening),{"device","volume","normalize"}},
-                    {L(SetUX_Interface),{"theme","systemFont"}},
+                    {L(SetUX_Interface),{"theme","uiScale","systemFont"}},
                     {L(SetUX_YourWorkflow),{"searchMode","remember","closeAction"}}}){
                     heading(group.first);for(const auto& id:group.second){const auto it=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==id;});if(it!=su::Catalog().end())drawEntry(*it);}
                 }
