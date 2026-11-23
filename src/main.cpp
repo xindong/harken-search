@@ -32386,13 +32386,9 @@ void RenderUI(AppState& state) {
             ImGui::SetWindowFontScale(1.55f);
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
             const float contentW = ImGui::GetContentRegionAvail().x;
-            const ImVec4 aboutBG = kCurrentModules.overlay.background;
-            const float aboutLuma = aboutBG.x * 0.299f + aboutBG.y * 0.587f + aboutBG.z * 0.114f;
             const ImVec4 aboutAccent(0.94f, 0.62f, 0.16f, 1.0f);
-            const char* wordmarkAsset = aboutLuma >= 0.5f
-                ? "assets/logos/brand/harken-search-menu-wordmark-black.png"
-                : "assets/logos/brand/harken-search-menu-wordmark-white.png";
-            const auto brandIcon = aura::ui::LoadPackagedAsset("assets/icons/brand/harken@2x.png");
+            const char* wordmarkAsset = "assets/logos/brand/harken-search-menu-wordmark-orange.png";
+            const auto brandIcon = aura::ui::LoadPackagedAsset("assets/icons/brand/harken-bot@2x.png");
             const auto wordmark = aura::ui::LoadPackagedAsset(wordmarkAsset);
             const ImVec2 header = ImGui::GetCursorScreenPos();
             ImGui::Dummy(ImVec2(contentW, 58.0f));
