@@ -7711,6 +7711,13 @@ aura_set_test_labels(TestRelinkWorkflowLifecycle ui)
     )
     aura_set_test_labels(TestSettingsImportDialogBoundary platform stage4)
 
+    add_test(
+        NAME TestSettingsThemeImport
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_settings_theme_import.py"
+    )
+    aura_set_test_labels(TestSettingsThemeImport platform)
+
     add_custom_target(TestCoverImageImportDialogBoundary
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cover_image_import_dialog_boundary.py"

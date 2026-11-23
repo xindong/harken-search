@@ -342,6 +342,39 @@ static bool LoadEditorThemeFile(const std::string& pathUtf8, ThemeColorScheme& i
     return true;
 }
 
+static bool SaveCustomThemeFiles(const std::string& name, const ThemeColorScheme& scheme,
+                                 bool requireLibrary, std::string& statusMsg) {
+    const auto json = ThemeColors::exportToJSON(scheme);
+    std::string error;
+    auto saveCopy = [&] {
+        if (!harken::theme_library::SaveThemeCopy(ThemeLibraryDir(), name, json, error)) {
+            statusMsg = L(TE_LibrarySaveFail);
+            return false;
+        }
+        RefreshSavedThemes();
+        return true;
+    };
+    if (requireLibrary && !saveCopy()) return false;
+    if (!harken::theme_library::SaveThemeJson(CustomThemeFilePath(), json, error)) {
+        statusMsg = L(TE_AppliedWriteFail);
+        return false;
+    }
+    statusMsg.clear();
+    if (!requireLibrary) saveCopy();
+    return true;
+}
+
+static void ActivateInstalledTheme(AppState& state, const std::string& name,
+                                   const ThemeColorScheme& scheme, bool fromSettingsImport = false) {
+    state.settings.theme = AppTheme::Custom;
+    state.settings.customThemeName = name;
+    state.settings.useCustomColors = false;
+    if (fromSettingsImport) harken::theme_schedule::OnThemeImported(state);
+    ThemeColors::activateCustomScheme(scheme);
+    ThemeColors::applyToImGui();
+    ThemeColors::markPendingUiChromeResync();
+}
+
 static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     if (g_ed.schedulePeriod >= 0) {
         const auto period = g_ed.schedulePeriod == 0 ? harken::theme_schedule::Period::Day : harken::theme_schedule::Period::Night;
@@ -357,25 +390,12 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
-    const std::string filePath = CustomThemeFilePath().u8string();
-    if (filePath.empty() || !ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
-        statusMsg = L(TE_AppliedWriteFail);
-        return false;
-    }
-    std::string libraryError;
-    const bool librarySaved = harken::theme_library::SaveThemeCopy(
-        ThemeLibraryDir(), themeName, ThemeColors::exportToJSON(g_ed.draft), libraryError);
-    if (librarySaved) RefreshSavedThemes();
+    if (!SaveCustomThemeFiles(themeName, g_ed.draft, false, statusMsg)) return false;
 
     std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", themeName.c_str());
-    ThemeColors::activateCustomScheme(g_ed.draft);
-    ThemeColors::applyToImGui();
-    ThemeColors::markPendingUiChromeResync();
+    ActivateInstalledTheme(state, g_ed.themeName, g_ed.draft);
     g_ed.savedThisSession = true;
 
-    state.settings.theme = AppTheme::Custom;
-    state.settings.customThemeName = g_ed.themeName;
-    state.settings.useCustomColors = false;
     g_ed.openTheme = AppTheme::Custom;
     g_ed.openCustomized = true;
     g_ed.openUseCustomColors = false;
@@ -388,8 +408,30 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
 #endif
     char savedMsg[512];
     std::snprintf(savedMsg, sizeof(savedMsg), L(TE_SaveAsFmt), g_ed.themeName);
-    statusMsg = librarySaved ? savedMsg : std::string(L(TE_LibrarySaveFail));
+    if (statusMsg.empty()) statusMsg = savedMsg;
     return true;
+}
+
+std::string ImportThemeFromSettings(AppState& state) {
+#ifdef _WIN32
+    const auto filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(
+        g_hwnd, GetExeDirUtf8() + "\\theme_export.json");
+    if (filePath.empty()) return {};
+
+    ThemeColorScheme imported{};
+    if (!LoadEditorThemeFile(filePath, imported, "SettingsThemeImport", state.settings.theme, false))
+        return L(TE_ImportFail);
+
+    const auto themeName = ThemeNameFromPathUtf8(filePath);
+    std::string error;
+    if (!SaveCustomThemeFiles(themeName, imported, true, error)) return L(SetUX_ThemeImportWriteFailed);
+
+    ActivateInstalledTheme(state, themeName, imported, true);
+    SaveAppSettings(state);
+    return L(SetUX_ThemeImported);
+#else
+    return L(TE_ImportUnsupported);
+#endif
 }
 
 enum class ThemeEditorRelationAction {

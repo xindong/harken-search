@@ -2610,7 +2610,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertEqual(1, main.count(qualified_call))
         button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-        next_action = main.index('} else if(editor.action=="custom-colors")', button)
+        next_action = main.index('    if(!editor.error.empty())', button)
         body = main[button:next_action]
         self.assertNotIn("OPENFILENAMEW", body)
         self.assertNotIn("GetOpenFileNameW", body)
@@ -9313,7 +9313,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             '} else if(editor.action=="import")', 1
         )[0]
         import_body = source.split('} else if(editor.action=="import")', 1)[1].split(
-            '} else if(editor.action=="custom-colors")', 1
+            '    if(!editor.error.empty())', 1
         )[0]
 
         self.assertIn("bool CopyFile(", header)

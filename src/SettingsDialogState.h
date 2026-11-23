@@ -130,6 +130,7 @@ struct Editor {
     bool previousSearching=false, hadChildPopup=false, scrollToTop=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
+    std::string themeImportResult;
     std::string clearSimilarTarget;
     bool clearSimilarConfirm=false;
     int64_t clearSimilarResult=-2;

@@ -21,6 +21,7 @@ struct Runtime {
     std::array<std::optional<AppTheme>, 2> builtinThemes;
     std::array<std::string, 2> warnings;
     std::optional<Period> applied;
+    std::optional<Period> importOverridePeriod;
     std::optional<ManualAppearance> manualAppearance;
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
     int qaMinute = -1;
@@ -105,7 +106,15 @@ void OnManualThemeSelected(AppState& state) {
         g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
     SetMode(state, ModeAfterManualTheme(state.settings.themeScheduleMode));
 }
-void Invalidate() { g_runtime.dirty = true; }
+void OnThemeImported(AppState& state) {
+    OnManualThemeSelected(state);
+    if (state.settings.themeScheduleMode == Mode::Automatic)
+        g_runtime.importOverridePeriod = SelectedPeriod(state);
+}
+void Invalidate() {
+    g_runtime.dirty = true;
+    g_runtime.importOverridePeriod.reset();
+}
 Period CurrentPeriod() { return ReadPeriod().value_or(g_runtime.applied.value_or(Period::Night)); }
 const ThemeColorScheme& Palette(Period period) { return g_runtime.palettes[Index(period)]; }
 const std::string& LoadWarning(Period period) { return g_runtime.warnings[Index(period)]; }
@@ -119,6 +128,8 @@ void Tick(AppState& state, bool force) {
         g_runtime.applied.reset();
         return;
     }
+    if (!force && !editorClosed && g_runtime.importOverridePeriod == wanted) return;
+    g_runtime.importOverridePeriod.reset();
     if (!g_runtime.manualAppearance)
         g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
     const auto builtin = g_runtime.builtinThemes[Index(*wanted)];

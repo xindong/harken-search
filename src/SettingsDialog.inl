@@ -161,7 +161,9 @@
             state.lastInputTime=std::chrono::steady_clock::now(); ScheduleNextIdleAssetBackfillCheck(state,state.lastInputTime);
         }
         if (nextRuntime.spectrum && (oldRuntime.fft!=nextRuntime.fft || !oldRuntime.spectrum)) state.spectrogramNeedsUpdate=true;
-        if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors) {
+        const bool restoreManualTheme=oldSettings.themeScheduleMode!=schedule::Mode::Off &&
+            state.settings.themeScheduleMode==schedule::Mode::Off && state.settings.theme==AppTheme::Custom;
+        if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors || restoreManualTheme) {
             ThemeColors::deactivateCustomTheme();
             if (state.settings.theme==AppTheme::Custom && !state.settings.customThemeName.empty()) {
                 std::string customThemePath = GetExeDirUtf8()+"\\theme_custom.json";
@@ -193,6 +195,7 @@
     };
     if (state.showSettingsDialog) {
         editor.Reset(state); editor.open=true; editor.closePrompt=false; editor.action.clear();
+        editor.themeImportResult.clear();
 #if defined(_WIN32)
         editor.reaperConfigOpen=false;
         editor.reaperDiagnosticsOpen=false;
@@ -573,6 +576,11 @@
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(5);ImGui::PopStyleColor(10);
+    if (editor.open && !editor.closePrompt && editor.action=="import-theme") {
+        editor.action.clear();
+        editor.themeImportResult=ImportThemeFromSettings(state);
+        if (!editor.themeImportResult.empty()) editor.Reset(state);
+    }
     // RenderUI continues with the file list and other main panels after this
     // block. Resume the draft overlay for those draws, then end it after RenderUI.
     if(resumeAppearancePreview)su::BeginAppearancePreview(state);

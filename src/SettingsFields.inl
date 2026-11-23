@@ -55,7 +55,12 @@ else if(id=="themeEditor") {
 #if AURA_BUILD_DIAGNOSTICS
     if(ProductEdition::hasFeature("theme_editor"))actionButton(L(Set_EditTheme),"theme-editor");
 #endif
-    actionButton(L(SetUX_CustomColors),"custom-colors");
+    actionButton(L(SetUX_ImportTheme),"import-theme");
+    su::Observe("import-theme");
+    if(!editor.themeImportResult.empty()){
+        ImGui::TextUnformatted(editor.themeImportResult.c_str());
+        su::Observe("import-theme-result");
+    }
     if(!draft.customThemeName.empty()){
         ImGui::TextWrapped("%s",draft.customThemeName.c_str());
         if(aura::ui::SmallActionButton(L(Main_ApplyCustomBtn))){draft.theme=AppTheme::Custom;draft.useCustomColors=false;}

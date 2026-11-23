@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 // ThemeEditor.h - Independent theme editor module
 // Extracted from ModuleUI.cpp. Owns editor lifecycle, undo, draft, save/discard.
 
@@ -12,6 +13,7 @@ enum class AppTheme;
 // transfers AppState ownership or retains transient caller references.
 void RenderThemeEditor(AppState& state);
 void ResetThemeEditorSession();
+std::string ImportThemeFromSettings(AppState& state);
 
 struct ThemeEditorSavedAppearance {
     AppTheme theme;
@@ -23,7 +25,6 @@ ThemeEditorSavedAppearance ThemeEditorAppearanceForSettings(const AppState& stat
 
 #include "BuildConfig.h"
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
-#include <string>
 struct ImVec4;
 // Isolated package only; exercises the same editor draft, undo and live preview.
 bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value);

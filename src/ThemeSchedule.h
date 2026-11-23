@@ -20,6 +20,7 @@ bool ControlsTheme(const AppState& state);
 std::optional<ManualAppearance> ManualAppearanceForSettings(const AppState& state);
 void SetMode(AppState& state, Mode mode);
 void OnManualThemeSelected(AppState& state);
+void OnThemeImported(AppState& state);
 std::optional<Period> SelectedPeriod(const AppState& state);
 void Tick(AppState& state, bool force = false);
 void Invalidate();
