@@ -69,5 +69,29 @@ int main() {
     check(resumed.ok && resumed.progress.total==3 && resumed.progress.saved==2 && resumed.progress.skipped==0 &&
           store.Load(1,entry) && entry.identity==completedIdentity,
         "interrupted batch resumes only unfinished files and keeps completed analysis");
+    for (int64_t id = 1; id <= 4; ++id) store.Invalidate(id);
+    const auto serialRun = BuildSimilarityIndex(dbPath,"missing-model",{},{},SimilarityIndexScope::ValidateAll,1);
+    SimilarityAnalysisEntry serialEntry;
+    const bool serialLoaded = store.Load(1,serialEntry);
+    for (int64_t id = 1; id <= 4; ++id) store.Invalidate(id);
+    bool parallelSaved = false;
+    const auto parallelRun = BuildSimilarityIndex(dbPath,"missing-model",{},
+        [&](const SimilarityIndexProgress& progress){ if(progress.saved>0) parallelSaved=true; },
+        SimilarityIndexScope::ValidateAll,4);
+    check(parallelRun.ok && !parallelRun.cancelled && parallelRun.progress.total==serialRun.progress.total &&
+          parallelRun.progress.saved==serialRun.progress.saved && parallelRun.progress.failed==serialRun.progress.failed &&
+          parallelRun.progress.completed==serialRun.progress.completed && parallelSaved,
+        "parallel workers keep the serial counters and report saved work");
+    SimilarityAnalysisEntry parallelEntry;
+    check(serialLoaded && store.Load(1,parallelEntry) && parallelEntry.identity==serialEntry.identity &&
+          parallelEntry.acoustic.activeStart==serialEntry.acoustic.activeStart,
+        "parallel workers write the same records as the serial pass");
+    for (int64_t id = 1; id <= 4; ++id) store.Invalidate(id);
+    bool stopParallel = false;
+    const auto parallelCancelled = BuildSimilarityIndex(dbPath,"missing-model",[&]{return stopParallel;},
+        [&](const SimilarityIndexProgress& progress){if(progress.saved==1) stopParallel=true;},
+        SimilarityIndexScope::ValidateAll,4);
+    check(parallelCancelled.cancelled && parallelCancelled.progress.saved>=1 && store.Load(1,entry),
+        "parallel cancellation keeps finished records and reports cancellation");
     return failures ? 1 : 0;
 }
