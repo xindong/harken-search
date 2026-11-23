@@ -70,7 +70,8 @@ SingleChannelExportResult RunSingleChannelExport(
         request.sourcePath,
         request.channelIndex,
         result.outputPath,
-        &exportError);
+        &exportError,
+        request.progress ? &request.progress : nullptr);
     if (!result.ok) {
         result.errorMessage =
             exportError.empty() ? "Single-channel export failed" : exportError;

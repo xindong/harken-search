@@ -2741,6 +2741,8 @@ struct AppState {
     HarkenSearch::LibraryTaskPhase waveformTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
     HarkenSearch::LibraryTaskPhase coverTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
     HarkenSearch::LibraryTaskPhase backfillTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    bool exportTaskWasActive = false;
+    double exportTaskDoneAt = 0.0;
     int waveformMenuVisibleFrame = -1;
 
     bool coverRebuildActive = false;
@@ -3119,10 +3121,15 @@ struct AppState {
         std::string errorMessage;
     };
 
+    struct ChannelExportProgress {
+        std::atomic<std::uint64_t> writtenFrames{0};
+        std::atomic<std::uint64_t> totalFrames{0};
+    };
     struct ChannelExportJob {
         std::future<ChannelExportJobResult> future;
         std::string sourceName;
         std::string channelLabel;
+        std::shared_ptr<ChannelExportProgress> progress;
     };
     std::vector<ChannelExportJob> channelExportJobs;
 
