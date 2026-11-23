@@ -30500,7 +30500,7 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
 }
 
-enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update, Export };
+enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update, Export, Wwise };
 
 struct LibraryTaskRow {
     LibraryTaskKind kind;
@@ -30640,6 +30640,40 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
     pushDerivedRow(LibraryTaskKind::Backfill, backfillActive, pendingAssets, 0,
                    L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
                    &state.backfillTaskLastPhase);
+
+    // Wwise 传输：后台线程执行，这里只读进度快照。
+    {
+        const auto wwise = aura::wwise::GetWwiseTransferProgress();
+        if (wwise.active) {
+            state.wwiseTaskWasActive = true;
+            state.wwiseTaskDoneAt = 0.0;
+            std::string detail = std::to_string(wwise.done) + " / " + std::to_string(wwise.total);
+            const float fraction = wwise.total > 0
+                ? std::clamp(static_cast<float>(wwise.done) / static_cast<float>(wwise.total), 0.0f, 1.0f)
+                : -1.0f;
+            rows.push_back({LibraryTaskKind::Wwise, Phase::Running, L(Task_WwiseImport),
+                            std::move(detail), fraction});
+        } else {
+            if (state.wwiseTaskWasActive) {
+                state.wwiseTaskWasActive = false;
+                state.wwiseTaskDoneAt = now;
+            }
+            if (state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
+                // 失败（聚合错误或条目失败）不能报成完成。
+                const bool wwiseFailed = wwise.failed;
+                char failedDetail[64];
+                if (wwiseFailed && wwise.failedCount > 0) {
+                    std::snprintf(failedDetail, sizeof(failedDetail), L(Task_WwiseFailedFmt), wwise.failedCount);
+                } else {
+                    std::snprintf(failedDetail, sizeof(failedDetail), "%s", L(Task_Failed));
+                }
+                rows.push_back({LibraryTaskKind::Wwise,
+                                wwiseFailed ? Phase::Failed : Phase::Succeeded,
+                                L(Task_WwiseImport),
+                                wwiseFailed ? failedDetail : L(Task_Done), -1.0f});
+            }
+        }
+    }
 
     // 单通道导出：聚合进行中作业的写样本进度。
     {
@@ -30859,7 +30893,8 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                 row.kind == LibraryTaskKind::Waveform ? "task.toast.waveform" :
                 row.kind == LibraryTaskKind::Cover ? "task.toast.cover" :
                 row.kind == LibraryTaskKind::Update ? "task.toast.update" :
-                row.kind == LibraryTaskKind::Export ? "task.toast.export" : "task.toast.backfill");
+                row.kind == LibraryTaskKind::Export ? "task.toast.export" :
+                row.kind == LibraryTaskKind::Wwise ? "task.toast.wwise" : "task.toast.backfill");
             ImGui::PopID();
         }
     }
