@@ -30843,13 +30843,8 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
             }
             draw->PopClipRect();
 
-            ImGui::SetCursorScreenPos(origin);
-            ImGui::InvisibleButton("##row", ImVec2(rowWidth, 20.0f));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
-            if (ImGui::IsItemClicked() && !failed) {
-                if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
-                else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
-            }
+            // 失败行的 × 必须先于整行按钮提交：ImGui 里先提交并被悬停的 item 会锁住
+            // HoveredId，后提交且矩形被它整个包住的 × 就永远拿不到 hover 与点击。
             if (failed) {
                 ImGui::SetCursorScreenPos(ImVec2(origin.x + rowWidth - 16.0f, origin.y + 2.0f));
                 if (ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f))) {
@@ -30867,6 +30862,14 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                               ImVec2(closeMax.x - 4.0f, closeMax.y - 4.0f), color, 1.2f);
                 draw->AddLine(ImVec2(closeMax.x - 4.0f, closeMin.y + 4.0f),
                               ImVec2(closeMin.x + 4.0f, closeMax.y - 4.0f), color, 1.2f);
+            }
+
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::InvisibleButton("##row", ImVec2(rowWidth, 20.0f));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
+            if (ImGui::IsItemClicked() && !failed) {
+                if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
+                else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
             }
 
             // 进度条
