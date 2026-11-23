@@ -337,13 +337,13 @@ static bool LoadEditorThemeFile(const std::string& pathUtf8, ThemeColorScheme& i
     ThemeColorScheme loaded{};
     if (!ThemeColors::importFromJSON(colors.dump(), loaded)) return false;
     imported = loaded;
-    ThemeColors::armImportDiagnostics(source, pathUtf8, (int)startTheme,
-                                     ThemeDiagPublicThemeLabel(startTheme), livePreview);
+    if (source) ThemeColors::armImportDiagnostics(source, pathUtf8, (int)startTheme,
+                                                  ThemeDiagPublicThemeLabel(startTheme), livePreview);
     return true;
 }
 
 static bool SaveCustomThemeFiles(const std::string& name, const ThemeColorScheme& scheme,
-                                 bool requireLibrary, std::string& statusMsg) {
+                                 std::string& statusMsg) {
     const auto json = ThemeColors::exportToJSON(scheme);
     std::string error;
     auto saveCopy = [&] {
@@ -354,22 +354,20 @@ static bool SaveCustomThemeFiles(const std::string& name, const ThemeColorScheme
         RefreshSavedThemes();
         return true;
     };
-    if (requireLibrary && !saveCopy()) return false;
     if (!harken::theme_library::SaveThemeJson(CustomThemeFilePath(), json, error)) {
         statusMsg = L(TE_AppliedWriteFail);
         return false;
     }
     statusMsg.clear();
-    if (!requireLibrary) saveCopy();
+    saveCopy();
     return true;
 }
 
 static void ActivateInstalledTheme(AppState& state, const std::string& name,
-                                   const ThemeColorScheme& scheme, bool fromSettingsImport = false) {
+                                   const ThemeColorScheme& scheme) {
     state.settings.theme = AppTheme::Custom;
     state.settings.customThemeName = name;
     state.settings.useCustomColors = false;
-    if (fromSettingsImport) harken::theme_schedule::OnThemeImported(state);
     ThemeColors::activateCustomScheme(scheme);
     ThemeColors::applyToImGui();
     ThemeColors::markPendingUiChromeResync();
@@ -390,7 +388,7 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
-    if (!SaveCustomThemeFiles(themeName, g_ed.draft, false, statusMsg)) return false;
+    if (!SaveCustomThemeFiles(themeName, g_ed.draft, statusMsg)) return false;
 
     std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", themeName.c_str());
     ActivateInstalledTheme(state, g_ed.themeName, g_ed.draft);
@@ -412,25 +410,47 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     return true;
 }
 
-std::string ImportThemeFromSettings(AppState& state) {
+bool ImportThemeFromSettings(AppState& state, std::string& result) {
 #ifdef _WIN32
     const auto filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(
         g_hwnd, GetExeDirUtf8() + "\\theme_export.json");
-    if (filePath.empty()) return {};
+    if (filePath.empty()) {
+        result.clear();
+        return false;
+    }
 
+    const auto startTheme = state.settings.theme;
     ThemeColorScheme imported{};
-    if (!LoadEditorThemeFile(filePath, imported, "SettingsThemeImport", state.settings.theme, false))
-        return L(TE_ImportFail);
+    if (!LoadEditorThemeFile(filePath, imported, nullptr, startTheme, false)) {
+        result = L(TE_ImportFail);
+        return false;
+    }
 
+    namespace library = harken::theme_library;
     const auto themeName = ThemeNameFromPathUtf8(filePath);
-    std::string error;
-    if (!SaveCustomThemeFiles(themeName, imported, true, error)) return L(SetUX_ThemeImportWriteFailed);
-
-    ActivateInstalledTheme(state, themeName, imported, true);
-    SaveAppSettings(state);
-    return L(SetUX_ThemeImported);
+    if (g_appSettingsPathUtf8.empty() || state.showThemeEditor || g_ed.wasOpen) {
+        result = L(SetUX_ThemeImportWriteFailed);
+        return false;
+    }
+    const auto installed = library::InstallImportedTheme(ThemeSettingsFilePath(), themeName,
+        ThemeColors::exportToJSON(imported), [&] {
+            return harken::theme_schedule::TrySaveImportedAppearance(state, themeName,
+                [&] { return TrySaveAppSettings(state); });
+        });
+    if (installed != library::ImportResult::Saved) {
+        result = installed == library::ImportResult::RollbackFailed
+            ? L(SetUX_ThemeImportRollbackFailed) : L(SetUX_ThemeImportWriteFailed);
+        return false;
+    }
+    ThemeColors::armImportDiagnostics("SettingsThemeImport", filePath, (int)startTheme,
+                                     ThemeDiagPublicThemeLabel(startTheme), false);
+    ActivateInstalledTheme(state, themeName, imported);
+    RefreshSavedThemes();
+    result = L(SetUX_ThemeImported);
+    return true;
 #else
-    return L(TE_ImportUnsupported);
+    result = L(TE_ImportUnsupported);
+    return false;
 #endif
 }
 

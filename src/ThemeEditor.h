@@ -13,7 +13,7 @@ enum class AppTheme;
 // transfers AppState ownership or retains transient caller references.
 void RenderThemeEditor(AppState& state);
 void ResetThemeEditorSession();
-std::string ImportThemeFromSettings(AppState& state);
+bool ImportThemeFromSettings(AppState& state, std::string& result);
 
 struct ThemeEditorSavedAppearance {
     AppTheme theme;

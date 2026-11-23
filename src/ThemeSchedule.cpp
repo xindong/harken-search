@@ -85,6 +85,7 @@ std::optional<Period> SelectedPeriod(const AppState& state) {
     return ResolvePeriod(state.settings.themeScheduleMode, ReadPeriod());
 }
 void SetMode(AppState& state, Mode mode) {
+    if (state.settings.themeScheduleMode == mode) return;
     const bool wasControlling = ControlsTheme(state);
     if (mode != Mode::Off && !wasControlling)
         g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
@@ -104,12 +105,42 @@ void SetMode(AppState& state, Mode mode) {
 void OnManualThemeSelected(AppState& state) {
     if (ControlsTheme(state))
         g_runtime.manualAppearance = ManualAppearance{state.settings.theme, state.settings.useCustomColors};
-    SetMode(state, ModeAfterManualTheme(state.settings.themeScheduleMode));
+    const Mode mode = ModeAfterManualTheme(state.settings.themeScheduleMode);
+    if (mode == state.settings.themeScheduleMode) Invalidate();
+    else SetMode(state, mode);
 }
-void OnThemeImported(AppState& state) {
-    OnManualThemeSelected(state);
-    if (state.settings.themeScheduleMode == Mode::Automatic)
+bool TrySaveImportedAppearance(AppState& state, const std::string& name,
+                               const std::function<bool()>& persistSettings) {
+    auto& settings = state.settings;
+    const auto previousMode = settings.themeScheduleMode;
+    const auto previousTheme = settings.theme;
+    const bool previousUseCustomColors = settings.useCustomColors;
+    const auto previousName = settings.customThemeName;
+    const auto previousManual = g_runtime.manualAppearance;
+    settings.themeScheduleMode = ModeAfterManualTheme(previousMode);
+    settings.theme = AppTheme::Custom;
+    settings.useCustomColors = false;
+    settings.customThemeName = name;
+    if (settings.themeScheduleMode == Mode::Automatic)
+        g_runtime.manualAppearance = ManualAppearance{AppTheme::Custom, false};
+    else
+        g_runtime.manualAppearance.reset();
+
+    if (!persistSettings()) {
+        settings.themeScheduleMode = previousMode;
+        settings.theme = previousTheme;
+        settings.useCustomColors = previousUseCustomColors;
+        settings.customThemeName = previousName;
+        g_runtime.manualAppearance = previousManual;
+        return false;
+    }
+
+    Invalidate();
+    if (settings.themeScheduleMode == Mode::Automatic)
         g_runtime.importOverridePeriod = SelectedPeriod(state);
+    else
+        g_runtime.applied.reset();
+    return true;
 }
 void Invalidate() {
     g_runtime.dirty = true;
@@ -154,10 +185,11 @@ void Tick(AppState& state, bool force) {
 bool SavePalette(Period period, const ThemeColorScheme& scheme, std::string& error) {
     if (!ValidatePalette(scheme, period, error)) return false;
     if (!SavePaletteJson(g_runtime.settingsFile, period, EncodePalette(scheme), error)) return false;
+    const bool changed = !PalettesEqual(g_runtime.palettes[Index(period)], scheme);
     g_runtime.palettes[Index(period)] = scheme;
     g_runtime.builtinThemes[Index(period)] = BuiltinThemeForPalette(scheme);
     g_runtime.warnings[Index(period)].clear();
-    Invalidate();
+    if (changed) Invalidate();
     return true;
 }
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION

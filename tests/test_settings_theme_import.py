@@ -29,34 +29,44 @@ class SettingsThemeImportTests(unittest.TestCase):
 
     def test_settings_reuses_strict_loader_and_persists_before_activation(self):
         editor = source("src/ThemeEditor.cpp")
-        self.assertIn("ImportThemeFromSettings(AppState& state)", editor)
-        body = editor.split("ImportThemeFromSettings(AppState& state)", 1)[1].split(
+        signature = "ImportThemeFromSettings(AppState& state, std::string& result)"
+        self.assertIn(signature, editor)
+        body = editor.split(signature, 1)[1].split(
             "enum class ThemeEditorRelationAction", 1
         )[0]
         steps = (
             "OpenThemeJsonFileDialogUtf8",
-            "if (filePath.empty()) return {};",
+            "if (filePath.empty())",
             "LoadEditorThemeFile",
-            "SaveCustomThemeFiles",
+            "InstallImportedTheme",
+            "TrySaveImportedAppearance",
+            "TrySaveAppSettings",
+            "installed != library::ImportResult::Saved",
             "ActivateInstalledTheme",
-            "SaveAppSettings",
         )
         offsets = [body.index(step) for step in steps]
         self.assertEqual(offsets, sorted(offsets))
         self.assertNotIn("g_ed.draft", body)
         self.assertNotIn("loadAndApplyThemeFile", body)
 
-    def test_import_holds_current_period_without_changing_automatic_mode(self):
-        editor = source("src/ThemeEditor.cpp")
-        install = editor.split("static void ActivateInstalledTheme", 1)[1].split(
-            "static bool SaveDraftAsCustomTheme", 1
-        )[0]
-        self.assertLess(install.index("OnThemeImported"), install.index("activateCustomScheme"))
+    def test_unrelated_apply_does_not_cycle_schedule_or_replace_effective_appearance(self):
+        dialog = source("src/SettingsDialog.inl")
+        apply = dialog.split("auto apply=[&]()", 1)[1].split("auto requestClose", 1)[0]
+        self.assertIn("if (themePreferencesChanged) schedule::SetMode(state,schedule::Mode::Off);", apply)
+        self.assertIn("next.theme=state.settings.theme;", apply)
+        self.assertIn("next.useCustomColors=state.settings.useCustomColors;", apply)
         schedule = source("src/ThemeSchedule.cpp")
-        callback = schedule.split("void OnThemeImported", 1)[1].split("void Invalidate", 1)[0]
-        self.assertIn("OnManualThemeSelected(state);", callback)
+        set_mode = schedule.split("void SetMode", 1)[1].split("void OnManualThemeSelected", 1)[0]
+        self.assertLess(set_mode.index("if (state.settings.themeScheduleMode == mode) return;"),
+                        set_mode.index("Invalidate();"))
+
+    def test_import_holds_current_period_without_changing_automatic_mode(self):
+        schedule = source("src/ThemeSchedule.cpp")
+        callback = schedule.split("bool TrySaveImportedAppearance", 1)[1].split("void Invalidate", 1)[0]
+        self.assertIn("ModeAfterManualTheme(previousMode)", callback)
         self.assertIn("Mode::Automatic", callback)
         self.assertIn("importOverridePeriod = SelectedPeriod(state);", callback)
+        self.assertLess(callback.index("if (!persistSettings())"), callback.index("Invalidate();"))
         tick = schedule.split("void Tick", 1)[1].split("bool SavePalette", 1)[0]
         self.assertLess(tick.index("importOverridePeriod == wanted"), tick.index("ShouldApply"))
         self.assertIn("importOverridePeriod.reset();", tick)

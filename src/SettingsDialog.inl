@@ -100,8 +100,16 @@
             saved=schedule::SavePalette(schedule::Period::Night,MakeBuiltinScheme(su::StockThemes[nextRuntime.night]),paletteError); nightWritten=saved;
         }
         const auto nextMode=next.themeScheduleMode;
-        schedule::SetMode(state,schedule::Mode::Off);
-        next.themeScheduleMode=schedule::Mode::Off;
+        const auto liveTheme=state.settings.theme;
+        const bool liveUseCustomColors=state.settings.useCustomColors;
+        const bool themePreferencesChanged=nextMode!=oldSettings.themeScheduleMode ||
+            next.theme!=oldSettings.theme || next.useCustomColors!=oldSettings.useCustomColors;
+        if (themePreferencesChanged) schedule::SetMode(state,schedule::Mode::Off);
+        if (themePreferencesChanged) next.themeScheduleMode=schedule::Mode::Off;
+        else {
+            next.theme=state.settings.theme;
+            next.useCustomColors=state.settings.useCustomColors;
+        }
         state.settings=next;
         state.settings.syncFromListeningMode();
         su::WriteRuntime(state,nextRuntime);
@@ -135,9 +143,15 @@
             bool restored=true;
             if (dayWritten) restored &= schedule::SavePalette(schedule::Period::Day,previousDay,rollbackError);
             if (nightWritten) restored &= schedule::SavePalette(schedule::Period::Night,previousNight,rollbackError);
-            schedule::SetMode(state,schedule::Mode::Off);
-            state.settings=oldSettings; state.settings.themeScheduleMode=schedule::Mode::Off;
-            schedule::SetMode(state,oldSettings.themeScheduleMode);
+            if (themePreferencesChanged) schedule::SetMode(state,schedule::Mode::Off);
+            state.settings=oldSettings;
+            if (themePreferencesChanged) {
+                state.settings.themeScheduleMode=schedule::Mode::Off;
+                schedule::SetMode(state,oldSettings.themeScheduleMode);
+            } else {
+                state.settings.theme=liveTheme;
+                state.settings.useCustomColors=liveUseCustomColors;
+            }
             su::WriteRuntime(state,oldRuntime);
             const bool outputRestored=!deviceChanged || restoreOutput();
             if(volumeApplied)state.audioEngine.setVolume(oldEngineVolume);
@@ -163,7 +177,8 @@
         if (nextRuntime.spectrum && (oldRuntime.fft!=nextRuntime.fft || !oldRuntime.spectrum)) state.spectrogramNeedsUpdate=true;
         const bool restoreManualTheme=oldSettings.themeScheduleMode!=schedule::Mode::Off &&
             state.settings.themeScheduleMode==schedule::Mode::Off && state.settings.theme==AppTheme::Custom;
-        if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors || restoreManualTheme) {
+        if (themePreferencesChanged && (oldSettings.theme!=state.settings.theme ||
+            oldSettings.useCustomColors!=state.settings.useCustomColors || restoreManualTheme)) {
             ThemeColors::deactivateCustomTheme();
             if (state.settings.theme==AppTheme::Custom && !state.settings.customThemeName.empty()) {
                 std::string customThemePath = GetExeDirUtf8()+"\\theme_custom.json";
@@ -578,8 +593,7 @@
     ImGui::PopStyleVar(5);ImGui::PopStyleColor(10);
     if (editor.open && !editor.closePrompt && editor.action=="import-theme") {
         editor.action.clear();
-        editor.themeImportResult=ImportThemeFromSettings(state);
-        if (!editor.themeImportResult.empty()) editor.Reset(state);
+        if (ImportThemeFromSettings(state, editor.themeImportResult)) editor.Reset(state);
     }
     // RenderUI continues with the file list and other main panels after this
     // block. Resume the draft overlay for those draws, then end it after RenderUI.
