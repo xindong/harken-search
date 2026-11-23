@@ -2745,6 +2745,7 @@ struct AppState {
     double exportTaskDoneAt = 0.0;
     bool wwiseTaskWasActive = false;
     double wwiseTaskDoneAt = 0.0;
+    bool wwiseTaskDismissed = false;
     int waveformMenuVisibleFrame = -1;
 
     bool coverRebuildActive = false;

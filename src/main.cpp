@@ -30648,6 +30648,7 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         if (wwise.active) {
             state.wwiseTaskWasActive = true;
             state.wwiseTaskDoneAt = 0.0;
+            state.wwiseTaskDismissed = false;
             std::string detail = std::to_string(wwise.done) + " / " + std::to_string(wwise.total);
             const float fraction = wwise.total > 0
                 ? std::clamp(static_cast<float>(wwise.done) / static_cast<float>(wwise.total), 0.0f, 1.0f)
@@ -30659,7 +30660,8 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
                 state.wwiseTaskWasActive = false;
                 state.wwiseTaskDoneAt = now;
             }
-            if (state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
+            if (!state.wwiseTaskDismissed &&
+                state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
                 // 失败（聚合错误或条目失败）不能报成完成。
                 const bool wwiseFailed = wwise.failed;
                 char failedDetail[64];
@@ -30854,6 +30856,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                     if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Similarity) state.manualSimilarityNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Update) state.updateTaskDismissed = true;
+                    else if (row.kind == LibraryTaskKind::Wwise) state.wwiseTaskDismissed = true;
                     else state.folderRemovalNotice.Dismiss();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
