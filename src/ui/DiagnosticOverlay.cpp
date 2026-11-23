@@ -354,20 +354,22 @@ void DrawPerformance(const Layout& ui, const ViewData& view, const Monitor& moni
     const float cpuX = kPadding + (right - kPadding) * 0.39f;
     char fpsBuffer[32], cpuBuffer[32], memoryBuffer[32];
     const auto* fps = Value(fpsBuffer, monitor.FramesPerSecond(), "%.0f");
-    const float fpsLabelX = std::min(cpuX - ui.Width("FPS", kCaptionSize) - 8.0f,
+    const auto* fpsLabel = L(DiagnosticOverlay_FpsLabel);
+    const float fpsLabelX = std::min(cpuX - ui.Width(fpsLabel, kCaptionSize) - 8.0f,
                                     kPadding + ui.Width(fps, fpsSize, true) + 5.0f);
     ui.FitText(kPadding, fpsLabelX - 5.0f, metricsY, fps, fpsSize, ui.ink, true);
-    ui.Text(fpsLabelX, metricsBottom - ui.LineHeight(kCaptionSize), L(DiagnosticOverlay_FpsLabel), kCaptionSize, ui.muted);
+    ui.Text(fpsLabelX, metricsBottom - ui.LineHeight(kCaptionSize), fpsLabel, kCaptionSize, ui.muted);
     const auto* cpu = Value(cpuBuffer, monitor.CpuPercent(), "%.1f%%");
-    ui.Text(cpuX, valueY, L(DiagnosticOverlay_CpuLabel), kBodySize, ui.muted);
-    const float cpuValueX = cpuX + ui.Width("CPU", kBodySize) + 5.0f;
+    const auto* cpuLabel = L(DiagnosticOverlay_CpuLabel);
+    ui.Text(cpuX, valueY, cpuLabel, kBodySize, ui.muted);
+    const float cpuValueX = cpuX + ui.Width(cpuLabel, kBodySize) + 5.0f;
     const auto memory = monitor.PrivateUsageBytes();
     const auto* memoryText = Value(memoryBuffer, memory ? std::optional<double>{*memory / kBytesPerMiB} : std::nullopt, "%.0f MB");
     const float memoryLabelRight = right - ui.Width(memoryText, kBodySize, true) - 5.0f;
     const auto* memoryLabel = L(DiagnosticOverlay_Memory);
     const float memoryLabelX = std::max(cpuValueX + ui.Width(cpu, kBodySize, true) + 8.0f,
                                        memoryLabelRight - ui.Width(memoryLabel, kBodySize));
-    ui.FitText(cpuValueX, memoryLabelRight, valueY, cpu, kBodySize, ui.ink, true);
+    ui.FitText(cpuValueX, memoryLabelX - 8.0f, valueY, cpu, kBodySize, ui.ink, true);
     ui.FitText(memoryLabelX, memoryLabelRight, valueY, memoryLabel, kBodySize, ui.muted);
     ui.Right(right, valueY, memoryText, kBodySize, ui.ink, true);
 
