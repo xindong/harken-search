@@ -8683,3 +8683,18 @@ set_tests_properties(TestAlertDialogContract PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 aura_set_test_labels(TestAlertDialogContract core)
+add_executable(TestTaskProgressToastModel EXCLUDE_FROM_ALL
+    tests/test_task_progress_toast_model.cpp
+    src/TaskProgressToastModel.cpp
+)
+target_include_directories(TestTaskProgressToastModel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestTaskProgressToastModel PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestTaskProgressToastModel PRIVATE /W3 /utf-8 /UNDEBUG)
+else()
+    target_compile_options(TestTaskProgressToastModel PRIVATE -UNDEBUG)
+endif()
+add_test(NAME TestTaskProgressToastModel COMMAND TestTaskProgressToastModel)
+aura_set_test_labels(TestTaskProgressToastModel core ui)
