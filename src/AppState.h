@@ -2734,6 +2734,11 @@ struct AppState {
     double backfillTaskDoneAt = 0.0;
     bool updateTaskWasActive = false;
     double updateTaskDoneAt = 0.0;
+    bool updateTaskDismissed = false;
+    HarkenSearch::LibraryTaskPhase waveformTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    HarkenSearch::LibraryTaskPhase coverTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    HarkenSearch::LibraryTaskPhase backfillTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    int waveformMenuVisibleFrame = -1;
 
     bool coverRebuildActive = false;
     int64_t coverRebuildTotal = 0;

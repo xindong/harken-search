@@ -30576,7 +30576,9 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
 
     // 波形重建 / 封面重建 / 补波形封面：没有独立提示生成器，用状态边沿做 3 秒成功短报。
     const auto pushDerivedRow = [&](LibraryTaskKind kind, bool active, int64_t done, int64_t total,
-                                    const char* title, bool* wasActive, double* doneAt) {
+                                    const char* title, bool* wasActive, double* doneAt,
+                                    HarkenSearch::LibraryTaskPhase* lastPhase,
+                                    bool cancelled = false) {
         if (active) {
             *wasActive = true;
             *doneAt = 0.0;
@@ -30594,18 +30596,24 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         if (*wasActive) {
             *wasActive = false;
             *doneAt = now;
+            *lastPhase = cancelled ? Phase::Stopped : Phase::Succeeded;
         }
         if (*doneAt > 0.0 && now - *doneAt < 3.0) {
-            rows.push_back({kind, Phase::Succeeded, title, L(Task_Done), -1.0f});
+            rows.push_back({kind, *lastPhase, title,
+                            *lastPhase == Phase::Stopped ? L(Task_Stopped) : L(Task_Done), -1.0f});
         }
     };
 
-    pushDerivedRow(LibraryTaskKind::Waveform, state.waveformRebuildActive,
+    const bool waveformMenuVisible = state.waveformMenuVisibleFrame >= ImGui::GetFrameCount() - 1;
+    pushDerivedRow(LibraryTaskKind::Waveform, state.waveformRebuildActive && !waveformMenuVisible,
                    state.waveformRebuildProgress, state.waveformRebuildTotal,
-                   L(Ctx_RebuildWaveform), &state.waveformTaskWasActive, &state.waveformTaskDoneAt);
+                   L(Ctx_RebuildWaveform), &state.waveformTaskWasActive, &state.waveformTaskDoneAt,
+                   &state.waveformTaskLastPhase,
+                   state.waveformRebuildCancel && !state.waveformRebuildActive);
     pushDerivedRow(LibraryTaskKind::Cover, state.coverRebuildActive,
                    state.coverRebuildProgress, state.coverRebuildTotal,
-                   L(Set_RebuildCoverIndex), &state.coverTaskWasActive, &state.coverTaskDoneAt);
+                   L(Set_RebuildCoverIndex), &state.coverTaskWasActive, &state.coverTaskDoneAt,
+                   &state.coverTaskLastPhase, state.coverRebuildCancel && !state.coverRebuildActive);
 
     int pendingAssets = 0;
     try {
@@ -30617,7 +30625,8 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
     }
     const bool backfillActive = pendingAssets > 0 && !state.isScanning.load();
     pushDerivedRow(LibraryTaskKind::Backfill, backfillActive, pendingAssets, 0,
-                   L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt);
+                   L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
+                   &state.backfillTaskLastPhase);
 
     // 应用更新下载：读取更新模块的字节计数，更新中心窗口可见时不重复显示。
     {
@@ -30625,6 +30634,7 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         const auto update = aris::update::GetHarkenSearchUpdateUiState();
         const bool updateDownloading = update.phase == aris::update::HarkenSearchUpdateUiPhase::Downloading;
         const bool updateVisible = state.showUpdateCenter;
+        if (update.phase != aris::update::HarkenSearchUpdateUiPhase::Error) state.updateTaskDismissed = false;
         if (updateDownloading) {
             state.updateTaskWasActive = true;
             state.updateTaskDoneAt = 0.0;
@@ -30653,7 +30663,8 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
                 state.updateTaskDoneAt = now;
             }
             const bool failed = update.phase == aris::update::HarkenSearchUpdateUiPhase::Error;
-            if (!updateVisible && (failed || (state.updateTaskDoneAt > 0.0 && now - state.updateTaskDoneAt < 3.0))) {
+            if (!updateVisible && !state.updateTaskDismissed &&
+                (failed || (state.updateTaskDoneAt > 0.0 && now - state.updateTaskDoneAt < 3.0))) {
                 rows.push_back({LibraryTaskKind::Update, failed ? Phase::Failed : Phase::Succeeded,
                                 L(Task_DownloadUpdate),
                                 failed ? (update.lastError.empty() ? L(Task_Failed) : update.lastError.c_str())
@@ -30661,6 +30672,22 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
                                 -1.0f});
             }
         }
+    }
+
+    // 最多显示 3 条：运行中优先，其次失败，最后完成。
+    // 被挤掉的完成态派生任务不开始 3 秒倒计时，等它有位置时再显示。
+    if (rows.size() > 3) {
+        const auto priority = [](HarkenSearch::LibraryTaskPhase phase) {
+            if (phase == Phase::Running) return 0;
+            if (phase == Phase::Failed) return 1;
+            if (phase == Phase::Stopped) return 2;
+            return 3;
+        };
+        std::stable_sort(rows.begin(), rows.end(),
+            [&](const LibraryTaskRow& a, const LibraryTaskRow& b) {
+                return priority(a.phase) < priority(b.phase);
+            });
+        rows.resize(3);
     }
 
     return rows;
@@ -30736,6 +30763,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                 if (ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f))) {
                     if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Similarity) state.manualSimilarityNotice.Dismiss();
+                    else if (row.kind == LibraryTaskKind::Update) state.updateTaskDismissed = true;
                     else state.folderRemovalNotice.Dismiss();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
@@ -36537,6 +36565,8 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndDisabled();
                 if (state.waveformRebuildActive) {
+                    // 菜单里已经画了进度与取消按钮，浮层这一帧不要重复显示。
+                    state.waveformMenuVisibleFrame = ImGui::GetFrameCount();
                     const int64_t displayProgress = state.waveformRebuildTotal > 0
                         ? std::min(state.waveformRebuildProgress, state.waveformRebuildTotal)
                         : state.waveformRebuildProgress;

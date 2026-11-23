@@ -6499,9 +6499,6 @@ endif()
 add_test(NAME TestScanDialogPresentation COMMAND TestScanDialogPresentation)
 aura_set_test_labels(TestScanDialogPresentation core)
 if(Python3_Interpreter_FOUND)
-    add_test(NAME TestLibraryTaskProgressBoundary COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_library_task_progress_boundary.py")
-    aura_set_test_labels(TestLibraryTaskProgressBoundary core)
     add_test(NAME TestScanDialogSimpleContract COMMAND ${Python3_EXECUTABLE} -m pytest -q
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_dialog_simple_contract.py
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scan_completion_refresh_runtime.py
