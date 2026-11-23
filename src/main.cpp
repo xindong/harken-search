@@ -30377,40 +30377,7 @@ static void ResetScanDialogResult(AppState& state) {
     state.scanDialogAutoStart = false; state.scanDataCommitted = false;
     // A paused scan stays paused after dismissing its result. Only the next
     // beginNewScanTask clears this latch and permits background work again.
-    // 暂停后由 UI 线程接棒：等扫描线程完全停下（isScanning=false）再按库重建队列，
-    // 避免与下一次扫描同时启停工作池；队列重建也会丢掉上一轮扫描的 sessionId。
-    if (!state.isScanning.load() && state.scanWasPaused && !state.pauseBackfillResumeDone) {
-        state.pauseBackfillResumeDone = true;
-        const std::string resumeDbPath = state.backfillQueue.currentDbPath();
-        int queuedJobs = 0;
-        if (!resumeDbPath.empty()) {
-            Database resumeDb;
-            if (resumeDb.open(resumeDbPath)) {
-                state.backfillQueue.rebuildFromDatabase(&resumeDb, 4096);
-                const auto snapshot = state.backfillQueue.snapshot();
-                for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
-                    queuedJobs += std::max(0, snapshot.byKind[i]);
-                }
-                if (queuedJobs > 0) {
-                    const int resumeThreads = (std::min)(
-                        aura::ResolveScanBackfillWorkerThreads(
-                            state.scanWorkerThreads, std::thread::hardware_concurrency()),
-                        2);
-                    aura::GlobalBackfillWorkerPool().start(
-                        state.backfillQueue.currentDbPath(),
-                        state.backfillQueue.currentGeneration(),
-                        &state.backfillQueue,
-                        resumeThreads);
-                    DIAG_SYSTEM_FMT("Scan", "ScanPauseBackfillResume: queued=%d threads=%d",
-                                    queuedJobs, resumeThreads);
-                } else {
-                    DIAG_SYSTEM("Scan", "ScanPauseBackfillIdle: queued=0");
-                }
-            } else {
-                DIAG_SYSTEM_FMT("Scan", "ScanPauseBackfillSeedFailed: path=%s", resumeDbPath.c_str());
-            }
-        }
-    }
+
 }
 
 static void ScanDialogNextAction(const char* label, float minimumWidth = 0.f) {
@@ -52310,6 +52277,69 @@ void RenderUI(AppState& state) {
         ImGui::End();
     }
 
+    // 补全看门狗：只要没在扫描、队列里还有活、而工作池没在跑，就把它拉起来。
+    // 暂停/停止扫描会把池子停掉，以前要等下一次扫描（或重启应用）才会继续补。
+    if (!state.isScanning.load()) {
+        const auto backfillSnapshot = state.backfillQueue.snapshot();
+        int queuedJobs = 0;
+        for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
+            queuedJobs += std::max(0, backfillSnapshot.byKind[i]);
+        }
+        const bool poolRunning = aura::GlobalBackfillWorkerPool().running();
+        const double nowSeconds = ImGui::GetTime();
+        // 队列里有活就 1 秒内接棒；计数未知（pendingTableRows=-1）时每 10 秒探一次库，
+        // 免得暂停后没人把「库里有待补行」这件事告诉工作池。
+        const double watchdogInterval = queuedJobs > 0 || backfillSnapshot.inFlight > 0 ? 1.0 : 10.0;
+        if (!poolRunning && nowSeconds - state.lastBackfillWatchdogSeconds >= watchdogInterval) {
+            state.lastBackfillWatchdogSeconds = nowSeconds;
+            ++state.backfillWatchdogAttempts;
+            std::string resumeDbPath = state.backfillQueue.currentDbPath();
+            // 暂停后队列可能已经和库解绑（path 被清空），这时按当前库重新绑定，
+            // 否则工作池拿不到 path/generation 会直接返回，队列就一直堆着。
+            if (resumeDbPath.empty()) {
+                const std::string fallbackPath =
+                    !state.currentDbPathUtf8.empty() ? state.currentDbPathUtf8 : state.database.getMainDbPath();
+                if (!fallbackPath.empty() && state.backfillDbGeneration > 0) {
+                    state.backfillQueue.onDbOpened(fallbackPath, state.backfillDbGeneration);
+                    resumeDbPath = fallbackPath;
+                    DIAG_SYSTEM_FMT("Scan", "BackfillWatchdogRebind: path=%s generation=%lld",
+                                    fallbackPath.c_str(), (long long)state.backfillDbGeneration);
+                }
+            }
+            if (!resumeDbPath.empty()) {
+                {
+                    Database resumeDb;
+                    if (resumeDb.open(resumeDbPath)) {
+                        state.backfillQueue.rebuildFromDatabase(&resumeDb, 4096);
+                    } else {
+                        DIAG_SYSTEM_FMT("Scan", "BackfillWatchdogSeedFailed: path=%s", resumeDbPath.c_str());
+                    }
+                }
+                const auto afterSeed = state.backfillQueue.snapshot();
+                int afterJobs = 0;
+                for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
+                    afterJobs += std::max(0, afterSeed.byKind[i]);
+                }
+                state.backfillWatchdogLastQueued = afterJobs;
+                state.backfillWatchdogLastPath = resumeDbPath;
+                state.backfillWatchdogLastGeneration = state.backfillQueue.currentGeneration();
+                if (afterJobs > 0) {
+                    const int resumeThreads = (std::min)(
+                        aura::ResolveScanBackfillWorkerThreads(
+                            state.scanWorkerThreads, std::thread::hardware_concurrency()),
+                        2);
+                    aura::GlobalBackfillWorkerPool().start(
+                        state.backfillQueue.currentDbPath(),
+                        state.backfillQueue.currentGeneration(),
+                        &state.backfillQueue,
+                        resumeThreads);
+                    ++state.backfillWatchdogStarts;
+                    DIAG_SYSTEM_FMT("Scan", "BackfillWatchdogStart: queued=%d threads=%d",
+                                    afterJobs, resumeThreads);
+                }
+            }
+        }
+    }
     DrawLibraryTaskToasts(state, libraryTaskRows);
 
     // STATUS BAR with Panel Toggle Buttons
