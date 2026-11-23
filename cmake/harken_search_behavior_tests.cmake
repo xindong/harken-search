@@ -7385,6 +7385,18 @@ if(MSVC)
 endif()
 add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
 aura_set_test_labels(TestSimilarityIndexer core)
+# Index-build concurrency benchmark for REQ-20261123-SIMILARITY-PARALLEL.
+# Explicit target: it analyzes a real isolated library and is never part of CTest.
+add_executable(SimilarityConcurrencyBench EXCLUDE_FROM_ALL tools/similarity_concurrency_bench.cpp
+    src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+target_include_directories(SimilarityConcurrencyBench PRIVATE src ${SQLITE_DIR})
+if(WIN32)
+    target_link_libraries(SimilarityConcurrencyBench PRIVATE bcrypt)
+endif()
+if(MSVC)
+    target_compile_options(SimilarityConcurrencyBench PRIVATE /W3 /utf-8)
+endif()
+
 set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
 set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
 add_executable(TestSimilarityIndexCountState EXCLUDE_FROM_ALL tests/test_similarity_index_count_state.cpp)
