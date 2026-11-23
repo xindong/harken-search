@@ -42419,7 +42419,7 @@ void RenderUI(AppState& state) {
         // Keep list text vertically centered, but cap vertical padding so large row heights
         // do not create oversized visual gaps between adjacent rows.
         const float listFontPx = listFont ? workspacePx(listFont->LegacySize) : ImGui::GetFontSize();
-        ImFont* numericFont = GetUIFontMono();
+        ImFont* numericFont = GetUIListMono();
         const float numericFontPx = numericFont ? workspacePx(numericFont->LegacySize) : listFontPx;
         const float minimumTextHeight = (std::max)(listFontPx, numericFontPx);
         const float targetRowHeight = (std::max)(workspacePx(static_cast<float>(state.settings.rowHeight)),
@@ -42632,12 +42632,11 @@ void RenderUI(AppState& state) {
                     ImGui::TableSetColumnEnabled(lufsBase + mi, cp.showMeter);
             }
 
-            // 2. 绘制表头 (chrome-sized: headers stay pinned at system font)
+            // 2. 绘制表头（列头跟随「列表字体大小」，与行文本同一档字号）
             {
-            ChromeTextScope _chromeHeader;
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
             const ImVec4 kListHeaderText = uiWithAlpha(uiMix(results.text, results.secondaryText, 0.66f), 0.95f);
-            ImGui::PushFont(GetUIFontEmphasis());
+            ImGui::PushFont(GetUIListEmphasis());
             ImGui::PushStyleColor(ImGuiCol_Text, kListHeaderText);
             for (int col = 0; col < totalColumns; col++) {
                 ImGui::TableSetColumnIndex(col);
@@ -43444,7 +43443,7 @@ void RenderUI(AppState& state) {
                     if (!entry.isDirectory) {
                         auto metaIt = state.browserMetaCache.find(entry.fullPath);
                         if (metaIt != state.browserMetaCache.end() && metaIt->second.durationSeconds > 0.f) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             ImGui::PushStyleColor(ImGuiCol_Text, kBL2);
                             ImGui::Text("%s", FormatTime(metaIt->second.durationSeconds).c_str());
                             ImGui::PopStyleColor();
@@ -43465,7 +43464,7 @@ void RenderUI(AppState& state) {
                     // Size (L2, Mono)
                     ImGui::TableNextColumn();
                     if (!entry.isDirectory) {
-                        ImGui::PushFont(GetUIFontMono());
+                        ImGui::PushFont(GetUIListMono());
                         ImGui::PushStyleColor(ImGuiCol_Text, kBL2);
                         ImGui::Text("%s", FileBrowser::formatFileSize(entry.fileSize).c_str());
                         ImGui::PopStyleColor();
@@ -43477,7 +43476,7 @@ void RenderUI(AppState& state) {
                     if (!entry.isDirectory) {
                         auto metaIt = state.browserMetaCache.find(entry.fullPath);
                         if (metaIt != state.browserMetaCache.end() && metaIt->second.sampleRate > 0) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             ImGui::PushStyleColor(ImGuiCol_Text, kBL3);
                             ImGui::Text("%u", metaIt->second.sampleRate);
                             ImGui::PopStyleColor();
@@ -43524,7 +43523,7 @@ void RenderUI(AppState& state) {
                     if (!entry.isDirectory) {
                         auto metaIt = state.browserMetaCache.find(entry.fullPath);
                         if (metaIt != state.browserMetaCache.end() && metaIt->second.channels > 0) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             ImGui::PushStyleColor(ImGuiCol_Text, kBL3);
                             ImGui::Text("%u", metaIt->second.channels);
                             ImGui::PopStyleColor();
@@ -43586,7 +43585,7 @@ void RenderUI(AppState& state) {
                     if (!entry.isDirectory) {
                         auto metaIt = state.browserMetaCache.find(entry.fullPath);
                         if (metaIt != state.browserMetaCache.end() && metaIt->second.bpm > 0.f) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             const float conf = metaIt->second.bpmConfidence;
                             ImVec4 bpmCol = (conf > 0.0f)
                                 ? ImVec4(0.7f + conf * 0.3f, 0.55f + conf * 0.35f, 0.2f, 1.0f)
@@ -43611,7 +43610,7 @@ void RenderUI(AppState& state) {
                             const bool showCamelot = state.settings.showKeyCamelotCol;
                             const std::string& keyDisplay = (showCamelot && !meta.musicalKeyCamelot.empty())
                                 ? meta.musicalKeyCamelot : meta.musicalKey;
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             const float kc = meta.keyConfidence;
                             ImVec4 keyCol;
                             if (kc >= 0.7f)
@@ -43659,7 +43658,7 @@ void RenderUI(AppState& state) {
                     if (!entry.isDirectory) {
                         auto metaIt = state.browserMetaCache.find(entry.fullPath);
                         if (metaIt != state.browserMetaCache.end() && metaIt->second.dateAdded > 0) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             ImGui::PushStyleColor(ImGuiCol_Text, kBL2);
                             time_t t = (time_t)metaIt->second.dateAdded;
                             struct tm tmBuf;
@@ -45104,7 +45103,7 @@ void RenderUI(AppState& state) {
                     // Duration (Mono, L2 gray)
                     ImGui::TableNextColumn();
                     if (record.durationSeconds > 0) {
-                        ImGui::PushFont(GetUIFontMono());
+                        ImGui::PushFont(GetUIListMono());
                         ImGui::PushStyleColor(ImGuiCol_Text, kL2);
                         ImGui::Text("%s", FormatTime(record.durationSeconds).c_str());
                         ImGui::PopStyleColor();
@@ -45132,7 +45131,7 @@ void RenderUI(AppState& state) {
 
                     // Size (Mono, L2 gray)
                     ImGui::TableNextColumn();
-                    ImGui::PushFont(GetUIFontMono());
+                    ImGui::PushFont(GetUIListMono());
                     ImGui::PushStyleColor(ImGuiCol_Text, kL2);
                     ImGui::Text("%s", FileBrowser::formatFileSize(record.fileSize).c_str());
                     ImGui::PopStyleColor();
@@ -45141,7 +45140,7 @@ void RenderUI(AppState& state) {
                     // Sample Rate (Mono, L2 gray)
                     ImGui::TableNextColumn();
                     if (record.sampleRate > 0) {
-                        ImGui::PushFont(GetUIFontMono());
+                        ImGui::PushFont(GetUIListMono());
                         ImGui::PushStyleColor(ImGuiCol_Text, kL2);
                         ImGui::Text("%d", record.sampleRate);
                         ImGui::PopStyleColor();
@@ -45194,7 +45193,7 @@ void RenderUI(AppState& state) {
                     // Channels (Mono, L2 gray)
                     ImGui::TableNextColumn();
                     if (record.channels > 0) {
-                        ImGui::PushFont(GetUIFontMono());
+                        ImGui::PushFont(GetUIListMono());
                         ImGui::PushStyleColor(ImGuiCol_Text, kL2);
                         ImGui::Text("%u", record.channels);
                         ImGui::PopStyleColor();
@@ -45228,7 +45227,7 @@ void RenderUI(AppState& state) {
                     {
                         const std::string& bpm = record.getMeta("bpm");
                         if (!bpm.empty()) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             const float conf = record.bpmConfidence;
                             ImVec4 bpmCol = (conf > 0.0f)
                                 ? ImVec4(0.7f + conf * 0.3f, 0.55f + conf * 0.35f, 0.2f, 1.0f)
@@ -45252,7 +45251,7 @@ void RenderUI(AppState& state) {
                             ? (record.musicalKeyCamelot.empty() ? record.getMeta("musical_key") : record.musicalKeyCamelot)
                             : record.getMeta("musical_key");
                         if (!keyDisplay.empty()) {
-                            ImGui::PushFont(GetUIFontMono());
+                            ImGui::PushFont(GetUIListMono());
                             // Confidence-based color: green (high) → neutral → gray (none/low)
                             const float kc = record.keyConfidence;
                             ImVec4 keyCol;
@@ -45300,7 +45299,7 @@ void RenderUI(AppState& state) {
                     // DateAdded (Mono, L2 gray)
                     ImGui::TableNextColumn();
                     if (record.dateAdded > 0) {
-                        ImGui::PushFont(GetUIFontMono());
+                        ImGui::PushFont(GetUIListMono());
                         ImGui::PushStyleColor(ImGuiCol_Text, kL2);
                         // 日期格式化缓存：同一天的 dateAdded 只格式化一次
                         {

@@ -4900,6 +4900,8 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
                 {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
                 {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"list_mono_font_pixels",[]{ImGui::PushFont(GetUIListMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"list_emphasis_font_pixels",[]{ImGui::PushFont(GetUIListEmphasis());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"drawn_list_frame",state.qaRegions.listTextFrame},{"drawn_list_font_pixels",state.qaRegions.listTextFontPixels},
                 {"drawn_list_line_height",state.qaRegions.listTextLineHeight},{"drawn_list_row_height",state.qaRegions.listTextRowHeight},
                 {"drawn_list_sample",state.qaRegions.listTextSample},
@@ -8773,6 +8775,8 @@ static ImFont* g_readingRegular = nullptr;
 static ImFont* g_readingEmphasis = nullptr;
 static ImFont* g_readingMono = nullptr;
 static ImFont* g_uiListFont = nullptr;   // reading-sized; the file-list body font
+static ImFont* g_uiListEmphasis = nullptr; // list-sized; results-table column headers
+static ImFont* g_uiListMono = nullptr;   // list-sized; numeric cells in the file list
 
 // True while rendering a reading surface. Flipped by ReadingTextScope.
 // File-local: every reader (accessors) and writer (the scope ctors/dtors)
@@ -8953,6 +8957,56 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
     }
     if (!g_uiListFont) g_uiListFont = g_uiFontRegular;
 
+    // Results-table header face at the list size: column titles must follow
+    // listFontSize together with the row text instead of staying at chrome size.
+    ImFontConfig listEmphasisConfig = uiConfig;
+    listEmphasisConfig.MergeMode = false;
+    g_uiListEmphasis = AddFontFromCandidates(
+        io,
+        uiEmphasisLatinBase,
+        (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
+        listPx,
+        listEmphasisConfig,
+        kExtendedLatinRanges);
+    if (!g_uiListEmphasis) {
+        g_uiListEmphasis = AddFontFromCandidates(
+            io,
+            uiEmphasisCjkMerge,
+            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
+            listPx,
+            listEmphasisConfig,
+            io.Fonts->GetGlyphRangesChineseFull());
+    } else {
+        ImFontConfig mergeCjkListEmphasis = listEmphasisConfig;
+        mergeCjkListEmphasis.MergeMode = true;
+        mergeCjkListEmphasis.RasterizerMultiply = 1.08f;
+        (void)AddFontFromCandidates(
+            io,
+            uiEmphasisCjkMerge,
+            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
+            listPx,
+            mergeCjkListEmphasis,
+            io.Fonts->GetGlyphRangesChineseFull());
+    }
+    if (!g_uiListEmphasis) g_uiListEmphasis = g_uiListFont;
+
+    // List mono: numeric cells (duration, size, sample rate, channels, BPM,
+    // key, date) share the list size, with the same +1px optical compensation
+    // the chrome/reading mono faces use.
+    ImFontConfig listMonoConfig;
+    listMonoConfig.MergeMode = false;
+    listMonoConfig.OversampleH = 2;
+    listMonoConfig.OversampleV = 1;
+    listMonoConfig.PixelSnapH = true;
+    g_uiListMono = AddFontFromCandidates(
+        io,
+        monoPaths,
+        (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
+        listPx + 1.0f,
+        listMonoConfig,
+        kExtendedLatinRanges);
+    if (!g_uiListMono) g_uiListMono = g_uiListFont;
+
     // F-018: Small ASCII-only font for Loudness Meter numeric readouts / channel labels
     // when barW is narrow. No CJK merge needed — meter labels are L/R/C/LFE/Lss/W/Y/Z etc.
     {
@@ -8996,6 +9050,14 @@ ImFont* GetUIFontMono() {
 ImFont* GetUIListFont() {
     // Reading-sized fallback (not chrome) so the list keeps reading metrics.
     return g_uiListFont ? g_uiListFont : g_readingRegular;
+}
+
+ImFont* GetUIListEmphasis() {
+    return g_uiListEmphasis ? g_uiListEmphasis : GetUIListFont();
+}
+
+ImFont* GetUIListMono() {
+    return g_uiListMono ? g_uiListMono : GetUIListFont();
 }
 
 ImFont* GetUIMeterFont() {
