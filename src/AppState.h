@@ -3354,6 +3354,11 @@ struct AppState {
 #if ARIS_PREVIEW_ISOLATION
         int listTextFrame = -1;
         float listTextFontPixels = 0, listTextLineHeight = 0;
+        // Draw-time probes for the results table: numeric cells and column
+        // headers record the font size they actually render with.
+        float listNumericFontPixels = 0, listHeaderFontPixels = 0;
+        float listDurationColWidth = 0, listSampleRateColWidth = 0;
+        std::string listNumericSample, listHeaderSample;
         float listTextRowHeight = 0;
         std::string listTextSample;
         std::vector<float> listRowOrigins, listRowHitHeights;

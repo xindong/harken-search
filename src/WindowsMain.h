@@ -120,6 +120,8 @@ ImFont* GetUIFontRegular();
 ImFont* GetUIFontEmphasis();
 ImFont* GetUIFontMono();
 ImFont* GetUIListFont();
+ImFont* GetUIListEmphasis();  // list-sized emphasis face for results-table headers
+ImFont* GetUIListMono();      // list-sized mono face for numeric list cells
 ImFont* GetUIMeterFont();  // F-018: 10px ASCII-only, for narrow loudness meter bars
 
 // Top-menu typography. The menu bar follows the system/reading font size, never
