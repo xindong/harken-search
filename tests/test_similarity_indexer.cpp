@@ -3,6 +3,8 @@
 #include "sqlite3.h"
 #include <filesystem>
 #include <cmath>
+#include <string>
+#include <vector>
 #include <iostream>
 using namespace HarkenSearch;
 int main() {
@@ -93,5 +95,45 @@ int main() {
         SimilarityIndexScope::ValidateAll,4);
     check(parallelCancelled.cancelled && parallelCancelled.progress.saved>=1 && store.Load(1,entry),
         "parallel cancellation keeps finished records and reports cancellation");
+    // One real semantic analysis takes hundreds of milliseconds, so the consumer must
+    // wait for a slow worker instead of treating one short poll as cancellation.
+    {
+        const auto slowDir = root / "slow";
+        std::filesystem::create_directories(slowDir);
+        constexpr int kSeconds = 60;
+        std::vector<std::string> slowPaths;
+        std::vector<float> frames(size_t(48000) * 2 * size_t(kSeconds));
+        for (int file = 0; file < 4; ++file) {
+            const auto path = (slowDir / ("long-" + std::to_string(file) + ".wav")).u8string();
+            for (int frame = 0; frame < 48000 * kSeconds; ++frame) {
+                const float value = 0.4f * std::sin(float(frame) * 6.2831853f *
+                                                    (220.0f + 110.0f * float(file)) / 48000.0f);
+                frames[size_t(frame) * 2] = value;
+                frames[size_t(frame) * 2 + 1] = value * 0.5f;
+            }
+            Platform::AudioFile::FloatWavWriter writer; writer.Open(path,48000,2);
+            writer.Write(frames.data(),48000 * kSeconds); writer.Close();
+            slowPaths.push_back(path);
+        }
+        sqlite3_open(dbPath.c_str(), &db);
+        sqlite3_exec(db,"DELETE FROM audio_files;",nullptr,nullptr,nullptr);
+        sqlite3_close(db);
+        sqlite3_open(dbPath.c_str(), &db);
+        for (size_t index = 0; index < slowPaths.size(); ++index) {
+            sqlite3_stmt* row=nullptr;
+            sqlite3_prepare_v2(db,"INSERT INTO audio_files VALUES(?,?,'long','wav',60,0)",-1,&row,nullptr);
+            sqlite3_bind_int64(row,1,int64_t(index)+1);
+            sqlite3_bind_text(row,2,slowPaths[index].c_str(),-1,SQLITE_TRANSIENT);
+            sqlite3_step(row); sqlite3_finalize(row);
+        }
+        sqlite3_close(db);
+        SimilarityAnalysisStore slowStore; slowStore.Open(dbPath);
+        for (int64_t id = 1; id <= 4; ++id) slowStore.Invalidate(id);
+        const auto slowParallel = BuildSimilarityIndex(dbPath,"missing-model",{},{},
+            SimilarityIndexScope::ValidateAll,4);
+        check(slowParallel.ok && !slowParallel.cancelled && slowParallel.progress.completed==4 &&
+              slowParallel.progress.saved==4,
+            "parallel workers wait for slow analyses instead of reporting a false cancellation");
+    }
     return failures ? 1 : 0;
 }

@@ -111,7 +111,12 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
                 std::unique_ptr<Slot> slot;
                 {
                     std::unique_lock<std::mutex> lock(slotMutex);
-                    slotReady.wait_for(lock,std::chrono::milliseconds(100),[&]{ return slots[index] != nullptr || cancelled(); });
+                    // The semantic path needs hundreds of milliseconds per file, so a
+                    // single short poll must not be read as failure. Wait for the slot
+                    // (or a real cancellation) and keep re-checking cancellation.
+                    while (!slots[index] && !cancelled()) {
+                        slotReady.wait_for(lock,std::chrono::milliseconds(100));
+                    }
                     slot = std::move(slots[index]);
                 }
                 if (!slot) { result.cancelled = true; break; }
