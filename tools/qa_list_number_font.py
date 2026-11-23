@@ -15,8 +15,6 @@ import time
 import uuid
 import wave
 
-from PIL import Image
-
 from qa_required_library_setup import PrivateDesktop, capture, wait_state
 from qa_transport_themes import Driver
 
@@ -61,7 +59,7 @@ def run(args):
     runtime.mkdir(parents=True, exist_ok=True)
     # The pinned preview build is fail-closed: every fixture stays inside the root.
     fixture_dir = root / 'fixtures'
-    fixtures = write_fixtures(fixture_dir)
+    write_fixtures(fixture_dir)
 
     driver = Driver(runtime, out)
     desktop = PrivateDesktop()
@@ -252,6 +250,7 @@ def run(args):
             if verified:
                 capture(driver, out / 'failure.png')
         except Exception:
+            # 失败现场截图失败不应掩盖原始异常，因此这里明确忽略。
             pass
         raise
     finally:
