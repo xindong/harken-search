@@ -3274,7 +3274,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
         self.assertIn("struct LengthInFrames", header)
         self.assertIn("LengthInFrames QueryLength(BorrowedSource source) noexcept;", header)
-        self.assertEqual(13, source.count("Platform::AudioDataSource::QueryLength("))
+        # 14：单通道导出需要源文件总帧数来上报写样本进度（2026-11-23 REQ-20261123-TASK-PROGRESS-TOAST-B2）
+        self.assertEqual(14, source.count("Platform::AudioDataSource::QueryLength("))
         self.assertNotIn("ma_decoder_get_length_in_pcm_frames(", source)
         self.assertIn("ma_data_source_get_length_in_pcm_frames", backend)
 

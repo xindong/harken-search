@@ -107,6 +107,7 @@ enum class AsyncKind : int {
     PickRowTemplate = 2,
     Reveal = 3,
     RefreshFromWwise = 4,
+    Transfer = 5,
 };
 
 struct AsyncOp {
@@ -119,10 +120,15 @@ struct AsyncOp {
     std::string result;                 // picked path / reveal path / error
     ExistingObjectMap refreshedExisting;
     ExistingOriginalsSet refreshedWavs;
+    // Transfer 专用：结果与实时进度（进度由 executeTransfer 的回调写入）
+    TransferResult transferResult;
+    std::atomic<int> transferDone{0};
+    std::atomic<int> transferTotal{0};
 };
 
 std::mutex g_asyncMu;
 AsyncOp g_async;
+
 
 bool ensureTerminalSoundLayer(std::vector<WwiseStructureNode>& structure);
 
@@ -1067,6 +1073,36 @@ void pumpAsyncCompletion() {
                    std::to_string(g_ps.cachedWavs.size()) + " WAVs.")
                 : ("Refresh failed: " + result);
             break;
+        case AsyncKind::Transfer: {
+            TransferResult transfer;
+            {
+                std::lock_guard<std::mutex> lk(g_asyncMu);
+                transfer = std::move(g_async.transferResult);
+                g_async.transferResult = TransferResult{};
+            }
+            g_ps.lastResult = std::move(transfer);
+            g_ps.hasResult = true;
+            DIAG_SYSTEM_FMT("Wwise", "ImportComplete:success=%d total=%d imported=%d skipped=%d failed=%d",
+                            g_ps.lastResult.failed == 0 && g_ps.lastResult.aggregateError.empty() ? 1 : 0,
+                            g_ps.lastResult.total,
+                            g_ps.lastResult.imported,
+                            g_ps.lastResult.skipped,
+                            g_ps.lastResult.failed);
+            for (int i = 0; i < (int)g_ps.lastResult.items.size(); ++i) {
+                const auto& item = g_ps.lastResult.items[(size_t)i];
+                DIAG_ACTION_FMT("Wwise", "ImportItem:index=%d status=%s", i, toString(item.status));
+            }
+            if (!g_ps.lastResult.aggregateError.empty()) {
+                g_ps.lastActionMessage = "Transfer failed: " + g_ps.lastResult.aggregateError;
+            } else {
+                std::ostringstream oss;
+                oss << "Transfer complete: " << g_ps.lastResult.imported << " imported / "
+                    << g_ps.lastResult.skipped << " skipped / "
+                    << g_ps.lastResult.failed << " failed";
+                g_ps.lastActionMessage = oss.str();
+            }
+            break;
+        }
         case AsyncKind::None:
             break;
     }
@@ -1238,31 +1274,40 @@ void handleTransfer() {
         }
     }
 
-    const auto imports = expandStructure(cfg, g_ps.contexts, g_ps.sourceWavs);
+    auto imports = expandStructure(cfg, g_ps.contexts, g_ps.sourceWavs);
     DIAG_SYSTEM_FMT("Wwise", "ImportStart:count=%d conflict=%s",
                     (int)imports.size(), toString(cfg.conflictPolicy).c_str());
-    DiagScopedTimer transferTimer("Wwise", "importTotal");
-    g_ps.lastResult = executeTransfer(*g_ps.client, cfg, imports, /*progressCb*/ nullptr);
-    g_ps.hasResult = true;
-    DIAG_SYSTEM_FMT("Wwise", "ImportComplete:success=%d total=%d imported=%d skipped=%d failed=%d",
-                    g_ps.lastResult.failed == 0 && g_ps.lastResult.aggregateError.empty() ? 1 : 0,
-                    g_ps.lastResult.total,
-                    g_ps.lastResult.imported,
-                    g_ps.lastResult.skipped,
-                    g_ps.lastResult.failed);
-    for (int i = 0; i < (int)g_ps.lastResult.items.size(); ++i) {
-        const auto& item = g_ps.lastResult.items[(size_t)i];
-        DIAG_ACTION_FMT("Wwise", "ImportItem:index=%d status=%s", i, toString(item.status));
-    }
-    if (!g_ps.lastResult.aggregateError.empty()) {
-        g_ps.lastActionMessage = "Transfer failed: " + g_ps.lastResult.aggregateError;
+    if (!tryClaimAsync(AsyncKind::Transfer)) {
+        g_ps.lastActionMessage = "Another Wwise operation is still running.";
         return;
     }
-    std::ostringstream oss;
-    oss << "Transfer complete: " << g_ps.lastResult.imported << " imported / "
-        << g_ps.lastResult.skipped << " skipped / "
-        << g_ps.lastResult.failed << " failed";
-    g_ps.lastActionMessage = oss.str();
+    g_async.transferDone.store(0);
+    g_async.transferTotal.store(static_cast<int>(imports.size()));
+    WwiseTransferConfig transferCfg = cfg;
+    waapi::WaapiClient* clientPtr = g_ps.client.get();
+    g_ps.lastActionMessage = "Transfer started in background: " + std::to_string(imports.size()) + " items";
+    std::thread([transferCfg, imports = std::move(imports), clientPtr]() mutable {
+        TransferResult result;
+        try {
+            result = executeTransfer(*clientPtr, transferCfg, imports,
+                [](int done, int total, const ItemReport&) {
+                    g_async.transferDone.store(done);
+                    g_async.transferTotal.store(total);
+                });
+        } catch (const std::exception& e) {
+            result.aggregateError = std::string("Transfer crashed: ") + e.what();
+        } catch (...) {
+            result.aggregateError = "Transfer crashed: unknown error";
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_asyncMu);
+            g_async.transferResult = std::move(result);
+            g_async.success = g_async.transferResult.aggregateError.empty();
+            g_async.result = g_async.transferResult.aggregateError;
+        }
+        g_async.ready.store(true);
+    }).detach();
+    return;
 }
 
 } // namespace
@@ -2032,10 +2077,23 @@ void RenderWwiseTransferPanel() {
                          96.0f);
             aura::ui::Divider(aura::ui::DividerVariant::Inset);
 
-            if (aura::ui::Button(wz("Transfer to Wwise", u8"传输到 Wwise"),
-                    aura::ui::ButtonOptions{aura::ui::ButtonVariant::PrimaryTransfer,
-                                            aura::ui::ButtonSize::Md,
-                                            ICON_LC_SEND})) handleTransfer();
+            const bool transferring =
+                g_async.active.load() && g_async.kind == AsyncKind::Transfer;
+            char transferLabel[96];
+            if (transferring) {
+                const int done = g_async.transferDone.load();
+                const int total = g_async.transferTotal.load();
+                std::snprintf(transferLabel, sizeof(transferLabel), u8"传输中 %d / %d", done, total);
+            } else {
+                std::snprintf(transferLabel, sizeof(transferLabel), "%s", wz("Transfer to Wwise", u8"传输到 Wwise"));
+            }
+            aura::ui::ButtonOptions transferOptions;
+            transferOptions.variant = aura::ui::ButtonVariant::PrimaryTransfer;
+            transferOptions.size = aura::ui::ButtonSize::Md;
+            transferOptions.icon = ICON_LC_SEND;
+            transferOptions.loading = transferring;
+            transferOptions.disabled = transferring;
+            if (aura::ui::Button(transferLabel, transferOptions)) handleTransfer();
 
             ImGui::SameLine(0, 10.0f);
             const bool refreshing =
@@ -2203,6 +2261,18 @@ void RenderWwiseTransferPanel() {
     if (hasBodyTextOverride) ImGui::PopStyleColor();
     ImGui::End();
     g_ps.visible = open;
+}
+
+WwiseTransferProgress GetWwiseTransferProgress() {
+    WwiseTransferProgress snap;
+    const bool active = g_async.active.load();
+    const bool isTransfer = active && g_async.kind == AsyncKind::Transfer;
+    snap.active = isTransfer;
+    if (isTransfer) {
+        snap.done = g_async.transferDone.load();
+        snap.total = g_async.transferTotal.load();
+    }
+    return snap;
 }
 
 void ShutdownWwiseTransferPanel() {

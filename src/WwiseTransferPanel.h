@@ -36,6 +36,14 @@ void OpenWwiseTransferPanel(const std::vector<std::string>& sourceWavs,
 // panel is not visible. Idempotent across frames.
 void RenderWwiseTransferPanel();
 
+// 传输任务的实时进度快照（供右下角任务浮层读取；非传输时为 active=false）。
+struct WwiseTransferProgress {
+    bool active = false;
+    int done = 0;
+    int total = 0;
+};
+WwiseTransferProgress GetWwiseTransferProgress();
+
 // Closes the panel and disconnects the embedded WAAPI client. Called from
 // app shutdown so the socket is torn down cleanly.
 void ShutdownWwiseTransferPanel();
