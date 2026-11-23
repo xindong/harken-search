@@ -1,8 +1,10 @@
 #pragma once
 
 #include "ExternalAiAuthorization.h"
+#include "ExternalAiClientLink.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,6 +29,7 @@ struct ExternalAiPlaylistWriteRequest {
     std::string playlistPath;  // "Game SFX" or "Game SFX/Combat & Ability"
     std::vector<int64_t> fileIds;                    // legacy: one playlist for all
     std::vector<ExternalAiPlaylistTarget> items;     // preferred: per-file playlist
+    std::optional<ExternalAiLinkTarget> clientLink;
 };
 
 struct ExternalAiPlaylistWriteReceipt {

@@ -41,8 +41,9 @@ def playlists(database):
     try:
         return connection.execute(
             "SELECT p.name, p.parent_id, p.is_folder, "
-            "(SELECT COUNT(*) FROM playlist_items i WHERE i.playlist_id = p.id) "
-            "FROM playlists p ORDER BY p.id").fetchall()
+            "(SELECT COUNT(*) FROM playlist_items i WHERE i.playlist_id = p.id), parent.name "
+            "FROM playlists p LEFT JOIN playlists parent ON parent.id = p.parent_id "
+            "ORDER BY p.id").fetchall()
     finally:
         connection.close()
 
@@ -180,8 +181,8 @@ def run(args):
             after = playlists(database)
             report["playlists"] = after
             assert applied.get("status") == "ok", applied
-            chosen = [row for row in after if row[0] == "Game SFX" and row[3] > 0]
-            assert chosen, after
+            selected_children = [row for row in after if row[4] == "Game SFX" and not row[2] and row[3] > 0]
+            assert selected_children and sum(row[3] for row in selected_children) == applied["added"], after
 
             again = connector.tool(4, "harken_apply_playlist_pack",
                                    {"proposal_id": preview["proposal_id"], "confirm": True})
@@ -196,6 +197,7 @@ def run(args):
             refused = connector.tool(6, "harken_apply_playlist_pack",
                                      {"proposal_id": fresh["proposal_id"], "confirm": True})
             check("apply-after-revoke", result=refused)
+            assert refused["status"] in ("not_authorized", "playlist_write_unavailable"), refused
             assert playlists(database) == after, "revoked write must not change playlists"
         finally:
             connector.close()

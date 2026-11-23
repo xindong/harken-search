@@ -8,6 +8,10 @@
 #include <iostream>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -287,6 +291,99 @@ int main(int argc, char** argv)
     Check(connectorView.Authorize(ExternalAiCapability::ReadFileName, libraryIdText, insideFile) ==
             ExternalAiAccess::ReadOnly,
         "the connector accepts a document written by the settings store");
+
+    auto draft = reloaded;
+    draft.roots = {{outsideText, true}};
+    draft.capabilities.fill(ExternalAiAccess::Editable);
+    Check(HarkenSearch::SetExternalAiMasterSwitch(libraryPath, draft, false, storeError) && !draft.enabled,
+        "turning off persists without a separate save");
+    std::string disabledBytes;
+    {
+        std::ifstream saved(libraryPath, std::ios::binary);
+        disabledBytes.assign((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
+    }
+    auto savedDocument = nlohmann::json::parse(savedBytes);
+    savedDocument["enabled"] = false;
+    Check(nlohmann::json::parse(disabledBytes) == savedDocument,
+        "turning off changes only the saved switch, not saved roots, capabilities or bridge token");
+    Check(draft.roots.size() == 1 && draft.roots.front().path == outsideText &&
+        draft.capability(ExternalAiCapability::SearchAudio) == ExternalAiAccess::Editable,
+        "turning off leaves unsaved drafts in memory");
+    Check(ParseOk(disabledBytes).Authorize(ExternalAiCapability::ReadFileName, libraryIdText, insideFile) ==
+            ExternalAiAccess::Denied,
+        "the connector denies existing grants immediately after the switch is turned off");
+    Check(HarkenSearch::SetExternalAiMasterSwitch(libraryPath, draft, true, storeError) && draft.enabled,
+        "turning on updates the draft");
+    Check(HarkenSearch::LoadExternalAiSettings(libraryPath, libraryIdText, draft, storeError) && !draft.enabled,
+        "reload cannot reopen the persisted closed authorization");
+    Check(HarkenSearch::SetExternalAiMasterSwitch(libraryPath, draft, false, storeError) && !draft.enabled,
+        "closing an already closed authorization is a no-op");
+
+    const auto failureDirectory = base / "switch-failures";
+    fs::create_directories(failureDirectory);
+    const auto fixtureDocument = failureDirectory / "authorization.json";
+    draft = stored;
+    Check(HarkenSearch::SetExternalAiMasterSwitch(fixtureDocument.u8string(), draft, false, storeError) &&
+            !draft.enabled && storeError.empty() && !fs::exists(fixtureDocument),
+        "absent authorization can be closed without creating it");
+    fs::create_directory(fixtureDocument);
+    draft = stored;
+    Check(!HarkenSearch::SetExternalAiMasterSwitch(fixtureDocument.u8string(), draft, false, storeError) &&
+            draft.enabled && !storeError.empty(),
+        "a directory at the authorization path is not a missing grant");
+    fs::remove(fixtureDocument);
+    Check(HarkenSearch::SaveExternalAiSettings(fixtureDocument.u8string(), stored, storeError),
+        "enabled failure-test grant saves");
+
+#ifdef _WIN32
+    const HANDLE unreadable = CreateFileW(fixtureDocument.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(unreadable != INVALID_HANDLE_VALUE, "exclusive read-failure fixture opens");
+    if (unreadable != INVALID_HANDLE_VALUE) {
+        draft = stored;
+        Check(!HarkenSearch::SetExternalAiMasterSwitch(fixtureDocument.u8string(), draft, false, storeError) &&
+                draft.enabled && !storeError.empty(),
+            "a sharing violation on the authorization file cannot report the switch closed");
+        CloseHandle(unreadable);
+        Check(ReadText(fixtureDocument) == serialized, "failed read leaves the old grant intact");
+    }
+    const HANDLE withoutDeleteShare = CreateFileW(fixtureDocument.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(withoutDeleteShare != INVALID_HANDLE_VALUE, "atomic replacement failure fixture opens");
+    if (withoutDeleteShare != INVALID_HANDLE_VALUE) {
+        auto stillEnabled = HarkenSearch::ExternalAiSettings{};
+        Check(HarkenSearch::LoadExternalAiSettings(fixtureDocument.u8string(), libraryIdText, stillEnabled,
+                  storeError) && stillEnabled.enabled,
+            "the replacement failure fixture is still readable");
+        draft = stored;
+        Check(!HarkenSearch::SetExternalAiMasterSwitch(fixtureDocument.u8string(), draft, false, storeError) &&
+                draft.enabled && !storeError.empty(),
+            "failed atomic replacement cannot report the switch closed");
+        CloseHandle(withoutDeleteShare);
+        Check(ReadText(fixtureDocument) == serialized, "failed atomic replacement does not change the old grant");
+    }
+#endif
+
+    const auto pendingDocument = failureDirectory / "authorization.json.pending";
+    fs::create_directory(pendingDocument);
+    draft = stored;
+    Check(!HarkenSearch::SetExternalAiMasterSwitch(fixtureDocument.u8string(), draft, false, storeError) &&
+            draft.enabled && !storeError.empty() && ReadText(fixtureDocument) == serialized,
+        "failed authorization staging leaves the old grant and reports failure");
+    fs::remove(pendingDocument);
+    Check(HarkenSearch::SetExternalAiMasterSwitch(fixtureDocument.u8string(), draft, false, storeError) &&
+            !draft.enabled && !ParseOk(ReadText(fixtureDocument)).enabled(),
+        "retry after the write fault is cleared persists the closed switch");
+
+    const auto mixed = HarkenSearch::ExternalAiLinkRootFor({{"E:/Synthetic/First", true}, {"D:/Synthetic/Second", true}});
+    Check(mixed.spansVolumes && mixed.path.empty(), "cross-drive directories never produce a link root");
+    const auto same = HarkenSearch::ExternalAiLinkRootFor({{"E:/Synthetic/First", true},
+        {"D:/Synthetic/Disabled", false}, {"e:/Synthetic/Second", true}});
+    Check(!same.spansVolumes && same.path == "E:\\Synthetic", "same-drive siblings share their nearest ancestor");
+    const auto drive = HarkenSearch::ExternalAiLinkRootFor({{"E:/", true}, {"e:/Synthetic/First", true}});
+    Check(!drive.spansVolumes && drive.path == "E:\\", "drive root already contains same-volume descendants");
+    const auto separate = HarkenSearch::ExternalAiLinkRootFor({{"E:/First", true}, {"E:/Second", true}});
+    Check(!separate.spansVolumes && separate.path == "E:\\", "same-volume siblings terminate at the drive root");
 
     {
         std::ofstream broken(libraryPath, std::ios::binary | std::ios::trunc);
