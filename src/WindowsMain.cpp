@@ -5955,6 +5955,14 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"scan_background_backfill_phase\":\"" + std::string(scanBackgroundBackfillPhase) + "\",";
         result += "\"scan_background_backfill_deferred_wait_ms\":" + std::to_string(state.scanBackgroundBackfillDeferredWaitMs.load(std::memory_order_acquire)) + ",";
         result += "\"scan_background_backfill_resume_threads\":" + std::to_string(state.scanBackgroundBackfillResumeThreads.load(std::memory_order_acquire)) + ",";
+        {
+            const auto backfill = state.backfillQueue.snapshot();
+            int queued = 0;
+            for (int i = 0; i < aura::kBackfillJobKindCount; ++i) queued += std::max(0, backfill.byKind[i]);
+            result += "\"backfill_queued\":" + std::to_string(queued) + ",";
+            result += "\"backfill_inflight\":" + std::to_string(std::max(0, backfill.inFlight)) + ",";
+            result += "\"backfill_pool_running\":" + std::string(aura::GlobalBackfillWorkerPool().running() ? "true" : "false") + ",";
+        }
         const ScanReadyToWorkSnapshot readyToWork = GetScanReadyToWorkSnapshotForQa(state);
         result += "\"ready_to_work_pending\":" + std::string(readyToWork.pending ? "true" : "false") + ",";
         result += "\"ready_to_work_waveforms_pending\":" + std::string(readyToWork.waveformsPending ? "true" : "false") + ",";

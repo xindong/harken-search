@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Task_BackfillRunningFmt", "type": "ui", "zh": "正在处理 %d 项", "en": "Processing %d item(s)", "ja": "%d 件を処理中"},
+    {"id": "Task_BackfillQueuedFmt", "type": "ui", "zh": "排队 %d 项", "en": "Queued: %d item(s)", "ja": "%d 件を待機中"},
     {"id": "Task_WwiseFailedFmt", "type": "ui", "zh": "%d 条失败", "en": "%d failed", "ja": "%d 件失敗"},
     {"id": "Task_WwiseTransferringFmt", "type": "ui", "zh": "传输中 %d / %d", "en": "Transferring %d / %d", "ja": "転送中 %d / %d"},
     {"id": "Task_WwiseImport", "type": "ui", "zh": "Wwise 导入", "en": "Importing to Wwise", "ja": "Wwise へインポート"},
