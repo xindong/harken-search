@@ -124,6 +124,10 @@ struct AsyncOp {
     TransferResult transferResult;
     std::atomic<int> transferDone{0};
     std::atomic<int> transferTotal{0};
+    std::atomic<bool> transferFailed{false};
+    std::atomic<bool> transferFinishedOnce{false};
+    std::atomic<int> transferFailedCount{0};
+    std::thread transferThread;   // 传输线程：shutdown 时 join，避免退出时线程还在跑
 };
 
 std::mutex g_asyncMu;
@@ -1286,12 +1290,14 @@ void handleTransfer() {
     WwiseTransferConfig transferCfg = cfg;
     waapi::WaapiClient* clientPtr = g_ps.client.get();
     g_ps.lastActionMessage = "Transfer started in background: " + std::to_string(imports.size()) + " items";
-    std::thread([transferCfg, imports = std::move(imports), clientPtr]() mutable {
+    g_async.transferThread = std::thread([transferCfg, imports = std::move(imports), clientPtr]() mutable {
         TransferResult result;
         try {
             result = executeTransfer(*clientPtr, transferCfg, imports,
                 [](int done, int total, const ItemReport&) {
-                    g_async.transferDone.store(done);
+                    // done 是「已解析条目数」，可能重复或回退，这里只允许前进。
+                    const int previous = g_async.transferDone.load();
+                    if (done > previous) g_async.transferDone.store(done);
                     g_async.transferTotal.store(total);
                 });
         } catch (const std::exception& e) {
@@ -1302,11 +1308,15 @@ void handleTransfer() {
         {
             std::lock_guard<std::mutex> lk(g_asyncMu);
             g_async.transferResult = std::move(result);
-            g_async.success = g_async.transferResult.aggregateError.empty();
+            g_async.success = g_async.transferResult.aggregateError.empty() &&
+                              g_async.transferResult.failed == 0;
+            g_async.transferFailed.store(!g_async.success);
+            g_async.transferFailedCount.store(g_async.transferResult.failed);
+            g_async.transferFinishedOnce.store(true);
             g_async.result = g_async.transferResult.aggregateError;
         }
         g_async.ready.store(true);
-    }).detach();
+    });
     return;
 }
 
@@ -1382,16 +1392,23 @@ void RenderWwiseTransferPanel() {
         drawStatChip(connected ? wz("Connected", u8"已连接") : wz("Disconnected", u8"未连接"), "",
                      connected ? connectedColor : disconnectedColor, 120.0f);
         ImGui::SameLine(0, 10.0f);
+        // 传输进行中禁止连接/断开：后台线程拿着当前 client 与目标工程，换工程会让批次写错地方。
+        const bool transferInFlight =
+            g_async.active.load() && g_async.kind == AsyncKind::Transfer;
         if (!connected) {
-            if (aura::ui::Button(wz("Connect", u8"连接"),
-                    aura::ui::ButtonOptions{aura::ui::ButtonVariant::PrimaryTransfer,
-                                            aura::ui::ButtonSize::Md})) {
+            aura::ui::ButtonOptions connectOptions;
+            connectOptions.variant = aura::ui::ButtonVariant::PrimaryTransfer;
+            connectOptions.size = aura::ui::ButtonSize::Md;
+            connectOptions.disabled = transferInFlight;
+            if (aura::ui::Button(wz("Connect", u8"连接"), connectOptions)) {
                 handleConnect();
             }
         } else {
-            if (aura::ui::Button(wz("Disconnect", u8"断开"),
-                    aura::ui::ButtonOptions{aura::ui::ButtonVariant::Secondary,
-                                            aura::ui::ButtonSize::Md})) {
+            aura::ui::ButtonOptions disconnectOptions;
+            disconnectOptions.variant = aura::ui::ButtonVariant::Secondary;
+            disconnectOptions.size = aura::ui::ButtonSize::Md;
+            disconnectOptions.disabled = transferInFlight;
+            if (aura::ui::Button(wz("Disconnect", u8"断开"), disconnectOptions)) {
                 handleDisconnect();
             }
         }
@@ -2079,11 +2096,12 @@ void RenderWwiseTransferPanel() {
 
             const bool transferring =
                 g_async.active.load() && g_async.kind == AsyncKind::Transfer;
+            // 传输期间禁止连接/断开，避免后台线程把工程 A 的批次送进工程 B。
             char transferLabel[96];
             if (transferring) {
                 const int done = g_async.transferDone.load();
                 const int total = g_async.transferTotal.load();
-                std::snprintf(transferLabel, sizeof(transferLabel), u8"传输中 %d / %d", done, total);
+                std::snprintf(transferLabel, sizeof(transferLabel), L(Task_WwiseTransferringFmt), done, total);
             } else {
                 std::snprintf(transferLabel, sizeof(transferLabel), "%s", wz("Transfer to Wwise", u8"传输到 Wwise"));
             }
@@ -2272,10 +2290,15 @@ WwiseTransferProgress GetWwiseTransferProgress() {
         snap.done = g_async.transferDone.load();
         snap.total = g_async.transferTotal.load();
     }
+    snap.finished = !isTransfer && g_async.transferFinishedOnce.load();
+    snap.failed = g_async.transferFailed.load();
+    snap.failedCount = g_async.transferFailedCount.load();
     return snap;
 }
 
 void ShutdownWwiseTransferPanel() {
+    // 先等后台传输结束，避免退出时线程还在用 clientPtr / 写全局状态。
+    if (g_async.transferThread.joinable()) g_async.transferThread.join();
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_ps.client) g_ps.client->disconnect();
     g_ps.client.reset();

@@ -30659,8 +30659,18 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
                 state.wwiseTaskDoneAt = now;
             }
             if (state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
-                rows.push_back({LibraryTaskKind::Wwise, Phase::Succeeded, L(Task_WwiseImport),
-                                L(Task_Done), -1.0f});
+                // 失败（聚合错误或条目失败）不能报成完成。
+                const bool wwiseFailed = wwise.failed;
+                char failedDetail[64];
+                if (wwiseFailed && wwise.failedCount > 0) {
+                    std::snprintf(failedDetail, sizeof(failedDetail), L(Task_WwiseFailedFmt), wwise.failedCount);
+                } else {
+                    std::snprintf(failedDetail, sizeof(failedDetail), "%s", L(Task_Failed));
+                }
+                rows.push_back({LibraryTaskKind::Wwise,
+                                wwiseFailed ? Phase::Failed : Phase::Succeeded,
+                                L(Task_WwiseImport),
+                                wwiseFailed ? failedDetail : L(Task_Done), -1.0f});
             }
         }
     }

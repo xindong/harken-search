@@ -41,6 +41,9 @@ struct WwiseTransferProgress {
     bool active = false;
     int done = 0;
     int total = 0;
+    bool finished = false;   // 至少完成过一次传输（结果仍在面板里）
+    bool failed = false;     // 最近一次传输有失败（聚合错误或条目失败）
+    int failedCount = 0;
 };
 WwiseTransferProgress GetWwiseTransferProgress();
 
