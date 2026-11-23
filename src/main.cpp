@@ -328,6 +328,7 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "ResultActionMenu.h"
 #include "ExternalAiAuthorizationStore.h"
 #include "ExternalAiBridgeServer.h"
+#include "ExternalAiClientConfigLocation.h"
 #include "ExternalAiPlaylistService.h"
 #include "SendToTargetSurfaceModel.h"
 #include "HostSendRuntime.h"

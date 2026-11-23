@@ -1,7 +1,7 @@
 import hashlib
 import json
 import os
-from contextlib import closing
+from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 from queue import Queue
 import sqlite3
@@ -13,6 +13,9 @@ import unittest
 
 
 EXECUTABLE = Path(sys.argv.pop(1)).resolve()
+LINK_FIXTURE = None
+if len(sys.argv) > 1 and sys.argv[1].startswith("--link-fixture="):
+    LINK_FIXTURE = Path(sys.argv.pop(1).split("=", 1)[1]).resolve()
 VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 SEARCH = "harken_search_audio"
 FOLDERS = "harken_find_folders"
@@ -155,6 +158,100 @@ class ExternalAiMcpTest(unittest.TestCase):
         replies = self.exchange(initialize(version), request("notifications/initialized"), *messages, flags=flags)
         self.assertEqual(replies.pop(0)["id"], "hello")
         return replies
+
+    @contextmanager
+    def live_session(self, flags):
+        with subprocess.Popen(self.command(flags), cwd=self.fixture, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+            received = Queue()
+
+            def pump():
+                for line in process.stdout:
+                    received.put(line)
+                received.put(b"")
+
+            reader = Thread(target=pump, daemon=True)
+            reader.start()
+
+            def exchange(message):
+                process.stdin.write(wire_line(message))
+                process.stdin.flush()
+                reply = received.get(timeout=5)
+                self.assertTrue(reply, process.stderr.read().decode("utf-8") if not reply else "")
+                self.assert_no_echo(reply, b"")
+                decoded = json.loads(reply)
+                self.assertEqual(decoded["id"], message["id"])
+                return decoded
+
+            try:
+                self.assertIn("result", exchange(initialize()))
+                process.stdin.write(wire_line(request("notifications/initialized")))
+                process.stdin.flush()
+                yield exchange
+            finally:
+                process.stdin.close()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                reader.join(timeout=5)
+
+    def configure_client(self, area, client, action):
+        config = area / ("mcp.json" if client == "cindy" else "config.toml")
+        spec = area / "link-fixture.json"
+        spec.write_text(json.dumps({
+            "client": client, "config": str(config), "executable": str(EXECUTABLE),
+            "library": LIBRARY_ID, "database": str(self.database), "root": str(self.root),
+            "settings": str(area / "authorization.json"),
+        }), encoding="utf-8")
+        subprocess.run([str(LINK_FIXTURE), "--fixture", str(spec), action], cwd=area, check=True, timeout=5)
+        if action == "unlink":
+            return None
+        text = config.read_text(encoding="utf-8")
+        if client == "cindy":
+            return json.loads(text)["mcpServers"]["harken"]["args"]
+        return json.loads(next(line.split("=", 1)[1] for line in text.splitlines() if line.startswith("args = ")))
+
+    @unittest.skipIf(LINK_FIXTURE is None, "requires the isolated client-link fixture executable")
+    def test_disconnect_revokes_only_that_clients_live_session(self):
+        with tempfile.TemporaryDirectory(dir=self.fixture) as scratch, ExitStack() as sessions:
+            area = Path(scratch)
+            write_authorization(area / "authorization.json", self.root)
+            cindy = sessions.enter_context(self.live_session(self.configure_client(area, "cindy", "link")))
+            codex = sessions.enter_context(self.live_session(self.configure_client(area, "codex", "link")))
+            query = call(SEARCH, {"query": "wind", "limit": 1}, "search")
+            self.assertTrue(self.tool_payload(cindy(query))["results"])
+            self.assertTrue(self.tool_payload(codex(query))["results"])
+
+            self.configure_client(area, "cindy", "unlink")
+            denied = cindy(query)
+            self.assertIn("error", denied, "disconnect must deny the previously authorized live connector")
+            self.assertIn("error", cindy(request("tools/list", "list")))
+            self.assertTrue(self.tool_payload(codex(query))["results"])
+
+    @unittest.skipIf(LINK_FIXTURE is None, "requires the isolated client-link fixture executable")
+    def test_reconnect_cannot_resurrect_an_old_session_even_without_an_interim_call(self):
+        with tempfile.TemporaryDirectory(dir=self.fixture) as scratch, ExitStack() as sessions:
+            area = Path(scratch)
+            write_authorization(area / "authorization.json", self.root)
+            old_flags = self.configure_client(area, "codex", "link")
+            old = sessions.enter_context(self.live_session(old_flags))
+            query = call(SEARCH, {"query": "wind", "limit": 1}, "search")
+            self.assertTrue(self.tool_payload(old(query))["results"])
+
+            original = (area / "config.toml").read_bytes()
+            self.configure_client(area, "codex", "unlink")
+            new_flags = self.configure_client(area, "codex", "link")
+            fresh = sessions.enter_context(self.live_session(new_flags))
+            self.assertTrue(self.tool_payload(fresh(query))["results"])
+            self.assertIn("error", old(query), "relink must not reauthorize the old connector")
+            self.assertNotEqual(self.launch([initialize()], old_flags).returncode, 0)
+
+            (area / "config.toml").write_bytes(original)
+            self.assertIn("error", fresh(query), "restoring a stale client entry must not match the current link")
+            self.assertIn("error", old(query), "restoring stale config bytes must not reactivate an old link")
+            self.assertNotEqual(self.launch([initialize()], old_flags).returncode, 0)
 
     def tool_payload(self, reply, structured=True):
         result = reply["result"]

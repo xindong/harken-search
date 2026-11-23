@@ -160,6 +160,10 @@ ExternalAiPlaylistWriteReceipt ApplyExternalAiPlaylistWrite(
     if (!authorization.enabled()) {
         return Refusal("not_authorized", "switch_off");
     }
+    if (request.clientLink && (request.clientLink->libraryId != request.libraryId ||
+        !ExternalAiClientLinkAuthorized(*request.clientLink))) {
+        return Refusal("not_authorized", "client_connection_revoked");
+    }
     if (request.requestId.empty() || request.requestId.size() > 128) {
         return Refusal("invalid", "request_id");
     }

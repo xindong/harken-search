@@ -1,4 +1,5 @@
 #include "ExternalAiClientLink.h"
+#include "ExternalAiClientConfigLocation.h"
 
 #include "../thirdparty/nlohmann_json.hpp"
 
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -112,6 +114,9 @@ void TestCindyJsonMerge(const fs::path& root, const ExternalAiLinkTarget& target
     Check(HarkenSearch::UnlinkExternalAiClient(ExternalAiClient::Cindy, config.u8string(), status),
           "cindy: second unlink is a no-op success");
     Check(ReadAll(config) == beforeSecond, "cindy: second unlink keeps the file unchanged");
+    Check(HarkenSearch::LinkExternalAiClient(ExternalAiClient::Cindy, config.u8string(), target, status),
+          "cindy: reconnect succeeds");
+    Check(ReadAll(config) != linked, "cindy: reconnect issues a different launch authorization");
 }
 
 void TestCindyCreatesFile(const fs::path& root, const ExternalAiLinkTarget& target)
@@ -184,22 +189,9 @@ void TestCodexTomlMerge(const fs::path& root, const ExternalAiLinkTarget& target
     Check(HarkenSearch::UnlinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), status),
           "codex: second unlink is a no-op success");
     Check(ReadAll(config) == beforeSecond, "codex: second unlink keeps the file unchanged");
-}
-
-void TestPathsAndDetection(const fs::path& root)
-{
-    const std::string home = root.u8string();
-    const std::string cindy = HarkenSearch::ExternalAiClientConfigPath(ExternalAiClient::Cindy, home);
-    const std::string codex = HarkenSearch::ExternalAiClientConfigPath(ExternalAiClient::Codex, home);
-    Check(Contains(cindy, ".pi\\agent\\mcp.json"), "path: cindy uses pi mcp.json");
-    Check(Contains(codex, ".codex\\config.toml"), "path: codex uses config.toml");
-    Check(HarkenSearch::ExternalAiClientConfigPath(ExternalAiClient::Cindy, "").empty(),
-          "path: empty home yields no path");
-    Check(!HarkenSearch::ExternalAiClientDetected(ExternalAiClient::Cindy, root.u8string()),
-          "detect: missing .pi means not detected");
-    fs::create_directories(root / ".pi");
-    Check(HarkenSearch::ExternalAiClientDetected(ExternalAiClient::Cindy, root.u8string()),
-          "detect: existing .pi means detected");
+    Check(HarkenSearch::LinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), target, status),
+          "codex: reconnect succeeds");
+    Check(ReadAll(config) != linked, "codex: reconnect issues a different launch authorization");
 }
 
 void TestCommandLine(const ExternalAiLinkTarget& target)
@@ -212,10 +204,145 @@ void TestCommandLine(const ExternalAiLinkTarget& target)
     Check(Contains(command, target.executablePath), "command: points at the connector executable");
 }
 
+void TestConfigLocations(const fs::path& root)
+{
+    const auto home = root / "locations" / "home";
+    const auto appData = home / "AppData" / "Roaming";
+    const auto desktop = appData / "Cindy" / "codex-home";
+    const auto standalone = home / ".codex";
+    const auto overrideHome = home / "cli-override";
+    const auto unrelated = appData / "Cindy" / "not-the-codex-home";
+    fs::create_directories(desktop);
+    fs::create_directories(standalone);
+    fs::create_directories(overrideHome);
+    fs::create_directories(unrelated);
+    fs::create_directories(home / ".pi" / "agent");
+    HarkenSearch::ExternalAiClientConfigInputs inputs{home.u8string(), appData.u8string()};
+    const auto resolve = [&](ExternalAiClient client) {
+        return HarkenSearch::ResolveExternalAiClientConfigLocation(client, inputs);
+    };
+    const auto isConfig = [](const HarkenSearch::ExternalAiClientConfigLocation& location, const fs::path& directory) {
+        return location.detected && fs::u8path(location.configPath) == fs::canonical(directory) / "config.toml";
+    };
+    Check(isConfig(resolve(ExternalAiClient::Cindy), desktop), "location: Cindy uses its own Codex home");
+    Check(isConfig(resolve(ExternalAiClient::Codex), standalone), "location: standalone Codex uses its default home");
+    inputs.codexHome = desktop.u8string();
+    Check(isConfig(resolve(ExternalAiClient::Cindy), desktop) &&
+          isConfig(resolve(ExternalAiClient::Codex), standalone), "location: inherited Cindy CODEX_HOME is not the standalone config");
+    inputs.codexHome = overrideHome.u8string();
+    Check(isConfig(resolve(ExternalAiClient::Cindy), desktop) &&
+          isConfig(resolve(ExternalAiClient::Codex), overrideHome), "location: a standalone override cannot redirect Cindy");
+    inputs.codexHome = unrelated.u8string();
+    Check(isConfig(resolve(ExternalAiClient::Cindy), desktop), "location: arbitrary Cindy subdirectory is not a managed Codex home");
+    inputs.codexHome = (home / "missing-override").u8string();
+    Check(resolve(ExternalAiClient::Codex).configPath.empty(), "location: invalid explicit override does not fall back");
+    inputs.appData = (home / "without-cindy").u8string();
+    Check(!resolve(ExternalAiClient::Cindy).detected, "location: standalone Pi is not Cindy desktop");
+    inputs.isolated = true;
+    inputs.isolationRoot = (root / "isolation").u8string();
+    const auto isolatedProfile = fs::u8path(inputs.isolationRoot) / "profile";
+    const auto isolatedHome = isolatedProfile / "home";
+    const auto isolatedDesktop = isolatedProfile / "Roaming" / "Cindy" / "codex-home";
+    fs::create_directories(isolatedHome / ".codex");
+    fs::create_directories(isolatedHome / ".pi" / "agent");
+    inputs.appData = appData.u8string();
+    inputs.codexHome = overrideHome.u8string();
+    Check(resolve(ExternalAiClient::Cindy).configPath.empty(), "location: isolated standalone Pi is not Cindy desktop");
+    fs::create_directories(isolatedDesktop);
+    Check(isConfig(resolve(ExternalAiClient::Cindy), isolatedDesktop) &&
+          isConfig(resolve(ExternalAiClient::Codex), isolatedHome / ".codex"),
+          "location: isolation only selects explicit fixture configs");
+}
+
+void TestDisconnectWithoutCurrentTarget(const fs::path& root, const ExternalAiLinkTarget& target)
+{
+    const auto config = root / "stale-draft" / "config.toml";
+    ExternalAiLinkStatus status;
+    Check(HarkenSearch::LinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), target, status),
+          "stale: initial link succeeds");
+    auto original = target;
+    original.clientConfigPath = config.u8string();
+    original.clientLinkId = ReadAll(fs::u8path(original.clientConfigPath + ".harken-link"));
+    Check(HarkenSearch::ExternalAiClientLinkAuthorized(original), "stale: initial launch authorization is valid");
+    auto currentDraft = target;
+    currentDraft.rootPath.clear();
+    Check(HarkenSearch::QueryExternalAiClientLink(ExternalAiClient::Codex, config.u8string(), currentDraft).canDisconnect,
+          "stale: clearing the draft root does not hide Disconnect");
+    currentDraft.libraryId = "lib-switched";
+    currentDraft.databasePath = (root / "new.db").u8string();
+    currentDraft.settingsPath = (root / "new.json").u8string();
+    Check(HarkenSearch::QueryExternalAiClientLink(ExternalAiClient::Codex, config.u8string(), currentDraft).canDisconnect,
+          "stale: switching libraries does not hide Disconnect");
+    Check(HarkenSearch::UnlinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), status) &&
+          !HarkenSearch::ExternalAiClientLinkAuthorized(original), "stale: disconnect invalidates original launch authorization");
+}
+
+void TestForeignEntriesAreUntouched(const fs::path& root, const ExternalAiLinkTarget& target)
+{
+    for (const auto client : {ExternalAiClient::Cindy, ExternalAiClient::Codex}) {
+        const auto config = root / "foreign" / (client == ExternalAiClient::Cindy ? "mcp.json" : "config.toml");
+        const auto foreign = client == ExternalAiClient::Cindy
+            ? "{\"mcpServers\":{\"harken\":{\"command\":\"other.exe\",\"args\":[]}}}\n"
+            : "[mcp_servers.harken]\r\ncommand = \"other.exe\"\r\nargs = []\r\n";
+        WriteAll(config, foreign);
+        ExternalAiLinkStatus status;
+        Check(!HarkenSearch::QueryExternalAiClientLink(client, config.u8string(), target).canDisconnect,
+              "foreign: a name collision is not a Harken connection");
+        Check(!HarkenSearch::LinkExternalAiClient(client, config.u8string(), target, status) && ReadAll(config) == foreign,
+              "foreign: connect refuses to overwrite another program using the harken key");
+        HarkenSearch::UnlinkExternalAiClient(client, config.u8string(), status);
+        Check(ReadAll(config) == foreign, "foreign: disconnect never removes another program's entry");
+    }
+}
+
+void TestIndependentTomlClients(const fs::path& root, const ExternalAiLinkTarget& target)
+{
+    const auto cindyConfig = root / "dual" / "Cindy" / "codex-home" / "config.toml";
+    const auto codexConfig = root / "dual" / ".codex" / "config.toml";
+    const auto bind = [&](const fs::path& config) {
+        ExternalAiLinkStatus status;
+        Check(HarkenSearch::LinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), target, status),
+              "dual: TOML link succeeds");
+        auto launch = target;
+        launch.clientConfigPath = config.u8string();
+        launch.clientLinkId = ReadAll(fs::u8path(launch.clientConfigPath + ".harken-link"));
+        return launch;
+    };
+    const auto cindy = bind(cindyConfig);
+    const auto codex = bind(codexConfig);
+    Check(HarkenSearch::ExternalAiClientLinkAuthorized(cindy) &&
+          HarkenSearch::ExternalAiClientLinkAuthorized(codex), "dual: both original TOML grants match");
+    auto wrongLibrary = cindy;
+    wrongLibrary.libraryId = "different-library";
+    Check(!HarkenSearch::ExternalAiClientLinkAuthorized(wrongLibrary), "dual: a marker is not transferable to another library");
+    ExternalAiLinkStatus status;
+    Check(HarkenSearch::UnlinkExternalAiClient(ExternalAiClient::Codex, cindyConfig.u8string(), status) &&
+          status.revoked && !HarkenSearch::ExternalAiClientLinkAuthorized(cindy) &&
+          HarkenSearch::ExternalAiClientLinkAuthorized(codex), "dual: revoking Cindy does not revoke standalone Codex");
+}
+
+int RunFixture(const fs::path& fixture, std::string_view action)
+{
+    const auto input = nlohmann::json::parse(ReadAll(fixture));
+    const auto client = input.at("client") == "cindy" ? ExternalAiClient::Cindy : ExternalAiClient::Codex;
+    const auto config = input.at("config").get<std::string>();
+    const ExternalAiLinkTarget target{input.at("executable"), input.at("library"), input.at("database"),
+        input.at("root"), input.at("settings")};
+    ExternalAiLinkStatus status;
+    const bool ok = action == "link"
+        ? HarkenSearch::LinkExternalAiClient(client, config, target, status)
+        : HarkenSearch::UnlinkExternalAiClient(client, config, status);
+    if (!ok) std::cerr << status.detail << '\n';
+    return ok ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string_view(argv[1]) == "--fixture") {
+        return RunFixture(fs::u8path(argv[2]), argv[3]);
+    }
     const fs::path root = fs::path(argc > 1 ? argv[1] : ".") / "external-ai-client-link";
     std::error_code code;
     fs::remove_all(root, code);
@@ -223,12 +350,15 @@ int main(int argc, char** argv)
 
     const ExternalAiLinkTarget target = Target(root / "app" / "HarkenExternalAiMcp.exe");
 
-    TestPathsAndDetection(root);
+    TestConfigLocations(root);
     TestCommandLine(target);
     TestCindyJsonMerge(root, target);
     TestCindyCreatesFile(root, target);
     TestCindyRejectsBrokenJson(root, target);
     TestCodexTomlMerge(root, target);
+    TestDisconnectWithoutCurrentTarget(root, target);
+    TestForeignEntriesAreUntouched(root, target);
+    TestIndependentTomlClients(root, target);
 
     std::cout << (failures == 0 ? "ALL PASS" : "FAILURES") << ": " << failures << '\n';
     return failures == 0 ? 0 : 1;

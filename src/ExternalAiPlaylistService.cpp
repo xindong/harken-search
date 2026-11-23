@@ -208,6 +208,27 @@ try {
     write.requestId = request["requestId"].get<std::string>();
     write.libraryId = request["libraryId"].get<std::string>();
     write.playlistPath = request["playlistPath"].get<std::string>();
+    if (const auto clientLink = request.find("clientLink"); clientLink != request.end()) {
+        if (!clientLink->is_object()) return refuse("clientLink");
+        for (const char* field : {"executable", "database", "root", "config", "id"}) {
+            if (!clientLink->contains(field) || !(*clientLink)[field].is_string()) {
+                return refuse("clientLink");
+            }
+        }
+        const auto& config = (*clientLink)["config"].get_ref<const std::string&>();
+        const auto configPath = fs::u8path(config);
+        if (!configPath.is_absolute()) return refuse("clientLink");
+#ifdef _WIN32
+        if (configPath.root_name().native().size() != 2 || configPath.root_name().native()[1] != L':') {
+            return refuse("clientLink");
+        }
+#endif
+        write.clientLink = ExternalAiLinkTarget{
+            (*clientLink)["executable"].get<std::string>(), write.libraryId,
+            (*clientLink)["database"].get<std::string>(), (*clientLink)["root"].get<std::string>(),
+            authorizationPath, config, (*clientLink)["id"].get<std::string>(),
+        };
+    }
     if (request.contains("items")) {
         if (!request["items"].is_array()) {
             return refuse("items");
