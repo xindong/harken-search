@@ -7402,18 +7402,26 @@ static bool StartSingleChannelExport(AppState& state, const AudioRecord& record,
         ? PathToUtf8Main(Utf8ToPathMain(record.filePath).filename())
         : record.fileName;
     job.channelLabel = label;
+    job.progress = std::make_shared<AppState::ChannelExportProgress>();
+    const auto jobProgress = job.progress;
     job.future = std::async(std::launch::async,
         [sourcePath = record.filePath,
          sourceFileName = job.sourceName,
          destDir,
          channelIndex,
-         totalChannels]() mutable {
+         totalChannels,
+         jobProgress]() mutable {
             const auto exported = aura::audio_export::RunSingleChannelExport({
                 std::move(sourcePath),
                 std::move(sourceFileName),
                 std::move(destDir),
                 channelIndex,
                 totalChannels,
+                [jobProgress](std::uint64_t written, std::uint64_t total) {
+                    if (!jobProgress) return;
+                    jobProgress->writtenFrames.store(written, std::memory_order_relaxed);
+                    jobProgress->totalFrames.store(total, std::memory_order_relaxed);
+                },
             });
             AppState::ChannelExportJobResult result;
             result.ok = exported.ok;
@@ -30487,7 +30495,7 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
 }
 
-enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update };
+enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update, Export };
 
 struct LibraryTaskRow {
     LibraryTaskKind kind;
@@ -30627,6 +30635,46 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
     pushDerivedRow(LibraryTaskKind::Backfill, backfillActive, pendingAssets, 0,
                    L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
                    &state.backfillTaskLastPhase);
+
+    // 单通道导出：聚合进行中作业的写样本进度。
+    {
+        uint64_t exportDone = 0;
+        uint64_t exportTotal = 0;
+        int exportJobs = 0;
+        for (const auto& job : state.channelExportJobs) {
+            if (!job.progress) continue;
+            exportDone += job.progress->writtenFrames.load(std::memory_order_relaxed);
+            exportTotal += job.progress->totalFrames.load(std::memory_order_relaxed);
+            ++exportJobs;
+        }
+        const bool exportActive = exportJobs > 0 && !state.channelExportJobs.empty();
+        if (exportActive) {
+            state.exportTaskWasActive = true;
+            state.exportTaskDoneAt = 0.0;
+            std::string detail = std::to_string(exportJobs) + " 个通道";
+            float fraction = -1.0f;
+            if (exportTotal > 0) {
+                char buffer[64];
+                std::snprintf(buffer, sizeof(buffer), "%d%%",
+                              static_cast<int>(100.0 * static_cast<double>(exportDone) /
+                                               static_cast<double>(exportTotal) + 0.5));
+                detail = std::to_string(exportJobs) + " 个通道  " + buffer;
+                fraction = static_cast<float>(static_cast<double>(exportDone) /
+                                              static_cast<double>(exportTotal));
+            }
+            rows.push_back({LibraryTaskKind::Export, Phase::Running, L(Task_ExportAudio),
+                            std::move(detail), fraction});
+        } else {
+            if (state.exportTaskWasActive) {
+                state.exportTaskWasActive = false;
+                state.exportTaskDoneAt = now;
+            }
+            if (state.exportTaskDoneAt > 0.0 && now - state.exportTaskDoneAt < 3.0) {
+                rows.push_back({LibraryTaskKind::Export, Phase::Succeeded, L(Task_ExportAudio),
+                                L(Task_Done), -1.0f});
+            }
+        }
+    }
 
     // 应用更新下载：读取更新模块的字节计数，更新中心窗口可见时不重复显示。
     {
@@ -30803,7 +30851,8 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                 row.kind == LibraryTaskKind::Similarity ? "task.toast.similarity" :
                 row.kind == LibraryTaskKind::Waveform ? "task.toast.waveform" :
                 row.kind == LibraryTaskKind::Cover ? "task.toast.cover" :
-                row.kind == LibraryTaskKind::Update ? "task.toast.update" : "task.toast.backfill");
+                row.kind == LibraryTaskKind::Update ? "task.toast.update" :
+                row.kind == LibraryTaskKind::Export ? "task.toast.export" : "task.toast.backfill");
             ImGui::PopID();
         }
     }
