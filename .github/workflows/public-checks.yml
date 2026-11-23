@@ -61,7 +61,7 @@ jobs:
           TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput TestSidebarMetadataPicker
           TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
           TestAITaskQueueStop TestAITaskQueueStopLegacyWindow TestToolbarSearchControls
-          HarkenExternalAiMcp TestExternalAiLibrary
+          HarkenExternalAiMcp TestExternalAiLibrary TestExternalAiClientLink
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
