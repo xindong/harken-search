@@ -1,5 +1,6 @@
 #include "ExternalAiAuthorizationStore.h"
 
+#include "FolderTreePathModePolicy.h"
 #include "platform/filesystem.h"
 
 #include <algorithm>
@@ -201,6 +202,7 @@ std::string ExternalAiLibraryIdForPath(const std::string& canonicalDatabasePathU
 bool LoadExternalAiSettings(const std::string& path, const std::string& libraryId, ExternalAiSettings& out,
     std::string& error, bool* existed)
 {
+    error.clear();
     if (existed) {
         *existed = false;
     }
@@ -210,13 +212,38 @@ bool LoadExternalAiSettings(const std::string& path, const std::string& libraryI
     }
     ExternalAiSettings defaults;
     defaults.libraryId = libraryId;
-    std::string document;
-    if (!Platform::FileSystem::ReadFileText(path, document)) {
+    const auto source = fs::u8path(path);
+    if (!source.is_absolute() || source.filename().empty()) {
+        out = std::move(defaults);
+        error = "authorization document path must be an absolute file path";
+        return false;
+    }
+    std::error_code statusError;
+    const auto entry = fs::symlink_status(source, statusError);
+    if (entry.type() == fs::file_type::not_found &&
+        (!statusError || statusError == std::errc::no_such_file_or_directory)) {
         out = std::move(defaults);
         return true;
     }
     if (existed) {
-        *existed = true;
+        *existed = fs::exists(entry);
+    }
+    if (statusError || !fs::is_regular_file(source, statusError)) {
+        out = std::move(defaults);
+        error = "authorization document is not a readable file";
+        return false;
+    }
+    std::ifstream input(source, std::ios::binary);
+    std::string document;
+    char buffer[4096];
+    while (input) {
+        input.read(buffer, sizeof(buffer));
+        document.append(buffer, static_cast<std::size_t>(input.gcount()));
+    }
+    if (input.bad() || !input.eof()) {
+        out = std::move(defaults);
+        error = "authorization document could not be read";
+        return false;
     }
     if (!ParseExternalAiSettings(document, libraryId, out, error)) {
         out = std::move(defaults);
@@ -282,7 +309,7 @@ bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& s
             return false;
         }
         stream.write(document.data(), static_cast<std::streamsize>(document.size()));
-        stream.flush();
+        stream.close();
         written = stream.good() ? document.size() : 0;
     }
     if (written != document.size()) {
@@ -296,6 +323,52 @@ bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& s
         return false;
     }
     return true;
+}
+
+bool SetExternalAiMasterSwitch(const std::string& path, ExternalAiSettings& draft, bool enabled, std::string& error)
+{
+    error.clear();
+    if (!enabled) {
+        ExternalAiSettings saved;
+        if (!LoadExternalAiSettings(path, draft.libraryId, saved, error)) return false;
+        if (saved.enabled) {
+            saved.enabled = false;
+            if (!SaveExternalAiSettings(path, saved, error)) return false;
+        }
+    }
+    draft.enabled = enabled;
+    return true;
+}
+
+ExternalAiLinkRoot ExternalAiLinkRootFor(const std::vector<ExternalAiRoot>& roots)
+{
+    using namespace aura::folder_tree;
+    ExternalAiLinkRoot result;
+    std::string volume;
+    for (const auto& root : roots) {
+        if (!root.enabled) continue;
+        const auto candidate = NormalizeFolderPathPreserved(root.path);
+        const auto normalized = NormalizeFolderPathForCompare(candidate);
+        if (normalized.size() < 3 || normalized[0] < 'a' || normalized[0] > 'z' ||
+            normalized[1] != ':' || normalized[2] != '\\') {
+            return {};
+        }
+        const auto candidateVolume = normalized.substr(0, 2);
+        if (volume.empty()) {
+            volume = candidateVolume;
+            result.path = candidate;
+        } else if (volume != candidateVolume) {
+            return {{}, true};
+        } else {
+            while (result.path.size() > 3 &&
+                   !PathIsInsideRoot(normalized, NormalizeFolderPathForCompare(result.path))) {
+                const auto parent = result.path.find_last_of('\\');
+                if (parent == std::string::npos) return {};
+                result.path.resize(std::max<std::size_t>(parent, 3));
+            }
+        }
+    }
+    return result;
 }
 
 }  // namespace HarkenSearch

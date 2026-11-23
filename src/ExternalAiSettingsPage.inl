@@ -84,41 +84,31 @@
         linkTarget.executablePath=GetExeDirUtf8()+"\\HarkenExternalAiMcp.exe";
         linkTarget.libraryId=page.libraryId;
         linkTarget.databasePath=databasePath;
-        linkTarget.rootPath=[&]() {
-            std::string commonPath;
-            for (const auto& root : page.settings.roots) {
-                if (!root.enabled) continue;
-                const std::string preserved=aura::folder_tree::NormalizeFolderPathPreserved(root.path);
-                if (commonPath.empty()) {
-                    commonPath=preserved;
-                    continue;
-                }
-                std::string commonNorm=aura::folder_tree::NormalizeFolderPathForCompare(commonPath);
-                const std::string candidateNorm=aura::folder_tree::NormalizeFolderPathForCompare(preserved);
-                if (aura::folder_tree::PathIsInsideRoot(candidateNorm,commonNorm)) continue;
-                if (aura::folder_tree::PathIsInsideRoot(commonNorm,candidateNorm)) {
-                    commonPath=preserved;
-                    continue;
-                }
-                while (!commonPath.empty() && !aura::folder_tree::PathIsInsideRoot(candidateNorm,commonNorm)) {
-                    const auto cut=commonPath.find_last_of("\\/");
-                    if (cut==std::string::npos || cut<2) {
-                        commonPath.clear();
-                        break;
-                    }
-                    commonPath.erase(cut);
-                    if (commonPath.size()==2) commonPath.push_back('\\');
-                    commonNorm=aura::folder_tree::NormalizeFolderPathForCompare(commonPath);
-                }
-            }
-            return commonPath;
-        }();
+        const auto linkRoot=HarkenSearch::ExternalAiLinkRootFor(page.settings.roots);
+        linkTarget.rootPath=linkRoot.path;
         linkTarget.settingsPath=page.documentPath;
         const float rowRight=ImGui::GetWindowContentRegionMax().x;
         // 所有右侧控件共用同一条右边缘：内缩 12px，文字先量宽再定位。
         const float edgeRight=rowRight-12.f;
         auto placeRight=[&](float width) { ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-width)); };
-        auto sectionHeading=[&](const char* number,const char* title,const char* meta) {
+        const ImVec2 framePadding=ImGui::GetStyle().FramePadding;
+        auto smallActionWidth=[&](const char* label) {
+            return ImGui::CalcTextSize(label,nullptr,true).x+2.f*framePadding.x;
+        };
+        auto fittedButtonPadding=[&](const char* label,const ImVec2& size) {
+            const ImVec2 textSize=ImGui::CalcTextSize(label,nullptr,true);
+            return ImVec2(std::min(framePadding.x,std::max(0.f,(size.x-textSize.x)*.5f)),
+                          std::min(framePadding.y,std::max(0.f,(size.y-textSize.y)*.5f)));
+        };
+        auto itemCenterY=[]() {
+            return (ImGui::GetItemRectMin().y+ImGui::GetItemRectMax().y)*.5f;
+        };
+        auto placeCenteredY=[](float centerY,float height) {
+            ImVec2 position=ImGui::GetCursorScreenPos();
+            position.y=centerY-height*.5f;
+            ImGui::SetCursorScreenPos(position);
+        };
+        auto sectionHeading=[&](const char* number,const char* title,const char* meta,bool showSeparator=true) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8.f,4.f));
             ImGui::AlignTextToFramePadding();
             ImGui::TextColored(theme.controlAccent,"%s",number);
@@ -132,14 +122,20 @@
                 ImGui::TextDisabled("%s",meta);
             }
             ImGui::PopStyleVar();
-            ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
-            ImGui::Separator();
-            ImGui::PopStyleColor();
+            if (showSeparator) {
+                ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
+                ImGui::Separator();
+                ImGui::PopStyleColor();
+            }
         };
-        auto copyable=[&](const char* label,const std::string& value) {
+        auto copyable=[&](const char* label,const std::string& value,const char* copyId) {
+            const char* copyLabel=L(AI_CopyMenu);
             ImGui::TextDisabled("%s",label);
-            ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-64.f));
-            if (aura::ui::SmallActionButton(L(AI_CopyMenu))) ImGui::SetClipboardText(value.c_str());
+            placeRight(smallActionWidth(copyLabel));
+            ImGui::PushID(copyId);
+            if (aura::ui::SmallActionButton(copyLabel)) ImGui::SetClipboardText(value.c_str());
+            su::Observe(copyId);
+            ImGui::PopID();
             ImGui::TextWrapped("%s",value.c_str());
         };
 
@@ -150,9 +146,9 @@
             ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
         {
             const char* stateText=page.settings.enabled?L(ExtAi_StateOn):L(ExtAi_StateOff);
-            const float switchWidth=44.f;
+            const float switchSlotWidth=44.f;
             const float clusterWidth=ImGui::CalcTextSize(L(ExtAi_Enabled)).x+8.f+
-                ImGui::CalcTextSize(stateText).x+10.f+switchWidth;
+                ImGui::CalcTextSize(stateText).x+10.f+switchSlotWidth;
             ImGui::SetCursorPosY(ImGui::GetCursorPosY()+8.f);
             ImGui::SetCursorPosX(12.f);
             ImGui::AlignTextToFramePadding();
@@ -165,9 +161,25 @@
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%s",stateText);
-            ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-24.f-switchWidth));
+            su::Observe("ext-ai-master-state");
+            ImGui::SameLine(std::max(ImGui::GetCursorPosX(),edgeRight-24.f-switchSlotWidth));
+            placeCenteredY(ImGui::GetWindowPos().y+ImGui::GetWindowHeight()*.5f,18.f);
             bool enabled=page.settings.enabled;
-            if (aura::ui::Toggle("##ext-ai-enabled",&enabled)) { page.settings.enabled=enabled; page.dirty=true; }
+            if (aura::ui::Toggle("##ext-ai-enabled",&enabled)) {
+                std::string error;
+                if (HarkenSearch::SetExternalAiMasterSwitch(page.documentPath,page.settings,enabled,error)) {
+                    page.error.clear();
+                    if (enabled) {
+                        page.dirty=true;
+                    } else {
+                        HarkenSearch::StopExternalAiBridgeServer();
+                        page.status=L(ExtAi_StateOff);
+                        page.statusUntil=ImGui::GetTime()+4.0;
+                    }
+                } else {
+                    page.error=error.empty()?L(ExtAi_SaveFailed):std::move(error);
+                }
+            }
             su::Observe("ext-ai-enabled");
         }
         ImGui::EndChild();
@@ -178,14 +190,20 @@
         const char* pathModeLabel=state.settings.folderTreePathMode==aura::folder_tree::PathMode::Absolute
             ?L(Set_FolderTreePathAbsolute):L(Set_FolderTreePathPilot);
         sectionHeading("01",L(ExtAi_Folders),pathModeLabel);
-        const float addWidth=112.f;
+        const ImVec2 addButtonSize(112.f,26.f);
         const int tickedCount=(int)std::count_if(page.settings.roots.begin(),page.settings.roots.end(),
             [](const HarkenSearch::ExternalAiRoot& root) { return root.enabled; });
         char folderMeta[128]{};
         snprintf(folderMeta,sizeof(folderMeta),L(ExtAi_FolderCountFmt),tickedCount);
+        const char* addLabel=L(ExtAi_AddRoot);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,fittedButtonPadding(addLabel,addButtonSize));
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s · %s：%s",folderMeta,L(Set_FolderTreePathMode),pathModeLabel);
-        placeRight(addWidth);
-        if (aura::ui::ActionButton(L(ExtAi_AddRoot),ImVec2(addWidth,26))) {
+        su::Observe("ext-ai-directory-summary");
+        placeRight(addButtonSize.x);
+        const bool addClicked=aura::ui::ActionButton(addLabel,addButtonSize);
+        ImGui::PopStyleVar();
+        if (addClicked) {
             const std::string picked=OpenFolderDialog(g_hwnd);
             if (!picked.empty()) {
                 std::string root=picked;
@@ -227,8 +245,14 @@
                 ImGui::TableSetColumnIndex(1);
                 ImGui::TextWrapped("%s",displayRootPath(page.settings.roots[index].path).c_str());
                 ImGui::TableSetColumnIndex(2);
+                const char* removeLabel=L(Main_RemoveBtn2);
+                const float cellLeft=ImGui::GetCursorPosX();
+                const float cellRight=cellLeft+ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorPosX(std::max(cellLeft,std::min(edgeRight,cellRight)-smallActionWidth(removeLabel)));
                 ImGui::AlignTextToFramePadding();
-                if (aura::ui::SmallActionButton(L(Main_RemoveBtn2))) {
+                const bool removeClicked=aura::ui::SmallActionButton(removeLabel);
+                su::Observe("ext-ai-root-remove");
+                if (removeClicked) {
                     page.settings.roots.erase(page.settings.roots.begin()+static_cast<std::ptrdiff_t>(index));
                     page.dirty=true;
                     ImGui::PopID();
@@ -243,122 +267,181 @@
 
         // —— 连接客户端 ——
         ImGui::Dummy(ImVec2(0,12));
-        sectionHeading("02",L(ExtAi_Clients),nullptr);
-        const std::string homePath=[&]() {
-            // 预览隔离构建里把“家目录”固定在隔离根内，QA 永远不碰真实用户配置。
-            if (Platform::HarkenUserData::PreviewIsolationActive()) {
-                const std::string isolatedRoot=Platform::HarkenUserData::PreviewIsolationRootUtf8();
-                if (!isolatedRoot.empty()) return isolatedRoot+"\\profile\\home";
-            }
-            const auto environment=Platform::ReadEnvironmentVariable("USERPROFILE");
+        sectionHeading("02",L(ExtAi_Clients),nullptr,false);
+        const auto environmentValue=[](const char* name) {
+            const auto environment=Platform::ReadEnvironmentVariable(name);
             return environment.status==Platform::EnvironmentStringStatus::Success ? environment.valueUtf8 : std::string{};
-        }();
-        // The connector resolves paths against a single authorized root. Ticked
-        // folders on different drives cannot both be served, so say so instead of
-        // accepting the grant and then refusing to connect.
-        const auto volumeOf=[](const std::string& path) {
-            if (path.size()>=2 && path[1]==':') return std::string(1,(char)std::toupper((unsigned char)path[0]));
-            return std::string{"?"};
         };
-        bool rootsShareVolume=true;
-        {
-            std::string volume;
-            for (const auto& root : page.settings.roots) {
-                if (!root.enabled) continue;
-                const std::string current=volumeOf(root.path);
-                if (volume.empty()) volume=current;
-                else if (current!=volume) { rootsShareVolume=false; break; }
-            }
-        }
-        const bool linkReady=hasConnector&&rootsShareVolume&&!linkTarget.libraryId.empty()&&
+        const HarkenSearch::ExternalAiClientConfigInputs clientInputs{
+            environmentValue("USERPROFILE"),environmentValue("APPDATA"),environmentValue("CODEX_HOME"),
+            Platform::HarkenUserData::PreviewIsolationActive(),Platform::HarkenUserData::PreviewIsolationRootUtf8()};
+        const bool linkReady=page.settings.enabled&&!page.dirty&&hasConnector&&
+            !linkRoot.spansVolumes&&!linkTarget.libraryId.empty()&&
             !linkTarget.databasePath.empty()&&!linkTarget.rootPath.empty()&&!linkTarget.settingsPath.empty();
         if (!hasConnector) {
             ImGui::TextDisabled("%s",L(ExtAi_ConnectNoExe));
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextDisabled("%s",linkTarget.executablePath.c_str());
             ImGui::PopTextWrapPos();
-        } else if (!rootsShareVolume) {
+        } else if (linkRoot.spansVolumes) {
             ImGui::TextDisabled("%s",L(ExtAi_ConnectMultiVolume));
         } else if (!linkReady) {
             ImGui::TextDisabled("%s",L(ExtAi_ConnectNotReady));
         }
-        auto drawClientLogo=[&](HarkenSearch::ExternalAiClient client,const ImVec2& origin,bool connected) {
-            ImDrawList* draw=ImGui::GetWindowDrawList();
-            const ImVec4 tint=connected?theme.controlAccent:theme.resultsSecondaryText;
-            const ImU32 border=ImGui::ColorConvertFloat4ToU32(theme.chromeBorder);
-            const ImU32 color=ImGui::ColorConvertFloat4ToU32(tint);
-            const ImVec2 max(origin.x+34.f,origin.y+34.f);
-            draw->AddRectFilled(origin,max,ImGui::ColorConvertFloat4ToU32(theme.dialogPanelBG),7.f);
-            draw->AddRect(origin,max,border,7.f,0,1.f);
-            if (client==HarkenSearch::ExternalAiClient::Cindy) {
-                const ImVec2 points[]{
-                    {origin.x+23.f,origin.y+9.f},{origin.x+19.f,origin.y+7.f},
-                    {origin.x+13.f,origin.y+8.f},{origin.x+9.f,origin.y+12.f},
-                    {origin.x+9.f,origin.y+18.f},{origin.x+13.f,origin.y+23.f},
-                    {origin.x+19.f,origin.y+24.f},{origin.x+23.f,origin.y+21.f}};
-                draw->AddPolyline(points,8,color,0,1.8f);
-                draw->AddCircle(ImVec2(origin.x+16.f,origin.y+16.f),2.3f,color,12,1.7f);
-            } else {
-                const ImVec2 hexagon[]{
-                    {origin.x+17.f,origin.y+6.f},{origin.x+25.f,origin.y+11.f},
-                    {origin.x+25.f,origin.y+21.f},{origin.x+17.f,origin.y+27.f},
-                    {origin.x+9.f,origin.y+21.f},{origin.x+9.f,origin.y+11.f}};
-                draw->AddPolyline(hexagon,6,color,ImDrawFlags_Closed,1.6f);
-                draw->AddLine(ImVec2(origin.x+12.f,origin.y+12.f),ImVec2(origin.x+17.f,origin.y+9.f),color,1.5f);
-                draw->AddLine(ImVec2(origin.x+17.f,origin.y+9.f),ImVec2(origin.x+22.f,origin.y+12.f),color,1.5f);
-                draw->AddLine(ImVec2(origin.x+12.f,origin.y+20.f),ImVec2(origin.x+17.f,origin.y+23.f),color,1.5f);
-                draw->AddLine(ImVec2(origin.x+17.f,origin.y+23.f),ImVec2(origin.x+22.f,origin.y+20.f),color,1.5f);
-            }
+        struct ClientCleanupFailure {
+            bool revoked;
+            std::string detail;
         };
+        static std::unordered_map<std::string,ClientCleanupFailure> cleanupFailures;
         const char* clientLabels[]{L(ExtAi_ClientCindy),L(ExtAi_ClientCodex)};
+        const char* clientIcons[]{"assets/icons/brand/mcp-client-cindy.png","assets/icons/brand/mcp-client-codex.png"};
         const HarkenSearch::ExternalAiClient clients[]{HarkenSearch::ExternalAiClient::Cindy,
             HarkenSearch::ExternalAiClient::Codex};
+        const float clientIconSize=20.f;
+        const float clientInsetX=12.f;
+        const float clientInsetY=8.f;
+        const float clientTextGap=4.f;
+        const float clientActionGap=8.f;
+        const ImVec2 clientSwitchSize(36.f,28.f);
+        const float clientTrackHeight=18.f;
+        const float clientCardWidth=ImGui::GetContentRegionAvail().x;
+        const float clientCardLeft=ImGui::GetCursorScreenPos().x;
+        const float clientIconX=clientCardLeft+clientInsetX;
+        const float clientTextX=clientIconX+clientIconSize+clientInsetX;
+        const float clientSwitchX=clientCardLeft+clientCardWidth-clientInsetX-clientSwitchSize.x;
+        auto placeClientCell=[](float screenX,float screenY) {
+            ImGui::SameLine(0.f,0.f);
+            ImGui::SetCursorScreenPos(ImVec2(screenX,screenY));
+        };
+        ImDrawList* clientDraw=ImGui::GetWindowDrawList();
+        float clientDividerY=0.f;
+        ImGui::BeginGroup();
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(ImGui::GetStyle().ItemSpacing.x,0.f));
         for (int clientIndex=0; clientIndex<2; ++clientIndex) {
             ImGui::PushID(clientIndex);
-            const std::string configPath=HarkenSearch::ExternalAiClientConfigPath(clients[clientIndex],homePath);
-            const bool detected=HarkenSearch::ExternalAiClientDetected(clients[clientIndex],homePath);
-            const auto linkState=HarkenSearch::QueryExternalAiClientLink(clients[clientIndex],configPath,linkTarget);
+            const auto location=HarkenSearch::ResolveExternalAiClientConfigLocation(clients[clientIndex],clientInputs);
+            const auto& configPath=location.configPath;
+            const auto format=std::filesystem::u8path(configPath).extension()==".toml"?
+                HarkenSearch::ExternalAiClient::Codex:HarkenSearch::ExternalAiClient::Cindy;
+            const auto linkState=HarkenSearch::QueryExternalAiClientLink(format,configPath,linkTarget);
             const bool connected=linkState.state==HarkenSearch::ExternalAiLinkState::Connected;
-            if (clientIndex>0) {
-                ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
-                ImGui::Separator();
-                ImGui::PopStyleColor();
+            const bool canDisconnect=linkState.canDisconnect;
+            if (connected || (!canDisconnect && linkState.state!=HarkenSearch::ExternalAiLinkState::Failed))
+                cleanupFailures.erase(configPath);
+            const auto cleanupFailure=cleanupFailures.find(configPath);
+            const bool cleanupFailed=cleanupFailure!=cleanupFailures.end();
+            const bool previouslyRevoked=cleanupFailed&&cleanupFailure->second.revoked;
+            const bool showCleanup=!connected&&!configPath.empty()&&(canDisconnect||cleanupFailed);
+            const bool canConnect=!configPath.empty()&&linkReady&&!showCleanup&&
+                linkState.state==HarkenSearch::ExternalAiLinkState::Disconnected;
+            const bool switchEnabled=connected?canDisconnect:canConnect;
+            const char* clientLabel=clientIndex==0&&format==HarkenSearch::ExternalAiClient::Codex?
+                L(ExtAi_ClientCindyCodex):clientLabels[clientIndex];
+            const char* linkStateText=connected?
+                (page.settings.enabled?L(ExtAi_ClientConnected):L(ExtAi_ClientConfiguredLibraryOff)):
+                (cleanupFailed?(previouslyRevoked?L(ExtAi_ClientRevokedCleanupFailed):L(ExtAi_ClientCleanupFailed)):
+                (!location.detected?L(ExtAi_ClientNotDetected):
+                (configPath.empty()?L(ExtAi_ClientNoConfig):
+                (linkState.state==HarkenSearch::ExternalAiLinkState::Failed?L(ExtAi_ClientUnreadable):
+                (linkState.state==HarkenSearch::ExternalAiLinkState::Conflict?L(ExtAi_ClientKeyConflict):
+                (linkState.needsRelink?L(ExtAi_ClientRelink):L(ExtAi_ClientDisconnected)))))));
+            const char* cleanupLabel=cleanupFailed?L(ExtAi_ClientRetryCleanupBtn):L(ExtAi_ClientCleanupBtn);
+            const float cleanupWidth=showCleanup?smallActionWidth(cleanupLabel):0.f;
+            const float cleanupX=clientSwitchX-clientActionGap-cleanupWidth;
+            const float textRight=(showCleanup?cleanupX:clientSwitchX)-clientInsetX;
+            const float textWidth=std::max(1.f,textRight-clientTextX);
+            const float nameHeight=ImGui::CalcTextSize(clientLabel,nullptr,false,textWidth).y;
+            const float stateHeight=ImGui::CalcTextSize(linkStateText,nullptr,false,textWidth).y;
+            const float textHeight=nameHeight+clientTextGap+stateHeight;
+            const float rowHeight=std::max(clientSwitchSize.y,textHeight)+2.f*clientInsetY;
+            const float rowTop=ImGui::GetCursorScreenPos().y;
+            const float rowCenter=rowTop+rowHeight*.5f;
+            const float nameY=rowCenter-textHeight*.5f;
+            if (clientIndex>0) clientDividerY=rowTop;
+            ImGui::Dummy(ImVec2(clientCardWidth,rowHeight));
+
+            placeClientCell(clientIconX,rowCenter-clientIconSize*.5f);
+            ImGui::Dummy(ImVec2(clientIconSize,clientIconSize));
+            su::Observe(clientIndex==0?"ext-ai-client-cindy-logo":"ext-ai-client-codex-logo");
+            if (ImGui::IsItemVisible()) {
+                const auto asset=aura::ui::LoadPackagedAsset(clientIcons[clientIndex]);
+                if (asset.glId!=0&&asset.w>0&&asset.h>0) {
+                    const float scale=clientIconSize/static_cast<float>(std::max(asset.w,asset.h));
+                    const ImVec2 halfSize(asset.w*scale*.5f,asset.h*scale*.5f);
+                    const float centerX=clientIconX+clientIconSize*.5f;
+                    clientDraw->AddImage(static_cast<ImTextureID>(asset.glId),
+                        ImVec2(centerX-halfSize.x,rowCenter-halfSize.y),ImVec2(centerX+halfSize.x,rowCenter+halfSize.y),
+                        ImVec2(0.f,0.f),ImVec2(1.f,1.f),ImGui::GetColorU32(theme.interfaceText));
+                }
             }
-            const ImVec2 logoOrigin=ImGui::GetCursorScreenPos();
-            ImGui::Dummy(ImVec2(34.f,34.f));
-            drawClientLogo(clients[clientIndex],logoOrigin,connected);
-            ImGui::SameLine(0.f,12.f);
-            ImGui::BeginGroup();
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(clientLabels[clientIndex]);
-            const char* linkStateText=!detected?L(ExtAi_ClientNotDetected)
-                :(connected?L(ExtAi_ClientConnected)
-                :(linkState.state==HarkenSearch::ExternalAiLinkState::Failed?L(ExtAi_ClientUnreadable)
-                :L(ExtAi_ClientDisconnected)));
+            placeClientCell(clientTextX,nameY);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+textWidth);
+            ImGui::TextUnformatted(clientLabel);
+            su::Observe(clientIndex==0?"ext-ai-client-cindy-name":"ext-ai-client-codex-name");
+            placeClientCell(clientTextX,nameY+nameHeight+clientTextGap);
             ImGui::TextDisabled("%s",linkStateText);
-            ImGui::EndGroup();
-            const float linkButtonWidth=96.f;
-            placeRight(linkButtonWidth);
-            ImGui::BeginDisabled(!linkReady||!detected);
-            if (aura::ui::ActionButton(connected?L(ExtAi_DisconnectBtn):L(ExtAi_ConnectBtn),ImVec2(linkButtonWidth,28),
-                    connected?aura::ui::ButtonVariant::Quiet:aura::ui::ButtonVariant::PrimarySearch)) {
+            su::Observe(clientIndex==0?"ext-ai-client-cindy-state":"ext-ai-client-codex-state");
+            ImGui::PopTextWrapPos();
+            if (cleanupFailed) ImGui::SetItemTooltip("%s",cleanupFailure->second.detail.c_str());
+
+            const float actionY=rowCenter-clientSwitchSize.y*.5f;
+            bool cleanupPressed=false;
+            if (showCleanup) {
+                placeClientCell(cleanupX,actionY);
+                const ImVec2 cleanupSize(cleanupWidth,clientSwitchSize.y);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,fittedButtonPadding(cleanupLabel,cleanupSize));
+                cleanupPressed=aura::ui::ActionButton(cleanupLabel,cleanupSize,aura::ui::ButtonVariant::Quiet);
+                ImGui::PopStyleVar();
+                su::Observe(clientIndex==0?"ext-ai-client-cindy-cleanup":"ext-ai-client-codex-cleanup");
+            }
+            placeClientCell(clientSwitchX,actionY);
+            ImGui::BeginDisabled(!switchEnabled);
+            const bool switchPressed=ImGui::InvisibleButton("##ext-ai-client-switch",clientSwitchSize,ImGuiButtonFlags_EnableNav);
+            su::Observe(clientIndex==0?"ext-ai-client-cindy":"ext-ai-client-codex");
+            if (ImGui::IsItemVisible()) {
+                const float trackLeft=ImGui::GetItemRectMin().x;
+                const float trackRight=ImGui::GetItemRectMax().x;
+                const float radius=clientTrackHeight*.5f;
+                const float thumbX=connected?trackRight-radius:trackLeft+radius;
+                clientDraw->AddRectFilled(ImVec2(trackLeft,rowCenter-radius),ImVec2(trackRight,rowCenter+radius),
+                    ImGui::GetColorU32(connected?theme.controlAccent:theme.frameBgBase),radius);
+                clientDraw->AddCircleFilled(ImVec2(thumbX,rowCenter),clientTrackHeight*.4f,
+                    ImGui::GetColorU32(theme.interfaceText),20);
+                if (switchEnabled) ImGui::SetItemTooltip("%s",connected?L(ExtAi_DisconnectBtn):L(ExtAi_ConnectBtn));
+            }
+            ImGui::EndDisabled();
+
+            const bool unlinkRequested=cleanupPressed||(switchPressed&&connected&&canDisconnect);
+            const bool linkRequested=switchPressed&&canConnect;
+            if (unlinkRequested||linkRequested) {
                 HarkenSearch::ExternalAiLinkStatus result;
-                const bool changed=connected
-                    ? HarkenSearch::UnlinkExternalAiClient(clients[clientIndex],configPath,result)
-                    : HarkenSearch::LinkExternalAiClient(clients[clientIndex],configPath,linkTarget,result);
+                const bool changed=unlinkRequested
+                    ? HarkenSearch::UnlinkExternalAiClient(format,configPath,result)
+                    : HarkenSearch::LinkExternalAiClient(format,configPath,linkTarget,result);
                 char message[768];
                 if (changed) {
-                    snprintf(message,sizeof(message),connected?L(ExtAi_DisconnectedFmt):L(ExtAi_ConnectedFmt),configPath.c_str());
+                    cleanupFailures.erase(configPath);
+                    snprintf(message,sizeof(message),unlinkRequested?L(ExtAi_DisconnectedFmt):L(ExtAi_ConnectedFmt),configPath.c_str());
                 } else {
-                    snprintf(message,sizeof(message),L(ExtAi_LinkFailedFmt),
-                        result.detail.empty()?L(ExtAi_LinkFailed):result.detail.c_str());
+                    const bool revoked=unlinkRequested&&(result.revoked||previouslyRevoked);
+                    const char* detail=result.detail.empty()?L(ExtAi_LinkFailed):result.detail.c_str();
+                    if (cleanupPressed||revoked) cleanupFailures[configPath]={revoked,detail};
+                    snprintf(message,sizeof(message),revoked?L(ExtAi_RevokedCleanupFailedFmt):L(ExtAi_LinkFailedFmt),detail);
                 }
                 page.linkStatus=message;
                 page.linkStatusUntil=ImGui::GetTime()+6.0;
             }
-            ImGui::EndDisabled();
-            su::Observe(clientIndex==0?"ext-ai-client-cindy":"ext-ai-client-codex");
             ImGui::PopID();
+        }
+        ImGui::PopStyleVar();
+        ImGui::EndGroup();
+        su::Observe("ext-ai-clients-card");
+        if (ImGui::IsItemVisible()) {
+            const ImVec2 cardMin=ImGui::GetItemRectMin();
+            const ImVec2 cardMax=ImGui::GetItemRectMax();
+            const ImU32 border=ImGui::GetColorU32(theme.chromeBorder);
+            clientDraw->AddRect(cardMin,cardMax,border,8.f);
+            clientDraw->AddLine(ImVec2(cardMin.x+1.f,clientDividerY),ImVec2(cardMax.x-1.f,clientDividerY),border);
         }
         if (!page.linkStatus.empty() && ImGui::GetTime()<page.linkStatusUntil) {
             ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("%s",page.linkStatus.c_str()); ImGui::PopTextWrapPos();
@@ -375,9 +458,9 @@
         const int groupStarts[]{0,3,7};
         const int groupEnds[]{2,6,8};
         const int groupCount=3;
-        const float accessButtonWidth=62.f;
+        const ImVec2 accessButtonSize(62.f,28.f);
         const float accessButtonGap=3.f;
-        const float accessGroupWidth=accessButtonWidth*3.f+accessButtonGap*2.f;
+        const float accessGroupWidth=accessButtonSize.x*3.f+accessButtonGap*2.f;
         for (int group=0; group<groupCount; ++group) {
             const char* groupTitle=group==0?L(ExtAi_GroupLookup)
                 :(group==1?L(ExtAi_GroupMetadata):L(ExtAi_GroupPlaylist));
@@ -388,27 +471,31 @@
                 ImGui::PushID(index);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(capabilityLabels[index]);
+                const float capabilityCenterY=itemCenterY();
+                su::Observe("ext-ai-capability-label");
                 placeRight(accessGroupWidth);
                 const int currentAccess=static_cast<int>(page.settings.capabilities[static_cast<std::size_t>(index)]);
                 for (int option=0; option<3; ++option) {
                     if (option>0) ImGui::SameLine(0.f,accessButtonGap);
+                    placeCenteredY(capabilityCenterY,accessButtonSize.y);
                     const bool selected=currentAccess==option;
                     const ImVec4 selectedBg=option==static_cast<int>(HarkenSearch::ExternalAiAccess::Editable)
                         ?theme.controlAccent:theme.resultsTabActive;
                     const ImVec4 selectedText=option==static_cast<int>(HarkenSearch::ExternalAiAccess::Editable)
                         ?theme.mainWindowBG:theme.interfaceText;
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,5.f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,fittedButtonPadding(accessLabels[option],accessButtonSize));
                     ImGui::PushStyleColor(ImGuiCol_Button,selected?selectedBg:ImVec4(0,0,0,0));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,selected?selectedBg:theme.frameBgBase);
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive,selected?selectedBg:theme.frameBgBase);
                     ImGui::PushStyleColor(ImGuiCol_Text,selected?selectedText:theme.resultsSecondaryText);
-                    if (ImGui::Button(accessLabels[option],ImVec2(accessButtonWidth,28.f))) {
+                    if (ImGui::Button(accessLabels[option],accessButtonSize)) {
                         page.settings.capabilities[static_cast<std::size_t>(index)]=
                             static_cast<HarkenSearch::ExternalAiAccess>(option);
                         page.dirty=true;
                     }
                     ImGui::PopStyleColor(4);
-                    ImGui::PopStyleVar();
+                    ImGui::PopStyleVar(2);
                     su::Observe((std::string("ext-ai-capability-")+std::to_string(index)+"-"+std::to_string(option)).c_str());
                 }
                 ImGui::PopID();
@@ -420,23 +507,42 @@
         ImGui::Dummy(ImVec2(0,4));
         ImGui::TextWrapped("%s",L(ExtAi_EditNote));
 
-        // —— 连接详情 ——
         ImGui::Dummy(ImVec2(0,10));
-        char detailsLabel[128];
-        snprintf(detailsLabel,sizeof(detailsLabel),"%s  %s",L(ExtAi_ConnectionDetails),
-            page.detailsOpen?u8"▾":u8"›");
-        const float detailsWidth=ImGui::CalcTextSize(detailsLabel).x;
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),edgeRight-12.f-detailsWidth));
-        if (aura::ui::SmallActionButton(detailsLabel,aura::ui::ButtonVariant::Quiet)) page.detailsOpen=!page.detailsOpen;
+        const std::string commandLine=linkReady?HarkenSearch::ExternalAiClientCommandLine(linkTarget):std::string{};
+        const std::string copyPromptLink=std::string(L(ExtAi_CopyAiPrompt))+"###ext-ai-copy-ai-prompt";
+        ImGui::TextUnformatted(L(ExtAi_AiPromptRow));
+        su::Observe("ext-ai-ai-prompt-label");
+        placeRight(ImGui::CalcTextSize(copyPromptLink.c_str(),nullptr,true).x);
+        ImGui::BeginDisabled(!linkReady);
+        ImGui::PushStyleColor(ImGuiCol_TextLink,ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        if (ImGui::TextLink(copyPromptLink.c_str()) && linkReady) {
+            char aiPrompt[4096];
+            snprintf(aiPrompt,sizeof(aiPrompt),L(ExtAi_AiSetupPromptFmt),commandLine.c_str());
+            ImGui::SetClipboardText(aiPrompt);
+        }
+        su::Observe("ext-ai-copy-ai-prompt");
+        ImGui::PopStyleColor();
+        ImGui::EndDisabled();
+        ImGui::PushTextWrapPos(0.f);
+        ImGui::TextDisabled("%s",L(ExtAi_AiPromptNote));
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0,4));
+        ImGui::PushStyleColor(ImGuiCol_Separator,theme.chromeBorder);
+        ImGui::Separator();
+        ImGui::PopStyleColor();
+        ImGui::SetNextItemOpen(page.detailsOpen,ImGuiCond_Always);
+        page.detailsOpen=ImGui::TreeNodeEx("ext-ai-details",
+            ImGuiTreeNodeFlags_NoTreePushOnOpen|ImGuiTreeNodeFlags_NoAutoOpenOnLog,"%s",L(ExtAi_ManualConnect));
         su::Observe("ext-ai-details");
         if (page.detailsOpen) {
-            copyable(L(ExtAi_LibraryId),page.libraryId);
-            copyable(L(ExtAi_Document),page.documentPath);
-            ImGui::TextDisabled("%s",L(ExtAi_ConnectorCommand));
-            if (hasConnector && aura::ui::SmallActionButton(L(AI_CopyMenu),aura::ui::ButtonVariant::Quiet)) {
-                ImGui::SetClipboardText(HarkenSearch::ExternalAiClientCommandLine(linkTarget).c_str());
+            copyable(L(ExtAi_Document),page.documentPath,"ext-ai-copy-auth-file");
+            ImGui::Dummy(ImVec2(0,4));
+            if (linkReady) {
+                copyable(L(ExtAi_ConnectorCommand),commandLine,"ext-ai-copy-command");
+            } else {
+                ImGui::TextDisabled("%s",L(ExtAi_ConnectorCommand));
+                ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());
             }
-            ImGui::TextWrapped("%s",linkTarget.executablePath.c_str());
         }
 
         // —— 最近一次写入回执 ——
@@ -446,7 +552,7 @@
             if (const auto* latest = receipts.Latest()) {
                 char line[512];
                 snprintf(line,sizeof(line),L(ExtAi_LastWriteFmt),
-                    latest->added,latest->skippedExisting,latest->receiptId.c_str());
+                    latest->added,latest->skippedExisting);
                 ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextDisabled("%s",line);
                 ImGui::PopTextWrapPos();
@@ -464,9 +570,11 @@
         const float reloadWidth=112.f;
         const char* footerNote=!page.status.empty() && ImGui::GetTime()<page.statusUntil
             ? page.status.c_str()
-            : (page.dirty?L(ExtAi_Unsaved):L(ExtAi_FooterHint));
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("%s",footerNote);
+            : (page.dirty?L(ExtAi_Unsaved):"");
+        if (*footerNote) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s",footerNote);
+        }
         placeRight(reloadWidth+8.f+saveWidth);
         if (aura::ui::ActionButton(L(ExtAi_Reload),ImVec2(reloadWidth,32),aura::ui::ButtonVariant::Quiet)) loadLibrary(databasePath);
         su::Observe("ext-ai-reload");

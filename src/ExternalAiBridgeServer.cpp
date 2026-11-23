@@ -1,5 +1,6 @@
 #include "ExternalAiBridgeServer.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -7,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -15,39 +17,6 @@
 namespace HarkenSearch {
 
 namespace {
-
-constexpr std::size_t kMaxRequestBytes = 64 * 1024;
-constexpr int kResponseTimeoutMs = 15000;
-
-struct PendingRequest {
-    std::string request;
-    std::string response;
-    bool answered = false;
-    bool inProgress = false;
-};
-
-struct ServerState {
-    std::thread worker;
-    std::atomic<bool> stop{false};
-    std::string libraryId;
-    std::string pipeName;
-    bool running = false;
-
-    std::mutex mutex;
-    std::condition_variable answered;
-    std::condition_variable queued;
-    std::unique_ptr<PendingRequest> pending;
-
-#ifdef _WIN32
-    HANDLE handle = INVALID_HANDLE_VALUE;
-#endif
-};
-
-ServerState& State()
-{
-    static ServerState state;
-    return state;
-}
 
 std::string HashLibraryId(const std::string& libraryId)
 {
@@ -68,89 +37,192 @@ std::string HashLibraryId(const std::string& libraryId)
 
 #ifdef _WIN32
 
-std::wstring WidePipeName(const std::string& pipeName)
+constexpr DWORD kMaxRequestBytes = 64 * 1024;
+constexpr DWORD kClientIoTimeoutMs = 5000;
+constexpr DWORD kResponseTimeoutMs = 15000;
+constexpr DWORD kShutdownWaitMs = 100;
+
+class OwnedHandle {
+public:
+    explicit OwnedHandle(HANDLE handle) : handle_(handle) {}
+    OwnedHandle(const OwnedHandle&) = delete;
+    OwnedHandle& operator=(const OwnedHandle&) = delete;
+    ~OwnedHandle() { if (*this) CloseHandle(handle_); }
+    explicit operator bool() const { return handle_ && handle_ != INVALID_HANDLE_VALUE; }
+    HANDLE get() const { return handle_; }
+
+private:
+    HANDLE handle_;
+};
+
+struct PendingRequest {
+    std::string request;
+    std::string response;
+    bool answered = false;
+    bool inProgress = false;
+};
+
+struct ServerState {
+    explicit ServerState(const std::string& id)
+        : libraryId(id), stop(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+
+    bool Stopping() const { return WaitForSingleObject(stop.get(), 0) == WAIT_OBJECT_0; }
+
+    const std::string libraryId;
+    const OwnedHandle stop;
+    std::atomic<bool> finished{false};
+    std::mutex mutex;
+    std::condition_variable answered;
+    std::shared_ptr<PendingRequest> pending;
+};
+
+struct ServerOwner {
+    ~ServerOwner() { Stop(); }
+
+    void Stop()
+    {
+        const auto previous = std::move(active);
+        if (!previous) return;
+        {
+            std::lock_guard<std::mutex> lock(previous->mutex);
+            SetEvent(previous->stop.get());
+            previous->pending.reset();
+        }
+        previous->answered.notify_all();
+        if (WaitForSingleObject(worker.native_handle(), kShutdownWaitMs) == WAIT_OBJECT_0) {
+            worker.join();
+        } else {
+            worker.detach();
+        }
+    }
+
+    std::shared_ptr<ServerState> active;
+    std::thread worker;
+};
+
+ServerOwner& Owner()
 {
-    return std::wstring(pipeName.begin(), pipeName.end());
+    static ServerOwner owner;
+    return owner;
 }
 
-bool ReadRequestLine(HANDLE handle, std::string& out)
-{
-    out.clear();
-    char buffer[4096];
-    while (out.size() < kMaxRequestBytes) {
+class PipeIo {
+public:
+    PipeIo(HANDLE pipe, const ServerState& state)
+        : pipe_(pipe), state_(state), completed_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+
+    bool Connect()
+    {
+        DWORD transferred = 0;
+        return Run(INFINITE, transferred, [&](OVERLAPPED& operation) {
+            return ConnectNamedPipe(pipe_, &operation) || GetLastError() == ERROR_PIPE_CONNECTED;
+        });
+    }
+
+    bool Read(char* buffer, DWORD size, DWORD timeout, DWORD& read)
+    {
+        return Run(timeout, read, [&](OVERLAPPED& operation) {
+            return ReadFile(pipe_, buffer, size, &read, &operation);
+        });
+    }
+
+    bool Write(const std::string& response)
+    {
+        DWORD written = 0;
+        return Run(kClientIoTimeoutMs, written, [&](OVERLAPPED& operation) {
+            return WriteFile(pipe_, response.data(), static_cast<DWORD>(response.size()), &written, &operation);
+        }) && written == response.size();
+    }
+
+    void WaitForPeerClose()
+    {
+        char unexpectedByte = 0;
         DWORD read = 0;
-        if (!ReadFile(handle, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
+        Read(&unexpectedByte, 1, kClientIoTimeoutMs, read);
+    }
+
+private:
+    template <typename Begin>
+    bool Run(DWORD timeout, DWORD& transferred, Begin begin)
+    {
+        if (!completed_ || state_.Stopping()) return false;
+        ResetEvent(completed_.get());
+        OVERLAPPED operation{};
+        operation.hEvent = completed_.get();
+        if (begin(operation)) return true;
+        if (GetLastError() != ERROR_IO_PENDING) return false;
+
+        const HANDLE events[] = {state_.stop.get(), completed_.get()};
+        if (WaitForMultipleObjects(2, events, FALSE, timeout) == WAIT_OBJECT_0 + 1) {
+            return GetOverlappedResult(pipe_, &operation, &transferred, FALSE) != FALSE;
+        }
+        CancelIoEx(pipe_, &operation);
+        GetOverlappedResult(pipe_, &operation, &transferred, TRUE);
+        return false;
+    }
+
+    HANDLE pipe_;
+    const ServerState& state_;
+    const OwnedHandle completed_;
+};
+
+bool ReadRequestLine(PipeIo& io, std::string& request)
+{
+    const ULONGLONG deadline = GetTickCount64() + kClientIoTimeoutMs;
+    char buffer[4096];
+    while (request.size() < kMaxRequestBytes) {
+        const auto now = GetTickCount64();
+        if (now >= deadline) return false;
+        DWORD read = 0;
+        const auto count = (std::min)(sizeof(buffer), kMaxRequestBytes - request.size());
+        if (!io.Read(buffer, static_cast<DWORD>(count), static_cast<DWORD>(deadline - now), read) || read == 0) {
             return false;
         }
-        out.append(buffer, read);
-        const auto newline = out.find('\n');
+        request.append(buffer, read);
+        const auto newline = request.find('\n');
         if (newline != std::string::npos) {
-            out.resize(newline);
-            return true;
+            request.resize(newline);
+            return !request.empty();
         }
     }
     return false;
 }
 
+std::string WaitForReply(ServerState& state, const std::shared_ptr<PendingRequest>& request)
+{
+    std::unique_lock<std::mutex> lock(state.mutex);
+    if (state.Stopping()) return {};
+    state.pending = request;
+    state.answered.wait_for(lock, std::chrono::milliseconds(kResponseTimeoutMs),
+        [&] { return state.pending != request || request->answered; });
+    if (state.pending != request) return {};
+    state.pending.reset();
+    return request->answered ? std::move(request->response)
+                             : R"({"status":"failed","reason":"bridge_timeout"})";
+}
+
 void WorkerLoop(ServerState& state)
 {
-    const std::wstring name = WidePipeName(state.pipeName);
-    while (!state.stop.load()) {
-        HANDLE pipe = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, kMaxRequestBytes,
-            kMaxRequestBytes, 0, nullptr);
-        if (pipe == INVALID_HANDLE_VALUE) {
-            return;
-        }
-        {
-            std::lock_guard<std::mutex> lock(state.mutex);
-            state.handle = pipe;
-        }
-        const BOOL connected = ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-        if (!connected || state.stop.load()) {
-            DisconnectNamedPipe(pipe);
-            CloseHandle(pipe);
-            continue;
-        }
-
-        // A client that connects and then stays silent must not own the only
-        // instance: bound the read with a peek/timeout loop.
-        std::string request;
-        bool gotRequest = false;
-        for (int attempt = 0; attempt < 50 && !state.stop.load(); ++attempt) {
-            DWORD available = 0;
-            if (PeekNamedPipe(pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0) {
-                gotRequest = ReadRequestLine(pipe, request) && !request.empty();
-                break;
+    const auto pipeName = ExternalAiBridgePipeName(state.libraryId);
+    const std::wstring name(pipeName.begin(), pipeName.end());
+    const OwnedHandle pipe(CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, kMaxRequestBytes, kMaxRequestBytes, 0, nullptr));
+    if (!pipe || state.Stopping()) return;
+    PipeIo io(pipe.get(), state);
+    while (!state.Stopping()) {
+        if (!io.Connect()) return;
+        auto request = std::make_shared<PendingRequest>();
+        if (ReadRequestLine(io, request->request)) {
+            auto response = WaitForReply(state, request);
+            if (!state.Stopping()) {
+                response.push_back('\n');
+                if (io.Write(response)) {
+                    io.WaitForPeerClose();
+                }
             }
-            Sleep(100);
         }
-        if (gotRequest) {
-            std::unique_lock<std::mutex> lock(state.mutex);
-            state.pending = std::make_unique<PendingRequest>();
-            state.pending->request = std::move(request);
-            state.queued.notify_all();
-            state.answered.wait_for(lock, std::chrono::milliseconds(kResponseTimeoutMs),
-                [&state] { return !state.pending || state.pending->answered || state.stop.load(); });
-            std::string response;
-            if (state.pending && state.pending->answered) {
-                response = state.pending->response;
-            } else {
-                response = R"({"status":"failed","reason":"bridge_timeout"})";
-            }
-            state.pending.reset();
-            lock.unlock();
-            response.push_back('\n');
-            DWORD written = 0;
-            WriteFile(pipe, response.data(), static_cast<DWORD>(response.size()), &written, nullptr);
-        }
-        FlushFileBuffers(pipe);
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
-        {
-            std::lock_guard<std::mutex> lock(state.mutex);
-            state.handle = INVALID_HANDLE_VALUE;
-        }
+        if (state.Stopping()) return;
+        DisconnectNamedPipe(pipe.get());
     }
 }
 
@@ -165,84 +237,68 @@ std::string ExternalAiBridgePipeName(const std::string& libraryId)
 
 void StartExternalAiBridgeServer(const std::string& libraryId)
 {
-    if (libraryId.empty()) {
-        StopExternalAiBridgeServer();
-        return;
-    }
-    auto& state = State();
-    if (state.running && state.libraryId == libraryId) {
-        return;
-    }
-    StopExternalAiBridgeServer();
 #ifdef _WIN32
-    {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        state.stop.store(false);
-        state.libraryId = libraryId;
-        state.pipeName = ExternalAiBridgePipeName(libraryId);
-        state.running = true;
+    auto& owner = Owner();
+    if (owner.active && owner.active->libraryId == libraryId && !owner.active->finished.load()) return;
+    owner.Stop();
+    if (libraryId.empty()) {
+        return;
     }
-    state.worker = std::thread(WorkerLoop, std::ref(state));
+    auto state = std::make_shared<ServerState>(libraryId);
+    if (!state->stop) return;
+    owner.worker = std::thread([state] {
+        WorkerLoop(*state);
+        state->finished.store(true);
+    });
+    owner.active = std::move(state);
+#else
+    (void)libraryId;
 #endif
 }
 
 void StopExternalAiBridgeServer()
 {
-    auto& state = State();
-    if (!state.running) {
-        return;
-    }
 #ifdef _WIN32
-    {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        state.stop.store(true);
-        if (state.handle != INVALID_HANDLE_VALUE) {
-            // Cancels a blocking ConnectNamedPipe / ReadFile so the thread can exit.
-            CancelIoEx(state.handle, nullptr);
-            CloseHandle(state.handle);
-            state.handle = INVALID_HANDLE_VALUE;
-        }
-        state.answered.notify_all();
-        state.queued.notify_all();
-    }
-    if (state.worker.joinable()) {
-        state.worker.join();
-    }
+    Owner().Stop();
 #endif
-    std::lock_guard<std::mutex> lock(state.mutex);
-    state.running = false;
-    state.pending.reset();
 }
 
 bool ExternalAiBridgeServerRunning()
 {
-    return State().running;
+#ifdef _WIN32
+    const auto& active = Owner().active;
+    return active && !active->finished.load();
+#else
+    return false;
+#endif
 }
 
 void DrainExternalAiBridgeServer(const std::function<std::string(const std::string&)>& handler)
 {
-    auto& state = State();
-    std::string request;
+#ifdef _WIN32
+    const auto state = Owner().active;
+    if (!state) return;
+    std::shared_ptr<PendingRequest> request;
     {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        // Keep the slot owned by the worker: moving it out here used to leave the
-        // response nowhere to go, so every request timed out.
-        if (!state.pending || state.pending->answered || state.pending->inProgress) {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (!state->pending || state->pending->answered || state->pending->inProgress) {
             return;
         }
-        state.pending->inProgress = true;
-        request = state.pending->request;
+        request = state->pending;
+        request->inProgress = true;
     }
-    const std::string response = handler ? handler(request) : std::string("{}");
+    std::string response = handler ? handler(request->request) : std::string("{}");
     {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        // The worker may have timed out while the handler ran; only answer a live one.
-        if (state.pending && state.pending->inProgress && !state.pending->answered) {
-            state.pending->response = response;
-            state.pending->answered = true;
-            state.answered.notify_all();
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->pending == request) {
+            request->response = std::move(response);
+            request->answered = true;
+            state->answered.notify_all();
         }
     }
+#else
+    (void)handler;
+#endif
 }
 
 }  // namespace HarkenSearch
