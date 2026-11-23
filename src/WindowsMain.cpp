@@ -12,6 +12,7 @@
 #include "SpectrogramMath.h"
 #include "Theme.h"
 #include "ThemeSchedule.h"
+#include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
@@ -9032,9 +9033,16 @@ static void ApplyThemeAndScaleForSettings(const AppState& state, float scale) {
     } else if (state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty()) {
         if (!ThemeColors::customized()) {
             try {
-                std::string exeDir = GetExeDirUtf8();
-                std::string filePath = exeDir + "\\theme_custom.json";
-                appliedVisualTheme = ThemeColors::loadAndApplyThemeFile(filePath);
+                const std::filesystem::path settingsFile = std::filesystem::u8path(
+                    g_appSettingsPathUtf8.empty() ? (GetExeDirUtf8() + "\\settings.ini")
+                                                  : g_appSettingsPathUtf8);
+                const std::filesystem::path customPath =
+                    harken::theme_library::CustomThemePath(settingsFile);
+                const std::filesystem::path legacyPath =
+                    std::filesystem::u8path(GetExeDirUtf8() + "\\theme_custom.json");
+                std::string adoptError;
+                harken::theme_library::AdoptLegacyCustomTheme(legacyPath, customPath, adoptError);
+                appliedVisualTheme = ThemeColors::loadAndApplyThemeFile(customPath.u8string());
             } catch (...) {}
         }
         if (!appliedVisualTheme && ThemeColors::customized()) {
