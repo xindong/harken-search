@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "entries": [
+
     {"id": "Task_Done", "type": "ui", "zh": "已完成", "en": "Done", "ja": "完了"},
     {"id": "Task_BackfillAssets", "type": "ui", "zh": "补全波形与封面", "en": "Backfill waveforms & covers", "ja": "波形とカバーを補完"},
     {"id": "Task_DownloadUpdate", "type": "ui", "zh": "下载更新", "en": "Downloading update", "ja": "アップデートをダウンロード"},
@@ -175,7 +176,6 @@
     {"id":"Task_RemoveLibraryChanged","type":"ui","zh":"库已切换，请在当前库重新确认。","en":"Library changed. Confirm again in the current library.","ja":"ライブラリが変わりました。現在のライブラリで再確認してください。"},
     {"id":"Task_Stopped","type":"ui","zh":"已停止","en":"Stopped","ja":"停止しました"},
     {"id":"Task_Failed","type":"ui","zh":"未完成","en":"Failed","ja":"完了できませんでした"},
-    {"id":"Task_ViewDetails","type":"ui","zh":"查看详情","en":"View details","ja":"詳細を表示"},
     {"id":"Task_Dismiss","type":"ui","zh":"收起","en":"Dismiss","ja":"閉じる"},
     {"id":"ScanUi_Title","type":"ui","zh":"扫描入库","en":"Scan library","ja":"ライブラリに取り込む"},
     {"id":"ScanUi_AdvancedOptions","type":"ui","zh":"高级选项","en":"Advanced options","ja":"詳細設定"},
@@ -9072,20 +9072,6 @@
       "ja": "上半分: フェードハンドル · 下半分: イン/アウト端点"
     },
     {
-      "id": "Main_ImportRunLabel",
-      "type": "ui",
-      "zh": "本次入库",
-      "en": "This import",
-      "ja": "今回の取り込み"
-    },
-    {
-      "id": "Main_ElapsedLabel",
-      "type": "ui",
-      "zh": "耗时",
-      "en": "Elapsed",
-      "ja": "所要時間"
-    },
-    {
       "id": "Main_MiniWaveBackfillNote",
       "type": "ui",
       "zh": "迷你波形后台渐进补齐",
@@ -10107,13 +10093,6 @@
       "zh": "+%d BPM",
       "en": "+%d BPM",
       "ja": "+%d BPM"
-    },
-    {
-      "id": "Main_ScanDoneShort",
-      "type": "ui",
-      "zh": "扫描完成",
-      "en": "Scan complete",
-      "ja": "スキャン完了"
     },
     {
       "id": "Main_WarnPrefixFmt",
