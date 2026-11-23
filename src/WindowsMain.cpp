@@ -160,7 +160,8 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 
 void FinalizeFolderSubtreeDbRemoval(AppState& state,
                                     const std::string& targetPath,
-                                    int removed);
+                                    const FolderSubtreeRemovalResult& result);
+void PumpFolderSubtreeRemoval(AppState& state);
 
 // Startup is split into two decisions so the beta can show login without
 // regressing to the old WebView loading screen.
@@ -6372,27 +6373,41 @@ static void PollQaCommandFile(AppState& state) {
 #endif
 
     } else if (cmd == "remove_folder_subtree") {
+#if ARIS_PREVIEW_ISOLATION
         const std::string path = getStr(raw, "path");
-        if (path.empty()) {
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(state.currentDbPathUtf8)) {
+            result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"fixed preview isolation required\"}";
+        } else if (path.empty()) {
             result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"path missing\"}";
+        } else if (state.dbSwitchInProgress || state.folderRemoval.Active()) {
+            result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"library busy\"}";
         } else if (!state.database.isOpen()) {
             result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"database not open\"}";
         } else {
-            const int removed = state.database.removeFolderSubtreeFromDb(path, false);
-            const std::string lastError = state.database.getLastError();
-            FinalizeFolderSubtreeDbRemoval(state, path, removed);
+            const auto removal = state.database.removeFolderSubtreeFromLibrary(path);
+            ++state.folderRemovalSerial;
+            FinalizeFolderSubtreeDbRemoval(state, path, removal);
+            const auto status = removal.status == FolderSubtreeRemovalStatus::Removed ? "removed" :
+                removal.status == FolderSubtreeRemovalStatus::NoMatch ? "no_match" : "failed";
             result = "{";
-            result += "\"ok\":true,";
+            result += removal.status == FolderSubtreeRemovalStatus::Failed ? "\"ok\":false," : "\"ok\":true,";
             result += "\"cmd\":\"remove_folder_subtree\",";
             result += "\"path\":\"" + jsonEscape(path) + "\",";
-            result += "\"removed\":" + std::to_string(removed) + ",";
+            result += "\"status\":\"" + std::string(status) + "\",";
+            result += "\"unregistered_root\":" + std::string(removal.unregisteredRoot ? "true," : "false,");
+            result += "\"removed\":" + std::to_string(removal.removedFiles) + ",";
             result += "\"result_count\":" + std::to_string((int)state.searchResults.size()) + ",";
             result += "\"total_count\":" + std::to_string((long long)state.totalFileCount);
-            if (!lastError.empty()) {
-                result += ",\"last_error\":\"" + jsonEscape(lastError) + "\"";
+            if (!removal.error.empty()) {
+                result += ",\"error\":\"" + jsonEscape(removal.error) + "\"";
             }
             result += "}";
         }
+#else
+        result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "reorder_playlist_quickbar") {
         long long movedId = -1;
@@ -7190,7 +7205,9 @@ static void PollQaCommandFile(AppState& state) {
             bool hit = false;
             const auto* modal = ImGui::GetTopMostPopupModal();
             for (const auto& zone : snapshot.zones) {
-                if (zone.key.rfind("scan.", 0) == 0 && x >= zone.minX && x < zone.maxX &&
+                const bool removalControl = GetHarkenSearchHarnessLaneKindUtf8() == "folder-search" &&
+                    (zone.key.rfind("folder.remove.confirm.", 0) == 0 || zone.key.rfind("task.footer.", 0) == 0);
+                if ((zone.key.rfind("scan.", 0) == 0 || removalControl) && x >= zone.minX && x < zone.maxX &&
                     y >= zone.minY && y < zone.maxY && (!modal || modal->Rect().Contains(ImVec2(x, y)))) hit = true;
             }
             if (!hit || snapshot.frameNumber == 0 || snapshot.frameNumber + 2 < static_cast<uint64_t>(ImGui::GetFrameCount()) ||
@@ -7225,7 +7242,8 @@ static void PollQaCommandFile(AppState& state) {
             }
             auto items = nlohmann::json::array();
             for (const auto& zone : snapshot.zones) {
-                if (zone.key.rfind("scan.", 0) != 0) continue;
+                if (zone.key.rfind("scan.", 0) != 0 && zone.key.rfind("task.footer.", 0) != 0 &&
+                    zone.key.rfind("folder.remove.", 0) != 0 && zone.key.rfind("similar.index.", 0) != 0) continue;
                 std::string owner;
                 for (const auto& window : windows) {
                     const auto& bounds = window["bounds"];
@@ -7250,7 +7268,12 @@ static void PollQaCommandFile(AppState& state) {
                     {"speed_known", state.scanUiMetrics.Value().speedKnown}, {"files_per_second", state.scanUiMetrics.Value().filesPerSecond}}},
                 {"similarity", {{"available", batch.available}, {"running", batch.running}, {"stopped", batch.stopped},
                     {"total", batch.total}, {"succeeded", batch.succeeded}, {"failed", batch.Failed()}, {"remaining", batch.Remaining()}}},
-                {"items", items}, {"windows", windows}}).dump();
+                {"items", items}, {"windows", windows},
+                {"viewport_origin", {ImGui::GetMainViewport()->Pos.x, ImGui::GetMainViewport()->Pos.y}},
+                {"removal", {{"active", state.folderRemoval.Active()}, {"phase", static_cast<int>(state.folderRemovalPhase)},
+                    {"count", state.folderRemovalCount}, {"details", state.folderRemovalDetails},
+                    {"error", state.folderRemovalError}}},
+                {"manual_similarity", state.manualSimilarityTask}}).dump();
         } else result = R"({"ok":false,"error":"unknown_scan_ui_action"})";
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
@@ -14332,6 +14355,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         DevTools_EndFramePhase();
         // 异步切库：轮询后台 open 结果，避免大库 open 卡死主线程
         DevTools_BeginFramePhase("PreRender.AsyncPumps");
+        PumpFolderSubtreeRemoval(state);
         PumpDatabaseSwitchIfPending(state);
         PumpInitRandomSamplingPoolIfPending(state);
 
@@ -15368,6 +15392,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
     logShutdownStage("BackfillQueueClosingEnd");
     logShutdownStage("DatabaseCloseBegin");
+    state.folderRemoval.Wait();
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");
     logShutdownStage("AudioEngineShutdownBegin");
