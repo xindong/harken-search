@@ -5,6 +5,9 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 
 namespace harken::theme_library {
 namespace fs = std::filesystem;
@@ -32,6 +35,29 @@ std::string CapUtf8Bytes(const std::string& value, size_t maxBytes) {
     size_t cut = maxBytes;
     while (cut > 0 && (static_cast<unsigned char>(value[cut]) & 0xC0) == 0x80) --cut;
     return value.substr(0, cut);
+}
+
+uint32_t Fnv1a32(const std::string& value) {
+    uint32_t hash = 2166136261u;
+    for (unsigned char byte : value) {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// Windows reserves these as device names whatever the extension is, so
+// "CON.json" is still the console device and cannot be saved as a file.
+bool IsReservedDeviceName(const std::string& stem) {
+    static const char* const kReserved[] = {
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5",
+        "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4",
+        "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
+    const std::string lower = ToLowerAscii(stem);
+    for (const char* reserved : kReserved) {
+        if (lower == reserved) return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -62,10 +88,18 @@ std::string FileStemForName(const std::string& nameUtf8) {
         cleaned.push_back(c);
     }
     cleaned = TrimSpacesAndDots(std::move(cleaned));
-    cleaned = CapUtf8Bytes(cleaned, 120);
-    cleaned = TrimSpacesAndDots(std::move(cleaned));
     if (cleaned.empty()) return "theme";
-    return cleaned;
+    std::string stem = std::move(cleaned);
+    if (stem.size() > 120) {
+        // Two long names can share a prefix; keep the tail distinct instead of
+        // silently saving both into one file.
+        char suffix[16];
+        std::snprintf(suffix, sizeof(suffix), "-%08x", Fnv1a32(stem));
+        std::string head = CapUtf8Bytes(stem, 120 - std::strlen(suffix));
+        stem = TrimSpacesAndDots(std::move(head)) + suffix;
+    }
+    if (IsReservedDeviceName(stem)) return "_" + stem;
+    return stem;
 }
 
 fs::path ThemePathFor(const fs::path& libraryDir, const std::string& nameUtf8) {

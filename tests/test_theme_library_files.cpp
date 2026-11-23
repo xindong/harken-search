@@ -51,12 +51,35 @@ int main(int argc, char** argv) {
     Check(FileStemForName("  ...  ") == "theme", "dots and spaces fall back to theme");
     Check(FileStemForName("") == "theme", "empty name falls back to theme");
     Check(FileStemForName("abc.") == "abc", "trailing dot trimmed");
+    std::string error;
     {
         const std::string longName(200, 'x');
         Check(FileStemForName(longName).size() <= 120, "long name capped");
     }
+    {
+        // Same 120-byte prefix, different tails: both must stay usable names
+        // and must not land in the same file.
+        const fs::path extraLibrary = root / "extra";
+        const std::string shared(120, 'p');
+        const std::string first = FileStemForName(shared + "-alpha");
+        const std::string second = FileStemForName(shared + "-beta");
+        Check(first.size() <= 120 && second.size() <= 120, "truncated names stay short");
+        Check(first != second, "truncated names stay distinct");
+        Check(!fs::exists(extraLibrary / (first + ".json")), "distinct name has no file yet");
+        Check(SaveThemeCopy(extraLibrary, shared + "-alpha", "{\"a\":\"10\"}", error), "save long name one");
+        Check(SaveThemeCopy(extraLibrary, shared + "-beta", "{\"a\":\"11\"}", error), "save long name two");
+        Check(ReadBytes(extraLibrary / (first + ".json")) != ReadBytes(extraLibrary / (second + ".json")),
+              "long names do not overwrite each other");
+    }
+    Check(FileStemForName("CON") == "_CON", "reserved device name is prefixed");
+    Check(FileStemForName("con") == "_con", "reserved device name check is case-insensitive");
+    Check(FileStemForName("COM1") == "_COM1" && FileStemForName("lpt9") == "_lpt9",
+          "numbered device names are prefixed");
+    Check(FileStemForName("NUL") == "_NUL", "null device name is prefixed");
+    Check(FileStemForName("CONSOLE") == "CONSOLE", "ordinary name keeps its text");
+    Check(SaveThemeCopy(root / "extra", "CON", "{\"a\":\"12\"}", error), "reserved name saves");
+    Check(ReadBytes(root / "extra" / "_CON.json") == "{\"a\":\"12\"}", "reserved name lands on disk");
 
-    std::string error;
     Check(SaveThemeCopy(library, "Rose Cedar", "{\"a\":\"01\"}", error), "save first theme");
     Check(SaveThemeCopy(library, "Ocean Test", "{\"a\":\"02\"}", error), "save second theme");
     Check(ReadBytes(library / "Rose Cedar.json") == "{\"a\":\"01\"}", "theme bytes on disk");

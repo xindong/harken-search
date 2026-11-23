@@ -108,6 +108,7 @@
 #include "Theme.h"              // 主题颜色系统
 #include "ThemeModuleColors.h"
 #include "ThemeSchedule.h"
+#include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"

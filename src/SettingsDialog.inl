@@ -164,7 +164,18 @@
         if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors) {
             ThemeColors::deactivateCustomTheme();
             if (state.settings.theme==AppTheme::Custom && !state.settings.customThemeName.empty()) {
-                ThemeColors::loadAndApplyThemeFile(GetExeDirUtf8()+"\\theme_custom.json",nullptr,false,"SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
+                std::string customThemePath = GetExeDirUtf8()+"\\theme_custom.json";
+                if (!g_appSettingsPathUtf8.empty()) {
+                    const std::filesystem::path customPath =
+                        harken::theme_library::CustomThemePath(std::filesystem::u8path(g_appSettingsPathUtf8));
+                    if (!customPath.empty()) {
+                        std::string adoptError;
+                        harken::theme_library::AdoptLegacyCustomTheme(
+                            std::filesystem::u8path(GetExeDirUtf8()+"\\theme_custom.json"), customPath, adoptError);
+                        customThemePath = customPath.u8string();
+                    }
+                }
+                ThemeColors::loadAndApplyThemeFile(customThemePath,nullptr,false,"SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
             }
             ThemeColors::markPendingUiChromeResync();
         }

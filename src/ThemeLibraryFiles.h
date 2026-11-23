@@ -14,7 +14,9 @@ std::filesystem::path LibraryDirectory(const std::filesystem::path& settingsFile
 std::filesystem::path CustomThemePath(const std::filesystem::path& settingsFile);
 
 // File-name-safe stem for a theme name (Windows forbids <>:"/\|?* and
-// trailing dots/spaces). Returns "theme" for input that sanitizes to nothing.
+// trailing dots/spaces, and reserves device names such as CON or COM1).
+// Over-long names keep a short hash so two similar names stay distinct.
+// Returns "theme" for input that sanitizes to nothing.
 std::string FileStemForName(const std::string& nameUtf8);
 
 std::filesystem::path ThemePathFor(const std::filesystem::path& libraryDir,
