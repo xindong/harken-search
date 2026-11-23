@@ -25,6 +25,7 @@ inline const std::vector<Entry>& Catalog() {
         {u8"night",Page::Appearance,0,LStr::SetUX_Night,u8"黑夜 主题 night"},
         {u8"themeEditor",Page::Appearance,0,LStr::Set_EditTheme,u8"编辑 颜色 配色 自定义 custom"},
         {u8"language",Page::Appearance,0,LStr::Set_UILanguage,u8"中文 英文 日语 language"},
+        {u8"uiScale",Page::Appearance,0,LStr::Set_InterfaceScale,u8"界面 缩放 放大 缩小 scale zoom"},
         {u8"systemFont",Page::Appearance,0,LStr::Set_SystemFontSize,u8"界面 字体 大小 font"},
         {u8"listFont",Page::Appearance,0,LStr::Set_ListFontSize,u8"列表 字体 大小 font"},
         {u8"rowHeight",Page::Appearance,0,LStr::Set_RowHeight,u8"密度 紧凑 行高"},

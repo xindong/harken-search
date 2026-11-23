@@ -5600,6 +5600,8 @@ void LoadAppSettings(AppState& state) {
             kDefaultReadingFontPx);
         // Chrome is fixed at kChromeFontPx.
         state.settings.fontSize = kChromeFontPx;
+        state.settings.uiScalePercent = aura::ui::dpi::ResolveInterfaceScalePercent(
+            ParseInt(kv["uiScalePercent"], 100));
         // List font is independently adjustable and keeps its own default.
         state.settings.listFontSize = itList != kv.end()
             ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)
@@ -6559,6 +6561,8 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
     items.push_back({"readingFontSize", std::to_string(persistedAppearance.readingFontSize)});
+    items.push_back({"uiScalePercent", std::to_string(aura::ui::dpi::ResolveInterfaceScalePercent(
+        persistedAppearance.uiScalePercent))});
     items.push_back({"listFontSize", std::to_string(persistedAppearance.listFontSize)});
     items.push_back({"rowHeight", std::to_string(persistedAppearance.rowHeight)});
     items.push_back({"listDensity", std::to_string((int)persistedAppearance.listDensity)});

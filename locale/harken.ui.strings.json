@@ -1247,6 +1247,13 @@
       "ja": "行の高さ"
     },
     {
+      "id": "Set_InterfaceScale",
+      "type": "ui",
+      "zh": "界面缩放",
+      "en": "Interface Scale",
+      "ja": "インターフェース拡大"
+    },
+    {
       "id": "Set_SystemFontSize",
       "type": "ui",
       "zh": "系统字体大小",
