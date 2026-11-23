@@ -61,6 +61,7 @@ jobs:
           TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput TestSidebarMetadataPicker
           TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
           TestAITaskQueueStop TestAITaskQueueStopLegacyWindow TestToolbarSearchControls
+          TestLibraryTaskToastHitOrder
           HarkenExternalAiMcp TestExternalAiLibrary TestExternalAiClientLink TestExternalAiBridgeServer
       - name: Run update delivery and detached input tests
         run: >-
@@ -69,6 +70,10 @@ jobs:
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
+      - name: Run task toast hit-order tests
+        run: >-
+          ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
+          -R "^TestLibraryTaskToastHitOrder$"
       - name: Run AI task queue stop window tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(AITaskQueueStop|AITaskQueueStopLegacyWindow)$"
       - name: Run read-only library tests
