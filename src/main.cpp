@@ -30656,14 +30656,16 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         if (exportActive) {
             state.exportTaskWasActive = true;
             state.exportTaskDoneAt = 0.0;
-            std::string detail = std::to_string(exportJobs) + " 个通道";
+            char channels[64];
+            std::snprintf(channels, sizeof(channels), L(Task_ExportChannelFmt), exportJobs);
+            std::string detail = channels;
             float fraction = -1.0f;
             if (exportTotal > 0) {
                 char buffer[64];
                 std::snprintf(buffer, sizeof(buffer), "%d%%",
                               static_cast<int>(100.0 * static_cast<double>(exportDone) /
                                                static_cast<double>(exportTotal) + 0.5));
-                detail = std::to_string(exportJobs) + " 个通道  " + buffer;
+                detail = std::string(channels) + "  " + buffer;
                 fraction = static_cast<float>(static_cast<double>(exportDone) /
                                               static_cast<double>(exportTotal));
             }

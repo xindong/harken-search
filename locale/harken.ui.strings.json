@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Task_ExportChannelFmt", "type": "ui", "zh": "%d 个通道", "en": "%d channel(s)", "ja": "%d チャンネル"},
     {"id": "Task_ExportAudio", "type": "ui", "zh": "导出音频", "en": "Exporting audio", "ja": "音声をエクスポート"},
 
     {"id": "Task_Done", "type": "ui", "zh": "已完成", "en": "Done", "ja": "完了"},

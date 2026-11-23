@@ -6820,11 +6820,16 @@ bool AudioEngine::exportSingleChannel(const std::string& inputPath,
         }
 
         writtenFrames += written;
-        if (progress && *progress && (progressTick++ % 8) == 0) {
+        if (progress && *progress && (++progressTick % 8) == 0) {
             try { (*progress)(writtenFrames, sourceTotalFrames); } catch (...) {}
         }
 
         if (res == MA_AT_END) break;
+    }
+
+    // 收尾补发一次，保证界面能到 100%，不依赖块数是否为 8 的倍数。
+    if (ok && progress && *progress) {
+        try { (*progress)(writtenFrames, sourceTotalFrames); } catch (...) {}
     }
 
     encoder.Close();
