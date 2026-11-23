@@ -1262,6 +1262,13 @@
       "ja": "行の高さ"
     },
     {
+      "id": "Set_InterfaceScale",
+      "type": "ui",
+      "zh": "界面缩放",
+      "en": "Interface Scale",
+      "ja": "インターフェース拡大"
+    },
+    {
       "id": "Set_SystemFontSize",
       "type": "ui",
       "zh": "系统字体大小",
@@ -6817,6 +6824,13 @@
       "zh": "从任意 JSON 文件导入主题",
       "en": "Import a theme from any JSON file",
       "ja": "任意の JSON ファイルからテーマをインポート"
+    },
+    {
+      "id": "ThemeEditor_SavedThemes",
+      "type": "ui",
+      "zh": "已保存主题",
+      "en": "Saved themes",
+      "ja": "保存済みテーマ"
     },
     {
       "id": "ThemeEditor_DevSavePreset",
@@ -13432,6 +13446,13 @@
       "zh": "主题已应用，但 theme_custom.json 写入失败",
       "en": "Theme applied, but writing theme_custom.json failed",
       "ja": "テーマは適用済みですが theme_custom.json の書き込みに失敗"
+    },
+    {
+      "id": "TE_LibrarySaveFail",
+      "type": "ui",
+      "zh": "主题已应用，但保存到本地主题文件夹失败",
+      "en": "Theme applied, but saving a copy to the local theme folder failed",
+      "ja": "テーマは適用済みですが、ローカルのテーマフォルダへの保存に失敗"
     },
     {
       "id": "TE_InspectOn",

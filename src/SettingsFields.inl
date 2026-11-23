@@ -62,6 +62,12 @@ else if(id=="themeEditor") {
     }
 }
 else if(id=="language") {int n=(int)draft.language;if(combo(n,{u8"简体中文","English",u8"日本語"}))draft.language=(AppLanguage)n;}
+else if(id=="uiScale") {
+    static const int kPercents[]{80,90,100,125,150,175,200};
+    const int safeValue=aura::ui::dpi::ResolveInterfaceScalePercent(draft.uiScalePercent);
+    int n=0;for(int i=0;i<7;++i)if(kPercents[i]==safeValue)n=i;
+    if(combo(n,{"80%","90%","100%","125%","150%","175%","200%"}))draft.uiScalePercent=kPercents[n];
+}
 else if(id=="systemFont") {
     auto& value=draft.readingFontSize;
     const int safeValue=ClampSettingsFontSize(value);

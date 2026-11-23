@@ -872,6 +872,9 @@ struct AppSettings {
     int fontSize = 13;
     int listFontSize = kDefaultListFontPx;
     int readingFontSize = kDefaultReadingFontPx;   // unified reading-surface font size (replaces listFontSize for reading)
+    // Application-level interface scale (80-200). Multiplies the monitor DPI so the
+    // whole UI can grow or shrink without changing Windows scaling.
+    int uiScalePercent = 100;
     float settingsDialogWidth = 860.0f;
     float settingsDialogHeight = 560.0f;
     float waveformPanelHeight = 200.0f;

@@ -108,6 +108,7 @@
 #include "Theme.h"              // 主题颜色系统
 #include "ThemeModuleColors.h"
 #include "ThemeSchedule.h"
+#include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
@@ -5601,6 +5602,8 @@ void LoadAppSettings(AppState& state) {
             kDefaultReadingFontPx);
         // Chrome is fixed at kChromeFontPx.
         state.settings.fontSize = kChromeFontPx;
+        state.settings.uiScalePercent = aura::ui::dpi::ResolveInterfaceScalePercent(
+            ParseInt(kv["uiScalePercent"], 100));
         // List font is independently adjustable and keeps its own default.
         state.settings.listFontSize = itList != kv.end()
             ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)
@@ -6560,6 +6563,8 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     // UI sizing
     items.push_back({"fontSize", std::to_string(state.settings.fontSize)});
     items.push_back({"readingFontSize", std::to_string(persistedAppearance.readingFontSize)});
+    items.push_back({"uiScalePercent", std::to_string(aura::ui::dpi::ResolveInterfaceScalePercent(
+        persistedAppearance.uiScalePercent))});
     items.push_back({"listFontSize", std::to_string(persistedAppearance.listFontSize)});
     items.push_back({"rowHeight", std::to_string(persistedAppearance.rowHeight)});
     items.push_back({"listDensity", std::to_string((int)persistedAppearance.listDensity)});
@@ -46918,7 +46923,11 @@ void RenderUI(AppState& state) {
             bool isOverdriven = volume > 100.0f;
 
             ImDrawList* volDl = barDl;
-            const float volWidth = workspacePx(260.0f);
+            // The volume track gets a share of the bar instead of a fixed logical
+            // width: 13.66% of the bar is 260 px at 100%, and the share stays the
+            // same when the interface is enlarged, so the EQ axis keeps its room.
+            const float volWidth = std::clamp(barW * 0.1366f, workspacePx(180.0f),
+                                              workspacePx(330.0f));
             const float volHeight = workspacePx(32.0f);
             const float fireSpace = workspacePx(45.0f);
 
