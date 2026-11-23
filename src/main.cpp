@@ -30630,17 +30630,34 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
                    &state.coverTaskLastPhase, state.coverRebuildCancel && !state.coverRebuildActive);
 
     int pendingAssets = 0;
+    int inFlightAssets = 0;
     try {
         const auto backfill = state.backfillQueue.snapshot();
         for (int i = 0; i < aura::kBackfillJobKindCount; ++i) pendingAssets += std::max(0, backfill.byKind[i]);
-        pendingAssets += std::max(0, backfill.inFlight);
+        inFlightAssets = std::max(0, backfill.inFlight);
+        pendingAssets += inFlightAssets;
     } catch (...) {
         pendingAssets = 0;
+        inFlightAssets = 0;
     }
     const bool backfillActive = pendingAssets > 0 && !state.isScanning.load();
-    pushDerivedRow(LibraryTaskKind::Backfill, backfillActive, pendingAssets, 0,
-                   L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
-                   &state.backfillTaskLastPhase);
+    if (backfillActive) {
+        // 只有真的有任务在跑才叫「处理中」；队列里躺着没动就是排队。
+        char detail[96];
+        if (inFlightAssets > 0) {
+            std::snprintf(detail, sizeof(detail), L(Task_BackfillRunningFmt), pendingAssets);
+        } else {
+            std::snprintf(detail, sizeof(detail), L(Task_BackfillQueuedFmt), pendingAssets);
+        }
+        state.backfillTaskWasActive = true;
+        state.backfillTaskDoneAt = 0.0;
+        rows.push_back({LibraryTaskKind::Backfill, Phase::Running, L(Task_BackfillAssets),
+                        detail, -1.0f});
+    } else {
+        pushDerivedRow(LibraryTaskKind::Backfill, false, 0, 0,
+                       L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt,
+                       &state.backfillTaskLastPhase);
+    }
 
     // Wwise 传输：后台线程执行，这里只读进度快照。
     {
@@ -34354,6 +34371,51 @@ void RenderUI(AppState& state) {
                                     "Scan",
                                     "ScanPauseFailed: session=%lld error=fatal_scan_failure",
                                     (long long)scanGeneration);
+                            } else {
+                                // 暂停只停扫描本身：已经落进 backfill_pending 的补封面/补波形继续跑，
+                                // 不再等用户重新开始扫描才接棒。内存队列此刻可能是空的，先按库补齐。
+                                const std::string pauseDbPath = state.backfillQueue.currentDbPath();
+                                if (!pauseDbPath.empty()) {
+                                    Database pauseSeedDb;
+                                    if (pauseSeedDb.open(pauseDbPath)) {
+                                        state.backfillQueue.refillFromDatabaseIfBelowWaterMark(&pauseSeedDb, 4096, 4096);
+                                    } else {
+                                        DIAG_SYSTEM_FMT(
+                                            "Scan",
+                                            "ScanPauseBackfillSeedFailed: session=%lld path=%s",
+                                            (long long)scanGeneration,
+                                            pauseDbPath.c_str());
+                                    }
+                                }
+                                const auto queuedSnapshot = state.backfillQueue.snapshot();
+                                int queuedJobs = 0;
+                                for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
+                                    queuedJobs += std::max(0, queuedSnapshot.byKind[i]);
+                                }
+                                if (queuedJobs > 0 || queuedSnapshot.inFlight > 0) {
+                                    const int resumeThreads =
+                                        (std::min)(aura::ResolveScanBackfillWorkerThreads(
+                                                       state.scanWorkerThreads,
+                                                       std::thread::hardware_concurrency()),
+                                                   2);
+                                    aura::GlobalBackfillWorkerPool().start(
+                                        state.backfillQueue.currentDbPath(),
+                                        state.backfillQueue.currentGeneration(),
+                                        &state.backfillQueue,
+                                        resumeThreads);
+                                    DIAG_SYSTEM_FMT(
+                                        "Scan",
+                                        "ScanPauseBackfillResume: session=%lld queued=%d inFlight=%d threads=%d",
+                                        (long long)scanGeneration,
+                                        queuedJobs,
+                                        queuedSnapshot.inFlight,
+                                        resumeThreads);
+                                } else {
+                                    DIAG_SYSTEM_FMT(
+                                        "Scan",
+                                        "ScanPauseBackfillIdle: session=%lld queued=0 inFlight=0",
+                                        (long long)scanGeneration);
+                                }
                             }
                         } else if (cancelled) {
                             if (rollbackCancelled) {
