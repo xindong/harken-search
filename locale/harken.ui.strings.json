@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "entries": [
+
+    {"id": "Task_Done", "type": "ui", "zh": "已完成", "en": "Done", "ja": "完了"},
+    {"id": "Task_BackfillAssets", "type": "ui", "zh": "补全波形与封面", "en": "Backfill waveforms & covers", "ja": "波形とカバーを補完"},
+    {"id": "Task_DownloadUpdate", "type": "ui", "zh": "下载更新", "en": "Downloading update", "ja": "アップデートをダウンロード"},
     {"id": "DiagnosticOverlay_Title", "type": "ui", "zh": "性能监视器", "en": "Performance Monitor", "ja": "パフォーマンスモニター"},
     {"id": "DiagnosticOverlay_Performance", "type": "ui", "zh": "性能", "en": "Performance", "ja": "性能"},
     {"id": "DiagnosticOverlay_FpsLabel", "type": "ui", "zh": "帧率", "en": "FPS", "ja": "FPS"},
@@ -163,6 +167,16 @@
     {"id":"ScanUi_AnalysisSuccessFmt","type":"ui","zh":"成功 %d 个音效","en":"Succeeded: %d sounds","ja":"成功した音声 %d 件"},
     {"id":"ScanUi_ViewProgress","type":"ui","zh":"查看进度","en":"View progress","ja":"進捗を表示"},
     {"id":"ScanUi_ViewResult","type":"ui","zh":"查看结果","en":"View results","ja":"結果を表示"},
+    {"id":"Task_RemovePath","type":"ui","zh":"移除路径","en":"Remove path","ja":"パスを削除"},
+    {"id":"Task_RemoveRunning","type":"ui","zh":"正在移除库记录…","en":"Removing library records…","ja":"ライブラリから削除中…"},
+    {"id":"Task_RemoveDoneFmt","type":"ui","zh":"已移除 %d 条记录","en":"Removed %d records","ja":"%d 件のレコードを削除"},
+    {"id":"Task_RemoveEmptyRoot","type":"ui","zh":"已移除扫描路径","en":"Scan path removed","ja":"スキャンパスを削除しました"},
+    {"id":"Task_RemoveNoMatch","type":"ui","zh":"没有匹配项","en":"No matches","ja":"一致する項目がありません"},
+    {"id":"Task_RemoveBusy","type":"ui","zh":"正在移除路径，请完成后再切换库。","en":"Wait for path removal before switching libraries.","ja":"パスの削除が終わってからライブラリを切り替えてください。"},
+    {"id":"Task_RemoveLibraryChanged","type":"ui","zh":"库已切换，请在当前库重新确认。","en":"Library changed. Confirm again in the current library.","ja":"ライブラリが変わりました。現在のライブラリで再確認してください。"},
+    {"id":"Task_Stopped","type":"ui","zh":"已停止","en":"Stopped","ja":"停止しました"},
+    {"id":"Task_Failed","type":"ui","zh":"未完成","en":"Failed","ja":"完了できませんでした"},
+    {"id":"Task_Dismiss","type":"ui","zh":"收起","en":"Dismiss","ja":"閉じる"},
     {"id":"ScanUi_Title","type":"ui","zh":"扫描入库","en":"Scan library","ja":"ライブラリに取り込む"},
     {"id":"ScanUi_AdvancedOptions","type":"ui","zh":"高级选项","en":"Advanced options","ja":"詳細設定"},
     {"id":"ScanUi_AutoThreads","type":"ui","zh":"自动分配线程","en":"Automatic threads","ja":"スレッド数を自動設定"},
@@ -1245,6 +1259,13 @@
       "zh": "列表行高",
       "en": "Row Height",
       "ja": "行の高さ"
+    },
+    {
+      "id": "Set_InterfaceScale",
+      "type": "ui",
+      "zh": "界面缩放",
+      "en": "Interface Scale",
+      "ja": "インターフェース拡大"
     },
     {
       "id": "Set_SystemFontSize",
@@ -6804,6 +6825,13 @@
       "ja": "任意の JSON ファイルからテーマをインポート"
     },
     {
+      "id": "ThemeEditor_SavedThemes",
+      "type": "ui",
+      "zh": "已保存主题",
+      "en": "Saved themes",
+      "ja": "保存済みテーマ"
+    },
+    {
       "id": "ThemeEditor_DevSavePreset",
       "type": "ui",
       "zh": "[DEV] Save as C++ Preset",
@@ -9058,20 +9086,6 @@
       "ja": "上半分: フェードハンドル · 下半分: イン/アウト端点"
     },
     {
-      "id": "Main_ImportRunLabel",
-      "type": "ui",
-      "zh": "本次入库",
-      "en": "This import",
-      "ja": "今回の取り込み"
-    },
-    {
-      "id": "Main_ElapsedLabel",
-      "type": "ui",
-      "zh": "耗时",
-      "en": "Elapsed",
-      "ja": "所要時間"
-    },
-    {
       "id": "Main_MiniWaveBackfillNote",
       "type": "ui",
       "zh": "迷你波形后台渐进补齐",
@@ -10093,13 +10107,6 @@
       "zh": "+%d BPM",
       "en": "+%d BPM",
       "ja": "+%d BPM"
-    },
-    {
-      "id": "Main_ScanDoneShort",
-      "type": "ui",
-      "zh": "扫描完成",
-      "en": "Scan complete",
-      "ja": "スキャン完了"
     },
     {
       "id": "Main_WarnPrefixFmt",
@@ -13438,6 +13445,13 @@
       "zh": "主题已应用，但 theme_custom.json 写入失败",
       "en": "Theme applied, but writing theme_custom.json failed",
       "ja": "テーマは適用済みですが theme_custom.json の書き込みに失敗"
+    },
+    {
+      "id": "TE_LibrarySaveFail",
+      "type": "ui",
+      "zh": "主题已应用，但保存到本地主题文件夹失败",
+      "en": "Theme applied, but saving a copy to the local theme folder failed",
+      "ja": "テーマは適用済みですが、ローカルのテーマフォルダへの保存に失敗"
     },
     {
       "id": "TE_InspectOn",
