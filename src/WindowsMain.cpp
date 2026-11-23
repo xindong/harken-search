@@ -6197,6 +6197,26 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
 #endif
+    } else if (cmd == "start_channel_export") {
+        const int row = getInt(raw, "row", state.selectedResultIndex);
+        const int channel = getInt(raw, "channel", 0);
+        if (row >= 0 && row < (int)state.searchResults.size() && channel >= 0) {
+            state.qaStartChannelExportRow = row;
+            state.qaStartChannelExportChannel = channel;
+            result = R"({"ok":true,"cmd":"start_channel_export","row":)" + std::to_string(row) +
+                     R"(,"channel":)" + std::to_string(channel) + "}";
+        } else {
+            result = R"({"ok":false,"cmd":"start_channel_export","error":"row or channel out of range"})";
+        }
+
+    } else if (cmd == "channel_export_state") {
+        result = R"({"ok":true,"cmd":"channel_export_state","jobs":)" +
+                 std::to_string((int)state.channelExportJobs.size()) +
+                 R"(,"was_active":)" + std::string(state.channelExportTaskWasActive ? "true" : "false") +
+                 R"(,"dismissed":)" + std::string(state.channelExportTaskDismissed ? "true" : "false") +
+                 R"(,"done_at":)" + std::to_string(state.channelExportTaskDoneAt) +
+                 R"(,"last_error":")" + jsonEscape(state.channelExportTaskLastError) + R"(","frame":)" +
+                 std::to_string(ImGui::GetFrameCount()) + "}";
     } else if (cmd == "open_row_context_menu") {
         int row = getInt(raw, "row", state.selectedResultIndex);
         if (row >= 0 && row < (int)state.searchResults.size()) {

@@ -3311,6 +3311,8 @@ struct AppState {
     // QA harness: deferred rescan row — set by PollQaCommandFile, processed at
     // the top of RenderUI (outside any table loop) to avoid dangling references.
     int qaRescanRow = -1;
+    int qaStartChannelExportRow = -1;
+    int qaStartChannelExportChannel = 0;
     bool qaRequestScanBpm = false;
     bool qaRequestWaveformRebuild = false;
     bool qaRequestWaveformRebuildFull = false;

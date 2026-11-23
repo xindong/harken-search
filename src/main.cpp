@@ -31049,6 +31049,14 @@ void RenderUI(AppState& state) {
         }
     }
 
+    if (state.qaStartChannelExportRow >= 0) {
+        const int qrow = state.qaStartChannelExportRow;
+        state.qaStartChannelExportRow = -1;
+        if (qrow < (int)state.searchResults.size()) {
+            StartSingleChannelExport(state, state.searchResults[qrow], state.qaStartChannelExportChannel);
+        }
+    }
+
     if (deferredRequests.scanBpm) {
         StartBpmBatchScan(state);
     }
