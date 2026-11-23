@@ -2725,6 +2725,16 @@ struct AppState {
     int embedBatchProgress = 0;
 
     // Rebuild all covers (重建当前数据库的所有封面) - 流式分批处理
+    // 右下角任务浮层用的派生任务边沿状态（3 秒成功短报）
+    bool waveformTaskWasActive = false;
+    double waveformTaskDoneAt = 0.0;
+    bool coverTaskWasActive = false;
+    double coverTaskDoneAt = 0.0;
+    bool backfillTaskWasActive = false;
+    double backfillTaskDoneAt = 0.0;
+    bool updateTaskWasActive = false;
+    double updateTaskDoneAt = 0.0;
+
     bool coverRebuildActive = false;
     int64_t coverRebuildTotal = 0;
     int64_t coverRebuildProgress = 0;

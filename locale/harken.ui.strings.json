@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Task_Done", "type": "ui", "zh": "已完成", "en": "Done", "ja": "完了"},
+    {"id": "Task_BackfillAssets", "type": "ui", "zh": "补全波形与封面", "en": "Backfill waveforms & covers", "ja": "波形とカバーを補完"},
+    {"id": "Task_DownloadUpdate", "type": "ui", "zh": "下载更新", "en": "Downloading update", "ja": "アップデートをダウンロード"},
     {"id": "DiagnosticOverlay_Title", "type": "ui", "zh": "性能监视器", "en": "Performance Monitor", "ja": "パフォーマンスモニター"},
     {"id": "DiagnosticOverlay_Performance", "type": "ui", "zh": "性能", "en": "Performance", "ja": "性能"},
     {"id": "DiagnosticOverlay_FpsLabel", "type": "ui", "zh": "帧率", "en": "FPS", "ja": "FPS"},

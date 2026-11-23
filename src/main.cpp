@@ -30487,7 +30487,7 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
 }
 
-enum class LibraryTaskKind { Removal, Scan, Similarity };
+enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update };
 
 struct LibraryTaskRow {
     LibraryTaskKind kind;
@@ -30573,95 +30573,217 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         }
         rows.push_back({LibraryTaskKind::Similarity, similarPhase, L(ScanUi_SimilarTitle), std::move(detail), fraction});
     }
+
+    // 波形重建 / 封面重建 / 补波形封面：没有独立提示生成器，用状态边沿做 3 秒成功短报。
+    const auto pushDerivedRow = [&](LibraryTaskKind kind, bool active, int64_t done, int64_t total,
+                                    const char* title, bool* wasActive, double* doneAt) {
+        if (active) {
+            *wasActive = true;
+            *doneAt = 0.0;
+            std::string detail;
+            float fraction = -1.0f;
+            if (total > 0) {
+                detail = std::to_string(done) + " / " + std::to_string(total);
+                fraction = std::clamp(static_cast<float>(done) / static_cast<float>(total), 0.0f, 1.0f);
+            } else {
+                detail = std::to_string(done);
+            }
+            rows.push_back({kind, Phase::Running, title, std::move(detail), fraction});
+            return;
+        }
+        if (*wasActive) {
+            *wasActive = false;
+            *doneAt = now;
+        }
+        if (*doneAt > 0.0 && now - *doneAt < 3.0) {
+            rows.push_back({kind, Phase::Succeeded, title, L(Task_Done), -1.0f});
+        }
+    };
+
+    pushDerivedRow(LibraryTaskKind::Waveform, state.waveformRebuildActive,
+                   state.waveformRebuildProgress, state.waveformRebuildTotal,
+                   L(Ctx_RebuildWaveform), &state.waveformTaskWasActive, &state.waveformTaskDoneAt);
+    pushDerivedRow(LibraryTaskKind::Cover, state.coverRebuildActive,
+                   state.coverRebuildProgress, state.coverRebuildTotal,
+                   L(Set_RebuildCoverIndex), &state.coverTaskWasActive, &state.coverTaskDoneAt);
+
+    int pendingAssets = 0;
+    try {
+        const auto backfill = state.backfillQueue.snapshot();
+        for (int i = 0; i < aura::kBackfillJobKindCount; ++i) pendingAssets += std::max(0, backfill.byKind[i]);
+        pendingAssets += std::max(0, backfill.inFlight);
+    } catch (...) {
+        pendingAssets = 0;
+    }
+    const bool backfillActive = pendingAssets > 0 && !state.isScanning.load();
+    pushDerivedRow(LibraryTaskKind::Backfill, backfillActive, pendingAssets, 0,
+                   L(Task_BackfillAssets), &state.backfillTaskWasActive, &state.backfillTaskDoneAt);
+
+    // 应用更新下载：读取更新模块的字节计数，更新中心窗口可见时不重复显示。
+    {
+        using HarkenSearch::LibraryTaskPhase;
+        const auto update = aris::update::GetHarkenSearchUpdateUiState();
+        const bool updateDownloading = update.phase == aris::update::HarkenSearchUpdateUiPhase::Downloading;
+        const bool updateVisible = state.showUpdateCenter;
+        if (updateDownloading) {
+            state.updateTaskWasActive = true;
+            state.updateTaskDoneAt = 0.0;
+            std::string detail;
+            float fraction = -1.0f;
+            if (update.totalBytes > 0) {
+                const double doneMb = static_cast<double>(update.downloadedBytes) / (1024.0 * 1024.0);
+                const double totalMb = static_cast<double>(update.totalBytes) / (1024.0 * 1024.0);
+                char buffer[96];
+                std::snprintf(buffer, sizeof(buffer), "%.1f / %.1f MB", doneMb, totalMb);
+                detail = buffer;
+                fraction = std::clamp(static_cast<float>(doneMb / totalMb), 0.0f, 1.0f);
+            } else {
+                char buffer[64];
+                std::snprintf(buffer, sizeof(buffer), "%.1f MB",
+                              static_cast<double>(update.downloadedBytes) / (1024.0 * 1024.0));
+                detail = buffer;
+            }
+            if (!updateVisible) {
+                rows.push_back({LibraryTaskKind::Update, Phase::Running, L(Task_DownloadUpdate),
+                                std::move(detail), fraction});
+            }
+        } else {
+            if (state.updateTaskWasActive) {
+                state.updateTaskWasActive = false;
+                state.updateTaskDoneAt = now;
+            }
+            const bool failed = update.phase == aris::update::HarkenSearchUpdateUiPhase::Error;
+            if (!updateVisible && (failed || (state.updateTaskDoneAt > 0.0 && now - state.updateTaskDoneAt < 3.0))) {
+                rows.push_back({LibraryTaskKind::Update, failed ? Phase::Failed : Phase::Succeeded,
+                                L(Task_DownloadUpdate),
+                                failed ? (update.lastError.empty() ? L(Task_Failed) : update.lastError.c_str())
+                                       : L(Task_Done),
+                                -1.0f});
+            }
+        }
+    }
+
     return rows;
 }
 
-static void DrawLibraryTaskRows(AppState& state, const std::vector<LibraryTaskRow>& rows,
-                                float rowHeight, float height, bool removalDetails) {
+static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTaskRow>& rows) {
     using Phase = HarkenSearch::LibraryTaskPhase;
     if (rows.empty()) return;
-    const auto modules = ResolveThemeModuleColors(ThemeColors::current());
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.surface.toolbar);
-    ImGui::PushFont(GetUIFontRegular());
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 0.0f));
-    BeginTransientScrollbarChild("##LibraryTaskProgress", ImVec2(0, height), false,
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    for (const auto& row : rows) {
-        ImGui::PushID(static_cast<int>(row.kind));
-        const bool running = row.phase == Phase::Running;
-        const bool failed = row.phase == Phase::Failed;
-        const char* open = failed ? L(Task_ViewDetails) : L(ScanUi_ViewProgress);
-        const bool hasOpen = failed || (running && row.kind != LibraryTaskKind::Removal);
-        const char* dismiss = L(Task_Dismiss);
-        const ImVec2 origin = ImGui::GetCursorScreenPos();
-        const float width = ImGui::GetContentRegionAvail().x;
-        const float gap = ImGui::GetStyle().ItemSpacing.x;
-        const float inset = 8.0f;
-        const auto buttonWidth = [&](const char* label) {
-            return ImGui::CalcTextSize(label).x + 2.0f * ImGui::GetStyle().FramePadding.x + 4.0f;
-        };
-        const float openWidth = hasOpen ? buttonWidth(open) + gap : 0.0f;
-        const float dismissWidth = failed ? buttonWidth(dismiss) + gap : 0.0f;
-        const float controlsStart = std::max(inset + 1.0f, width - inset - openWidth - dismissWidth);
-        const float textWidth = std::max(1.0f, controlsStart - inset);
-        const float barWidth = running ? std::max(0.0f, std::min(textWidth * 0.25f, 104.0f)) : 0.0f;
-        const float textY = origin.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f;
-        const float labelRight = origin.x + controlsStart - (running ? barWidth + gap : 0.0f);
-        const std::string label = std::string(row.title) + "  ·  " + row.detail;
-        auto* draw = ImGui::GetWindowDrawList();
-        draw->PushClipRect(ImVec2(origin.x, origin.y), ImVec2(std::max(origin.x, labelRight), origin.y + rowHeight), true);
-        draw->AddText(ImVec2(origin.x + inset, textY), ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
-        draw->PopClipRect();
 
-        if (barWidth >= 4.0f) {
-            ImGui::SetCursorScreenPos(ImVec2(origin.x + controlsStart - barWidth - 2.0f,
-                origin.y + (rowHeight - 4.0f) * 0.5f));
-            if (row.fraction >= 0.0f) DrawUnifiedProgressBar(row.fraction, ImVec2(barWidth, 4.0f));
-            else DrawScanWaitingBar(barWidth, 4.0f);
-        }
-        if (hasOpen) {
-            const float buttonY = origin.y + std::max(0.0f, (rowHeight - ImGui::GetFrameHeight()) * 0.5f);
-            ImGui::SetCursorScreenPos(ImVec2(origin.x + controlsStart, buttonY));
-            if (aura::ui::SmallActionButton(open, aura::ui::ButtonVariant::Quiet)) {
+    const auto* viewport = ImGui::GetMainViewport();
+    const float inset = 16.0f;
+    const float width = 300.0f;
+    const float rowHeight = 46.0f;
+    const float padding = 10.0f;
+    const size_t shown = std::min<size_t>(rows.size(), 3);
+    const float spacing = ImGui::GetStyle().ItemSpacing.y;
+    const float height = padding * 2.0f + rowHeight * static_cast<float>(shown) +
+        spacing * static_cast<float>(shown > 0 ? shown - 1 : 0);
+
+    ImGui::SetNextWindowPos(
+        ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - inset,
+               viewport->WorkPos.y + viewport->WorkSize.y - inset),
+        ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+
+    const auto modules = ResolveThemeModuleColors(ThemeColors::current());
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, modules.surface.toolbar);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.surface.border);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.results.text);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, spacing));
+    ImGui::PushFont(GetUIFontRegular());
+
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoDocking;
+
+    if (ImGui::Begin("##LibraryTaskToasts", nullptr, flags)) {
+        for (size_t index = 0; index < shown; ++index) {
+            const auto& row = rows[index];
+            ImGui::PushID(static_cast<int>(row.kind));
+            const bool running = row.phase == Phase::Running;
+            const bool failed = row.phase == Phase::Failed;
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const float rowWidth = ImGui::GetContentRegionAvail().x;
+            auto* draw = ImGui::GetWindowDrawList();
+
+            // 标题行：标题 + 右侧状态（失败时可点 ×）
+            const float textWidth = rowWidth - (failed ? 18.0f : 0.0f);
+            draw->PushClipRect(ImVec2(origin.x, origin.y),
+                               ImVec2(std::max(origin.x, origin.x + textWidth), origin.y + 20.0f), true);
+            draw->AddText(origin, ImGui::GetColorU32(ImGuiCol_Text), row.title);
+            const float titleWidth = ImGui::CalcTextSize(row.title).x;
+            if (titleWidth + 8.0f < textWidth) {
+                draw->AddText(ImVec2(origin.x + titleWidth + 8.0f, origin.y),
+                              ImGui::GetColorU32(ImGuiCol_TextDisabled), row.detail.c_str());
+            }
+            draw->PopClipRect();
+
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::InvisibleButton("##row", ImVec2(rowWidth, 20.0f));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
+            if (ImGui::IsItemClicked() && !failed) {
                 if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
                 else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
-                else state.folderRemovalDetails = !state.folderRemovalDetails;
             }
-            ThemeInspector::RegisterLastItem(row.kind == LibraryTaskKind::Removal ? "task.footer.remove.details" :
-                row.kind == LibraryTaskKind::Scan ? "task.footer.scan.open" : "task.footer.similarity.open");
             if (failed) {
-                ImGui::SetCursorScreenPos(ImVec2(origin.x + controlsStart + openWidth, buttonY));
-                if (aura::ui::SmallActionButton(dismiss, aura::ui::ButtonVariant::Quiet)) {
+                ImGui::SetCursorScreenPos(ImVec2(origin.x + rowWidth - 16.0f, origin.y + 2.0f));
+                if (ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f))) {
                     if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Similarity) state.manualSimilarityNotice.Dismiss();
-                    else {
-                        state.folderRemovalDetails = false;
-                        state.folderRemovalNotice.Dismiss();
-                    }
+                    else state.folderRemovalNotice.Dismiss();
                 }
-                if (row.kind == LibraryTaskKind::Removal) ThemeInspector::RegisterLastItem("task.footer.remove.dismiss");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
+                const ImVec2 closeMin = ImGui::GetItemRectMin();
+                const ImVec2 closeMax = ImGui::GetItemRectMax();
+                const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                draw->AddLine(ImVec2(closeMin.x + 4.0f, closeMin.y + 4.0f),
+                              ImVec2(closeMax.x - 4.0f, closeMax.y - 4.0f), color, 1.2f);
+                draw->AddLine(ImVec2(closeMax.x - 4.0f, closeMin.y + 4.0f),
+                              ImVec2(closeMin.x + 4.0f, closeMax.y - 4.0f), color, 1.2f);
             }
+
+            // 进度条
+            const float barY = origin.y + 26.0f;
+            const float barWidth = rowWidth - 44.0f;
+            ImGui::SetCursorScreenPos(ImVec2(origin.x, barY));
+            if (running) {
+                if (row.fraction >= 0.0f) DrawUnifiedProgressBar(row.fraction, ImVec2(barWidth, 4.0f));
+                else DrawScanWaitingBar(barWidth, 4.0f);
+            } else {
+                draw->AddRectFilled(ImVec2(origin.x, barY),
+                                    ImVec2(origin.x + barWidth, barY + 4.0f),
+                    failed ? ImGui::GetColorU32(ImGuiCol_TextDisabled)
+                           : ImGui::GetColorU32(ImGuiCol_TextDisabled, 0.35f), 2.0f);
+            }
+            if (running && row.fraction >= 0.0f) {
+                char percent[16];
+                std::snprintf(percent, sizeof(percent), "%d%%", static_cast<int>(row.fraction * 100.0f + 0.5f));
+                ImGui::SetCursorScreenPos(ImVec2(origin.x + barWidth + 8.0f, barY - 7.0f));
+                ImGui::TextUnformatted(percent);
+            }
+
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::Dummy(ImVec2(rowWidth, rowHeight));
+            ThemeInspector::RegisterLastItem(row.kind == LibraryTaskKind::Removal ? "task.toast.remove" :
+                row.kind == LibraryTaskKind::Scan ? "task.toast.scan" :
+                row.kind == LibraryTaskKind::Similarity ? "task.toast.similarity" :
+                row.kind == LibraryTaskKind::Waveform ? "task.toast.waveform" :
+                row.kind == LibraryTaskKind::Cover ? "task.toast.cover" :
+                row.kind == LibraryTaskKind::Update ? "task.toast.update" : "task.toast.backfill");
+            ImGui::PopID();
         }
-        ImGui::SetCursorScreenPos(origin);
-        ImGui::Dummy(ImVec2(width, rowHeight));
-        ThemeInspector::RegisterLastItem(row.kind == LibraryTaskKind::Removal ? "task.footer.remove" :
-            row.kind == LibraryTaskKind::Scan ? "task.footer.scan" : "task.footer.similarity");
-        if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > labelRight - origin.x - inset)
-            ImGui::SetTooltip("%s", label.c_str());
-        if (removalDetails && failed && row.kind == LibraryTaskKind::Removal) {
-            const auto position = ImGui::GetCursorScreenPos();
-            const char* reason = state.folderRemovalError.empty() ? L(Task_Failed) : state.folderRemovalError.c_str();
-            draw->AddText(ImVec2(position.x + inset, position.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f),
-                ImGui::GetColorU32(ImGuiCol_Text), reason);
-            ImGui::Dummy(ImVec2(width, rowHeight));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", reason);
-        }
-        ImGui::PopID();
     }
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
+    ImGui::End();
+
     ImGui::PopFont();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(3);
 }
 
 static void DrawLibrarySwitchBackground(ImDrawList* drawList, const ImRect& bounds) {
@@ -38968,15 +39090,10 @@ void RenderUI(AppState& state) {
     const float startupWaveformOffsetReserve =
         showDockedWaveform ? 40.0f * (1.0f - t) : 0.0f;
     const auto libraryTaskRows = BuildLibraryTaskRows(state, scanView, scanIsCleanup, scanOriginalVisible);
-    const bool removalDetailsVisible = state.folderRemovalDetails &&
-        std::any_of(libraryTaskRows.begin(), libraryTaskRows.end(),
-            [](const LibraryTaskRow& row) { return row.kind == LibraryTaskKind::Removal; });
-    const float libraryTaskRowHeight = std::ceil(
-        layoutStatusTextH + 2.0f * ImGui::GetStyle().FramePadding.y + 4.0f);
-    const float libraryTasksHeight = libraryTaskRowHeight *
-        static_cast<float>(libraryTaskRows.size() + (removalDetailsVisible ? 1 : 0));
+    // 任务进度改为右下角浮层，不再在底栏预留一行高度。
+    const float reservedTaskRowsHeight = 0.0f;
     const float reservedStatusBarHeight = (showDockedWaveform ? 0.0f : statusBarHeight) +
-        (libraryTasksHeight > 0.0f ? libraryTasksHeight + ImGui::GetStyle().ItemSpacing.y : 0.0f);
+        reservedTaskRowsHeight;
     const float statusBottomLayoutReserve =
         showDockedWaveform ? 0.0f : std::max(2.0f, ImGui::GetStyle().FramePadding.y + 1.0f);
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
@@ -51973,7 +52090,7 @@ void RenderUI(AppState& state) {
         ImGui::End();
     }
 
-    DrawLibraryTaskRows(state, libraryTaskRows, libraryTaskRowHeight, libraryTasksHeight, removalDetailsVisible);
+    DrawLibraryTaskToasts(state, libraryTaskRows);
 
     // STATUS BAR with Panel Toggle Buttons
     if (!showDockedWaveform) {

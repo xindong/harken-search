@@ -5902,6 +5902,23 @@ static void PollQaCommandFile(AppState& state) {
         result += "],";
         result += "\"scan_in_progress\":" + std::string(state.isScanning.load() ? "true" : "false") + ",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
+        {
+            const auto update = aris::update::GetHarkenSearchUpdateUiState();
+            const char* phase = "idle";
+            switch (update.phase) {
+                case aris::update::HarkenSearchUpdateUiPhase::Disabled: phase = "disabled"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Checking: phase = "checking"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Downloading: phase = "downloading"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Ready: phase = "ready"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Restarting: phase = "restarting"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Error: phase = "error"; break;
+                default: break;
+            }
+            result += "\"update_phase\":\"" + std::string(phase) + "\",";
+            result += "\"update_downloaded_bytes\":" + std::to_string(update.downloadedBytes) + ",";
+            result += "\"update_total_bytes\":" + std::to_string(update.totalBytes) + ",";
+            result += "\"update_error\":\"" + jsonEscape(update.lastError) + "\",";
+        }
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
         result += "\"was_paused\":" + std::string(state.scanWasPaused ? "true" : "false") + ",";
         result += "\"data_committed\":" + std::string(state.scanDataCommitted.load() ? "true" : "false") + ",";
@@ -8057,6 +8074,23 @@ static void PollQaCommandFile(AppState& state) {
         result += "],";
         result += "\"current_file\":\"" + jsonEscape(currentFile) + "\",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
+        {
+            const auto update = aris::update::GetHarkenSearchUpdateUiState();
+            const char* phase = "idle";
+            switch (update.phase) {
+                case aris::update::HarkenSearchUpdateUiPhase::Disabled: phase = "disabled"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Checking: phase = "checking"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Downloading: phase = "downloading"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Ready: phase = "ready"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Restarting: phase = "restarting"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Error: phase = "error"; break;
+                default: break;
+            }
+            result += "\"update_phase\":\"" + std::string(phase) + "\",";
+            result += "\"update_downloaded_bytes\":" + std::to_string(update.downloadedBytes) + ",";
+            result += "\"update_total_bytes\":" + std::to_string(update.totalBytes) + ",";
+            result += "\"update_error\":\"" + jsonEscape(update.lastError) + "\",";
+        }
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
         const HarkenSearch::ScanWorkflowSnapshot workflowSnapshot = state.getScanWorkflowSnapshot();
         const HarkenSearch::ScanProgressView processingProgress =
