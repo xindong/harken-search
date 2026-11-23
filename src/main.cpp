@@ -46429,7 +46429,11 @@ void RenderUI(AppState& state) {
             bool isOverdriven = volume > 100.0f;
 
             ImDrawList* volDl = barDl;
-            const float volWidth = workspacePx(260.0f);
+            // The volume track gets a share of the bar instead of a fixed logical
+            // width: 13.66% of the bar is 260 px at 100%, and the share stays the
+            // same when the interface is enlarged, so the EQ axis keeps its room.
+            const float volWidth = std::clamp(barW * 0.1366f, workspacePx(180.0f),
+                                              workspacePx(330.0f));
             const float volHeight = workspacePx(32.0f);
             const float fireSpace = workspacePx(45.0f);
 
