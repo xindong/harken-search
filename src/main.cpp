@@ -30702,7 +30702,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoDocking;
 
-    if (ImGui::Begin("##LibraryTaskToasts", nullptr, flags)) {
+    if (BeginTransientScrollbarWindow("##LibraryTaskToasts", nullptr, flags)) {
         for (size_t index = 0; index < shown; ++index) {
             const auto& row = rows[index];
             ImGui::PushID(static_cast<int>(row.kind));
