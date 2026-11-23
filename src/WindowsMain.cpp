@@ -12,6 +12,7 @@
 #include "SpectrogramMath.h"
 #include "Theme.h"
 #include "ThemeSchedule.h"
+#include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
 #include "ui/TransportVisualAudit.h"
@@ -160,7 +161,8 @@ namespace { inline void TickHarkenSearchSmokeWindow() {} }
 
 void FinalizeFolderSubtreeDbRemoval(AppState& state,
                                     const std::string& targetPath,
-                                    int removed);
+                                    const FolderSubtreeRemovalResult& result);
+void PumpFolderSubtreeRemoval(AppState& state);
 
 // Startup is split into two decisions so the beta can show login without
 // regressing to the old WebView loading screen.
@@ -4898,6 +4900,8 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
                 {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
                 {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"list_mono_font_pixels",[]{ImGui::PushFont(GetUIListMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
+                {"list_emphasis_font_pixels",[]{ImGui::PushFont(GetUIListEmphasis());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"drawn_list_frame",state.qaRegions.listTextFrame},{"drawn_list_font_pixels",state.qaRegions.listTextFontPixels},
                 {"drawn_list_line_height",state.qaRegions.listTextLineHeight},{"drawn_list_row_height",state.qaRegions.listTextRowHeight},
                 {"drawn_list_sample",state.qaRegions.listTextSample},
@@ -5500,6 +5504,14 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"last_clicked_index\":" + std::to_string(state.lastClickedIndex) + ",";
         result += "\"window_width\":" + std::to_string((int)ImGui::GetIO().DisplaySize.x) + ",";
         result += "\"window_height\":" + std::to_string((int)ImGui::GetIO().DisplaySize.y) + ",";
+#if ARIS_PREVIEW_ISOLATION
+        result += "\"drawn_list_numeric_font_pixels\":" + std::to_string(state.qaRegions.listNumericFontPixels) + ",";
+        result += "\"drawn_list_header_font_pixels\":" + std::to_string(state.qaRegions.listHeaderFontPixels) + ",";
+        result += "\"drawn_list_numeric_sample\":\"" + jsonEscape(state.qaRegions.listNumericSample) + "\",";
+        result += "\"drawn_list_header_sample\":\"" + jsonEscape(state.qaRegions.listHeaderSample) + "\",";
+        result += "\"drawn_duration_column_width\":" + std::to_string(state.qaRegions.listDurationColWidth) + ",";
+        result += "\"drawn_sample_rate_column_width\":" + std::to_string(state.qaRegions.listSampleRateColWidth) + ",";
+#endif
         result += "\"webui_active\":false,";
         result += "\"webui_bridge_active\":false,";
         result += "\"memory_profile\":" + std::to_string(state.settings.memoryProfile) + ",";
@@ -5890,8 +5902,34 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"removed\":" + std::to_string(state.scanRemovedCount.load()) + ",";
         result += "\"errors\":" + std::to_string(state.scanErrorCount.load()) + ",";
         result += "\"total\":" + std::to_string(state.scanTotal.load()) + "},";
+        result += "\"scan_error_messages\":[";
+        {
+            const auto messages = state.getScanErrors();
+            for (size_t i = 0; i < messages.size(); ++i) {
+                if (i > 0) result += ",";
+                result += "\"" + jsonEscape(messages[i]) + "\"";
+            }
+        }
+        result += "],";
         result += "\"scan_in_progress\":" + std::string(state.isScanning.load() ? "true" : "false") + ",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
+        {
+            const auto update = aris::update::GetHarkenSearchUpdateUiState();
+            const char* phase = "idle";
+            switch (update.phase) {
+                case aris::update::HarkenSearchUpdateUiPhase::Disabled: phase = "disabled"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Checking: phase = "checking"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Downloading: phase = "downloading"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Ready: phase = "ready"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Restarting: phase = "restarting"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Error: phase = "error"; break;
+                default: break;
+            }
+            result += "\"update_phase\":\"" + std::string(phase) + "\",";
+            result += "\"update_downloaded_bytes\":" + std::to_string(update.downloadedBytes) + ",";
+            result += "\"update_total_bytes\":" + std::to_string(update.totalBytes) + ",";
+            result += "\"update_error\":\"" + jsonEscape(update.lastError) + "\",";
+        }
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
         result += "\"was_paused\":" + std::string(state.scanWasPaused ? "true" : "false") + ",";
         result += "\"data_committed\":" + std::string(state.scanDataCommitted.load() ? "true" : "false") + ",";
@@ -5917,6 +5955,19 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"scan_background_backfill_phase\":\"" + std::string(scanBackgroundBackfillPhase) + "\",";
         result += "\"scan_background_backfill_deferred_wait_ms\":" + std::to_string(state.scanBackgroundBackfillDeferredWaitMs.load(std::memory_order_acquire)) + ",";
         result += "\"scan_background_backfill_resume_threads\":" + std::to_string(state.scanBackgroundBackfillResumeThreads.load(std::memory_order_acquire)) + ",";
+        {
+            const auto backfill = state.backfillQueue.snapshot();
+            int queued = 0;
+            for (int i = 0; i < aura::kBackfillJobKindCount; ++i) queued += std::max(0, backfill.byKind[i]);
+            result += "\"backfill_queued\":" + std::to_string(queued) + ",";
+            result += "\"backfill_inflight\":" + std::to_string(std::max(0, backfill.inFlight)) + ",";
+            result += "\"backfill_pool_running\":" + std::string(aura::GlobalBackfillWorkerPool().running() ? "true" : "false") + ",";
+            result += "\"backfill_watchdog_attempts\":" + std::to_string(state.backfillWatchdogAttempts) + ",";
+            result += "\"backfill_watchdog_starts\":" + std::to_string(state.backfillWatchdogStarts) + ",";
+            result += "\"backfill_watchdog_last_queued\":" + std::to_string(state.backfillWatchdogLastQueued) + ",";
+            result += "\"backfill_watchdog_last_gen\":" + std::to_string((long long)state.backfillWatchdogLastGeneration) + ",";
+            result += "\"backfill_watchdog_last_path\":\"" + jsonEscape(state.backfillWatchdogLastPath) + "\",";
+        }
         const ScanReadyToWorkSnapshot readyToWork = GetScanReadyToWorkSnapshotForQa(state);
         result += "\"ready_to_work_pending\":" + std::string(readyToWork.pending ? "true" : "false") + ",";
         result += "\"ready_to_work_waveforms_pending\":" + std::string(readyToWork.waveformsPending ? "true" : "false") + ",";
@@ -6363,27 +6414,41 @@ static void PollQaCommandFile(AppState& state) {
 #endif
 
     } else if (cmd == "remove_folder_subtree") {
+#if ARIS_PREVIEW_ISOLATION
         const std::string path = getStr(raw, "path");
-        if (path.empty()) {
+        if (!MagicEqQaIsolationReady() ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path) ||
+            !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(state.currentDbPathUtf8)) {
+            result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"fixed preview isolation required\"}";
+        } else if (path.empty()) {
             result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"path missing\"}";
+        } else if (state.dbSwitchInProgress || state.folderRemoval.Active()) {
+            result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"library busy\"}";
         } else if (!state.database.isOpen()) {
             result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"database not open\"}";
         } else {
-            const int removed = state.database.removeFolderSubtreeFromDb(path, false);
-            const std::string lastError = state.database.getLastError();
-            FinalizeFolderSubtreeDbRemoval(state, path, removed);
+            const auto removal = state.database.removeFolderSubtreeFromLibrary(path);
+            ++state.folderRemovalSerial;
+            FinalizeFolderSubtreeDbRemoval(state, path, removal);
+            const auto status = removal.status == FolderSubtreeRemovalStatus::Removed ? "removed" :
+                removal.status == FolderSubtreeRemovalStatus::NoMatch ? "no_match" : "failed";
             result = "{";
-            result += "\"ok\":true,";
+            result += removal.status == FolderSubtreeRemovalStatus::Failed ? "\"ok\":false," : "\"ok\":true,";
             result += "\"cmd\":\"remove_folder_subtree\",";
             result += "\"path\":\"" + jsonEscape(path) + "\",";
-            result += "\"removed\":" + std::to_string(removed) + ",";
+            result += "\"status\":\"" + std::string(status) + "\",";
+            result += "\"unregistered_root\":" + std::string(removal.unregisteredRoot ? "true," : "false,");
+            result += "\"removed\":" + std::to_string(removal.removedFiles) + ",";
             result += "\"result_count\":" + std::to_string((int)state.searchResults.size()) + ",";
             result += "\"total_count\":" + std::to_string((long long)state.totalFileCount);
-            if (!lastError.empty()) {
-                result += ",\"last_error\":\"" + jsonEscape(lastError) + "\"";
+            if (!removal.error.empty()) {
+                result += ",\"error\":\"" + jsonEscape(removal.error) + "\"";
             }
             result += "}";
         }
+#else
+        result = "{\"ok\":false,\"cmd\":\"remove_folder_subtree\",\"error\":\"preview only\"}";
+#endif
 
     } else if (cmd == "reorder_playlist_quickbar") {
         long long movedId = -1;
@@ -7181,7 +7246,9 @@ static void PollQaCommandFile(AppState& state) {
             bool hit = false;
             const auto* modal = ImGui::GetTopMostPopupModal();
             for (const auto& zone : snapshot.zones) {
-                if (zone.key.rfind("scan.", 0) == 0 && x >= zone.minX && x < zone.maxX &&
+                const bool removalControl = GetHarkenSearchHarnessLaneKindUtf8() == "folder-search" &&
+                    (zone.key.rfind("folder.remove.confirm.", 0) == 0 || zone.key.rfind("task.footer.", 0) == 0);
+                if ((zone.key.rfind("scan.", 0) == 0 || removalControl) && x >= zone.minX && x < zone.maxX &&
                     y >= zone.minY && y < zone.maxY && (!modal || modal->Rect().Contains(ImVec2(x, y)))) hit = true;
             }
             if (!hit || snapshot.frameNumber == 0 || snapshot.frameNumber + 2 < static_cast<uint64_t>(ImGui::GetFrameCount()) ||
@@ -7216,7 +7283,8 @@ static void PollQaCommandFile(AppState& state) {
             }
             auto items = nlohmann::json::array();
             for (const auto& zone : snapshot.zones) {
-                if (zone.key.rfind("scan.", 0) != 0) continue;
+                if (zone.key.rfind("scan.", 0) != 0 && zone.key.rfind("task.footer.", 0) != 0 &&
+                    zone.key.rfind("folder.remove.", 0) != 0 && zone.key.rfind("similar.index.", 0) != 0) continue;
                 std::string owner;
                 for (const auto& window : windows) {
                     const auto& bounds = window["bounds"];
@@ -7241,7 +7309,12 @@ static void PollQaCommandFile(AppState& state) {
                     {"speed_known", state.scanUiMetrics.Value().speedKnown}, {"files_per_second", state.scanUiMetrics.Value().filesPerSecond}}},
                 {"similarity", {{"available", batch.available}, {"running", batch.running}, {"stopped", batch.stopped},
                     {"total", batch.total}, {"succeeded", batch.succeeded}, {"failed", batch.Failed()}, {"remaining", batch.Remaining()}}},
-                {"items", items}, {"windows", windows}}).dump();
+                {"items", items}, {"windows", windows},
+                {"viewport_origin", {ImGui::GetMainViewport()->Pos.x, ImGui::GetMainViewport()->Pos.y}},
+                {"removal", {{"active", state.folderRemoval.Active()}, {"phase", static_cast<int>(state.folderRemovalPhase)},
+                    {"count", state.folderRemovalCount}, {"details", state.folderRemovalDetails},
+                    {"error", state.folderRemovalError}}},
+                {"manual_similarity", state.manualSimilarityTask}}).dump();
         } else result = R"({"ok":false,"error":"unknown_scan_ui_action"})";
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
@@ -8025,6 +8098,23 @@ static void PollQaCommandFile(AppState& state) {
         result += "],";
         result += "\"current_file\":\"" + jsonEscape(currentFile) + "\",";
         result += "\"last_scanned_path\":\"" + jsonEscape(state.lastScannedPath) + "\",";
+        {
+            const auto update = aris::update::GetHarkenSearchUpdateUiState();
+            const char* phase = "idle";
+            switch (update.phase) {
+                case aris::update::HarkenSearchUpdateUiPhase::Disabled: phase = "disabled"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Checking: phase = "checking"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Downloading: phase = "downloading"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Ready: phase = "ready"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Restarting: phase = "restarting"; break;
+                case aris::update::HarkenSearchUpdateUiPhase::Error: phase = "error"; break;
+                default: break;
+            }
+            result += "\"update_phase\":\"" + std::string(phase) + "\",";
+            result += "\"update_downloaded_bytes\":" + std::to_string(update.downloadedBytes) + ",";
+            result += "\"update_total_bytes\":" + std::to_string(update.totalBytes) + ",";
+            result += "\"update_error\":\"" + jsonEscape(update.lastError) + "\",";
+        }
         result += "\"scan_phase\":\"" + std::string(ScanPhaseToSnakeCase(state.scanPhase.load())) + "\",";
         const HarkenSearch::ScanWorkflowSnapshot workflowSnapshot = state.getScanWorkflowSnapshot();
         const HarkenSearch::ScanProgressView processingProgress =
@@ -8706,6 +8796,8 @@ static ImFont* g_readingRegular = nullptr;
 static ImFont* g_readingEmphasis = nullptr;
 static ImFont* g_readingMono = nullptr;
 static ImFont* g_uiListFont = nullptr;   // reading-sized; the file-list body font
+static ImFont* g_uiListEmphasis = nullptr; // list-sized; results-table column headers
+static ImFont* g_uiListMono = nullptr;   // list-sized; numeric cells in the file list
 
 // True while rendering a reading surface. Flipped by ReadingTextScope.
 // File-local: every reader (accessors) and writer (the scope ctors/dtors)
@@ -8886,6 +8978,56 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
     }
     if (!g_uiListFont) g_uiListFont = g_uiFontRegular;
 
+    // Results-table header face at the list size: column titles must follow
+    // listFontSize together with the row text instead of staying at chrome size.
+    ImFontConfig listEmphasisConfig = uiConfig;
+    listEmphasisConfig.MergeMode = false;
+    g_uiListEmphasis = AddFontFromCandidates(
+        io,
+        uiEmphasisLatinBase,
+        (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
+        listPx,
+        listEmphasisConfig,
+        kExtendedLatinRanges);
+    if (!g_uiListEmphasis) {
+        g_uiListEmphasis = AddFontFromCandidates(
+            io,
+            uiEmphasisCjkMerge,
+            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
+            listPx,
+            listEmphasisConfig,
+            io.Fonts->GetGlyphRangesChineseFull());
+    } else {
+        ImFontConfig mergeCjkListEmphasis = listEmphasisConfig;
+        mergeCjkListEmphasis.MergeMode = true;
+        mergeCjkListEmphasis.RasterizerMultiply = 1.08f;
+        (void)AddFontFromCandidates(
+            io,
+            uiEmphasisCjkMerge,
+            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
+            listPx,
+            mergeCjkListEmphasis,
+            io.Fonts->GetGlyphRangesChineseFull());
+    }
+    if (!g_uiListEmphasis) g_uiListEmphasis = g_uiListFont;
+
+    // List mono: numeric cells (duration, size, sample rate, channels, BPM,
+    // key, date) share the list size, with the same +1px optical compensation
+    // the chrome/reading mono faces use.
+    ImFontConfig listMonoConfig;
+    listMonoConfig.MergeMode = false;
+    listMonoConfig.OversampleH = 2;
+    listMonoConfig.OversampleV = 1;
+    listMonoConfig.PixelSnapH = true;
+    g_uiListMono = AddFontFromCandidates(
+        io,
+        monoPaths,
+        (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
+        listPx + 1.0f,
+        listMonoConfig,
+        kExtendedLatinRanges);
+    if (!g_uiListMono) g_uiListMono = g_uiListFont;
+
     // F-018: Small ASCII-only font for Loudness Meter numeric readouts / channel labels
     // when barW is narrow. No CJK merge needed — meter labels are L/R/C/LFE/Lss/W/Y/Z etc.
     {
@@ -8929,6 +9071,14 @@ ImFont* GetUIFontMono() {
 ImFont* GetUIListFont() {
     // Reading-sized fallback (not chrome) so the list keeps reading metrics.
     return g_uiListFont ? g_uiListFont : g_readingRegular;
+}
+
+ImFont* GetUIListEmphasis() {
+    return g_uiListEmphasis ? g_uiListEmphasis : GetUIListFont();
+}
+
+ImFont* GetUIListMono() {
+    return g_uiListMono ? g_uiListMono : GetUIListFont();
 }
 
 ImFont* GetUIMeterFont() {
@@ -9023,9 +9173,16 @@ static void ApplyThemeAndScaleForSettings(const AppState& state, float scale) {
     } else if (state.settings.theme == AppTheme::Custom && !state.settings.customThemeName.empty()) {
         if (!ThemeColors::customized()) {
             try {
-                std::string exeDir = GetExeDirUtf8();
-                std::string filePath = exeDir + "\\theme_custom.json";
-                appliedVisualTheme = ThemeColors::loadAndApplyThemeFile(filePath);
+                const std::filesystem::path settingsFile = std::filesystem::u8path(
+                    g_appSettingsPathUtf8.empty() ? (GetExeDirUtf8() + "\\settings.ini")
+                                                  : g_appSettingsPathUtf8);
+                const std::filesystem::path customPath =
+                    harken::theme_library::CustomThemePath(settingsFile);
+                const std::filesystem::path legacyPath =
+                    std::filesystem::u8path(GetExeDirUtf8() + "\\theme_custom.json");
+                std::string adoptError;
+                harken::theme_library::AdoptLegacyCustomTheme(legacyPath, customPath, adoptError);
+                appliedVisualTheme = ThemeColors::loadAndApplyThemeFile(customPath.u8string());
             } catch (...) {}
         }
         if (!appliedVisualTheme && ThemeColors::customized()) {
@@ -9124,7 +9281,21 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     io.FontGlobalScale = 1.0f;
 
     const float dpiScale = MainWindowUiDpiScale();
-    const float chromeScale = ((float)kChromeFontPx / kTypographyBasePx) * dpiScale;
+
+    // Application-level interface scale. Published before NewFrame so the whole
+    // UI reads one composed multiplier; FontScaleMain is ImGui's own "the app was
+    // scaled" knob, which keeps text crisp at any ratio.
+    static int s_lastInterfacePercent = -1;
+    const int interfacePercent =
+        aura::ui::dpi::ResolveInterfaceScalePercent(state.settings.uiScalePercent);
+    const float interfaceScale = aura::ui::dpi::InterfaceScaleFactor(interfacePercent);
+    aura::ui::dpi::SetInterfaceScalePercent(interfacePercent);
+    ImGui::GetStyle().FontScaleMain = interfaceScale;
+    const bool interfaceChanged = s_lastInterfacePercent != interfacePercent;
+    s_lastInterfacePercent = interfacePercent;
+
+    const float chromeScale =
+        ((float)kChromeFontPx / kTypographyBasePx) * dpiScale * interfaceScale;
     const bool dpiChanged = dpiScale != s_lastDpiScale;
 
     const bool needFontRebuild = (s_lastRebuiltReadingPx != (float)requestedReading) ||
@@ -9138,7 +9309,7 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     const bool themeChanged = (themeNow != s_lastTheme) || (useCustomNow != s_lastUseCustom);
     const bool chromePending = ThemeColors::hasPendingUiChromeResync();
 
-    if (themeChanged || needFontRebuild || chromePending || dpiChanged) {
+    if (themeChanged || needFontRebuild || chromePending || dpiChanged || interfaceChanged) {
         const bool editorPreviewChromeOnly =
             !themeChanged && !needFontRebuild && state.showThemeEditor &&
             ThemeColors::customized();
@@ -10047,7 +10218,7 @@ static bool ReadBinaryFile(const std::string& pathUtf8, std::string& outBytes) {
 
 static std::string BuildStartupBrandLogoDataUri() {
     const std::string relativePath =
-        "assets\\logos\\brand\\harken-search-menu-wordmark-white.png";
+        "assets\\logos\\brand\\harken-search-menu-wordmark-orange.png";
     const std::string candidates[] = {
         GetExeDirUtf8() + "\\" + relativePath,
         relativePath,
@@ -10060,7 +10231,7 @@ static std::string BuildStartupBrandLogoDataUri() {
     return {};
 }
 
-static void AppendStartupBrandLogoCss(std::wstring& html, bool useLightStartupChrome) {
+static void AppendStartupBrandLogoCss(std::wstring& html) {
     const std::string logoDataUri = BuildStartupBrandLogoDataUri();
     if (logoDataUri.empty()) return; // Preserve the visible Harken Search text.
     html += L".brand-word{background-image:url('" + Utf8ToWide(logoDataUri) +
@@ -10068,8 +10239,6 @@ static void AppendStartupBrandLogoCss(std::wstring& html, bool useLightStartupCh
         L"background-size:290px auto;width:290px;height:44px;"
         L"color:transparent!important;font-size:0!important;text-shadow:none!important;}\n";
     html += L"@media(max-width:640px){.brand-word{background-size:220px auto;width:220px;height:36px;}}\n";
-    if (useLightStartupChrome)
-        html += L".brand-word{filter:brightness(0)!important;}\n";
 }
 
 // Shared startup mascot: the loading page and the welcome page mount the same
@@ -10591,7 +10760,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     html += L".glass-card::after{content:\"\";position:absolute;inset:auto -10% 42% -10%;height:54%;pointer-events:none;background:radial-gradient(circle at 24% 28%," + tokenCardBloomA + L",transparent 58%),radial-gradient(circle at 76% 6%," + tokenCardBloomB + L",transparent 54%);filter:blur(14px);opacity:.98;}\n";
     html += L".spinner-container{display:none!important;}.status-text{position:relative;z-index:1;margin:0;color:" + tokenStatusText + L";font-size:12.5px;line-height:1.45;font-weight:420;min-height:1.45em;animation:statusPulse 2.2s ease-in-out infinite;}.progress-detail{position:relative;z-index:1;margin-top:8px;font-size:11px;color:" + tokenDetailText + L";}.progress-bar-track{position:relative;z-index:1;width:104px;height:1px;margin-top:16px;background:" + tokenProgressTrack + L";border-radius:999px;}.progress-bar-fill{height:100%;background:linear-gradient(90deg," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L"," + tokenProgressCore + L"," + BuildCssRgba(startupTheme.waveformColor, 0.22f) + L");box-shadow:none;transition:width .28s ease-out;}\n";
     html += L".version-footer{display:none!important;}@keyframes statusPulse{0%,100%{opacity:.68;}50%{opacity:.92;}}\n";
-    AppendStartupBrandLogoCss(html, useLightStartupChrome);
+    AppendStartupBrandLogoCss(html);
     html += L"</style>\n";
 
     // ---- Part 2: body HTML ----
@@ -12170,7 +12339,7 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     AppendStartupMascotCss(html);
     AppendStartupAvatarCss(html);
     html += L"@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}\n";
-    AppendStartupBrandLogoCss(html, useLightStartupChrome);
+    AppendStartupBrandLogoCss(html);
     html += L"</style>\n";
     html += LR"HTML_W2(
 <body>
@@ -14323,6 +14492,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         DevTools_EndFramePhase();
         // 异步切库：轮询后台 open 结果，避免大库 open 卡死主线程
         DevTools_BeginFramePhase("PreRender.AsyncPumps");
+        PumpFolderSubtreeRemoval(state);
         PumpDatabaseSwitchIfPending(state);
         PumpInitRandomSamplingPoolIfPending(state);
 
@@ -15359,6 +15529,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     state.backfillQueue.onDbClosing(state.backfillDbGeneration);
     logShutdownStage("BackfillQueueClosingEnd");
     logShutdownStage("DatabaseCloseBegin");
+    state.folderRemoval.Wait();
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");
     logShutdownStage("AudioEngineShutdownBegin");

@@ -61,7 +61,8 @@ jobs:
           TestUpdateFailureExplanation TestUpdateStaleError TestDetachedViewportInput TestSidebarMetadataPicker
           TestLibraryStatisticsWorker TestActionButtonStyle TestPreferenceDraft TestOutputDeviceComboItem TestSettingsFileAtomicSave TestAppSettingsDefaults
           TestAITaskQueueStop TestAITaskQueueStopLegacyWindow TestToolbarSearchControls
-          HarkenExternalAiMcp TestExternalAiLibrary
+          TestLibraryTaskToastHitOrder
+          HarkenExternalAiMcp TestExternalAiLibrary TestExternalAiClientLink TestExternalAiBridgeServer
       - name: Run update delivery and detached input tests
         run: >-
           ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
@@ -69,12 +70,18 @@ jobs:
           --output-junit test-results.xml
       - name: Run settings draft and device identity tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(PreferenceDraft|TestOutputDeviceComboItem|SettingsFileAtomicSave|TestAppSettingsDefaults)$"
+      - name: Run task toast hit-order tests
+        run: >-
+          ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure
+          -R "^TestLibraryTaskToastHitOrder$"
       - name: Run AI task queue stop window tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^(AITaskQueueStop|AITaskQueueStopLegacyWindow)$"
       - name: Run read-only library tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestExternalAiLibrary$"
       - name: Run the local MCP protocol tests
         run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestExternalAiMcp$"
+      - name: Run the local MCP named-pipe tests
+        run: ctest --test-dir build/public -C Debug --no-tests=error --output-on-failure -R "^TestExternalAiBridgeServer_"
       - name: Retain test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

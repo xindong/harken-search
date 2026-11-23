@@ -689,6 +689,7 @@ set(APP_SOURCES
     src/ThemeScheduleUI.cpp
     src/ThemeSchedulePaletteCodec.cpp
     src/ThemeSchedulePaletteFiles.cpp
+    src/ThemeLibraryFiles.cpp
     src/ThemeInspector.cpp
     src/AnnotationBridge.cpp
     src/CueviFeedbackClient.cpp
@@ -1133,6 +1134,23 @@ if(MSVC)
 endif()
 add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
     "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
+
+add_executable(TestThemeLibraryFiles EXCLUDE_FROM_ALL
+    tests/test_theme_library_files.cpp
+    src/ThemeLibraryFiles.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestThemeLibraryFiles PRIVATE
+        src/platform/filesystem_win32.cpp src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestThemeLibraryFiles PRIVATE shlwapi)
+endif()
+target_include_directories(TestThemeLibraryFiles PRIVATE src)
+target_compile_features(TestThemeLibraryFiles PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeLibraryFiles PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeLibraryFiles COMMAND TestThemeLibraryFiles
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-library-files")
 
 add_executable(TestSettingsFileAtomicSave EXCLUDE_FROM_ALL
     tests/test_settings_file_atomic_save.cpp src/platform/filesystem_std.cpp)

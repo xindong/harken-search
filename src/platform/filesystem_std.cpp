@@ -33,7 +33,13 @@ void fillDirectoryEntry(const std::filesystem::directory_entry& native,
                         DirectoryEntry& outEntry,
                         std::error_code& ec) {
     outEntry = {};
+#ifdef _WIN32
+    // 用宽松转换（非法 UTF-16 会替换为占位符）而不是 u8string()：
+    // u8string() 遇到无法转换的文件名会抛异常，一个坏名字曾经让整个目录的枚举失败。
+    outEntry.pathUtf8 = Platform::TextEncoding::WideToUtf8Permissive(native.path().wstring());
+#else
     outEntry.pathUtf8 = native.path().u8string();
+#endif
     outEntry.isDirectory = native.is_directory(ec);
     if (ec) return;
     outEntry.isRegularFile = native.is_regular_file(ec);
@@ -94,22 +100,28 @@ DirectoryReadStatus DirectoryIterator::Next(DirectoryEntry& outEntry,
 
     std::error_code entryError;
     std::error_code incrementError;
-    if (impl_->recursive) {
-        if (impl_->recursiveDirectory == std::filesystem::recursive_directory_iterator()) {
-            impl_->open = false;
-            return DirectoryReadStatus::End;
+    try {
+        if (impl_->recursive) {
+            if (impl_->recursiveDirectory == std::filesystem::recursive_directory_iterator()) {
+                impl_->open = false;
+                return DirectoryReadStatus::End;
+            }
+            const auto native = *impl_->recursiveDirectory;
+            fillDirectoryEntry(native, outEntry, entryError);
+            impl_->recursiveDirectory.increment(incrementError);
+        } else {
+            if (impl_->directory == std::filesystem::directory_iterator()) {
+                impl_->open = false;
+                return DirectoryReadStatus::End;
+            }
+            const auto native = *impl_->directory;
+            fillDirectoryEntry(native, outEntry, entryError);
+            impl_->directory.increment(incrementError);
         }
-        const auto native = *impl_->recursiveDirectory;
-        fillDirectoryEntry(native, outEntry, entryError);
-        impl_->recursiveDirectory.increment(incrementError);
-    } else {
-        if (impl_->directory == std::filesystem::directory_iterator()) {
-            impl_->open = false;
-            return DirectoryReadStatus::End;
-        }
-        const auto native = *impl_->directory;
-        fillDirectoryEntry(native, outEntry, entryError);
-        impl_->directory.increment(incrementError);
+    } catch (const std::exception& e) {
+        // 单个条目抛异常（例如文件名无法转换）只丢这一条，不断整个目录。
+        copyError(errorMessage, e.what());
+        return DirectoryReadStatus::Error;
     }
     if (entryError) copyError(errorMessage, entryError.message());
     if (incrementError) impl_->pendingError = incrementError.message();

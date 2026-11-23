@@ -15,8 +15,9 @@ enum class ExternalAiClient { Cindy, Codex };
 enum class ExternalAiLinkState {
     NotDetected,   // the client's config directory does not exist yet
     Disconnected,  // detected, but no harken entry
-    Connected,     // a harken entry already points at this library and connector
+    Connected,     // an active Harken entry, possibly for a different library than the draft
     Failed,        // the file exists but cannot be parsed or written
+    Conflict,
 };
 
 struct ExternalAiLinkTarget {
@@ -25,23 +26,20 @@ struct ExternalAiLinkTarget {
     std::string databasePath;
     std::string rootPath;
     std::string settingsPath;
+    std::string clientConfigPath;
+    std::string clientLinkId;
 };
 
 struct ExternalAiLinkStatus {
     ExternalAiLinkState state = ExternalAiLinkState::NotDetected;
     std::string configPath;
     std::string detail;  // backup path, or the reason a link attempt failed
+    bool canDisconnect = false;
+    bool needsRelink = false;
+    bool revoked = false;
 };
 
 const char* ExternalAiClientKey(ExternalAiClient client);
-
-// Client config file under an explicit home directory:
-//   Cindy -> <home>\.pi\agent\mcp.json
-//   Codex -> <home>\.codex\config.toml
-std::string ExternalAiClientConfigPath(ExternalAiClient client, const std::string& homeDirectory);
-
-// Whether the client looks installed: its config directory exists under <home>.
-bool ExternalAiClientDetected(ExternalAiClient client, const std::string& homeDirectory);
 
 // Connector command line shared by the client entry and the copy fallback.
 std::string ExternalAiClientCommandLine(const ExternalAiLinkTarget& target);
@@ -50,6 +48,8 @@ std::string ExternalAiClientCommandLine(const ExternalAiLinkTarget& target);
 // Disconnected: the first link creates it.
 ExternalAiLinkStatus QueryExternalAiClientLink(ExternalAiClient client, const std::string& configPath,
                                                const ExternalAiLinkTarget& target);
+
+bool ExternalAiClientLinkAuthorized(const ExternalAiLinkTarget& target);
 
 // Writes only the `harken` entry. The previous file is copied to
 // `<configPath>.harken-backup` before the first modification. Entries the user

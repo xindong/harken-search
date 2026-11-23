@@ -4,6 +4,7 @@
 #include "InfoEditSession.h"
 #include "ThemeScheduleClock.h"
 #include "LibraryStatisticsWorker.h"
+#include "LibraryTaskProgress.h"
 #if AURA_BUILD_DIAGNOSTICS
 #include "PerformanceMonitor.h"
 #endif
@@ -871,6 +872,9 @@ struct AppSettings {
     int fontSize = 13;
     int listFontSize = kDefaultListFontPx;
     int readingFontSize = kDefaultReadingFontPx;   // unified reading-surface font size (replaces listFontSize for reading)
+    // Application-level interface scale (80-200). Multiplies the monitor DPI so the
+    // whole UI can grow or shrink without changing Windows scaling.
+    int uiScalePercent = 100;
     float settingsDialogWidth = 860.0f;
     float settingsDialogHeight = 560.0f;
     float waveformPanelHeight = 200.0f;
@@ -1610,6 +1614,15 @@ struct AppState {
     bool pendingReverseRestore = false;
     FileBrowser fileBrowser;
     Database database;
+    HarkenSearch::FolderRemovalTask<FolderSubtreeRemovalResult> folderRemoval;
+    HarkenSearch::LibraryTaskNotice folderRemovalNotice;
+    HarkenSearch::LibraryTaskNotice scanTaskNotice;
+    HarkenSearch::LibraryTaskNotice manualSimilarityNotice;
+    HarkenSearch::LibraryTaskPhase folderRemovalPhase = HarkenSearch::LibraryTaskPhase::Idle;
+    uint64_t folderRemovalSerial = 0;
+    int folderRemovalCount = 0;
+    std::string folderRemovalError;
+    bool folderRemovalDetails = false;
     // AppState owns these workers; shared_ptr keeps unrelated state-only test
     // targets independent of the optional worker implementation at link time.
     std::shared_ptr<HarkenSearch::LibraryStatisticsWorker> featureIndexStatistics;
@@ -2526,6 +2539,7 @@ struct AppState {
         expandedPlaylistFolderTreePlaylistId = -1;
     }
     std::string pendingRemoveFolderDbPath;
+    int64_t pendingRemoveFolderDbGeneration = -1;
     bool pendingRemoveFolderDbDeleteFiles = false;
     bool showRemoveFolderDbConfirm = false;
     std::string selectedFolderPath;
@@ -2714,6 +2728,34 @@ struct AppState {
     int embedBatchProgress = 0;
 
     // Rebuild all covers (重建当前数据库的所有封面) - 流式分批处理
+    // 右下角任务浮层用的派生任务边沿状态（3 秒成功短报）
+    bool waveformTaskWasActive = false;
+    double waveformTaskDoneAt = 0.0;
+    bool coverTaskWasActive = false;
+    double coverTaskDoneAt = 0.0;
+    bool backfillTaskWasActive = false;
+    double backfillTaskDoneAt = 0.0;
+    bool updateTaskWasActive = false;
+    double updateTaskDoneAt = 0.0;
+    bool updateTaskDismissed = false;
+    HarkenSearch::LibraryTaskPhase waveformTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    HarkenSearch::LibraryTaskPhase coverTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    HarkenSearch::LibraryTaskPhase backfillTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    bool exportTaskWasActive = false;
+    double exportTaskDoneAt = 0.0;
+    bool pauseBackfillResumeDone = false;
+    double lastBackfillWatchdogSeconds = -1000.0;
+    bool backfillWatchdogArmed = false;
+    int backfillWatchdogAttempts = 0;
+    int backfillWatchdogStarts = 0;
+    int backfillWatchdogLastQueued = 0;
+    std::string backfillWatchdogLastPath;
+    int64_t backfillWatchdogLastGeneration = 0;
+    bool wwiseTaskWasActive = false;
+    double wwiseTaskDoneAt = 0.0;
+    bool wwiseTaskDismissed = false;
+    int waveformMenuVisibleFrame = -1;
+
     bool coverRebuildActive = false;
     int64_t coverRebuildTotal = 0;
     int64_t coverRebuildProgress = 0;
@@ -3090,10 +3132,15 @@ struct AppState {
         std::string errorMessage;
     };
 
+    struct ChannelExportProgress {
+        std::atomic<std::uint64_t> writtenFrames{0};
+        std::atomic<std::uint64_t> totalFrames{0};
+    };
     struct ChannelExportJob {
         std::future<ChannelExportJobResult> future;
         std::string sourceName;
         std::string channelLabel;
+        std::shared_ptr<ChannelExportProgress> progress;
     };
     std::vector<ChannelExportJob> channelExportJobs;
 
@@ -3191,6 +3238,9 @@ struct AppState {
     HarkenSearch::SimilarityIndexResult batchFeatureResult;
     bool showSimilarAnalysisReport = false;
     HarkenSearch::BatchFeatureResultState batchFeatureResults;
+    bool manualSimilarityTask = false;
+    int manualSimilarityProgressVisibleFrame = -2;
+    int manualSimilarityResultVisibleFrame = -2;
     bool scanSimilarityOwned = false; // UI-thread-only; post-scan analysis surface.
     bool showScanSimilarityDialog = false;
 
@@ -3312,6 +3362,11 @@ struct AppState {
 #if ARIS_PREVIEW_ISOLATION
         int listTextFrame = -1;
         float listTextFontPixels = 0, listTextLineHeight = 0;
+        // Draw-time probes for the results table: numeric cells and column
+        // headers record the font size they actually render with.
+        float listNumericFontPixels = 0, listHeaderFontPixels = 0;
+        float listDurationColWidth = 0, listSampleRateColWidth = 0;
+        std::string listNumericSample, listHeaderSample;
         float listTextRowHeight = 0;
         std::string listTextSample;
         std::vector<float> listRowOrigins, listRowHitHeights;

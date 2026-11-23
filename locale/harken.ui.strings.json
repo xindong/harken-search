@@ -1,6 +1,20 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Task_BackfillCovers", "type": "ui", "zh": "补全封面", "en": "Backfilling covers", "ja": "カバーを補完"},
+    {"id": "Task_BackfillWaveforms", "type": "ui", "zh": "补全波形", "en": "Backfilling waveforms", "ja": "波形を補完"},
+    {"id": "Task_BackfillMetadata", "type": "ui", "zh": "补全音频信息", "en": "Backfilling metadata", "ja": "メタデータを補完"},
+    {"id": "Task_BackfillRunningFmt", "type": "ui", "zh": "正在处理 %d 项", "en": "Processing %d item(s)", "ja": "%d 件を処理中"},
+    {"id": "Task_BackfillQueuedFmt", "type": "ui", "zh": "排队 %d 项", "en": "Queued: %d item(s)", "ja": "%d 件を待機中"},
+    {"id": "Task_WwiseFailedFmt", "type": "ui", "zh": "%d 条失败", "en": "%d failed", "ja": "%d 件失敗"},
+    {"id": "Task_WwiseTransferringFmt", "type": "ui", "zh": "传输中 %d / %d", "en": "Transferring %d / %d", "ja": "転送中 %d / %d"},
+    {"id": "Task_WwiseImport", "type": "ui", "zh": "Wwise 导入", "en": "Importing to Wwise", "ja": "Wwise へインポート"},
+    {"id": "Task_ExportChannelFmt", "type": "ui", "zh": "%d 个通道", "en": "%d channel(s)", "ja": "%d チャンネル"},
+    {"id": "Task_ExportAudio", "type": "ui", "zh": "导出音频", "en": "Exporting audio", "ja": "音声をエクスポート"},
+
+    {"id": "Task_Done", "type": "ui", "zh": "已完成", "en": "Done", "ja": "完了"},
+    {"id": "Task_BackfillAssets", "type": "ui", "zh": "补全波形与封面", "en": "Backfill waveforms & covers", "ja": "波形とカバーを補完"},
+    {"id": "Task_DownloadUpdate", "type": "ui", "zh": "下载更新", "en": "Downloading update", "ja": "アップデートをダウンロード"},
     {"id": "DiagnosticOverlay_Title", "type": "ui", "zh": "性能监视器", "en": "Performance Monitor", "ja": "パフォーマンスモニター"},
     {"id": "DiagnosticOverlay_Performance", "type": "ui", "zh": "性能", "en": "Performance", "ja": "性能"},
     {"id": "DiagnosticOverlay_FpsLabel", "type": "ui", "zh": "帧率", "en": "FPS", "ja": "FPS"},
@@ -163,6 +177,16 @@
     {"id":"ScanUi_AnalysisSuccessFmt","type":"ui","zh":"成功 %d 个音效","en":"Succeeded: %d sounds","ja":"成功した音声 %d 件"},
     {"id":"ScanUi_ViewProgress","type":"ui","zh":"查看进度","en":"View progress","ja":"進捗を表示"},
     {"id":"ScanUi_ViewResult","type":"ui","zh":"查看结果","en":"View results","ja":"結果を表示"},
+    {"id":"Task_RemovePath","type":"ui","zh":"移除路径","en":"Remove path","ja":"パスを削除"},
+    {"id":"Task_RemoveRunning","type":"ui","zh":"正在移除库记录…","en":"Removing library records…","ja":"ライブラリから削除中…"},
+    {"id":"Task_RemoveDoneFmt","type":"ui","zh":"已移除 %d 条记录","en":"Removed %d records","ja":"%d 件のレコードを削除"},
+    {"id":"Task_RemoveEmptyRoot","type":"ui","zh":"已移除扫描路径","en":"Scan path removed","ja":"スキャンパスを削除しました"},
+    {"id":"Task_RemoveNoMatch","type":"ui","zh":"没有匹配项","en":"No matches","ja":"一致する項目がありません"},
+    {"id":"Task_RemoveBusy","type":"ui","zh":"正在移除路径，请完成后再切换库。","en":"Wait for path removal before switching libraries.","ja":"パスの削除が終わってからライブラリを切り替えてください。"},
+    {"id":"Task_RemoveLibraryChanged","type":"ui","zh":"库已切换，请在当前库重新确认。","en":"Library changed. Confirm again in the current library.","ja":"ライブラリが変わりました。現在のライブラリで再確認してください。"},
+    {"id":"Task_Stopped","type":"ui","zh":"已停止","en":"Stopped","ja":"停止しました"},
+    {"id":"Task_Failed","type":"ui","zh":"未完成","en":"Failed","ja":"完了できませんでした"},
+    {"id":"Task_Dismiss","type":"ui","zh":"收起","en":"Dismiss","ja":"閉じる"},
     {"id":"ScanUi_Title","type":"ui","zh":"扫描入库","en":"Scan library","ja":"ライブラリに取り込む"},
     {"id":"ScanUi_AdvancedOptions","type":"ui","zh":"高级选项","en":"Advanced options","ja":"詳細設定"},
     {"id":"ScanUi_AutoThreads","type":"ui","zh":"自动分配线程","en":"Automatic threads","ja":"スレッド数を自動設定"},
@@ -1245,6 +1269,13 @@
       "zh": "列表行高",
       "en": "Row Height",
       "ja": "行の高さ"
+    },
+    {
+      "id": "Set_InterfaceScale",
+      "type": "ui",
+      "zh": "界面缩放",
+      "en": "Interface Scale",
+      "ja": "インターフェース拡大"
     },
     {
       "id": "Set_SystemFontSize",
@@ -6804,6 +6835,13 @@
       "ja": "任意の JSON ファイルからテーマをインポート"
     },
     {
+      "id": "ThemeEditor_SavedThemes",
+      "type": "ui",
+      "zh": "已保存主题",
+      "en": "Saved themes",
+      "ja": "保存済みテーマ"
+    },
+    {
       "id": "ThemeEditor_DevSavePreset",
       "type": "ui",
       "zh": "[DEV] Save as C++ Preset",
@@ -9058,20 +9096,6 @@
       "ja": "上半分: フェードハンドル · 下半分: イン/アウト端点"
     },
     {
-      "id": "Main_ImportRunLabel",
-      "type": "ui",
-      "zh": "本次入库",
-      "en": "This import",
-      "ja": "今回の取り込み"
-    },
-    {
-      "id": "Main_ElapsedLabel",
-      "type": "ui",
-      "zh": "耗时",
-      "en": "Elapsed",
-      "ja": "所要時間"
-    },
-    {
       "id": "Main_MiniWaveBackfillNote",
       "type": "ui",
       "zh": "迷你波形后台渐进补齐",
@@ -10093,13 +10117,6 @@
       "zh": "+%d BPM",
       "en": "+%d BPM",
       "ja": "+%d BPM"
-    },
-    {
-      "id": "Main_ScanDoneShort",
-      "type": "ui",
-      "zh": "扫描完成",
-      "en": "Scan complete",
-      "ja": "スキャン完了"
     },
     {
       "id": "Main_WarnPrefixFmt",
@@ -13440,6 +13457,13 @@
       "ja": "テーマは適用済みですが theme_custom.json の書き込みに失敗"
     },
     {
+      "id": "TE_LibrarySaveFail",
+      "type": "ui",
+      "zh": "主题已应用，但保存到本地主题文件夹失败",
+      "en": "Theme applied, but saving a copy to the local theme folder failed",
+      "ja": "テーマは適用済みですが、ローカルのテーマフォルダへの保存に失敗"
+    },
+    {
       "id": "TE_InspectOn",
       "type": "ui",
       "zh": "🔍 检视中...",
@@ -14985,7 +15009,6 @@
     {"id":"Set_ClearSimilarChanged","type":"ui","zh":"当前数据库已切换，请重新选择清空。","en":"The current database changed. Choose clear again.","ja":"現在のデータベースが切り替わりました。もう一度消去を選んでください。"},
     {"id":"SetUX_ExternalAiMcp","type":"ui","zh":"外部 AI（MCP）","en":"External AI (MCP)","ja":"外部 AI (MCP)"},
     {"id":"ExtAi_Enabled","type":"ui","zh":"允许外部 AI 访问这个库","en":"Allow external AI to use this library","ja":"外部 AI にこのライブラリの使用を許可"},
-    {"id":"ExtAi_LibraryId","type":"ui","zh":"库标识","en":"Library ID","ja":"ライブラリ ID"},
     {"id":"ExtAi_Document","type":"ui","zh":"授权文件","en":"Authorization file","ja":"認可ファイル"},
     {"id":"ExtAi_NoRoots","type":"ui","zh":"还没有勾选目录，外部 AI 无法读取任何文件。","en":"No folder is ticked yet, so external AI cannot read any file.","ja":"フォルダーが未選択のため、外部 AI はファイルを読み取れません。"},
     {"id":"ExtAi_AddRoot","type":"ui","zh":"添加目录","en":"Add folder","ja":"フォルダーを追加"},
@@ -15005,27 +15028,41 @@
     {"id":"ExtAi_CurrentLibrary","type":"ui","zh":"当前数据库","en":"Current library","ja":"現在のデータベース"},
     {"id":"ExtAi_StateOn","type":"ui","zh":"已开启","en":"On","ja":"有効"},
     {"id":"ExtAi_StateOff","type":"ui","zh":"已关闭","en":"Off","ja":"無効"},
-    {"id":"ExtAi_ConnectionDetails","type":"ui","zh":"连接详情","en":"Connection details","ja":"接続の詳細"},
+    {"id":"ExtAi_ManualConnect","type":"ui","zh":"手动连接","en":"Manual connection","ja":"手動接続"},
+    {"id":"ExtAi_AiPromptRow","type":"ui","zh":"其他 AI 客户端","en":"Other AI clients","ja":"他の AI クライアント"},
+    {"id":"ExtAi_CopyAiPrompt","type":"ui","zh":"复制配置说明","en":"Copy setup instructions","ja":"設定手順をコピー"},
+    {"id":"ExtAi_AiPromptNote","type":"ui","zh":"把说明粘贴到你用的 AI 对话里。","en":"Paste the instructions into your AI chat.","ja":"手順をお使いの AI のチャットに貼り付けてください。"},
+    {"id":"ExtAi_AiSetupPromptFmt","type":"ui","zh":"在你自己正在读取的 MCP 配置里加一项，名字用 harken，写完告诉我最终的配置文件路径。\n\n启动命令：\n%s\n\n要求：\n1. 只新增或更新 harken 这一项，其他 server 原样保留；改动前先备份原文件。\n2. 按你自己实际使用的格式和路径写（TOML 或 JSON，CODEX_HOME、--config 或 profile 指定了什么就用什么），不要照搬默认路径。\n3. 不要修改上面命令里那些路径指向的文件，也不要改 Harken 的设置。\n4. 写完后告诉我：最终文件路径、harken 这一项的原文，并提醒我新开会话才生效。","en":"Add one MCP server named harken to the configuration you actually read, then tell me the final config file path.\n\nLaunch command:\n%s\n\nRules:\n1. Add or update only the harken entry; keep every other server as it is and back up the file first.\n2. Use the format and path you really use (TOML or JSON; follow CODEX_HOME, --config or profile if set) instead of the default path.\n3. Do not modify the files those paths point to, and do not change Harken settings.\n4. When done, tell me the final file path and the harken entry itself, and remind me that a new session is required.","ja":"あなたが実際に読み込む MCP 設定に harken という名前で 1 件追加し、最終的な設定ファイルのパスを教えてください。\n\n起動コマンド:\n%s\n\n条件:\n1. harken の項目だけを追加・更新し、他の server はそのまま残す。変更前に元ファイルをバックアップする。\n2. 実際に使っている形式とパスで書く（TOML か JSON、CODEX_HOME・--config・profile の指定があればそれに従う）。既定パスを流用しない。\n3. 上記コマンドのパスが指すファイルや Harken の設定は変更しない。\n4. 完了したら最終パスと harken の項目内容を伝え、新しいセッションが必要だと知らせる。"},
     {"id":"ExtAi_ConnectorCommand","type":"ui","zh":"连接命令","en":"Connector command","ja":"接続コマンド"},
     {"id":"ExtAi_Folders","type":"ui","zh":"可操作目录","en":"Allowed folders","ja":"操作可能なフォルダー"},
     {"id":"ExtAi_FolderCountFmt","type":"ui","zh":"%d 个已勾选","en":"%d ticked","ja":"%d 件選択中"},
     {"id":"ExtAi_GroupLookup","type":"ui","zh":"查找","en":"Lookup","ja":"検索"},
     {"id":"ExtAi_GroupPlaylist","type":"ui","zh":"播放列表","en":"Playlists","ja":"プレイリスト"},
     {"id":"ExtAi_GroupMetadata","type":"ui","zh":"文件名与元数据","en":"File names and metadata","ja":"ファイル名とメタデータ"},
-    {"id":"ExtAi_LastWriteFmt","type":"ui","zh":"最近一次写入：新增 %d，已有 %d，回执 %s","en":"Last write: added %d, already there %d, receipt %s","ja":"直近の書き込み: 追加 %d、既存 %d、レシート %s"},
+    {"id":"ExtAi_LastWriteFmt","type":"ui","zh":"上次写入：新增 %d 个，跳过 %d 个","en":"Last write: added %d, skipped %d","ja":"直近の書き込み: 追加 %d、スキップ %d"},
     {"id":"ExtAi_SaveCurrent","type":"ui","zh":"保存当前库","en":"Save this library","ja":"このライブラリを保存"},
     {"id":"ExtAi_FooterHint","type":"ui","zh":"只影响当前打开的库","en":"Applies to the open library only","ja":"開いているライブラリにのみ適用"},
     {"id":"ExtAi_Clients","type":"ui","zh":"连接客户端","en":"Connected apps","ja":"接続先"},
     {"id":"ExtAi_ClientCindy","type":"ui","zh":"Cindy","en":"Cindy","ja":"Cindy"},
     {"id":"ExtAi_ClientCodex","type":"ui","zh":"Codex","en":"Codex","ja":"Codex"},
-    {"id":"ExtAi_ClientConnected","type":"ui","zh":"已连接","en":"Connected","ja":"接続済み"},
+    {"id":"ExtAi_ClientConnected","type":"ui","zh":"已配置","en":"Configured","ja":"設定済み"},
+    {"id":"ExtAi_ClientConfiguredLibraryOff","type":"ui","zh":"已配置 · 当前库访问已关闭","en":"Configured · Library access off","ja":"設定済み・このライブラリへのアクセスはオフ"},
+    {"id":"ExtAi_ClientCindyCodex","type":"ui","zh":"Cindy（Codex）","en":"Cindy (Codex)","ja":"Cindy（Codex）"},
+    {"id":"ExtAi_ClientNoConfig","type":"ui","zh":"无可用配置","en":"No supported config","ja":"利用可能な設定なし"},
     {"id":"ExtAi_ClientDisconnected","type":"ui","zh":"未连接","en":"Not connected","ja":"未接続"},
     {"id":"ExtAi_ClientNotDetected","type":"ui","zh":"未检测到","en":"Not installed","ja":"未検出"},
     {"id":"ExtAi_ClientUnreadable","type":"ui","zh":"配置无法读取","en":"Config unreadable","ja":"設定を読み取れません"},
+    {"id":"ExtAi_ClientRelink","type":"ui","zh":"需重新连接","en":"Reconnect required","ja":"再接続が必要です"},
+    {"id":"ExtAi_ClientKeyConflict","type":"ui","zh":"配置名已被占用","en":"Config name already in use","ja":"設定名は使用中です"},
+    {"id":"ExtAi_ClientRevokedCleanupFailed","type":"ui","zh":"已撤权，未能清理配置","en":"Access revoked; config cleanup failed","ja":"アクセスは取り消し済み・設定のクリーンアップに失敗"},
+    {"id":"ExtAi_ClientCleanupFailed","type":"ui","zh":"清理配置失败","en":"Config cleanup failed","ja":"設定のクリーンアップに失敗"},
+    {"id":"ExtAi_ClientCleanupBtn","type":"ui","zh":"清理","en":"Clean up","ja":"クリーンアップ"},
+    {"id":"ExtAi_ClientRetryCleanupBtn","type":"ui","zh":"重试清理","en":"Retry cleanup","ja":"クリーンアップを再試行"},
     {"id":"ExtAi_ConnectBtn","type":"ui","zh":"连接","en":"Connect","ja":"接続"},
     {"id":"ExtAi_DisconnectBtn","type":"ui","zh":"断开","en":"Disconnect","ja":"切断"},
     {"id":"ExtAi_ConnectedFmt","type":"ui","zh":"已连接，新开会话生效：%s","en":"Connected. Open a new session: %s","ja":"接続しました。新しいセッションで有効になります: %s"},
-    {"id":"ExtAi_DisconnectedFmt","type":"ui","zh":"已断开，条目已从 %s 移除","en":"Disconnected. Entry removed from %s","ja":"切断しました。%s から項目を削除しました"},
+    {"id":"ExtAi_DisconnectedFmt","type":"ui","zh":"已断开：%s","en":"Disconnected: %s","ja":"切断しました: %s"},
+    {"id":"ExtAi_RevokedCleanupFailedFmt","type":"ui","zh":"已撤权，未能清理配置：%s","en":"Access revoked. Could not clean up the config: %s","ja":"アクセスを取り消しました。設定を削除できません: %s"},
     {"id":"ExtAi_LinkFailedFmt","type":"ui","zh":"未能修改配置：%s","en":"Could not update the config: %s","ja":"設定を変更できません: %s"},
     {"id":"ExtAi_LinkFailed","type":"ui","zh":"写入失败","en":"Write failed","ja":"書き込みに失敗しました"},
     {"id":"ExtAi_ConnectNoExe","type":"ui","zh":"缺少连接器程序，请重新安装本软件。","en":"HarkenExternalAiMcp.exe is missing. Reinstall Harken.","ja":"HarkenExternalAiMcp.exe が見つかりません。Harken を再インストールしてください。"},

@@ -49,7 +49,10 @@
 - Then 应得到以下结果：expensive reconcile paths remain opt-in and missing libraries are shown as unavailable/guarded entries instead of being silently removed
 - Given 已满足以下前置条件：the user switches between built-in stock themes or saves a custom theme from the theme editor
 - When 执行以下操作：settings are saved and Aris applies the theme on the next frame or next launch
-- Then 应得到以下结果：stock themes remain stock selections instead of being marked customized, and the saved custom theme name remains available so `theme_custom.json` can be reloaded.
+- Then 应得到以下结果：stock themes remain stock selections instead of being marked customized, and the saved custom theme name remains available so the user-data `theme_custom.json` can be reloaded.
+- Given 已满足以下前置条件：the user imports a theme JSON in the theme editor
+- When 执行以下操作：the import validates and applies
+- Then 应得到以下结果：a copy is kept as `<theme name>.json` in the `themes` folder next to `settings.ini`, the editor lists it under saved themes, and clicking the entry applies the same file; the install directory is never written, and a legacy install-directory `theme_custom.json` is adopted into user data on first load.
 - Given 已满足以下前置条件：a built-in stock theme uses token chrome on toolbar/transport surfaces
 - When 执行以下操作：the stock theme is applied without using the custom-theme flag
 - Then 应得到以下结果：toolbar and transport token chrome remains selected by explicit stock-theme identity instead of depending on `ThemeColors::customized()`.

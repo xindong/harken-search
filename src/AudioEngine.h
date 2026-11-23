@@ -419,7 +419,9 @@ public:
     static bool exportSingleChannel(const std::string& inputPath,
                                     int channelIndex,
                                     const std::string& outputPath,
-                                    std::string* outError = nullptr);
+                                    std::string* outError = nullptr,
+                                    const std::function<void(uint64_t writtenFrames,
+                                                             uint64_t totalFrames)>* progress = nullptr);
 
     // State queries
     bool isPlaying() const;

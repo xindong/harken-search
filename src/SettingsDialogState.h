@@ -83,7 +83,7 @@ inline PreferencePreview<AppSettings>& AppearancePreview() {
     static PreferencePreview<AppSettings> preview{
         {[](const AppSettings& a,const AppSettings& b){return a.theme==b.theme && a.useCustomColors==b.useCustomColors;},
          [](AppSettings& a,const AppSettings& b){a.theme=b.theme;a.useCustomColors=b.useCustomColors;}},
-        Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),
+        Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),Field(&AppSettings::uiScalePercent),
         {[](const AppSettings& a,const AppSettings& b){return a.rowHeight==b.rowHeight && a.listDensity==b.listDensity;},
          [](AppSettings& a,const AppSettings& b){a.rowHeight=b.rowHeight;a.listDensity=b.listDensity;}}
     };
@@ -103,7 +103,7 @@ struct Editor {
         PREF(defaultVolume),PREF(loudnessNormEnabled),PREF(loudnessNormTargetLUFS),PREF(fadeInOutEnabled),PREF(fadeInOutMs),
         PREF(skipLeadingSilence),PREF(silenceThresholdDb),PREF(defaultPitch),PREF(pitchRange),
         PREF(monitorLayout),PREF(downmixMode),PREF(downmixCenterDb),PREF(downmixSurroundDb),PREF(binauralMonitor),
-        PREF(theme),PREF(themeScheduleMode),PREF(useCustomColors),PREF(language),PREF(readingFontSize),PREF(listFontSize),PREF(rowHeight),PREF(listDensity),
+        PREF(theme),PREF(themeScheduleMode),PREF(useCustomColors),PREF(language),PREF(readingFontSize),PREF(listFontSize),PREF(uiScalePercent),PREF(rowHeight),PREF(listDensity),
         PREF(showFileExtension),PREF(waveformDisplayMode),PREF(waveformStyle),PREF(miniWaveformRmsBodyStyle),PREF(meterChannelLayout),
         PREF(showLoudnessMeter),PREF(showRMSMeter),PREF(showTruePeakMeter),PREF(showClickRipple),
         PREF(showMilliseconds),PREF(showFrameNumber),PREF(defaultFrameRate),PREF(searchRealtime),PREF(suggestSourceMode),PREF(autoRenameTabBySearch),

@@ -124,6 +124,21 @@ int main(int argc, char** argv)
     {
         FakeWriter writer;
         ExternalAiPlaylistReceiptStore receipts;
+        auto request = Request(token.c_str(), "Game SFX");
+        request.clientLink = HarkenSearch::ExternalAiLinkTarget{
+            (scratch / "HarkenExternalAiMcp.exe").u8string(), request.libraryId,
+            (scratch / "library.db").u8string(), root, (scratch / "grants.json").u8string(),
+            (scratch / "playlist-bridge-revoked-client.toml").u8string(), "0123456789abcdef0123456789abcdef"};
+        const auto receipt = HarkenSearch::ApplyExternalAiPlaylistWrite(authorization, request, writer, receipts);
+        Check(receipt.status == "not_authorized" && receipt.reason == "client_connection_revoked" &&
+            writer.applyCalls == 0, "a queued request cannot write after the managed client link was removed");
+        request.clientLink.reset();
+        Check(HarkenSearch::ApplyExternalAiPlaylistWrite(authorization, request, writer, receipts).status == "ok" &&
+            writer.applyCalls == 1, "client-specific revocation does not disable a separately authorized manual client");
+    }
+    {
+        FakeWriter writer;
+        ExternalAiPlaylistReceiptStore receipts;
         const auto receipt = HarkenSearch::ApplyExternalAiPlaylistWrite(
             authorization, Request("wrong-token", "Game SFX"), writer, receipts);
         Check(receipt.status == "denied" && receipt.reason == "bridge_token_mismatch",

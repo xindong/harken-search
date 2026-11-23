@@ -6,9 +6,8 @@ from pathlib import Path
 def render(root: Path) -> str:
     page = (root / 'src/bootstrap/BootstrapProgressPage.html').read_text(encoding='utf-8')
     for token, relative in {
-        '@SEARCH_ICON@': 'assets/icons/source/harken-app-icons/Search/Search transparent 64.png',
-        '@WORDMARK_BLACK@': 'assets/logos/brand/harken-search-menu-wordmark-black.png',
-        '@WORDMARK_WHITE@': 'assets/logos/brand/harken-search-menu-wordmark-white.png',
+        '@ROBOT_ICON@': 'assets/icons/brand/harken-bot@2x.png',
+        '@WORDMARK_ORANGE@': 'assets/logos/brand/harken-search-menu-wordmark-orange.png',
     }.items():
         page = page.replace(token, 'data:image/png;base64,' + base64.b64encode((root / relative).read_bytes()).decode('ascii'))
     return page

@@ -20,6 +20,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <thread>
@@ -709,6 +710,56 @@ static int testScanStatsReportIngestSummary() {
     check(stats.ingested == 1, "scan stats reports this-run ingested count", failures);
     check(stats.failedFiles == 0, "successful scan reports no failed files", failures);
     check(stats.ingestDurationMs >= 0, "scan stats reports ingest duration", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testScanCollectsUppercaseExtensions() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("uppercase_ext");
+    const fs::path dbPath = root / "uppercase_ext.db";
+    writeSilentMonoWav(root / "UPPER.WAV");
+    writeSilentMonoWav(root / "Mixed.WaV");
+    writeSilentMonoWav(root / "lower.wav");
+    {
+        std::ofstream note(root / "readme.TXT", std::ios::binary | std::ios::trunc);
+        note << "not audio";
+    }
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const ScanStats stats = db.scanDirectoryEx(root.u8string(), true, false, false, nullptr, nullptr, 1, false);
+    check(stats.added == 3, "scan collects every case spelling of an audio extension", failures);
+
+    const auto records = db.getAllFiles();
+    check(records.size() == 3, "scan stores all three case-spelled audio files", failures);
+    bool sawUpper = false;
+    bool sawMixed = false;
+    for (const auto& record : records) {
+        if (record.fileName == "UPPER.WAV") {
+            sawUpper = true;
+            check(record.extension == ".wav", "uppercase extension is stored lowercased", failures);
+        } else if (record.fileName == "Mixed.WaV") {
+            sawMixed = true;
+            check(record.extension == ".wav", "mixed-case extension is stored lowercased", failures);
+        }
+    }
+    check(sawUpper, "UPPER.WAV record is present", failures);
+    check(sawMixed, "Mixed.WaV record is present", failures);
+
+    SearchFilter knownAudioOnly;
+    knownAudioOnly.includeOnlyKnownExts = true;
+    const auto filtered = db.searchFiles(knownAudioOnly, 100, 0);
+    check(filtered.size() == 3, "file-type filter keeps case-spelled WAV rows", failures);
 
     db.close();
     removeDbArtifacts(dbPath);
@@ -2256,6 +2307,242 @@ static int testCoverWallIgnoresStaleOrphanRegistryRows() {
     return failures;
 }
 
+static std::string readRemovalFixtureBytes(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+static bool hasRegisteredRemovalRoot(const Database& db, const fs::path& path) {
+    const auto key = HarkenSearch::CanonicalFolderPath(path.u8string());
+    const auto roots = db.getLibraryRoots();
+    return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
+        return HarkenSearch::CanonicalFolderPath(root) == key;
+    });
+}
+
+static bool hasRemovalTreeFolder(const FolderInfo& tree, const std::string& key) {
+    return tree.path == key || std::any_of(tree.subfolders.begin(), tree.subfolders.end(), [&](const auto& child) {
+        return hasRemovalTreeFolder(child, key);
+    });
+}
+
+static int testRemoveRegisteredFolderSubtreePreservesOtherRoots(bool useWorker = false) {
+    int failures = 0;
+    const auto root = makeTempRoot("remove_registered_root");
+    const auto target = root / "Outsourcer";
+    const auto nearby = root / "Outsourcer Database";
+    const auto nested = target / "AnotherRoot";
+    fs::create_directories(target / "Child");
+    fs::create_directories(nearby);
+    fs::create_directories(nested);
+    const auto targetFile = target / "Remove.wav";
+    const auto childFile = target / "Child" / "RemoveChild.wav";
+    const auto nearbyFile = nearby / "Keep.wav";
+    const auto nestedFile = nested / "KeepNested.wav";
+    for (const auto& path : {targetFile, childFile, nearbyFile, nestedFile}) {
+        writeSilentMonoWav(path);
+    }
+    const auto source = readRemovalFixtureBytes(targetFile);
+    const auto childSource = readRemovalFixtureBytes(childFile);
+    check(!source.empty() && !childSource.empty(), "registered-root fixture has real WAV bytes", failures);
+
+    Database db;
+    Database otherDb;
+    if (!db.open((root / "active.db").u8string()) || !otherDb.open((root / "other.db").u8string())) {
+        std::cerr << "FAIL: fixture databases did not open\n";
+        return 1;
+    }
+    db.mergeLibraryRoots({target.u8string(), nearby.u8string(), nested.u8string()});
+    otherDb.mergeLibraryRoots({target.u8string()});
+    check(db.scanDirectoryEx(root.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 4,
+          "registered-root fixture indexed four WAVs", failures);
+    check(otherDb.scanDirectoryEx(target.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 3,
+          "other library indexed the same physical files independently", failures);
+    check(otherDb.saveWaveformByPath(targetFile.u8string(), {0.4f}, -20.0f, 1),
+          "other library has its own waveform", failures);
+    check(db.saveWaveformByPath(targetFile.u8string(), {0.2f}, -22.0f, 1) &&
+          db.saveWaveformByPath(nestedFile.u8string(), {0.3f}, -24.0f, 1),
+          "target and nested root have independent waveform rows", failures);
+    const auto targetId = db.getFileByPath(targetFile.u8string()).id;
+    const auto nestedId = db.getFileByPath(nestedFile.u8string()).id;
+    const auto playlist = db.createPlaylist("Keep other roots");
+    check(db.addToPlaylist(playlist, targetId) && db.addToPlaylist(playlist, nestedId),
+          "playlist refers to the target and nested-root files", failures);
+    const std::string targetKey = HarkenSearch::CanonicalFolderPath(target.u8string());
+    const std::string equivalentPath = "\\\\?\\" + targetKey + "\\";
+    const auto revision = db.dataRevision();
+    const auto removed = useWorker ? db.removeFolderSubtreeFromLibraryOnWorker(equivalentPath)
+                                   : db.removeFolderSubtreeFromLibrary(equivalentPath);
+    check(removed.status == FolderSubtreeRemovalStatus::Removed && removed.removedFiles == 2 &&
+          removed.removedPaths.size() == 2 && removed.error.empty() && db.dataRevision() > revision,
+          "extended mixed-case equivalent removes the target without touching a nested independent root", failures);
+    check(!hasRegisteredRemovalRoot(db, target) && hasRegisteredRemovalRoot(db, nearby) &&
+          hasRegisteredRemovalRoot(db, nested) && db.getLibraryRoots().size() == 2,
+          "exact registration is removed but other roots stay registered", failures);
+    check(!db.fileExists(targetFile.u8string()) && !db.fileExists(childFile.u8string()) &&
+          db.fileExists(nearbyFile.u8string()) && db.fileExists(nestedFile.u8string()),
+          "target rows are gone and nested and same-prefix neighbors are retained", failures);
+    check(db.getWaveformByPath(targetFile.u8string()).empty() &&
+          !db.getWaveformByPath(nestedFile.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1,
+          "target cache and playlist reference clear without removing the nested file references", failures);
+    check(hasRegisteredRemovalRoot(otherDb, target) && otherDb.fileExists(targetFile.u8string()) &&
+          !otherDb.getWaveformByPath(targetFile.u8string()).empty(),
+          "other library retains its roots, indexed files and cache", failures);
+    check(readRemovalFixtureBytes(targetFile) == source && readRemovalFixtureBytes(childFile) == childSource,
+          "registered removal leaves source WAV bytes unchanged", failures);
+    check(db.removeFolderSubtreeFromDb(target.u8string()) == 0 && db.getLastError().empty() &&
+          db.fileExists(nestedFile.u8string()),
+          "repeating removal does not remove an independent nested root", failures);
+
+    db.close();
+    otherDb.close();
+    return failures;
+}
+
+static int testRemoveLastEmptyRegisteredFolderRoot() {
+    int failures = 0;
+    const auto root = makeTempRoot("remove_last_empty_root");
+    const auto emptyRoot = root / "EmptyRoot";
+    fs::create_directories(emptyRoot);
+    const auto dbPath = root / "empty.db";
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    db.mergeLibraryRoots({emptyRoot.u8string()});
+    const auto key = HarkenSearch::CanonicalFolderPath(emptyRoot.u8string());
+    check(db.getFileCount() == 0 && hasRemovalTreeFolder(db.getFolderHierarchyFromIndex(), key),
+          "empty registered root is initially visible", failures);
+    const auto removed = db.removeFolderSubtreeFromLibrary(emptyRoot.u8string());
+    check(removed.status == FolderSubtreeRemovalStatus::Removed && removed.removedFiles == 0 &&
+          removed.unregisteredRoot && removed.error.empty() && db.getLibraryRoots().empty(),
+          "remove unregisters the last root even with zero indexed files", failures);
+    check(!hasRemovalTreeFolder(db.getFolderHierarchyFromIndex(), key) &&
+          !hasRemovalTreeFolder(db.getFolderHierarchy(), key), "both tree paths omit the unregistered empty root", failures);
+    check(execSqlite(db.db(), "INSERT INTO waveforms_db.waveforms(file_id, status) VALUES(99999991, 'done')"),
+          "repeat fixture has an unrelated orphan waveform", failures);
+    const auto repeated = db.removeFolderSubtreeFromLibrary(emptyRoot.u8string());
+    check(repeated.status == FolderSubtreeRemovalStatus::NoMatch && repeated.removedFiles == 0 &&
+          !repeated.unregisteredRoot && repeated.error.empty() &&
+          querySingleInt(db.db(), "SELECT count(*) FROM waveforms_db.waveforms WHERE file_id=99999991") == 1,
+          "no match leaves even unrelated stale cache data unmodified", failures);
+    db.close();
+    check(db.open(dbPath.u8string()) && db.getLibraryRoots().empty() &&
+          !hasRemovalTreeFolder(db.getFolderHierarchyFromIndex(), key),
+          "reopen does not restore the last unregistered root", failures);
+    db.close();
+    return failures;
+}
+
+static int testRemoveRegisteredFolderRollbackOnRootWriteFailure() {
+    int failures = 0;
+    const auto root = makeTempRoot("remove_registered_root_rollback");
+    const auto target = root / "Target";
+    fs::create_directories(target);
+    const auto file = target / "Keep.wav";
+    writeSilentMonoWav(file);
+    const auto original = readRemovalFixtureBytes(file);
+    Database db;
+    if (!db.open((root / "rollback.db").u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        return 1;
+    }
+    db.mergeLibraryRoots({target.u8string()});
+    check(db.scanDirectoryEx(target.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 1,
+          "rollback fixture indexed target WAV", failures);
+    check(db.rebuildFolderIndex(), "rollback fixture stores a folder index row", failures);
+    const auto fileId = db.getFileByPath(file.u8string()).id;
+    const auto playlist = db.createPlaylist("Rollback fixture");
+    check(db.saveWaveformByPath(file.u8string(), {0.4f}, -18.0f, 1) &&
+          db.addToPlaylist(playlist, fileId) && db.addTagToFile(fileId, "rollback") &&
+          db.markBackfillPending(fileId, static_cast<int>(aura::BackfillJobKind::WaveformL1Overview)),
+          "rollback fixture stores waveform, playlist, tag and backfill references", failures);
+    check(execSqlite(db.db(),
+                     "CREATE TRIGGER fail_root_update BEFORE UPDATE ON app_meta "
+                     "WHEN old.key='library_roots_v1' "
+                     "BEGIN SELECT RAISE(ABORT, 'injected root update failure'); END;"),
+          "rollback fixture installs a root-registration write failure", failures);
+    const auto result = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(result.status == FolderSubtreeRemovalStatus::Failed && result.removedFiles == 0 &&
+          !result.unregisteredRoot &&
+          result.error.find("injected root update failure") != std::string::npos &&
+          db.getLastError() == result.error,
+          "root-registration write failure keeps the database error and reports no removal", failures);
+    check(hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          querySingleInt(db.db(), "SELECT count(*) FROM folder_index") == 1,
+          "registration, audio file and folder index survive the failed transaction", failures);
+    check(!db.getWaveformByPath(file.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1 &&
+          querySingleInt(db.db(), "SELECT count(*) FROM file_tags") == 1 && db.countBackfillPending() == 1,
+          "failed transaction preserves waveform, playlist, tag and backfill on disk", failures);
+    check(!original.empty() && readRemovalFixtureBytes(file) == original,
+          "failed transaction leaves WAV bytes unchanged", failures);
+    const auto workerResult = db.removeFolderSubtreeFromLibraryOnWorker(target.u8string());
+    check(workerResult.status == FolderSubtreeRemovalStatus::Failed &&
+          workerResult.error.find("injected root update failure") != std::string::npos &&
+          hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          !db.getWaveformByPath(file.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1 &&
+          readRemovalFixtureBytes(file) == original,
+          "background connection reports transaction failure and leaves primary rows and caches intact", failures);
+    check(execSqlite(db.db(),
+                     "DROP TRIGGER fail_root_update; "
+                     "CREATE TRIGGER fail_folder_index_clear BEFORE DELETE ON folder_index "
+                     "WHEN (SELECT value FROM app_meta WHERE key='library_roots_v1')='' "
+                     "BEGIN SELECT RAISE(ABORT, 'injected failure after unregister'); END;"),
+          "rollback fixture installs an error after the root was already cleared", failures);
+    const auto lateFailure = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(lateFailure.status == FolderSubtreeRemovalStatus::Failed && lateFailure.removedFiles == 0 &&
+          !lateFailure.unregisteredRoot &&
+          lateFailure.error.find("injected failure after unregister") != std::string::npos,
+          "failure after root write is not reported as success", failures);
+    check(hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          querySingleInt(db.db(), "SELECT count(*) FROM folder_index") == 1 &&
+          !db.getWaveformByPath(file.u8string()).empty() && db.getPlaylistFileCount(playlist) == 1 &&
+          querySingleInt(db.db(), "SELECT count(*) FROM file_tags") == 1 && db.countBackfillPending() == 1 &&
+          readRemovalFixtureBytes(file) == original,
+          "late failure restores the registration, index and all references without changing the WAV", failures);
+    check(execSqlite(db.db(),
+                     "DROP TRIGGER fail_folder_index_clear; "
+                     "UPDATE audio_files SET embedded_cover_key='E|remove-root-fixture'; "
+                     "CREATE TRIGGER fail_backfill_cleanup BEFORE DELETE ON backfill_pending "
+                     "BEGIN SELECT RAISE(ABORT, 'injected backfill cleanup failure'); END;"),
+          "rollback fixture installs an error on an existing backfill table", failures);
+    db.upsertCoverRegistry("E|remove-root-fixture", file.u8string(), true, "E|remove-root-fixture");
+    check(db.saveCoverThumb("E|remove-root-fixture", std::vector<uint8_t>(64, 0x42), "image/png"),
+          "rollback fixture stores an attached cover thumbnail", failures);
+    const auto backfillFailure = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(backfillFailure.status == FolderSubtreeRemovalStatus::Failed &&
+          backfillFailure.error.find("injected backfill cleanup failure") != std::string::npos &&
+          hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) && db.countBackfillPending() == 1,
+          "existing backfill table errors roll back instead of using the missing-table compatibility path", failures);
+    check(execSqlite(db.db(),
+                     "DROP TRIGGER fail_backfill_cleanup; "
+                     "CREATE TRIGGER blobs_db.fail_cover_prune BEFORE DELETE ON cover_thumbs "
+                     "BEGIN SELECT RAISE(ABORT, 'injected cover cleanup failure'); END;"),
+          "rollback fixture installs a failure in the cover sidecar", failures);
+    const auto coverFailure = db.removeFolderSubtreeFromLibrary(target.u8string());
+    check(coverFailure.status == FolderSubtreeRemovalStatus::Failed &&
+          coverFailure.error.find("injected cover cleanup failure") != std::string::npos &&
+          hasRegisteredRemovalRoot(db, target) && db.fileExists(file.u8string()) &&
+          querySingleInt(db.db(), "SELECT count(*) FROM cover_cache_registry WHERE cover_key='E|remove-root-fixture'") == 1 &&
+          querySingleInt(db.db(), "SELECT count(*) FROM blobs_db.cover_thumbs WHERE cover_key='E|remove-root-fixture'") == 1 &&
+          db.getPlaylistFileCount(playlist) == 1 && readRemovalFixtureBytes(file) == original,
+          "cover-sidecar failure restores the main library, associated cache and reference changes", failures);
+    db.close();
+    return failures;
+}
+
+static int testRemoveFolderRootRegistrations() {
+    std::cout << "-- testRemoveRegisteredFolderSubtreePreservesOtherRoots\n";
+    int failures = testRemoveRegisteredFolderSubtreePreservesOtherRoots();
+    std::cout << "-- testRemoveRegisteredFolderSubtreePreservesOtherRoots (worker connection)\n";
+    failures += testRemoveRegisteredFolderSubtreePreservesOtherRoots(true);
+    std::cout << "-- testRemoveLastEmptyRegisteredFolderRoot\n";
+    failures += testRemoveLastEmptyRegisteredFolderRoot();
+    std::cout << "-- testRemoveRegisteredFolderRollbackOnRootWriteFailure\n";
+    return failures + testRemoveRegisteredFolderRollbackOnRootWriteFailure();
+}
+
 static int testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault() {
     int failures = 0;
     const fs::path root = makeTempRoot("remove_folder_db_only");
@@ -2316,6 +2603,7 @@ static int testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault() {
     check(db.getFolderFileCount(targetCanon) == 2, "target subtree starts with two db rows", failures);
     const int removed = db.removeFolderSubtreeFromDb(target.u8string(), false);
     check(removed == 2, "db-only folder subtree removal reports two rows", failures);
+    check(hasRegisteredRemovalRoot(db, root), "removing an ordinary subdirectory preserves its registered ancestor", failures);
     check(db.getFileCount() == 1, "db-only folder subtree removal invalidates total file count immediately", failures);
     check(!db.fileExists(targetFile.u8string()), "target root file db row removed", failures);
     check(!db.fileExists(childFile.u8string()), "target child file db row removed", failures);
@@ -2999,6 +3287,238 @@ static int testRemoveFolderSubtreeRecoversMalformedFtsIndexes() {
                          "WHERE folder_path LIKE 'H:\\Sound effect\\综合%'",
                          -1) == 0,
           "malformed-fts removal leaves no target subtree rows behind", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static std::string readIntegrityCheck(const std::string& dbPath) {
+    sqlite3* raw = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &raw) != SQLITE_OK) {
+        if (raw) {
+            sqlite3_close(raw);
+        }
+        return "open-failed";
+    }
+    std::string result;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(raw, "PRAGMA integrity_check;", -1, &stmt, nullptr) == SQLITE_OK) {
+        int step = sqlite3_step(stmt);
+        while (step == SQLITE_ROW) {
+            const unsigned char* text = sqlite3_column_text(stmt, 0);
+            if (!result.empty()) {
+                result += " | ";
+            }
+            result += text ? reinterpret_cast<const char*>(text) : "";
+            step = sqlite3_step(stmt);
+        }
+        if (result.empty() && step != SQLITE_DONE) {
+            result = std::string("integrity_check failed: ") + sqlite3_errmsg(raw);
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(raw);
+    return result;
+}
+
+// Makes one audio_files index page unreadable by claiming a cell count the page cannot hold,
+// which breaks the b-tree structure without touching the table rows. This records how far the
+// REINDEX-and-retry fallback reaches: damage it cannot rebuild must still surface as a readable
+// error with every row rolled back, never as silent data loss.
+static bool corruptIndexPageCellCount(const std::string& dbPath, std::string* indexName, long long* rootPage) {
+    sqlite3* raw = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &raw) != SQLITE_OK) {
+        if (raw) {
+            sqlite3_close(raw);
+        }
+        return false;
+    }
+    std::string name;
+    long long rootpage = 0;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(raw,
+                           "SELECT name, rootpage FROM sqlite_master "
+                           "WHERE type='index' AND tbl_name='audio_files' AND rootpage>0 "
+                           "ORDER BY name LIMIT 1",
+                           -1,
+                           &stmt,
+                           nullptr) == SQLITE_OK &&
+        sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* text = sqlite3_column_text(stmt, 0);
+        name = text ? reinterpret_cast<const char*>(text) : "";
+        rootpage = sqlite3_column_int64(stmt, 1);
+    }
+    sqlite3_finalize(stmt);
+
+    int pageSize = 0;
+    stmt = nullptr;
+    if (sqlite3_prepare_v2(raw, "PRAGMA page_size;", -1, &stmt, nullptr) == SQLITE_OK &&
+        sqlite3_step(stmt) == SQLITE_ROW) {
+        pageSize = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(raw);
+
+    if (name.empty() || rootpage <= 0 || pageSize <= 0) {
+        return false;
+    }
+
+    std::fstream file(fs::u8path(dbPath), std::ios::in | std::ios::out | std::ios::binary);
+    if (!file) {
+        return false;
+    }
+    file.seekp(static_cast<std::streamoff>((rootpage - 1) * pageSize + 3));
+    const unsigned char zeroCells[2] = {0xff, 0xff};
+    file.write(reinterpret_cast<const char*>(zeroCells), sizeof(zeroCells));
+    file.flush();
+    const bool written = file.good();
+    file.close();
+
+    *indexName = name;
+    *rootPage = rootpage;
+    return written;
+}
+
+static int testRemoveFolderSubtreeReportsUnrecoverableIndexDamage() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("remove_folder_unrecoverable_index");
+    const fs::path dbPath = root / "remove_folder_unrecoverable_index.db";
+
+    AudioRecord target;
+    target.filePath = "H:\\Sound effect\\CorruptCase\\hit.wav";
+    target.folderPath = "H:\\Sound effect\\CorruptCase";
+    target.fileName = "hit.wav";
+    target.extension = ".wav";
+    target.format = "WAV";
+    target.fileSize = 10;
+    target.sampleRate = 48000;
+    target.channels = 1;
+    target.totalFrames = 48000;
+    target.durationSeconds = 1.0f;
+
+    AudioRecord sibling = target;
+    sibling.filePath = "I:\\Sound effect\\KeepCase\\keep.wav";
+    sibling.folderPath = "I:\\Sound effect\\KeepCase";
+    sibling.fileName = "keep.wav";
+    sibling.fileSize = 20;
+    sibling.totalFrames = 96000;
+    sibling.durationSeconds = 2.0f;
+
+    {
+        Database seed;
+        if (!seed.open(dbPath.u8string())) {
+            std::cerr << "FAIL: open db: " << seed.getLastError() << "\n";
+            fs::remove_all(root);
+            return 1;
+        }
+        check(seed.addFile(target), "index-damage fixture inserts target row", failures);
+        check(seed.addFile(sibling), "index-damage fixture inserts sibling row", failures);
+        seed.close();
+    }
+
+    std::string indexName;
+    long long rootPage = 0;
+    const bool patched = corruptIndexPageCellCount(dbPath.u8string(), &indexName, &rootPage);
+    check(patched, "index-damage fixture rewrites an audio_files index page header", failures);
+    if (!patched) {
+        removeDbArtifacts(dbPath);
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        return failures;
+    }
+    std::cout << "   index-damage fixture index=" << indexName << " rootpage=" << rootPage << "\n";
+
+    const std::string damagedCheck = readIntegrityCheck(dbPath.u8string());
+    std::cout << "   integrity_check on damaged library: " << damagedCheck << "\n";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: reopen damaged db: " << db.getLastError() << "\n";
+        removeDbArtifacts(dbPath);
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        return failures + 1;
+    }
+
+    const int removed = db.removeFolderSubtreeFromDb("h:\\sound effect\\corruptcase", false);
+    const std::string error = db.getLastError();
+    std::cout << "   removal error: " << error << "\n";
+    check(removed == 0, "index-damage removal reports zero rows removed", failures);
+    check(error.find("removeFolderSubtreeFromDb") != std::string::npos,
+          "index-damage error names the failing operation", failures);
+    check(error.find("malformed") != std::string::npos,
+          "index-damage error keeps the underlying sqlite message", failures);
+    check(error.find("reindex=") != std::string::npos,
+          "index-damage error reports the failed REINDEX attempt", failures);
+    check(db.fileExists(target.filePath), "index-damage rollback keeps the target row", failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
+          "index-damage rollback keeps every row", failures);
+    db.close();
+
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+static int testRemoveFolderSubtreeDeleteFailureReportsReadableError() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("remove_folder_delete_failure");
+    const fs::path dbPath = root / "remove_folder_delete_failure.db";
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    AudioRecord target;
+    target.filePath = "H:\\Sound effect\\综合\\BoomLibrary\\hit.wav";
+    target.folderPath = "H:\\Sound effect\\综合\\BoomLibrary";
+    target.fileName = "hit.wav";
+    target.extension = ".wav";
+    target.format = "WAV";
+    target.fileSize = 10;
+    target.sampleRate = 48000;
+    target.channels = 1;
+    target.totalFrames = 48000;
+    target.durationSeconds = 1.0f;
+    check(db.addFile(target), "delete-failure fixture inserts target row", failures);
+
+    AudioRecord sibling = target;
+    sibling.filePath = "I:\\Sound effect\\KeepCase\\keep.wav";
+    sibling.folderPath = "I:\\Sound effect\\KeepCase";
+    sibling.fileName = "keep.wav";
+    sibling.fileSize = 20;
+    sibling.totalFrames = 96000;
+    sibling.durationSeconds = 2.0f;
+    check(db.addFile(sibling), "delete-failure fixture inserts sibling row", failures);
+
+    check(execSqlite(db.db(),
+                     "CREATE TRIGGER fail_audio_delete BEFORE DELETE ON audio_files "
+                     "BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END;"),
+          "delete-failure fixture installs blocking delete trigger", failures);
+
+    const int removed = db.removeFolderSubtreeFromDb("h:\\sound effect\\综合", false);
+    check(removed == 0, "delete-failure removal reports zero rows removed", failures);
+    const std::string error = db.getLastError();
+    check(error.find("removeFolderSubtreeFromDb") != std::string::npos,
+          "delete-failure error names the failing operation", failures);
+    check(error.find("injected delete failure") != std::string::npos,
+          "delete-failure error keeps the underlying sqlite message", failures);
+    check(db.fileExists(target.filePath),
+          "delete-failure rollback keeps the target row", failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
+          "delete-failure rollback keeps every row", failures);
+
+    check(execSqlite(db.db(), "DROP TRIGGER fail_audio_delete;"),
+          "delete-failure fixture drops the blocking trigger", failures);
+    const int retried = db.removeFolderSubtreeFromDb("h:\\sound effect\\综合", false);
+    check(retried == 1, "delete-failure removal succeeds after the trigger is gone", failures);
+    check(!db.fileExists(target.filePath), "delete-failure retry deletes the target row", failures);
 
     db.close();
     removeDbArtifacts(dbPath);
@@ -4636,6 +5156,9 @@ static int testUnchangedFullScanWithConcurrentCacheWrite(bool cached) {
 int main(int argc, char** argv) {
     std::cout << std::unitbuf;
     std::cout << "=== Scan/Waveform Cache Contract Tests ===\n";
+    if (argc == 2 && std::string(argv[1]) == "--remove-root-registrations") {
+        return testRemoveFolderRootRegistrations() == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string(argv[1]) == "--concurrent-rescan") {
         return testUnchangedFullScanWithConcurrentCacheWrite(false) +
                testUnchangedFullScanWithConcurrentCacheWrite(true) == 0 ? 0 : 1;
@@ -4659,6 +5182,8 @@ int main(int argc, char** argv) {
     failures += testCompleteImportSkipsPersistentDetailForOverFiveMinutes();
     std::cout << "-- testScanStatsReportIngestSummary\n";
     failures += testScanStatsReportIngestSummary();
+    std::cout << "-- testScanCollectsUppercaseExtensions";
+    failures += testScanCollectsUppercaseExtensions();
     std::cout << "-- testMultiFolderScanProgressAggregatesLocalCallbacks\n";
     failures += testMultiFolderScanProgressAggregatesLocalCallbacks();
     std::cout << "-- testCompleteWaveformExtractionReturnsAllScanArtifacts\n";
@@ -4713,6 +5238,7 @@ int main(int argc, char** argv) {
     failures += testRemoveMissingDeletesWaveformRows();
     std::cout << "-- testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault\n";
     failures += testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault();
+    failures += testRemoveFolderRootRegistrations();
     std::cout << "-- testRemoveDriveRootSubtreeCleansHiddenIndexedRows\n";
     failures += testRemoveDriveRootSubtreeCleansHiddenIndexedRows();
     std::cout << "-- testRemoveFolderSubtreeMatchesLegacyCaseFolderPaths\n";
@@ -4725,6 +5251,10 @@ int main(int argc, char** argv) {
     failures += testRemoveFolderSubtreeLeavesPackageCompactable();
     std::cout << "-- testRemoveFolderSubtreeRecoversMalformedFtsIndexes\n";
     failures += testRemoveFolderSubtreeRecoversMalformedFtsIndexes();
+    std::cout << "-- testRemoveFolderSubtreeReportsUnrecoverableIndexDamage" << std::endl;
+    failures += testRemoveFolderSubtreeReportsUnrecoverableIndexDamage();
+    std::cout << "-- testRemoveFolderSubtreeDeleteFailureReportsReadableError";
+    failures += testRemoveFolderSubtreeDeleteFailureReportsReadableError();
     std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
     failures += testPilotFolderHierarchyKeepsNestedRootsTogether();
     failures += testFolderHierarchyFromIndexRepairsStaleIndex();

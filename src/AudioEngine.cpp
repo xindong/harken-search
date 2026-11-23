@@ -6728,7 +6728,8 @@ bool AudioEngine::switchOutputDevice(int deviceIndex) {
 bool AudioEngine::exportSingleChannel(const std::string& inputPath,
                                        int channelIndex,
                                        const std::string& outputPath,
-                                       std::string* outError)
+                                       std::string* outError,
+                                       const std::function<void(uint64_t, uint64_t)>* progress)
 {
     auto setErr = [&](const std::string& msg) {
         if (outError) *outError = msg;
@@ -6746,6 +6747,9 @@ bool AudioEngine::exportSingleChannel(const std::string& inputPath,
         Platform::AudioDataSource::BorrowDataSource(probeDecoder));
     const uint32_t nativeChannels = probeFormat.channels;
     const uint32_t sampleRate     = probeFormat.sampleRate;
+    const uint64_t sourceTotalFrames =
+        Platform::AudioDataSource::QueryLength(
+            Platform::AudioDataSource::BorrowDataSource(probeDecoder)).frames;
     Platform::AudioDataSource::UninitializeDecoder(probeDecoder);
 
 #ifdef _WIN32
@@ -6780,6 +6784,8 @@ bool AudioEngine::exportSingleChannel(const std::string& inputPath,
 
     // 4. Decode, extract channel, convert f32→s24, write
     const int kBlockFrames = 4096;
+    uint64_t writtenFrames = 0;
+    uint64_t progressTick = 0;
     std::vector<float> inBuf(kBlockFrames * nativeChannels);
     std::vector<uint8_t> s24Buf(kBlockFrames * 3); // mono s24: 3 bytes per frame
 
@@ -6813,7 +6819,17 @@ bool AudioEngine::exportSingleChannel(const std::string& inputPath,
             break;
         }
 
+        writtenFrames += written;
+        if (progress && *progress && (++progressTick % 8) == 0) {
+            try { (*progress)(writtenFrames, sourceTotalFrames); } catch (...) {}
+        }
+
         if (res == MA_AT_END) break;
+    }
+
+    // 收尾补发一次，保证界面能到 100%，不依赖块数是否为 8 的倍数。
+    if (ok && progress && *progress) {
+        try { (*progress)(writtenFrames, sourceTotalFrames); } catch (...) {}
     }
 
     encoder.Close();

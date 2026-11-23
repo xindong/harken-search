@@ -443,6 +443,16 @@ struct FolderInfo {
     std::vector<FolderInfo> subfolders;
 };
 
+enum class FolderSubtreeRemovalStatus { Removed, NoMatch, Failed };
+
+struct FolderSubtreeRemovalResult {
+    FolderSubtreeRemovalStatus status = FolderSubtreeRemovalStatus::Failed;
+    int removedFiles = 0;
+    bool unregisteredRoot = false;
+    std::string error;
+    std::vector<std::string> removedPaths;
+};
+
 // Lightweight playlist folder aggregation row so the playlist folder tree can
 // show folder names and counts without loading complete AudioRecord rows.
 struct PlaylistFolderCount {
@@ -1521,6 +1531,9 @@ public:
     // 1. Folder tree context menu: remove a subtree from the current database.
     // Disk files are kept by default; deleteFilesFromDisk only removes indexed files.
     int removeFolderSubtreeFromDb(const std::string& folderPath, bool deleteFilesFromDisk = false);
+    FolderSubtreeRemovalResult removeFolderSubtreeFromLibrary(const std::string& folderPath);
+    FolderSubtreeRemovalResult removeFolderSubtreeFromLibraryOnWorker(const std::string& folderPath);
+    void discardFolderRemovalReadCaches();
 
     // 2. main.cpp:8121 — 切库/切表前断开当前连接
     void detachConnectionForSwitch();
@@ -1543,6 +1556,8 @@ public:
         int limit, int64_t lastClaimedFileId, bool incrementalOnly);
     bool saveWaveformDetailBatch(const std::vector<WaveformDetailBatchEntry>& batch);
 private:
+    FolderSubtreeRemovalResult removeFolderSubtreeFromDbImpl(const std::string& folderPath, bool deleteFilesFromDisk);
+    void onOrphanCoverCachesPruned(int removed);
     // Caller holds m_writerSerializeMutex.
     bool ensureSearchRecomputeConnection();
     bool ensureFtsSchema();

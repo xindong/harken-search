@@ -1,260 +1,172 @@
 #include "ExternalAiBridgeServer.h"
 
-#ifdef _WIN32
-
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-
-#include <atomic>
-#include <functional>
+#include <chrono>
 #include <iostream>
-#include <iterator>
 #include <string>
-#include <vector>
+#include <thread>
+#include <utility>
+
+#ifdef _WIN32
+#include <windows.h>
 
 namespace {
 
+using namespace std::chrono_literals;
+using Clock = std::chrono::steady_clock;
+using HarkenSearch::DrainExternalAiBridgeServer;
 using HarkenSearch::ExternalAiBridgePipeName;
 using HarkenSearch::ExternalAiBridgeServerRunning;
-using HarkenSearch::DrainExternalAiBridgeServer;
 using HarkenSearch::StartExternalAiBridgeServer;
 using HarkenSearch::StopExternalAiBridgeServer;
 
-std::wstring PipeName(const std::string& libraryId)
-{
-    const auto name = ExternalAiBridgePipeName(libraryId);
-    return std::wstring(name.begin(), name.end());
+constexpr auto kWait = 2s;
+constexpr auto kStopLimit = 250ms;
+
+struct Client {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    ~Client() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+
+    bool Send(const std::string& bytes) const {
+        DWORD written = 0;
+        return WriteFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr)
+            && written == bytes.size();
+    }
+};
+
+bool Connect(const std::string& library, Client& client) {
+    const auto narrow = ExternalAiBridgePipeName(library);
+    const std::wstring name(narrow.begin(), narrow.end());
+    const auto deadline = Clock::now() + kWait;
+    do {
+        client.handle = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (client.handle != INVALID_HANDLE_VALUE) return true;
+        std::this_thread::sleep_for(1ms);
+    } while (Clock::now() < deadline);
+    return false;
 }
 
-HANDLE OpenClient(const std::wstring& name, DWORD timeoutMs)
-{
-    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
-    for (;;) {
-        HANDLE pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-            OPEN_EXISTING, 0, nullptr);
-        if (pipe != INVALID_HANDLE_VALUE) {
-            return pipe;
-        }
-        if (GetTickCount64() >= deadline) {
-            return INVALID_HANDLE_VALUE;
-        }
-        Sleep(10);
-    }
-}
-
-bool WaitUntil(const std::function<bool()>& predicate, DWORD timeoutMs)
-{
-    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
-    while (GetTickCount64() < deadline) {
-        if (predicate()) {
-            return true;
-        }
-        Sleep(10);
-    }
-    return predicate();
-}
-
-int Fail(const char* message)
-{
-    std::cerr << "FAIL: " << message << "\n";
-    StopExternalAiBridgeServer();
-    return 1;
-}
-
-int RunUnreadClientStopChild()
-{
-    const std::string libraryId = "external-ai-bridge-unread-stop";
-    const auto pipeName = PipeName(libraryId);
-    StartExternalAiBridgeServer(libraryId);
-
-    HANDLE client = OpenClient(pipeName, 2000);
-    if (client == INVALID_HANDLE_VALUE) {
-        return Fail("could not connect to bridge");
-    }
-
-    const std::string request = "{\"requestId\":\"unread-stop\"}\n";
-    DWORD written = 0;
-    if (!WriteFile(client, request.data(), static_cast<DWORD>(request.size()), &written, nullptr)
-        || written != request.size()) {
-        CloseHandle(client);
-        return Fail("could not write bridge request");
-    }
-
-    std::atomic<bool> handled{false};
-    for (int attempt = 0; attempt < 200 && !handled.load(); ++attempt) {
-        DrainExternalAiBridgeServer([&handled](const std::string&) {
-            handled.store(true);
-            return std::string("{}");
-        });
-        Sleep(10);
-    }
-    if (!handled.load()) {
-        CloseHandle(client);
-        return Fail("bridge did not queue the request");
-    }
-
-    // Leave the response unread. The stop path must still finish promptly.
-    Sleep(100);
-    StopExternalAiBridgeServer();
-    CloseHandle(client);
-    return 0;
-}
-
-bool RunChildWithTimeout()
-{
-    wchar_t executable[32768] = {};
-    const DWORD length = GetModuleFileNameW(nullptr, executable,
-        static_cast<DWORD>(std::size(executable)));
-    if (length == 0 || length >= std::size(executable)) {
-        return false;
-    }
-
-    std::wstring command = L"\"";
-    command.append(executable, length);
-    command += L"\" --unread-client-stop";
-    std::vector<wchar_t> mutableCommand(command.begin(), command.end());
-    mutableCommand.push_back(L'\0');
-
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, 0,
-            nullptr, nullptr, &startup, &process)) {
-        return false;
-    }
-
-    const DWORD waitResult = WaitForSingleObject(process.hProcess, 3000);
-    if (waitResult == WAIT_TIMEOUT) {
-        TerminateProcess(process.hProcess, 1);
-        WaitForSingleObject(process.hProcess, 1000);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        return false;
-    }
-    DWORD exitCode = 1;
-    GetExitCodeProcess(process.hProcess, &exitCode);
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return waitResult == WAIT_OBJECT_0 && exitCode == 0;
-}
-
-bool TestStopWithUnreadClient()
-{
-    if (!RunChildWithTimeout()) {
-        std::cerr << "FAIL: stop did not finish with an unread client\n";
-        return false;
-    }
-    std::cout << "PASS: stop with unread client\n";
-    return true;
-}
-
-bool TestNormalResponse()
-{
-    const std::string libraryId = "external-ai-bridge-normal-response";
-    StartExternalAiBridgeServer(libraryId);
-    HANDLE client = OpenClient(PipeName(libraryId), 2000);
-    if (client == INVALID_HANDLE_VALUE) {
-        std::cerr << "FAIL: could not connect for normal response\n";
-        StopExternalAiBridgeServer();
-        return false;
-    }
-
-    const std::string request = "{\"requestId\":\"normal-response\"}\n";
-    DWORD written = 0;
-    if (!WriteFile(client, request.data(), static_cast<DWORD>(request.size()), &written, nullptr)
-        || written != request.size()) {
-        CloseHandle(client);
-        StopExternalAiBridgeServer();
-        std::cerr << "FAIL: could not write normal response request\n";
-        return false;
-    }
-
+bool DrainUntilHandled(std::string response = "{\"status\":\"ok\"}") {
     bool handled = false;
-    for (int attempt = 0; attempt < 200 && !handled; ++attempt) {
-        DrainExternalAiBridgeServer([&handled](const std::string&) {
-            handled = true;
-            return std::string("{}");
+    const auto deadline = Clock::now() + kWait;
+    do {
+        DrainExternalAiBridgeServer([&](const std::string& request) {
+            handled = request == "{}";
+            return std::move(response);
         });
-        Sleep(10);
-    }
-    char response[128] = {};
-    DWORD read = 0;
-    const bool received = handled
-        && ReadFile(client, response, static_cast<DWORD>(sizeof(response) - 1), &read, nullptr)
-        && std::string(response, read) == "{}\n";
-    CloseHandle(client);
+        if (handled) return true;
+        std::this_thread::sleep_for(1ms);
+    } while (Clock::now() < deadline);
+    return false;
+}
+
+bool AwaitReply(const Client& client, bool consume) {
+    const auto deadline = Clock::now() + kWait;
+    do {
+        DWORD available = 0;
+        if (!PeekNamedPipe(client.handle, nullptr, 0, nullptr, &available, nullptr)) return false;
+        if (available > 0) {
+            if (!consume) return true;
+            char reply[128]{};
+            DWORD read = 0;
+            return ReadFile(client.handle, reply, sizeof(reply), &read, nullptr) &&
+                std::string(reply, read) == "{\"status\":\"ok\"}\n";
+        }
+        std::this_thread::sleep_for(1ms);
+    } while (Clock::now() < deadline);
+    return false;
+}
+
+bool StopWithinBudget() {
+    const auto started = Clock::now();
     StopExternalAiBridgeServer();
-    if (!received) {
-        std::cerr << "FAIL: normal response was not delivered\n";
-        return false;
-    }
-    std::cout << "PASS: normal response\n";
-    return true;
+    const auto elapsed = Clock::now() - started;
+    std::cout << "stop_us=" << std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count() << '\n';
+    return elapsed < kStopLimit && !ExternalAiBridgeServerRunning();
 }
 
-bool TestFailedWorkerCanBeRestarted()
-{
-    const std::string libraryId = "external-ai-bridge-create-failure";
-    const auto pipeName = PipeName(libraryId);
-    HANDLE blocker = CreateNamedPipeW(pipeName.c_str(), PIPE_ACCESS_DUPLEX,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 4096, 4096, 0, nullptr);
-    if (blocker == INVALID_HANDLE_VALUE) {
-        std::cerr << "FAIL: could not create pipe blocker\n";
+bool Run(const std::string& scenario, const std::string& library) {
+    if (scenario == "startup") {
+        auto slowest = Clock::duration::zero();
+        for (int iteration = 0; iteration < 200; ++iteration) {
+            StartExternalAiBridgeServer(library);
+            if (iteration % 2 == 0) SwitchToThread();
+            const auto started = Clock::now();
+            StopExternalAiBridgeServer();
+            const auto elapsed = Clock::now() - started;
+            if (elapsed > slowest) slowest = elapsed;
+            if (elapsed >= kStopLimit || ExternalAiBridgeServerRunning()) return false;
+        }
+        std::cout << "iterations=200 max_stop_us="
+                  << std::chrono::duration_cast<std::chrono::microseconds>(slowest).count() << '\n';
+        return true;
+    }
+    StartExternalAiBridgeServer(library);
+    if (scenario == "reuse") {
+        for (int iteration = 0; iteration < 20; ++iteration) {
+            Client peer;
+            if (!Connect(library, peer) || !peer.Send("{}\n") || !DrainUntilHandled() ||
+                !AwaitReply(peer, true)) return false;
+        }
+        return StopWithinBudget();
+    }
+    if (scenario == "listening") {
+        const auto narrow = ExternalAiBridgePipeName(library);
+        const std::wstring name(narrow.begin(), narrow.end());
+        const auto deadline = Clock::now() + kWait;
+        do {
+            if (WaitNamedPipeW(name.c_str(), 0)) return StopWithinBudget();
+            std::this_thread::sleep_for(1ms);
+        } while (Clock::now() < deadline);
         return false;
     }
-
-    StartExternalAiBridgeServer(libraryId);
-    const bool stopped = WaitUntil([] { return !ExternalAiBridgeServerRunning(); }, 2000);
-    CloseHandle(blocker);
-    if (!stopped) {
-        std::cerr << "FAIL: failed worker remained running\n";
-        StopExternalAiBridgeServer();
-        return false;
+    Client client;
+    if (!Connect(library, client)) return false;
+    if (scenario == "silent") return StopWithinBudget();
+    if (scenario == "partial") {
+        if (!client.Send("{")) return false;
+        std::this_thread::sleep_for(200ms);
+        return StopWithinBudget();
     }
-
-    // Start must join the exited worker before replacing its joinable thread.
-    StartExternalAiBridgeServer(libraryId);
-    HANDLE client = OpenClient(pipeName, 2000);
-    if (client == INVALID_HANDLE_VALUE) {
-        std::cerr << "FAIL: bridge did not recover after pipe creation failure\n";
-        StopExternalAiBridgeServer();
-        return false;
+    if (!client.Send("{}\n")) return false;
+    if (scenario == "queued") {
+        std::this_thread::sleep_for(150ms);
+        if (!StopWithinBudget()) return false;
+        StartExternalAiBridgeServer(library);
+        Client nextClient;
+        if (!Connect(library, nextClient)) return false;
+        bool late = false;
+        DrainExternalAiBridgeServer([&late](const std::string&) { late = true; return std::string{}; });
+        return !late && nextClient.Send("{}\n") && DrainUntilHandled() &&
+            AwaitReply(nextClient, true) && StopWithinBudget();
     }
-    CloseHandle(client);
-    StopExternalAiBridgeServer();
-    if (ExternalAiBridgeServerRunning()) {
-        std::cerr << "FAIL: bridge still reports running after stop\n";
-        return false;
+    if (scenario == "reply" || scenario == "unread") {
+        return DrainUntilHandled() && AwaitReply(client, scenario == "reply") && StopWithinBudget();
     }
-    std::cout << "PASS: failed worker cleanup and restart\n";
-    return true;
+    if (scenario == "backpressure") {
+        return DrainUntilHandled(std::string(1024 * 1024, 'x')) && AwaitReply(client, false) &&
+            StopWithinBudget();
+    }
+    return false;
 }
 
-}  // namespace
-
-int main(int argc, char** argv)
-{
-    if (argc > 1 && std::string(argv[1]) == "--unread-client-stop") {
-        return RunUnreadClientStopChild();
-    }
-    if (argc > 1 && std::string(argv[1]) == "--stop-test") {
-        return TestStopWithUnreadClient() ? 0 : 1;
-    }
-    if (argc > 1 && std::string(argv[1]) == "--normal-response") {
-        return TestNormalResponse() ? 0 : 1;
-    }
-    if (argc > 1 && std::string(argv[1]) == "--failed-worker") {
-        return TestFailedWorkerCanBeRestarted() ? 0 : 1;
-    }
-    return TestStopWithUnreadClient() && TestNormalResponse() && TestFailedWorkerCanBeRestarted() ? 0 : 1;
 }
-
-#else
-
-int main()
-{
-    return 0;
-}
-
 #endif
+
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    if (argc != 2) return 2;
+    const std::string scenario = argv[1];
+    const std::string library = "bridge-shutdown-fixture-" + std::to_string(GetCurrentProcessId()) + "-" +
+        std::to_string(GetTickCount64());
+    std::cout << "scenario=" << scenario << std::endl;
+    const bool passed = Run(scenario, library);
+    StopExternalAiBridgeServer();
+    std::cout << (passed ? "PASS " : "FAIL ") << scenario << '\n';
+    return passed ? 0 : 1;
+#else
+    (void)argc;
+    (void)argv;
+    return 0;
+#endif
+}
