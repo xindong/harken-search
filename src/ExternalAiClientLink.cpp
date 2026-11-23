@@ -1,4 +1,6 @@
 #include "ExternalAiClientLink.h"
+#include "ExternalAiClientConfigAccess.h"
+#include "ExternalAiClientToml.h"
 
 #include "../thirdparty/nlohmann_json.hpp"
 
@@ -12,12 +14,6 @@
 #include <system_error>
 #include <utility>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 namespace HarkenSearch {
 
@@ -58,18 +54,6 @@ bool ReadFileUtf8(const std::string& path, std::string& out, std::string& error)
     return true;
 }
 
-bool BackupOnce(const std::string& path, std::string& backupPath, std::string& error) {
-    std::error_code code;
-    if (!fs::exists(fs::u8path(path), code)) return true;  // nothing to back up yet
-    backupPath = path + kBackupSuffix;
-    if (fs::exists(fs::u8path(backupPath), code)) return true;  // keep the oldest copy
-    fs::copy_file(fs::u8path(path), fs::u8path(backupPath), fs::copy_options::none, code);
-    if (code) {
-        error = "cannot back up " + path;
-        return false;
-    }
-    return true;
-}
 
 std::string NewLinkId() {
     std::random_device random;
@@ -102,33 +86,37 @@ std::string ReadLinkId(const std::string& configPath) {
     return ValidLinkId(id) ? id : std::string{};
 }
 
-bool WriteFileUtf8(const std::string& path, const std::string& content, std::string& error) {
+bool ReadForEdit(const std::string& path, ClientConfigAccess::Snapshot& source, std::string& error) {
+    if (ClientConfigAccess::ReadSnapshot(fs::u8path(path), source)) return true;
+    error = "cannot open " + path;
+    return false;
+}
+
+bool BackupOnce(const std::string& path, const ClientConfigAccess::Snapshot& source,
+                std::string& backupPath, std::string& error) {
+    if (source.state == ClientConfigAccess::State::Missing) return true;
     std::error_code code;
-    const fs::path target = fs::u8path(path);
+    backupPath = path + kBackupSuffix;
+    const auto backup = fs::u8path(backupPath);
+    const auto existing = fs::symlink_status(backup, code);
+    if (fs::exists(existing) && ClientConfigAccess::BackupMatches(source, backup)) return true;
+    if (existing.type() == fs::file_type::not_found) {
+        if (ClientConfigAccess::Write(backup, fs::u8path(backupPath + ".harken-pending-" + NewLinkId()),
+                                      source.bytes, false, &source)) return true;
+    }
+    error = "cannot back up " + path;
+    return false;
+}
+
+bool WriteFileUtf8(const std::string& path, const std::string& content, std::string& error,
+                   const ClientConfigAccess::Snapshot* source = nullptr) {
+    std::error_code code;
+    const auto target = fs::u8path(path);
     if (target.has_parent_path()) fs::create_directories(target.parent_path(), code);
-    const fs::path pending = fs::u8path(path + ".harken-pending-" + NewLinkId());
-    std::ofstream stream(pending, std::ios::binary | std::ios::trunc);
-    if (!stream) {
-        error = "cannot write " + path;
-        return false;
-    }
-    stream << content;
-    stream.close();
-    bool written = stream.good();
-    if (written) {
-#ifdef _WIN32
-        written = MoveFileExW(pending.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-        fs::rename(pending, target, code);
-        written = !code;
-#endif
-    }
-    if (!written) {
-        fs::remove(pending, code);
-        error = "cannot write " + path;
-        return false;
-    }
-    return true;
+    if (!code && ClientConfigAccess::Write(target, fs::u8path(path + ".harken-pending-" + NewLinkId()),
+                                           content, true, source)) return true;
+    error = "cannot write " + path;
+    return false;
 }
 
 struct ConfigEntry {
@@ -147,15 +135,11 @@ std::string Trim(std::string value) {
 
 // --- JSON client (Cindy reads Pi's mcp.json) ---------------------------------
 
-bool ParseJsonFile(const std::string& path, ordered_json& out, bool& missing, std::string& error) {
-    std::string text;
-    if (!ReadFileUtf8(path, text, error)) return false;
+bool ParseJson(const std::string& text, ordered_json& out, std::string& error) {
     if (Trim(text).empty()) {
-        missing = true;
         out = ordered_json::object();
         return true;
     }
-    missing = false;
     out = ordered_json::parse(text, nullptr, false);
     if (out.is_discarded() || !out.is_object()) {
         error = "existing file is not a JSON object";
@@ -218,166 +202,41 @@ std::optional<ExternalAiLinkTarget> HarkenTarget(const ConfigEntry& entry) {
 
 // --- TOML client (Codex reads config.toml) ----------------------------------
 
-// Line-driven section handling: the connector entry is one plain table, so a
-// minimal editor is enough and keeps every other byte of the user's file.
-bool IsSectionHeader(const std::string& line) {
-    const std::string trimmed = Trim(line);
-    return !trimmed.empty() && trimmed.front() == '[';
-}
-
-std::string SectionName(const std::string& line) {
-    const std::string trimmed = Trim(line);
-    const auto open = trimmed.find('[');
-    const auto close = trimmed.rfind(']');
-    if (open == std::string::npos || close == std::string::npos || close <= open) return {};
-    return trimmed.substr(open + 1, close - open - 1);
-}
-
-bool IsHarkenSection(const std::string& name) {
-    const std::size_t base = std::string("mcp_servers.").size();
-    if (name.size() < base || name.compare(0, base, "mcp_servers.") != 0) return false;
-    const std::string rest = name.substr(base);
-    return rest == kServerKey || rest.rfind(std::string(kServerKey) + ".", 0) == 0;
-}
-
-std::vector<std::string> SplitLines(const std::string& text) {
-    std::vector<std::string> lines;
-    std::string current;
-    for (const char unit : text) {
-        if (unit == '\n') {
-            lines.push_back(current);
-            current.clear();
-        } else if (unit != '\r') {
-            current.push_back(unit);
-        }
+std::string AddHarkenTable(std::string text, const ClientToml::OwnedTable& table,
+                           const ExternalAiLinkTarget& target) {
+    const auto newline = text.find('\n', table.begin);
+    const std::string eol = newline != std::string::npos && newline > 0 && text[newline - 1] == '\r'
+        ? "\r\n" : "\n";
+    const std::string section = std::string("[mcp_servers.") + kServerKey + "]" + eol +
+        "command = " + ordered_json(target.executablePath).dump() + eol +
+        "args = " + BuildArgs(target).dump() + eol;
+    if (table.present) {
+        text.replace(table.begin, table.end - table.begin, section);
+    } else {
+        if (!text.empty() && text.back() != '\n') text += eol;
+        text += section;
     }
-    if (!current.empty()) lines.push_back(current);
-    return lines;
+    return text;
 }
 
-// Refuses files whose harken entry cannot be edited without risking the rest of
-// the user's TOML (array-of-tables, inline tables). Failing here is safer than
-// rewriting a file the user depends on.
-bool TomlHasUnsupportedHarkenForm(const std::string& text) {
-    if (text.rfind("\xEF\xBB\xBF", 0) == 0 ||
-        text.find("\"\"\"") != std::string::npos || text.find("'''") != std::string::npos) return true;
-    const auto lines = SplitLines(text);
-    for (const auto& line : lines) {
-        const std::string trimmed = Trim(line);
-        if (trimmed.empty() || trimmed.front() == '#') continue;
-        if (trimmed.rfind("[[", 0) == 0 || trimmed.rfind("mcp_servers", 0) == 0) {
-            return true;
-        }
-        if (trimmed.rfind("harken", 0) == 0 && trimmed.find('=') != std::string::npos) {
-            return true;
-        }
-        auto key = Trim(trimmed.substr(0, trimmed.find('=')));
-        if (trimmed.front() == '[') key = SectionName(trimmed);
-        key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char unit) {
-            return unit == '"' || unit == '\'' || std::isspace(unit);
-        }), key.end());
-        if ((key == "mcp_servers" && trimmed.front() != '[') ||
-            (IsHarkenSection(key) && (trimmed.front() != '[' || !IsHarkenSection(SectionName(trimmed))))) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::string JoinLines(const std::vector<std::string>& lines) {
-    std::string out;
-    for (const auto& line : lines) {
-        out += line;
-        out.push_back('\n');
-    }
-    return out;
-}
-
-std::vector<std::string> RemoveHarkenSections(const std::vector<std::string>& lines) {
-    std::vector<std::string> kept;
-    bool skipping = false;
-    for (const auto& line : lines) {
-        if (IsSectionHeader(line)) skipping = IsHarkenSection(SectionName(line));
-        if (skipping) continue;
-        kept.push_back(line);
-    }
-    while (!kept.empty() && Trim(kept.back()).empty()) kept.pop_back();
-    return kept;
-}
-
-std::string TomlQuote(const std::string& value) {
-    std::string out = "\"";
-    for (const char unit : value) {
-        if (unit == '\\') out += "\\\\";
-        else if (unit == '"') out += "\\\"";
-        else out.push_back(unit);
-    }
-    out += "\"";
-    return out;
-}
-
-std::vector<std::string> HarkenSectionLines(const ExternalAiLinkTarget& target) {
-    std::vector<std::string> lines;
-    lines.push_back(std::string("[mcp_servers.") + kServerKey + "]");
-    lines.push_back("command = " + TomlQuote(target.executablePath));
-    std::string args = "args = [";
-    bool first = true;
-    for (const auto& value : BuildArgs(target)) {
-        if (!first) args += ", ";
-        args += TomlQuote(value.get<std::string>());
-        first = false;
-    }
-    lines.push_back(args + "]");
-    return lines;
-}
-
-ConfigEntry TomlEntry(const std::string& text) {
-    const auto lines = SplitLines(text);
-    bool inside = false;
-    bool tableSeen = false;
-    ConfigEntry entry;
-    for (const auto& line : lines) {
-        if (IsSectionHeader(line)) {
-            const auto section = SectionName(line);
-            inside = section == std::string("mcp_servers.") + kServerKey;
-            entry.present = entry.present || IsHarkenSection(section);
-            if (inside && tableSeen) return {true, false};
-            tableSeen = tableSeen || inside;
-            continue;
-        }
-        if (!inside) continue;
-        const std::string trimmed = Trim(line);
-        const auto separator = trimmed.find('=');
-        if (separator == std::string::npos) continue;
-        const auto key = Trim(trimmed.substr(0, separator));
-        const auto value = Trim(trimmed.substr(separator + 1));
-        if (key == "command") {
-            if (!entry.command.is_null()) return {true, false};
-            entry.command = ordered_json::parse(value, nullptr, false);
-        } else if (key == "args") {
-            if (!entry.args.is_null()) return {true, false};
-            entry.args = ordered_json::parse(value, nullptr, false);
-        } else if (key == "enabled" && value != "true") {
-            entry.enabled = false;
-        }
-    }
-    return entry;
+ConfigEntry TomlEntry(const ClientToml::OwnedTable& table) {
+    return {table.present, table.enabled, ordered_json(table.command), ordered_json(table.args)};
 }
 
 bool ReadEntry(ExternalAiClient client, const std::string& path, ConfigEntry& entry, std::string& error) {
+    std::string content;
+    if (!ReadFileUtf8(path, content, error)) return false;
     if (client == ExternalAiClient::Cindy) {
         ordered_json root;
-        bool missing = false;
-        if (!ParseJsonFile(path, root, missing, error)) return false;
+        if (!ParseJson(content, root, error)) return false;
         entry = JsonEntry(root);
     } else {
-        std::string content;
-        if (!ReadFileUtf8(path, content, error)) return false;
-        if (TomlHasUnsupportedHarkenForm(content)) {
+        const auto table = ClientToml::Parse(content);
+        if (!table) {
             error = "existing config uses a form this writer will not edit";
             return false;
         }
-        entry = TomlEntry(content);
+        entry = TomlEntry(*table);
     }
     return true;
 }
@@ -456,17 +315,16 @@ bool LinkExternalAiClient(ExternalAiClient client, const std::string& configPath
     bound.clientLinkId = NewLinkId();
     std::string error;
     std::string backup;
-    if (!BackupOnce(configPath, backup, error)) {
+    ClientConfigAccess::Snapshot original;
+    if (!ReadForEdit(configPath, original, error)) {
         status.state = ExternalAiLinkState::Failed;
         status.detail = error;
         return false;
     }
-    status.detail = backup;
     std::string updated;
     if (client == ExternalAiClient::Cindy) {
         ordered_json root;
-        bool missing = false;
-        if (!ParseJsonFile(configPath, root, missing, error)) {
+        if (!ParseJson(original.bytes, root, error)) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = error;
             return false;
@@ -483,42 +341,27 @@ bool LinkExternalAiClient(ExternalAiClient client, const std::string& configPath
         root["mcpServers"][kServerKey] = BuildServerEntry(bound);
         updated = root.dump(2) + "\n";
     } else {
-        std::string text;
-        if (!ReadFileUtf8(configPath, text, error)) {
-            status.state = ExternalAiLinkState::Failed;
-            status.detail = error;
-            return false;
-        }
-        if (TomlHasUnsupportedHarkenForm(text)) {
+        const auto table = ClientToml::Parse(original.bytes);
+        if (!table) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = "existing config uses a form this writer will not edit";
             return false;
         }
-        const auto entry = TomlEntry(text);
+        const auto entry = TomlEntry(*table);
         if (entry.present && !HarkenTarget(entry)) {
             status.state = ExternalAiLinkState::Conflict;
             status.detail = "harken is already used by an unrecognized entry";
             return false;
         }
-        std::vector<std::string> lines = RemoveHarkenSections(SplitLines(text));
-        const auto section = HarkenSectionLines(bound);
-        if (!lines.empty()) lines.push_back(std::string());
-        lines.insert(lines.end(), section.begin(), section.end());
-        std::string joined = JoinLines(lines);
-        const bool crlfSource = text.find("\r\n") != std::string::npos;
-        if (crlfSource) {
-            std::string crlf;
-            crlf.reserve(joined.size() + lines.size());
-            for (const char unit : joined) {
-                if (unit == '\n') crlf.push_back('\r');
-                crlf.push_back(unit);
-            }
-            joined.swap(crlf);
-        }
-        updated = std::move(joined);
+        updated = AddHarkenTable(original.bytes, *table, bound);
+    }
+    if (!BackupOnce(configPath, original, backup, error)) {
+        status.state = ExternalAiLinkState::Failed;
+        status.detail = error;
+        return false;
     }
     if (!WriteFileUtf8(configPath + kLinkSuffix, bound.clientLinkId, error) ||
-        !WriteFileUtf8(configPath, updated, error)) {
+        !WriteFileUtf8(configPath, updated, error, &original)) {
         status.state = ExternalAiLinkState::Failed;
         status.detail = error;
         return false;
@@ -550,10 +393,15 @@ bool UnlinkExternalAiClient(ExternalAiClient client, const std::string& configPa
     }
     std::string error;
     std::string backup;
+    ClientConfigAccess::Snapshot original;
+    if (!ReadForEdit(configPath, original, error)) {
+        status.state = ExternalAiLinkState::Failed;
+        status.detail = error;
+        return false;
+    }
     if (client == ExternalAiClient::Cindy) {
         ordered_json root;
-        bool missing = false;
-        if (!ParseJsonFile(configPath, root, missing, error)) {
+        if (!ParseJson(original.bytes, root, error)) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = error;
             return false;
@@ -563,13 +411,13 @@ bool UnlinkExternalAiClient(ExternalAiClient client, const std::string& configPa
             status.state = entry.present && !status.revoked ? ExternalAiLinkState::Conflict : ExternalAiLinkState::Disconnected;
             return status.state == ExternalAiLinkState::Disconnected;
         }
-        if (!BackupOnce(configPath, backup, error)) {
+        if (!BackupOnce(configPath, original, backup, error)) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = error;
             return false;
         }
         root["mcpServers"].erase(kServerKey);
-        if (!WriteFileUtf8(configPath, root.dump(2) + "\n", error)) {
+        if (!WriteFileUtf8(configPath, root.dump(2) + "\n", error, &original)) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = error;
             return false;
@@ -578,39 +426,25 @@ bool UnlinkExternalAiClient(ExternalAiClient client, const std::string& configPa
         status.detail = backup;
         return true;
     }
-    std::string text;
-    if (!ReadFileUtf8(configPath, text, error)) {
-        status.state = ExternalAiLinkState::Failed;
-        status.detail = error;
-        return false;
-    }
-    if (TomlHasUnsupportedHarkenForm(text)) {
+    const auto table = ClientToml::Parse(original.bytes);
+    if (!table) {
         status.state = ExternalAiLinkState::Failed;
         status.detail = "existing config uses a form this writer will not edit";
         return false;
     }
-    const auto entry = TomlEntry(text);
+    const auto entry = TomlEntry(*table);
     if (!HarkenTarget(entry)) {
         status.state = entry.present && !status.revoked ? ExternalAiLinkState::Conflict : ExternalAiLinkState::Disconnected;
         return status.state == ExternalAiLinkState::Disconnected;
     }
-    if (!BackupOnce(configPath, backup, error)) {
+    if (!BackupOnce(configPath, original, backup, error)) {
         status.state = ExternalAiLinkState::Failed;
         status.detail = error;
         return false;
     }
-    const auto kept = RemoveHarkenSections(SplitLines(text));
-    auto joined = JoinLines(kept);
-    if (text.find("\r\n") != std::string::npos) {
-        std::string crlf;
-        crlf.reserve(joined.size() + kept.size());
-        for (const char unit : joined) {
-            if (unit == '\n') crlf.push_back('\r');
-            crlf.push_back(unit);
-        }
-        joined.swap(crlf);
-    }
-    if (!WriteFileUtf8(configPath, joined, error)) {
+    auto updated = original.bytes;
+    updated.erase(table->begin, table->end - table->begin);
+    if (!WriteFileUtf8(configPath, updated, error, &original)) {
         status.state = ExternalAiLinkState::Failed;
         status.detail = error;
         return false;

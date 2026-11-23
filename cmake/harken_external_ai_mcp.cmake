@@ -101,7 +101,7 @@ if(WIN32)
         tests/test_external_ai_bridge_server.cpp
         src/ExternalAiBridgeServer.cpp)
     target_include_directories(TestExternalAiBridgeServer PRIVATE src)
-    foreach(scenario IN ITEMS startup listening silent partial queued reply unread)
+    foreach(scenario IN ITEMS startup listening silent partial queued reply unread reuse backpressure)
         add_test(NAME TestExternalAiBridgeServer_${scenario} COMMAND TestExternalAiBridgeServer ${scenario})
         set_tests_properties(TestExternalAiBridgeServer_${scenario} PROPERTIES TIMEOUT 10)
         aura_set_test_labels(TestExternalAiBridgeServer_${scenario} core)

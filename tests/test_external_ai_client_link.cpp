@@ -1,4 +1,5 @@
 #include "ExternalAiClientLink.h"
+#include "ExternalAiClientConfigAccess.h"
 #include "ExternalAiClientConfigLocation.h"
 
 #include "../thirdparty/nlohmann_json.hpp"
@@ -9,6 +10,18 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
+#else
+#include <sys/stat.h>
+#endif
 
 namespace {
 
@@ -194,6 +207,196 @@ void TestCodexTomlMerge(const fs::path& root, const ExternalAiLinkTarget& target
     Check(ReadAll(config) != linked, "codex: reconnect issues a different launch authorization");
 }
 
+void TestCodexTomlFormatting(const fs::path& root, ExternalAiLinkTarget target)
+{
+    const auto config = root / "toml-format" / "config.toml";
+    const std::string prefix = "model = 'fixture'\r\n\r\n";
+    const std::string suffix = "\r\n# unrelated comment [ ]\r\n[profiles.other]\r\nmodel = 'kept'";
+    target.libraryId = "synthetic#library";
+    WriteAll(config, prefix);
+    ExternalAiLinkStatus status;
+    if (!HarkenSearch::LinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), target, status)) {
+        Check(false, "toml format: seed link succeeds");
+        return;
+    }
+    target.clientConfigPath = config.u8string();
+    target.clientLinkId = ReadAll(fs::u8path(target.clientConfigPath + ".harken-link"));
+    const std::string generated = ReadAll(config);
+    const auto argsOffset = generated.find("args = [");
+    const auto argsEnd = generated.find('\r', argsOffset);
+    const auto argsLine = generated.substr(argsOffset, argsEnd - argsOffset);
+    const auto args = nlohmann::json::parse(argsLine.substr(7));
+    const std::string header = "[mcp_servers.harken]\r\n";
+    const std::string command = "command = " + nlohmann::json(target.executablePath).dump();
+    WriteAll(config, prefix + header + command + " # inline [note]\r\n" + argsLine + "\r\n" + suffix);
+    Check(HarkenSearch::ExternalAiClientLinkAuthorized(target),
+          "toml format: a command comment does not revoke an unchanged link");
+
+    std::string multiline = "args = [ # same arguments\r\n";
+    for (const auto& arg : args) {
+        multiline += "  " + arg.dump() + ", # unchanged\r\n";
+    }
+    multiline += "] # trailing comma and comment\r\n";
+    const std::string quotedHeader = R"([ "mcp_servers" . 'harken' ] # bracket in comment ])";
+    const std::string owned = quotedHeader + "\r\n'command' = '" + target.executablePath + "' # literal path\r\n" +
+        multiline + "enabled = true # still enabled\r\n";
+    const std::string formatted = prefix + owned + suffix;
+    WriteAll(config, prefix + header + command + "\r\n" + multiline + suffix);
+    Check(HarkenSearch::ExternalAiClientLinkAuthorized(target),
+          "toml format: multiline args with comments and trailing comma do not revoke");
+    WriteAll(config, formatted);
+    Check(HarkenSearch::ExternalAiClientLinkAuthorized(target),
+          "toml format: quoted keys and literal path keep semantic authorization");
+    Check(HarkenSearch::LinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), target, status) &&
+              ReadAll(config) == formatted, "toml format: already-linked formatting remains byte-identical");
+
+    std::string escaped = formatted;
+    escaped.replace(escaped.find("synthetic#library"), std::string("synthetic#library").size(),
+                    "synthetic\\U00000023library");
+    WriteAll(config, escaped);
+    Check(HarkenSearch::ExternalAiClientLinkAuthorized(target),
+          "toml format: a Unicode escape and its literal value authorize identically");
+    escaped.replace(escaped.find("\\U00000023"), std::string("\\U00000023").size(), "\\/");
+    WriteAll(config, escaped);
+    Check(!HarkenSearch::ExternalAiClientLinkAuthorized(target), "toml format: JSON-only escape is rejected");
+
+    std::string changed = formatted;
+    changed.replace(changed.find("synthetic#library"), std::string("synthetic#library").size(), "different#library");
+    WriteAll(config, changed);
+    Check(!HarkenSearch::ExternalAiClientLinkAuthorized(target), "toml format: changing an actual argument revokes");
+    for (const auto& ambiguous : {
+            prefix + owned + "enabled = true\r\n" + suffix,
+            formatted + "\r\n[mcp_servers.harken]\r\n",
+            prefix + "mcp_servers.harken.enabled = true\r\n" + owned + suffix,
+            prefix + owned + "env = { BAD = nope }\r\n" + suffix}) {
+        WriteAll(config, ambiguous);
+        Check(!HarkenSearch::ExternalAiClientLinkAuthorized(target) &&
+                  !HarkenSearch::LinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), target, status) &&
+                  ReadAll(config) == ambiguous, "toml format: ambiguous or invalid config is not authorized or edited");
+    }
+    WriteAll(config, formatted);
+    Check(HarkenSearch::UnlinkExternalAiClient(ExternalAiClient::Codex, config.u8string(), status) &&
+              status.revoked && ReadAll(config) == prefix + suffix,
+          "toml format: unlink removes only the owned table; preserves CRLF, comments, and final EOF");
+}
+
+bool RestrictFixtureFile(const fs::path& path)
+{
+#ifdef _WIN32
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (GetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()), SE_FILE_OBJECT,
+                             OWNER_SECURITY_INFORMATION, &owner, nullptr, nullptr, nullptr,
+                             &descriptor) != ERROR_SUCCESS) {
+        return false;
+    }
+    const DWORD aclSize = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + GetLengthSid(owner);
+    std::vector<unsigned char> buffer(aclSize);
+    auto* acl = reinterpret_cast<PACL>(buffer.data());
+    const bool restricted = InitializeAcl(acl, aclSize, ACL_REVISION) &&
+        AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, owner) &&
+        SetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()), SE_FILE_OBJECT,
+                             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                             nullptr, nullptr, acl, nullptr) == ERROR_SUCCESS;
+    LocalFree(descriptor);
+    return restricted;
+#else
+    return chmod(path.c_str(), S_IRUSR | S_IWUSR) == 0;
+#endif
+}
+
+std::string FixtureAccess(const fs::path& path)
+{
+#ifdef _WIN32
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    constexpr SECURITY_INFORMATION info = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    if (GetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()), SE_FILE_OBJECT, info,
+                             nullptr, nullptr, nullptr, nullptr, &descriptor) != ERROR_SUCCESS) {
+        return {};
+    }
+    LPSTR serialized = nullptr;
+    const bool converted = ConvertSecurityDescriptorToStringSecurityDescriptorA(
+        descriptor, SDDL_REVISION_1, info, &serialized, nullptr);
+    std::string value = converted ? serialized : "";
+    if (serialized) LocalFree(serialized);
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    const bool readControl = GetSecurityDescriptorControl(descriptor, &control, &revision) != 0;
+    LocalFree(descriptor);
+    if (!converted || !readControl) return {};
+    const auto dacl = value.find("D:");
+    if (dacl == std::string::npos) return {};
+    const auto firstAce = value.find('(', dacl);
+    value.replace(dacl + 2, firstAce == std::string::npos ? std::string::npos : firstAce - (dacl + 2),
+                  (control & SE_DACL_PROTECTED) != 0 ? "P" : "");
+    return value;
+#else
+    struct stat details{};
+    return stat(path.c_str(), &details) == 0 ? std::to_string(details.st_mode & 0777) : std::string{};
+#endif
+}
+
+void TestConfigFileRestrictions(const fs::path& root, const ExternalAiLinkTarget& target)
+{
+    for (const auto client : {ExternalAiClient::Cindy, ExternalAiClient::Codex}) {
+        const auto config = root / "private-config" /
+            (client == ExternalAiClient::Cindy ? "mcp.json" : "config.toml");
+        const std::string original = client == ExternalAiClient::Cindy
+            ? "{\"mcpServers\":{\"other\":{\"command\":\"synthetic-fixture\"}}}\n"
+            : "[mcp_servers.other]\ncommand = 'synthetic-fixture'\n";
+        WriteAll(config, original);
+        const auto before = FixtureAccess(config);
+        const bool restricted = RestrictFixtureFile(config);
+        const auto expected = FixtureAccess(config);
+        Check(restricted && !expected.empty() && expected != before, "file access: tighten the synthetic file only");
+        if (!restricted || expected.empty()) continue;
+        namespace access = HarkenSearch::ClientConfigAccess;
+        access::Access restrictions;
+        const auto pending = fs::u8path(config.u8string() + ".harken-pending-test");
+        bool created = false;
+        Check(access::Inspect(config, restrictions) == access::State::Safe &&
+                  access::WritePending(pending, original, &restrictions, created) && created &&
+                  FixtureAccess(pending) == expected && ReadAll(pending) == original,
+              "file access: on-disk temporary copy has the original access rules before publish");
+        created = false;
+        Check(!access::WritePending(pending, "unchanged sentinel", &restrictions, created) &&
+                  !created && ReadAll(pending) == original,
+              "file access: an existing pending path is not opened or overwritten");
+        ExternalAiLinkStatus status;
+        const auto backup = fs::u8path(config.u8string() + ".harken-backup");
+        Check(HarkenSearch::LinkExternalAiClient(client, config.u8string(), target, status),
+              "file access: link succeeds with a restricted source");
+        Check(FixtureAccess(config) == expected, "file access: replacement keeps the original access restriction");
+        Check(ReadAll(backup) == original && FixtureAccess(backup) == expected,
+              "file access: rollback copy keeps original bytes and restriction");
+        Check(HarkenSearch::UnlinkExternalAiClient(client, config.u8string(), status) &&
+                  status.revoked && FixtureAccess(config) == expected && FixtureAccess(backup) == expected,
+              "file access: unlink preserves both restrictions");
+
+        access::Snapshot stale;
+        const auto stalePending = fs::u8path(config.u8string() + ".harken-pending-stale");
+        Check(access::ReadSnapshot(config, stale), "file access: capture one file and its access rules");
+        const std::string newer = original + "\n";
+        WriteAll(config, newer);
+        Check(!access::Write(config, stalePending, original, true, &stale) &&
+                  ReadAll(config) == newer && !fs::exists(stalePending),
+              "file access: a stale edit is refused without publishing a temporary copy");
+
+        const auto collision = root / "backup-collision" / config.filename();
+        const auto oldBackup = fs::u8path(collision.u8string() + ".harken-backup");
+        WriteAll(collision, original);
+        WriteAll(oldBackup, "synthetic preexisting backup");
+#ifndef _WIN32
+        chmod(oldBackup.c_str(), 0640);
+#endif
+        Check(RestrictFixtureFile(collision) && FixtureAccess(collision) != FixtureAccess(oldBackup),
+              "file access: seed a backup with different access restrictions");
+        Check(!HarkenSearch::LinkExternalAiClient(client, collision.u8string(), target, status) &&
+                  ReadAll(collision) == original && ReadAll(oldBackup) == "synthetic preexisting backup",
+              "file access: mismatched backup fails closed without editing either file");
+    }
+}
+
 void TestCommandLine(const ExternalAiLinkTarget& target)
 {
     const std::string command = HarkenSearch::ExternalAiClientCommandLine(target);
@@ -356,6 +559,8 @@ int main(int argc, char** argv)
     TestCindyCreatesFile(root, target);
     TestCindyRejectsBrokenJson(root, target);
     TestCodexTomlMerge(root, target);
+    TestCodexTomlFormatting(root, target);
+    TestConfigFileRestrictions(root, target);
     TestDisconnectWithoutCurrentTarget(root, target);
     TestForeignEntriesAreUntouched(root, target);
     TestIndependentTomlClients(root, target);
