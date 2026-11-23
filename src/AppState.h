@@ -2745,6 +2745,7 @@ struct AppState {
     double exportTaskDoneAt = 0.0;
     bool pauseBackfillResumeDone = false;
     double lastBackfillWatchdogSeconds = -1000.0;
+    bool backfillWatchdogArmed = false;
     int backfillWatchdogAttempts = 0;
     int backfillWatchdogStarts = 0;
     int backfillWatchdogLastQueued = 0;

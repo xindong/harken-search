@@ -52314,7 +52314,19 @@ void RenderUI(AppState& state) {
 
     // 补全看门狗：只要没在扫描、队列里还有活、而工作池没在跑，就把它拉起来。
     // 暂停/停止扫描会把池子停掉，以前要等下一次扫描（或重启应用）才会继续补。
-    if (!state.isScanning.load()) {
+    // 只在「暂停过扫描」之后武装，避免和空闲补全/用户主动停止抢同一个池子。
+    if (state.scanWasPaused && !state.isScanning.load()) state.backfillWatchdogArmed = true;
+    if (!state.scanWasPaused) state.backfillWatchdogArmed = false;
+    const bool watchdogAllowed =
+        state.backfillWatchdogArmed &&
+        !state.isScanning.load() &&
+        !state.dbSwitchInProgress &&
+        !state.folderRemoval.Active() &&
+        !state.idleAssetBackfillActive &&
+        (state.currentDbPathUtf8.empty() ||
+         state.backfillQueue.currentDbPath() == state.currentDbPathUtf8 ||
+         state.backfillQueue.currentDbPath().empty());
+    if (watchdogAllowed) {
         const auto backfillSnapshot = state.backfillQueue.snapshot();
         int queuedJobs = 0;
         for (int i = 0; i < aura::kBackfillJobKindCount; ++i) {
@@ -52325,7 +52337,10 @@ void RenderUI(AppState& state) {
         // 队列里有活就 1 秒内接棒；计数未知（pendingTableRows=-1）时每 10 秒探一次库，
         // 免得暂停后没人把「库里有待补行」这件事告诉工作池。
         const double watchdogInterval = queuedJobs > 0 || backfillSnapshot.inFlight > 0 ? 1.0 : 10.0;
-        if (!poolRunning && nowSeconds - state.lastBackfillWatchdogSeconds >= watchdogInterval) {
+        const bool knownEmpty = queuedJobs == 0 && backfillSnapshot.inFlight == 0 &&
+                                backfillSnapshot.pendingTableRows == 0;
+        if (!poolRunning && !knownEmpty &&
+            nowSeconds - state.lastBackfillWatchdogSeconds >= watchdogInterval) {
             state.lastBackfillWatchdogSeconds = nowSeconds;
             ++state.backfillWatchdogAttempts;
             std::string resumeDbPath = state.backfillQueue.currentDbPath();
@@ -52358,6 +52373,7 @@ void RenderUI(AppState& state) {
                 state.backfillWatchdogLastQueued = afterJobs;
                 state.backfillWatchdogLastPath = resumeDbPath;
                 state.backfillWatchdogLastGeneration = state.backfillQueue.currentGeneration();
+                if (afterJobs == 0) state.backfillWatchdogArmed = false;
                 if (afterJobs > 0) {
                     const int resumeThreads = (std::min)(
                         aura::ResolveScanBackfillWorkerThreads(
