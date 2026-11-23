@@ -14,7 +14,10 @@ namespace HarkenSearch {
 inline constexpr float kTooltipHoverDelaySeconds = 1.0f;
 
 inline bool TooltipItemHoverDwelled() {
+    // NoSharedDelay keeps the timer per control: after resting on one button a
+    // sweep across its neighbours must start each of them from zero again.
     return ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal |
+                                ImGuiHoveredFlags_NoSharedDelay |
                                 ImGuiHoveredFlags_AllowWhenDisabled);
 }
 
@@ -84,6 +87,18 @@ inline bool BeginTooltipUngated() {
     if (!TooltipItemHoverDwelled()) return false;
     ImGui::BeginTooltip();
     return true;
+}
+
+// Drop-target hints appear while a drag hovers a region that submits no item
+// under the cursor (dock markers, tab previews). They gate on the region's own
+// dwell instead of the last submitted item.
+inline void SetTooltipRegionUngated(const void* regionKey, const char* fmt, ...) IM_FMTARGS(2);
+inline void SetTooltipRegionUngated(const void* regionKey, const char* fmt, ...) {
+    if (!TooltipRegionHoverDwelled(regionKey)) return;
+    va_list args;
+    va_start(args, fmt);
+    ImGui::SetTooltipV(fmt, args);
+    va_end(args);
 }
 
 inline void EndTooltip() { ImGui::EndTooltip(); }

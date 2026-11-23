@@ -42,3 +42,29 @@ def test_preview_class_tooltips_keep_the_immediate_entry_point():
     preview = main.split("// Hover preview and cover metadata.", 1)[1][:600]
     assert "HarkenSearch::BeginTooltipImmediate()" in preview
     assert "BeginTooltipImmediate" in HEADER.read_text(encoding="utf-8")
+
+
+def test_dwell_timer_does_not_share_state_between_controls():
+    header = HEADER.read_text(encoding="utf-8")
+    dwell = header.split("inline bool TooltipItemHoverDwelled() {", 1)[1].split("}", 1)[0]
+    assert "ImGuiHoveredFlags_NoSharedDelay" in dwell
+
+
+def test_begin_tooltip_call_sites_only_close_what_they_opened():
+    header = HEADER.read_text(encoding="utf-8")
+    assert "inline bool BeginTooltipUngated() {\n    if (!TooltipItemHoverDwelled()) return false;" in header
+    main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+    helper = main.split("static bool BeginSearchExplainabilityTooltip() {", 1)[1].split("\n}", 1)[0]
+    assert "if (!HarkenSearch::BeginTooltipUngated())" in helper
+    similar = (ROOT / "src" / "SimilarSoundsWindow.cpp").read_text(encoding="utf-8")
+    assert "HarkenSearch::BeginTooltip()) {" in similar
+    assert "\n                HarkenSearch::BeginTooltip();" not in similar
+
+
+def test_dock_drop_hints_dwell_on_their_own_region():
+    header = HEADER.read_text(encoding="utf-8")
+    assert "inline void SetTooltipRegionUngated(const void* regionKey" in header
+    main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8")
+    dock_hint = main.split("auto drawDockPreview = [&](bool titleBarDragging) {", 1)[1][:400]
+    assert "HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan" in dock_hint
+    assert 'HarkenSearch::SetTooltipUngated("%s", L(Dock_UxTooSmall))' not in main

@@ -9745,7 +9745,8 @@ static bool BeginSearchExplainabilityTooltip() {
     const int frame = ImGui::GetFrameCount();
     if (s_lastSearchExplainabilityTooltipFrame == frame)
         return false;
-    HarkenSearch::BeginTooltipUngated();
+    if (!HarkenSearch::BeginTooltipUngated())
+        return false;
     s_lastSearchExplainabilityTooltipFrame = frame;
     return true;
 }
@@ -51152,7 +51153,7 @@ void RenderUI(AppState& state) {
     auto drawDockPreview = [&](bool titleBarDragging) {
         if (!g_dockDrag.Active()) return;
         if (titleBarDragging && g_dockDropPlan.tooSmall) {
-            HarkenSearch::SetTooltipUngated("%s", L(Dock_UxTooSmall));
+            HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan, "%s", L(Dock_UxTooSmall));
             return;
         }
         const aura::ui::dock::DockHit& hit = g_dockDrag.Preview();
@@ -51274,7 +51275,7 @@ void RenderUI(AppState& state) {
                 if (hovered) {
                     tabTargetId = target;
                     g_dockDropPlan.tooSmall = true;
-                    if (titleBarDrag) HarkenSearch::SetTooltipUngated("%s", L(Dock_UxTooSmall));
+                    if (titleBarDrag) HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan, "%s", L(Dock_UxTooSmall));
                 }
                 return;
             }
