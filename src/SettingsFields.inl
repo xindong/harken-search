@@ -153,6 +153,7 @@ else if(id=="perf") {
     }
 }
 else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto),ImGuiSliderFlags_AlwaysClamp);
+else if(id=="similarConcurrency") {ImGui::SliderInt("##value",&draft.similarityAnalysisConcurrency,1,16,"%d",ImGuiSliderFlags_AlwaysClamp);ImGui::TextDisabled("%s",L(SetUX_SimilarityConcurrencyHint));}
 else if(id=="startupScan")ImGui::Checkbox("##value",&draft.autoReconcileOnStartup);
 else if(id=="backfill")ImGui::Checkbox("##value",&draft.idleAssetBackfillEnabled);
 else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,L(SetUX_DMin),ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}

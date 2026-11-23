@@ -3622,6 +3622,18 @@ set_tests_properties(TestFolderTreePathModePolicyBoundary PROPERTIES
 )
 aura_set_test_labels(TestFolderTreePathModePolicyBoundary core)
 
+add_test(
+    NAME TestSimilarityConcurrencySetting
+    COMMAND ${Python3_EXECUTABLE} -m pytest
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similarity_concurrency_setting.py"
+        -q
+)
+set_tests_properties(TestSimilarityConcurrencySetting PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    TIMEOUT 60
+)
+aura_set_test_labels(TestSimilarityConcurrencySetting core)
+
 add_executable(TestFileTypeVisibilityPolicy EXCLUDE_FROM_ALL
     tests/test_file_type_visibility_policy.cpp
     src/FileTypeVisibilityPolicy.cpp
