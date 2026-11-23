@@ -136,7 +136,10 @@
     {"id":"SetUX_ApplyClose","type":"ui","zh":"应用并关闭","en":"Apply & close","ja":"適用して閉じる"},
     {"id":"SetUX_ApplyContinue","type":"ui","zh":"应用并继续","en":"Apply & continue","ja":"適用して続ける"},
     {"id":"SetUX_UsedWhenScheduleIsOff","type":"ui","zh":"日夜模式关闭后使用","en":"Used when schedule is off","ja":"自動切替がオフのとき使用"},
-    {"id":"SetUX_CustomColors","type":"ui","zh":"自定义颜色…","en":"Custom colors…","ja":"カスタムカラー…"},
+    {"id":"SetUX_ImportTheme","type":"ui","zh":"导入主题","en":"Import Theme","ja":"テーマをインポート"},
+    {"id":"SetUX_ThemeImported","type":"ui","zh":"主题已导入","en":"Theme imported","ja":"テーマをインポートしました"},
+    {"id":"SetUX_ThemeImportWriteFailed","type":"ui","zh":"导入失败：无法保存主题","en":"Import failed: could not save theme","ja":"インポート失敗：テーマを保存できませんでした"},
+    {"id":"SetUX_ThemeImportRollbackFailed","type":"ui","zh":"导入失败：部分主题文件未能恢复，请检查设置目录。","en":"Import failed: some theme files could not be restored. Check the settings folder.","ja":"インポート失敗：一部のテーマファイルを復元できませんでした。設定フォルダーを確認してください。"},
     {"id":"SetUX_AfterRestart","type":"ui","zh":"重启后生效","en":"After restart","ja":"再起動後に適用"},
     {"id":"SetUX_EditThesaurus","type":"ui","zh":"编辑词库…","en":"Edit thesaurus…","ja":"辞書を編集…"},
     {"id":"SetUX_D0Auto","type":"ui","zh":"%d（0 = 自动）","en":"%d (0 = auto)","ja":"%d（0 = 自動）"},
@@ -1213,48 +1216,6 @@
       "zh": "海玻璃",
       "en": "Sea Glass",
       "ja": "シーグラス"
-    },
-    {
-      "id": "Set_ResetColors",
-      "type": "ui",
-      "zh": "重置为默认颜色",
-      "en": "Reset to Default Colors",
-      "ja": "デフォルト色に戻す"
-    },
-    {
-      "id": "Set_BgColor",
-      "type": "ui",
-      "zh": "背景色",
-      "en": "Background",
-      "ja": "背景色"
-    },
-    {
-      "id": "Set_TextColor",
-      "type": "ui",
-      "zh": "文字色",
-      "en": "Text",
-      "ja": "テキスト色"
-    },
-    {
-      "id": "Set_AccentColor",
-      "type": "ui",
-      "zh": "强调色",
-      "en": "Accent",
-      "ja": "アクセント色"
-    },
-    {
-      "id": "Set_WaveformColor",
-      "type": "ui",
-      "zh": "波形色",
-      "en": "Waveform",
-      "ja": "波形色"
-    },
-    {
-      "id": "Set_VolumeColor",
-      "type": "ui",
-      "zh": "音量条",
-      "en": "Volume Bar",
-      "ja": "ボリュームバー"
     },
     {
       "id": "Set_ShowFileExt",
