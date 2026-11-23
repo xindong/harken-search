@@ -335,6 +335,27 @@ class LocalizationPurityBaselineTests(unittest.TestCase):
         self.assertNotIn("Search_NoResultTips", mixes([tips]))
         self.assertIn("ZZ_TIPS", mixes([dict(tips, id="ZZ_TIPS")]))
 
+    def test_external_ai_setup_prompt_terms_are_row_scoped(self) -> None:
+        prompt_id = "ExtAi_AiSetupPromptFmt"
+        entries = localization_purity.load_ledger()["entries"]
+        prompt = next(entry for entry in entries if entry["id"] == prompt_id)
+
+        def mixed_keys(entry):
+            return {
+                finding["key"]
+                for finding in localization_purity.find_ledger_mixes({"entries": [entry]})
+            }
+
+        self.assertEqual(mixed_keys(prompt), set())
+        self.assertEqual(
+            mixed_keys(dict(prompt, zh=prompt["zh"] + " Injected")),
+            {f"mix|{prompt_id}|zh"},
+        )
+        self.assertEqual(
+            mixed_keys(dict(prompt, id="ZZ_UnlistedSetupPrompt")),
+            {"mix|ZZ_UnlistedSetupPrompt|zh"},
+        )
+
     def test_about_brand_names_are_allowed_only_in_their_own_rows(self) -> None:
         license_row = {
             "id": "Main_AboutLicenseNote", "type": "ui",
