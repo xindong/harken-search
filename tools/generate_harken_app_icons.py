@@ -64,6 +64,11 @@ def outputs(website: Path | None) -> dict[Path, bytes]:
         buffer = io.BytesIO()
         png(size).save(buffer, format="PNG")
         result[ROOT / "assets/icons/brand" / name] = buffer.getvalue()
+    # 界面里的品牌小图用和应用图标同一份圆角机器人瓦片，保证同源。
+    for name, size in (("harken-bot.png", 64), ("harken-bot@2x.png", 128)):
+        buffer = io.BytesIO()
+        bot_tile(size).save(buffer, format="PNG")
+        result[ROOT / "assets/icons/brand" / name] = buffer.getvalue()
     if website is not None:
         result[website / "public/favicon.ico"] = app_icon()
         buffer = io.BytesIO()
@@ -100,7 +105,8 @@ def main() -> None:
             if icon.ico.getimage((size, size)).convert("RGBA").tobytes() != bot_tile(size).tobytes():
                 raise SystemExit(f"ICO pixels differ from source: {size}")
     print(f"PASS: shared ICO from Search bot, {len(SIZES)} resolutions, rounded corners "
-          f"{int(CORNER_RADIUS * 100)}%; brand PNGs from the 2026-10-25 package")
+          f"{int(CORNER_RADIUS * 100)}%; brand PNGs from the 2026-10-25 package and the "
+          f"same bot tile")
 
 
 if __name__ == "__main__":

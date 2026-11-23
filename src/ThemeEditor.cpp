@@ -7,6 +7,7 @@
 #include "BuiltinThemeScheme.h"
 #include "ThemeEditorSchema.h"
 #include "ThemeInspector.h"
+#include "ThemeLibraryFiles.h"
 
 #include "AppState.h"
 #include "Theme.h"
@@ -39,6 +40,10 @@ static void ObserveEditorItem(const char*) {}
 #include <cstring>
 #include <cstdio>
 #include <sstream>
+#include <filesystem>
+
+// User theme files live next to settings.ini, never in the install directory.
+extern std::string g_appSettingsPathUtf8;
 
 
 // Editor State (file-static singleton)
@@ -71,6 +76,11 @@ struct ThemeEditorState {
     std::string lastImportPath;
     std::string lastExportPath;
 
+    // Theme library: one JSON copy per imported theme, kept in user data.
+    std::vector<std::string> savedThemes;
+    bool        savedThemesLoaded = false;
+    std::string activeSavedTheme;
+
     bool        inspectMode = false;
     std::string inspectScrollTarget;
     std::string inspectHighlightKey;
@@ -79,6 +89,27 @@ struct ThemeEditorState {
 
 static ThemeEditorState g_ed;
 static constexpr int kMaxUndoDepth = 30;
+
+static std::filesystem::path ThemeSettingsFilePath() {
+    if (!g_appSettingsPathUtf8.empty()) return std::filesystem::u8path(g_appSettingsPathUtf8);
+    return std::filesystem::u8path(GetExeDirUtf8() + "\\settings.ini");
+}
+
+static std::filesystem::path ThemeLibraryDir() {
+    return harken::theme_library::LibraryDirectory(ThemeSettingsFilePath());
+}
+
+static std::filesystem::path CustomThemeFilePath() {
+    return harken::theme_library::CustomThemePath(ThemeSettingsFilePath());
+}
+
+static void RefreshSavedThemes() {
+    g_ed.savedThemes.clear();
+    for (const auto& path : harken::theme_library::ListThemes(ThemeLibraryDir())) {
+        g_ed.savedThemes.push_back(path.u8string());
+    }
+    g_ed.savedThemesLoaded = true;
+}
 
 static const char* ThemePresetDisplayName(int presetIndex) {
     return (g_currentLanguage == AppLanguage::Chinese)
@@ -326,11 +357,15 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
-    const std::string filePath = GetExeDirUtf8() + "\\theme_custom.json";
-    if (!ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
+    const std::string filePath = CustomThemeFilePath().u8string();
+    if (filePath.empty() || !ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
         statusMsg = L(TE_AppliedWriteFail);
         return false;
     }
+    std::string libraryError;
+    const bool librarySaved = harken::theme_library::SaveThemeCopy(
+        ThemeLibraryDir(), themeName, ThemeColors::exportToJSON(g_ed.draft), libraryError);
+    if (librarySaved) RefreshSavedThemes();
 
     std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", themeName.c_str());
     ThemeColors::activateCustomScheme(g_ed.draft);
@@ -353,7 +388,7 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
 #endif
     char savedMsg[512];
     std::snprintf(savedMsg, sizeof(savedMsg), L(TE_SaveAsFmt), g_ed.themeName);
-    statusMsg = savedMsg;
+    statusMsg = librarySaved ? savedMsg : std::string(L(TE_LibrarySaveFail));
     return true;
 }
 
@@ -699,6 +734,8 @@ void RenderThemeEditor(AppState& state) {
         g_ed.undoStack.clear();
         g_ed.exportMsg.clear();
         g_ed.importMsg.clear();
+        g_ed.savedThemesLoaded = false;
+        g_ed.activeSavedTheme.clear();
         g_ed.lastImportPath = GetExeDirUtf8() + "\\theme_export.json";
         g_ed.lastExportPath = BuildThemeJsonSuggestedPathUtf8("theme_export");
 
@@ -769,6 +806,9 @@ void RenderThemeEditor(AppState& state) {
 
     const float topConsoleH = 92.0f;
     const float bottomConsoleH = g_ed.schedulePeriod >= 0 ? 82.0f : 102.0f;
+    if (!g_ed.savedThemesLoaded) RefreshSavedThemes();
+    const float libraryH =
+        (g_ed.schedulePeriod >= 0 || g_ed.savedThemes.empty()) ? 0.0f : 118.0f;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorConsoleBg);
     ImGui::PushStyleColor(ImGuiCol_Border, editorConsoleEdge);
@@ -923,12 +963,48 @@ void RenderThemeEditor(AppState& state) {
 // Color groups
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorChildBg);
     ImGui::PushStyleColor(ImGuiCol_Border, editorChildEdge);
-    ImGui::BeginChild("##ThemeColors", ImVec2(0, -bottomConsoleH - 8.0f), true);
+    ImGui::BeginChild("##ThemeColors", ImVec2(0, -bottomConsoleH - 8.0f - libraryH), true);
     DrawEditorLayer(ThemeEditorLayer::Base);
     DrawEditorLayer(ThemeEditorLayer::Regions);
     DrawEditorLayer(ThemeEditorLayer::Advanced);
     ImGui::EndChild();
     ImGui::PopStyleColor(2);
+
+// Theme library: imported themes kept on this machine
+    if (libraryH > 0.0f) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, editorChildBg);
+        ImGui::PushStyleColor(ImGuiCol_Border, editorChildEdge);
+        ImGui::BeginChild("##ThemeLibrary", ImVec2(0, libraryH - 8.0f), true);
+        ImGui::TextDisabled("%s", L(ThemeEditor_SavedThemes));
+        for (int i = 0; i < (int)g_ed.savedThemes.size(); ++i) {
+            const std::string& themePath = g_ed.savedThemes[(size_t)i];
+            const std::string label = std::filesystem::u8path(themePath).stem().u8string();
+            ImGui::PushID(i);
+            const bool activeTheme = (themePath == g_ed.activeSavedTheme);
+            if (ImGui::Selectable(label.c_str(), activeTheme)) {
+                const AppTheme startTheme = state.settings.theme;
+                ThemeColorScheme imported = g_ed.draft;
+                if (LoadEditorThemeFile(themePath, imported, "ThemeEditorLibrary", startTheme, true)) {
+                    PushUndo();
+                    g_ed.draft = imported;
+                    g_ed.relationState.ResetToValues(g_ed.draft);
+                    g_ed.lastImportPath = themePath;
+                    g_ed.activeSavedTheme = themePath;
+                    std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", label.c_str());
+                    ApplyDraftToLive(state);
+                    char m[1024];
+                    std::snprintf(m, sizeof(m), L(TE_ImportAppliedFmt), themePath.c_str());
+                    g_ed.importMsg = m;
+                } else {
+                    g_ed.importMsg = L(TE_ImportFail);
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", themePath.c_str());
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
 
 // Bottom toolbar
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorConsoleBgAlt);
@@ -986,6 +1062,15 @@ void RenderThemeEditor(AppState& state) {
                 SetThemeNameFromPathUtf8(filePath);
                 if (g_ed.livePreview) ApplyDraftToLive(state);
                 { char m[1024]; std::snprintf(m, sizeof(m), L(TE_ImportAppliedFmt), filePath.c_str()); g_ed.importMsg = m; }
+                std::string libraryError;
+                if (!harken::theme_library::SaveThemeCopy(ThemeLibraryDir(),
+                                                          ThemeNameFromPathUtf8(filePath),
+                                                          ThemeColors::exportToJSON(imported),
+                                                          libraryError)) {
+                    g_ed.importMsg = std::string(L(TE_LibrarySaveFail)) + " (" + libraryError + ")";
+                } else {
+                    RefreshSavedThemes();
+                }
             } else {
                 g_ed.importMsg = L(TE_ImportFail);
             }

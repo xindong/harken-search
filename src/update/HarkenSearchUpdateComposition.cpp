@@ -1,5 +1,12 @@
 #include "update/HarkenSearchUpdateComposition.h"
 
+#include <atomic>
+
+namespace {
+std::atomic<bool> g_prereleaseChannelRestartRequired{false};
+}
+
+
 #ifdef _WIN32
 
 #include "platform/update_bootstrap_authority_port.h"
@@ -365,6 +372,14 @@ void StartHarkenSearchAutomaticUpdate() {
         }).detach();
     });
 #endif
+}
+
+bool PrereleaseChannelRestartRequired() {
+    return g_prereleaseChannelRestartRequired.load(std::memory_order_acquire);
+}
+
+void MarkPrereleaseChannelRestartRequired() {
+    g_prereleaseChannelRestartRequired.store(true, std::memory_order_release);
 }
 
 HarkenSearchUpdateUiState GetHarkenSearchUpdateUiState() {

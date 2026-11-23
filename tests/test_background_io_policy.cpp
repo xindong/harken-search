@@ -3542,6 +3542,76 @@ void TestResultListFormatColumnUsesListFontContract() {
           dbFormatBlock.find("GetUIFontMono()") == std::string::npos &&
           dbFormatBlock.find("ImGui::Text(\"%s\", record.format.c_str())") == std::string::npos,
           "BDD: Database result-list Format column follows list font for value, extension fallback, and placeholder");
+
+    // Numeric cells and column headers must follow listFontSize too — otherwise
+    // raising the list font leaves duration/sample-rate/channels/header text behind.
+    const size_t headerStart = source.find("// 2. 绘制表头");
+    const size_t headerEnd = source.find("const float librarySwitchBodyTop", headerStart);
+    Check(headerStart != std::string::npos && headerEnd != std::string::npos,
+          "BDD: Result-list header row block is inspectable");
+    const std::string headerBlock =
+        (headerStart != std::string::npos && headerEnd != std::string::npos)
+            ? source.substr(headerStart, headerEnd - headerStart)
+            : std::string{};
+    Check(headerBlock.find("GetUIListEmphasis()") != std::string::npos &&
+          headerBlock.find("ChromeTextScope") == std::string::npos &&
+          headerBlock.find("GetUIFontEmphasis()") == std::string::npos,
+          "BDD: Result-list column headers follow the list font, not the chrome font");
+
+    const size_t dbDurationStart = source.find("// Duration (Mono, L2 gray)");
+    const size_t dbDurationEnd = source.find("// Format (L3 dark-gray", dbDurationStart);
+    const std::string dbDurationBlock =
+        (dbDurationStart != std::string::npos && dbDurationEnd != std::string::npos)
+            ? source.substr(dbDurationStart, dbDurationEnd - dbDurationStart)
+            : std::string{};
+    Check(dbDurationBlock.find("GetUIListMono()") != std::string::npos &&
+          dbDurationBlock.find("GetUIFontMono()") == std::string::npos,
+          "BDD: Database result-list duration cell follows the list mono face");
+
+    const size_t browserDurationStart = source.find("// Duration — look up from DB metadata cache");
+    const size_t browserDurationEnd = source.find("// Format (L3)", browserDurationStart);
+    const std::string browserDurationBlock =
+        (browserDurationStart != std::string::npos && browserDurationEnd != std::string::npos)
+            ? source.substr(browserDurationStart, browserDurationEnd - browserDurationStart)
+            : std::string{};
+    Check(browserDurationBlock.find("GetUIListMono()") != std::string::npos &&
+          browserDurationBlock.find("GetUIFontMono()") == std::string::npos,
+          "BDD: Browser result-list duration cell follows the list mono face");
+
+    const auto windowsSourcePath = std::filesystem::path(__FILE__).parent_path().parent_path() / "src" / "WindowsMain.cpp";
+    std::ifstream windowsIn(windowsSourcePath, std::ios::binary);
+    std::stringstream windowsBuffer;
+    windowsBuffer << windowsIn.rdbuf();
+    const std::string windowsSource = windowsBuffer.str();
+    Check(!windowsSource.empty(),
+          "BDD: Given list font contract runs, src/WindowsMain.cpp can be opened");
+    const size_t listMonoPos = windowsSource.find("g_uiListMono = AddFontFromCandidates(");
+    Check(listMonoPos != std::string::npos &&
+          windowsSource.find("listPx + 1.0f", listMonoPos) != std::string::npos &&
+          windowsSource.find("listPx + 1.0f", listMonoPos) - listMonoPos < 400,
+          "BDD: List mono face is built at the list font size with mono optical compensation");
+    const size_t listEmphasisPos = windowsSource.find("g_uiListEmphasis = AddFontFromCandidates(");
+    Check(listEmphasisPos != std::string::npos &&
+          windowsSource.find("listPx,", listEmphasisPos) != std::string::npos &&
+          windowsSource.find("listPx,", listEmphasisPos) - listEmphasisPos < 400,
+          "BDD: List emphasis face for headers is built at the list font size");
+    Check(windowsSource.find("ImFont* GetUIListMono() {") != std::string::npos &&
+          windowsSource.find("ImFont* GetUIListEmphasis() {") != std::string::npos,
+          "BDD: List mono and list emphasis faces are exposed through accessors");
+
+    // A fresh layout must keep the widest numeric value readable at any list size.
+    Check(source.find("numericDefaultWidth(88.0f, \"00:00:00.00\")") != std::string::npos &&
+          source.find("numericDefaultWidth(76.0f, \"192000\")") != std::string::npos,
+          "BDD: Duration and sample-rate columns size their default width from the list mono font");
+
+    // Acceptance must observe the font the cells and headers really render with.
+    Check(source.find("state.qaRegions.listNumericFontPixels = ImGui::GetFontSize();") != std::string::npos &&
+          source.find("state.qaRegions.listHeaderFontPixels = ImGui::GetFontSize();") != std::string::npos,
+          "BDD: Result list records draw-time font sizes for numeric cells and headers");
+    Check(windowsSource.find("drawn_list_numeric_font_pixels") != std::string::npos &&
+          windowsSource.find("drawn_list_header_font_pixels") != std::string::npos &&
+          windowsSource.find("drawn_sample_rate_column_width") != std::string::npos,
+          "BDD: Harness state exposes the drawn numeric/header font sizes and numeric column widths");
 }
 
 void TestNaturalFilenameSortUsesSharedComparatorContract() {

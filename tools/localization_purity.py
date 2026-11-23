@@ -897,6 +897,7 @@ PROTECTED_ROW_TOKENS = {
     # 2026-11-20 external AI page: the nav row names the feature by its
     # domain acronyms; no other row may carry them.
     "SetUX_ExternalAiMcp": {"ai", "mcp"},
+    "ExtAi_AiSetupPromptFmt": {"codex", "config", "harken", "home", "mcp", "profile", "server", "toml"},
     "Sc_ToggleReverse": {"reverse"},
     "Sc_ToggleMono": {"mono"},
     "ScDesc_TapTempo": {"tap"},

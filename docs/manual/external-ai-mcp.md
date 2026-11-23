@@ -16,9 +16,21 @@ port.
 3. Under per-action grants choose the level. For Playlist writing, *read playlists*
    must be at least readable and *edit playlists* must be editable.
 4. Click **Save this library**.
-5. In **Connected apps**, click **Connect** on Cindy or Codex. That writes one
-   `harken` entry into the client's own config and asks you to open a new session.
-   **Disconnect** removes only that entry and leaves other servers untouched.
+5. In **Connected apps**, click **Connect** on Cindy (Codex) or standalone Codex,
+   then open a new session in that client. Cindy's Codex engine and standalone Codex
+   use separate configuration directories. A standalone Pi configuration is not
+   Cindy's desktop configuration.
+
+**Disconnect** revokes that app's managed link, including requests made by its
+already-open sessions after disconnection. Other clients are unaffected.
+Reconnecting creates a new link; start a new session to use it. Switching off
+**Allow external AI** revokes library access for all clients without clicking
+**Save this library**. Other unsaved changes remain drafts. Neither operation
+retracts results that a client already received.
+
+Each connection uses one launch root. If the selected directories span drives,
+choose directories on one drive before creating a new connection. An existing
+connection can still be disconnected.
 
 Harken keeps a local write bridge for the open library while those grants are
 active; the connector asks Harken to write, so Playlist writes happen in Harken's
@@ -34,14 +46,15 @@ cmake -S . -B build_debug -G 'Visual Studio 17 2022' -A x64
 cmake --build build_debug --config Debug --target HarkenExternalAiMcp
 ```
 
-In a **local** Codex CLI, add the stdio connector. Replace the four paths.
-The second path is an existing Harken library database. The last path is the
-indexed audio folder you want to share, not the folder that stores the database.
+In a **local** Codex CLI, add the stdio connector. Replace the example paths
+and library ID. The launch root is the indexed audio folder you want to share,
+not the folder that stores the database. Find the authorization document and
+library ID in the setting page's connection details.
 If the database uses SQLite WAL, keep that library open in Harken while using
 the connector. The connector refuses to recover or create missing WAL sidecars.
 
 ```powershell
-codex mcp add harken -- 'C:\Harken Dev\HarkenExternalAiMcp.exe' --library-db 'C:\Harken Data\Library.db' --library-root 'D:\Sounds\Selected Library'
+codex mcp add harken -- 'C:\Harken Dev\HarkenExternalAiMcp.exe' --library-db 'C:\Harken Data\Library.db' --library-root 'D:\Sounds\Selected Library' --settings 'C:\Harken Data\external-ai\example.json' --library-id 'example-library-id'
 ```
 
 The connector also requires `--settings <authorization document>` and `--library-id <library identity>`.
@@ -50,8 +63,9 @@ and re-reads the document for every tool call.
 
 Start a new local session and try: “Find metal door sounds in my Harken library.
 Show me their folders. Pick a result and find three same-kind substitutes.”
-To revoke access, remove the `harken` server (`codex mcp remove harken`) and end
-sessions that have loaded it.
+To revoke access immediately for manual or legacy links, turn off the library's
+**Allow external AI** switch. You can then remove the `harken` server
+(`codex mcp remove harken`) and end any sessions that loaded it.
 
 ## What the connector can do
 

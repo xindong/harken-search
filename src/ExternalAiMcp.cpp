@@ -1,4 +1,5 @@
 #include "ExternalAiAuthorization.h"
+#include "ExternalAiClientLink.h"
 #include "ExternalAiLibrary.h"
 #include "../thirdparty/nlohmann_json.hpp"
 
@@ -99,6 +100,16 @@ struct LaunchConfig {
     std::string root;
     std::string settings;
     std::string libraryId;
+    std::string executable;
+    std::string clientConfig;
+    std::string clientLink;
+
+    bool ClientAuthorized() const
+    {
+        if (clientConfig.empty()) return true;
+        return HarkenSearch::ExternalAiClientLinkAuthorized(
+            {executable, libraryId, database, root, settings, clientConfig, clientLink});
+    }
 
     std::string AbsolutePath(const std::string& relative) const
     {
@@ -595,6 +606,9 @@ public:
             if (phase_ != Phase::Ready) {
                 return RpcError(*id, -32002, "Server not initialized");
             }
+            if (!config_.ClientAuthorized()) {
+                return RpcError(*id, -32003, "Client connection revoked");
+            }
             return method == "tools/list" ? RpcResult(*id, ListTools()) : CallTool(*id, params);
         }
         return RpcError(*id, -32601, "Method not found");
@@ -1042,7 +1056,7 @@ private:
             const std::string path = selection.selection.value("playlist_path", pending.playlist);
             requestedItems.push_back({{"fileId", selection.fileId}, {"playlistPath", path}});
         }
-        const Json bridgeRequest = {
+        Json bridgeRequest = {
             {"token", authorization.bridgeToken()},
             // Unique per (process, library, proposal): a restarted client or a
             // second library must never look like a repeated request.
@@ -1051,9 +1065,14 @@ private:
             {"playlistPath", pending.playlist},
             {"items", requestedItems},
         };
+        if (!config_.clientConfig.empty()) {
+            bridgeRequest["clientLink"] = {
+                {"executable", config_.executable}, {"database", config_.database}, {"root", config_.root},
+                {"config", config_.clientConfig}, {"id", config_.clientLink},
+            };
+        }
         std::string bridgeResponse;
         if (!CallPlaylistBridge(config_.libraryId, bridgeRequest.dump(), bridgeResponse)) {
-            // Harken is closed or did not answer: nothing was written.
             return ToolResult(id, {
                 {"status", "playlist_write_unavailable"},
                 {"proposal_id", proposalId},
@@ -1422,18 +1441,24 @@ bool IsLocalAbsolutePath(const std::filesystem::path& path)
 template <typename Character>
 bool ReadLaunchPaths(int argc, Character** argv, LaunchConfig& config)
 {
-    if (argc != 9) {
+    if (argc != 9 && argc != 13) {
         return false;
     }
+    config.executable = std::filesystem::absolute(std::filesystem::path(argv[0])).u8string();
     for (int index = 1; index < argc; index += 2) {
         const auto flag = std::filesystem::path(argv[index]).u8string();
         const std::filesystem::path value(argv[index + 1]);
-        if (flag == "--library-id") {
+        if (flag == "--library-id" && config.libraryId.empty()) {
             const auto id = value.u8string();
             if (id.empty() || id.size() > 512) {
                 return false;
             }
             config.libraryId = id;
+            continue;
+        }
+        if (flag == "--client-link" && config.clientLink.empty()) {
+            config.clientLink = value.u8string();
+            if (config.clientLink.size() != 32) return false;
             continue;
         }
         if (!IsLocalAbsolutePath(value)) {
@@ -1445,11 +1470,16 @@ bool ReadLaunchPaths(int argc, Character** argv, LaunchConfig& config)
             config.root = value.u8string();
         } else if (flag == "--settings" && config.settings.empty()) {
             config.settings = value.u8string();
+        } else if (flag == "--client-config" && config.clientConfig.empty()) {
+            config.clientConfig = value.u8string();
         } else {
             return false;
         }
     }
-    return !config.database.empty() && !config.root.empty() && !config.settings.empty() && !config.libraryId.empty();
+    const bool linkValid = argc == 9 ? config.clientConfig.empty() && config.clientLink.empty()
+                                    : !config.clientConfig.empty() && !config.clientLink.empty();
+    return linkValid && !config.database.empty() && !config.root.empty() &&
+        !config.settings.empty() && !config.libraryId.empty();
 }
 
 }
@@ -1473,6 +1503,10 @@ int main(int argc, char** argv)
         LaunchConfig config;
         if (!ReadLaunchPaths(argc, argv, config)) {
             std::cerr << "HarkenExternalAiMcp: --library-db, --library-root, --settings and --library-id are required; paths must be local and absolute.\n";
+            return 1;
+        }
+        if (!config.ClientAuthorized()) {
+            std::cerr << "HarkenExternalAiMcp: client connection revoked.\n";
             return 1;
         }
         HarkenSearch::ExternalAiAuthorization authorization;

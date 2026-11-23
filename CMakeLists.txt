@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.46 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.47 LANGUAGES C CXX)
 
 enable_testing()
 add_executable(TestPerformanceMonitor EXCLUDE_FROM_ALL tests/test_performance_monitor.cpp)
@@ -134,6 +134,20 @@ if(ARIS_UPDATE_MIRROR_BASE_URL AND
     ARIS_UPDATE_MIRROR_BASE_URL MATCHES "\\.\\."))
     message(FATAL_ERROR
         "ARIS_UPDATE_MIRROR_BASE_URL must be an exact HTTP(S) base URL ending in / without traversal")
+endif()
+
+# 预发布（QA）通道基址：留空表示这个构建没有预发布通道。
+# 只有运行时白名单用户名才会用到它，其余人仍读 ARIS_UPDATE_MIRROR_BASE_URL。
+set(ARIS_UPDATE_PRERELEASE_BASE_URL "" CACHE STRING
+    "Optional prerelease mirror used only by allow-listed users")
+if(ARIS_UPDATE_PRERELEASE_BASE_URL AND
+   NOT ARIS_UPDATE_PRERELEASE_BASE_URL MATCHES "^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?/$")
+    message(FATAL_ERROR
+        "ARIS_UPDATE_PRERELEASE_BASE_URL must be an exact HTTP(S) base URL ending in /")
+endif()
+# 更新传输代码在内部静态库里编译，这里用全局定义，避免只有可执行目标拿到宏。
+if(ARIS_UPDATE_PRERELEASE_BASE_URL)
+    add_compile_definitions(ARIS_UPDATE_PRERELEASE_BASE_URL="${ARIS_UPDATE_PRERELEASE_BASE_URL}")
 endif()
 
 option(ARIS_UPDATE_LOCAL_DEMO
@@ -689,6 +703,7 @@ set(APP_SOURCES
     src/ThemeScheduleUI.cpp
     src/ThemeSchedulePaletteCodec.cpp
     src/ThemeSchedulePaletteFiles.cpp
+    src/ThemeLibraryFiles.cpp
     src/ThemeInspector.cpp
     src/AnnotationBridge.cpp
     src/CueviFeedbackClient.cpp
@@ -1134,6 +1149,23 @@ endif()
 add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
     "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
 
+add_executable(TestThemeLibraryFiles EXCLUDE_FROM_ALL
+    tests/test_theme_library_files.cpp
+    src/ThemeLibraryFiles.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestThemeLibraryFiles PRIVATE
+        src/platform/filesystem_win32.cpp src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestThemeLibraryFiles PRIVATE shlwapi)
+endif()
+target_include_directories(TestThemeLibraryFiles PRIVATE src)
+target_compile_features(TestThemeLibraryFiles PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeLibraryFiles PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeLibraryFiles COMMAND TestThemeLibraryFiles
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-library-files")
+
 add_executable(TestSettingsFileAtomicSave EXCLUDE_FROM_ALL
     tests/test_settings_file_atomic_save.cpp src/platform/filesystem_std.cpp)
 if(WIN32)
@@ -1541,6 +1573,7 @@ target_compile_definitions(HarkenSearch PRIVATE
     ARIS_ENABLE_IMGUI_VIEWPORTS=$<IF:$<BOOL:${ARIS_ENABLE_IMGUI_VIEWPORTS}>,1,0>
     ARIS_UPDATE_GITHUB_REPOSITORY=\"${ARIS_UPDATE_GITHUB_REPOSITORY}\"
     ARIS_UPDATE_MIRROR_BASE_URL=\"${ARIS_UPDATE_MIRROR_BASE_URL}\"
+    ARIS_UPDATE_PRERELEASE_BASE_URL=\"${ARIS_UPDATE_PRERELEASE_BASE_URL}\"
     ARIS_UPDATE_LOCAL_DEMO=$<IF:$<BOOL:${ARIS_UPDATE_LOCAL_DEMO}>,1,0>
 )
 if(ARIS_UPDATE_QA_CLI)

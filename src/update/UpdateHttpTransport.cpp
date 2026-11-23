@@ -31,7 +31,7 @@ bool HasExactHttpsHost(const std::string& url, std::string_view host) {
 }
 
 bool IsApprovedMirrorUrl(const std::string& url) {
-    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
+    const std::string_view mirror = ActiveMirrorBaseUrl();
     if (mirror.empty() || url.rfind(mirror.data(), 0) != 0 ||
         url.size() <= mirror.size() || url.find('\\') != std::string::npos ||
         url.find("..") != std::string::npos || url.find('?') != std::string::npos ||

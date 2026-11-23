@@ -8,9 +8,8 @@ function(harken_bootstrap_progress_ui target)
                 --root "${_root}" --output "${_generated}"
             DEPENDS "${_root}/tools/generate_bootstrap_progress_page.py"
                 "${_root}/src/bootstrap/BootstrapProgressPage.html"
-                "${_root}/assets/icons/source/harken-app-icons/Search/Search transparent 64.png"
-                "${_root}/assets/logos/brand/harken-search-menu-wordmark-black.png"
-                "${_root}/assets/logos/brand/harken-search-menu-wordmark-white.png"
+                "${_root}/assets/icons/brand/harken-bot@2x.png"
+                "${_root}/assets/logos/brand/harken-search-menu-wordmark-orange.png"
             VERBATIM)
         add_custom_target(harken_bootstrap_progress_page DEPENDS "${_generated}")
     endif()

@@ -71,12 +71,21 @@ std::string ExternalAiSettingsPath(const std::string& settingsDirectory, const s
 std::string ExternalAiLibraryIdForPath(const std::string& canonicalDatabasePathUtf8);
 
 // A missing file is not an error: the library starts disabled with no ticked
-// directory and every capability closed. existed (optional) reports whether a
-// document was found.
+// directory and every capability closed. A read or parse error returns false.
+// existed (optional) reports whether a filesystem entry was found.
 bool LoadExternalAiSettings(const std::string& path, const std::string& libraryId, ExternalAiSettings& out,
     std::string& error, bool* existed = nullptr);
 
 // Writes the document atomically next to the target file.
 bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& settings, std::string& error);
+
+bool SetExternalAiMasterSwitch(const std::string& path, ExternalAiSettings& draft, bool enabled, std::string& error);
+
+struct ExternalAiLinkRoot {
+    std::string path;
+    bool spansVolumes = false;
+};
+
+ExternalAiLinkRoot ExternalAiLinkRootFor(const std::vector<ExternalAiRoot>& roots);
 
 }  // namespace HarkenSearch

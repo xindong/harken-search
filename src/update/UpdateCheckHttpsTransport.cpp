@@ -77,8 +77,8 @@ UpdateCheckFetchResult ReadUpdateCheckHttpsBody(
 // one of the four package plan/signature names; query, fragment, traversal and
 // any extra path component are rejected here rather than at network I/O.
 bool IsCompanyCloudBootstrapPackageUrl(const std::string& url) {
-    constexpr std::string_view prefix =
-        ARIS_UPDATE_COMPANY_RELEASE_DOWNLOAD_PREFIX;
+    // 走当前生效的通道：白名单用户的预发布前缀同样被接受，否则下载完拒绝安装。
+    const std::string prefix = std::string(aris::update::ActiveMirrorBaseUrl()) + "releases/download/";
     if (url.size() <= prefix.size() ||
         url.compare(0, prefix.size(), prefix) != 0) {
         return false;
@@ -103,7 +103,7 @@ bool IsCompanyCloudBootstrapPackageUrl(const std::string& url) {
 
 
 bool IsCompanyCloudStableManifestUrl(const std::string& url) {
-    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
+    const std::string_view mirror = ActiveMirrorBaseUrl();
     if (mirror.empty() ||
         url.find('\\') != std::string::npos ||
         url.find("..") != std::string::npos ||
