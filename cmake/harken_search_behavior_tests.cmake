@@ -7390,6 +7390,16 @@ aura_set_test_labels(TestSimilarityIndexer core)
 add_executable(SimilarityConcurrencyBench EXCLUDE_FROM_ALL tools/similarity_concurrency_bench.cpp
     src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
 target_include_directories(SimilarityConcurrencyBench PRIVATE src ${SQLITE_DIR})
+if(HARKEN_ONNXRUNTIME_ROOT)
+    target_compile_definitions(SimilarityConcurrencyBench PRIVATE HARKEN_WITH_ONNX=1)
+    target_include_directories(SimilarityConcurrencyBench PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_link_libraries(SimilarityConcurrencyBench PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        add_custom_command(TARGET SimilarityConcurrencyBench POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:SimilarityConcurrencyBench>)
+    endif()
+endif()
 if(WIN32)
     target_link_libraries(SimilarityConcurrencyBench PRIVATE bcrypt)
 endif()
