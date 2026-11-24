@@ -382,6 +382,78 @@ int main() { return RunDockPerfReplay(); }
 int main() {
     {
         using namespace aura::ui::dock;
+        DockLayout layout;
+        if (!layout.InsertModule("info", DockSide::Right, 0.5f) ||
+            !layout.InsertAdjacent("info", "mod-transfer", DockSide::Right, 0.5f))
+            return 1;
+        if (!Check(!DragAdjacentLeafGrip(layout, "info", "mod-transfer", -700.0f, 600.0f, 1.0f),
+                   "a split with insufficient room for both usable floors must not shrink either pane further"))
+            return 1;
+        DockModuleTarget leaves[2]{};
+        const auto* root = layout.RegionRoot(DockSide::Right);
+        CollectLeafRects(root, {100.0f, 0.0f, 600.0f, 400.0f}, leaves, 2, 0, 1.0f);
+        if (!Check(leaves[0].rect.width > 140.0f && leaves[1].rect.width > 450.0f &&
+                   std::abs(leaves[1].rect.x + leaves[1].rect.width - 700.0f) < 0.01f,
+                   "a narrow host must keep both panes on screen without flattening the smaller pane")) return 1;
+        CollectLeafRects(root, {100.0f, 0.0f, 800.0f, 400.0f}, leaves, 2, 0, 1.0f);
+        if (!Check(std::abs(leaves[0].rect.width - 320.0f) < 0.01f &&
+                   std::abs(leaves[1].rect.width - 480.0f) < 0.01f,
+                   "a stale split ratio must not clip the transfer pane when its floor fits")) return 1;
+    }
+    {
+        using namespace aura::ui::dock;
+        const char* resizeCases[] = {
+            "mod-workflow", "filter", "info", "similar-sounds",
+            "mod-ucs-browser", "mod-tag-browser", "mod-transfer",
+        };
+        for (const char* panel : resizeCases) {
+            const bool isWorkflow = std::string_view(panel) == "mod-workflow";
+            const char* peer = isWorkflow ? "mod-transfer" : "mod-workflow";
+            for (const float scale : {1.0f, 1.25f}) {
+                const auto minimum = DockModuleMinimum(panel, scale, DockMinimumPurpose::Resize);
+                const auto peerMinimum = DockModuleMinimum(peer, scale, DockMinimumPurpose::Resize);
+                for (const bool horizontal : {true, false}) {
+                    const float floor = horizontal ? minimum.width : minimum.height;
+                    const float peerFloor = horizontal ? peerMinimum.width : peerMinimum.height;
+                    for (const float extent : {floor + peerFloor + 120.0f * scale, 4800.0f * scale}) {
+                        for (const bool first : {true, false}) {
+                            const auto edge = horizontal
+                                ? (first ? DockSide::Right : DockSide::Left)
+                                : (first ? DockSide::Bottom : DockSide::Top);
+                            DockLayout layout;
+                            if (!layout.InsertModule(panel, DockSide::Top, 0.5f) ||
+                                !layout.InsertAdjacent(panel, peer, edge, 1.0f - (floor + 24.0f * scale) / extent))
+                                return 1;
+                            const auto firstId = first ? panel : peer;
+                            const auto secondId = first ? peer : panel;
+                            if (!Check(DragAdjacentLeafGrip(layout, firstId, secondId,
+                                       first ? -extent : extent, extent, scale),
+                                       "a seam must travel when both usable floors fit")) return 1;
+                            const DockRect slot{0.0f, 0.0f, horizontal ? extent : 900.0f,
+                                horizontal ? 900.0f : extent};
+                            DockModuleTarget leaves[2]{};
+                            if (CollectLeafRects(layout.RegionRoot(DockSide::Top), slot, leaves, 2, 0, scale) != 2)
+                                return 1;
+                            const auto& target = leaves[first ? 0 : 1];
+                            const float actual = horizontal ? target.rect.width : target.rect.height;
+                            if (!Check(target.id == panel && std::abs(actual - floor) <= 0.5f,
+                                       "a seam must reach the shrinking panel's usable floor")) return 1;
+                            const auto liveMinimum = DockSubtreeMinimum(layout.RegionRoot(DockSide::Top),
+                                scale, DockMinimumPurpose::Resize);
+                            if (!Check(std::abs((horizontal ? liveMinimum.width : liveMinimum.height) -
+                                           (floor + peerFloor)) <= 0.5f,
+                                       "the parent floor must not grow as a split ratio changes")) return 1;
+                            if (!Check(!DragAdjacentLeafGrip(layout, firstId, secondId,
+                                       first ? -100.0f : 100.0f, extent, scale),
+                                       "continued drag must stop at the floor")) return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    {
+        using namespace aura::ui::dock;
         DockTabGroups groups;
         if (groups.Merge("info", "info") || groups.Merge("info", "waveform") ||
             groups.Merge("info", "search-results") || groups.Merge("search-results", "info") ||

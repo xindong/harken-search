@@ -26889,6 +26889,14 @@ static bool DrawSoundstagePopupContent(float* centerSenseValue) {
 
 // Dockable Panel System
 
+static constexpr float kWorkspaceModuleGutterPx = 8.0f;
+static constexpr float kWorkspaceColumnSplitterHitWidth = 12.0f;
+static constexpr float kWorkspaceHorizontalSplitterHitHeight = 6.0f;
+
+static float WorkspacePanelGapPx() {
+    return std::round(kWorkspaceModuleGutterPx * aura::ui::dpi::UiScale());
+}
+
 static ImVec4 ResolveThreeDotSplitterColor(
     const ThemeColorScheme& theme,
     bool hovered,
@@ -26927,17 +26935,65 @@ static ImVec4 ResolveWaveformSplitterDragBg(const ThemeColorScheme& theme) {
     return color;
 }
 
+static bool BeginWorkspaceSplitterOverlay(
+    const char* id, ImGuiWindow* workspace, const ImVec2& hitMin, const ImVec2& hitSize) {
+    ImGui::SetNextWindowViewport(workspace->Viewport->ID);
+    ImGui::SetNextWindowPos(hitMin, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(hitSize, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus;
+    const bool visible = BeginTransientScrollbarWindow(id, nullptr, flags);
+    ImGui::PopStyleVar(3);
+    return visible;
+}
+
+static void LayerWorkspaceSplitterOverlays(ImGuiWindow* workspace) {
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    const std::array overlays{
+        ImGui::FindWindowByName("##LeftSplitter"),
+        ImGui::FindWindowByName("##RightSplitter"),
+        ImGui::FindWindowByName("##WaveformSplitterOverlay"),
+        ImGui::FindWindowByName("##LeftDockLeafSplitter"),
+        ImGui::FindWindowByName("##RightDockLeafSplitter")};
+    for (ImGuiWindow* overlay : overlays) {
+        if (!overlay || !overlay->Active) continue;
+        ImGuiWindow* occluder = nullptr;
+        const int firstAboveWorkspace = ImGui::FindWindowDisplayIndex(workspace->RootWindow) + 1;
+        for (int index = firstAboveWorkspace; index < context.Windows.Size; ++index) {
+            ImGuiWindow* window = context.Windows[index];
+            if (window->Viewport != overlay->Viewport || window->RootWindow != window ||
+                (!window->Active && !window->WasActive) || window->Hidden ||
+                std::find(overlays.begin(), overlays.end(), window) != overlays.end() ||
+                std::strstr(window->Name, "##Docked") ||
+                std::strncmp(window->Name, "##DockSplitGrip-", 16) == 0) continue;
+            if ((window->Flags & ImGuiWindowFlags_Popup) != 0 ||
+                window->OuterRectClipped.Overlaps(overlay->OuterRectClipped)) {
+                occluder = window;
+                break;
+            }
+        }
+        if (occluder) ImGui::BringWindowToDisplayBehind(overlay, occluder);
+        else ImGui::BringWindowToDisplayFront(overlay);
+    }
+}
+
 // Draw a vertical splitter and handle dragging to resize
 // Returns true if the width was changed
 // invertDelta: true for right-side panels (drag left = increase width)
-bool VerticalSplitter(const char* id, float* panelWidth, float minWidth = 100.0f, float maxWidth = 600.0f, float height = 0.0f, bool invertDelta = false) {
+bool VerticalSplitter(const char* id, float* panelWidth, float minWidth, float maxWidth,
+                      float height, ImVec2 centerTop, bool invertDelta = false) {
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    float splitterWidth = 12.0f;  // Keep left/right seams visually identical; interaction affordance should not create asymmetry in chrome width
-    if (height <= 0) height = ImGui::GetContentRegionAvail().y;
-
-// Use InvisibleButton for interaction.
-    ImGui::InvisibleButton(id, ImVec2(splitterWidth, height));
+    ImGuiWindow* workspace = ImGui::GetCurrentWindow();
+    const ImVec2 hitMin(centerTop.x - kWorkspaceColumnSplitterHitWidth * 0.5f, centerTop.y);
+    if (!BeginWorkspaceSplitterOverlay(id, workspace, hitMin, ImVec2(kWorkspaceColumnSplitterHitWidth, height))) {
+        ImGui::End();
+        return false;
+    }
+    ImGui::InvisibleButton("##ResizeHit", ImVec2(kWorkspaceColumnSplitterHitWidth, height));
     if (ThemeInspector::IsCollecting()) {
         const char* annotationKey = nullptr;
         if (id && std::strcmp(id, "##LeftSplitter") == 0) annotationKey = "splitter.left";
@@ -26956,23 +27012,22 @@ bool VerticalSplitter(const char* id, float* panelWidth, float minWidth = 100.0f
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ThemeColorScheme& splitterTheme = ThemeColors::current();
-    const float cx = pos.x + splitterWidth * 0.5f;
     const ImVec4 splitterColor = ResolveThreeDotSplitterColor(
         splitterTheme, hovered, draggingResize);
 
     // Three dots along vertical axis (centered): filter|results and results|info splitters.
-    // Keep the hit target alive while hiding the visual affordance after idle.
     {
-        const float midY = pos.y + height * 0.5f;
+        const float midY = centerTop.y + height * 0.5f;
         const float gap = ImClamp(height * 0.018f, 5.0f, 9.0f);
         const float edgePad = gap + 3.0f;
         if (height > edgePad * 2.0f + 1.0f) {
             const float r = draggingResize ? 1.95f : (hovered ? 2.15f : 2.0f);
             const ImU32 dotCol = ImGui::GetColorU32(splitterColor);
             aura::ui::workspace::DrawThreeDotSplitterGrip(
-                dl, ImVec2(cx, midY), ImVec2(0.0f, 1.0f), gap, r, dotCol);
+                dl, ImVec2(centerTop.x, midY), ImVec2(0.0f, 1.0f), gap, r, dotCol);
         }
     }
+    ImGui::End();
 
     if (draggingResize) {
         float delta = io.MouseDelta.x;
@@ -26987,12 +27042,19 @@ bool VerticalSplitter(const char* id, float* panelWidth, float minWidth = 100.0f
 // Draw a horizontal splitter and handle dragging to resize
 bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, float maxHeight, float width, bool growWhenDraggingDown) {
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    float splitterHeight = 6.0f;  // Visible enough to read as a drag target without becoming a heavy black bar.
+    ImGuiWindow* workspace = ImGui::GetCurrentWindow();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float splitterHeight = kWorkspaceHorizontalSplitterHitHeight;
     if (width <= 0) width = ImGui::GetContentRegionAvail().x;
 
+    const bool waveformSplitter = id && std::strcmp(id, "##WaveformSplitter") == 0;
+    if (waveformSplitter && !BeginWorkspaceSplitterOverlay(
+            "##WaveformSplitterOverlay", workspace, pos, ImVec2(width, splitterHeight))) {
+        ImGui::End();
+        return false;
+    }
     ImGui::InvisibleButton(id, ImVec2(width, splitterHeight));
-    if (ThemeInspector::IsCollecting() && id && std::strcmp(id, "##WaveformSplitter") == 0) {
+    if (ThemeInspector::IsCollecting() && waveformSplitter) {
         ThemeInspector::RegisterLastItem(
             "splitter.waveform", "Waveform splitter", "src/main.cpp:HorizontalSplitter");
     }
@@ -27006,7 +27068,6 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     }
 
-    // Fill the splitter band so light themes do not expose a dark window seam.
     ImDrawList* dl = ImGui::GetWindowDrawList();
     auto splitterWithAlpha = [](ImVec4 c, float a) {
         c.w = a;
@@ -27037,7 +27098,8 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
                         : idleSeamBg)),
         (minimalistLightSplitter && !sidebarSubpaneSplitter) ? 0.0f : 1.0f);
     const bool drawSidebarSubpaneBand = sidebarSubpaneSplitter && (hovered || active);
-    if ((!sidebarSubpaneSplitter && (!minimalistLightSplitter || hovered || active)) || drawSidebarSubpaneBand) {
+    if (!waveformSplitter &&
+        ((!sidebarSubpaneSplitter && (!minimalistLightSplitter || hovered || active)) || drawSidebarSubpaneBand)) {
         dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + splitterHeight), ImGui::GetColorU32(splitterBg), 0.0f);
     }
     float cy = pos.y + splitterHeight * 0.5f;
@@ -27056,6 +27118,8 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
                 dl, ImVec2(midX, cy), ImVec2(1.0f, 0.0f), gap, r, dotCol);
         }
     }
+
+    if (waveformSplitter) ImGui::End();
 
     if (draggingResize) {
         float delta = io.MouseDelta.y;
@@ -27174,6 +27238,17 @@ std::string GetDockQaState() {
     const auto rectJson = [](const ImRect& r) {
         return nlohmann::json{{"x", r.Min.x}, {"y", r.Min.y}, {"w", r.GetWidth()}, {"h", r.GetHeight()}};
     };
+    const auto* viewport = ImGui::GetMainViewport();
+    out["work"] = rectJson(ImRect(viewport->WorkPos, ImVec2(viewport->WorkPos.x + viewport->WorkSize.x, viewport->WorkPos.y + viewport->WorkSize.y)));
+    for (ImGuiWindow* child : context.Windows) {
+        if (!child->WasActive || std::string_view(child->Name).find("##DockedTransferContent") == std::string_view::npos) continue;
+        out["transfer_scroll"] = {{"x", child->Scroll.x}, {"y", child->Scroll.y},
+            {"max_x", child->ScrollMax.x}, {"max_y", child->ScrollMax.y}};
+        if (child->ScrollbarX)
+            out["transfer_scroll"]["bar_x"] = rectJson(ImGui::GetWindowScrollbarRect(child, ImGuiAxis_X));
+        if (child->ScrollbarY)
+            out["transfer_scroll"]["bar_y"] = rectJson(ImGui::GetWindowScrollbarRect(child, ImGuiAxis_Y));
+    }
     out["results_tabs"] = nlohmann::json::array();
     out["results_tab_model_order"] = nlohmann::json::array();
     out["dock_tab_groups"] = nlohmann::json::array();
@@ -27272,7 +27347,7 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
         const bool left = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left) == g_dockLayout.Find(module);
         const bool right = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right) == g_dockLayout.Find(module);
         if (!left && !right) return false;
-        const ImVec2 grip(left ? e.window.x + e.window.width + 6.0f : e.window.x - 6.0f,
+        const ImVec2 grip(left ? e.window.x + e.window.width : e.window.x,
                           e.window.y + e.window.height * .5f);
         r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
     } else if (part != "title") return false;
@@ -27286,7 +27361,7 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
     return true;
 }
 
-std::string SetupDockGestureFixtureForQa(AppState& state) {
+std::string SetupDockGestureFixtureForQa(AppState& state, std::string_view resizeModule, std::string_view resizeMode) {
     if (g_dockTitleGesture.Active() || g_dockDrag.Active() || ImGui::IsMouseDown(0))
         return R"({"ok":false,"error":"dock_gesture_active"})";
     const auto reset = [](AppState::PanelState& panel, DockSide side, float width) {
@@ -27298,6 +27373,52 @@ std::string SetupDockGestureFixtureForQa(AppState& state) {
         panel.restoreClampPending = false;
         panel.hasMonitorRelative = false;
     };
+    if (!resizeModule.empty()) {
+        struct FixturePanel { const char* id; AppState::PanelState* panel; bool* open; };
+        const FixturePanel modules[] = {
+            {"info", &state.panelFileInfo, nullptr},
+            {"similar-sounds", &state.panelSimilarSounds, nullptr},
+            {"filter", &state.panelSidebar, nullptr},
+            {"mod-ucs-browser", &state.panelUCSBrowser, &state.showUCSBrowser},
+            {"mod-tag-browser", &state.panelTagBrowser, &state.showTagBrowser},
+            {"mod-workflow", &state.panelWorkflow, &state.showWorkflowDialog},
+            {"mod-transfer", &state.panelTransfer, &state.showTransferDialog},
+        };
+        const FixturePanel* target = nullptr;
+        for (const auto& entry : modules) {
+            if (resizeModule == entry.id) target = &entry;
+        }
+        const bool floating = resizeMode == "floating";
+        if (!target || (!floating && resizeMode != "horizontal" && resizeMode != "vertical"))
+            return R"({"ok":false,"error":"invalid_dock_resize_fixture"})";
+        const auto* peer = !floating ? &modules[resizeModule == "info" ? 1 : 0] : nullptr;
+        for (const auto& entry : modules) {
+            reset(*entry.panel, DockSide::Right, 760.0f);
+            entry.panel->visible = &entry == target || &entry == peer;
+            if (entry.open) *entry.open = entry.panel->visible;
+        }
+        reset(g_searchResultsDockPanel, DockSide::Left, 600.0f);
+        state.similarSoundsWindow.open = false;
+        g_dockLayout = {};
+        if (floating) {
+            target->panel->floating = true;
+            target->panel->floatX = ImGui::GetMainViewport()->Pos.x + 140.0f;
+            target->panel->floatY = ImGui::GetMainViewport()->Pos.y + 140.0f;
+            target->panel->floatW = 600.0f;
+            target->panel->floatH = 430.0f;
+            g_dockLayout.EnsureFloat(target->id);
+        } else {
+            const auto dockSide = aura::ui::dock::DockSide::Right;
+            const auto splitSide = resizeMode == "horizontal"
+                ? aura::ui::dock::DockSide::Right : aura::ui::dock::DockSide::Bottom;
+            g_dockLayout.InsertModule(target->id, dockSide, 0.5f);
+            g_dockLayout.InsertAdjacent(target->id, peer->id, splitSide, 0.5f);
+        }
+        g_dockRestoreFloatingModule.clear();
+        g_dockQaPanels.clear();
+        ++g_dockGeometryRevision;
+        return R"({"ok":true,"fixture":"dock-resize"})";
+    }
     reset(state.panelSidebar, DockSide::Left, 300.0f);
     reset(state.panelFileInfo, DockSide::Right, 720.0f);
     reset(state.panelSimilarSounds, DockSide::Right, 720.0f);
@@ -37488,6 +37609,7 @@ void RenderUI(AppState& state) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, workspacePalette.applicationSurface); // workspace application surface
     BeginTransientScrollbarWindow("MainWindow", nullptr, windowFlags);
+    ImGuiWindow* workspaceWindow = ImGui::GetCurrentWindow();
 #if ARIS_PREVIEW_ISOLATION
     state.qaRegions.workspaceTopFrame = ImGui::GetFrameCount();
     state.qaRegions.workspaceTop = ImGui::GetWindowPos().y;
@@ -37651,9 +37773,9 @@ void RenderUI(AppState& state) {
         MarkSettingsDirty(state);
     }
     const bool allowDockedLeftColumn = (state.panelSidebar.visible || anchoredTabGroup("filter")) &&
-        !state.panelSidebar.floating && !layoutTinyWidth;
+        !state.panelSidebar.floating;
     const bool allowDockedRightColumn = (state.panelFileInfo.visible || anchoredTabGroup("info")) &&
-        !state.panelFileInfo.floating && !layoutCompactWidth;
+        !state.panelFileInfo.floating;
     bool showLeftColumn = false;
     bool showRightColumn = false;
 
@@ -37738,12 +37860,14 @@ void RenderUI(AppState& state) {
     // The legacy columns are only the renderer for their home roots. Once a
     // panel is moved to another root, its Dock leaf owns both geometry and
     // content; keeping the old column visible would render a duplicate panel.
-    showLeftColumn = allowDockedLeftColumn && (!filterHasDockLeaf || filterDockedInLeft);
-    showRightColumn = allowDockedRightColumn && (!infoHasDockLeaf || infoDockedInRight);
     const aura::ui::dock::DockNode* leftRegionRoot = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left);
     const aura::ui::dock::DockNode* rightRegionRoot = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right);
     const bool leftRegionSplit = leftRegionRoot && leftRegionRoot->Kind() == aura::ui::dock::NodeKind::Split;
     const bool rightRegionSplit = rightRegionRoot && rightRegionRoot->Kind() == aura::ui::dock::NodeKind::Split;
+    showLeftColumn = allowDockedLeftColumn && (!layoutTinyWidth || leftRegionSplit) &&
+        (!filterHasDockLeaf || filterDockedInLeft);
+    showRightColumn = allowDockedRightColumn && (!layoutCompactWidth || rightRegionSplit) &&
+        (!infoHasDockLeaf || infoDockedInRight);
     const bool leftDockSlotRequired = showLeftColumn || leftRegionRoot != nullptr;
     const bool rightDockSlotRequired = showRightColumn || rightRegionRoot != nullptr;
 
@@ -37774,23 +37898,29 @@ void RenderUI(AppState& state) {
     // deliberately absent from the Dock tree and from all Dock split math.
 
     // Keep layout math consistent with the actual splitter widgets below.
-    float splitterWidth = 12.0f;
+    const float splitterWidth = WorkspacePanelGapPx() * 0.5f;
     // Browser still needs the same left/center splitter affordance as other
     // modes: the three-dot vertical grip sits at the left of the audio list and
     // lets users resize the folder navigator.
     const bool hideLeftSplitterInBrowser = false;
     const float leftCenterSplitterWidth =
-        (leftDockSlotRequired && !hideLeftSplitterInBrowser) ? splitterWidth : 0.0f;
+        (leftDockSlotRequired && !hideLeftSplitterInBrowser) ? kWorkspaceColumnSplitterHitWidth : 0.0f;
     const auto splitResizeMinimum = aura::ui::dock::DockMinimumPurpose::Resize;
+    constexpr float kFilterInfoShellRadius = aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
+    constexpr float kFloatingDockTitleHeight = 24.0f;
+    const auto dockLiveMinimum = [&](const aura::ui::dock::DockNode* root,
+                                     aura::ui::dock::DockMinimumPurpose purpose) {
+        return aura::ui::dock::DockSubtreeMinimum(root, viewport->DpiScale, purpose);
+    };
     const float leftSidebarMinWidth = leftRegionSplit
-        ? aura::ui::dock::DockSubtreeMinimum(leftRegionRoot, viewport->DpiScale, splitResizeMinimum).width
+        ? dockLiveMinimum(leftRegionRoot, splitResizeMinimum).width
         : workspacePx(layoutCompactWidth ? 96.0f : 160.0f);
     const float rightPanelMinWidth = rightRegionSplit
-        ? aura::ui::dock::DockSubtreeMinimum(rightRegionRoot, viewport->DpiScale, splitResizeMinimum).width : workspacePx(150.0f);
+        ? dockLiveMinimum(rightRegionRoot, splitResizeMinimum).width : workspacePx(150.0f);
     const float rightPanelMaxWidth = std::max(
         std::max(workspacePx(260.0f), rightPanelMinWidth),
         mainWorkW -
-            (leftDockSlotRequired ? (leftSidebarMinWidth + leftCenterSplitterWidth + splitterWidth) : splitterWidth) -
+            (leftDockSlotRequired ? (leftSidebarMinWidth + leftCenterSplitterWidth + kWorkspaceColumnSplitterHitWidth) : kWorkspaceColumnSplitterHitWidth) -
             minReadableCenterWidth);
     // Use stored panel widths (resizable).
     float rightPanelWidth = showRightColumn
@@ -37798,7 +37928,7 @@ void RenderUI(AppState& state) {
         : 0.0f;
     const float leftSidebarMaxWidth = std::max(
         std::max(leftSidebarMinWidth, workspacePx(layoutCompactWidth ? 220.0f : 400.0f)),
-        mainWorkW - (rightDockSlotRequired ? (rightPanelWidth + splitterWidth) : 0.0f) - minReadableCenterWidth);
+        mainWorkW - (rightDockSlotRequired ? (rightPanelWidth + kWorkspaceColumnSplitterHitWidth) : 0.0f) - minReadableCenterWidth);
     float leftPanelWidth = showLeftColumn
         ? std::clamp(workspacePx(state.panelSidebar.dockedWidth), leftSidebarMinWidth, leftSidebarMaxWidth)
         : 0.0f;
@@ -37833,7 +37963,7 @@ void RenderUI(AppState& state) {
         aura::ui::dock::ResolveDockColumnBudget(
             mainWorkW, leftDockSlotRequired, rightDockSlotRequired,
             requestedLeftDockWidth, requestedRightDockWidth, splitterWidth,
-            minReadableCenterWidth, rightPanelMinWidth);
+            minReadableCenterWidth, rightPanelMinWidth, leftSidebarMinWidth);
     const float leftDockColumnWidth = dockColumnBudget.leftWidth;
     const float rightDockColumnWidth = dockColumnBudget.rightWidth;
     if (showLeftColumn) leftPanelWidth = leftDockColumnWidth;
@@ -39269,7 +39399,11 @@ void RenderUI(AppState& state) {
     // magic +25 was too small at high DPI / startup transitions, so the status
     // bar could be pushed into the parent clip rect and appear cut off.
     const bool showDockedWaveform = state.panelWaveform.visible && !state.panelWaveform.floating && !layoutVeryShortHeight;
-    const float waveformSplitterReserve = showDockedWaveform ? 6.0f : 0.0f;
+    const float waveShellPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+    const float waveformPanelGapReserve = showDockedWaveform
+        ? WorkspacePanelGapPx() - 2.0f * waveShellPad
+        : 0.0f;
+    const float bottomLayoutReserve = showDockedWaveform ? 1.0f : 13.0f;
     const float startupListOffsetReserve = 15.0f * (1.0f - t);
     const float startupWaveformOffsetReserve =
         showDockedWaveform ? 40.0f * (1.0f - t) : 0.0f;
@@ -39283,8 +39417,8 @@ void RenderUI(AppState& state) {
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
     const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? workspacePx(36.0f) : 0.0f;
     const float baseOverhead = workspaceHeaderHeight + reservedStatusBarHeight +
-        waveformSplitterReserve + statusBottomLayoutReserve + startupListOffsetReserve +
-        startupWaveformOffsetReserve + 13.0f;
+        waveformPanelGapReserve + statusBottomLayoutReserve + startupListOffsetReserve +
+        startupWaveformOffsetReserve + bottomLayoutReserve;
     const float minimumWaveform = showDockedWaveform ? (layoutShortHeight ? 96.0f : 150.0f) : 0.0f;
     const float bandCenterWidth = std::max(1.0f, mainWorkW -
         (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
@@ -39349,7 +39483,7 @@ void RenderUI(AppState& state) {
                                        float& y) {
         if (!root) return;
         aura::ui::dock::DockModuleTarget leaves[16]{};
-        const int count = aura::ui::dock::CollectLeafRects(root, slot, leaves, 16, 0);
+        const int count = aura::ui::dock::CollectLeafRects(root, slot, leaves, 16, 0, viewport->DpiScale);
         for (int i = 0; i < count; ++i) {
             if (leaves[i].id != id) continue;
             width = leaves[i].rect.width;
@@ -39389,8 +39523,35 @@ void RenderUI(AppState& state) {
     const ImU32 kTitleText = ImGui::GetColorU32(state.settings.theme == AppTheme::LapisBlue
         ? kCurrentModules.transport.text
         : ThemeColors::peerPanelHeading(ThemeColors::current()));
-    constexpr float kFilterInfoShellRadius =
-        aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
+    const auto useSharedSimilarAppearance = [&] {
+        return state.settings.theme != AppTheme::Custom &&
+            !state.settings.useCustomColors && !ThemeColors::customized();
+    };
+    const auto usesDockToolPalette = [](std::string_view module) {
+        return module == "info" || module == "similar-sounds" || module == "mod-ucs-browser" ||
+               module == "mod-tag-browser" || module == "mod-workflow" || module == "mod-transfer";
+    };
+    struct DockToolPalette {
+        ImVec4 body;
+        ImVec4 bodyText;
+        ImVec4 title;
+        ImVec4 titleText;
+    };
+    const auto resolveDockToolPalette = [&](std::string_view module) -> DockToolPalette {
+        const auto& theme = ThemeColors::current();
+        const ImVec4 body = uiWithAlpha(module == "similar-sounds"
+            ? (useSharedSimilarAppearance() ? theme.metadataPanelBG : theme.filterBrowserBG)
+            : ThemeColors::infoPanelDockBG(theme), 1.0f);
+        const ImVec4 title = TransportContrast::Over(workspaceDockTitleSurface, body);
+        return {body, TransportContrast::ForSurface(theme.metadataPanelText, body),
+                title, TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(kTitleText), title, 4.7)};
+    };
+    const auto pushDockToolBodyStyle = [](const DockToolPalette& palette) {
+        const int colors = PushFileInfoShellStyle(ThemeColors::current());
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.bodyText);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, palette.body);
+        return colors + 2;
+    };
     constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
     const float infoDockTitleHeight = workspacePx(24.0f);
 
@@ -39399,13 +39560,14 @@ void RenderUI(AppState& state) {
                                 float w,
                                 float h,
                                 const char* title,
+                                const ImVec4& titleSurface,
                                 ImU32 titleColor,
                                 ImDrawFlags titleRoundFlags = ImDrawFlags_RoundCornersTop,
                                 float titleTextScale = 1.0f) {
         dl->AddRectFilled(
             wp,
             ImVec2(wp.x + w, wp.y + h),
-            ImGui::GetColorU32(workspaceDockTitleSurface),
+            ImGui::GetColorU32(titleSurface),
             kFilterInfoShellRadius,
             titleRoundFlags);
         if (!title) return;
@@ -39425,7 +39587,7 @@ void RenderUI(AppState& state) {
         float insetT = kDockShellVerticalInset;
         float insetB = kDockShellVerticalInset;
         float innerPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
-        float titleHeight = 24.0f;
+        float titleHeight = kFloatingDockTitleHeight;
         float shellWidth = 0.0f;
         ImVec2 shellMin{};
         ImVec2 shellMax{};
@@ -39446,8 +39608,11 @@ void RenderUI(AppState& state) {
                                    const ImVec4& bodyBg,
                                    ImU32 titleColor,
                                    bool keepFilterRim = false,
-                                   float titleHeight = 24.0f) {
+                                   float titleHeight = 24.0f,
+                                   std::string_view module = {}) {
         DockModuleShellLayout layout;
+        layout.insetL = splitterWidth;
+        layout.insetR = splitterWidth;
         layout.titleHeight = titleHeight;
         layout.shellWidth = (std::max)(120.0f, panelWidth - layout.insetL - layout.insetR);
         layout.shellMin = ImVec2(winPos.x + layout.insetL, winPos.y + layout.insetT);
@@ -39500,7 +39665,11 @@ void RenderUI(AppState& state) {
             ImGui::GetColorU32(bodyBg),
             kFilterInfoShellRadius,
             contentRoundFlags);
-        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title, titleColor,
+        const bool sharedPalette = usesDockToolPalette(module);
+        const auto palette = sharedPalette ? resolveDockToolPalette(module) : DockToolPalette{};
+        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title,
+            sharedPalette ? palette.title : workspaceDockTitleSurface,
+            sharedPalette ? ImGui::GetColorU32(palette.titleText) : titleColor,
             titleRoundFlags, layout.titleHeight / 24.0f);
         dl->AddLine(
             ImVec2(layout.contentMin.x + 0.5f, layout.contentMin.y + 0.5f),
@@ -39675,12 +39844,16 @@ void RenderUI(AppState& state) {
             !state.settings.useCustomColors && !ThemeColors::customized() &&
             (std::strcmp(moduleId, "info") == 0 ||
              std::strcmp(moduleId, "similar-sounds") == 0);
-        const ImVec4 floatingTitleSurface = infoFamily
-            ? uiWithAlpha(workspaceDockTitleSurface, 1.0f) : workspaceDockTitleSurface;
-        const ImVec4 floatingTitleInk = infoFamily
-            ? TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(kTitleText),
-                floatingTitleSurface, 4.7)
-            : ImGui::ColorConvertU32ToFloat4(kTitleText);
+        const bool sharedPalette = usesDockToolPalette(moduleId);
+        const auto palette = sharedPalette ? resolveDockToolPalette(moduleId) : DockToolPalette{};
+        const ImVec4 floatingBody = sharedPalette ? palette.body :
+            uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
+        const ImVec4 floatingTitleSurface = sharedPalette ? palette.title :
+            uiWithAlpha(workspaceDockTitleSurface, 1.0f);
+        const ImVec4 floatingTitleInk = sharedPalette ? palette.titleText : TransportContrast::ForSurface(
+            ImGui::ColorConvertU32ToFloat4(kTitleText), floatingTitleSurface, 4.7);
+        const ImVec4 floatingBodyInk = sharedPalette ? palette.bodyText :
+            TransportContrast::ForSurface(kCurrentModules.filterBrowser.text, floatingBody);
         ImFont* emph = GetUIFontEmphasis();
         if (emph) ImGui::PushFont(emph);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
@@ -39691,9 +39864,7 @@ void RenderUI(AppState& state) {
         // Draw the one rounded perimeter below. Native viewport decorations
         // otherwise force their perimeter to square even with WindowRounding.
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg,
-            infoFamily ? ThemeColors::infoPanelDockBG(ThemeColors::current())
-                       : uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, floatingBody);
         ImGui::PushStyleColor(ImGuiCol_TitleBg, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, floatingTitleSurface);
@@ -39714,6 +39885,7 @@ void RenderUI(AppState& state) {
         ImGui::PopStyleVar(4);
         if (emph) ImGui::PopFont();
         if (visible) {
+            ImGui::PushStyleColor(ImGuiCol_Text, floatingBodyInk);
             const ImVec2 pos = ImGui::GetWindowPos();
             const ImVec2 size = ImGui::GetWindowSize();
 #ifdef _WIN32
@@ -39746,6 +39918,26 @@ void RenderUI(AppState& state) {
         return visible;
     };
 
+    const auto beginDockContentViewport = [&](std::string_view module, const char* childId,
+                                              const ImVec2& outerSize, const ImVec2& bodySize,
+                                              ImGuiWindowFlags flags = ImGuiWindowFlags_None) {
+        if (!state.dockTabGroups.Find(module)) {
+            const auto minimum = aura::ui::dock::DockModuleMinimum(
+                module, viewport->DpiScale, splitResizeMinimum);
+            const float missingWidth = minimum.width - outerSize.x;
+            const float missingHeight = module == "mod-transfer" ? 0.0f : minimum.height - outerSize.y;
+            if (missingWidth > 0.5f || missingHeight > 0.5f) {
+                ImGui::SetNextWindowContentSize(ImVec2(
+                    missingWidth > 0.5f ? bodySize.x + missingWidth : 0.0f,
+                    missingHeight > 0.5f ? bodySize.y + missingHeight : 0.0f));
+                flags &= ~(ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            }
+            if (!(flags & ImGuiWindowFlags_NoScrollbar))
+                flags |= ImGuiWindowFlags_HorizontalScrollbar;
+        }
+        return BeginTransientScrollbarChild(childId, bodySize, false, flags);
+    };
+
     auto renderFunctionDockedModule = [&](const aura::ui::dock::DockModuleTarget& leaf,
                                            const char* moduleId,
                                            PanelState& panel,
@@ -39761,13 +39953,14 @@ void RenderUI(AppState& state) {
         ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
         bool open = true;
-        const int styleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const auto palette = resolveDockToolPalette(moduleId);
+        const int styleCount = pushDockToolBodyStyle(palette);
         if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
             const ImVec2 pos = ImGui::GetWindowPos();
             const ImVec2 size = ImGui::GetWindowSize();
-            const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
             const DockModuleShellLayout shell = drawDockModuleShell(
-                ImGui::GetWindowDrawList(), pos, size.x, size.y, title, bodyBg, kTitleText);
+                ImGui::GetWindowDrawList(), pos, size.x, size.y, title,
+                palette.body, kTitleText, false, 24.0f, moduleId);
             ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
             ImGui::InvisibleButton(titleId, ImVec2(shell.shellWidth, shell.titleHeight));
             beginDockedPanelDrag(moduleId, panel,
@@ -39792,8 +39985,7 @@ void RenderUI(AppState& state) {
                 size.x - shell.insetL - shell.insetR - shell.innerPad * 2.0f);
             const float contentHeight = std::max(1.0f,
                 size.y - shell.insetT - shell.insetB - shell.titleHeight - 8.0f);
-            if (BeginTransientScrollbarChild(contentId,
-                    ImVec2(contentWidth, contentHeight), false)) {
+            if (beginDockContentViewport(moduleId, contentId, size, ImVec2(contentWidth, contentHeight))) {
                 renderContent(state);
             }
             ImGui::EndChild();
@@ -39826,10 +40018,6 @@ void RenderUI(AppState& state) {
         int colors;
         int vars;
         bool similarPerimeter;
-    };
-    const auto useSharedSimilarAppearance = [&] {
-        return state.settings.theme != AppTheme::Custom &&
-            !state.settings.useCustomColors && !ThemeColors::customized();
     };
     const auto pushDockedToolAppearance = [&](std::string_view module) -> DockedToolAppearance {
         const auto& theme = ThemeColors::current();
@@ -39896,20 +40084,21 @@ void RenderUI(AppState& state) {
             return {uiWithAlpha(uiMix(uiMix(theme.filterBrowserBG, warmWhite, lift),
                                 theme.mainWindowBG, 0.05f), 1.0f), 21, 4, false};
         }
+        const auto palette = resolveDockToolPalette(module);
         if (module == "info") {
-            const ImVec4 body = ThemeColors::infoPanelDockBG(theme);
             const ImVec4 scrollbar = ThemeColors::fileInfoPanelScrollbar(theme);
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, body);
-            ImGui::PushStyleColor(ImGuiCol_Text, theme.metadataPanelText);
-            aura::ui::workspace::PushTransientScrollbarColors(
+            const int bodyColors = pushDockToolBodyStyle(palette);
+            const int scrollbarColors = aura::ui::workspace::PushTransientScrollbarColors(
                 ImVec4(scrollbar.x, scrollbar.y, scrollbar.z, 0.40f),
                 ImVec4(scrollbar.x, scrollbar.y, scrollbar.z, 0.60f),
                 ImVec4(scrollbar.x, scrollbar.y, scrollbar.z, 0.80f));
-            return {body, 6, 0, false};
+            return {palette.body, bodyColors + scrollbarColors, 0, false};
         }
         const bool similarPerimeter = module == "similar-sounds" && useSharedSimilarAppearance();
-        const ImVec4 body = uiWithAlpha(similarPerimeter ? theme.metadataPanelBG : theme.filterBrowserBG, 1.0f);
-        return {body, PushFileInfoShellStyle(theme), 0, similarPerimeter};
+        if (usesDockToolPalette(module)) {
+            return {palette.body, pushDockToolBodyStyle(palette), 0, similarPerimeter};
+        }
+        return {uiWithAlpha(theme.filterBrowserBG, 1.0f), PushFileInfoShellStyle(theme), 0, false};
     };
     const auto popDockedToolAppearance = [](const DockedToolAppearance& appearance) {
         ImGui::PopStyleColor(appearance.colors);
@@ -39972,8 +40161,9 @@ void RenderUI(AppState& state) {
         const ImGuiWindowFlags bodyFlags = isSimilar
             ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
             : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
-        const bool bodyVisible = BeginTransientScrollbarChild(childId, bodySize, false, bodyFlags);
-        if (bodyVisible) renderToolContent(module, bodySize.x, sidebarScope);
+        const ImVec2 outerSize(shell.shellWidth + shell.insetL + shell.insetR, shellHeight);
+        const bool bodyVisible = beginDockContentViewport(module, childId, outerSize, bodySize, bodyFlags);
+        if (bodyVisible) renderToolContent(module, std::max(bodySize.x, ImGui::GetContentRegionAvail().x), sidebarScope);
         ImGui::EndChild();
         if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
     };
@@ -40008,7 +40198,7 @@ void RenderUI(AppState& state) {
             const DockModuleShellLayout leftShell = drawDockModuleShell(
                 dl, winPos, filterShellWidth, leftShellHeight,
                 leftTabGroup ? nullptr : L(Panel_FilterTitle), appearance.bodyBg, kTitleText,
-                displayedTool == "filter");
+                displayedTool == "filter", 24.0f, displayedTool);
 
             if (leftTabGroup) {
                 tabStrip(*leftTabGroup, leftShell);
@@ -40057,17 +40247,13 @@ void RenderUI(AppState& state) {
         popDockedToolAppearance(appearance);
         ImGui::EndChild();
 
-        // The child may render a nested Dock leaf at an offset position. Restore
-        // the outer column edge before creating ##LeftSplitter so the legacy
-        // splitter remains the owner of the whole left-column width.
-        ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
         if (!hideLeftSplitterInBrowser) {
             const float previousWidth = workspacePx(state.panelSidebar.dockedWidth);
             float dragWidth = previousWidth;
             VerticalSplitter("##LeftSplitter", &dragWidth,
-                leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth, sideColumnHeight);
+                leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth,
+                sideColumnHeight, ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
             if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
-            ImGui::SameLine(0, 0);
         }
     }
 
@@ -40141,15 +40327,34 @@ void RenderUI(AppState& state) {
         const float infoActionWidth = hasInfoActions ? FileInfoPageActionsWidth(state, infoActionBudget, true) : 0.0f;
         const ImGuiTabBarFlags barFlags = ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll |
             ImGuiTabBarFlags_NoCloseWithMiddleMouseButton | ImGuiTabBarFlags_DrawSelectedOverline;
-        const ImVec4 ink = ImGui::ColorConvertU32ToFloat4(kTitleText);
-        const ImVec4 selectedSurface = uiWithAlpha(uiMix(workspaceDockTitleSurface, ink, 0.10f), 1.0f);
+        const bool sharedPalette = usesDockToolPalette(selected);
+        const auto palette = sharedPalette ? resolveDockToolPalette(selected) : DockToolPalette{};
+        const ImVec4 ink = sharedPalette ? palette.titleText : ImGui::ColorConvertU32ToFloat4(kTitleText);
+        const ImVec4 tabSurface = sharedPalette ? palette.title : workspaceDockTitleSurface;
+        const auto tabTint = [&](float amount) {
+            const ImVec4 tint = uiWithAlpha(uiMix(tabSurface, ink, amount), 1.0f);
+            return !sharedPalette || TransportContrast::Ratio(ink, tint) >= 4.5 ? tint : tabSurface;
+        };
+        const ImVec4 selectedSurface = tabTint(0.10f);
+        const ImVec4 accent = sharedPalette ? TransportContrast::ForSurface(dockTabAccent, selectedSurface, 3.0)
+                                            : dockTabAccent;
+        if (sharedPalette) {
+            if (!docked) {
+                // Transparent tabs need the same backing surface as tabs in the docked title.
+                const ImVec2 start = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(start,
+                    ImVec2(start.x + headerWidth, start.y + headerHeight),
+                    ImGui::GetColorU32(palette.title));
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, ink);
+        }
         ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4());
         ImGui::PushStyleColor(ImGuiCol_TabDimmed, ImVec4());
         ImGui::PushStyleColor(ImGuiCol_TabSelected, selectedSurface);
         ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, selectedSurface);
-        ImGui::PushStyleColor(ImGuiCol_TabHovered, uiWithAlpha(uiMix(workspaceDockTitleSurface, ink, 0.16f), 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, dockTabAccent);
-        ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, dockTabAccent);
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, tabTint(0.16f));
+        ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, accent);
+        ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, accent);
         ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, 3.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_TabBarOverlineSize, 2.0f);
         const auto beginTabBar = [&] {
@@ -40260,7 +40465,7 @@ void RenderUI(AppState& state) {
             ImGui::EndTabBar();
         }
         ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(7);
+        ImGui::PopStyleColor(sharedPalette ? 8 : 7);
         if (!tabAvailable(active)) {
             const auto first = std::find_if(group.members.begin(), group.members.end(), tabAvailable);
             if (first == group.members.end()) {
@@ -45982,9 +46187,7 @@ void RenderUI(AppState& state) {
     if (showRightColumn && (rightTabGroup || !state.dockTabGroups.Find("info"))) {
         // A nested right Dock leaf can move the child cursor inward. The
         // legacy splitter still belongs at the outer results/info boundary.
-        ImGui::SetCursorScreenPos(ImVec2(
-            viewport->WorkPos.x + mainWorkW - rightPanelWidth - splitterWidth,
-            dockColumnTop));
+        const float rightColumnX = viewport->WorkPos.x + mainWorkW - rightPanelWidth;
         const float previousWidth = workspacePx(state.panelFileInfo.dockedWidth);
         float dragWidth = previousWidth;
         VerticalSplitter(
@@ -45993,10 +46196,11 @@ void RenderUI(AppState& state) {
             rightPanelMinWidth,
             rightPanelMaxWidth,
             sideColumnHeight,
+            ImVec2(rightColumnX, dockColumnTop),
             true);  // invertDelta for right panel
         if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
 
-        ImGui::SameLine(0, 0);
+        ImGui::SetCursorScreenPos(ImVec2(rightColumnX, dockColumnTop));
         const std::string displayedTool = selectedDockTool(rightTabGroup, "info");
         const auto appearance = pushDockedToolAppearance(displayedTool);
         const float rightColumnChildWidth = rightRegionSplit ? infoShellWidth : rightPanelWidth;
@@ -46015,7 +46219,7 @@ void RenderUI(AppState& state) {
         const ImVec2 size = ImGui::GetWindowSize();
         const DockModuleShellLayout rightShell = drawDockModuleShell(
             dl, pos, size.x, size.y, rightTabGroup ? nullptr : L(View_InfoPanel), appearance.bodyBg, kTitleText,
-            displayedTool == "filter", displayedTool == "info" ? infoDockTitleHeight : 24.0f);
+            displayedTool == "filter", displayedTool == "info" ? infoDockTitleHeight : 24.0f, displayedTool);
 
         if (rightTabGroup) {
             renderDockTabsInShell(*rightTabGroup, rightShell);
@@ -46228,25 +46432,12 @@ void RenderUI(AppState& state) {
     // BOTTOM - Waveform and Transport (with resizable splitter)
     // The center may end above a bottom Dock band; the waveform always starts
     // after the full-height side columns, never over a newly docked panel.
-    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
-        dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y));
-
     if (showDockedWaveform) {
-    // 启动动画：自底升起
-    float offsetY = 40.0f * (1.0f - t);
-        ImVec2 currentPos = ImGui::GetCursorPos();
-        const ImVec4 transportSeamBg = uiWithAlpha(
-            uiMix(kCurrentModules.transport.background, kCurrentModules.waveform.background, 0.38f),
-            1.0f);
-        if (offsetY > 0.5f) {
-            ImVec2 gapMin = ImGui::GetCursorScreenPos();
-            ImVec2 gapMax(gapMin.x + ImGui::GetContentRegionAvail().x, gapMin.y + offsetY);
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                gapMin, gapMax,
-                ImGui::GetColorU32(transportSeamBg),
-                0.0f);
-        }
-    ImGui::SetCursorPos(ImVec2(currentPos.x, currentPos.y + offsetY));
+    const float dockColumnBottom = dockColumnTop + sideColumnHeight;
+    const float waveformDockY = dockColumnBottom + waveformPanelGapReserve + startupWaveformOffsetReserve;
+    const float waveformSeamCenter = (dockColumnBottom + waveformDockY) * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
+        waveformSeamCenter - kWorkspaceHorizontalSplitterHitHeight * 0.5f));
 
     // Three-dot results/waveform boundary handle. Only the main waveform's
     // dockedHeight is mutated; drag up grows, drag down shrinks.
@@ -46258,16 +46449,10 @@ void RenderUI(AppState& state) {
         MarkSettingsDirty(state);
     }
 
-    // 波形 / 传输与筛选器、Info 视为同级面板，先统一外壳底色；内部波形区域仍单独走 waveformBG。
     const float waveformDockHeight = waveformPanelHeight + playlistQuickBarHeight;
-    const ImVec4 kLegacyWaveDockSurface = uiWithAlpha(
-        uiMix(kCurrentModules.waveform.background, kCurrentModules.results.background, 0.20f),
-        1.0f);
-    const ImVec4 workspaceWaveDockSurface = kUsePreWorkspaceSemanticColors
-        ? kLegacyWaveDockSurface
-        : workspacePalette.applicationSurface;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, workspaceWaveDockSurface);
-    BeginTransientScrollbarChild("WaveformPanel", ImVec2(0, waveformDockHeight), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x, waveformDockY));
+    BeginTransientScrollbarChild("WaveformPanel", ImVec2(0, waveformDockHeight), false,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
     {
         // Fold the old separate title strip into the transport surface so the
         // bottom dock reads as one continuous band instead of stacked black bars.
@@ -46278,7 +46463,6 @@ void RenderUI(AppState& state) {
         float titleHeight = 0.0f;
 
         const auto& waveformShellTheme = ThemeColors::current();
-        const float waveShellPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         const float waveShellInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         const float waveQuickBarH = state.settings.showPlaylistQuickBar ? playlistQuickBarHeight : 0.0f;
         const float waveQuickBarGap = waveQuickBarH > 0.0f ? workspacePx(4.0f) : 0.0f;
@@ -48349,13 +48533,12 @@ void RenderUI(AppState& state) {
         const float pitchModeTopOffset = 22.0f;
         const float pitchModeHeight = 14.0f;
         const float pitchColumnTailHeight = pitchModeTopOffset + pitchModeHeight;
-        float panelAvailH = ImGui::GetContentRegionAvail().y;
+        const float waveFooterGap = 1.0f;
+        const float waveFooterEdge = 2.0f;
+        const float panelAvailH = ImGui::GetContentRegionAvail().y;
         // The zoom/navigation bar is a transient overlay on the waveform. It
         // must not reserve a permanent blank shelf when its visual is hidden.
-        // The pitch mode switch extends below the wheel farther than the
-        // waveform footer, so both columns must reserve the deeper tail.
-        const float reservedH = std::max(waveFileNameBarHeight, pitchColumnTailHeight);
-        const float availHeight = std::max(24.0f, panelAvailH - reservedH);
+        const float pitchWheelHeight = std::max(24.0f, panelAvailH - std::max(waveFileNameBarHeight, pitchColumnTailHeight));
         const float pitchColumnY = ImGui::GetCursorScreenPos().y;
 
         // INDEPENDENT PLAYER FOOTER CONTROL STRIP
@@ -48371,7 +48554,7 @@ void RenderUI(AppState& state) {
                 ThemeColors::isLightChromeTheme(playerFooterStripTheme);
             const ImVec2 playerFooterStripMin(
                 pitchColumnOriginX,
-                pitchColumnY + availHeight + 1.0f);
+                pitchColumnY + pitchWheelHeight + waveFooterGap);
             const ImVec2 playerFooterStripMax(
                 ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x,
                 pitchColumnY + panelAvailH);
@@ -48404,7 +48587,7 @@ void RenderUI(AppState& state) {
 
         {
             ImDrawList* pwDl = ImGui::GetWindowDrawList();
-            float pwHeight = availHeight;
+            float pwHeight = pitchWheelHeight;
             float pwX = pitchWheelPos.x;
             float pwY = pitchWheelPos.y;
 
@@ -48823,7 +49006,7 @@ void RenderUI(AppState& state) {
         float waveformWidth = ImGui::GetContentRegionAvail().x - meterWidth - (meterWidth > 0 ? 5 : 0);
         // Ensure minimum waveform width
         if (waveformWidth < 100.0f) waveformWidth = 100.0f;
-        float waveformHeight = availHeight;
+        float waveformHeight = std::max(24.0f, panelAvailH - waveFileNameBarHeight - waveFooterGap - waveFooterEdge);
         ImVec2 waveformPos = ImGui::GetCursorScreenPos();
 
         // Generate spectrogram if needed（与 RenderHybridWaveformDock 解耦一致）
@@ -49186,8 +49369,8 @@ void RenderUI(AppState& state) {
                 ThemeColors::isLightChromeTheme(footerShelfTheme));
             const bool footerShelfIsLight = ThemeColors::isLightChromeTheme(footerShelfTheme);
             const float meterFooterExtraW = state.showLoudnessMeter ? (5.0f + meterWidth) : 0.0f;
-            const float footerShelfTopY = waveformPos.y + waveformHeight + 1.0f;
-            const float footerShelfBottomY = footerShelfTopY + waveFileNameBarHeight + 2.0f;
+            const float footerShelfTopY = waveformPos.y + waveformHeight + waveFooterGap;
+            const float footerShelfBottomY = footerShelfTopY + waveFileNameBarHeight + waveFooterEdge;
             const ImVec2 footerShelfMin(waveformPos.x, footerShelfTopY);
             const ImVec2 footerShelfMax(waveformPos.x + waveformWidth, footerShelfBottomY);
             const ImVec2 footerShelfVisualMax(footerShelfMax.x + meterFooterExtraW, footerShelfBottomY);
@@ -49361,7 +49544,7 @@ void RenderUI(AppState& state) {
         // 🚀 UNIFIED WAVEFORM FOOTER (Filename + Selection Data)
 
         {
-            const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + 1.0f);
+            const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + waveFooterGap);
             ImGui::SetCursorScreenPos(ImVec2(waveformPos.x, footerPos.y));
 
             // 1. Prepare footer text + lane geometry.
@@ -50933,7 +51116,6 @@ void RenderUI(AppState& state) {
             "waveformSplitterBG", L(ThemeCol_waveformSplitterBG));
     }
     ImGui::EndChild();
-    ImGui::PopStyleColor();
     }  // End of waveform panel visible && !floating check
 
     // FLOATING PANELS with Drag-to-Dock Support (Wwise style)
@@ -50988,7 +51170,7 @@ void RenderUI(AppState& state) {
 #endif
         cachedDockFrameGeometry = aura::ui::dock::BuildDockFrameGeometry(
             g_dockLayout, mainWork, workspaceHeaderHeight,
-            reservedStatusBarHeight, rootSlots, legacyColumns, legacyColumnCount);
+            reservedStatusBarHeight, rootSlots, legacyColumns, legacyColumnCount, viewport->DpiScale);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         if (auto& trace = aura::ui::dock::ActiveDockFrameTrace(); trace.enabled) {
             ++trace.geometryCalls;
@@ -51406,6 +51588,7 @@ void RenderUI(AppState& state) {
             RememberFloatingPanelMonitor(state, panel);
             driveFloatingDockDrag(moduleId, panel, pos, size);
             ImGui::TextUnformatted(title);
+            ImGui::PopStyleColor();
         }
         if (!open) {
             panel.visible = false;
@@ -51434,7 +51617,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(panel.floatW, panel.floatH), placementCond);
         const std::string windowTitle = std::string(title) + "##Floating-" + moduleId;
         bool open = true;
-        const int styleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const int styleCount = pushDockToolBodyStyle(resolveDockToolPalette(moduleId));
         const bool windowVisible = beginFilterStyleFloatingWindow(
             windowTitle.c_str(), &open, moduleId);
         if (windowVisible) {
@@ -51464,6 +51647,7 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
             renderContent(state);
+            ImGui::PopStyleColor();
         }
         if (!open || !*show) {
             panel.visible = false;
@@ -51509,6 +51693,7 @@ void RenderUI(AppState& state) {
             driveFloatingDockDrag("search-results", g_searchResultsDockPanel, resultsPos, resultsSize);
             const ImVec2 content = ImGui::GetContentRegionAvail();
             renderResultsSurface((std::max)(200.0f, content.x), (std::max)(100.0f, content.y));
+            ImGui::PopStyleColor();
         }
         if (!resultsOpen) {
             g_searchResultsDockPanel.visible = false;
@@ -51556,6 +51741,7 @@ void RenderUI(AppState& state) {
             }
 
             RenderSidebarPanelContent(state, "FloatSidebar");
+            ImGui::PopStyleColor();
         }
         if (!open) state.panelSidebar.visible = false;
         ImGui::End();
@@ -51570,7 +51756,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelFileInfo.floatX, state.panelFileInfo.floatY), fileInfoPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelFileInfo.floatW, state.panelFileInfo.floatH), fileInfoPlacementCond);
         bool open = true;
-        const int fileInfoStyleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const int fileInfoStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("info"));
         const bool fileInfoWindowVisible = beginFilterStyleFloatingWindow(
             u8"Info##FloatingFileInfo", &open, "info");
         if (fileInfoWindowVisible) {
@@ -51602,6 +51788,7 @@ void RenderUI(AppState& state) {
                 RenderFileInfoPanelContent(state, size.x);
             }
             DevTools_EndFramePhase();
+            ImGui::PopStyleColor();
         }
         if (!open) state.panelFileInfo.visible = false;
         ImGui::End();
@@ -51619,7 +51806,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelSimilarSounds.floatX, state.panelSimilarSounds.floatY), similarPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelSimilarSounds.floatW, state.panelSimilarSounds.floatH), similarPlacementCond);
         bool similarOpen = true;
-        const int similarStyleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const int similarStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("similar-sounds"));
         const bool similarWindowVisible = beginFilterStyleFloatingWindow(
             (std::string(L(Similar_Title)) + "##FloatingSimilarSounds").c_str(),
             &similarOpen, "similar-sounds");
@@ -51656,6 +51843,7 @@ void RenderUI(AppState& state) {
                     kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
                     aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
             }
+            ImGui::PopStyleColor();
         }
         if (!similarOpen) {
             state.panelSimilarSounds.visible = false;
@@ -51681,7 +51869,9 @@ void RenderUI(AppState& state) {
         bool open = true;
         const bool filterStyle = selected == "filter";
         const auto& theme = ThemeColors::current();
-        const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) : PushFileInfoShellStyle(theme);
+        const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) :
+            usesDockToolPalette(selected) ? pushDockToolBodyStyle(resolveDockToolPalette(selected)) :
+            PushFileInfoShellStyle(theme);
         if (filterStyle) pushFilterFrameStyle(0.0f);
         if (beginFilterStyleFloatingWindow(title.c_str(), &open, selected.c_str())) {
             const auto pos = ImGui::GetWindowPos();
@@ -51714,6 +51904,7 @@ void RenderUI(AppState& state) {
             renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
             if (selected == "similar-sounds" && useSharedSimilarAppearance())
                 drawSimilarBodyPerimeter(contentPos, contentSize);
+            ImGui::PopStyleColor();
         }
         if (!open) {
             for (const auto& member : group.members) tabPanel(member)->visible = false;
@@ -51755,7 +51946,7 @@ void RenderUI(AppState& state) {
                 const ImVec2 bodySize = ImGui::GetWindowSize();
                 const auto shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), bodyPos, bodySize.x, bodySize.y, nullptr, appearance.bodyBg, kTitleText,
-                    selected == "filter");
+                    selected == "filter", 24.0f, selected);
                 renderDockTabsInShell(group, shell);
                 renderDockedToolBody(selected, shell, bodySize.y, appearance.similarPerimeter, "GroupedDockedSidebar");
             }
@@ -51839,12 +52030,12 @@ void RenderUI(AppState& state) {
                 ImGui::SetCursorPos(ImVec2(
                     shell.insetL + shell.innerPad,
                     shell.insetT + shell.titleHeight + 4.0f));
-                BeginTransientScrollbarChild(
-                    "DockedFilterContent",
+                if (beginDockContentViewport(
+                    "filter", "DockedFilterContent", size,
                     ImVec2(shell.shellWidth - shell.innerPad * 2.0f,
-                           std::max(1.0f, size.y - shell.insetT - shell.insetB - shell.titleHeight - 6.0f)),
-                    false);
-                RenderSidebarPanelContent(state, "DockedFilter");
+                           std::max(1.0f, size.y - shell.insetT - shell.insetB - shell.titleHeight - 6.0f)))) {
+                    RenderSidebarPanelContent(state, "DockedFilter");
+                }
                 ImGui::EndChild();
             }
             if (!open || !state.panelSidebar.visible) {
@@ -51861,18 +52052,17 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const int dockedInfoStyle = PushFileInfoShellStyle(ThemeColors::current());
+            const auto palette = resolveDockToolPalette("info");
+            const int dockedInfoStyle = pushDockToolBodyStyle(palette);
             if (beginSharedDockWindowHost(
                     (std::string(L(View_InfoPanel)) + "##DockedFileInfo").c_str(),
                     &open,
                     dockFlags)) {
                 const ImVec2 pos = ImGui::GetWindowPos();
                 const ImVec2 size = ImGui::GetWindowSize();
-                const ImVec4 bodyBg = uiWithAlpha(
-                    ThemeColors::infoPanelDockBG(ThemeColors::current()), 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(View_InfoPanel), bodyBg, kTitleText, false, infoDockTitleHeight);
+                    L(View_InfoPanel), palette.body, kTitleText, false, infoDockTitleHeight, "info");
                 const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, shell.insetT);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
@@ -51896,16 +52086,15 @@ void RenderUI(AppState& state) {
                     shell.insetL + shell.innerPad,
                     shell.insetT + shell.titleHeight + 8.0f));
                 const float infoContentWidth = std::max(1.0f, shell.shellWidth - shell.innerPad * 2.0f);
-                BeginTransientScrollbarChild(
-                    "FileInfoContent",
+                const bool infoVisible = beginDockContentViewport(
+                    "info", "FileInfoContent", size,
                     ImVec2(infoContentWidth, std::max(1.0f, size.y - shell.titleHeight -
                         shell.insetT - shell.insetB - 16.0f)),
-                    false,
                     ImGuiWindowFlags_NoScrollbar);
                 DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
-                {
+                if (infoVisible) {
                     ReadingTextScope _readingInfo;
-                    RenderFileInfoPanelContent(state, infoContentWidth);
+                    RenderFileInfoPanelContent(state, std::max(infoContentWidth, ImGui::GetContentRegionAvail().x));
                 }
                 DevTools_EndFramePhase();
                 ImGui::EndChild();
@@ -51923,25 +52112,23 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const int dockedSimilarStyle = PushFileInfoShellStyle(ThemeColors::current());
+            const auto palette = resolveDockToolPalette("similar-sounds");
+            const int dockedSimilarStyle = pushDockToolBodyStyle(palette);
             if (beginSharedDockWindowHost(
                     (std::string(L(Similar_Title)) + "##DockedSimilarSounds").c_str(),
                     &open,
                     dockFlags)) {
                 ImDrawList* similarDl = ImGui::GetWindowDrawList();
                 const auto& similarTheme = ThemeColors::current();
-                const bool sharedSimilarStyle = state.settings.theme != AppTheme::Custom &&
-                    !state.settings.useCustomColors && !ThemeColors::customized();
-                const ImVec4 similarBody = uiWithAlpha(
-                    sharedSimilarStyle ? similarTheme.metadataPanelBG : similarTheme.filterBrowserBG, 1.0f);
+                const bool sharedSimilarStyle = useSharedSimilarAppearance();
                 const DockModuleShellLayout similarShell = drawDockModuleShell(
                     similarDl,
                     ImGui::GetWindowPos(),
                     leaf.rect.width,
                     leaf.rect.height,
                     L(Similar_Title),
-                    similarBody,
-                    kTitleText);
+                    palette.body,
+                    kTitleText, false, 24.0f, "similar-sounds");
                 ImGui::SetCursorPos(ImVec2(similarShell.insetL, similarShell.insetT));
                 ImGui::InvisibleButton("##DockedSimilarSoundsTitle",
                     ImVec2(similarShell.shellWidth, similarShell.titleHeight));
@@ -51980,10 +52167,10 @@ void RenderUI(AppState& state) {
                     leaf.rect.height - similarShell.insetT - similarShell.insetB -
                         similarShell.titleHeight - 8.0f - similarContentInset * 2.0f);
                 const ImVec2 similarContentMin = ImGui::GetCursorScreenPos();
-                if (ImGui::BeginChild(
-                        "##DockedSimilarSoundsContent",
+                if (beginDockContentViewport(
+                        "similar-sounds", "##DockedSimilarSoundsContent",
+                        ImVec2(leaf.rect.width, leaf.rect.height),
                         ImVec2(similarContentWidth, similarContentHeight),
-                        false,
                         ImGuiWindowFlags_NoBackground |
                             ImGuiWindowFlags_NoScrollbar |
                             ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -52023,12 +52210,11 @@ void RenderUI(AppState& state) {
     }
 
     {
-        const float minBandHeight = aura::ui::dock::kDockBandMinHeight;
         float* topHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Top);
         if (topHeightOwner != nullptr && topDockReserve > 0.0f) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.top.x, dockColumnTop + topDockBandHeight));
-            const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
-                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top), viewport->DpiScale).height);
+            const float minimum = aura::ui::dock::DockBandMinimum(
+                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top), viewport->DpiScale).height;
             float resizedHeight = topDockBandHeight;
             if (HorizontalSplitter("##TopDockSplitter", &resizedHeight, minimum,
                     std::max(minimum, availHeight + topDockBandHeight - minContentHeight),
@@ -52041,8 +52227,8 @@ void RenderUI(AppState& state) {
         float* bottomHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Bottom);
         if (bottomHeightOwner != nullptr && bottomDockReserve > 0.0f) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.bottom.x, bottomSlotY - dockBandSplitter));
-            const float minimum = std::max(minBandHeight, aura::ui::dock::DockSubtreeMinimum(
-                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom), viewport->DpiScale).height);
+            const float minimum = aura::ui::dock::DockBandMinimum(
+                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom), viewport->DpiScale).height;
             float resizedHeight = bottomDockBandHeight;
             if (HorizontalSplitter("##BottomDockSplitter", &resizedHeight, minimum,
                     std::max(minimum, availHeight + bottomDockBandHeight - minContentHeight),
@@ -52100,19 +52286,17 @@ void RenderUI(AppState& state) {
         const aura::ui::dock::AdjacentLeafGrip* adjacentGrips = gripSnapshot.grips;
         const int adjacentCount = gripSnapshot.gripCount;
         const auto leftOuterGrip = leftDockSlotRequired && !showLeftColumn
-            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, splitterWidth)
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, kWorkspaceColumnSplitterHitWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         const auto rightOuterGrip = rightDockSlotRequired && !showRightColumn
-            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, splitterWidth)
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, kWorkspaceColumnSplitterHitWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
-        static bool activeOuterGrips[2]{};
         const bool modalBlocksGrips = ImGui::GetTopMostPopupModal() != nullptr;
         if (modalBlocksGrips || !ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) {
             activeGripId.clear();
             activeGripDistanceSq = std::numeric_limits<float>::max();
-            activeOuterGrips[0] = activeOuterGrips[1] = false;
         }
         const auto gripHitDistanceSq = [](const aura::ui::dock::AdjacentLeafGrip& grip, const ImVec2& mouse) {
             const float minX = grip.rect.x;
@@ -52206,41 +52390,26 @@ void RenderUI(AppState& state) {
             if (modalBlocksGrips) break;
             const bool left = column == 0;
             const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
-            const auto& grip = left ? leftOuterGrip : rightOuterGrip;
+            auto grip = left ? leftOuterGrip : rightOuterGrip;
             if (!grip.visible) continue;
-            ImGui::SetNextWindowPos(ImVec2(grip.rect.x, grip.rect.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(grip.rect.width, grip.rect.height), ImGuiCond_Always);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-            const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing;
-            const bool visible = BeginTransientScrollbarWindow(
-                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", nullptr, flags);
-            ImGui::PopStyleVar(3);
+            const float columnBoundaryX = left ? rootSlots.left.x + rootSlots.left.width : rootSlots.right.x;
+            grip.rect.x = columnBoundaryX - grip.rect.width * 0.5f;
+            const bool visible = BeginWorkspaceSplitterOverlay(
+                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", workspaceWindow,
+                ImVec2(grip.rect.x, grip.rect.y), ImVec2(grip.rect.width, grip.rect.height));
             if (visible) {
                 ImGui::InvisibleButton(left ? "##LeftDockLeafSplitterHit" : "##RightDockLeafSplitterHit",
                     ImVec2(grip.rect.width, grip.rect.height));
-                const bool pointerHit = ImGui::IsMouseHoveringRect(
-                    ImVec2(grip.rect.x, grip.rect.y),
-                    ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                bool& activeRightOuterGrip = activeOuterGrips[column];
-                if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
-                    activeRightOuterGrip = true;
-                const bool hovered = ImGui::IsItemHovered() || pointerHit || activeRightOuterGrip;
-                const bool dragging =
-                    (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) ||
-                    (activeRightOuterGrip && ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]);
+                const bool hovered = ImGui::IsItemHovered();
+                const bool dragging = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
                 if (hovered || dragging) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-                ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+                ImDrawList* dl = ImGui::GetWindowDrawList();
                 if (dl) {
                     const float gap = ImClamp(grip.rect.height * 0.018f, 5.0f, 9.0f);
                     const ImVec4 color = ResolveThreeDotSplitterColor(
                         ThemeColors::current(), hovered, dragging);
                     aura::ui::workspace::DrawThreeDotSplitterGrip(
-                        dl, ImVec2(grip.rect.x + grip.rect.width * 0.5f,
+                        dl, ImVec2(columnBoundaryX,
                                    grip.rect.y + grip.rect.height * 0.5f),
                         ImVec2(0.0f, 1.0f), gap, dragging ? 1.95f : 2.0f,
                         ImGui::GetColorU32(color));
@@ -52250,7 +52419,7 @@ void RenderUI(AppState& state) {
                     const auto* root = g_dockLayout.RegionRoot(side);
                     const auto purpose = root && root->Kind() == aura::ui::dock::NodeKind::Split
                         ? splitResizeMinimum : aura::ui::dock::DockMinimumPurpose::Placement;
-                    const float minimum = aura::ui::dock::DockSubtreeMinimum(root, viewport->DpiScale, purpose).width;
+                    const float minimum = dockLiveMinimum(root, purpose).width;
                     const float maximum = std::max(minimum, resizedRect.width + centerWidth - minReadableCenterWidth);
                     if (aura::ui::dock::DragRightDockOuterGrip(resizedRect.width,
                             ImGui::GetIO().MouseDelta.x * (left ? -1.0f : 1.0f), minimum, maximum)) {
@@ -52395,6 +52564,8 @@ void RenderUI(AppState& state) {
 
     // STATUS BAR with Panel Toggle Buttons
     if (!showDockedWaveform) {
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
+        dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y));
     const bool mergeWaveformAndStatusShell = showDockedWaveform;
     const bool useTokenStatusBar = kUseSoftChromeTheme || ThemeColors::isLightChromeTheme(ThemeColors::current());
     const ImVec4 statusBarBg = uiWithAlpha(
@@ -52712,10 +52883,17 @@ void RenderUI(AppState& state) {
     // FLOATING FILE INFO PANEL (when detached)
 
     if (state.fileInfoDetached) {
-        const int fileInfoStyleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const auto palette = resolveDockToolPalette("info");
+        const int fileInfoStyleCount = pushDockToolBodyStyle(palette);
         ImGui::SetNextWindowSize(ImVec2(280, 500), ImGuiCond_FirstUseEver);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, palette.body);
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, palette.title);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, palette.title);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, palette.title);
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.titleText);
         const bool detachedInfoVisible = beginSharedDockWindowHost(
             L(Panel_FileInfoTitle), &state.fileInfoDetached, ImGuiWindowFlags_MenuBar);
+        ImGui::PopStyleColor(5);
         if (detachedInfoVisible) {
             drawFloatingInfoTitleActions();
             if (ImGui::BeginMenuBar()) {
@@ -52886,4 +53064,5 @@ void RenderUI(AppState& state) {
     if (HarkenSearch::BetaFeatureFlags::kExposeWwiseTransfer) {
         aura::wwise::RenderWwiseTransferPanel();
     }
+    LayerWorkspaceSplitterOverlays(workspaceWindow);
 } // <--- 这是 RenderUI 的最后一个大括号，必须有！
