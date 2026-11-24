@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Task_BackfillRunningQueuedFmt", "type": "ui", "zh": "正在处理 %d 项，排队 %d 项", "en": "Processing %d item(s), %d queued", "ja": "%d 件を処理中、%d 件待機"},
     {"id": "Task_BackfillCovers", "type": "ui", "zh": "补全封面", "en": "Backfilling covers", "ja": "カバーを補完"},
     {"id": "Task_BackfillWaveforms", "type": "ui", "zh": "补全波形", "en": "Backfilling waveforms", "ja": "波形を補完"},
     {"id": "Task_BackfillMetadata", "type": "ui", "zh": "补全音频信息", "en": "Backfilling metadata", "ja": "メタデータを補完"},
