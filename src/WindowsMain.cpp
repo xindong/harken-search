@@ -13197,6 +13197,19 @@ static int RunHarkenSearchDemoCli(bool integrityFailed) {
 #endif
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    // The installer runs this windowless entry as the original (non-elevated)
+    // user right after an upgrade: an elevated setup process cannot be trusted
+    // to reach Explorer, and the pin must already be correct before the new
+    // version is started for the first time. Handled before the integrity check
+    // so the refresh takes milliseconds, not the hashing time of the whole EXE.
+    for (std::uint32_t argumentIndex = 1; argumentIndex <= 8; ++argumentIndex) {
+        const auto argument = Platform::ReadProcessArgument(argumentIndex);
+        if (argument.status != Platform::ProcessArgumentStatus::Success) break;
+        if (argument.value != L"--refresh-pinned-taskbar-icons") continue;
+        (void)Platform::RefreshPinnedTaskbarIcons();
+        return 0;
+    }
+
     Platform::HarkenUserData::ApplyPreviewIsolationProcessEnvironment();
     // Capture the one-shot bootstrap challenge before UI startup. The health
     // acknowledgement remains tied to the first presented main UI frame.
@@ -13253,26 +13266,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         if (earlyCliResult >= 0) return earlyCliResult;
     }
 #endif
-
-    // The installer runs this windowless entry as the original (non-elevated)
-    // user right after an upgrade: an elevated setup process cannot be trusted
-    // to reach Explorer, and the pin must already be correct before the new
-    // version is started for the first time.
-    {
-        bool refreshPinnedTaskbarIcons = false;
-        for (std::uint32_t argumentIndex = 1; argumentIndex <= 8; ++argumentIndex) {
-            const auto argument = Platform::ReadProcessArgument(argumentIndex);
-            if (argument.status != Platform::ProcessArgumentStatus::Success) break;
-            if (argument.value == L"--refresh-pinned-taskbar-icons") {
-                refreshPinnedTaskbarIcons = true;
-                break;
-            }
-        }
-        if (refreshPinnedTaskbarIcons) {
-            (void)Platform::RefreshPinnedTaskbarIcons();
-            return 0;
-        }
-    }
 
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
     // Preview diagnostics stay under the compile-time isolated root.
@@ -13407,7 +13400,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     // bitmap it cached for it across an in-place upgrade. Ask Explorer to
     // re-read only the pins that still use this executable's default icon, off
     // the startup path so a slow or unresponsive shell never delays the UI.
+    // Preview and QA builds must not touch the real user's taskbar, so the
+    // automatic refresh stays out of isolated builds; the explicit installer
+    // entry above still works when it is invoked on purpose.
+#if !ARIS_PREVIEW_ISOLATION
     std::thread([] { (void)Platform::RefreshPinnedTaskbarIcons(); }).detach();
+#endif
 
     // Setup OpenGL
     HDC hdc;

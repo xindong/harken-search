@@ -983,15 +983,18 @@ bool ReadShortcutTarget(const std::wstring& shortcutPath,
                 target.resize(::wcslen(target.c_str()));
                 std::wstring icon(kShellItemPathBuffer, L'\0');
                 int index = 0;
-                if (SUCCEEDED(link->GetIconLocation(icon.data(),
-                                                    static_cast<int>(icon.size()),
-                                                    &index))) {
+                // An unreadable icon location must not pass as "no chosen icon":
+                // the caller treats an empty location as the app's default icon,
+                // so a failed read would refresh a pin whose icon is unknown.
+                const bool iconLocationRead = SUCCEEDED(link->GetIconLocation(
+                    icon.data(), static_cast<int>(icon.size()), &index));
+                if (iconLocationRead) {
                     icon.resize(::wcslen(icon.c_str()));
                     iconLocation.assign(icon);
                     iconIndex = index;
+                    targetPath.assign(target);
+                    read = !targetPath.empty();
                 }
-                targetPath.assign(target);
-                read = !targetPath.empty();
             }
         }
         persist->Release();

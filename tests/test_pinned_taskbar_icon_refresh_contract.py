@@ -72,6 +72,22 @@ class PinnedTaskbarIconRefreshContract(unittest.TestCase):
         self.assertIn("Platform::RefreshPinnedTaskbarIcons();", entry)
         self.assertIn("return 0;", entry)
 
+    def test_installer_entry_does_not_hash_the_exe_first(self) -> None:
+        # 安装器在结束页就能点启动；刷新入口若排在整包 SHA-512 校验之后，
+        # 会多出上秒级延迟，首次启动会先看到旧图标。
+        flag = MAIN.index("--refresh-pinned-taskbar-icons")
+        integrity = MAIN.index("EXE integrity check")
+        self.assertLess(flag, integrity)
+
+    def test_icon_read_failure_is_not_treated_as_default_icon(self) -> None:
+        # 空 iconLocation 代表「没设过图标」。GetIconLocation 失败时必须整条跳过，
+        # 否则会把没读出来的固定项当成默认图标去刷新。
+        read = PLATFORM[PLATFORM.index("bool ReadShortcutTarget("):PLATFORM.index("CurrentExecutablePath")]
+        self.assertIn("iconLocationRead", read)
+        icon_check = read.index("if (iconLocationRead)")
+        self.assertGreater(read.index("iconLocation.assign(icon);"), icon_check)
+        self.assertGreater(read.index("targetPath.assign(target);"), icon_check)
+
     def test_startup_refresh_stays_off_the_ui_path(self) -> None:
         self.assertRegex(
             MAIN,
@@ -79,6 +95,15 @@ class PinnedTaskbarIconRefreshContract(unittest.TestCase):
         )
         icon_block = MAIN.index("SendMessageW(hwnd, WM_SETICON, ICON_SMALL")
         self.assertGreater(MAIN.index("Platform::RefreshPinnedTaskbarIcons();", icon_block), icon_block)
+
+    def test_startup_refresh_is_disabled_in_preview_builds(self) -> None:
+        # 预览/QA 构建不得对真实用户的任务栏固定项发 shell 通知。
+        icon_block = MAIN.index("SendMessageW(hwnd, WM_SETICON, ICON_SMALL")
+        guarded = MAIN[icon_block:]
+        self.assertRegex(
+            guarded,
+            r"#if !ARIS_PREVIEW_ISOLATION\n(?:[^\n]*\n){0,6}\s*std::thread\(\[\] \{ \(void\)Platform::RefreshPinnedTaskbarIcons\(\); \}\)\.detach\(\);\n#endif",
+        )
 
     def test_installer_refreshes_as_the_original_non_elevated_user(self) -> None:
         entries = [line for line in INSTALLER.splitlines()
@@ -90,6 +115,9 @@ class PinnedTaskbarIconRefreshContract(unittest.TestCase):
         self.assertIn("runasoriginaluser", entry)
         # 应用内静默升级同样要在首次启动前刷新，因此不能跳过静默安装。
         self.assertNotIn("skipifsilent", entry)
+        # 结束页可以立即启动程序：刷新没跑完就点启动会先看到旧图标。
+        self.assertIn("waituntilterminated", entry)
+        self.assertNotIn("nowait", entry)
 
     def test_installer_launch_entry_keeps_its_existing_behaviour(self) -> None:
         launches = [line for line in INSTALLER.splitlines()
