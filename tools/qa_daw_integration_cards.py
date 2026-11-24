@@ -36,6 +36,7 @@ def prepare_library(library: Path, source: Path | None, count: int) -> list[str]
                 break
             target = library / path.name
             if target.exists():
+                copied.append(path.name)
                 continue
             shutil.copy2(path, target)
             copied.append(path.name)
@@ -303,16 +304,28 @@ def run(args: argparse.Namespace) -> int:
         assert not any(entry["id"] == "daw-reaper-path" for entry in snapshot["items"]), \
             "the collapsed REAPER card must not show its path row"
         collapsed_next_top = item("daw-pro-tools", snapshot)["bounds"][1]
-        command(cmd="settings_ui", action="daw_reaper_config", open=True)
+        collapsed_card_bottom = item("daw-reaper-card", snapshot)["bounds"][3]
+        click("daw-reaper-config")
         expanded = settle()
         path_box = item("daw-reaper-path", expanded)
-        card_box = item("daw-reaper", expanded)
+        card_box = item("daw-reaper-card", expanded)
         assert path_box["bounds"][0] >= card_box["bounds"][0], (path_box, card_box)
         assert path_box["bounds"][2] <= card_box["bounds"][2], (path_box, card_box)
-        assert path_box["bounds"][1] >= card_box["bounds"][3] - 1, (path_box, card_box)
+        header_box = item("daw-reaper", expanded)
+        assert path_box["bounds"][1] >= header_box["bounds"][3] - 1, (path_box, header_box)
+        assert path_box["bounds"][3] <= card_box["bounds"][3] + 1, (path_box, card_box)
         expanded_next_top = item("daw-pro-tools", expanded)["bounds"][1]
         assert expanded_next_top > collapsed_next_top, (collapsed_next_top, expanded_next_top)
-        check("REAPER card expands in place and the executable path row stays inside the card",
+        click("daw-reaper-config")
+        collapsed_again = settle()
+        assert not any(entry["id"] == "daw-reaper-path" for entry in collapsed_again["items"]), \
+            "clicking Configure again must collapse the REAPER card"
+        assert abs(item("daw-reaper-card", collapsed_again)["bounds"][3]
+                   - collapsed_card_bottom) <= 1, collapsed_card_bottom
+        click("daw-reaper-config")
+        settle()
+        check("REAPER expands and collapses through its own Configure control, "
+              "and the executable path row stays inside the full card",
               next_card_top_collapsed=collapsed_next_top,
               next_card_top_expanded=expanded_next_top)
 
@@ -332,11 +345,14 @@ def run(args: argparse.Namespace) -> int:
             applied = set_theme(index)
             snapshot = daw_page(1120, 800)
             colors = snapshot["rendered_colors"]
+            ratio = contrast_ratio(colors["text"], colors["bg"])
+            assert ratio >= 4.5, (index, ratio, colors)
             samples.append({"index": index, "applied_theme": applied, "bg": colors["bg"],
                             "text": colors["text"],
                             "background_luminance": relative_luminance(colors["bg"]),
-                            "contrast": contrast_ratio(colors["text"], colors["bg"])})
+                            "contrast": ratio})
         report["theme_samples"] = samples
+        assert len({sample["applied_theme"]["applied"] for sample in samples}) == 5, samples
         light_index = max(range(5), key=lambda i: samples[i]["background_luminance"])
         dark_index = min(range(5), key=lambda i: samples[i]["background_luminance"])
         assert samples[light_index]["background_luminance"] > 0.5, samples
@@ -414,14 +430,16 @@ def run(args: argparse.Namespace) -> int:
         raise
     finally:
         if process is not None:
-            if verified and win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
+            running = win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT
+            if running and verified:
                 try:
                     command(cmd="info_edit_input", action="tray_exit")
-                    win32event.WaitForSingleObject(process, 20000)
                 except Exception:  # noqa: BLE001
-                    win32process.TerminateProcess(process, 1)
-            elif win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT:
+                    pass
+                running = win32event.WaitForSingleObject(process, 20000) != win32con.WAIT_OBJECT_0
+            if running:
                 win32process.TerminateProcess(process, 1)
+                win32event.WaitForSingleObject(process, 10000)
             process.Close()
         desktop.close()
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
