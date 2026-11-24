@@ -949,11 +949,13 @@ def test_waveform_zoom_scrollbar_is_transient_independently_and_never_shown_at_o
     assert "waveformScrollBarEligible" in scroll
     assert 'ImGui::InvisibleButton("##WaveScrollBar"' in scroll
     assert "ImGuiButtonFlags_AllowOverlap" in scroll
-    assert "const float pitchColumnTailHeight = pitchModeTopOffset + pitchModeHeight;" in main
-    assert "const float reservedH = std::max(waveFileNameBarHeight, pitchColumnTailHeight);" in main
+    assert (
+        "float waveformHeight = std::max(24.0f, panelAvailH - waveFileNameBarHeight"
+        " - waveFooterGap - waveFooterEdge);" in main
+    )
     assert "waveScrollBarHeight + waveFooterGap" not in main
     assert "waveformPos.y + waveformHeight - scrollBarHeight - scrollOverlayInset" in scroll
-    assert "const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + 1.0f);" in main
+    assert "const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + waveFooterGap);" in main
     assert "Ctrl+Scroll Zoom" not in scroll
 
 
@@ -1184,8 +1186,10 @@ def test_pitch_mode_toggle_reserves_its_full_bottom_tail():
         in pitch_column
     )
     assert (
-        "const float reservedH = std::max(waveFileNameBarHeight, pitchColumnTailHeight);"
+        "const float pitchWheelHeight = std::max(24.0f, panelAvailH - "
+        "std::max(waveFileNameBarHeight, pitchColumnTailHeight));"
         in pitch_column
     )
+    assert "float pwHeight = pitchWheelHeight;" in pitch_column
     assert "const float segY = pwY + pwHeight + pitchModeTopOffset;" in pitch_column
     assert "const float segH = pitchModeHeight;" in pitch_column
