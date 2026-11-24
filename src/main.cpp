@@ -117,6 +117,7 @@
 #include "ui/MistBlueChrome.h"
 #include "ui/EmptyStatePalette.h"
 #include "ui/ActionButtonStyle.h"
+#include "ui/DatabaseSetupButtonLayout.h"
 #include "ui/EmptyStateVisualAudit.h"
 #include "ui/TransportBlendSlider.h"
 #include "HarkenSearchThemeManager.h"   // 次世代视觉管理器
@@ -35141,13 +35142,18 @@ void RenderUI(AppState& state) {
     ImGuiWindowFlags newDbFlags = ImGuiWindowFlags_AlwaysAutoResize;
     if (requireDatabaseSetup) {
         const auto* viewport = ImGui::GetMainViewport();
-        const float topInset = (std::min)(106.0f, viewport->WorkSize.y * 0.10f);
-        const float width = (std::min)(560.0f, viewport->WorkSize.x - 32.0f);
+        // The dialog is a logical layout, so its own box has to follow the same
+        // interface factor as the fonts inside it. Otherwise every text line
+        // wraps into a ~560 px ribbon on a 4K screen at 200%.
+        const float topInset =
+            (std::min)(aura::ui::dpi::Px(106.0f), viewport->WorkSize.y * 0.10f);
+        const float width = (std::min)(aura::ui::dpi::Px(560.0f),
+            viewport->WorkSize.x - aura::ui::dpi::Px(32.0f));
         ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
             viewport->WorkPos.y + topInset), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
         ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0),
-            ImVec2(width, viewport->WorkSize.y - topInset - 16.0f));
+            ImVec2(width, viewport->WorkSize.y - topInset - aura::ui::dpi::Px(16.0f)));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, setupPalette.panelBg);
         ImGui::PushStyleColor(ImGuiCol_Border, setupPalette.panelBorder);
         ImGui::PushStyleColor(ImGuiCol_Separator, setupPalette.separatorColor);
@@ -35155,7 +35161,7 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4(0, 0, 0, 0.64f));
         newDbFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
     } else {
-        ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(aura::ui::dpi::Px(420.0f), 0), ImGuiCond_Always);
     }
     if (BeginTransientScrollbarPopupModal(L(Dlg_NewDB), nullptr, newDbFlags)) {
         { ReadingTextScope _readingPopup;  // dialog body is a reading surface
@@ -35205,7 +35211,7 @@ void RenderUI(AppState& state) {
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s", L(NewDB_StoragePath));
             ImGui::TextWrapped("%s", dbDir.c_str());
         }
-        if (aura::ui::ActionButton(L(Main_ChooseStorageLocation), ImVec2(140, 0))) {
+        if (aura::ui::ActionButton(L(Main_ChooseStorageLocation), ImVec2(aura::ui::dpi::Px(140.0f), 0))) {
             std::string folder = OpenFolderDialog(g_hwnd);
             if (!folder.empty()) {
                 if (Platform::FileSystem::IsNetworkPath(folder)) {
@@ -35267,13 +35273,31 @@ void RenderUI(AppState& state) {
         bool canCreate = nameValid && (!exists || confirmOverwrite);
 
         ImGui::BeginDisabled(!canCreate);
-        const float setupButtonWidth = requireDatabaseSetup
-            ? (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f - 72.0f) * 0.5f
-            : 120.0f;
+        const ImGuiStyle& setupButtonStyle = ImGui::GetStyle();
         const char* createLabel = exists ? L(NewDB_OverwriteCreate) : L(Create);
+        const char* openDbLabel = L(File_OpenDB);
+        const char* exitLabel = L(File_Exit);
+        // Height follows the real line box (font + frame padding) with the
+        // design's 32 px as a floor, and the row splits into one button per
+        // line when three measured labels no longer fit side by side.
+        const aura::ui::setup::ButtonRow setupRow = aura::ui::setup::ResolveRow(
+            ImGui::GetContentRegionAvail().x,
+            setupButtonStyle.ItemSpacing.x,
+            ImGui::CalcTextSize(createLabel, nullptr, true),
+            ImGui::CalcTextSize(openDbLabel, nullptr, true),
+            ImGui::CalcTextSize(exitLabel, nullptr, true),
+            setupButtonStyle.FramePadding.x,
+            aura::ui::dpi::UiScale(),
+            ImGui::GetFrameHeight());
+        const float setupButtonHeight = aura::ui::setup::ButtonHeight(
+            aura::ui::dpi::UiScale(), ImGui::GetFrameHeight());
+        const bool stackSetupButtons = requireDatabaseSetup && setupRow.stacked;
+        const float createWidth = requireDatabaseSetup
+            ? setupRow.create.x
+            : aura::ui::dpi::Px(aura::ui::setup::kCancelWidth);
         bool createClicked = requireDatabaseSetup
-            ? DatabaseSetupButton(createLabel, ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Create)
-            : aura::ui::ActionButton(createLabel, ImVec2(setupButtonWidth, 32), aura::ui::ButtonVariant::PrimarySearch);
+            ? DatabaseSetupButton(createLabel, setupRow.create, setupPalette, DatabaseSetupAction::Create)
+            : aura::ui::ActionButton(createLabel, ImVec2(createWidth, setupButtonHeight), aura::ui::ButtonVariant::PrimarySearch);
 #ifdef ARIS_PREVIEW_ISOLATION
         const bool qaCreateClicked = std::exchange(state.qaCreateNewDbNow, false);
         createClicked = createClicked || (qaCreateClicked && canCreate);
@@ -35308,10 +35332,10 @@ void RenderUI(AppState& state) {
         }
         ImGui::EndDisabled();
 
-        ImGui::SameLine();
         if (requireDatabaseSetup) {
-            bool openExistingClicked = DatabaseSetupButton(L(File_OpenDB),
-                ImVec2(setupButtonWidth, 32), setupPalette, DatabaseSetupAction::Open);
+            if (!stackSetupButtons) ImGui::SameLine();
+            bool openExistingClicked = DatabaseSetupButton(openDbLabel,
+                setupRow.open, setupPalette, DatabaseSetupAction::Open);
             std::string openPath;
 #ifdef ARIS_PREVIEW_ISOLATION
             if (!state.qaOpenExistingDbPath.empty()) {
@@ -35329,13 +35353,16 @@ void RenderUI(AppState& state) {
                     newDbPending = true;
                 }
             }
-            ImGui::SameLine();
-            if (DatabaseSetupButton(L(File_Exit), ImVec2(72.0f, 32), setupPalette, DatabaseSetupAction::Exit)) {
+            if (!stackSetupButtons) ImGui::SameLine();
+            if (DatabaseSetupButton(exitLabel, setupRow.exit, setupPalette, DatabaseSetupAction::Exit)) {
                 RequestHarkenSearchExit(g_hwnd, L"first-library-setup-exit");
             }
-        } else if (aura::ui::ActionButton(L(Cancel), ImVec2(120, 32), aura::ui::ButtonVariant::Quiet)) {
-            newDbError.clear();
-            ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::SameLine();
+            if (aura::ui::ActionButton(L(Cancel), ImVec2(aura::ui::dpi::Px(120.0f), setupButtonHeight), aura::ui::ButtonVariant::Quiet)) {
+                newDbError.clear();
+                ImGui::CloseCurrentPopup();
+            }
         }
 
         if (!nameValid && !nameStr.empty()) {

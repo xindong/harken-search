@@ -6420,6 +6420,28 @@ endif()
 add_test(NAME TestCoreWorkspaceStyle COMMAND TestCoreWorkspaceStyle)
 aura_set_test_labels(TestCoreWorkspaceStyle core)
 
+add_executable(TestDatabaseSetupButtons EXCLUDE_FROM_ALL
+    tests/test_database_setup_buttons.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(TestDatabaseSetupButtons PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+)
+target_compile_features(TestDatabaseSetupButtons PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestDatabaseSetupButtons PRIVATE /W3 /utf-8)
+    set_target_properties(TestDatabaseSetupButtons PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestDatabaseSetupButtons COMMAND TestDatabaseSetupButtons)
+aura_set_test_labels(TestDatabaseSetupButtons core)
+
 add_test(
     NAME TestCoreWorkspaceStyleBoundary
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
