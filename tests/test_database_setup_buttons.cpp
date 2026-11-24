@@ -36,6 +36,10 @@ void ScaleLikeTheApp(float scale) {
     style.ScaleAllSizes(scale);
     style.FontScaleDpi = scale;
     style.FontScaleMain = 1.0f;
+    // ImGui re-derives the current font size at NewFrame, so the new scale only
+    // reaches CalcTextSize/GetFrameHeight across a frame boundary.
+    ImGui::EndFrame();
+    ImGui::NewFrame();
 }
 
 void CheckScale(float scale, const char* label) {
@@ -71,8 +75,15 @@ int main() {
     ImGui::NewFrame();
 
     CheckScale(1.0f, "100%");
+    const float textAt100 = ImGui::CalcTextSize("Create", nullptr, true).y;
     CheckScale(2.0f, "200% DPI");
+    const float textAt200 = ImGui::CalcTextSize("Create", nullptr, true).y;
     CheckScale(2.5f, "200% DPI × 125%");
+    const float textAt250 = ImGui::CalcTextSize("Create", nullptr, true).y;
+    // Guard the measurement itself: if the font scale never reached the atlas
+    // these numbers would be identical and every height assertion would be fake.
+    Check(textAt200 > textAt100 * 1.8f, "200% DPI really enlarges the measured glyphs");
+    Check(textAt250 > textAt100 * 2.3f, "250% really enlarges the measured glyphs");
 
     // 4K at 200% DPI with the interface at 125%: the dialog content is wide, so
     // the three buttons stay on one row and share the surplus evenly.
@@ -105,6 +116,17 @@ int main() {
           "stacked: each button uses the full width");
     Check(NearlyEqual(narrow.create.y, narrow.open.y) && NearlyEqual(narrow.open.y, narrow.exit.y),
           "stacked: all three buttons share one height");
+
+    // One very wide label must not be squeezed below its own minimum just
+    // because the equal-share width would overflow the dialog.
+    const auto asymmetric = aura::ui::setup::ResolveRow(
+        720.0f, spacing, ImVec2(300.0f, 30.0f), ImVec2(120.0f, 30.0f),
+        exitText, padX, 1.0f, frameHeight);
+    Check(!asymmetric.stacked, "asymmetric labels still use one row when they fit");
+    Check(asymmetric.create.x >= 300.0f + padX * 2.0f - 0.01f, "wide label keeps its measured width");
+    Check(asymmetric.open.x >= 120.0f + padX * 2.0f - 0.01f, "narrow label keeps its measured width");
+    Check(asymmetric.create.x + asymmetric.open.x + asymmetric.exit.x + spacing * 2.0f <= 720.0f + 0.01f,
+          "asymmetric row stays inside the dialog");
 
     // A pinned 100% interface scale must not change today's geometry.
     ScaleLikeTheApp(1.0f);

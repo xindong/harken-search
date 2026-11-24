@@ -81,6 +81,24 @@ def audit_buttons(driver: Driver) -> dict:
     return {'panel': audit['panel'], 'buttons': buttons, 'frame': audit['frame']}
 
 
+def shutdown(process, hwnd: int) -> None:
+    """A stuck QA build must not outlive the script."""
+    if process is None:
+        return
+    import win32con
+    import win32event
+    import win32gui
+    import win32process
+    if win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0:
+        return
+    if hwnd:
+        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+    if win32event.WaitForSingleObject(process, 10000) == win32con.WAIT_OBJECT_0:
+        return
+    win32process.TerminateProcess(process, 1)
+    win32event.WaitForSingleObject(process, 5000)
+
+
 def resize_client(hwnd: int, client_width: int) -> None:
     import win32con
     import win32gui
@@ -110,11 +128,13 @@ def run(args) -> dict:
         runtime = reset_profile(root, scale)
         desktop = PrivateDesktop()
         process = None
+        hwnd = 0
         try:
             process, pid = desktop.start(exe, (), {'HARKEN_QA_DPI_SCALE': args.dpi})
             driver = Driver(runtime, out)
             identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
             assert identity['pid'] == pid, identity
+            hwnd = identity['hwnd']
             wait_state(driver, lambda s: s['main_ui_ready'], f'scale {scale}: UI ready', timeout=90)
             state = wait_state(driver, lambda s: s['new_db_dialog_open'],
                                f'scale {scale}: setup dialog', timeout=30)
@@ -133,12 +153,7 @@ def run(args) -> dict:
             })
             driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
         finally:
-            if process is not None:
-                try:
-                    import win32event
-                    win32event.WaitForSingleObject(process, 15000)
-                except Exception:
-                    pass
+            shutdown(process, hwnd)
             desktop.close()
 
     narrow = args.narrow_scale
@@ -146,11 +161,13 @@ def run(args) -> dict:
         runtime = reset_profile(root, narrow)
         desktop = PrivateDesktop()
         process = None
+        hwnd = 0
         try:
             process, pid = desktop.start(exe, (), {'HARKEN_QA_DPI_SCALE': args.dpi})
             driver = Driver(runtime, out)
             identity = driver.command({'cmd': 'magic_eq_identity'}, timeout=60)
             assert identity['pid'] == pid, identity
+            hwnd = identity['hwnd']
             wait_state(driver, lambda s: s['main_ui_ready'], 'narrow: UI ready', timeout=90)
             wait_state(driver, lambda s: s['new_db_dialog_open'], 'narrow: setup dialog', timeout=30)
             resize_client(identity['hwnd'], args.narrow_client_width)
@@ -167,12 +184,7 @@ def run(args) -> dict:
             })
             driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
         finally:
-            if process is not None:
-                try:
-                    import win32event
-                    win32event.WaitForSingleObject(process, 15000)
-                except Exception:
-                    pass
+            shutdown(process, hwnd)
             desktop.close()
 
     (out / 'setup-button-scale.json').write_text(

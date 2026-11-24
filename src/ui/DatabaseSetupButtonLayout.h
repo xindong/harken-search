@@ -49,10 +49,18 @@ inline ButtonRow ResolveRow(float availableWidth,
     const float minExit = scaledExit > measuredExit ? scaledExit : measuredExit;
     const float needed = minCreate + minOpen + minExit + spacing * 2.0f;
     if (needed <= availableWidth) {
-        // Share the surplus so the row still fills the dialog width.
-        const float half = (availableWidth - spacing * 2.0f - minExit) * 0.5f;
-        row.create = ImVec2(minCreate > half ? minCreate : half, height);
-        row.open = ImVec2(minOpen > half ? minOpen : half, height);
+        // The design gives Create and Open one shared width and leaves Exit at
+        // its minimum. Keep that look while the shared width still holds both
+        // labels; otherwise hand each button its own minimum so a wide label
+        // can never be pushed past the dialog edge.
+        const float shared = (availableWidth - spacing * 2.0f - minExit) * 0.5f;
+        if (shared >= minCreate && shared >= minOpen) {
+            row.create = ImVec2(shared, height);
+            row.open = ImVec2(shared, height);
+        } else {
+            row.create = ImVec2(minCreate, height);
+            row.open = ImVec2(minOpen, height);
+        }
         row.exit = ImVec2(minExit, height);
         return row;
     }
