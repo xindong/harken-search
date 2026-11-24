@@ -948,6 +948,61 @@ int main() {
             if (frame.grips[index].axis == Axis::Horizontal) ++widthGripCount;
         if (frame.gripCount != 3 || widthGripCount != 2) return 356;
     }
+    for (float scale : {1.0f, 1.25f}) {
+        for (auto band : {DockSide::Top, DockSide::Bottom}) {
+            for (auto target : {DockSide::Left, DockSide::Right}) {
+                for (bool oppositeOccupied : {false, true}) {
+                    const bool targetLeft = target == DockSide::Left;
+                    const auto opposite = targetLeft ? DockSide::Right : DockSide::Left;
+                    const char* targetId = targetLeft ? "filter" : "info";
+                    const char* oppositeId = targetLeft ? "info" : "filter";
+                    const float splitterWidth = 4.0f * scale;
+                    const float targetWidth = 560.0f * scale;
+                    const float oppositeWidth = 360.0f * scale;
+                    const float leftWidth = targetLeft ? targetWidth : oppositeWidth;
+                    const float rightWidth = targetLeft ? oppositeWidth : targetWidth;
+                    const DockRect work{0.0f, 0.0f, 1920.0f * scale, 1280.0f * scale};
+                    const float toolbar = 80.0f * scale;
+                    const float status = 40.0f * scale;
+                    const float columnHeight = work.height - toolbar - status;
+                    const float bandWidth = work.width - targetWidth - splitterWidth -
+                        (oppositeOccupied ? oppositeWidth + splitterWidth : 0.0f);
+                    const float bandX = (targetLeft || oppositeOccupied) ? leftWidth + splitterWidth : 0.0f;
+                    const float bandHeight = 300.0f * scale;
+                    DockLayout layout;
+                    if (!layout.InsertModule(targetId, target, .25f) ||
+                        (oppositeOccupied && !layout.InsertModule(oppositeId, opposite, .25f)) ||
+                        !layout.InsertModule("mod-ucs-browser", band, .25f)) return 359;
+                    DockRootSlots slots{};
+                    slots.left = {0.0f, toolbar, leftWidth, columnHeight};
+                    slots.right = {work.width - rightWidth, toolbar, rightWidth, columnHeight};
+                    slots.top = {bandX, toolbar, bandWidth, bandHeight};
+                    slots.bottom = {bandX, work.height - status - bandHeight, bandWidth, bandHeight};
+                    slots.visibleSideGapPx = splitterWidth;
+                    const auto& targetSlot = DockSlotForSide(slots, target);
+                    const DockModuleTarget leaf{targetId, targetSlot};
+                    const auto hit = HitDockTarget(EdgeProbe(targetSlot, DockSide::Bottom),
+                        work, 40.0f * scale, &leaf, 1, &slots, &layout);
+                    if (!CheckDrop(hit.kind == DockHitKind::Module && hit.side == DockSide::Bottom,
+                                   "mod-transfer", target, "target inner bottom edge")) return 360;
+                    const auto plan = PlanReadableDockDrop(
+                        layout, hit, "mod-transfer", work, toolbar, status, slots, scale, 520.0f * scale);
+                    if (!CheckDrop(plan.accepted && !plan.tooSmall && plan.candidate,
+                                   "mod-transfer", target, "same-width drop with existing band",
+                                   plan.accepted ? 1.0f : 0.0f, 1.0f)) return 361;
+                    const auto& originalBand = band == DockSide::Top ? slots.top : slots.bottom;
+                    const auto& plannedBand = band == DockSide::Top ? plan.slots.top : plan.slots.bottom;
+                    if (!CheckDrop(SameDockRect(plannedBand, originalBand) &&
+                                   std::fabs(plan.hit.resultRect.width - targetWidth) < .01f,
+                                   "mod-transfer", target, "drop preserves the band and the column")) return 362;
+                    const auto tooTight = PlanReadableDockDrop(
+                        layout, hit, "mod-transfer", work, toolbar, status, slots, scale, bandWidth + scale);
+                    if (!CheckDrop(!tooTight.accepted && tooTight.tooSmall,
+                                   "mod-transfer", target, "minimum center width still enforced")) return 363;
+                }
+            }
+        }
+    }
     if (!opened.opened) return 71;
     if (!opened.visible || !opened.floating) return 72;
     if (!opened.requestMove) return 73;
