@@ -19798,8 +19798,10 @@ void RenderFileInfoPanelTabContents(
                         // filter. Discover the complete wall from the database.
                         cw.entriesInFlight = true;
                         const std::string dbPath = state.database.getMainDbPath();
-                        cw.entriesFuture = std::async(std::launch::async, [dbPath]() -> CoverWallPageLoadResult {
-                            return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);
+                        const int reloadLimit = static_cast<int>(std::clamp(
+                            cw.scanBackfillReloadItemCount, size_t{kGlobalCoverWallPageSize}, size_t{50000}));
+                        cw.entriesFuture = std::async(std::launch::async, [dbPath, reloadLimit]() -> CoverWallPageLoadResult {
+                            return LoadGlobalCoverWallPage(dbPath, {}, reloadLimit);
                             Database localDb;
                             if (!localDb.openReadOnly(dbPath))
                                 return CoverWallPageLoadResult{};
@@ -19899,6 +19901,7 @@ void RenderFileInfoPanelTabContents(
                         AppendUniqueCoverWallPageItems(cw.items, page.items);
                     } else {
                         cw.items = std::move(page.items);
+                        cw.scanBackfillReloadItemCount = 0;
                     }
                     cw.globalPageNextCursor = page.nextCursor;
                     cw.globalPageHasMore = page.hasMore;

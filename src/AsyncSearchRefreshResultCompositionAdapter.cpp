@@ -66,7 +66,7 @@ void AsyncSearchRefreshResultCompositionAdapter::apply() {
     browsePreviewAdapter.restore(browseSurfaceSelection, !result_.scanCoverRefresh);
     if (result_.scanCoverRefresh) {
         state_.coverWall.filteredLastSelSize = 0;
-        state_.requestCoverWallBackfillDisplayRefresh();
+        state_.requestCoverWallScanBackfillRefresh();
     }
 
     AsyncSearchCoverPreloadStateAdapter coverPreloadAdapter(

@@ -1867,6 +1867,11 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             DIAG_ACTION_FMT("Database",
                 "BackfillPendingIndexCreateFailed: %s", m_lastError.c_str());
         }
+        if (!executeSQL("CREATE INDEX IF NOT EXISTS idx_backfill_pending_kind "
+                        "ON backfill_pending(kind)")) {
+            DIAG_ACTION_FMT("Database",
+                "BackfillPendingKindIndexCreateFailed: %s", m_lastError.c_str());
+        }
     }
 
     if (!executeSQL(

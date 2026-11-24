@@ -56,7 +56,8 @@ def test_main_consumes_cover_wall_page_mapping_builder():
     registry_fallback = load_scope[
         load_scope.index("} else {") :
     ]
-    assert "return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);" in registry_fallback
+    assert "return LoadGlobalCoverWallPage(dbPath, {}, reloadLimit);" in registry_fallback
+    assert "cw.scanBackfillReloadItemCount, size_t{kGlobalCoverWallPageSize}" in registry_fallback
 
 
 def test_global_wall_cannot_be_completed_or_reordered_by_filtered_facets():
@@ -72,7 +73,7 @@ def test_global_wall_cannot_be_completed_or_reordered_by_filtered_facets():
     assert "currentTotal <= 50000" not in global_mode
     assert "CanReuseGlobalCoverWallCache" in global_mode
     assert "ReconstructGlobalCoverWallPageState" in global_mode
-    assert "return LoadGlobalCoverWallPage(dbPath, {}, kGlobalCoverWallPageSize);" in global_mode
+    assert "return LoadGlobalCoverWallPage(dbPath, {}, reloadLimit);" in global_mode
     assert "cw.globalPageNextCursor = page.nextCursor;" in global_mode
     assert "cw.globalPageHasMore = page.hasMore;" in global_mode
     assert "cw.discoveryDone = !cw.globalPageHasMore;" in global_mode
