@@ -229,6 +229,14 @@ bool DeleteRegistryValue(
     const std::string& subkeyUtf8,
     const std::string& valueNameUtf8);
 void NotifyShellAssociationsChanged();
+
+// @stage7-contract
+// API contract: asks Explorer to re-read the icon of taskbar pins that launch
+// this executable with its default icon. Read-only: never rewrites a shortcut,
+// never touches a pin with a user-chosen icon, never clears the icon cache.
+// Returns how many pins were refreshed; 0 when unsupported or nothing matched.
+std::uint32_t RefreshPinnedTaskbarIcons();
+
 RegistryStringResult QueryEffectiveFileAssociation(const std::string& extensionUtf8);
 bool LaunchDefaultAppsSettings();
 

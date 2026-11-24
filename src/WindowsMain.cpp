@@ -13254,6 +13254,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
 #endif
 
+    // The installer runs this windowless entry as the original (non-elevated)
+    // user right after an upgrade: an elevated setup process cannot be trusted
+    // to reach Explorer, and the pin must already be correct before the new
+    // version is started for the first time.
+    {
+        bool refreshPinnedTaskbarIcons = false;
+        for (std::uint32_t argumentIndex = 1; argumentIndex <= 8; ++argumentIndex) {
+            const auto argument = Platform::ReadProcessArgument(argumentIndex);
+            if (argument.status != Platform::ProcessArgumentStatus::Success) break;
+            if (argument.value == L"--refresh-pinned-taskbar-icons") {
+                refreshPinnedTaskbarIcons = true;
+                break;
+            }
+        }
+        if (refreshPinnedTaskbarIcons) {
+            (void)Platform::RefreshPinnedTaskbarIcons();
+            return 0;
+        }
+    }
+
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
     // Preview diagnostics stay under the compile-time isolated root.
     const std::string dockTracePath = GetHarkenSearchRuntimePathUtf8("dock_drag_trace.json");
@@ -13382,6 +13402,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (wc.hIconSm) {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
     }
+
+    // A taskbar pin is a per-user shortcut copy; Explorer can keep the icon
+    // bitmap it cached for it across an in-place upgrade. Ask Explorer to
+    // re-read only the pins that still use this executable's default icon, off
+    // the startup path so a slow or unresponsive shell never delays the UI.
+    std::thread([] { (void)Platform::RefreshPinnedTaskbarIcons(); }).detach();
 
     // Setup OpenGL
     HDC hdc;
