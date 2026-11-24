@@ -5886,6 +5886,9 @@ void LoadAppSettings(AppState& state) {
     state.settings.fpsLimit = ParseInt(kv["fpsLimit"], state.settings.fpsLimit);
     state.settings.thumbnailMaxResolution = ParseInt(kv["thumbnailMaxResolution"], state.settings.thumbnailMaxResolution);
     state.settings.threadLimit = ParseInt(kv["threadLimit"], state.settings.threadLimit);
+    state.settings.similarityAnalysisConcurrency = std::clamp(
+        ParseInt(kv["similarityAnalysisConcurrency"], state.settings.similarityAnalysisConcurrency),
+        1, HarkenSearch::kMaxSimilarityConcurrency);
 
     // Send-to-DAW targets
     state.settings.reaperSetupNoticeDismissed = ParseInt(kv["reaperSetupNoticeDismissed"], 0) != 0;
@@ -6710,6 +6713,9 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"fpsLimit", std::to_string(state.settings.fpsLimit)});
     items.push_back({"thumbnailMaxResolution", std::to_string(state.settings.thumbnailMaxResolution)});
     items.push_back({"threadLimit", std::to_string(state.settings.threadLimit)});
+    items.push_back({"similarityAnalysisConcurrency",
+                     std::to_string(std::clamp(state.settings.similarityAnalysisConcurrency, 1,
+                                               HarkenSearch::kMaxSimilarityConcurrency))});
 
     // Send-to-DAW targets
     items.push_back({"reaperSetupNoticeDismissed", state.settings.reaperSetupNoticeDismissed ? "1" : "0"});
@@ -30269,9 +30275,11 @@ void StartBatchFeatureExtraction(AppState& state, bool recheckAll, bool manual) 
     }
     const std::string databasePath = state.currentDbPathUtf8;
     const std::string modelDirectory = GetExeDirUtf8() + "/models/clap";
+    const int similarityConcurrency = std::clamp(
+        state.settings.similarityAnalysisConcurrency, 1, HarkenSearch::kMaxSimilarityConcurrency);
     state.batchFeatureExtracting.store(true);
     state.batchFeatureStartGeneration.fetch_add(1);
-    state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll]() {
+    state.batchFeatureThread = std::thread([&state, databasePath, modelDirectory, recheckAll, similarityConcurrency]() {
         HarkenSearch::SimilarityIndexResult result;
         try {
             result = HarkenSearch::BuildSimilarityIndex(databasePath, modelDirectory,
@@ -30283,7 +30291,7 @@ void StartBatchFeatureExtraction(AppState& state, bool recheckAll, bool manual) 
                     state.batchFeatureSaved.store(progress.saved);
                     PublishBatchSimilarityOutcome(state, progress);
                 }, recheckAll ? HarkenSearch::SimilarityIndexScope::ValidateAll
-                              : HarkenSearch::SimilarityIndexScope::PendingOnly);
+                              : HarkenSearch::SimilarityIndexScope::PendingOnly, similarityConcurrency);
         } catch (const std::exception& error) { result.error = error.what(); }
           catch (...) { result.error = "analysis_failed"; }
         const bool complete = result.ok && !result.cancelled && result.progress.failed == 0 && result.modelError.empty();

@@ -3622,6 +3622,18 @@ set_tests_properties(TestFolderTreePathModePolicyBoundary PROPERTIES
 )
 aura_set_test_labels(TestFolderTreePathModePolicyBoundary core)
 
+add_test(
+    NAME TestSimilarityConcurrencySetting
+    COMMAND ${Python3_EXECUTABLE} -m pytest
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similarity_concurrency_setting.py"
+        -q
+)
+set_tests_properties(TestSimilarityConcurrencySetting PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    TIMEOUT 60
+)
+aura_set_test_labels(TestSimilarityConcurrencySetting core)
+
 add_executable(TestFileTypeVisibilityPolicy EXCLUDE_FROM_ALL
     tests/test_file_type_visibility_policy.cpp
     src/FileTypeVisibilityPolicy.cpp
@@ -7373,6 +7385,28 @@ if(MSVC)
 endif()
 add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
 aura_set_test_labels(TestSimilarityIndexer core)
+# Index-build concurrency benchmark for REQ-20261123-SIMILARITY-PARALLEL.
+# Explicit target: it analyzes a real isolated library and is never part of CTest.
+add_executable(SimilarityConcurrencyBench EXCLUDE_FROM_ALL tools/similarity_concurrency_bench.cpp
+    src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+target_include_directories(SimilarityConcurrencyBench PRIVATE src ${SQLITE_DIR})
+if(HARKEN_ONNXRUNTIME_ROOT)
+    target_compile_definitions(SimilarityConcurrencyBench PRIVATE HARKEN_WITH_ONNX=1)
+    target_include_directories(SimilarityConcurrencyBench PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_link_libraries(SimilarityConcurrencyBench PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        add_custom_command(TARGET SimilarityConcurrencyBench POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:SimilarityConcurrencyBench>)
+    endif()
+endif()
+if(WIN32)
+    target_link_libraries(SimilarityConcurrencyBench PRIVATE bcrypt)
+endif()
+if(MSVC)
+    target_compile_options(SimilarityConcurrencyBench PRIVATE /W3 /utf-8)
+endif()
+
 set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
 set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
 add_executable(TestSimilarityIndexCountState EXCLUDE_FROM_ALL tests/test_similarity_index_count_state.cpp)
