@@ -198,6 +198,8 @@
     {"id":"ScanUi_RemoveInvalid","type":"ui","zh":"移除库中的失效记录","en":"Remove missing library records","ja":"ライブラリの無効な記録を削除"},
     {"id":"ScanUi_RemoveReminder","type":"ui","zh":"将移除失效记录，不删除原文件。","en":"Removes missing records, not source files.","ja":"無効な記録のみ削除します。元ファイルは削除しません。"},
     {"id":"ScanUi_SimilarEnabled","type":"ui","zh":"已开启扫描后相似分析","en":"Post-scan similarity analysis enabled","ja":"スキャン後の類似解析が有効"},
+    {"id":"Set_SimilarityConcurrency","type":"ui","zh":"相似分析并发数","en":"Similarity analysis concurrency","ja":"類似解析の同時実行数"},
+    {"id":"SetUX_SimilarityConcurrencyHint","type":"ui","zh":"1–16，下次分析生效","en":"1–16, applied on the next run","ja":"1〜16、次回の解析から適用"},
     {"id":"ScanUi_Counting","type":"ui","zh":"正在统计文件","en":"Counting files","ja":"ファイルを集計中"},
     {"id":"ScanUi_FoundAudioFmt","type":"ui","zh":"已找到 %d 个音频","en":"Found %d audio files","ja":"音声ファイル %d 件を検出"},
     {"id":"ScanUi_Ingesting","type":"ui","zh":"正在入库","en":"Importing","ja":"取り込み中"},

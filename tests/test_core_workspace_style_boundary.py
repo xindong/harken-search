@@ -304,7 +304,7 @@ def test_filter_and_info_share_one_rounded_outer_shell_without_global_restyling(
 def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
     main = read(MAIN_CPP)
 
-    body_style = between(main, "const auto pushDockToolBodyStyle", "constexpr float kFilterInfoShellRadius")
+    body_style = between(main, "const auto pushDockToolBodyStyle", "constexpr float kDockShellVerticalInset")
     docked_appearance = between(main, "const auto pushDockedToolAppearance", "const auto popDockedToolAppearance")
     direct_style = main.replace(body_style, "").replace(docked_appearance, "")
     names = re.findall(
@@ -403,11 +403,82 @@ def test_all_resize_handles_share_the_three_dot_grip_logic():
     assert "dl->AddLine(" not in vertical
     assert "dl->AddLine(" not in horizontal
 
+
+def test_sidebar_rail_and_active_content_keep_the_original_internal_spacing():
+    main = read(MAIN_CPP)
+    rail = between(main, 'BeginTransientScrollbarChild("##SidebarRail"', 'BeginTransientScrollbarChild("##SidebarContent"')
+
+    assert "ImGui::SameLine(0, 0);" in rail
+    assert "WorkspacePanelGapPx" not in rail
+    assert "AddRectFilled" not in rail
+
+
+def test_docked_workspace_seams_share_the_reference_gap_without_shrinking_resize_targets():
+    main = read(MAIN_CPP)
+    shell = between(main, "auto drawDockModuleShell", "const ImVec2 laneEnd")
+    vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+    assert "const float splitterWidth = WorkspacePanelGapPx() * 0.5f;" in main
+    assert "layout.insetL = splitterWidth;" in shell
+    assert "layout.insetR = splitterWidth;" in shell
+    assert "kWorkspaceColumnSplitterHitWidth = 12.0f" in main
+    assert 'InvisibleButton("##ResizeHit", ImVec2(kWorkspaceColumnSplitterHitWidth, height))' in vertical
+    horizontal_start = main.rindex("bool HorizontalSplitter(")
+    horizontal = main[horizontal_start:main.index("// Begin a dockable panel", horizontal_start)]
+    assert "if (!waveformSplitter &&" in horizontal
+
     meter = between(main, "// Meter resize handle", "// AUDITION_NATIVE_EXCEPTION: waveform-derived-meter")
     assert "const float handleWidth = 12.0f" in meter
     assert "InvisibleButton(\"##handle\", ImVec2(handleWidth" in meter
     assert "DrawThreeDotSplitterGrip" in meter
     assert "ResolveThreeDotSplitterColor" in meter
+
+
+def test_workspace_splitter_dots_use_their_window_layer_below_covering_tools():
+    main = read(MAIN_CPP)
+    vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+    horizontal_start = main.rindex("bool HorizontalSplitter(")
+    horizontal = main[horizontal_start:main.index("// Begin a dockable panel", horizontal_start)]
+    fallback = between(main, "for (int column = 0; column < 2; ++column)", "if (g_dockTestBandHintsVisible)")
+    for splitter in (vertical, horizontal, fallback):
+        assert "GetWindowDrawList()" in splitter
+        assert "GetForegroundDrawList" not in splitter
+    overlay_order = between(main, "static void LayerWorkspaceSplitterOverlays(", "// Draw a vertical splitter")
+    assert "ImGui::BringWindowToDisplayBehind(overlay, occluder)" in overlay_order
+    assert "window->OuterRectClipped.Overlaps(overlay->OuterRectClipped)" in overlay_order
+    assert "ImGuiWindowFlags_Popup" in overlay_order
+    assert "LayerWorkspaceSplitterOverlays(workspaceWindow);" in main
+
+
+def test_fallback_column_splitters_keep_the_full_hit_width_centered_on_the_seam():
+    main = read(MAIN_CPP)
+    gripper = between(main, "const auto leftOuterGrip =", "static std::string activeGripId")
+    fallback = between(main, "for (int column = 0; column < 2; ++column)", "if (g_dockTestBandHintsVisible)")
+
+    for side in ("Left", "Right"):
+        assert f"PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::{side}, kWorkspaceColumnSplitterHitWidth)" in gripper
+    assert "grip.rect.x = columnBoundaryX - grip.rect.width * 0.5f;" in fallback
+
+
+def test_standalone_status_bar_anchors_to_the_full_dock_column_bottom():
+    main = read(MAIN_CPP)
+    status = between(main, "// STATUS BAR with Panel Toggle Buttons", 'BeginTransientScrollbarChild("StatusBar"')
+
+    assert "if (!showDockedWaveform)" in status
+    assert "ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x," in status
+    assert "dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y" in status
+
+
+def test_bottom_waveform_uses_the_same_visible_gap_as_the_columns():
+    main = read(MAIN_CPP)
+    budget = between(main, "const bool showDockedWaveform =", "const float minimumWaveform =")
+    seam = between(main, "// BOTTOM - Waveform and Transport", 'BeginTransientScrollbarChild("WaveformPanel"')
+    waveform_child = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "const auto& waveformShellTheme")
+
+    assert "WorkspacePanelGapPx()" in budget
+    assert "waveformPanelGapReserve" in budget and "waveformPanelGapReserve" in seam
+    assert "ItemSpacing.y" not in seam
+    assert "AddRectFilled" not in seam
+    assert "ImGuiWindowFlags_NoBackground" in waveform_child
 
 
 def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
@@ -908,6 +979,15 @@ def test_waveform_zoom_scrollbar_is_transient_independently_and_never_shown_at_o
     assert "Ctrl+Scroll Zoom" not in scroll
 
 
+def test_outer_dock_band_splitters_share_the_layout_floor():
+    main = read(MAIN_CPP)
+    top_grip = between(main, "float* topHeightOwner = dockBandHeightOwner", "float* bottomHeightOwner = dockBandHeightOwner")
+    bottom_grip = between(main, "float* bottomHeightOwner = dockBandHeightOwner", 'HorizontalSplitter("##BottomDockSplitter"')
+    for grip, side in ((top_grip, "Top"), (bottom_grip, "Bottom")):
+        assert "aura::ui::dock::DockBandMinimum(" in grip
+        assert f"g_dockLayout.RegionRoot(aura::ui::dock::DockSide::{side}), viewport->DpiScale).height" in grip
+
+
 def test_native_scrollbars_use_independent_region_visibility_gates():
     header = read(STYLE_HEADER)
     source = read(STYLE_SOURCE)
@@ -927,10 +1007,12 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert "TransientScrollbarStyleScope transientScrollbarStyle" not in main
     assert "BeginTransientScrollbarChild" in main
     assert "BeginTransientScrollbarTable" in main
-    # The Similar Sounds leaf explicitly disables native scrollbars; normal
-    # content uses the wrapper. The QA narrator is a local packaging addition.
-    assert main.count("ImGui::BeginChild(") == 1
-    similar = between(main, 'ImGui::BeginChild(\n                        "##DockedSimilarSoundsContent"', 'ImGui::EndChild();')
+    assert "ImGui::BeginChild(" not in main
+    dock_content = between(main, "const auto beginDockContentViewport", "auto renderFunctionDockedModule")
+    assert "ImGui::SetNextWindowContentSize" in dock_content
+    assert "flags &= ~(ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)" in dock_content
+    assert "return BeginTransientScrollbarChild(childId, bodySize, false, flags);" in dock_content
+    similar = between(main, '"similar-sounds", "##DockedSimilarSoundsContent"', "ImGui::EndChild();")
     assert "ImGuiWindowFlags_NoScrollbar |" in similar
     assert "ImGui::BeginTable(" not in main
     assert "ImGui::Begin(" not in main

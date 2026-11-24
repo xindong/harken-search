@@ -736,6 +736,27 @@ int main() {
         if (!tiny.floatTop || !tiny.floatBottom || tiny.top!=0 || tiny.bottom!=0) return fail(706);
     }
 
+    {
+        for (const auto side : {DockSide::Top, DockSide::Bottom}) {
+            DockLayout band;
+            if (!band.InsertModule("info", side, 0.5f)) return fail(707);
+            if (DockBandMinimum(band.RegionRoot(side), 1.0f).height != 180.0f) return fail(708);
+            if (!band.InsertAdjacent("info", "similar-sounds", DockSide::Bottom, 0.5f)) return fail(709);
+            const auto* root = band.RegionRoot(side);
+            for (const float scale : {1.0f, 1.25f}) {
+                const auto minimum = DockBandMinimum(root, scale);
+                if (minimum.height != 300.0f * scale || minimum.width != 220.0f * scale ||
+                    DockSubtreeMinimum(root, scale, DockMinimumPurpose::Placement).height != 440.0f * scale)
+                    return fail(710);
+                const auto reserve = ResolveDockBandReserve(band, [](std::string_view) { return 500.0f; },
+                    220.0f, scale, 200.0f + kDockBandSplitterHeight + minimum.height, 800.0f);
+                if (reserve.floatTop || reserve.floatBottom ||
+                    (side == DockSide::Top ? reserve.top : reserve.bottom) != minimum.height)
+                    return fail(711);
+            }
+        }
+    }
+
     // Diagnostic/regression: Info top + SimilarSounds bottom in the Right
     // region must produce only the horizontal height divider, never a vertical
     // grip on SimilarSounds left outer edge.
@@ -924,6 +945,19 @@ int main() {
             1600.0f, false, true, 0.0f, 300.0f, 12.0f, 500.0f, 150.0f);
         if (!before.showLeft || after.showLeft || after.leftWidth != 0.0f) return fail(2701);
         if (after.centerWidth <= before.centerWidth + 320.0f) return fail(2702);
+    }
+    {
+        using namespace aura::ui::dock;
+        const DockColumnBudget fitted = ResolveDockColumnBudget(
+            1050.0f, true, true, 360.0f, 780.0f, 8.0f, 360.0f, 630.0f, 160.0f);
+        if (fitted.leftWidth != 160.0f || fitted.rightWidth != 630.0f ||
+            fitted.centerWidth != 244.0f) return fail(2703);
+        const DockColumnBudget narrow = ResolveDockColumnBudget(
+            580.0f, true, true, 360.0f, 780.0f, 8.0f, 360.0f, 630.0f, 160.0f);
+        if (!narrow.showLeft || !narrow.showRight || narrow.leftWidth <= 0.0f ||
+            narrow.rightWidth <= 0.0f || narrow.centerWidth <= 0.0f ||
+            std::fabs(narrow.leftWidth + narrow.rightWidth + narrow.centerWidth + 16.0f - 580.0f) > 0.01f)
+            return fail(2704);
     }
 
     // A lone Similar Sounds leaf has no leaf-to-leaf grip. The outer right

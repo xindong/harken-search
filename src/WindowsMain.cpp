@@ -3853,7 +3853,7 @@ struct MagicEqQaPointer {
 static MagicEqQaPointer s_magicEqQaPointer;
 #if ARIS_PREVIEW_ISOLATION
 extern std::string GetDockQaState();
-extern std::string SetupDockGestureFixtureForQa(AppState&);
+extern std::string SetupDockGestureFixtureForQa(AppState&, std::string_view, std::string_view);
 extern bool ResolveDockQaPointerPoint(const std::string&, const std::string&, float&, float&, unsigned int&);
 static bool s_dockQaPointerOwned = false;
 static int s_dockQaEscapePhase = 0;
@@ -5181,7 +5181,7 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
-    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup") {
+    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup" || cmd == "dock_viewport") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
             (!state.currentDbPathUtf8.empty() &&
@@ -5189,9 +5189,21 @@ static void PollQaCommandFile(AppState& state) {
             result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
         } else if (cmd == "dock_state") {
             result = GetDockQaState();
+        } else if (cmd == "dock_viewport") {
+            const int width = getInt(raw, "width", 0);
+            const int height = getInt(raw, "height", 0);
+            if (s_magicEqQaPointer.active || width < 400 || width > 2400 || height < 400 || height > 1600) {
+                result = R"({"ok":false,"error":"invalid_dock_viewport_size"})";
+            } else if (SetWindowPos(g_hwnd, nullptr, 0, 0, width, height,
+                           SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER)) {
+                result = R"({"ok":true})";
+            } else {
+                result = R"({"ok":false,"error":"dock_viewport_resize_failed"})";
+            }
         } else if (cmd == "dock_setup") {
             result = s_magicEqQaPointer.active
-                ? R"({"ok":false,"error":"qa_pointer_active"})" : SetupDockGestureFixtureForQa(state);
+                ? R"({"ok":false,"error":"qa_pointer_active"})"
+                : SetupDockGestureFixtureForQa(state, getStr(raw, "resize_module"), getStr(raw, "resize_mode"));
         } else {
             const std::string phase = getStr(raw, "phase");
             float x = s_magicEqQaPointer.x;
@@ -13197,6 +13209,19 @@ static int RunHarkenSearchDemoCli(bool integrityFailed) {
 #endif
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    // The installer runs this windowless entry as the original (non-elevated)
+    // user right after an upgrade: an elevated setup process cannot be trusted
+    // to reach Explorer, and the pin must already be correct before the new
+    // version is started for the first time. Handled before the integrity check
+    // so the refresh takes milliseconds, not the hashing time of the whole EXE.
+    for (std::uint32_t argumentIndex = 1; argumentIndex <= 8; ++argumentIndex) {
+        const auto argument = Platform::ReadProcessArgument(argumentIndex);
+        if (argument.status != Platform::ProcessArgumentStatus::Success) break;
+        if (argument.value != L"--refresh-pinned-taskbar-icons") continue;
+        (void)Platform::RefreshPinnedTaskbarIcons();
+        return 0;
+    }
+
     Platform::HarkenUserData::ApplyPreviewIsolationProcessEnvironment();
     // Capture the one-shot bootstrap challenge before UI startup. The health
     // acknowledgement remains tied to the first presented main UI frame.
@@ -13382,6 +13407,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (wc.hIconSm) {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
     }
+
+    // A taskbar pin is a per-user shortcut copy; Explorer can keep the icon
+    // bitmap it cached for it across an in-place upgrade. Ask Explorer to
+    // re-read only the pins that still use this executable's default icon, off
+    // the startup path so a slow or unresponsive shell never delays the UI.
+    // Preview and QA builds must not touch the real user's taskbar, so the
+    // automatic refresh stays out of isolated builds; the explicit installer
+    // entry above still works when it is invoked on purpose.
+#if !ARIS_PREVIEW_ISOLATION
+    std::thread([] { (void)Platform::RefreshPinnedTaskbarIcons(); }).detach();
+#endif
 
     // Setup OpenGL
     HDC hdc;

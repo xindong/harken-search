@@ -3,6 +3,7 @@
 #include "../HarkenSearchWidgets.h"
 #include "../BuildConfig.h"
 #include "EmptyStatePalette.h"
+#include "UiScale.h"
 #include "imgui_internal.h"
 
 namespace aura::ui::ActionButtonStyle {
@@ -42,6 +43,12 @@ inline void Record(const char* label) {
 // Shared ordinary-button paint. Layout, operations and custom graphic controls
 // belong to callers. Every push is local to one button and is restored by Scope.
 inline constexpr float kRounding = 6.0f;
+
+// A corner is part of the control's shape, so it scales with the same interface
+// factor as the height. Keeping it at 6 physical pixels makes a button that grew
+// to 80 px read as a rectangle next to a dialog that already scales its own
+// rounding.
+inline float ScaledRounding() noexcept { return dpi::Px(kRounding); }
 struct Palette {
     ImVec4 fill, hover, active, text, border;
     float borderWidth = 1.0f;
@@ -117,7 +124,7 @@ inline ImVec4 CurrentSurface() {
 class Scope {
 public:
     explicit Scope(const Palette& p) {
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, kRounding);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ScaledRounding());
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, p.borderWidth);
         ImGui::PushStyleColor(ImGuiCol_BorderShadow, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_Border, p.border);
