@@ -1963,6 +1963,12 @@ struct AppState {
     std::atomic<bool> scanCompletionPending{false};
     std::atomic<bool> scanCompletionWaveformsPending{false};
     std::atomic<bool> scanCompletionCoversPending{false};
+    struct ScanCoverResultsRefreshState {
+        uint64_t scanGeneration = 0;
+        int64_t dbGeneration = 0;
+        bool sawCoverWork = false;
+        std::chrono::steady_clock::time_point nextPoll{};
+    } scanCoverResultsRefresh;
     std::atomic<int> scanCompletionTotal{0};
     std::atomic<int> scanCompletionPendingFiles{0};
     std::atomic<int> scanCompletionMiniUnresolved{0};

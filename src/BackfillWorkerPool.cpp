@@ -28,7 +28,7 @@ namespace {
 
 std::mutex g_backfillDbWriteMutex;
 std::atomic<int> g_scanWriteRequests{0};
-std::atomic<bool> g_coverBackfillUiRefreshRequested{false};
+std::atomic<int64_t> g_coverBackfillUiRefreshGeneration{0};
 
 // P2: Coalesced facet_query_cache invalidate. Hot-path processCoverJob
 // commits one cover at a time; the per-call DELETE FROM facet_query_cache
@@ -140,8 +140,8 @@ void emitAllBackfillWorkerThroughput(int workerIndex,
 }
 #endif
 
-void RequestCoverBackfillUiRefresh() {
-    g_coverBackfillUiRefreshRequested.store(true, std::memory_order_release);
+void RequestCoverBackfillUiRefresh(int64_t dbGeneration) {
+    g_coverBackfillUiRefreshGeneration.store(dbGeneration, std::memory_order_release);
 }
 
 // Notes that a cover commit was deferred (i.e. the underlying
@@ -384,7 +384,7 @@ bool processCoverJob(Database& db,
             return false;
         }
         NoteCoverFacetDirtyAndMaybeFlush(db);  // P2: coalesced facet invalidate
-        RequestCoverBackfillUiRefresh();
+        RequestCoverBackfillUiRefresh(job.dbGeneration);
         return true;
     }
 
@@ -456,7 +456,7 @@ bool processCoverJob(Database& db,
         return false;
     }
     NoteCoverFacetDirtyAndMaybeFlush(db);  // P2: coalesced facet invalidate
-    RequestCoverBackfillUiRefresh();
+    RequestCoverBackfillUiRefresh(job.dbGeneration);
     return true;
 }
 
@@ -700,8 +700,9 @@ BackfillWorkerPool& GlobalBackfillWorkerPool() {
     return pool;
 }
 
-bool ConsumeCoverBackfillUiRefresh() {
-    return g_coverBackfillUiRefreshRequested.exchange(false, std::memory_order_acq_rel);
+bool ConsumeCoverBackfillUiRefresh(int64_t dbGeneration) {
+    const int64_t requested = g_coverBackfillUiRefreshGeneration.exchange(0, std::memory_order_acq_rel);
+    return requested != 0 && requested == dbGeneration;
 }
 
 BackfillScanWriteGuard::BackfillScanWriteGuard()

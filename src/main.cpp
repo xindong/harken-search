@@ -9869,7 +9869,8 @@ static uint64_t SubmitAsyncSearch(AppState& state, const SearchFilter& filter, A
                                   int limit, int offset, bool resetPagination, bool needFacets,
                                   bool isRandomShuffle = false,
                                   bool deferCount = false, bool deferFacets = false,
-                                  bool skipDeferredCountFollowUp = false) {
+                                  bool skipDeferredCountFollowUp = false,
+                                  bool scanCoverRefresh = false) {
     AsyncSearchRequest req;
     req.filter = filter;
     req.viewMode = (int)state.viewMode;
@@ -9885,6 +9886,7 @@ static uint64_t SubmitAsyncSearch(AppState& state, const SearchFilter& filter, A
     req.deferCount = deferCount;
     req.deferFacets = deferFacets;
     req.skipDeferredCountFollowUp = skipDeferredCountFollowUp;
+    req.scanCoverRefresh = scanCoverRefresh;
     req.folderFilterActive = state.folderFilterActive;
     req.selectedFolderPath = state.selectedFolderPath;
     req.hasAdvancedFilters = HasAdvancedDbFilters(state);
@@ -10912,7 +10914,8 @@ static bool MountFilePlayerDatabaseForInteractiveRefresh(AppState& state,
     return true;
 }
 
-void RefreshSearchResults(AppState& state, bool resetPagination) {
+static uint64_t RefreshSearchResultsWithRowLimit(AppState& state, bool resetPagination, int resultLimit,
+                                                bool scanCoverRefresh = false) {
     // Advance the result revision only after successful delivery.
     // Request-start timestamps are unsafe because canceled, superseded, or
     // failed searches do not produce a new snapshot.
@@ -10933,7 +10936,7 @@ void RefreshSearchResults(AppState& state, bool resetPagination) {
             state.loadingMore = false;
             state.asyncSearchInProgress = false;
             state.bumpSearchResultsGen();
-            return;
+            return 0;
         }
     }
 
@@ -11039,14 +11042,65 @@ void RefreshSearchResults(AppState& state, bool resetPagination) {
     // deferCount: skip expensive count during rapid input, cover filter clicks,
     // and filtered cover-wall first paint. Count/facet follow-up is enough to
     // stabilize the artwork wall before the heavier paged list query lands.
-    const bool deferCount = filteredCoverWallFastFirstPaint ||
-        (preferDeferredCountForThisRefresh || !isStable) ||
-        coverFilterActive;
+    const bool deferCount = !scanCoverRefresh &&
+        (filteredCoverWallFastFirstPaint || preferDeferredCountForThisRefresh ||
+         !isStable || coverFilterActive);
     const bool deferFacets = false;
 
-    SubmitAsyncSearch(state, filter, AsyncSearchKind::Refresh,
-        AppState::PAGE_SIZE, 0, true, needFacets, false, deferCount, deferFacets,
-        skipDeferredCountFollowUpForThisRefresh);
+    return SubmitAsyncSearch(state, filter, AsyncSearchKind::Refresh,
+        resultLimit, 0, true, needFacets, false, deferCount, deferFacets,
+        skipDeferredCountFollowUpForThisRefresh, scanCoverRefresh);
+}
+
+void RefreshSearchResults(AppState& state, bool resetPagination) {
+    RefreshSearchResultsWithRowLimit(state, resetPagination, AppState::PAGE_SIZE);
+}
+
+void PumpScanCoverResultsRefresh(AppState& state, bool coverBackfillUpdated) {
+    auto& refresh = state.scanCoverResultsRefresh;
+    if (refresh.scanGeneration == 0) return;
+    if (refresh.dbGeneration != state.backfillDbGeneration ||
+        !state.isScanTaskCurrent(refresh.scanGeneration) ||
+        state.scanStopDisposition.load(std::memory_order_acquire) ==
+            HarkenSearch::ScanStopDisposition::CancelRollback ||
+        state.scanFatalFailure.load(std::memory_order_acquire)) {
+        refresh = {};
+        return;
+    }
+
+    refresh.sawCoverWork |= coverBackfillUpdated;
+    if (state.isScanning.load(std::memory_order_acquire) ||
+        state.dbSwitchInProgress || state.needsDatabaseRefresh ||
+        state.asyncSearchInProgress || state.loadingMore ||
+        state.viewMode != ViewMode::Database || !state.database.isOpen()) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now < refresh.nextPoll) return;
+    refresh.nextPoll = now + std::chrono::milliseconds(500);
+    const auto coversPending = state.database.hasBackfillPendingKind(
+        static_cast<int>(aura::BackfillJobKind::CoverResolveAndThumb));
+    if (!coversPending.has_value()) return;
+    if (*coversPending) {
+        refresh.sawCoverWork = true;
+        return;
+    }
+
+    refresh.sawCoverWork |= aura::ConsumeCoverBackfillUiRefresh(state.backfillDbGeneration);
+    const auto scanSessionId = refresh.scanGeneration;
+    const bool shouldRefresh = refresh.sawCoverWork;
+    refresh = {};
+    if (!shouldRefresh) return;
+
+    const int resultLimit = state.loadedCount > AppState::PAGE_SIZE
+        ? state.loadedCount : AppState::PAGE_SIZE;
+    const uint64_t requestId = RefreshSearchResultsWithRowLimit(state, false, resultLimit, true);
+    DIAG_SYSTEM_FMT("Scan",
+                    "ScanCompletionCoverResultsRefresh: session=%lld req=%llu limit=%d",
+                    (long long)scanSessionId,
+                    (unsigned long long)requestId,
+                    resultLimit);
 }
 
 // Decide whether "Load All" should use batched mode.
@@ -22972,6 +23026,10 @@ static void RefreshScanCompletionState(AppState& state) {
                             "ScanCompletionCoversSatisfied: session=%lld total=%d",
                             (long long)scanSessionId,
                             counts.total);
+            if (state.scanCoverResultsRefresh.scanGeneration == static_cast<uint64_t>(scanSessionId) &&
+                state.scanCompletionSessionId.load(std::memory_order_acquire) == scanSessionId) {
+                state.scanCoverResultsRefresh.sawCoverWork = true;
+            }
     }
     if (waveformsBefore && !waveformsPending) {
             DIAG_SYSTEM_FMT("Scan",
@@ -33577,6 +33635,7 @@ void RenderUI(AppState& state) {
                 const bool keepCommittedOnCancel =
                     !lightweightInsert && state.pendingScanIsDirectDriveRootDrop;
                 const uint64_t scanGeneration = state.beginNewScanTask(keepCommittedOnCancel);
+                state.scanCoverResultsRefresh = {scanGeneration, state.backfillDbGeneration};
                 state.pendingScanIsDirectDriveRootDrop = false;
                 std::shared_ptr<std::atomic<bool>> scanCancelToken = state.getActiveScanCancelToken();
                 bool recursive = state.scanRecursive;
@@ -46070,7 +46129,7 @@ void RenderUI(AppState& state) {
     const bool postProcessCoverRefresh =
         state.database.consumePostProcessCoverRefresh();
     const bool backfillCoverRefresh =
-        aura::ConsumeCoverBackfillUiRefresh();
+        aura::ConsumeCoverBackfillUiRefresh(state.backfillDbGeneration);
     if (postProcessCoverRefresh) {
         state.invalidateCoverWallAfterDatabaseContentChange();
 #if AURA_BUILD_DIAGNOSTICS
@@ -46078,16 +46137,19 @@ void RenderUI(AppState& state) {
 #endif
         MarkScanReadyToWorkCoversSatisfied(state);
     }
-    if (backfillCoverRefresh) {
-        state.requestCoverWallBackfillDisplayRefresh();
+    if (backfillCoverRefresh && !state.dbSwitchInProgress) {
+        if (state.scanCoverResultsRefresh.scanGeneration == 0) {
+            state.requestCoverWallBackfillDisplayRefresh();
 #if AURA_BUILD_DIAGNOSTICS
-        DIAG_ACTION("CoverWall", "BackfillLightRefreshConsumed");
+            DIAG_ACTION("CoverWall", "BackfillLightRefreshConsumed");
 #endif
+        }
         MarkScanReadyToWorkCoversSatisfied(state);
     }
     PumpScanReadyToWorkFirstScreenCovers(state);
     RefreshScanReadyToWorkState(state);
     RefreshScanCompletionState(state);
+    PumpScanCoverResultsRefresh(state, backfillCoverRefresh);
 
     static bool s_bottomStatusWasScanning = false;
     const bool bottomStatusScanningNow = state.isScanning.load();

@@ -23,9 +23,11 @@ CaptureAsyncSearchBrowsePreviewRefresh(
 
 void HandleAsyncSearchBrowsePreviewRefreshRestore(
     const aura::coverwall::BrowseSurfacePreviewSelection& selection,
-    AsyncSearchBrowsePreviewRefreshEffects& effects) {
+    AsyncSearchBrowsePreviewRefreshEffects& effects,
+    bool restoreSelection) {
     effects.startDeferredCoverPriming();
     effects.applyCoverKeyFilter();
+    if (!restoreSelection) return;
     const auto state = effects.readState();
     HandleAsyncSearchBrowsePreviewRestore(
         {state.databaseView,
