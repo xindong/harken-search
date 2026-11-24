@@ -3,11 +3,22 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <thread>
 namespace HarkenSearch {
 namespace {
+struct SimilarityWorkerGroup {
+    std::atomic<bool> stopping{false};
+    std::vector<std::thread> threads;
+
+    ~SimilarityWorkerGroup() {
+        stopping.store(true);
+        for (auto& thread : threads) thread.join();
+    }
+};
+
 void RecordSimilarityOutcome(SimilarityAnalysisStore& store, const SimilarityFile& file, bool modelReady,
                              bool analyzed, SimilarityIndexFailure failure, SimilarityAnalysisEntry& entry,
                              SimilarityIndexResult& result) {
@@ -91,18 +102,26 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
             std::vector<std::unique_ptr<Slot>> slots(tasks.size());
             std::mutex slotMutex; std::condition_variable slotReady;
             std::atomic<size_t> nextTask{0};
-            std::vector<std::thread> threads;
+            std::exception_ptr workerFailure;
+            SimilarityWorkerGroup group;
+            const FeatureExtractionCancelCheck workerCancelled = [&] {
+                return group.stopping.load() || cancelled();
+            };
             for (AudioEmbeddingService* workerModel : pool) {
-                threads.emplace_back([&, workerModel] {
-                    for (;;) {
-                        const size_t index = nextTask.fetch_add(1);
-                        if (index >= tasks.size() || cancelled()) break;
-                        auto slot = std::make_unique<Slot>();
-                        try {
-                            slot->analyzed = AnalyzeSimilarityEntry(tasks[index],workerModel,slot->entry,slot->failure,cancel);
-                        } catch (const std::exception&) { slot->analyzed = false; }
-                        { std::lock_guard<std::mutex> lock(slotMutex); slots[index] = std::move(slot); }
-                        slotReady.notify_all();
+                group.threads.emplace_back([&, workerModel, workerCancelled] {
+                    try {
+                        for (;;) {
+                            const size_t index = nextTask.fetch_add(1);
+                            if (index >= tasks.size() || workerCancelled()) break;
+                            auto slot = std::make_unique<Slot>();
+                            slot->analyzed = AnalyzeSimilarityEntry(tasks[index],workerModel,slot->entry,slot->failure,workerCancelled);
+                            { std::lock_guard<std::mutex> lock(slotMutex); slots[index] = std::move(slot); }
+                            slotReady.notify_all();
+                        }
+                    } catch (...) {
+                        std::lock_guard<std::mutex> lock(slotMutex);
+                        if (!workerFailure) workerFailure = std::current_exception();
+                        group.stopping.store(true);
                     }
                     slotReady.notify_all();
                 });
@@ -114,17 +133,17 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
                     // The semantic path needs hundreds of milliseconds per file, so a
                     // single short poll must not be read as failure. Wait for the slot
                     // (or a real cancellation) and keep re-checking cancellation.
-                    while (!slots[index] && !cancelled()) {
+                    while (!slots[index] && !workerFailure && !cancelled()) {
                         slotReady.wait_for(lock,std::chrono::milliseconds(100));
                     }
+                    if (workerFailure) std::rethrow_exception(workerFailure);
                     slot = std::move(slots[index]);
                 }
-                if (!slot) { result.cancelled = true; break; }
+                if (!slot || cancelled()) { result.cancelled = true; break; }
                 RecordSimilarityOutcome(store,tasks[index],model.IsReady(),slot->analyzed,slot->failure,slot->entry,result);
                 if (cancelled()) { result.cancelled = true; break; }
                 ++result.progress.completed; if (progress) progress(result.progress);
             }
-            for (auto& thread : threads) thread.join();
         }
         result.ok = !result.cancelled; return result;
     }

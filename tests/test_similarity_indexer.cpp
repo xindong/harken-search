@@ -2,8 +2,11 @@
 #include "platform/audio_file.h"
 #include "sqlite3.h"
 #include <filesystem>
+#include <atomic>
 #include <cmath>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <iostream>
 using namespace HarkenSearch;
@@ -89,12 +92,50 @@ int main() {
           parallelEntry.acoustic.activeStart==serialEntry.acoustic.activeStart,
         "parallel workers write the same records as the serial pass");
     for (int64_t id = 1; id <= 4; ++id) store.Invalidate(id);
-    bool stopParallel = false;
-    const auto parallelCancelled = BuildSimilarityIndex(dbPath,"missing-model",[&]{return stopParallel;},
+    std::atomic<bool> stopParallel{false};
+    const auto parallelCancelled = BuildSimilarityIndex(dbPath,"missing-model",[&]{return stopParallel.load();},
         [&](const SimilarityIndexProgress& progress){if(progress.saved==1) stopParallel=true;},
         SimilarityIndexScope::ValidateAll,4);
     check(parallelCancelled.cancelled && parallelCancelled.progress.saved>=1 && store.Load(1,entry),
         "parallel cancellation keeps finished records and reports cancellation");
+    {
+        SimilarityAnalysisEntry oldEntry;
+        const bool oldLoaded = store.Load(1,oldEntry);
+        write(1100);
+        const auto caller = std::this_thread::get_id();
+        std::atomic<bool> callerWaiting{false};
+        std::atomic<bool> cancelDuringAnalysis{false};
+        bool workerPhase = false;
+        int initialCallbacks = 0;
+        int workerChecks = 0;
+        const auto stopped = BuildSimilarityIndex(dbPath,"missing-model",[&] {
+            if (std::this_thread::get_id() == caller) {
+                const bool requested = cancelDuringAnalysis.load();
+                if (workerPhase) callerWaiting = true;
+                return requested;
+            }
+            if (++workerChecks == 1) return false;
+            while (!callerWaiting) std::this_thread::yield();
+            cancelDuringAnalysis = true;
+            return true;
+        },[&](const SimilarityIndexProgress&) { workerPhase = ++initialCallbacks >= 2; },
+            SimilarityIndexScope::ValidateAll,4);
+        check(oldLoaded && stopped.cancelled && stopped.progress.failed == 0 &&
+              store.Load(1,entry) && entry.identity == oldEntry.identity,
+            "cancelling a parallel reanalysis preserves the old index without recording a failure");
+    }
+    {
+        write(1320);
+        bool caught = false;
+        try {
+            BuildSimilarityIndex(dbPath,"missing-model",{},[](const SimilarityIndexProgress& progress) {
+                if (progress.saved > 0) throw std::runtime_error("test progress failure");
+            },SimilarityIndexScope::ValidateAll,4);
+        } catch (const std::runtime_error& error) {
+            caught = std::string(error.what()) == "test progress failure";
+        }
+        check(caught, "a throwing progress callback joins workers and propagates the original exception");
+    }
     // One real semantic analysis takes hundreds of milliseconds, so the consumer must
     // wait for a slow worker instead of treating one short poll as cancellation.
     {
