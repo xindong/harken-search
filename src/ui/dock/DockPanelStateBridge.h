@@ -156,24 +156,27 @@ inline DockColumnBudget ResolveDockColumnBudget(
     float rightWidth,
     float splitterWidth,
     float minReadableCenterWidth,
-    float minRightWidth) {
+    float minRightWidth,
+    float minLeftWidth = 0.0f) {
     DockColumnBudget budget;
     budget.showLeft = showLeft;
     budget.showRight = showRight;
-    budget.leftWidth = showLeft ? leftWidth : 0.0f;
-    budget.rightWidth = showRight ? rightWidth : 0.0f;
-    const float leftSplitter = showLeft ? splitterWidth : 0.0f;
-    if (budget.showLeft && budget.showRight &&
-        mainWidth - budget.leftWidth - budget.rightWidth - (leftSplitter + splitterWidth) < minReadableCenterWidth) {
-        const float fittedRight = std::max(
-            minRightWidth,
-            mainWidth - budget.leftWidth - (leftSplitter + splitterWidth) - minReadableCenterWidth);
-        if (fittedRight >= minRightWidth) {
-            budget.rightWidth = std::min(budget.rightWidth, fittedRight);
-        } else {
-            budget.showRight = false;
-            budget.rightWidth = 0.0f;
-        }
+    const float available = std::max(0.0f, mainWidth -
+        (showLeft ? splitterWidth : 0.0f) - (showRight ? splitterWidth : 0.0f));
+    const float leftFloor = showLeft ? minLeftWidth : 0.0f;
+    const float rightFloor = showRight ? minRightWidth : 0.0f;
+    const float totalFloor = leftFloor + rightFloor;
+    const float preferredCenter = std::clamp(minReadableCenterWidth, 0.0f, available);
+    const float centerReserve = std::clamp(available - totalFloor,
+        std::min(preferredCenter * 0.5f, available * 0.25f), preferredCenter);
+    const float dockRoom = available - centerReserve;
+    if (dockRoom < totalFloor) {
+        budget.leftWidth = dockRoom * (leftFloor / totalFloor);
+        budget.rightWidth = dockRoom - budget.leftWidth;
+    } else {
+        budget.leftWidth = showLeft ? std::clamp(leftWidth, leftFloor, dockRoom - rightFloor) : 0.0f;
+        budget.rightWidth = showRight
+            ? std::clamp(rightWidth, rightFloor, std::max(rightFloor, dockRoom - budget.leftWidth)) : 0.0f;
     }
     budget.centerWidth = std::max(
         0.0f,
@@ -212,6 +215,11 @@ inline DockBandReserve ResolveDockBandReserve(
     float availableHeight = std::numeric_limits<float>::infinity(),
     float centerWidth = std::numeric_limits<float>::infinity(),
     float centerMinimumHeight = 200.0f) {
+    const auto liveMinimum = [&](const DockNode* root) {
+        const bool split = root && root->Kind() == NodeKind::Split;
+        return DockSubtreeMinimum(root, scale,
+            split ? DockMinimumPurpose::Resize : DockMinimumPurpose::Placement);
+    };
     auto height = [&](DockSide side) {
         const DockNode* root = layout.RegionRoot(side);
         if (!root) return 0.0f;
@@ -230,11 +238,11 @@ inline DockBandReserve ResolveDockBandReserve(
         // The workspace budget below is the ceiling, including on tall screens.
         const float preferred = std::max(kDockBandMinHeight,
             std::isfinite(saved) && saved > 0.0f ? saved : fallbackHeight);
-        return std::max(preferred, DockSubtreeMinimum(root, scale).height);
+        return std::max(preferred, liveMinimum(root).height);
     };
     DockBandReserve result{height(DockSide::Top), height(DockSide::Bottom)};
-    auto topMinimum = DockSubtreeMinimum(layout.RegionRoot(DockSide::Top), scale);
-    auto bottomMinimum = DockSubtreeMinimum(layout.RegionRoot(DockSide::Bottom), scale);
+    auto topMinimum = liveMinimum(layout.RegionRoot(DockSide::Top));
+    auto bottomMinimum = liveMinimum(layout.RegionRoot(DockSide::Bottom));
     auto floatBand = [](float& extent, DockMinimumSize& minimum, bool& floating) {
         floating = floating || extent > 0.0f;
         extent = 0.0f;

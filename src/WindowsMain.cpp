@@ -3853,7 +3853,7 @@ struct MagicEqQaPointer {
 static MagicEqQaPointer s_magicEqQaPointer;
 #if ARIS_PREVIEW_ISOLATION
 extern std::string GetDockQaState();
-extern std::string SetupDockGestureFixtureForQa(AppState&);
+extern std::string SetupDockGestureFixtureForQa(AppState&, std::string_view, std::string_view);
 extern bool ResolveDockQaPointerPoint(const std::string&, const std::string&, float&, float&, unsigned int&);
 static bool s_dockQaPointerOwned = false;
 static int s_dockQaEscapePhase = 0;
@@ -5181,7 +5181,7 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
-    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup") {
+    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup" || cmd == "dock_viewport") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
             (!state.currentDbPathUtf8.empty() &&
@@ -5189,9 +5189,21 @@ static void PollQaCommandFile(AppState& state) {
             result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
         } else if (cmd == "dock_state") {
             result = GetDockQaState();
+        } else if (cmd == "dock_viewport") {
+            const int width = getInt(raw, "width", 0);
+            const int height = getInt(raw, "height", 0);
+            if (s_magicEqQaPointer.active || width < 400 || width > 2400 || height < 400 || height > 1600) {
+                result = R"({"ok":false,"error":"invalid_dock_viewport_size"})";
+            } else if (SetWindowPos(g_hwnd, nullptr, 0, 0, width, height,
+                           SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER)) {
+                result = R"({"ok":true})";
+            } else {
+                result = R"({"ok":false,"error":"dock_viewport_resize_failed"})";
+            }
         } else if (cmd == "dock_setup") {
             result = s_magicEqQaPointer.active
-                ? R"({"ok":false,"error":"qa_pointer_active"})" : SetupDockGestureFixtureForQa(state);
+                ? R"({"ok":false,"error":"qa_pointer_active"})"
+                : SetupDockGestureFixtureForQa(state, getStr(raw, "resize_module"), getStr(raw, "resize_mode"));
         } else {
             const std::string phase = getStr(raw, "phase");
             float x = s_magicEqQaPointer.x;

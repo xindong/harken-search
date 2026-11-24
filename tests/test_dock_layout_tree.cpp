@@ -925,6 +925,19 @@ int main() {
         if (!before.showLeft || after.showLeft || after.leftWidth != 0.0f) return fail(2701);
         if (after.centerWidth <= before.centerWidth + 320.0f) return fail(2702);
     }
+    {
+        using namespace aura::ui::dock;
+        const DockColumnBudget fitted = ResolveDockColumnBudget(
+            1050.0f, true, true, 360.0f, 780.0f, 8.0f, 360.0f, 630.0f, 160.0f);
+        if (fitted.leftWidth != 160.0f || fitted.rightWidth != 630.0f ||
+            fitted.centerWidth != 244.0f) return fail(2703);
+        const DockColumnBudget narrow = ResolveDockColumnBudget(
+            580.0f, true, true, 360.0f, 780.0f, 8.0f, 360.0f, 630.0f, 160.0f);
+        if (!narrow.showLeft || !narrow.showRight || narrow.leftWidth <= 0.0f ||
+            narrow.rightWidth <= 0.0f || narrow.centerWidth <= 0.0f ||
+            std::fabs(narrow.leftWidth + narrow.rightWidth + narrow.centerWidth + 16.0f - 580.0f) > 0.01f)
+            return fail(2704);
+    }
 
     // A lone Similar Sounds leaf has no leaf-to-leaf grip. The outer right
     // column width still belongs to its own persisted width and gives Results
