@@ -30306,9 +30306,10 @@ void StartBatchFeatureExtraction(AppState& state, bool recheckAll, bool manual) 
     });
 }
 
-void DrawSimilarityIndexPanel(AppState& state) {
+void DrawSimilarityIndexPanel(AppState& state, bool independentLayout) {
     const bool sharedSimilarStyle = state.settings.theme != AppTheme::Custom &&
         !state.settings.useCustomColors && !ThemeColors::customized();
+    const bool showSeparators = independentLayout || !sharedSimilarStyle;
     // Full-table counts run on one independent read-only connection. This UI
     // path only submits work and polls values; it never waits for SQLite.
     static SimilarityIndexCountState count;
@@ -30352,7 +30353,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
             now - lastCountTime > 2.0 && statistics.Request()) lastCountTime = now;
     }
 
-    if (!sharedSimilarStyle) ImGui::Separator();
+    if (showSeparators) ImGui::Separator();
     ImGui::BeginDisabled(state.dbSwitchInProgress);
     if (state.dbSwitchInProgress) {
         ImGui::TextUnformatted(L(Similar_StatsSwitching));
@@ -30448,7 +30449,7 @@ void DrawSimilarityIndexPanel(AppState& state) {
         }
     }
     ImGui::EndDisabled();
-    if (!sharedSimilarStyle) ImGui::Separator();
+    if (showSeparators) ImGui::Separator();
 }
 
 static std::string ScanDialogLeafName(const std::string& path) {
@@ -39864,7 +39865,8 @@ void RenderUI(AppState& state) {
         return visible;
     };
 
-    auto beginFilterStyleFloatingWindow = [&](const char* title, bool* open, const char* moduleId) {
+    auto beginFilterStyleFloatingWindow = [&](const char* title, bool* open, const char* moduleId,
+                                               bool independentSimilar = false) {
         if (g_dockRestoreFloatingModule == moduleId) {
             ImGui::SetNextWindowPos(ImVec2(g_dockGesturePanelBefore.floatX,
                 g_dockGesturePanelBefore.floatY), ImGuiCond_Always);
@@ -39895,7 +39897,8 @@ void RenderUI(AppState& state) {
             ImVec2(8.0f, (std::max)(0.0f, (shell.titleHeight - ImGui::GetFontSize()) * 0.5f)));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowTitleAlign, ImVec2(0.0f, 0.5f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-            infoFamily ? ImVec2(8.0f, 8.0f) : ImVec2(shell.insetL + shell.innerPad, shell.innerPad));
+            independentSimilar ? ImVec2(0.0f, 0.0f) :
+            (infoFamily ? ImVec2(8.0f, 8.0f) : ImVec2(shell.insetL + shell.innerPad, shell.innerPad)));
         // Draw the one rounded perimeter below. Native viewport decorations
         // otherwise force their perimeter to square even with WindowRounding.
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -39971,6 +39974,19 @@ void RenderUI(AppState& state) {
                 flags |= ImGuiWindowFlags_HorizontalScrollbar;
         }
         return BeginTransientScrollbarChild(childId, bodySize, false, flags);
+    };
+
+    const auto renderIndependentSimilarSounds = [&](const ImVec2& outerSize, const ImVec2& contentMin,
+                                                     const ImVec2& contentMax) {
+        constexpr float padding = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+        ImGui::SetCursorScreenPos(ImVec2(contentMin.x + padding, contentMin.y + padding));
+        const ImVec2 bodySize((std::max)(1.0f, contentMax.x - contentMin.x - 2.0f * padding),
+                              (std::max)(1.0f, contentMax.y - contentMin.y - 2.0f * padding));
+        if (beginDockContentViewport("similar-sounds", "##IndependentSimilarSoundsContent",
+                outerSize, bodySize, ImGuiWindowFlags_NoBackground)) {
+            aura::ui::RenderSimilarSoundsContent(state, true);
+        }
+        ImGui::EndChild();
     };
 
     auto renderFunctionDockedModule = [&](const aura::ui::dock::DockModuleTarget& leaf,
@@ -51844,7 +51860,7 @@ void RenderUI(AppState& state) {
         const int similarStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("similar-sounds"));
         const bool similarWindowVisible = beginFilterStyleFloatingWindow(
             (std::string(L(Similar_Title)) + "##FloatingSimilarSounds").c_str(),
-            &similarOpen, "similar-sounds");
+            &similarOpen, "similar-sounds", true);
         if (similarWindowVisible) {
             ImVec2 pos = ImGui::GetWindowPos();
             ImVec2 size = ImGui::GetWindowSize();
@@ -51864,20 +51880,9 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndPopup();
             }
-            const ImVec2 similarContentMin = ImGui::GetCursorScreenPos();
-            const ImVec2 similarContentSize = ImGui::GetContentRegionAvail();
-            aura::ui::RenderSimilarSoundsContent(state);
-            if (state.settings.theme != AppTheme::Custom &&
-                !state.settings.useCustomColors && !ThemeColors::customized()) {
-                ImDrawList* similarDl = ImGui::GetWindowDrawList();
-                similarDl->AddRect(
-                    similarContentMin,
-                    ImVec2(similarContentMin.x + similarContentSize.x,
-                           similarContentMin.y + similarContentSize.y),
-                    ImGui::GetColorU32(ThemeColors::infoPanelDockEdge(ThemeColors::current())),
-                    kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
-                    aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
-            }
+            renderIndependentSimilarSounds(size,
+                ImVec2(pos.x, ImGui::GetCurrentWindowRead()->TitleBarRect().Max.y),
+                ImVec2(pos.x + size.x, pos.y + size.y));
             ImGui::PopStyleColor();
         }
         if (!similarOpen) {
@@ -52154,8 +52159,6 @@ void RenderUI(AppState& state) {
                     &open,
                     dockFlags)) {
                 ImDrawList* similarDl = ImGui::GetWindowDrawList();
-                const auto& similarTheme = ThemeColors::current();
-                const bool sharedSimilarStyle = useSharedSimilarAppearance();
                 const DockModuleShellLayout similarShell = drawDockModuleShell(
                     similarDl,
                     ImGui::GetWindowPos(),
@@ -52191,37 +52194,8 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::EndPopup();
                 }
-                const float similarContentInset = sharedSimilarStyle ? 4.0f : 0.0f;
-                ImGui::SetCursorPos(ImVec2(
-                    similarShell.insetL + similarShell.innerPad + similarContentInset,
-                    similarShell.insetT + similarShell.titleHeight + 4.0f + similarContentInset));
-                const float similarContentWidth = std::max(1.0f,
-                    leaf.rect.width - similarShell.insetL - similarShell.insetR -
-                        similarShell.innerPad * 2.0f - similarContentInset * 2.0f);
-                const float similarContentHeight = std::max(1.0f,
-                    leaf.rect.height - similarShell.insetT - similarShell.insetB -
-                        similarShell.titleHeight - 8.0f - similarContentInset * 2.0f);
-                const ImVec2 similarContentMin = ImGui::GetCursorScreenPos();
-                if (beginDockContentViewport(
-                        "similar-sounds", "##DockedSimilarSoundsContent",
-                        ImVec2(leaf.rect.width, leaf.rect.height),
-                        ImVec2(similarContentWidth, similarContentHeight),
-                        ImGuiWindowFlags_NoBackground |
-                            ImGuiWindowFlags_NoScrollbar |
-                            ImGuiWindowFlags_NoScrollWithMouse)) {
-                    aura::ui::RenderSimilarSoundsContent(state);
-                }
-                ImGui::EndChild();
-                if (sharedSimilarStyle) {
-                    similarDl->AddRect(
-                        similarContentMin,
-                        ImVec2(similarContentMin.x + similarContentWidth,
-                               similarContentMin.y + similarContentHeight),
-                        ImGui::GetColorU32(ThemeColors::infoPanelDockEdge(similarTheme)),
-                        kFilterInfoShellRadius,
-                        ImDrawFlags_RoundCornersAll,
-                        aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
-                }
+                renderIndependentSimilarSounds(ImVec2(leaf.rect.width, leaf.rect.height),
+                    similarShell.contentMin, similarShell.contentMax);
             }
             if (!open) {
                 FloatDockedPanel("similar-sounds", state.panelSimilarSounds, leaf.rect);
