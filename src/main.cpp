@@ -39282,9 +39282,11 @@ void RenderUI(AppState& state) {
         showDockedWaveform ? 0.0f : std::max(2.0f, ImGui::GetStyle().FramePadding.y + 1.0f);
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
     const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? workspacePx(36.0f) : 0.0f;
+    const float workspaceVerticalSpacing =
+        showDockedWaveform ? 2.0f * ImGui::GetStyle().ItemSpacing.y : 13.0f;
     const float baseOverhead = workspaceHeaderHeight + reservedStatusBarHeight +
         waveformSplitterReserve + statusBottomLayoutReserve + startupListOffsetReserve +
-        startupWaveformOffsetReserve + 13.0f;
+        startupWaveformOffsetReserve + workspaceVerticalSpacing;
     const float minimumWaveform = showDockedWaveform ? (layoutShortHeight ? 96.0f : 150.0f) : 0.0f;
     const float bandCenterWidth = std::max(1.0f, mainWorkW -
         (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
@@ -48349,13 +48351,12 @@ void RenderUI(AppState& state) {
         const float pitchModeTopOffset = 22.0f;
         const float pitchModeHeight = 14.0f;
         const float pitchColumnTailHeight = pitchModeTopOffset + pitchModeHeight;
-        float panelAvailH = ImGui::GetContentRegionAvail().y;
+        const float waveFooterGap = 1.0f;
+        const float waveFooterEdge = 2.0f;
+        const float panelAvailH = ImGui::GetContentRegionAvail().y;
         // The zoom/navigation bar is a transient overlay on the waveform. It
         // must not reserve a permanent blank shelf when its visual is hidden.
-        // The pitch mode switch extends below the wheel farther than the
-        // waveform footer, so both columns must reserve the deeper tail.
-        const float reservedH = std::max(waveFileNameBarHeight, pitchColumnTailHeight);
-        const float availHeight = std::max(24.0f, panelAvailH - reservedH);
+        const float pitchWheelHeight = std::max(24.0f, panelAvailH - std::max(waveFileNameBarHeight, pitchColumnTailHeight));
         const float pitchColumnY = ImGui::GetCursorScreenPos().y;
 
         // INDEPENDENT PLAYER FOOTER CONTROL STRIP
@@ -48371,7 +48372,7 @@ void RenderUI(AppState& state) {
                 ThemeColors::isLightChromeTheme(playerFooterStripTheme);
             const ImVec2 playerFooterStripMin(
                 pitchColumnOriginX,
-                pitchColumnY + availHeight + 1.0f);
+                pitchColumnY + pitchWheelHeight + waveFooterGap);
             const ImVec2 playerFooterStripMax(
                 ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x,
                 pitchColumnY + panelAvailH);
@@ -48404,7 +48405,7 @@ void RenderUI(AppState& state) {
 
         {
             ImDrawList* pwDl = ImGui::GetWindowDrawList();
-            float pwHeight = availHeight;
+            float pwHeight = pitchWheelHeight;
             float pwX = pitchWheelPos.x;
             float pwY = pitchWheelPos.y;
 
@@ -48823,7 +48824,7 @@ void RenderUI(AppState& state) {
         float waveformWidth = ImGui::GetContentRegionAvail().x - meterWidth - (meterWidth > 0 ? 5 : 0);
         // Ensure minimum waveform width
         if (waveformWidth < 100.0f) waveformWidth = 100.0f;
-        float waveformHeight = availHeight;
+        float waveformHeight = std::max(24.0f, panelAvailH - waveFileNameBarHeight - waveFooterGap - waveFooterEdge);
         ImVec2 waveformPos = ImGui::GetCursorScreenPos();
 
         // Generate spectrogram if needed（与 RenderHybridWaveformDock 解耦一致）
@@ -49186,8 +49187,8 @@ void RenderUI(AppState& state) {
                 ThemeColors::isLightChromeTheme(footerShelfTheme));
             const bool footerShelfIsLight = ThemeColors::isLightChromeTheme(footerShelfTheme);
             const float meterFooterExtraW = state.showLoudnessMeter ? (5.0f + meterWidth) : 0.0f;
-            const float footerShelfTopY = waveformPos.y + waveformHeight + 1.0f;
-            const float footerShelfBottomY = footerShelfTopY + waveFileNameBarHeight + 2.0f;
+            const float footerShelfTopY = waveformPos.y + waveformHeight + waveFooterGap;
+            const float footerShelfBottomY = footerShelfTopY + waveFileNameBarHeight + waveFooterEdge;
             const ImVec2 footerShelfMin(waveformPos.x, footerShelfTopY);
             const ImVec2 footerShelfMax(waveformPos.x + waveformWidth, footerShelfBottomY);
             const ImVec2 footerShelfVisualMax(footerShelfMax.x + meterFooterExtraW, footerShelfBottomY);
@@ -49361,7 +49362,7 @@ void RenderUI(AppState& state) {
         // 🚀 UNIFIED WAVEFORM FOOTER (Filename + Selection Data)
 
         {
-            const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + 1.0f);
+            const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + waveFooterGap);
             ImGui::SetCursorScreenPos(ImVec2(waveformPos.x, footerPos.y));
 
             // 1. Prepare footer text + lane geometry.

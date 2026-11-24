@@ -35,6 +35,25 @@ class WaveformSplitterContract(unittest.TestCase):
         budget = main.split("desiredWaveformH", 1)[1][:300]
         self.assertIn("state.panelWaveform.dockedHeight", budget)
 
+    def test_docked_waveform_budgets_only_the_spacing_used_by_its_splitter(self) -> None:
+        main = _read()
+        start = main.index("const bool showDockedWaveform =")
+        end = main.index("const float minimumWaveform", start)
+        budget = main[start:end]
+        self.assertRegex(
+            budget,
+            r"workspaceVerticalSpacing\s*=\s*showDockedWaveform\s*\?\s*"
+            r"2\.0f \* ImGui::GetStyle\(\)\.ItemSpacing\.y\s*:\s*13\.0f;",
+        )
+        self.assertIn("startupWaveformOffsetReserve + workspaceVerticalSpacing;", budget)
+
+    def test_main_footer_does_not_inherit_the_pitch_column_tail_height(self) -> None:
+        main = _read()
+        start = main.index("// Waveform display with region selection", main.index("const float pitchColumnTailHeight ="))
+        block = main[start : start + 900]
+        self.assertIn("panelAvailH - waveFileNameBarHeight - waveFooterGap - waveFooterEdge", block)
+        self.assertNotIn("waveformHeight = availHeight", block)
+
     def test_drag_preview_bottom_is_shared_and_not_hardcoded_blue(self) -> None:
         main = _read()
         self.assertIn("ResolveWaveformSplitterDragBg", main)
