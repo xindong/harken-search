@@ -51258,6 +51258,7 @@ void RenderUI(AppState& state) {
     const float bottomSlotHeight = bottomDockBandHeight > 0.0f ? bottomDockBandHeight : emptyBandHeight;
     const float bottomSlotY = dockColumnTop + sideColumnHeight - bottomSlotHeight;
     rootSlots.bottom = {centerDockX, bottomSlotY, centerDockWidth, bottomSlotHeight};
+    rootSlots.visibleSideGapPx = splitterWidth;
 
     aura::ui::dock::DockFrameGeometry cachedDockFrameGeometry{};
     uint64_t cachedDockGeometryRevision = 0;

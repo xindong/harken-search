@@ -12,6 +12,12 @@ HIT_TEST = ROOT / "src" / "DockHitTest.h"
 
 
 class DockRuntimeGeometryWiringContract(unittest.TestCase):
+    def test_drop_planning_uses_the_rendered_side_gap(self) -> None:
+        main = MAIN.read_text(encoding="utf-8")
+        hit_test = HIT_TEST.read_text(encoding="utf-8")
+        self.assertIn("rootSlots.visibleSideGapPx = splitterWidth;", main)
+        self.assertIn("const float sideGap = plan.slots.visibleSideGapPx;", hit_test)
+
     def test_live_frame_and_grips_use_the_production_geometry_snapshot(self) -> None:
         main = MAIN.read_text(encoding="utf-8")
         bridge = BRIDGE.read_text(encoding="utf-8")

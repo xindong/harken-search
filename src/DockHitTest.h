@@ -128,6 +128,7 @@ struct DockRootSlots {
     DockRect right;
     DockRect top;
     DockRect bottom;
+    float visibleSideGapPx = 12.0f;
 };
 
 inline bool RectsOverlap(const DockRect& a, const DockRect& b) {
@@ -1258,7 +1259,8 @@ inline DockRootSlots ResolveDockRootSlots(
         SlotOrWork(requested.left, usable),
         SlotOrWork(requested.right, usable),
         SlotOrWork(requested.top, usable),
-        SlotOrWork(requested.bottom, usable)};
+        SlotOrWork(requested.bottom, usable),
+        requested.visibleSideGapPx};
 
     if (layout.RegionRoot(DockSide::Left) && resolved.left.width > 0.0f) {
         const float leftEdge = resolved.left.x + resolved.left.width;
@@ -1455,10 +1457,10 @@ inline DockDropPlan PlanReadableDockDrop(
     if (sideRoot) {
         const DockSide opposite = root == DockSide::Left ? DockSide::Right : DockSide::Left;
         const bool oppositeOccupied = candidate.RegionRoot(opposite) != nullptr;
-        const float splitter = 12.0f;
+        const float sideGap = plan.slots.visibleSideGapPx;
         const float oppositeReserve = oppositeOccupied
-            ? DockSlotForSide(plan.slots, opposite).width + splitter : 0.0f;
-        const float maxWidth = work.width - oppositeReserve - centerMinimumWidth - splitter;
+            ? DockSlotForSide(plan.slots, opposite).width + sideGap : 0.0f;
+        const float maxWidth = work.width - oppositeReserve - centerMinimumWidth - sideGap;
         if (occupied) {
             extent.width = FitDockSideWidths(candidate.RegionRoot(root), before, beforeCount,
                                              incoming, incomingMinimum.width);
@@ -1470,7 +1472,7 @@ inline DockDropPlan PlanReadableDockDrop(
             plan.tooSmall = true;
             return plan;
         }
-        const float centerWidth = work.width - oppositeReserve - extent.width - splitter;
+        const float centerWidth = work.width - oppositeReserve - extent.width - sideGap;
         for (auto band : {DockSide::Top, DockSide::Bottom}) {
             if (candidate.RegionRoot(band) &&
                 std::fabs(DockSlotForSide(plan.slots, band).width - centerWidth) > .01f) {
