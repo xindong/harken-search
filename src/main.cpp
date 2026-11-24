@@ -27602,10 +27602,10 @@ static aura::ui::dock::DockSide LandedDockSideForModule(const char* moduleId) {
     return aura::ui::dock::DockSide::Left;
 }
 
-static void MirrorDockCommitToPanel(AppState::PanelState& panel,
+static void MirrorDockCommitToPanel(AppState& state, AppState::PanelState& panel,
                                     aura::ui::dock::DockSide side,
-                                    aura::ui::dock::DockSide extentSide,
                                     const aura::ui::dock::DockRect& incoming) {
+    using RootSide = aura::ui::dock::DockSide;
     aura::ui::dock::PanelDockState mirror;
     mirror.dockSide = static_cast<int>(panel.dockSide);
     mirror.floating = panel.floating;
@@ -27613,10 +27613,12 @@ static void MirrorDockCommitToPanel(AppState::PanelState& panel,
     mirror.dockedHeight = panel.dockedHeight;
     auto logicalRect = incoming;
     logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);
-    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);
+    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, logicalRect);
     panel.dockSide = static_cast<DockSide>(mirror.dockSide);
     panel.floating = mirror.floating;
-    panel.dockedWidth = mirror.dockedWidth;
+    if ((&panel != &state.panelSidebar || side == RootSide::Left) &&
+        (&panel != &state.panelFileInfo || side == RootSide::Right))
+        panel.dockedWidth = mirror.dockedWidth;
     panel.dockedHeight = mirror.dockedHeight;
 }
 
@@ -27646,34 +27648,21 @@ static void ApplyDockedPanel(
     AppState& state,
     const char* moduleId,
     AppState::PanelState& panel,
-    ImVec2 size,
     const aura::ui::dock::DockHit& hit,
     const aura::ui::dock::DockRect& work,
     float menuBarAndToolbar,
     float statusBar,
-    const aura::ui::dock::DockRootSlots& rootSlots) {
+    const aura::ui::dock::DockRootSlots& rootSlots,
+    float minReadableCenterWidth) {
     const auto plan = aura::ui::dock::PlanReadableDockDrop(g_dockLayout, hit, moduleId,
-        work, menuBarAndToolbar, statusBar, rootSlots, ImGui::GetMainViewport()->DpiScale);
-    if (!plan.accepted) return;
+        work, menuBarAndToolbar, statusBar, rootSlots, ImGui::GetMainViewport()->DpiScale,
+        minReadableCenterWidth);
+    if (!plan.accepted || !plan.candidate) return;
     ++g_dockGeometryRevision;
-    g_dockLayout.RemoveFloat(moduleId);
-    if (g_dockLayout.Find(moduleId)) g_dockLayout.Detach(moduleId);
-    g_dockLayout.RemoveFloat(moduleId);
-    bool inserted = false;
-    if (hit.kind == aura::ui::dock::DockHitKind::Module && !hit.targetModuleId.empty() &&
-        hit.targetModuleId != moduleId) {
-        inserted = g_dockLayout.InsertAdjacent(hit.targetModuleId, moduleId, hit.side, aura::ui::dock::kDockIncomingShare);
-    } else if (hit.kind != aura::ui::dock::DockHitKind::None) {
-        inserted = g_dockLayout.InsertModule(moduleId, hit.side, aura::ui::dock::kDockIncomingShare);
-    }
-    if (!inserted) {
-        g_dockLayout.EnsureFloat(moduleId);
-        panel.floating = true;
-        return;
-    }
+    g_dockLayout = *plan.candidate;
     panel.floating = false;
     const aura::ui::dock::DockSide landedSide = LandedDockSideForModule(moduleId);
-    MirrorDockCommitToPanel(panel, landedSide, landedSide, plan.rootRect);
+    MirrorDockCommitToPanel(state, panel, landedSide, plan.rootRect);
     MirrorDockRootExtent(state, landedSide, plan.rootRect);
     if (std::find(g_dockCommittedThisFrame.begin(), g_dockCommittedThisFrame.end(), moduleId) ==
         g_dockCommittedThisFrame.end()) {
@@ -27699,6 +27688,8 @@ static bool FloatDockedPanel(
 
 static void CancelDockTitleGesture() {
     if (!g_dockTitleGesture.Active()) return;
+    if (ImGui::GetCurrentContext() && ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_Any, ImGuiInputFlags_LockThisFrame);
     if (g_dockDrag.OwnsDrag(g_dockTitleGesture.ModuleId())) g_dockDrag.Cancel();
     if (g_dockTabDragSnapshot && g_appState) {
         g_appState->dockTabGroups = std::move(*g_dockTabDragSnapshot);
@@ -38063,6 +38054,8 @@ void RenderUI(AppState& state) {
             minReadableCenterWidth, rightPanelMinWidth, leftSidebarMinWidth);
     const float leftDockColumnWidth = dockColumnBudget.leftWidth;
     const float rightDockColumnWidth = dockColumnBudget.rightWidth;
+    float pendingLeftDockWidthDelta = 0.0f;
+    float pendingRightDockWidthDelta = 0.0f;
     if (showLeftColumn) leftPanelWidth = leftDockColumnWidth;
     if (showRightColumn) rightPanelWidth = rightDockColumnWidth;
     const float resultsHomeLeftScreenX = std::trunc(viewport->WorkPos.x +
@@ -39517,12 +39510,13 @@ void RenderUI(AppState& state) {
         waveformPanelGapReserve + statusBottomLayoutReserve + startupListOffsetReserve +
         startupWaveformOffsetReserve + bottomLayoutReserve;
     const float minimumWaveform = showDockedWaveform ? (layoutShortHeight ? 96.0f : 150.0f) : 0.0f;
+    const float bandAvailableHeight = mainWorkH - baseOverhead - playlistQuickBarHeight - minimumWaveform;
     const float bandCenterWidth = std::max(1.0f, mainWorkW -
         (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
         (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f));
     const auto dockBandReserve = aura::ui::dock::ResolveDockBandReserve(
         g_dockLayout, dockSavedHeight, std::clamp(mainWorkH * .20f, 96.0f, 240.0f),
-        viewport->DpiScale, mainWorkH - baseOverhead - playlistQuickBarHeight - minimumWaveform,
+        viewport->DpiScale, bandAvailableHeight,
         bandCenterWidth, minContentHeight);
     const auto floatOverflowBand = [&](aura::ui::dock::DockSide side, bool overflow) {
         if (!overflow) return;
@@ -39574,13 +39568,15 @@ void RenderUI(AppState& state) {
     auto refreshDockLeafGeometry = [&](const aura::ui::dock::DockNode* root,
                                        const aura::ui::dock::DockRect& slot,
                                        const char* id,
+                                       bool rightAligned,
                                        float& width,
                                        float& height,
                                        float& x,
                                        float& y) {
         if (!root) return;
         aura::ui::dock::DockModuleTarget leaves[16]{};
-        const int count = aura::ui::dock::CollectLeafRects(root, slot, leaves, 16, 0, viewport->DpiScale);
+        const int count = aura::ui::dock::CollectLeafRects(
+            root, slot, leaves, 16, 0, viewport->DpiScale, rightAligned);
         for (int i = 0; i < count; ++i) {
             if (leaves[i].id != id) continue;
             width = leaves[i].rect.width;
@@ -39594,7 +39590,7 @@ void RenderUI(AppState& state) {
         refreshDockLeafGeometry(
             leftRegionRoot,
             {viewport->WorkPos.x, dockColumnTop, leftPanelWidth, sideColumnHeight},
-            "filter", filterLeafWidth, filterLeafHeight, filterLeafX, filterLeafY);
+            "filter", false, filterLeafWidth, filterLeafHeight, filterLeafX, filterLeafY);
         filterShellWidth = aura::ui::dock::DockFilterShellWidth(
             true, leftPanelWidth, filterLeafWidth, leftSidebarMinWidth, leftSidebarMaxWidth);
     }
@@ -39602,7 +39598,7 @@ void RenderUI(AppState& state) {
         refreshDockLeafGeometry(
             rightRegionRoot,
             {viewport->WorkPos.x + mainWorkW - rightPanelWidth, dockColumnTop, rightPanelWidth, sideColumnHeight},
-            "info", infoLeafWidth, infoLeafHeight, infoLeafX, infoLeafY);
+            "info", true, infoLeafWidth, infoLeafHeight, infoLeafX, infoLeafY);
         infoShellWidth = aura::ui::dock::DockFilterShellWidth(
             true, rightPanelWidth, infoLeafWidth, rightPanelMinWidth, std::max(rightPanelMaxWidth, rightPanelWidth));
     }
@@ -40360,12 +40356,11 @@ void RenderUI(AppState& state) {
         ImGui::EndChild();
 
         if (!hideLeftSplitterInBrowser) {
-            const float previousWidth = workspacePx(state.panelSidebar.dockedWidth);
-            float dragWidth = previousWidth;
-            VerticalSplitter("##LeftSplitter", &dragWidth,
+            float dragWidth = leftPanelWidth;
+            if (VerticalSplitter("##LeftSplitter", &dragWidth,
                 leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth,
-                sideColumnHeight, ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
-            if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
+                sideColumnHeight, ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop)))
+                pendingLeftDockWidthDelta = dragWidth - leftPanelWidth;
         }
     }
 
@@ -46300,17 +46295,16 @@ void RenderUI(AppState& state) {
         // A nested right Dock leaf can move the child cursor inward. The
         // legacy splitter still belongs at the outer results/info boundary.
         const float rightColumnX = viewport->WorkPos.x + mainWorkW - rightPanelWidth;
-        const float previousWidth = workspacePx(state.panelFileInfo.dockedWidth);
-        float dragWidth = previousWidth;
-        VerticalSplitter(
+        float dragWidth = rightPanelWidth;
+        if (VerticalSplitter(
             "##RightSplitter",
             &dragWidth,
             rightPanelMinWidth,
             rightPanelMaxWidth,
             sideColumnHeight,
             ImVec2(rightColumnX, dockColumnTop),
-            true);  // invertDelta for right panel
-        if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
+            true))
+            pendingRightDockWidthDelta = dragWidth - rightPanelWidth;
 
         ImGui::SetCursorScreenPos(ImVec2(rightColumnX, dockColumnTop));
         const std::string displayedTool = selectedDockTool(rightTabGroup, "info");
@@ -51245,6 +51239,7 @@ void RenderUI(AppState& state) {
 
     const float columnTop = dockColumnTop;
     const float columnHeight = std::max(1.0f, sideColumnHeight);
+    const float dockDropCenterMinimumHeight = minContentHeight + std::max(0.0f, columnHeight - bandAvailableHeight);
     const float columnWidthLeft = leftDockSlotRequired
         ? leftDockColumnWidth : std::max(160.0f, mainWinSize.x * 0.24f);
     const float columnWidthRight = rightDockSlotRequired
@@ -51377,7 +51372,8 @@ void RenderUI(AppState& state) {
             &centerDrop);
         g_dockDropPlan = aura::ui::dock::PlanReadableDockDrop(
             g_dockLayout, hit, draggingId, mainWork, workspaceHeaderHeight,
-            reservedStatusBarHeight, rootSlots, viewport->DpiScale, minReadableCenterWidth);
+            reservedStatusBarHeight, rootSlots, viewport->DpiScale,
+            minReadableCenterWidth, dockDropCenterMinimumHeight);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         if (auto& trace = aura::ui::dock::ActiveDockFrameTrace(); trace.enabled) {
             ++trace.hitCalls;
@@ -51454,15 +51450,10 @@ void RenderUI(AppState& state) {
         }
         const aura::ui::dock::DockHit& hit = g_dockDrag.Preview();
         if (!aura::ui::dock::ShouldDrawDockPreview(titleBarDragging, hit)) return;
-        if (hit.kind == aura::ui::dock::DockHitKind::None) return;
-        aura::ui::dock::DockModuleTarget modules[16]{};
-        const int moduleCount = collectDockedModuleTargets(nullptr, modules, 16);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         const auto previewStart = std::chrono::steady_clock::now();
 #endif
-        const aura::ui::dock::DockPreviewPlan plan = aura::ui::dock::PlanDockPreview(
-            hit, mainWork, workspaceHeaderHeight, reservedStatusBarHeight,
-            modules, moduleCount, dockSnapDistance, &rootSlots);
+        const auto plan = aura::ui::dock::PlanDockPreview(g_dockDropPlan);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         if (auto& trace = aura::ui::dock::ActiveDockFrameTrace(); trace.enabled) {
             ++trace.previewCalls;
@@ -51654,7 +51645,7 @@ void RenderUI(AppState& state) {
             g_dockDrag.CommitFloatingOnMouseUp();
             panel.floating = true;
         } else {
-            g_dockDrag.CommitOnMouseUp();
+            g_dockDrag.CommitOnMouseUp(g_dockDropPlan);
             if (commitHit.kind == aura::ui::dock::DockHitKind::ResultsHome)
                 RestoreSearchResultsHome();
         }
@@ -51665,12 +51656,12 @@ void RenderUI(AppState& state) {
 #endif
         if (g_dockLayout.Find(moduleId) && commitHit.kind != aura::ui::dock::DockHitKind::None) {
             const auto landedSide = LandedDockSideForModule(moduleId);
-            MirrorDockCommitToPanel(panel, landedSide, landedSide, g_dockDropPlan.rootRect);
+            MirrorDockCommitToPanel(state, panel, landedSide, g_dockDropPlan.rootRect);
             MirrorDockRootExtent(state, landedSide, g_dockDropPlan.rootRect);
-            if (landedSide == aura::ui::dock::DockSide::Left && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right))
-                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Right, g_dockDropPlan.slots.right);
-            if (landedSide == aura::ui::dock::DockSide::Right && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left))
-                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Left, g_dockDropPlan.slots.left);
+            if (landedSide == aura::ui::dock::DockSide::Top && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom))
+                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Bottom, g_dockDropPlan.slots.bottom);
+            if (landedSide == aura::ui::dock::DockSide::Bottom && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top))
+                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Top, g_dockDropPlan.slots.top);
             g_dockCommittedThisFrame.emplace_back(moduleId);
         }
         panel.wasDragging = false;
@@ -51749,15 +51740,15 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Left;
-                    ApplyDockedPanel(state, moduleId, panel, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, moduleId, panel, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 if (ImGui::MenuItem(L(Panel_DockRight))) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Right;
-                    ApplyDockedPanel(state, moduleId, panel, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, moduleId, panel, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
@@ -51849,8 +51840,8 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Left;
-                    ApplyDockedPanel(state, "filter", state.panelSidebar, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, "filter", state.panelSidebar, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
@@ -51891,8 +51882,8 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Right;
-                    ApplyDockedPanel(state, "info", state.panelFileInfo, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, "info", state.panelFileInfo, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
@@ -51939,8 +51930,8 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Right;
-                    ApplyDockedPanel(state, "similar-sounds", state.panelSimilarSounds, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, "similar-sounds", state.panelSimilarSounds, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
@@ -52436,10 +52427,12 @@ void RenderUI(AppState& state) {
                     ImGui::GetColorU32(ImVec4(gripFillBase.x, gripFillBase.y, gripFillBase.z, gripFillAlpha)));
             }
             if (dl) {
-                const ImVec2 center(
-                    grip.rect.x + grip.rect.width * 0.5f,
-                    grip.rect.y + grip.rect.height * 0.5f);
                 const bool dotsAlongY = grip.axis == aura::ui::dock::Axis::Horizontal;
+                const float midX = grip.rect.x + grip.rect.width * 0.5f;
+                const float midY = grip.rect.y + grip.rect.height * 0.5f;
+                const ImVec2 center(
+                    dotsAlongY ? midX : grip.indicatorAlong.value_or(midX),
+                    dotsAlongY ? grip.indicatorAlong.value_or(midY) : midY);
                 const float span = dotsAlongY ? grip.rect.height : grip.rect.width;
                 const float gap = ImClamp(span * 0.018f, 5.0f, 9.0f);
                 const ImVec4 dotColor = ResolveThreeDotSplitterColor(
@@ -52462,7 +52455,6 @@ void RenderUI(AppState& state) {
         for (int column = 0; column < 2; ++column) {
             if (modalBlocksGrips) break;
             const bool left = column == 0;
-            const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
             auto grip = left ? leftOuterGrip : rightOuterGrip;
             if (!grip.visible) continue;
             const float columnBoundaryX = left ? rootSlots.left.x + rootSlots.left.width : rootSlots.right.x;
@@ -52488,28 +52480,47 @@ void RenderUI(AppState& state) {
                         ImGui::GetColorU32(color));
                 }
                 if (dragging) {
-                    auto resizedRect = left ? rootSlots.left : rootSlots.right;
-                    const auto* root = g_dockLayout.RegionRoot(side);
-                    const auto purpose = root && root->Kind() == aura::ui::dock::NodeKind::Split
-                        ? splitResizeMinimum : aura::ui::dock::DockMinimumPurpose::Placement;
-                    const float minimum = dockLiveMinimum(root, purpose).width;
-                    const float maximum = std::max(minimum, resizedRect.width + centerWidth - minReadableCenterWidth);
-                    if (aura::ui::dock::DragRightDockOuterGrip(resizedRect.width,
-                            ImGui::GetIO().MouseDelta.x * (left ? -1.0f : 1.0f), minimum, maximum)) {
-                        MirrorDockRootExtent(state, side, resizedRect);
-                        MarkSettingsDirty(state);
-                    }
+                    (left ? pendingLeftDockWidthDelta : pendingRightDockWidthDelta) =
+                        ImGui::GetIO().MouseDelta.x * (left ? 1.0f : -1.0f);
                 }
             }
             ImGui::End();
         }
     }
 
+    const float dockResizeCenterSpare = std::max(0.0f, mainWorkW -
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
+        (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f) -
+        minReadableCenterWidth);
+    const auto applyDockColumnResize = [&](aura::ui::dock::DockSide side, float width,
+                                           float delta, float legacyMinimum, bool legacyVisible) {
+        if (delta == 0.0f) return;
+        const float minimum = legacyVisible ? legacyMinimum : aura::ui::dock::DockSubtreeMinimum(
+            g_dockLayout.RegionRoot(side), viewport->DpiScale).width;
+        if (!aura::ui::dock::ResizeDockColumnFromCenter(g_dockLayout, side, width,
+                delta, minimum, width + dockResizeCenterSpare, viewport->DpiScale)) return;
+        const float logicalWidth = aura::ui::dpi::UnscalePx(width, workspaceScale);
+        if (side == aura::ui::dock::DockSide::Left) {
+            state.panelSidebar.dockedWidth = logicalWidth;
+        } else {
+            state.panelFileInfo.dockedWidth = logicalWidth;
+            state.panelSimilarSounds.dockedWidth = logicalWidth;
+        }
+        ++g_dockGeometryRevision;
+        MarkSettingsDirty(state);
+    };
+    applyDockColumnResize(aura::ui::dock::DockSide::Left, leftDockColumnWidth,
+                          pendingLeftDockWidthDelta, leftSidebarMinWidth, showLeftColumn);
+    applyDockColumnResize(aura::ui::dock::DockSide::Right, rightDockColumnWidth,
+                          pendingRightDockWidthDelta, rightPanelMinWidth, showRightColumn);
+
     if (g_dockTestBandHintsVisible) {
         const auto& frame = buildDockFrameGeometry();
         aura::ui::dock::DockHint hints[64]{};
+        const aura::ui::dock::DockCenterDropTarget centerDrop{
+            resultsHomeRect, aura::ui::dock::DockSide::Left, true};
         const int hintCount = aura::ui::dock::CollectLegalDockHints(
-            g_dockLayout, mainWork, dockSnapDistance, frame, hints, 64);
+            g_dockLayout, mainWork, dockSnapDistance, frame, hints, 64, &centerDrop);
         ImDrawList* overlay = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
         for (int i = 0; i < hintCount && overlay; ++i) {
             const auto& rect = hints[i].visibleRect;

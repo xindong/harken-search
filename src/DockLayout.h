@@ -58,6 +58,8 @@ struct SplitNode : DockNode {
     float ratio = 0.5f;
     float minFirst = 0.08f;
     float minSecond = 0.08f;
+    float firstWidthShare = 1.0f;
+    float secondWidthShare = 1.0f;
     std::unique_ptr<DockNode> first;
     std::unique_ptr<DockNode> second;
 };
