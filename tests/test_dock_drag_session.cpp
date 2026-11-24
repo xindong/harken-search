@@ -653,6 +653,47 @@ int main() {
             plan.slots.left.width < 599.0f) return 313;
         if (!layout.Find("filter") || !layout.FindFloat("info")) return 314;
     }
+    for (auto band : {DockSide::Top, DockSide::Bottom}) {
+        for (auto splitSide : {DockSide::Left, DockSide::Right}) {
+            DockLayout layout;
+            layout.InsertModule("similar-sounds", DockSide::Left, .24f);
+            layout.InsertModule("filter", band, .24f);
+            layout.InsertAdjacent("filter", "mod-transfer", DockSide::Right, .34f);
+            layout.EnsureFloat("info");
+            const DockRect work{0, 0, 2000, 1400};
+            DockRootSlots slots{};
+            slots.left = {0, 80, 440, 1280};
+            slots.top = {440, 80, 1560, 400};
+            slots.bottom = {440, 960, 1560, 400};
+            const auto anchor = CommittedLeafRectForModule(layout, "filter", work, 80, 40, &slots, {});
+            const auto transfer = CommittedLeafRectForModule(layout, "mod-transfer", work, 80, 40, &slots, {});
+            const auto similar = CommittedLeafRectForModule(layout, "similar-sounds", work, 80, 40, &slots, {});
+            DockHit hit;
+            hit.kind = DockHitKind::Module;
+            hit.side = splitSide;
+            hit.targetModuleId = "filter";
+            const auto plan = PlanReadableDockDrop(layout, hit, "info", work, 80, 40, slots);
+            if (!CheckDrop(plan.accepted && !plan.tooSmall && plan.hit.rootRegion == band,
+                           "info", splitSide, "fitting split inside a top or bottom band")) return 351;
+            const auto landed = CommittedLeafRectForModule(
+                *plan.candidate, "info", work, 80, 40, &plan.slots, {});
+            const auto resizedAnchor = CommittedLeafRectForModule(
+                *plan.candidate, "filter", work, 80, 40, &plan.slots, {});
+            if (!SameDockRect(landed, plan.hit.resultRect, .01f) ||
+                std::fabs(landed.width + resizedAnchor.width - anchor.width) > .01f ||
+                std::fabs(std::min(landed.x, resizedAnchor.x) - anchor.x) > .01f ||
+                (landed.x < resizedAnchor.x) != (splitSide == DockSide::Left)) return 352;
+            if (!SameDockRect(transfer, CommittedLeafRectForModule(
+                    *plan.candidate, "mod-transfer", work, 80, 40, &plan.slots, {}), .01f) ||
+                !SameDockRect(similar, CommittedLeafRectForModule(
+                    *plan.candidate, "similar-sounds", work, 80, 40, &plan.slots, {}), .01f)) return 353;
+            auto narrowSlots = slots;
+            narrowSlots.top.width = narrowSlots.bottom.width = 520;
+            const auto tooNarrow = PlanReadableDockDrop(
+                layout, hit, "info", {0, 0, 960, 1400}, 80, 40, narrowSlots);
+            if (tooNarrow.accepted || !tooNarrow.tooSmall) return 354;
+        }
+    }
     // Empty side roots use their entire slot, expand only to the incoming
     // content floor, and do not steal the central results' readable space.
     {

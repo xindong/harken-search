@@ -355,7 +355,7 @@ def run(args):
                                           b"capture_preview_frame\0", b"magic_eq_identity\0")):
         raise ValueError("Missing pinned isolation root or required QA commands in the candidate")
     output.mkdir(parents=True, exist_ok=False)
-    lock = root / "dock-mixed-splitters.lock"
+    lock = root / "dock-qa.lock"
     driver = Driver(runtime, output)
     report = dict(root=str(root), exe=str(exe), sha256=digest, layout=args.layout, fixture={}, cases=[],
                   failures=[], result="ERROR", test_exit_code=2)

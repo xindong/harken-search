@@ -1514,8 +1514,11 @@ inline DockDropPlan PlanReadableDockDrop(
             std::fabs(leaf.rect.width - old.width) > .5f;
         const bool sharesIncomingColumn = widthChanged && sideRoot &&
             IsSingleDockColumn(FindSplitContainingLeaves(candidate, incoming, leaf.id));
-        if ((widthChanged && !sharesIncomingColumn) ||
-            (isIncoming && leaf.rect.width + .5f < floor.width) ||
+        const bool sharesTargetBandCell = !sideRoot && hit.kind == DockHitKind::Module &&
+            (hit.side == DockSide::Left || hit.side == DockSide::Right) &&
+            leaf.id == hit.targetModuleId;
+        if ((widthChanged && !sharesIncomingColumn && !sharesTargetBandCell) ||
+            ((isIncoming || sharesTargetBandCell) && leaf.rect.width + .5f < floor.width) ||
             ((isIncoming || leaf.rect.height < old.height - .5f) && leaf.rect.height + .5f < floor.height)) {
             plan.tooSmall = true;
             return plan;

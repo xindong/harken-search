@@ -11,7 +11,7 @@ from pathlib import Path
 
 from qa_dock_grip_modal import shutdown_preview
 from qa_required_library_setup import PrivateDesktop, capture, wait_state
-from qa_top_menu_font import exe_has_root
+from qa_top_menu_font import exe_has_root, require_idle_root
 from qa_transport_themes import Driver, window_api
 
 
@@ -69,6 +69,13 @@ def target_points(placement, bounds, anchor, results):
             yield anchor["x"] + anchor["w"] * .47, point_y
 
 
+def run_exit_code(report, gestures_only):
+    checks = report.get("gestures", []) if gestures_only else report["cases"]
+    if report.get("app_exit") != 0 or report.get("shutdown_error"):
+        return 1
+    return 0 if checks and all(check["passed"] for check in checks) else 1
+
+
 def run(args):
     import win32con
     import win32event
@@ -89,9 +96,9 @@ def run(args):
     database = root / "profile/Local/HarkenSearch/Database/Dock QA/main.db"
     if not database.is_file():
         raise FileNotFoundError(database)
-    set_scale(root, args.scale)
-    driver = Driver(runtime, out)
-    desktop = PrivateDesktop()
+    lock = root / "dock-qa.lock"
+    owns_lock = False
+    desktop = None
     process = None
     verified = False
     report = dict(exe=str(exe), sha256=hashlib.sha256(executable).hexdigest(),
@@ -267,6 +274,12 @@ def run(args):
             capture(driver, out / "tab-merged.png")
 
     try:
+        with lock.open("x", encoding="utf-8"):
+            owns_lock = True
+        require_idle_root(root)
+        set_scale(root, args.scale)
+        driver = Driver(runtime, out)
+        desktop = PrivateDesktop()
         process, pid = desktop.start(exe, environment_overrides={"AURA_RUNTIME_ROOT": str(runtime)})
         identity = driver.command({"cmd": "magic_eq_identity"}, timeout=60)
         if (identity["pid"] != pid or Path(identity["exe_path"]).resolve() != exe
@@ -300,11 +313,15 @@ def run(args):
                 report["app_exit"], report["shutdown_error"] = shutdown_preview(
                     process, driver, verified, win32con, win32event, win32process)
         finally:
-            desktop.close()
-            (out / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                                              encoding="utf-8")
-    checks = report.get("gestures", []) if args.gestures_only else report["cases"]
-    return 0 if checks and all(check["passed"] for check in checks) else 1
+            try:
+                if desktop is not None:
+                    desktop.close()
+                (out / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),
+                                                  encoding="utf-8")
+            finally:
+                if owns_lock:
+                    lock.unlink()
+    return run_exit_code(report, args.gestures_only)
 
 
 if __name__ == "__main__":

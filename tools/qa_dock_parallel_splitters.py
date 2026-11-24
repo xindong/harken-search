@@ -328,7 +328,7 @@ def run(args):
     report = dict(exe=str(exe), sha256=hashlib.sha256(executable).hexdigest(),
                   root=str(root), output=str(output), library=str(database),
                   fixture={}, cases=[], result="ERROR", test_exit_code=2)
-    lock = root / "dock-parallel-splitters.lock"
+    lock = root / "dock-qa.lock"
     desktop = process = None
     owns_lock = verified = False
     try:
