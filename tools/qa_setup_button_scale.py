@@ -15,7 +15,6 @@ import hashlib
 import json
 import shutil
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -105,7 +104,6 @@ def resize_client(hwnd: int, client_width: int) -> None:
     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
     client = win32gui.GetClientRect(hwnd)
     frame_w = (right - left) - client[2]
-    frame_h = (bottom - top) - client[3]
     win32gui.SetWindowPos(hwnd, 0, left, top, client_width + frame_w,
                           bottom - top, win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
 

@@ -107,7 +107,7 @@ int main() {
         std::atomic<bool> cancelDuringAnalysis{false};
         bool workerPhase = false;
         int initialCallbacks = 0;
-        int workerChecks = 0;
+        std::atomic<int> workerChecks{0};
         const auto stopped = BuildSimilarityIndex(dbPath,"missing-model",[&] {
             if (std::this_thread::get_id() == caller) {
                 const bool requested = cancelDuringAnalysis.load();
@@ -175,6 +175,9 @@ int main() {
         check(slowParallel.ok && !slowParallel.cancelled && slowParallel.progress.completed==4 &&
               slowParallel.progress.saved==4,
             "parallel workers wait for slow analyses instead of reporting a false cancellation");
+        check(!slowParallel.modelError.empty() && slowParallel.peakConcurrentAnalyses > 1 &&
+              slowParallel.peakConcurrentAnalyses <= 4,
+            "acoustic-only analysis honors the worker limit without an ONNX model");
     }
     return failures ? 1 : 0;
 }

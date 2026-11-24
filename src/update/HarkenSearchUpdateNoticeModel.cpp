@@ -35,8 +35,18 @@ bool ParseHarkenSearchReleaseNotes(std::string_view bytes, std::vector<ReleaseNo
             entry.contributors = record.contributors;
             entry.notes = record.notes;
             for (const auto& item : record.entries) {
-                entry.items.push_back({{}, item.title, item.description,
-                                       JoinContributors(item.contributors)});
+                if (item.group.empty()) {
+                    entry.items.push_back({{}, item.title, item.description,
+                                           JoinContributors(item.contributors)});
+                    continue;
+                }
+                if (entry.items.empty() || entry.items.back().category != item.group) {
+                    entry.items.push_back({item.group, item.group, {}, {}});
+                }
+                auto& bullets = entry.items.back().text;
+                if (!bullets.empty()) bullets += '\n';
+                bullets += u8"• ";
+                bullets += item.description;
             }
             out.push_back(std::move(entry));
         }

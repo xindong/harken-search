@@ -81,7 +81,11 @@ def test_release_history_is_readable_utf8_with_structured_change_items() -> None
         for item in group["list"]
     ]
     assert changes
-    assert all(item["title"] and item["description"] for item in changes)
+    for item in changes:
+        if isinstance(item, str):
+            assert item.strip()
+        else:
+            assert item["title"] and item["description"]
 
 
 def test_release_packaging_supplies_the_installed_local_notes() -> None:
