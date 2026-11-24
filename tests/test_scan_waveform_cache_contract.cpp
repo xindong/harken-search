@@ -2917,6 +2917,119 @@ static int testFolderHierarchyFromIndexRepairsStaleIndex() {
     return failures;
 }
 
+static int testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("readonly_stale_folder_index");
+    const fs::path dbPath = root / "readonly_stale_folder_index.db";
+    const fs::path libraryRoot = root / "Cinematic Hits";
+    const fs::path indexedFolder = libraryRoot / "Heavy Hits";
+    const fs::path missingFolder = libraryRoot / "Metal Hits";
+    fs::create_directories(indexedFolder);
+    fs::create_directories(missingFolder);
+    writeSilentMonoWav(indexedFolder / "indexed.wav");
+    writeSilentMonoWav(missingFolder / "missing.wav");
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    db.mergeLibraryRoots({libraryRoot.u8string()});
+    check(db.scanDirectoryEx(libraryRoot.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 2,
+          "read-only folder-index fixture imports two WAVs", failures);
+    check(db.rebuildFolderIndex() &&
+          querySingleInt(db.db(), "SELECT COUNT(*) FROM folder_index", -1) == 2,
+          "read-only folder-index fixture starts with both indexed folders", failures);
+    check(execSqlite(db.db(), "DELETE FROM folder_index WHERE folder_path = "
+                             "(SELECT folder_path FROM audio_files WHERE file_name = 'missing.wav')") &&
+          sqlite3_changes(db.db()) == 1,
+          "read-only folder-index fixture deletes exactly one index row", failures);
+    db.close();
+
+    if (!db.openReadOnly(dbPath.u8string())) {
+        std::cerr << "FAIL: open read-only db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(sqlite3_db_readonly(db.db(), "main") == 1,
+          "stale folder index is read over a read-only connection", failures);
+    const std::string rootKey = HarkenSearch::CanonicalFolderPath(libraryRoot.u8string());
+    const std::string indexedKey = HarkenSearch::CanonicalFolderPath(indexedFolder.u8string());
+    const std::string missingKey = HarkenSearch::CanonicalFolderPath(missingFolder.u8string());
+    const FolderInfo tree = db.getFolderHierarchyFromIndex(aura::folder_tree::PathMode::Pilot);
+    const auto library = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
+        [&](const FolderInfo& folder) { return folder.path == rootKey; });
+    if (check(library != tree.subfolders.end(), "registered library root is visible", failures)) {
+        const auto children = std::count_if(library->subfolders.begin(), library->subfolders.end(),
+            [&](const FolderInfo& folder) {
+                return folder.fileCount == 1 && (folder.path == indexedKey || folder.path == missingKey);
+            });
+        if (!check(children == 2, "stale read-only tree includes both imported folders", failures)) {
+            std::cerr << "  Found " << children << " of 2 imported folders under the visible library root\n";
+        }
+    }
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM folder_index", -1) == 1,
+          "read-only fallback leaves the stale index unchanged", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testReadOnlyFolderHierarchyFromIndexFallsBackWhenUnavailable() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("readonly_unavailable_folder_index");
+    const fs::path dbPath = root / "readonly_unavailable_folder_index.db";
+    const fs::path libraryRoot = root / "Cinematic Hits";
+    const fs::path childFolder = libraryRoot / "Metal Hit";
+    fs::create_directories(childFolder);
+    writeSilentMonoWav(childFolder / "metal.wav");
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    db.mergeLibraryRoots({libraryRoot.u8string()});
+    check(db.scanDirectoryEx(libraryRoot.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 1,
+          "missing folder-index fixture imports one WAV", failures);
+    check(execSqlite(db.db(), "DROP TABLE folder_index"),
+          "missing folder-index fixture drops the index table", failures);
+    db.close();
+
+    if (!db.openReadOnly(dbPath.u8string())) {
+        std::cerr << "FAIL: open read-only db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    check(sqlite3_db_readonly(db.db(), "main") == 1,
+          "missing folder index is read over a read-only connection", failures);
+    const std::string rootKey = HarkenSearch::CanonicalFolderPath(libraryRoot.u8string());
+    const std::string childKey = HarkenSearch::CanonicalFolderPath(childFolder.u8string());
+    const FolderInfo tree = db.getFolderHierarchyFromIndex(aura::folder_tree::PathMode::Pilot);
+    const auto library = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
+        [&](const FolderInfo& folder) { return folder.path == rootKey; });
+    if (check(library != tree.subfolders.end(), "registered library root is visible", failures)) {
+        const auto child = std::find_if(library->subfolders.begin(), library->subfolders.end(),
+            [&](const FolderInfo& folder) { return folder.path == childKey && folder.fileCount == 1; });
+        check(child != library->subfolders.end(),
+              "missing folder index falls back to the imported subfolder", failures);
+    }
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM sqlite_master "
+                                  "WHERE type = 'table' AND name = 'folder_index'", -1) == 0,
+          "read-only fallback leaves the index table absent", failures);
+
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testMultiFolderScanProgressAggregatesLocalCallbacks() {
     int failures = 0;
 
@@ -5167,6 +5280,10 @@ int main(int argc, char** argv) {
         return testMissingScanRootReportsPathFailure() == 0 ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--failure-writer")
         return testWaveformFailureWriterKeepsUiConnectionIndependent() == 0 ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--read-only-folder-index")
+        return testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale() == 0 ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--read-only-missing-folder-index")
+        return testReadOnlyFolderHierarchyFromIndexFallsBackWhenUnavailable() == 0 ? 0 : 1;
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -5258,6 +5375,10 @@ int main(int argc, char** argv) {
     std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
     failures += testPilotFolderHierarchyKeepsNestedRootsTogether();
     failures += testFolderHierarchyFromIndexRepairsStaleIndex();
+    std::cout << "-- testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale\n";
+    failures += testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale();
+    std::cout << "-- testReadOnlyFolderHierarchyFromIndexFallsBackWhenUnavailable\n";
+    failures += testReadOnlyFolderHierarchyFromIndexFallsBackWhenUnavailable();
     std::cout << "-- testClearWaveformCacheByFolderUsesCanonicalFolderPath\n";
     failures += testClearWaveformCacheByFolderUsesCanonicalFolderPath();
     std::cout << "-- testExternalWaveformCacheStillWorksOutsideLibraryRoots\n";
