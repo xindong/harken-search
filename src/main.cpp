@@ -26889,6 +26889,14 @@ static bool DrawSoundstagePopupContent(float* centerSenseValue) {
 
 // Dockable Panel System
 
+static constexpr float kWorkspaceModuleGutterPx = 8.0f;
+static constexpr float kWorkspaceColumnSplitterHitWidth = 12.0f;
+static constexpr float kWorkspaceHorizontalSplitterHitHeight = 6.0f;
+
+static float WorkspacePanelGapPx() {
+    return std::round(kWorkspaceModuleGutterPx * aura::ui::dpi::UiScale());
+}
+
 static ImVec4 ResolveThreeDotSplitterColor(
     const ThemeColorScheme& theme,
     bool hovered,
@@ -26927,17 +26935,46 @@ static ImVec4 ResolveWaveformSplitterDragBg(const ThemeColorScheme& theme) {
     return color;
 }
 
+static bool BeginWorkspaceSplitterOverlay(
+    const char* id, ImGuiWindow* workspace, const ImVec2& hitMin, const ImVec2& hitSize) {
+    const ImVec2 hitMax(hitMin.x + hitSize.x, hitMin.y + hitSize.y);
+    ImGui::SetNextWindowViewport(workspace->Viewport->ID);
+    ImGui::SetNextWindowPos(hitMin, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(hitSize, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus;
+    const bool visible = BeginTransientScrollbarWindow(id, nullptr, flags);
+    ImGui::PopStyleVar(3);
+    if (!visible) return false;
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    const ImGuiWindow* hoveredWindow = context.HoveredWindow;
+    const bool dockedWindowHovered = hoveredWindow && hoveredWindow->Viewport == workspace->Viewport &&
+        (hoveredWindow->RootWindow == workspace->RootWindow ||
+         std::strncmp(hoveredWindow->RootWindow->Name, "##Docked", 8) == 0);
+    if (dockedWindowHovered && context.OpenPopupStack.empty() && !ImGui::IsAnyItemActive() &&
+        ImGui::IsMouseHoveringRect(hitMin, hitMax, false)) {
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    }
+    return true;
+}
+
 // Draw a vertical splitter and handle dragging to resize
 // Returns true if the width was changed
 // invertDelta: true for right-side panels (drag left = increase width)
-bool VerticalSplitter(const char* id, float* panelWidth, float minWidth = 100.0f, float maxWidth = 600.0f, float height = 0.0f, bool invertDelta = false) {
+bool VerticalSplitter(const char* id, float* panelWidth, float minWidth, float maxWidth,
+                      float height, ImVec2 centerTop, bool invertDelta = false) {
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    float splitterWidth = 12.0f;  // Keep left/right seams visually identical; interaction affordance should not create asymmetry in chrome width
-    if (height <= 0) height = ImGui::GetContentRegionAvail().y;
-
-// Use InvisibleButton for interaction.
-    ImGui::InvisibleButton(id, ImVec2(splitterWidth, height));
+    ImGuiWindow* workspace = ImGui::GetCurrentWindow();
+    const ImVec2 hitMin(centerTop.x - kWorkspaceColumnSplitterHitWidth * 0.5f, centerTop.y);
+    if (!BeginWorkspaceSplitterOverlay(id, workspace, hitMin, ImVec2(kWorkspaceColumnSplitterHitWidth, height))) {
+        ImGui::End();
+        return false;
+    }
+    ImGui::InvisibleButton("##ResizeHit", ImVec2(kWorkspaceColumnSplitterHitWidth, height));
     if (ThemeInspector::IsCollecting()) {
         const char* annotationKey = nullptr;
         if (id && std::strcmp(id, "##LeftSplitter") == 0) annotationKey = "splitter.left";
@@ -26954,25 +26991,26 @@ bool VerticalSplitter(const char* id, float* panelWidth, float minWidth = 100.0f
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     }
 
-    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImDrawList* dl = ImGui::GetCurrentContext()->OpenPopupStack.empty()
+        ? ImGui::GetForegroundDrawList(workspace->Viewport)
+        : ImGui::GetWindowDrawList();
     const ThemeColorScheme& splitterTheme = ThemeColors::current();
-    const float cx = pos.x + splitterWidth * 0.5f;
     const ImVec4 splitterColor = ResolveThreeDotSplitterColor(
         splitterTheme, hovered, draggingResize);
 
     // Three dots along vertical axis (centered): filter|results and results|info splitters.
-    // Keep the hit target alive while hiding the visual affordance after idle.
     {
-        const float midY = pos.y + height * 0.5f;
+        const float midY = centerTop.y + height * 0.5f;
         const float gap = ImClamp(height * 0.018f, 5.0f, 9.0f);
         const float edgePad = gap + 3.0f;
         if (height > edgePad * 2.0f + 1.0f) {
             const float r = draggingResize ? 1.95f : (hovered ? 2.15f : 2.0f);
             const ImU32 dotCol = ImGui::GetColorU32(splitterColor);
             aura::ui::workspace::DrawThreeDotSplitterGrip(
-                dl, ImVec2(cx, midY), ImVec2(0.0f, 1.0f), gap, r, dotCol);
+                dl, ImVec2(centerTop.x, midY), ImVec2(0.0f, 1.0f), gap, r, dotCol);
         }
     }
+    ImGui::End();
 
     if (draggingResize) {
         float delta = io.MouseDelta.x;
@@ -26987,12 +27025,19 @@ bool VerticalSplitter(const char* id, float* panelWidth, float minWidth = 100.0f
 // Draw a horizontal splitter and handle dragging to resize
 bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, float maxHeight, float width, bool growWhenDraggingDown) {
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 pos = ImGui::GetCursorScreenPos();
-    float splitterHeight = 6.0f;  // Visible enough to read as a drag target without becoming a heavy black bar.
+    ImGuiWindow* workspace = ImGui::GetCurrentWindow();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float splitterHeight = kWorkspaceHorizontalSplitterHitHeight;
     if (width <= 0) width = ImGui::GetContentRegionAvail().x;
 
+    const bool waveformSplitter = id && std::strcmp(id, "##WaveformSplitter") == 0;
+    if (waveformSplitter && !BeginWorkspaceSplitterOverlay(
+            "##WaveformSplitterOverlay", workspace, pos, ImVec2(width, splitterHeight))) {
+        ImGui::End();
+        return false;
+    }
     ImGui::InvisibleButton(id, ImVec2(width, splitterHeight));
-    if (ThemeInspector::IsCollecting() && id && std::strcmp(id, "##WaveformSplitter") == 0) {
+    if (ThemeInspector::IsCollecting() && waveformSplitter) {
         ThemeInspector::RegisterLastItem(
             "splitter.waveform", "Waveform splitter", "src/main.cpp:HorizontalSplitter");
     }
@@ -27007,7 +27052,9 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
     }
 
     // Fill the splitter band so light themes do not expose a dark window seam.
-    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImDrawList* dl = waveformSplitter && ImGui::GetCurrentContext()->OpenPopupStack.empty()
+        ? ImGui::GetForegroundDrawList(workspace->Viewport)
+        : ImGui::GetWindowDrawList();
     auto splitterWithAlpha = [](ImVec4 c, float a) {
         c.w = a;
         return c;
@@ -27037,7 +27084,8 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
                         : idleSeamBg)),
         (minimalistLightSplitter && !sidebarSubpaneSplitter) ? 0.0f : 1.0f);
     const bool drawSidebarSubpaneBand = sidebarSubpaneSplitter && (hovered || active);
-    if ((!sidebarSubpaneSplitter && (!minimalistLightSplitter || hovered || active)) || drawSidebarSubpaneBand) {
+    if (!waveformSplitter &&
+        ((!sidebarSubpaneSplitter && (!minimalistLightSplitter || hovered || active)) || drawSidebarSubpaneBand)) {
         dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + splitterHeight), ImGui::GetColorU32(splitterBg), 0.0f);
     }
     float cy = pos.y + splitterHeight * 0.5f;
@@ -27056,6 +27104,8 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
                 dl, ImVec2(midX, cy), ImVec2(1.0f, 0.0f), gap, r, dotCol);
         }
     }
+
+    if (waveformSplitter) ImGui::End();
 
     if (draggingResize) {
         float delta = io.MouseDelta.y;
@@ -27272,7 +27322,7 @@ bool ResolveDockQaPointerPoint(const std::string& module, const std::string& par
         const bool left = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left) == g_dockLayout.Find(module);
         const bool right = g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right) == g_dockLayout.Find(module);
         if (!left && !right) return false;
-        const ImVec2 grip(left ? e.window.x + e.window.width + 6.0f : e.window.x - 6.0f,
+        const ImVec2 grip(left ? e.window.x + e.window.width : e.window.x,
                           e.window.y + e.window.height * .5f);
         r = ImRect(grip, ImVec2(grip.x + 1.0f, grip.y + 1.0f));
     } else if (part != "title") return false;
@@ -37774,13 +37824,13 @@ void RenderUI(AppState& state) {
     // deliberately absent from the Dock tree and from all Dock split math.
 
     // Keep layout math consistent with the actual splitter widgets below.
-    float splitterWidth = 12.0f;
+    const float splitterWidth = WorkspacePanelGapPx() * 0.5f;
     // Browser still needs the same left/center splitter affordance as other
     // modes: the three-dot vertical grip sits at the left of the audio list and
     // lets users resize the folder navigator.
     const bool hideLeftSplitterInBrowser = false;
     const float leftCenterSplitterWidth =
-        (leftDockSlotRequired && !hideLeftSplitterInBrowser) ? splitterWidth : 0.0f;
+        (leftDockSlotRequired && !hideLeftSplitterInBrowser) ? kWorkspaceColumnSplitterHitWidth : 0.0f;
     const auto splitResizeMinimum = aura::ui::dock::DockMinimumPurpose::Resize;
     const float leftSidebarMinWidth = leftRegionSplit
         ? aura::ui::dock::DockSubtreeMinimum(leftRegionRoot, viewport->DpiScale, splitResizeMinimum).width
@@ -37790,7 +37840,7 @@ void RenderUI(AppState& state) {
     const float rightPanelMaxWidth = std::max(
         std::max(workspacePx(260.0f), rightPanelMinWidth),
         mainWorkW -
-            (leftDockSlotRequired ? (leftSidebarMinWidth + leftCenterSplitterWidth + splitterWidth) : splitterWidth) -
+            (leftDockSlotRequired ? (leftSidebarMinWidth + leftCenterSplitterWidth + kWorkspaceColumnSplitterHitWidth) : kWorkspaceColumnSplitterHitWidth) -
             minReadableCenterWidth);
     // Use stored panel widths (resizable).
     float rightPanelWidth = showRightColumn
@@ -37798,7 +37848,7 @@ void RenderUI(AppState& state) {
         : 0.0f;
     const float leftSidebarMaxWidth = std::max(
         std::max(leftSidebarMinWidth, workspacePx(layoutCompactWidth ? 220.0f : 400.0f)),
-        mainWorkW - (rightDockSlotRequired ? (rightPanelWidth + splitterWidth) : 0.0f) - minReadableCenterWidth);
+        mainWorkW - (rightDockSlotRequired ? (rightPanelWidth + kWorkspaceColumnSplitterHitWidth) : 0.0f) - minReadableCenterWidth);
     float leftPanelWidth = showLeftColumn
         ? std::clamp(workspacePx(state.panelSidebar.dockedWidth), leftSidebarMinWidth, leftSidebarMaxWidth)
         : 0.0f;
@@ -39269,7 +39319,11 @@ void RenderUI(AppState& state) {
     // magic +25 was too small at high DPI / startup transitions, so the status
     // bar could be pushed into the parent clip rect and appear cut off.
     const bool showDockedWaveform = state.panelWaveform.visible && !state.panelWaveform.floating && !layoutVeryShortHeight;
-    const float waveformSplitterReserve = showDockedWaveform ? 6.0f : 0.0f;
+    const float waveShellPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
+    const float waveformPanelGapReserve = showDockedWaveform
+        ? WorkspacePanelGapPx() - 2.0f * waveShellPad
+        : 0.0f;
+    const float bottomLayoutReserve = showDockedWaveform ? 1.0f : 13.0f;
     const float startupListOffsetReserve = 15.0f * (1.0f - t);
     const float startupWaveformOffsetReserve =
         showDockedWaveform ? 40.0f * (1.0f - t) : 0.0f;
@@ -39283,8 +39337,8 @@ void RenderUI(AppState& state) {
     const float minContentHeight = layoutVeryShortHeight ? 240.0f : (layoutShortHeight ? 220.0f : 200.0f);
     const float playlistQuickBarHeight = state.settings.showPlaylistQuickBar ? workspacePx(36.0f) : 0.0f;
     const float baseOverhead = workspaceHeaderHeight + reservedStatusBarHeight +
-        waveformSplitterReserve + statusBottomLayoutReserve + startupListOffsetReserve +
-        startupWaveformOffsetReserve + 13.0f;
+        waveformPanelGapReserve + statusBottomLayoutReserve + startupListOffsetReserve +
+        startupWaveformOffsetReserve + bottomLayoutReserve;
     const float minimumWaveform = showDockedWaveform ? (layoutShortHeight ? 96.0f : 150.0f) : 0.0f;
     const float bandCenterWidth = std::max(1.0f, mainWorkW -
         (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
@@ -39448,6 +39502,8 @@ void RenderUI(AppState& state) {
                                    bool keepFilterRim = false,
                                    float titleHeight = 24.0f) {
         DockModuleShellLayout layout;
+        layout.insetL = splitterWidth;
+        layout.insetR = splitterWidth;
         layout.titleHeight = titleHeight;
         layout.shellWidth = (std::max)(120.0f, panelWidth - layout.insetL - layout.insetR);
         layout.shellMin = ImVec2(winPos.x + layout.insetL, winPos.y + layout.insetT);
@@ -40057,17 +40113,13 @@ void RenderUI(AppState& state) {
         popDockedToolAppearance(appearance);
         ImGui::EndChild();
 
-        // The child may render a nested Dock leaf at an offset position. Restore
-        // the outer column edge before creating ##LeftSplitter so the legacy
-        // splitter remains the owner of the whole left-column width.
-        ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
         if (!hideLeftSplitterInBrowser) {
             const float previousWidth = workspacePx(state.panelSidebar.dockedWidth);
             float dragWidth = previousWidth;
             VerticalSplitter("##LeftSplitter", &dragWidth,
-                leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth, sideColumnHeight);
+                leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth,
+                sideColumnHeight, ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
             if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
-            ImGui::SameLine(0, 0);
         }
     }
 
@@ -45982,9 +46034,7 @@ void RenderUI(AppState& state) {
     if (showRightColumn && (rightTabGroup || !state.dockTabGroups.Find("info"))) {
         // A nested right Dock leaf can move the child cursor inward. The
         // legacy splitter still belongs at the outer results/info boundary.
-        ImGui::SetCursorScreenPos(ImVec2(
-            viewport->WorkPos.x + mainWorkW - rightPanelWidth - splitterWidth,
-            dockColumnTop));
+        const float rightColumnX = viewport->WorkPos.x + mainWorkW - rightPanelWidth;
         const float previousWidth = workspacePx(state.panelFileInfo.dockedWidth);
         float dragWidth = previousWidth;
         VerticalSplitter(
@@ -45993,10 +46043,11 @@ void RenderUI(AppState& state) {
             rightPanelMinWidth,
             rightPanelMaxWidth,
             sideColumnHeight,
+            ImVec2(rightColumnX, dockColumnTop),
             true);  // invertDelta for right panel
         if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
 
-        ImGui::SameLine(0, 0);
+        ImGui::SetCursorScreenPos(ImVec2(rightColumnX, dockColumnTop));
         const std::string displayedTool = selectedDockTool(rightTabGroup, "info");
         const auto appearance = pushDockedToolAppearance(displayedTool);
         const float rightColumnChildWidth = rightRegionSplit ? infoShellWidth : rightPanelWidth;
@@ -46228,25 +46279,12 @@ void RenderUI(AppState& state) {
     // BOTTOM - Waveform and Transport (with resizable splitter)
     // The center may end above a bottom Dock band; the waveform always starts
     // after the full-height side columns, never over a newly docked panel.
-    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
-        dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y));
-
     if (showDockedWaveform) {
-    // 启动动画：自底升起
-    float offsetY = 40.0f * (1.0f - t);
-        ImVec2 currentPos = ImGui::GetCursorPos();
-        const ImVec4 transportSeamBg = uiWithAlpha(
-            uiMix(kCurrentModules.transport.background, kCurrentModules.waveform.background, 0.38f),
-            1.0f);
-        if (offsetY > 0.5f) {
-            ImVec2 gapMin = ImGui::GetCursorScreenPos();
-            ImVec2 gapMax(gapMin.x + ImGui::GetContentRegionAvail().x, gapMin.y + offsetY);
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                gapMin, gapMax,
-                ImGui::GetColorU32(transportSeamBg),
-                0.0f);
-        }
-    ImGui::SetCursorPos(ImVec2(currentPos.x, currentPos.y + offsetY));
+    const float dockColumnBottom = dockColumnTop + sideColumnHeight;
+    const float waveformDockY = dockColumnBottom + waveformPanelGapReserve + startupWaveformOffsetReserve;
+    const float waveformSeamCenter = (dockColumnBottom + waveformDockY) * 0.5f;
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
+        waveformSeamCenter - kWorkspaceHorizontalSplitterHitHeight * 0.5f));
 
     // Three-dot results/waveform boundary handle. Only the main waveform's
     // dockedHeight is mutated; drag up grows, drag down shrinks.
@@ -46258,16 +46296,10 @@ void RenderUI(AppState& state) {
         MarkSettingsDirty(state);
     }
 
-    // 波形 / 传输与筛选器、Info 视为同级面板，先统一外壳底色；内部波形区域仍单独走 waveformBG。
     const float waveformDockHeight = waveformPanelHeight + playlistQuickBarHeight;
-    const ImVec4 kLegacyWaveDockSurface = uiWithAlpha(
-        uiMix(kCurrentModules.waveform.background, kCurrentModules.results.background, 0.20f),
-        1.0f);
-    const ImVec4 workspaceWaveDockSurface = kUsePreWorkspaceSemanticColors
-        ? kLegacyWaveDockSurface
-        : workspacePalette.applicationSurface;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, workspaceWaveDockSurface);
-    BeginTransientScrollbarChild("WaveformPanel", ImVec2(0, waveformDockHeight), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x, waveformDockY));
+    BeginTransientScrollbarChild("WaveformPanel", ImVec2(0, waveformDockHeight), false,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
     {
         // Fold the old separate title strip into the transport surface so the
         // bottom dock reads as one continuous band instead of stacked black bars.
@@ -46278,7 +46310,6 @@ void RenderUI(AppState& state) {
         float titleHeight = 0.0f;
 
         const auto& waveformShellTheme = ThemeColors::current();
-        const float waveShellPad = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         const float waveShellInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         const float waveQuickBarH = state.settings.showPlaylistQuickBar ? playlistQuickBarHeight : 0.0f;
         const float waveQuickBarGap = waveQuickBarH > 0.0f ? workspacePx(4.0f) : 0.0f;
@@ -50933,7 +50964,6 @@ void RenderUI(AppState& state) {
             "waveformSplitterBG", L(ThemeCol_waveformSplitterBG));
     }
     ImGui::EndChild();
-    ImGui::PopStyleColor();
     }  // End of waveform panel visible && !floating check
 
     // FLOATING PANELS with Drag-to-Dock Support (Wwise style)

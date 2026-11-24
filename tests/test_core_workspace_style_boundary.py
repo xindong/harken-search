@@ -383,11 +383,55 @@ def test_all_resize_handles_share_the_three_dot_grip_logic():
     assert "dl->AddLine(" not in vertical
     assert "dl->AddLine(" not in horizontal
 
+
+def test_sidebar_rail_and_active_content_keep_the_original_internal_spacing():
+    main = read(MAIN_CPP)
+    rail = between(main, 'BeginTransientScrollbarChild("##SidebarRail"', 'BeginTransientScrollbarChild("##SidebarContent"')
+
+    assert "ImGui::SameLine(0, 0);" in rail
+    assert "WorkspacePanelGapPx" not in rail
+    assert "AddRectFilled" not in rail
+
+
+def test_docked_workspace_seams_share_the_reference_gap_without_shrinking_resize_targets():
+    main = read(MAIN_CPP)
+    shell = between(main, "auto drawDockModuleShell", "const ImVec2 laneEnd")
+    vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+    assert "const float splitterWidth = WorkspacePanelGapPx() * 0.5f;" in main
+    assert "layout.insetL = splitterWidth;" in shell
+    assert "layout.insetR = splitterWidth;" in shell
+    assert "kWorkspaceColumnSplitterHitWidth = 12.0f" in main
+    assert 'InvisibleButton("##ResizeHit", ImVec2(kWorkspaceColumnSplitterHitWidth, height))' in vertical
+    horizontal_start = main.rindex("bool HorizontalSplitter(")
+    horizontal = main[horizontal_start:main.index("// Begin a dockable panel", horizontal_start)]
+    assert "if (!waveformSplitter &&" in horizontal
+
     meter = between(main, "// Meter resize handle", "// AUDITION_NATIVE_EXCEPTION: waveform-derived-meter")
     assert "const float handleWidth = 12.0f" in meter
     assert "InvisibleButton(\"##handle\", ImVec2(handleWidth" in meter
     assert "DrawThreeDotSplitterGrip" in meter
     assert "ResolveThreeDotSplitterColor" in meter
+
+
+def test_column_resize_dots_draw_above_the_workspace_panels():
+    main = read(MAIN_CPP)
+    vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+
+    assert "GetForegroundDrawList(workspace->Viewport)" in vertical
+    assert vertical.index("GetForegroundDrawList") < vertical.index("DrawThreeDotSplitterGrip")
+
+
+def test_bottom_waveform_uses_the_same_visible_gap_as_the_columns():
+    main = read(MAIN_CPP)
+    budget = between(main, "const bool showDockedWaveform =", "const float minimumWaveform =")
+    seam = between(main, "// BOTTOM - Waveform and Transport", 'BeginTransientScrollbarChild("WaveformPanel"')
+    waveform_child = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "const auto& waveformShellTheme")
+
+    assert "WorkspacePanelGapPx()" in budget
+    assert "waveformPanelGapReserve" in budget and "waveformPanelGapReserve" in seam
+    assert "ItemSpacing.y" not in seam
+    assert "AddRectFilled" not in seam
+    assert "ImGuiWindowFlags_NoBackground" in waveform_child
 
 
 def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
