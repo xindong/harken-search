@@ -12953,8 +12953,7 @@ static void MaybeStartAdaptiveMiniWaveformFormatUpgrade(AppState& state) {
     }
 
     DIAG_SYSTEM_FMT("Waveform",
-                    "Adaptive mini format upgrade purge: purged=%d rebuildTotal=%lld db=%s",
-                    preparation.purged,
+                    "Adaptive mini format upgrade check: rebuildTotal=%lld db=%s",
                     (long long)preparation.rebuildTotal,
                     state.currentDbPathUtf8.c_str());
 
