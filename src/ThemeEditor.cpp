@@ -311,31 +311,12 @@ static bool LoadEditorThemeFile(const std::string& pathUtf8, ThemeColorScheme& i
                                 const char* source, AppTheme startTheme, bool livePreview) {
     std::string text;
     if (!Platform::FileSystem::ReadFileText(pathUtf8, text)) return false;
-    const auto document = nlohmann::json::parse(text, nullptr, false);
-    if (!document.is_object()) return false;
-    // The serialized scheme is the complete supported field list, including
-    // Wwise colors that are not shown in the editor. Only validated top-level
-    // values reach the legacy flat reader; nested metadata cannot override them.
-    const auto supported = nlohmann::json::parse(ThemeColors::exportToJSON(ThemeColorScheme{}));
-    nlohmann::json colors = nlohmann::json::object();
-    for (auto field = supported.begin(); field != supported.end(); ++field) {
-        const auto value = document.find(field.key());
-        if (value == document.end()) continue;
-        if (!value->is_string()) return false;
-        const auto text = value->get<std::string>();
-        // colorMixing / resultsGradient 是开关，不是颜色：原样透传，不按十六进制校验。
-        if (field.key() == "colorMixing" || field.key() == "resultsGradient") {
-            if (text != "0" && text != "1") return false;
-            colors[field.key()] = text;
-            continue;
-        }
-        if ((text.size() != 6 && text.size() != 8) || text.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
-            return false;
-        colors[field.key()] = text;
-    }
-    if (colors.empty()) return false;
+    // 只允许完整支持列表里的顶层颜色字段（含未配置时不导出的可选覆盖项）；
+    // 嵌套元数据不能覆盖它们。
+    std::string colorsJson;
+    if (!ThemeColors::filterImportColors(text, colorsJson)) return false;
     ThemeColorScheme loaded{};
-    if (!ThemeColors::importFromJSON(colors.dump(), loaded)) return false;
+    if (!ThemeColors::importFromJSON(colorsJson, loaded)) return false;
     imported = loaded;
     if (source) ThemeColors::armImportDiagnostics(source, pathUtf8, (int)startTheme,
                                                   ThemeDiagPublicThemeLabel(startTheme), livePreview);
@@ -505,9 +486,9 @@ static ThemeEditorRowResult DrawColorItem(const ThemeEditorItem& item) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
     if (linked) ImGui::BeginDisabled();
-    result.colorChanged = ImGui::ColorEdit4(
-        "##color", &color.x,
-        ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+    const auto colorFlags = item.group == ThemeEditorGroup::Welcome
+        ? ImGuiColorEditFlags_NoAlpha : ImGuiColorEditFlags_AlphaPreview;
+    result.colorChanged = ImGui::ColorEdit4("##color", &color.x, ImGuiColorEditFlags_NoInputs | colorFlags);
     if (result.colorChanged) item.SetColor(g_ed.draft, color);
     ObserveEditorItem(item.key);
     if (linked) ImGui::EndDisabled();
@@ -570,6 +551,30 @@ static bool GroupContainsKey(ThemeEditorGroup group, ThemeEditorLayer layer, con
             return true;
     }
     return false;
+}
+
+static void DrawWelcomeColorPreview(const ThemeColorScheme& scheme) {
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const ImVec2 size(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight() * 2.5f);
+    ImVec4 background = kWelcomeBackgroundColor.Resolve(scheme);
+    ImVec4 textColor = kWelcomeTextColor.Resolve(scheme);
+    ImVec4 accent = kWelcomeAccentColor.Resolve(scheme);
+    background.w = textColor.w = accent.w = 1.0f;
+    const char* greeting = L(Greet_WelcomeBack);
+    const ImVec2 textSize = ImGui::CalcTextSize(greeting);
+    const float center = start.x + size.x * 0.5f;
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(start, ImVec2(start.x + size.x, start.y + size.y),
+                        ImGui::ColorConvertFloat4ToU32(background), ImGui::GetStyle().FrameRounding);
+    draw->PushClipRect(start, ImVec2(start.x + size.x, start.y + size.y), true);
+    draw->AddText(ImVec2(center - textSize.x * 0.5f, start.y + (size.y - textSize.y) * 0.5f),
+                  ImGui::ColorConvertFloat4ToU32(textColor), greeting);
+    draw->AddLine(ImVec2(center - textSize.x * 0.5f, start.y + size.y * 0.8f),
+                  ImVec2(center + textSize.x * 0.5f, start.y + size.y * 0.8f),
+                  ImGui::ColorConvertFloat4ToU32(accent));
+    draw->PopClipRect();
+    ImGui::Dummy(size);
+    ObserveEditorItem("welcome-page-preview");
 }
 
 static void DrawGroup(ThemeEditorGroup group, ThemeEditorLayer layer) {
@@ -670,6 +675,8 @@ static void DrawGroup(ThemeEditorGroup group, ThemeEditorLayer layer) {
             if (g_ed.livePreview && g_appState) ApplyDraftToLive(*g_appState);
         }
     }
+    if (group == ThemeEditorGroup::Welcome)
+        DrawWelcomeColorPreview(g_ed.draft);
     ImGui::Unindent(8.0f);
 }
 
@@ -692,6 +699,7 @@ static void DrawEditorLayer(ThemeEditorLayer layer) {
     DrawGroup(ThemeEditorGroup::ButtonsAndStatus, layer);
     DrawGroup(ThemeEditorGroup::PresetDial, layer);
     DrawGroup(ThemeEditorGroup::Wwise, layer);
+    DrawGroup(ThemeEditorGroup::Welcome, layer);
     ImGui::PopID();
     ImGui::Unindent(8.0f);
 }
@@ -719,6 +727,12 @@ bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value) 
         }
     }
     return false;
+}
+bool ThemeEditorQaRevealColor(const std::string& key) {
+    if (!g_ed.wasOpen || !g_appState || !g_appState->showThemeEditor || !FindThemeEditorItem(key.c_str()))
+        return false;
+    g_ed.inspectScrollTarget = key;
+    return true;
 }
 std::string ThemeScheduleEditorQaStatus() { return g_ed.exportMsg; }
 std::string ThemeScheduleEditorQaObservation() {
@@ -1092,6 +1106,7 @@ void RenderThemeEditor(AppState& state) {
         if (aura::ui::ActionButton(L(ThemeEditor_SaveAsNew), ImVec2(130, 0), aura::ui::ButtonVariant::PrimaryTransfer)) {
             SaveDraftAsCustomTheme(state, g_ed.exportMsg);
         }
+        ObserveEditorItem("save-as-new-theme");
         if (nameEmpty) ImGui::EndDisabled();
     }
 

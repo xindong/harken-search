@@ -28,6 +28,7 @@ ThemeEditorSavedAppearance ThemeEditorAppearanceForSettings(const AppState& stat
 struct ImVec4;
 // Isolated package only; exercises the same editor draft, undo and live preview.
 bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value);
+bool ThemeEditorQaRevealColor(const std::string& key);
 std::string ThemeScheduleEditorQaStatus();
 std::string ThemeScheduleEditorQaObservation();
 #endif

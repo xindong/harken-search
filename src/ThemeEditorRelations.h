@@ -146,6 +146,9 @@ inline const ThemeEditorRelation* GetThemeEditorRelations(size_t& count) {
         {"wwiseParentBadge", ThemeEditorLayer::Advanced, ThemeEditorRelationKind::Derived, "menuText"},
         {"wwiseLabelText", ThemeEditorLayer::Regions, ThemeEditorRelationKind::Shared, "menuText"},
         {"wwiseBodyText", ThemeEditorLayer::Regions, ThemeEditorRelationKind::Shared, "interfaceText"},
+        {"welcomeBackground", ThemeEditorLayer::Regions, ThemeEditorRelationKind::Shared, "mainWindowBG"},
+        {"welcomeText", ThemeEditorLayer::Regions, ThemeEditorRelationKind::Shared, "welcomeBackground"},
+        {"welcomeAccent", ThemeEditorLayer::Regions, ThemeEditorRelationKind::Shared, "controlAccent"},
     };
     count = sizeof(kRelations) / sizeof(kRelations[0]);
     return kRelations;
