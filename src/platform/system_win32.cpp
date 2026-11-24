@@ -2,7 +2,6 @@
 
 #include "system.h"
 #include "platform/harken_user_data_layout.h"
-#include "executable_path.h"
 #include "explorer_shell_path.h"
 #include "pinned_taskbar_icon_refresh.h"
 #include "text_encoding.h"
@@ -1001,6 +1000,23 @@ bool ReadShortcutTarget(const std::wstring& shortcutPath,
     return read;
 }
 
+// Stays inside this translation unit: several small test targets link this
+// file alone and cannot pull in the executable-path module.
+std::wstring CurrentExecutablePath() {
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD written =
+            GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (written == 0) return std::wstring();
+        if (written < buffer.size()) {
+            buffer.resize(written);
+            return buffer;
+        }
+        if (buffer.size() >= kShellItemPathBuffer) return std::wstring();
+        buffer.resize(buffer.size() * 2);
+    }
+}
+
 std::wstring ExpandShortcutEnvironment(const std::wstring& value) {
     if (value.find(L'%') == std::wstring::npos) return value;
     const DWORD required = ExpandEnvironmentStringsW(value.c_str(), nullptr, 0);
@@ -1016,9 +1032,7 @@ std::wstring ExpandShortcutEnvironment(const std::wstring& value) {
 } // namespace
 
 std::uint32_t RefreshPinnedTaskbarIcons() {
-    const auto executable = GetExecutablePath();
-    if (executable.status != ExecutablePathStatus::Success) return 0;
-    const std::wstring exePath = TextEncoding::Utf8ToWideStrict(executable.pathUtf8);
+    const std::wstring exePath = CurrentExecutablePath();
     if (exePath.empty()) return 0;
 
     PWSTR roamingAppData = nullptr;

@@ -58,6 +58,11 @@ class PinnedTaskbarIconRefreshContract(unittest.TestCase):
         self.assertIn("STGM_READ", PLATFORM)
         self.assertIn("ReadShortcutTarget(shortcutPath", self.refresh)
 
+    def test_platform_file_has_no_cross_module_link_dependency(self) -> None:
+        # 多个小测试目标只链接本文件，取 EXE 路径必须自带，不能依赖 executable-path 模块。
+        self.assertNotIn("GetExecutablePath", PLATFORM)
+        self.assertIn("GetModuleFileNameW", PLATFORM)
+
     def test_headless_entry_runs_before_the_single_instance_broker(self) -> None:
         # 安装器以非提权用户启动本 EXE：即使主程序正开着也必须只刷新并退出，不能附着到已有窗口。
         flag = MAIN.index("--refresh-pinned-taskbar-icons")
