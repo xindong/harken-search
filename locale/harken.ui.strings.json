@@ -10731,6 +10731,13 @@
       "ja": "OpenGL コンテキストの作成に失敗しました。"
     },
     {
+      "id": "MB_GlRendererUnsupported",
+      "type": "ui",
+      "zh": "当前图形环境不受支持，应用无法启动。",
+      "en": "Your graphics environment does not support the OpenGL features Harken Search needs to start.",
+      "ja": "現在のグラフィック環境は、Harken Search の起動に必要な OpenGL に対応していません。"
+    },
+    {
       "id": "MB_AudioInitFail",
       "type": "ui",
       "zh": "Failed to initialize audio engine.",

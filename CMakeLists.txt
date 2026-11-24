@@ -1323,6 +1323,8 @@ target_include_directories(HarkenSearchBootstrapCore PUBLIC
 )
 target_compile_features(HarkenSearchBootstrapCore PUBLIC cxx_std_17)
 if(MSVC)
+    set_target_properties(HarkenSearchBootstrapCore PROPERTIES
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(HarkenSearchBootstrapCore PRIVATE /W4 /WX /EHsc /permissive- /utf-8)
 endif()
 set_target_properties(HarkenSearchBootstrapCore PROPERTIES
@@ -1468,6 +1470,8 @@ if(WIN32)
         bcrypt
     )
     if(MSVC)
+        set_target_properties(HarkenSearchBootstrap PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         target_compile_options(HarkenSearchBootstrap PRIVATE /W4 /WX /EHsc /permissive- /utf-8)
     endif()
     # Multi-config generators select Release at build time.  Keep ordinary

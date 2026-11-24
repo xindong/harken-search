@@ -3999,6 +3999,11 @@ public:
             temporary.get(), target.parent.get(), target.leaf,
             mode == WindowsFilesystemReplaceMode::ReplaceExisting);
         if (!renamed.ok()) {
+            if (renamed.status == WindowsFilesystemBackendStatus::AccessDenied &&
+                (prepared || (checkpoint != nullptr &&
+                              checkpoint->onPrepared != nullptr))) {
+                return renamed;
+            }
             const WindowsFilesystemBackendResult cleaned =
                 CleanupCreatedEntry(temporary, target.parent.get(),
                                     wideTemporaryLeaf);

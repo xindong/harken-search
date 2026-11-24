@@ -8732,6 +8732,95 @@ void test_native_port_retargets_the_journal_lease_during_prepared_checkpoint() {
 #endif
 }
 
+void test_native_prepared_rename_retries_with_mapped_target() {
+#if defined(_WIN32)
+    NativeSandbox sandbox;
+    NativeSandboxCleanupAssertion cleanup(sandbox, "prepared-rename-retry");
+    for (std::uint32_t attempt = 0; attempt < 32 && !sandbox.owned; ++attempt) {
+        sandbox.path = NativeSandbox::systemTempRoot() /
+            ("prepared-rename-retry-" + std::to_string(GetCurrentProcessId()) +
+             "-" + std::to_string(attempt));
+        std::error_code createError;
+        sandbox.owned = std::filesystem::create_directory(sandbox.path, createError);
+    }
+    check(sandbox.owned, "prepared rename retry owns an isolated test directory");
+    if (!sandbox.owned) return;
+    const auto install = sandbox.path / "install";
+    const auto updater = sandbox.path / "updater";
+    const auto staging = updater / "staging";
+    const auto transaction = updater / "transaction";
+    const auto target = install / "HarkenSearch.exe";
+    const auto temporary =
+        install / ".aris-bootstrap-attempt-replacement-crash-01-0-forward.tmp";
+    wchar_t executable[MAX_PATH]{};
+    const auto executableLength = GetModuleFileNameW(
+        nullptr, executable, static_cast<DWORD>(std::size(executable)));
+    std::error_code error;
+    const bool filesReady = executableLength != 0 &&
+        executableLength < std::size(executable) &&
+        std::filesystem::create_directory(install, error) &&
+        std::filesystem::create_directory(updater, error) &&
+        std::filesystem::create_directory(staging, error) &&
+        std::filesystem::create_directory(transaction, error) &&
+        std::filesystem::copy_file(executable, target, error) &&
+        writeNativeFixtureFile(staging / "HarkenSearch.exe", "new-native");
+    check(filesReady, "prepared rename retry creates an actual PE target");
+    if (!filesReady) return;
+    auto backend = createAuthorizedNativeBackend(install, staging, transaction);
+    check(backend != nullptr, "prepared rename retry has a trusted native backend");
+    if (!backend) return;
+    const Fixture values = replacementCrashFixture(
+        install.u8string(), staging.u8string(), transaction.u8string());
+    const WindowsBootstrapFilesystemRoots roots{
+        staging.u8string(), transaction.u8string(), updater.u8string(),
+        "signed-invocation-01"};
+    WindowsBootstrapFilesystemPort port(*backend);
+    const auto begun = port.Begin(values.plan, values.journal, roots);
+    check(begun.ok(), "prepared rename retry admits the original target");
+    if (!begun.ok()) return;
+    const auto persisted = port.Apply(intent(BootstrapIntentKind::PersistJournal, {}, "prepared"));
+    check(persisted.ok(), "prepared rename retry persists the initial journal");
+    if (!persisted.ok()) return;
+    const auto backedUp = port.Apply(intent(BootstrapIntentKind::SnapshotBackup, "HarkenSearch.exe"));
+    check(backedUp.ok(), "prepared rename retry backs up the original target");
+    if (!backedUp.ok()) return;
+
+    const HANDLE file = CreateFileW(target.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(file != INVALID_HANDLE_VALUE, "prepared rename retry opens the PE for mapping");
+    if (file == INVALID_HANDLE_VALUE) return;
+    const HANDLE section = CreateFileMappingW(file, nullptr, PAGE_READONLY | SEC_IMAGE,
+                                              0, 0, nullptr);
+    CloseHandle(file);
+    check(section != nullptr, "prepared rename retry creates an image section");
+    if (!section) return;
+    const void* view = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(section);
+    check(view != nullptr, "prepared rename retry maps the target with no file handle held");
+    if (!view) return;
+    const auto replace = intent(BootstrapIntentKind::ReplaceInventoryItem,
+                                "HarkenSearch.exe");
+    const auto first = port.Apply(replace);
+    check(first.status == WindowsBootstrapFilesystemStatus::RetryableAccessDenied &&
+              first.nativeError == 0xC0000022U,
+          "mapped target causes the native rename to return STATUS_ACCESS_DENIED");
+    check(std::filesystem::exists(temporary),
+          "a retryable rename denial preserves the journal-bound prepared temporary");
+    const auto persistent = port.Apply(replace);
+    check(persistent.status == WindowsBootstrapFilesystemStatus::RetryableAccessDenied &&
+              persistent.nativeError == first.nativeError &&
+              std::filesystem::exists(temporary),
+          "persistent image mapping still reports the original denial, not missing temp");
+    const BOOL unmapped = UnmapViewOfFile(view);
+    check(unmapped != FALSE, "prepared rename retry releases the sole image view");
+    const auto retried = port.Apply(replace);
+    check(retried.ok() && readNativeFixtureFile(target) == "new-native" &&
+              !std::filesystem::exists(temporary),
+          "releasing the image mapping lets the same transaction publish the prepared file");
+#endif
+}
+
 void test_native_restart_reopens_journal_temp_from_separate_process() {
 #if defined(_WIN32)
     const auto runCase = [](const bool beforeDirectoryFlush) {
@@ -11617,6 +11706,10 @@ int main(int argc, char** argv) {
         test_native_atomic_replacement_has_no_delete_rename_gap();
         return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::strcmp(argv[1], "--only-native-prepared-denial") == 0) {
+        test_native_prepared_rename_retries_with_mapped_target();
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 &&
         std::strcmp(argv[1], "--only-native-checkpoint-target-swap") == 0) {
         test_native_target_swap_after_prepared_checkpoint_is_rejected();
@@ -11860,6 +11953,7 @@ int main(int argc, char** argv) {
     test_native_legacy_journal_names_fail_closed();
 #endif
     test_native_port_retargets_the_journal_lease_during_prepared_checkpoint();
+    test_native_prepared_rename_retries_with_mapped_target();
     test_native_restart_reopens_journal_temp_from_separate_process();
     test_native_restart_observes_atomic_target_from_separate_process();
     test_native_restart_resumes_prepared_target_from_separate_process();

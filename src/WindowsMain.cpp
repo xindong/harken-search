@@ -13336,7 +13336,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     WM_TASKBARCREATED = RegisterWindowMessageW(L"TaskbarCreated");
 
     Platform::InitThreadCom();
-    OleInitialize(nullptr);
+    const HRESULT oleStatus = OleInitialize(nullptr);
 
     // Register window class
     WNDCLASSEXW wc = {};
@@ -13370,8 +13370,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
 
     g_hwnd = hwnd;
-
-    aris::update::StartHarkenSearchAutomaticUpdate();
 
     // Force the final brand icon onto the actual window. Relying only on the
     // class icon can leave Windows taskbar/titlebar surfaces showing a cached
@@ -13517,14 +13515,46 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
 #endif
 
-    ImGui_ImplWin32_InitForOpenGL(hwnd);
+    const bool win32BackendInitialized = ImGui_ImplWin32_InitForOpenGL(hwnd);
+    if (!ImGui_ImplOpenGL3_Init("#version 130")) {
+        const auto* glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        wchar_t diagnostic[256]{};
+        swprintf_s(diagnostic, L"STARTUP: OpenGL renderer initialization failed (GL_VERSION=%.160hs).\r\n",
+                   glVersion ? glVersion : "unknown");
+        OutputDebugStringW(diagnostic);
+        DiagnosticFile().append(std::string_view(reinterpret_cast<const char*>(diagnostic),
+                                                 std::wstring_view(diagnostic).size() * sizeof(wchar_t)));
+        Platform::ShowMessageBox(hwnd, Lw(MB_GlRendererUnsupported).c_str(), Lw(MB_Title_Error).c_str(),
+                                 MB_OK | MB_ICONERROR);
+
+        if (win32BackendInitialized) {
+            ImGui_ImplWin32_Shutdown();
+        }
+        ImGui::DestroyContext();
+        wglMakeCurrent(nullptr, nullptr);
+        wglDeleteContext(hglrc);
+        g_hRC = nullptr;
+        ReleaseDC(hwnd, hdc);
+        g_mainHdc = nullptr;
+        DestroyWindow(hwnd);
+        g_hwnd = nullptr;
+        if (SUCCEEDED(oleStatus)) {
+            OleUninitialize();
+        }
+        Platform::UninitThreadCom();
+        if (hMutex) {
+            Platform::CloseNativeHandle(hMutex);
+        }
+        return 1;
+    }
+    aris::update::StartHarkenSearchAutomaticUpdate();
+
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
     if (const float previewScale = PreviewUiDpiScale(); previewScale > 0.0f) {
         ImGui::GetPlatformIO().Platform_GetWindowDpiScale = [](ImGuiViewport*) { return PreviewUiDpiScale(); };
         ImGui::GetMainViewport()->DpiScale = previewScale;
     }
 #endif
-    ImGui_ImplOpenGL3_Init("#version 130");
 #if ARIS_ENABLE_IMGUI_VIEWPORTS
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
         ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();

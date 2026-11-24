@@ -56,6 +56,23 @@ class ImguiDockingViewportVendorContract(unittest.TestCase):
 
 
 class ImguiDockingViewportHostContract(unittest.TestCase):
+    def test_windows_renderer_init_failure_exits_before_drawing(self) -> None:
+        source = _read(WINMAIN)
+        start = source.index("    g_hwnd = hwnd;\n\n", source.index("    RegisterClassExW(&wc);"))
+        startup = source[start:source.index("    AppState state;", start)]
+        guard = 'if (!ImGui_ImplOpenGL3_Init("#version 130")) {'
+        self.assertIn(guard, startup, "Renderer initialization must gate the Windows startup path")
+        failure_start = startup.index(guard)
+        failure_end = startup.index("\n    }", failure_start)
+        failure = startup[failure_start:failure_end]
+        self.assertIn("Platform::ShowMessageBox", failure)
+        self.assertIn("return 1;", failure)
+        self.assertIn("ImGui::DestroyContext();", failure)
+        self.assertIn("wglDeleteContext(hglrc);", failure)
+        self.assertNotIn("ImGui_ImplOpenGL3_Shutdown", failure)
+        for action in ("StartHarkenSearchAutomaticUpdate", "Hook_Renderer_CreateWindow", "SwapBuffers(hdc)"):
+            self.assertGreater(startup.index(action), failure_end)
+
     def test_saved_detached_main_window_rejoins_host_without_disabling_panels(self) -> None:
         """Execute the product root-window setup against real ImGui and synthetic INI."""
         if not shutil.which("cmake"):
