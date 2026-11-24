@@ -103,7 +103,7 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
             };
             std::vector<std::unique_ptr<Slot>> slots(pool.size());
             std::mutex slotMutex; std::condition_variable slotReady;
-            size_t nextTask = 0, consumed = 0;
+            size_t nextTask = 0, consumed = 0, activeAnalyses = 0;
             std::exception_ptr workerFailure;
             SimilarityWorkerGroup group{slotReady};
             const FeatureExtractionCancelCheck workerCancelled = [&] {
@@ -122,11 +122,20 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
                                 }
                                 if (group.stopping.load() || nextTask >= tasks.size()) break;
                                 index = nextTask++;
+                                result.peakOutstandingAnalyses = std::max(result.peakOutstandingAnalyses, nextTask - consumed);
                             }
                             if (workerCancelled()) break;
                             auto slot = std::make_unique<Slot>();
+                            {
+                                std::lock_guard<std::mutex> lock(slotMutex);
+                                result.peakConcurrentAnalyses = std::max(result.peakConcurrentAnalyses, ++activeAnalyses);
+                            }
                             slot->analyzed = AnalyzeSimilarityEntry(tasks[index],workerModel,slot->entry,slot->failure,workerCancelled);
-                            { std::lock_guard<std::mutex> lock(slotMutex); slots[index % slots.size()] = std::move(slot); }
+                            {
+                                std::lock_guard<std::mutex> lock(slotMutex);
+                                --activeAnalyses;
+                                slots[index % slots.size()] = std::move(slot);
+                            }
                             slotReady.notify_all();
                         }
                     } catch (...) {

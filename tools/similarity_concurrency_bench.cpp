@@ -109,6 +109,8 @@ int main(int argc, char** argv) {
         << "  \"skipped\": " << result.progress.skipped << ",\n"
         << "  \"failed\": " << result.progress.failed << ",\n"
         << "  \"invalidated\": " << invalidated << ",\n"
+        << "  \"peakConcurrentAnalyses\": " << result.peakConcurrentAnalyses << ",\n"
+        << "  \"peakOutstandingAnalyses\": " << result.peakOutstandingAnalyses << ",\n"
         << "  \"elapsedMs\": " << elapsedMs << ",\n"
         << "  \"itemsPerMinute\": " << itemsPerMinute << ",\n"
         << "  \"baselineWorkingSetBytes\": " << baselineBytes << ",\n"

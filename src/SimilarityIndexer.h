@@ -13,6 +13,7 @@ struct SimilarityIndexResult {
     SimilarityIndexProgress progress;
     std::vector<SimilarityIndexIssue> issues;
     std::string error, modelError;
+    size_t peakConcurrentAnalyses = 0, peakOutstandingAnalyses = 0;
 };
 bool AnalyzeSimilarityEntry(const SimilarityFile& file, AudioEmbeddingService* model,
                             SimilarityAnalysisEntry& entry, SimilarityIndexFailure& failure,
