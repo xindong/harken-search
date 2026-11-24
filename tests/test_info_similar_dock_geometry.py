@@ -31,16 +31,23 @@ class InfoSimilarDockGeometryContract(unittest.TestCase):
         main = _read()
         idx = main.find('"##DockedSimilarSounds"')
         self.assertGreater(idx, 0)
-        block = main[idx : idx + 5000]
-        self.assertIn('"##DockedSimilarSoundsContent"', block)
-        self.assertIn("similarShell.insetL + similarShell.innerPad", block)
-        self.assertIn("similarShell.insetT + similarShell.titleHeight + 4.0f", block)
+        block = main[idx : main.index("if (!open)", idx)]
+        self.assertRegex(
+            block,
+            r"renderIndependentSimilarSounds\(ImVec2\(leaf\.rect\.width, leaf\.rect\.height\),"
+            r"\s*similarShell\.contentMin, similarShell\.contentMax\)",
+        )
+
+        start = main.index("const auto renderIndependentSimilarSounds")
+        viewport = main[start : main.index("auto renderFunctionDockedModule", start)]
+        self.assertIn("ImVec2(contentMin.x + padding, contentMin.y + padding)", viewport)
+        self.assertIn("contentMax.x - contentMin.x - 2.0f * padding", viewport)
+        self.assertIn("contentMax.y - contentMin.y - 2.0f * padding", viewport)
         self.assertIn(
-            "leaf.rect.width - similarShell.insetL - similarShell.insetR -",
-            block)
-        self.assertIn(
-            "leaf.rect.height - similarShell.insetT - similarShell.insetB -",
-            block)
+            'beginDockContentViewport("similar-sounds", "##IndependentSimilarSoundsContent",',
+            viewport,
+        )
+        self.assertIn("outerSize, bodySize, ImGuiWindowFlags_NoBackground", viewport)
 
 
 if __name__ == "__main__":

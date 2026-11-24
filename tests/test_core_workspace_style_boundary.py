@@ -1012,8 +1012,9 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert "ImGui::SetNextWindowContentSize" in dock_content
     assert "flags &= ~(ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)" in dock_content
     assert "return BeginTransientScrollbarChild(childId, bodySize, false, flags);" in dock_content
-    similar = between(main, '"similar-sounds", "##DockedSimilarSoundsContent"', "ImGui::EndChild();")
-    assert "ImGuiWindowFlags_NoScrollbar |" in similar
+    similar = between(main, '"similar-sounds", "##IndependentSimilarSoundsContent"', "ImGui::EndChild();")
+    assert "ImGuiWindowFlags_NoBackground" in similar
+    assert "ImGuiWindowFlags_NoScrollWithMouse" not in similar
     assert "ImGui::BeginTable(" not in main
     assert "ImGui::Begin(" not in main
     assert "ImGui::BeginPopup(" not in main
