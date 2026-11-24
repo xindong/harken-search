@@ -39458,6 +39458,35 @@ void RenderUI(AppState& state) {
     const ImU32 kTitleText = ImGui::GetColorU32(state.settings.theme == AppTheme::LapisBlue
         ? kCurrentModules.transport.text
         : ThemeColors::peerPanelHeading(ThemeColors::current()));
+    const auto useSharedSimilarAppearance = [&] {
+        return state.settings.theme != AppTheme::Custom &&
+            !state.settings.useCustomColors && !ThemeColors::customized();
+    };
+    const auto usesDockToolPalette = [](std::string_view module) {
+        return module == "info" || module == "similar-sounds" || module == "mod-ucs-browser" ||
+               module == "mod-tag-browser" || module == "mod-workflow" || module == "mod-transfer";
+    };
+    struct DockToolPalette {
+        ImVec4 body;
+        ImVec4 bodyText;
+        ImVec4 title;
+        ImVec4 titleText;
+    };
+    const auto resolveDockToolPalette = [&](std::string_view module) -> DockToolPalette {
+        const auto& theme = ThemeColors::current();
+        const ImVec4 body = uiWithAlpha(module == "similar-sounds"
+            ? (useSharedSimilarAppearance() ? theme.metadataPanelBG : theme.filterBrowserBG)
+            : ThemeColors::infoPanelDockBG(theme), 1.0f);
+        const ImVec4 title = TransportContrast::Over(workspaceDockTitleSurface, body);
+        return {body, TransportContrast::ForSurface(theme.metadataPanelText, body),
+                title, TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(kTitleText), title, 4.7)};
+    };
+    const auto pushDockToolBodyStyle = [](const DockToolPalette& palette) {
+        const int colors = PushFileInfoShellStyle(ThemeColors::current());
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.bodyText);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, palette.body);
+        return colors + 2;
+    };
     constexpr float kFilterInfoShellRadius =
         aura::ui::workspace::kCoreWorkspaceMetrics.compactControlRadius;
     constexpr float kDockShellVerticalInset = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
@@ -39468,13 +39497,14 @@ void RenderUI(AppState& state) {
                                 float w,
                                 float h,
                                 const char* title,
+                                const ImVec4& titleSurface,
                                 ImU32 titleColor,
                                 ImDrawFlags titleRoundFlags = ImDrawFlags_RoundCornersTop,
                                 float titleTextScale = 1.0f) {
         dl->AddRectFilled(
             wp,
             ImVec2(wp.x + w, wp.y + h),
-            ImGui::GetColorU32(workspaceDockTitleSurface),
+            ImGui::GetColorU32(titleSurface),
             kFilterInfoShellRadius,
             titleRoundFlags);
         if (!title) return;
@@ -39515,7 +39545,8 @@ void RenderUI(AppState& state) {
                                    const ImVec4& bodyBg,
                                    ImU32 titleColor,
                                    bool keepFilterRim = false,
-                                   float titleHeight = 24.0f) {
+                                   float titleHeight = 24.0f,
+                                   std::string_view module = {}) {
         DockModuleShellLayout layout;
         layout.insetL = splitterWidth;
         layout.insetR = splitterWidth;
@@ -39571,7 +39602,11 @@ void RenderUI(AppState& state) {
             ImGui::GetColorU32(bodyBg),
             kFilterInfoShellRadius,
             contentRoundFlags);
-        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title, titleColor,
+        const bool sharedPalette = usesDockToolPalette(module);
+        const auto palette = sharedPalette ? resolveDockToolPalette(module) : DockToolPalette{};
+        drawDockTitleBar(dl, layout.shellMin, layout.shellWidth, layout.titleHeight, title,
+            sharedPalette ? palette.title : workspaceDockTitleSurface,
+            sharedPalette ? ImGui::GetColorU32(palette.titleText) : titleColor,
             titleRoundFlags, layout.titleHeight / 24.0f);
         dl->AddLine(
             ImVec2(layout.contentMin.x + 0.5f, layout.contentMin.y + 0.5f),
@@ -39746,12 +39781,16 @@ void RenderUI(AppState& state) {
             !state.settings.useCustomColors && !ThemeColors::customized() &&
             (std::strcmp(moduleId, "info") == 0 ||
              std::strcmp(moduleId, "similar-sounds") == 0);
-        const ImVec4 floatingTitleSurface = infoFamily
-            ? uiWithAlpha(workspaceDockTitleSurface, 1.0f) : workspaceDockTitleSurface;
-        const ImVec4 floatingTitleInk = infoFamily
-            ? TransportContrast::ForSurface(ImGui::ColorConvertU32ToFloat4(kTitleText),
-                floatingTitleSurface, 4.7)
-            : ImGui::ColorConvertU32ToFloat4(kTitleText);
+        const bool sharedPalette = usesDockToolPalette(moduleId);
+        const auto palette = sharedPalette ? resolveDockToolPalette(moduleId) : DockToolPalette{};
+        const ImVec4 floatingBody = sharedPalette ? palette.body :
+            uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
+        const ImVec4 floatingTitleSurface = sharedPalette ? palette.title :
+            uiWithAlpha(workspaceDockTitleSurface, 1.0f);
+        const ImVec4 floatingTitleInk = sharedPalette ? palette.titleText : TransportContrast::ForSurface(
+            ImGui::ColorConvertU32ToFloat4(kTitleText), floatingTitleSurface, 4.7);
+        const ImVec4 floatingBodyInk = sharedPalette ? palette.bodyText :
+            TransportContrast::ForSurface(kCurrentModules.filterBrowser.text, floatingBody);
         ImFont* emph = GetUIFontEmphasis();
         if (emph) ImGui::PushFont(emph);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
@@ -39762,9 +39801,7 @@ void RenderUI(AppState& state) {
         // Draw the one rounded perimeter below. Native viewport decorations
         // otherwise force their perimeter to square even with WindowRounding.
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg,
-            infoFamily ? ThemeColors::infoPanelDockBG(ThemeColors::current())
-                       : uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, floatingBody);
         ImGui::PushStyleColor(ImGuiCol_TitleBg, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, floatingTitleSurface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, floatingTitleSurface);
@@ -39785,6 +39822,7 @@ void RenderUI(AppState& state) {
         ImGui::PopStyleVar(4);
         if (emph) ImGui::PopFont();
         if (visible) {
+            ImGui::PushStyleColor(ImGuiCol_Text, floatingBodyInk);
             const ImVec2 pos = ImGui::GetWindowPos();
             const ImVec2 size = ImGui::GetWindowSize();
 #ifdef _WIN32
@@ -39832,13 +39870,14 @@ void RenderUI(AppState& state) {
         ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
         bool open = true;
-        const int styleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const auto palette = resolveDockToolPalette(moduleId);
+        const int styleCount = pushDockToolBodyStyle(palette);
         if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
             const ImVec2 pos = ImGui::GetWindowPos();
             const ImVec2 size = ImGui::GetWindowSize();
-            const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
             const DockModuleShellLayout shell = drawDockModuleShell(
-                ImGui::GetWindowDrawList(), pos, size.x, size.y, title, bodyBg, kTitleText);
+                ImGui::GetWindowDrawList(), pos, size.x, size.y, title,
+                palette.body, kTitleText, false, 24.0f, moduleId);
             ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
             ImGui::InvisibleButton(titleId, ImVec2(shell.shellWidth, shell.titleHeight));
             beginDockedPanelDrag(moduleId, panel,
@@ -39897,10 +39936,6 @@ void RenderUI(AppState& state) {
         int colors;
         int vars;
         bool similarPerimeter;
-    };
-    const auto useSharedSimilarAppearance = [&] {
-        return state.settings.theme != AppTheme::Custom &&
-            !state.settings.useCustomColors && !ThemeColors::customized();
     };
     const auto pushDockedToolAppearance = [&](std::string_view module) -> DockedToolAppearance {
         const auto& theme = ThemeColors::current();
@@ -39967,20 +40002,21 @@ void RenderUI(AppState& state) {
             return {uiWithAlpha(uiMix(uiMix(theme.filterBrowserBG, warmWhite, lift),
                                 theme.mainWindowBG, 0.05f), 1.0f), 21, 4, false};
         }
+        const auto palette = resolveDockToolPalette(module);
         if (module == "info") {
-            const ImVec4 body = ThemeColors::infoPanelDockBG(theme);
             const ImVec4 scrollbar = ThemeColors::fileInfoPanelScrollbar(theme);
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, body);
-            ImGui::PushStyleColor(ImGuiCol_Text, theme.metadataPanelText);
-            aura::ui::workspace::PushTransientScrollbarColors(
+            const int bodyColors = pushDockToolBodyStyle(palette);
+            const int scrollbarColors = aura::ui::workspace::PushTransientScrollbarColors(
                 ImVec4(scrollbar.x, scrollbar.y, scrollbar.z, 0.40f),
                 ImVec4(scrollbar.x, scrollbar.y, scrollbar.z, 0.60f),
                 ImVec4(scrollbar.x, scrollbar.y, scrollbar.z, 0.80f));
-            return {body, 6, 0, false};
+            return {palette.body, bodyColors + scrollbarColors, 0, false};
         }
         const bool similarPerimeter = module == "similar-sounds" && useSharedSimilarAppearance();
-        const ImVec4 body = uiWithAlpha(similarPerimeter ? theme.metadataPanelBG : theme.filterBrowserBG, 1.0f);
-        return {body, PushFileInfoShellStyle(theme), 0, similarPerimeter};
+        if (usesDockToolPalette(module)) {
+            return {palette.body, pushDockToolBodyStyle(palette), 0, similarPerimeter};
+        }
+        return {uiWithAlpha(theme.filterBrowserBG, 1.0f), PushFileInfoShellStyle(theme), 0, false};
     };
     const auto popDockedToolAppearance = [](const DockedToolAppearance& appearance) {
         ImGui::PopStyleColor(appearance.colors);
@@ -40079,7 +40115,7 @@ void RenderUI(AppState& state) {
             const DockModuleShellLayout leftShell = drawDockModuleShell(
                 dl, winPos, filterShellWidth, leftShellHeight,
                 leftTabGroup ? nullptr : L(Panel_FilterTitle), appearance.bodyBg, kTitleText,
-                displayedTool == "filter");
+                displayedTool == "filter", 24.0f, displayedTool);
 
             if (leftTabGroup) {
                 tabStrip(*leftTabGroup, leftShell);
@@ -40208,15 +40244,34 @@ void RenderUI(AppState& state) {
         const float infoActionWidth = hasInfoActions ? FileInfoPageActionsWidth(state, infoActionBudget, true) : 0.0f;
         const ImGuiTabBarFlags barFlags = ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll |
             ImGuiTabBarFlags_NoCloseWithMiddleMouseButton | ImGuiTabBarFlags_DrawSelectedOverline;
-        const ImVec4 ink = ImGui::ColorConvertU32ToFloat4(kTitleText);
-        const ImVec4 selectedSurface = uiWithAlpha(uiMix(workspaceDockTitleSurface, ink, 0.10f), 1.0f);
+        const bool sharedPalette = usesDockToolPalette(selected);
+        const auto palette = sharedPalette ? resolveDockToolPalette(selected) : DockToolPalette{};
+        const ImVec4 ink = sharedPalette ? palette.titleText : ImGui::ColorConvertU32ToFloat4(kTitleText);
+        const ImVec4 tabSurface = sharedPalette ? palette.title : workspaceDockTitleSurface;
+        const auto tabTint = [&](float amount) {
+            const ImVec4 tint = uiWithAlpha(uiMix(tabSurface, ink, amount), 1.0f);
+            return !sharedPalette || TransportContrast::Ratio(ink, tint) >= 4.5 ? tint : tabSurface;
+        };
+        const ImVec4 selectedSurface = tabTint(0.10f);
+        const ImVec4 accent = sharedPalette ? TransportContrast::ForSurface(dockTabAccent, selectedSurface, 3.0)
+                                            : dockTabAccent;
+        if (sharedPalette) {
+            if (!docked) {
+                // Transparent tabs need the same backing surface as tabs in the docked title.
+                const ImVec2 start = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddRectFilled(start,
+                    ImVec2(start.x + headerWidth, start.y + headerHeight),
+                    ImGui::GetColorU32(palette.title));
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, ink);
+        }
         ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4());
         ImGui::PushStyleColor(ImGuiCol_TabDimmed, ImVec4());
         ImGui::PushStyleColor(ImGuiCol_TabSelected, selectedSurface);
         ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected, selectedSurface);
-        ImGui::PushStyleColor(ImGuiCol_TabHovered, uiWithAlpha(uiMix(workspaceDockTitleSurface, ink, 0.16f), 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, dockTabAccent);
-        ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, dockTabAccent);
+        ImGui::PushStyleColor(ImGuiCol_TabHovered, tabTint(0.16f));
+        ImGui::PushStyleColor(ImGuiCol_TabSelectedOverline, accent);
+        ImGui::PushStyleColor(ImGuiCol_TabDimmedSelectedOverline, accent);
         ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, 3.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_TabBarOverlineSize, 2.0f);
         const auto beginTabBar = [&] {
@@ -40327,7 +40382,7 @@ void RenderUI(AppState& state) {
             ImGui::EndTabBar();
         }
         ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor(7);
+        ImGui::PopStyleColor(sharedPalette ? 8 : 7);
         if (!tabAvailable(active)) {
             const auto first = std::find_if(group.members.begin(), group.members.end(), tabAvailable);
             if (first == group.members.end()) {
@@ -46081,7 +46136,7 @@ void RenderUI(AppState& state) {
         const ImVec2 size = ImGui::GetWindowSize();
         const DockModuleShellLayout rightShell = drawDockModuleShell(
             dl, pos, size.x, size.y, rightTabGroup ? nullptr : L(View_InfoPanel), appearance.bodyBg, kTitleText,
-            displayedTool == "filter", displayedTool == "info" ? infoDockTitleHeight : 24.0f);
+            displayedTool == "filter", displayedTool == "info" ? infoDockTitleHeight : 24.0f, displayedTool);
 
         if (rightTabGroup) {
             renderDockTabsInShell(*rightTabGroup, rightShell);
@@ -51450,6 +51505,7 @@ void RenderUI(AppState& state) {
             RememberFloatingPanelMonitor(state, panel);
             driveFloatingDockDrag(moduleId, panel, pos, size);
             ImGui::TextUnformatted(title);
+            ImGui::PopStyleColor();
         }
         if (!open) {
             panel.visible = false;
@@ -51478,7 +51534,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(panel.floatW, panel.floatH), placementCond);
         const std::string windowTitle = std::string(title) + "##Floating-" + moduleId;
         bool open = true;
-        const int styleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const int styleCount = pushDockToolBodyStyle(resolveDockToolPalette(moduleId));
         const bool windowVisible = beginFilterStyleFloatingWindow(
             windowTitle.c_str(), &open, moduleId);
         if (windowVisible) {
@@ -51508,6 +51564,7 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
             renderContent(state);
+            ImGui::PopStyleColor();
         }
         if (!open || !*show) {
             panel.visible = false;
@@ -51553,6 +51610,7 @@ void RenderUI(AppState& state) {
             driveFloatingDockDrag("search-results", g_searchResultsDockPanel, resultsPos, resultsSize);
             const ImVec2 content = ImGui::GetContentRegionAvail();
             renderResultsSurface((std::max)(200.0f, content.x), (std::max)(100.0f, content.y));
+            ImGui::PopStyleColor();
         }
         if (!resultsOpen) {
             g_searchResultsDockPanel.visible = false;
@@ -51600,6 +51658,7 @@ void RenderUI(AppState& state) {
             }
 
             RenderSidebarPanelContent(state, "FloatSidebar");
+            ImGui::PopStyleColor();
         }
         if (!open) state.panelSidebar.visible = false;
         ImGui::End();
@@ -51614,7 +51673,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelFileInfo.floatX, state.panelFileInfo.floatY), fileInfoPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelFileInfo.floatW, state.panelFileInfo.floatH), fileInfoPlacementCond);
         bool open = true;
-        const int fileInfoStyleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const int fileInfoStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("info"));
         const bool fileInfoWindowVisible = beginFilterStyleFloatingWindow(
             u8"Info##FloatingFileInfo", &open, "info");
         if (fileInfoWindowVisible) {
@@ -51646,6 +51705,7 @@ void RenderUI(AppState& state) {
                 RenderFileInfoPanelContent(state, size.x);
             }
             DevTools_EndFramePhase();
+            ImGui::PopStyleColor();
         }
         if (!open) state.panelFileInfo.visible = false;
         ImGui::End();
@@ -51663,7 +51723,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelSimilarSounds.floatX, state.panelSimilarSounds.floatY), similarPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelSimilarSounds.floatW, state.panelSimilarSounds.floatH), similarPlacementCond);
         bool similarOpen = true;
-        const int similarStyleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const int similarStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("similar-sounds"));
         const bool similarWindowVisible = beginFilterStyleFloatingWindow(
             (std::string(L(Similar_Title)) + "##FloatingSimilarSounds").c_str(),
             &similarOpen, "similar-sounds");
@@ -51700,6 +51760,7 @@ void RenderUI(AppState& state) {
                     kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
                     aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
             }
+            ImGui::PopStyleColor();
         }
         if (!similarOpen) {
             state.panelSimilarSounds.visible = false;
@@ -51725,7 +51786,9 @@ void RenderUI(AppState& state) {
         bool open = true;
         const bool filterStyle = selected == "filter";
         const auto& theme = ThemeColors::current();
-        const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) : PushFileInfoShellStyle(theme);
+        const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) :
+            usesDockToolPalette(selected) ? pushDockToolBodyStyle(resolveDockToolPalette(selected)) :
+            PushFileInfoShellStyle(theme);
         if (filterStyle) pushFilterFrameStyle(0.0f);
         if (beginFilterStyleFloatingWindow(title.c_str(), &open, selected.c_str())) {
             const auto pos = ImGui::GetWindowPos();
@@ -51758,6 +51821,7 @@ void RenderUI(AppState& state) {
             renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
             if (selected == "similar-sounds" && useSharedSimilarAppearance())
                 drawSimilarBodyPerimeter(contentPos, contentSize);
+            ImGui::PopStyleColor();
         }
         if (!open) {
             for (const auto& member : group.members) tabPanel(member)->visible = false;
@@ -51799,7 +51863,7 @@ void RenderUI(AppState& state) {
                 const ImVec2 bodySize = ImGui::GetWindowSize();
                 const auto shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), bodyPos, bodySize.x, bodySize.y, nullptr, appearance.bodyBg, kTitleText,
-                    selected == "filter");
+                    selected == "filter", 24.0f, selected);
                 renderDockTabsInShell(group, shell);
                 renderDockedToolBody(selected, shell, bodySize.y, appearance.similarPerimeter, "GroupedDockedSidebar");
             }
@@ -51905,18 +51969,17 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const int dockedInfoStyle = PushFileInfoShellStyle(ThemeColors::current());
+            const auto palette = resolveDockToolPalette("info");
+            const int dockedInfoStyle = pushDockToolBodyStyle(palette);
             if (beginSharedDockWindowHost(
                     (std::string(L(View_InfoPanel)) + "##DockedFileInfo").c_str(),
                     &open,
                     dockFlags)) {
                 const ImVec2 pos = ImGui::GetWindowPos();
                 const ImVec2 size = ImGui::GetWindowSize();
-                const ImVec4 bodyBg = uiWithAlpha(
-                    ThemeColors::infoPanelDockBG(ThemeColors::current()), 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(View_InfoPanel), bodyBg, kTitleText, false, infoDockTitleHeight);
+                    L(View_InfoPanel), palette.body, kTitleText, false, infoDockTitleHeight, "info");
                 const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, shell.insetT);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
@@ -51967,25 +52030,23 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const int dockedSimilarStyle = PushFileInfoShellStyle(ThemeColors::current());
+            const auto palette = resolveDockToolPalette("similar-sounds");
+            const int dockedSimilarStyle = pushDockToolBodyStyle(palette);
             if (beginSharedDockWindowHost(
                     (std::string(L(Similar_Title)) + "##DockedSimilarSounds").c_str(),
                     &open,
                     dockFlags)) {
                 ImDrawList* similarDl = ImGui::GetWindowDrawList();
                 const auto& similarTheme = ThemeColors::current();
-                const bool sharedSimilarStyle = state.settings.theme != AppTheme::Custom &&
-                    !state.settings.useCustomColors && !ThemeColors::customized();
-                const ImVec4 similarBody = uiWithAlpha(
-                    sharedSimilarStyle ? similarTheme.metadataPanelBG : similarTheme.filterBrowserBG, 1.0f);
+                const bool sharedSimilarStyle = useSharedSimilarAppearance();
                 const DockModuleShellLayout similarShell = drawDockModuleShell(
                     similarDl,
                     ImGui::GetWindowPos(),
                     leaf.rect.width,
                     leaf.rect.height,
                     L(Similar_Title),
-                    similarBody,
-                    kTitleText);
+                    palette.body,
+                    kTitleText, false, 24.0f, "similar-sounds");
                 ImGui::SetCursorPos(ImVec2(similarShell.insetL, similarShell.insetT));
                 ImGui::InvisibleButton("##DockedSimilarSoundsTitle",
                     ImVec2(similarShell.shellWidth, similarShell.titleHeight));
@@ -52741,10 +52802,17 @@ void RenderUI(AppState& state) {
     // FLOATING FILE INFO PANEL (when detached)
 
     if (state.fileInfoDetached) {
-        const int fileInfoStyleCount = PushFileInfoShellStyle(ThemeColors::current());
+        const auto palette = resolveDockToolPalette("info");
+        const int fileInfoStyleCount = pushDockToolBodyStyle(palette);
         ImGui::SetNextWindowSize(ImVec2(280, 500), ImGuiCond_FirstUseEver);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, palette.body);
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, palette.title);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, palette.title);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, palette.title);
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.titleText);
         const bool detachedInfoVisible = beginSharedDockWindowHost(
             L(Panel_FileInfoTitle), &state.fileInfoDetached, ImGuiWindowFlags_MenuBar);
+        ImGui::PopStyleColor(5);
         if (detachedInfoVisible) {
             drawFloatingInfoTitleActions();
             if (ImGui::BeginMenuBar()) {
