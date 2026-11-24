@@ -413,12 +413,39 @@ def test_docked_workspace_seams_share_the_reference_gap_without_shrinking_resize
     assert "ResolveThreeDotSplitterColor" in meter
 
 
-def test_column_resize_dots_draw_above_the_workspace_panels():
+def test_workspace_splitter_dots_use_their_window_layer_below_covering_tools():
     main = read(MAIN_CPP)
     vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+    horizontal_start = main.rindex("bool HorizontalSplitter(")
+    horizontal = main[horizontal_start:main.index("// Begin a dockable panel", horizontal_start)]
+    fallback = between(main, "for (int column = 0; column < 2; ++column)", "if (g_dockTestBandHintsVisible)")
+    for splitter in (vertical, horizontal, fallback):
+        assert "GetWindowDrawList()" in splitter
+        assert "GetForegroundDrawList" not in splitter
+    overlay_order = between(main, "static void LayerWorkspaceSplitterOverlays(", "// Draw a vertical splitter")
+    assert "ImGui::BringWindowToDisplayBehind(overlay, occluder)" in overlay_order
+    assert "window->OuterRectClipped.Overlaps(overlay->OuterRectClipped)" in overlay_order
+    assert "ImGuiWindowFlags_Popup" in overlay_order
+    assert "LayerWorkspaceSplitterOverlays(workspaceWindow);" in main
 
-    assert "GetForegroundDrawList(workspace->Viewport)" in vertical
-    assert vertical.index("GetForegroundDrawList") < vertical.index("DrawThreeDotSplitterGrip")
+
+def test_fallback_column_splitters_keep_the_full_hit_width_centered_on_the_seam():
+    main = read(MAIN_CPP)
+    gripper = between(main, "const auto leftOuterGrip =", "static std::string activeGripId")
+    fallback = between(main, "for (int column = 0; column < 2; ++column)", "if (g_dockTestBandHintsVisible)")
+
+    for side in ("Left", "Right"):
+        assert f"PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::{side}, kWorkspaceColumnSplitterHitWidth)" in gripper
+    assert "grip.rect.x = columnBoundaryX - grip.rect.width * 0.5f;" in fallback
+
+
+def test_standalone_status_bar_anchors_to_the_full_dock_column_bottom():
+    main = read(MAIN_CPP)
+    status = between(main, "// STATUS BAR with Panel Toggle Buttons", 'BeginTransientScrollbarChild("StatusBar"')
+
+    assert "if (!showDockedWaveform)" in status
+    assert "ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x," in status
+    assert "dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y" in status
 
 
 def test_bottom_waveform_uses_the_same_visible_gap_as_the_columns():

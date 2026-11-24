@@ -26937,7 +26937,6 @@ static ImVec4 ResolveWaveformSplitterDragBg(const ThemeColorScheme& theme) {
 
 static bool BeginWorkspaceSplitterOverlay(
     const char* id, ImGuiWindow* workspace, const ImVec2& hitMin, const ImVec2& hitSize) {
-    const ImVec2 hitMax(hitMin.x + hitSize.x, hitMin.y + hitSize.y);
     ImGui::SetNextWindowViewport(workspace->Viewport->ID);
     ImGui::SetNextWindowPos(hitMin, ImGuiCond_Always);
     ImGui::SetNextWindowSize(hitSize, ImGuiCond_Always);
@@ -26949,17 +26948,37 @@ static bool BeginWorkspaceSplitterOverlay(
         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus;
     const bool visible = BeginTransientScrollbarWindow(id, nullptr, flags);
     ImGui::PopStyleVar(3);
-    if (!visible) return false;
+    return visible;
+}
+
+static void LayerWorkspaceSplitterOverlays(ImGuiWindow* workspace) {
     ImGuiContext& context = *ImGui::GetCurrentContext();
-    const ImGuiWindow* hoveredWindow = context.HoveredWindow;
-    const bool dockedWindowHovered = hoveredWindow && hoveredWindow->Viewport == workspace->Viewport &&
-        (hoveredWindow->RootWindow == workspace->RootWindow ||
-         std::strncmp(hoveredWindow->RootWindow->Name, "##Docked", 8) == 0);
-    if (dockedWindowHovered && context.OpenPopupStack.empty() && !ImGui::IsAnyItemActive() &&
-        ImGui::IsMouseHoveringRect(hitMin, hitMax, false)) {
-        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    const std::array overlays{
+        ImGui::FindWindowByName("##LeftSplitter"),
+        ImGui::FindWindowByName("##RightSplitter"),
+        ImGui::FindWindowByName("##WaveformSplitterOverlay"),
+        ImGui::FindWindowByName("##LeftDockLeafSplitter"),
+        ImGui::FindWindowByName("##RightDockLeafSplitter")};
+    for (ImGuiWindow* overlay : overlays) {
+        if (!overlay || !overlay->Active) continue;
+        ImGuiWindow* occluder = nullptr;
+        const int firstAboveWorkspace = ImGui::FindWindowDisplayIndex(workspace->RootWindow) + 1;
+        for (int index = firstAboveWorkspace; index < context.Windows.Size; ++index) {
+            ImGuiWindow* window = context.Windows[index];
+            if (window->Viewport != overlay->Viewport || window->RootWindow != window ||
+                (!window->Active && !window->WasActive) || window->Hidden ||
+                std::find(overlays.begin(), overlays.end(), window) != overlays.end() ||
+                std::strstr(window->Name, "##Docked") ||
+                std::strncmp(window->Name, "##DockSplitGrip-", 16) == 0) continue;
+            if ((window->Flags & ImGuiWindowFlags_Popup) != 0 ||
+                window->OuterRectClipped.Overlaps(overlay->OuterRectClipped)) {
+                occluder = window;
+                break;
+            }
+        }
+        if (occluder) ImGui::BringWindowToDisplayBehind(overlay, occluder);
+        else ImGui::BringWindowToDisplayFront(overlay);
     }
-    return true;
 }
 
 // Draw a vertical splitter and handle dragging to resize
@@ -26991,9 +27010,7 @@ bool VerticalSplitter(const char* id, float* panelWidth, float minWidth, float m
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     }
 
-    ImDrawList* dl = ImGui::GetCurrentContext()->OpenPopupStack.empty()
-        ? ImGui::GetForegroundDrawList(workspace->Viewport)
-        : ImGui::GetWindowDrawList();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     const ThemeColorScheme& splitterTheme = ThemeColors::current();
     const ImVec4 splitterColor = ResolveThreeDotSplitterColor(
         splitterTheme, hovered, draggingResize);
@@ -27051,10 +27068,7 @@ bool HorizontalSplitter(const char* id, float* panelHeight, float minHeight, flo
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     }
 
-    // Fill the splitter band so light themes do not expose a dark window seam.
-    ImDrawList* dl = waveformSplitter && ImGui::GetCurrentContext()->OpenPopupStack.empty()
-        ? ImGui::GetForegroundDrawList(workspace->Viewport)
-        : ImGui::GetWindowDrawList();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     auto splitterWithAlpha = [](ImVec4 c, float a) {
         c.w = a;
         return c;
@@ -37538,6 +37552,7 @@ void RenderUI(AppState& state) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, workspacePalette.applicationSurface); // workspace application surface
     BeginTransientScrollbarWindow("MainWindow", nullptr, windowFlags);
+    ImGuiWindow* workspaceWindow = ImGui::GetCurrentWindow();
 #if ARIS_PREVIEW_ISOLATION
     state.qaRegions.workspaceTopFrame = ImGui::GetFrameCount();
     state.qaRegions.workspaceTop = ImGui::GetWindowPos().y;
@@ -52130,19 +52145,17 @@ void RenderUI(AppState& state) {
         const aura::ui::dock::AdjacentLeafGrip* adjacentGrips = gripSnapshot.grips;
         const int adjacentCount = gripSnapshot.gripCount;
         const auto leftOuterGrip = leftDockSlotRequired && !showLeftColumn
-            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, splitterWidth)
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Left, kWorkspaceColumnSplitterHitWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         const auto rightOuterGrip = rightDockSlotRequired && !showRightColumn
-            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, splitterWidth)
+            ? aura::ui::dock::PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::Right, kWorkspaceColumnSplitterHitWidth)
             : aura::ui::dock::AdjacentLeafGrip{};
         static std::string activeGripId;
         static float activeGripDistanceSq = std::numeric_limits<float>::max();
-        static bool activeOuterGrips[2]{};
         const bool modalBlocksGrips = ImGui::GetTopMostPopupModal() != nullptr;
         if (modalBlocksGrips || !ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]) {
             activeGripId.clear();
             activeGripDistanceSq = std::numeric_limits<float>::max();
-            activeOuterGrips[0] = activeOuterGrips[1] = false;
         }
         const auto gripHitDistanceSq = [](const aura::ui::dock::AdjacentLeafGrip& grip, const ImVec2& mouse) {
             const float minX = grip.rect.x;
@@ -52236,41 +52249,26 @@ void RenderUI(AppState& state) {
             if (modalBlocksGrips) break;
             const bool left = column == 0;
             const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
-            const auto& grip = left ? leftOuterGrip : rightOuterGrip;
+            auto grip = left ? leftOuterGrip : rightOuterGrip;
             if (!grip.visible) continue;
-            ImGui::SetNextWindowPos(ImVec2(grip.rect.x, grip.rect.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(grip.rect.width, grip.rect.height), ImGuiCond_Always);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.0f, 0.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-            const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing;
-            const bool visible = BeginTransientScrollbarWindow(
-                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", nullptr, flags);
-            ImGui::PopStyleVar(3);
+            const float columnBoundaryX = left ? rootSlots.left.x + rootSlots.left.width : rootSlots.right.x;
+            grip.rect.x = columnBoundaryX - grip.rect.width * 0.5f;
+            const bool visible = BeginWorkspaceSplitterOverlay(
+                left ? "##LeftDockLeafSplitter" : "##RightDockLeafSplitter", workspaceWindow,
+                ImVec2(grip.rect.x, grip.rect.y), ImVec2(grip.rect.width, grip.rect.height));
             if (visible) {
                 ImGui::InvisibleButton(left ? "##LeftDockLeafSplitterHit" : "##RightDockLeafSplitterHit",
                     ImVec2(grip.rect.width, grip.rect.height));
-                const bool pointerHit = ImGui::IsMouseHoveringRect(
-                    ImVec2(grip.rect.x, grip.rect.y),
-                    ImVec2(grip.rect.x + grip.rect.width, grip.rect.y + grip.rect.height), false);
-                bool& activeRightOuterGrip = activeOuterGrips[column];
-                if (pointerHit && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Left])
-                    activeRightOuterGrip = true;
-                const bool hovered = ImGui::IsItemHovered() || pointerHit || activeRightOuterGrip;
-                const bool dragging =
-                    (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) ||
-                    (activeRightOuterGrip && ImGui::GetIO().MouseDown[ImGuiMouseButton_Left]);
+                const bool hovered = ImGui::IsItemHovered();
+                const bool dragging = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
                 if (hovered || dragging) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-                ImDrawList* dl = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+                ImDrawList* dl = ImGui::GetWindowDrawList();
                 if (dl) {
                     const float gap = ImClamp(grip.rect.height * 0.018f, 5.0f, 9.0f);
                     const ImVec4 color = ResolveThreeDotSplitterColor(
                         ThemeColors::current(), hovered, dragging);
                     aura::ui::workspace::DrawThreeDotSplitterGrip(
-                        dl, ImVec2(grip.rect.x + grip.rect.width * 0.5f,
+                        dl, ImVec2(columnBoundaryX,
                                    grip.rect.y + grip.rect.height * 0.5f),
                         ImVec2(0.0f, 1.0f), gap, dragging ? 1.95f : 2.0f,
                         ImGui::GetColorU32(color));
@@ -52425,6 +52423,8 @@ void RenderUI(AppState& state) {
 
     // STATUS BAR with Panel Toggle Buttons
     if (!showDockedWaveform) {
+    ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x,
+        dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y));
     const bool mergeWaveformAndStatusShell = showDockedWaveform;
     const bool useTokenStatusBar = kUseSoftChromeTheme || ThemeColors::isLightChromeTheme(ThemeColors::current());
     const ImVec4 statusBarBg = uiWithAlpha(
@@ -52916,4 +52916,5 @@ void RenderUI(AppState& state) {
     if (HarkenSearch::BetaFeatureFlags::kExposeWwiseTransfer) {
         aura::wwise::RenderWwiseTransferPanel();
     }
+    LayerWorkspaceSplitterOverlays(workspaceWindow);
 } // <--- 这是 RenderUI 的最后一个大括号，必须有！
