@@ -43,6 +43,15 @@ class DockRuntimeGeometryWiringContract(unittest.TestCase):
         self.assertTrue("drawFloatingDockTestPanel" in main, "Dock Test floats have a render path")
         self.assertTrue("g_dockCommittedThisFrame" in main, "a panel cannot render docked and floating in one frame")
 
+    def test_side_commit_does_not_store_the_other_columns_extent(self) -> None:
+        main = MAIN.read_text(encoding="utf-8")
+        mirror = main.split("static void MirrorDockCommitToPanel(", 1)[1].split("static void MirrorDockRootExtent", 1)[0]
+        self.assertIn("&state.panelSidebar", mirror, "the filter state owns the left column, even when filter is elsewhere")
+        self.assertIn("&state.panelFileInfo", mirror, "the info state owns the right column, even when info is elsewhere")
+        self.assertIn("panel.dockedWidth = mirror.dockedWidth", mirror)
+        self.assertNotIn("DockSide::Right, g_dockDropPlan.slots.right", main)
+        self.assertNotIn("DockSide::Left, g_dockDropPlan.slots.left", main)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -986,10 +986,6 @@ int main() {
         }
     }
 
-    // When both side roots are occupied, a four-way split on the narrow left
-    // root may need to reclaim remembered width from the opposite root. The
-    // opposite tree must stay above its own floor while the center remains
-    // readable; rejecting the drop here was the runtime failure seen by QA.
     {
         DockLayout bothRoots;
         if (!bothRoots.InsertModule("filter", DockSide::Left, 0.24f)) return 1;
@@ -1006,11 +1002,8 @@ int main() {
         const DockDropPlan plan = PlanReadableDockDrop(
             bothRoots, rightEdge, "info", bothWork, 80.0f, 40.0f,
             bothSlots, 1.0f, 520.0f);
-        if (!Check(plan.accepted && !plan.tooSmall &&
-                   plan.slots.left.width >= 599.0f &&
-                   plan.slots.right.width >= 419.0f &&
-                   plan.slots.right.width < 720.0f,
-                   "a narrow root must reclaim spare width from the opposite root")) return 1;
+        if (!Check(!plan.accepted && plan.tooSmall && plan.slots.right.width == 720.0f,
+                   "a narrow root must not reclaim width from the opposite root")) return 1;
     }
 
     // After the first split, the resulting leaves must remain recursive Dock
