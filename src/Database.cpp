@@ -17856,9 +17856,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
                         static_cast<long long>(liveFolderCount),
                         static_cast<long long>(indexedFolderCount));
         if (sqlite3_db_readonly(m_db, "main") == 1) {
-            EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
-            SortFolderTree(root);
-            return root;
+            return getFolderHierarchy(pathMode);
         }
         if (!rebuildFolderIndex()) {
             DIAG_ACTION("Database", "FolderIndexStale rebuild failed");
@@ -17867,9 +17865,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
 
     auto entries = getFolderIndex();
     if (entries.empty()) {
-        EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
-        SortFolderTree(root);
-        return root;
+        return getFolderHierarchy(pathMode);
     }
 
     // folder_index has no file_path column, so map each canonical folder

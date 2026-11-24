@@ -875,6 +875,11 @@ Root: HKCR; Subkey: "Directory\shell\ArisScan\command"; ValueType: string; Value
 ; Root: HKCR; Subkey: "ArisAudioFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
+; Explorer 会缓存任务栏固定项的图标位图，覆盖升级后需要请它重读。
+; 以安装前的当前用户（非提权）身份执行：提权进程发出的 Shell 通知可能被 UIPI 挡住。
+; 故意不加 skipifsilent：应用内静默升级同样需要在首次启动前刷新。
+; 等它跑完再继续：结束页可以立刻启动程序，刷新没做完就点启动会看到旧图标。
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--refresh-pinned-taskbar-icons"; WorkingDir: "{app}"; Flags: runasoriginaluser waituntilterminated
 ; 安装完成后运行程序（可选）
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Verb: runas; Flags: shellexec nowait postinstall skipifsilent
 

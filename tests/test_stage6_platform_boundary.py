@@ -7290,16 +7290,15 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(main.count("PrepareAdaptiveMiniWaveformFormat("), 1)
         for removed in (
             "state.database.usesAdaptiveMiniWaveform()",
-            "state.database.purgeAllMiniWaveform()",
             "state.database.countFilesNeedingWaveformCache()",
         ):
             self.assertNotIn(removed, start)
+        for body in (start, header, source):
+            self.assertNotIn("purgeAllMiniWaveform", body)
         for owned in (
             "source.usesAdaptiveMiniWaveform()",
-            "source.purgeAllMiniWaveform()",
             "source.countFilesNeedingWaveformCache()",
             "database_.usesAdaptiveMiniWaveform()",
-            "database_.purgeAllMiniWaveform()",
             "database_.countFilesNeedingWaveformCache()",
         ):
             self.assertIn(owned, source)

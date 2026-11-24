@@ -397,6 +397,9 @@ bool DeleteRegistryValue(
 
 void NotifyShellAssociationsChanged() {
 }
+std::uint32_t RefreshPinnedTaskbarIcons() {
+    return 0;
+}
 RegistryStringResult QueryEffectiveFileAssociation(const std::string& extensionUtf8) {
     RegistryStringResult result;
     if (extensionUtf8.empty() || extensionUtf8.find(' ') != std::string::npos) {

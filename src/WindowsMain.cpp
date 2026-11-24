@@ -3858,7 +3858,7 @@ struct MagicEqQaPointer {
 static MagicEqQaPointer s_magicEqQaPointer;
 #if ARIS_PREVIEW_ISOLATION
 extern std::string GetDockQaState();
-extern std::string SetupDockGestureFixtureForQa(AppState&);
+extern std::string SetupDockGestureFixtureForQa(AppState&, std::string_view, std::string_view);
 extern bool ResolveDockQaPointerPoint(const std::string&, const std::string&, float&, float&, unsigned int&);
 static bool s_dockQaPointerOwned = false;
 static int s_dockQaEscapePhase = 0;
@@ -5186,7 +5186,7 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
-    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup") {
+    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup" || cmd == "dock_viewport") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
             (!state.currentDbPathUtf8.empty() &&
@@ -5194,9 +5194,21 @@ static void PollQaCommandFile(AppState& state) {
             result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
         } else if (cmd == "dock_state") {
             result = GetDockQaState();
+        } else if (cmd == "dock_viewport") {
+            const int width = getInt(raw, "width", 0);
+            const int height = getInt(raw, "height", 0);
+            if (s_magicEqQaPointer.active || width < 400 || width > 2400 || height < 400 || height > 1600) {
+                result = R"({"ok":false,"error":"invalid_dock_viewport_size"})";
+            } else if (SetWindowPos(g_hwnd, nullptr, 0, 0, width, height,
+                           SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER)) {
+                result = R"({"ok":true})";
+            } else {
+                result = R"({"ok":false,"error":"dock_viewport_resize_failed"})";
+            }
         } else if (cmd == "dock_setup") {
             result = s_magicEqQaPointer.active
-                ? R"({"ok":false,"error":"qa_pointer_active"})" : SetupDockGestureFixtureForQa(state);
+                ? R"({"ok":false,"error":"qa_pointer_active"})"
+                : SetupDockGestureFixtureForQa(state, getStr(raw, "resize_module"), getStr(raw, "resize_mode"));
         } else {
             const std::string phase = getStr(raw, "phase");
             float x = s_magicEqQaPointer.x;
@@ -7009,6 +7021,7 @@ static void PollQaCommandFile(AppState& state) {
             const auto action = getStr(raw, "action");
             bool ok = action.empty() || action == "state";
             if (action == "clock") ok = harken::theme_schedule::SetQaClock(getInt(raw, "minute", -2));
+            if (action == "reveal_color") ok = ThemeEditorQaRevealColor(getStr(raw, "key"));
             if (action == "pointer") {
                 const auto phase = getStr(raw, "phase");
                 const float x = static_cast<float>(getDouble(raw, "x", -1));
@@ -10431,7 +10444,11 @@ static void AppendStartupAvatarCss(std::wstring& html) {
 static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const StartupThemeAccents themeAccents = ResolveStartupThemeAccents(settings);
     const ThemeColorScheme& startupTheme = ThemeColors::current();
-    const bool useLightStartupChrome = ThemeColors::isLightChromeTheme(startupTheme);
+    const ImVec4 welcomeBackground = kWelcomeBackgroundColor.Resolve(startupTheme);
+    const ImVec4 welcomeText = kWelcomeTextColor.Resolve(startupTheme);
+    const ImVec4 welcomeAccent = kWelcomeAccentColor.Resolve(startupTheme);
+    const bool useLightStartupChrome = DeriveWelcomeText(startupTheme).x == 0.0f;
+    const ImVec4 cardShade = ImVec4(1.0f - welcomeText.x, 1.0f - welcomeText.y, 1.0f - welcomeText.z, 1.0f);
     auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -10449,14 +10466,14 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const std::wstring themePrimaryRgb = BuildCssRgbTriplet(startupTheme.waveformColor);
     const std::wstring themeSecondaryRgb = BuildCssRgbTriplet(startupTheme.waveformSecondaryColor);
     const std::wstring themedParticleChance = std::to_wstring(themeAccents.themedParticleChance);
-    const std::wstring tokenMainBg = BuildCssRgba(startupTheme.mainWindowBG, 1.0f);
+    const std::wstring tokenMainBg = BuildCssRgba(welcomeBackground, 1.0f);
     const std::wstring tokenCardBg = BuildCssRgba(startupTheme.dialogBG, 0.58f);
     const std::wstring tokenBorder = BuildCssRgba(startupTheme.chromeBorder, 0.34f);
     const std::wstring tokenBorderSoft = BuildCssRgba(startupTheme.waveformPanelBorder, 0.22f);
-    const std::wstring tokenText = BuildCssRgba(startupTheme.interfaceText, 0.96f);
-    const std::wstring tokenTextMuted = BuildCssRgba(startupTheme.resultsSecondaryText, 0.72f);
-    const std::wstring tokenWave = BuildCssRgba(startupTheme.waveformColor, 1.0f);
-    const std::wstring tokenWaveSoft = BuildCssRgba(startupTheme.waveformSecondaryColor, 1.0f);
+    const std::wstring tokenText = BuildCssRgba(welcomeText, 1.0f);
+    const std::wstring tokenTextMuted = tokenText;
+    const std::wstring tokenWave = BuildCssRgba(welcomeAccent, 1.0f);
+    const std::wstring tokenWaveSoft = BuildCssRgba(welcomeAccent, 0.65f);
     const std::wstring tokenCardShadow = BuildCssRgba(
         useLightStartupChrome
             ? mixColor(startupTheme.chromeBorder, startupTheme.mainWindowBG, 0.34f)
@@ -10470,20 +10487,8 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const std::wstring tokenCardSheen = BuildCssRgba(
         mixColor(startupTheme.interfaceText, startupTheme.dialogBG, 0.76f),
         useLightStartupChrome ? 0.10f : 0.04f);
-    const std::wstring tokenStatusText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.18f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.24f)
-                : mixColor(startupTheme.interfaceText, startupTheme.resultsSecondaryText, 0.52f)),
-        useLightStartupChrome ? 0.88f : 0.78f);
-    const std::wstring tokenDetailText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.20f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.28f)
-                : mixColor(startupTheme.resultsSecondaryText, startupTheme.chromeBorder, 0.18f)),
-        useLightStartupChrome ? 0.78f : 0.48f);
+    const std::wstring tokenStatusText = tokenText;
+    const std::wstring tokenDetailText = tokenText;
     const std::wstring tokenProgressTrack = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.chromeBorder, startupTheme.controlAccent, 0.18f)
@@ -10491,13 +10496,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
                 ? mixColor(startupTheme.chromeBorder, startupTheme.controlAccent, 0.30f)
                 : mixColor(startupTheme.chromeBorder, startupTheme.dialogPanelBG, 0.20f)),
         useLightStartupChrome ? 0.40f : 0.22f);
-    const std::wstring tokenProgressCore = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.56f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.68f)
-                : mixColor(startupTheme.controlAccent, startupTheme.interfaceText, useLightStartupChrome ? 0.18f : 0.34f)),
-        useLightStartupChrome ? 0.94f : 0.66f);
+    const std::wstring tokenProgressCore = tokenWave;
     const std::wstring tokenCanvasWash = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.18f)
@@ -10505,24 +10504,8 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
                 ? mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.22f)
                 : mixColor(startupTheme.mainWindowBG, startupTheme.dialogBG, 0.38f)),
         useLightStartupChrome ? 0.12f : 0.16f);
-    const std::wstring tokenCardTop = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.26f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.22f)
-                    : mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.14f)))
-            : mixColor(startupTheme.dialogBG, startupTheme.interfaceText, 0.05f),
-        1.0f);
-    const std::wstring tokenCardBottom = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.24f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.mainWindowBG, startupTheme.resultsSecondaryText, 0.18f)
-                    : mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.12f)))
-            : mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.04f),
-        1.0f);
+    const std::wstring tokenCardTop = tokenMainBg;
+    const std::wstring tokenCardBottom = BuildCssRgba(mixColor(welcomeBackground, cardShade, 0.06f), 1.0f);
     const std::wstring tokenBackdropCore = BuildCssRgba(
         useLightStartupChrome
             ? (isRoseCedarStartup
@@ -11962,7 +11945,11 @@ static void DisableWebShortcutsForStartupUi(ICoreWebView2Controller* controller,
 static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const std::string& userNameUtf8) {
     const StartupThemeAccents themeAccents = ResolveStartupThemeAccents(settings);
     const ThemeColorScheme& startupTheme = ThemeColors::current();
-    const bool useLightStartupChrome = ThemeColors::isLightChromeTheme(startupTheme);
+    const ImVec4 welcomeBackground = kWelcomeBackgroundColor.Resolve(startupTheme);
+    const ImVec4 welcomeText = kWelcomeTextColor.Resolve(startupTheme);
+    const ImVec4 welcomeAccent = kWelcomeAccentColor.Resolve(startupTheme);
+    const bool useLightStartupChrome = DeriveWelcomeText(startupTheme).x == 0.0f;
+    const ImVec4 cardShade = ImVec4(1.0f - welcomeText.x, 1.0f - welcomeText.y, 1.0f - welcomeText.z, 1.0f);
     auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -11978,16 +11965,14 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     const std::wstring themeChrome = BuildJsRgbaPrefix(startupTheme.chromeBorder);
     const std::wstring themeTextGlow = BuildJsRgbaPrefix(startupTheme.interfaceText);
     const std::wstring themedParticleChance = std::to_wstring(themeAccents.themedParticleChance);
-    const std::wstring tokenMainBg = BuildCssRgba(startupTheme.mainWindowBG, 1.0f);
+    const std::wstring tokenMainBg = BuildCssRgba(welcomeBackground, 1.0f);
     const std::wstring tokenAirBg = BuildCssRgba(startupTheme.resultsBG, 0.56f);
     const std::wstring tokenCardBg = BuildCssRgba(startupTheme.dialogBG, 0.62f);
     const std::wstring tokenBorder = BuildCssRgba(startupTheme.waveformPanelBorder, 0.26f);
-    const std::wstring tokenText = BuildCssRgba(startupTheme.interfaceText, 0.97f);
+    const std::wstring tokenText = BuildCssRgba(welcomeText, 1.0f);
     const std::wstring tokenMuted = BuildCssRgba(startupTheme.resultsSecondaryText, 0.74f);
-    const std::wstring tokenControl = BuildCssRgba(startupTheme.controlAccent, 1.0f);
-    const std::wstring tokenNameText = BuildCssRgba(
-        mixColor(startupTheme.interfaceText, startupTheme.controlAccent, useLightStartupChrome ? 0.24f : 0.38f),
-        useLightStartupChrome ? 0.92f : 0.82f);
+    const std::wstring tokenControl = BuildCssRgba(welcomeAccent, 1.0f);
+    const std::wstring tokenNameText = tokenText;
     const std::wstring tokenNameGlow = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.60f)
@@ -12010,24 +11995,8 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
                 ? mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.22f)
                 : mixColor(startupTheme.mainWindowBG, startupTheme.dialogBG, 0.38f)),
         useLightStartupChrome ? 0.12f : 0.16f);
-    const std::wstring tokenCardTop = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.28f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.20f)
-                    : mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.15f)))
-            : mixColor(startupTheme.dialogBG, startupTheme.interfaceText, 0.05f),
-        1.0f);
-    const std::wstring tokenCardBottom = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.26f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.mainWindowBG, startupTheme.resultsSecondaryText, 0.20f)
-                    : mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.13f)))
-            : mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.04f),
-        1.0f);
+    const std::wstring tokenCardTop = tokenMainBg;
+    const std::wstring tokenCardBottom = BuildCssRgba(mixColor(welcomeBackground, cardShade, 0.06f), 1.0f);
     const std::wstring tokenBackdropCore = BuildCssRgba(
         useLightStartupChrome
             ? (isRoseCedarStartup
@@ -12060,20 +12029,8 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
                     : mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.18f)))
             : startupTheme.interfaceText,
         0.96f);
-    const std::wstring tokenLeadText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.22f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.28f)
-                : mixColor(startupTheme.interfaceText, startupTheme.controlAccent, useLightStartupChrome ? 0.10f : 0.02f)),
-        useLightStartupChrome ? 0.94f : 0.90f);
-    const std::wstring tokenStatusText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.22f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.32f)
-                : mixColor(startupTheme.resultsSecondaryText, startupTheme.interfaceText, 0.24f)),
-        useLightStartupChrome ? 0.90f : 0.76f);
+    const std::wstring tokenLeadText = tokenText;
+    const std::wstring tokenStatusText = tokenText;
     const std::wstring tokenCardBloomA = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.62f)
@@ -13257,6 +13214,19 @@ static int RunHarkenSearchDemoCli(bool integrityFailed) {
 #endif
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    // The installer runs this windowless entry as the original (non-elevated)
+    // user right after an upgrade: an elevated setup process cannot be trusted
+    // to reach Explorer, and the pin must already be correct before the new
+    // version is started for the first time. Handled before the integrity check
+    // so the refresh takes milliseconds, not the hashing time of the whole EXE.
+    for (std::uint32_t argumentIndex = 1; argumentIndex <= 8; ++argumentIndex) {
+        const auto argument = Platform::ReadProcessArgument(argumentIndex);
+        if (argument.status != Platform::ProcessArgumentStatus::Success) break;
+        if (argument.value != L"--refresh-pinned-taskbar-icons") continue;
+        (void)Platform::RefreshPinnedTaskbarIcons();
+        return 0;
+    }
+
     Platform::HarkenUserData::ApplyPreviewIsolationProcessEnvironment();
     // Capture the one-shot bootstrap challenge before UI startup. The health
     // acknowledgement remains tied to the first presented main UI frame.
@@ -13442,6 +13412,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (wc.hIconSm) {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
     }
+
+    // A taskbar pin is a per-user shortcut copy; Explorer can keep the icon
+    // bitmap it cached for it across an in-place upgrade. Ask Explorer to
+    // re-read only the pins that still use this executable's default icon, off
+    // the startup path so a slow or unresponsive shell never delays the UI.
+    // Preview and QA builds must not touch the real user's taskbar, so the
+    // automatic refresh stays out of isolated builds; the explicit installer
+    // entry above still works when it is invoked on purpose.
+#if !ARIS_PREVIEW_ISOLATION
+    std::thread([] { (void)Platform::RefreshPinnedTaskbarIcons(); }).detach();
+#endif
 
     // Setup OpenGL
     HDC hdc;
@@ -13684,10 +13665,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
     }
 
-    ApplyTheme(state.settings.theme);
-    if (state.settings.useCustomColors) {
-        ApplyCustomColors(state.settings);
-    }
+    ApplyThemeAndScaleForSettings(state, 1.0f);
     harken::theme_schedule::Tick(state, true);
     HarkenSearchSplash::ConfigureThemePalette(state.settings);
     ApplyShowManagerGlobalHotkey(state.settings);
@@ -14156,10 +14134,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     });
 
     // 主题在进入主界面前再应用一次，确保 WebView 启动门面退场后样式已稳定。
-    ApplyTheme(state.settings.theme);
-    if (state.settings.useCustomColors) {
-        ApplyCustomColors(state.settings);
-    }
+    ApplyThemeAndScaleForSettings(state, 1.0f);
     harken::theme_schedule::Tick(state, true);
     s_mainUiReady.store(true, std::memory_order_release);
     DIAG_SYSTEM("App", "MainUIReady");
