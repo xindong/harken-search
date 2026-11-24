@@ -311,31 +311,12 @@ static bool LoadEditorThemeFile(const std::string& pathUtf8, ThemeColorScheme& i
                                 const char* source, AppTheme startTheme, bool livePreview) {
     std::string text;
     if (!Platform::FileSystem::ReadFileText(pathUtf8, text)) return false;
-    const auto document = nlohmann::json::parse(text, nullptr, false);
-    if (!document.is_object()) return false;
-    // The serialized scheme is the complete supported field list, including
-    // Wwise colors that are not shown in the editor. Only validated top-level
-    // values reach the legacy flat reader; nested metadata cannot override them.
-    const auto supported = nlohmann::json::parse(ThemeColors::exportToJSON(ThemeColorScheme{}));
-    nlohmann::json colors = nlohmann::json::object();
-    for (auto field = supported.begin(); field != supported.end(); ++field) {
-        const auto value = document.find(field.key());
-        if (value == document.end()) continue;
-        if (!value->is_string()) return false;
-        const auto text = value->get<std::string>();
-        // colorMixing / resultsGradient 是开关，不是颜色：原样透传，不按十六进制校验。
-        if (field.key() == "colorMixing" || field.key() == "resultsGradient") {
-            if (text != "0" && text != "1") return false;
-            colors[field.key()] = text;
-            continue;
-        }
-        if ((text.size() != 6 && text.size() != 8) || text.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
-            return false;
-        colors[field.key()] = text;
-    }
-    if (colors.empty()) return false;
+    // 只允许完整支持列表里的顶层颜色字段（含未配置时不导出的可选覆盖项）；
+    // 嵌套元数据不能覆盖它们。
+    std::string colorsJson;
+    if (!ThemeColors::filterImportColors(text, colorsJson)) return false;
     ThemeColorScheme loaded{};
-    if (!ThemeColors::importFromJSON(colors.dump(), loaded)) return false;
+    if (!ThemeColors::importFromJSON(colorsJson, loaded)) return false;
     imported = loaded;
     if (source) ThemeColors::armImportDiagnostics(source, pathUtf8, (int)startTheme,
                                                   ThemeDiagPublicThemeLabel(startTheme), livePreview);

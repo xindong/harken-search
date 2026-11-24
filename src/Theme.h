@@ -342,6 +342,9 @@ public:
     // 导入/导出为 JSON 格式字符串
     static std::string exportToJSON(const ThemeColorScheme& scheme);
     static bool importFromJSON(const std::string& json, ThemeColorScheme& outScheme);
+    /// 按完整支持列表过滤主题文件里的颜色：可选覆盖项未配置时不在导出里，也要允许导入。
+    /// 成功时 outFlatJson 只含通过校验的字段，供 importFromJSON 读取。
+    static bool filterImportColors(const std::string& jsonText, std::string& outFlatJson);
     
 // 文件导入/导出 (F-016)
     /// 导出主题到 JSON 文件（用于分享）

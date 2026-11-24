@@ -551,6 +551,37 @@ int main(int argc, char** argv) {
               "legacy import clears all welcome overrides and derives from the dark base");
     }
     {
+        // 文件导入走 filterImportColors 白名单：可选覆盖项未配置时不在导出里，
+        // 也必须允许导入，否则导出的欢迎页配色会被过滤掉。
+        ThemeColorScheme exported;
+        exported.mainWindowBG = ImVec4(0.06f, 0.07f, 0.08f, 1.0f);
+        exported.welcomeBackground = ThemeColors::fromARGBHex("ffeeeee0");
+        exported.welcomeText = ThemeColors::fromARGBHex("ff102030");
+        exported.welcomeAccent = ThemeColors::fromARGBHex("ff00ff55");
+        std::string filtered;
+        CHECK(ThemeColors::filterImportColors(ThemeColors::exportToJSON(exported), filtered),
+              "exported theme passes the import key filter");
+        ThemeColorScheme fromFile;
+        CHECK(ThemeColors::importFromJSON(filtered, fromFile) &&
+              approxEqual(kWelcomeBackgroundColor.Resolve(fromFile), ThemeColors::fromARGBHex("ffeeeee0")) &&
+              approxEqual(kWelcomeTextColor.Resolve(fromFile), ThemeColors::fromARGBHex("ff102030")) &&
+              approxEqual(kWelcomeAccentColor.Resolve(fromFile), ThemeColors::fromARGBHex("ff00ff55")) &&
+              approxEqual(kWelcomeBackgroundColor.Resolve(fromFile), fromFile.welcomeBackground.value()),
+              "file import keeps every explicit welcome color");
+        std::string legacyFiltered;
+        CHECK(ThemeColors::filterImportColors(
+                  R"({"mainWindowBG":"ff101010","interfaceText":"ffe8e8e8","meta":{"welcomeText":"ffffffff"}})",
+                  legacyFiltered),
+              "legacy theme files still import through the filter");
+        ThemeColorScheme legacyFromFile;
+        CHECK(ThemeColors::importFromJSON(legacyFiltered, legacyFromFile) &&
+              !legacyFromFile.welcomeBackground && !legacyFromFile.welcomeText && !legacyFromFile.welcomeAccent,
+              "legacy file leaves welcome colors to derivation and ignores nested metadata");
+        std::string rejected;
+        CHECK(!ThemeColors::filterImportColors(R"({"welcomeBackground":"zzzzzz"})", rejected),
+              "an invalid welcome color rejects the import file");
+    }
+    {
         ThemeColorScheme scheme = ThemeColors::getClassicDark();
         scheme.resultsSelection = ImVec4(0.11f, 0.22f, 0.33f, 1.0f);
         scheme.toolbarAccent = ImVec4(0.44f, 0.55f, 0.66f, 1.0f);
