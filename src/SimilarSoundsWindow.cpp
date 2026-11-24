@@ -89,10 +89,15 @@ static bool DrawSimilarSoundsActionRow(
     }
     const float actionHeight = (optionRow+2)*height + (optionRow+1)*kItemGap;
     bool changed = false, searchRequested = false;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeColors::current().metadataPanelBG);
+    const auto& theme = ThemeColors::current();
+    const ImVec4 actionSurface = TransportContrast::Over(
+        theme.metadataPanelBG, ImGui::GetStyleColorVec4(ImGuiCol_ChildBg));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, actionSurface);
     if (ImGui::BeginChild("##SimilarActionRow", ImVec2(0,actionHeight), false,
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         const float rowX = ImGui::GetCursorPosX(), rowY = ImGui::GetCursorPosY();
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            TransportContrast::ForSurface(theme.metadataPanelText, actionSurface, 4.7));
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(L(Similar_CurrentAudio)); ImGui::SameLine();
         const float fileWidth = std::max(20.0f,ImGui::GetContentRegionAvail().x);
@@ -104,6 +109,7 @@ static bool DrawSimilarSoundsActionRow(
         ImVec2 currentNameSize = ImGui::CalcTextSize(currentName);
         ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), ImVec2(textMin.x,textMin.y+ImGui::GetStyle().FramePadding.y),
             textMax,textMax.x,currentName,nullptr,&currentNameSize);
+        ImGui::PopStyleColor();
         ImGui::SetCursorPos(ImVec2(rowX+positions[0].x,rowY+positions[0].y+(height-18)*0.5f));
         const ImVec2 deepMin = ImGui::GetCursorScreenPos();
         if (aura::ui::Toggle(L(Similar_DeepThink), &state.similarSoundsDeep)) changed = true;
@@ -198,11 +204,20 @@ static void DrawSimilarSoundsResultsTable(
         !state.settings.useCustomColors && !ThemeColors::customized();
     const ImVec4 infoSurface = theme.metadataPanelBG;
     const ImVec4 tableBody = sharedPanelStyle ? infoSurface : theme.resultsBG;
-    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg,
-        sharedPanelStyle ? ImLerp(infoSurface, theme.toolbarBG, 0.14f) : theme.resultsHeaderBG);
+    const ImVec4 tableHeader = sharedPanelStyle
+        ? ImLerp(infoSurface, theme.toolbarBG, 0.14f) : theme.resultsHeaderBG;
+    const ImVec4 stripedBody = ImLerp(
+        tableBody, sharedPanelStyle ? theme.resultsBG : theme.resultsHeaderBG, 0.32f);
+    // Custom result colors can be dark even when the surrounding tool is light.
+    const ImVec4 headerInk = sharedPanelStyle ? ImVec4{} :
+        TransportContrast::ForSurface(theme.resultsText, tableHeader);
+    const ImVec4 rowInk = sharedPanelStyle ? ImVec4{} :
+        TransportContrast::ForSurface(theme.resultsText, tableBody);
+    const ImVec4 stripedInk = sharedPanelStyle ? ImVec4{} :
+        TransportContrast::ForSurface(theme.resultsText, stripedBody);
+    ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, tableHeader);
     ImGui::PushStyleColor(ImGuiCol_TableRowBg, tableBody);
-    ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt,
-        ImLerp(tableBody, sharedPanelStyle ? theme.resultsBG : theme.resultsHeaderBG, 0.32f));
+    ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, stripedBody);
     if (sharedPanelStyle) {
         ImVec4 edge = ThemeColors::infoPanelDockEdge(theme);
         edge.w = 0.45f;
@@ -240,7 +255,9 @@ static void DrawSimilarSoundsResultsTable(
         ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
         for (int column = 0; column < IM_ARRAYSIZE(headers); ++column) {
             ImGui::TableSetColumnIndex(column);
+            if (!sharedPanelStyle) ImGui::PushStyleColor(ImGuiCol_Text, headerInk);
             ImGui::TableHeader(GetLocalizedString(headers[column]));
+            if (!sharedPanelStyle) ImGui::PopStyleColor();
             if (column == 4 && ImGui::IsItemHovered()) {
                 aura::ui::Tooltip(L(Similar_ScoreTooltip));
             }
@@ -250,7 +267,8 @@ static void DrawSimilarSoundsResultsTable(
                 snapshot, state.batchFeatureExtracting.load())) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::PushStyleColor(ImGuiCol_Text, SimilarSecondaryText(state));
+            ImGui::PushStyleColor(ImGuiCol_Text, sharedPanelStyle ? SimilarSecondaryText(state) :
+                TransportContrast::ForSurface(theme.resultsSecondaryText, tableBody));
             ImGui::TextUnformatted(message);
             ImGui::PopStyleColor();
         }
@@ -259,6 +277,10 @@ static void DrawSimilarSoundsResultsTable(
             ImGui::PushID(row.filePath.c_str());
             ImGui::TableNextRow(ImGuiTableRowFlags_None, similarRowHeight);
             ImGui::TableSetColumnIndex(0);
+            if (!sharedPanelStyle) {
+                const int strip = ImGui::GetCurrentTable()->RowBgColorCounter & 1;
+                ImGui::PushStyleColor(ImGuiCol_Text, strip ? stripedInk : rowInk);
+            }
             const int previousSelectedRow = state.similarSoundsSelectedRow;
             if (ImGui::Selectable(row.fileName.c_str(),
                     state.similarSoundsSelectedRow == index,
@@ -374,6 +396,7 @@ static void DrawSimilarSoundsResultsTable(
             const int score = static_cast<int>(
                 std::clamp(row.similarity, 0.0f, 1.0f) * 100.0f + 0.5f);
             ImGui::Text("%d", score);
+            if (!sharedPanelStyle) ImGui::PopStyleColor();
             if (ImGui::IsItemHovered() && row.breakdown.valid) {
                 ImGui::BeginTooltip();
                 ImGui::TextUnformatted(L(Similar_ScoreTooltip));
@@ -533,8 +556,11 @@ static void DrawSimilarSoundsBody(AppState& state, bool windowFocused) {
         }
         ImGui::TextUnformatted(L(Similar_Results));
         ImGui::SameLine();
-        ImGui::PushStyleColor(
-            ImGuiCol_Text, SimilarSecondaryText(state));
+        const auto& theme = ThemeColors::current();
+        const ImVec4 headingSurface = TransportContrast::Over(
+            ImGui::GetStyleColorVec4(ImGuiCol_ChildBg), ImGui::GetStyleColorVec4(ImGuiCol_WindowBg));
+        ImGui::PushStyleColor(ImGuiCol_Text, sharedPanelStyle ? SimilarSecondaryText(state) :
+            TransportContrast::ForSurface(theme.resultsSecondaryText, headingSurface, 4.7));
         ImGui::Text("%d", static_cast<int>(snapshot.rows.size()));
         if (snapshot.totalFiles > 0 && snapshot.indexed < snapshot.totalFiles) {
             ImGui::SameLine(); ImGui::Text(L(Similar_CoverageFmt),static_cast<int>(snapshot.indexed),static_cast<int>(snapshot.totalFiles));
