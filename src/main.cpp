@@ -52167,13 +52167,11 @@ void RenderUI(AppState& state) {
     }
 
     {
-        const float minBandHeight = aura::ui::dock::kDockBandMinHeight;
         float* topHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Top);
         if (topHeightOwner != nullptr && topDockReserve > 0.0f) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.top.x, dockColumnTop + topDockBandHeight));
-            const float minimum = std::max(minBandHeight, dockLiveMinimum(
-                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top),
-                aura::ui::dock::DockMinimumPurpose::Placement).height);
+            const float minimum = aura::ui::dock::DockBandMinimum(
+                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top), viewport->DpiScale).height;
             float resizedHeight = topDockBandHeight;
             if (HorizontalSplitter("##TopDockSplitter", &resizedHeight, minimum,
                     std::max(minimum, availHeight + topDockBandHeight - minContentHeight),
@@ -52186,9 +52184,8 @@ void RenderUI(AppState& state) {
         float* bottomHeightOwner = dockBandHeightOwner(aura::ui::dock::DockSide::Bottom);
         if (bottomHeightOwner != nullptr && bottomDockReserve > 0.0f) {
             ImGui::SetCursorScreenPos(ImVec2(rootSlots.bottom.x, bottomSlotY - dockBandSplitter));
-            const float minimum = std::max(minBandHeight, dockLiveMinimum(
-                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom),
-                aura::ui::dock::DockMinimumPurpose::Placement).height);
+            const float minimum = aura::ui::dock::DockBandMinimum(
+                g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom), viewport->DpiScale).height;
             float resizedHeight = bottomDockBandHeight;
             if (HorizontalSplitter("##BottomDockSplitter", &resizedHeight, minimum,
                     std::max(minimum, availHeight + bottomDockBandHeight - minContentHeight),

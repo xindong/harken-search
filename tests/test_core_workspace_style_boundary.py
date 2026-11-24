@@ -908,6 +908,15 @@ def test_waveform_zoom_scrollbar_is_transient_independently_and_never_shown_at_o
     assert "Ctrl+Scroll Zoom" not in scroll
 
 
+def test_outer_dock_band_splitters_share_the_layout_floor():
+    main = read(MAIN_CPP)
+    top_grip = between(main, "float* topHeightOwner = dockBandHeightOwner", "float* bottomHeightOwner = dockBandHeightOwner")
+    bottom_grip = between(main, "float* bottomHeightOwner = dockBandHeightOwner", 'HorizontalSplitter("##BottomDockSplitter"')
+    for grip, side in ((top_grip, "Top"), (bottom_grip, "Bottom")):
+        assert "aura::ui::dock::DockBandMinimum(" in grip
+        assert f"g_dockLayout.RegionRoot(aura::ui::dock::DockSide::{side}), viewport->DpiScale).height" in grip
+
+
 def test_native_scrollbars_use_independent_region_visibility_gates():
     header = read(STYLE_HEADER)
     source = read(STYLE_SOURCE)

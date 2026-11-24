@@ -736,6 +736,27 @@ int main() {
         if (!tiny.floatTop || !tiny.floatBottom || tiny.top!=0 || tiny.bottom!=0) return fail(706);
     }
 
+    {
+        for (const auto side : {DockSide::Top, DockSide::Bottom}) {
+            DockLayout band;
+            if (!band.InsertModule("info", side, 0.5f)) return fail(707);
+            if (DockBandMinimum(band.RegionRoot(side), 1.0f).height != 180.0f) return fail(708);
+            if (!band.InsertAdjacent("info", "similar-sounds", DockSide::Bottom, 0.5f)) return fail(709);
+            const auto* root = band.RegionRoot(side);
+            for (const float scale : {1.0f, 1.25f}) {
+                const auto minimum = DockBandMinimum(root, scale);
+                if (minimum.height != 300.0f * scale || minimum.width != 220.0f * scale ||
+                    DockSubtreeMinimum(root, scale, DockMinimumPurpose::Placement).height != 440.0f * scale)
+                    return fail(710);
+                const auto reserve = ResolveDockBandReserve(band, [](std::string_view) { return 500.0f; },
+                    220.0f, scale, 200.0f + kDockBandSplitterHeight + minimum.height, 800.0f);
+                if (reserve.floatTop || reserve.floatBottom ||
+                    (side == DockSide::Top ? reserve.top : reserve.bottom) != minimum.height)
+                    return fail(711);
+            }
+        }
+    }
+
     // Diagnostic/regression: Info top + SimilarSounds bottom in the Right
     // region must produce only the horizontal height divider, never a vertical
     // grip on SimilarSounds left outer edge.

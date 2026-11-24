@@ -188,6 +188,15 @@ inline DockColumnBudget ResolveDockColumnBudget(
 
 inline constexpr float kDockBandMinHeight = 96.0f;
 
+inline DockMinimumSize DockBandMinimum(const DockNode* root, float scale) {
+    if (!root) return {0.0f, 0.0f};
+    const auto purpose = root->Kind() == NodeKind::Split
+        ? DockMinimumPurpose::Resize : DockMinimumPurpose::Placement;
+    auto minimum = DockSubtreeMinimum(root, scale, purpose);
+    minimum.height = std::max(kDockBandMinHeight, minimum.height);
+    return minimum;
+}
+
 inline void PurgeObsoleteDockTestModules(DockLayout& layout) {
     for (const char* id : {"mod-docktest-similar", "mod-docktest-band"}) {
         if (layout.Find(id)) layout.Detach(id);
@@ -215,13 +224,7 @@ inline DockBandReserve ResolveDockBandReserve(
     float availableHeight = std::numeric_limits<float>::infinity(),
     float centerWidth = std::numeric_limits<float>::infinity(),
     float centerMinimumHeight = 200.0f) {
-    const auto liveMinimum = [&](const DockNode* root) {
-        const bool split = root && root->Kind() == NodeKind::Split;
-        return DockSubtreeMinimum(root, scale,
-            split ? DockMinimumPurpose::Resize : DockMinimumPurpose::Placement);
-    };
-    auto height = [&](DockSide side) {
-        const DockNode* root = layout.RegionRoot(side);
+    auto height = [&](const DockNode* root, float minimumHeight) {
         if (!root) return 0.0f;
         float saved = 0.0f;
         auto visit = [&](auto&& self, const DockNode* node) -> void {
@@ -236,13 +239,14 @@ inline DockBandReserve ResolveDockBandReserve(
         };
         visit(visit, root);
         // The workspace budget below is the ceiling, including on tall screens.
-        const float preferred = std::max(kDockBandMinHeight,
-            std::isfinite(saved) && saved > 0.0f ? saved : fallbackHeight);
-        return std::max(preferred, liveMinimum(root).height);
+        const float preferred = std::isfinite(saved) && saved > 0.0f ? saved : fallbackHeight;
+        return std::max(preferred, minimumHeight);
     };
-    DockBandReserve result{height(DockSide::Top), height(DockSide::Bottom)};
-    auto topMinimum = liveMinimum(layout.RegionRoot(DockSide::Top));
-    auto bottomMinimum = liveMinimum(layout.RegionRoot(DockSide::Bottom));
+    const auto* topRoot = layout.RegionRoot(DockSide::Top);
+    const auto* bottomRoot = layout.RegionRoot(DockSide::Bottom);
+    auto topMinimum = DockBandMinimum(topRoot, scale);
+    auto bottomMinimum = DockBandMinimum(bottomRoot, scale);
+    DockBandReserve result{height(topRoot, topMinimum.height), height(bottomRoot, bottomMinimum.height)};
     auto floatBand = [](float& extent, DockMinimumSize& minimum, bool& floating) {
         floating = floating || extent > 0.0f;
         extent = 0.0f;
