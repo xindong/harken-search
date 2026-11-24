@@ -75,6 +75,11 @@ inline DockMinimumSize DockModuleMinimum(
     return {size.width * scale, size.height * scale};
 }
 
+inline float DockGeometrySplitRatio(const SplitNode& split) {
+    constexpr float epsilon = std::numeric_limits<float>::epsilon();
+    return std::clamp(split.ratio, epsilon, 1.0f - epsilon);
+}
+
 inline DockMinimumSize DockSubtreeMinimum(
     const DockNode* node,
     float scale = 1.0f,
@@ -86,10 +91,32 @@ inline DockMinimumSize DockSubtreeMinimum(
     const auto* split = static_cast<const SplitNode*>(node);
     const auto a = DockSubtreeMinimum(split->first.get(), scale, purpose);
     const auto b = DockSubtreeMinimum(split->second.get(), scale, purpose);
-    const float ratio = std::clamp(split->ratio, .08f, .92f);
+    if (purpose == DockMinimumPurpose::Resize) {
+        return split->axis == Axis::Horizontal
+            ? DockMinimumSize{a.width + b.width, std::max(a.height, b.height)}
+            : DockMinimumSize{std::max(a.width, b.width), a.height + b.height};
+    }
+    const float ratio = std::clamp(split->ratio, 0.08f, 0.92f);
     return split->axis == Axis::Horizontal
         ? DockMinimumSize{std::max(a.width / ratio, b.width / (1 - ratio)), std::max(a.height, b.height)}
         : DockMinimumSize{std::max(a.width, b.width), std::max(a.height / ratio, b.height / (1 - ratio))};
+}
+
+struct DockSplitResizeRange { float lower; float upper; };
+
+inline DockSplitResizeRange ResolveDockSplitResizeRange(const SplitNode& split, float extent, float scale) {
+    const auto first = DockSubtreeMinimum(split.first.get(), scale, DockMinimumPurpose::Resize);
+    const auto second = DockSubtreeMinimum(split.second.get(), scale, DockMinimumPurpose::Resize);
+    const float firstExtent = split.axis == Axis::Horizontal ? first.width : first.height;
+    const float secondExtent = split.axis == Axis::Horizontal ? second.width : second.height;
+    const float total = firstExtent + secondExtent;
+    if (total <= 0.0f) return {0.0f, 1.0f};
+    if (extent <= total) {
+        const float fittedRatio = firstExtent / total;
+        return {fittedRatio, fittedRatio};
+    }
+    const float lower = firstExtent / extent;
+    return {lower, std::max(lower, 1.0f - secondExtent / extent)};
 }
 
 struct DockRootSlots {
@@ -345,19 +372,16 @@ inline bool DragAdjacentLeafGrip(
     float pixelDelta,
     float extent, float readabilityScale = 0.0f) {
     SplitNode* split = FindSplitContainingLeaves(layout, firstId, secondId);
-    if (!split || extent <= 1.0f) return false;
-    if (readabilityScale > 0.0f) {
-        const auto a = DockSubtreeMinimum(split->first.get(), readabilityScale, DockMinimumPurpose::Resize);
-        const auto b = DockSubtreeMinimum(split->second.get(), readabilityScale, DockMinimumPurpose::Resize);
-        const float firstMin = split->axis == Axis::Horizontal ? a.width : a.height;
-        const float secondMin = split->axis == Axis::Horizontal ? b.width : b.height;
-        const float lower = std::max(split->minFirst, firstMin / extent);
-        const float upper = std::min(1.0f - split->minSecond, 1.0f - secondMin / extent);
-        if (lower > upper) return false;
-        const float next = std::clamp(split->ratio + pixelDelta / extent, lower, upper);
-        return layout.ResizeSplit(split, next - split->ratio);
-    }
-    return layout.ResizeSplit(split, pixelDelta / extent);
+    if (!split || !std::isfinite(extent) || extent <= 2.0f ||
+        !std::isfinite(pixelDelta) || pixelDelta == 0.0f) return false;
+    if (readabilityScale <= 0.0f) return layout.ResizeSplit(split, pixelDelta / extent);
+
+    const auto range = ResolveDockSplitResizeRange(*split, extent, readabilityScale);
+    const float current = std::clamp(DockGeometrySplitRatio(*split), range.lower, range.upper);
+    const float next = std::clamp(current + pixelDelta / extent, range.lower, range.upper);
+    if (next == current) return false;
+    split->ratio = next;
+    return true;
 }
 
 inline DockRect RemainingColumnShell(
@@ -878,7 +902,8 @@ inline DockPreviewPlan PlanDockPreview(
     return plan;
 }
 
-inline int CollectLeafRects(const DockNode* node, const DockRect& box, DockModuleTarget* out, int maxCount, int count) {
+inline int CollectLeafRects(const DockNode* node, const DockRect& box, DockModuleTarget* out,
+                            int maxCount, int count, float resizeScale = 0.0f) {
     if (!node || count >= maxCount || box.width <= 1.0f || box.height <= 1.0f) return count;
     if (node->Kind() == NodeKind::Module) {
         out[count++] = {static_cast<const ModuleNode*>(node)->id, box};
@@ -886,15 +911,20 @@ inline int CollectLeafRects(const DockNode* node, const DockRect& box, DockModul
     }
     if (node->Kind() != NodeKind::Split) return count;
     const auto* split = static_cast<const SplitNode*>(node);
-    const float ratio = std::clamp(split->ratio, 0.08f, 0.92f);
+    float ratio = DockGeometrySplitRatio(*split);
+    if (resizeScale > 0.0f) {
+        const float extent = split->axis == Axis::Horizontal ? box.width : box.height;
+        const auto range = ResolveDockSplitResizeRange(*split, extent, resizeScale);
+        ratio = std::clamp(ratio, range.lower, range.upper);
+    }
     if (split->axis == Axis::Horizontal) {
         const float firstW = box.width * ratio;
-        count = CollectLeafRects(split->first.get(), {box.x, box.y, firstW, box.height}, out, maxCount, count);
-        return CollectLeafRects(split->second.get(), {box.x + firstW, box.y, box.width - firstW, box.height}, out, maxCount, count);
+        count = CollectLeafRects(split->first.get(), {box.x, box.y, firstW, box.height}, out, maxCount, count, resizeScale);
+        return CollectLeafRects(split->second.get(), {box.x + firstW, box.y, box.width - firstW, box.height}, out, maxCount, count, resizeScale);
     }
     const float firstH = box.height * ratio;
-    count = CollectLeafRects(split->first.get(), {box.x, box.y, box.width, firstH}, out, maxCount, count);
-    return CollectLeafRects(split->second.get(), {box.x, box.y + firstH, box.width, box.height - firstH}, out, maxCount, count);
+    count = CollectLeafRects(split->first.get(), {box.x, box.y, box.width, firstH}, out, maxCount, count, resizeScale);
+    return CollectLeafRects(split->second.get(), {box.x, box.y + firstH, box.width, box.height - firstH}, out, maxCount, count, resizeScale);
 }
 
 struct DockedSplitBand {
@@ -968,7 +998,8 @@ inline int LayoutRootRegionLeaves(
     float statusBar,
     DockModuleTarget* out,
     int maxCount,
-    const DockRootSlots* slots = nullptr) {
+    const DockRootSlots* slots = nullptr,
+    float resizeScale = 0.0f) {
     int count = 0;
     DockRect usable{
         work.x,
@@ -978,7 +1009,7 @@ inline int LayoutRootRegionLeaves(
     auto take = [&](DockSide side, DockRect box) {
         const DockNode* node = layout.RegionRoot(side);
         if (!node) return;
-        count = CollectLeafRects(node, box, out, maxCount, count);
+        count = CollectLeafRects(node, box, out, maxCount, count, resizeScale);
     };
     if (slots) {
         const DockRect leftBox = SlotOrWork(slots->left, usable);
@@ -1357,13 +1388,14 @@ inline DockFrameGeometry BuildDockFrameGeometry(
     float statusBar,
     const DockRootSlots& requestedSlots,
     const DockModuleTarget* legacyColumns = nullptr,
-    int legacyColumnCount = 0) {
+    int legacyColumnCount = 0,
+    float resizeScale = 0.0f) {
     DockFrameGeometry frame;
     frame.rootSlots = ResolveDockRootSlots(
         layout, work, menuBarAndToolbar, statusBar, requestedSlots);
     frame.moduleCount = LayoutRootRegionLeaves(
         layout, work, menuBarAndToolbar, statusBar, frame.modules,
-        kDockFrameModuleCapacity, &frame.rootSlots);
+        kDockFrameModuleCapacity, &frame.rootSlots, resizeScale);
 
     const DockRect usable{
         work.x,
@@ -1381,7 +1413,7 @@ inline DockFrameGeometry BuildDockFrameGeometry(
         if (!root) continue;
         DockModuleTarget leaves[kDockFrameModuleCapacity]{};
         const int leafCount = CollectLeafRects(
-            root, slots[sideIndex], leaves, kDockFrameModuleCapacity, 0);
+            root, slots[sideIndex], leaves, kDockFrameModuleCapacity, 0, resizeScale);
         AdjacentLeafGrip local[kDockFrameGripCapacity]{};
         const int localCount = CollectAdjacentLeafGrips(
             leaves, leafCount, local, kDockFrameGripCapacity);

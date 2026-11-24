@@ -304,7 +304,7 @@ def test_filter_and_info_share_one_rounded_outer_shell_without_global_restyling(
 def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
     main = read(MAIN_CPP)
 
-    body_style = between(main, "const auto pushDockToolBodyStyle", "constexpr float kFilterInfoShellRadius")
+    body_style = between(main, "const auto pushDockToolBodyStyle", "constexpr float kDockShellVerticalInset")
     docked_appearance = between(main, "const auto pushDockedToolAppearance", "const auto popDockedToolAppearance")
     direct_style = main.replace(body_style, "").replace(docked_appearance, "")
     names = re.findall(
@@ -979,6 +979,15 @@ def test_waveform_zoom_scrollbar_is_transient_independently_and_never_shown_at_o
     assert "Ctrl+Scroll Zoom" not in scroll
 
 
+def test_outer_dock_band_splitters_share_the_layout_floor():
+    main = read(MAIN_CPP)
+    top_grip = between(main, "float* topHeightOwner = dockBandHeightOwner", "float* bottomHeightOwner = dockBandHeightOwner")
+    bottom_grip = between(main, "float* bottomHeightOwner = dockBandHeightOwner", 'HorizontalSplitter("##BottomDockSplitter"')
+    for grip, side in ((top_grip, "Top"), (bottom_grip, "Bottom")):
+        assert "aura::ui::dock::DockBandMinimum(" in grip
+        assert f"g_dockLayout.RegionRoot(aura::ui::dock::DockSide::{side}), viewport->DpiScale).height" in grip
+
+
 def test_native_scrollbars_use_independent_region_visibility_gates():
     header = read(STYLE_HEADER)
     source = read(STYLE_SOURCE)
@@ -998,10 +1007,12 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert "TransientScrollbarStyleScope transientScrollbarStyle" not in main
     assert "BeginTransientScrollbarChild" in main
     assert "BeginTransientScrollbarTable" in main
-    # The Similar Sounds leaf explicitly disables native scrollbars; normal
-    # content uses the wrapper. The QA narrator is a local packaging addition.
-    assert main.count("ImGui::BeginChild(") == 1
-    similar = between(main, 'ImGui::BeginChild(\n                        "##DockedSimilarSoundsContent"', 'ImGui::EndChild();')
+    assert "ImGui::BeginChild(" not in main
+    dock_content = between(main, "const auto beginDockContentViewport", "auto renderFunctionDockedModule")
+    assert "ImGui::SetNextWindowContentSize" in dock_content
+    assert "flags &= ~(ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)" in dock_content
+    assert "return BeginTransientScrollbarChild(childId, bodySize, false, flags);" in dock_content
+    similar = between(main, '"similar-sounds", "##DockedSimilarSoundsContent"', "ImGui::EndChild();")
     assert "ImGuiWindowFlags_NoScrollbar |" in similar
     assert "ImGui::BeginTable(" not in main
     assert "ImGui::Begin(" not in main
