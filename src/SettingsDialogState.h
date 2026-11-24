@@ -107,7 +107,7 @@ struct Editor {
         PREF(showFileExtension),PREF(waveformDisplayMode),PREF(waveformStyle),PREF(miniWaveformRmsBodyStyle),PREF(meterChannelLayout),
         PREF(showLoudnessMeter),PREF(showRMSMeter),PREF(showTruePeakMeter),PREF(showClickRipple),
         PREF(showMilliseconds),PREF(showFrameNumber),PREF(defaultFrameRate),PREF(searchRealtime),PREF(suggestSourceMode),PREF(autoRenameTabBySearch),
-        PREF(memoryProfile),PREF(fpsLimit),PREF(thumbnailMaxResolution),PREF(threadLimit),PREF(autoReconcileOnStartup),
+        PREF(memoryProfile),PREF(fpsLimit),PREF(thumbnailMaxResolution),PREF(threadLimit),PREF(similarityAnalysisConcurrency),PREF(autoReconcileOnStartup),
         PREF(idleAssetBackfillEnabled),PREF(idleAssetBackfillDelayMinutes),PREF(rememberLastFolder),PREF(closeButtonAction),
         PREF(showGuidedMode),PREF(suppressConfirmDialogs),PREF(enableShowManagerHotkey),
         Field(&AppSettings::showManagerHotkey,[](const KeyBinding& a,const KeyBinding& b){return a.key==b.key && a.ctrl==b.ctrl && a.alt==b.alt && a.shift==b.shift;}),
@@ -130,6 +130,7 @@ struct Editor {
     bool previousSearching=false, hadChildPopup=false, scrollToTop=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
+    std::string themeImportResult;
     std::string clearSimilarTarget;
     bool clearSimilarConfirm=false;
     int64_t clearSimilarResult=-2;

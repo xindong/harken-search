@@ -52,10 +52,15 @@ def refresh_probe():
         "HarkenSearch::ScanWorkflowSnapshot getScanWorkflowSnapshot() const",
         "void setScanMiniWaveformProgress(int completed, int total)",
         "void resolveScanWorkflowTerminalStage(bool cancelled, bool fatalFailure)",
+        "bool isScanTaskCurrent(uint64_t generation) const",
     )]
     functions = []
+    cover_refresh = "void PumpScanCoverResultsRefresh(AppState& state, bool coverBackfillUpdated)"
     for relative, suffix in (("src/main.cpp", ""), ("src/WindowsMain.cpp", "ForQa")):
         source = source_file(relative)
+        if not suffix:
+            functions.append(definition(source, cover_refresh) if cover_refresh in source else
+                             "void PumpScanCoverResultsRefresh(AppState&, bool) {}")
         for name, result, argument in (
             ("ScanCompletionPendingAny", "bool", "const AppState& state"),
             ("CommitScanCompletionState", "void", "AppState& state"),
@@ -88,6 +93,9 @@ def refresh_probe():
 @pytest.mark.parametrize("case", [
     "last-mini", "still-pending", "cover-pending", "metadata-pending",
     "progress-without-flag-change", "fast-mode", "pause", "rollback",
+    "covers-satisfied", "covers-satisfied-early", "superseded", "gate-moved",
+    "background-pause", "background-other-db", "background-query-unavailable",
+    "background-switching-db", "background-late-notification",
 ])
 def test_real_refresh_sequence(refresh_probe, case):
     result = subprocess.run([str(refresh_probe), case], text=True, capture_output=True, timeout=10)

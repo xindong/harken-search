@@ -28,7 +28,8 @@ public:
 
     aura::coverwall::BrowseSurfacePreviewSelection capture() const;
     void restore(
-        const aura::coverwall::BrowseSurfacePreviewSelection& selection);
+        const aura::coverwall::BrowseSurfacePreviewSelection& selection,
+        bool restoreSelection = true);
 
 private:
     AppState& state_;

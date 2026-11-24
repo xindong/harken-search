@@ -61,8 +61,9 @@ def test_alert_helper_draws_title_inside_a_rounded_surface():
     helper = source[source.index("bool BeginAlertDialog("):]
     helper = helper[:helper.index("void EndAlertDialog()")]
     assert "ImGuiWindowFlags_NoTitleBar" in helper
-    assert "ImGuiStyleVar_WindowRounding, kRadiusDialog" in helper
-    assert "ImGuiStyleVar_PopupRounding, kRadiusDialog" in helper
+    # 圆角随界面倍率放大，与按钮共用同一个缩放因子。
+    assert "ImGuiStyleVar_WindowRounding, aura::ui::dpi::Px(kRadiusDialog)" in helper
+    assert "ImGuiStyleVar_PopupRounding, aura::ui::dpi::Px(kRadiusDialog)" in helper
     assert "ImGui::Separator" not in helper
     # macOS-style caption bar: one filled strip inside the outline, title on
     # the left, close on the right, and the strip itself is the drag zone.

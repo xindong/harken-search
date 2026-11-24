@@ -204,6 +204,7 @@ void PlayRandomFile(AppState& state);
 
 // Search/filter (defined in main.cpp; primary declaration in SearchQuery.h)
 void RefreshSearchResults(AppState& state, bool resetPagination);
+void PumpScanCoverResultsRefresh(AppState& state, bool coverBackfillUpdated);
 void ForceCoverWallReload(AppState& state);
 void StartCoverRebuild(AppState& state);
 // 轮询并应用一次异步搜索结果；返回 true 表示消费了一条结果（供加载页等待首包）

@@ -127,7 +127,8 @@ AsyncSearchBrowsePreviewRefreshStateAdapter::capture() const {
 }
 
 void AsyncSearchBrowsePreviewRefreshStateAdapter::restore(
-    const aura::coverwall::BrowseSurfacePreviewSelection& selection) {
+    const aura::coverwall::BrowseSurfacePreviewSelection& selection,
+    bool restoreSelection) {
     Effects effects(
         state_,
         startDeferredCoverPriming_,
@@ -135,7 +136,7 @@ void AsyncSearchBrowsePreviewRefreshStateAdapter::restore(
         readIntegratedMode_,
         readActiveDatabaseFilter_,
         canonicalizeFolderPath_);
-    HandleAsyncSearchBrowsePreviewRefreshRestore(selection, effects);
+    HandleAsyncSearchBrowsePreviewRefreshRestore(selection, effects, restoreSelection);
 }
 
 }  // namespace aura::search

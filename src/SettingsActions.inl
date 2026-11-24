@@ -1,6 +1,6 @@
 // Actions such as library repair and avatar editing have their own persistence.
 // Pending preferences are resolved explicitly before entering these tools.
-if (!editor.closePrompt && !editor.action.empty()) {
+if (!editor.closePrompt && !editor.action.empty() && editor.action!="import-theme") {
     if (editor.action=="theme-editor" || editor.action=="day-editor" || editor.action=="night-editor" || editor.action=="shortcuts") {
         if (editor.action=="shortcuts") state.showShortcutsDialog=true;
         else {state.themeScheduleEditorPeriod=editor.action=="day-editor"?0:editor.action=="night-editor"?1:-1;state.showThemeEditor=true;}
@@ -13,7 +13,7 @@ ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(24,24));
 if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar)) {
     const auto& cs=ThemeColors::current();
     auto mixVec=[](const ImVec4& a,const ImVec4& b,float t){return ImVec4(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t,a.w+(b.w-a.w)*t);};
-    const char* title=editor.action=="avatar"?L(SetUX_EditAvatarAction):editor.action=="dictionary"?su::PageLabel(su::Page::Search):editor.action=="maintenance"?L(Set_DBMaint2):editor.action=="diagnostics"?su::PageLabel(su::Page::Diagnostics):editor.action=="shell"?L(Set_ShellIntegration):editor.action=="reset-all"?L(Set_ResetAllDefaults):editor.action=="reset-size"?L(Set_ResetDefaultSize):editor.action=="custom-colors"?L(Set_EditTheme):su::PageLabel(su::Page::Backup);
+    const char* title=editor.action=="avatar"?L(SetUX_EditAvatarAction):editor.action=="dictionary"?su::PageLabel(su::Page::Search):editor.action=="maintenance"?L(Set_DBMaint2):editor.action=="diagnostics"?su::PageLabel(su::Page::Diagnostics):editor.action=="shell"?L(Set_ShellIntegration):editor.action=="reset-all"?L(Set_ResetAllDefaults):editor.action=="reset-size"?L(Set_ResetDefaultSize):su::PageLabel(su::Page::Backup);
     ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(title);ImGui::PopFont();
     ImGui::TextWrapped("%s",L(SetUX_ActionsHereSaveSeparately));
     ImGui::Separator();
@@ -84,25 +84,6 @@ if (ImGui::BeginPopupModal("###SettingsTool",nullptr,ImGuiWindowFlags_NoTitleBar
                 else editor.error=L(SetUX_ImportFailedCheckTheSettingsFolder);
             }
         }
-    } else if(editor.action=="custom-colors") {
-        bool changed=false;
-        changed|=ImGui::ColorEdit3(L(Set_BgColor),(float*)&state.settings.customBgColor,ImGuiColorEditFlags_NoInputs);
-        su::Observe("custom-bg");
-        changed|=ImGui::ColorEdit3(L(Set_TextColor),(float*)&state.settings.customTextColor,ImGuiColorEditFlags_NoInputs);
-        su::Observe("custom-text");
-        changed|=ImGui::ColorEdit3(L(Set_AccentColor),(float*)&state.settings.customAccentColor,ImGuiColorEditFlags_NoInputs);
-        su::Observe("custom-accent");
-        changed|=ImGui::ColorEdit3(L(Set_WaveformColor),(float*)&state.settings.customWaveformColor,ImGuiColorEditFlags_NoInputs);
-        su::Observe("custom-waveform");
-        changed|=ImGui::ColorEdit3(L(Set_VolumeColor),(float*)&state.settings.customVolumeColor,ImGuiColorEditFlags_NoInputs);
-        su::Observe("custom-volume");
-        if(aura::ui::SmallActionButton(L(Set_ResetColors))){
-            const AppSettings defaults;
-            state.settings.customBgColor=defaults.customBgColor;state.settings.customTextColor=defaults.customTextColor;
-            state.settings.customAccentColor=defaults.customAccentColor;state.settings.customWaveformColor=defaults.customWaveformColor;state.settings.customVolumeColor=defaults.customVolumeColor;changed=true;
-        }
-        su::Observe("custom-reset");
-        if(changed){if(state.settings.theme==AppTheme::Custom)state.settings.theme=AppTheme::Dark;state.settings.useCustomColors=true;schedule::OnManualThemeSelected(state);ThemeColors::deactivateCustomTheme();ThemeColors::markPendingUiChromeResync();MarkSettingsDirty(state);editor.Reset(state);}
     }
     if(!editor.error.empty())ImGui::TextWrapped("%s",editor.error.c_str());
     ImGui::EndChild();

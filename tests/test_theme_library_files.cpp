@@ -8,6 +8,10 @@
 #include <iostream>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace fs = std::filesystem;
 using harken::theme_library::AdoptLegacyCustomTheme;
 using harken::theme_library::CustomThemePath;
@@ -115,6 +119,68 @@ int main(int argc, char** argv) {
     Check(!AdoptLegacyCustomTheme(legacyRoot / "missing.json", root / "other.json", error),
           "missing legacy file reports failure");
     Check(!fs::exists(root / "other.json"), "failed adoption creates nothing");
+
+    using harken::theme_library::ImportResult;
+    using harken::theme_library::InstallImportedTheme;
+    const auto existing = ThemePathFor(library, "Rose Cedar");
+    const std::string oldLibrary = "{\r\n  \"old\": true\r\n}\r\n";
+    const std::string imported = "{\"new\":true}";
+    WriteText(existing, oldLibrary);
+    WriteText(custom, "");
+    int calls = 0;
+    const auto rejectSettings = [&] {
+        ++calls;
+        Check(ReadBytes(custom) == imported, "active file is written before settings save");
+        return false;
+    };
+    Check(InstallImportedTheme(settings, "Rose Cedar", imported, rejectSettings) == ImportResult::Failed,
+          "settings save failure reports a rolled-back import");
+    Check(calls == 1 && ReadBytes(existing) == oldLibrary &&
+              fs::is_regular_file(custom) && ReadBytes(custom).empty(),
+          "settings save failure restores exact previous bytes, including empty file");
+
+    fs::remove(custom);
+    const auto fresh = ThemePathFor(library, "Fresh");
+    Check(InstallImportedTheme(settings, "Fresh", imported, rejectSettings) == ImportResult::Failed &&
+              !fs::exists(fresh) && !fs::exists(custom),
+          "settings save failure removes newly introduced files");
+    fs::remove(custom);
+
+    fs::create_directory(custom);
+    const auto unreachableSettings = [&] { Check(false, "must not persist settings after a file error"); return true; };
+    Check(InstallImportedTheme(settings, "Rose Cedar", imported, unreachableSettings) == ImportResult::Failed &&
+              ReadBytes(existing) == oldLibrary && fs::is_directory(custom),
+          "blocked active slot leaves previous library and active slot alone");
+    fs::remove(custom);
+
+#ifdef _WIN32
+    WriteText(custom, "previous active theme");
+    const HANDLE locked = CreateFileW(custom.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                      nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(locked != INVALID_HANDLE_VALUE, "open active slot without delete sharing");
+    if (locked != INVALID_HANDLE_VALUE) {
+        Check(InstallImportedTheme(settings, "Rose Cedar", imported, unreachableSettings) == ImportResult::Failed &&
+                  ReadBytes(existing) == oldLibrary && ReadBytes(custom) == "previous active theme",
+              "active replacement failure rolls back an already written library entry");
+        CloseHandle(locked);
+    }
+    fs::remove(custom);
+#endif
+
+    Check(InstallImportedTheme(settings, "Rose Cedar", imported, [&] {
+              fs::remove(custom);
+              fs::create_directory(custom);
+              WriteText(custom / "blocker", "occupied");
+              return false;
+          }) == ImportResult::RollbackFailed && ReadBytes(existing) == oldLibrary,
+          "failed active rollback is reported and does not skip library restoration");
+    fs::remove(custom / "blocker");
+    fs::remove(custom);
+
+    Check(InstallImportedTheme(settings, "Rose Cedar", imported, [&] {
+              return ReadBytes(existing) == imported && ReadBytes(custom) == imported;
+          }) == ImportResult::Saved && ReadBytes(existing) == imported && ReadBytes(custom) == imported,
+          "success retains both files and only persists settings after both writes");
 
     if (failed != 0) { std::cerr << failed << " check(s) failed\n"; return 1; }
     std::cout << "theme library files: all checks passed\n";

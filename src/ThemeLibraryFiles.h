@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,10 @@ bool SaveThemeJson(const std::filesystem::path& target, const std::string& json,
 // Saves a copy of an imported theme; same name overwrites the earlier copy.
 bool SaveThemeCopy(const std::filesystem::path& libraryDir, const std::string& nameUtf8,
                    const std::string& json, std::string& error);
+
+enum class ImportResult { Saved, Failed, RollbackFailed };
+ImportResult InstallImportedTheme(const std::filesystem::path& settingsFile, const std::string& name,
+                                  const std::string& json, const std::function<bool()>& persistSettings);
 
 // Theme files in the library, sorted by display name (case-insensitive).
 std::vector<std::filesystem::path> ListThemes(const std::filesystem::path& libraryDir);

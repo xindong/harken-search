@@ -43,7 +43,7 @@ private:
 };
 
 BackfillWorkerPool& GlobalBackfillWorkerPool();
-bool ConsumeCoverBackfillUiRefresh();
+bool ConsumeCoverBackfillUiRefresh(int64_t dbGeneration);
 
 class BackfillScanWriteGuard {
 public:

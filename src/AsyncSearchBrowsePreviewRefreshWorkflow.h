@@ -38,6 +38,7 @@ CaptureAsyncSearchBrowsePreviewRefresh(
 
 void HandleAsyncSearchBrowsePreviewRefreshRestore(
     const aura::coverwall::BrowseSurfacePreviewSelection& selection,
-    AsyncSearchBrowsePreviewRefreshEffects& effects);
+    AsyncSearchBrowsePreviewRefreshEffects& effects,
+    bool restoreSelection = true);
 
 }  // namespace aura::search
