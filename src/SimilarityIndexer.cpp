@@ -10,11 +10,13 @@
 namespace HarkenSearch {
 namespace {
 struct SimilarityWorkerGroup {
+    std::condition_variable& ready;
     std::atomic<bool> stopping{false};
     std::vector<std::thread> threads;
 
     ~SimilarityWorkerGroup() {
         stopping.store(true);
+        ready.notify_all();
         for (auto& thread : threads) thread.join();
     }
 };
@@ -99,11 +101,11 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
                 SimilarityIndexFailure failure = SimilarityIndexFailure::Unreadable;
                 SimilarityAnalysisEntry entry;
             };
-            std::vector<std::unique_ptr<Slot>> slots(tasks.size());
+            std::vector<std::unique_ptr<Slot>> slots(pool.size());
             std::mutex slotMutex; std::condition_variable slotReady;
-            std::atomic<size_t> nextTask{0};
+            size_t nextTask = 0, consumed = 0;
             std::exception_ptr workerFailure;
-            SimilarityWorkerGroup group;
+            SimilarityWorkerGroup group{slotReady};
             const FeatureExtractionCancelCheck workerCancelled = [&] {
                 return group.stopping.load() || cancelled();
             };
@@ -111,11 +113,20 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
                 group.threads.emplace_back([&, workerModel, workerCancelled] {
                     try {
                         for (;;) {
-                            const size_t index = nextTask.fetch_add(1);
-                            if (index >= tasks.size() || workerCancelled()) break;
+                            size_t index;
+                            {
+                                std::unique_lock<std::mutex> lock(slotMutex);
+                                while (!group.stopping.load() && nextTask < tasks.size() &&
+                                       !(nextTask - consumed < slots.size())) {
+                                    slotReady.wait_for(lock,std::chrono::milliseconds(100));
+                                }
+                                if (group.stopping.load() || nextTask >= tasks.size()) break;
+                                index = nextTask++;
+                            }
+                            if (workerCancelled()) break;
                             auto slot = std::make_unique<Slot>();
                             slot->analyzed = AnalyzeSimilarityEntry(tasks[index],workerModel,slot->entry,slot->failure,workerCancelled);
-                            { std::lock_guard<std::mutex> lock(slotMutex); slots[index] = std::move(slot); }
+                            { std::lock_guard<std::mutex> lock(slotMutex); slots[index % slots.size()] = std::move(slot); }
                             slotReady.notify_all();
                         }
                     } catch (...) {
@@ -133,14 +144,20 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
                     // The semantic path needs hundreds of milliseconds per file, so a
                     // single short poll must not be read as failure. Wait for the slot
                     // (or a real cancellation) and keep re-checking cancellation.
-                    while (!slots[index] && !workerFailure && !cancelled()) {
+                    while (!slots[index % slots.size()] && !workerFailure && !cancelled()) {
                         slotReady.wait_for(lock,std::chrono::milliseconds(100));
                     }
                     if (workerFailure) std::rethrow_exception(workerFailure);
-                    slot = std::move(slots[index]);
+                    slot = std::move(slots[index % slots.size()]);
                 }
                 if (!slot || cancelled()) { result.cancelled = true; break; }
                 RecordSimilarityOutcome(store,tasks[index],model.IsReady(),slot->analyzed,slot->failure,slot->entry,result);
+                slot.reset();
+                {
+                    std::lock_guard<std::mutex> lock(slotMutex);
+                    ++consumed;
+                }
+                slotReady.notify_all();
                 if (cancelled()) { result.cancelled = true; break; }
                 ++result.progress.completed; if (progress) progress(result.progress);
             }

@@ -64,8 +64,8 @@ int main() {
                     "INSERT INTO audio_files SELECT 4,file_path,'fourth',format,duration,file_size FROM audio_files WHERE id=1;",nullptr,nullptr,nullptr);
     sqlite3_close(db);
     store.Invalidate(1);
-    bool stopAfterFirst = false;
-    const auto interrupted=BuildSimilarityIndex(dbPath,"missing-model",[&]{return stopAfterFirst;},
+    std::atomic<bool> stopAfterFirst{false};
+    const auto interrupted=BuildSimilarityIndex(dbPath,"missing-model",[&]{return stopAfterFirst.load();},
         [&](const SimilarityIndexProgress& progress){if(progress.saved==1) stopAfterFirst=true;});
     check(interrupted.cancelled && interrupted.progress.saved==1 && store.Load(1,entry),
         "mid-batch cancellation saves the completed file");

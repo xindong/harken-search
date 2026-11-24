@@ -9,6 +9,7 @@ DIALOG_STATE = (ROOT / "src" / "SettingsDialogState.h").read_text(encoding="utf-
 SETTINGS_CATALOG = (ROOT / "src" / "SettingsCatalog.h").read_text(encoding="utf-8")
 SETTINGS_FIELDS = (ROOT / "src" / "SettingsFields.inl").read_text(encoding="utf-8")
 INDEXER = (ROOT / "src" / "SimilarityIndexer.h").read_text(encoding="utf-8")
+INDEXER_IMPL = (ROOT / "src" / "SimilarityIndexer.cpp").read_text(encoding="utf-8")
 LOCALIZED = {
     entry["id"]: entry
     for entry in json.loads(
@@ -49,3 +50,9 @@ def test_labels_are_localized():
     assert "下次分析生效" in hint["zh"]
     assert "next run" in hint["en"]
     assert "次回" in hint["ja"]
+
+
+def test_parallel_results_use_a_worker_sized_ring():
+    assert "slots(pool.size())" in INDEXER_IMPL
+    assert "nextTask - consumed < slots.size()" in INDEXER_IMPL
+    assert "slots[index % slots.size()]" in INDEXER_IMPL
