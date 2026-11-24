@@ -26,6 +26,7 @@ enum class ThemeEditorGroup {
     ButtonsAndStatus,  // 按钮/状态
     PresetDial,        // 预设拨盘
     Wwise,
+    Welcome,
 };
 
 // Field Entry: one color field in the editor
@@ -60,6 +61,7 @@ inline const char* ThemeEditorGroupNameZh(ThemeEditorGroup g) {
     case ThemeEditorGroup::ButtonsAndStatus: return L(TEGroupName_Buttons);
     case ThemeEditorGroup::PresetDial:        return L(TEGroupName_PresetDial);
     case ThemeEditorGroup::Wwise:             return L(TEGroupName_Wwise);
+    case ThemeEditorGroup::Welcome:           return L(TEGroupName_Welcome);
     default:                                 return L(TEGroupName_Ungrouped);
     }
 }
@@ -181,6 +183,9 @@ inline const ThemeEditorItem* GetThemeEditorItems(size_t& count) {
         {"presetDialAccent", LStr::ThemeCol_presetDialAccent, ThemeEditorGroup::PresetDial, &ThemeColorScheme::presetDialAccent},
         {kWwiseLabelTextColor.key, LStr::ThemeCol_wwiseLabelText, ThemeEditorGroup::Wwise, nullptr, &kWwiseLabelTextColor},
         {kWwiseBodyTextColor.key, LStr::ThemeCol_wwiseBodyText, ThemeEditorGroup::Wwise, nullptr, &kWwiseBodyTextColor},
+        {kWelcomeBackgroundColor.key, LStr::ThemeCol_welcomeBackground, ThemeEditorGroup::Welcome, nullptr, &kWelcomeBackgroundColor},
+        {kWelcomeTextColor.key, LStr::ThemeCol_welcomeText, ThemeEditorGroup::Welcome, nullptr, &kWelcomeTextColor},
+        {kWelcomeAccentColor.key, LStr::ThemeCol_welcomeAccent, ThemeEditorGroup::Welcome, nullptr, &kWelcomeAccentColor},
     };
 
     count = sizeof(kItems) / sizeof(kItems[0]);

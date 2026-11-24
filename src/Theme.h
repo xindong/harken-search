@@ -5,6 +5,8 @@
 
 #include "imgui.h"
 #include "LocalizationGenerated.h"
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -197,15 +199,34 @@ struct ThemeColorScheme {
     ImVec4 wwiseParentBadge      = ImVec4(0.471f, 0.596f, 0.753f, 1.0f);  // 父层
     std::optional<ImVec4> wwiseLabelText;
     std::optional<ImVec4> wwiseBodyText;
+    std::optional<ImVec4> welcomeBackground;
+    std::optional<ImVec4> welcomeText;
+    std::optional<ImVec4> welcomeAccent;
 };
+
+inline float WelcomeRelativeLuminance(const ImVec4& color) {
+    const auto linear = [](float channel) {
+        const float srgb = std::round(std::clamp(channel, 0.0f, 1.0f) * 255.0f) / 255.0f;
+        return srgb <= 0.04045f ? srgb / 12.92f : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * linear(color.x) + 0.7152f * linear(color.y) + 0.0722f * linear(color.z);
+}
+
+inline ImVec4 DeriveWelcomeText(const ThemeColorScheme& scheme) {
+    const float base = WelcomeRelativeLuminance(scheme.welcomeBackground.value_or(scheme.mainWindowBG)) + 0.05f;
+    const float choice = base / 0.05f >= 1.05f / base ? 0.0f : 1.0f;
+    return ImVec4(choice, choice, choice, 1.0f);
+}
 
 struct ThemeColorOverride {
     const char* key;
     std::optional<ImVec4> ThemeColorScheme::* member;
     ImVec4 ThemeColorScheme::* source;
+    ImVec4 (*derive)(const ThemeColorScheme&) = nullptr;
 
     ImVec4 Resolve(const ThemeColorScheme& scheme) const {
-        return (scheme.*member).value_or(scheme.*source);
+        if (const auto& value = scheme.*member) return *value;
+        return derive ? derive(scheme) : scheme.*source;
     }
 };
 
@@ -213,8 +234,15 @@ inline constexpr ThemeColorOverride kWwiseLabelTextColor{
     "wwiseLabelText", &ThemeColorScheme::wwiseLabelText, &ThemeColorScheme::menuText};
 inline constexpr ThemeColorOverride kWwiseBodyTextColor{
     "wwiseBodyText", &ThemeColorScheme::wwiseBodyText, &ThemeColorScheme::interfaceText};
+inline constexpr ThemeColorOverride kWelcomeBackgroundColor{
+    "welcomeBackground", &ThemeColorScheme::welcomeBackground, &ThemeColorScheme::mainWindowBG};
+inline constexpr ThemeColorOverride kWelcomeTextColor{
+    "welcomeText", &ThemeColorScheme::welcomeText, nullptr, DeriveWelcomeText};
+inline constexpr ThemeColorOverride kWelcomeAccentColor{
+    "welcomeAccent", &ThemeColorScheme::welcomeAccent, &ThemeColorScheme::controlAccent};
 inline constexpr const ThemeColorOverride* kOptionalThemeColors[]{
-    &kWwiseLabelTextColor, &kWwiseBodyTextColor};
+    &kWwiseLabelTextColor, &kWwiseBodyTextColor,
+    &kWelcomeBackgroundColor, &kWelcomeTextColor, &kWelcomeAccentColor};
 
 // Theme Color Scheme Manager
 

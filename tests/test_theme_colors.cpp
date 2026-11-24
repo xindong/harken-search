@@ -231,7 +231,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < relationCount; ++i) {
             relationKeys.insert(relations[i].key);
         }
-        CHECK(relationCount == 112, "theme editor relation metadata covers every ThemeColorScheme field");
+        CHECK(relationCount == 115, "theme editor relation metadata covers every ThemeColorScheme field");
         CHECK(relationKeys.size() == relationCount, "theme editor relation metadata has no duplicate field keys");
 
         const ThemeEditorRelation* canvas = FindThemeEditorRelation("mainWindowBG");
@@ -499,6 +499,56 @@ int main(int argc, char** argv) {
         CHECK(ThemeColors::importFromJSON(malformed, scheme) &&
               ThemeColors::exportToJSON(scheme) == legacyExport,
               "malformed optional text overrides fall back to the original color");
+    }
+    {
+        const auto* background = FindThemeEditorItem("welcomeBackground");
+        const auto* text = FindThemeEditorItem("welcomeText");
+        const auto* accent = FindThemeEditorItem("welcomeAccent");
+        CHECK(background && background->group == ThemeEditorGroup::Welcome &&
+              text && text->group == ThemeEditorGroup::Welcome &&
+              accent && accent->group == ThemeEditorGroup::Welcome,
+              "welcome colors share an editable group");
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue, AppTheme::JadeMist}) {
+            auto stock = MakeBuiltinScheme(theme);
+            CHECK(!stock.welcomeBackground && !stock.welcomeText && !stock.welcomeAccent &&
+                  approxEqual(kWelcomeBackgroundColor.Resolve(stock), stock.mainWindowBG) &&
+                  approxEqual(kWelcomeAccentColor.Resolve(stock), stock.controlAccent),
+                  "all stock themes derive their welcome colors");
+        }
+        ThemeColorScheme scheme;
+        for (int shade = 0; shade < 256; ++shade) {
+            const auto gray = static_cast<float>(shade) / 255.0f;
+            scheme.mainWindowBG = ImVec4(gray, gray, gray, 1.0f);
+            const auto foreground = WelcomeRelativeLuminance(kWelcomeTextColor.Resolve(scheme));
+            const auto backdrop = WelcomeRelativeLuminance(scheme.mainWindowBG);
+            const auto contrast = (std::max(foreground, backdrop) + 0.05f) /
+                                  (std::min(foreground, backdrop) + 0.05f);
+            CHECK(contrast >= 4.5f, "derived welcome text clears 4.5:1 across neutral backdrops");
+        }
+        const std::string legacy = R"({"mainWindowBG":"ff101010"})";
+        const std::string custom = R"({"mainWindowBG":"ff101010","welcomeBackground":"ffeeeee0","welcomeAccent":"ff00ff55"})";
+        CHECK(ThemeColors::importFromJSON(custom, scheme) &&
+              scheme.welcomeBackground && !scheme.welcomeText && scheme.welcomeAccent &&
+              approxEqual(kWelcomeTextColor.Resolve(scheme), ImVec4(0.f, 0.f, 0.f, 1.f)),
+              "partial override derives text against the custom background");
+        ThemeEditorRelationState relations;
+        relations.ResetToValues(scheme);
+        relations.Detach(scheme, "welcomeText");
+        if (text) text->SetColor(scheme, ThemeColors::fromARGBHex("ff0f2244"));
+        ThemeColorScheme reloaded;
+        CHECK(ThemeColors::importFromJSON(ThemeColors::exportToJSON(scheme), reloaded) &&
+              reloaded.welcomeText &&
+              approxEqual(kWelcomeTextColor.Resolve(reloaded), ThemeColors::fromARGBHex("ff0f2244")) &&
+              approxEqual(kWelcomeBackgroundColor.Resolve(reloaded), ThemeColors::fromARGBHex("ffeeeee0")) &&
+              approxEqual(kWelcomeAccentColor.Resolve(reloaded), ThemeColors::fromARGBHex("ff00ff55")),
+              "export and reimport preserve all explicit welcome colors");
+        relations.Relink(scheme, "welcomeText");
+        CHECK(!scheme.welcomeText, "linking welcome text restores contrast-based derivation");
+        CHECK(ThemeColors::importFromJSON(legacy, reloaded) &&
+              !reloaded.welcomeBackground && !reloaded.welcomeText && !reloaded.welcomeAccent &&
+              approxEqual(kWelcomeTextColor.Resolve(reloaded), ImVec4(1.f, 1.f, 1.f, 1.f)),
+              "legacy import clears all welcome overrides and derives from the dark base");
     }
     {
         ThemeColorScheme scheme = ThemeColors::getClassicDark();
