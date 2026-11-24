@@ -10500,6 +10500,34 @@
       "ja": "プリセットダイヤル"
     },
     {
+      "id": "TEGroupName_Welcome",
+      "type": "ui",
+      "zh": "欢迎页",
+      "en": "Welcome page",
+      "ja": "ウェルカムページ"
+    },
+    {
+      "id": "ThemeCol_welcomeBackground",
+      "type": "ui",
+      "zh": "背景",
+      "en": "Background",
+      "ja": "背景"
+    },
+    {
+      "id": "ThemeCol_welcomeText",
+      "type": "ui",
+      "zh": "文字",
+      "en": "Text",
+      "ja": "文字"
+    },
+    {
+      "id": "ThemeCol_welcomeAccent",
+      "type": "ui",
+      "zh": "强调",
+      "en": "Accent",
+      "ja": "アクセント"
+    },
+    {
       "id": "TEGroupName_Wwise",
       "type": "ui",
       "zh": "Wwise",
