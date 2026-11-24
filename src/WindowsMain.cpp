@@ -3040,6 +3040,10 @@ static void RefreshScanCompletionStateForQa(AppState& state) {
                             "ScanCompletionCoversSatisfied: session=%lld total=%d",
                             (long long)scanSessionId,
                             counts.total);
+            if (state.scanCoverResultsRefresh.scanGeneration == static_cast<uint64_t>(scanSessionId) &&
+                state.scanCompletionSessionId.load(std::memory_order_acquire) == scanSessionId) {
+                state.scanCoverResultsRefresh.sawCoverWork = true;
+            }
     }
     if (waveformsBefore && !waveformsPending) {
             DIAG_SYSTEM_FMT("Scan",
@@ -3118,6 +3122,7 @@ static bool BeginFolderScan(
     state.beginScanWorkflow(cacheWaveforms);
 
     const uint64_t scanGeneration = state.beginNewScanTask();
+    state.scanCoverResultsRefresh = {scanGeneration, state.backfillDbGeneration};
     std::shared_ptr<std::atomic<bool>> scanCancelToken = state.getActiveScanCancelToken();
     bool precomputeWaveforms = cacheWaveforms;
     const std::string waveformFolderScope =
@@ -14655,18 +14660,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         const bool postProcessCoverRefresh =
             state.database.consumePostProcessCoverRefresh();
         const bool backfillCoverRefresh =
-            aura::ConsumeCoverBackfillUiRefresh();
+            aura::ConsumeCoverBackfillUiRefresh(state.backfillDbGeneration);
         if (postProcessCoverRefresh) {
             state.invalidateCoverWallAfterDatabaseContentChange();
             MarkScanReadyToWorkCoversSatisfiedForQa(state);
         }
-        if (backfillCoverRefresh) {
-            state.requestCoverWallBackfillDisplayRefresh();
+        if (backfillCoverRefresh && !state.dbSwitchInProgress) {
+            if (state.scanCoverResultsRefresh.scanGeneration == 0) {
+                state.requestCoverWallBackfillDisplayRefresh();
+            }
             MarkScanReadyToWorkCoversSatisfiedForQa(state);
         }
         PumpScanReadyToWorkFirstScreenCoversForQa(state);
         RefreshScanReadyToWorkStateForQa(state);
         RefreshScanCompletionStateForQa(state);
+        PumpScanCoverResultsRefresh(state, backfillCoverRefresh);
         DevTools_EndFramePhase();
 
         state.visibleFilePaths.clear();

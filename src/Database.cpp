@@ -1867,6 +1867,11 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             DIAG_ACTION_FMT("Database",
                 "BackfillPendingIndexCreateFailed: %s", m_lastError.c_str());
         }
+        if (!executeSQL("CREATE INDEX IF NOT EXISTS idx_backfill_pending_kind "
+                        "ON backfill_pending(kind)")) {
+            DIAG_ACTION_FMT("Database",
+                "BackfillPendingKindIndexCreateFailed: %s", m_lastError.c_str());
+        }
     }
 
     if (!executeSQL(
@@ -2266,6 +2271,19 @@ int Database::countBackfillPendingKind(int kind) {
     if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int(stmt, 0);
     returnStmt(sql, stmt);
     return count;
+}
+
+std::optional<bool> Database::hasBackfillPendingKind(int kind) {
+    if (!m_db || kind < 0) return std::nullopt;
+    static const std::string sql = "SELECT 1 FROM backfill_pending WHERE kind = ? LIMIT 1";
+    sqlite3_stmt* stmt = checkoutStmt(sql);
+    if (!stmt) return std::nullopt;
+    sqlite3_bind_int(stmt, 1, kind);
+    const int result = sqlite3_step(stmt);
+    returnStmt(sql, stmt);
+    if (result == SQLITE_ROW) return true;
+    if (result == SQLITE_DONE) return false;
+    return std::nullopt;
 }
 
 bool Database::hasBackfillPending(int64_t fileId, int kind) {
@@ -20270,7 +20288,8 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
     return out;
 }
 
-std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilter& filter, int limit) {
+std::vector<Database::CoverFacetEntry> Database::getCoverFacets(
+    const SearchFilter& filter, int limit, bool allowCachedFacets) {
     DIAG_SCOPED("Database.getCoverFacets");
     std::vector<CoverFacetEntry> results;
     if (!m_db || limit <= 0) return results;
@@ -20336,7 +20355,7 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
                         readiness.minimumExpectedRegistry);
     }
 
-    if (!registrySparse) {
+    if (allowCachedFacets && !registrySparse) {
         std::vector<uint8_t> payload;
         if (loadFacetQueryCache(persistentCacheKey, payload)) {
             if (DeserializeCoverFacetEntries(payload, results)) {
@@ -20344,7 +20363,7 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
                 return results;
             }
         }
-    } else {
+    } else if (registrySparse) {
         DIAG_ACTION("Search", "CoverFacetPersistentCacheBypass: registry sparse");
     }
 

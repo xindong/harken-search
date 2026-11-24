@@ -1368,6 +1368,7 @@ struct CoverWallState {
     bool globalPageHasMore = false;
     bool globalPageLoadingNext = false;
     std::string globalPageDbPath;
+    size_t scanBackfillReloadItemCount = 0;
 
     // Snapshot of the cover wall item the user clicked to activate the
     // specific-cover-key filter. Persisted here (instead of being looked up
@@ -1468,7 +1469,7 @@ struct CoverWallState {
         // global first-page preload remains valid for this database generation.
     }
 
-    void invalidateAfterDatabaseContentChange() {
+    void invalidateGlobalCoverData() {
         ++generation;
         loaded = false;
         loading = false;
@@ -1476,11 +1477,29 @@ struct CoverWallState {
         discoveryKnown.clear();
         discoveryDone = false;
         loadTotal = 0;
-        displaySnapshot.clear();
-        lastDisplaySnapshotCursor = 0;
         entriesRequestedCursor.clear();
         entriesRequestedAppend = false;
         entriesRequestBaseItemCount = 0;
+        preloadFullList.clear();
+        preloadFirstPage.clear();
+        preloadDbPath.clear();
+        preloadCursor = 0;
+        globalPageNextCursor.clear();
+        globalPageHasMore = false;
+        globalPageLoadingNext = false;
+        globalPageDbPath.clear();
+        scanBackfillReloadItemCount = 0;
+        globalItemsCache.clear();
+        globalItemsCacheValid = false;
+        globalItemsCacheDbPath.clear();
+        globalItemsCacheTotalFileCount = 0;
+        globalItemsCacheGeneration = 0;
+    }
+
+    void invalidateAfterDatabaseContentChange() {
+        invalidateGlobalCoverData();
+        displaySnapshot.clear();
+        lastDisplaySnapshotCursor = 0;
         qaDisplayCount = 0;
         qaPrefetchTileCount = 0;
         qaVisibleTileCount = 0;
@@ -1494,22 +1513,6 @@ struct CoverWallState {
         qaHiddenFailedItemCount = 0;
         qaHiddenPendingItemCount = 0;
         failedTexCache.clear();
-        preloadFullList.clear();
-        preloadFirstPage.clear();
-        preloadDbPath.clear();
-        preloadCursor = 0;
-        globalPageNextCursor.clear();
-        globalPageHasMore = false;
-        globalPageLoadingNext = false;
-        globalPageDbPath.clear();
-        entriesRequestedCursor.clear();
-        entriesRequestedAppend = false;
-        entriesRequestBaseItemCount = 0;
-        globalItemsCache.clear();
-        globalItemsCacheValid = false;
-        globalItemsCacheDbPath.clear();
-        globalItemsCacheTotalFileCount = 0;
-        globalItemsCacheGeneration = 0;
         lastTotalItems = -1;
         preRequestCursor = 0;
         lastPreRequestTotalItems = -1;
@@ -1556,6 +1559,7 @@ struct CoverWallState {
         globalPageHasMore = false;
         globalPageLoadingNext = false;
         globalPageDbPath.clear();
+        scanBackfillReloadItemCount = 0;
         globalItemsCache.clear();
         globalItemsCacheValid = false;
         globalItemsCacheDbPath.clear();
@@ -1964,6 +1968,12 @@ struct AppState {
     std::atomic<bool> scanCompletionPending{false};
     std::atomic<bool> scanCompletionWaveformsPending{false};
     std::atomic<bool> scanCompletionCoversPending{false};
+    struct ScanCoverResultsRefreshState {
+        uint64_t scanGeneration = 0;
+        int64_t dbGeneration = 0;
+        bool sawCoverWork = false;
+        std::chrono::steady_clock::time_point nextPoll{};
+    } scanCoverResultsRefresh;
     std::atomic<int> scanCompletionTotal{0};
     std::atomic<int> scanCompletionPendingFiles{0};
     std::atomic<int> scanCompletionMiniUnresolved{0};
@@ -2294,6 +2304,22 @@ struct AppState {
         needsCoverWallReload = true;
         // Keep the current wall stable during incremental backfill refreshes.
         coverWall.failedTexCache.clear();
+    }
+
+    void requestCoverWallScanBackfillRefresh() {
+        const std::string dbPath = database.getMainDbPath();
+        const size_t loadedItems =
+            coverWall.source == CoverWallSource::Global && coverWall.globalPageDbPath == dbPath
+                ? coverWall.items.size()
+                : 0;
+        coverWallDatabaseInvalidationRequested = true;
+        needsCoverWallReload = true;
+        preloadedCoverWallEntries.clear();
+        preloadedCoverWallFullyDiscovered = false;
+        coverWall.invalidateGlobalCoverData();
+        coverWall.failedTexCache.clear();
+        coverWall.scanBackfillReloadItemCount = loadedItems;
+        if (loadedItems > 0) coverWall.preloadDbPath = dbPath;
     }
 
 // Relink session state (F-034)
