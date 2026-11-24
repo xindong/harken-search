@@ -528,7 +528,7 @@ def test_dock_widths_round_trip_in_workspace_units():
     main = read(MAIN_CPP)
     commit = between(main, "static void MirrorDockCommitToPanel", "static void ApplyDockedPanel(")
     assert "logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);" in commit
-    assert "ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);" in commit
+    assert "ApplyDockCommitToPanel(mirror, side, logicalRect);" in commit
     assert "const float logicalWidth = aura::ui::dpi::LogicalPx(rect.width);" in commit
     assert "state.panelSidebar.dockedWidth = logicalWidth;" in commit
     assert "state.panelFileInfo.dockedWidth = logicalWidth;" in commit
