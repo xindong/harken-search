@@ -88,13 +88,19 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
             // per-session thread budget stays bounded across the pool.
             const int threadsPerSession = std::max(1, 4 / workers);
             std::vector<std::unique_ptr<AudioEmbeddingService>> extraModels;
-            std::vector<AudioEmbeddingService*> pool{&model};
-            for (int i = 1; model.IsReady() && i < workers && i < int(tasks.size()); ++i) {
-                auto service = std::make_unique<AudioEmbeddingService>();
-                std::string error;
-                if (!service->Load(modelDirectory,error,threadsPerSession)) break;
-                extraModels.push_back(std::move(service));
-                pool.push_back(extraModels.back().get());
+            const size_t requestedWorkers = std::min(static_cast<size_t>(workers), tasks.size());
+            std::vector<AudioEmbeddingService*> pool;
+            if (!model.IsReady()) {
+                pool.resize(requestedWorkers, nullptr);
+            } else {
+                pool.push_back(&model);
+                while (pool.size() < requestedWorkers) {
+                    auto service = std::make_unique<AudioEmbeddingService>();
+                    std::string error;
+                    if (!service->Load(modelDirectory,error,threadsPerSession)) break;
+                    extraModels.push_back(std::move(service));
+                    pool.push_back(extraModels.back().get());
+                }
             }
             struct Slot {
                 bool analyzed = false;

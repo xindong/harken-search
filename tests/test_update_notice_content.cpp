@@ -15,6 +15,18 @@ int main(int argc, char** argv) {
     check(ParseHarkenSearchReleaseNotes(document, notes.releases), "existing structured schema parses");
     auto* entry = FindHarkenSearchReleaseNotes(notes.releases, "v1.0.37");
     check(entry && entry->items[0].title == "A title" && entry->items[0].text == "Complete details" && entry->items[0].author == "Dev", "title, full text and author survive normalization");
+    {
+        const std::string groupedDocument = R"({"schema_version":2,"releases":[{"version":"1.0.47","release_date":"2026-11-25","contributors":["Dev","Cindy"],"sections":[{"title":"Appearance","items":[{"name":"","list":["Import themes","Keep the current theme on failure"]}]},{"title":"Search","items":[{"name":"","list":["Find more folders"]}]}]}]})";
+        std::vector<ReleaseNotesEntry> groupedReleases;
+        check(ParseHarkenSearchReleaseNotes(groupedDocument, groupedReleases), "version-credited sections parse");
+        const auto* grouped = FindHarkenSearchReleaseNotes(groupedReleases, "1.0.47");
+        check(grouped && grouped->contributors == std::vector<std::string>{"Dev", "Cindy"} &&
+                  grouped->items.size() == 2 && grouped->items[0].title == "Appearance" &&
+                  grouped->items[0].text == u8"• Import themes\n• Keep the current theme on failure" &&
+                  grouped->items[0].author.empty() && grouped->items[1].title == "Search" &&
+                  grouped->items[1].text == u8"• Find more folders" && grouped->items[1].author.empty(),
+              "module groups preserve bullet order and display contributors once per release");
+    }
     check(!FindHarkenSearchReleaseNotes(notes.releases, "1.0.38"), "missing target never selects newest record");
     SyncHarkenSearchCandidateReleaseNotes(notes, "1.0.37", document, false);
     check(SelectHarkenSearchReleaseNotes(notes, "1.0.37", true) != nullptr, "matching downloaded target can be previewed");
