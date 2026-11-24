@@ -40,10 +40,8 @@ for token in (
 
 for owned in (
     "source.usesAdaptiveMiniWaveform()",
-    "source.purgeAllMiniWaveform()",
     "source.countFilesNeedingWaveformCache()",
     "database_.usesAdaptiveMiniWaveform()",
-    "database_.purgeAllMiniWaveform()",
     "database_.countFilesNeedingWaveformCache()",
 ):
     assert owned in SOURCE, owned
@@ -54,13 +52,16 @@ body = function_body(
 assert MAIN.count("PrepareAdaptiveMiniWaveformFormat(") == 1
 for removed in (
     "state.database.usesAdaptiveMiniWaveform()",
-    "state.database.purgeAllMiniWaveform()",
     "state.database.countFilesNeedingWaveformCache()",
 ):
     assert removed not in body, removed
+for removed in ("purgeAllMiniWaveform", "purged"):
+    assert removed not in HEADER, removed
+    assert removed not in SOURCE, removed
+    assert removed not in body, removed
 assert "AdaptiveMiniFormatPreparationDecision::Disabled" in body
 assert "AdaptiveMiniFormatPreparationDecision::NoWork" in body
-diag_pos = body.index("Adaptive mini format upgrade purge:")
+diag_pos = body.index("Adaptive mini format upgrade check:")
 finalize_pos = body.index("FinalizeAdaptiveMiniWaveformFormat(")
 assert diag_pos < finalize_pos
 
