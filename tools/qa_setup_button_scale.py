@@ -44,12 +44,20 @@ def write_settings(runtime: Path, scale_percent: int) -> None:
     )
 
 
+PROFILE_MARKER = '.qa-setup-button-scale-profile'
+
+
 def reset_profile(root: Path, scale_percent: int) -> Path:
     profile = root / 'profile'
+    marker = profile / PROFILE_MARKER
     if profile.exists():
+        # Only remove a profile this script created; never an existing library or settings.
+        if not marker.is_file():
+            raise RuntimeError(f'{profile} was not created by this QA script; refusing to delete it')
         shutil.rmtree(profile)
     runtime = profile / 'runtime'
     runtime.mkdir(parents=True)
+    marker.write_text('qa_setup_button_scale', encoding='utf-8')
     (profile / 'Roaming').mkdir(parents=True, exist_ok=True)
     settings_dir = profile / 'Local' / 'HarkenSearch'
     settings_dir.mkdir(parents=True, exist_ok=True)
@@ -80,22 +88,24 @@ def audit_buttons(driver: Driver) -> dict:
     return {'panel': audit['panel'], 'buttons': buttons, 'frame': audit['frame']}
 
 
-def shutdown(process, hwnd: int) -> None:
-    """A stuck QA build must not outlive the script."""
+def shutdown(process, hwnd: int) -> str | None:
+    """Stop the QA build and report how it exited; ``None`` means a clean exit."""
     if process is None:
-        return
+        return None
     import win32con
     import win32event
     import win32gui
     import win32process
-    if win32event.WaitForSingleObject(process, 15000) == win32con.WAIT_OBJECT_0:
-        return
-    if hwnd:
-        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-    if win32event.WaitForSingleObject(process, 10000) == win32con.WAIT_OBJECT_0:
-        return
-    win32process.TerminateProcess(process, 1)
-    win32event.WaitForSingleObject(process, 5000)
+    if win32event.WaitForSingleObject(process, 15000) != win32con.WAIT_OBJECT_0:
+        if hwnd:
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        if win32event.WaitForSingleObject(process, 10000) != win32con.WAIT_OBJECT_0:
+            # A stuck QA build must not outlive the script, but it is a failure.
+            win32process.TerminateProcess(process, 1)
+            win32event.WaitForSingleObject(process, 5000)
+            return 'exit timed out; process was terminated'
+    code = win32process.GetExitCodeProcess(process)
+    return None if code == 0 else f'process exited with code {code}'
 
 
 def resize_client(hwnd: int, client_width: int) -> None:
@@ -120,6 +130,7 @@ def run(args) -> dict:
         'dpi_override': args.dpi,
         'started_at': datetime.now(timezone.utc).isoformat(),
         'runs': [],
+        'exit_failures': [],
     }
 
     for scale in scales:
@@ -151,7 +162,9 @@ def run(args) -> dict:
             })
             driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
         finally:
-            shutdown(process, hwnd)
+            failure = shutdown(process, hwnd)
+            if failure:
+                report['exit_failures'].append({'scale': scale, 'error': failure})
             desktop.close()
 
     narrow = args.narrow_scale
@@ -182,7 +195,9 @@ def run(args) -> dict:
             })
             driver.command({'cmd': 'info_edit_input', 'action': 'exit'})
         finally:
-            shutdown(process, hwnd)
+            failure = shutdown(process, hwnd)
+            if failure:
+                report['exit_failures'].append({'scale': narrow, 'error': failure})
             desktop.close()
 
     (out / 'setup-button-scale.json').write_text(
@@ -205,7 +220,9 @@ def main() -> int:
         print(json.dumps({key: item[key] for key in item
                           if key in ('case', 'scale', 'heights', 'same_row', 'rows')},
                          ensure_ascii=False))
-    return 0
+    for failure in report['exit_failures']:
+        print(json.dumps({'exit_failure': failure}, ensure_ascii=False))
+    return 1 if report['exit_failures'] else 0
 
 
 if __name__ == '__main__':
