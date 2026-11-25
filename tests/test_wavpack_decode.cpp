@@ -248,11 +248,14 @@ int main() {
               "encoder writes a hybrid pair with real correction blocks");
         fs::copy_file(correctionPath, savedCorrection);
         std::vector<float> corrected;
+        const auto checksBefore = Platform::WavPack::CorrectionVerificationCountForTest();
         check(ReadWavPackLosslessness(correctedPath) == true,
               "hybrid WV with matching WVC is selectable as lossless");
         check(DecodeAll(correctedPath.u8string(), corrected, channels, sampleRate, length) &&
                   corrected == decoded,
               "matching WVC restores all 96000 original PCM samples");
+        check(Platform::WavPack::CorrectionVerificationCountForTest() == checksBefore + 1,
+              "metadata and playback reuse the verification of the same correction pair");
         fs::remove(correctionPath);
         std::vector<float> lossy;
         check(ReadWavPackLosslessness(correctedPath) == false,

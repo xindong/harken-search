@@ -21743,7 +21743,9 @@ void Database::refreshFileSystemWatcher() {
         return;
 
     auto roots = getLibraryRoots();
-    if (roots == m_watcherLibraryRoots) return;
+    if (roots == m_watcherLibraryRoots &&
+        (roots.empty() || (m_fileSystemWatcher && m_fileSystemWatcher->isRunning())))
+        return;
     if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
     m_watcherLibraryRoots = roots;
     m_watcherRootsRefreshing.store(true, std::memory_order_release);

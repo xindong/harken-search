@@ -10,12 +10,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <new>
 #include <string>
 #include <vector>
 
 #ifdef _WIN32
+#include <io.h>
 #include <windows.h>
+#else
+#include <sys/stat.h>
 #endif
 
 namespace Platform::WavPack {
@@ -220,7 +225,14 @@ bool OpenDecoderContext(Decoder& decoder, bool allowCorrection) {
     return decoder.context != nullptr;
 }
 
+#ifdef HARKEN_TEST_WAVPACK_VERIFICATION_COUNT
+unsigned int correctionVerificationCount = 0;
+#endif
+
 bool VerifyCorrection(WavpackContext* context) {
+#ifdef HARKEN_TEST_WAVPACK_VERIFICATION_COUNT
+    ++correctionVerificationCount;
+#endif
     const int channels = WavpackGetNumChannels(context);
     const int64_t length = WavpackGetNumSamples64(context);
     if (channels < 1 || channels > MA_MAX_CHANNELS || length <= 0) return false;
@@ -237,10 +249,80 @@ bool VerifyCorrection(WavpackContext* context) {
     return (WavpackGetMode(context) & MODE_LOSSLESS) != 0;
 }
 
+using FileIdentity = std::array<uint64_t, 7>;
+using CorrectionIdentity = std::array<FileIdentity, 2>;
+
+std::optional<FileIdentity> IdentifyFile(std::FILE* file) {
+    if (!file) return std::nullopt;
+#ifdef _WIN32
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(file)));
+    BY_HANDLE_FILE_INFORMATION info{};
+    FILE_BASIC_INFO times{};
+    if (handle == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(handle, &info) ||
+        !GetFileInformationByHandleEx(handle, FileBasicInfo, &times, sizeof(times)) ||
+        (info.nFileIndexHigh == 0 && info.nFileIndexLow == 0) || times.ChangeTime.QuadPart == 0)
+        return std::nullopt;
+    return FileIdentity{
+        info.dwVolumeSerialNumber,
+        (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow,
+        (static_cast<uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow,
+        static_cast<uint64_t>(times.LastWriteTime.QuadPart),
+        static_cast<uint64_t>(times.ChangeTime.QuadPart),
+        static_cast<uint64_t>(times.CreationTime.QuadPart), 0};
+#else
+    struct stat info{};
+    if (fstat(fileno(file), &info) != 0 || info.st_ino == 0) return std::nullopt;
+#ifdef __APPLE__
+    const auto modified = info.st_mtimespec;
+    const auto changed = info.st_ctimespec;
+#else
+    const auto modified = info.st_mtim;
+    const auto changed = info.st_ctim;
+#endif
+    return FileIdentity{
+        static_cast<uint64_t>(info.st_dev), static_cast<uint64_t>(info.st_ino),
+        static_cast<uint64_t>(info.st_size),
+        static_cast<uint64_t>(modified.tv_sec), static_cast<uint64_t>(modified.tv_nsec),
+        static_cast<uint64_t>(changed.tv_sec), static_cast<uint64_t>(changed.tv_nsec)};
+#endif
+}
+
+std::optional<CorrectionIdentity> IdentifyCorrection(const Decoder& decoder) {
+    const auto audio = IdentifyFile(decoder.handle.file);
+    const auto correction = IdentifyFile(decoder.correction.file);
+    if (!audio || !correction) return std::nullopt;
+    return CorrectionIdentity{*audio, *correction};
+}
+
+bool VerifyOpenedCorrection(Decoder& decoder) {
+    constexpr size_t maxCachedPairs = 64;
+    static std::mutex mutex;
+    static std::deque<std::pair<CorrectionIdentity, bool>> cache;
+    const auto identity = IdentifyCorrection(decoder);
+    if (identity) {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto found = std::find_if(cache.begin(), cache.end(),
+            [&](const auto& entry) { return entry.first == *identity; });
+        if (found != cache.end()) return found->second;
+    }
+
+    const bool valid = VerifyCorrection(decoder.context) && WavpackSeekSample64(decoder.context, 0);
+    if (!identity) return valid;
+    if (IdentifyCorrection(decoder) != identity) return false;
+
+    std::lock_guard<std::mutex> lock(mutex);
+    if (std::none_of(cache.begin(), cache.end(),
+        [&](const auto& entry) { return entry.first == *identity; })) {
+        if (cache.size() == maxCachedPairs) cache.pop_front();
+        cache.emplace_back(*identity, valid);
+    }
+    return valid;
+}
+
 bool OpenValidatedDecoderContext(Decoder& decoder) {
     if (OpenDecoderContext(decoder, true)) {
         if ((WavpackGetMode(decoder.context) & MODE_WVC) == 0) return true;
-        if (VerifyCorrection(decoder.context) && WavpackSeekSample64(decoder.context, 0)) return true;
+        if (VerifyOpenedCorrection(decoder)) return true;
     }
     return OpenDecoderContext(decoder, false);
 }
@@ -455,5 +537,11 @@ std::optional<bool> IsLossless(const ma_decoder& decoder) {
     const auto* backend = reinterpret_cast<const Decoder*>(decoder.pBackend);
     return (WavpackGetMode(backend->context) & MODE_LOSSLESS) != 0;
 }
+
+#ifdef HARKEN_TEST_WAVPACK_VERIFICATION_COUNT
+unsigned int CorrectionVerificationCountForTest() {
+    return correctionVerificationCount;
+}
+#endif
 
 }  // namespace Platform::WavPack
