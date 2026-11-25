@@ -892,6 +892,7 @@ PROTECTED_ROW_TOKENS = {
     "Main_MissingLibraryReconnectTip": {"missing", "disconnected"},
     "Main_ScanErrorsNoFileFmt": {"scan"},
     "Main_SystemFontHint": {"info"},
+    "Set_BuiltinSourceHanSans": {"sc"},
     "Nav_KeyPlaceholder": {"major"},
     "Playlist_UpgradeForFolder": {"standard"},
     "Playlist_NewInFolderLocked": {"standard"},

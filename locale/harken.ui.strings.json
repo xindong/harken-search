@@ -1299,6 +1299,34 @@
       "ja": "リストフォントサイズ"
     },
     {
+      "id": "Set_ChineseFontFamily",
+      "type": "ui",
+      "zh": "中文字族",
+      "en": "Chinese Font Family",
+      "ja": "中国語のフォント"
+    },
+    {
+      "id": "Set_EnglishFontFamily",
+      "type": "ui",
+      "zh": "英文字族",
+      "en": "English Font Family",
+      "ja": "英語のフォント"
+    },
+    {
+      "id": "Set_NumeralFontFamily",
+      "type": "ui",
+      "zh": "数字字族",
+      "en": "Numeral Font Family",
+      "ja": "数字のフォント"
+    },
+    {
+      "id": "Set_BuiltinSourceHanSans",
+      "type": "ui",
+      "zh": "思源黑体 SC",
+      "en": "Source Han Sans SC",
+      "ja": "源ノ角ゴシック SC"
+    },
+    {
       "id": "Set_SkipLeadingSilence",
       "type": "ui",
       "zh": "跳过开头无声部分",

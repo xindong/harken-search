@@ -119,6 +119,7 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
 ImFont* GetUIFontRegular();
 ImFont* GetUIFontEmphasis();
 ImFont* GetUIFontMono();
+ImFont* GetUIWaveformTimecodeFont();
 ImFont* GetUIListFont();
 ImFont* GetUIListEmphasis();  // list-sized emphasis face for results-table headers
 ImFont* GetUIListMono();      // list-sized mono face for numeric list cells
