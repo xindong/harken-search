@@ -3532,6 +3532,10 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
         if (regionOrigin.displayName.empty()) {
             regionOrigin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
         }
+        if (files.front() != engine.getFileInfo().filePath) {
+            regionOrigin.peakChannels = 1;
+            WaveformExtractor::ExtractExactMonoEnvelope(files.front(), 100, regionOrigin.peaks);
+        }
         StartFileDrag(files, &regionOrigin);
     } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
