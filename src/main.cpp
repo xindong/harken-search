@@ -14244,6 +14244,9 @@ static void RenderBrowserSystemFolderNode(AppState& state,
         }
     }
     ImGui::PushID(folderPath.c_str());
+    if (hasChildren) {
+        ImGui::SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserFolders")));
+    }
     const bool opened = ImGui::TreeNodeEx(displayName.c_str(), flags);
     if (flash > 0.0f) {
         ImGui::PopStyleColor(3);
@@ -14316,6 +14319,9 @@ static void RenderBrowserSystemFolderSearchNode(AppState& state,
         ImGui::PushStyleColor(ImGuiCol_Text, modules.filterBrowser.searchHitText);
     }
     ImGui::PushID(node.path.c_str());
+    if (!node.children.empty()) {
+        ImGui::SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserSearchResults")));
+    }
     const bool opened = ImGui::TreeNodeEx(node.displayName.c_str(), flags);
     if (node.directHit && ImGui::IsItemVisible()) {
         ImVec2 rMin = ImGui::GetItemRectMin();
@@ -14578,6 +14584,7 @@ static void RenderFolderTreeExplorerList(
     float treeH,
     bool collapseAll,
     bool useRoundedChrome,
+    ImGuiStorage& expansionStorage,
     const std::function<void()>& renderRows)
 {
     const ThemeColorScheme& theme = ThemeColors::current();
@@ -14591,13 +14598,13 @@ static void RenderFolderTreeExplorerList(
         styleVars = 2;
     }
     BeginTransientScrollbarChild(childId, ImVec2(-1, treeH), true);
+    ImGuiStorage* previousStorage = ImGui::GetStateStorage();
+    ImGui::SetStateStorage(&expansionStorage);
     if (collapseAll) {
-        ImGuiWindow* tw = ImGui::GetCurrentWindow();
-        if (tw && tw->DC.StateStorage) {
-            tw->DC.StateStorage->Clear();
-        }
+        expansionStorage.Clear();
     }
     renderRows();
+    ImGui::SetStateStorage(previousStorage);
     ImGui::EndChild();
     if (styleVars > 0) {
         ImGui::PopStyleVar(styleVars);
@@ -14735,11 +14742,13 @@ static void RenderBrowserFolderTreeSidebarPanel(
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(previousFramePadding.x, compactTreePadY));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(previousItemSpacing.x, compactTreeSpacingY));
             ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, compactTreeIndentSpacing);
+            static ImGuiStorage browserExpansion;
             RenderFolderTreeExplorerList(
                 browserSource.treeListChildId,
                 treeH,
                 g_browserSystemFolderTreeCollapseAll,
                 false,
+                browserExpansion,
                 [&state, &controls, searchQuery]() {
                     if (!searchQuery.empty()) {
                         RenderBrowserSystemFolderSearchTree(state);
@@ -17086,7 +17095,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const bool collapseFolderTree = state.folderTreeCollapseAll;
         static std::string expansionDatabase;
         static ImGuiStorage folderExpansion;
-        if (expansionDatabase != state.currentDbPathUtf8 || collapseFolderTree) {
+        if (expansionDatabase != state.currentDbPathUtf8) {
             folderExpansion.Clear();
             expansionDatabase = state.currentDbPathUtf8;
         }
@@ -17098,6 +17107,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             treeH,
             collapseFolderTree,
             false,
+            folderExpansion,
             [&]() {
         if (folderTreeLoading && activeFolderHierarchy.subfolders.empty()) {
             ImGui::TextDisabled("%s", L(Nav_BuildingTree));
@@ -17262,15 +17272,12 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         const ImGuiID expansionSeed = playlistScopedFolderTree
             ? ImHashData(&effectivePlaylistFolderTreeId, sizeof(effectivePlaylistFolderTreeId), ImHashStr("SidebarPlaylistFolders"))
             : ImHashStr("SidebarDatabaseFolders");
-        ImGuiStorage* previousStorage = ImGui::GetStateStorage();
-        ImGui::SetStateStorage(&folderExpansion);
         for (const auto& folder : activeFolderHierarchy.subfolders) {
             RenderFolderTreeNode(state, folder, folderSearch,
                                  playlistScopedFolderTree ? FolderTreeSelectionMode::PlaylistFilter
                                                           : FolderTreeSelectionMode::DatabaseFilter,
                                  false, &treeRowMetrics, false, &controls.locate, expansionSeed);
         }
-        ImGui::SetStateStorage(previousStorage);
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
         }
             });

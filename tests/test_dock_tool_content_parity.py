@@ -44,6 +44,19 @@ def test_folder_expansion_storage_does_not_depend_on_the_host_window():
     tree = section(MAIN, "// Section 1: 文件夹树", "// Section 4: 标签云")
     assert "ImGui::SetNextItemStorageID(ImHashStr(folder.path.c_str(), 0, expansionSeed))" in node
     assert "true, locate, expansionSeed)" in node
-    assert "ImGui::SetStateStorage(&folderExpansion)" in tree
-    assert "ImGui::SetStateStorage(previousStorage)" in tree
+    assert "folderExpansion," in tree
     assert "folderExpansion.Clear()" in tree
+
+
+def test_browser_tree_and_search_keep_independent_expansion_across_hosts():
+    browser_node = section(MAIN, "static void RenderBrowserSystemFolderNode", "static void RenderBrowserSystemFolderTree")
+    search_node = section(MAIN, "static void RenderBrowserSystemFolderSearchNode", "static void RenderBrowserSystemFolderSearchTree")
+    browser_panel = section(MAIN, "static void RenderBrowserFolderTreeSidebarPanel", "static void RefreshFolderTreeAfterDbRemoval")
+    list_body = section(MAIN, "static void RenderFolderTreeExplorerList", "static void RenderExplorerShell")
+    assert 'SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserFolders")))' in browser_node
+    assert 'SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserSearchResults")))' in search_node
+    assert "static ImGuiStorage browserExpansion;" in browser_panel
+    assert "browserExpansion," in browser_panel
+    assert list_body.index("expansionStorage.Clear()") < list_body.index("renderRows();")
+    assert list_body.index("ImGui::SetStateStorage(&expansionStorage)") < list_body.index("renderRows();")
+    assert list_body.index("renderRows();") < list_body.index("ImGui::SetStateStorage(previousStorage)")
