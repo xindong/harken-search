@@ -1477,18 +1477,18 @@ void TestDeferredCoverBackfillRefreshesCoverWallAfterStoppedScanContract() {
           "BDD: Deferred cover-backfill job body is inspectable");
     Check(workerSource.find("ConsumeCoverBackfillUiRefresh") != std::string::npos,
           "BDD: Deferred cover-backfill exposes a main-thread consumable refresh signal");
-    Check(coverJobBody.find("RequestCoverBackfillUiRefresh();") != std::string::npos,
+    Check(coverJobBody.find("RequestCoverBackfillUiRefresh(job.dbGeneration);") != std::string::npos,
           "BDD: When cover backfill writes cover keys or registry rows, it requests a cover-wall refresh signal");
-    Check(windowsSource.find("aura::ConsumeCoverBackfillUiRefresh()") != std::string::npos,
+    const size_t consume =
+        windowsSource.find("aura::ConsumeCoverBackfillUiRefresh(state.backfillDbGeneration)");
+    Check(consume != std::string::npos,
           "BDD: Main UI loop consumes cover-backfill refresh signals from worker DB connections");
-    const size_t consume = windowsSource.find("aura::ConsumeCoverBackfillUiRefresh()");
-    const size_t backfillBranch = windowsSource.find("if (backfillCoverRefresh) {", consume);
-    const size_t backfillBranchEnd = windowsSource.find("}", backfillBranch);
-    const std::string backfillBranchBody =
-        (backfillBranch != std::string::npos && backfillBranchEnd != std::string::npos)
-            ? windowsSource.substr(backfillBranch, backfillBranchEnd - backfillBranch)
-            : std::string();
+    const std::string backfillBranchBody = consume != std::string::npos
+        ? ExtractFunctionBody(windowsSource.substr(consume),
+                              "if (backfillCoverRefresh && !state.dbSwitchInProgress)")
+        : std::string();
     Check(!backfillBranchBody.empty() &&
+          backfillBranchBody.find("state.scanCoverResultsRefresh.scanGeneration == 0") != std::string::npos &&
           backfillBranchBody.find("state.requestCoverWallBackfillDisplayRefresh();") != std::string::npos &&
           backfillBranchBody.find("state.invalidateCoverWallAfterDatabaseContentChange();") == std::string::npos,
           "BDD: Consuming deferred cover-backfill refresh uses the lightweight cover-wall display refresh path");
@@ -1570,7 +1570,7 @@ void TestFilteredCoverWallAsyncFacetLimitMatchesUiContract() {
           "BDD: Filtered cover-wall UI consumes async facets instead of issuing a second UI-thread database query");
     Check(workerSource.find("constexpr int kFilteredCoverWallFacetLimit = 10000;") != std::string::npos,
           "BDD: Async search worker defines one shared filtered cover-wall facet limit instead of ad-hoc literals");
-    Check(workerSource.find("m_db->getCoverFacets(req.filter, kFilteredCoverWallFacetLimit)") != std::string::npos,
+    Check(workerSource.find("req.filter, kFilteredCoverWallFacetLimit, !req.scanCoverRefresh)") != std::string::npos,
           "BDD: Async filtered cover-wall facet fetch uses the widened shared limit");
     Check(workerSource.find("m_db->getCoverFacets(req.filter, 1200)") == std::string::npos,
           "BDD: Async filtered cover-wall facet fetch no longer truncates folder/path walls at the legacy 1200 cap");
@@ -1784,7 +1784,7 @@ void TestFilteredRefreshClearsStaleFacetsAtSubmitTimeContract() {
     std::ostringstream buffer;
     buffer << input.rdbuf();
     const std::string source = buffer.str();
-    const std::string refreshBody = ExtractFunctionBody(source, "void RefreshSearchResults(AppState& state, bool resetPagination)");
+    const std::string refreshBody = ExtractFunctionBody(source, "uint64_t RefreshSearchResultsWithRowLimit(");
 
     Check(refreshBody.find("const bool filteredCoverWallRefresh =\n        resetPagination &&\n        state.viewMode == ViewMode::Database &&\n        !coverFilterActive &&\n        HasActiveDbFilterForCoverWall(state);") != std::string::npos,
           "BDD: Filtered refresh submit path explicitly detects when a new DB filter should drop the old facet wall immediately");
@@ -1797,7 +1797,8 @@ void TestFilteredRefreshClearsStaleFacetsAtSubmitTimeContract() {
           "BDD: Filtered refresh submit path clears stale facets through the normal generation/display-refresh path before async results land");
     Check(refreshBody.find("const bool filteredCoverWallFastFirstPaint =\n        filteredCoverWallRefresh &&\n        (state.folderFilterActive ||\n         state.searchBuffer[0] != '\\0' ||\n         HasAdvancedDbFilters(state));") != std::string::npos,
           "BDD: Filtered refresh submit path marks folder/keyword/advanced DB filters as cover-wall first-paint candidates");
-    Check(refreshBody.find("const bool deferCount = filteredCoverWallFastFirstPaint ||") != std::string::npos,
+    Check(refreshBody.find("const bool deferCount = !scanCoverRefresh &&") != std::string::npos &&
+          refreshBody.find("filteredCoverWallFastFirstPaint || preferDeferredCountForThisRefresh") != std::string::npos,
           "BDD: Filtered cover-wall fast first paint defers the heavy count/list lane behind the facet-first path");
 }
 
@@ -1965,7 +1966,7 @@ void TestFilteredCoverWallFastFirstPaintWarmsFacetsBeforePagedListContract() {
           workerBody.find("followup.filter = req.filter;") != std::string::npos,
           "BDD: Async search list, warm-start, and facet follow-up payloads all carry the submitted filter back to the apply site");
     Check(workerBody.find("warmStart.totalCount = m_db->searchFilesCount(req.filter);") != std::string::npos &&
-          workerBody.find("warmStart.coverFacets = m_db->getCoverFacets(req.filter, kFilteredCoverWallFacetLimit);") != std::string::npos,
+          workerBody.find("warmStart.coverFacets = m_db->getCoverFacets(") != std::string::npos,
           "BDD: Filtered cover-wall warm-start computes the cheap count/facet payload before the paged list query");
     Check(workerBody.find("AppendDbQueryPerfLog(\"[DBQuery] searchFiles (facet warm-start): %.2f ms, items=%d, total=%lld\\n\",") != std::string::npos,
           "BDD: Filtered cover-wall warm-start keeps an explicit diagnostics lane for the delayed paged-list query");

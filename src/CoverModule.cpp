@@ -434,11 +434,7 @@ static void AsyncLoaderThread() {
 
         const std::string originalKey = task.key;
 
-        if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
-            std::lock_guard<std::mutex> lk(g_asyncMutex);
-            g_asyncPendingKeys.erase(originalKey);
-            continue;
-        }
+        if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) continue;
 
         std::vector<uint8_t> pixels;
         int w = 0, h = 0;
@@ -602,14 +598,9 @@ static void AsyncLoaderThread() {
             }
         }
 
-        if (success && task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
-            success = false;
-        }
-
         if (success) {
-            // Apply backpressure until the UI upload queue has capacity; a
-            // successfully decoded image is not discarded.
-            while (g_asyncThreadRunning) {
+            while (g_asyncThreadRunning &&
+                   task.generation == g_asyncGeneration.load(std::memory_order_relaxed)) {
                 size_t queueSz;
                 {
                     std::lock_guard<std::mutex> ulk(g_uploadMutex);
@@ -618,25 +609,23 @@ static void AsyncLoaderThread() {
                 if (queueSz < kMaxUploadQueueSize) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
-            
-            PendingUpload u;
-            u.key = task.key;
-            u.kind = task.isEmbedded ? CoverKind::EmbeddedCover : CoverKind::FolderCover;
-            u.folderPathUtf8 = task.path;
-            u.filePathUtf8 = folderCoverImagePathUtf8; // 封面墙按 "F|filePathUtf8" 查，上传时双 key 写入
-            u.pixels = std::move(pixels);
-            u.w = w; u.h = h;
-            if (task.generation == g_asyncGeneration.load(std::memory_order_relaxed)) {
-                PushUpload(std::move(u));
-            }
         }
 
         {
             std::lock_guard<std::mutex> lk(g_asyncMutex);
+            if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) continue;
             g_asyncPendingKeys.erase(originalKey);
-            if (task.key != originalKey)
-                g_asyncPendingKeys.erase(task.key);
             if (success) {
+                PendingUpload upload;
+                upload.key = task.key;
+                upload.kind = task.isEmbedded ? CoverKind::EmbeddedCover : CoverKind::FolderCover;
+                upload.folderPathUtf8 = task.path;
+                upload.filePathUtf8 = folderCoverImagePathUtf8;
+                upload.pixels = std::move(pixels);
+                upload.w = w;
+                upload.h = h;
+                PushUpload(std::move(upload));
+
                 g_asyncFailedKeys.erase(task.key);
                 if (task.key != originalKey)
                     g_asyncFailedKeys.erase(originalKey);
@@ -881,10 +870,10 @@ static bool EnsureFolderCoverTextureLoaded(const std::string& keyOrFolderPathUtf
 
         if (!StartAsyncLoader()) return false;
         {
-            const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
             std::lock_guard<std::mutex> lk(g_asyncMutex);
             if (g_asyncQueue.size() >= kMaxAsyncQueueSize) return false;
-            g_asyncPendingKeys.insert(stableKey);
+            if (!g_asyncPendingKeys.insert(stableKey).second) return false;
+            const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
             g_asyncQueue.push_front({stableKey, pathForLookup, false, 0, true, gen});
             g_asyncCv.notify_one();
         }
@@ -919,10 +908,10 @@ static bool EnsureFolderCoverTextureLoaded(const std::string& keyOrFolderPathUtf
 
     if (!StartAsyncLoader()) return false;
     {
-        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(g_asyncMutex);
         if (g_asyncQueue.size() >= kMaxAsyncQueueSize) return false;
-        g_asyncPendingKeys.insert(folderPath);
+        if (!g_asyncPendingKeys.insert(folderPath).second) return false;
+        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         g_asyncQueue.push_front({folderPath, folderPath, false, 0, true, gen});
         g_asyncCv.notify_one();
     }
@@ -964,10 +953,10 @@ static bool EnsureEmbeddedCoverTextureLoaded(const std::string& key,
     // 3. 发起异步任务
     if (!StartAsyncLoader()) return false;
     {
-        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(g_asyncMutex);
         if (g_asyncQueue.size() >= kMaxAsyncQueueSize) return false;
-        g_asyncPendingKeys.insert(cacheKey);
+        if (!g_asyncPendingKeys.insert(cacheKey).second) return false;
+        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         // Selected-file and viewport requests enter at the front of the queue.
         g_asyncQueue.push_front({cacheKey, representativeFilePathUtf8, true, lodLevel, true, gen});
         g_asyncCv.notify_one();
@@ -1755,8 +1744,8 @@ void PreCacheFolderCovers(const std::vector<std::string>& folderPathsUtf8) {
     if (!StartAsyncLoader()) return;
     bool anyPushed = false;
     {
-        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(g_asyncMutex);
+        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         for (const std::string& path : toEnqueue) {
             if (g_asyncQueue.size() >= kMaxAsyncQueueSize) break;
             if (IsKeyFailedLocked(path) || g_asyncPendingKeys.count(path)) continue;
@@ -1770,11 +1759,9 @@ void PreCacheFolderCovers(const std::vector<std::string>& folderPathsUtf8) {
 }
 
 void InvalidateViewportCoverTasks() {
-    g_asyncGeneration.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(g_asyncMutex);
-    for (const auto& t : g_asyncQueue) {
-        g_asyncPendingKeys.erase(t.key);
-    }
+    g_asyncGeneration.fetch_add(1, std::memory_order_relaxed);
+    g_asyncPendingKeys.clear();
     g_asyncQueue.clear();
     g_asyncCv.notify_all();
 }

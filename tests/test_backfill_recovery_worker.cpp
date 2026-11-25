@@ -227,6 +227,53 @@ int testRebuildAndRefillRecoverDurablePendingRows() {
     return failures;
 }
 
+int testPendingKindLookupUsesIndex() {
+    int failures = 0;
+    const fs::path dbPath = makeTempRoot("backfill_kind_index") / "recovery.db";
+    const int cover = static_cast<int>(aura::BackfillJobKind::CoverResolveAndThumb);
+    const int waveform = static_cast<int>(aura::BackfillJobKind::WaveformL1Overview);
+    Database db;
+    const auto usesIndex = [&] {
+        sqlite3_stmt* statement = nullptr;
+        const bool prepared = sqlite3_prepare_v2(
+            db.db(), "EXPLAIN QUERY PLAN SELECT 1 FROM backfill_pending WHERE kind = ? LIMIT 1",
+            -1, &statement, nullptr) == SQLITE_OK;
+        const bool found = prepared && sqlite3_bind_int(statement, 1, cover) == SQLITE_OK &&
+            sqlite3_step(statement) == SQLITE_ROW;
+        const auto* detail = found ? reinterpret_cast<const char*>(
+            sqlite3_column_text(statement, 3)) : nullptr;
+        const bool indexed = detail && std::string(detail).find(
+            "SEARCH backfill_pending USING COVERING INDEX idx_backfill_pending_kind") != std::string::npos;
+        sqlite3_finalize(statement);
+        return indexed;
+    };
+    check(db.open(dbPath.u8string()), "open new durable kind lookup database", failures);
+    if (failures) return failures;
+    check(usesIndex(), "new database searches the durable queue by indexed kind", failures);
+    check(sqlite3_exec(db.db(), "DROP INDEX IF EXISTS idx_backfill_pending_kind",
+                      nullptr, nullptr, nullptr) == SQLITE_OK,
+          "prepare old database without kind index", failures);
+    db.close();
+    if (!db.open(dbPath.u8string())) return failures + 1;
+    check(usesIndex(), "opening an old database adds the durable kind index", failures);
+    check(sqlite3_exec(db.db(),
+                      "INSERT INTO audio_files(id, file_path, file_name) VALUES(1, 'kind-index.wav', 'kind-index.wav')",
+                      nullptr, nullptr, nullptr) == SQLITE_OK,
+          "seed the file owning the durable jobs", failures);
+    const auto insertPending = [&](int kind) {
+        const std::string sql = "INSERT INTO backfill_pending(file_id, kind, enqueued_at) VALUES(1, " +
+            std::to_string(kind) + ", 1)";
+        return sqlite3_exec(db.db(), sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
+    };
+    check(insertPending(waveform) && db.hasBackfillPendingKind(cover) == false,
+          "pending waveform work does not count as cover work", failures);
+    check(insertPending(cover) && db.hasBackfillPendingKind(cover) == true,
+          "pending cover work is found alongside a waveform job", failures);
+    db.close();
+    removeDbArtifacts(dbPath);
+    return failures;
+}
+
 int testWorkerContinuouslyRefillsBeyond4096Rows() {
     int failures = 0;
     const fs::path root = makeTempRoot("backfill_refill_beyond_4096");
@@ -1513,6 +1560,9 @@ int testScanTakeoverPreservesInFlightOwnership() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--kind-index") {
+        return testPendingKindLookupUsesIndex() == 0 ? 0 : 1;
+    }
     int failures = 0;
     std::cout << "=== Backfill Recovery/Worker Tests ===\n";
     failures += testPendingJobsFollowNewScanSession();
@@ -1529,6 +1579,8 @@ int main(int argc, char** argv) {
     failures += testDurableRefillRearmsPermanentFailureRuntimeEntry();
     std::cout << "-- testWorkerContinuouslyRefillsBeyond4096Rows\n";
     failures += testWorkerContinuouslyRefillsBeyond4096Rows();
+    std::cout << "-- testPendingKindLookupUsesIndex\n";
+    failures += testPendingKindLookupUsesIndex();
     std::cout << "-- testScanEnqueueKeepsBoundedRuntimeWindow\n";
     failures += testScanEnqueueKeepsBoundedRuntimeWindow();
     std::cout << "-- testWorkerPoolMarksForegroundCoverNoSourceTerminal\n";

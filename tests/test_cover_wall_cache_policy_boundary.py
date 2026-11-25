@@ -142,6 +142,7 @@ def _build_async_completion_probe(folder):
     cover = _production_source("src/CoverModule.h")
     database = _production_source("src/Database.h")
     adapter = _production_source("src/CoverWallRefreshStateAdapter.cpp")
+    refresh = _production_source("src/AsyncSearchRefreshResultCompositionAdapter.cpp")
     main = _production_source("src/main.cpp")
     fragments = {
         "cover_item": ";\n".join(
@@ -153,6 +154,13 @@ def _build_async_completion_probe(folder):
         )) + ";",
         "database_entry": _cpp_block(database, "struct CoverWallEntry") + ";",
         "app_invalidation": _cpp_block(app, "void invalidateCoverWallAfterDatabaseContentChange()"),
+        "app_scan_cover_refresh": "\n".join(
+            _cpp_block(app, signature) for signature in (
+                "void requestCoverWallBackfillDisplayRefresh()",
+                "void requestCoverWallScanBackfillRefresh()",
+            ) if signature in app
+        ),
+        "scan_cover_refresh": _cpp_block(refresh, "if (result_.scanCoverRefresh)"),
         "force_reload": _cpp_block(adapter, "void ForceCoverWallReload(AppState& state)"),
         "request_invalidation": _cpp_block(adapter, "void RequestDatabaseInvalidation(AppState& state)"),
         "completions": "\n".join(
@@ -202,5 +210,12 @@ def async_completion_probe():
 def test_late_result_preserves_new_first_page(async_completion_probe, request_kind):
     result = subprocess.run(
         [str(async_completion_probe), request_kind], text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_scan_backfill_reloads_an_already_loaded_global_wall(async_completion_probe):
+    result = subprocess.run(
+        [str(async_completion_probe), "scan-backfill"], text=True, capture_output=True, timeout=10
     )
     assert result.returncode == 0, result.stdout + result.stderr

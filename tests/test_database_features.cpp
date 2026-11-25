@@ -1525,7 +1525,7 @@ int testLargeCoverBrowseHotPathsUseBoundedRegistryHeuristic() {
 
     const std::string facetBody = extractFunctionBody(
         source,
-        "std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilter& filter, int limit)");
+        "std::vector<Database::CoverFacetEntry> Database::getCoverFacets(");
     const bool facetUsesBoundedHelper =
         !facetBody.empty() &&
         facetBody.find("AssessGlobalCoverAggregationReadiness") != std::string::npos &&

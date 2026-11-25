@@ -25,7 +25,7 @@ public:
     ~AudioEmbeddingService();
     AudioEmbeddingService(const AudioEmbeddingService&) = delete;
     AudioEmbeddingService& operator=(const AudioEmbeddingService&) = delete;
-    bool Load(const std::string& directory, std::string& error);
+    bool Load(const std::string& directory, std::string& error, int intraOpThreads = 4);
     bool IsReady() const;
     bool MakeMel(const float* pcm, size_t samples, std::vector<float>& mel, std::string& error,
                  const FeatureExtractionCancelCheck& cancel = {}) const;

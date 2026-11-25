@@ -618,6 +618,7 @@ public:
     bool clearBackfillPending(int64_t fileId, int kind);
     int  countBackfillPending();
     int  countBackfillPendingKind(int kind);
+    std::optional<bool> hasBackfillPendingKind(int kind);
     int  countBackfillPendingKindInFolder(int kind, const std::string& folderPathPrefix);
     bool hasBackfillPending(int64_t fileId, int kind);
     bool resetScanForegroundCompletionSession(int64_t scanSessionId);
@@ -1166,7 +1167,8 @@ public:
     bool isCoverWallOrderIndexReady() const;
     static bool flushCoverWallOrderIndexDirtyAtPath(const std::string& dbPath, int maxTiles = 4096);
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
-    std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
+    std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200,
+                                              bool allowCachedFacets = true);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);
     bool persistCoverFacetCache(const SearchFilter& filter,
                                 int limit,

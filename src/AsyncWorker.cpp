@@ -1411,6 +1411,8 @@ void SearchWorker::workerThread() {
         result.countFollowUpSkipped = req.skipDeferredCountFollowUp;
         // Preserve the request's random-shuffle flag in the result.
         result.isRandomShuffle = req.isRandomShuffle;
+        result.scanCoverRefresh = req.scanCoverRefresh;
+        if (req.scanCoverRefresh) m_facetCache.clear();
         // Carry the submit-time database revision with the result so the
         // apply site records the revision represented by these rows.
 
@@ -1492,7 +1494,8 @@ void SearchWorker::workerThread() {
                                 ? BuildFacetCacheKey(req, totalCountLocal)
                                 : std::string();
                         if (!tryLoadFacetCache(facetCacheKey, warmStart.coverFacets, warmStart.pathFacets)) {
-                            warmStart.coverFacets = m_db->getCoverFacets(req.filter, kFilteredCoverWallFacetLimit);
+                            warmStart.coverFacets = m_db->getCoverFacets(
+                                req.filter, kFilteredCoverWallFacetLimit, !req.scanCoverRefresh);
                             warmStart.pathFacets = m_db->getPathFacets(req.filter, 300);
                             storeFacetCache(facetCacheKey, warmStart.coverFacets, warmStart.pathFacets);
                         }
@@ -1527,7 +1530,8 @@ void SearchWorker::workerThread() {
                         const std::string facetCacheKey =
                             allowFacetCache ? BuildFacetCacheKey(req, totalCountLocal) : std::string();
                         if (!tryLoadFacetCache(facetCacheKey, result.coverFacets, result.pathFacets)) {
-                            result.coverFacets = m_db->getCoverFacets(req.filter, kFilteredCoverWallFacetLimit);
+                            result.coverFacets = m_db->getCoverFacets(
+                                req.filter, kFilteredCoverWallFacetLimit, !req.scanCoverRefresh);
                             result.pathFacets = m_db->getPathFacets(req.filter, 300);
                             storeFacetCache(facetCacheKey, result.coverFacets, result.pathFacets);
                         }
@@ -1807,7 +1811,8 @@ void SearchWorker::workerThread() {
                             m_searching.store(false);
                             continue;
                         }
-                        followup.coverFacets = m_db->getCoverFacets(req.filter, kFilteredCoverWallFacetLimit);
+                        followup.coverFacets = m_db->getCoverFacets(
+                            req.filter, kFilteredCoverWallFacetLimit, !req.scanCoverRefresh);
                         if (req.requestId >= m_latestRequestId.load(std::memory_order_acquire)) {
                             followup.pathFacets = m_db->getPathFacets(req.filter, 300);
                         }

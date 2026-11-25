@@ -12,6 +12,12 @@ HIT_TEST = ROOT / "src" / "DockHitTest.h"
 
 
 class DockRuntimeGeometryWiringContract(unittest.TestCase):
+    def test_drop_planning_uses_the_rendered_side_gap(self) -> None:
+        main = MAIN.read_text(encoding="utf-8")
+        hit_test = HIT_TEST.read_text(encoding="utf-8")
+        self.assertIn("rootSlots.visibleSideGapPx = splitterWidth;", main)
+        self.assertIn("const float sideGap = plan.slots.visibleSideGapPx;", hit_test)
+
     def test_live_frame_and_grips_use_the_production_geometry_snapshot(self) -> None:
         main = MAIN.read_text(encoding="utf-8")
         bridge = BRIDGE.read_text(encoding="utf-8")
@@ -42,6 +48,15 @@ class DockRuntimeGeometryWiringContract(unittest.TestCase):
         self.assertTrue("UpdateFloatingDockPanelGeometry" in main, "floating resize records actual bounds")
         self.assertTrue("drawFloatingDockTestPanel" in main, "Dock Test floats have a render path")
         self.assertTrue("g_dockCommittedThisFrame" in main, "a panel cannot render docked and floating in one frame")
+
+    def test_side_commit_does_not_store_the_other_columns_extent(self) -> None:
+        main = MAIN.read_text(encoding="utf-8")
+        mirror = main.split("static void MirrorDockCommitToPanel(", 1)[1].split("static void MirrorDockRootExtent", 1)[0]
+        self.assertIn("&state.panelSidebar", mirror, "the filter state owns the left column, even when filter is elsewhere")
+        self.assertIn("&state.panelFileInfo", mirror, "the info state owns the right column, even when info is elsewhere")
+        self.assertIn("panel.dockedWidth = mirror.dockedWidth", mirror)
+        self.assertNotIn("DockSide::Right, g_dockDropPlan.slots.right", main)
+        self.assertNotIn("DockSide::Left, g_dockDropPlan.slots.left", main)
 
 
 if __name__ == "__main__":
