@@ -3533,12 +3533,8 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
             regionOrigin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
         }
         if (files.front() != engine.getFileInfo().filePath) {
-            WaveformData renderedWaveform;
-            regionOrigin.peaks.clear();
-            if (AudioEngine::generateQuickWaveformForFile(files.front(), renderedWaveform)) {
-                regionOrigin.peaks = std::move(renderedWaveform.peaks);
-                regionOrigin.peakChannels = renderedWaveform.numChannels;
-            }
+            regionOrigin.peakChannels = 1;
+            WaveformExtractor::ExtractExactMonoEnvelope(files.front(), 100, regionOrigin.peaks);
         }
         StartFileDrag(files, &regionOrigin);
     } else {

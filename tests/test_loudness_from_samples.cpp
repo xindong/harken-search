@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../src/AudioEngine.h"
+#include "../src/WaveformExtractor.h"
 #include "../thirdparty/miniaudio.h"
 #include "../src/platform/audio_data_source.h"
 #include "../src/Database.h"
@@ -85,9 +86,9 @@ static void CHECK(bool c, const char* d) {
     else   { ++failed; std::printf("  FAIL: %s\n", d); }
 }
 
-// 1 kHz sine, 48 kHz mono, 1 second, 16-bit WAV.
-static void WriteSineWav(const std::string& path) {
-    const uint32_t sr = 48000, frames = 48000;
+template<class SampleAt>
+static void WritePcmWav(const std::string& path, uint32_t frames, SampleAt sampleAt) {
+    const uint32_t sr = 48000;
     auto le16 = [](std::vector<uint8_t>& o, uint16_t v){ o.push_back(v&0xFF); o.push_back((v>>8)&0xFF); };
     auto le32 = [](std::vector<uint8_t>& o, uint32_t v){ for(int i=0;i<4;++i) o.push_back((v>>(8*i))&0xFF); };
     std::vector<uint8_t> w;
@@ -97,12 +98,18 @@ static void WriteSineWav(const std::string& path) {
     le16(w,1); le16(w,1); le32(w,sr); le32(w,sr*2); le16(w,2); le16(w,16);
     w.insert(w.end(), {'d','a','t','a'}); le32(w,dataBytes);
     for (uint32_t i=0;i<frames;++i){
-        double t=(double)i/sr;
-        int16_t s=(int16_t)std::lround(0.5*32767.0*std::sin(2*3.14159265358979*1000.0*t));
+        const int16_t s = sampleAt(i);
         w.push_back((uint8_t)(s&0xFF)); w.push_back((uint8_t)((s>>8)&0xFF));
     }
     std::ofstream o(path, std::ios::binary);
     o.write((const char*)w.data(), (std::streamsize)w.size());
+}
+
+static void WriteSineWav(const std::string& path) {
+    WritePcmWav(path, 48000, [](uint32_t frame) {
+        const double time = static_cast<double>(frame) / 48000;
+        return static_cast<int16_t>(std::lround(0.5 * 32767.0 * std::sin(2 * 3.14159265358979 * 1000.0 * time)));
+    });
 }
 
 int main() {
@@ -192,6 +199,20 @@ int main() {
     g_reportZeroLength = false;
     CHECK(!overCap, "decode cap rejects a file larger than the frame budget");
     CHECK(capped.empty(), "rejected capped decode retains no samples");
+    std::remove(wav.c_str());
+
+    WritePcmWav(wav, 480001, [](uint32_t frame) -> int16_t {
+        if (frame == 2400) return -24576;
+        if (frame == 480000) return 16384;
+        return 0;
+    });
+    std::vector<float> dragPeaks;
+    const bool dragWaveformOk = WaveformExtractor::ExtractExactMonoEnvelope(wav, 100, dragPeaks);
+    CHECK(dragWaveformOk && dragPeaks.size() == 100, "drag waveform has 100 bounded peaks");
+    CHECK(dragPeaks.size() == 100 && dragPeaks.front() >= 0.74f && dragPeaks[1] == 0.0f,
+          "drag waveform retains a negative hit between quick scan windows");
+    CHECK(dragPeaks.size() == 100 && dragPeaks.back() >= 0.49f && dragPeaks[98] == 0.0f,
+          "drag waveform retains the final frame without shifting nearby silence");
     std::remove(wav.c_str());
     std::printf("\n=== LoudnessFromSamples: %d passed, %d failed ===\n", passed, failed);
     return failed ? 1 : 0;

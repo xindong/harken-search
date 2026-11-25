@@ -79,7 +79,7 @@ struct WaveformData {
     int numChannels = 1;
 };
 
-static std::unordered_map<std::string, WaveformData> transferWaveforms;
+static std::unordered_map<std::string, std::vector<float>> transferEnvelopes;
 static std::vector<std::string> transferWaveformLookups;
 static std::string preparedDragPath;
 static HarkenSearch::AudioDragCard::CardSpec capturedDragCard;
@@ -94,11 +94,15 @@ struct AudioEngine {
     std::shared_ptr<const WaveformData> getWaveformData() const {
         return std::make_shared<WaveformData>(WaveformData{{0.9f, 0.1f, 0.7f}});
     }
-    static bool generateQuickWaveformForFile(const std::string& file, WaveformData& waveform, int = 100, bool = false) {
+};
+
+struct WaveformExtractor {
+    static bool ExtractExactMonoEnvelope(const std::string& file, int, std::vector<float>& peaks) {
         transferWaveformLookups.push_back(file);
-        const auto existing = transferWaveforms.find(file);
-        if (existing == transferWaveforms.end()) return false;
-        waveform = existing->second;
+        peaks.clear();
+        const auto existing = transferEnvelopes.find(file);
+        if (existing == transferEnvelopes.end()) return false;
+        peaks = existing->second;
         return true;
     }
 };
@@ -111,8 +115,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine&, std::vector<std::string
 
 static void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* origin);
 enum { Misc_DragFailed, MB_DragFailTitle };
-static const char* L(int) { return ""; }
-static std::wstring Lw(int) { return {}; }
+static const char* L([[maybe_unused]] int id) { return ""; }
+static std::wstring Lw([[maybe_unused]] int id) { return {}; }
 namespace Platform {
 static void ShowMessageBox(HWND, const wchar_t*, const wchar_t*, UINT) {}
 }
@@ -257,7 +261,7 @@ static int TestRegionDragWaveform() {
               transferWaveformLookups.empty(), "whole-file drag keeps the source waveform without a new decode");
 
     preparedDragPath = "rendered_region.wav";
-    transferWaveforms[preparedDragPath] = WaveformData{{0.1f, 0.2f}};
+    transferEnvelopes[preparedDragPath] = {0.1f, 0.2f};
     StartRegionDrag(engine, 0.0f, 0.0f, true, &origin);
     Check(capturedDragCard.envelope == std::vector<float>{0.1f, 0.2f} &&
               transferWaveformLookups == std::vector<std::string>{preparedDragPath},
@@ -265,7 +269,13 @@ static int TestRegionDragWaveform() {
     Check(capturedDragCard.fileName == L"source.wav" && EqualRect(&capturedDragRect, &sourceRect),
           "region drag retains the original label and animation source rectangle");
 
-    transferWaveforms.clear();
+    preparedDragPath = "rendered_sparse_region.wav";
+    transferEnvelopes[preparedDragPath] = {0.0f, 0.9f, 0.0f};
+    StartRegionDrag(engine, 0.0f, 0.0f, true, &origin);
+    Check(capturedDragCard.envelope == std::vector<float>{0.0f, 0.9f, 0.0f},
+          "region drag shows a short hit between quick preview read windows");
+
+    transferEnvelopes.clear();
     StartRegionDrag(engine, 0.0f, 0.0f);
     Check(capturedDragCard.envelope.empty(),
           "an unreadable transfer waveform cannot fall back to the entire source waveform");
