@@ -5260,6 +5260,11 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
     }
 }
 
+// QA 隔离构建专用：走与右键「发送到宿主」完全相同的 SendToDAW 路径。
+void QaSendToDaw(AppState& state, int dawIndex) {
+    SendToDAW(state, dawIndex);
+}
+
 // Top-level: Send = prepare payload (shared with drag) → dispatch to DAW (async)
 static void SendToDAW(AppState& state, int dawIndex) {
     SendToDAW(state, dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost);
@@ -42850,7 +42855,7 @@ void RenderUI(AppState& state) {
         // Calculate dynamic column count based on settings
         int meterColumnCount = 3;  // LUFS + RMS + TruePeak 始终注册（DefaultHide，右键可开关）
         int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
-        int totalColumns = 18 + meterColumnCount + coverColumnCount;  // Filename..FilePath + Rating + meters + optional cover
+        int totalColumns = 19 + meterColumnCount + coverColumnCount;  // Filename..FilePath + UseCount + Rating + meters + optional cover
 
         // Table ID V5 - 移除历史列 (已播放文件用文字颜色高亮)
         // inner_width 动态计算：取可用宽度和最小宽度的较大值

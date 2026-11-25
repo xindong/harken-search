@@ -3921,6 +3921,7 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
     }
 }
 
+extern void QaSendToDaw(AppState&, int);
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
 extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
 #if ARIS_PREVIEW_ISOLATION
@@ -6164,6 +6165,25 @@ static void PollQaCommandFile(AppState& state) {
                    + ",\"visible_rows\":" + std::to_string(visibleRows)
                    + ",\"result_count\":" + std::to_string(resultCount) + "}";
         }
+
+    } else if (cmd == "send_to_daw") {
+        const int dawIndex = getInt(raw, "index", state.selectedDAWIndex);
+        const bool hasSelection = !state.selectedIndicesSet.empty() ||
+            (state.selectedResultIndex >= 0 && state.selectedResultIndex < (int)state.searchResults.size());
+        if (!hasSelection) {
+            result = "{\"ok\":false,\"cmd\":\"send_to_daw\",\"error\":\"no selection\"}";
+        } else if (dawIndex < 0 || dawIndex >= (int)state.settings.dawTargets.size()) {
+            result = "{\"ok\":false,\"cmd\":\"send_to_daw\",\"error\":\"target index out of range\"}";
+        } else {
+            QaSendToDaw(state, dawIndex);
+            result = "{\"ok\":true,\"cmd\":\"send_to_daw\",\"index\":" + std::to_string(dawIndex) + "}";
+        }
+
+    } else if (cmd == "send_feedback") {
+        const auto snapshot = state.dawSendFeedback.snapshot();
+        result = "{\"ok\":true,\"cmd\":\"send_feedback\",\"outcome\":" + std::to_string((int)snapshot.outcome)
+               + ",\"sent\":" + std::to_string(snapshot.sent.value_or(-1))
+               + ",\"total\":" + std::to_string(snapshot.total.value_or(-1)) + "}";
 
     } else if (cmd == "send_target_menu") {
 #if ARIS_PREVIEW_ISOLATION
