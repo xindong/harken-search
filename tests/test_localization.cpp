@@ -75,6 +75,24 @@ int main() {
             ++failures;
         }
     }
+    const struct {
+        AppLanguage language;
+        const char* name;
+        const char* help;
+    } workflowCopy[] = {
+        {AppLanguage::Chinese, u8"设置字段", u8"将字段设为固定值。"},
+        {AppLanguage::English, "Set Field", "Set a field to a fixed value."},
+        {AppLanguage::Japanese, u8"フィールドを設定", u8"フィールドを固定値に設定します。"},
+    };
+    for (const auto& expected : workflowCopy) {
+        g_currentLanguage = expected.language;
+        if (std::strcmp(L(Wf_NodeSetFieldName), expected.name) != 0 ||
+            std::strcmp(L(Wf_NodeSetFieldHelp), expected.help) != 0) {
+            std::cerr << "FAIL: workflow node localization for "
+                      << static_cast<int>(expected.language) << '\n';
+            ++failures;
+        }
+    }
     // --- Knife-6 W6-1: wide accessor (Lw) contract ---------------------
     g_currentLanguage = AppLanguage::Chinese;
     {

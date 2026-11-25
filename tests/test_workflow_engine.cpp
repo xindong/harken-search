@@ -91,14 +91,6 @@ int main() {
               "Number name");
     }
 
-    // ── getNodeTypeNameZh ──
-    std::printf("\n--- getNodeTypeNameZh ---\n");
-    {
-        const char* zh = WorkflowEngine::getNodeTypeNameZh(WorkflowNodeType::SetField);
-        CHECK(zh != nullptr && zh[0] != '\0', "SetField has Chinese name");
-        CHECK(std::strcmp(zh, "Set Field") != 0, "SetField zh differs from en");
-    }
-
     // ── getAvailableNodeTypes ──
     std::printf("\n--- getAvailableNodeTypes ---\n");
     {
