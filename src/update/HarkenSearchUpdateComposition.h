@@ -1,6 +1,6 @@
 #pragma once
 
-#include "update/UpdateState.h"
+#include "update/UpdateApplicationService.h"
 
 #include <cstdint>
 #include <optional>
@@ -91,6 +91,24 @@ inline void ApplyHarkenSearchUpdateSnapshot(
         case UpdatePhase::Idle:
             state.phase = HarkenSearchUpdateUiPhase::Idle;
             break;
+    }
+}
+
+inline void ApplyHarkenSearchUpdateOperationResult(
+    HarkenSearchUpdateUiState& state,
+    const UpdateApplicationResult& result,
+    HarkenSearchUpdateCheckOrigin checkOrigin) {
+    if (result.checkFailed) {
+        state.phase = HarkenSearchUpdateUiPhase::Error;
+        state.checkInFlight = false;
+        state.failedCheckOrigin = checkOrigin;
+        state.lastError = result.detail;
+        state.ClearDownloadProgress();
+    } else if (result.disposition == UpdateApplicationDisposition::TerminalError) {
+        ApplyHarkenSearchUpdateSnapshot(state, result.snapshot,
+            HarkenSearchUpdateCheckOrigin::None);
+    } else {
+        ApplyHarkenSearchUpdateSnapshot(state, result.snapshot);
     }
 }
 

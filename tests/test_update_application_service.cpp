@@ -657,7 +657,7 @@ void test_a_new_download_failure_is_visible_even_with_the_previous_check_error_t
 
     HarkenSearchUpdateUiState ui;
     const auto failedCheck = service.CheckNow(checkCancellation, downloadCancellation);
-    ApplyHarkenSearchUpdateSnapshot(ui, failedCheck.snapshot, CheckOrigin::Manual);
+    ApplyHarkenSearchUpdateOperationResult(ui, failedCheck, CheckOrigin::Manual);
     check(failedCheck.disposition == UpdateApplicationDisposition::Failed &&
               ui.SuppressesDownloadNotice(),
           "a check failure is not a download failure regardless of the detail text");
@@ -667,10 +667,44 @@ void test_a_new_download_failure_is_visible_even_with_the_previous_check_error_t
               failedDownload.snapshot.lastError == ui.lastError &&
               downloadTransport.executions == 1 && bootstrap.authorizations == 0,
           "a later check finds an update and the download really fails with the same detail");
-    ApplyHarkenSearchUpdateSnapshot(ui, failedDownload.snapshot, CheckOrigin::None);
+    ApplyHarkenSearchUpdateOperationResult(ui, failedDownload, CheckOrigin::Manual);
     check(ui.phase == HarkenSearchUpdateUiPhase::Error &&
               ui.failedCheckOrigin == CheckOrigin::None && !ui.SuppressesDownloadNotice(),
           "a new download failure is not suppressed as a replay of the check failure");
+}
+
+void test_check_retry_persistence_failure_stays_out_of_download_notice() {
+    using CheckOrigin = HarkenSearchUpdateCheckOrigin;
+    UpdateCheckFetchResult offline;
+    offline.error = UpdateCheckFetchError::Network;
+    offline.detail = "update check HTTPS request failed";
+    ScriptedCheckTransport checkTransport;
+    checkTransport.responses = {offline};
+    FakeDownloadTransport downloadTransport;
+    FakePersistence persistence;
+    FakeClock clock;
+    RecordingBootstrapPort bootstrap;
+    UpdateApplicationService service(
+        checkTransport, downloadTransport, persistence, capacity(), clock,
+        bootstrap, config());
+    NeverCheckCancelled checkCancellation;
+    NeverDownloadCancelled downloadCancellation;
+
+    HarkenSearchUpdateUiState ui;
+    const auto failedCheck = service.CheckNow(checkCancellation, downloadCancellation);
+    ApplyHarkenSearchUpdateOperationResult(ui, failedCheck, CheckOrigin::Manual);
+    persistence.failStoreAt = persistence.storePlans;
+    ui.BeginCheckPresentation();
+    const auto failedRetry = service.CheckNow(checkCancellation, downloadCancellation);
+    check(failedRetry.disposition == UpdateApplicationDisposition::TerminalError &&
+              failedRetry.error == DownloadErrorKind::Disk &&
+              failedRetry.snapshot.lastError == failedCheck.detail &&
+              checkTransport.requests.size() == 1 && downloadTransport.executions == 0,
+          "retry admission fails before transport and keeps the previous persisted snapshot");
+    ApplyHarkenSearchUpdateOperationResult(ui, failedRetry, CheckOrigin::Manual);
+    check(ui.phase == HarkenSearchUpdateUiPhase::Error && ui.SuppressesDownloadNotice() &&
+              ui.failedCheckOrigin == CheckOrigin::Manual && ui.lastError == failedRetry.detail,
+          "a rejected check retry shows the current disk error without a download notice");
 }
 
 void test_signature_schema_caps_disk_and_check_cancel_fail_closed() {
@@ -1109,6 +1143,7 @@ int main(int argc, char** argv) {
     test_manual_supersedes_startup_and_periodic_rearms_without_stale_work();
     test_https_check_failures_only_use_update_center_and_allow_manual_recovery();
     test_a_new_download_failure_is_visible_even_with_the_previous_check_error_text();
+    test_check_retry_persistence_failure_stays_out_of_download_notice();
     test_signature_schema_caps_disk_and_check_cancel_fail_closed();
     test_download_retry_stale_and_cross_service_intents_are_capability_bound();
     test_superseding_preserves_ready_fallback_and_bootstrap_retry_is_exact();

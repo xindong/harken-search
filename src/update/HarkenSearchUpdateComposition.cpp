@@ -271,13 +271,9 @@ void StartHarkenSearchAutomaticUpdate() {
                     withNotes.candidateReleaseNotesFailed = !read;
                     SetUiState(withNotes);
                 }
-                if (result.disposition == UpdateApplicationDisposition::Failed ||
-                    result.disposition == UpdateApplicationDisposition::TerminalError) {
-                    MergeSnapshot(result.snapshot,
-                        result.disposition == UpdateApplicationDisposition::Failed
-                            ? checkOrigin : CheckOrigin::None);
-                } else {
-                    MergeSnapshot(result.snapshot);
+                {
+                    std::lock_guard<std::mutex> lock(g_updateUiMutex);
+                    ApplyHarkenSearchUpdateOperationResult(g_updateUiState, result, checkOrigin);
                 }
                 enqueue(result);
             };

@@ -188,12 +188,7 @@ def test_update_owner_preserves_check_failure_origin() -> None:
         r"\? CheckOrigin::Automatic : CheckOrigin::None\);",
         source,
     )
-    assert re.search(
-        r"MergeSnapshot\(result\.snapshot,\s*"
-        r"result\.disposition == UpdateApplicationDisposition::Failed\s*"
-        r"\? checkOrigin : CheckOrigin::None\);",
-        source,
-    ), "only an actual check failure owns check feedback, not a package failure"
+    assert "ApplyHarkenSearchUpdateOperationResult(g_updateUiState, result, checkOrigin);" in source
 
 
 def test_bootstrap_product_failure_prompts_reinstall_without_touching_user_data() -> None:
