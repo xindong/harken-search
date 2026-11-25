@@ -1192,7 +1192,7 @@ public:
     std::vector<std::string> getDistinctFolderPaths();
 
     /** 极速搜索联想词，基于 FTS5 Vocab 树状索引，百万级库 <1ms */
-    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit = 10);
+    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit, int maxTermBytes);
 
     /** 设置 AppSettings 指针，用于访问性能模式设置 */
     void setSettings(struct AppSettings* settings);
@@ -1209,7 +1209,10 @@ public:
     bool rebuildFolderIndex();
     /** 删除/移动文件后调用，使 facet 总数与文件夹树数量下次从数据库重算 */
     bool invalidateFacetQueryCache();
-    void clearSearchCountMemoryCache() { m_countMemCache.clear(); }
+    void clearSearchCountMemoryCache() {
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
+        m_countMemCache.clear();
+    }
     bool rebuildTagFacetIndex();
     bool invalidateTagFacetIndex();
     bool isTagFacetIndexValid() const;
@@ -1280,6 +1283,7 @@ public:
 
 // 文件系统监听（VFS监听）
     void startFileSystemWatcher(const std::vector<std::string>& watchDirectories);
+    void refreshFileSystemWatcher();
     void stopFileSystemWatcher();
     void handleFileSystemEvent(const std::string& filePath, bool isAdded, bool isDeleted, bool isModified);
 
@@ -1420,6 +1424,11 @@ private:
     static bool startsWithPathPrefix(const std::string& pathNorm, const std::string& prefixNorm);
     void pruneFsDedupeLocked(uint64_t nowMs);
     bool shouldSuppressWatcherEvent(const FileSystemWatcher::FileEvent& event);
+    AudioRecord getWatcherFileByPath(const std::string& filePath);
+    bool upsertFile(const AudioRecord& record, bool refreshFolderCount);
+    void refreshIndexedFolderCounts(const std::string& folder, const std::string& otherFolder = {});
+    void refreshWavPackCorrection(const std::string& correctionPath);
+    void notifyWatcherChange(WatcherChangeType type, const std::string& path);
 
     std::vector<std::string> getNetworkLibraryRoots() const;
     bool setFileTagsInTransaction(int64_t fileId, const std::vector<std::string>& tagNames);
@@ -1686,13 +1695,17 @@ public:
     // Cleared by invalidateFacetQueryCache().
     struct CountMemCacheEntry { int64_t count; int64_t expirySec; };
     std::unordered_map<std::string, CountMemCacheEntry> m_countMemCache;
+    std::mutex m_searchCountCacheMutex;
     int64_t m_cachedFileCount = -1;
     uint64_t m_cachedFileCountRevision = 0;
     std::chrono::steady_clock::time_point m_cachedFileCountTime{};
     std::string m_blobsDbPath; // 封面数据库路径（blobs.db）
     std::string m_waveformsDbPath; // 波形数据库路径（waveforms.db）
 
-    FileSystemWatcher* m_fileSystemWatcher = nullptr;
+    std::unique_ptr<FileSystemWatcher> m_fileSystemWatcher;
+    std::vector<std::string> m_watcherLibraryRoots;
+    std::thread m_watcherRootRefreshThread;
+    std::atomic<bool> m_watcherRootsRefreshing{false};
     WatcherChangeCallback m_watcherChangeCallback;
 
     struct AppSettings* m_settings = nullptr;  // 指向 AppSettings 的指针，用于访问性能模式设置

@@ -72,6 +72,19 @@ bool requireNotContains(const std::string& haystack, const std::string& needle, 
 
 
 
+bool requireFollowingLine(const std::string& source, const std::string& first,
+                          const std::string& next, const char* message) {
+    const size_t firstStart = source.find(first + '\n');
+    if (firstStart != std::string::npos) {
+        const size_t nextStart = source.find_first_not_of(" \t", firstStart + first.size() + 1);
+        if (nextStart != std::string::npos && source.compare(nextStart, next.size(), next) == 0) {
+            return true;
+        }
+    }
+    std::cerr << "FAIL: " << message << "\nexpected next line: " << next << "\n";
+    return false;
+}
+
 bool requireOrder(const std::string& haystack, const std::string& first, const std::string& second, const char* message) {
 
     const size_t a = haystack.find(first);
@@ -246,29 +259,43 @@ int main() {
 
                           "results table clamps header auto-fit or drag resize when filename width becomes unreadable");
 
-    ok &= requireContains(mainCpp, "Breadcrumb path chip flow",
+    ok &= requireContains(mainCpp, "breadcrumbChipPadX = 2.0f",
 
-                          "database breadcrumb documents readable chip-flow behavior");
+                          "database breadcrumb uses compact horizontal padding without shrinking the font");
 
-    ok &= requireContains(mainCpp, "breadcrumbContentRightX",
+    ok &= requireContains(mainCpp, "breadcrumbSeparatorPadX = 4.0f",
 
-                          "database breadcrumb computes the available right edge before drawing path segments");
+                          "database breadcrumb option A gives the arrow 6 px per side with the 2 px chip inset");
 
-    ok &= requireContains(mainCpp, "breadcrumbMinReadableChipW",
+    ok &= requireContains(mainCpp, "CalcTextSize(\">\").x + breadcrumbSeparatorPadX * 2.0f",
 
-                          "database breadcrumb protects a minimum readable chip width");
+                          "database breadcrumb scroll extent includes both separator gaps");
+
+    ok &= requireOrder(mainCpp, "ImGui::SameLine(0, breadcrumbSeparatorPadX);",
+
+                       "ImGui::TextColored(kInfoMuted, \">\");",
+
+                       "database breadcrumb reserves the gap before the original arrow");
+
+    ok &= requireFollowingLine(mainCpp, "ImGui::TextColored(kInfoMuted, \">\");",
+                               "ImGui::SameLine(0, breadcrumbSeparatorPadX);",
+                               "database breadcrumb reserves the same gap after the original arrow");
+
+    ok &= requireContains(mainCpp, "BeginTransientScrollbarChild(\"##DatabaseBreadcrumbPath\", ImVec2(breadcrumbViewportW, breadcrumbRowH)",
+
+                          "database breadcrumb clips overflow in a single-row viewport");
 
     ok &= requireContains(mainCpp, "breadcrumbMaxChipW",
 
-                          "database breadcrumb caps long segments instead of creating tall path blocks");
+                          "database breadcrumb still caps individual overlong segments");
 
-    ok &= requireContains(mainCpp, "wrapBreadcrumbLineIfNeeded(separatorW + segmentButtonW)",
+    ok &= requireContains(mainCpp, "ImGui::SetNextWindowScroll(ImVec2(breadcrumbScrollX, 0.0f))",
 
-                          "database breadcrumb wraps segment groups before they clip");
+                          "database breadcrumb moves only on its horizontal axis");
 
-    ok &= requireContains(mainCpp, "startReadableBreadcrumbLine",
+    ok &= requireNotContains(mainCpp, "wrapBreadcrumbLineIfNeeded",
 
-                          "database breadcrumb starts overflow on a readable full line");
+                             "database breadcrumb must not wrap path segments when they overflow");
 
     ok &= requireContains(mainCpp, "drawBreadcrumbPathChip",
 

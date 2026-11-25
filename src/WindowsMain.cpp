@@ -6402,10 +6402,17 @@ static void PollQaCommandFile(AppState& state) {
     } else if (cmd == "search_enter_key") {
 #if ARIS_PREVIEW_ISOLATION
         const std::string phase = getStr(raw, "phase");
+        const std::string keyName = getStr(raw, "key");
+        const ImGuiKey key = keyName.empty() || keyName == "Enter" ? ImGuiKey_Enter :
+                             keyName == "Down" ? ImGuiKey_DownArrow :
+                             keyName == "Up" ? ImGuiKey_UpArrow : ImGuiKey_None;
         if (!MagicEqQaIsolationReady()) {
             result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (key == ImGuiKey_None ||
+                   (key != ImGuiKey_Enter && GetHarkenSearchHarnessLaneKindUtf8() != "folder-search")) {
+            result = R"({"ok":false,"error":"unsupported_search_key"})";
         } else if (phase == "down" || phase == "up") {
-            ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, phase == "down");
+            ImGui::GetIO().AddKeyEvent(key, phase == "down");
             result = "{\"ok\":true,\"cmd\":\"search_enter_key\"}";
         } else {
             result = "{\"ok\":false,\"error\":\"invalid phase\"}";
@@ -14480,6 +14487,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         PumpFolderSubtreeRemoval(state);
         PumpDatabaseSwitchIfPending(state);
         PumpInitRandomSamplingPoolIfPending(state);
+        const double watcherNow = ImGui::GetTime();
+        if (!s_isIngestMode && !state.dbSwitchInProgress && !state.isScanning.load() &&
+            watcherNow - state.lastWatcherRefreshTime >= 1.0) {
+            state.lastWatcherRefreshTime = watcherNow;
+            state.database.refreshFileSystemWatcher();
+        }
 
         // Complete pending audio loads before dependent UI updates.
         if (state.audioEngine.pumpLoadFileIfPending()) {

@@ -3846,6 +3846,89 @@ static int testRemoveSingleFileInvalidatesCountAndFolderIndex() {
     return failures;
 }
 
+static int testWatcherRefreshKeepsIndexedCountsInSync() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("watcher_refresh_counts");
+    const fs::path library = root / "Library";
+    const fs::path source = library / "Source";
+    const fs::path destination = library / "Destination";
+    const fs::path dbPath = root / "watcher_refresh_counts.db";
+    fs::create_directories(source);
+    fs::create_directories(destination);
+    const fs::path originalFile = source / "original.wav";
+    const fs::path addedFile = source / "added.wav";
+    const fs::path movedFile = destination / "moved.wav";
+    writeSilentMonoWav(originalFile);
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const ScanStats stats = db.scanDirectoryEx(library.u8string(), true, false, false, nullptr, nullptr, 1, false);
+    check(stats.added == 1, "watcher fixture scans one real WAV", failures);
+    check(db.rebuildFolderIndex(), "watcher fixture builds the persistent folder index", failures);
+    SearchFilter sourceFilter;
+    sourceFilter.folderPath = HarkenSearch::CanonicalFolderPath(source.u8string());
+    SearchFilter destinationFilter;
+    destinationFilter.folderPath = HarkenSearch::CanonicalFolderPath(destination.u8string());
+    const auto verifyCounts = [&](int total, int sourceCount, int destinationCount, const char* phase) {
+        const auto rows = db.searchFiles({});
+        const auto reportedTotal = db.searchFilesCount({});
+        const auto reportedSource = db.searchFilesCount(sourceFilter);
+        const auto reportedDestination = db.searchFilesCount(destinationFilter);
+        if (!check(rows.size() == static_cast<size_t>(total) && reportedTotal == total &&
+                   reportedSource == sourceCount && reportedDestination == destinationCount, phase, failures)) {
+            std::cerr << "  expected total/source/destination " << total << "/" << sourceCount << "/"
+                      << destinationCount << "; rows " << rows.size() << ", reported " << reportedTotal << "/"
+                      << reportedSource << "/" << reportedDestination << "\n";
+        }
+    };
+    verifyCounts(1, 1, 0, "initial scan returns one row and matching counts");
+
+    writeSilentMonoWav(addedFile);
+    db.handleFileSystemEvent(addedFile.u8string(), true, false, false);
+    verifyCounts(2, 2, 0, "watcher add updates list and total to two");
+    db.handleFileSystemEvent(addedFile.u8string(), true, false, false);
+    verifyCounts(2, 2, 0, "duplicate add does not double-count the file");
+
+    fs::rename(addedFile, movedFile);
+    check(db.updateFilePath(addedFile.u8string(), movedFile.u8string(), {}),
+          "watcher move updates the stored path", failures);
+    db.handleFileSystemEvent(movedFile.u8string(), false, false, true);
+    check(!db.fileExists(addedFile.u8string()) && db.fileExists(movedFile.u8string()),
+          "watcher move leaves only the new path searchable", failures);
+    verifyCounts(2, 1, 1, "cross-folder move updates both folder counts without changing the total");
+    const auto movedIndex = db.getFolderIndex();
+    check(movedIndex.size() == 2 && movedIndex.front().fileCount == 1 && movedIndex.back().fileCount == 1,
+          "cross-folder move persists both indexed counts", failures);
+
+    fs::remove(movedFile);
+    db.handleFileSystemEvent(movedFile.u8string(), false, true, false);
+    db.handleFileSystemEvent(movedFile.u8string(), false, true, false);
+    verifyCounts(1, 1, 0, "watcher delete and duplicate notification leave one row and total");
+    const auto indexedFolders = db.getFolderIndex();
+    check(indexedFolders.size() == 1 && indexedFolders.front().fileCount == 1 &&
+          indexedFolders.front().folderPath == HarkenSearch::CanonicalFolderPath(source.u8string()),
+          "last-file deletion removes the empty folder's persisted count", failures);
+
+    db.close();
+    if (check(db.open(dbPath.u8string()), "reopen watcher fixture database", failures)) {
+        verifyCounts(1, 1, 0, "reopened library retains the corrected total and folder counts");
+        check(db.clearFolderIndex(), "fixture simulates an unbuilt folder index", failures);
+        writeSilentMonoWav(movedFile);
+        db.handleFileSystemEvent(movedFile.u8string(), true, false, false);
+        verifyCounts(2, 1, 1, "an unbuilt index does not hide rows from untouched folders");
+    }
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 static int testScanWriteInfrastructureFailureCountsDiscoveredFiles() {
     int failures = 0;
     const fs::path root = makeTempRoot("write_failure_counts");
@@ -5284,6 +5367,8 @@ int main(int argc, char** argv) {
         return testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale() == 0 ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--read-only-missing-folder-index")
         return testReadOnlyFolderHierarchyFromIndexFallsBackWhenUnavailable() == 0 ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--watcher-refresh-counts")
+        return testWatcherRefreshKeepsIndexedCountsInSync() == 0 ? 0 : 1;
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -5387,6 +5472,8 @@ int main(int argc, char** argv) {
     failures += testRemoveFolderSubtreeFromDbCanDeleteDiskFiles();
     std::cout << "-- testRemoveSingleFileInvalidatesCountAndFolderIndex\n";
     failures += testRemoveSingleFileInvalidatesCountAndFolderIndex();
+    std::cout << "-- testWatcherRefreshKeepsIndexedCountsInSync\n";
+    failures += testWatcherRefreshKeepsIndexedCountsInSync();
     std::cout << "-- testScanWriteInfrastructureFailureCountsDiscoveredFiles\n";
     failures += testScanWriteInfrastructureFailureCountsDiscoveredFiles();
     failures += testScanStatsKeepCategoriesWhenDetailsAreCapped();

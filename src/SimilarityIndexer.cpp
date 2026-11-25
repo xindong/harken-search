@@ -65,13 +65,15 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
     if (cancelled()) { result.cancelled = true; return result; }
     SimilarityAnalysisStore store;
     if (!store.Open(path,cancel)) { result.error = store.Error(); result.cancelled = cancelled(); return result; }
-    AudioEmbeddingService model; model.Load(modelDirectory,result.modelError);
+    const int workers = std::clamp(concurrency, 1, kMaxSimilarityConcurrency);
+    // Every worker session, including the first, shares one intra-op thread budget.
+    const int threadsPerSession = workers > 1 ? std::max(1, 4 / workers) : 4;
+    AudioEmbeddingService model; model.Load(modelDirectory,result.modelError,threadsPerSession);
     std::vector<SimilarityFile> files;
     const bool selected = scope == SimilarityIndexScope::ValidateAll
         ? store.Files(files) : store.PendingFiles(files,model.IsReady());
     if (!selected) { result.error = "library_read_failed"; result.cancelled = cancelled(); return result; }
     result.progress.total = int(files.size()); if (progress) progress(result.progress);
-    const int workers = std::clamp(concurrency, 1, kMaxSimilarityConcurrency);
     if (workers > 1 && files.size() > 1) {
         std::vector<SimilarityFile> tasks; tasks.reserve(files.size());
         for (const auto& file : files) {
@@ -86,7 +88,6 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
         if (!tasks.empty()) {
             // Each worker owns its ONNX session: no shared model state, and the
             // per-session thread budget stays bounded across the pool.
-            const int threadsPerSession = std::max(1, 4 / workers);
             std::vector<std::unique_ptr<AudioEmbeddingService>> extraModels;
             const size_t requestedWorkers = std::min(static_cast<size_t>(workers), tasks.size());
             std::vector<AudioEmbeddingService*> pool;
@@ -95,6 +96,7 @@ SimilarityIndexResult BuildSimilarityIndex(const std::string& path, const std::s
             } else {
                 pool.push_back(&model);
                 while (pool.size() < requestedWorkers) {
+                    if (cancelled()) { result.cancelled = true; return result; }
                     auto service = std::make_unique<AudioEmbeddingService>();
                     std::string error;
                     if (!service->Load(modelDirectory,error,threadsPerSession)) break;

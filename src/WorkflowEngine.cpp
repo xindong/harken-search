@@ -63,40 +63,6 @@ const char* WorkflowEngine::getNodeTypeName(WorkflowNodeType type) {
     }
 }
 
-const char* WorkflowEngine::getNodeTypeNameZh(WorkflowNodeType type) {
-    switch (type) {
-        case WorkflowNodeType::SetField:            return "\xe8\xae\xbe\xe7\xbd\xae\xe5\xad\x97\xe6\xae\xb5"; // 设置字段
-        case WorkflowNodeType::CopyField:           return "\xe5\xa4\x8d\xe5\x88\xb6\xe5\xad\x97\xe6\xae\xb5"; // 复制字段
-        case WorkflowNodeType::FindAndReplace:       return "\xe6\x9f\xa5\xe6\x89\xbe\xe6\x9b\xbf\xe6\x8d\xa2"; // 查找替换
-        case WorkflowNodeType::ChangeCase:           return "\xe5\xa4\xa7\xe5\xb0\x8f\xe5\x86\x99\xe8\xbd\xac\xe6\x8d\xa2"; // 大小写转换
-        case WorkflowNodeType::RemoveMultipleSpaces: return "\xe5\x88\xa0\xe9\x99\xa4\xe5\xa4\x9a\xe4\xbd\x99\xe7\xa9\xba\xe6\xa0\xbc"; // 删除多余空格
-        case WorkflowNodeType::TakeFirstWords:       return "\xe5\x8f\x96\xe5\x89\x8dN\xe4\xb8\xaa\xe8\xaf\x8d"; // 取前N个词
-        case WorkflowNodeType::TakeLastWords:        return "\xe5\x8f\x96\xe5\x90\x8eN\xe4\xb8\xaa\xe8\xaf\x8d"; // 取后N个词
-        case WorkflowNodeType::CopyFolderName:       return "\xe5\xa4\x8d\xe5\x88\xb6\xe6\x96\x87\xe4\xbb\xb6\xe5\xa4\xb9\xe5\x90\x8d"; // 复制文件夹名
-        case WorkflowNodeType::Number:               return "\xe8\x87\xaa\xe5\x8a\xa8\xe7\xbc\x96\xe5\x8f\xb7"; // 自动编号
-        case WorkflowNodeType::ProcessIf:            return "\xe6\x9d\xa1\xe4\xbb\xb6\xe5\xa4\x84\xe7\x90\x86"; // 条件处理
-        case WorkflowNodeType::Comment:              return "\xe6\xb3\xa8\xe9\x87\x8a"; // 注释
-        default: return getNodeTypeName(type);
-    }
-}
-
-const char* WorkflowEngine::getNodeTypeDescription(WorkflowNodeType type) {
-    switch (type) {
-        case WorkflowNodeType::SetField:            return "Set a field to a fixed value";
-        case WorkflowNodeType::CopyField:           return "Copy, append, or prepend one field to another";
-        case WorkflowNodeType::FindAndReplace:       return "Find text and replace it (supports regex)";
-        case WorkflowNodeType::ChangeCase:           return "Change text case (upper/lower/title)";
-        case WorkflowNodeType::RemoveMultipleSpaces: return "Remove extra spaces from field";
-        case WorkflowNodeType::TakeFirstWords:       return "Keep only the first N words";
-        case WorkflowNodeType::TakeLastWords:        return "Keep only the last N words";
-        case WorkflowNodeType::CopyFolderName:       return "Copy the folder name to a field";
-        case WorkflowNodeType::Number:               return "Add sequential numbers";
-        case WorkflowNodeType::ProcessIf:            return "Execute only if condition is met";
-        case WorkflowNodeType::Comment:              return "Add a comment (no action)";
-        default: return "";
-    }
-}
-
 std::vector<WorkflowNodeType> WorkflowEngine::getAvailableNodeTypes() {
     return {
         WorkflowNodeType::SetField,
