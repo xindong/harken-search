@@ -174,6 +174,7 @@ struct Decoder {
     WavpackContext* context = nullptr;
     WavpackStreamReader64 reader{};
     FileHandle handle{};
+    FileHandle correction{};
     ma_format format = ma_format_s16;
     ma_uint32 channels = 0;
     ma_uint32 sampleRate = 0;
@@ -185,6 +186,64 @@ struct Decoder {
     char openError[128] = {};
     std::vector<int32_t> staging;
 };
+
+void CloseDecoderContext(Decoder& decoder) {
+    if (decoder.context)
+        decoder.context = WavpackCloseFile(decoder.context);
+    CloseHandle(&decoder.handle);
+    CloseHandle(&decoder.correction);
+}
+
+bool OpenDecoderContext(Decoder& decoder, bool allowCorrection) {
+    CloseDecoderContext(decoder);
+    decoder.handle.file = OpenUtf8(decoder.pathUtf8.c_str());
+    if (!decoder.handle.file) return false;
+
+    const auto size = decoder.pathUtf8.size();
+    if (allowCorrection && size > 3 && decoder.pathUtf8[size - 3] == '.' &&
+        (decoder.pathUtf8[size - 2] == 'w' || decoder.pathUtf8[size - 2] == 'W') &&
+        (decoder.pathUtf8.back() == 'v' || decoder.pathUtf8.back() == 'V')) {
+        const auto stem = decoder.pathUtf8.substr(0, size - 3);
+        decoder.correction.file = OpenUtf8((stem + ".wvc").c_str());
+#ifndef _WIN32
+        if (!decoder.correction.file)
+            decoder.correction.file = OpenUtf8((stem + ".WVC").c_str());
+#endif
+    }
+
+    decoder.reader = MakeReader();
+    auto* correction = decoder.correction.file ? &decoder.correction : nullptr;
+    decoder.context = WavpackOpenFileInputEx64(
+        &decoder.reader, &decoder.handle, correction, decoder.openError,
+        kOpenFlags | (correction ? OPEN_WVC : 0), 0);
+    if (!decoder.context) CloseDecoderContext(decoder);
+    return decoder.context != nullptr;
+}
+
+bool VerifyCorrection(WavpackContext* context) {
+    const int channels = WavpackGetNumChannels(context);
+    const int64_t length = WavpackGetNumSamples64(context);
+    if (channels < 1 || channels > MA_MAX_CHANNELS || length <= 0) return false;
+
+    constexpr uint32_t chunkFrames = 4096;
+    std::vector<int32_t> samples(static_cast<size_t>(channels) * chunkFrames);
+    for (int64_t remaining = length; remaining > 0;) {
+        const auto request = static_cast<uint32_t>(std::min<int64_t>(remaining, chunkFrames));
+        const auto frames = WavpackUnpackSamples(context, samples.data(), request);
+        if (frames == 0 || WavpackGetNumErrors(context) != 0 || WavpackLossyBlocks(context))
+            return false;
+        remaining -= frames;
+    }
+    return (WavpackGetMode(context) & MODE_LOSSLESS) != 0;
+}
+
+bool OpenValidatedDecoderContext(Decoder& decoder) {
+    if (OpenDecoderContext(decoder, true)) {
+        if ((WavpackGetMode(decoder.context) & MODE_WVC) == 0) return true;
+        if (VerifyCorrection(decoder.context) && WavpackSeekSample64(decoder.context, 0)) return true;
+    }
+    return OpenDecoderContext(decoder, false);
+}
 
 ma_result DecoderRead(ma_data_source* source, void* framesOut, ma_uint64 frameCount,
                       ma_uint64* framesRead) {
@@ -223,23 +282,14 @@ ma_result DecoderSeek(ma_data_source* source, ma_uint64 frameIndex) {
     // reopening the file and decoding forward to the requested position.
     // Closing the old context closes the shared file handle, so reopen from
     // the stored path before decoding forward to the requested position.
-    WavpackCloseFile(decoder->context);
-    decoder->context = nullptr;
-    CloseHandle(&decoder->handle);
-    decoder->handle.file = OpenUtf8(decoder->pathUtf8.c_str());
-    if (!decoder->handle.file) return MA_ERROR;
-    decoder->reader = MakeReader();
-    decoder->context = WavpackOpenFileInputEx64(
-        &decoder->reader, &decoder->handle, nullptr, decoder->openError, kOpenFlags, 0);
-    if (!decoder->context) return MA_ERROR;
+    if (!OpenValidatedDecoderContext(*decoder)) return MA_ERROR;
     if (WavpackGetNumChannels(decoder->context) != static_cast<int>(decoder->channels) ||
         WavpackGetSampleRate(decoder->context) != decoder->sampleRate ||
         WavpackGetBitsPerSample(decoder->context) != static_cast<int>(decoder->bitsPerSample) ||
         ((WavpackGetMode(decoder->context) & MODE_FLOAT) != 0) != decoder->isFloat ||
         static_cast<ma_uint64>(WavpackGetNumSamples64(decoder->context)) != decoder->lengthInFrames ||
         BuildChannelMap(decoder->context, decoder->channels) != decoder->channelMap) {
-        decoder->context = WavpackCloseFile(decoder->context);
-        CloseHandle(&decoder->handle);
+        CloseDecoderContext(*decoder);
         return MA_ERROR;
     }
 
@@ -292,20 +342,15 @@ ma_data_source_vtable g_decoderVtable = {
     0,
 };
 
-ma_result OpenDecoderFromFile(std::FILE* file, ma_data_source** backendOut) {
+ma_result OpenDecoder(const char* utf8Path, ma_data_source** backendOut) {
     if (backendOut) *backendOut = nullptr;
-    if (!file) return MA_INVALID_ARGS;
+    if (!utf8Path || !utf8Path[0]) return MA_INVALID_ARGS;
 
     auto* decoder = new (std::nothrow) Decoder();
     if (!decoder) return MA_OUT_OF_MEMORY;
 
-    decoder->handle.file = file;
-
-    decoder->reader = MakeReader();
-    decoder->context = WavpackOpenFileInputEx64(
-        &decoder->reader, &decoder->handle, nullptr, decoder->openError, kOpenFlags, 0);
-    if (!decoder->context) {
-        CloseHandle(&decoder->handle);
+    decoder->pathUtf8 = utf8Path;
+    if (!OpenValidatedDecoderContext(*decoder)) {
         delete decoder;
         return MA_NO_BACKEND;
     }
@@ -318,8 +363,7 @@ ma_result OpenDecoderFromFile(std::FILE* file, ma_data_source** backendOut) {
     decoder->isFloat = (mode & MODE_FLOAT) != 0;
     if (decoder->channels == 0 || decoder->channels > MA_MAX_CHANNELS || decoder->sampleRate == 0 ||
         decoder->bitsPerSample == 0 || decoder->bitsPerSample > 32) {
-        WavpackCloseFile(decoder->context);
-        CloseHandle(&decoder->handle);
+        CloseDecoderContext(*decoder);
         delete decoder;
         return MA_NO_BACKEND;
     }
@@ -332,8 +376,7 @@ ma_result OpenDecoderFromFile(std::FILE* file, ma_data_source** backendOut) {
     ma_data_source_config sourceConfig = ma_data_source_config_init();
     sourceConfig.vtable = &g_decoderVtable;
     if (ma_data_source_init(&sourceConfig, &decoder->base) != MA_SUCCESS) {
-        WavpackCloseFile(decoder->context);
-        CloseHandle(&decoder->handle);
+        CloseDecoderContext(*decoder);
         delete decoder;
         return MA_ERROR;
     }
@@ -342,26 +385,11 @@ ma_result OpenDecoderFromFile(std::FILE* file, ma_data_source** backendOut) {
     return MA_SUCCESS;
 }
 
-ma_result OpenDecoder(const char* utf8Path, ma_data_source** backendOut) {
-    if (backendOut) *backendOut = nullptr;
-    if (utf8Path == nullptr || utf8Path[0] == '\0') return MA_INVALID_ARGS;
-    std::FILE* file = OpenUtf8(utf8Path);
-    if (!file) return MA_DOES_NOT_EXIST;
-    const ma_result result = OpenDecoderFromFile(file, backendOut);
-    if (result == MA_SUCCESS && backendOut != nullptr && *backendOut != nullptr) {
-        reinterpret_cast<Decoder*>(*backendOut)->pathUtf8 = utf8Path;
-    }
-    return result;
-}
 void CloseDecoder(ma_data_source* backend) {
     if (!backend) return;
     auto* decoder = reinterpret_cast<Decoder*>(backend);
     ma_data_source_uninit(&decoder->base);
-    if (decoder->context) {
-        WavpackCloseFile(decoder->context);
-        decoder->context = nullptr;
-    }
-    CloseHandle(&decoder->handle);
+    CloseDecoderContext(*decoder);
     delete decoder;
 }
 

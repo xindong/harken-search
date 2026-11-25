@@ -392,8 +392,14 @@ void FileSystemWatcher::watchThreadProc() {
             &bytesTransferred,
             &completionKey,
             &overlapped,
-            1000
+            m_coalesceWindowMs > 0 ? static_cast<DWORD>(m_coalesceWindowMs) : 1000
         );
+
+        const DWORD error = success ? ERROR_SUCCESS : GetLastError();
+        if (!success && error == WAIT_TIMEOUT) {
+            flushCoalescedEvents();
+            continue;
+        }
 
         // 显式退出信号
         if (completionKey == 0 && overlapped == nullptr) {
@@ -403,12 +409,6 @@ void FileSystemWatcher::watchThreadProc() {
         WatchInfo* watch = reinterpret_cast<WatchInfo*>(completionKey);
 
         if (!success) {
-            DWORD error = GetLastError();
-
-            if (error == WAIT_TIMEOUT) {
-                continue;
-            }
-
             if (watch != nullptr) {
                 watch->ioPending.store(false);
 

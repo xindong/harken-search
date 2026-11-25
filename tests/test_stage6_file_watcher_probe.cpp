@@ -10,6 +10,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -137,6 +138,10 @@ int main() {
         std::filesystem::remove_all(root);
         return EnvironmentGate("watcher start failed");
     }
+
+#ifdef _WIN32
+    std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+#endif
 
     bool passed = true;
     for (int cycle = 0; cycle < kCycles; ++cycle) {

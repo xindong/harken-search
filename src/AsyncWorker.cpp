@@ -1379,6 +1379,7 @@ void SearchWorker::workerThread() {
         std::chrono::steady_clock::time_point checkedAt;
     };
     std::unordered_map<std::string, LegacyCommentCacheEntry> legacyCommentCache;
+    uint64_t observedDbRevision = 0;
     while (m_running.load()) {
         AsyncSearchRequest req;
         
@@ -1394,6 +1395,13 @@ void SearchWorker::workerThread() {
             
             req = m_pendingRequest;
             m_hasPendingRequest = false;
+        }
+
+        const bool dbRevisionChanged = observedDbRevision != req.requestedAtDbRevision;
+        if (m_db && dbRevisionChanged) {
+            m_db->clearSearchCountMemoryCache();
+            m_db->bumpDataRevision();
+            observedDbRevision = req.requestedAtDbRevision;
         }
         
         m_searching.store(true);
@@ -1412,7 +1420,7 @@ void SearchWorker::workerThread() {
         // Preserve the request's random-shuffle flag in the result.
         result.isRandomShuffle = req.isRandomShuffle;
         result.scanCoverRefresh = req.scanCoverRefresh;
-        if (req.scanCoverRefresh) m_facetCache.clear();
+        if (req.scanCoverRefresh || dbRevisionChanged) m_facetCache.clear();
         // Carry the submit-time database revision with the result so the
         // apply site records the revision represented by these rows.
 

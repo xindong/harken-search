@@ -1032,7 +1032,8 @@ static const std::set<std::string> AUDIO_EXTENSIONS = {
 
 static bool isAudioFile(const std::string& ext) {
     std::string lower = ext;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return AUDIO_EXTENSIONS.find(lower) != AUDIO_EXTENSIONS.end();
 }
 
@@ -2706,11 +2707,7 @@ void Database::close() {
         m_coverPhashBackfillThread.join();
     }
     m_coverPhashBackfillRunning.store(false, std::memory_order_release);
-    // T-296: stop the watcher rescan worker before nulling m_db, otherwise
-    // a queued scanDirectoryEx() can dereference a dangling sqlite handle.
-    // Independent of stopFileSystemWatcher() because reconciliation can be
-    // dispatched without the FS watcher ever being started.
-    stopWatcherRescanWorker();
+    stopFileSystemWatcher();
     // T-297: same reasoning for the waveform precompute worker.
     stopPrecomputeWorker();
     std::lock_guard<std::mutex> writerLock(m_writerSerializeMutex);
@@ -2731,7 +2728,7 @@ void Database::close() {
     clearPreparedCoverFilterKeys();
     // These caches belong to the closed library. A newly opened library may
     // have the same revision, so the two-second cache must not survive close.
-    m_countMemCache.clear();
+    clearSearchCountMemoryCache();
     m_cachedFileCount = -1;
     m_cachedFileCountRevision = 0;
     m_cachedFileCountTime = {};
@@ -3658,6 +3655,7 @@ bool Database::saveFacetQueryCache(const std::string& cacheKey,
 
 bool Database::invalidateFacetQueryCache() {
     if (!m_db) return false;
+    std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
     m_countMemCache.clear();  // also clear in-memory count cache
     if (sqlite3_db_readonly(m_db, "main") == 1) return true;
     bool ok = executeSQL("DELETE FROM facet_query_cache;");
@@ -4271,6 +4269,10 @@ static const std::string& GetAddFileSql() {
 }
 
 bool Database::addFile(const AudioRecord& record) {
+    return upsertFile(record, false);
+}
+
+bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
     if (!m_db) return false;
 
     // The extension column is a canonical type key: filters compare it with
@@ -4424,7 +4426,10 @@ bool Database::addFile(const AudioRecord& record) {
     // Every successful insert or upsert advances the revision observed by tabs.
     // Scan-time increments are absorbed while result polling is gated by isScanning.
 
-    if (success) bumpDataRevision();
+    if (success) {
+        if (refreshFolderCount) refreshIndexedFolderCounts(folderPath);
+        bumpDataRevision();
+    }
     return success;
 }
 
@@ -5052,6 +5057,8 @@ bool Database::removeFileByPath(const std::string& filePath) {
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     if (success) {
+        refreshIndexedFolderCounts(
+            HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(filePath)));
         pruneOrphanCoverCaches();
         bumpDataRevision();  // Invalidate tab snapshots.
     }
@@ -6784,10 +6791,23 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
         return getFileCount();
     }
 
+    const auto countRevision = dataRevision();
     const std::string persistentCacheKey = BuildPersistentFacetCacheKey(filter, -1, "count");
+    auto storeCount = [&](int64_t count, bool persist) {
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
+        if (countRevision != dataRevision()) return;
+        if (m_countMemCache.size() >= 16) m_countMemCache.clear();
+        m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
+        if (persist) {
+            std::vector<uint8_t> payload(sizeof(count));
+            std::memcpy(payload.data(), &count, sizeof(count));
+            saveFacetQueryCache(persistentCacheKey, payload, 1);
+        }
+    };
     {
         // 2a) In-memory cache: zero SQLite I/O, avoids WAL contention during active scans
         const int64_t nowSec = static_cast<int64_t>(std::time(nullptr));
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
         auto it = m_countMemCache.find(persistentCacheKey);
         if (it != m_countMemCache.end() && nowSec < it->second.expirySec) {
             if (it->second.count > 0 || allowZeroCountCache) {
@@ -6806,8 +6826,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
                 if (cachedCount > 0 || allowZeroCountCache) {
                     DIAG_ACTION_FMT("Search", "SearchCountPersistentCacheHit: count=%lld", (long long)cachedCount);
                     // Promote to in-memory cache for subsequent frames
-                    if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-                    m_countMemCache[persistentCacheKey] = {cachedCount, static_cast<int64_t>(std::time(nullptr)) + 30};
+                    storeCount(cachedCount, false);
                     return cachedCount;
                 }
             }
@@ -6860,11 +6879,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
                 count = (std::max<int64_t>)(0, count);
             }
             if (count > 0 || allowZeroCountCache) {
-                if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-                m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
-                std::vector<uint8_t> payload(sizeof(int64_t));
-                std::memcpy(payload.data(), &count, sizeof(int64_t));
-                saveFacetQueryCache(persistentCacheKey, payload, 1);
+                storeCount(count, true);
             }
             DIAG_ACTION_FMT("Search", "SearchCountFileTypeFastPath: count=%lld",
                             (long long)count);
@@ -6922,14 +6937,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
     // Write the count back so revisiting this filter does not repeat COUNT.
     {
         if (count > 0 || allowZeroCountCache) {
-            // 3a) Populate in-memory cache first (fast path for next call)
-            if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-            m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
-
-            // Store the count in the persistent SQLite cache.
-            std::vector<uint8_t> payload(sizeof(int64_t));
-            std::memcpy(payload.data(), &count, sizeof(int64_t));
-            saveFacetQueryCache(persistentCacheKey, payload, 1);
+            storeCount(count, true);
         }
     }
 
@@ -12510,19 +12518,8 @@ bool Database::updateFilePath(
         }
     }
 
-    std::string newFolderPath;
-    try {
-        fs::path p = Utf8ToPath(newPath);
-        fs::path parent = p.parent_path();
-        if (parent != p) newFolderPath = PathToUtf8(parent);
-        // Match scan normalization: remove the trailing separator so equivalent paths share one key.
-        while (!newFolderPath.empty() && (newFolderPath.back() == '/' || newFolderPath.back() == '\\'))
-            newFolderPath.pop_back();
-    } catch (...) {
-    }
-    // T2.1: canonicalize folder_path before bind so updateFilePath stays
-    // consistent with addFile (T1.0 v2 §5.1). file_path keeps raw form.
-    newFolderPath = HarkenSearch::CanonicalFolderPath(newFolderPath);
+    const auto newFolderPath =
+        HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(newPath));
 
     // Update path fields and clear folder artwork in one statement to keep list and detail views aligned.
     const char* sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
@@ -12562,6 +12559,11 @@ bool Database::updateFilePath(
     }
     sqlite3_finalize(stmt);
     if (ok) {
+        const auto oldFolderPath =
+            HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(oldPath));
+        if (oldFolderPath != newFolderPath) {
+            refreshIndexedFolderCounts(oldFolderPath, newFolderPath);
+        }
         std::vector<std::string> changedPaths;
         changedPaths.reserve(2);
         if (!oldPath.empty()) changedPaths.push_back(oldPath);
@@ -18032,6 +18034,34 @@ bool Database::clearFolderIndex() {
     if (!m_db) return false;
     return executeSQL("DELETE FROM folder_index;");
 }
+
+void Database::refreshIndexedFolderCounts(const std::string& folder, const std::string& otherFolder) {
+    if (folder.empty() && otherFolder.empty()) return;
+
+    const auto run = [&](const char* sql) {
+        auto* stmt = checkoutStmt(sql);
+        if (!stmt) return false;
+        sqlite3_bind_text(stmt, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, otherFolder.c_str(), -1, SQLITE_TRANSIENT);
+        const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+        returnStmt(sql, stmt);
+        return ok;
+    };
+    const char* refreshSql =
+        "WITH affected(path) AS (SELECT ?1 UNION SELECT ?2) "
+        "INSERT OR REPLACE INTO folder_index (folder_path, file_count, last_updated) "
+        "SELECT path, (SELECT COUNT(*) FROM audio_files WHERE folder_path = affected.path), "
+        "CAST(strftime('%s', 'now') AS INTEGER) FROM affected "
+        "WHERE path <> '' AND EXISTS (SELECT 1 FROM folder_index)";
+    const char* removeEmptySql =
+        "DELETE FROM folder_index WHERE folder_path IN (?1, ?2) AND file_count = 0";
+    if (!run(refreshSql) || !run(removeEmptySql)) {
+        const bool invalidated = clearFolderIndex();
+        DIAG_ACTION_FMT("Database", "FolderIndex incremental refresh failed; cleared=%d",
+                        static_cast<int>(invalidated));
+    }
+}
+
 bool Database::rebuildFolderIndex() {
     if (!m_db) return false;
     if (!executeSQL("DELETE FROM folder_index")) return false;
@@ -18315,7 +18345,7 @@ FolderSubtreeRemovalResult Database::removeFolderSubtreeFromLibrary(const std::s
 }
 
 void Database::discardFolderRemovalReadCaches() {
-    m_countMemCache.clear();
+    clearSearchCountMemoryCache();
 }
 
 FolderSubtreeRemovalResult Database::removeFolderSubtreeFromLibraryOnWorker(const std::string& folderPath) {
@@ -21144,25 +21174,17 @@ Database::SqlResult Database::executeRawQuery(const std::string& sql) {
 // File-system watcher integration.
 
 // 支持的音频文件扩展名
-static bool IsAudioExtension(const std::string& ext) {
-    static const std::unordered_set<std::string> kAudioExts = {
-        ".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma",
-        ".opus", ".ape", ".wv", ".ac3", ".aac"
-    };
-    std::string lower = ext;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    return kAudioExts.count(lower) > 0;
-}
-
 static std::string GetExtensionUtf8(const std::string& pathUtf8) {
+    std::string extension;
     try {
         fs::path p = Utf8ToPath(pathUtf8);
-        return PathToUtf8(p.extension());
+        extension = PathToUtf8(p.extension());
     } catch (...) {
-        auto dot = pathUtf8.rfind('.');
-        if (dot != std::string::npos) return pathUtf8.substr(dot);
-        return "";
+        return {};
     }
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return extension;
 }
 
 namespace {
@@ -21715,13 +21737,38 @@ void Database::watcherRescanWorkerThread() {
     }
 }
 
+void Database::refreshFileSystemWatcher() {
+    if (!m_db || !m_isPrimaryConnection || sqlite3_db_readonly(m_db, "main") != 0 ||
+        m_watcherRootsRefreshing.load(std::memory_order_acquire))
+        return;
+
+    auto roots = getLibraryRoots();
+    if (roots == m_watcherLibraryRoots) return;
+    if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
+    m_watcherLibraryRoots = roots;
+    m_watcherRootsRefreshing.store(true, std::memory_order_release);
+    try {
+        m_watcherRootRefreshThread = std::thread([this, roots = std::move(roots)] {
+            try {
+                startFileSystemWatcher(roots);
+            } catch (...) {
+                DIAG_ACTION_FMT("Watcher", "Unable to start live library watcher (%zu roots)", roots.size());
+            }
+            m_watcherRootsRefreshing.store(false, std::memory_order_release);
+        });
+    } catch (...) {
+        m_watcherRootsRefreshing.store(false, std::memory_order_release);
+        DIAG_ACTION_FMT("Watcher", "Unable to create library watcher thread (%zu roots)", m_watcherLibraryRoots.size());
+    }
+}
+
 void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirectories) {
-    // 停止已有的监听器
-    stopFileSystemWatcher();
+    m_fileSystemWatcher.reset();
 
     if (watchDirectories.empty()) return;
 
-    m_fileSystemWatcher = new FileSystemWatcher();
+    m_fileSystemWatcher = std::make_unique<FileSystemWatcher>();
+    m_fileSystemWatcher->setCoalesceWindowMs(150);
 
     // 添加监听目录
     for (const auto& dir : watchDirectories) {
@@ -21743,8 +21790,10 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
             return;
         }
 
-        const bool newIsAudio = IsAudioExtension(GetExtensionUtf8(event.path));
-        const bool oldIsAudio = IsAudioExtension(GetExtensionUtf8(event.oldPath));
+        const auto newExtension = GetExtensionUtf8(event.path);
+        const auto oldExtension = GetExtensionUtf8(event.oldPath);
+        const bool newIsAudio = isAudioFile(newExtension);
+        const bool oldIsAudio = isAudioFile(oldExtension);
 
         switch (event.type) {
             case FileSystemWatcher::EventType::FileAdded:
@@ -21767,20 +21816,14 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
 
             case FileSystemWatcher::EventType::FileRenamed:
                 if (oldIsAudio && newIsAudio) {
-                    std::string newFileName;
-                    try {
-                        newFileName = PathToUtf8(Utf8ToPath(event.path).filename());
-                    } catch (...) {
-                        newFileName.clear();
-                    }
-
-                    if (!updateFilePath(event.oldPath, event.path, newFileName)) {
-                        DIAG_ACTION_FMT("Watcher",
-                                        "Watcher rename DB update failed: %s -> %s",
-                                        event.oldPath.c_str(),
-                                        event.path.c_str());
-                    } else if (m_watcherChangeCallback) {
-                        m_watcherChangeCallback(WatcherChangeType::Renamed, event.path);
+                    const auto previous = getWatcherFileByPath(event.oldPath);
+                    if (previous.id > 0 && updateFilePath(previous.filePath, event.path, {})) {
+                        handleFileSystemEvent(event.path, false, false, true);
+                        if (m_watcherChangeCallback)
+                            m_watcherChangeCallback(WatcherChangeType::Renamed, event.path);
+                    } else {
+                        handleFileSystemEvent(event.oldPath, false, true, false);
+                        handleFileSystemEvent(event.path, true, false, false);
                     }
                 } else if (oldIsAudio && !newIsAudio) {
                     handleFileSystemEvent(event.oldPath, false, true, false);
@@ -21792,158 +21835,119 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
             default:
                 break;
         }
+        if (oldExtension == ".wvc") refreshWavPackCorrection(event.oldPath);
+        if (newExtension == ".wvc") refreshWavPackCorrection(event.path);
     });
 
     // 启动监听
-    m_fileSystemWatcher->start();
+    if (!m_fileSystemWatcher->start())
+        DIAG_ACTION_FMT("Watcher", "No live watch started (%zu roots)", watchDirectories.size());
 }
 
 void Database::stopFileSystemWatcher() {
-    if (m_fileSystemWatcher) {
-        m_fileSystemWatcher->stop();
-        delete m_fileSystemWatcher;
-        m_fileSystemWatcher = nullptr;
-    }
+    if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
+    m_fileSystemWatcher.reset();
+    m_watcherLibraryRoots.clear();
     stopWatcherRescanWorker();
+}
+
+AudioRecord Database::getWatcherFileByPath(const std::string& filePath) {
+    auto record = getFileByPath(filePath);
+#ifdef _WIN32
+    if (record.id <= 0) {
+        const fs::path path = Utf8ToPath(filePath);
+        const auto folder = HarkenSearch::CanonicalFolderPath(PathToUtf8(path.parent_path()));
+        const auto name = PathToUtf8(path.filename());
+        const char* query =
+            "SELECT file_path FROM audio_files WHERE folder_path = ? AND file_name = ? COLLATE NOCASE LIMIT 1";
+        auto* statement = checkoutStmt(query);
+        if (!statement) return record;
+        sqlite3_bind_text(statement, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement, 2, name.c_str(), -1, SQLITE_TRANSIENT);
+        std::string storedPath;
+        if (sqlite3_step(statement) == SQLITE_ROW) storedPath = safeGetText(statement, 0);
+        returnStmt(query, statement);
+        if (!storedPath.empty()) record = getFileByPath(storedPath);
+    }
+#endif
+    return record;
+}
+
+void Database::refreshWavPackCorrection(const std::string& correctionPath) {
+    auto mainPath = Utf8ToPath(correctionPath);
+    auto refresh = [this](const std::string& path) {
+        auto record = getWatcherFileByPath(path);
+        if (record.id <= 0) return;
+        uint32_t sampleRate = 0;
+        uint32_t channels = 0;
+        uint64_t frames = 0;
+        float duration = 0;
+        std::optional<bool> lossless;
+        if (!readAudioFileInfo(Utf8ToPath(record.filePath), sampleRate, channels, frames, duration, &lossless) ||
+            lossless == record.wavPackLossless)
+            return;
+        record.wavPackLossless = lossless;
+        if (updateFile(record))
+            notifyWatcherChange(WatcherChangeType::Modified, record.filePath);
+    };
+    mainPath.replace_extension(".wv");
+    refresh(PathToUtf8(mainPath));
+#ifndef _WIN32
+    mainPath.replace_extension(".WV");
+    refresh(PathToUtf8(mainPath));
+#endif
+}
+
+void Database::notifyWatcherChange(WatcherChangeType type, const std::string& path) {
+    invalidateFacetQueryCache();
+    bumpDataRevision();
+    if (m_watcherChangeCallback) m_watcherChangeCallback(type, path);
 }
 
 void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, bool isDeleted, bool isModified) {
     if (!m_db || filePath.empty()) return;
 
-    // The watcher may race with removal; verify existence and file type before reading metadata.
-    if (isAdded || isModified) {
-        if (Platform::FileSystem::ProbePath(filePath) !=
-                Platform::FileSystem::PathStatus::Present) return;
-        if (Platform::FileSystem::IsDirectory(filePath)) return;
-    }
-
+    const auto pathStatus = Platform::FileSystem::ProbePath(filePath);
     if (isDeleted) {
-        removeFileByPath(filePath);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Deleted, filePath);
+        if (pathStatus != Platform::FileSystem::PathStatus::Missing) return;
+        const auto record = getWatcherFileByPath(filePath);
+        if (record.id > 0 && removeFileByPath(record.filePath))
+            notifyWatcherChange(WatcherChangeType::Deleted, record.filePath);
         return;
     }
 
-    if (isAdded) {
-        // 文件添加：检查是否已存在
-        if (fileExists(filePath)) return;
+    if ((!isAdded && !isModified) || pathStatus != Platform::FileSystem::PathStatus::Present) return;
+    const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
+    if (!fileInfo.isRegularFile || !fileInfo.sizeAvailable) return;
 
-        // Read audio properties.
-        AudioRecord record;
-        record.filePath = filePath;
-
-        try {
-            fs::path p = Utf8ToPath(filePath);
-            record.fileName = PathToUtf8(p.filename());
-            record.extension = PathToUtf8(p.extension());
-            record.folderPath = PathToUtf8(p.parent_path());
-
-            // Read file size and modification time.
-            const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
-            record.fileSize = fileInfo.sizeAvailable ? fileInfo.sizeBytes : 0;
-            record.fileMtime = Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
-        } catch (...) {
-            return; // 文件路径解析失败
+    auto record = getWatcherFileByPath(filePath);
+    const bool newRecord = record.id <= 0;
+    try {
+        const auto path = Utf8ToPath(filePath);
+        if (newRecord) {
+            record.filePath = filePath;
+            record.fileName = PathToUtf8(path.filename());
+            record.folderPath = PathToUtf8(path.parent_path());
+            record.dateAdded = static_cast<int64_t>(std::time(nullptr));
         }
 
-        readAudioFileInfo(Utf8ToPath(filePath),
-                          record.sampleRate,
-                          record.channels,
-                          record.totalFrames,
-                          record.durationSeconds,
-                          &record.wavPackLossless);
-        
-        // Read metadata tags.
-        AudioMetadata metadata;
-        if (MetadataReader::readMetadata(filePath, metadata)) {
-            if (!metadata.title.empty()) record.title = metadata.title;
-            if (!metadata.artist.empty()) record.artist = metadata.artist;
-            if (!metadata.album.empty()) record.album = metadata.album;
-            if (!metadata.albumArtist.empty()) record.albumArtist = metadata.albumArtist;
-            if (metadata.replayGainTrack != 0.0f) record.replayGainTrack = metadata.replayGainTrack;
-            if (metadata.replayGainAlbum != 0.0f) record.replayGainAlbum = metadata.replayGainAlbum;
-            if (metadata.track > 0) record.trackNumber = metadata.track;
-            if (metadata.disc > 1) record.discNumber = metadata.disc;
-            if (!metadata.description.empty()) record.description = metadata.description;
-            if (!metadata.category.empty()) record.category = metadata.category;
-            else if (!metadata.genre.empty()) record.category = metadata.genre;
-
-            if (!metadata.genre.empty()) record.rawGenre = metadata.genre;
-            if (!metadata.instruments.empty()) record.rawInstruments = metadata.instruments;
-            TagVocabularyMapper::normalize(
-                record.rawGenre,
-                record.rawInstruments,
-                record.normGenre,
-                record.normInstruments,
-                record.normMoodTags,
-                record.vocalType
-            );
-            if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
-            else if (!metadata.comment.empty()) record.keywords = metadata.comment;
-            PopulateExtendedMeta(record.meta, metadata);
-        }
-
-        record.dateAdded = (int64_t)std::time(nullptr);
-        record.lastIndexed = record.dateAdded;
-
-        addFile(record);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Added, filePath);
-        return;
-    }
-
-    if (isModified) {
-        // 文件修改：更新元数据
-        AudioRecord existing = getFileByPath(filePath);
-        if (existing.id <= 0) {
-            // If the path is not in the database, handle it as an addition.
-            handleFileSystemEvent(filePath, true, false, false);
+        record.extension = GetExtensionUtf8(filePath);
+        record.fileSize = fileInfo.sizeBytes;
+        record.fileMtime = Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
+        if (!readAudioFileInfo(path, record.sampleRate, record.channels, record.totalFrames,
+                               record.durationSeconds, &record.wavPackLossless))
             return;
-        }
 
-        // Check whether the modification time actually changed.
-        try {
-            const int64_t newMtime =
-                Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
-            if (newMtime > 0) {
-                if (newMtime == existing.fileMtime) return; // No effective change.
-                existing.fileMtime = newMtime;
-            }
-            const auto modifiedFileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
-            existing.fileSize = modifiedFileInfo.sizeAvailable
-                ? modifiedFileInfo.sizeBytes
-                : std::numeric_limits<uint64_t>::max();
-        } catch (...) {}
-
-        readAudioFileInfo(Utf8ToPath(filePath),
-                          existing.sampleRate,
-                          existing.channels,
-                          existing.totalFrames,
-                          existing.durationSeconds,
-                          &existing.wavPackLossless);
-        
-        // Re-read metadata tags.
         AudioMetadata metadata;
-        if (MetadataReader::readMetadata(filePath, metadata)) {
-            if (!metadata.title.empty()) existing.title = metadata.title;
-            if (!metadata.artist.empty()) existing.artist = metadata.artist;
-            if (!metadata.album.empty()) existing.album = metadata.album;
-            if (!metadata.albumArtist.empty()) existing.albumArtist = metadata.albumArtist;
-            if (metadata.track > 0) existing.trackNumber = metadata.track;
-            if (metadata.disc > 1) existing.discNumber = metadata.disc;
-            if (!metadata.description.empty()) existing.description = metadata.description;
-            if (!metadata.category.empty()) existing.category = metadata.category;
-            else if (!metadata.genre.empty()) existing.category = metadata.genre;
-            if (!metadata.keywords.empty()) existing.keywords = metadata.keywords;
-            else if (!metadata.comment.empty()) existing.keywords = metadata.comment;
-            PopulateExtendedMeta(existing.meta, metadata);
-        }
-
-        existing.lastIndexed = (int64_t)std::time(nullptr);
-        updateFile(existing);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Modified, filePath);
+        if (MetadataReader::readMetadata(filePath, metadata))
+            ApplyAudioMetadataToRecord(record, metadata);
+    } catch (...) {
+        return;
     }
+
+    record.lastIndexed = static_cast<int64_t>(std::time(nullptr));
+    if (upsertFile(record, newRecord))
+        notifyWatcherChange(newRecord ? WatcherChangeType::Added : WatcherChangeType::Modified, record.filePath);
 }
 
 void Database::interrupt() {
