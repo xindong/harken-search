@@ -440,14 +440,19 @@ def run(args: argparse.Namespace) -> int:
             if running:
                 win32process.TerminateProcess(process, 1)
                 win32event.WaitForSingleObject(process, 10000)
+                report["exit_failure"] = "exit timed out; process was terminated"
+            else:
+                exit_code = win32process.GetExitCodeProcess(process)
+                if exit_code != 0:
+                    report["exit_failure"] = f"process exited with code {exit_code}"
             process.Close()
         desktop.close()
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
         (out / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False),
                                          encoding="utf-8")
-        print(json.dumps({key: report[key] for key in ("checks", "error") if key in report},
-                         ensure_ascii=False))
-    return 0
+        print(json.dumps({key: report[key] for key in ("checks", "error", "exit_failure")
+                          if key in report}, ensure_ascii=False))
+    return 1 if "exit_failure" in report else 0
 
 
 def parse_args() -> argparse.Namespace:
