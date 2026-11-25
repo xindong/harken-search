@@ -1229,7 +1229,7 @@ static void SendToDAW(AppState& state, int dawIndex);
 static void SendToDAW(AppState& state, int dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind transferAction);
 static bool IsPlaylistSystemView(ViewMode mode);
 static void OpenTransferDialogForRecords(AppState& state, const std::vector<AudioRecord>& records);
-static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& records);
+static bool OpenWwiseTransferPanelForRecords(AppState& state, const std::vector<AudioRecord>& records);
 
 namespace {
 bool g_searchBarFocusedForShortcuts = false;
@@ -5268,7 +5268,8 @@ static void SendToDAW(AppState& state, int dawIndex) {
 static void DispatchPreparedSendToDAW(AppState& state,
                                       DawTarget& target,
                                       std::vector<std::string> files,
-                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction);
+                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction,
+                                      std::vector<int64_t> useCountIds);
 
 static void PublishDawSendFailure(AppState& state, LedgerText detail) {
     state.dawSendFeedback.failBeforeSend(std::move(detail));
@@ -5297,13 +5298,24 @@ static void SendToDAW(AppState& state,
         return;
     }
 
-    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction);
+    std::vector<int64_t> useCountIds;
+    {
+        auto selected = state.getSelectedRecords();
+        if (selected.empty() && state.selectedResultIndex >= 0 &&
+            state.selectedResultIndex < (int)state.searchResults.size())
+            selected.push_back(state.searchResults[state.selectedResultIndex]);
+        for (const auto& record : selected) {
+            if (record.id > 0) useCountIds.push_back(record.id);
+        }
+    }
+    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction, std::move(useCountIds));
 }
 
 static void DispatchPreparedSendToDAW(AppState& state,
                                       DawTarget& target,
                                       std::vector<std::string> files,
-                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction) {
+                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction,
+                                      std::vector<int64_t> useCountIds) {
     const bool isReaperPipe = IsReaperNamedPipeTarget(target);
     const bool keepHarkenSearchProcessingSuffix = state.settings.keepHarkenSearchOutputProcessingSuffix;
     DawTarget targetCopy = target;
@@ -5313,7 +5325,8 @@ static void DispatchPreparedSendToDAW(AppState& state,
         state.dawSendThread.join();
 
     auto dispatch = [&state, files = std::move(files), targetCopy = std::move(targetCopy),
-                   isReaperPipe, transferAction, keepHarkenSearchProcessingSuffix]() mutable {
+                   isReaperPipe, transferAction, keepHarkenSearchProcessingSuffix,
+                   useCountIds = std::move(useCountIds)]() mutable {
         DawSendFeedbackSnapshot feedback;
         feedback.total = static_cast<int>(files.size());
         std::string status;
@@ -5343,6 +5356,10 @@ static void DispatchPreparedSendToDAW(AppState& state,
             feedback.outcome = DawSendOutcome::BridgeFailure;
             feedback.detail = std::move(bridgeSnap.detail);
             feedback.remediation = std::move(bridgeSnap.remediation);
+        }
+        // 只有整批真正送到 DAW 才算一次使用；部分成功/失败不计数。
+        if (feedback.outcome == DawSendOutcome::Success) {
+            for (int64_t fileId : useCountIds) state.queueUseCount(fileId);
         }
         return feedback;
     };
@@ -5381,7 +5398,16 @@ static void SendToDAWForPaths(AppState& state,
         return;
     }
 
-    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction);
+    std::vector<int64_t> useCountIds;
+    for (const auto& sourcePath : sourcePaths) {
+        for (const auto& record : state.searchResults) {
+            if (record.id > 0 && record.filePath == sourcePath) {
+                useCountIds.push_back(record.id);
+                break;
+            }
+        }
+    }
+    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction, std::move(useCountIds));
 }
 
 static void OpenTransferDialogForRecords(AppState& state, const std::vector<AudioRecord>& records) {
@@ -5399,7 +5425,7 @@ static void OpenTransferDialogForRecords(AppState& state, const std::vector<Audi
     state.showTransferDialog = true;
 }
 
-static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& records) {
+static bool OpenWwiseTransferPanelForRecords(AppState& state, const std::vector<AudioRecord>& records) {
     std::vector<std::string> sources;
     std::vector<aura::wwise::MetadataContext> contexts;
     sources.reserve(records.size());
@@ -5424,6 +5450,10 @@ static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& rec
     }
     if (sources.empty()) {
         return false;
+    }
+    state.wwiseUseCountIds.clear();
+    for (const auto& r : records) {
+        if (r.id > 0 && !r.filePath.empty()) state.wwiseUseCountIds.push_back(r.id);
     }
     aura::wwise::OpenWwiseTransferPanel(sources, contexts);
     return true;
@@ -6445,17 +6475,33 @@ void LoadAppSettings(AppState& state) {
                 if (it != kv.end()) state.columnPresets[i].name = it->second;
                 state.columnPresets[i].showMeter = ParseBool(kv[p + "meter"],   false);
                 state.columnPresets[i].builtIn   = ParseBool(kv[p + "builtIn"], false);
+                const bool hasPathSlot = kv.find(p + "col15") != kv.end();
                 const bool hasKeywordsSlot = kv.find(p + "col14") != kv.end();
-                if (hasKeywordsSlot) {
+                if (hasPathSlot) {
                     for (int c = 0; c < kColumnViewPresetFieldCount; ++c)
                         state.columnPresets[i].col[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
+                } else if (hasKeywordsSlot) {
+                    // 15-field layout: Dur,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
+                    // Use count was inserted at index 1 (default visible).
+                    bool legacy[kColumnViewPresetFieldCount - 1] = {};
+                    for (int c = 0; c < kColumnViewPresetFieldCount - 1; ++c)
+                        legacy[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
+                    state.columnPresets[i].col[0] = legacy[0];
+                    state.columnPresets[i].col[1] = true;
+                    for (int c = 1; c < kColumnViewPresetFieldCount - 1; ++c)
+                        state.columnPresets[i].col[c + 1] = legacy[c];
                 } else {
-                    for (int c = 0; c < 5; ++c)
-                        state.columnPresets[i].col[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
-                    state.columnPresets[i].col[5] = false;
-                    // 14 = pre-Keywords field count; shift by 1 to make room for Keywords at index 5
-                    for (int legacy = 5; legacy < 14; ++legacy)
-                        state.columnPresets[i].col[legacy + 1] = ParseBool(kv[p + "col" + std::to_string(legacy)], false);
+                    // 14-field layout without Keywords: Dur,Fmt,Size,SR,Desc,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
+                    bool legacy[14] = {};
+                    for (int c = 0; c < 14; ++c)
+                        legacy[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
+                    state.columnPresets[i].col[0] = legacy[0];
+                    state.columnPresets[i].col[1] = true;
+                    for (int c = 1; c < 5; ++c)
+                        state.columnPresets[i].col[c + 1] = legacy[c];
+                    state.columnPresets[i].col[6] = false;  // Keywords
+                    for (int c = 5; c < 14; ++c)
+                        state.columnPresets[i].col[c + 2] = legacy[c];
                 }
             }
             state.activeColumnPreset = ParseInt(kv["activeColumnPreset"], 0);
@@ -6482,38 +6528,38 @@ void LoadAppSettings(AppState& state) {
 // Call when no saved presets are found (first launch or migration).
 static void InitDefaultColumnPresets(AppState& state) {
     state.columnPresets.clear();
-    // Index layout: Dur,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
-    //               [0] [1]  [2] [3] [4] [5]       [6] [7] [8] [9]  [10][11][12] [13] [14]
+    // Index layout: Dur,Use,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
+    //               [0] [1] [2] [3] [4] [5] [6]       [7] [8] [9] [10] [11] [12] [13] [14] [15]
     ColumnViewPreset sfx;
     sfx.name = "SFX";
-    sfx.col[0]=true; sfx.col[1]=true; sfx.col[2]=false; sfx.col[3]=true;
-    sfx.col[4]=false; sfx.col[5]=false; sfx.col[6]=true; sfx.col[7]=true;
-    sfx.col[8]=false; sfx.col[9]=false; sfx.col[10]=false; sfx.col[11]=false; sfx.col[12]=false;
-    sfx.col[13]=false; sfx.col[14]=true;  // UX-112: SFX folks care where a sample came from
+    sfx.col[0]=true; sfx.col[1]=true; sfx.col[2]=true; sfx.col[3]=false;
+    sfx.col[4]=true; sfx.col[5]=false; sfx.col[6]=false; sfx.col[7]=true;
+    sfx.col[8]=true; sfx.col[9]=false; sfx.col[10]=false; sfx.col[11]=false; sfx.col[12]=false;
+    sfx.col[13]=false; sfx.col[14]=false; sfx.col[15]=true;  // UX-112: SFX folks care where a sample came from
     sfx.showMeter=false; sfx.builtIn=true;
 
     ColumnViewPreset music;
     music.name = "Music";
     music.col[0]=true; music.col[1]=false; music.col[2]=false; music.col[3]=false;
     music.col[4]=false; music.col[5]=false; music.col[6]=false; music.col[7]=false;
-    music.col[8]=true; music.col[9]=true; music.col[10]=true; music.col[11]=true; music.col[12]=true;
-    music.col[13]=false; music.col[14]=false;
+    music.col[8]=false; music.col[9]=true; music.col[10]=true; music.col[11]=true; music.col[12]=true;
+    music.col[13]=true; music.col[14]=false; music.col[15]=false;
     music.showMeter=false; music.builtIn=true;
 
     ColumnViewPreset meta;
     meta.name = "Meta";
     meta.col[0]=true; meta.col[1]=false; meta.col[2]=false; meta.col[3]=false;
-    meta.col[4]=true; meta.col[5]=true; meta.col[6]=false; meta.col[7]=true;
-    meta.col[8]=true; meta.col[9]=false; meta.col[10]=false; meta.col[11]=false; meta.col[12]=false;
-    meta.col[13]=true; meta.col[14]=true;  // UX-112: metadata review naturally includes path audit
+    meta.col[4]=false; meta.col[5]=true; meta.col[6]=true; meta.col[7]=false;
+    meta.col[8]=false; meta.col[9]=true; meta.col[10]=false; meta.col[11]=false; meta.col[12]=false;
+    meta.col[13]=false; meta.col[14]=true; meta.col[15]=true;  // UX-112: metadata review naturally includes path audit
     meta.showMeter=false; meta.builtIn=true;
 
     ColumnViewPreset loud;
     loud.name = "Loud";
-    loud.col[0]=true; loud.col[1]=true; loud.col[2]=false; loud.col[3]=true;
-    loud.col[4]=false; loud.col[5]=false; loud.col[6]=false; loud.col[7]=false;
+    loud.col[0]=true; loud.col[1]=false; loud.col[2]=true; loud.col[3]=false;
+    loud.col[4]=true; loud.col[5]=false; loud.col[6]=false; loud.col[7]=false;
     loud.col[8]=false; loud.col[9]=false; loud.col[10]=false; loud.col[11]=false; loud.col[12]=false;
-    loud.col[13]=false; loud.col[14]=false;
+    loud.col[13]=false; loud.col[14]=false; loud.col[15]=false;
     loud.showMeter=true; loud.builtIn=true;
 
     state.columnPresets = {sfx, music, meta, loud};
@@ -7466,9 +7512,25 @@ void FlushSettingsDirty(AppState& state) {
     }
 }
 
+// 使用次数：拖到 DAW / 发送 Wwise / 导出成功后由后台入队，UI 线程统一落库并刷新列表。
+// 试听、播放、hover 预览一律不登记。
+static void DrainPendingUseCounts(AppState& state) {
+    const std::vector<int64_t> ids = state.takePendingUseCounts();
+    if (ids.empty()) return;
+    bool changed = false;
+    for (int64_t fileId : ids) {
+        if (fileId <= 0) continue;
+        if (!state.database.incrementUseCount(fileId)) continue;
+        changed = true;
+        for (auto& record : state.searchResults) {
+            if (record.id == fileId) record.useCount += 1;
+        }
+    }
+    if (changed) state.bumpSearchResultsGen();
+}
+
 // Sort search results
-void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool ascending) {
-    std::sort(results.begin(), results.end(), [column, ascending](const AudioRecord& a, const AudioRecord& b) {
+void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool ascending) {    std::sort(results.begin(), results.end(), [column, ascending](const AudioRecord& a, const AudioRecord& b) {
         int cmp = 0;
         switch (column) {
             case SortColumn::FileName:
@@ -7476,6 +7538,9 @@ void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool asce
                 break;
             case SortColumn::Duration:
                 cmp = (a.durationSeconds < b.durationSeconds) ? -1 : (a.durationSeconds > b.durationSeconds) ? 1 : 0;
+                break;
+            case SortColumn::UseCount:
+                cmp = (a.useCount < b.useCount) ? -1 : (a.useCount > b.useCount) ? 1 : 0;
                 break;
             case SortColumn::Format:
                 cmp = a.format.compare(b.format);
@@ -30961,6 +31026,11 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
             if (state.wwiseTaskWasActive) {
                 state.wwiseTaskWasActive = false;
                 state.wwiseTaskDoneAt = now;
+                // 整批成功才记一次使用；有失败条目不记。
+                if (!wwise.failed && wwise.done > 0 && !state.wwiseUseCountIds.empty()) {
+                    for (int64_t fileId : state.wwiseUseCountIds) state.queueUseCount(fileId);
+                    state.wwiseUseCountIds.clear();
+                }
             }
             if (!state.wwiseTaskDismissed &&
                 state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
@@ -31396,6 +31466,8 @@ void RenderUI(AppState& state) {
     // Guided Mode 镜像：每帧同步说明性 tooltip 全局开关（HoveredForHelp 读取此标志）
     g_showGuidedTooltips = state.settings.showGuidedMode;
     PumpFilePlayerDeferredDbWarmupLog();
+    DrainPendingUseCounts(state);
+
 
     // QA harness: process deferred rescan request (safe here — outside any table loop).
     // Set by PollQaCommandFile; avoids the use-after-free crash from calling
@@ -32182,6 +32254,8 @@ void RenderUI(AppState& state) {
                                                          rec.fileName, copyError);
                             } else {
                                 completed++;
+                                // 导出成功才记一次使用；失败和跳过不计。
+                                if (rec.id > 0) state.queueUseCount(rec.id);
                             }
                         } catch (const std::exception& ex) {
                             errors++;
@@ -42994,6 +43068,7 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(L(Col_FileName), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_NoHide, fileNameColW, (ImGuiID)SortColumn::FileName);
             ImGui::TableSetupColumn(L(Col_Waveform), ImGuiTableColumnFlags_WidthFixed, waveformColW, 0);
             ImGui::TableSetupColumn(L(Col_Duration), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(88.0f, "00:00:00.00"), (ImGuiID)SortColumn::Duration);
+            ImGui::TableSetupColumn(L(Col_UseCount), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(72.0f, "99999"), (ImGuiID)SortColumn::UseCount);
             ImGui::TableSetupColumn(L(Col_Format), ImGuiTableColumnFlags_WidthFixed, workspacePx(72.0f), (ImGuiID)SortColumn::Format);
             ImGui::TableSetupColumn(L(Col_Size), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(84.0f, "1023.9 MB"), (ImGuiID)SortColumn::Size);
             ImGui::TableSetupColumn(L(Col_SampleRate), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(76.0f, "192000"), (ImGuiID)SortColumn::SampleRate);
@@ -43061,9 +43136,9 @@ void RenderUI(AppState& state) {
             // SFX mode: completely hide music-specific columns from dropdown
             if (state.settings.productMode != ProductMode::Music &&
                 !ProductEdition::hasFeature("music_analysis")) {
-                ImGui::TableSetColumnEnabled(12, false);  // BPM
-                ImGui::TableSetColumnEnabled(13, false);  // MusicalKey
-                ImGui::TableSetColumnEnabled(14, false);  // Mood
+                ImGui::TableSetColumnEnabled(13, false);  // BPM
+                ImGui::TableSetColumnEnabled(14, false);  // MusicalKey
+                ImGui::TableSetColumnEnabled(15, false);  // Mood
             }
 
             // 波形列改为可隐藏：状态由右键表头菜单控制并持久化到 imgui.ini，
@@ -43092,9 +43167,9 @@ void RenderUI(AppState& state) {
                 state.columnPresetDirty     = false;
                 state.columnViewPresetDirty = false;
                 constexpr int kPresetColumnTableIndices[kColumnViewPresetFieldCount] = {
-                    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
+                    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
                 };
-                const int lufsBase = 17 + (state.settings.showCoverColumn ? 1 : 0);
+                const int lufsBase = 18 + (state.settings.showCoverColumn ? 1 : 0);
                 const auto& cp = state.columnPresets[
                     ImClamp(state.activeColumnPreset, 0, (int)state.columnPresets.size() - 1)];
                 for (int ci = 0; ci < kColumnViewPresetFieldCount; ++ci)
@@ -45115,7 +45190,7 @@ void RenderUI(AppState& state) {
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::OpenTransferPanel:
-                                if (OpenWwiseTransferPanelForRecords(selectedRecords)) {
+                                if (OpenWwiseTransferPanelForRecords(state, selectedRecords)) {
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Opened transfer panel");
                                 }
                                 break;
@@ -45606,6 +45681,24 @@ void RenderUI(AppState& state) {
                         ImGui::PushStyleColor(ImGuiCol_Text, kL3);
                         ImGui::Text("-");
                         ImGui::PopStyleColor();
+                    }
+
+                    // Use count (Mono, right-aligned, L2 gray)
+                    ImGui::TableNextColumn();
+                    {
+                        ImGui::PushFont(GetUIListMono());
+                        const std::string useCountText = std::to_string(record.useCount);
+                        const float cellAvail = ImGui::GetContentRegionAvail().x;
+                        const float textWidth = ImGui::CalcTextSize(useCountText.c_str()).x;
+                        if (cellAvail > textWidth + 4.0f)
+                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cellAvail - textWidth) - 4.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Text, record.useCount > 0 ? kL2 : kL3);
+#if ARIS_PREVIEW_ISOLATION
+                        state.qaRegions.listUseCountSample = useCountText;
+#endif
+                        ImGui::TextUnformatted(useCountText.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::PopFont();
                     }
 
                     // Format (L3 dark-gray — low-priority suffix info)

@@ -11585,6 +11585,7 @@ static SortColumn ParseSortColumnForWeb(const std::string& sortColumn) {
     const std::string s = ToLowerAscii(sortColumn);
     if (s == "filename" || s == "name") return SortColumn::FileName;
     if (s == "duration") return SortColumn::Duration;
+    if (s == "usecount" || s == "uses") return SortColumn::UseCount;
     if (s == "format") return SortColumn::Format;
     if (s == "size") return SortColumn::Size;
     if (s == "samplerate") return SortColumn::SampleRate;
@@ -11613,6 +11614,7 @@ static void SortAudioRecordsForWeb(std::vector<AudioRecord>& rows, SortColumn co
         switch (column) {
         case SortColumn::FileName: return cmpStr(a.fileName, b.fileName);
         case SortColumn::Duration: return cmpNum(a.durationSeconds, b.durationSeconds);
+        case SortColumn::UseCount: return cmpNum(a.useCount, b.useCount);
         case SortColumn::Format: return cmpStr(!a.format.empty() ? a.format : a.extension, !b.format.empty() ? b.format : b.extension);
         case SortColumn::Size: return cmpNum(a.fileSize, b.fileSize);
         case SortColumn::SampleRate: return cmpNum(a.sampleRate, b.sampleRate);

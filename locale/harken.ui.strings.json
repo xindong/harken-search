@@ -2209,6 +2209,13 @@
       "ja": "長さ"
     },
     {
+      "id": "Col_UseCount",
+      "type": "ui",
+      "zh": "使用次数",
+      "en": "Uses",
+      "ja": "使用回数"
+    },
+    {
       "id": "Col_Format",
       "type": "ui",
       "zh": "格式",

@@ -368,6 +368,7 @@ enum class SortColumn {
     FileName,
     History,
     Duration,
+    UseCount,    // 使用次数列
     Format,
     Size,
     SampleRate,
@@ -1597,11 +1598,11 @@ struct CoverWallState {
 // F-034: Column View Preset
 
 // F-034: Column view preset — one entry per named preset
-inline constexpr int kColumnViewPresetFieldCount = 15;
+inline constexpr int kColumnViewPresetFieldCount = 16;
 
 struct ColumnViewPreset {
     std::string name;       // display name, e.g. "SFX", "My Preset"
-    bool        col[kColumnViewPresetFieldCount]  = {};    // Dur,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
+    bool        col[kColumnViewPresetFieldCount]  = {};    // Dur,Use,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
     bool        showMeter = false;  // enable LUFS/RMS/TruePeak columns
     bool        builtIn   = false;    // true = user cannot delete
 };
@@ -2641,6 +2642,24 @@ struct AppState {
     int64_t randomTotalPool = 0;
     std::set<int64_t> playedFileIds;
     bool randomAllPlayed = false;
+
+    // 使用次数：拖到 DAW / 发送 Wwise / 导出成功后登记一次。
+    // 后台线程只入队，UI 线程统一落库并刷新列表。
+    std::mutex useCountPendingMutex;
+    std::vector<int64_t> useCountPendingIds_;
+    void queueUseCount(int64_t fileId) {
+        if (fileId <= 0) return;
+        std::lock_guard<std::mutex> lk(useCountPendingMutex);
+        useCountPendingIds_.push_back(fileId);
+    }
+    std::vector<int64_t> takePendingUseCounts() {
+        std::lock_guard<std::mutex> lk(useCountPendingMutex);
+        std::vector<int64_t> out = std::move(useCountPendingIds_);
+        useCountPendingIds_.clear();
+        return out;
+    }
+    // 发送到 Wwise：面板打开时记录源文件 id，转移成功结束后统一登记
+    std::vector<int64_t> wwiseUseCountIds;
     static const int RANDOM_PAGE_SIZE = 50;
     
     void resetRandomSampling();
@@ -3394,6 +3413,7 @@ struct AppState {
         float listNumericFontPixels = 0, listHeaderFontPixels = 0;
         float listDurationColWidth = 0, listSampleRateColWidth = 0;
         std::string listNumericSample, listHeaderSample;
+        std::string listUseCountSample;
         float listTextRowHeight = 0;
         std::string listTextSample;
         std::vector<float> listRowOrigins, listRowHitHeights;

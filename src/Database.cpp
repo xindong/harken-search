@@ -7097,6 +7097,7 @@ std::vector<AudioRecord> Database::searchFiles(const SearchFilter& filter, int l
     switch ((SortColumn)filter.sortColumn) {
         case SortColumn::FileName:   orderClause = "af.file_name COLLATE AURA_NATURAL"; break;
         case SortColumn::Duration:   orderClause = "af.duration"; break;
+        case SortColumn::UseCount:   orderClause = "af.use_count"; break;
         case SortColumn::SampleRate: orderClause = "af.sample_rate"; break;
         case SortColumn::Channels:   orderClause = "af.channels"; break;
         case SortColumn::Size:       orderClause = "af.file_size"; break;
