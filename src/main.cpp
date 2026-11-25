@@ -5615,6 +5615,11 @@ void LoadAppSettings(AppState& state) {
         state.settings.listFontSize = itList != kv.end()
             ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)
             : kDefaultListFontPx;
+        state.settings.uiFontFamilies = {
+            kv["chineseFontFamily"] == UiFontFamilies::SourceHanSans,
+            kv["englishFontFamily"] == UiFontFamilies::Inter,
+            kv["numeralFontFamily"] == UiFontFamilies::JetBrainsMono
+        };
     }
     state.settings.rowHeight = ParseInt(kv["rowHeight"], state.settings.rowHeight);
     state.settings.listDensity = static_cast<ListDensity>(ParseInt(kv["listDensity"], (int)state.settings.listDensity));
@@ -6576,6 +6581,10 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"uiScalePercent", std::to_string(aura::ui::dpi::ResolveInterfaceScalePercent(
         persistedAppearance.uiScalePercent))});
     items.push_back({"listFontSize", std::to_string(persistedAppearance.listFontSize)});
+    const auto& fontFamilies = persistedAppearance.uiFontFamilies;
+    items.push_back({"chineseFontFamily", fontFamilies.chinese ? UiFontFamilies::SourceHanSans : "default"});
+    items.push_back({"englishFontFamily", fontFamilies.english ? UiFontFamilies::Inter : "default"});
+    items.push_back({"numeralFontFamily", fontFamilies.numerals ? UiFontFamilies::JetBrainsMono : "default"});
     items.push_back({"rowHeight", std::to_string(persistedAppearance.rowHeight)});
     items.push_back({"listDensity", std::to_string((int)persistedAppearance.listDensity)});
     items.push_back({"settingsDialogWidth", std::to_string(state.settings.settingsDialogWidth)});
@@ -46933,7 +46942,7 @@ void RenderUI(AppState& state) {
             // 纯数字时间码：无边框、无背景、无装饰；保持简约并放大可读性
             char tcText[32];
             snprintf(tcText, sizeof(tcText), "%02d:%02d:%02d.%02d", hours, mins, secs, frames);
-            ImFont* mono = GetUIFontMono();
+            ImFont* mono = GetUIWaveformTimecodeFont();
             const float tcFontSize = workspacePx((float)kChromeFontPx * 1.57f);
             ImVec2 tcTextSize = mono ? mono->CalcTextSizeA(tcFontSize, FLT_MAX, 0.0f, tcText) : ImGui::CalcTextSize(tcText);
             ImVec2 tcTextPos(

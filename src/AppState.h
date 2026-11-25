@@ -807,6 +807,20 @@ struct SavedSearchEntry {
     bool pinned = false;
 };
 
+struct UiFontFamilies {
+    static constexpr const char* SourceHanSans = "source-han-sans-sc";
+    static constexpr const char* Inter = "inter";
+    static constexpr const char* JetBrainsMono = "jetbrains-mono";
+
+    bool chinese = false;
+    bool english = false;
+    bool numerals = false;
+
+    bool operator==(const UiFontFamilies& other) const {
+        return chinese == other.chinese && english == other.english && numerals == other.numerals;
+    }
+};
+
 // Application Settings
 
 struct AppSettings {
@@ -872,6 +886,7 @@ struct AppSettings {
     int fontSize = 13;
     int listFontSize = kDefaultListFontPx;
     int readingFontSize = kDefaultReadingFontPx;   // unified reading-surface font size (replaces listFontSize for reading)
+    UiFontFamilies uiFontFamilies;
     // Application-level interface scale (80-200). Multiplies the monitor DPI so the
     // whole UI can grow or shrink without changing Windows scaling.
     int uiScalePercent = 100;

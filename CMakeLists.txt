@@ -1887,6 +1887,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lucide/lucide.ttf")
         COMMENT "Copying lucide.ttf...")
 endif()
 
+if(WIN32)
+    set(HARKEN_UI_FONTS SourceHanSansSC-Regular.otf Inter.ttf JetBrainsMono-Regular.ttf)
+    list(TRANSFORM HARKEN_UI_FONTS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HarkenSearch>/assets/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HARKEN_UI_FONTS} "$<TARGET_FILE_DIR:HarkenSearch>/assets/fonts"
+        VERBATIM)
+endif()
+
 # F-035 T5: copy brand icon PNGs next to HarkenSearch.exe. Search icons are derived
 # from user-supplied PNGs; see assets/icons/source/harken-app-icons/README.md.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand")
