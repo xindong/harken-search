@@ -135,6 +135,10 @@ static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
             std::string res = HarkenSearch::Search::BuildSearchDataForFts(input);
             sqlite3_result_text(ctx, res.c_str(), -1, SQLITE_TRANSIENT);
         }, nullptr, nullptr);
+    sqlite3_create_function(db, "aura_utf8_bytes", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+        [](sqlite3_context* context, int, sqlite3_value** values) {
+            sqlite3_result_int(context, sqlite3_value_bytes(values[0]));
+        }, nullptr, nullptr);
     sqlite3_create_function(db, "phash_hamming", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
         [](sqlite3_context* ctx, int argc, sqlite3_value** argv) {
             if (argc < 2 ||
@@ -1320,6 +1324,12 @@ static bool ReplaceSearchIndexTriggers(sqlite3* db, const char* sql, std::string
     return false;
 }
 
+static bool ensureSearchSuggestionVocabulary(sqlite3* db, std::string* error) {
+    const char* sql =
+        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.audio_files_suggestion_vocab USING fts5vocab(main, audio_files_fts, col);";
+    return execSqlite(db, sql, error);
+}
+
 bool Database::ensureFtsSchema() {
     if (!m_db) return false;
     if (!requireFts5()) return false;
@@ -1377,12 +1387,7 @@ bool Database::ensureFtsSchema() {
         return false;
     }
 
-    // Build an fts5vocab shadow table for global search suggestions.
-    // type='row' records each term and the number of documents containing it for ranking.
-    const char* createVocab = R"(
-        CREATE VIRTUAL TABLE IF NOT EXISTS audio_files_vocab USING fts5vocab(audio_files_fts, row);
-    )";
-    if (!execSqlite(m_db, createVocab, &err)) {
+    if (!ensureSearchSuggestionVocabulary(m_db, &err)) {
         m_lastError = FormatDbError(L(Db_FtsVocabFailFmt), err.c_str());
         return false;
     }
@@ -2671,6 +2676,8 @@ bool Database::openReadOnly(const std::string& dbPath) {
         return false;
     }
     sqlite3_finalize(mainSchema);
+
+    ensureSearchSuggestionVocabulary(m_db, nullptr);
 
     // Read-only connections must not create missing sidecars beside the source DB.
     m_mainDbPath = dbPath;
@@ -21960,36 +21967,46 @@ void Database::interrupt() {
 
 // Fast search suggestions backed by the FTS5 vocabulary index.
 
-std::vector<std::string> Database::getSearchSuggestions(const std::string& query, int limit) {
+std::vector<std::string> Database::getSearchSuggestions(const std::string& query, int limit, int maxTermBytes) {
     std::vector<std::string> results;
-    if (!m_db || query.empty() || limit <= 0) return results;
+    if (!m_db || query.empty() || limit <= 0 || maxTermBytes < 2) return results;
 
     // FTS terms are lowercase, so normalize the query before the range scan.
     std::string lowerQuery = query;
-    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     // Build the exclusive upper bound for the B-tree prefix query.
     std::string upperQuery = lowerQuery;
     upperQuery.back() = static_cast<char>(upperQuery.back() + 1);
 
-    // Indexed prefix query:
-    // Use the B-tree index and rank by document frequency without a temporary GROUP BY.
-    const char* sql = "SELECT term FROM audio_files_vocab "
-                      "WHERE term >= ? AND term < ? "
-                      "ORDER BY doc DESC LIMIT ?";
+    const char* sql = "SELECT term FROM temp.audio_files_suggestion_vocab "
+                      "WHERE term >= ?1 AND term < ?2 "
+                      "AND col IN ('file_name', 'title', 'artist', 'album', 'description', 'keywords', 'category') "
+                      "AND length(term) <= min(?4, 32) AND (length(term) > 1 OR unicode(term) > 127) "
+                      "AND term GLOB '*[^0-9]*' "
+                      "AND instr(?5, '|' || ltrim(term, '0123456789') || '|') = 0 "
+                      "AND aura_utf8_bytes(term) <= ?4 "
+                      "GROUP BY term ORDER BY max(doc) DESC, length(term), term LIMIT ?3";
+    static const std::string extensionTokens = [] {
+        std::string tokens = "|";
+        for (const auto& extension : AUDIO_EXTENSIONS) {
+            tokens.append(extension, 1, std::string::npos);
+            tokens.push_back('|');
+        }
+        return tokens;
+    }();
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, lowerQuery.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, upperQuery.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(stmt, 3, limit);
+        sqlite3_bind_int(stmt, 4, maxTermBytes);
+        sqlite3_bind_text(stmt, 5, extensionTokens.c_str(), -1, SQLITE_STATIC);
 
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            std::string term = safeGetText(stmt, 0);
-            // Drop one-character terms and filename-extension tokens.
-            if (term.length() > 1 && term.find(".wav") == std::string::npos && term.find(".mp3") == std::string::npos) {
-                results.push_back(term);
-            }
+            results.emplace_back(safeGetText(stmt, 0));
         }
         sqlite3_finalize(stmt);
     }
