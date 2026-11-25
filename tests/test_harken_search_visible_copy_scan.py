@@ -2,8 +2,11 @@ import hashlib
 import json
 import pathlib
 import re
+import tempfile
 import unittest
 from collections import Counter
+
+from tools import localization_purity
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -302,6 +305,149 @@ def _script_issue(lang, text):
     if lowered in {"ja", "jp", "japanese"} and has_han and not has_kana:
         return "ja column contains Han without Kana"
     return None
+
+
+class LocalizationCoverageTests(unittest.TestCase):
+    def test_existing_gate_rejects_native_copy_in_new_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "locale").mkdir()
+            (root / "locale/harken.ui.strings.json").write_text('{"entries": []}', encoding="utf-8")
+            (root / "src/ui").mkdir(parents=True)
+            (root / "src/ui/NewWindow.inl").write_text(
+                '''ImGui::InputTextWithHint("##find", "Find a source", buffer, size);
+ImGui::BeginCombo("##preset", condition ? L(Preset) : u8"未命名预设");
+drawList->AddText(position, color, std::string("No result").c_str());
+SetWindowTextW(hwnd, L"New window caption");
+ImGui::Button(R"copy(Raw label)copy");
+ImGui::TextUnformatted("Two " "parts");
+''', encoding="utf-8",
+            )
+            with self.assertRaises(localization_purity.PurityError) as failure:
+                localization_purity.check_visible_copy_purity(root, baseline=set())
+            for literal in ("Find a source", "未命名预设", "No result", "New window caption",
+                            "Raw label", "Two parts"):
+                self.assertIn(literal, str(failure.exception))
+            self.assertIn("src/ui/NewWindow.inl:1", str(failure.exception))
+
+    def test_display_names_are_inventory_sources_but_ids_formats_and_logs_are_not_debt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "src/ui").mkdir(parents=True)
+            (root / "locale").mkdir()
+            (root / "locale/harken.ui.strings.json").write_text(
+                json.dumps({"entries": [
+                    {"id": "New_Title", "zh": "新窗口", "en": "New window", "ja": "新しい画面"},
+                ]}, ensure_ascii=False), encoding="utf-8",
+            )
+            (root / "src/ui/NewWindow.hpp").write_text(
+                r'''const char* GetFilterDisplayName(Filter item) {
+    return item ? u8"\u65b0\u540d" : L(New_Title);
+}
+void Draw() {
+    info.displayName = "Default library";
+    const char* actionLabel = "Clear filters";
+    ImGui::Button(actionLabel);
+    ImGui::Begin(L(New_Title));
+    ImGui::InputTextWithHint("##find", L(New_Title), buffer, size);
+    ImGui::BeginTable("Unique internal table", 2);
+    ImGui::OpenPopup("Internal popup name");
+    ImGui::MenuItem(L(New_Title), "Ctrl+O");
+    ImGui::Text(" %.1f dB", value);
+    ImGui::Text("%s", recordName.c_str());
+    LogInfo("Do not scan diagnostics", recordName);
+    /* ImGui::Button("Inactive comment"); */
+    auto example = R"cpp(ImGui::Button("Not compiled as code");)cpp";
+}
+''', encoding="utf-8",
+            )
+            (root / "src/ui/WwiseTransferPanel.cpp").write_text(
+                'ImGui::Button("Excluded Wwise");', encoding="utf-8",
+            )
+            (root / "src/ui/CoverWallLabWindow.cpp").write_text(
+                'ImGui::Button("Excluded lab");', encoding="utf-8",
+            )
+            (root / "src/DiagnosticOverlay.cpp").write_text(
+                'ImGui::Button("Excluded diagnostic");', encoding="utf-8",
+            )
+            report = localization_purity.build_coverage_inventory(root)
+            self.assertEqual(report["resources"][0]["translations"],
+                             {"zh": "新窗口", "en": "New window", "ja": "新しい画面"})
+            self.assertEqual(
+                {(row["text"], row["line"]) for row in report["debt"]},
+                {("新名", 2), ("Default library", 5), ("Clear filters", 6)},
+            )
+            self.assertTrue(any(
+                row["site"] == "ImGui::Begin[0]" and row.get("id") == "New_Title"
+                and row["path"] == "src/ui/NewWindow.hpp" and row["line"] == 8
+                for row in report["visible"]
+            ))
+
+    def test_stock_copy_does_not_exempt_an_extra_occurrence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "src").mkdir()
+            (root / "locale").mkdir()
+            (root / "tests").mkdir()
+            (root / "locale/harken.ui.strings.json").write_text('{"entries": []}', encoding="utf-8")
+            source = root / "src/Window.inl"
+            stock = 'ImGui::InputTextWithHint("##find", "Filter by name", buffer, size);\n'
+            source.write_text(stock, encoding="utf-8")
+            baseline = root / "tests/localization_coverage_baseline.json"
+            baseline.write_text(json.dumps({
+                "schema_version": 1,
+                "entries": [["src/Window.inl", "ImGui::InputTextWithHint[1]", "Filter by name", 1]],
+            }), encoding="utf-8")
+            localization_purity.check_visible_copy_purity(root)
+            source.write_text("\n" + stock + stock, encoding="utf-8")
+            with self.assertRaisesRegex(localization_purity.PurityError, r"src/Window\.inl:3"):
+                localization_purity.check_visible_copy_purity(root)
+            source.write_text("\n" + stock, encoding="utf-8")
+            localization_purity.check_visible_copy_purity(root)
+
+    def test_project_display_slots_exclude_field_ids_and_ternary_comparisons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "src").mkdir()
+            (root / "src/MetadataFields.cpp").write_text(
+                '''registerField("internalFieldId", "User label", u8"用户标签", ignored);
+void DrawSettings() {
+    const char* title = page == "stored-page-id" ? L(Existing_Title) : "Unknown page";
+    aura::ui::ActionButton(title);
+    const char* options[] = {"First choice", "Second choice"};
+    aura::ui::Combo("##choice", &selected, options, 2);
+    opts.placeholder = "Type a name";
+    opts.trailingTooltip = "Show more";
+}
+''', encoding="utf-8",
+            )
+            rows = localization_purity.scan_localization_coverage(root)
+            self.assertEqual({row["text"] for row in rows}, {
+                "User label", "用户标签", "Unknown page", "First choice", "Second choice",
+                "Type a name", "Show more",
+            })
+
+    def test_native_coverage_uses_existing_purity_gate_for_this_checkout(self):
+        self.assertTrue((ROOT / localization_purity.COVERAGE_BASELINE).is_file())
+        localization_purity.check_visible_copy_purity(ROOT)
+
+    def test_same_gate_ignores_internal_windows_and_technical_format_in_cpp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "src").mkdir()
+            (root / "locale").mkdir()
+            (root / "locale/harken.ui.strings.json").write_text('{"entries": []}', encoding="utf-8")
+            for name in ("DiagnosticOverlay.cpp", "WwiseNewPanel.cpp", "CoverWallLabWindow.cpp"):
+                (root / "src" / name).write_text('ImGui::Button("Internal only");', encoding="utf-8")
+            (root / "src/Window.cpp").write_text(
+                '''ImGui::Text(" %.1f dB", value);
+ImGui::BeginChild("Internal child ID");
+LogInfo("Internal diagnostic breadcrumb");
+// ImGui::Button("Commented out");
+auto example = R"cpp(ImGui::Button("Example source");)cpp";
+''', encoding="utf-8",
+            )
+            localization_purity.check_visible_copy_purity(root)
 
 
 class HarkenSearchVisibleCopyScanTests(unittest.TestCase):

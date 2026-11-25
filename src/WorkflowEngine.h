@@ -223,8 +223,6 @@ public:
 // Node Type Info
     
     static const char* getNodeTypeName(WorkflowNodeType type);
-    static const char* getNodeTypeNameZh(WorkflowNodeType type);
-    static const char* getNodeTypeDescription(WorkflowNodeType type);
     
     // 获取所有可用的节点类型
     static std::vector<WorkflowNodeType> getAvailableNodeTypes();
