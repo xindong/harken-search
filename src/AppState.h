@@ -2660,6 +2660,7 @@ struct AppState {
     }
     // 发送到 Wwise：面板打开时记录源文件 id，转移成功结束后统一登记
     std::vector<int64_t> wwiseUseCountIds;
+    bool wwiseUseCountHandled = false;
     static const int RANDOM_PAGE_SIZE = 50;
     
     void resetRandomSampling();

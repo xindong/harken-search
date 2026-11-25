@@ -5464,6 +5464,15 @@ static bool OpenWwiseTransferPanelForRecords(AppState& state, const std::vector<
     return true;
 }
 
+// QA 隔离构建专用：把当前选中的行交给 Wwise 传输面板（与右键菜单同一入口）。
+void QaWwiseStageSelection(AppState& state) {
+    auto selected = state.getSelectedRecords();
+    if (selected.empty() && state.selectedResultIndex >= 0 &&
+        state.selectedResultIndex < (int)state.searchResults.size())
+        selected.push_back(state.searchResults[state.selectedResultIndex]);
+    if (!selected.empty()) OpenWwiseTransferPanelForRecords(state, selected);
+}
+
 // Folder Dialog
 
 std::string OpenFolderDialog(HWND hwnd) {
@@ -7515,6 +7524,22 @@ void FlushSettingsDirty(AppState& state) {
     if (TrySaveAppSettings(state)) {
         state.settingsDirty = false;
     }
+}
+
+// 发送到 Wwise：整批成功（无失败条目）才记一次使用；同一轮只记一次。
+static void CountWwiseTransferUseOnce(AppState& state) {
+    const auto progress = aura::wwise::GetWwiseTransferProgress();
+    if (progress.active) {
+        state.wwiseUseCountHandled = false;
+        return;
+    }
+    if (!progress.finished || state.wwiseUseCountHandled) return;
+    state.wwiseUseCountHandled = true;
+    // 进度计数器在完成后会归零，这里只按“本轮没有失败”判定。
+    if (progress.failed) return;
+    if (state.wwiseUseCountIds.empty()) return;
+    for (int64_t fileId : state.wwiseUseCountIds) state.queueUseCount(fileId);
+    state.wwiseUseCountIds.clear();
 }
 
 // 使用次数：拖到 DAW / 发送 Wwise / 导出成功后由后台入队，UI 线程统一落库并刷新列表。
@@ -31031,11 +31056,7 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
             if (state.wwiseTaskWasActive) {
                 state.wwiseTaskWasActive = false;
                 state.wwiseTaskDoneAt = now;
-                // 整批成功才记一次使用；有失败条目不记。
-                if (!wwise.failed && wwise.done > 0 && !state.wwiseUseCountIds.empty()) {
-                    for (int64_t fileId : state.wwiseUseCountIds) state.queueUseCount(fileId);
-                    state.wwiseUseCountIds.clear();
-                }
+
             }
             if (!state.wwiseTaskDismissed &&
                 state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
@@ -31471,6 +31492,7 @@ void RenderUI(AppState& state) {
     // Guided Mode 镜像：每帧同步说明性 tooltip 全局开关（HoveredForHelp 读取此标志）
     g_showGuidedTooltips = state.settings.showGuidedMode;
     PumpFilePlayerDeferredDbWarmupLog();
+    CountWwiseTransferUseOnce(state);
     DrainPendingUseCounts(state);
 
 

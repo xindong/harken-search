@@ -2296,6 +2296,66 @@ WwiseTransferProgress GetWwiseTransferProgress() {
     return snap;
 }
 
+// QA 隔离构建专用：action = configure / connect / transfer / status。
+// configure 直接改内存中的传输配置（端口/工程/结构），避免依赖配置文件读取时序。
+std::string QaWwiseCommand(const std::string& action, int port, const std::string& projectPath) {
+    auto& cfg = activeTransferConfig();
+    if (action == "configure") {
+        // handleConnect 会先 flushBuffersToConfig()，所以缓冲区也要一起改。
+        if (port > 0) { cfg.waapiPort = port; g_ps.bufWaapiPort = port; }
+        if (!projectPath.empty()) {
+            cfg.projectPath = projectPath;
+            std::snprintf(g_ps.bufProjectPath, sizeof(g_ps.bufProjectPath), "%s", projectPath.c_str());
+        }
+        if (cfg.originalsSubfolder.empty()) {
+            cfg.originalsSubfolder = "UseCountQA";
+            std::snprintf(g_ps.bufOriginalsSubfolder, sizeof(g_ps.bufOriginalsSubfolder), "%s", cfg.originalsSubfolder.c_str());
+        }
+        if (cfg.structure.empty()) {
+            WwiseStructureNode folder;
+            folder.type = WwiseObjectType::RandomContainer;
+            folder.nameTemplate = "$ucs_cat";
+            WwiseStructureNode sound;
+            sound.type = WwiseObjectType::SoundSFX;
+            sound.nameTemplate = "$filename_base";
+            cfg.structure = {folder, sound};
+        }
+    } else if (action == "connect") {
+        handleConnect();
+    } else if (action == "transfer") {
+        handleTransfer();
+    }
+
+    auto sanitize = [](std::string value) {
+        for (char& ch : value) {
+            const unsigned char code = static_cast<unsigned char>(ch);
+            if (code < 0x20 || code == 0x22 || code == 0x5C) ch = ' ';
+        }
+        return value;
+    };
+    const auto progress = GetWwiseTransferProgress();
+    std::ostringstream oss;
+    oss << "{\"ok\":true,\"cmd\":\"wwise_qa\",\"action\":\"" << sanitize(action) << "\""
+        << ",\"connected\":" << ((g_ps.client && g_ps.client->isConnected()) ? "true" : "false")
+        << ",\"port\":" << cfg.waapiPort
+        << ",\"project\":\"" << sanitize(cfg.projectPath) << "\""
+        << ",\"structure_layers\":" << cfg.structure.size()
+        << ",\"active\":" << (progress.active ? "true" : "false")
+        << ",\"done\":" << progress.done
+        << ",\"total\":" << progress.total
+        << ",\"finished\":" << (progress.finished ? "true" : "false")
+        << ",\"failed\":" << (progress.failed ? "true" : "false")
+        << ",\"has_result\":" << (g_ps.hasResult ? "true" : "false")
+        << ",\"imported\":" << g_ps.lastResult.imported
+        << ",\"skipped\":" << g_ps.lastResult.skipped
+        << ",\"failed_items\":" << g_ps.lastResult.failed
+        << ",\"staged\":" << g_ps.sourceWavs.size()
+        << ",\"message\":\"" << sanitize(g_ps.lastActionMessage) << "\""
+        << ",\"connect_error\":\"" << sanitize(g_ps.connectError) << "\""
+        << ",\"aggregate_error\":\"" << sanitize(g_ps.lastResult.aggregateError) << "\"}";
+    return oss.str();
+}
+
 void ShutdownWwiseTransferPanel() {
     // 先等后台传输结束，避免退出时线程还在用 clientPtr / 写全局状态。
     if (g_async.transferThread.joinable()) g_async.transferThread.join();

@@ -3922,6 +3922,7 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
 }
 
 extern void QaSendToDaw(AppState&, int);
+extern void QaWwiseStageSelection(AppState&);
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
 extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
 #if ARIS_PREVIEW_ISOLATION
@@ -6177,6 +6178,16 @@ static void PollQaCommandFile(AppState& state) {
         } else {
             QaSendToDaw(state, dawIndex);
             result = "{\"ok\":true,\"cmd\":\"send_to_daw\",\"index\":" + std::to_string(dawIndex) + "}";
+        }
+
+    } else if (cmd == "wwise_qa") {
+        const std::string action = getStr(raw, "action");
+        if (action == "stage") {
+            QaWwiseStageSelection(state);
+            result = "{\"ok\":true,\"cmd\":\"wwise_qa\",\"action\":\"stage\"}";
+        } else {
+            result = aura::wwise::QaWwiseCommand(action, getInt(raw, "port", 0),
+                                                    getStr(raw, "project"));
         }
 
     } else if (cmd == "send_feedback") {

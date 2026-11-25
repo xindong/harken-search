@@ -49,6 +49,8 @@ WwiseTransferProgress GetWwiseTransferProgress();
 
 // Closes the panel and disconnects the embedded WAAPI client. Called from
 // app shutdown so the socket is torn down cleanly.
+// QA 隔离构建专用：触发与面板按钮相同的连接/传输，返回 JSON 状态。
+std::string QaWwiseCommand(const std::string& action, int port, const std::string& projectPath);
 void ShutdownWwiseTransferPanel();
 
 } // namespace wwise
