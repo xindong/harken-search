@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -139,9 +140,20 @@ std::unique_ptr<PersistenceWorker> g_worker;
 
 void BindPersistence(const Database& database) {
     StopPersistence();
-    if (database.isOpen() && sqlite3_db_readonly(database.db(), "main") == 0 &&
-        !database.getMainDbPath().empty()) {
+    if (!database.isOpen() || sqlite3_db_readonly(database.db(), "main") != 0 ||
+        database.getMainDbPath().empty()) {
+        return;
+    }
+    try {
         g_worker = std::make_unique<PersistenceWorker>(database.getMainDbPath());
+    } catch (const std::exception& error) {
+        // A missing worker only means cover keys stay queued instead of written;
+        // never let thread creation take the whole application down.
+        g_worker.reset();
+        DIAG_SYSTEM_FMT("Cover", "Cover key cache writer unavailable: %s", error.what());
+    } catch (...) {
+        g_worker.reset();
+        DIAG_SYSTEM("Cover", "Cover key cache writer unavailable");
     }
 }
 

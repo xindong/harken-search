@@ -2231,6 +2231,70 @@ set_tests_properties(TestCoverKeyCachePersistenceWorkflowBoundary PROPERTIES
 )
 aura_set_test_labels(TestCoverKeyCachePersistenceWorkflowBoundary core stage4)
 
+# Runtime coverage for the cover key cache writeback worker: real SQLite writes,
+# retry on a locked database, stop on database switch, flush on shutdown.
+add_executable(TestCoverKeyCachePersistenceRuntime EXCLUDE_FROM_ALL
+    tests/test_cover_key_cache_persistence_runtime.cpp
+    tests/test_database_link_stubs.cpp
+    tests/test_appstate_link_stubs.cpp
+    src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
+    src/Database.cpp
+    src/CoverKeyCachePersistenceWorkflow.cpp
+    src/CoverReplacementFoundation.cpp
+    src/BackfillQueue.cpp
+    src/BackfillWorkerPool.cpp
+    src/PathUtils.cpp
+    src/platform/file_watcher.cpp
+    src/platform/harken_user_data_layout.cpp
+    src/Utils.cpp
+    src/MetadataReader.cpp
+    src/SearchQuery.cpp
+    src/AudioEngine.cpp
+    src/platform/audio_playback_miniaudio.cpp
+    src/TagVocabularyMapper.cpp
+    src/DiagnosticsLogger.cpp
+    src/CenterSenseDataSource.cpp
+    src/CenterSenseDsp.cpp
+    src/WaveformExtractor.cpp
+    src/NativeFloatReader.cpp
+    src/platform/audio_data_source_miniaudio.cpp
+    src/platform/filesystem_win32.cpp
+    src/platform/filesystem_std.cpp
+    src/platform/search_text_gb2312_std.cpp
+    src/platform/metadata_legacy_tag_content_std.cpp
+    src/platform/audio_file_miniaudio.cpp
+    src/platform/text_encoding_win32.cpp
+    src/platform/thread_id_win32.cpp
+    src/platform/media_foundation_audio_unsupported.cpp
+    src/platform/emergency_file_writer_win32.cpp
+    src/TimeStretch.cpp
+    ${SQLITE_SOURCES}
+)
+target_include_directories(TestCoverKeyCachePersistenceRuntime PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${SQLITE_DIR}
+    ${IMGUI_DIR}
+)
+target_link_libraries(TestCoverKeyCachePersistenceRuntime PRIVATE
+    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
+)
+target_compile_definitions(TestCoverKeyCachePersistenceRuntime PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    TEST_DATABASE_STUBS_REAL_FILESYSTEM
+)
+if(MSVC)
+    target_compile_options(TestCoverKeyCachePersistenceRuntime PRIVATE /W3 /MP /utf-8)
+    set_target_properties(TestCoverKeyCachePersistenceRuntime PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestCoverKeyCachePersistenceRuntime COMMAND TestCoverKeyCachePersistenceRuntime)
+aura_set_test_labels(TestCoverKeyCachePersistenceRuntime core stage4)
+
 add_test(
     NAME TestDeferredSidebarBootstrapWorkflowBoundary
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
