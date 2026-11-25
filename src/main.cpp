@@ -38902,27 +38902,43 @@ void RenderUI(AppState& state) {
         std::vector<const SearchCommands::SearchCommand*> cmdMatches;
         if (inCmdMenu) cmdMatches = SearchCommands::MatchCommandsByPrefix(s_cmdPrefix);
 
-        // 只有在用户停止输入 120ms 后，才真正请求数据库联想
-        if (ImGui::GetTime() >= s_searchSuggestNextQueryAt) {
-            if (lastWord != state.searchSuggestLastQueryNorm) {
-                state.searchSuggestLastQueryNorm = lastWord;
+        constexpr int kWordSuggestLimit = 8;
+        if (!inCmdMenu && !inValuePick && cleanQuery != state.searchSuggestLastQueryNorm) {
+            state.searchSuggestCandidates.clear();
+            state.searchSuggestSelected = -1;
+            state.searchSuggestUserSelected = false;
+            if (ImGui::GetTime() >= s_searchSuggestNextQueryAt) {
+                state.searchSuggestLastQueryNorm = cleanQuery;
                 if (!lastWord.empty()) {
-                    state.searchSuggestCandidates = state.database.getSearchSuggestions(lastWord, 10);
-                } else {
-                    state.searchSuggestCandidates.clear();
+                    const size_t prefixBytes = cleanQuery.size() - lastWord.size();
+                    const int maxTermBytes = static_cast<int>(sizeof(state.searchBuffer) - prefixBytes - 2);
+                    state.searchSuggestCandidates = state.database.getSearchSuggestions(lastWord, kWordSuggestLimit, maxTermBytes);
                 }
-                state.searchSuggestSelected = -1;
-                state.searchSuggestUserSelected = false;
+            } else {
+                state.searchSuggestLastQueryNorm.clear();
             }
         }
 
-        bool hasSuggestCandidates = !state.searchSuggestCandidates.empty() && !currentSearch.empty();
+        ImGuiIO& io = ImGui::GetIO();
+        auto wasKeyPressed = [&](ImGuiKey key) -> bool {
+            return ImGui::IsKeyPressed(key, false) ||
+                   (io.KeysData[key - ImGuiKey_NamedKey_BEGIN].DownDuration == 0.0f &&
+                    io.KeysData[key - ImGuiKey_NamedKey_BEGIN].Down);
+        };
 
         // 用户按 ESC 或 Enter(未选) 关闭后，本输入周期内不再自动展开，避免闪烁；输入变化后允许再次展开
         static bool s_suggestPopupDismissedByUser = false;
         if (typedChanged) s_suggestPopupDismissedByUser = false;
-        if (!hasSuggestCandidates) s_suggestPopupDismissedByUser = false;
+        if (!inCmdMenu && !inValuePick && state.searchSuggestMode == SuggestMode::WordSuggest &&
+            wasKeyPressed(ImGuiKey_Escape)) {
+            s_suggestPopupDismissedByUser = true;
+            state.searchSuggestLastQueryNorm = cleanQuery;
+            state.searchSuggestCandidates.clear();
+            state.searchSuggestSelected = -1;
+            state.searchSuggestUserSelected = false;
+        }
 
+        const bool hasSuggestCandidates = !state.searchSuggestCandidates.empty() && !currentSearch.empty();
         const char* kSearchSuggestPopupId = "##SearchSuggestPopup";
         bool popupOpen = ImGui::IsPopupOpen(kSearchSuggestPopupId);
         // 展开条件：有联想且（搜索框有焦点 或 联想框已打开），且未被用户主动关闭
@@ -38941,25 +38957,17 @@ void RenderUI(AppState& state) {
         auto acceptSuggestionBySelected = [&](bool applyNow) -> bool {
             if (!showSuggestPopup || inValuePick) return false;
             if (state.searchSuggestSelected < 0 || state.searchSuggestSelected >= (int)state.searchSuggestCandidates.size()) return false;
-            const std::string& disp = state.searchSuggestCandidates[state.searchSuggestSelected];
-
             // Replace only the final token and keep the existing prefix.
-            std::string cleanQuery = TrimCopy(currentSearch);
-            size_t lastSpace = cleanQuery.find_last_of(' ');
-            std::string newQuery;
-            if (lastSpace != std::string::npos) {
-                newQuery = cleanQuery.substr(0, lastSpace + 1) + disp + " ";
-            } else {
-                newQuery = disp + " ";
-            }
-
+            std::string newQuery = (lastSpace != std::string::npos) ? cleanQuery.substr(0, lastSpace + 1) : std::string{};
+            newQuery += state.searchSuggestCandidates[state.searchSuggestSelected];
+            state.searchSuggestLastQueryNorm = newQuery;
+            newQuery.push_back(' ');
             state.searchSuggestPendingText = newQuery;
             state.searchSuggestRequestFocus = true;
             state.searchSuggestPopupOpen = false;
             state.searchSuggestCandidates.clear();
             state.searchSuggestSelected = -1;
             state.searchSuggestUserSelected = false;
-            state.searchSuggestLastQueryNorm = disp;
             ImGui::CloseCurrentPopup();
             if (applyNow) state.searchSuggestForceApply = true;
             return true;
@@ -39042,19 +39050,12 @@ void RenderUI(AppState& state) {
             return true;
         };
 
-        ImGuiIO& io = ImGui::GetIO();
-        auto wasKeyPressed = [&](ImGuiKey key) -> bool {
-            return ImGui::IsKeyPressed(key, false) ||
-                   (io.KeysData[key - ImGuiKey_NamedKey_BEGIN].DownDuration == 0.0f &&
-                    io.KeysData[key - ImGuiKey_NamedKey_BEGIN].Down);
-        };
-
         // Merge widget return state with raw Enter keys so acceptance is not lost.
         bool enterPressed = inputReturn || wasKeyPressed(ImGuiKey_Enter) || wasKeyPressed(ImGuiKey_KeypadEnter);
         bool suggestionAccepted = false;
 
         if (showSuggestPopup) {
-            if (wasKeyPressed(ImGuiKey_Escape)) {
+            if (inValuePick && wasKeyPressed(ImGuiKey_Escape)) {
                 s_suggestPopupDismissedByUser = true;
                 state.searchSuggestPopupOpen = false;
                 state.searchSuggestCandidates.clear();
@@ -39412,23 +39413,29 @@ void RenderUI(AppState& state) {
                         ImGui::PopID();
                     }
                 } else {
-                    // WordSuggest content
-                    int showN = std::min<int>(10, (int)state.searchSuggestCandidates.size());
-                    for (int i = 0; i < showN; ++i) {
-                        const std::string& disp = state.searchSuggestCandidates[i];
-                        if (disp.empty()) continue;  // 跳过空字符串，避免 ImGui 空 ID 断言崩溃
-                        bool selected = (i == state.searchSuggestSelected);
-                        ImGui::PushID(i);
+                    const int suggestionCount = static_cast<int>(state.searchSuggestCandidates.size());
+                    for (int suggestionIndex = 0; suggestionIndex < suggestionCount; ++suggestionIndex) {
+                        const std::string& term = state.searchSuggestCandidates[suggestionIndex];
+                        const bool selected = (suggestionIndex == state.searchSuggestSelected);
+                        ImGui::PushID(suggestionIndex);
+                        ImVec2 textMin = ImGui::GetCursorScreenPos();
+                        textMin.y += ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset;
+                        const float textRight = textMin.x + ImGui::GetContentRegionAvail().x;
 
-                        if (ImGui::Selectable(disp.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(0, 24.0f))) {
-                            state.searchSuggestSelected = i;
+                        if (ImGui::Selectable("##word", selected, ImGuiSelectableFlags_None, ImVec2(0, 24.0f))) {
+                            state.searchSuggestSelected = suggestionIndex;
                             acceptSuggestionBySelected(true);  // 必须在 clear 之前读取 candidates
                             ImGui::ClearActiveID();
                             ImGui::PopID();
                             break;  // candidates 已被 accept 清空，不可继续遍历
                         }
+                        if (textRight > textMin.x) {
+                            const ImVec2 textMax(textRight, textMin.y + ImGui::GetTextLineHeight());
+                            ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), textMin, textMax, textRight,
+                                                      term.data(), term.data() + term.size(), nullptr);
+                        }
                         if (ImGui::IsItemHovered()) {
-                            state.searchSuggestSelected = i;
+                            state.searchSuggestSelected = suggestionIndex;
                             state.searchSuggestUserSelected = true;
                         }
                         if (selected) ImGui::SetItemDefaultFocus();
