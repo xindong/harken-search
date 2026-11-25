@@ -85,8 +85,13 @@ int main() {
             std::cerr << "FAIL: Lw CJK zh\n"; ++failures;
         }
         const std::wstring save = GetLocalizedStringW(LStr::Main_WriteCoverProgress);  // starts with U+1F4BE
-        if (save.size() < 2 || save[0] != 0xD83D || save[1] != 0xDCBE) {
-            std::cerr << "FAIL: Lw astral surrogate pair\n"; ++failures;
+        // Win32 wchar_t is UTF-16, so an astral code point arrives as a surrogate pair;
+        // where wchar_t is 32-bit it is a single value and the pair check does not apply.
+        const bool astralOk = sizeof(wchar_t) == 2
+            ? (save.size() >= 2 && save[0] == 0xD83D && save[1] == 0xDCBE)
+            : (!save.empty() && static_cast<unsigned long>(save[0]) == 0x1F4BEUL);
+        if (!astralOk) {
+            std::cerr << "FAIL: Lw astral code point\n"; ++failures;
         }
         if (!GetLocalizedStringW(LStr::Auth_ContactAdmin).empty()) {  // intentionally-empty cell
             std::cerr << "FAIL: Lw empty cell must stay empty, no crash\n"; ++failures;
