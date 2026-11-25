@@ -74,9 +74,9 @@ def test_sidebar_render_instances_own_independent_folder_tree_controls():
         "DetachedSidebar": "DetachedSidebar",
     }
     assert 'RenderSidebarPanelContent(state, sidebarScope);' in MAIN
-    assert 'renderToolContent(module, bodySize.x, sidebarScope);' in MAIN
+    assert 'renderToolContent(module, ImGui::GetContentRegionAvail().x, sidebarScope);' in MAIN
     docked = re.findall(r'renderDockedToolBody\([^;\n]+, "(\w+)"\);', MAIN)
-    floating = re.findall(r'renderToolContent\(selected,[^;\n]+, "(\w+)"\);', MAIN)
+    floating = re.findall(r'renderFloatingToolBody\([^;\n]+, "(\w+)"\);', MAIN)
     standalone = re.findall(r'RenderSidebarPanelContent\(state, "(\w+)"\);', MAIN)
     assert sorted(docked + floating + standalone) == sorted(slots)
 

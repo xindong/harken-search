@@ -14244,6 +14244,9 @@ static void RenderBrowserSystemFolderNode(AppState& state,
         }
     }
     ImGui::PushID(folderPath.c_str());
+    if (hasChildren) {
+        ImGui::SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserFolders")));
+    }
     const bool opened = ImGui::TreeNodeEx(displayName.c_str(), flags);
     if (flash > 0.0f) {
         ImGui::PopStyleColor(3);
@@ -14316,6 +14319,9 @@ static void RenderBrowserSystemFolderSearchNode(AppState& state,
         ImGui::PushStyleColor(ImGuiCol_Text, modules.filterBrowser.searchHitText);
     }
     ImGui::PushID(node.path.c_str());
+    if (!node.children.empty()) {
+        ImGui::SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserSearchResults")));
+    }
     const bool opened = ImGui::TreeNodeEx(node.displayName.c_str(), flags);
     if (node.directHit && ImGui::IsItemVisible()) {
         ImVec2 rMin = ImGui::GetItemRectMin();
@@ -14578,6 +14584,7 @@ static void RenderFolderTreeExplorerList(
     float treeH,
     bool collapseAll,
     bool useRoundedChrome,
+    ImGuiStorage& expansionStorage,
     const std::function<void()>& renderRows)
 {
     const ThemeColorScheme& theme = ThemeColors::current();
@@ -14591,13 +14598,13 @@ static void RenderFolderTreeExplorerList(
         styleVars = 2;
     }
     BeginTransientScrollbarChild(childId, ImVec2(-1, treeH), true);
+    ImGuiStorage* previousStorage = ImGui::GetStateStorage();
+    ImGui::SetStateStorage(&expansionStorage);
     if (collapseAll) {
-        ImGuiWindow* tw = ImGui::GetCurrentWindow();
-        if (tw && tw->DC.StateStorage) {
-            tw->DC.StateStorage->Clear();
-        }
+        expansionStorage.Clear();
     }
     renderRows();
+    ImGui::SetStateStorage(previousStorage);
     ImGui::EndChild();
     if (styleVars > 0) {
         ImGui::PopStyleVar(styleVars);
@@ -14735,11 +14742,13 @@ static void RenderBrowserFolderTreeSidebarPanel(
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(previousFramePadding.x, compactTreePadY));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(previousItemSpacing.x, compactTreeSpacingY));
             ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, compactTreeIndentSpacing);
+            static ImGuiStorage browserExpansion;
             RenderFolderTreeExplorerList(
                 browserSource.treeListChildId,
                 treeH,
                 g_browserSystemFolderTreeCollapseAll,
                 false,
+                browserExpansion,
                 [&state, &controls, searchQuery]() {
                     if (!searchQuery.empty()) {
                         RenderBrowserSystemFolderSearchTree(state);
@@ -15161,7 +15170,8 @@ static void RenderFolderTreeNode(AppState& state,
                                  FolderTreeSelectionMode mode,
                                  bool revealSubtree = false,
                                  FolderTreeRowMetrics* modernRow = nullptr, bool nested = false,
-                                 aura::folder_tree::controls::LocateFeedback* locate = nullptr) {
+                                 aura::folder_tree::controls::LocateFeedback* locate = nullptr,
+                                 ImGuiID expansionSeed = 0) {
     // Use the precomputed folderSearchHits set for constant-time membership.
     // 杜绝调用 FolderOrChildMatchesSearch 这种每帧递归的"性能黑洞"
     if (!search.empty() && !revealSubtree) {
@@ -15213,6 +15223,8 @@ static void RenderFolderTreeNode(AppState& state,
     // node ignores unless _FramePadding is set.
     if (modernRow) flags |= ImGuiTreeNodeFlags_FramePadding;
     if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
+    if (hasChildren && expansionSeed)
+        ImGui::SetNextItemStorageID(ImHashStr(folder.path.c_str(), 0, expansionSeed));
     if (state.folderTreeCollapseAll && !shouldAutoOpen) ImGui::SetNextItemOpen(false);
     else if (shouldAutoOpen) ImGui::SetNextItemOpen(true);
 
@@ -15284,6 +15296,14 @@ static void RenderFolderTreeNode(AppState& state,
     // 手动绘制搜索命中 / 选中 / 待确认(pending) / 定位高亮 / 悬停背景
     const ImVec2 rowMin = ImGui::GetItemRectMin();
     const ImVec2 rowMax = ImGui::GetItemRectMax();
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+    if (expansionSeed && !nested && hasChildren && ImGui::IsItemVisible()) {
+        const ImVec4 toggle(rowMin.x, rowMin.y, rowMin.x + arrowWidth, rowMax.y);
+        state.qaFilterUiRects["folder_tree_root_toggle"] = toggle;
+        if (nodeOpen) state.qaFilterUiRects["folder_tree_root_open"] = toggle;
+        else state.qaFilterUiRects.erase("folder_tree_root_open");
+    }
+#endif
     const bool rowHovered = ImGui::IsItemHovered();
     const bool hasStateFill = isSelected || isPending || rowHovered;
     const bool isLightTreeTheme = (tcs.filterBrowserBG.x + tcs.filterBrowserBG.y + tcs.filterBrowserBG.z) > 2.15f;
@@ -15431,7 +15451,7 @@ static void RenderFolderTreeNode(AppState& state,
         //    in reveal mode), so the user keeps control of further expansion.
         const bool revealChildren = revealSubtree || isSearchTerminalHit;
         for (const auto& sub : folder.subfolders) {
-            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true, locate);
+            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true, locate, expansionSeed);
         }
         ImGui::Unindent();
     }
@@ -16633,6 +16653,10 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
 
 // SECTION 8 - Sidebar Panel
 
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+static void RecordDockQaBody(std::string_view module);
+#endif
+
 static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
     struct SidebarRenderInstance {
         std::string_view id;
@@ -16670,7 +16694,10 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
     const float railWidth   = SidebarRailWidth(state);
 
     // Left: VS Code-style activity bar (52px * size factor).
-    BeginTransientScrollbarChild("##SidebarRail", ImVec2(railWidth, totalAvail), false, ImGuiWindowFlags_NoScrollbar);
+    BeginTransientScrollbarChild("##SidebarRail", ImVec2(railWidth, totalAvail), false);
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+    RecordDockQaBody("filter-rail");
+#endif
     DrawSidebarActivityBar(state);
     ImGui::EndChild();
 
@@ -17066,6 +17093,12 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, treeRowIndentSpacing);
         const bool collapseFolderTree = state.folderTreeCollapseAll;
+        static std::string expansionDatabase;
+        static ImGuiStorage folderExpansion;
+        if (expansionDatabase != state.currentDbPathUtf8) {
+            folderExpansion.Clear();
+            expansionDatabase = state.currentDbPathUtf8;
+        }
         if (collapseFolderTree) {
             state.folderTreeCollapseAll = false;
         }
@@ -17074,6 +17107,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             treeH,
             collapseFolderTree,
             false,
+            folderExpansion,
             [&]() {
         if (folderTreeLoading && activeFolderHierarchy.subfolders.empty()) {
             ImGui::TextDisabled("%s", L(Nav_BuildingTree));
@@ -17235,14 +17269,14 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 ClearPlaylistFolderFilter(state);
             }
         }
+        const ImGuiID expansionSeed = playlistScopedFolderTree
+            ? ImHashData(&effectivePlaylistFolderTreeId, sizeof(effectivePlaylistFolderTreeId), ImHashStr("SidebarPlaylistFolders"))
+            : ImHashStr("SidebarDatabaseFolders");
         for (const auto& folder : activeFolderHierarchy.subfolders) {
-            if (playlistScopedFolderTree) {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter,
-                                     false, &treeRowMetrics, false, &controls.locate);
-            } else {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter,
-                                     false, &treeRowMetrics, false, &controls.locate);
-            }
+            RenderFolderTreeNode(state, folder, folderSearch,
+                                 playlistScopedFolderTree ? FolderTreeSelectionMode::PlaylistFilter
+                                                          : FolderTreeSelectionMode::DatabaseFilter,
+                                 false, &treeRowMetrics, false, &controls.locate, expansionSeed);
         }
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
         }
@@ -27261,6 +27295,16 @@ struct DockQaPanelSnapshot {
     std::string windowName;
 };
 static std::map<std::string, DockQaPanelSnapshot> g_dockQaPanels;
+struct DockQaBodySnapshot {
+    ImRect bounds;
+    ImVec2 scroll;
+    ImVec2 scrollMax;
+    float fontSize;
+    ImU32 textColor;
+    ImU32 backgroundColor;
+    int frame;
+};
+static std::map<std::string, DockQaBodySnapshot> g_dockQaBodies;
 static std::map<int, std::pair<ImRect, int>> g_resultsTabQaRects;
 static std::map<std::string, std::pair<ImRect, int>> g_dockGroupTabQaRects;
 
@@ -27269,6 +27313,14 @@ static void RecordDockQaPanel(const char* module, AppState::PanelState& panel,
     g_dockQaPanels[module] = {&panel, {pos.x, pos.y, size.x, size.y}, title, label,
         ImGui::GetWindowViewport()->ID, ImGui::GetFrameCount(),
         ImGui::IsItemHovered(), ImGui::IsItemActive(), ImGui::GetCurrentWindow()->Name};
+}
+
+static void RecordDockQaBody(std::string_view module) {
+    const auto* window = ImGui::GetCurrentWindowRead();
+    if (window->SkipItems) return;
+    g_dockQaBodies[std::string(module)] = {
+        window->InnerRect, window->Scroll, window->ScrollMax, ImGui::GetFontSize(),
+        ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(ImGuiCol_ChildBg), ImGui::GetFrameCount()};
 }
 
 static nlohmann::json DockQaNode(const aura::ui::dock::DockNode* node) {
@@ -27363,6 +27415,12 @@ std::string GetDockQaState() {
             {"hovered", entry.hovered}, {"item_active", entry.itemActive},
             {"window_name", entry.windowName},
             {"title", rectJson(entry.title)}, {"label", rectJson(entry.label)}};
+    }
+    for (const auto& [module, entry] : g_dockQaBodies) {
+        if (entry.frame + 1 < ImGui::GetFrameCount()) continue;
+        out["content"][module] = {{"rect", rectJson(entry.bounds)},
+            {"scroll", {entry.scroll.x, entry.scroll.y}}, {"scroll_max", {entry.scrollMax.x, entry.scrollMax.y}},
+            {"font_size", entry.fontSize}, {"text_color", entry.textColor}, {"background_color", entry.backgroundColor}};
     }
     for (auto side : {aura::ui::dock::DockSide::Left, aura::ui::dock::DockSide::Right,
                      aura::ui::dock::DockSide::Top, aura::ui::dock::DockSide::Bottom})
@@ -39975,6 +40033,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_BorderShadow, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         ImGuiWindowFlags floatFlags = ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse;
+        if (sharedPalette || std::strcmp(moduleId, "filter") == 0)
+            floatFlags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         // ImGui normally starts a window move from unhandled body clicks too.
         // Limit that fallback to this shared shell's title, without changing
         // movement in unrelated dialogs or disabling the native resize grips.
@@ -40038,7 +40098,11 @@ void RenderUI(AppState& state) {
             if (!(flags & ImGuiWindowFlags_NoScrollbar))
                 flags |= ImGuiWindowFlags_HorizontalScrollbar;
         }
-        return BeginTransientScrollbarChild(childId, bodySize, false, flags);
+        const bool visible = BeginTransientScrollbarChild(childId, bodySize, false, flags);
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+        if (visible) RecordDockQaBody(module);
+#endif
+        return visible;
     };
 
     const auto renderIndependentSimilarSounds = [&](const ImVec2& outerSize, const ImVec2& contentMin,
@@ -40052,68 +40116,6 @@ void RenderUI(AppState& state) {
             aura::ui::RenderSimilarSoundsContent(state, true);
         }
         ImGui::EndChild();
-    };
-
-    auto renderFunctionDockedModule = [&](const aura::ui::dock::DockModuleTarget& leaf,
-                                           const char* moduleId,
-                                           PanelState& panel,
-                                           bool* show,
-                                           const char* title,
-                                           void (*renderContent)(AppState&),
-                                           const char* titleId,
-                                           const char* popupId,
-                                           const char* contentId) {
-        if (leaf.id != moduleId || panel.floating) return;
-        ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(leaf.rect.width, leaf.rect.height), ImGuiCond_Always);
-        ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
-        bool open = true;
-        const auto palette = resolveDockToolPalette(moduleId);
-        const int styleCount = pushDockToolBodyStyle(palette);
-        if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
-            const ImVec2 pos = ImGui::GetWindowPos();
-            const ImVec2 size = ImGui::GetWindowSize();
-            const DockModuleShellLayout shell = drawDockModuleShell(
-                ImGui::GetWindowDrawList(), pos, size.x, size.y, title,
-                palette.body, kTitleText, false, 24.0f, moduleId);
-            ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
-            ImGui::InvisibleButton(titleId, ImVec2(shell.shellWidth, shell.titleHeight));
-            beginDockedPanelDrag(moduleId, panel,
-                ImVec2(leaf.rect.x, leaf.rect.y), ImVec2(leaf.rect.width, leaf.rect.height));
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                ImGui::OpenPopup(popupId);
-            }
-            if (BeginTransientScrollbarPopup(popupId)) {
-                if (ImGui::MenuItem(L(Panel_Float))) {
-                    FloatDockedPanel(moduleId, panel, leaf.rect);
-                }
-                if (ImGui::MenuItem(L(Panel_Hide))) {
-                    panel.visible = false;
-                    *show = false;
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::SetCursorPos(ImVec2(
-                shell.insetL + shell.innerPad,
-                shell.insetT + shell.titleHeight + 4.0f));
-            const float contentWidth = std::max(1.0f,
-                size.x - shell.insetL - shell.insetR - shell.innerPad * 2.0f);
-            const float contentHeight = std::max(1.0f,
-                size.y - shell.insetT - shell.insetB - shell.titleHeight - 8.0f);
-            if (beginDockContentViewport(moduleId, contentId, size, ImVec2(contentWidth, contentHeight))) {
-                renderContent(state);
-            }
-            ImGui::EndChild();
-        }
-        if (!open || !panel.visible || !*show) {
-            g_dockLayout.Detach(moduleId);
-            panel.visible = false;
-            panel.floating = false;
-            *show = false;
-        }
-        ImGui::End();
-        ImGui::PopStyleColor(styleCount);
     };
 
     const auto selectedDockTool = [&](const aura::ui::dock::DockTabGroups::Group* group,
@@ -40258,11 +40260,28 @@ void RenderUI(AppState& state) {
             kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
             aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
     };
+    const auto renderDockToolBody = [&](std::string_view module, const ImVec2& outerSize,
+                                        const ImVec2& bodySize, bool similarPerimeter,
+                                        const char* sidebarScope) {
+        const bool isFilter = module == "filter";
+        const bool isInfo = module == "info";
+        const bool isSimilar = module == "similar-sounds";
+        const auto bodyPos = ImGui::GetCursorScreenPos();
+        const char* childId = isFilter ? "SidebarShellContent" : isInfo ? "FileInfoContent" :
+            isSimilar ? "##DockedSimilarSoundsContent" :
+            module == "mod-transfer" ? "##DockedTransferContent" : "##DockToolContent";
+        const ImGuiWindowFlags bodyFlags = isSimilar
+            ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+            : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
+        if (beginDockContentViewport(module, childId, outerSize, bodySize, bodyFlags))
+            renderToolContent(module, ImGui::GetContentRegionAvail().x, sidebarScope);
+        ImGui::EndChild();
+        if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
+    };
     const auto renderDockedToolBody = [&](std::string_view module, const DockModuleShellLayout& shell,
                                           float shellHeight, bool similarPerimeter, const char* sidebarScope) {
         const bool isFilter = module == "filter";
         const bool isInfo = module == "info";
-        const bool isSimilar = module == "similar-sounds";
         const float inset = similarPerimeter ? 4.0f : 0.0f;
         const float top = (isInfo ? 8.0f : 4.0f) + inset;
         const float bottom = (isInfo ? 8.0f : (isFilter ? 2.0f : 4.0f)) + inset;
@@ -40271,17 +40290,64 @@ void RenderUI(AppState& state) {
             std::max(1.0f, shellHeight - shell.titleHeight - shell.insetT - shell.insetB - top - bottom));
         ImGui::SetCursorPos(ImVec2(shell.insetL + shell.innerPad + inset,
                                   shell.insetT + shell.titleHeight + top));
-        const auto bodyPos = ImGui::GetCursorScreenPos();
-        const char* childId = isFilter ? "SidebarShellContent" :
-            isInfo ? "FileInfoContent" : isSimilar ? "##DockedSimilarSoundsContent" : "##DockedToolContent";
-        const ImGuiWindowFlags bodyFlags = isSimilar
-            ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
-            : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
         const ImVec2 outerSize(shell.shellWidth + shell.insetL + shell.insetR, shellHeight);
-        const bool bodyVisible = beginDockContentViewport(module, childId, outerSize, bodySize, bodyFlags);
-        if (bodyVisible) renderToolContent(module, std::max(bodySize.x, ImGui::GetContentRegionAvail().x), sidebarScope);
-        ImGui::EndChild();
-        if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
+        renderDockToolBody(module, outerSize, bodySize, similarPerimeter, sidebarScope);
+    };
+    const auto renderFloatingToolBody = [&](std::string_view module, const ImVec2& outerSize,
+                                            bool similarPerimeter, const char* sidebarScope) {
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const ImVec2 bodySize(std::max(1.0f, available.x), std::max(1.0f, available.y));
+        renderDockToolBody(module, outerSize, bodySize, similarPerimeter, sidebarScope);
+    };
+
+    auto renderFunctionDockedModule = [&](const aura::ui::dock::DockModuleTarget& leaf,
+                                           const char* moduleId,
+                                           PanelState& panel,
+                                           bool* show,
+                                           const char* title,
+                                           const char* titleId,
+                                           const char* popupId) {
+        if (leaf.id != moduleId || panel.floating) return;
+        ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(leaf.rect.width, leaf.rect.height), ImGuiCond_Always);
+        ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+        bool open = true;
+        const auto palette = resolveDockToolPalette(moduleId);
+        const int styleCount = pushDockToolBodyStyle(palette);
+        if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
+            const ImVec2 pos = ImGui::GetWindowPos();
+            const ImVec2 size = ImGui::GetWindowSize();
+            const DockModuleShellLayout shell = drawDockModuleShell(
+                ImGui::GetWindowDrawList(), pos, size.x, size.y, title,
+                palette.body, kTitleText, false, 24.0f, moduleId);
+            ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
+            ImGui::InvisibleButton(titleId, ImVec2(shell.shellWidth, shell.titleHeight));
+            beginDockedPanelDrag(moduleId, panel,
+                ImVec2(leaf.rect.x, leaf.rect.y), ImVec2(leaf.rect.width, leaf.rect.height));
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                ImGui::OpenPopup(popupId);
+            }
+            if (BeginTransientScrollbarPopup(popupId)) {
+                if (ImGui::MenuItem(L(Panel_Float))) {
+                    FloatDockedPanel(moduleId, panel, leaf.rect);
+                }
+                if (ImGui::MenuItem(L(Panel_Hide))) {
+                    panel.visible = false;
+                    *show = false;
+                }
+                ImGui::EndPopup();
+            }
+            renderDockedToolBody(moduleId, shell, size.y, false, nullptr);
+        }
+        if (!open || !panel.visible || !*show) {
+            g_dockLayout.Detach(moduleId);
+            panel.visible = false;
+            panel.floating = false;
+            *show = false;
+        }
+        ImGui::End();
+        ImGui::PopStyleColor(styleCount);
     };
 
     // Left Column - Sidebar with title bar
@@ -51713,7 +51779,6 @@ void RenderUI(AppState& state) {
                                              PanelState& panel,
                                              bool* show,
                                              const char* title,
-                                             void (*renderContent)(AppState&),
                                              const char* popupId,
                                              float minWidth,
                                              float minHeight) {
@@ -51753,8 +51818,8 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndPopup();
             }
-            renderContent(state);
             ImGui::PopStyleColor();
+            renderFloatingToolBody(moduleId, size, false, nullptr);
         }
         if (!open || !*show) {
             panel.visible = false;
@@ -51767,16 +51832,16 @@ void RenderUI(AppState& state) {
     };
 
     renderFunctionFloatingWindow("mod-ucs-browser", state.panelUCSBrowser,
-        &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle), RenderUCSBrowserContent,
+        &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle),
         "##FloatUCSBrowserMenu", 480.0f, 260.0f);
     renderFunctionFloatingWindow("mod-tag-browser", state.panelTagBrowser,
-        &state.showTagBrowser, L(ModuleUI_TagSystemTitle), RenderTagBrowserContent,
+        &state.showTagBrowser, L(ModuleUI_TagSystemTitle),
         "##FloatTagBrowserMenu", 320.0f, 320.0f);
     renderFunctionFloatingWindow("mod-workflow", state.panelWorkflow,
-        &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle), RenderWorkflowDialogContent,
+        &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle),
         "##FloatWorkflowMenu", 560.0f, 360.0f);
     renderFunctionFloatingWindow("mod-transfer", state.panelTransfer,
-        &state.showTransferDialog, L(ModuleUI_TransferTitle), RenderTransferDialogContent,
+        &state.showTransferDialog, L(ModuleUI_TransferTitle),
         "##FloatTransferMenu", 480.0f, 360.0f);
 
     if (g_searchResultsDockPanel.visible && g_searchResultsDockPanel.floating &&
@@ -51817,12 +51882,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelSidebar.floatX, state.panelSidebar.floatY), sidebarPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelSidebar.floatW, state.panelSidebar.floatH), sidebarPlacementCond);
         bool open = true;
-        const int sidebarStyleCount = PushSidebarShellStyle(ThemeColors::current());
-// /polish — match the docked sidebar's tightened rhythm + borderless frames
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,   0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,      ImVec2(6.0f, 3.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,       ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,     3.0f);
+        const auto appearance = pushDockedToolAppearance("filter");
         const bool sidebarWindowVisible = beginFilterStyleFloatingWindow(
             (std::string(L(Panel_FilterTitle)) + "##FloatingSidebar").c_str(), &open, "filter");
         if (sidebarWindowVisible) {
@@ -51847,13 +51907,12 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
 
-            RenderSidebarPanelContent(state, "FloatSidebar");
             ImGui::PopStyleColor();
+            renderFloatingToolBody("filter", size, false, "FloatSidebar");
         }
         if (!open) state.panelSidebar.visible = false;
         ImGui::End();
-        ImGui::PopStyleVar(4);
-        ImGui::PopStyleColor(sidebarStyleCount);
+        popDockedToolAppearance(appearance);
     }
 
     // Floating File Info with drag-to-dock
@@ -51863,7 +51922,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelFileInfo.floatX, state.panelFileInfo.floatY), fileInfoPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelFileInfo.floatW, state.panelFileInfo.floatH), fileInfoPlacementCond);
         bool open = true;
-        const int fileInfoStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("info"));
+        const auto appearance = pushDockedToolAppearance("info");
         const bool fileInfoWindowVisible = beginFilterStyleFloatingWindow(
             u8"Info##FloatingFileInfo", &open, "info");
         if (fileInfoWindowVisible) {
@@ -51889,17 +51948,12 @@ void RenderUI(AppState& state) {
                 ImGui::EndPopup();
             }
 
-            DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
-            {
-                ReadingTextScope _readingInfo;
-                RenderFileInfoPanelContent(state, size.x);
-            }
-            DevTools_EndFramePhase();
             ImGui::PopStyleColor();
+            renderFloatingToolBody("info", size, false, nullptr);
         }
         if (!open) state.panelFileInfo.visible = false;
         ImGui::End();
-        ImGui::PopStyleColor(fileInfoStyleCount);
+        popDockedToolAppearance(appearance);
     }
 
     if (state.panelSimilarSounds.visible && state.panelSimilarSounds.floating &&
@@ -51963,12 +52017,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(panel.floatW, panel.floatH), placement);
         const std::string title = std::string(tabTitle(selected)) + "###DockTabGroup" + std::to_string(group.id);
         bool open = true;
-        const bool filterStyle = selected == "filter";
-        const auto& theme = ThemeColors::current();
-        const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) :
-            usesDockToolPalette(selected) ? pushDockToolBodyStyle(resolveDockToolPalette(selected)) :
-            PushFileInfoShellStyle(theme);
-        if (filterStyle) pushFilterFrameStyle(0.0f);
+        const auto appearance = pushDockedToolAppearance(selected);
         if (beginFilterStyleFloatingWindow(title.c_str(), &open, selected.c_str())) {
             const auto pos = ImGui::GetWindowPos();
             const auto size = ImGui::GetWindowSize();
@@ -51995,20 +52044,15 @@ void RenderUI(AppState& state) {
                 MarkSettingsDirty(state);
             }
             renderDockTabStrip(group, selected, false);
-            const ImVec2 contentPos = ImGui::GetCursorScreenPos();
-            const ImVec2 contentSize = ImGui::GetContentRegionAvail();
-            renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
-            if (selected == "similar-sounds" && useSharedSimilarAppearance())
-                drawSimilarBodyPerimeter(contentPos, contentSize);
             ImGui::PopStyleColor();
+            renderFloatingToolBody(selected, size, appearance.similarPerimeter, "GroupedFloatingSidebar");
         }
         if (!open) {
             for (const auto& member : group.members) tabPanel(member)->visible = false;
             MarkSettingsDirty(state);
         }
         ImGui::End();
-        if (filterStyle) ImGui::PopStyleVar(4);
-        ImGui::PopStyleColor(dockGroupStyleCount);
+        popDockedToolAppearance(appearance);
     }
 
     aura::ui::dock::DockFrameGeometry dockedGeometry = buildDockFrameGeometry();
@@ -52090,21 +52134,16 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const int dockedFilterStyle = PushSidebarShellStyle(ThemeColors::current());
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 3.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+            const auto appearance = pushDockedToolAppearance("filter");
             if (beginSharedDockWindowHost(
                     (std::string(L(Panel_FilterTitle)) + "##DockedFilter").c_str(),
                     &open,
                     dockFlags)) {
                 const ImVec2 pos = ImGui::GetWindowPos();
                 const ImVec2 size = ImGui::GetWindowSize();
-                const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(Panel_FilterTitle), bodyBg, kTitleText, true);
+                    L(Panel_FilterTitle), appearance.bodyBg, kTitleText, true);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFilterTitleBar",
                     ImVec2(shell.shellWidth, shell.titleHeight));
@@ -52123,24 +52162,14 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::EndPopup();
                 }
-                ImGui::SetCursorPos(ImVec2(
-                    shell.insetL + shell.innerPad,
-                    shell.insetT + shell.titleHeight + 4.0f));
-                if (beginDockContentViewport(
-                    "filter", "DockedFilterContent", size,
-                    ImVec2(shell.shellWidth - shell.innerPad * 2.0f,
-                           std::max(1.0f, size.y - shell.insetT - shell.insetB - shell.titleHeight - 6.0f)))) {
-                    RenderSidebarPanelContent(state, "DockedFilter");
-                }
-                ImGui::EndChild();
+                renderDockedToolBody("filter", shell, size.y, false, "DockedFilter");
             }
             if (!open || !state.panelSidebar.visible) {
                 g_dockLayout.Detach("filter");
                 state.panelSidebar.visible = false;
             }
             ImGui::End();
-            ImGui::PopStyleVar(4);
-            ImGui::PopStyleColor(dockedFilterStyle);
+            popDockedToolAppearance(appearance);
         }
         if (leaf.id == "info" && !state.panelFileInfo.floating && !infoDockedInRight) {
             ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
@@ -52148,8 +52177,7 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const auto palette = resolveDockToolPalette("info");
-            const int dockedInfoStyle = pushDockToolBodyStyle(palette);
+            const auto appearance = pushDockedToolAppearance("info");
             if (beginSharedDockWindowHost(
                     (std::string(L(View_InfoPanel)) + "##DockedFileInfo").c_str(),
                     &open,
@@ -52158,7 +52186,7 @@ void RenderUI(AppState& state) {
                 const ImVec2 size = ImGui::GetWindowSize();
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(View_InfoPanel), palette.body, kTitleText, false, infoDockTitleHeight, "info");
+                    L(View_InfoPanel), appearance.bodyBg, kTitleText, false, infoDockTitleHeight, "info");
                 const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, shell.insetT);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
@@ -52178,29 +52206,14 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::EndPopup();
                 }
-                ImGui::SetCursorPos(ImVec2(
-                    shell.insetL + shell.innerPad,
-                    shell.insetT + shell.titleHeight + 8.0f));
-                const float infoContentWidth = std::max(1.0f, shell.shellWidth - shell.innerPad * 2.0f);
-                const bool infoVisible = beginDockContentViewport(
-                    "info", "FileInfoContent", size,
-                    ImVec2(infoContentWidth, std::max(1.0f, size.y - shell.titleHeight -
-                        shell.insetT - shell.insetB - 16.0f)),
-                    ImGuiWindowFlags_NoScrollbar);
-                DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
-                if (infoVisible) {
-                    ReadingTextScope _readingInfo;
-                    RenderFileInfoPanelContent(state, std::max(infoContentWidth, ImGui::GetContentRegionAvail().x));
-                }
-                DevTools_EndFramePhase();
-                ImGui::EndChild();
+                renderDockedToolBody("info", shell, size.y, false, nullptr);
             }
             if (!open || !state.panelFileInfo.visible) {
                 g_dockLayout.Detach("info");
                 state.panelFileInfo.visible = false;
             }
             ImGui::End();
-            ImGui::PopStyleColor(dockedInfoStyle);
+            popDockedToolAppearance(appearance);
         }
         if (leaf.id == "similar-sounds" && !state.panelSimilarSounds.floating) {
             ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
@@ -52261,17 +52274,17 @@ void RenderUI(AppState& state) {
             ImGui::PopStyleColor(dockedSimilarStyle);
         }
         renderFunctionDockedModule(leaf, "mod-ucs-browser", state.panelUCSBrowser,
-            &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle), RenderUCSBrowserContent,
-            "##DockedUCSBrowser", "##DockedUCSBrowserMenu", "##DockedUCSBrowserContent");
+            &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle),
+            "##DockedUCSBrowser", "##DockedUCSBrowserMenu");
         renderFunctionDockedModule(leaf, "mod-tag-browser", state.panelTagBrowser,
-            &state.showTagBrowser, L(ModuleUI_TagSystemTitle), RenderTagBrowserContent,
-            "##DockedTagBrowser", "##DockedTagBrowserMenu", "##DockedTagBrowserContent");
+            &state.showTagBrowser, L(ModuleUI_TagSystemTitle),
+            "##DockedTagBrowser", "##DockedTagBrowserMenu");
         renderFunctionDockedModule(leaf, "mod-workflow", state.panelWorkflow,
-            &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle), RenderWorkflowDialogContent,
-            "##DockedWorkflow", "##DockedWorkflowMenu", "##DockedWorkflowContent");
+            &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle),
+            "##DockedWorkflow", "##DockedWorkflowMenu");
         renderFunctionDockedModule(leaf, "mod-transfer", state.panelTransfer,
-            &state.showTransferDialog, L(ModuleUI_TransferTitle), RenderTransferDialogContent,
-            "##DockedTransfer", "##DockedTransferMenu", "##DockedTransferContent");
+            &state.showTransferDialog, L(ModuleUI_TransferTitle),
+            "##DockedTransfer", "##DockedTransferMenu");
     }
 
     {

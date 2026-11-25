@@ -12,7 +12,7 @@ def section(start, end):
 
 def test_floating_tool_shell_consumes_the_docked_palette():
     floating = section("auto beginFilterStyleFloatingWindow", "auto renderFunctionDockedModule")
-    docked = section("auto renderFunctionDockedModule", "const auto selectedDockTool")
+    docked = section("auto renderFunctionDockedModule", "// Left Column - Sidebar with title bar")
     assert "resolveDockToolPalette(moduleId)" in floating
     assert "resolveDockToolPalette(moduleId)" in docked
     assert "palette.bodyText" in floating
@@ -26,7 +26,7 @@ def test_info_similar_and_docked_tab_groups_share_the_tool_palette():
     similar = section('if (leaf.id == "similar-sounds" && !state.panelSimilarSounds.floating',
                       'renderFunctionDockedModule(leaf, "mod-ucs-browser"')
     assert "resolveDockToolPalette(module)" in grouped
-    assert 'resolveDockToolPalette("info")' in info
+    assert 'pushDockedToolAppearance("info")' in info
     assert 'resolveDockToolPalette("similar-sounds")' in similar
 
 
