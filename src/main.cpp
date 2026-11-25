@@ -156,6 +156,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/DatabaseBreadcrumbScroll.h"
 #include "ui/ResultsPanelLayout.h"
 #include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
@@ -41971,6 +41972,9 @@ void RenderUI(AppState& state) {
                 const std::string breadcrumbLabel =
                     HarkenSearch::ResolveFolderBreadcrumbDisplayLabel(fullPath, L(Misc_AllFiles));
 
+                static harken::breadcrumb::ScrollState breadcrumbScroll;
+                breadcrumbScroll.setPath(fullPath);
+
                 if (!fullPath.empty()) {
                     std::vector<std::pair<std::string, std::string>> pathSegments;
 
@@ -42002,26 +42006,34 @@ void RenderUI(AppState& state) {
                         pathSegments.push_back({segment, fullPath});
                     }
 
-                    // Breadcrumb path chip flow: short segments stay in a fast
-                    // scannable row; overflow starts on a full readable line and
-                    // overlong labels are ellipsized, never squeezed into a
-                    // narrow vertical block at the right edge.
-                    const float breadcrumbPathStartX = ImGui::GetCursorScreenPos().x;
-                    const float breadcrumbContentRightX =
-                        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-                    const float breadcrumbMinReadableChipW = 96.0f;
-                    const float breadcrumbMaxChipW = 320.0f;
-                    auto startReadableBreadcrumbLine = [&]() {
-                        ImGui::NewLine();
-                        ImGui::SetCursorScreenPos(ImVec2(breadcrumbPathStartX, ImGui::GetCursorScreenPos().y));
-                    };
-                    auto wrapBreadcrumbLineIfNeeded = [&](float neededW) {
-                        const float cursorX = ImGui::GetCursorScreenPos().x;
-                        if (cursorX > breadcrumbPathStartX + 1.0f &&
-                            cursorX + neededW > breadcrumbContentRightX) {
-                            startReadableBreadcrumbLine();
-                        }
-                    };
+                    constexpr float breadcrumbChipPadX = 2.0f;
+                    constexpr float breadcrumbSeparatorPadX = 4.0f;
+                    constexpr float breadcrumbMaxChipW = 320.0f;
+                    const float separatorW = ImGui::CalcTextSize(">").x + breadcrumbSeparatorPadX * 2.0f;
+                    std::vector<float> segmentWidths;
+                    segmentWidths.reserve(pathSegments.size());
+                    float breadcrumbContentW = 0.0f;
+                    for (const auto& segment : pathSegments) {
+                        const float chipW = std::min(breadcrumbMaxChipW,
+                            ImGui::CalcTextSize(segment.first.c_str()).x + breadcrumbChipPadX * 2.0f);
+                        if (!segmentWidths.empty()) breadcrumbContentW += separatorW;
+                        breadcrumbContentW += chipW;
+                        segmentWidths.push_back(chipW);
+                    }
+
+                    const float breadcrumbViewportW = std::max(1.0f, std::floor(ImGui::GetContentRegionAvail().x));
+                    const float breadcrumbRowH = ImGui::GetFrameHeight();
+                    const ImVec2 breadcrumbViewportMin = ImGui::GetCursorScreenPos();
+                    const ImVec2 breadcrumbViewportMax(breadcrumbViewportMin.x + breadcrumbViewportW,
+                                                       breadcrumbViewportMin.y + breadcrumbRowH);
+                    const bool breadcrumbHovered =
+                        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                        ImGui::IsMouseHoveringRect(breadcrumbViewportMin, breadcrumbViewportMax);
+                    const float breadcrumbScrollX = breadcrumbScroll.update(
+                        breadcrumbContentW, breadcrumbViewportMin.x, breadcrumbViewportW,
+                        ImGui::GetMousePos().x, ImGui::GetIO().DeltaTime, breadcrumbHovered,
+                        ImGui::IsMouseDown(ImGuiMouseButton_Left));
+
                     auto drawBreadcrumbPathChip = [&](const char* id,
                                                       const std::string& label,
                                                       const std::string& payloadPath,
@@ -42041,8 +42053,8 @@ void RenderUI(AppState& state) {
                                 5.0f);
                         }
                         ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-                        const ImVec2 textMin(p0.x + style.FramePadding.x, p0.y + style.FramePadding.y);
-                        const ImVec2 textMax(p1.x - style.FramePadding.x, p1.y);
+                        const ImVec2 textMin(p0.x + breadcrumbChipPadX, p0.y + style.FramePadding.y);
+                        const ImVec2 textMax(p1.x - breadcrumbChipPadX, p1.y);
                         ImGui::RenderTextEllipsis(
                             ImGui::GetWindowDrawList(),
                             textMin,
@@ -42067,57 +42079,40 @@ void RenderUI(AppState& state) {
                         }
                     };
 
-                    // Render clickable segments
-                    for (size_t i = 0; i < pathSegments.size(); i++) {
-                        const float segmentTextW = ImGui::CalcTextSize(pathSegments[i].first.c_str()).x;
-                        const float rawSegmentButtonW = segmentTextW + ImGui::GetStyle().FramePadding.x * 2.0f;
-                        float segmentButtonW = std::min(rawSegmentButtonW, breadcrumbMaxChipW);
-                        const float separatorW = (i > 0) ? ImGui::CalcTextSize(" > ").x : 0.0f;
-                        wrapBreadcrumbLineIfNeeded(separatorW + segmentButtonW);
-                        if (i > 0) {
-                            ImGui::SameLine(0, 0);
-                            ImGui::TextColored(kInfoMuted, " > ");
-                            ImGui::SameLine(0, 0);
-                        }
+                    ImGui::SetNextWindowContentSize(ImVec2(breadcrumbContentW, 0.0f));
+                    ImGui::SetNextWindowScroll(ImVec2(breadcrumbScrollX, 0.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+                    if (BeginTransientScrollbarChild("##DatabaseBreadcrumbPath", ImVec2(breadcrumbViewportW, breadcrumbRowH),
+                                                     ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground |
+                                                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                        for (size_t segmentIndex = 0; segmentIndex < pathSegments.size(); ++segmentIndex) {
+                            const auto& segment = pathSegments[segmentIndex];
+                            if (segmentIndex > 0) {
+                                ImGui::SameLine(0, breadcrumbSeparatorPadX);
+                                ImGui::AlignTextToFramePadding();
+                                ImGui::TextColored(kInfoMuted, ">");
+                                ImGui::SameLine(0, breadcrumbSeparatorPadX);
+                            }
 
-                        ImGui::PushID((int)i);
-                        ImGui::PushStyleColor(ImGuiCol_Text, kInfoLink);
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kInfoLinkHover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, kInfoLinkActive);
-
-                        const float remainingLineW = std::max(
-                            breadcrumbMinReadableChipW,
-                            breadcrumbContentRightX - ImGui::GetCursorScreenPos().x);
-                        if (segmentButtonW > remainingLineW &&
-                            ImGui::GetCursorScreenPos().x > breadcrumbPathStartX + 1.0f) {
-                            startReadableBreadcrumbLine();
-                            segmentButtonW = std::min(rawSegmentButtonW, std::min(breadcrumbMaxChipW, std::max(
-                                breadcrumbMinReadableChipW,
-                                breadcrumbContentRightX - breadcrumbPathStartX)));
-                        } else {
-                            segmentButtonW = std::min(segmentButtonW, remainingLineW);
+                            ImGui::PushID(static_cast<int>(segmentIndex));
+                            ImGui::PushStyleColor(ImGuiCol_Text, kInfoLink);
+                            drawBreadcrumbPathChip("##PathSegmentChip", segment.first, segment.second,
+                                                   segmentWidths[segmentIndex]);
+                            if (HoveredForHelp()) {
+                                HarkenSearch::SetTooltip(L(Main_JumpToTip), segment.second.c_str());
+                            }
+                            if (ImGui::BeginDragDropSource()) {
+                                MaybePausePlaybackOnInScopeDragStart();
+                                ImGui::SetDragDropPayload("FOLDER_PATH", segment.second.c_str(), static_cast<int>(segment.second.size() + 1));
+                                ImGui::Text(L(Main_CategorizeFolderFmt), segment.first.c_str());
+                                ImGui::EndDragDropSource();
+                            }
+                            ImGui::PopStyleColor();
+                            ImGui::PopID();
                         }
-                        drawBreadcrumbPathChip("##PathSegmentChip",
-                                               pathSegments[i].first,
-                                               pathSegments[i].second,
-                                               segmentButtonW);
-                        if (HoveredForHelp()) {
-                            HarkenSearch::SetTooltip(L(Main_JumpToTip), pathSegments[i].second.c_str());
-                        }
-                        if (ImGui::BeginDragDropSource()) {
-                            MaybePausePlaybackOnInScopeDragStart();
-                            ImGui::SetDragDropPayload("FOLDER_PATH", pathSegments[i].second.c_str(), (int)(pathSegments[i].second.size() + 1));
-                            ImGui::Text(L(Main_CategorizeFolderFmt), pathSegments[i].first.c_str());
-                            ImGui::EndDragDropSource();
-                        }
-                        if (HoveredForHelp()) {
-                            HarkenSearch::SetTooltip(L(Main_JumpToTip), pathSegments[i].second.c_str());
-                        }
-
-                        ImGui::PopStyleColor(4);
-                        ImGui::PopID();
                     }
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
                 } else {
                     ImGui::TextColored(kInfoMuted, "%s", breadcrumbLabel.c_str());
                 }

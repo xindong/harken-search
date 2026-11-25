@@ -6,6 +6,7 @@
 #include "src/DatabaseSessionViewStateReset.h"
 #include "src/PathUtils.h"
 #include "src/WaveformRebuildRuntimeState.h"
+#include "src/ui/DatabaseBreadcrumbScroll.h"
 
 #include <cstdio>
 #include <cstring>
@@ -50,7 +51,37 @@ static std::string readMainSource() {
     return {};
 }
 
+static void checkBreadcrumbScroll() {
+    harken::breadcrumb::ScrollState scroll;
+    scroll.setPath("C:/Sounds/Motors");
+    const auto frame = [&](float mouseX, float viewportWidth = 100.0f,
+                           bool hovered = true, bool leftButtonDown = false,
+                           float deltaTime = 0.05f) {
+        return scroll.update(113.0f, 50.0f, viewportWidth, mouseX,
+                             deltaTime, hovered, leftButtonDown);
+    };
+
+    check(frame(130.0f) == 6.0f, "breadcrumb scrolls right from the right edge");
+    check(frame(60.0f) == 0.0f, "breadcrumb scrolls left from the left edge");
+    check(frame(60.0f) == 0.0f, "breadcrumb stays at the left end");
+    check(frame(145.0f, 100.0f, true, false, 0.5f) == 12.0f,
+          "breadcrumb limits the scroll step after a slow frame");
+    check(frame(145.0f) == 13.0f && frame(145.0f) == 13.0f,
+          "breadcrumb stays at the right end without wrapping");
+    check(frame(90.0f) == 13.0f, "breadcrumb does not scroll in the middle");
+    check(frame(50.0f, 100.0f, false) == 13.0f, "breadcrumb stops when the pointer leaves");
+    check(frame(50.0f, 100.0f, true, true) == 13.0f, "breadcrumb holds still while clicking");
+    check(frame(90.0f, 108.0f) == 5.0f, "breadcrumb clamps to the new extent when the viewport widens");
+    check(frame(90.0f, 113.0f) == 0.0f, "breadcrumb stays still when the path fits");
+    check(frame(80.0f, 40.0f) == 6.0f, "breadcrumb uses a proportional edge on a narrow viewport");
+    scroll.setPath("C:/Sounds/Motors");
+    check(frame(70.0f, 40.0f) == 6.0f, "breadcrumb keeps its offset for an unchanged path");
+    scroll.setPath("C:/Sounds/Engines");
+    check(frame(70.0f, 40.0f) == 0.0f, "breadcrumb resets the offset on a path change");
+}
+
 int main() {
+    checkBreadcrumbScroll();
     AppState state;
     check(!state.settings.autoReconcileOnStartup,
           "startup reconcile is opt-in by default for large-library safety");
