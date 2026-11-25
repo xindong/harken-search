@@ -18,6 +18,7 @@
 #include "EmbedScript.h"
 #include "NamingScript.h"
 #include "TransferEngine.h"
+#include "TransferOptionLabels.h"
 #include "WorkflowEngine.h"
 #include "Theme.h"
 #include "ThemeEditor.h"
@@ -1042,10 +1043,10 @@ void RenderTransferDialogContent(AppState& state) {
     auto strategies = TransferEngine::getFolderStrategyList();
     ImGui::SetNextItemWidth(350);
     if (ImGui::BeginCombo("##FolderStrategy",
-        state.transferFolderStrategy >= 0 && state.transferFolderStrategy < (int)strategies.size()
-            ? strategies[state.transferFolderStrategy].second.c_str() : "")) {
+        aura::ui::TransferOptionPreview(strategies, state.transferFolderStrategy,
+            strategies.front().second.c_str()))) {
         for (int i = 0; i < (int)strategies.size(); i++) {
-            if (ImGui::Selectable(strategies[i].second.c_str(), state.transferFolderStrategy == i)) {
+            if (ImGui::Selectable(aura::ui::TransferOptionLabel(strategies[i]), state.transferFolderStrategy == i)) {
                 state.transferFolderStrategy = i;
             }
         }
@@ -1061,10 +1062,10 @@ void RenderTransferDialogContent(AppState& state) {
     auto fileTypes = TransferEngine::getFileTypeChoices();
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo(L(Module_ComboFileFormat),
-        state.transferFileType >= 0 && state.transferFileType < (int)fileTypes.size()
-            ? fileTypes[state.transferFileType].first.c_str() : "")) {
+        aura::ui::TransferOptionPreview(fileTypes, state.transferFileType,
+            fileTypes.front().first.c_str()))) {
         for (int i = 0; i < (int)fileTypes.size(); i++) {
-            if (ImGui::Selectable(fileTypes[i].first.c_str(), state.transferFileType == i)) {
+            if (ImGui::Selectable(aura::ui::TransferOptionLabel(fileTypes[i]), state.transferFileType == i)) {
                 state.transferFileType = i;
             }
         }
@@ -1109,10 +1110,10 @@ void RenderTransferDialogContent(AppState& state) {
     auto existBehaviors = TransferEngine::getExistingBehaviorChoices();
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo(L(Export_ExistingFile),
-        state.transferExistingBehavior >= 0 && state.transferExistingBehavior < (int)existBehaviors.size()
-            ? existBehaviors[state.transferExistingBehavior].first.c_str() : "")) {
+        aura::ui::TransferOptionPreview(existBehaviors, state.transferExistingBehavior,
+            existBehaviors.front().first.c_str()))) {
         for (int i = 0; i < (int)existBehaviors.size(); i++) {
-            if (ImGui::Selectable(existBehaviors[i].first.c_str(), state.transferExistingBehavior == i)) {
+            if (ImGui::Selectable(aura::ui::TransferOptionLabel(existBehaviors[i]), state.transferExistingBehavior == i)) {
                 state.transferExistingBehavior = i;
             }
         }
