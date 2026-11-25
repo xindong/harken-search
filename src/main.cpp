@@ -30863,12 +30863,15 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
     else if (queuedCovers <= 0 && queuedWaveforms > 0 && queuedMetadata <= 0) backfillTitle = L(Task_BackfillWaveforms);
     else if (queuedCovers <= 0 && queuedWaveforms <= 0 && queuedMetadata > 0) backfillTitle = L(Task_BackfillMetadata);
     if (backfillActive) {
-        // 只有真的有任务在跑才叫「处理中」；队列里躺着没动就是排队。
-        char detail[96];
-        if (inFlightAssets > 0) {
-            std::snprintf(detail, sizeof(detail), L(Task_BackfillRunningFmt), pendingAssets);
+        // 「正在处理」只报真正在跑的条数；排队数量单独写，不再把两者相加冒充进度。
+        const int queuedOnly = std::max(0, pendingAssets - inFlightAssets);
+        char detail[128];
+        if (inFlightAssets > 0 && queuedOnly > 0) {
+            std::snprintf(detail, sizeof(detail), L(Task_BackfillRunningQueuedFmt), inFlightAssets, queuedOnly);
+        } else if (inFlightAssets > 0) {
+            std::snprintf(detail, sizeof(detail), L(Task_BackfillRunningFmt), inFlightAssets);
         } else {
-            std::snprintf(detail, sizeof(detail), L(Task_BackfillQueuedFmt), pendingAssets);
+            std::snprintf(detail, sizeof(detail), L(Task_BackfillQueuedFmt), queuedOnly);
         }
         state.backfillTaskWasActive = true;
         state.backfillTaskDoneAt = 0.0;
