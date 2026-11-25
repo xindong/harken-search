@@ -10798,6 +10798,7 @@ static void ConfigureDatabaseRuntimeForFilePlayerMount(AppState& state,
     PushRecentDbPath(state, dbPathUtf8);
     CoverModule::SetDatabase(&state.database);
     CoverModule::SetAppState(&state);
+    aura::cover_cache::BindPersistence(state.database);
     state.database.setSettings(&state.settings);
     state.musicQueue.init(state.database.db());
     state.gaplessEngine.init(&state.audioEngine);
@@ -11276,6 +11277,7 @@ void ResetDatabaseState(AppState& state) {
     CoverModule::ClearAllCoverCaches();
     CoverModule::SetDatabase(&state.database);
     CoverModule::SetAppState(&state);  // 设置 AppState 指针，用于访问性能模式设置
+    aura::cover_cache::BindPersistence(state.database);
     state.database.setSettings(&state.settings);  // 设置性能模式访问器
 
 // 3. 搜索结果 & 分页
@@ -11649,6 +11651,7 @@ static bool SwitchDatabase(AppState& state,
         [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent,
          featureStatistics = state.featureIndexStatistics,
          idleStatistics = state.idleAssetStatistics]() {
+        aura::cover_cache::StopPersistence();
         // Cancel on the UI immediately, but drain connections only here. Windows
         // package replacement must not race a statistics reader's file handle.
         if (featureStatistics) featureStatistics->CancelAndWait();
@@ -46201,12 +46204,10 @@ void RenderUI(AppState& state) {
     PollBackgroundReconcileScanToast(state);
     PumpIdleAssetBackfill(state, DetectHarkenSearchUserInteractionForIdleAssetBackfill());
     PumpWaveformRebuild(state);
-    // Persist newly computed cover keys (avoid rescan after restart)
-    aura::cover_cache::PumpPersistence({
-        state.database,
-        state.currentDbPathUtf8,
-        state.viewMode != ViewMode::Browser,
-    });
+    if (!state.dbSwitchInProgress && state.viewMode != ViewMode::Browser &&
+        aura::cover_cache::PumpPersistence()) {
+        state.database.clearSearchCountMemoryCache();
+    }
     // Deferred cover key priming (frame-budgeted, avoids blocking on filter click)
     // Limit background waveform submissions to 15 per frame.
     aura::search::PumpDeferredCoverPriming(state, 15);

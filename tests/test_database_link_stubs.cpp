@@ -41,6 +41,7 @@ std::string GetExeDir()
 
 namespace FileSystem {
 #ifndef AURO_TEST_EXTERNAL_PATH_ATTRIBUTES
+#ifndef TEST_DATABASE_STUBS_REAL_FILESYSTEM
 PathAttributes QueryPathAttributes(const std::string& pathUtf8)
 {
     const auto path = std::filesystem::u8path(pathUtf8);
@@ -53,6 +54,7 @@ PathAttributes QueryPathAttributes(const std::string& pathUtf8)
         false,
     };
 }
+#endif
 #endif
 } // namespace FileSystem
 

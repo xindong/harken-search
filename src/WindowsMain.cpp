@@ -124,6 +124,7 @@ inline void TickHarkenSearchSmokeWindow() {
 namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #endif
 #include "CoverModule.h"
+#include "CoverKeyCachePersistenceWorkflow.h"
 #include "AvatarCropper.h"
 #include "AIEngine.h"
 #include "MetadataReader.h"
@@ -507,6 +508,7 @@ static void PumpCoverPrefetch(AppState& state, const BackgroundIoContext& coverI
 struct PlayedMetaCacheState {
     int64_t lastFileId = -1;
     std::string lastFilePath;
+    std::string lastFolderPath;
     std::unordered_set<std::string> cachedCoverPaths;
     std::unordered_set<std::string> cachedDetailPaths;
 };
@@ -519,6 +521,7 @@ static void PumpPlayedMetadataCache(AppState& state, bool isMouseIdle) {
         s.lastFileId = state.currentFileId;
         AudioRecord rec = state.database.getFileById(state.currentFileId);
         s.lastFilePath = rec.filePath;
+        s.lastFolderPath = rec.folderPath;
         if (!s.lastFilePath.empty()) {
             // If this file is played, request a higher-detail waveform (main view); delay 150ms
             ScheduleDeferredWaveformDetail(state, s.lastFilePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
@@ -556,12 +559,13 @@ static void PumpPlayedMetadataCache(AppState& state, bool isMouseIdle) {
         !IsRapidUiClickBurstActive() &&
         s.cachedCoverPaths.find(s.lastFilePath) == s.cachedCoverPaths.end()) {
         CoverModule::TextureHandle tex;
-        bool hasTex = CoverModule::GetEmbeddedCoverTextureByPath(s.lastFilePath, tex);
+        bool identityPending = false;
+        bool hasTex = CoverModule::GetEmbeddedCoverTextureByPath(s.lastFilePath, tex, &identityPending);
+        if (identityPending) return;
         if (!hasTex) {
             // Fallback to folder cover：只按 folderPath 请求，folderCoverKey 不做路径参数
-            AudioRecord rec = state.database.getFileById(state.currentFileId);
-            if (!rec.folderPath.empty()) {
-                CoverModule::GetFolderCoverTexture(rec.folderPath, tex);
+            if (!s.lastFolderPath.empty()) {
+                CoverModule::GetFolderCoverTexture(s.lastFolderPath, tex);
             }
         }
         s.cachedCoverPaths.insert(s.lastFilePath);
@@ -13820,6 +13824,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 state.backfillQueue.onDbOpened(dbPathUtf8, ++state.backfillDbGeneration);
                 PushRecentDbPath(state, dbPathUtf8);
                 CoverModule::SetDatabase(&state.database);
+                aura::cover_cache::BindPersistence(state.database);
                 CoverModule::SetAppState(&state);  // 设置 AppState 指针，用于访问性能模式设置
                 state.database.setSettings(&state.settings);  // 设置性能模式访问器
                 state.musicQueue.init(state.database.db());
@@ -15485,6 +15490,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         g_coverTaskThread.join();
     }
     logShutdownStage("CoverTaskThreadJoinEnd");
+    CoverModule::ShutdownCoverWallPrecache();
 
     logShutdownStage("RelinkWorkflowShutdownBegin");
     aura::ui::ShutdownRelinkWorkflow(state);
@@ -15515,12 +15521,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     state.folderRemoval.Wait();
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");
+    aura::cover_cache::FlushPersistence();
     logShutdownStage("AudioEngineShutdownBegin");
     state.audioEngine.shutdown();
     logShutdownStage("AudioEngineShutdownEnd");
 
     logShutdownStage("CoverCacheShutdownBegin");
-    CoverModule::ShutdownCoverWallPrecache();
     CoverModule::ClearAllCoverCaches();
     logShutdownStage("CoverCacheShutdownEnd");
 
