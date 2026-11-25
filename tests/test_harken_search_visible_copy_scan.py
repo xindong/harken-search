@@ -427,6 +427,34 @@ void DrawSettings() {
                 "Type a name", "Show more",
             })
 
+    def test_branch_assignments_reach_visible_copy_without_following_shadowed_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "src").mkdir()
+            (root / "src/Window.cpp").write_text(
+                '''void DrawStatus() {
+    const char* label = "Superseded caption";
+    label = "Default caption";
+    switch (state) {
+        case 1: label = "Running without translation"; break;
+        case 2: { label = "Paused without translation"; break; }
+    }
+    if (pending) label = "Waiting without translation";
+    if (other) {
+        const char* label = "Unrelated inner binding";
+        label = "Unrelated inner update";
+    }
+    auto diagnostic = [&] { label = "Uncalled lambda"; };
+    ImGui::TextUnformatted(label);
+}
+''', encoding="utf-8",
+            )
+            rows = localization_purity.scan_localization_coverage(root)
+            self.assertEqual({row["text"] for row in rows}, {
+                "Default caption", "Running without translation", "Paused without translation",
+                "Waiting without translation",
+            })
+
     def test_native_coverage_uses_existing_purity_gate_for_this_checkout(self):
         self.assertTrue((ROOT / localization_purity.COVERAGE_BASELINE).is_file())
         localization_purity.check_visible_copy_purity(ROOT)

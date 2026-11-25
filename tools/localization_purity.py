@@ -1411,6 +1411,14 @@ _COVERAGE_FUNCTION_RE = re.compile(
 )
 _COVERAGE_FUNCTION_BODY_RE = re.compile(r"\s*(?:(?:const|noexcept|override|final)\s*)*\{")
 _COVERAGE_ASSIGN_RE = re.compile(r"\b(\w+)\s*(?:\[[^\]\n]*\]\s*)?=(?![=>])")
+_COVERAGE_BRANCH_RE = re.compile(r"\b(?:if(?:\s+constexpr)?|switch|for|while|catch)\s*\(")
+_COVERAGE_BRANCH_KEYWORD_RE = re.compile(r"\b(?:else|do|try)\b\s*")
+_COVERAGE_SPACE_RE = re.compile(r"\s*")
+_COVERAGE_LOCAL_RE = re.compile(
+    r"(?:^|(?<=[;{}]))\s*(?:(?:const|constexpr|static|volatile)\s+)*"
+    r"(?!return\b|throw\b)[\w:]+(?:<[^<>{};\n]+>)?(?:\s+|\s*[*&]+\s*)"
+    r"(?P<name>\w+)\s*(?=[=;\[])"
+)
 _COVERAGE_RETURN_RE = re.compile(r"\breturn\b([^;]*);")
 _COVERAGE_VARIABLE_RE = re.compile(r"\s*(\w+)(?:\.(?:c_str|data)\(\))?\s*")
 _COVERAGE_COMPARISON_RE = re.compile(r"(?:==|!=|<=|>=|&&|\|\|)")
@@ -1553,6 +1561,22 @@ def _coverage_sites(path: str, source: str, *, include_all: bool) -> list[dict[s
             active_scope = scope_parent.get(active_scope, -1)
         brace_offsets.append(offset)
         brace_scopes.append(active_scope)
+
+    def scope_at(position: int) -> int:
+        scope_index = bisect_left(brace_offsets, position) - 1
+        return brace_scopes[scope_index] if scope_index >= 0 else -1
+
+    branch_bodies = set()
+    for match in _COVERAGE_BRANCH_RE.finditer(code):
+        close = _match_paren(code, match.end() - 1)
+        if close >= 0:
+            branch_bodies.add(_COVERAGE_SPACE_RE.match(code, close + 1).end())
+    branch_bodies.update(match.end() for match in _COVERAGE_BRANCH_KEYWORD_RE.finditer(code))
+    statement_blocks = branch_bodies | {match.end() for match in re.finditer(r"[;:{}]\s*(?=\{)", code)}
+    local_bindings = {}
+    for match in _COVERAGE_LOCAL_RE.finditer(code):
+        position = match.start("name")
+        local_bindings.setdefault((scope_at(position), match["name"]), position)
     references = list(_COVERAGE_KEY_RE.finditer(code))
     reference_starts = [match.start() for match in references]
     assignments: dict[str, list[re.Match[str]]] = defaultdict(list)
@@ -1622,41 +1646,54 @@ def _coverage_sites(path: str, source: str, *, include_all: bool) -> list[dict[s
             previous_end = stop
         return extracted
 
+    def assignment_values(name: str, anchor: int) -> list[tuple[int, int]]:
+        scopes = {-1}
+        scope = scope_at(anchor)
+        while scope >= 0:
+            scopes.add(scope)
+            scope = scope_parent[scope]
+        ranges = []
+        for match in reversed(assignments.get(name, ())):
+            position = match.start()
+            if position >= anchor or code[max(0, position - 4):position].rstrip().endswith((".", "->", "::")):
+                continue
+            origin_scope = scope_at(position)
+            scope = origin_scope
+            while scope not in scopes:
+                if scope not in statement_blocks or local_bindings.get((scope, name), anchor) <= position:
+                    break
+                scope = scope_parent[scope]
+            else:
+                semi = code.find(";", match.end(), anchor)
+                if semi >= 0:
+                    ranges.append((match.end(), semi))
+                if origin_scope in scopes and position not in branch_bodies:
+                    break
+        return ranges
+
     def collect(site: str, anchor: int, start: int, end: int, *, follow_variable: bool = False) -> None:
         found = False
         variable = _COVERAGE_VARIABLE_RE.fullmatch(code[start:end]) if follow_variable else None
+        ranges = [(start, end)]
         if variable:
-            local_assignments = assignments.get(variable[1], ())
-            if local_assignments:
-                def scope_at(position: int) -> int:
-                    scope_index = bisect_left(brace_offsets, position) - 1
-                    return brace_scopes[scope_index] if scope_index >= 0 else -1
-
-                scope = scope_at(anchor)
-                scopes = {-1}
-                while scope >= 0:
-                    scopes.add(scope)
-                    scope = scope_parent[scope]
-                for match in reversed(local_assignments):
-                    if match.start() < anchor and scope_at(match.start()) in scopes:
-                        semi = code.find(";", match.end(), anchor)
-                        if semi >= 0:
-                            start, end = match.end(), semi
-                            site = f"assignment:{variable[1]}"
-                        break
-        for position, literal in pieces(start, end):
-            caption = _coverage_caption(literal, site, path)
-            if caption:
-                emit(site, anchor, position, "literal", caption)
-                found = True
-        if include_all:
-            low = bisect_left(reference_starts, start)
-            high = bisect_left(reference_starts, end)
-            for ref in references[low:high]:
-                emit(site, anchor, ref.start(), "ledger", ref[1] or ref[2])
-                found = True
-            if not found and code[start:end].strip():
-                emit(site, anchor, anchor, "dynamic")
+            values = assignment_values(variable[1], anchor)
+            if values:
+                ranges = values
+                site = f"assignment:{variable[1]}"
+        for begin, stop in ranges:
+            for position, literal in pieces(begin, stop):
+                caption = _coverage_caption(literal, site, path)
+                if caption:
+                    emit(site, anchor, position, "literal", caption)
+                    found = True
+            if include_all:
+                low = bisect_left(reference_starts, begin)
+                high = bisect_left(reference_starts, stop)
+                for ref in references[low:high]:
+                    emit(site, anchor, ref.start(), "ledger", ref[1] or ref[2])
+                    found = True
+        if include_all and not found and code[start:end].strip():
+            emit(site, anchor, anchor, "dynamic")
 
     for name, matches in assignments.items():
         if not _COVERAGE_FIELD_RE.fullmatch(name):
