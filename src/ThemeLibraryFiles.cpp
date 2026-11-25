@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 
 namespace harken::theme_library {
 namespace fs = std::filesystem;
@@ -109,10 +110,10 @@ fs::path ThemePathFor(const fs::path& libraryDir, const std::string& nameUtf8) {
     return libraryDir / file;
 }
 
-bool SaveThemeJson(const fs::path& target, const std::string& json, std::string& error) {
+static bool SaveThemeBytes(const fs::path& target, const std::string& bytes, std::string& error) {
     error.clear();
-    if (target.empty() || json.empty()) {
-        error = "theme path or theme JSON is empty";
+    if (target.empty()) {
+        error = "theme path is empty";
         return false;
     }
     const fs::path parent = target.parent_path();
@@ -131,7 +132,7 @@ bool SaveThemeJson(const fs::path& target, const std::string& json, std::string&
             error = "cannot open theme staging file";
             return false;
         }
-        if (!out.Write(json) || !out.Flush()) {
+        if ((!bytes.empty() && !out.Write(bytes)) || !out.Flush()) {
             error = "cannot write theme staging file";
             out.Close();
             Platform::FileSystem::RemoveFile(pending.u8string());
@@ -151,9 +152,58 @@ bool SaveThemeJson(const fs::path& target, const std::string& json, std::string&
     return true;
 }
 
+bool SaveThemeJson(const fs::path& target, const std::string& json, std::string& error) {
+    if (json.empty()) {
+        error = "theme JSON is empty";
+        return false;
+    }
+    return SaveThemeBytes(target, json, error);
+}
+
 bool SaveThemeCopy(const fs::path& libraryDir, const std::string& nameUtf8,
                    const std::string& json, std::string& error) {
     return SaveThemeJson(ThemePathFor(libraryDir, nameUtf8), json, error);
+}
+
+ImportResult InstallImportedTheme(const fs::path& settingsFile, const std::string& name,
+                                  const std::string& json, const std::function<bool()>& persistSettings) {
+    namespace pal = Platform::FileSystem;
+    struct PreviousFile {
+        fs::path path;
+        std::optional<std::string> bytes;
+
+        bool Capture() {
+            if (path.empty()) return false;
+            const auto utf8 = path.u8string();
+            const auto status = pal::ProbePath(utf8);
+            if (status == pal::PathStatus::Missing) return true;
+            if (status != pal::PathStatus::Present) return false;
+            const auto info = pal::ProbeRegularFile(utf8);
+            if (!info.isRegularFile || !info.sizeAvailable) return false;
+            const auto snapshot = pal::ReadFileBytes(utf8);
+            if (snapshot.size() != info.sizeBytes) return false;
+            bytes.emplace(snapshot.begin(), snapshot.end());
+            return true;
+        }
+
+        bool Restore() const {
+            std::string error;
+            if (bytes) return SaveThemeBytes(path, *bytes, error);
+            const auto utf8 = path.u8string();
+            return pal::RemoveFile(utf8) || pal::ProbePath(utf8) == pal::PathStatus::Missing;
+        }
+    };
+    PreviousFile library{ThemePathFor(LibraryDirectory(settingsFile), name), {}};
+    PreviousFile active{CustomThemePath(settingsFile), {}};
+    if (!library.Capture() || !active.Capture()) return ImportResult::Failed;
+
+    std::string error;
+    if (!SaveThemeJson(library.path, json, error)) return ImportResult::Failed;
+    const bool activeWritten = SaveThemeJson(active.path, json, error);
+    if (activeWritten && persistSettings()) return ImportResult::Saved;
+    const bool activeRestored = !activeWritten || active.Restore();
+    const bool libraryRestored = library.Restore();
+    return activeRestored && libraryRestored ? ImportResult::Failed : ImportResult::RollbackFailed;
 }
 
 std::vector<fs::path> ListThemes(const fs::path& libraryDir) {

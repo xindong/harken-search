@@ -215,6 +215,7 @@ struct AsyncSearchRequest {
     bool isRandomShuffle = false;
     // 子播放列表 folder 聚合: true 时使用 getAggregatedPlaylistFiles
     bool playlistAggregatedView = false;
+    bool scanCoverRefresh = false;
     // Database revision captured when the request is submitted. The result
     // carries it to the apply site so concurrent writes make the snapshot stale.
 
@@ -243,6 +244,7 @@ struct AsyncSearchResult {
     bool countFollowUpSkipped = false;
     // Mirrors randomized ordering so the UI can start playback consistently.
     bool isRandomShuffle = false;
+    bool scanCoverRefresh = false;
     // Revision represented by the returned rows; copied from the request.
 
     uint64_t requestedAtDbRevision = 0;

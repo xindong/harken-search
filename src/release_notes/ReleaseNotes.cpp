@@ -228,6 +228,9 @@ bool ParseLegacySections(const json& releaseJson, ReleaseRecord& release,
                 if (itemJson.is_string()) {
                     entry.title = sectionTitle;
                     entry.description = itemJson.get<std::string>();
+                    if (author.empty() && !release.contributors.empty()) {
+                        entry.group = sectionTitle;
+                    }
                 } else if (itemJson.is_object()) {
                     if (!ReadString(itemJson, "title", entry.title) ||
                         !ReadString(itemJson, "description", entry.description) ||
@@ -241,7 +244,9 @@ bool ParseLegacySections(const json& releaseJson, ReleaseRecord& release,
                 }
                 if (entry.description.empty()) continue;
                 if (!author.empty()) entry.contributors.push_back(author);
-                if (entry.contributors.empty()) entry.contributors.push_back("Harken Search Team");
+                if (entry.contributors.empty() && entry.group.empty()) {
+                    entry.contributors.push_back("Harken Search Team");
+                }
                 entry.sources.push_back({ReleaseNoteSourceKind::ReleaseNote,
                                          std::move(sourceRef), {}});
                 release.entries.push_back(std::move(entry));

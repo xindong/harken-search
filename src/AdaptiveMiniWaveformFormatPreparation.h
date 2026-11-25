@@ -17,7 +17,6 @@ struct AdaptiveMiniFormatPreparationResult {
     AdaptiveMiniFormatPreparationDecision decision =
         AdaptiveMiniFormatPreparationDecision::Disabled;
     AdaptiveMiniFormatFinalizationState state;
-    int purged = 0;
     int64_t rebuildTotal = 0;
 };
 
@@ -26,7 +25,6 @@ public:
     virtual ~AdaptiveMiniFormatPreparationSource() = default;
 
     virtual bool usesAdaptiveMiniWaveform() const = 0;
-    virtual int purgeAllMiniWaveform() = 0;
     virtual int countFilesNeedingWaveformCache() = 0;
 };
 
@@ -37,7 +35,6 @@ public:
         Database& database) noexcept;
 
     bool usesAdaptiveMiniWaveform() const override;
-    int purgeAllMiniWaveform() override;
     int countFilesNeedingWaveformCache() override;
 
 private:

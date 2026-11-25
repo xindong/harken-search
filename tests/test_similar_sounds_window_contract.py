@@ -147,12 +147,12 @@ assert action_row < snapshot_refresh < results_draw
 # Starting the batch invalidates results synchronously, so refresh the render
 # snapshot after the index controls too (including a batch that ends this frame).
 assert "ImGui::BeginTabItem(L(Main_SimilarSearchTab))" not in main
-index_controls = body.index("DrawSimilarityIndexPanel(state)")
+index_controls = body.index("DrawSimilarityIndexPanel(state,")
 index_snapshot_refresh = body.index("snapshot = workflow.Snapshot()", index_controls)
 assert action_row < index_controls < index_snapshot_refresh < results_draw
 assert main.count('##SimilarPreset') == 0
 assert window.count('##SimilarPreset') == 1
-index_start = main.index("void DrawSimilarityIndexPanel(AppState& state)")
+index_start = main.index("void DrawSimilarityIndexPanel(AppState& state, bool independentLayout)")
 index_end = main.index("static std::string ScanDialogLeafName", index_start)
 index_panel = main[index_start:index_end]
 for required in (
@@ -379,3 +379,36 @@ assert "src/SimilaritySearch.cpp" in cmake
 assert "tests/test_similarity_search_database_stub.cpp" in cmake
 assert "target_link_libraries(SimilarityBench PRIVATE Threads::Threads)" in cmake
 assert "add_test(NAME SimilarityBench" not in cmake
+
+
+def test_independent_similar_dock_and_float_share_one_content_viewport():
+    viewport_start = main.index("const auto renderIndependentSimilarSounds")
+    viewport = main[viewport_start:main.index("auto renderFunctionDockedModule", viewport_start)]
+    floating_start = main.index("if (state.panelSimilarSounds.visible && state.panelSimilarSounds.floating &&")
+    floating = main[floating_start:main.index("##FloatSimilarSoundsMenu", floating_start)]
+    floating_full = main[floating_start:main.index("RenderSimilarSoundsWindow(state)", floating_start)]
+    docked_start = main.index('if (leaf.id == "similar-sounds" && !state.panelSimilarSounds.floating)')
+    docked = main[docked_start:main.index("if (!open)", docked_start)]
+    assert 'beginDockContentViewport("similar-sounds"' in viewport
+    assert "RenderSimilarSoundsContent(state, true)" in viewport
+    assert "renderIndependentSimilarSounds(" in floating_full
+    assert "renderIndependentSimilarSounds(" in docked
+    assert "TitleBarRect()" in floating_full
+    assert "similarShell.contentMin" in docked and "similarShell.contentMax" in docked
+    assert ' &similarOpen, "similar-sounds", true)' in floating
+    assert "similarContentInset" not in docked
+    assert "similarDl->AddRect(" not in docked
+    assert main.count("aura::ui::RenderSimilarSoundsContent(state);") == 1
+
+
+def test_independent_similar_layout_is_separate_from_theme_colors():
+    for section in (body, results_table):
+        assert "sharedPanelStyle && !independentLayout" in section
+    assert "sharedPanelLayout ? ImGuiTableFlags_None : ImGuiTableFlags_BordersOuter" in results_table
+    assert "sharedPanelLayout ? ImGui::CalcTextSize" in results_table
+    assert "tableBody = sharedPanelStyle ? infoSurface : theme.resultsBG" in results_table
+    assert "tableHeader = sharedPanelStyle" in results_table
+    assert "TransportContrast::ForSurface(theme.resultsText, stripedBody)" in results_table
+    assert "independentLayout || !sharedSimilarStyle" in index_panel
+    assert index_panel.count("if (showSeparators) ImGui::Separator();") == 2
+    assert "DrawSimilarityIndexPanel(state, independentLayout)" in body

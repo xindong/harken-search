@@ -55,7 +55,12 @@ else if(id=="themeEditor") {
 #if AURA_BUILD_DIAGNOSTICS
     if(ProductEdition::hasFeature("theme_editor"))actionButton(L(Set_EditTheme),"theme-editor");
 #endif
-    actionButton(L(SetUX_CustomColors),"custom-colors");
+    actionButton(L(SetUX_ImportTheme),"import-theme");
+    su::Observe("import-theme");
+    if(!editor.themeImportResult.empty()){
+        ImGui::TextUnformatted(editor.themeImportResult.c_str());
+        su::Observe("import-theme-result");
+    }
     if(!draft.customThemeName.empty()){
         ImGui::TextWrapped("%s",draft.customThemeName.c_str());
         if(aura::ui::SmallActionButton(L(Main_ApplyCustomBtn))){draft.theme=AppTheme::Custom;draft.useCustomColors=false;}
@@ -148,6 +153,7 @@ else if(id=="perf") {
     }
 }
 else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto),ImGuiSliderFlags_AlwaysClamp);
+else if(id=="similarConcurrency") {ImGui::SliderInt("##value",&draft.similarityAnalysisConcurrency,1,16,"%d",ImGuiSliderFlags_AlwaysClamp);ImGui::TextDisabled("%s",L(SetUX_SimilarityConcurrencyHint));}
 else if(id=="startupScan")ImGui::Checkbox("##value",&draft.autoReconcileOnStartup);
 else if(id=="backfill")ImGui::Checkbox("##value",&draft.idleAssetBackfillEnabled);
 else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,L(SetUX_DMin),ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}

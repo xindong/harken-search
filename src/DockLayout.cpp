@@ -91,6 +91,8 @@ bool NodesEqual(const DockNode* a, const DockNode* b) {
     const auto* sa = static_cast<const SplitNode*>(a);
     const auto* sb = static_cast<const SplitNode*>(b);
     return sa->axis == sb->axis && std::fabs(sa->ratio - sb->ratio) < 1.0e-6f &&
+        std::fabs(sa->firstWidthShare - sb->firstWidthShare) < 1.0e-6f &&
+        std::fabs(sa->secondWidthShare - sb->secondWidthShare) < 1.0e-6f &&
         NodesEqual(sa->first.get(), sb->first.get()) && NodesEqual(sa->second.get(), sb->second.get());
 }
 
@@ -108,6 +110,8 @@ std::unique_ptr<DockNode> CloneNode(const DockNode* node) {
     copy->ratio = split->ratio;
     copy->minFirst = split->minFirst;
     copy->minSecond = split->minSecond;
+    copy->firstWidthShare = split->firstWidthShare;
+    copy->secondWidthShare = split->secondWidthShare;
     copy->first = CloneNode(split->first.get());
     copy->second = CloneNode(split->second.get());
     return copy;

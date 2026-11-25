@@ -63,7 +63,11 @@ void AsyncSearchRefreshResultCompositionAdapter::apply() {
     AsyncSearchEmptyFallbackStateAdapter emptyFallbackAdapter(state_);
     emptyFallbackAdapter.apply();
 
-    browsePreviewAdapter.restore(browseSurfaceSelection);
+    browsePreviewAdapter.restore(browseSurfaceSelection, !result_.scanCoverRefresh);
+    if (result_.scanCoverRefresh) {
+        state_.coverWall.filteredLastSelSize = 0;
+        state_.requestCoverWallScanBackfillRefresh();
+    }
 
     AsyncSearchCoverPreloadStateAdapter coverPreloadAdapter(
         state_,
