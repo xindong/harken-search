@@ -4201,7 +4201,7 @@ static const std::string& GetAddFileSql() {
             "file_path, file_name, extension, file_size, "
             "sample_rate, bit_depth, channels, total_frames, duration, format, "
             "title, artist, album, description, category, keywords, rating, "
-            "play_count, use_count, date_added, last_played, "
+            "play_count, date_added, last_played, "
             "folder_path, file_mtime, last_indexed, has_cover, "
             "embedded_cover_key, embedded_cover_key_mtime, "
             "folder_cover_key, folder_cover_src_path, folder_cover_src_mtime, "
@@ -4211,8 +4211,8 @@ static const std::string& GetAddFileSql() {
             "energy_tension, energy_drive, "
             "replay_gain_track, replay_gain_album, highlight_start_ms, "
             "raw_genre, raw_instruments, norm_genre, norm_instruments, norm_mood_tags, vocal_type, "
-            "wavpack_lossless";
-        int baseCount = 45;
+            "wavpack_lossless, use_count";
+        int baseCount = 46;
 
         // Extended meta columns
         for (size_t i = 0; i < kExtMetaCount; ++i) {
@@ -4441,10 +4441,12 @@ bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
     sqlite3_bind_text(stmt, 43, record.normMoodTags.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 44, record.vocalType.c_str(), -1, SQLITE_TRANSIENT);
     if (record.wavPackLossless.has_value()) sqlite3_bind_int(stmt, 45, *record.wavPackLossless);
+    // 使用次数与 play_count 分离：只由拖出/发送/导出自增，重扫不覆盖。
+    sqlite3_bind_int(stmt, 46, record.useCount);
 
-    // Extended meta columns (params 46 .. 45+kExtMetaCount)
+    // Extended meta columns (params 47 .. 46+kExtMetaCount)
     for (size_t i = 0; i < kExtMetaCount; ++i) {
-        int paramIdx = 46 + (int)i;
+        int paramIdx = 47 + (int)i;
         auto it = record.meta.find(kExtMetaCols[i].col);
         if (it != record.meta.end() && !it->second.empty()) {
             sqlite3_bind_text(stmt, paramIdx, it->second.c_str(), -1, SQLITE_TRANSIENT);

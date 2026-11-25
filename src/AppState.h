@@ -3412,6 +3412,8 @@ struct AppState {
         // headers record the font size they actually render with.
         float listNumericFontPixels = 0, listHeaderFontPixels = 0;
         float listDurationColWidth = 0, listSampleRateColWidth = 0;
+        float listUseCountHeaderLeft = 0, listUseCountHeaderTop = 0;
+        float listUseCountHeaderRight = 0, listUseCountHeaderBottom = 0;
         std::string listNumericSample, listHeaderSample;
         std::string listUseCountSample;
         float listTextRowHeight = 0;

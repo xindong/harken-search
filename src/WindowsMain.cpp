@@ -4115,6 +4115,7 @@ static void PollQaCommandFile(AppState& state) {
         item += ",\"embedded_cover_key\":\"" + jsonEscape(r.embeddedCoverKey) + "\"";
         item += ",\"folder_cover_key\":\"" + jsonEscape(r.folderCoverKey) + "\"";
         item += ",\"cover_key\":\"" + jsonEscape(!r.embeddedCoverKey.empty() ? r.embeddedCoverKey : r.folderCoverKey) + "\"";
+        item += ",\"use_count\":" + std::to_string((long long)r.useCount);
         item += ",\"selected\":" + std::string(state.selectedIndicesSet.count(rowIndex) ? "true" : "false");
         item += "}";
         return item;
@@ -5532,6 +5533,8 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"drawn_list_header_sample\":\"" + jsonEscape(state.qaRegions.listHeaderSample) + "\",";
         result += "\"drawn_duration_column_width\":" + std::to_string(state.qaRegions.listDurationColWidth) + ",";
         result += "\"drawn_sample_rate_column_width\":" + std::to_string(state.qaRegions.listSampleRateColWidth) + ",";
+        result += "\"drawn_use_count_sample\":\"" + jsonEscape(state.qaRegions.listUseCountSample) + "\",";
+        result += "\"use_count_header\":[" + std::to_string(state.qaRegions.listUseCountHeaderLeft) + "," + std::to_string(state.qaRegions.listUseCountHeaderTop) + "," + std::to_string(state.qaRegions.listUseCountHeaderRight) + "," + std::to_string(state.qaRegions.listUseCountHeaderBottom) + "],";
 #endif
         result += "\"webui_active\":false,";
         result += "\"webui_bridge_active\":false,";
@@ -6723,6 +6726,8 @@ static void PollQaCommandFile(AppState& state) {
                                                          record.fileName, copyError);
                             } else {
                                 ++completed;
+                                // 导出成功才记一次使用；失败和跳过不计。
+                                if (record.id > 0) state.queueUseCount(record.id);
                             }
                         } catch (const std::exception& ex) {
                             ++errors;

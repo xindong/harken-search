@@ -43203,6 +43203,18 @@ void RenderUI(AppState& state) {
                     state.qaRegions.listHeaderFontPixels = ImGui::GetFontSize();
                     state.qaRegions.listHeaderSample = colName ? colName : "";
                 }
+                if (col == 3) {
+                    // 使用次数表头矩形（viewport 相对），供隔离验收脚本点表头验证排序。
+                    ImGuiTable* qaHeaderTable = ImGui::GetCurrentTable();
+                    const ImVec2 headerPos = ImGui::GetCursorScreenPos();
+                    const ImVec2 viewportPos = ImGui::GetMainViewport()->Pos;
+                    const float headerWidth = qaHeaderTable ? qaHeaderTable->Columns[3].WidthGiven : 0.0f;
+                    const float headerHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+                    state.qaRegions.listUseCountHeaderLeft = headerPos.x - viewportPos.x;
+                    state.qaRegions.listUseCountHeaderTop = headerPos.y - viewportPos.y;
+                    state.qaRegions.listUseCountHeaderRight = headerPos.x - viewportPos.x + headerWidth;
+                    state.qaRegions.listUseCountHeaderBottom = headerPos.y - viewportPos.y + headerHeight;
+                }
 #endif
                 bool needsPop = false;
                 if (strcmp(colName, u8"LUFS") == 0) { ImGui::PushStyleColor(ImGuiCol_Text, kThemeSuccessText); needsPop = true; }
