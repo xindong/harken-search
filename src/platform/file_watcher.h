@@ -85,6 +85,8 @@ private:
 
     bool setupWatch(WatchInfo& watch);
     bool issueRead(WatchInfo& watch);
+    void retryUnavailableWatches();
+    void rearmWatch(WatchInfo& watch);
     void cleanupWatch(WatchInfo& watch);
     void emitNeedRescan(const WatchInfo& watch, const char* reason);
 

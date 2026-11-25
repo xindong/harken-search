@@ -14480,6 +14480,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         PumpFolderSubtreeRemoval(state);
         PumpDatabaseSwitchIfPending(state);
         PumpInitRandomSamplingPoolIfPending(state);
+        const double watcherNow = ImGui::GetTime();
+        if (!s_isIngestMode && !state.dbSwitchInProgress && !state.isScanning.load() &&
+            watcherNow - state.lastWatcherRefreshTime >= 1.0) {
+            state.lastWatcherRefreshTime = watcherNow;
+            state.database.refreshFileSystemWatcher();
+        }
 
         // Complete pending audio loads before dependent UI updates.
         if (state.audioEngine.pumpLoadFileIfPending()) {

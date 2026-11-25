@@ -2982,6 +2982,7 @@ target_include_directories(TestWavPackDecode PRIVATE
 )
 target_link_libraries(TestWavPackDecode PRIVATE harken_wavpack)
 target_compile_features(TestWavPackDecode PRIVATE cxx_std_17)
+target_compile_definitions(TestWavPackDecode PRIVATE HARKEN_TEST_WAVPACK_VERIFICATION_COUNT)
 if(MSVC)
     target_compile_options(TestWavPackDecode PRIVATE /W3 /utf-8)
 endif()
