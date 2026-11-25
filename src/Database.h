@@ -1192,7 +1192,7 @@ public:
     std::vector<std::string> getDistinctFolderPaths();
 
     /** 极速搜索联想词，基于 FTS5 Vocab 树状索引，百万级库 <1ms */
-    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit = 10);
+    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit, int maxTermBytes);
 
     /** 设置 AppSettings 指针，用于访问性能模式设置 */
     void setSettings(struct AppSettings* settings);
