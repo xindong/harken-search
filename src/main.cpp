@@ -3531,6 +3531,14 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
         if (regionOrigin.displayName.empty()) {
             regionOrigin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
         }
+        if (files.front() != engine.getFileInfo().filePath) {
+            WaveformData renderedWaveform;
+            regionOrigin.peaks.clear();
+            if (AudioEngine::generateQuickWaveformForFile(files.front(), renderedWaveform)) {
+                regionOrigin.peaks = std::move(renderedWaveform.peaks);
+                regionOrigin.peakChannels = renderedWaveform.numChannels;
+            }
+        }
         StartFileDrag(files, &regionOrigin);
     } else {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
