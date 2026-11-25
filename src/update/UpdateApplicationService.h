@@ -176,6 +176,7 @@ struct UpdateApplicationResult {
     ManifestError manifestError = ManifestError::None;
     UpdateCheckFetchError fetchError = UpdateCheckFetchError::None;
     std::string detail;
+    bool checkFailed = false;
 };
 
 // Serialized black-box updater composition. It owns the check and download

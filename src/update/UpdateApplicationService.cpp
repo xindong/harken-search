@@ -335,6 +335,8 @@ UpdateApplicationResult UpdateApplicationService::HandleCheckResult(
         result = Result(disposition, checked.error, checked.detail);
         result.manifestError = checked.manifestError;
         result.fetchError = checked.fetchError;
+        result.checkFailed = checked.disposition == UpdateCheckServiceDisposition::Failed ||
+                             checked.disposition == UpdateCheckServiceDisposition::TerminalError;
     }
     if (checked.schedule) {
         const auto schedule = ArmCheck(*checked.schedule);
