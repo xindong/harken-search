@@ -246,29 +246,29 @@ int main() {
 
                           "results table clamps header auto-fit or drag resize when filename width becomes unreadable");
 
-    ok &= requireContains(mainCpp, "Breadcrumb path chip flow",
+    ok &= requireContains(mainCpp, "breadcrumbChipPadX = 2.0f",
 
-                          "database breadcrumb documents readable chip-flow behavior");
+                          "database breadcrumb uses compact horizontal padding without shrinking the font");
 
-    ok &= requireContains(mainCpp, "breadcrumbContentRightX",
+    ok &= requireContains(mainCpp, "CalcTextSize(\">\")",
 
-                          "database breadcrumb computes the available right edge before drawing path segments");
+                          "database breadcrumb does not pad separators with spaces");
 
-    ok &= requireContains(mainCpp, "breadcrumbMinReadableChipW",
+    ok &= requireContains(mainCpp, "ImGui::BeginChild(\"##DatabaseBreadcrumbPath\", ImVec2(breadcrumbViewportW, breadcrumbRowH)",
 
-                          "database breadcrumb protects a minimum readable chip width");
+                          "database breadcrumb clips overflow in a single-row viewport");
 
     ok &= requireContains(mainCpp, "breadcrumbMaxChipW",
 
-                          "database breadcrumb caps long segments instead of creating tall path blocks");
+                          "database breadcrumb still caps individual overlong segments");
 
-    ok &= requireContains(mainCpp, "wrapBreadcrumbLineIfNeeded(separatorW + segmentButtonW)",
+    ok &= requireContains(mainCpp, "ImGui::SetNextWindowScroll(ImVec2(breadcrumbScrollX, 0.0f))",
 
-                          "database breadcrumb wraps segment groups before they clip");
+                          "database breadcrumb moves only on its horizontal axis");
 
-    ok &= requireContains(mainCpp, "startReadableBreadcrumbLine",
+    ok &= requireNotContains(mainCpp, "wrapBreadcrumbLineIfNeeded",
 
-                          "database breadcrumb starts overflow on a readable full line");
+                             "database breadcrumb must not wrap path segments when they overflow");
 
     ok &= requireContains(mainCpp, "drawBreadcrumbPathChip",
 
