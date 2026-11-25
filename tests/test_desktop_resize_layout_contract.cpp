@@ -250,9 +250,27 @@ int main() {
 
                           "database breadcrumb uses compact horizontal padding without shrinking the font");
 
-    ok &= requireContains(mainCpp, "CalcTextSize(\">\")",
+    ok &= requireContains(mainCpp, "breadcrumbSeparatorPadX = 4.0f",
 
-                          "database breadcrumb does not pad separators with spaces");
+                          "database breadcrumb option A gives the arrow 6 px per side with the 2 px chip inset");
+
+    ok &= requireContains(mainCpp, "CalcTextSize(\">\").x + breadcrumbSeparatorPadX * 2.0f",
+
+                          "database breadcrumb scroll extent includes both separator gaps");
+
+    ok &= requireOrder(mainCpp, "ImGui::SameLine(0, breadcrumbSeparatorPadX);",
+
+                       "ImGui::TextColored(kInfoMuted, \">\");",
+
+                       "database breadcrumb reserves the gap before the original arrow");
+
+    ok &= requireContains(mainCpp,
+
+                          "ImGui::TextColored(kInfoMuted, \">\");\n"
+
+                          "                                ImGui::SameLine(0, breadcrumbSeparatorPadX);",
+
+                          "database breadcrumb reserves the same gap after the original arrow");
 
     ok &= requireContains(mainCpp, "ImGui::BeginChild(\"##DatabaseBreadcrumbPath\", ImVec2(breadcrumbViewportW, breadcrumbRowH)",
 

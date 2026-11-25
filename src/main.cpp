@@ -42002,9 +42002,10 @@ void RenderUI(AppState& state) {
                     }
 
                     constexpr float breadcrumbChipPadX = 2.0f;
+                    constexpr float breadcrumbSeparatorPadX = 4.0f;
                     constexpr float breadcrumbMaxChipW = 320.0f;
                     constexpr float breadcrumbScrollSpeed = 120.0f;
-                    const float separatorW = ImGui::CalcTextSize(">").x;
+                    const float separatorW = ImGui::CalcTextSize(">").x + breadcrumbSeparatorPadX * 2.0f;
                     std::vector<float> segmentWidths;
                     segmentWidths.reserve(pathSegments.size());
                     float breadcrumbContentW = 0.0f;
@@ -42088,10 +42089,10 @@ void RenderUI(AppState& state) {
                         for (size_t segmentIndex = 0; segmentIndex < pathSegments.size(); ++segmentIndex) {
                             const auto& segment = pathSegments[segmentIndex];
                             if (segmentIndex > 0) {
-                                ImGui::SameLine(0, 0);
+                                ImGui::SameLine(0, breadcrumbSeparatorPadX);
                                 ImGui::AlignTextToFramePadding();
                                 ImGui::TextColored(kInfoMuted, ">");
-                                ImGui::SameLine(0, 0);
+                                ImGui::SameLine(0, breadcrumbSeparatorPadX);
                             }
 
                             ImGui::PushID(static_cast<int>(segmentIndex));
