@@ -7,6 +7,7 @@
 
 #include "../Localization.h"
 #include "../Theme.h"
+#include "../ThemeModuleColors.h"
 #include "../HarkenSearchWidgets.h"
 #include "../../thirdparty/lucide/IconsLucide.h"
 #include "../ui/ActionButtonStyle.h"
@@ -172,8 +173,9 @@ void RenderHeader(
     bool& open,
     ReleaseNotesUiState& notes,
     const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     TextAt(notes.showHistory ? u8"更新历史" : u8"检查更新",
-           kContentLeft, 22.0f, theme.interfaceText);
+           kContentLeft, 22.0f, modules.topBar.text);
     if (!notes.showHistory && ButtonAt(
             "history", u8"更新历史", 594.0f, 20.0f, 108.0f, 24.0f,
             false, true, theme)) {
@@ -210,8 +212,9 @@ void RenderStatusRow(
     HarkenSearchUpdateNoticeVisibleState state,
     const HarkenSearchUpdateUiState& updateState,
     const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const char* label = u8"更新检查失败";
-    ImVec4 color = theme.resultsText;
+    ImVec4 color = modules.results.text;
     switch (state) {
         case HarkenSearchUpdateNoticeVisibleState::Checking:
             label = u8"正在检查更新";
@@ -221,19 +224,19 @@ void RenderStatusRow(
             break;
         case HarkenSearchUpdateNoticeVisibleState::Available:
             label = u8"有新版本可用";
-            color = theme.resultsText;
+            color = modules.results.text;
             break;
         case HarkenSearchUpdateNoticeVisibleState::Downloading:
             label = u8"正在下载更新";
             break;
         case HarkenSearchUpdateNoticeVisibleState::Restarting:
             label = u8"正在准备更新";
-            color = theme.resultsText;
+            color = modules.results.text;
             break;
         case HarkenSearchUpdateNoticeVisibleState::Error: {
             const auto failure = ExplainHarkenSearchUpdateFailure(updateState.lastError);
             label = failure.headline.empty() ? u8"更新检查失败" : failure.headline.c_str();
-            color = theme.wwiseConnectFail;
+            color = modules.wwise.failed;
             break;
         }
         case HarkenSearchUpdateNoticeVisibleState::History:
@@ -247,13 +250,14 @@ void RenderVersionCard(
     HarkenSearchUpdateNoticeVisibleState state,
     const HarkenSearchUpdateUiState& updateState,
     const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     DrawPanelRect(
         kContentLeft,
         115.0f,
         kContentWidth,
         72.0f,
-        theme.dialogPanelBG,
-        theme.chromeBorder,
+        modules.overlay.panel,
+        modules.overlay.border,
         8.0f);
 
     const std::string currentVersion = DisplayVersion(
@@ -272,19 +276,19 @@ void RenderVersionCard(
                                     state == HarkenSearchUpdateNoticeVisibleState::Downloading ||
                                     state == HarkenSearchUpdateNoticeVisibleState::Restarting;
 
-    TextAt(u8"当前版本", 37.0f, 128.0f, theme.resultsSecondaryText);
-    TextAt(currentVersion.c_str(), 37.0f, 148.0f, theme.resultsText);
+    TextAt(u8"当前版本", 37.0f, 128.0f, modules.results.secondaryText);
+    TextAt(currentVersion.c_str(), 37.0f, 148.0f, modules.results.text);
     ImGui::GetWindowDrawList()->AddLine(
         ScreenPoint(378.0f, 126.0f),
         ScreenPoint(378.0f, 174.0f),
-        ImGui::GetColorU32(theme.chromeBorder),
+        ImGui::GetColorU32(modules.overlay.border),
         1.0f);
-    TextAt(u8"最新版本", 399.0f, 128.0f, theme.resultsSecondaryText);
+    TextAt(u8"最新版本", 399.0f, 128.0f, modules.results.secondaryText);
     TextAt(
         candidateVersion.c_str(),
         399.0f,
         148.0f,
-        highlightCandidate ? theme.resultsText : theme.resultsSecondaryText);
+        highlightCandidate ? modules.results.text : modules.results.secondaryText);
 }
 
 std::string FormatContributors(const ReleaseNotesEntry* release) {
@@ -310,12 +314,13 @@ std::string FormatContributors(const ReleaseNotesEntry* release) {
 
 // Shared single-column content for target preview and history.
 void RenderReleaseContents(const ReleaseNotesEntry& release, const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const std::string metadata = DisplayVersion(release.version) + "   " +
         SanitizeHarkenSearchUpdateDisplayText(release.releaseDate);
-    ImGui::TextColored(theme.resultsSecondaryText, "%s", metadata.c_str());
+    ImGui::TextColored(modules.results.secondaryText, "%s", metadata.c_str());
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme.resultsText);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.results.text);
     if (!release.headline.empty()) {
         const auto headline = SanitizeHarkenSearchUpdateDisplayText(release.headline);
         ImGui::TextUnformatted(headline.c_str());
@@ -339,7 +344,7 @@ void RenderReleaseContents(const ReleaseNotesEntry& release, const ThemeColorSch
             const float authorWidth = ImGui::CalcTextSize(author.c_str()).x;
             const float remaining = ImGui::GetContentRegionAvail().x;
             if (authorWidth < remaining) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + remaining - authorWidth);
-            ImGui::TextColored(theme.resultsSecondaryText, "%s", author.c_str());
+            ImGui::TextColored(modules.results.secondaryText, "%s", author.c_str());
             ImGui::PopTextWrapPos();
             ImGui::EndTable();
         }
@@ -354,22 +359,23 @@ void RenderReleaseContents(const ReleaseNotesEntry& release, const ThemeColorSch
     }
     ImGui::PopStyleColor();
     const auto contributors = FormatContributors(&release);
-    ImGui::TextColored(theme.resultsSecondaryText, "%s", contributors.c_str());
+    ImGui::TextColored(modules.results.secondaryText, "%s", contributors.c_str());
     ImGui::PopTextWrapPos();
 }
 
 void RenderUpdateLog(float y, float bottom, const char* sectionTitle,
     const ReleaseNotesEntry* release, ReleaseNotesUiState& notes,
     bool candidate, const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     ImGui::GetWindowDrawList()->AddLine(ScreenPoint(kContentLeft, y),
-        ScreenPoint(kContentLeft + kContentWidth, y), ImGui::GetColorU32(theme.chromeBorder));
-    TextAt(sectionTitle, kContentLeft, y + 12.0f, theme.resultsSecondaryText);
+        ScreenPoint(kContentLeft + kContentWidth, y), ImGui::GetColorU32(modules.overlay.border));
+    TextAt(sectionTitle, kContentLeft, y + 12.0f, modules.results.secondaryText);
     const std::string key = std::string(sectionTitle) + ":" +
         (release ? release->version : (candidate ? notes.candidateNotesVersion : "missing"));
     const bool changed = notes.summaryScrollKey != key;
     notes.summaryScrollKey = key;
     ImGui::SetCursorPos(ImVec2(kContentLeft, y + 37.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.dialogBG);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.overlay.background);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 4.0f));
     ImGui::PushID(key.c_str());
     ImGui::BeginChild("##UpdateReleaseContents", ImVec2(kContentWidth, std::max(40.0f, bottom - y - 37.0f)),
@@ -381,7 +387,7 @@ void RenderUpdateLog(float y, float bottom, const char* sectionTitle,
         const bool failed = candidate ? notes.candidateNotesFailed : notes.loadFailed;
         const char* message = failed ? L(Update_InlineReadFailed)
                                     : L(Update_InlineNoNotes);
-        ImGui::PushStyleColor(ImGuiCol_Text, theme.resultsSecondaryText);
+        ImGui::PushStyleColor(ImGuiCol_Text, modules.results.secondaryText);
         ImGui::TextWrapped("%s", message);
         ImGui::PopStyleColor();
     }
@@ -400,6 +406,7 @@ void RenderDownloadProgress(
     const HarkenSearchUpdateUiState& updateState,
     const HarkenSearchUpdateNoticePresentation& presentation,
     const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const bool totalUnknown = presentation.totalBytes == 0;
     const float progress = totalUnknown
         ? -1.0f
@@ -423,9 +430,9 @@ void RenderDownloadProgress(
 
     ImGui::SetCursorPos(ImVec2(kContentLeft, 199.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, theme.dialogPanelBG);
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme.resultsText);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme.interfaceText);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, modules.overlay.panel);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, modules.results.text);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.topBar.text);
     ImGui::ProgressBar(progress, ImVec2(kContentWidth, 18.0f), progressText);
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar();
@@ -433,13 +440,14 @@ void RenderDownloadProgress(
 
 void RenderHistory(ReleaseNotesUiState& notes, bool& open, float panelHeight,
     std::string_view installedVersion, const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const auto history = BuildHarkenSearchReleaseNotesHistory(notes, installedVersion);
     ImGui::SetCursorPos(ImVec2(kContentLeft, 66.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.dialogBG);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.overlay.background);
     ImGui::BeginChild("##UpdateHistoryContents", ImVec2(kContentWidth, panelHeight - 134.0f),
         false, ImGuiWindowFlags_NoSavedSettings);
     if (history.empty()) {
-        ImGui::TextColored(theme.resultsSecondaryText, "%s", notes.loadFailed
+        ImGui::TextColored(modules.results.secondaryText, "%s", notes.loadFailed
             ? L(Update_InlineHistoryReadFailed) : L(Update_InlineHistoryEmpty));
     } else {
         for (const auto* release : history) {
@@ -466,20 +474,22 @@ void RenderHistory(ReleaseNotesUiState& notes, bool& open, float panelHeight,
 void RenderCheckingWait(
     const HarkenSearchUpdateUiState& updateState,
     const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     (void)updateState;
     const char* message = u8"正在连接更新服务，请稍候…";
-    TextWrappedAt(message, kContentLeft, 211.0f, kContentWidth, theme.resultsSecondaryText);
+    TextWrappedAt(message, kContentLeft, 211.0f, kContentWidth, modules.results.secondaryText);
 }
 
 void RenderRestartNotice(float y, const ThemeColorScheme& theme) {
-    TextAt(L(Update_BootstrapHandoff), kContentLeft, y, theme.resultsSecondaryText);
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
+    TextAt(L(Update_BootstrapHandoff), kContentLeft, y, modules.results.secondaryText);
     TextAt(u8"关闭主窗口后，独立更新窗口会继续显示替换进度。",
-           kContentLeft, y + 24.0f, theme.resultsSecondaryText);
+           kContentLeft, y + 24.0f, modules.results.secondaryText);
     ImGui::SetCursorPos(ImVec2(kContentLeft, y + 42.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, theme.dialogPanelBG);
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme.resultsText);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme.interfaceText);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, modules.overlay.panel);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, modules.results.text);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.topBar.text);
     const float progress = Platform::Animation::ClientAreaAnimationEnabled()
         ? -static_cast<float>(ImGui::GetTime() + 0.001) : 0.0f;
     ImGui::ProgressBar(progress, ImVec2(kContentWidth, 8.0f), "");
@@ -492,6 +502,7 @@ void RenderErrorDetails(
     const HarkenSearchUpdateNoticePresentation& presentation,
     ReleaseNotesUiState& notes,
     const ThemeColorScheme& theme) {
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const auto failure = ExplainHarkenSearchUpdateFailure(updateState.lastError);
     const char* fallback = updateState.phase == HarkenSearchUpdateUiPhase::Disabled
         ? u8"当前构建未配置正式更新通道。"
@@ -504,8 +515,8 @@ void RenderErrorDetails(
     const bool resetErrorScroll = notes.errorScrollKey != errorScrollKey;
     notes.errorScrollKey = errorScrollKey;
     ImGui::SetCursorPos(ImVec2(kContentLeft, 199.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.dialogPanelBG);
-    ImGui::PushStyleColor(ImGuiCol_Border, theme.chromeBorder);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, modules.overlay.panel);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.overlay.border);
     ImGui::PushID(errorScrollKey.c_str());
     ImGui::BeginChild("##UpdateErrorDetails",
         ImVec2(kContentWidth, 54.0f),
@@ -515,7 +526,7 @@ void RenderErrorDetails(
         ImGui::SetScrollY(0.0f);
     }
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme.resultsSecondaryText);
+    ImGui::PushStyleColor(ImGuiCol_Text, modules.results.secondaryText);
     ImGui::TextUnformatted(fallback);
     if (!presentation.lastError.empty()) {
         ImGui::Spacing();
@@ -624,6 +635,7 @@ void RenderHarkenSearchUpdateNoticeUi(
     g_noticeQa.history = notes.showHistory;
 #endif
     const auto& theme = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
     const HarkenSearchUpdateNoticeVisibleState state = ResolvePanelState(updateState, notes.showHistory);
     const float panelHeight = std::min(PanelHeight(state), std::max(420.0f, ImGui::GetMainViewport()->WorkSize.y - 40.0f));
     const bool rendersUpdateSummary = state == HarkenSearchUpdateNoticeVisibleState::Latest ||
@@ -644,8 +656,8 @@ void RenderHarkenSearchUpdateNoticeUi(
         ImGuiCond_Always,
         ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(kPanelWidth, panelHeight), ImGuiCond_Always);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.dialogBG);
-    ImGui::PushStyleColor(ImGuiCol_Border, theme.chromeBorder);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, modules.overlay.background);
+    ImGui::PushStyleColor(ImGuiCol_Border, modules.overlay.border);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -690,7 +702,7 @@ void RenderHarkenSearchUpdateNoticeUi(
             case HarkenSearchUpdateNoticeVisibleState::Available:
                 RenderUpdateLog(199.0f, actionY - 63.0f, u8"本次更新", release, notes, true, theme);
                 TextWrappedAt(L(Update_InlineRestartNote),
-                    kContentLeft, actionY - 44.0f, kContentWidth, theme.resultsSecondaryText);
+                    kContentLeft, actionY - 44.0f, kContentWidth, modules.results.secondaryText);
                 RenderActionBar(actionY, state, open, updateState, actions, presentation, theme);
                 break;
             case HarkenSearchUpdateNoticeVisibleState::Downloading:

@@ -444,6 +444,16 @@ struct FolderInfo {
     std::vector<FolderInfo> subfolders;
 };
 
+enum class FolderSubtreeRemovalStatus { Removed, NoMatch, Failed };
+
+struct FolderSubtreeRemovalResult {
+    FolderSubtreeRemovalStatus status = FolderSubtreeRemovalStatus::Failed;
+    int removedFiles = 0;
+    bool unregisteredRoot = false;
+    std::string error;
+    std::vector<std::string> removedPaths;
+};
+
 // Lightweight playlist folder aggregation row so the playlist folder tree can
 // show folder names and counts without loading complete AudioRecord rows.
 struct PlaylistFolderCount {
@@ -552,6 +562,7 @@ public:
     // Initialize database.  Pass isPrimary=true for the single app-owned connection;
     // worker-thread local connections leave it false to skip one-time migrations.
     bool open(const std::string& dbPath, bool isPrimary = false);
+    bool openForCoverKeyCachePersistence(const std::string& dbPath);
     // 打开只读连接（WAL 模式下不阻塞写操作，用于 SearchWorker 等纯读场景）
     bool openReadOnly(const std::string& dbPath);
     void close();
@@ -609,6 +620,7 @@ public:
     bool clearBackfillPending(int64_t fileId, int kind);
     int  countBackfillPending();
     int  countBackfillPendingKind(int kind);
+    std::optional<bool> hasBackfillPendingKind(int kind);
     int  countBackfillPendingKindInFolder(int kind, const std::string& folderPathPrefix);
     bool hasBackfillPending(int64_t fileId, int kind);
     bool resetScanForegroundCompletionSession(int64_t scanSessionId);
@@ -1158,7 +1170,8 @@ public:
     bool isCoverWallOrderIndexReady() const;
     static bool flushCoverWallOrderIndexDirtyAtPath(const std::string& dbPath, int maxTiles = 4096);
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
-    std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
+    std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200,
+                                              bool allowCachedFacets = true);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);
     bool persistCoverFacetCache(const SearchFilter& filter,
                                 int limit,
@@ -1181,7 +1194,7 @@ public:
     std::vector<std::string> getDistinctFolderPaths();
 
     /** 极速搜索联想词，基于 FTS5 Vocab 树状索引，百万级库 <1ms */
-    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit = 10);
+    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit, int maxTermBytes);
 
     /** 设置 AppSettings 指针，用于访问性能模式设置 */
     void setSettings(struct AppSettings* settings);
@@ -1198,6 +1211,10 @@ public:
     bool rebuildFolderIndex();
     /** 删除/移动文件后调用，使 facet 总数与文件夹树数量下次从数据库重算 */
     bool invalidateFacetQueryCache();
+    void clearSearchCountMemoryCache() {
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
+        m_countMemCache.clear();
+    }
     bool rebuildTagFacetIndex();
     bool invalidateTagFacetIndex();
     bool isTagFacetIndexValid() const;
@@ -1268,6 +1285,7 @@ public:
 
 // 文件系统监听（VFS监听）
     void startFileSystemWatcher(const std::vector<std::string>& watchDirectories);
+    void refreshFileSystemWatcher();
     void stopFileSystemWatcher();
     void handleFileSystemEvent(const std::string& filePath, bool isAdded, bool isDeleted, bool isModified);
 
@@ -1408,6 +1426,11 @@ private:
     static bool startsWithPathPrefix(const std::string& pathNorm, const std::string& prefixNorm);
     void pruneFsDedupeLocked(uint64_t nowMs);
     bool shouldSuppressWatcherEvent(const FileSystemWatcher::FileEvent& event);
+    AudioRecord getWatcherFileByPath(const std::string& filePath);
+    bool upsertFile(const AudioRecord& record, bool refreshFolderCount);
+    void refreshIndexedFolderCounts(const std::string& folder, const std::string& otherFolder = {});
+    void refreshWavPackCorrection(const std::string& correctionPath);
+    void notifyWatcherChange(WatcherChangeType type, const std::string& path);
 
     std::vector<std::string> getNetworkLibraryRoots() const;
     bool setFileTagsInTransaction(int64_t fileId, const std::vector<std::string>& tagNames);
@@ -1513,6 +1536,9 @@ public:
     // 1. Folder tree context menu: remove a subtree from the current database.
     // Disk files are kept by default; deleteFilesFromDisk only removes indexed files.
     int removeFolderSubtreeFromDb(const std::string& folderPath, bool deleteFilesFromDisk = false);
+    FolderSubtreeRemovalResult removeFolderSubtreeFromLibrary(const std::string& folderPath);
+    FolderSubtreeRemovalResult removeFolderSubtreeFromLibraryOnWorker(const std::string& folderPath);
+    void discardFolderRemovalReadCaches();
 
     // 2. main.cpp:8121 — 切库/切表前断开当前连接
     void detachConnectionForSwitch();
@@ -1535,6 +1561,8 @@ public:
         int limit, int64_t lastClaimedFileId, bool incrementalOnly);
     bool saveWaveformDetailBatch(const std::vector<WaveformDetailBatchEntry>& batch);
 private:
+    FolderSubtreeRemovalResult removeFolderSubtreeFromDbImpl(const std::string& folderPath, bool deleteFilesFromDisk);
+    void onOrphanCoverCachesPruned(int removed);
     // Caller holds m_writerSerializeMutex.
     bool ensureSearchRecomputeConnection();
     bool ensureFtsSchema();
@@ -1669,13 +1697,17 @@ public:
     // Cleared by invalidateFacetQueryCache().
     struct CountMemCacheEntry { int64_t count; int64_t expirySec; };
     std::unordered_map<std::string, CountMemCacheEntry> m_countMemCache;
+    std::mutex m_searchCountCacheMutex;
     int64_t m_cachedFileCount = -1;
     uint64_t m_cachedFileCountRevision = 0;
     std::chrono::steady_clock::time_point m_cachedFileCountTime{};
     std::string m_blobsDbPath; // 封面数据库路径（blobs.db）
     std::string m_waveformsDbPath; // 波形数据库路径（waveforms.db）
 
-    FileSystemWatcher* m_fileSystemWatcher = nullptr;
+    std::unique_ptr<FileSystemWatcher> m_fileSystemWatcher;
+    std::vector<std::string> m_watcherLibraryRoots;
+    std::thread m_watcherRootRefreshThread;
+    std::atomic<bool> m_watcherRootsRefreshing{false};
     WatcherChangeCallback m_watcherChangeCallback;
 
     struct AppSettings* m_settings = nullptr;  // 指向 AppSettings 的指针，用于访问性能模式设置

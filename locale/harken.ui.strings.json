@@ -1,6 +1,64 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Wf_NodeUnknownName", "type": "ui", "zh": "未知节点", "en": "Unknown Node", "ja": "不明なノード"},
+    {"id": "Wf_NodeSetFieldName", "type": "ui", "zh": "设置字段", "en": "Set Field", "ja": "フィールドを設定"},
+    {"id": "Wf_NodeCopyFieldName", "type": "ui", "zh": "复制字段", "en": "Copy Field", "ja": "フィールドをコピー"},
+    {"id": "Wf_NodeFindAndReplaceName", "type": "ui", "zh": "查找替换", "en": "Find and Replace", "ja": "検索と置換"},
+    {"id": "Wf_NodeFindAndReplaceWordName", "type": "ui", "zh": "查找替换单词", "en": "Find and Replace Word", "ja": "単語の検索と置換"},
+    {"id": "Wf_NodeChangeCaseName", "type": "ui", "zh": "大小写转换", "en": "Change Case", "ja": "大文字・小文字を変換"},
+    {"id": "Wf_NodeAddRemoveCharsName", "type": "ui", "zh": "添加或移除字符", "en": "Add/Remove Chars", "ja": "文字を追加・削除"},
+    {"id": "Wf_NodeAppendPrependFieldName", "type": "ui", "zh": "在字段前后追加", "en": "Append/Prepend Field", "ja": "フィールドの前後に追加"},
+    {"id": "Wf_NodeRemoveWordsName", "type": "ui", "zh": "移除单词", "en": "Remove Words", "ja": "単語を削除"},
+    {"id": "Wf_NodeRemoveOccurrencesName", "type": "ui", "zh": "移除匹配内容", "en": "Remove Occurrences", "ja": "一致する箇所を削除"},
+    {"id": "Wf_NodeRemoveMultipleSpacesName", "type": "ui", "zh": "移除多余空格", "en": "Remove Multiple Spaces", "ja": "余分な空白を削除"},
+    {"id": "Wf_NodeTakeFirstWordsName", "type": "ui", "zh": "保留开头的词", "en": "Take First Words", "ja": "先頭の単語を残す"},
+    {"id": "Wf_NodeTakeLastWordsName", "type": "ui", "zh": "保留末尾的词", "en": "Take Last Words", "ja": "末尾の単語を残す"},
+    {"id": "Wf_NodeSplitAndSortName", "type": "ui", "zh": "拆分排序", "en": "Split and Sort", "ja": "分割して並べ替え"},
+    {"id": "Wf_NodeSeparateItemsName", "type": "ui", "zh": "分隔项目", "en": "Separate Items", "ja": "項目を分離"},
+    {"id": "Wf_NodeSeparateLastItemsName", "type": "ui", "zh": "分隔末尾项目", "en": "Separate Last Items", "ja": "末尾の項目を分離"},
+    {"id": "Wf_NodeCopyFirstRecordName", "type": "ui", "zh": "复制第一条记录", "en": "Copy First Record", "ja": "最初のレコードをコピー"},
+    {"id": "Wf_NodeCopyFolderNameName", "type": "ui", "zh": "复制文件夹名", "en": "Copy Folder Name", "ja": "フォルダー名をコピー"},
+    {"id": "Wf_NodeFilePathExtractorName", "type": "ui", "zh": "提取文件路径信息", "en": "FilePath Extractor", "ja": "ファイルパスから抽出"},
+    {"id": "Wf_NodeFieldBuildName", "type": "ui", "zh": "组合字段", "en": "Field Build", "ja": "フィールドを結合"},
+    {"id": "Wf_NodeAutoSplitName", "type": "ui", "zh": "自动拆分", "en": "Auto Split", "ja": "自動分割"},
+    {"id": "Wf_NodeAssignCatsName", "type": "ui", "zh": "分配分类", "en": "Assign Categories", "ja": "カテゴリを割り当て"},
+    {"id": "Wf_NodeUCSBuildName", "type": "ui", "zh": "组合 UCS 分类", "en": "UCS Build", "ja": "UCS カテゴリを構成"},
+    {"id": "Wf_NodeSetRatingName", "type": "ui", "zh": "设置评分", "en": "Set Rating", "ja": "評価を設定"},
+    {"id": "Wf_NodeSetColourName", "type": "ui", "zh": "设置颜色标记", "en": "Set Colour", "ja": "色ラベルを設定"},
+    {"id": "Wf_NodeNumberName", "type": "ui", "zh": "自动编号", "en": "Number", "ja": "連番"},
+    {"id": "Wf_NodeDateName", "type": "ui", "zh": "日期", "en": "Date", "ja": "日付"},
+    {"id": "Wf_NodeSetUniqueIDName", "type": "ui", "zh": "设置唯一标识", "en": "Set Unique ID", "ja": "一意の ID を設定"},
+    {"id": "Wf_NodeProcessIfName", "type": "ui", "zh": "条件处理", "en": "Process If", "ja": "条件付き処理"},
+    {"id": "Wf_NodeCommentName", "type": "ui", "zh": "注释", "en": "Comment", "ja": "コメント"},
+    {"id": "Wf_NodeCodeExecuteName", "type": "ui", "zh": "执行代码", "en": "Code Execute", "ja": "コードを実行"},
+    {"id": "Wf_NodeFindAndPlaceName", "type": "ui", "zh": "查找并放置", "en": "Find and Place", "ja": "検索して配置"},
+    {"id": "Wf_NodePublisherCheckName", "type": "ui", "zh": "检查发行方", "en": "Publisher Check", "ja": "発行元を確認"},
+    {"id": "Wf_NodeSetFieldHelp", "type": "ui", "zh": "将字段设为固定值。", "en": "Set a field to a fixed value.", "ja": "フィールドを固定値に設定します。"},
+    {"id": "Wf_NodeCopyFieldHelp", "type": "ui", "zh": "将一个字段的值复制、追加或前置到另一个字段。", "en": "Copy, append, or prepend one field to another.", "ja": "フィールドの値を別のフィールドにコピーするか、先頭または末尾に追加します。"},
+    {"id": "Wf_NodeFindAndReplaceHelp", "type": "ui", "zh": "查找并替换文本，支持正则表达式。", "en": "Find and replace text (supports regular expressions).", "ja": "テキストを検索して置換します。正規表現に対応しています。"},
+    {"id": "Wf_NodeChangeCaseHelp", "type": "ui", "zh": "将文本改为大写、小写或标题式大小写。", "en": "Change text to uppercase, lowercase, or title case.", "ja": "大文字、小文字、またはタイトルケースに変換します。"},
+    {"id": "Wf_NodeRemoveMultipleSpacesHelp", "type": "ui", "zh": "移除字段中的多余空格。", "en": "Remove extra spaces from a field.", "ja": "フィールド内の余分な空白を削除します。"},
+    {"id": "Wf_NodeTakeFirstWordsHelp", "type": "ui", "zh": "只保留开头的 N 个词。", "en": "Keep only the first N words.", "ja": "先頭から N 個の単語だけを残します。"},
+    {"id": "Wf_NodeTakeLastWordsHelp", "type": "ui", "zh": "只保留末尾的 N 个词。", "en": "Keep only the last N words.", "ja": "末尾から N 個の単語だけを残します。"},
+    {"id": "Wf_NodeCopyFolderNameHelp", "type": "ui", "zh": "将文件夹名复制到指定字段。", "en": "Copy the folder name to a field.", "ja": "フォルダー名をフィールドにコピーします。"},
+    {"id": "Wf_NodeNumberHelp", "type": "ui", "zh": "添加连续编号。", "en": "Add sequential numbers.", "ja": "連番を追加します。"},
+    {"id": "Wf_NodeProcessIfHelp", "type": "ui", "zh": "只在满足条件时执行。", "en": "Execute only if the condition is met.", "ja": "条件を満たす場合にのみ実行します。"},
+    {"id": "Wf_NodeCommentHelp", "type": "ui", "zh": "添加注释，不执行操作。", "en": "Add a comment without running an action.", "ja": "コメントを追加します。処理は実行されません。"},
+    {"id": "Task_BackfillCovers", "type": "ui", "zh": "补全封面", "en": "Backfilling covers", "ja": "カバーを補完"},
+    {"id": "Task_BackfillWaveforms", "type": "ui", "zh": "补全波形", "en": "Backfilling waveforms", "ja": "波形を補完"},
+    {"id": "Task_BackfillMetadata", "type": "ui", "zh": "补全音频信息", "en": "Backfilling metadata", "ja": "メタデータを補完"},
+    {"id": "Task_BackfillRunningFmt", "type": "ui", "zh": "正在处理 %d 项", "en": "Processing %d item(s)", "ja": "%d 件を処理中"},
+    {"id": "Task_BackfillQueuedFmt", "type": "ui", "zh": "排队 %d 项", "en": "Queued: %d item(s)", "ja": "%d 件を待機中"},
+    {"id": "Task_WwiseFailedFmt", "type": "ui", "zh": "%d 条失败", "en": "%d failed", "ja": "%d 件失敗"},
+    {"id": "Task_WwiseTransferringFmt", "type": "ui", "zh": "传输中 %d / %d", "en": "Transferring %d / %d", "ja": "転送中 %d / %d"},
+    {"id": "Task_WwiseImport", "type": "ui", "zh": "Wwise 导入", "en": "Importing to Wwise", "ja": "Wwise へインポート"},
+    {"id": "Task_ExportChannelFmt", "type": "ui", "zh": "%d 个通道", "en": "%d channel(s)", "ja": "%d チャンネル"},
+    {"id": "Task_ExportAudio", "type": "ui", "zh": "导出音频", "en": "Exporting audio", "ja": "音声をエクスポート"},
+
+    {"id": "Task_Done", "type": "ui", "zh": "已完成", "en": "Done", "ja": "完了"},
+    {"id": "Task_BackfillAssets", "type": "ui", "zh": "补全波形与封面", "en": "Backfill waveforms & covers", "ja": "波形とカバーを補完"},
+    {"id": "Task_DownloadUpdate", "type": "ui", "zh": "下载更新", "en": "Downloading update", "ja": "アップデートをダウンロード"},
     {"id": "DiagnosticOverlay_Title", "type": "ui", "zh": "性能监视器", "en": "Performance Monitor", "ja": "パフォーマンスモニター"},
     {"id": "DiagnosticOverlay_Performance", "type": "ui", "zh": "性能", "en": "Performance", "ja": "性能"},
     {"id": "DiagnosticOverlay_FpsLabel", "type": "ui", "zh": "帧率", "en": "FPS", "ja": "FPS"},
@@ -35,6 +93,7 @@
     {"id": "AvatarCropSaveFailed", "type": "ui", "zh": "保存失败，裁剪已保留，请检查头像目录后重试。", "en": "Save failed. Your crop is kept; check the avatar folder and retry.", "ja": "保存できません。切り抜きは保持されています。保存先を確認してください。"},
     {"id":"SetUX_OutputRestoreFailed","type":"ui","zh":"未能恢复原输出设备，请重新选择。修改仍保留。","en":"Could not restore the previous output device. Select a device again; your changes are kept.","ja":"元の出力デバイスを復元できません。選択し直してください。変更は保持されています。"},
     {"id":"SetUX_Theme","type":"ui","zh":"界面主题","en":"Interface theme","ja":"画面テーマ"},
+    {"id":"SetUX_ThemeDownloadLink","type":"ui","zh":"下载主题","en":"Download themes","ja":"テーマをダウンロード"},
     {"id":"SetUX_Day","type":"ui","zh":"白天主题 · 08:00–16:00","en":"Day theme · 08:00–16:00","ja":"昼のテーマ · 08:00–16:00"},
     {"id":"SetUX_Night","type":"ui","zh":"黑夜主题 · 16:00–08:00","en":"Night theme · 16:00–08:00","ja":"夜のテーマ · 16:00–08:00"},
     {"id":"SetUX_SilenceThreshold","type":"ui","zh":"静音判断阈值","en":"Silence threshold","ja":"無音のしきい値"},
@@ -121,7 +180,10 @@
     {"id":"SetUX_ApplyClose","type":"ui","zh":"应用并关闭","en":"Apply & close","ja":"適用して閉じる"},
     {"id":"SetUX_ApplyContinue","type":"ui","zh":"应用并继续","en":"Apply & continue","ja":"適用して続ける"},
     {"id":"SetUX_UsedWhenScheduleIsOff","type":"ui","zh":"日夜模式关闭后使用","en":"Used when schedule is off","ja":"自動切替がオフのとき使用"},
-    {"id":"SetUX_CustomColors","type":"ui","zh":"自定义颜色…","en":"Custom colors…","ja":"カスタムカラー…"},
+    {"id":"SetUX_ImportTheme","type":"ui","zh":"导入主题","en":"Import Theme","ja":"テーマをインポート"},
+    {"id":"SetUX_ThemeImported","type":"ui","zh":"主题已导入","en":"Theme imported","ja":"テーマをインポートしました"},
+    {"id":"SetUX_ThemeImportWriteFailed","type":"ui","zh":"导入失败：无法保存主题","en":"Import failed: could not save theme","ja":"インポート失敗：テーマを保存できませんでした"},
+    {"id":"SetUX_ThemeImportRollbackFailed","type":"ui","zh":"导入失败：部分主题文件未能恢复，请检查设置目录。","en":"Import failed: some theme files could not be restored. Check the settings folder.","ja":"インポート失敗：一部のテーマファイルを復元できませんでした。設定フォルダーを確認してください。"},
     {"id":"SetUX_AfterRestart","type":"ui","zh":"重启后生效","en":"After restart","ja":"再起動後に適用"},
     {"id":"SetUX_EditThesaurus","type":"ui","zh":"编辑词库…","en":"Edit thesaurus…","ja":"辞書を編集…"},
     {"id":"SetUX_D0Auto","type":"ui","zh":"%d（0 = 自动）","en":"%d (0 = auto)","ja":"%d（0 = 自動）"},
@@ -162,6 +224,16 @@
     {"id":"ScanUi_AnalysisSuccessFmt","type":"ui","zh":"成功 %d 个音效","en":"Succeeded: %d sounds","ja":"成功した音声 %d 件"},
     {"id":"ScanUi_ViewProgress","type":"ui","zh":"查看进度","en":"View progress","ja":"進捗を表示"},
     {"id":"ScanUi_ViewResult","type":"ui","zh":"查看结果","en":"View results","ja":"結果を表示"},
+    {"id":"Task_RemovePath","type":"ui","zh":"移除路径","en":"Remove path","ja":"パスを削除"},
+    {"id":"Task_RemoveRunning","type":"ui","zh":"正在移除库记录…","en":"Removing library records…","ja":"ライブラリから削除中…"},
+    {"id":"Task_RemoveDoneFmt","type":"ui","zh":"已移除 %d 条记录","en":"Removed %d records","ja":"%d 件のレコードを削除"},
+    {"id":"Task_RemoveEmptyRoot","type":"ui","zh":"已移除扫描路径","en":"Scan path removed","ja":"スキャンパスを削除しました"},
+    {"id":"Task_RemoveNoMatch","type":"ui","zh":"没有匹配项","en":"No matches","ja":"一致する項目がありません"},
+    {"id":"Task_RemoveBusy","type":"ui","zh":"正在移除路径，请完成后再切换库。","en":"Wait for path removal before switching libraries.","ja":"パスの削除が終わってからライブラリを切り替えてください。"},
+    {"id":"Task_RemoveLibraryChanged","type":"ui","zh":"库已切换，请在当前库重新确认。","en":"Library changed. Confirm again in the current library.","ja":"ライブラリが変わりました。現在のライブラリで再確認してください。"},
+    {"id":"Task_Stopped","type":"ui","zh":"已停止","en":"Stopped","ja":"停止しました"},
+    {"id":"Task_Failed","type":"ui","zh":"未完成","en":"Failed","ja":"完了できませんでした"},
+    {"id":"Task_Dismiss","type":"ui","zh":"收起","en":"Dismiss","ja":"閉じる"},
     {"id":"ScanUi_Title","type":"ui","zh":"扫描入库","en":"Scan library","ja":"ライブラリに取り込む"},
     {"id":"ScanUi_AdvancedOptions","type":"ui","zh":"高级选项","en":"Advanced options","ja":"詳細設定"},
     {"id":"ScanUi_AutoThreads","type":"ui","zh":"自动分配线程","en":"Automatic threads","ja":"スレッド数を自動設定"},
@@ -170,6 +242,8 @@
     {"id":"ScanUi_RemoveInvalid","type":"ui","zh":"移除库中的失效记录","en":"Remove missing library records","ja":"ライブラリの無効な記録を削除"},
     {"id":"ScanUi_RemoveReminder","type":"ui","zh":"将移除失效记录，不删除原文件。","en":"Removes missing records, not source files.","ja":"無効な記録のみ削除します。元ファイルは削除しません。"},
     {"id":"ScanUi_SimilarEnabled","type":"ui","zh":"已开启扫描后相似分析","en":"Post-scan similarity analysis enabled","ja":"スキャン後の類似解析が有効"},
+    {"id":"Set_SimilarityConcurrency","type":"ui","zh":"相似分析并发数","en":"Similarity analysis concurrency","ja":"類似解析の同時実行数"},
+    {"id":"SetUX_SimilarityConcurrencyHint","type":"ui","zh":"1–16，下次分析生效","en":"1–16, applied on the next run","ja":"1〜16、次回の解析から適用"},
     {"id":"ScanUi_Counting","type":"ui","zh":"正在统计文件","en":"Counting files","ja":"ファイルを集計中"},
     {"id":"ScanUi_FoundAudioFmt","type":"ui","zh":"已找到 %d 个音频","en":"Found %d audio files","ja":"音声ファイル %d 件を検出"},
     {"id":"ScanUi_Ingesting","type":"ui","zh":"正在入库","en":"Importing","ja":"取り込み中"},
@@ -1190,48 +1264,6 @@
       "ja": "シーグラス"
     },
     {
-      "id": "Set_ResetColors",
-      "type": "ui",
-      "zh": "重置为默认颜色",
-      "en": "Reset to Default Colors",
-      "ja": "デフォルト色に戻す"
-    },
-    {
-      "id": "Set_BgColor",
-      "type": "ui",
-      "zh": "背景色",
-      "en": "Background",
-      "ja": "背景色"
-    },
-    {
-      "id": "Set_TextColor",
-      "type": "ui",
-      "zh": "文字色",
-      "en": "Text",
-      "ja": "テキスト色"
-    },
-    {
-      "id": "Set_AccentColor",
-      "type": "ui",
-      "zh": "强调色",
-      "en": "Accent",
-      "ja": "アクセント色"
-    },
-    {
-      "id": "Set_WaveformColor",
-      "type": "ui",
-      "zh": "波形色",
-      "en": "Waveform",
-      "ja": "波形色"
-    },
-    {
-      "id": "Set_VolumeColor",
-      "type": "ui",
-      "zh": "音量条",
-      "en": "Volume Bar",
-      "ja": "ボリュームバー"
-    },
-    {
       "id": "Set_ShowFileExt",
       "type": "ui",
       "zh": "文件名显示后缀",
@@ -1244,6 +1276,13 @@
       "zh": "列表行高",
       "en": "Row Height",
       "ja": "行の高さ"
+    },
+    {
+      "id": "Set_InterfaceScale",
+      "type": "ui",
+      "zh": "界面缩放",
+      "en": "Interface Scale",
+      "ja": "インターフェース拡大"
     },
     {
       "id": "Set_SystemFontSize",
@@ -6621,6 +6660,83 @@
       "ja": "高度なテーマエディター"
     },
     {
+      "id": "ThemeEditor_LayerBase",
+      "type": "ui",
+      "zh": "基础颜色",
+      "en": "Base colors",
+      "ja": "基本色"
+    },
+    {
+      "id": "ThemeEditor_LayerRegions",
+      "type": "ui",
+      "zh": "区域颜色",
+      "en": "Region colors",
+      "ja": "領域色"
+    },
+    {
+      "id": "ThemeEditor_LayerAdvanced",
+      "type": "ui",
+      "zh": "高级与兼容",
+      "en": "Advanced and compatibility",
+      "ja": "高度な設定と互換"
+    },
+    {
+      "id": "ThemeEditor_RelationShared",
+      "type": "ui",
+      "zh": "共享",
+      "en": "Shared",
+      "ja": "共有"
+    },
+    {
+      "id": "ThemeEditor_RelationLinked",
+      "type": "ui",
+      "zh": "跟随",
+      "en": "Linked",
+      "ja": "連動"
+    },
+    {
+      "id": "ThemeEditor_RelationIndependent",
+      "type": "ui",
+      "zh": "独立",
+      "en": "Independent",
+      "ja": "独立"
+    },
+    {
+      "id": "ThemeEditor_RelationDetach",
+      "type": "ui",
+      "zh": "独立编辑",
+      "en": "Edit independently",
+      "ja": "個別に編集"
+    },
+    {
+      "id": "ThemeEditor_RelationRelink",
+      "type": "ui",
+      "zh": "恢复跟随",
+      "en": "Relink",
+      "ja": "連動に戻す"
+    },
+    {
+      "id": "ThemeEditor_RelationDerived",
+      "type": "ui",
+      "zh": "派生",
+      "en": "Derived",
+      "ja": "派生"
+    },
+    {
+      "id": "ThemeEditor_RelationLegacy",
+      "type": "ui",
+      "zh": "兼容",
+      "en": "Compatibility",
+      "ja": "互換"
+    },
+    {
+      "id": "ThemeEditor_RelationCoupling",
+      "type": "ui",
+      "zh": "疑似耦合",
+      "en": "Suspected coupling",
+      "ja": "要確認の結合"
+    },
+    {
       "id": "ThemeEditor_PresetSectionHint",
       "type": "ui",
       "zh": "当前主题草案与预设操作",
@@ -6633,6 +6749,20 @@
       "zh": "实时预览",
       "en": "Live preview",
       "ja": "ライブプレビュー"
+    },
+    {
+      "id": "ThemeEditor_ColorMixing",
+      "type": "ui",
+      "zh": "颜色混合效果",
+      "en": "Color mixing",
+      "ja": "色のブレンド"
+    },
+    {
+      "id": "ThemeEditor_ResultsGradient",
+      "type": "ui",
+      "zh": "列表渐变",
+      "en": "List gradient",
+      "ja": "リストのグラデーション"
     },
     {
       "id": "ThemeEditor_RestoreOnOpen",
@@ -6710,6 +6840,13 @@
       "zh": "从任意 JSON 文件导入主题",
       "en": "Import a theme from any JSON file",
       "ja": "任意の JSON ファイルからテーマをインポート"
+    },
+    {
+      "id": "ThemeEditor_SavedThemes",
+      "type": "ui",
+      "zh": "已保存主题",
+      "en": "Saved themes",
+      "ja": "保存済みテーマ"
     },
     {
       "id": "ThemeEditor_DevSavePreset",
@@ -8966,20 +9103,6 @@
       "ja": "上半分: フェードハンドル · 下半分: イン/アウト端点"
     },
     {
-      "id": "Main_ImportRunLabel",
-      "type": "ui",
-      "zh": "本次入库",
-      "en": "This import",
-      "ja": "今回の取り込み"
-    },
-    {
-      "id": "Main_ElapsedLabel",
-      "type": "ui",
-      "zh": "耗时",
-      "en": "Elapsed",
-      "ja": "所要時間"
-    },
-    {
       "id": "Main_MiniWaveBackfillNote",
       "type": "ui",
       "zh": "迷你波形后台渐进补齐",
@@ -10003,13 +10126,6 @@
       "ja": "+%d BPM"
     },
     {
-      "id": "Main_ScanDoneShort",
-      "type": "ui",
-      "zh": "扫描完成",
-      "en": "Scan complete",
-      "ja": "スキャン完了"
-    },
-    {
       "id": "Main_WarnPrefixFmt",
       "type": "ui",
       "zh": "⚠ %s",
@@ -10428,6 +10544,41 @@
       "zh": "预设拨盘",
       "en": "Preset dials",
       "ja": "プリセットダイヤル"
+    },
+    {
+      "id": "TEGroupName_Welcome",
+      "type": "ui",
+      "zh": "欢迎页",
+      "en": "Welcome page",
+      "ja": "ウェルカムページ"
+    },
+    {
+      "id": "ThemeCol_welcomeBackground",
+      "type": "ui",
+      "zh": "背景",
+      "en": "Background",
+      "ja": "背景"
+    },
+    {
+      "id": "ThemeCol_welcomeText",
+      "type": "ui",
+      "zh": "文字",
+      "en": "Text",
+      "ja": "文字"
+    },
+    {
+      "id": "ThemeCol_welcomeAccent",
+      "type": "ui",
+      "zh": "强调",
+      "en": "Accent",
+      "ja": "アクセント"
+    },
+    {
+      "id": "TEGroupName_Wwise",
+      "type": "ui",
+      "zh": "Wwise",
+      "en": "Wwise",
+      "ja": "Wwise"
     },
     {
       "id": "TEGroupName_Buttons",
@@ -13250,6 +13401,20 @@
       "ja": "Spotting パネル文字"
     },
     {
+      "id": "ThemeCol_wwiseLabelText",
+      "type": "ui",
+      "zh": "标签文字",
+      "en": "Label text",
+      "ja": "ラベル文字"
+    },
+    {
+      "id": "ThemeCol_wwiseBodyText",
+      "type": "ui",
+      "zh": "正文文字",
+      "en": "Body text",
+      "ja": "本文の文字"
+    },
+    {
       "id": "ThemeCol_diagnosticOverlayBG",
       "type": "ui",
       "zh": "诊断悬浮窗背景",
@@ -13325,6 +13490,13 @@
       "zh": "主题已应用，但 theme_custom.json 写入失败",
       "en": "Theme applied, but writing theme_custom.json failed",
       "ja": "テーマは適用済みですが theme_custom.json の書き込みに失敗"
+    },
+    {
+      "id": "TE_LibrarySaveFail",
+      "type": "ui",
+      "zh": "主题已应用，但保存到本地主题文件夹失败",
+      "en": "Theme applied, but saving a copy to the local theme folder failed",
+      "ja": "テーマは適用済みですが、ローカルのテーマフォルダへの保存に失敗"
     },
     {
       "id": "TE_InspectOn",
@@ -13521,20 +13693,6 @@
       "zh": "无法删除 %s 个文件（可能被其他程序占用）",
       "en": "Could not delete %s files (possibly locked by another program)",
       "ja": "%s 個のファイルを削除できません（他プロセス占用の可能性）"
-    },
-    {
-      "id": "Status_LibFilteredFmt",
-      "type": "ui",
-      "zh": "库 %lld   过滤 %lld",
-      "en": "Library %lld   filtered %lld",
-      "ja": "ライブラリ %lld   フィルタ %lld"
-    },
-    {
-      "id": "Status_LibFmt",
-      "type": "ui",
-      "zh": "库 %lld",
-      "en": "Library %lld",
-      "ja": "ライブラリ %lld"
     },
     {
       "id": "Ren_HitWord",
@@ -14883,6 +15041,101 @@
     {"id":"Set_CancelClearSimilar","type":"ui","zh":"取消","en":"Cancel","ja":"キャンセル"},
     {"id":"Set_ClearSimilarDoneFmt","type":"ui","zh":"已清空 %lld 条分析结果","en":"Cleared %lld analysis results","ja":"%lld 件の分析結果を消去しました"},
     {"id":"Set_ClearSimilarFailed","type":"ui","zh":"清空失败，请检查当前数据库后重试。","en":"Could not clear analysis. Check the current database and retry.","ja":"消去できませんでした。現在のデータベースを確認して再試行してください。"},
-    {"id":"Set_ClearSimilarChanged","type":"ui","zh":"当前数据库已切换，请重新选择清空。","en":"The current database changed. Choose clear again.","ja":"現在のデータベースが切り替わりました。もう一度消去を選んでください。"}
+    {"id":"Set_ClearSimilarChanged","type":"ui","zh":"当前数据库已切换，请重新选择清空。","en":"The current database changed. Choose clear again.","ja":"現在のデータベースが切り替わりました。もう一度消去を選んでください。"},
+    {"id":"SetUX_ExternalAiMcp","type":"ui","zh":"外部 AI（MCP）","en":"External AI (MCP)","ja":"外部 AI (MCP)"},
+    {"id":"ExtAi_Enabled","type":"ui","zh":"允许外部 AI 访问这个库","en":"Allow external AI to use this library","ja":"外部 AI にこのライブラリの使用を許可"},
+    {"id":"ExtAi_Document","type":"ui","zh":"授权文件","en":"Authorization file","ja":"認可ファイル"},
+    {"id":"ExtAi_NoRoots","type":"ui","zh":"还没有勾选目录，外部 AI 无法读取任何文件。","en":"No folder is ticked yet, so external AI cannot read any file.","ja":"フォルダーが未選択のため、外部 AI はファイルを読み取れません。"},
+    {"id":"ExtAi_AddRoot","type":"ui","zh":"添加目录","en":"Add folder","ja":"フォルダーを追加"},
+    {"id":"ExtAi_Capabilities","type":"ui","zh":"分项权限","en":"Allowed capabilities","ja":"許可する機能"},
+    {"id":"ExtAi_CapSearchAudio","type":"ui","zh":"查找音效","en":"Search audio","ja":"音声を検索"},
+    {"id":"ExtAi_CapFindSimilar","type":"ui","zh":"相似音效","en":"Similar sounds","ja":"類似音"},
+    {"id":"ExtAi_CapFindFolders","type":"ui","zh":"目录","en":"Folders","ja":"フォルダー"},
+    {"id":"ExtAi_CapReadFileName","type":"ui","zh":"读取文件名","en":"Read file names","ja":"ファイル名の読み取り"},
+    {"id":"ExtAi_CapReadMetadata","type":"ui","zh":"读取元数据","en":"Read metadata","ja":"メタデータの読み取り"},
+    {"id":"ExtAi_CapEditMetadata","type":"ui","zh":"编辑元数据","en":"Edit metadata","ja":"メタデータの編集"},
+    {"id":"ExtAi_CapAiNaming","type":"ui","zh":"AI 命名与打标","en":"AI naming and tagging","ja":"AI 命名とタグ付け"},
+    {"id":"ExtAi_CapReadPlaylist","type":"ui","zh":"读取播放列表","en":"Read playlists","ja":"プレイリストの読み取り"},
+    {"id":"ExtAi_CapEditPlaylist","type":"ui","zh":"编辑播放列表","en":"Edit playlists","ja":"プレイリストの編集"},
+    {"id":"ExtAi_AccessNone","type":"ui","zh":"不允许","en":"Not allowed","ja":"不許可"},
+    {"id":"ExtAi_AccessRead","type":"ui","zh":"只读","en":"Read-only","ja":"読み取りのみ"},
+    {"id":"ExtAi_AccessEdit","type":"ui","zh":"可编辑","en":"Editable","ja":"編集可"},
+    {"id":"ExtAi_CurrentLibrary","type":"ui","zh":"当前数据库","en":"Current library","ja":"現在のデータベース"},
+    {"id":"ExtAi_StateOn","type":"ui","zh":"已开启","en":"On","ja":"有効"},
+    {"id":"ExtAi_StateOff","type":"ui","zh":"已关闭","en":"Off","ja":"無効"},
+    {"id":"ExtAi_ManualConnect","type":"ui","zh":"手动连接","en":"Manual connection","ja":"手動接続"},
+    {"id":"ExtAi_AiPromptRow","type":"ui","zh":"其他 AI 客户端","en":"Other AI clients","ja":"他の AI クライアント"},
+    {"id":"ExtAi_CopyAiPrompt","type":"ui","zh":"复制配置说明","en":"Copy setup instructions","ja":"設定手順をコピー"},
+    {"id":"ExtAi_AiPromptNote","type":"ui","zh":"把说明粘贴到你用的 AI 对话里。","en":"Paste the instructions into your AI chat.","ja":"手順をお使いの AI のチャットに貼り付けてください。"},
+    {"id":"ExtAi_AiSetupPromptFmt","type":"ui","zh":"在你自己正在读取的 MCP 配置里加一项，名字用 harken，写完告诉我最终的配置文件路径。\n\n启动命令：\n%s\n\n要求：\n1. 只新增或更新 harken 这一项，其他 server 原样保留；改动前先备份原文件。\n2. 按你自己实际使用的格式和路径写（TOML 或 JSON，CODEX_HOME、--config 或 profile 指定了什么就用什么），不要照搬默认路径。\n3. 不要修改上面命令里那些路径指向的文件，也不要改 Harken 的设置。\n4. 写完后告诉我：最终文件路径、harken 这一项的原文，并提醒我新开会话才生效。","en":"Add one MCP server named harken to the configuration you actually read, then tell me the final config file path.\n\nLaunch command:\n%s\n\nRules:\n1. Add or update only the harken entry; keep every other server as it is and back up the file first.\n2. Use the format and path you really use (TOML or JSON; follow CODEX_HOME, --config or profile if set) instead of the default path.\n3. Do not modify the files those paths point to, and do not change Harken settings.\n4. When done, tell me the final file path and the harken entry itself, and remind me that a new session is required.","ja":"あなたが実際に読み込む MCP 設定に harken という名前で 1 件追加し、最終的な設定ファイルのパスを教えてください。\n\n起動コマンド:\n%s\n\n条件:\n1. harken の項目だけを追加・更新し、他の server はそのまま残す。変更前に元ファイルをバックアップする。\n2. 実際に使っている形式とパスで書く（TOML か JSON、CODEX_HOME・--config・profile の指定があればそれに従う）。既定パスを流用しない。\n3. 上記コマンドのパスが指すファイルや Harken の設定は変更しない。\n4. 完了したら最終パスと harken の項目内容を伝え、新しいセッションが必要だと知らせる。"},
+    {"id":"ExtAi_ConnectorCommand","type":"ui","zh":"连接命令","en":"Connector command","ja":"接続コマンド"},
+    {"id":"ExtAi_Folders","type":"ui","zh":"可操作目录","en":"Allowed folders","ja":"操作可能なフォルダー"},
+    {"id":"ExtAi_FolderCountFmt","type":"ui","zh":"%d 个已勾选","en":"%d ticked","ja":"%d 件選択中"},
+    {"id":"ExtAi_GroupLookup","type":"ui","zh":"查找","en":"Lookup","ja":"検索"},
+    {"id":"ExtAi_GroupPlaylist","type":"ui","zh":"播放列表","en":"Playlists","ja":"プレイリスト"},
+    {"id":"ExtAi_GroupMetadata","type":"ui","zh":"文件名与元数据","en":"File names and metadata","ja":"ファイル名とメタデータ"},
+    {"id":"ExtAi_LastWriteFmt","type":"ui","zh":"上次写入：新增 %d 个，跳过 %d 个","en":"Last write: added %d, skipped %d","ja":"直近の書き込み: 追加 %d、スキップ %d"},
+    {"id":"ExtAi_SaveCurrent","type":"ui","zh":"保存当前库","en":"Save this library","ja":"このライブラリを保存"},
+    {"id":"ExtAi_FooterHint","type":"ui","zh":"只影响当前打开的库","en":"Applies to the open library only","ja":"開いているライブラリにのみ適用"},
+    {"id":"ExtAi_Clients","type":"ui","zh":"连接客户端","en":"Connected apps","ja":"接続先"},
+    {"id":"ExtAi_ClientCindy","type":"ui","zh":"Cindy","en":"Cindy","ja":"Cindy"},
+    {"id":"ExtAi_ClientCodex","type":"ui","zh":"Codex","en":"Codex","ja":"Codex"},
+    {"id":"ExtAi_ClientConnected","type":"ui","zh":"已配置","en":"Configured","ja":"設定済み"},
+    {"id":"ExtAi_ClientConfiguredLibraryOff","type":"ui","zh":"已配置 · 当前库访问已关闭","en":"Configured · Library access off","ja":"設定済み・このライブラリへのアクセスはオフ"},
+    {"id":"ExtAi_ClientCindyCodex","type":"ui","zh":"Cindy（Codex）","en":"Cindy (Codex)","ja":"Cindy（Codex）"},
+    {"id":"ExtAi_ClientNoConfig","type":"ui","zh":"无可用配置","en":"No supported config","ja":"利用可能な設定なし"},
+    {"id":"ExtAi_ClientDisconnected","type":"ui","zh":"未连接","en":"Not connected","ja":"未接続"},
+    {"id":"ExtAi_ClientNotDetected","type":"ui","zh":"未检测到","en":"Not installed","ja":"未検出"},
+    {"id":"ExtAi_ClientUnreadable","type":"ui","zh":"配置无法读取","en":"Config unreadable","ja":"設定を読み取れません"},
+    {"id":"ExtAi_ClientRelink","type":"ui","zh":"需重新连接","en":"Reconnect required","ja":"再接続が必要です"},
+    {"id":"ExtAi_ClientKeyConflict","type":"ui","zh":"配置名已被占用","en":"Config name already in use","ja":"設定名は使用中です"},
+    {"id":"ExtAi_ClientRevokedCleanupFailed","type":"ui","zh":"已撤权，未能清理配置","en":"Access revoked; config cleanup failed","ja":"アクセスは取り消し済み・設定のクリーンアップに失敗"},
+    {"id":"ExtAi_ClientCleanupFailed","type":"ui","zh":"清理配置失败","en":"Config cleanup failed","ja":"設定のクリーンアップに失敗"},
+    {"id":"ExtAi_ClientCleanupBtn","type":"ui","zh":"清理","en":"Clean up","ja":"クリーンアップ"},
+    {"id":"ExtAi_ClientRetryCleanupBtn","type":"ui","zh":"重试清理","en":"Retry cleanup","ja":"クリーンアップを再試行"},
+    {"id":"ExtAi_ConnectBtn","type":"ui","zh":"连接","en":"Connect","ja":"接続"},
+    {"id":"ExtAi_DisconnectBtn","type":"ui","zh":"断开","en":"Disconnect","ja":"切断"},
+    {"id":"ExtAi_ConnectedFmt","type":"ui","zh":"已连接，新开会话生效：%s","en":"Connected. Open a new session: %s","ja":"接続しました。新しいセッションで有効になります: %s"},
+    {"id":"ExtAi_DisconnectedFmt","type":"ui","zh":"已断开：%s","en":"Disconnected: %s","ja":"切断しました: %s"},
+    {"id":"ExtAi_RevokedCleanupFailedFmt","type":"ui","zh":"已撤权，未能清理配置：%s","en":"Access revoked. Could not clean up the config: %s","ja":"アクセスを取り消しました。設定を削除できません: %s"},
+    {"id":"ExtAi_LinkFailedFmt","type":"ui","zh":"未能修改配置：%s","en":"Could not update the config: %s","ja":"設定を変更できません: %s"},
+    {"id":"ExtAi_LinkFailed","type":"ui","zh":"写入失败","en":"Write failed","ja":"書き込みに失敗しました"},
+    {"id":"ExtAi_ConnectNoExe","type":"ui","zh":"缺少连接器程序，请重新安装本软件。","en":"HarkenExternalAiMcp.exe is missing. Reinstall Harken.","ja":"HarkenExternalAiMcp.exe が見つかりません。Harken を再インストールしてください。"},
+    {"id":"ExtAi_ConnectMultiVolume","type":"ui","zh":"勾选的目录不在同一个盘，暂时只能连接同一盘下的目录。","en":"Selected folders span more than one drive; connecting supports one drive for now.","ja":"選択したフォルダーが複数のドライブにまたがっています。接続は同じドライブ内のみ対応です。"},
+    {"id":"ExtAi_ConnectNotReady","type":"ui","zh":"先开启外部 AI、添加授权目录并保存。","en":"Enable external AI, add a folder and save first.","ja":"先に外部 AI を有効にし、フォルダーを追加して保存してください。"},
+    {"id":"ExtAi_EditNote","type":"ui","zh":"每项授权只影响对应能力；加入播放列表需要程序打开且这一项为可编辑。","en":"Each grant only covers its own action. Adding files to a Playlist needs Harken running and this row set to editable.","ja":"各項目の許可はその操作だけに効きます。プレイリストへの追加は Harken の起動中かつこの項目が編集可能な場合のみ実行されます。"},
+    {"id":"ExtAi_Reload","type":"ui","zh":"重新读取","en":"Reload","ja":"再読み込み"},
+    {"id":"ExtAi_Saved","type":"ui","zh":"授权已保存","en":"Authorization saved","ja":"認可を保存しました"},
+    {"id":"ExtAi_LoadFailed","type":"ui","zh":"无法读取授权文件，已按全部关闭显示。","en":"The authorization file could not be read; everything is shown as closed.","ja":"認可ファイルを読み取れないため、すべて不許可として表示しています。"},
+    {"id":"ExtAi_SaveFailed","type":"ui","zh":"保存失败，请检查设置目录后重试。","en":"Could not save. Check the settings folder and try again.","ja":"保存できませんでした。設定フォルダーを確認して再試行してください。"},
+    {"id":"ExtAi_NoLibrary","type":"ui","zh":"请先打开一个素材库。","en":"Open a library first.","ja":"先にライブラリを開いてください。"},
+    {"id":"ExtAi_Unavailable","type":"ui","zh":"当前库无法生成授权标识。","en":"This library cannot get an authorization identity.","ja":"このライブラリの認可 ID を生成できません。"},
+    {"id":"ExtAi_Unsaved","type":"ui","zh":"有未保存的授权修改","en":"Authorization changes are not saved yet","ja":"未保存の認可変更があります"},
+    {"id":"TransferOption_SingleFolder","type":"ui","zh":"一个文件夹","en":"Build Using Single Folder","ja":"単一フォルダー"},
+    {"id":"TransferOption_ByCategory","type":"ui","zh":"按分类","en":"Build Using Category","ja":"分類で整理"},
+    {"id":"TransferOption_ByCategorySubCategory","type":"ui","zh":"按分类 → 子分类","en":"Build Using Category then SubCategory","ja":"分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByCategoryOptionalSubCategory","type":"ui","zh":"按分类 → 子分类（可选）","en":"Build Using Category then [optional] SubCategory","ja":"分類 → サブカテゴリ（任意）"},
+    {"id":"TransferOption_ByCategorySubCategoryCDTitle","type":"ui","zh":"按分类 → 子分类 → 光盘标题","en":"Build Using Category then SubCategory then CDTitle","ja":"分類 → サブカテゴリ → CD タイトル"},
+    {"id":"TransferOption_ByLibraryCategory","type":"ui","zh":"按音效库 → 分类","en":"Build Using Library then Category","ja":"ライブラリ → 分類"},
+    {"id":"TransferOption_ByLibraryCategorySubCategory","type":"ui","zh":"按音效库 → 分类 → 子分类","en":"Build Using Library then Category then SubCategory","ja":"ライブラリ → 分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByLibraryVolume","type":"ui","zh":"按音效库 → 卷号","en":"Build Using Library then Volume","ja":"ライブラリ → 巻番号"},
+    {"id":"TransferOption_ByLibraryVolumeCDTitle","type":"ui","zh":"按音效库 → 卷号 → 光盘标题","en":"Build Using Library then Volume then CDTitle","ja":"ライブラリ → 巻番号 → CD タイトル"},
+    {"id":"TransferOption_ByLibraryCDTitle","type":"ui","zh":"按音效库 → 光盘标题","en":"Build Using Library then CDTitle","ja":"ライブラリ → CD タイトル"},
+    {"id":"TransferOption_ByShowCategory","type":"ui","zh":"按节目 → 分类","en":"Build Using Show then Category","ja":"番組 → 分類"},
+    {"id":"TransferOption_ByShowCategorySubCategory","type":"ui","zh":"按节目 → 分类 → 子分类","en":"Build Using Show then Category then SubCategory","ja":"番組 → 分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByShowCategoryOptionalSubCategory","type":"ui","zh":"按节目 → 分类 → 子分类（可选）","en":"Build Using Show then Category then [optional] SubCategory","ja":"番組 → 分類 → サブカテゴリ（任意）"},
+    {"id":"TransferOption_ByDesignerCategorySubCategory","type":"ui","zh":"按设计师 → 分类 → 子分类","en":"Build Using Designer then Category then SubCategory","ja":"デザイナー → 分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByComposer","type":"ui","zh":"按作曲者","en":"Build Using Composer","ja":"作曲者で整理"},
+    {"id":"TransferOption_ByChannelLayout","type":"ui","zh":"按声道布局","en":"Build Using ChannelLayout","ja":"チャンネル構成で整理"},
+    {"id":"TransferOption_MirrorSource","type":"ui","zh":"沿用源文件夹结构","en":"Mirror Source Folder Structure","ja":"元のフォルダー構成を維持"},
+    {"id":"TransferOption_WAV","type":"ui","zh":"广播 WAV（BWF）","en":"Broadcast Wave","ja":"放送用 WAV（BWF）"},
+    {"id":"TransferOption_AIFF","type":"ui","zh":"AIFF","en":"AIFF","ja":"AIFF"},
+    {"id":"TransferOption_FLAC","type":"ui","zh":"FLAC（无损）","en":"FLAC (Lossless)","ja":"FLAC（可逆圧縮）"},
+    {"id":"TransferOption_MP3","type":"ui","zh":"MP3","en":"MP3","ja":"MP3"},
+    {"id":"TransferOption_SourceFormat","type":"ui","zh":"源格式","en":"Source Format","ja":"元の形式"},
+    {"id":"TransferOption_AlwaysCreateNew","type":"ui","zh":"总是新建","en":"Always Create New","ja":"常に新規作成"},
+    {"id":"TransferOption_SkipExisting","type":"ui","zh":"跳过已存在文件","en":"Skip Existing","ja":"既存ファイルをスキップ"},
+    {"id":"TransferOption_UpdateMetadata","type":"ui","zh":"仅更新元数据","en":"Update Metadata","ja":"メタデータのみ更新"},
+    {"id":"TransferOption_ReplaceExisting","type":"ui","zh":"替换已存在文件","en":"Replace Existing","ja":"既存ファイルを置き換え"}
   ]
 }

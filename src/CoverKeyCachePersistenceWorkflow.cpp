@@ -1,63 +1,173 @@
 #include "CoverKeyCachePersistenceWorkflow.h"
 
 #include "CoverModule.h"
+#include "Database.h"
+#include "DiagnosticsLogger.h"
+#include "sqlite3.h"
 
-#include <cstdint>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace aura::cover_cache {
 namespace {
 
-std::vector<CoverKeyCacheUpdate> g_pendingUpdates;
-std::string g_lastDatabasePath;
-bool g_pendingFolderPropagation = true;
-uint64_t g_lastPropagationTick = 0;
+constexpr size_t kWriteBatchSize = 128;
+constexpr auto kRetryDelay = std::chrono::milliseconds(100);
+constexpr auto kFlushRetryBudget = std::chrono::seconds(5);
+
+enum class StopMode { Running, Cancel, Flush };
+
+class PersistenceWorker {
+public:
+    explicit PersistenceWorker(std::string databasePathUtf8)
+        : databasePathUtf8_(std::move(databasePathUtf8)),
+          thread_(&PersistenceWorker::Run, this) {}
+
+    ~PersistenceWorker() {
+        Stop(StopMode::Cancel);
+    }
+
+    bool Request() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requested_ = true;
+        }
+        wake_.notify_one();
+        return committed_.exchange(false);
+    }
+
+    void Stop(StopMode mode) {
+        if (!thread_.joinable()) return;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopMode_.store(mode);
+        }
+        wake_.notify_one();
+        thread_.join();
+    }
+
+private:
+    bool WriteBatch(Database& database, const std::vector<CoverKeyCacheUpdate>& batch) {
+        using Clock = std::chrono::steady_clock;
+        auto flushDeadline = Clock::time_point::max();
+        bool reportedFailure = false;
+        while (stopMode_.load() != StopMode::Cancel) {
+            if ((database.isOpen() || database.openForCoverKeyCachePersistence(databasePathUtf8_)) &&
+                stopMode_.load() != StopMode::Cancel &&
+                database.updateCoverKeyCacheBatch(batch)) {
+                committed_.store(true);
+                return true;
+            }
+            if (stopMode_.load() == StopMode::Cancel) return false;
+            if (!reportedFailure) {
+                DIAG_SYSTEM_FMT("Cover", "Cover key cache writeback retry: %s",
+                                database.getLastError().c_str());
+                reportedFailure = true;
+            }
+            database.close();
+
+            std::unique_lock<std::mutex> lock(mutex_);
+            if (stopMode_.load() == StopMode::Flush) {
+                const auto now = Clock::now();
+                if (flushDeadline == Clock::time_point::max()) {
+                    flushDeadline = now + kFlushRetryBudget;
+                } else if (now >= flushDeadline) {
+                    lock.unlock();
+                    DIAG_SYSTEM("Cover", "Cover key cache writeback did not finish before shutdown");
+                    return false;
+                }
+            }
+            wake_.wait_for(lock, kRetryDelay, [this] { return stopMode_.load() == StopMode::Cancel; });
+        }
+        return false;
+    }
+
+    void Run() {
+        Database database;
+        std::vector<CoverModule::CoverKeyCacheUpdate> updates;
+        std::vector<CoverKeyCacheUpdate> batch;
+        updates.reserve(kWriteBatchSize);
+        batch.reserve(kWriteBatchSize);
+        for (;;) {
+            StopMode wakeMode;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                wake_.wait(lock, [this] { return requested_ || stopMode_.load() != StopMode::Running; });
+                wakeMode = stopMode_.load();
+                requested_ = false;
+            }
+            while (stopMode_.load() != StopMode::Cancel &&
+                   CoverModule::DrainCoverKeyCacheUpdates(updates, kWriteBatchSize) != 0) {
+                batch.clear();
+                for (auto& update : updates) {
+                    batch.push_back({
+                        std::move(update.filePathUtf8),
+                        update.updateEmbedded,
+                        update.updateFolder,
+                        std::move(update.embeddedCoverKey),
+                        update.embeddedCoverKeyMtime,
+                        std::move(update.folderCoverKey),
+                        std::move(update.folderCoverSrcPathUtf8),
+                        update.folderCoverSrcMtime,
+                    });
+                }
+                if (!WriteBatch(database, batch)) return;
+            }
+            if (wakeMode != StopMode::Running) return;
+        }
+    }
+
+    const std::string databasePathUtf8_;
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    bool requested_ = false;
+    std::atomic<StopMode> stopMode_{StopMode::Running};
+    std::atomic<bool> committed_{false};
+    std::thread thread_;
+};
+
+std::unique_ptr<PersistenceWorker> g_worker;
 
 }  // namespace
 
-void PumpPersistence(PersistenceContext context) {
-    if (!context.persistenceEnabled || !context.database.isOpen()) return;
-
-    static std::vector<CoverModule::CoverKeyCacheUpdate> moduleUpdates;
-    if (g_lastDatabasePath != context.databasePathUtf8) {
-        g_lastDatabasePath = context.databasePathUtf8;
-        g_pendingFolderPropagation = true;
-        g_lastPropagationTick = 0;
+void BindPersistence(const Database& database) {
+    StopPersistence();
+    if (!database.isOpen() || sqlite3_db_readonly(database.db(), "main") != 0 ||
+        database.getMainDbPath().empty()) {
+        return;
     }
-
-    const size_t count = CoverModule::DrainCoverKeyCacheUpdates(moduleUpdates, 128);
-    if (count > 0) {
-        g_pendingUpdates.clear();
-        g_pendingUpdates.reserve(moduleUpdates.size());
-        for (const auto& update : moduleUpdates) {
-            if (update.filePathUtf8.empty()) continue;
-            CoverKeyCacheUpdate persisted;
-            persisted.filePath = update.filePathUtf8;
-            persisted.updateEmbedded = update.updateEmbedded;
-            persisted.updateFolder = update.updateFolder;
-            persisted.embeddedCoverKey = update.embeddedCoverKey;
-            persisted.embeddedCoverKeyMtime = update.embeddedCoverKeyMtime;
-            persisted.folderCoverKey = update.folderCoverKey;
-            persisted.folderCoverSrcPath = update.folderCoverSrcPathUtf8;
-            persisted.folderCoverSrcMtime = update.folderCoverSrcMtime;
-            g_pendingUpdates.push_back(std::move(persisted));
-        }
-        if (!g_pendingUpdates.empty()) {
-            context.database.updateCoverKeyCacheBatch(g_pendingUpdates);
-            for (const auto& update : g_pendingUpdates) {
-                if (!update.embeddedCoverKey.empty() || !update.folderCoverKey.empty()) {
-                    g_pendingFolderPropagation = true;
-                    break;
-                }
-            }
-        }
+    try {
+        g_worker = std::make_unique<PersistenceWorker>(database.getMainDbPath());
+    } catch (const std::exception& error) {
+        // A missing worker only means cover keys stay queued instead of written;
+        // never let thread creation take the whole application down.
+        g_worker.reset();
+        DIAG_SYSTEM_FMT("Cover", "Cover key cache writer unavailable: %s", error.what());
+    } catch (...) {
+        g_worker.reset();
+        DIAG_SYSTEM("Cover", "Cover key cache writer unavailable");
     }
+}
 
-    if (g_pendingFolderPropagation) {
-        // Folder propagation is performed by the background cover pipeline.
-        g_pendingFolderPropagation = false;
-    }
+bool PumpPersistence() {
+    return g_worker && g_worker->Request();
+}
+
+void StopPersistence() {
+    g_worker.reset();
+}
+
+void FlushPersistence() {
+    if (g_worker) g_worker->Stop(StopMode::Flush);
+    g_worker.reset();
 }
 
 }  // namespace aura::cover_cache

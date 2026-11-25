@@ -59,7 +59,7 @@ assert 'return "";' in PORTABLE
 qualified_call = "Platform::SettingsDialogs::OpenSettingsImportFileDialogUtf8(g_hwnd)"
 assert MAIN.count(qualified_call) == 1
 button = MAIN.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-tooltip = MAIN.index('else if(editor.action=="custom-colors")', button)
+tooltip = MAIN.index('    if(!editor.error.empty())', button)
 body = MAIN[button:tooltip]
 assert "OPENFILENAMEW" not in body
 assert "GetOpenFileNameW" not in body

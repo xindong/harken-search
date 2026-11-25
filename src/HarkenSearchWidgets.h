@@ -31,6 +31,7 @@ void DrawFocusRing();
 
 enum class ButtonVariant {
     PrimarySearch,   // orange - local query / processing (Search, Scan, Rebuild)
+    DisabledSearch,  // muted search action that remains legible while unavailable
     PrimaryTransfer, // green  - outbound send / export (Transfer, Send, Export)
     Secondary,       // neutral fill (Save, Rename, Apply)
     Ghost,           // transparent background, label only
@@ -187,6 +188,7 @@ struct StandaloneWindowState {
 struct StandaloneWindowOptions {
     ImVec2 defaultSize{1040.0f, 514.0f};
     ImVec2 minimumSize{720.0f, 360.0f};
+    ImVec4 windowBackground{-1.0f, -1.0f, -1.0f, -1.0f};
 };
 
 void OpenStandaloneWindow(StandaloneWindowState* state);

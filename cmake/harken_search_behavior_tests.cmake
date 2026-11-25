@@ -2231,6 +2231,70 @@ set_tests_properties(TestCoverKeyCachePersistenceWorkflowBoundary PROPERTIES
 )
 aura_set_test_labels(TestCoverKeyCachePersistenceWorkflowBoundary core stage4)
 
+# Runtime coverage for the cover key cache writeback worker: real SQLite writes,
+# retry on a locked database, stop on database switch, flush on shutdown.
+add_executable(TestCoverKeyCachePersistenceRuntime EXCLUDE_FROM_ALL
+    tests/test_cover_key_cache_persistence_runtime.cpp
+    tests/test_database_link_stubs.cpp
+    tests/test_appstate_link_stubs.cpp
+    src/AppState.cpp
+    src/FileTypeVisibilityPolicy.cpp
+    src/Database.cpp
+    src/CoverKeyCachePersistenceWorkflow.cpp
+    src/CoverReplacementFoundation.cpp
+    src/BackfillQueue.cpp
+    src/BackfillWorkerPool.cpp
+    src/PathUtils.cpp
+    src/platform/file_watcher.cpp
+    src/platform/harken_user_data_layout.cpp
+    src/Utils.cpp
+    src/MetadataReader.cpp
+    src/SearchQuery.cpp
+    src/AudioEngine.cpp
+    src/platform/audio_playback_miniaudio.cpp
+    src/TagVocabularyMapper.cpp
+    src/DiagnosticsLogger.cpp
+    src/CenterSenseDataSource.cpp
+    src/CenterSenseDsp.cpp
+    src/WaveformExtractor.cpp
+    src/NativeFloatReader.cpp
+    src/platform/audio_data_source_miniaudio.cpp
+    src/platform/filesystem_win32.cpp
+    src/platform/filesystem_std.cpp
+    src/platform/search_text_gb2312_std.cpp
+    src/platform/metadata_legacy_tag_content_std.cpp
+    src/platform/audio_file_miniaudio.cpp
+    src/platform/text_encoding_win32.cpp
+    src/platform/thread_id_win32.cpp
+    src/platform/media_foundation_audio_unsupported.cpp
+    src/platform/emergency_file_writer_win32.cpp
+    src/TimeStretch.cpp
+    ${SQLITE_SOURCES}
+)
+target_include_directories(TestCoverKeyCachePersistenceRuntime PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${SQLITE_DIR}
+    ${IMGUI_DIR}
+)
+target_link_libraries(TestCoverKeyCachePersistenceRuntime PRIVATE
+    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
+)
+target_compile_definitions(TestCoverKeyCachePersistenceRuntime PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
+    TEST_DATABASE_STUBS_REAL_FILESYSTEM
+)
+if(MSVC)
+    target_compile_options(TestCoverKeyCachePersistenceRuntime PRIVATE /W3 /MP /utf-8)
+    set_target_properties(TestCoverKeyCachePersistenceRuntime PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestCoverKeyCachePersistenceRuntime COMMAND TestCoverKeyCachePersistenceRuntime)
+aura_set_test_labels(TestCoverKeyCachePersistenceRuntime core stage4)
+
 add_test(
     NAME TestDeferredSidebarBootstrapWorkflowBoundary
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
@@ -3621,6 +3685,18 @@ set_tests_properties(TestFolderTreePathModePolicyBoundary PROPERTIES
     TIMEOUT 60
 )
 aura_set_test_labels(TestFolderTreePathModePolicyBoundary core)
+
+add_test(
+    NAME TestSimilarityConcurrencySetting
+    COMMAND ${Python3_EXECUTABLE} -m pytest
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similarity_concurrency_setting.py"
+        -q
+)
+set_tests_properties(TestSimilarityConcurrencySetting PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    TIMEOUT 60
+)
+aura_set_test_labels(TestSimilarityConcurrencySetting core)
 
 add_executable(TestFileTypeVisibilityPolicy EXCLUDE_FROM_ALL
     tests/test_file_type_visibility_policy.cpp
@@ -6346,6 +6422,17 @@ aura_set_test_labels(TestTransportContrast ui)
 add_test(NAME TestTransportThemeAudit COMMAND ${Python3_EXECUTABLE} -m unittest discover
     -s ${CMAKE_CURRENT_SOURCE_DIR}/tests -p test_transport_theme_audit.py)
 aura_set_test_labels(TestTransportThemeAudit ui)
+add_executable(TestLibraryTaskToastHitOrder EXCLUDE_FROM_ALL
+    tests/test_library_task_toast_hit_order.cpp
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
+target_include_directories(TestLibraryTaskToastHitOrder PRIVATE src ${IMGUI_DIR})
+if(MSVC)
+    target_compile_options(TestLibraryTaskToastHitOrder PRIVATE /utf-8)
+endif()
+add_test(NAME TestLibraryTaskToastHitOrder COMMAND TestLibraryTaskToastHitOrder)
+aura_set_test_labels(TestLibraryTaskToastHitOrder ui)
+
 add_executable(TestTransportBlendInput EXCLUDE_FROM_ALL tests/test_transport_blend_input.cpp
     ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp)
@@ -6356,6 +6443,7 @@ aura_set_test_labels(TestTransportBlendInput ui)
 add_executable(TestThemeColors EXCLUDE_FROM_ALL
     tests/test_theme_colors.cpp
     src/Theme.cpp
+    src/BuiltinThemeScheme.cpp
     src/ui/CoreWorkspaceStyle.cpp
     src/platform/filesystem_std.cpp
     ${AURO_AUDIO_TEXT_SOURCE}
@@ -6407,6 +6495,28 @@ if(MSVC)
 endif()
 add_test(NAME TestCoreWorkspaceStyle COMMAND TestCoreWorkspaceStyle)
 aura_set_test_labels(TestCoreWorkspaceStyle core)
+
+add_executable(TestDatabaseSetupButtons EXCLUDE_FROM_ALL
+    tests/test_database_setup_buttons.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+target_include_directories(TestDatabaseSetupButtons PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+)
+target_compile_features(TestDatabaseSetupButtons PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestDatabaseSetupButtons PRIVATE /W3 /utf-8)
+    set_target_properties(TestDatabaseSetupButtons PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestDatabaseSetupButtons COMMAND TestDatabaseSetupButtons)
+aura_set_test_labels(TestDatabaseSetupButtons core)
 
 add_test(
     NAME TestCoreWorkspaceStyleBoundary
@@ -7361,6 +7471,28 @@ if(MSVC)
 endif()
 add_test(NAME TestSimilarityIndexer COMMAND TestSimilarityIndexer)
 aura_set_test_labels(TestSimilarityIndexer core)
+# Index-build concurrency benchmark for REQ-20261123-SIMILARITY-PARALLEL.
+# Explicit target: it analyzes a real isolated library and is never part of CTest.
+add_executable(SimilarityConcurrencyBench EXCLUDE_FROM_ALL tools/similarity_concurrency_bench.cpp
+    src/SimilarityIndexer.cpp src/AcousticSimilarityFile.cpp ${_similarity_store_sources})
+target_include_directories(SimilarityConcurrencyBench PRIVATE src ${SQLITE_DIR})
+if(HARKEN_ONNXRUNTIME_ROOT)
+    target_compile_definitions(SimilarityConcurrencyBench PRIVATE HARKEN_WITH_ONNX=1)
+    target_include_directories(SimilarityConcurrencyBench PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/include)
+    target_link_libraries(SimilarityConcurrencyBench PRIVATE ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.lib)
+    if(WIN32)
+        add_custom_command(TARGET SimilarityConcurrencyBench POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_ONNXRUNTIME_ROOT}/lib/onnxruntime.dll $<TARGET_FILE_DIR:SimilarityConcurrencyBench>)
+    endif()
+endif()
+if(WIN32)
+    target_link_libraries(SimilarityConcurrencyBench PRIVATE bcrypt)
+endif()
+if(MSVC)
+    target_compile_options(SimilarityConcurrencyBench PRIVATE /W3 /utf-8)
+endif()
+
 set(HARKEN_HNSWLIB_ROOT "" CACHE PATH "Pinned hnswlib header checkout, optional for audio similarity")
 set(HARKEN_SIMILARITY_MODEL_FIXTURES "" CACHE PATH "Local official CLAP parity fixtures, never bundled into source")
 add_executable(TestSimilarityIndexCountState EXCLUDE_FROM_ALL tests/test_similarity_index_count_state.cpp)
@@ -7698,6 +7830,13 @@ aura_set_test_labels(TestRelinkWorkflowLifecycle ui)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     aura_set_test_labels(TestSettingsImportDialogBoundary platform stage4)
+
+    add_test(
+        NAME TestSettingsThemeImport
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_settings_theme_import.py"
+    )
+    aura_set_test_labels(TestSettingsThemeImport platform)
 
     add_custom_target(TestCoverImageImportDialogBoundary
         COMMAND ${Python3_EXECUTABLE}

@@ -100,8 +100,16 @@
             saved=schedule::SavePalette(schedule::Period::Night,MakeBuiltinScheme(su::StockThemes[nextRuntime.night]),paletteError); nightWritten=saved;
         }
         const auto nextMode=next.themeScheduleMode;
-        schedule::SetMode(state,schedule::Mode::Off);
-        next.themeScheduleMode=schedule::Mode::Off;
+        const auto liveTheme=state.settings.theme;
+        const bool liveUseCustomColors=state.settings.useCustomColors;
+        const bool themePreferencesChanged=nextMode!=oldSettings.themeScheduleMode ||
+            next.theme!=oldSettings.theme || next.useCustomColors!=oldSettings.useCustomColors;
+        if (themePreferencesChanged) schedule::SetMode(state,schedule::Mode::Off);
+        if (themePreferencesChanged) next.themeScheduleMode=schedule::Mode::Off;
+        else {
+            next.theme=state.settings.theme;
+            next.useCustomColors=state.settings.useCustomColors;
+        }
         state.settings=next;
         state.settings.syncFromListeningMode();
         su::WriteRuntime(state,nextRuntime);
@@ -135,9 +143,15 @@
             bool restored=true;
             if (dayWritten) restored &= schedule::SavePalette(schedule::Period::Day,previousDay,rollbackError);
             if (nightWritten) restored &= schedule::SavePalette(schedule::Period::Night,previousNight,rollbackError);
-            schedule::SetMode(state,schedule::Mode::Off);
-            state.settings=oldSettings; state.settings.themeScheduleMode=schedule::Mode::Off;
-            schedule::SetMode(state,oldSettings.themeScheduleMode);
+            if (themePreferencesChanged) schedule::SetMode(state,schedule::Mode::Off);
+            state.settings=oldSettings;
+            if (themePreferencesChanged) {
+                state.settings.themeScheduleMode=schedule::Mode::Off;
+                schedule::SetMode(state,oldSettings.themeScheduleMode);
+            } else {
+                state.settings.theme=liveTheme;
+                state.settings.useCustomColors=liveUseCustomColors;
+            }
             su::WriteRuntime(state,oldRuntime);
             const bool outputRestored=!deviceChanged || restoreOutput();
             if(volumeApplied)state.audioEngine.setVolume(oldEngineVolume);
@@ -161,10 +175,24 @@
             state.lastInputTime=std::chrono::steady_clock::now(); ScheduleNextIdleAssetBackfillCheck(state,state.lastInputTime);
         }
         if (nextRuntime.spectrum && (oldRuntime.fft!=nextRuntime.fft || !oldRuntime.spectrum)) state.spectrogramNeedsUpdate=true;
-        if (oldSettings.theme!=state.settings.theme || oldSettings.useCustomColors!=state.settings.useCustomColors) {
+        const bool restoreManualTheme=oldSettings.themeScheduleMode!=schedule::Mode::Off &&
+            state.settings.themeScheduleMode==schedule::Mode::Off && state.settings.theme==AppTheme::Custom;
+        if (themePreferencesChanged && (oldSettings.theme!=state.settings.theme ||
+            oldSettings.useCustomColors!=state.settings.useCustomColors || restoreManualTheme)) {
             ThemeColors::deactivateCustomTheme();
             if (state.settings.theme==AppTheme::Custom && !state.settings.customThemeName.empty()) {
-                ThemeColors::loadAndApplyThemeFile(GetExeDirUtf8()+"\\theme_custom.json",nullptr,false,"SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
+                std::string customThemePath = GetExeDirUtf8()+"\\theme_custom.json";
+                if (!g_appSettingsPathUtf8.empty()) {
+                    const std::filesystem::path customPath =
+                        harken::theme_library::CustomThemePath(std::filesystem::u8path(g_appSettingsPathUtf8));
+                    if (!customPath.empty()) {
+                        std::string adoptError;
+                        harken::theme_library::AdoptLegacyCustomTheme(
+                            std::filesystem::u8path(GetExeDirUtf8()+"\\theme_custom.json"), customPath, adoptError);
+                        customThemePath = customPath.u8string();
+                    }
+                }
+                ThemeColors::loadAndApplyThemeFile(customThemePath,nullptr,false,"SettingsApply",(int)oldSettings.theme,ThemeDiagName(oldSettings.theme),false);
             }
             ThemeColors::markPendingUiChromeResync();
         }
@@ -182,6 +210,7 @@
     };
     if (state.showSettingsDialog) {
         editor.Reset(state); editor.open=true; editor.closePrompt=false; editor.action.clear();
+        editor.themeImportResult.clear();
 #if defined(_WIN32)
         editor.reaperConfigOpen=false;
         editor.reaperDiagnosticsOpen=false;
@@ -241,7 +270,11 @@
         const float navW=std::min(winSize.x*.34f,std::max(212.f,navTextW+60.f));
         const float contentX=navW+28.f,contentW=winSize.x-contentX-28.f;
         const float errorHeight=editor.error.empty()?0.f:ImGui::CalcTextSize(editor.error.c_str(),nullptr,false,contentW).y;
-        const float headerH=std::max(68.f,ImGui::GetFrameHeight()+30.f),footerH=editor.error.empty()?72.f:std::max(106.f,errorHeight+82.f);
+        const float settingsScale=aura::ui::dpi::UiScale();
+        const float headerH=std::max(aura::ui::dpi::ScalePx(68.f,settingsScale),ImGui::GetFrameHeight()+aura::ui::dpi::ScalePx(30.f,settingsScale));
+        const float footerH=editor.error.empty()
+            ? aura::ui::dpi::ScalePx(72.f,settingsScale)
+            : std::max(aura::ui::dpi::ScalePx(106.f,settingsScale), errorHeight+aura::ui::dpi::ScalePx(82.f,settingsScale));
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION
         su::observation.open=true; su::observation.page=(int)editor.page; su::observation.pending=editor.ChangedCount();
         su::observation.draftVolume=draft.defaultVolume; su::observation.draftRealtime=draft.searchRealtime; su::observation.draftTheme=(int)draft.theme;
@@ -269,7 +302,7 @@
         constexpr su::Page navigationPages[]{
             su::Page::Appearance, su::Page::Audio, su::Page::DawIntegration, su::Page::Search,
             su::Page::Library, su::Page::Interaction, su::Page::Personal, su::Page::Backup,
-            su::Page::Diagnostics,
+            su::Page::Diagnostics, su::Page::ExternalAi,
         };
         for (const auto page : navigationPages) {
 #if !AURA_BUILD_DIAGNOSTICS
@@ -416,6 +449,15 @@
             ImGui::PushTextWrapPos(controlX-20);aura::ui::DrawSettingsSearchableLabel(entryLabel);ImGui::PopTextWrapPos();
             if(id=="systemFont")su::Observe("system-font-preview");
             aura::ui::EndSettingsSearchHighlight();
+            if(id=="themeEditor"){
+                ImGui::SameLine(0,12);
+                ImGui::PushStyleColor(ImGuiCol_Text,preview.controlAccent);
+                ImGui::TextUnformatted(L(SetUX_ThemeDownloadLink));
+                if(ImGui::IsItemHovered())ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if(ImGui::IsItemClicked())Platform::OpenUrl("https://harkensearch.xd.com");
+                su::Observe("theme-download-link");
+                ImGui::PopStyleColor();
+            }
             const float labelBottom=ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(controlX,rowY)); ImGui::SetNextItemWidth(controlW-2);
             ImGui::BeginGroup();ImGui::PushTextWrapPos(rowX+rowW-2);
@@ -449,10 +491,12 @@
         }else{
             ImGui::TextDisabled("%s",L(SetUX_PREFERENCES));
             ImGui::PushFont(GetUIFontEmphasis(),settingsTitlePx);ImGui::TextUnformatted(su::PageLabel(editor.page));su::Observe("page-title");ImGui::PopFont();ImGui::Dummy(ImVec2(0,8));
-            if(editor.page==su::Page::Common){
+            if(editor.page==su::Page::ExternalAi){
+#include "ExternalAiSettingsPage.inl"
+            }else if(editor.page==su::Page::Common){
                 for(const auto& group:std::vector<std::pair<const char*,std::vector<std::string>>>{
                     {L(SetUX_Listening),{"device","volume","normalize"}},
-                    {L(SetUX_Interface),{"theme","systemFont"}},
+                    {L(SetUX_Interface),{"theme","uiScale","systemFont"}},
                     {L(SetUX_YourWorkflow),{"searchMode","remember","closeAction"}}}){
                     heading(group.first);for(const auto& id:group.second){const auto it=std::find_if(su::Catalog().begin(),su::Catalog().end(),[&](const auto& e){return e.id==id;});if(it!=su::Catalog().end())drawEntry(*it);}
                 }
@@ -495,6 +539,7 @@
                         ImGui::Dummy(ImVec2(0,6));
                         continue;
                     }
+                    if(entry.id=="externalAi")continue;
                     if(entry.id=="transportReverse"||entry.id=="transportPan"||entry.id=="transportSoundstage"||entry.id=="transportEQ")continue;
                     drawEntry(entry);
                 }
@@ -508,17 +553,22 @@
         }
         ImGui::Dummy(ImVec2(0,20));ImGui::EndChild();
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-footerH));ImGui::Separator();
-        const float buttonsW=editor.ChangedCount()?320.f:100.f;
+        const float settingsUiScale=aura::ui::dpi::UiScale();
+        const float buttonsW=aura::ui::dpi::ScalePx(editor.ChangedCount()?320.f:100.f,settingsUiScale);
         ImGui::SetCursorPos(ImVec2(contentX,winSize.y-50));
         if(!editor.error.empty()){ImGui::SetCursorPosY(winSize.y-footerH+10);ImGui::PushTextWrapPos(winSize.x-28);ImGui::TextWrapped("%s",editor.error.c_str());su::Observe("save-error");ImGui::PopTextWrapPos();}
         else if(editor.ChangedCount())ImGui::Text(L(SetUX_DChangesPending),(int)editor.ChangedCount());
         else ImGui::TextDisabled("%s",L(SetUX_NoPendingChanges));
-        ImGui::SetCursorPos(ImVec2(winSize.x-buttonsW-28,winSize.y-56));
+        // Footer buttons are logical sizes: at a large interface scale the body text
+        // grows, and a fixed 38 px button would clip the label it was sized for.
+        const float footerButtonH = std::max(aura::ui::dpi::ScalePx(38.0f, settingsUiScale), ImGui::GetFrameHeight());
+        ImGui::SetCursorPos(ImVec2(winSize.x-buttonsW-aura::ui::dpi::ScalePx(28.0f,settingsUiScale),
+                                   winSize.y-aura::ui::dpi::ScalePx(56.0f,settingsUiScale)));
         if(editor.ChangedCount()){
-            if(aura::ui::ActionButton(L(SetUX_Revert),ImVec2(140,38),aura::ui::ButtonVariant::Quiet))editor.Reset(state);su::Observe("revert");
+            if(aura::ui::ActionButton(L(SetUX_Revert),ImVec2(aura::ui::dpi::ScalePx(140.0f,settingsUiScale),footerButtonH),aura::ui::ButtonVariant::Quiet))editor.Reset(state);su::Observe("revert");
             ImGui::SameLine();
-            if(aura::ui::ActionButton(L(SetUX_Apply),ImVec2(168,38),aura::ui::ButtonVariant::PrimarySearch))apply();su::Observe("apply");
-        }else{if(aura::ui::ActionButton(L(Done),ImVec2(100,38)))requestClose();su::Observe("done");}
+            if(aura::ui::ActionButton(L(SetUX_Apply),ImVec2(aura::ui::dpi::ScalePx(168.0f,settingsUiScale),footerButtonH),aura::ui::ButtonVariant::PrimarySearch))apply();su::Observe("apply");
+        }else{if(aura::ui::ActionButton(L(Done),ImVec2(aura::ui::dpi::ScalePx(100.0f,settingsUiScale),footerButtonH)))requestClose();su::Observe("done");}
         if(editor.closePrompt)ImGui::OpenPopup("###SettingsUnsaved");
         ImGui::SetNextWindowSize(ImVec2(520,0),ImGuiCond_Appearing);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(24,24));
@@ -541,6 +591,10 @@
         ImGui::EndPopup();
     }
     ImGui::PopStyleVar(5);ImGui::PopStyleColor(10);
+    if (editor.open && !editor.closePrompt && editor.action=="import-theme") {
+        editor.action.clear();
+        if (ImportThemeFromSettings(state, editor.themeImportResult)) editor.Reset(state);
+    }
     // RenderUI continues with the file list and other main panels after this
     // block. Resume the draft overlay for those draws, then end it after RenderUI.
     if(resumeAppearancePreview)su::BeginAppearancePreview(state);

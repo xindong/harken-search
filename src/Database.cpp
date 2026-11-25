@@ -135,6 +135,10 @@ static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
             std::string res = HarkenSearch::Search::BuildSearchDataForFts(input);
             sqlite3_result_text(ctx, res.c_str(), -1, SQLITE_TRANSIENT);
         }, nullptr, nullptr);
+    sqlite3_create_function(db, "aura_utf8_bytes", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+        [](sqlite3_context* context, int, sqlite3_value** values) {
+            sqlite3_result_int(context, sqlite3_value_bytes(values[0]));
+        }, nullptr, nullptr);
     sqlite3_create_function(db, "phash_hamming", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
         [](sqlite3_context* ctx, int argc, sqlite3_value** argv) {
             if (argc < 2 ||
@@ -589,20 +593,25 @@ static bool WriteAppMetaInt(sqlite3* db, const char* key, int value) {
     return ok;
 }
 
-static std::string ReadAppMetaString(sqlite3* db, const char* key) {
-    if (!db || !key || !*key) return "";
+static bool TryReadAppMetaString(sqlite3* db, const char* key, std::string& value) {
+    value.clear();
+    if (!db || !key || !*key) return false;
     const char* sql = "SELECT value FROM app_meta WHERE key = ? LIMIT 1;";
     sqlite3_stmt* stmt = nullptr;
-    std::string value;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            const unsigned char* text = sqlite3_column_text(stmt, 0);
-            if (text) value = reinterpret_cast<const char*>(text);
-        }
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    int result = sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
+    if (result == SQLITE_OK) result = sqlite3_step(stmt);
+    if (result == SQLITE_ROW) {
+        const unsigned char* text = sqlite3_column_text(stmt, 0);
+        if (text) value = reinterpret_cast<const char*>(text);
     }
-    if (stmt) sqlite3_finalize(stmt);
-    return value;
+    const int finalResult = sqlite3_finalize(stmt);
+    return (result == SQLITE_ROW || result == SQLITE_DONE) && finalResult == SQLITE_OK;
+}
+
+static std::string ReadAppMetaString(sqlite3* db, const char* key) {
+    std::string value;
+    return TryReadAppMetaString(db, key, value) ? value : std::string{};
 }
 
 static bool WriteAppMetaString(sqlite3* db, const char* key, const std::string& value) {
@@ -1027,7 +1036,8 @@ static const std::set<std::string> AUDIO_EXTENSIONS = {
 
 static bool isAudioFile(const std::string& ext) {
     std::string lower = ext;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return AUDIO_EXTENSIONS.find(lower) != AUDIO_EXTENSIONS.end();
 }
 
@@ -1314,6 +1324,12 @@ static bool ReplaceSearchIndexTriggers(sqlite3* db, const char* sql, std::string
     return false;
 }
 
+static bool ensureSearchSuggestionVocabulary(sqlite3* db, std::string* error) {
+    const char* sql =
+        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.audio_files_suggestion_vocab USING fts5vocab(main, audio_files_fts, col);";
+    return execSqlite(db, sql, error);
+}
+
 bool Database::ensureFtsSchema() {
     if (!m_db) return false;
     if (!requireFts5()) return false;
@@ -1371,12 +1387,7 @@ bool Database::ensureFtsSchema() {
         return false;
     }
 
-    // Build an fts5vocab shadow table for global search suggestions.
-    // type='row' records each term and the number of documents containing it for ranking.
-    const char* createVocab = R"(
-        CREATE VIRTUAL TABLE IF NOT EXISTS audio_files_vocab USING fts5vocab(audio_files_fts, row);
-    )";
-    if (!execSqlite(m_db, createVocab, &err)) {
+    if (!ensureSearchSuggestionVocabulary(m_db, &err)) {
         m_lastError = FormatDbError(L(Db_FtsVocabFailFmt), err.c_str());
         return false;
     }
@@ -1862,6 +1873,11 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             DIAG_ACTION_FMT("Database",
                 "BackfillPendingIndexCreateFailed: %s", m_lastError.c_str());
         }
+        if (!executeSQL("CREATE INDEX IF NOT EXISTS idx_backfill_pending_kind "
+                        "ON backfill_pending(kind)")) {
+            DIAG_ACTION_FMT("Database",
+                "BackfillPendingKindIndexCreateFailed: %s", m_lastError.c_str());
+        }
     }
 
     if (!executeSQL(
@@ -1934,6 +1950,29 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     m_waveformFailureWritesAllowed = sidecarAttached &&
         sqlite3_db_readonly(m_db, "main") == 0 &&
         sqlite3_db_readonly(m_db, "waveforms_db") == 0;
+    return true;
+}
+
+bool Database::openForCoverKeyCachePersistence(const std::string& dbPath) {
+    if (m_db || dbPath.empty() ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(dbPath)) {
+        m_lastError = "Cover key cache writer rejected the database path";
+        return false;
+    }
+
+    sqlite3* opened = nullptr;
+    const int result = sqlite3_open_v2(
+        dbPath.c_str(), &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(opened, sqlite3_close);
+    if (result != SQLITE_OK || sqlite3_db_readonly(opened, "main") != 0) {
+        m_lastError = result == SQLITE_OK ? "Cover key cache database is read-only" :
+            (opened ? sqlite3_errmsg(opened) : "Could not open the cover key cache database");
+        return false;
+    }
+    RegisterHarkenSearchSqliteFunctions(opened);
+    sqlite3_busy_timeout(opened, 250);
+    m_mainDbPath = dbPath;
+    m_db = connection.release();
     return true;
 }
 
@@ -2261,6 +2300,19 @@ int Database::countBackfillPendingKind(int kind) {
     if (sqlite3_step(stmt) == SQLITE_ROW) count = sqlite3_column_int(stmt, 0);
     returnStmt(sql, stmt);
     return count;
+}
+
+std::optional<bool> Database::hasBackfillPendingKind(int kind) {
+    if (!m_db || kind < 0) return std::nullopt;
+    static const std::string sql = "SELECT 1 FROM backfill_pending WHERE kind = ? LIMIT 1";
+    sqlite3_stmt* stmt = checkoutStmt(sql);
+    if (!stmt) return std::nullopt;
+    sqlite3_bind_int(stmt, 1, kind);
+    const int result = sqlite3_step(stmt);
+    returnStmt(sql, stmt);
+    if (result == SQLITE_ROW) return true;
+    if (result == SQLITE_DONE) return false;
+    return std::nullopt;
 }
 
 bool Database::hasBackfillPending(int64_t fileId, int kind) {
@@ -2625,6 +2677,8 @@ bool Database::openReadOnly(const std::string& dbPath) {
     }
     sqlite3_finalize(mainSchema);
 
+    ensureSearchSuggestionVocabulary(m_db, nullptr);
+
     // Read-only connections must not create missing sidecars beside the source DB.
     m_mainDbPath = dbPath;
     m_blobsDbPath = getBlobsDbPath(dbPath);
@@ -2660,11 +2714,7 @@ void Database::close() {
         m_coverPhashBackfillThread.join();
     }
     m_coverPhashBackfillRunning.store(false, std::memory_order_release);
-    // T-296: stop the watcher rescan worker before nulling m_db, otherwise
-    // a queued scanDirectoryEx() can dereference a dangling sqlite handle.
-    // Independent of stopFileSystemWatcher() because reconciliation can be
-    // dispatched without the FS watcher ever being started.
-    stopWatcherRescanWorker();
+    stopFileSystemWatcher();
     // T-297: same reasoning for the waveform precompute worker.
     stopPrecomputeWorker();
     std::lock_guard<std::mutex> writerLock(m_writerSerializeMutex);
@@ -2685,7 +2735,7 @@ void Database::close() {
     clearPreparedCoverFilterKeys();
     // These caches belong to the closed library. A newly opened library may
     // have the same revision, so the two-second cache must not survive close.
-    m_countMemCache.clear();
+    clearSearchCountMemoryCache();
     m_cachedFileCount = -1;
     m_cachedFileCountRevision = 0;
     m_cachedFileCountTime = {};
@@ -3639,6 +3689,7 @@ bool Database::saveFacetQueryCache(const std::string& cacheKey,
 
 bool Database::invalidateFacetQueryCache() {
     if (!m_db) return false;
+    std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
     m_countMemCache.clear();  // also clear in-memory count cache
     if (sqlite3_db_readonly(m_db, "main") == 1) return true;
     bool ok = executeSQL("DELETE FROM facet_query_cache;");
@@ -4252,7 +4303,19 @@ static const std::string& GetAddFileSql() {
 }
 
 bool Database::addFile(const AudioRecord& record) {
+    return upsertFile(record, false);
+}
+
+bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
     if (!m_db) return false;
+
+    // The extension column is a canonical type key: filters compare it with
+    // COLLATE NOCASE and the metadata refresh path stores it lowercased. Fold
+    // it here so scan and watcher inserts keep the same spelling.
+    std::string canonicalExtension = record.extension;
+    std::transform(canonicalExtension.begin(), canonicalExtension.end(),
+                   canonicalExtension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     std::string folderPath = record.folderPath;
     if (folderPath.empty()) {
@@ -4322,7 +4385,7 @@ bool Database::addFile(const AudioRecord& record) {
     // Base columns (params 1-31)
     sqlite3_bind_text(stmt, 1, storageFilePath.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, record.fileName.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, record.extension.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, canonicalExtension.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 4, record.fileSize);
     sqlite3_bind_int(stmt, 5, record.sampleRate);
     sqlite3_bind_int(stmt, 6, record.bitDepth);
@@ -4397,7 +4460,10 @@ bool Database::addFile(const AudioRecord& record) {
     // Every successful insert or upsert advances the revision observed by tabs.
     // Scan-time increments are absorbed while result polling is gated by isScanning.
 
-    if (success) bumpDataRevision();
+    if (success) {
+        if (refreshFolderCount) refreshIndexedFolderCounts(folderPath);
+        bumpDataRevision();
+    }
     return success;
 }
 
@@ -5025,6 +5091,8 @@ bool Database::removeFileByPath(const std::string& filePath) {
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     if (success) {
+        refreshIndexedFolderCounts(
+            HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(filePath)));
         pruneOrphanCoverCaches();
         bumpDataRevision();  // Invalidate tab snapshots.
     }
@@ -5909,24 +5977,89 @@ static void AddUniqueFolderMatchPath(std::vector<std::string>& paths, std::strin
     }
 }
 
+// 长路径前缀与普通写法的等价形式。
+// 同一个库里可能出现 `\\nas\share\x` 与 `\\?\UNC\nas\share\x` 两种记录，
+// 删除/过滤子树时必须都能命中，否则会出现「移除了但还剩一半」。
+static std::string FolderMatchExtendedVariant(const std::string& path) {
+#ifdef _WIN32
+    if (path.empty()) return path;
+    if (path.rfind("\\\\?\\", 0) == 0) return path;
+    if (path.rfind("\\\\", 0) == 0) return "\\\\?\\UNC\\" + path.substr(2);
+    if (path.size() >= 2 && path[1] == ':') return "\\\\?\\" + path;
+#endif
+    return path;
+}
+
+static std::string FolderMatchPlainVariant(const std::string& path) {
+#ifdef _WIN32
+    if (path.rfind("\\\\?\\UNC\\", 0) == 0) return "\\\\" + path.substr(8);
+    if (path.rfind("\\\\?\\", 0) == 0) return path.substr(4);
+#endif
+    return path;
+}
+
 static std::vector<std::string> BuildFolderSubtreeMatchPaths(const std::string& canonicalPath,
                                                              const std::string& rawPath) {
     std::vector<std::string> paths;
-    paths.reserve(4);
+    paths.reserve(8);
     AddUniqueFolderMatchPath(paths, canonicalPath);
     AddUniqueFolderMatchPath(paths, rawPath);
+    AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(canonicalPath));
+    AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(rawPath));
+    AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(canonicalPath));
+    AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(rawPath));
 #ifdef _WIN32
     if (rawPath.size() >= 2 && rawPath[1] == ':') {
         std::string driveUpper = rawPath;
         driveUpper[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(driveUpper[0])));
-        AddUniqueFolderMatchPath(paths, std::move(driveUpper));
+        AddUniqueFolderMatchPath(paths, driveUpper);
+        AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(driveUpper));
+        AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(driveUpper));
 
         std::string driveLower = rawPath;
         driveLower[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(driveLower[0])));
-        AddUniqueFolderMatchPath(paths, std::move(driveLower));
+        AddUniqueFolderMatchPath(paths, driveLower);
+        AddUniqueFolderMatchPath(paths, FolderMatchExtendedVariant(driveLower));
+        AddUniqueFolderMatchPath(paths, FolderMatchPlainVariant(driveLower));
     }
 #endif
     return paths;
+}
+
+static std::string FolderRemovalRootKey(std::string_view path) {
+    auto key = HarkenSearch::CanonicalFolderPath(path);
+#ifdef _WIN32
+    if (key.size() == 3 && key[1] == ':' && key[2] == '\\') key.pop_back();
+#endif
+    return key;
+}
+
+static bool FolderRemovalContains(const std::string& root, const std::string& path) {
+    return !root.empty() && (path == root || path.rfind(MakeFolderChildPrefix(root), 0) == 0);
+}
+
+template <typename Match>
+static bool DeleteMatchingFolderRows(sqlite3* db, const char* selectSql, const char* deleteSql, Match matches) {
+    std::vector<std::string> paths;
+    sqlite3_stmt* raw = nullptr;
+    if (sqlite3_prepare_v2(db, selectSql, -1, &raw, nullptr) != SQLITE_OK) return false;
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> select(raw, sqlite3_finalize);
+    int step = SQLITE_OK;
+    while ((step = sqlite3_step(select.get())) == SQLITE_ROW) {
+        std::string path = safeGetText(select.get(), 0);
+        if (matches(FolderRemovalRootKey(path))) paths.push_back(std::move(path));
+    }
+    if (step != SQLITE_DONE) return false;
+    select.reset();
+    if (paths.empty()) return true;
+    if (sqlite3_prepare_v2(db, deleteSql, -1, &raw, nullptr) != SQLITE_OK) return false;
+    std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)> remove(raw, sqlite3_finalize);
+    for (const auto& path : paths) {
+        sqlite3_reset(remove.get());
+        if (sqlite3_bind_text(remove.get(), 1, path.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+            sqlite3_step(remove.get()) != SQLITE_DONE) return false;
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -6694,10 +6827,23 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
         return getFileCount();
     }
 
+    const auto countRevision = dataRevision();
     const std::string persistentCacheKey = BuildPersistentFacetCacheKey(filter, -1, "count");
+    auto storeCount = [&](int64_t count, bool persist) {
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
+        if (countRevision != dataRevision()) return;
+        if (m_countMemCache.size() >= 16) m_countMemCache.clear();
+        m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
+        if (persist) {
+            std::vector<uint8_t> payload(sizeof(count));
+            std::memcpy(payload.data(), &count, sizeof(count));
+            saveFacetQueryCache(persistentCacheKey, payload, 1);
+        }
+    };
     {
         // 2a) In-memory cache: zero SQLite I/O, avoids WAL contention during active scans
         const int64_t nowSec = static_cast<int64_t>(std::time(nullptr));
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
         auto it = m_countMemCache.find(persistentCacheKey);
         if (it != m_countMemCache.end() && nowSec < it->second.expirySec) {
             if (it->second.count > 0 || allowZeroCountCache) {
@@ -6716,8 +6862,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
                 if (cachedCount > 0 || allowZeroCountCache) {
                     DIAG_ACTION_FMT("Search", "SearchCountPersistentCacheHit: count=%lld", (long long)cachedCount);
                     // Promote to in-memory cache for subsequent frames
-                    if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-                    m_countMemCache[persistentCacheKey] = {cachedCount, static_cast<int64_t>(std::time(nullptr)) + 30};
+                    storeCount(cachedCount, false);
                     return cachedCount;
                 }
             }
@@ -6770,11 +6915,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
                 count = (std::max<int64_t>)(0, count);
             }
             if (count > 0 || allowZeroCountCache) {
-                if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-                m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
-                std::vector<uint8_t> payload(sizeof(int64_t));
-                std::memcpy(payload.data(), &count, sizeof(int64_t));
-                saveFacetQueryCache(persistentCacheKey, payload, 1);
+                storeCount(count, true);
             }
             DIAG_ACTION_FMT("Search", "SearchCountFileTypeFastPath: count=%lld",
                             (long long)count);
@@ -6832,14 +6973,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
     // Write the count back so revisiting this filter does not repeat COUNT.
     {
         if (count > 0 || allowZeroCountCache) {
-            // 3a) Populate in-memory cache first (fast path for next call)
-            if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-            m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
-
-            // Store the count in the persistent SQLite cache.
-            std::vector<uint8_t> payload(sizeof(int64_t));
-            std::memcpy(payload.data(), &count, sizeof(int64_t));
-            saveFacetQueryCache(persistentCacheKey, payload, 1);
+            storeCount(count, true);
         }
     }
 
@@ -8777,11 +8911,7 @@ int64_t Database::countAudioCoverPresenceCandidates() {
     return static_cast<int64_t>(CountAudioCoverPresenceCandidates(m_db));
 }
 
-int Database::pruneOrphanCoverCaches() {
-    if (!m_db) return 0;
-    if (sqlite3_db_readonly(m_db, "main") == 1) return 0;
-
-    const char* deleteRegistrySql = R"SQL(
+static constexpr const char* kDeleteOrphanCoverRegistrySql = R"SQL(
 WITH live_cover_keys AS (
     SELECT embedded_cover_key AS cover_key
     FROM audio_files
@@ -8801,7 +8931,7 @@ WHERE cover_key IS NULL
    );
 )SQL";
 
-    const char* deleteThumbSql = R"SQL(
+static constexpr const char* kDeleteOrphanCoverThumbsSql = R"SQL(
 WITH live_cover_keys AS (
     SELECT embedded_cover_key AS cover_key
     FROM audio_files
@@ -8821,14 +8951,7 @@ WHERE cover_key IS NULL
    );
 )SQL";
 
-    int removed = 0;
-    if (executeSQL(deleteRegistrySql)) {
-        removed += sqlite3_changes(m_db);
-    }
-    if (executeSQL(deleteThumbSql)) {
-        removed += sqlite3_changes(m_db);
-    }
-
+void Database::onOrphanCoverCachesPruned(int removed) {
     if (removed > 0) {
         clearCoverKeyEquivalentCache();
         invalidateFacetQueryCache();
@@ -8836,7 +8959,19 @@ WHERE cover_key IS NULL
         m_postProcessCoverRefreshNeeded.store(true, std::memory_order_release);
         DIAG_ACTION_FMT("Database", "PruneOrphanCoverCaches: removed=%d", removed);
     }
+}
 
+int Database::pruneOrphanCoverCaches() {
+    if (!m_db || sqlite3_db_readonly(m_db, "main") == 1) return 0;
+
+    int removed = 0;
+    if (executeSQL(kDeleteOrphanCoverRegistrySql)) {
+        removed += sqlite3_changes(m_db);
+    }
+    if (executeSQL(kDeleteOrphanCoverThumbsSql)) {
+        removed += sqlite3_changes(m_db);
+    }
+    onOrphanCoverCachesPruned(removed);
     return removed;
 }
 
@@ -12419,19 +12554,8 @@ bool Database::updateFilePath(
         }
     }
 
-    std::string newFolderPath;
-    try {
-        fs::path p = Utf8ToPath(newPath);
-        fs::path parent = p.parent_path();
-        if (parent != p) newFolderPath = PathToUtf8(parent);
-        // Match scan normalization: remove the trailing separator so equivalent paths share one key.
-        while (!newFolderPath.empty() && (newFolderPath.back() == '/' || newFolderPath.back() == '\\'))
-            newFolderPath.pop_back();
-    } catch (...) {
-    }
-    // T2.1: canonicalize folder_path before bind so updateFilePath stays
-    // consistent with addFile (T1.0 v2 §5.1). file_path keeps raw form.
-    newFolderPath = HarkenSearch::CanonicalFolderPath(newFolderPath);
+    const auto newFolderPath =
+        HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(newPath));
 
     // Update path fields and clear folder artwork in one statement to keep list and detail views aligned.
     const char* sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
@@ -12471,6 +12595,11 @@ bool Database::updateFilePath(
     }
     sqlite3_finalize(stmt);
     if (ok) {
+        const auto oldFolderPath =
+            HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(oldPath));
+        if (oldFolderPath != newFolderPath) {
+            refreshIndexedFolderCounts(oldFolderPath, newFolderPath);
+        }
         std::vector<std::string> changedPaths;
         changedPaths.reserve(2);
         if (!oldPath.empty()) changedPaths.push_back(oldPath);
@@ -16671,6 +16800,11 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
             if (!iterator.Open(PathToUtf8(currentDir), false, true)) {
                 return;
             }
+            // 单个条目读失败不应该把整个目录当成不可达：
+            // 之前只要根目录里有一个条目报错（网络库），就会直接中断本目录枚举，
+            // 后续子目录根本没机会入栈，最终 total=0、errors=1。
+            int entriesRead = 0;
+            int consecutiveEntryErrors = 0;
             while (true) {
                 if (isCancelled() || fatalScanError) break;
 
@@ -16682,18 +16816,25 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                 }
                if (readStatus == Platform::FileSystem::DirectoryReadStatus::Error) {
                     const std::string currentDirUtf8 = pathForScanError(currentDir);
-                    if (Platform::FileSystem::IsNetworkPath(currentDirUtf8) ||
-                        Platform::FileSystem::IsNetworkPath(dirPath)) {
+                    const bool networkDir = Platform::FileSystem::IsNetworkPath(currentDirUtf8) ||
+                                            Platform::FileSystem::IsNetworkPath(dirPath);
+                    ++consecutiveEntryErrors;
+                    stats.addError("Cannot read directory entry in " + currentDirUtf8 + ": " + entryError);
+                    m_lastError = entryError;
+                    // 只在本目录一条都没读出来且连续失败时才当作整目录不可达（真正的断网）。
+                    if (networkDir && entriesRead == 0 && consecutiveEntryErrors >= 3) {
                         stats.unreachable++;
                         stats.addError(std::string("Scan_NetworkLibraryUnreachable"));
                         m_lastError = std::string("Scan_NetworkLibraryUnreachable");
                         (void)Platform::FileSystem::PathStatus::Unreachable;
                         break;
                     }
-                    stats.addError("Cannot read directory entry in " + currentDirUtf8 + ": " + entryError);
-                    m_lastError = entryError;
+                    // 用“连续”失败防止死循环；成功读到条目后计数清零，不能累计截断。
+                    if (consecutiveEntryErrors >= 200) break;
                     continue;
                 }
+                ++entriesRead;
+                consecutiveEntryErrors = 0;
                 if (readStatus != Platform::FileSystem::DirectoryReadStatus::Entry) {
                     continue;
                 }
@@ -16704,6 +16845,10 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                     continue;
                 }
 
+                // 单个条目的名称转码失败（例如 macOS 残留文件的无配对代字符）不能中断
+                // 整个目录：之前它会抛 ERROR_NO_UNICODE_TRANSLATION 冒到外层 catch，
+                // 导致整个根目录 total=0、errors=1，看起来就像整个文件夹被漏收。
+                try {
                 // Skip hidden, system, and temporary files or directories.
                 if (isHiddenPath(rawPath)) {
                     continue;
@@ -16770,6 +16915,14 @@ ScanStats Database::scanDirectoryEx(const std::string& dirPath,
                             if (fatalScanError) break;
                         }
                     }
+                }
+                } catch (const std::exception& e) {
+                    stats.addError("Cannot read entry under " + pathForScanError(currentDir) + ": " + e.what());
+                    m_lastError = e.what();
+                    continue;
+                } catch (...) {
+                    stats.addError("Cannot read entry under " + pathForScanError(currentDir));
+                    continue;
                 }
 
             }
@@ -17768,9 +17921,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
                         static_cast<long long>(liveFolderCount),
                         static_cast<long long>(indexedFolderCount));
         if (sqlite3_db_readonly(m_db, "main") == 1) {
-            EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
-            SortFolderTree(root);
-            return root;
+            return getFolderHierarchy(pathMode);
         }
         if (!rebuildFolderIndex()) {
             DIAG_ACTION("Database", "FolderIndexStale rebuild failed");
@@ -17779,9 +17930,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
 
     auto entries = getFolderIndex();
     if (entries.empty()) {
-        EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
-        SortFolderTree(root);
-        return root;
+        return getFolderHierarchy(pathMode);
     }
 
     // folder_index has no file_path column, so map each canonical folder
@@ -17925,6 +18074,34 @@ bool Database::clearFolderIndex() {
     if (!m_db) return false;
     return executeSQL("DELETE FROM folder_index;");
 }
+
+void Database::refreshIndexedFolderCounts(const std::string& folder, const std::string& otherFolder) {
+    if (folder.empty() && otherFolder.empty()) return;
+
+    const auto run = [&](const char* sql) {
+        auto* stmt = checkoutStmt(sql);
+        if (!stmt) return false;
+        sqlite3_bind_text(stmt, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, otherFolder.c_str(), -1, SQLITE_TRANSIENT);
+        const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+        returnStmt(sql, stmt);
+        return ok;
+    };
+    const char* refreshSql =
+        "WITH affected(path) AS (SELECT ?1 UNION SELECT ?2) "
+        "INSERT OR REPLACE INTO folder_index (folder_path, file_count, last_updated) "
+        "SELECT path, (SELECT COUNT(*) FROM audio_files WHERE folder_path = affected.path), "
+        "CAST(strftime('%s', 'now') AS INTEGER) FROM affected "
+        "WHERE path <> '' AND EXISTS (SELECT 1 FROM folder_index)";
+    const char* removeEmptySql =
+        "DELETE FROM folder_index WHERE folder_path IN (?1, ?2) AND file_count = 0";
+    if (!run(refreshSql) || !run(removeEmptySql)) {
+        const bool invalidated = clearFolderIndex();
+        DIAG_ACTION_FMT("Database", "FolderIndex incremental refresh failed; cleared=%d",
+                        static_cast<int>(invalidated));
+    }
+}
+
 bool Database::rebuildFolderIndex() {
     if (!m_db) return false;
     if (!executeSQL("DELETE FROM folder_index")) return false;
@@ -18200,11 +18377,81 @@ bool Database::migrateFolderPathToCanonical_v1() {
 // 真实实现进来后会自然替换。
 
 int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool deleteFilesFromDisk) {
-    if (!m_db) return 0;
+    return removeFolderSubtreeFromDbImpl(folderPath, deleteFilesFromDisk).removedFiles;
+}
+
+FolderSubtreeRemovalResult Database::removeFolderSubtreeFromLibrary(const std::string& folderPath) {
+    return removeFolderSubtreeFromDbImpl(folderPath, false);
+}
+
+void Database::discardFolderRemovalReadCaches() {
+    clearSearchCountMemoryCache();
+}
+
+FolderSubtreeRemovalResult Database::removeFolderSubtreeFromLibraryOnWorker(const std::string& folderPath) {
+    std::unique_lock<std::mutex> writerLock(m_writerSerializeMutex);
+    Database worker;
+    auto failed = [&](const char* message) -> FolderSubtreeRemovalResult {
+        return {FolderSubtreeRemovalStatus::Failed, 0, false, message};
+    };
+    auto writablePath = [&](const char* schema) -> std::string {
+        if (!m_db || sqlite3_db_readonly(m_db, schema) != 0) return {};
+        const char* path = sqlite3_db_filename(m_db, schema);
+        if (!path || !*path || !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(path)) return {};
+        return path;
+    };
+    worker.m_mainDbPath = writablePath("main");
+    worker.m_blobsDbPath = writablePath("blobs_db");
+    worker.m_waveformsDbPath = writablePath("waveforms_db");
+    if (worker.m_mainDbPath.empty() || worker.m_blobsDbPath.empty() || worker.m_waveformsDbPath.empty()) {
+        return failed("The current library or its caches are not writable.");
+    }
+    if (sqlite3_open_v2(worker.m_mainDbPath.c_str(), &worker.m_db,
+                       SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
+        return failed(worker.m_db ? sqlite3_errmsg(worker.m_db) : "Could not reopen the current library.");
+    }
+    RegisterHarkenSearchSqliteFunctions(worker.m_db);
+    sqlite3_busy_timeout(worker.m_db, 5000);
+    auto attach = [&](const char* sql, const std::string& path) {
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(worker.m_db, sql, -1, &statement, nullptr) != SQLITE_OK) {
+            worker.m_lastError = sqlite3_errmsg(worker.m_db);
+            return false;
+        }
+        const bool attached = sqlite3_bind_text(statement, 1, path.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK &&
+            sqlite3_step(statement) == SQLITE_DONE;
+        const std::string error = attached ? std::string() : sqlite3_errmsg(worker.m_db);
+        sqlite3_finalize(statement);
+        worker.m_lastError = error;
+        return attached;
+    };
+    if (!worker.executeSQL("PRAGMA foreign_keys = ON;") ||
+        !worker.executeSQL("PRAGMA temp_store = MEMORY;") ||
+        !attach("ATTACH DATABASE ? AS blobs_db;", worker.m_blobsDbPath) ||
+        !attach("ATTACH DATABASE ? AS waveforms_db;", worker.m_waveformsDbPath)) {
+        return failed(worker.m_lastError.c_str());
+    }
+    auto result = worker.removeFolderSubtreeFromLibrary(folderPath);
+    if (result.status == FolderSubtreeRemovalStatus::Removed) {
+        bumpDataRevision();
+    }
+    return result;
+}
+
+FolderSubtreeRemovalResult Database::removeFolderSubtreeFromDbImpl(const std::string& folderPath,
+                                                                  bool deleteFilesFromDisk) {
+    std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
     m_lastError.clear();
+    auto failure = [this](const char* message = nullptr) -> FolderSubtreeRemovalResult {
+        if (message && *message) m_lastError = message;
+        if (m_lastError.empty()) m_lastError = "removeFolderSubtreeFromDb: database operation failed";
+        return {FolderSubtreeRemovalStatus::Failed, 0, false, m_lastError};
+    };
+    if (!m_db) return failure("removeFolderSubtreeFromDb: database is not open");
 
     const std::string targetPath = HarkenSearch::CanonicalFolderPath(folderPath);
-    if (targetPath.empty()) return 0;
+    if (targetPath.empty()) return failure("removeFolderSubtreeFromDb: empty target path");
+    const std::string targetKey = FolderRemovalRootKey(targetPath);
 
     std::string rawTargetPath = NormalizeFolderPathPreserveCaseForDbMatch(folderPath);
     if (rawTargetPath.empty()) rawTargetPath = targetPath;
@@ -18214,8 +18461,6 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
     std::vector<int64_t> candidateIds;
     int removed = 0;
 
-    std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
-
     const char* createCandidateTableSql =
         "CREATE TEMP TABLE IF NOT EXISTS temp.remove_folder_subtree_candidates ("
         "id INTEGER PRIMARY KEY, "
@@ -18223,8 +18468,44 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         ");";
     if (!executeSQL(createCandidateTableSql) ||
         !executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;")) {
-        m_lastError = "removeFolderSubtreeFromDb: prepare candidate table failed";
-        return 0;
+        m_lastError = "removeFolderSubtreeFromDb: prepare candidate table failed: " + m_lastError;
+        return failure();
+    }
+    if (!executeSQL("BEGIN IMMEDIATE TRANSACTION")) return failure();
+    auto rollbackWithError = [this, &failure](const char* message = nullptr) {
+        auto result = failure(message);
+        if (!sqlite3_get_autocommit(m_db) && !rollbackTransaction()) {
+            result.error += "; rollback failed: " + m_lastError;
+        }
+        m_lastError = result.error;
+        return result;
+    };
+    auto rollbackWithSqliteError = [this, &rollbackWithError](const char* operation) {
+        const std::string message = std::string("removeFolderSubtreeFromDb: ") + operation + ": " + sqlite3_errmsg(m_db);
+        return rollbackWithError(message.c_str());
+    };
+
+    std::string storedRoots;
+    if (!TryReadAppMetaString(m_db, kLibraryRootsMetaKey, storedRoots)) {
+        return rollbackWithSqliteError("read root registrations");
+    }
+    std::string retainedRoots;
+    std::vector<std::string> protectedRootKeys;
+    bool unregisterRoot = false;
+    std::istringstream roots(storedRoots);
+    for (std::string root; std::getline(roots, root);) {
+        const auto rootKey = FolderRemovalRootKey(root);
+        if (rootKey.empty()) continue;
+        if (rootKey == targetKey) {
+            unregisterRoot = true;
+            continue;
+        }
+        if (!retainedRoots.empty()) retainedRoots.push_back('\n');
+        retainedRoots += root;
+        if (FolderRemovalContains(targetKey, rootKey) &&
+            std::find(protectedRootKeys.begin(), protectedRootKeys.end(), rootKey) == protectedRootKeys.end()) {
+            protectedRootKeys.push_back(rootKey);
+        }
     }
 
     const char* insertCandidatesSql =
@@ -18234,24 +18515,25 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         "WHERE folder_path = ? "
         "   OR (folder_path >= ? AND folder_path < ?) "
         "   OR (file_path >= ? AND file_path < ?);";
-    auto insertCandidatesForMatchPaths = [&](const char* sql, const char* errorContext) -> bool {
+    auto queryCandidatesForMatchPaths = [&](const std::vector<std::string>& paths,
+                                            const char* sql, const char* errorContext) -> bool {
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             m_lastError = sqlite3_errmsg(m_db);
             return false;
         }
-        for (const std::string& matchPath : matchPaths) {
+        for (const std::string& matchPath : paths) {
             const std::string childPrefix = MakeFolderChildPrefix(matchPath);
             const std::string childUpper = MakeFolderPathUpperBound(childPrefix);
             sqlite3_reset(stmt);
             sqlite3_clear_bindings(stmt);
-            sqlite3_bind_text(stmt, 1, matchPath.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 2, childPrefix.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 3, childUpper.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 4, childPrefix.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt, 5, childUpper.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(stmt) != SQLITE_DONE) {
-                m_lastError = errorContext && *errorContext ? errorContext : sqlite3_errmsg(m_db);
+            if (sqlite3_bind_text(stmt, 1, matchPath.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+                sqlite3_bind_text(stmt, 2, childPrefix.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+                sqlite3_bind_text(stmt, 3, childUpper.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+                sqlite3_bind_text(stmt, 4, childPrefix.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+                sqlite3_bind_text(stmt, 5, childUpper.c_str(), -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+                sqlite3_step(stmt) != SQLITE_DONE) {
+                m_lastError = std::string(errorContext) + ": " + sqlite3_errmsg(m_db);
                 sqlite3_finalize(stmt);
                 return false;
             }
@@ -18259,21 +18541,13 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         sqlite3_finalize(stmt);
         return true;
     };
-    if (!insertCandidatesForMatchPaths(insertCandidatesSql,
-                                       "removeFolderSubtreeFromDb: fast candidate insert failed")) {
-        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-        return 0;
+    if (!queryCandidatesForMatchPaths(matchPaths, insertCandidatesSql,
+                                      "removeFolderSubtreeFromDb: fast candidate insert failed")) {
+        return rollbackWithError();
     }
-
-    int64_t candidateCount = 0;
-    if (!strictScalarInt64(m_db,
-                           "SELECT COUNT(*) FROM temp.remove_folder_subtree_candidates;",
-                           candidateCount)) {
-        m_lastError = "removeFolderSubtreeFromDb: candidate count failed";
-        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-        return 0;
-    }
-    if (candidateCount == 0) {
+    // 大小写不敏感的补查总是跑一遗：只在前一轮零命中时才补会把「部分命中」的
+    // 其他大小写形式漏在库里（移除了但还剩一半）。INSERT OR IGNORE 保证幂等。
+    {
         const char* insertCandidatesNoCaseSql =
             "INSERT OR IGNORE INTO temp.remove_folder_subtree_candidates(id, file_path) "
             "SELECT id, file_path "
@@ -18281,24 +18555,34 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
             "WHERE folder_path = ? COLLATE NOCASE "
             "   OR (folder_path >= ? COLLATE NOCASE AND folder_path < ? COLLATE NOCASE) "
             "   OR (file_path >= ? COLLATE NOCASE AND file_path < ? COLLATE NOCASE);";
-        if (!insertCandidatesForMatchPaths(insertCandidatesNoCaseSql,
-                                           "removeFolderSubtreeFromDb: nocase fallback candidate insert failed")) {
-            executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-            return 0;
+        if (!queryCandidatesForMatchPaths(matchPaths, insertCandidatesNoCaseSql,
+                                          "removeFolderSubtreeFromDb: nocase fallback candidate insert failed")) {
+            return rollbackWithError();
         }
-        if (!strictScalarInt64(m_db,
-                               "SELECT COUNT(*) FROM temp.remove_folder_subtree_candidates;",
-                               candidateCount)) {
-            m_lastError = "removeFolderSubtreeFromDb: fallback candidate count failed";
-            executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-            return 0;
+    }
+    const char* removeProtectedCandidatesSql =
+        "DELETE FROM temp.remove_folder_subtree_candidates WHERE id IN ("
+        "SELECT id FROM main.audio_files "
+        "WHERE folder_path = ? COLLATE NOCASE "
+        "   OR (folder_path >= ? COLLATE NOCASE AND folder_path < ? COLLATE NOCASE) "
+        "   OR (file_path >= ? COLLATE NOCASE AND file_path < ? COLLATE NOCASE));";
+    for (const auto& rootKey : protectedRootKeys) {
+        if (!queryCandidatesForMatchPaths(BuildFolderSubtreeMatchPaths(rootKey, rootKey), removeProtectedCandidatesSql,
+                                          "removeFolderSubtreeFromDb: exclude nested root candidates failed")) {
+            return rollbackWithError();
         }
-        if (candidateCount > 0) {
-            DIAG_ACTION_FMT("Database",
-                            "RemoveFolderSubtreeNoCaseFallback path=%s candidates=%lld",
-                            targetPath.c_str(),
-                            static_cast<long long>(candidateCount));
-        }
+    }
+    int64_t candidateCount = 0;
+    if (!strictScalarInt64(m_db, "SELECT COUNT(*) FROM temp.remove_folder_subtree_candidates;", candidateCount)) {
+        return rollbackWithSqliteError("count candidates");
+    }
+    if (candidateCount > 0) {
+        DIAG_ACTION_FMT("Database", "RemoveFolderSubtreeNoCaseFallback path=%s candidates=%lld",
+                        targetPath.c_str(), static_cast<long long>(candidateCount));
+    }
+    if (candidateCount == 0 && !unregisterRoot) {
+        if (!commitTransaction()) return rollbackWithError();
+        return {FolderSubtreeRemovalStatus::NoMatch, 0, false, {}};
     }
     removed = static_cast<int>((std::min<int64_t>)(candidateCount, std::numeric_limits<int>::max()));
 
@@ -18318,29 +18602,12 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         if (pathRc != SQLITE_DONE) {
             m_lastError = sqlite3_errmsg(m_db);
             sqlite3_finalize(selectPathsStmt);
-            executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-            return 0;
+            return rollbackWithError();
         }
         sqlite3_finalize(selectPathsStmt);
     } else {
-        m_lastError = sqlite3_errmsg(m_db);
-        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-        return 0;
+        return rollbackWithSqliteError("read candidate rows");
     }
-
-    if (!beginTransaction()) {
-        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-        return 0;
-    }
-
-    auto rollbackWithError = [this](const char* message) -> int {
-        if (message && *message) {
-            m_lastError = message;
-        }
-        rollbackTransaction();
-        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-        return 0;
-    };
 
     struct ConditionalDeleteStep {
         const char* schemaName;
@@ -18394,16 +18661,7 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
             continue;
         }
         if (!executeSQL(step.sql)) {
-            if (!step.required) {
-                DIAG_ACTION_FMT("Database",
-                                "RemoveFolderSubtreeSkipOptionalCleanup table=%s.%s err=%s",
-                                step.schemaName,
-                                step.tableName,
-                                sqlite3_errmsg(m_db));
-                continue;
-            }
-            m_lastError = std::string("removeFolderSubtreeFromDb: batch cleanup failed table=")
-                + step.schemaName + "." + step.tableName + " err=" + sqlite3_errmsg(m_db);
+            m_lastError = "removeFolderSubtreeFromDb: batch cleanup failed table=" + qualifiedTable + " err=" + m_lastError;
             return rollbackWithError(nullptr);
         }
     }
@@ -18412,11 +18670,42 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         const std::string deleteErr = sqlite3_errmsg(m_db);
         const int deleteErrorCode = sqlite3_extended_errcode(m_db);
         static thread_local bool s_retryingAfterSearchIndexRepair = false;
+        static thread_local bool s_retryingAfterReindex = false;
+        // 索引与表不一致时 SQLite 会拒绝删除并报 database disk image is malformed。
+        // 这在实际库里出现过（idx_* 报 row missing from index / wrong # of entries），
+        // 先重建索引再重试一次，而不是把错误直接丢给界面。
+        if (!s_retryingAfterReindex &&
+            (deleteErrorCode == SQLITE_CORRUPT || deleteErrorCode == SQLITE_CORRUPT_INDEX)) {
+            if (!sqlite3_get_autocommit(m_db) && !rollbackTransaction()) {
+                m_lastError = "removeFolderSubtreeFromDb: " + deleteErr + "; rollback failed: " + m_lastError;
+                return failure();
+            }
+            const char* reindexSql = "REINDEX;";
+            const bool reindexed = executeSQL(reindexSql);
+            if (reindexed) {
+                DIAG_ACTION_FMT("Database",
+                                "RemoveFolderSubtreeRecoveredIndexCorruption path=%s err=%s",
+                                targetPath.c_str(),
+                                deleteErr.c_str());
+                writerLk.unlock();
+                s_retryingAfterReindex = true;
+                auto retried = removeFolderSubtreeFromDbImpl(folderPath, deleteFilesFromDisk);
+                s_retryingAfterReindex = false;
+                return retried;
+            }
+            m_lastError = std::string("removeFolderSubtreeFromDb: audio row batch delete failed err=")
+                + deleteErr
+                + " reindex="
+                + (m_lastError.empty() ? std::string("failed") : m_lastError);
+            return failure();
+        }
         if (!s_retryingAfterSearchIndexRepair &&
             (deleteErrorCode == SQLITE_CORRUPT_VTAB ||
              IsRecoverableSearchIndexMalformedError(deleteErr))) {
-            rollbackTransaction();
-            executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
+            if (!sqlite3_get_autocommit(m_db) && !rollbackTransaction()) {
+                m_lastError = "removeFolderSubtreeFromDb: " + deleteErr + "; rollback failed: " + m_lastError;
+                return failure();
+            }
             std::string repairError;
             const bool dropped = DropSearchIndexTablesForRecovery(m_db, &repairError);
             const bool rebuilt = dropped && ensureFtsSchema();
@@ -18427,7 +18716,7 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
                                 deleteErr.c_str());
                 writerLk.unlock();
                 s_retryingAfterSearchIndexRepair = true;
-                const int retried = removeFolderSubtreeFromDb(folderPath, deleteFilesFromDisk);
+                auto retried = removeFolderSubtreeFromDbImpl(folderPath, deleteFilesFromDisk);
                 s_retryingAfterSearchIndexRepair = false;
                 return retried;
             }
@@ -18435,11 +18724,14 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
                 + deleteErr
                 + " repair="
                 + (repairError.empty() ? m_lastError : repairError);
-            return 0;
+            return failure();
         }
         m_lastError = std::string("removeFolderSubtreeFromDb: audio row batch delete failed err=")
             + deleteErr;
         return rollbackWithError(nullptr);
+    }
+    if (sqlite3_changes64(m_db) != candidateCount) {
+        return rollbackWithError("removeFolderSubtreeFromDb: deleted file count does not match candidates");
     }
 
     // Keep sidecar/cache tables honest even for older databases that were
@@ -18487,21 +18779,23 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
             continue;
         }
         if (!executeSQL(step.sql)) {
-            if (!step.required) {
-                DIAG_ACTION_FMT("Database",
-                                "RemoveFolderSubtreeSkipOptionalPrune table=%s.%s err=%s",
-                                step.schemaName,
-                                step.tableName,
-                                sqlite3_errmsg(m_db));
-                continue;
-            }
-            m_lastError = std::string("removeFolderSubtreeFromDb: prune orphan cache rows failed table=")
-                + step.schemaName + "." + step.tableName + " err=" + sqlite3_errmsg(m_db);
+            m_lastError = "removeFolderSubtreeFromDb: prune orphan cache rows failed table=" + qualifiedTable + " err=" + m_lastError;
             return rollbackWithError(nullptr);
         }
     }
 
-    if (tableExists(m_db, "directories")) {
+    if (!protectedRootKeys.empty() && tableExists(m_db, "directories")) {
+        const auto shouldRemove = [&](const std::string& key) {
+            return FolderRemovalContains(targetKey, key) &&
+                std::none_of(protectedRootKeys.begin(), protectedRootKeys.end(), [&](const auto& protectedKey) {
+                    return FolderRemovalContains(protectedKey, key) || FolderRemovalContains(key, protectedKey);
+                });
+        };
+        if (!DeleteMatchingFolderRows(m_db, "SELECT folder_path FROM directories",
+                                      "DELETE FROM directories WHERE folder_path = ?", shouldRemove)) {
+            return rollbackWithSqliteError("remove directory rows");
+        }
+    } else if (tableExists(m_db, "directories")) {
         sqlite3_stmt* deleteDirsStmt = nullptr;
         const char* deleteDirsSql =
             "DELETE FROM directories "
@@ -18527,8 +18821,22 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         }
     }
 
+    if (unregisterRoot) {
+        if (!DeleteMatchingFolderRows(m_db, "SELECT path FROM network_library_roots",
+                                      "DELETE FROM network_library_roots WHERE path = ?",
+                                      [&](const std::string& key) { return key == targetKey; })) {
+            return rollbackWithSqliteError("unregister network library root");
+        }
+        if (!WriteAppMetaString(m_db, kLibraryRootsMetaKey, retainedRoots)) {
+            return rollbackWithSqliteError("unregister library root");
+        }
+        if (sqlite3_changes(m_db) != 1) {
+            return rollbackWithError("removeFolderSubtreeFromDb: registration did not change");
+        }
+    }
+
     if (!executeSQL("DELETE FROM folder_index;")) {
-        return rollbackWithError("removeFolderSubtreeFromDb: clear folder_index failed");
+        return rollbackWithSqliteError("clear folder_index");
     }
     const char* rebuildFolderIndexSql =
         "INSERT INTO folder_index (folder_path, file_count, last_updated) "
@@ -18538,24 +18846,26 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
         "WHERE folder_path IS NOT NULL AND folder_path <> '' "
         "GROUP BY folder_path";
     if (!executeSQL(rebuildFolderIndexSql)) {
-        return rollbackWithError("removeFolderSubtreeFromDb: rebuild folder_index failed");
+        return rollbackWithSqliteError("rebuild folder_index");
     }
 
-    if (!commitTransaction()) {
-        rollbackTransaction();
-        executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
-        return 0;
+    int coverCachesRemoved = 0;
+    if (removed > 0) {
+        if (!executeSQL(kDeleteOrphanCoverRegistrySql)) return rollbackWithSqliteError("prune cover registry");
+        coverCachesRemoved += sqlite3_changes(m_db);
+        if (!executeSQL(kDeleteOrphanCoverThumbsSql)) return rollbackWithSqliteError("prune cover thumbnails");
+        coverCachesRemoved += sqlite3_changes(m_db);
     }
+
+    if (!invalidateFacetQueryCache()) return rollbackWithSqliteError("refresh facet indexes");
+    if (!commitTransaction()) return rollbackWithError();
     executeSQL("DELETE FROM temp.remove_folder_subtree_candidates;");
 
     if (removed > 0) {
-        pruneOrphanCoverCaches();
+        onOrphanCoverCachesPruned(coverCachesRemoved);
         invalidateFolderCoverFacetIndexForPaths(candidatePaths);
-        invalidateFacetQueryCache();
-        bumpDataRevision();
-    } else {
-        invalidateFacetQueryCache();
     }
+    bumpDataRevision();
 
     int diskDeleted = 0;
     int diskFailed = 0;
@@ -18586,10 +18896,11 @@ int Database::removeFolderSubtreeFromDb(const std::string& folderPath, bool dele
     }
 
     DIAG_ACTION_FMT("Database",
-                    "RemoveFolderSubtree path=%s removed=%d deleteDisk=%d diskDeleted=%d diskFailed=%d",
-                    targetPath.c_str(), removed, deleteFilesFromDisk ? 1 : 0, diskDeleted, diskFailed);
+                    "RemoveFolderSubtree path=%s removed=%d unregisteredRoot=%d deleteDisk=%d diskDeleted=%d diskFailed=%d",
+                    targetPath.c_str(), removed, unregisterRoot ? 1 : 0, deleteFilesFromDisk ? 1 : 0, diskDeleted, diskFailed);
     m_lastError.clear();
-    return removed;
+    std::sort(candidatePaths.begin(), candidatePaths.end());
+    return {FolderSubtreeRemovalStatus::Removed, removed, unregisterRoot, {}, std::move(candidatePaths)};
 }
 
 void Database::detachConnectionForSwitch() {
@@ -20070,7 +20381,8 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
     return out;
 }
 
-std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilter& filter, int limit) {
+std::vector<Database::CoverFacetEntry> Database::getCoverFacets(
+    const SearchFilter& filter, int limit, bool allowCachedFacets) {
     DIAG_SCOPED("Database.getCoverFacets");
     std::vector<CoverFacetEntry> results;
     if (!m_db || limit <= 0) return results;
@@ -20136,7 +20448,7 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
                         readiness.minimumExpectedRegistry);
     }
 
-    if (!registrySparse) {
+    if (allowCachedFacets && !registrySparse) {
         std::vector<uint8_t> payload;
         if (loadFacetQueryCache(persistentCacheKey, payload)) {
             if (DeserializeCoverFacetEntries(payload, results)) {
@@ -20144,7 +20456,7 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
                 return results;
             }
         }
-    } else {
+    } else if (registrySparse) {
         DIAG_ACTION("Search", "CoverFacetPersistentCacheBypass: registry sparse");
     }
 
@@ -20902,25 +21214,17 @@ Database::SqlResult Database::executeRawQuery(const std::string& sql) {
 // File-system watcher integration.
 
 // 支持的音频文件扩展名
-static bool IsAudioExtension(const std::string& ext) {
-    static const std::unordered_set<std::string> kAudioExts = {
-        ".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma",
-        ".opus", ".ape", ".wv", ".ac3", ".aac"
-    };
-    std::string lower = ext;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    return kAudioExts.count(lower) > 0;
-}
-
 static std::string GetExtensionUtf8(const std::string& pathUtf8) {
+    std::string extension;
     try {
         fs::path p = Utf8ToPath(pathUtf8);
-        return PathToUtf8(p.extension());
+        extension = PathToUtf8(p.extension());
     } catch (...) {
-        auto dot = pathUtf8.rfind('.');
-        if (dot != std::string::npos) return pathUtf8.substr(dot);
-        return "";
+        return {};
     }
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return extension;
 }
 
 namespace {
@@ -21473,13 +21777,40 @@ void Database::watcherRescanWorkerThread() {
     }
 }
 
+void Database::refreshFileSystemWatcher() {
+    if (!m_db || !m_isPrimaryConnection || sqlite3_db_readonly(m_db, "main") != 0 ||
+        m_watcherRootsRefreshing.load(std::memory_order_acquire))
+        return;
+
+    auto roots = getLibraryRoots();
+    if (roots == m_watcherLibraryRoots &&
+        (roots.empty() || (m_fileSystemWatcher && m_fileSystemWatcher->isRunning())))
+        return;
+    if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
+    m_watcherLibraryRoots = roots;
+    m_watcherRootsRefreshing.store(true, std::memory_order_release);
+    try {
+        m_watcherRootRefreshThread = std::thread([this, roots = std::move(roots)] {
+            try {
+                startFileSystemWatcher(roots);
+            } catch (...) {
+                DIAG_ACTION_FMT("Watcher", "Unable to start live library watcher (%zu roots)", roots.size());
+            }
+            m_watcherRootsRefreshing.store(false, std::memory_order_release);
+        });
+    } catch (...) {
+        m_watcherRootsRefreshing.store(false, std::memory_order_release);
+        DIAG_ACTION_FMT("Watcher", "Unable to create library watcher thread (%zu roots)", m_watcherLibraryRoots.size());
+    }
+}
+
 void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirectories) {
-    // 停止已有的监听器
-    stopFileSystemWatcher();
+    m_fileSystemWatcher.reset();
 
     if (watchDirectories.empty()) return;
 
-    m_fileSystemWatcher = new FileSystemWatcher();
+    m_fileSystemWatcher = std::make_unique<FileSystemWatcher>();
+    m_fileSystemWatcher->setCoalesceWindowMs(150);
 
     // 添加监听目录
     for (const auto& dir : watchDirectories) {
@@ -21501,8 +21832,10 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
             return;
         }
 
-        const bool newIsAudio = IsAudioExtension(GetExtensionUtf8(event.path));
-        const bool oldIsAudio = IsAudioExtension(GetExtensionUtf8(event.oldPath));
+        const auto newExtension = GetExtensionUtf8(event.path);
+        const auto oldExtension = GetExtensionUtf8(event.oldPath);
+        const bool newIsAudio = isAudioFile(newExtension);
+        const bool oldIsAudio = isAudioFile(oldExtension);
 
         switch (event.type) {
             case FileSystemWatcher::EventType::FileAdded:
@@ -21525,20 +21858,14 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
 
             case FileSystemWatcher::EventType::FileRenamed:
                 if (oldIsAudio && newIsAudio) {
-                    std::string newFileName;
-                    try {
-                        newFileName = PathToUtf8(Utf8ToPath(event.path).filename());
-                    } catch (...) {
-                        newFileName.clear();
-                    }
-
-                    if (!updateFilePath(event.oldPath, event.path, newFileName)) {
-                        DIAG_ACTION_FMT("Watcher",
-                                        "Watcher rename DB update failed: %s -> %s",
-                                        event.oldPath.c_str(),
-                                        event.path.c_str());
-                    } else if (m_watcherChangeCallback) {
-                        m_watcherChangeCallback(WatcherChangeType::Renamed, event.path);
+                    const auto previous = getWatcherFileByPath(event.oldPath);
+                    if (previous.id > 0 && updateFilePath(previous.filePath, event.path, {})) {
+                        handleFileSystemEvent(event.path, false, false, true);
+                        if (m_watcherChangeCallback)
+                            m_watcherChangeCallback(WatcherChangeType::Renamed, event.path);
+                    } else {
+                        handleFileSystemEvent(event.oldPath, false, true, false);
+                        handleFileSystemEvent(event.path, true, false, false);
                     }
                 } else if (oldIsAudio && !newIsAudio) {
                     handleFileSystemEvent(event.oldPath, false, true, false);
@@ -21550,158 +21877,119 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
             default:
                 break;
         }
+        if (oldExtension == ".wvc") refreshWavPackCorrection(event.oldPath);
+        if (newExtension == ".wvc") refreshWavPackCorrection(event.path);
     });
 
     // 启动监听
-    m_fileSystemWatcher->start();
+    if (!m_fileSystemWatcher->start())
+        DIAG_ACTION_FMT("Watcher", "No live watch started (%zu roots)", watchDirectories.size());
 }
 
 void Database::stopFileSystemWatcher() {
-    if (m_fileSystemWatcher) {
-        m_fileSystemWatcher->stop();
-        delete m_fileSystemWatcher;
-        m_fileSystemWatcher = nullptr;
-    }
+    if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
+    m_fileSystemWatcher.reset();
+    m_watcherLibraryRoots.clear();
     stopWatcherRescanWorker();
+}
+
+AudioRecord Database::getWatcherFileByPath(const std::string& filePath) {
+    auto record = getFileByPath(filePath);
+#ifdef _WIN32
+    if (record.id <= 0) {
+        const fs::path path = Utf8ToPath(filePath);
+        const auto folder = HarkenSearch::CanonicalFolderPath(PathToUtf8(path.parent_path()));
+        const auto name = PathToUtf8(path.filename());
+        const char* query =
+            "SELECT file_path FROM audio_files WHERE folder_path = ? AND file_name = ? COLLATE NOCASE LIMIT 1";
+        auto* statement = checkoutStmt(query);
+        if (!statement) return record;
+        sqlite3_bind_text(statement, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement, 2, name.c_str(), -1, SQLITE_TRANSIENT);
+        std::string storedPath;
+        if (sqlite3_step(statement) == SQLITE_ROW) storedPath = safeGetText(statement, 0);
+        returnStmt(query, statement);
+        if (!storedPath.empty()) record = getFileByPath(storedPath);
+    }
+#endif
+    return record;
+}
+
+void Database::refreshWavPackCorrection(const std::string& correctionPath) {
+    auto mainPath = Utf8ToPath(correctionPath);
+    auto refresh = [this](const std::string& path) {
+        auto record = getWatcherFileByPath(path);
+        if (record.id <= 0) return;
+        uint32_t sampleRate = 0;
+        uint32_t channels = 0;
+        uint64_t frames = 0;
+        float duration = 0;
+        std::optional<bool> lossless;
+        if (!readAudioFileInfo(Utf8ToPath(record.filePath), sampleRate, channels, frames, duration, &lossless) ||
+            lossless == record.wavPackLossless)
+            return;
+        record.wavPackLossless = lossless;
+        if (updateFile(record))
+            notifyWatcherChange(WatcherChangeType::Modified, record.filePath);
+    };
+    mainPath.replace_extension(".wv");
+    refresh(PathToUtf8(mainPath));
+#ifndef _WIN32
+    mainPath.replace_extension(".WV");
+    refresh(PathToUtf8(mainPath));
+#endif
+}
+
+void Database::notifyWatcherChange(WatcherChangeType type, const std::string& path) {
+    invalidateFacetQueryCache();
+    bumpDataRevision();
+    if (m_watcherChangeCallback) m_watcherChangeCallback(type, path);
 }
 
 void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, bool isDeleted, bool isModified) {
     if (!m_db || filePath.empty()) return;
 
-    // The watcher may race with removal; verify existence and file type before reading metadata.
-    if (isAdded || isModified) {
-        if (Platform::FileSystem::ProbePath(filePath) !=
-                Platform::FileSystem::PathStatus::Present) return;
-        if (Platform::FileSystem::IsDirectory(filePath)) return;
-    }
-
+    const auto pathStatus = Platform::FileSystem::ProbePath(filePath);
     if (isDeleted) {
-        removeFileByPath(filePath);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Deleted, filePath);
+        if (pathStatus != Platform::FileSystem::PathStatus::Missing) return;
+        const auto record = getWatcherFileByPath(filePath);
+        if (record.id > 0 && removeFileByPath(record.filePath))
+            notifyWatcherChange(WatcherChangeType::Deleted, record.filePath);
         return;
     }
 
-    if (isAdded) {
-        // 文件添加：检查是否已存在
-        if (fileExists(filePath)) return;
+    if ((!isAdded && !isModified) || pathStatus != Platform::FileSystem::PathStatus::Present) return;
+    const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
+    if (!fileInfo.isRegularFile || !fileInfo.sizeAvailable) return;
 
-        // Read audio properties.
-        AudioRecord record;
-        record.filePath = filePath;
-
-        try {
-            fs::path p = Utf8ToPath(filePath);
-            record.fileName = PathToUtf8(p.filename());
-            record.extension = PathToUtf8(p.extension());
-            record.folderPath = PathToUtf8(p.parent_path());
-
-            // Read file size and modification time.
-            const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
-            record.fileSize = fileInfo.sizeAvailable ? fileInfo.sizeBytes : 0;
-            record.fileMtime = Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
-        } catch (...) {
-            return; // 文件路径解析失败
+    auto record = getWatcherFileByPath(filePath);
+    const bool newRecord = record.id <= 0;
+    try {
+        const auto path = Utf8ToPath(filePath);
+        if (newRecord) {
+            record.filePath = filePath;
+            record.fileName = PathToUtf8(path.filename());
+            record.folderPath = PathToUtf8(path.parent_path());
+            record.dateAdded = static_cast<int64_t>(std::time(nullptr));
         }
 
-        readAudioFileInfo(Utf8ToPath(filePath),
-                          record.sampleRate,
-                          record.channels,
-                          record.totalFrames,
-                          record.durationSeconds,
-                          &record.wavPackLossless);
-        
-        // Read metadata tags.
-        AudioMetadata metadata;
-        if (MetadataReader::readMetadata(filePath, metadata)) {
-            if (!metadata.title.empty()) record.title = metadata.title;
-            if (!metadata.artist.empty()) record.artist = metadata.artist;
-            if (!metadata.album.empty()) record.album = metadata.album;
-            if (!metadata.albumArtist.empty()) record.albumArtist = metadata.albumArtist;
-            if (metadata.replayGainTrack != 0.0f) record.replayGainTrack = metadata.replayGainTrack;
-            if (metadata.replayGainAlbum != 0.0f) record.replayGainAlbum = metadata.replayGainAlbum;
-            if (metadata.track > 0) record.trackNumber = metadata.track;
-            if (metadata.disc > 1) record.discNumber = metadata.disc;
-            if (!metadata.description.empty()) record.description = metadata.description;
-            if (!metadata.category.empty()) record.category = metadata.category;
-            else if (!metadata.genre.empty()) record.category = metadata.genre;
-
-            if (!metadata.genre.empty()) record.rawGenre = metadata.genre;
-            if (!metadata.instruments.empty()) record.rawInstruments = metadata.instruments;
-            TagVocabularyMapper::normalize(
-                record.rawGenre,
-                record.rawInstruments,
-                record.normGenre,
-                record.normInstruments,
-                record.normMoodTags,
-                record.vocalType
-            );
-            if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
-            else if (!metadata.comment.empty()) record.keywords = metadata.comment;
-            PopulateExtendedMeta(record.meta, metadata);
-        }
-
-        record.dateAdded = (int64_t)std::time(nullptr);
-        record.lastIndexed = record.dateAdded;
-
-        addFile(record);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Added, filePath);
-        return;
-    }
-
-    if (isModified) {
-        // 文件修改：更新元数据
-        AudioRecord existing = getFileByPath(filePath);
-        if (existing.id <= 0) {
-            // If the path is not in the database, handle it as an addition.
-            handleFileSystemEvent(filePath, true, false, false);
+        record.extension = GetExtensionUtf8(filePath);
+        record.fileSize = fileInfo.sizeBytes;
+        record.fileMtime = Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
+        if (!readAudioFileInfo(path, record.sampleRate, record.channels, record.totalFrames,
+                               record.durationSeconds, &record.wavPackLossless))
             return;
-        }
 
-        // Check whether the modification time actually changed.
-        try {
-            const int64_t newMtime =
-                Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
-            if (newMtime > 0) {
-                if (newMtime == existing.fileMtime) return; // No effective change.
-                existing.fileMtime = newMtime;
-            }
-            const auto modifiedFileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
-            existing.fileSize = modifiedFileInfo.sizeAvailable
-                ? modifiedFileInfo.sizeBytes
-                : std::numeric_limits<uint64_t>::max();
-        } catch (...) {}
-
-        readAudioFileInfo(Utf8ToPath(filePath),
-                          existing.sampleRate,
-                          existing.channels,
-                          existing.totalFrames,
-                          existing.durationSeconds,
-                          &existing.wavPackLossless);
-        
-        // Re-read metadata tags.
         AudioMetadata metadata;
-        if (MetadataReader::readMetadata(filePath, metadata)) {
-            if (!metadata.title.empty()) existing.title = metadata.title;
-            if (!metadata.artist.empty()) existing.artist = metadata.artist;
-            if (!metadata.album.empty()) existing.album = metadata.album;
-            if (!metadata.albumArtist.empty()) existing.albumArtist = metadata.albumArtist;
-            if (metadata.track > 0) existing.trackNumber = metadata.track;
-            if (metadata.disc > 1) existing.discNumber = metadata.disc;
-            if (!metadata.description.empty()) existing.description = metadata.description;
-            if (!metadata.category.empty()) existing.category = metadata.category;
-            else if (!metadata.genre.empty()) existing.category = metadata.genre;
-            if (!metadata.keywords.empty()) existing.keywords = metadata.keywords;
-            else if (!metadata.comment.empty()) existing.keywords = metadata.comment;
-            PopulateExtendedMeta(existing.meta, metadata);
-        }
-
-        existing.lastIndexed = (int64_t)std::time(nullptr);
-        updateFile(existing);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Modified, filePath);
+        if (MetadataReader::readMetadata(filePath, metadata))
+            ApplyAudioMetadataToRecord(record, metadata);
+    } catch (...) {
+        return;
     }
+
+    record.lastIndexed = static_cast<int64_t>(std::time(nullptr));
+    if (upsertFile(record, newRecord))
+        notifyWatcherChange(newRecord ? WatcherChangeType::Added : WatcherChangeType::Modified, record.filePath);
 }
 
 void Database::interrupt() {
@@ -21712,36 +22000,46 @@ void Database::interrupt() {
 
 // Fast search suggestions backed by the FTS5 vocabulary index.
 
-std::vector<std::string> Database::getSearchSuggestions(const std::string& query, int limit) {
+std::vector<std::string> Database::getSearchSuggestions(const std::string& query, int limit, int maxTermBytes) {
     std::vector<std::string> results;
-    if (!m_db || query.empty() || limit <= 0) return results;
+    if (!m_db || query.empty() || limit <= 0 || maxTermBytes < 2) return results;
 
     // FTS terms are lowercase, so normalize the query before the range scan.
     std::string lowerQuery = query;
-    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     // Build the exclusive upper bound for the B-tree prefix query.
     std::string upperQuery = lowerQuery;
     upperQuery.back() = static_cast<char>(upperQuery.back() + 1);
 
-    // Indexed prefix query:
-    // Use the B-tree index and rank by document frequency without a temporary GROUP BY.
-    const char* sql = "SELECT term FROM audio_files_vocab "
-                      "WHERE term >= ? AND term < ? "
-                      "ORDER BY doc DESC LIMIT ?";
+    const char* sql = "SELECT term FROM temp.audio_files_suggestion_vocab "
+                      "WHERE term >= ?1 AND term < ?2 "
+                      "AND col IN ('file_name', 'title', 'artist', 'album', 'description', 'keywords', 'category') "
+                      "AND length(term) <= min(?4, 32) AND (length(term) > 1 OR unicode(term) > 127) "
+                      "AND term GLOB '*[^0-9]*' "
+                      "AND instr(?5, '|' || ltrim(term, '0123456789') || '|') = 0 "
+                      "AND aura_utf8_bytes(term) <= ?4 "
+                      "GROUP BY term ORDER BY max(doc) DESC, length(term), term LIMIT ?3";
+    static const std::string extensionTokens = [] {
+        std::string tokens = "|";
+        for (const auto& extension : AUDIO_EXTENSIONS) {
+            tokens.append(extension, 1, std::string::npos);
+            tokens.push_back('|');
+        }
+        return tokens;
+    }();
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, lowerQuery.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, upperQuery.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(stmt, 3, limit);
+        sqlite3_bind_int(stmt, 4, maxTermBytes);
+        sqlite3_bind_text(stmt, 5, extensionTokens.c_str(), -1, SQLITE_STATIC);
 
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            std::string term = safeGetText(stmt, 0);
-            // Drop one-character terms and filename-extension tokens.
-            if (term.length() > 1 && term.find(".wav") == std::string::npos && term.find(".mp3") == std::string::npos) {
-                results.push_back(term);
-            }
+            results.emplace_back(safeGetText(stmt, 0));
         }
         sqlite3_finalize(stmt);
     }

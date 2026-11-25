@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.45 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.47 LANGUAGES C CXX)
 
 enable_testing()
 add_executable(TestPerformanceMonitor EXCLUDE_FROM_ALL tests/test_performance_monitor.cpp)
@@ -684,6 +684,7 @@ set(APP_SOURCES
     src/ThemeScheduleUI.cpp
     src/ThemeSchedulePaletteCodec.cpp
     src/ThemeSchedulePaletteFiles.cpp
+    src/ThemeLibraryFiles.cpp
     src/ThemeInspector.cpp
     src/AnnotationBridge.cpp
     src/CueviFeedbackClient.cpp
@@ -892,6 +893,11 @@ if(WIN32)
     target_compile_features(TestFloatingPanelClampPolicy PRIVATE cxx_std_17)
     target_compile_options(TestFloatingPanelClampPolicy PRIVATE /utf-8)
     add_test(NAME FloatingPanelClampPolicy COMMAND TestFloatingPanelClampPolicy)
+    add_executable(TestPinnedTaskbarIconRefresh EXCLUDE_FROM_ALL tests/test_pinned_taskbar_icon_refresh.cpp)
+    target_include_directories(TestPinnedTaskbarIconRefresh PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestPinnedTaskbarIconRefresh PRIVATE cxx_std_17)
+    target_compile_options(TestPinnedTaskbarIconRefresh PRIVATE /utf-8)
+    add_test(NAME PinnedTaskbarIconRefresh COMMAND TestPinnedTaskbarIconRefresh)
     add_executable(TestSettingsBodyScrollHeight EXCLUDE_FROM_ALL tests/test_settings_body_scroll_height.cpp)
     target_include_directories(TestSettingsBodyScrollHeight PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_features(TestSettingsBodyScrollHeight PRIVATE cxx_std_17)
@@ -1129,6 +1135,23 @@ endif()
 add_test(NAME ThemeSchedulePaletteFiles COMMAND TestThemeSchedulePaletteFiles
     "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-schedule-palette-files")
 
+add_executable(TestThemeLibraryFiles EXCLUDE_FROM_ALL
+    tests/test_theme_library_files.cpp
+    src/ThemeLibraryFiles.cpp src/platform/filesystem_std.cpp)
+if(WIN32)
+    target_sources(TestThemeLibraryFiles PRIVATE
+        src/platform/filesystem_win32.cpp src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp)
+    target_link_libraries(TestThemeLibraryFiles PRIVATE shlwapi)
+endif()
+target_include_directories(TestThemeLibraryFiles PRIVATE src)
+target_compile_features(TestThemeLibraryFiles PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestThemeLibraryFiles PRIVATE /utf-8)
+endif()
+add_test(NAME ThemeLibraryFiles COMMAND TestThemeLibraryFiles
+    "${CMAKE_CURRENT_BINARY_DIR}/Testing/theme-library-files")
+
 add_executable(TestSettingsFileAtomicSave EXCLUDE_FROM_ALL
     tests/test_settings_file_atomic_save.cpp src/platform/filesystem_std.cpp)
 if(WIN32)
@@ -1247,6 +1270,8 @@ add_test(NAME DiagnosticLogBundle COMMAND TestDiagnosticLogBundle)
 aura_set_test_labels(DiagnosticLogBundle core)
 
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
+# External AI authorization document: the settings page reads and writes it.
+list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp src/ExternalAiClientLink.cpp src/ExternalAiPlaylistBridge.cpp src/ExternalAiPlaylistService.cpp src/ExternalAiBridgeServer.cpp)
 if(AURA_BUILD_DIAGNOSTICS)
     list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
     list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)
@@ -2957,6 +2982,7 @@ target_include_directories(TestWavPackDecode PRIVATE
 )
 target_link_libraries(TestWavPackDecode PRIVATE harken_wavpack)
 target_compile_features(TestWavPackDecode PRIVATE cxx_std_17)
+target_compile_definitions(TestWavPackDecode PRIVATE HARKEN_TEST_WAVPACK_VERIFICATION_COUNT)
 if(MSVC)
     target_compile_options(TestWavPackDecode PRIVATE /W3 /utf-8)
 endif()

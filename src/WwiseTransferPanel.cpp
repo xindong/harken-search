@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "HarkenSearchWidgets.h"
 #include "Theme.h"
+#include "ThemeModuleColors.h"
 #include "Localization.h"
 #include "DiagnosticsLogger.h"
 #include "../thirdparty/lucide/IconsLucide.h"
@@ -106,6 +107,7 @@ enum class AsyncKind : int {
     PickRowTemplate = 2,
     Reveal = 3,
     RefreshFromWwise = 4,
+    Transfer = 5,
 };
 
 struct AsyncOp {
@@ -118,10 +120,19 @@ struct AsyncOp {
     std::string result;                 // picked path / reveal path / error
     ExistingObjectMap refreshedExisting;
     ExistingOriginalsSet refreshedWavs;
+    // Transfer 专用：结果与实时进度（进度由 executeTransfer 的回调写入）
+    TransferResult transferResult;
+    std::atomic<int> transferDone{0};
+    std::atomic<int> transferTotal{0};
+    std::atomic<bool> transferFailed{false};
+    std::atomic<bool> transferFinishedOnce{false};
+    std::atomic<int> transferFailedCount{0};
+    std::thread transferThread;   // 传输线程：shutdown 时 join，避免退出时线程还在跑
 };
 
 std::mutex g_asyncMu;
 AsyncOp g_async;
+
 
 bool ensureTerminalSoundLayer(std::vector<WwiseStructureNode>& structure);
 
@@ -295,7 +306,7 @@ void drawFieldLabel(const char* label, const char* hint = nullptr) {
     const ThemeColorScheme& th = ThemeColors::current();
     ImGui::PushStyleColor(ImGuiCol_Text,
         ImGui::ColorConvertFloat4ToU32(withAlpha(
-            mixColor(th.interfaceText, th.menuText, 0.24f), 0.88f)));
+            mixColor(kWwiseBodyTextColor.Resolve(th), kWwiseLabelTextColor.Resolve(th), 0.24f), 0.88f)));
     ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
     if (hint && hint[0]) {
@@ -309,7 +320,7 @@ void drawSectionHint(const char* text) {
     const ThemeColorScheme& th = ThemeColors::current();
     ImGui::PushStyleColor(ImGuiCol_Text,
         ImGui::ColorConvertFloat4ToU32(withAlpha(
-            mixColor(th.interfaceText, th.chromeBorder, 0.30f), 0.82f)));
+            mixColor(kWwiseBodyTextColor.Resolve(th), th.chromeBorder, 0.30f), 0.82f)));
     ImGui::TextWrapped("%s", text);
     ImGui::PopStyleColor();
 }
@@ -327,7 +338,7 @@ ImVec4 wwiseTextTone(const ImVec4& accent,
                      float accentMix = 0.24f,
                      float alpha = 0.96f) {
     const ThemeColorScheme& th = ThemeColors::current();
-    return withAlpha(mixColor(th.menuText, accent, accentMix), alpha);
+    return withAlpha(mixColor(kWwiseLabelTextColor.Resolve(th), accent, accentMix), alpha);
 }
 
 void drawWwiseSectionTitle(const char* title,
@@ -520,7 +531,7 @@ void drawStatChip(const char* label,
     const ImVec4 chipBase = mixColor(th.frameBgBase, th.resultsBG, 0.18f);
     const ImVec4 bg = withAlpha(mixColor(chipBase, tone, 0.24f), 0.96f);
     const ImVec4 border = withAlpha(mixColor(th.chromeBorder, tone, 0.56f), 0.94f);
-    const ImVec4 textColor = withAlpha(mixColor(th.menuText, tone, 0.42f), 0.98f);
+    const ImVec4 textColor = withAlpha(mixColor(kWwiseLabelTextColor.Resolve(th), tone, 0.42f), 0.98f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p0, p1, ImGui::ColorConvertFloat4ToU32(bg), style.FrameRounding);
@@ -898,6 +909,7 @@ struct ObjTypeVisual {
 };
 ObjTypeVisual objectTypeVisual(WwiseObjectType t) {
     const ThemeColorScheme& th = ThemeColors::current();
+    const auto wwise = ResolveThemeModuleColors(th).wwise;
     // F-034 /colorize: anchor on wwiseParentBadge / wwiseLeafBadge so badges stay
     // distinguishable across all 5 themes. Mix toward interfaceText at constant 0.18f
     // (was 0.08–0.24 scattered) so containers look harmonious as a family.
@@ -905,23 +917,23 @@ ObjTypeVisual objectTypeVisual(WwiseObjectType t) {
     const float kAlpha = 0.92f;
     switch (t) {
         case WwiseObjectType::WorkUnit:
-            return {"WU", withAlpha(mixColor(th.wwiseParentBadge, th.menuText, kMix), kAlpha)};
+            return {"WU", withAlpha(mixColor(wwise.parentBadge, wwise.labelText, kMix), kAlpha)};
         case WwiseObjectType::VirtualFolder:
-            return {"VF", withAlpha(mixColor(th.wwiseParentBadge, th.interfaceText, kMix), kAlpha)};
+            return {"VF", withAlpha(mixColor(wwise.parentBadge, wwise.bodyText, kMix), kAlpha)};
         case WwiseObjectType::ActorMixer:
-            return {"AM", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseLeafBadge, kMix), kAlpha)};
+            return {"AM", withAlpha(mixColor(wwise.parentBadge, wwise.leafBadge, kMix), kAlpha)};
         case WwiseObjectType::RandomContainer:
-            return {"Rnd", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseDiffReplaced, kMix), kAlpha)};
+            return {"Rnd", withAlpha(mixColor(wwise.parentBadge, wwise.replaced, kMix), kAlpha)};
         case WwiseObjectType::SequenceContainer:
-            return {"Seq", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseConnectOk, kMix), kAlpha)};
+            return {"Seq", withAlpha(mixColor(wwise.parentBadge, wwise.connected, kMix), kAlpha)};
         case WwiseObjectType::SwitchContainer:
-            return {"Swt", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseDiffNew, kMix), kAlpha)};
+            return {"Swt", withAlpha(mixColor(wwise.parentBadge, wwise.newItem, kMix), kAlpha)};
         case WwiseObjectType::BlendContainer:
-            return {"Bld", withAlpha(mixColor(th.wwiseParentBadge, th.wwiseDiffUnresolved, kMix), kAlpha)};
+            return {"Bld", withAlpha(mixColor(wwise.parentBadge, wwise.unresolved, kMix), kAlpha)};
         case WwiseObjectType::SoundSFX:
-            return {"SFX", withAlpha(th.wwiseLeafBadge, kWwiseBadgeAlpha)};
+            return {"SFX", withAlpha(wwise.leafBadge, kWwiseBadgeAlpha)};
     }
-    return {"??", withAlpha(th.wwiseDiffNeutral, kWwiseAlphaMid)};
+    return {"??", withAlpha(wwise.neutral, kWwiseAlphaMid)};
 }
 
 // ---------- Async dispatchers ---------------------------------------------
@@ -1065,6 +1077,36 @@ void pumpAsyncCompletion() {
                    std::to_string(g_ps.cachedWavs.size()) + " WAVs.")
                 : ("Refresh failed: " + result);
             break;
+        case AsyncKind::Transfer: {
+            TransferResult transfer;
+            {
+                std::lock_guard<std::mutex> lk(g_asyncMu);
+                transfer = std::move(g_async.transferResult);
+                g_async.transferResult = TransferResult{};
+            }
+            g_ps.lastResult = std::move(transfer);
+            g_ps.hasResult = true;
+            DIAG_SYSTEM_FMT("Wwise", "ImportComplete:success=%d total=%d imported=%d skipped=%d failed=%d",
+                            g_ps.lastResult.failed == 0 && g_ps.lastResult.aggregateError.empty() ? 1 : 0,
+                            g_ps.lastResult.total,
+                            g_ps.lastResult.imported,
+                            g_ps.lastResult.skipped,
+                            g_ps.lastResult.failed);
+            for (int i = 0; i < (int)g_ps.lastResult.items.size(); ++i) {
+                const auto& item = g_ps.lastResult.items[(size_t)i];
+                DIAG_ACTION_FMT("Wwise", "ImportItem:index=%d status=%s", i, toString(item.status));
+            }
+            if (!g_ps.lastResult.aggregateError.empty()) {
+                g_ps.lastActionMessage = "Transfer failed: " + g_ps.lastResult.aggregateError;
+            } else {
+                std::ostringstream oss;
+                oss << "Transfer complete: " << g_ps.lastResult.imported << " imported / "
+                    << g_ps.lastResult.skipped << " skipped / "
+                    << g_ps.lastResult.failed << " failed";
+                g_ps.lastActionMessage = oss.str();
+            }
+            break;
+        }
         case AsyncKind::None:
             break;
     }
@@ -1080,13 +1122,14 @@ ImVec4 statusColorFor(DiffStatus s) {
     // F-034 /colorize: per-theme semantic tokens; no more inline mixing on volatile
     // base tokens (e.g. LapisBlue's controlAccent=#FFFFFF would collapse New→NoChange).
     const ThemeColorScheme& th = ThemeColors::current();
+    const auto wwise = ResolveThemeModuleColors(th).wwise;
     switch (s) {
-        case DiffStatus::NoChange:   return withAlpha(th.wwiseDiffNeutral,    kWwiseAlphaLow);
-        case DiffStatus::New:        return withAlpha(th.wwiseDiffNew,        kWwiseAlphaStrong);
-        case DiffStatus::Replaced:   return withAlpha(th.wwiseDiffReplaced,   kWwiseAlphaStrong);
-        case DiffStatus::Unresolved: return withAlpha(th.wwiseDiffUnresolved, kWwiseAlphaStrong);
+        case DiffStatus::NoChange:   return withAlpha(wwise.neutral,   kWwiseAlphaLow);
+        case DiffStatus::New:        return withAlpha(wwise.newItem,   kWwiseAlphaStrong);
+        case DiffStatus::Replaced:   return withAlpha(wwise.replaced,  kWwiseAlphaStrong);
+        case DiffStatus::Unresolved: return withAlpha(wwise.unresolved, kWwiseAlphaStrong);
     }
-    return th.menuText;
+    return wwise.labelText;
 }
 
 void renderDiffNode(const WwiseDiffNode& node) {
@@ -1235,31 +1278,46 @@ void handleTransfer() {
         }
     }
 
-    const auto imports = expandStructure(cfg, g_ps.contexts, g_ps.sourceWavs);
+    auto imports = expandStructure(cfg, g_ps.contexts, g_ps.sourceWavs);
     DIAG_SYSTEM_FMT("Wwise", "ImportStart:count=%d conflict=%s",
                     (int)imports.size(), toString(cfg.conflictPolicy).c_str());
-    DiagScopedTimer transferTimer("Wwise", "importTotal");
-    g_ps.lastResult = executeTransfer(*g_ps.client, cfg, imports, /*progressCb*/ nullptr);
-    g_ps.hasResult = true;
-    DIAG_SYSTEM_FMT("Wwise", "ImportComplete:success=%d total=%d imported=%d skipped=%d failed=%d",
-                    g_ps.lastResult.failed == 0 && g_ps.lastResult.aggregateError.empty() ? 1 : 0,
-                    g_ps.lastResult.total,
-                    g_ps.lastResult.imported,
-                    g_ps.lastResult.skipped,
-                    g_ps.lastResult.failed);
-    for (int i = 0; i < (int)g_ps.lastResult.items.size(); ++i) {
-        const auto& item = g_ps.lastResult.items[(size_t)i];
-        DIAG_ACTION_FMT("Wwise", "ImportItem:index=%d status=%s", i, toString(item.status));
-    }
-    if (!g_ps.lastResult.aggregateError.empty()) {
-        g_ps.lastActionMessage = "Transfer failed: " + g_ps.lastResult.aggregateError;
+    if (!tryClaimAsync(AsyncKind::Transfer)) {
+        g_ps.lastActionMessage = "Another Wwise operation is still running.";
         return;
     }
-    std::ostringstream oss;
-    oss << "Transfer complete: " << g_ps.lastResult.imported << " imported / "
-        << g_ps.lastResult.skipped << " skipped / "
-        << g_ps.lastResult.failed << " failed";
-    g_ps.lastActionMessage = oss.str();
+    g_async.transferDone.store(0);
+    g_async.transferTotal.store(static_cast<int>(imports.size()));
+    WwiseTransferConfig transferCfg = cfg;
+    waapi::WaapiClient* clientPtr = g_ps.client.get();
+    g_ps.lastActionMessage = "Transfer started in background: " + std::to_string(imports.size()) + " items";
+    g_async.transferThread = std::thread([transferCfg, imports = std::move(imports), clientPtr]() mutable {
+        TransferResult result;
+        try {
+            result = executeTransfer(*clientPtr, transferCfg, imports,
+                [](int done, int total, const ItemReport&) {
+                    // done 是「已解析条目数」，可能重复或回退，这里只允许前进。
+                    const int previous = g_async.transferDone.load();
+                    if (done > previous) g_async.transferDone.store(done);
+                    g_async.transferTotal.store(total);
+                });
+        } catch (const std::exception& e) {
+            result.aggregateError = std::string("Transfer crashed: ") + e.what();
+        } catch (...) {
+            result.aggregateError = "Transfer crashed: unknown error";
+        }
+        {
+            std::lock_guard<std::mutex> lk(g_asyncMu);
+            g_async.transferResult = std::move(result);
+            g_async.success = g_async.transferResult.aggregateError.empty() &&
+                              g_async.transferResult.failed == 0;
+            g_async.transferFailed.store(!g_async.success);
+            g_async.transferFailedCount.store(g_async.transferResult.failed);
+            g_async.transferFinishedOnce.store(true);
+            g_async.result = g_async.transferResult.aggregateError;
+        }
+        g_async.ready.store(true);
+    });
+    return;
 }
 
 } // namespace
@@ -1298,13 +1356,14 @@ void RenderWwiseTransferPanel() {
     runLocalPreview();
 
     const ThemeColorScheme& th = ThemeColors::current();
+    const ThemeModuleColors modules = ResolveThemeModuleColors(th);
     static bool showProjectSettings = false;
     static bool showStagedSources = false;
     static bool showDiagnostics = false;
 
     // F-034 /colorize: anchor on theme-defined semantic tokens, not inline mixes.
-    const ImVec4 connectedColor    = withAlpha(th.wwiseConnectOk,   kWwiseAlphaStrong);
-    const ImVec4 disconnectedColor = withAlpha(th.wwiseConnectFail, kWwiseAlphaStrong);
+    const ImVec4 connectedColor    = withAlpha(modules.wwise.connected, kWwiseAlphaStrong);
+    const ImVec4 disconnectedColor = withAlpha(modules.wwise.failed, kWwiseAlphaStrong);
     const bool connected = g_ps.client && g_ps.client->isConnected();
 
     ImGui::SetNextWindowSize(ImVec2(1060, 640), ImGuiCond_FirstUseEver);
@@ -1315,6 +1374,8 @@ void RenderWwiseTransferPanel() {
         g_ps.visible = open;
         return;
     }
+    const bool hasBodyTextOverride = th.wwiseBodyText.has_value();
+    if (hasBodyTextOverride) ImGui::PushStyleColor(ImGuiCol_Text, modules.wwise.bodyText);
 
     auto& presets = presetList();
     const std::string& activeName = activePresetName();
@@ -1331,16 +1392,23 @@ void RenderWwiseTransferPanel() {
         drawStatChip(connected ? wz("Connected", u8"已连接") : wz("Disconnected", u8"未连接"), "",
                      connected ? connectedColor : disconnectedColor, 120.0f);
         ImGui::SameLine(0, 10.0f);
+        // 传输进行中禁止连接/断开：后台线程拿着当前 client 与目标工程，换工程会让批次写错地方。
+        const bool transferInFlight =
+            g_async.active.load() && g_async.kind == AsyncKind::Transfer;
         if (!connected) {
-            if (aura::ui::Button(wz("Connect", u8"连接"),
-                    aura::ui::ButtonOptions{aura::ui::ButtonVariant::PrimaryTransfer,
-                                            aura::ui::ButtonSize::Md})) {
+            aura::ui::ButtonOptions connectOptions;
+            connectOptions.variant = aura::ui::ButtonVariant::PrimaryTransfer;
+            connectOptions.size = aura::ui::ButtonSize::Md;
+            connectOptions.disabled = transferInFlight;
+            if (aura::ui::Button(wz("Connect", u8"连接"), connectOptions)) {
                 handleConnect();
             }
         } else {
-            if (aura::ui::Button(wz("Disconnect", u8"断开"),
-                    aura::ui::ButtonOptions{aura::ui::ButtonVariant::Secondary,
-                                            aura::ui::ButtonSize::Md})) {
+            aura::ui::ButtonOptions disconnectOptions;
+            disconnectOptions.variant = aura::ui::ButtonVariant::Secondary;
+            disconnectOptions.size = aura::ui::ButtonSize::Md;
+            disconnectOptions.disabled = transferInFlight;
+            if (aura::ui::Button(wz("Disconnect", u8"断开"), disconnectOptions)) {
                 handleDisconnect();
             }
         }
@@ -1483,7 +1551,7 @@ void RenderWwiseTransferPanel() {
     if (aura::ui::BeginAlertDialog("presetDeleteConfirm",
                                    wz("Delete preset", u8"删除预设"))) {
         ImGui::PushStyleColor(ImGuiCol_Text,
-            ImGui::ColorConvertFloat4ToU32(withAlpha(ThemeColors::current().menuText, 0.65f)));
+            ImGui::ColorConvertFloat4ToU32(withAlpha(modules.wwise.labelText, 0.65f)));
         ImGui::TextUnformatted(g_ps.presetNameBuf);
         ImGui::PopStyleColor();
         ImGui::Spacing();
@@ -1530,7 +1598,7 @@ void RenderWwiseTransferPanel() {
             ImGui::PopFont();
             ImGui::SameLine(0, 10.0f);
             drawStatChip(wz("Target", u8"目标"), g_ps.bufImportDest[0] ? wz("Set", u8"已设置") : wz("Missing", u8"缺失"),
-                         withAlpha(th.wwiseDiffNeutral, kWwiseAlphaMid),
+                         withAlpha(modules.wwise.neutral, kWwiseAlphaMid),
                          90.0f);
             aura::ui::Divider(aura::ui::DividerVariant::Inset);
 
@@ -1651,7 +1719,7 @@ void RenderWwiseTransferPanel() {
 
             drawWwiseSectionTitle(
                 wz("Wwise Structures", u8"Wwise 结构"),
-                th.wwiseParentBadge,
+                modules.wwise.parentBadge,
                 wz("Build the hierarchy, then refine the selected row below.",
                    u8"先搭建层级，再在下方细化当前选中行。"));
             ImGui::Spacing();
@@ -1720,12 +1788,12 @@ void RenderWwiseTransferPanel() {
                 const float splitGapLocal = 10.0f;
                 const float tableHeight = (std::max)(170.0f, structurePanelHeight * 0.38f);
                 const float tableWidth = (std::max)(260.0f, ImGui::GetContentRegionAvail().x - toolbarW - splitGapLocal);
-                const ImVec4 structureAccent = th.wwiseParentBadge;
+                const ImVec4 structureAccent = modules.wwise.parentBadge;
                 const ImVec4 structureTableHeader = wwiseSurfaceTone(structureAccent, 0.18f, 0.10f, 0.98f);
                 const ImVec4 structureTableRow = wwiseSurfaceTone(structureAccent, 0.05f, 0.04f, 0.96f);
                 const ImVec4 structureTableRowAlt = wwiseSurfaceTone(structureAccent, 0.09f, 0.16f, 0.98f);
                 const ImVec4 structureTableBorder = wwiseSurfaceTone(structureAccent, 0.34f, 0.06f, 0.95f);
-                const ImVec4 structureSelection = withAlpha(mixColor(th.resultsSelection, structureAccent, 0.42f), 0.26f);
+                const ImVec4 structureSelection = withAlpha(mixColor(modules.results.selection, structureAccent, 0.42f), 0.26f);
 
                 ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImGui::ColorConvertFloat4ToU32(structureTableHeader));
                 ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, ImGui::ColorConvertFloat4ToU32(structureTableBorder));
@@ -1734,7 +1802,7 @@ void RenderWwiseTransferPanel() {
                 ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImGui::ColorConvertFloat4ToU32(structureTableRowAlt));
                 ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertFloat4ToU32(structureSelection));
                 ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::ColorConvertFloat4ToU32(withAlpha(mixColor(structureSelection, structureAccent, 0.28f), 0.34f)));
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::ColorConvertFloat4ToU32(withAlpha(mixColor(structureSelection, th.resultsSelection, 0.40f), 0.42f)));
+                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::ColorConvertFloat4ToU32(withAlpha(mixColor(structureSelection, modules.results.selection, 0.40f), 0.42f)));
 
                 if (ImGui::BeginTable("wwiseStructureTable", 3,
                                       ImGuiTableFlags_BordersInnerH |
@@ -2026,10 +2094,24 @@ void RenderWwiseTransferPanel() {
                          96.0f);
             aura::ui::Divider(aura::ui::DividerVariant::Inset);
 
-            if (aura::ui::Button(wz("Transfer to Wwise", u8"传输到 Wwise"),
-                    aura::ui::ButtonOptions{aura::ui::ButtonVariant::PrimaryTransfer,
-                                            aura::ui::ButtonSize::Md,
-                                            ICON_LC_SEND})) handleTransfer();
+            const bool transferring =
+                g_async.active.load() && g_async.kind == AsyncKind::Transfer;
+            // 传输期间禁止连接/断开，避免后台线程把工程 A 的批次送进工程 B。
+            char transferLabel[96];
+            if (transferring) {
+                const int done = g_async.transferDone.load();
+                const int total = g_async.transferTotal.load();
+                std::snprintf(transferLabel, sizeof(transferLabel), L(Task_WwiseTransferringFmt), done, total);
+            } else {
+                std::snprintf(transferLabel, sizeof(transferLabel), "%s", wz("Transfer to Wwise", u8"传输到 Wwise"));
+            }
+            aura::ui::ButtonOptions transferOptions;
+            transferOptions.variant = aura::ui::ButtonVariant::PrimaryTransfer;
+            transferOptions.size = aura::ui::ButtonSize::Md;
+            transferOptions.icon = ICON_LC_SEND;
+            transferOptions.loading = transferring;
+            transferOptions.disabled = transferring;
+            if (aura::ui::Button(transferLabel, transferOptions)) handleTransfer();
 
             ImGui::SameLine(0, 10.0f);
             const bool refreshing =
@@ -2047,7 +2129,7 @@ void RenderWwiseTransferPanel() {
             if (!g_ps.lastActionMessage.empty()) {
                 ImGui::Spacing();
                 ImGui::PushStyleColor(ImGuiCol_Text,
-                    ImGui::ColorConvertFloat4ToU32(withAlpha(th.menuText, 0.65f)));
+                    ImGui::ColorConvertFloat4ToU32(withAlpha(modules.wwise.labelText, 0.65f)));
                 ImGui::TextWrapped("%s", localizedActionMessage(g_ps.lastActionMessage).c_str());
                 ImGui::PopStyleColor();
             }
@@ -2090,7 +2172,7 @@ void RenderWwiseTransferPanel() {
                     const bool canReveal = g_ps.client && g_ps.client->isConnected();
                     for (std::size_t i = 0; i < g_ps.lastResult.items.size(); ++i) {
                         const auto& it = g_ps.lastResult.items[i];
-                        ImVec4 col = withAlpha(th.menuText, 0.92f);
+                        ImVec4 col = withAlpha(modules.wwise.labelText, 0.92f);
                         bool isSuccess = false;
                         switch (it.status) {
                             case ItemStatus::Imported:
@@ -2194,11 +2276,29 @@ void RenderWwiseTransferPanel() {
         aura::ui::EndPanel();
     }
 
+    if (hasBodyTextOverride) ImGui::PopStyleColor();
     ImGui::End();
     g_ps.visible = open;
 }
 
+WwiseTransferProgress GetWwiseTransferProgress() {
+    WwiseTransferProgress snap;
+    const bool active = g_async.active.load();
+    const bool isTransfer = active && g_async.kind == AsyncKind::Transfer;
+    snap.active = isTransfer;
+    if (isTransfer) {
+        snap.done = g_async.transferDone.load();
+        snap.total = g_async.transferTotal.load();
+    }
+    snap.finished = !isTransfer && g_async.transferFinishedOnce.load();
+    snap.failed = g_async.transferFailed.load();
+    snap.failedCount = g_async.transferFailedCount.load();
+    return snap;
+}
+
 void ShutdownWwiseTransferPanel() {
+    // 先等后台传输结束，避免退出时线程还在用 clientPtr / 写全局状态。
+    if (g_async.transferThread.joinable()) g_async.transferThread.join();
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_ps.client) g_ps.client->disconnect();
     g_ps.client.reset();

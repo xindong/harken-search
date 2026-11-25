@@ -55,24 +55,35 @@ else if(id=="themeEditor") {
 #if AURA_BUILD_DIAGNOSTICS
     if(ProductEdition::hasFeature("theme_editor"))actionButton(L(Set_EditTheme),"theme-editor");
 #endif
-    actionButton(L(SetUX_CustomColors),"custom-colors");
+    actionButton(L(SetUX_ImportTheme),"import-theme");
+    su::Observe("import-theme");
+    if(!editor.themeImportResult.empty()){
+        ImGui::TextUnformatted(editor.themeImportResult.c_str());
+        su::Observe("import-theme-result");
+    }
     if(!draft.customThemeName.empty()){
         ImGui::TextWrapped("%s",draft.customThemeName.c_str());
         if(aura::ui::SmallActionButton(L(Main_ApplyCustomBtn))){draft.theme=AppTheme::Custom;draft.useCustomColors=false;}
     }
 }
 else if(id=="language") {int n=(int)draft.language;if(combo(n,{u8"简体中文","English",u8"日本語"}))draft.language=(AppLanguage)n;}
+else if(id=="uiScale") {
+    static const int kPercents[]{80,90,100,125,150,175,200};
+    const int safeValue=aura::ui::dpi::ResolveInterfaceScalePercent(draft.uiScalePercent);
+    int n=0;for(int i=0;i<7;++i)if(kPercents[i]==safeValue)n=i;
+    if(combo(n,{"80%","90%","100%","125%","150%","175%","200%"}))draft.uiScalePercent=kPercents[n];
+}
 else if(id=="systemFont") {
     auto& value=draft.readingFontSize;
     const int safeValue=ClampSettingsFontSize(value);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
-    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32"}))value=kFontSteps[n];
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
 }
 else if(id=="listFont") {
     auto& value=draft.listFontSize;
     const int safeValue=std::clamp(value,10,kMaxListFontPx);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
-    if(combo(n,{"10","11","12","13","14","16","18","20","22","24"}))value=kFontSteps[n];
+    if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);
@@ -142,6 +153,7 @@ else if(id=="perf") {
     }
 }
 else if(id=="threads")ImGui::SliderInt("##value",&runtime.threads,0,32,L(SetUX_D0Auto),ImGuiSliderFlags_AlwaysClamp);
+else if(id=="similarConcurrency") {ImGui::SliderInt("##value",&draft.similarityAnalysisConcurrency,1,16,"%d",ImGuiSliderFlags_AlwaysClamp);ImGui::TextDisabled("%s",L(SetUX_SimilarityConcurrencyHint));}
 else if(id=="startupScan")ImGui::Checkbox("##value",&draft.autoReconcileOnStartup);
 else if(id=="backfill")ImGui::Checkbox("##value",&draft.idleAssetBackfillEnabled);
 else if(id=="idleMinutes") {ImGui::BeginDisabled(!draft.idleAssetBackfillEnabled);ImGui::SliderInt("##value",&draft.idleAssetBackfillDelayMinutes,1,240,L(SetUX_DMin),ImGuiSliderFlags_AlwaysClamp);ImGui::EndDisabled();}

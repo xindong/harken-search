@@ -67,6 +67,10 @@ public:
                               WaveformExtractResult& out,
                               const std::atomic<bool>* cancelFlag = nullptr);
 
+    static bool ExtractExactMonoEnvelope(const std::string& filePath,
+                                         int targetPeaks,
+                                         std::vector<float>& outPeaks);
+
     static bool BuildMiniFromDetail(const std::vector<float>& maxDetail,
                                     const std::vector<float>& minDetail,
                                     int detailChannels,

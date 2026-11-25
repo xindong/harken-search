@@ -4,11 +4,53 @@
 
 #if __has_include("ScanDialogPresentation.h")
 #include "ScanDialogPresentation.h"
+#include "LibraryTaskProgress.h"
 using namespace HarkenSearch;
 static void Check(bool ok, const char* message) {
     if (!ok) { std::cerr << "FAIL: " << message << "\n"; std::exit(1); }
 }
 int main(int argc, char** argv) {
+    if (argc == 1 || std::string(argv[1]) == "--library-task-progress") {
+        using Phase = LibraryTaskPhase;
+        LibraryTaskNotice removal, scan, similarity;
+        Check(!removal.Update(0, Phase::Idle, false, 0), "idle footer needs no space");
+        Check(!scan.Update(1, Phase::Running, true, 1), "foreground progress suppresses fallback");
+        const int fallbackRows = removal.Update(1, Phase::Running, false, 2) +
+            scan.Update(1, Phase::Running, false, 2) +
+            similarity.Update(1, Phase::Running, false, 2);
+        Check(fallbackRows == 3, "all hidden progress owners get independent stacked rows");
+        Check(!scan.Update(1, Phase::Running, true, 3), "returning to foreground removes its row");
+        Check(scan.Update(1, Phase::Stopped, false, 4), "background stop is reported");
+        Check(!scan.Update(1, Phase::Stopped, false, 8), "stop row expires");
+        Check(removal.Update(1, Phase::Succeeded, false, 4), "hidden committed result is reported");
+        Check(!removal.Update(1, Phase::Succeeded, false, 8), "success row expires");
+        Check(removal.Update(2, Phase::NoMatch, false, 8), "no-match is a separate result");
+        Check(similarity.Update(1, Phase::Failed, false, 4), "unread failure gets a row");
+        Check(similarity.Update(1, Phase::Failed, false, 120), "unread failure does not expire");
+        Check(!similarity.Update(1, Phase::Failed, true, 121), "opening details suppresses the fallback");
+        Check(!similarity.Update(1, Phase::Failed, false, 122), "seen failure does not return");
+        Check(similarity.Update(2, Phase::Failed, false, 123), "a new job failure is not suppressed");
+        similarity.Dismiss();
+        Check(!similarity.Update(2, Phase::Failed, false, 124), "explicit dismissal hides unread failure");
+
+        FolderRemovalTask<int> task;
+        std::promise<void> allowCommit;
+        auto ready = allowCommit.get_future();
+        Check(task.Start(7, "fixture", [&ready](const std::string&) { ready.wait(); return 0; }),
+            "start returns without waiting for the transaction");
+        Check(task.Active() && !task.Poll(7), "poll does not wait for unfinished work");
+        Check(!task.Start(7, "second", [](const std::string&) { return 1; }), "duplicate task is not started");
+        allowCommit.set_value();
+        task.Wait();
+        Check(!task.Poll(8) && !task.Active(), "stale library completion cannot be applied");
+        Check(task.Start(8, "empty-root", [](const std::string&) { return 0; }), "new library starts safely");
+        task.Wait();
+        const auto result = task.Poll(8);
+        Check(result && result->path == "empty-root" && result->result == 0 && !task.Active(),
+            "same-library completion is delivered once even with zero audio rows");
+        std::cout << "PASS: library task visibility, result lifetimes and bound completion\n";
+        if (argc > 1) return 0;
+    }
     if (argc == 1 || std::string(argv[1]) == "--sampling-gap") {
         ScanDialogMetrics metrics;
         ScanDialogView view; view.surface = ScanDialogSurface::Progress;

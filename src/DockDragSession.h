@@ -14,6 +14,7 @@ public:
     bool BeginDrag(std::string_view moduleId, bool fromUnplacedWorkspace = false);
     void UpdatePreview(const DockHit& hit);
     DockHit CommitOnMouseUp();
+    DockHit CommitOnMouseUp(const DockDropPlan& plan);
     // Finish a title-bar handoff while keeping the module floating.  This
     // deliberately ignores any stale preview from an earlier frame.
     void CommitFloatingOnMouseUp();

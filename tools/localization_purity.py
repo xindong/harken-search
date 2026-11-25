@@ -10,13 +10,23 @@ baseline is emptied, this same code becomes a hard gate.
 
 Proper nouns, units and format tokens are not treated as language mixes.
 Wwise wz() strings and diagnostics panels stay out of scope.
+
+Run "python tools/localization_purity.py check" for the same gate used by
+the tests. "inventory --format json" links localized call sites to all three
+ledger cells; "--format markdown" lists remaining copy by window. A dynamic
+site is unresolved, not assumed localized. The coverage baseline counts
+(source path, display slot, literal) occurrences, without pinning line numbers.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
+import sys
+from bisect import bisect_left, bisect_right
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +35,9 @@ ROOT = Path(__file__).resolve().parents[1]
 LEDGER_PATH = ROOT / "locale" / "harken.ui.strings.json"
 SRC_ROOT = ROOT / "src"
 BASELINE_PATH = ROOT / "locale" / "aris.ui.strings.purity-baseline.json"
+COVERAGE_BASELINE = Path("tests/localization_coverage_baseline.json")
+NATIVE_SRC_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".m", ".mm"}
+LANGUAGES = ("zh", "en", "ja")
 
 FROZEN_IDS = {
     "View_InfoPanel",
@@ -153,16 +166,15 @@ SKIP_FILE_NAMES = {
     "DiagnosticFileLifecycle.cpp",
     "FrameBudgetDiagnostics.cpp",
 }
-UI_CALL_RE = re.compile(
-    r"\b(?:ImGui::)?("
-    r"TextUnformatted|TextDisabled|TextWrapped|TextColored|SmallButton|"
-    r"Button|ButtonText|MenuItem|BeginMenu|BeginPopupModal|BeginTabItem|"
-    r"TabItemButton|SeparatorText|ProgressBar|TableSetupColumn|"
-    r"Selectable|Checkbox|RadioButton|CollapsingHeader|TreeNodeEx|TreeNode|"
-    r"BulletText|SetTooltip|BeginItemTooltip|LabelText|"
-    r"InputText|InputInt|Combo|SliderInt|Begin|Text"
-    r")\s*\("
+UI_LABEL_FUNCTIONS = (
+    "TextUnformatted", "TextDisabled", "TextWrapped", "TextColored", "SmallButton",
+    "Button", "ButtonText", "MenuItem", "BeginMenu", "BeginPopupModal", "BeginTabItem",
+    "TabItemButton", "SeparatorText", "ProgressBar", "TableSetupColumn",
+    "Selectable", "Checkbox", "RadioButton", "CollapsingHeader", "TreeNodeEx", "TreeNode",
+    "BulletText", "SetTooltip", "BeginItemTooltip", "LabelText",
+    "InputText", "InputInt", "Combo", "SliderInt", "Begin", "Text",
 )
+UI_CALL_RE = re.compile(r"\b(?:ImGui::)?(" + "|".join(UI_LABEL_FUNCTIONS) + r")\s*\(")
 # The visible string is not the first argument on these calls (color/float
 # comes first); locate the first literal inside the call's argument list.
 # TextColored(color, "label") / ProgressBar(frac, size, "overlay").
@@ -894,6 +906,10 @@ PROTECTED_ROW_TOKENS = {
     # Lead 7-A mix ruling tier 3: Reverse/Mono/Tap look like ordinary English
     # words, so they are bound to their exact keys instead of the global
     # package — the same anti-smuggling logic that created this registry.
+    # 2026-11-20 external AI page: the nav row names the feature by its
+    # domain acronyms; no other row may carry them.
+    "SetUX_ExternalAiMcp": {"ai", "mcp"},
+    "ExtAi_AiSetupPromptFmt": {"codex", "config", "harken", "home", "mcp", "profile", "server", "toml"},
     "Sc_ToggleReverse": {"reverse"},
     "Sc_ToggleMono": {"mono"},
     "ScDesc_TapTempo": {"tap"},
@@ -1139,6 +1155,8 @@ def _win32_findings(rel: str, text: str) -> list[dict[str, str]]:
 
 def find_hardcoded_ui(src_root: Path = SRC_ROOT) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
+    legacy_stock = load_baseline(src_root.parent / BASELINE_PATH.relative_to(ROOT))
+    legacy_files = {key.split("|", 2)[1] for key in legacy_stock if key.startswith("ui|")}
     files = sorted(list(src_root.rglob("*.cpp")) + list(src_root.rglob("*.h")))
     for path in files:
         rel = path.relative_to(src_root).as_posix()
@@ -1146,7 +1164,13 @@ def find_hardcoded_ui(src_root: Path = SRC_ROOT) -> list[dict[str, str]]:
             continue
         if path.name in SKIP_FILE_NAMES or "generated" in path.name:
             continue
+        out_of_scope = _COVERAGE_FILE_SKIP_RE.match(path.name)
+        if out_of_scope and rel not in legacy_files:
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
+        masked = mask_comments(text)
+        code, _ = _coverage_lex(text)
+        first_finding = len(findings)
 
         def emit_call(func: str, func_pos: int, literal: str) -> None:
             line_no = text.count("\n", 0, func_pos)
@@ -1169,12 +1193,13 @@ def find_hardcoded_ui(src_root: Path = SRC_ROOT) -> list[dict[str, str]]:
                 }
             )
 
-        for match in UI_CALL_RE.finditer(text):
+        for match in UI_CALL_RE.finditer(code):
             func = match.group(1)
-            literal = _parse_first_string(text, match.end())
+            literal = _parse_first_string(masked, match.end())
             if literal is None and func in COLOR_FIRST_FUNCS:
-                literal = _parse_arg_string(text, match.end())
-            if literal is not None and _keep_visible_literal(func, literal):
+                literal = _parse_arg_string(masked, match.end())
+            if (literal is not None and _keep_visible_literal(func, literal)
+                    and not (func in _COVERAGE_FORMAT_SLOTS and _is_technical_fragment(literal.lstrip()))):
                 emit_call(func, match.start(), literal)
                 continue
             # 7-0 (E5): arg 0 carried no usable copy — either no literal at all
@@ -1182,11 +1207,11 @@ def find_hardcoded_ui(src_root: Path = SRC_ROOT) -> list[dict[str, str]]:
             # copy may then hide at depth 0 of ANY top-level argument
             # (Text(L(fmt), x ? u8"无" : v)). ID-ish arg0 ("##x", "×") stays
             # suppressed exactly as before.
-            if literal is None or literal.startswith("%"):
-                close = _match_paren(text, match.end() - 1)
+            if literal is None or literal.lstrip().startswith("%"):
+                close = _match_paren(code, match.end() - 1)
                 if close > 0:
                     for ai, (astart, aexpr) in enumerate(
-                            _split_top_args_spanned(text, match.end(), close)):
+                            _split_top_args_spanned(masked, match.end(), close)):
                         # MenuItem(label, "Ctrl+O", ...): the chord slot is
                         # global keycap notation (batch-4 ratified keycaps),
                         # never copy — same never-scanned-slot precedent as
@@ -1194,15 +1219,16 @@ def find_hardcoded_ui(src_root: Path = SRC_ROOT) -> list[dict[str, str]]:
                         if ai in SECONDARY_DENY_SLOTS.get(func, ()):
                             continue
                         for off, lit in _depth0_literals(aexpr):
-                            if _keep_visible_literal(func, lit) and not _is_technical_fragment(lit):
+                            if _keep_visible_literal(func, lit) and not _is_technical_fragment(lit.lstrip()):
                                 emit_call(func, astart + off, lit)
-        masked = mask_comments(text)
         findings.extend(_f6_wrapper_findings(rel, masked))
         findings.extend(_f6_local_site_findings(rel, masked))
         findings.extend(_f6_registry_findings(rel, masked))
         findings.extend(_gate_ext_findings(rel, masked))
         findings.extend(_helper_findings(rel, text))
         findings.extend(_win32_findings(rel, text))
+        if out_of_scope:
+            findings[first_finding:] = [item for item in findings[first_finding:] if item["key"] in legacy_stock]
     return [x for x in findings
             if x["text"] not in F6_VISIBLE_KEEP and x["text"] not in F6_TECH_KEEP_LITERALS]
 
@@ -1314,6 +1340,512 @@ def find_new_violations(
     return [item for item in items if item["key"] not in baseline]
 
 
+_COVERAGE_TOKEN_RE = re.compile(
+    r'//(?:\\\n|[^\n])*|/\*[\s\S]*?\*/'
+    r'|(?:u8|[uUL])?R"(?P<delimiter>[^()\\\s]{0,16})\((?P<raw>[\s\S]*?)\)(?P=delimiter)"'
+    r'|(?:u8|[uUL@])?"(?P<quoted>(?:\\[\s\S]|[^"\\\n])*)"'
+    r"|(?<![\w])(?:u8|[uUL])?'(?:\\[\s\S]|[^'\\\n])+'"
+)
+_COVERAGE_KEY_RE = re.compile(r"\b(?:(?:L|Lw)\s*\(\s*(\w+)\s*\)|LStr\s*::\s*(\w+))")
+_COVERAGE_FILE_SKIP_RE = re.compile(r"^(?:CoverWallLab|(?:Settings)?(?:DeveloperTools|Diagnostic)|DevTools|Wwise)", re.I)
+_COVERAGE_INTERNAL_FUNCTION_RE = re.compile(r"^(?:Draw|Render|Show|Open)\w*(?:Diagnostic|Wwise|CoverWallLab)")
+_COVERAGE_INTERNAL_CONTEXTS = {
+    ("src/ThemeEditor.cpp", "ThemeDiagPublicThemeLabel"),
+    ("src/WindowsMain.cpp", "WriteBugReportJson"),
+    ("src/ThemeMascot.cpp", "ThemeMascot::drawSleepZzz"),
+}
+_COVERAGE_IMGUI_LABELS = {
+    *UI_LABEL_FUNCTIONS,
+    "BeginCombo", "BeginListBox", "ColorEdit3", "ColorEdit4", "ColorPicker3", "ColorPicker4",
+    "DragFloat", "DragFloat2", "DragFloat3", "DragFloat4", "DragFloatRange2",
+    "DragInt", "DragInt2", "DragInt3", "DragInt4", "DragIntRange2",
+    "InputDouble", "InputFloat", "InputFloat2", "InputFloat3", "InputFloat4",
+    "InputInt2", "InputInt3", "InputInt4", "InputScalar", "InputScalarN",
+    "InputTextMultiline", "SliderAngle", "SliderFloat", "SliderFloat2", "SliderFloat3",
+    "SliderFloat4", "SliderInt2", "SliderInt3", "SliderInt4", "SliderScalar", "SliderScalarN",
+    "TableHeader", "TextLink", "TextLinkOpenURL", "VSliderFloat", "VSliderInt", "VSliderScalar",
+}
+_COVERAGE_IMGUI_SLOTS = {
+    **{name: (0,) for name in _COVERAGE_IMGUI_LABELS - {"BeginItemTooltip"}},
+    "BeginCombo": (0, 1), "InputTextWithHint": (0, 1), "TextColored": (1,),
+    "LabelText": (0, 1), "ProgressBar": (2,), "Combo": (0, 2),
+    "SetItemTooltip": (0,), "PlotLines": (0, 4), "PlotHistogram": (0, 4),
+}
+_COVERAGE_FORMAT_SLOTS = {
+    "Text": 0, "TextDisabled": 0, "TextWrapped": 0, "TextColored": 1, "LabelText": 1,
+    "BulletText": 0, "SetTooltip": 0, "SetItemTooltip": 0,
+}
+_COVERAGE_WRAPPERS = {
+    **F6_WRAPPER_SITES,
+    "SectionHeader": (0,), "BeginStandaloneWindow": (0,), "BeginAlertDialog": (1,),
+    "DrawSettingsSearchableLabel": (0,), "NotifySettingsSearchLabeledItem": (0,),
+    "SettingsButtonRow": (0,), "SettingsSliderRow": (0, 5), "SettingsToggleRow": (0,),
+    "HintAwareInputTextWithHint": (0, 1), "DrawForegroundMaintenanceToastCard": (0,),
+    "ActionButton": (0,), "SmallActionButton": (0,), "IconButton": (1,), "TextInput": (0,),
+    "NumberInput": (0, 5), "ComboMulti": (0, 2), "Tooltip": (0,),
+    "CreateWindowExW": (2,), "CreateWindowExA": (2,), "SetWindowTextW": (1,), "SetWindowTextA": (1,),
+    "MessageBox": (1, 2), "MessageBoxW": (1, 2), "MessageBoxA": (1, 2), "ShowMessageBox": (1, 2),
+    "AppendMenuW": (3,), "AppendMenuA": (3,), "AddText": (),
+    "PopupTitle": (0,), "PopupMuted": (0,), "registerField": (1, 2),
+}
+_COVERAGE_CALL_RE = re.compile(r"\b(?P<name>"
+    + "|".join(re.escape(name) for name in sorted(
+        {f"ImGui::{name}" for name in _COVERAGE_IMGUI_SLOTS}
+        | {f"aura::ui::{name}" for name in ("Button", "Checkbox", "Radio", "Toggle", "SliderFloat", "SliderRange", "Combo")}
+        | set(_COVERAGE_WRAPPERS), key=lambda name: (-len(name), name)))
+    + r")\s*\(")
+_COVERAGE_FIELD_RE = re.compile(
+    r"\b(?:display(?:Name|Label)(?:_?(?:Zh|En|Ja))?|lpstr(?:Title|Filter)|"
+    r"placeholder|trailingTooltip|errorText|tooltip)\b",
+    re.I,
+)
+_COVERAGE_OBJC_RE = re.compile(r"\b(setTitle|setMessageText|setInformativeText|addButtonWithTitle):")
+_COVERAGE_DISPLAY_FN_RE = re.compile(
+    r"(?i)(?:\w*Display(?:Name|Label)(?:For\w+|Utf8)?|GetWorkflowNode(?:Name|Help)|"
+    r"getNodeType(?:Name(?:Zh)?|Description)|\w+(?:Theme|Preset|Mode)(?:Name|Label|Description)|"
+    r"ThemeEditorGroup(?:Name|Hint)Zh)"
+)
+_COVERAGE_FUNCTION_RE = re.compile(
+    r"(?m)^[ \t]*(?:(?!(?:return|if|for|while|switch)\b)[\w:<>,*&]+[ \t]+)+"
+    r"(?P<name>(?:\w+::)*\w+)\s*\("
+)
+_COVERAGE_FUNCTION_BODY_RE = re.compile(r"\s*(?:(?:const|noexcept|override|final)\s*)*\{")
+_COVERAGE_ASSIGN_RE = re.compile(r"\b(\w+)\s*(?:\[[^\]\n]*\]\s*)?=(?![=>])")
+_COVERAGE_BRANCH_RE = re.compile(r"\b(?:if(?:\s+constexpr)?|switch|for|while|catch)\s*\(")
+_COVERAGE_BRANCH_KEYWORD_RE = re.compile(r"\b(?:else|do|try)\b\s*")
+_COVERAGE_SPACE_RE = re.compile(r"\s*")
+_COVERAGE_LOCAL_RE = re.compile(
+    r"(?:^|(?<=[;{}]))\s*(?:(?:const|constexpr|static|volatile)\s+)*"
+    r"(?!return\b|throw\b)[\w:]+(?:<[^<>{};\n]+>)?(?:\s+|\s*[*&]+\s*)"
+    r"(?P<name>\w+)\s*(?=[=;\[])"
+)
+_COVERAGE_RETURN_RE = re.compile(r"\breturn\b([^;]*);")
+_COVERAGE_VARIABLE_RE = re.compile(r"\s*(\w+)(?:\.(?:c_str|data)\(\))?\s*")
+_COVERAGE_COMPARISON_RE = re.compile(r"(?:==|!=|<=|>=|&&|\|\|)")
+_COVERAGE_TRANSPARENT_RE = re.compile(
+    r"\b(?:string|wstring|string_view|LedgerText|Utf8ToWide|WideFromUtf8|format|MakeLabel)\s*$"
+)
+_COVERAGE_TOKEN_FORMAT_RE = re.compile(
+    r"(?<!%)%(?:\d+\$)?[-+# 0']*(?:\d+|\*)?(?:\.(?:\d+|\*))?"
+    r"(?:hh|ll|[hlLjzt]|I64)?[diouxXfFeEgGaAcspn%]"
+)
+_COVERAGE_UNIT_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(unit) for unit in sorted(UNITS, key=len, reverse=True)) + r")\b",
+    re.I,
+)
+_COVERAGE_ESCAPE_RE = re.compile(r"(?:(?:\\x[0-9a-fA-F]{2})+|\\[0-7]{1,3}|\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[nrtvbf'\"\\?]|\n))")
+_COVERAGE_NON_COPY = {
+    ("src/main.cpp", "ImGui::TableSetupColumn[0]"): {"k", "v"},
+    ("src/main.cpp", "ImGui::SmallButton[0]"): {"X"},
+    ("src/main.cpp", "assignment:bmTxt"): {"BM", "bm"},
+    ("src/update/HarkenSearchUpdateNoticeUi.cpp", "ImGui::TableSetupColumn[0]"): {"title", "author"},
+    ("src/CubaseAdapter.cpp", "return:GetHostDisplayName"): {"Cubase", "Nuendo"},
+}
+
+
+def _coverage_unescape(quoted: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        token = match.group()
+        if token.startswith("\\x"):
+            raw = bytes.fromhex(token.replace("\\x", ""))
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return raw.decode("latin-1")
+        if token[1].isdigit():
+            return chr(int(token[1:], 8))
+        return "" if token == "\\\n" else decode_cpp_escapes(token)
+
+    return _COVERAGE_ESCAPE_RE.sub(replace, quoted)
+
+
+def _coverage_lex(source: str) -> tuple[str, list[tuple[int, int, str]]]:
+    literals = []
+
+    def blank(match: re.Match[str]) -> str:
+        if match["raw"] is not None:
+            literals.append((*match.span(), match["raw"]))
+        elif match["quoted"] is not None:
+            literals.append((*match.span(), _coverage_unescape(match["quoted"])))
+        return re.sub(r"[^\n]", " ", match.group())
+
+    return _COVERAGE_TOKEN_RE.sub(blank, source), literals
+
+
+def _coverage_arguments(code: str, start: int, end: int) -> list[tuple[int, int]]:
+    arguments = []
+    depth = 0
+    for offset, char in enumerate(code[start:end], start):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            arguments.append((start, offset))
+            start = offset + 1
+    arguments.append((start, end))
+    return arguments
+
+
+def _coverage_functions(code: str) -> list[tuple[int, int, str]]:
+    functions = []
+    for match in _COVERAGE_FUNCTION_RE.finditer(code):
+        close = _match_paren(code, match.end() - 1)
+        if close < 0:
+            continue
+        body = _COVERAGE_FUNCTION_BODY_RE.match(code, close + 1)
+        if body:
+            start = body.end()
+            end = _match_brace(code, start - 1)
+            if end >= 0:
+                functions.append((start, end, match["name"]))
+    return functions
+
+
+def _coverage_caption(text: str, site: str, path: str) -> str:
+    visible = text.split("##", 1)[0].strip()
+    if visible in F6_VISIBLE_KEEP | F6_TECH_KEEP_LITERALS | F6_ENDONYM_KEEP or visible in PROTECTED_PHRASES:
+        return ""
+    if visible in _COVERAGE_NON_COPY.get((path, site), ()):
+        return ""
+    if (path.removeprefix("src/"), visible) in WIN32_KEEP_LITERALS:
+        return ""
+    if site == "lpstrFilter":
+        visible = " / ".join(visible.split("\0")[::2]).strip(" /")
+    content = _COVERAGE_TOKEN_FORMAT_RE.sub(" ", visible)
+    content = _COVERAGE_UNIT_RE.sub(" ", content)
+    return visible if any(char.isalpha() for char in content) else ""
+
+
+def _coverage_window(path: str, context: str) -> str:
+    scope = path.split("/")[-1] if not path.endswith(("/main.cpp", "/ModuleUI.cpp")) else context
+    for pattern, window in (
+        (r"Workflow(?:Engine|Node|Dialog|Preview)", "工作流引擎"),
+        (r"Transfer|Export|DAW|Reaper|Cubase|ProTools", "传输与导出（仅盘点）"),
+        (r"Theme|Appearance", "主题与外观"),
+        (r"Settings|Preference|Shortcut", "设置与快捷键"),
+        (r"Cover", "封面"),
+        (r"Waveform|Audition|MagicEQ", "波形与试听"),
+        (r"Similar", "相似音效"),
+        (r"Sidebar|Playlist|Browser|FolderTree", "侧栏、浏览器与列表"),
+        (r"Db|Database|Scan|Relink|Library", "数据库与扫描"),
+        (r"Metadata|Rename|FileInfo|Field", "元数据与文件信息"),
+        (r"(?:^AI|ExternalAi|AIEngine|AISettings|AIRecognition|AISearch)", "AI 工具"),
+        (r"Bootstrap|WindowsMain|Consent|app_entry|UpdateNotice", "启动、同意与更新"),
+    ):
+        if re.search(pattern, scope, re.I):
+            return window
+    if path.startswith("src/platform/"):
+        return "系统窗口与文件对话框"
+    return "主窗口与通用控件"
+
+
+def _coverage_sites(path: str, source: str, *, include_all: bool) -> list[dict[str, Any]]:
+    code, literals = _coverage_lex(source)
+    if not include_all and not literals:
+        return []
+    starts = [literal[0] for literal in literals]
+    line_ends = [match.start() for match in re.finditer("\n", source)]
+    functions = _coverage_functions(code)
+    function_starts = [start for start, _, _ in functions]
+    brace_offsets = []
+    brace_scopes = []
+    active_scope = -1
+    scope_parent = {}
+    for brace in re.finditer(r"[{}]", code):
+        offset = brace.start()
+        if brace.group() == "{":
+            scope_parent[offset] = active_scope
+            active_scope = offset
+        else:
+            active_scope = scope_parent.get(active_scope, -1)
+        brace_offsets.append(offset)
+        brace_scopes.append(active_scope)
+
+    def scope_at(position: int) -> int:
+        scope_index = bisect_left(brace_offsets, position) - 1
+        return brace_scopes[scope_index] if scope_index >= 0 else -1
+
+    branch_bodies = set()
+    for match in _COVERAGE_BRANCH_RE.finditer(code):
+        close = _match_paren(code, match.end() - 1)
+        if close >= 0:
+            branch_bodies.add(_COVERAGE_SPACE_RE.match(code, close + 1).end())
+    branch_bodies.update(match.end() for match in _COVERAGE_BRANCH_KEYWORD_RE.finditer(code))
+    statement_blocks = branch_bodies | {match.end() for match in re.finditer(r"[;:{}]\s*(?=\{)", code)}
+    local_bindings = {}
+    for match in _COVERAGE_LOCAL_RE.finditer(code):
+        position = match.start("name")
+        local_bindings.setdefault((scope_at(position), match["name"]), position)
+    references = list(_COVERAGE_KEY_RE.finditer(code))
+    reference_starts = [match.start() for match in references]
+    assignments: dict[str, list[re.Match[str]]] = defaultdict(list)
+    for match in _COVERAGE_ASSIGN_RE.finditer(code):
+        assignments[match[1]].append(match)
+    rows: list[dict[str, Any]] = []
+    recorded: set[tuple[int, str, str]] = set()
+    used_literals: set[int] = set()
+
+    def context_at(position: int) -> str:
+        index = bisect_right(function_starts, position) - 1
+        while index >= 0:
+            _, end, name = functions[index]
+            if position < end:
+                return name
+            index -= 1
+        return ""
+
+    def emit(site: str, anchor: int, position: int, kind: str, value: str = "") -> None:
+        context = context_at(anchor)
+        if ((path, context) in _COVERAGE_INTERNAL_CONTEXTS
+                or _COVERAGE_INTERNAL_FUNCTION_RE.match(context.split("::")[-1])):
+            return
+        identity = (position, site, kind)
+        if identity in recorded or (kind == "literal" and position in used_literals):
+            return
+        recorded.add(identity)
+        window = _coverage_window(path, context or site)
+        if path == "src/main.cpp" and site in {"assignment:sendToEditorLabel", "assignment:recentHistoryLabel"}:
+            window = "传输与导出（仅盘点）"
+        row = {"path": path, "line": bisect_left(line_ends, position) + 1,
+               "site": site, "kind": kind, "window": window}
+        if context:
+            row["context"] = context
+        if kind == "literal":
+            row["text"] = value
+            used_literals.add(position)
+        elif kind in {"ledger", "reference"}:
+            row["id"] = value
+        rows.append(row)
+
+    def pieces(start: int, end: int) -> list[tuple[int, str]]:
+        low, high = bisect_left(starts, start), bisect_left(starts, end)
+        if low == high:
+            return []
+        extracted: list[tuple[int, str]] = []
+        previous_end = start
+        nested: list[bool] = []
+        for position, stop, text in literals[low:high]:
+            for mark in re.finditer(r"[()]", code[previous_end:position]):
+                absolute = previous_end + mark.start()
+                if mark.group() == "(":
+                    prefix = code[start:absolute].rstrip()
+                    groups = not prefix or prefix[-1] in "?:+=,(>"
+                    nested.append(groups or bool(_COVERAGE_TRANSPARENT_RE.search(prefix)))
+                elif nested:
+                    nested.pop()
+            before = code[max(start, position - 24):position].rstrip()
+            after = code[stop:min(end, stop + 24)].lstrip()
+            comparison = _COVERAGE_COMPARISON_RE.fullmatch(before[-2:]) or _COVERAGE_COMPARISON_RE.match(after)
+            if all(nested) and not comparison:
+                if extracted and not code[previous_end:position].strip():
+                    origin, previous = extracted[-1]
+                    extracted[-1] = (origin, previous + text)
+                else:
+                    extracted.append((position, text))
+            previous_end = stop
+        return extracted
+
+    def assignment_values(name: str, anchor: int) -> list[tuple[int, int]]:
+        scopes = {-1}
+        scope = scope_at(anchor)
+        while scope >= 0:
+            scopes.add(scope)
+            scope = scope_parent[scope]
+        ranges = []
+        for match in reversed(assignments.get(name, ())):
+            position = match.start()
+            if position >= anchor or code[max(0, position - 4):position].rstrip().endswith((".", "->", "::")):
+                continue
+            origin_scope = scope_at(position)
+            scope = origin_scope
+            while scope not in scopes:
+                if scope not in statement_blocks or local_bindings.get((scope, name), anchor) <= position:
+                    break
+                scope = scope_parent[scope]
+            else:
+                semi = code.find(";", match.end(), anchor)
+                if semi >= 0:
+                    ranges.append((match.end(), semi))
+                if origin_scope in scopes and position not in branch_bodies:
+                    break
+        return ranges
+
+    def collect(site: str, anchor: int, start: int, end: int, *, follow_variable: bool = False) -> None:
+        found = False
+        variable = _COVERAGE_VARIABLE_RE.fullmatch(code[start:end]) if follow_variable else None
+        ranges = [(start, end)]
+        if variable:
+            values = assignment_values(variable[1], anchor)
+            if values:
+                ranges = values
+                site = f"assignment:{variable[1]}"
+        for begin, stop in ranges:
+            for position, literal in pieces(begin, stop):
+                caption = _coverage_caption(literal, site, path)
+                if caption:
+                    emit(site, anchor, position, "literal", caption)
+                    found = True
+            if include_all:
+                low = bisect_left(reference_starts, begin)
+                high = bisect_left(reference_starts, stop)
+                for ref in references[low:high]:
+                    emit(site, anchor, ref.start(), "ledger", ref[1] or ref[2])
+                    found = True
+        if include_all and not found and code[start:end].strip():
+            emit(site, anchor, anchor, "dynamic")
+
+    for name, matches in assignments.items():
+        if not _COVERAGE_FIELD_RE.fullmatch(name):
+            continue
+        for match in matches:
+            end = code.find(";", match.end())
+            if end >= 0:
+                collect(name, match.start(), match.end(), end)
+    for begin, end, name in functions:
+        short = name.split("::")[-1]
+        if not (_COVERAGE_DISPLAY_FN_RE.fullmatch(short)
+                or (Path(path).name, short) in RETURN_HELPER_FNS):
+            continue
+        if name == "WorkflowEngine::getNodeTypeName" and not re.search(r"\bgetNodeTypeNameZh\s*\(", code):
+            continue
+        for match in _COVERAGE_RETURN_RE.finditer(code, begin, end):
+            collect(f"return:{name}", match.start(), *match.span(1))
+    for match in _COVERAGE_CALL_RE.finditer(code):
+        name = match["name"]
+        if name == "AddText" and not code[max(0, match.start() - 2):match.start()].endswith(("->", ".")):
+            continue
+        close = _match_paren(code, match.end() - 1)
+        if close < 0:
+            continue
+        short = name.split("::")[-1]
+        args = _coverage_arguments(code, match.end(), close)
+        if name.startswith("ImGui::"):
+            slots = _COVERAGE_IMGUI_SLOTS[short]
+        elif short in {"Button", "Checkbox", "Radio", "Toggle", "SliderFloat", "SliderRange", "Combo"}:
+            slots = {"Combo": (0, 2), "SliderFloat": (0, 4), "SliderRange": (0, 5)}.get(short, (0,))
+        elif name == "AddText":
+            slots = (4,) if len(args) >= 5 else (2,)
+        else:
+            slots = _COVERAGE_WRAPPERS[name]
+        fmt = _COVERAGE_FORMAT_SLOTS.get(short) if name.startswith("ImGui::") else None
+        if name == "registerField" and not path.endswith("/MetadataFields.cpp"):
+            continue
+        if short in {"TreeNode", "TreeNodeEx"}:
+            fmt_slot = 1 if short == "TreeNode" else 2
+            if len(args) > fmt_slot:
+                slots = (fmt_slot,)
+                fmt = fmt_slot
+        if fmt is not None and fmt < len(args):
+            formats = pieces(*args[fmt])
+            if not formats or any(re.search(r"%[^% ]*s", literal) for _, literal in formats):
+                slots += tuple(range(fmt + 1, len(args)))
+        for slot in slots:
+            if slot < len(args):
+                collect(f"{name}[{slot}]", match.start(), *args[slot], follow_variable=True)
+    for match in _COVERAGE_OBJC_RE.finditer(code):
+        close = code.find("]", match.end())
+        if close >= 0:
+            collect(match[1], match.start(), match.end(), close)
+    if include_all:
+        covered_refs = {(row["line"], row["id"]) for row in rows if row["kind"] == "ledger"}
+        for match in references:
+            ident = match[1] or match[2]
+            if (bisect_left(line_ends, match.start()) + 1, ident) not in covered_refs:
+                emit("resource reference", match.start(), match.start(), "reference", ident)
+    return sorted(rows, key=lambda row: (row["line"], row["site"], row.get("text", row.get("id", ""))))
+
+
+def scan_localization_coverage(root: Path = ROOT, *, include_all: bool = False) -> list[dict[str, Any]]:
+    rows = []
+    for path in sorted((root / "src").rglob("*")):
+        if path.suffix.lower() not in NATIVE_SRC_SUFFIXES or not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if (SKIP_DIR_PARTS.intersection(part.lower() for part in path.relative_to(root).parts)
+                or path.name in SKIP_FILE_NAMES or "generated" in path.name.lower()
+                or _COVERAGE_FILE_SKIP_RE.match(path.name)):
+            continue
+        rows.extend(_coverage_sites(rel, path.read_text(encoding="utf-8-sig"), include_all=include_all))
+    return rows
+
+
+def build_coverage_inventory(root: Path = ROOT) -> dict[str, Any]:
+    ledger_path = LEDGER_PATH.relative_to(ROOT)
+    source = (root / ledger_path).read_text(encoding="utf-8")
+    ledger = json.loads(source)
+    line_ends = [match.start() for match in re.finditer("\n", source)]
+    ledger_lines = {
+        match[1]: bisect_left(line_ends, match.start()) + 1
+        for match in re.finditer(r'"id"\s*:\s*"(\w+)"', source)
+    }
+    resources = [
+        {"id": entry["id"], "type": entry.get("type"), "path": ledger_path.as_posix(),
+         "line": ledger_lines.get(entry["id"]),
+         "translations": {lang: entry.get(lang) for lang in LANGUAGES}}
+        for entry in ledger["entries"]
+    ]
+    sites = scan_localization_coverage(root, include_all=True)
+    debt = [row for row in sites if row["kind"] == "literal"]
+    locations = {(row["path"], row["line"], row["text"]) for row in debt}
+    legacy = []
+    for item in find_hardcoded_ui(root / "src"):
+        path = f"src/{item['path']}"
+        line = int(item["line"])
+        site = item["func"]
+        text = _coverage_caption(item["text"], site, path)
+        if text and (path, line, text) not in locations and not _COVERAGE_FILE_SKIP_RE.match(Path(path).name):
+            locations.add((path, line, text))
+            legacy.append({"path": path, "line": line, "site": site, "text": text,
+                           "window": _coverage_window(path, site)})
+    for row in sites:
+        if row.get("id") in ledger_lines:
+            row["resource_line"] = ledger_lines[row["id"]]
+    return {
+        "schema_version": 1, "languages": LANGUAGES, "resources": resources,
+        "visible": [row for row in sites if row["kind"] not in {"literal", "reference"}],
+        "resource_references": [row for row in sites if row["kind"] == "reference"],
+        "debt": debt,
+        "legacy_only_copy": legacy,
+        "ledger_purity_findings": find_ledger_mixes(ledger),
+    }
+
+
+def _coverage_signature(row: dict[str, Any]) -> tuple[str, str, str]:
+    return row["path"], row["site"], row["text"]
+
+
+def _coverage_baseline_issues(root: Path, *, allow_stock: bool) -> list[str]:
+    stock: Counter[tuple[str, str, str]] = Counter()
+    path = root / COVERAGE_BASELINE
+    if allow_stock and path.is_file():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != 1 or not isinstance(payload.get("entries"), list):
+            raise PurityError("Invalid native localization coverage baseline schema")
+        for entry in payload["entries"]:
+            if not isinstance(entry, list) or len(entry) != 4 or not all(
+                isinstance(value, str) and value for value in entry[:3]
+            ):
+                raise PurityError(f"Invalid native coverage baseline entry: {entry!r}")
+            file_name, site, text, count = entry
+            key = (file_name, site, text)
+            if key in stock or type(count) is not int or count < 1:
+                raise PurityError(f"Invalid or duplicate native coverage baseline entry: {key!r}")
+            stock[key] = count
+    seen: Counter[tuple[str, str, str]] = Counter()
+    errors = []
+    for row in scan_localization_coverage(root):
+        if row["kind"] != "literal":
+            continue
+        key = _coverage_signature(row)
+        seen[key] += 1
+        if seen[key] > stock[key]:
+            errors.append(f"{row['path']}:{row['line']} {row['site']}: {row['text']!r}")
+    for (file_name, site, text), count in sorted((stock - seen).items()):
+        errors.append(f"{file_name} {site}: remove {count} stale baseline occurrence(s) of {text!r}")
+    return errors
+
+
 def check_visible_copy_purity(root: Path = ROOT, baseline: set[str] | None = None) -> None:
     baseline_path = root / "locale" / "aris.ui.strings.purity-baseline.json"
     if baseline is None:
@@ -1324,10 +1856,11 @@ def check_visible_copy_purity(root: Path = ROOT, baseline: set[str] | None = Non
     else:
         allowed = baseline
     new_violations = find_new_violations(all_current_violations(root), allowed)
-    if new_violations:
-        lines = [describe_violation(item) for item in new_violations]
+    lines = [describe_violation(item) for item in new_violations]
+    lines.extend(_coverage_baseline_issues(root, allow_stock=baseline is None))
+    if lines:
         raise PurityError(
-            f"{len(new_violations)} new UI language-purity violation(s) outside the baseline:\n"
+            f"{len(lines)} UI language-purity/coverage violation(s):\n"
             + "\n".join(lines)
         )
 
@@ -1412,3 +1945,62 @@ def find_private_tables(src_root: Path = SRC_ROOT,
                 "registered": (path_rel, a, b) in reg,
             })
     return out
+
+
+def coverage_summary(report: dict[str, Any]) -> str:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in report["debt"] + report["legacy_only_copy"]:
+        groups[row["window"]].append(row)
+    blank = [f"{row['id']}:{lang}" for row in report["resources"] for lang, value
+             in row["translations"].items() if not value]
+    lines = [
+        "# Harken Search 原生窗口三语盘点",
+        "",
+        f"- 资源键：{len(report['resources'])}；空值：{', '.join(blank) or '无'}",
+        f"- 已定位的可见参数：资源键 {sum(row['kind'] == 'ledger' for row in report['visible'])}，"
+        f"动态值 {sum(row['kind'] == 'dynamic' for row in report['visible'])}（不能据此判断是否已翻译）",
+        f"- 未直接关联到可见参数的资源引用：{len(report['resource_references'])}",
+        f"- 硬编码可见文案：{len(report['debt'])} 项；旧纯度规则额外定位到 {len(report['legacy_only_copy'])} 项。",
+        f"- 资源表语言混用：{len(report['ledger_purity_findings'])} 项，沿用原纯度基线。",
+        "- 传输和导出仅盘点，不在本卡修复；不盘点 Wwise、内部诊断、实验工具及旧 WebUI。",
+        "- 这里是静态扫描：运行时生成的文案、外部数据和未登记的渲染入口不等于三语已覆盖。",
+        "",
+    ]
+    for window, rows in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0])):
+        lines.extend((f"## {window}（{len(rows)}）", ""))
+        for row in sorted(rows, key=lambda item: (item["path"], item["line"], item["site"])):
+            copy = json.dumps(row["text"], ensure_ascii=False).replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(f"- {row['path']}:{row['line']} · {row['site']} · {copy}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check or inventory native UI localization coverage")
+    parser.add_argument("action", choices=("check", "inventory"), nargs="?", default="check")
+    parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    if args.action == "check":
+        try:
+            check_visible_copy_purity(args.root)
+        except PurityError as error:
+            print(error, file=sys.stderr)
+            return 1
+        print("UI language purity and native localization coverage passed.")
+    else:
+        report = build_coverage_inventory(args.root)
+        output = (
+            coverage_summary(report) if args.format == "markdown"
+            else json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        )
+        if args.output:
+            args.output.write_text(output, encoding="utf-8", newline="\n")
+        else:
+            sys.stdout.write(output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

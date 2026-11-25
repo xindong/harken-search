@@ -7,6 +7,7 @@
 #include "BuiltinThemeScheme.h"
 #include "ThemeEditorSchema.h"
 #include "ThemeInspector.h"
+#include "ThemeLibraryFiles.h"
 
 #include "AppState.h"
 #include "Theme.h"
@@ -14,6 +15,7 @@
 #include "Utils.h"
 #include "WindowsMain.h"
 #include "BuildConfig.h"
+#include "ThemeEditorRelationState.h"
 #include "platform/filesystem.h"
 #include "platform/theme_json_dialogs.h"
 #include "imgui.h"
@@ -38,6 +40,10 @@ static void ObserveEditorItem(const char*) {}
 #include <cstring>
 #include <cstdio>
 #include <sstream>
+#include <filesystem>
+
+// User theme files live next to settings.ini, never in the install directory.
+extern std::string g_appSettingsPathUtf8;
 
 
 // Editor State (file-static singleton)
@@ -55,13 +61,25 @@ struct ThemeEditorState {
 
     ThemeColorScheme openSnapshot{};   // snapshot when editor opened (revert target)
     ThemeColorScheme draft{};          // working copy — editor only touches this
-    std::vector<ThemeColorScheme> undoStack;
+    ThemeEditorRelationState relationState;
+    ThemeEditorRelationState openRelationState;
+
+    struct UndoEntry {
+        ThemeColorScheme draft{};
+        ThemeEditorRelationState relationState;
+    };
+    std::vector<UndoEntry> undoStack;
 
     char        themeName[128] = "My Theme";
     std::string exportMsg;
     std::string importMsg;
     std::string lastImportPath;
     std::string lastExportPath;
+
+    // Theme library: one JSON copy per imported theme, kept in user data.
+    std::vector<std::string> savedThemes;
+    bool        savedThemesLoaded = false;
+    std::string activeSavedTheme;
 
     bool        inspectMode = false;
     std::string inspectScrollTarget;
@@ -71,6 +89,27 @@ struct ThemeEditorState {
 
 static ThemeEditorState g_ed;
 static constexpr int kMaxUndoDepth = 30;
+
+static std::filesystem::path ThemeSettingsFilePath() {
+    if (!g_appSettingsPathUtf8.empty()) return std::filesystem::u8path(g_appSettingsPathUtf8);
+    return std::filesystem::u8path(GetExeDirUtf8() + "\\settings.ini");
+}
+
+static std::filesystem::path ThemeLibraryDir() {
+    return harken::theme_library::LibraryDirectory(ThemeSettingsFilePath());
+}
+
+static std::filesystem::path CustomThemeFilePath() {
+    return harken::theme_library::CustomThemePath(ThemeSettingsFilePath());
+}
+
+static void RefreshSavedThemes() {
+    g_ed.savedThemes.clear();
+    for (const auto& path : harken::theme_library::ListThemes(ThemeLibraryDir())) {
+        g_ed.savedThemes.push_back(path.u8string());
+    }
+    g_ed.savedThemesLoaded = true;
+}
 
 static const char* ThemePresetDisplayName(int presetIndex) {
     return (g_currentLanguage == AppLanguage::Chinese)
@@ -128,10 +167,64 @@ static const char* ThemeEditorGroupHintZh(ThemeEditorGroup group) {
     }
 }
 
+static const char* ThemeEditorLayerName(ThemeEditorLayer layer) {
+    switch (layer) {
+    case ThemeEditorLayer::Base:     return L(ThemeEditor_LayerBase);
+    case ThemeEditorLayer::Regions:  return L(ThemeEditor_LayerRegions);
+    case ThemeEditorLayer::Advanced: return L(ThemeEditor_LayerAdvanced);
+    default:                         return L(ThemeEditor_LayerAdvanced);
+    }
+}
+
+static const char* ThemeEditorRelationLabel(ThemeEditorRelationKind kind) {
+    switch (kind) {
+    case ThemeEditorRelationKind::Shared:            return L(ThemeEditor_RelationShared);
+    case ThemeEditorRelationKind::Derived:           return L(ThemeEditor_RelationDerived);
+    case ThemeEditorRelationKind::Legacy:            return L(ThemeEditor_RelationLegacy);
+    case ThemeEditorRelationKind::SuspectedCoupling: return L(ThemeEditor_RelationCoupling);
+    case ThemeEditorRelationKind::Independent:       return L(ThemeEditor_RelationIndependent);
+    case ThemeEditorRelationKind::Base:
+    default:                                          return nullptr;
+    }
+}
+
+static const ThemeEditorRelation* ThemeEditorRelationFor(const ThemeEditorItem& item) {
+    return FindThemeEditorRelation(item.key);
+}
+
+static bool ThemeEditorItemInLayer(const ThemeEditorItem& item, ThemeEditorLayer layer) {
+    const ThemeEditorRelation* relation = ThemeEditorRelationFor(item);
+    return relation && relation->layer == layer;
+}
+
+static bool ThemeEditorLayerContainsKey(ThemeEditorLayer layer, const char* key) {
+    if (!key || !key[0]) return false;
+    size_t count = 0;
+    const ThemeEditorItem* items = GetThemeEditorItems(count);
+    for (size_t i = 0; i < count; ++i) {
+        if (std::strcmp(items[i].key, key) == 0 && ThemeEditorItemInLayer(items[i], layer))
+            return true;
+    }
+    return false;
+}
+
+static bool ThemeEditorHasVisibleKey(const char* key) {
+    if (!key || !key[0]) return false;
+    size_t count = 0;
+    const ThemeEditorItem* items = GetThemeEditorItems(count);
+    for (size_t i = 0; i < count; ++i) {
+        if (std::strcmp(items[i].key, key) == 0)
+            return true;
+    }
+    return false;
+}
+
 // Internal helpers
 
+static void ApplyDraftToLive(AppState& state);
+
 static void PushUndo() {
-    g_ed.undoStack.push_back(g_ed.draft);
+    g_ed.undoStack.push_back({g_ed.draft, g_ed.relationState});
     if ((int)g_ed.undoStack.size() > kMaxUndoDepth)
         g_ed.undoStack.erase(g_ed.undoStack.begin());
 }
@@ -152,6 +245,15 @@ static void ApplyDraftToLive(AppState& state) {
     ThemeColors::markPendingUiChromeResync();
 }
 
+static void UndoLast(AppState& state) {
+    if (g_ed.undoStack.empty()) return;
+    const ThemeEditorState::UndoEntry& entry = g_ed.undoStack.back();
+    g_ed.draft = entry.draft;
+    g_ed.relationState = entry.relationState;
+    g_ed.undoStack.pop_back();
+    if (g_ed.livePreview) ApplyDraftToLive(state);
+}
+
 static void RestoreOpenAppearance(AppState& state) {
     state.settings.theme = g_ed.openTheme;
     state.settings.useCustomColors = g_ed.openUseCustomColors;
@@ -169,15 +271,18 @@ static void RestoreOpenAppearance(AppState& state) {
 static void RestoreSnapshot(AppState& state) {
     if (g_ed.schedulePeriod >= 0) {
         g_ed.draft = g_ed.initialDraft;
+        g_ed.relationState = g_ed.openRelationState;
         if (g_ed.livePreview) ApplyDraftToLive(state);
         return;
     }
     g_ed.draft = g_ed.openSnapshot;
+    g_ed.relationState = g_ed.openRelationState;
     RestoreOpenAppearance(state);
 }
 
 static void LoadPresetToDraft(int idx) {
     g_ed.draft = ThemeColors::getPresetByIndex(idx);
+    g_ed.relationState.ResetToValues(g_ed.draft);
     if (g_ed.livePreview && g_appState) ApplyDraftToLive(*g_appState);
 }
 
@@ -206,29 +311,47 @@ static bool LoadEditorThemeFile(const std::string& pathUtf8, ThemeColorScheme& i
                                 const char* source, AppTheme startTheme, bool livePreview) {
     std::string text;
     if (!Platform::FileSystem::ReadFileText(pathUtf8, text)) return false;
-    const auto document = nlohmann::json::parse(text, nullptr, false);
-    if (!document.is_object()) return false;
-    // The serialized scheme is the complete supported field list, including
-    // Wwise colors that are not shown in the editor. Only validated top-level
-    // values reach the legacy flat reader; nested metadata cannot override them.
-    const auto supported = nlohmann::json::parse(ThemeColors::exportToJSON(ThemeColorScheme{}));
-    nlohmann::json colors = nlohmann::json::object();
-    for (auto field = supported.begin(); field != supported.end(); ++field) {
-        const auto value = document.find(field.key());
-        if (value == document.end()) continue;
-        if (!value->is_string()) return false;
-        const auto color = value->get<std::string>();
-        if ((color.size() != 6 && color.size() != 8) || color.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
-            return false;
-        colors[field.key()] = color;
-    }
-    if (colors.empty()) return false;
+    // 只允许完整支持列表里的顶层颜色字段（含未配置时不导出的可选覆盖项）；
+    // 嵌套元数据不能覆盖它们。
+    std::string colorsJson;
+    if (!ThemeColors::filterImportColors(text, colorsJson)) return false;
     ThemeColorScheme loaded{};
-    if (!ThemeColors::importFromJSON(colors.dump(), loaded)) return false;
+    if (!ThemeColors::importFromJSON(colorsJson, loaded)) return false;
     imported = loaded;
-    ThemeColors::armImportDiagnostics(source, pathUtf8, (int)startTheme,
-                                     ThemeDiagPublicThemeLabel(startTheme), livePreview);
+    if (source) ThemeColors::armImportDiagnostics(source, pathUtf8, (int)startTheme,
+                                                  ThemeDiagPublicThemeLabel(startTheme), livePreview);
     return true;
+}
+
+static bool SaveCustomThemeFiles(const std::string& name, const ThemeColorScheme& scheme,
+                                 std::string& statusMsg) {
+    const auto json = ThemeColors::exportToJSON(scheme);
+    std::string error;
+    auto saveCopy = [&] {
+        if (!harken::theme_library::SaveThemeCopy(ThemeLibraryDir(), name, json, error)) {
+            statusMsg = L(TE_LibrarySaveFail);
+            return false;
+        }
+        RefreshSavedThemes();
+        return true;
+    };
+    if (!harken::theme_library::SaveThemeJson(CustomThemeFilePath(), json, error)) {
+        statusMsg = L(TE_AppliedWriteFail);
+        return false;
+    }
+    statusMsg.clear();
+    saveCopy();
+    return true;
+}
+
+static void ActivateInstalledTheme(AppState& state, const std::string& name,
+                                   const ThemeColorScheme& scheme) {
+    state.settings.theme = AppTheme::Custom;
+    state.settings.customThemeName = name;
+    state.settings.useCustomColors = false;
+    ThemeColors::activateCustomScheme(scheme);
+    ThemeColors::applyToImGui();
+    ThemeColors::markPendingUiChromeResync();
 }
 
 static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
@@ -246,40 +369,91 @@ static bool SaveDraftAsCustomTheme(AppState& state, std::string& statusMsg) {
     std::string themeName = TrimCopy(g_ed.themeName);
     if (themeName.empty()) themeName = "My Theme";
 
-    const std::string filePath = GetExeDirUtf8() + "\\theme_custom.json";
-    if (!ThemeColors::saveThemeToFile(filePath, g_ed.draft)) {
-        statusMsg = L(TE_AppliedWriteFail);
-        return false;
-    }
+    if (!SaveCustomThemeFiles(themeName, g_ed.draft, statusMsg)) return false;
 
     std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", themeName.c_str());
-    ThemeColors::activateCustomScheme(g_ed.draft);
-    ThemeColors::applyToImGui();
-    ThemeColors::markPendingUiChromeResync();
+    ActivateInstalledTheme(state, g_ed.themeName, g_ed.draft);
     g_ed.savedThisSession = true;
 
-    state.settings.theme = AppTheme::Custom;
-    state.settings.customThemeName = g_ed.themeName;
-    state.settings.useCustomColors = false;
     g_ed.openTheme = AppTheme::Custom;
     g_ed.openCustomized = true;
     g_ed.openUseCustomColors = false;
     g_ed.openCustomThemeName = g_ed.themeName;
     g_ed.openSnapshot = g_ed.draft;
+    g_ed.openRelationState = g_ed.relationState;
 
 #ifdef _WIN32
     SaveAppSettings(state);
 #endif
     char savedMsg[512];
     std::snprintf(savedMsg, sizeof(savedMsg), L(TE_SaveAsFmt), g_ed.themeName);
-    statusMsg = savedMsg;
+    if (statusMsg.empty()) statusMsg = savedMsg;
     return true;
 }
 
+bool ImportThemeFromSettings(AppState& state, std::string& result) {
+#ifdef _WIN32
+    const auto filePath = Platform::ThemeDialogs::OpenThemeJsonFileDialogUtf8(
+        g_hwnd, GetExeDirUtf8() + "\\theme_export.json");
+    if (filePath.empty()) {
+        result.clear();
+        return false;
+    }
+
+    const auto startTheme = state.settings.theme;
+    ThemeColorScheme imported{};
+    if (!LoadEditorThemeFile(filePath, imported, nullptr, startTheme, false)) {
+        result = L(TE_ImportFail);
+        return false;
+    }
+
+    namespace library = harken::theme_library;
+    const auto themeName = ThemeNameFromPathUtf8(filePath);
+    if (g_appSettingsPathUtf8.empty() || state.showThemeEditor || g_ed.wasOpen) {
+        result = L(SetUX_ThemeImportWriteFailed);
+        return false;
+    }
+    const auto installed = library::InstallImportedTheme(ThemeSettingsFilePath(), themeName,
+        ThemeColors::exportToJSON(imported), [&] {
+            return harken::theme_schedule::TrySaveImportedAppearance(state, themeName,
+                [&] { return TrySaveAppSettings(state); });
+        });
+    if (installed != library::ImportResult::Saved) {
+        result = installed == library::ImportResult::RollbackFailed
+            ? L(SetUX_ThemeImportRollbackFailed) : L(SetUX_ThemeImportWriteFailed);
+        return false;
+    }
+    ThemeColors::armImportDiagnostics("SettingsThemeImport", filePath, (int)startTheme,
+                                     ThemeDiagPublicThemeLabel(startTheme), false);
+    ActivateInstalledTheme(state, themeName, imported);
+    RefreshSavedThemes();
+    result = L(SetUX_ThemeImported);
+    return true;
+#else
+    result = L(TE_ImportUnsupported);
+    return false;
+#endif
+}
+
+enum class ThemeEditorRelationAction {
+    None,
+    Detach,
+    Relink,
+};
+
+struct ThemeEditorRowResult {
+    bool colorChanged = false;
+    ThemeEditorRelationAction relationAction = ThemeEditorRelationAction::None;
+};
+
 // Color item + group rendering
 
-static bool DrawColorItem(const ThemeEditorItem& item) {
-    ImVec4& v = g_ed.draft.*(item.member);
+static ThemeEditorRowResult DrawColorItem(const ThemeEditorItem& item) {
+    ThemeEditorRowResult result;
+    ImVec4 color = item.Color(g_ed.draft);
+    const ThemeEditorRelation* relation = ThemeEditorRelationFor(item);
+    const bool canFollow = ThemeEditorRelationCanFollow(relation);
+    const bool linked = canFollow && g_ed.relationState.IsLinked(relation);
 
     ImGui::PushID(item.key);
     const auto& scheme = ThemeColors::current();
@@ -289,32 +463,35 @@ static bool DrawColorItem(const ThemeEditorItem& item) {
     const float rowHeight = ImGui::GetFrameHeight() + 10.0f;
     const ImVec2 rowMax(rowOrigin.x + rowWidth, rowOrigin.y + rowHeight);
     const bool rowHovered = ImGui::IsMouseHoveringRect(rowOrigin, rowMax);
-    const ImVec4 rowBg = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, v, 0.16f), 0.92f);
-    const ImVec4 rowBgHover = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, v, 0.24f), 0.96f);
-    const ImVec4 rowBorder = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelLabel, v, 0.26f), rowHovered ? 0.64f : 0.48f);
-    const ImVec4 rowText = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelText, v, 0.10f), 1.0f);
-    const ImVec4 rowKey = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelLabel, v, 0.18f), 0.92f);
+    const ImVec4 rowBg = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, color, 0.16f), 0.92f);
+    const ImVec4 rowBgHover = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, color, 0.24f), 0.96f);
+    const ImVec4 rowBorder = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelLabel, color, 0.26f), rowHovered ? 0.64f : 0.48f);
+    const ImVec4 rowText = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelText, color, 0.10f), 1.0f);
+    const ImVec4 rowKey = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelLabel, color, 0.18f), 0.92f);
     dl->AddRectFilled(rowOrigin, rowMax, ImGui::GetColorU32(rowHovered ? rowBgHover : rowBg), 6.0f);
     dl->AddRectFilledMultiColor(
         ImVec2(rowOrigin.x + 1.0f, rowOrigin.y + 1.0f),
         ImVec2(rowMax.x - 1.0f, rowOrigin.y + rowHeight * 0.48f),
-        ImGui::GetColorU32(ThemeEditorWithAlpha(ThemeEditorMix(v, scheme.metadataPanelText, 0.18f), rowHovered ? 0.10f : 0.06f)),
-        ImGui::GetColorU32(ThemeEditorWithAlpha(ThemeEditorMix(v, scheme.metadataPanelText, 0.10f), rowHovered ? 0.08f : 0.04f)),
-        ImGui::GetColorU32(ThemeEditorWithAlpha(v, 0.0f)),
-        ImGui::GetColorU32(ThemeEditorWithAlpha(v, 0.0f)));
+        ImGui::GetColorU32(ThemeEditorWithAlpha(ThemeEditorMix(color, scheme.metadataPanelText, 0.18f), rowHovered ? 0.10f : 0.06f)),
+        ImGui::GetColorU32(ThemeEditorWithAlpha(ThemeEditorMix(color, scheme.metadataPanelText, 0.10f), rowHovered ? 0.08f : 0.04f)),
+        ImGui::GetColorU32(ThemeEditorWithAlpha(color, 0.0f)),
+        ImGui::GetColorU32(ThemeEditorWithAlpha(color, 0.0f)));
     dl->AddRect(rowOrigin, rowMax, ImGui::GetColorU32(rowBorder), 6.0f, 0, 1.0f);
 
     ImGui::SetCursorScreenPos(ImVec2(rowOrigin.x + 8.0f, rowOrigin.y + 5.0f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ThemeEditorWithAlpha(ThemeEditorMix(v, scheme.metadataPanelBG, 0.46f), 0.98f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ThemeEditorWithAlpha(ThemeEditorMix(v, scheme.metadataPanelBG, 0.32f), 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ThemeEditorWithAlpha(ThemeEditorMix(v, scheme.metadataPanelLabel, 0.24f), 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ThemeEditorWithAlpha(ThemeEditorMix(v, scheme.metadataPanelLabel, 0.18f), 0.72f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ThemeEditorWithAlpha(ThemeEditorMix(color, scheme.metadataPanelBG, 0.46f), 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ThemeEditorWithAlpha(ThemeEditorMix(color, scheme.metadataPanelBG, 0.32f), 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ThemeEditorWithAlpha(ThemeEditorMix(color, scheme.metadataPanelLabel, 0.24f), 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ThemeEditorWithAlpha(ThemeEditorMix(color, scheme.metadataPanelLabel, 0.18f), 0.72f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
-    bool changed = ImGui::ColorEdit4(
-        "##color", (float*)&v,
-        ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+    if (linked) ImGui::BeginDisabled();
+    const auto colorFlags = item.group == ThemeEditorGroup::Welcome
+        ? ImGuiColorEditFlags_NoAlpha : ImGuiColorEditFlags_AlphaPreview;
+    result.colorChanged = ImGui::ColorEdit4("##color", &color.x, ImGuiColorEditFlags_NoInputs | colorFlags);
+    if (result.colorChanged) item.SetColor(g_ed.draft, color);
     ObserveEditorItem(item.key);
+    if (linked) ImGui::EndDisabled();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(4);
 
@@ -322,36 +499,100 @@ static bool DrawColorItem(const ThemeEditorItem& item) {
     ImGui::PushStyleColor(ImGuiCol_Text, rowText);
     ImGui::TextUnformatted(GetLocalizedString(item.labelId));
     ImGui::PopStyleColor();
+    if (relation) {
+        const char* relationLabel = canFollow
+            ? (linked ? L(ThemeEditor_RelationLinked) : L(ThemeEditor_RelationIndependent))
+            : ThemeEditorRelationLabel(relation->kind);
+        if (relationLabel) {
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::PushStyleColor(ImGuiCol_TextDisabled, rowKey);
+            ImGui::TextDisabled("%s", relationLabel);
+            ObserveEditorItem((std::string("relation-state-") + item.key).c_str());
+            if (relation->sourceKey && ImGui::IsItemHovered())
+                HarkenSearch::SetTooltip(relation->sourceKey);
+            ImGui::PopStyleColor();
+        }
+
+    }
     if (g_ed.schedulePeriod < 0) {
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::PushStyleColor(ImGuiCol_TextDisabled, rowKey);
         ImGui::TextDisabled(L(ThemeEditor_ItemKeyFmt), item.key);
         ImGui::PopStyleColor();
     }
+    if (relation && canFollow) {
+        const char* actionLabel = linked
+            ? L(ThemeEditor_RelationDetach)
+            : L(ThemeEditor_RelationRelink);
+        const float actionWidth = ImGui::CalcTextSize(actionLabel).x + 20.0f;
+        ImGui::SetCursorScreenPos(ImVec2(rowMax.x - actionWidth - 8.0f, rowOrigin.y + 5.0f));
+        if (ImGui::SmallButton(actionLabel)) {
+            result.relationAction = linked
+                ? ThemeEditorRelationAction::Detach
+                : ThemeEditorRelationAction::Relink;
+        }
+        ObserveEditorItem((std::string("relation-action-") + item.key).c_str());
+    }
     ImGui::SetCursorScreenPos(ImVec2(rowOrigin.x, rowOrigin.y + rowHeight + 4.0f));
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
     ImGui::PopID();
 
-    return changed;
+    return result;
 }
 
-static bool GroupContainsKey(ThemeEditorGroup group, const char* key) {
+static bool GroupContainsKey(ThemeEditorGroup group, ThemeEditorLayer layer, const char* key) {
     if (!key || !key[0]) return false;
     size_t count = 0;
     const ThemeEditorItem* items = GetThemeEditorItems(count);
     for (size_t i = 0; i < count; ++i) {
-        if (items[i].group == group && std::strcmp(items[i].key, key) == 0)
+        if (items[i].group == group
+            && ThemeEditorItemInLayer(items[i], layer)
+            && std::strcmp(items[i].key, key) == 0)
             return true;
     }
     return false;
 }
 
-static void DrawGroup(ThemeEditorGroup group) {
+static void DrawWelcomeColorPreview(const ThemeColorScheme& scheme) {
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const ImVec2 size(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight() * 2.5f);
+    ImVec4 background = kWelcomeBackgroundColor.Resolve(scheme);
+    ImVec4 textColor = kWelcomeTextColor.Resolve(scheme);
+    ImVec4 accent = kWelcomeAccentColor.Resolve(scheme);
+    background.w = textColor.w = accent.w = 1.0f;
+    const char* greeting = L(Greet_WelcomeBack);
+    const ImVec2 textSize = ImGui::CalcTextSize(greeting);
+    const float center = start.x + size.x * 0.5f;
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(start, ImVec2(start.x + size.x, start.y + size.y),
+                        ImGui::ColorConvertFloat4ToU32(background), ImGui::GetStyle().FrameRounding);
+    draw->PushClipRect(start, ImVec2(start.x + size.x, start.y + size.y), true);
+    draw->AddText(ImVec2(center - textSize.x * 0.5f, start.y + (size.y - textSize.y) * 0.5f),
+                  ImGui::ColorConvertFloat4ToU32(textColor), greeting);
+    draw->AddLine(ImVec2(center - textSize.x * 0.5f, start.y + size.y * 0.8f),
+                  ImVec2(center + textSize.x * 0.5f, start.y + size.y * 0.8f),
+                  ImGui::ColorConvertFloat4ToU32(accent));
+    draw->PopClipRect();
+    ImGui::Dummy(size);
+    ObserveEditorItem("welcome-page-preview");
+}
+
+static void DrawGroup(ThemeEditorGroup group, ThemeEditorLayer layer) {
     size_t count = 0;
     const ThemeEditorItem* items = GetThemeEditorItems(count);
 
+    bool hasItems = false;
+    for (size_t i = 0; i < count; ++i) {
+        if (items[i].group == group && ThemeEditorItemInLayer(items[i], layer)) {
+            hasItems = true;
+            break;
+        }
+    }
+    if (!hasItems)
+        return;
+
     const bool shouldAutoOpen = !g_ed.inspectScrollTarget.empty()
-                                && GroupContainsKey(group, g_ed.inspectScrollTarget.c_str());
+                  && GroupContainsKey(group, layer, g_ed.inspectScrollTarget.c_str());
 
     const auto& scheme = ThemeColors::current();
     const ImVec4 groupBg = ThemeEditorWithAlpha(ThemeEditorMix(scheme.metadataPanelBG, scheme.metadataPanelLabel, 0.14f), 0.96f);
@@ -381,7 +622,7 @@ static void DrawGroup(ThemeEditorGroup group) {
         ImGui::Spacing();
     }
     for (size_t i = 0; i < count; ++i) {
-        if (items[i].group != group) continue;
+        if (items[i].group != group || !ThemeEditorItemInLayer(items[i], layer)) continue;
 
         const bool isHighlighted = !g_ed.inspectHighlightKey.empty()
                                    && std::strcmp(items[i].key, g_ed.inspectHighlightKey.c_str()) == 0
@@ -408,19 +649,58 @@ static void DrawGroup(ThemeEditorGroup group) {
                 IM_COL32(36, 158, 152, (int)(180.f * alpha)), 6.0f, ImDrawFlags_None, 2.0f);
         }
 
-        ImVec4 before = g_ed.draft.*(items[i].member);
-        bool changed = DrawColorItem(items[i]);
+        const ImVec4 beforeValue = items[i].Color(g_ed.draft);
+        const ThemeColorScheme beforeDraft = g_ed.draft;
+        const ThemeEditorRelationState beforeRelations = g_ed.relationState;
+        const ThemeEditorRowResult result = DrawColorItem(items[i]);
+        const ImVec4 afterValue = items[i].Color(g_ed.draft);
+        const bool colorChanged = result.colorChanged
+            && std::memcmp(&beforeValue, &afterValue, sizeof(ImVec4)) != 0;
 
-        if (changed) {
-            ImVec4 after = g_ed.draft.*(items[i].member);
-            if (std::memcmp(&before, &after, sizeof(ImVec4)) != 0) {
-                g_ed.draft.*(items[i].member) = before;
-                PushUndo();
-                g_ed.draft.*(items[i].member) = after;
-                if (g_ed.livePreview && g_appState) ApplyDraftToLive(*g_appState);
-            }
+        if (colorChanged || result.relationAction != ThemeEditorRelationAction::None) {
+            const ThemeColorScheme afterDraft = g_ed.draft;
+            g_ed.draft = beforeDraft;
+            g_ed.relationState = beforeRelations;
+            PushUndo();
+            g_ed.draft = afterDraft;
+
+            if (result.relationAction == ThemeEditorRelationAction::Detach)
+                g_ed.relationState.Detach(g_ed.draft, items[i].key);
+            else if (result.relationAction == ThemeEditorRelationAction::Relink)
+                g_ed.relationState.Relink(g_ed.draft, items[i].key);
+
+            if (colorChanged || result.relationAction == ThemeEditorRelationAction::Relink)
+                g_ed.relationState.Propagate(g_ed.draft);
+
+            if (g_ed.livePreview && g_appState) ApplyDraftToLive(*g_appState);
         }
     }
+    if (group == ThemeEditorGroup::Welcome)
+        DrawWelcomeColorPreview(g_ed.draft);
+    ImGui::Unindent(8.0f);
+}
+
+static void DrawEditorLayer(ThemeEditorLayer layer) {
+    const bool shouldAutoOpen = !g_ed.inspectScrollTarget.empty()
+                                && ThemeEditorLayerContainsKey(layer, g_ed.inspectScrollTarget.c_str());
+    if (shouldAutoOpen)
+        ImGui::SetNextItemOpen(true);
+    if (!ImGui::CollapsingHeader(ThemeEditorLayerName(layer), ImGuiTreeNodeFlags_DefaultOpen))
+        return;
+
+    ImGui::Indent(8.0f);
+    ImGui::PushID(static_cast<int>(layer));
+    DrawGroup(ThemeEditorGroup::Foundation, layer);
+    DrawGroup(ThemeEditorGroup::TopBar, layer);
+    DrawGroup(ThemeEditorGroup::Results, layer);
+    DrawGroup(ThemeEditorGroup::Metadata, layer);
+    DrawGroup(ThemeEditorGroup::Waveform, layer);
+    DrawGroup(ThemeEditorGroup::FilterBrowser, layer);
+    DrawGroup(ThemeEditorGroup::ButtonsAndStatus, layer);
+    DrawGroup(ThemeEditorGroup::PresetDial, layer);
+    DrawGroup(ThemeEditorGroup::Wwise, layer);
+    DrawGroup(ThemeEditorGroup::Welcome, layer);
+    ImGui::PopID();
     ImGui::Unindent(8.0f);
 }
 
@@ -439,22 +719,37 @@ bool ThemeScheduleEditorQaSetColor(const std::string& key, const ImVec4& value) 
     for (size_t i = 0; i < count; ++i) {
         if (key == fields[i].key) {
             PushUndo();
-            g_ed.draft.*(fields[i].member) = value;
+            g_ed.relationState.Detach(g_ed.draft, key.c_str());
+            fields[i].SetColor(g_ed.draft, value);
+            g_ed.relationState.Propagate(g_ed.draft);
             if (g_ed.livePreview) ApplyDraftToLive(*g_appState);
             return true;
         }
     }
     return false;
 }
+bool ThemeEditorQaRevealColor(const std::string& key) {
+    if (!g_ed.wasOpen || !g_appState || !g_appState->showThemeEditor || !FindThemeEditorItem(key.c_str()))
+        return false;
+    g_ed.inspectScrollTarget = key;
+    return true;
+}
 std::string ThemeScheduleEditorQaStatus() { return g_ed.exportMsg; }
 std::string ThemeScheduleEditorQaObservation() {
     auto popups=nlohmann::json::array();
+    auto relationStates=nlohmann::json::object();
+    size_t relationCount=0;
+    const ThemeEditorRelation* relations=GetThemeEditorRelations(relationCount);
+    for(size_t i=0;i<relationCount;++i){
+        if(ThemeEditorRelationCanFollow(&relations[i]))
+            relationStates[relations[i].key]=g_ed.relationState.IsLinked(&relations[i]);
+    }
     for(const auto* w:ImGui::GetCurrentContext()->Windows)
         if(w->WasActive && (w->Flags&ImGuiWindowFlags_Popup))
             popups.push_back({{"name",w->Name},{"bounds",{w->Pos.x,w->Pos.y,w->Pos.x+w->Size.x,w->Pos.y+w->Size.y}}});
     const auto r=s_editorQaBounds;
     return nlohmann::json({{"frame",ImGui::GetFrameCount()},{"items",s_editorQaItems},{"popups",popups},
-        {"bounds",{r.x,r.y,r.z,r.w}},{"live_preview",g_ed.livePreview},
+        {"bounds",{r.x,r.y,r.z,r.w}},{"live_preview",g_ed.livePreview},{"relation_states",relationStates},
         {"draft_bg",ThemeColors::toARGBHex(g_ed.draft.mainWindowBG)},
         {"draft_wwise_ok",ThemeColors::toARGBHex(g_ed.draft.wwiseConnectOk)}}).dump();
 }
@@ -510,9 +805,13 @@ void RenderThemeEditor(AppState& state) {
             ApplyDraftToLive(state);
         }
         g_ed.initialDraft = g_ed.draft;
+        g_ed.relationState.ResetToValues(g_ed.draft);
+        g_ed.openRelationState = g_ed.relationState;
         g_ed.undoStack.clear();
         g_ed.exportMsg.clear();
         g_ed.importMsg.clear();
+        g_ed.savedThemesLoaded = false;
+        g_ed.activeSavedTheme.clear();
         g_ed.lastImportPath = GetExeDirUtf8() + "\\theme_export.json";
         g_ed.lastExportPath = BuildThemeJsonSuggestedPathUtf8("theme_export");
 
@@ -583,6 +882,9 @@ void RenderThemeEditor(AppState& state) {
 
     const float topConsoleH = 92.0f;
     const float bottomConsoleH = g_ed.schedulePeriod >= 0 ? 82.0f : 102.0f;
+    if (!g_ed.savedThemesLoaded) RefreshSavedThemes();
+    const float libraryH =
+        (g_ed.schedulePeriod >= 0 || g_ed.savedThemes.empty()) ? 0.0f : 118.0f;
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorConsoleBg);
     ImGui::PushStyleColor(ImGuiCol_Border, editorConsoleEdge);
@@ -613,6 +915,7 @@ void RenderThemeEditor(AppState& state) {
             if (aura::ui::ActionButton(ThemeDiagPublicThemeLabel(seeds[i]))) {
                 PushUndo();
                 g_ed.draft = MakeBuiltinScheme(seeds[i]);
+                g_ed.relationState.ResetToValues(g_ed.draft);
                 if (g_ed.livePreview) ApplyDraftToLive(state);
             }
         }
@@ -632,6 +935,31 @@ void RenderThemeEditor(AppState& state) {
         if (g_ed.livePreview) ApplyDraftToLive(state);
         else RestoreOpenAppearance(state);
     }
+
+    ImGui::SameLine();
+    {
+        // Checkbox 会直接改草稿：先留一份切换前的副本，撤销才能回到原来的开关状态。
+        bool mixing = g_ed.draft.colorMixing;
+        if (ImGui::Checkbox(L(ThemeEditor_ColorMixing), &mixing)) {
+            PushUndo();
+            g_ed.draft.colorMixing = mixing;
+            ThemeColors::resolveDerivedColors(g_ed.draft);
+            g_ed.relationState.ResetToValues(g_ed.draft);
+            if (g_ed.livePreview) ApplyDraftToLive(state);
+        }
+    }
+    ObserveEditorItem("color-mixing");
+
+    ImGui::SameLine();
+    {
+        bool gradient = g_ed.draft.resultsGradient;
+        if (ImGui::Checkbox(L(ThemeEditor_ResultsGradient), &gradient)) {
+            PushUndo();
+            g_ed.draft.resultsGradient = gradient;
+            if (g_ed.livePreview) ApplyDraftToLive(state);
+        }
+    }
+    ObserveEditorItem("results-gradient");
 
     static int presetIdx = 0;
     ImGui::Text("%s", L(Module_ColorPreset));
@@ -666,9 +994,7 @@ void RenderThemeEditor(AppState& state) {
         bool canUndo = !g_ed.undoStack.empty();
         if (!canUndo) ImGui::BeginDisabled();
         if (aura::ui::ActionButton(L(ThemeEditor_UndoBtn))) {
-            g_ed.draft = g_ed.undoStack.back();
-            g_ed.undoStack.pop_back();
-            if (g_ed.livePreview) ApplyDraftToLive(state);
+            UndoLast(state);
         }
         if (!canUndo) ImGui::EndDisabled();
     }
@@ -696,16 +1022,16 @@ void RenderThemeEditor(AppState& state) {
     ImGui::PopStyleColor(2);
     // Ctrl+Z shortcut
     if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z) && !g_ed.undoStack.empty()) {
-        g_ed.draft = g_ed.undoStack.back();
-        g_ed.undoStack.pop_back();
-        if (g_ed.livePreview) ApplyDraftToLive(state);
+        UndoLast(state);
     }
 
 // Inspect mode: consume scroll requests + decay highlight
     if (g_ed.inspectMode) {
         const char* scrollReq = ThemeInspector::ConsumeScrollRequest();
-        if (scrollReq)
+        if (scrollReq && ThemeEditorHasVisibleKey(scrollReq))
             g_ed.inspectScrollTarget = scrollReq;
+        else if (scrollReq)
+            g_ed.inspectScrollTarget.clear();
     }
     if (g_ed.inspectHighlightTimer > 0.f)
         g_ed.inspectHighlightTimer -= ImGui::GetIO().DeltaTime;
@@ -713,17 +1039,48 @@ void RenderThemeEditor(AppState& state) {
 // Color groups
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorChildBg);
     ImGui::PushStyleColor(ImGuiCol_Border, editorChildEdge);
-    ImGui::BeginChild("##ThemeColors", ImVec2(0, -bottomConsoleH - 8.0f), true);
-    DrawGroup(ThemeEditorGroup::Foundation);
-    DrawGroup(ThemeEditorGroup::TopBar);
-    DrawGroup(ThemeEditorGroup::Results);
-    DrawGroup(ThemeEditorGroup::Metadata);
-    DrawGroup(ThemeEditorGroup::Waveform);
-    DrawGroup(ThemeEditorGroup::FilterBrowser);
-    DrawGroup(ThemeEditorGroup::ButtonsAndStatus);
-    DrawGroup(ThemeEditorGroup::PresetDial);
+    ImGui::BeginChild("##ThemeColors", ImVec2(0, -bottomConsoleH - 8.0f - libraryH), true);
+    DrawEditorLayer(ThemeEditorLayer::Base);
+    DrawEditorLayer(ThemeEditorLayer::Regions);
+    DrawEditorLayer(ThemeEditorLayer::Advanced);
     ImGui::EndChild();
     ImGui::PopStyleColor(2);
+
+// Theme library: imported themes kept on this machine
+    if (libraryH > 0.0f) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, editorChildBg);
+        ImGui::PushStyleColor(ImGuiCol_Border, editorChildEdge);
+        ImGui::BeginChild("##ThemeLibrary", ImVec2(0, libraryH - 8.0f), true);
+        ImGui::TextDisabled("%s", L(ThemeEditor_SavedThemes));
+        for (int i = 0; i < (int)g_ed.savedThemes.size(); ++i) {
+            const std::string& themePath = g_ed.savedThemes[(size_t)i];
+            const std::string label = std::filesystem::u8path(themePath).stem().u8string();
+            ImGui::PushID(i);
+            const bool activeTheme = (themePath == g_ed.activeSavedTheme);
+            if (ImGui::Selectable(label.c_str(), activeTheme)) {
+                const AppTheme startTheme = state.settings.theme;
+                ThemeColorScheme imported = g_ed.draft;
+                if (LoadEditorThemeFile(themePath, imported, "ThemeEditorLibrary", startTheme, true)) {
+                    PushUndo();
+                    g_ed.draft = imported;
+                    g_ed.relationState.ResetToValues(g_ed.draft);
+                    g_ed.lastImportPath = themePath;
+                    g_ed.activeSavedTheme = themePath;
+                    std::snprintf(g_ed.themeName, sizeof(g_ed.themeName), "%s", label.c_str());
+                    ApplyDraftToLive(state);
+                    char m[1024];
+                    std::snprintf(m, sizeof(m), L(TE_ImportAppliedFmt), themePath.c_str());
+                    g_ed.importMsg = m;
+                } else {
+                    g_ed.importMsg = L(TE_ImportFail);
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", themePath.c_str());
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+    }
 
 // Bottom toolbar
     ImGui::PushStyleColor(ImGuiCol_ChildBg, editorConsoleBgAlt);
@@ -749,6 +1106,7 @@ void RenderThemeEditor(AppState& state) {
         if (aura::ui::ActionButton(L(ThemeEditor_SaveAsNew), ImVec2(130, 0), aura::ui::ButtonVariant::PrimaryTransfer)) {
             SaveDraftAsCustomTheme(state, g_ed.exportMsg);
         }
+        ObserveEditorItem("save-as-new-theme");
         if (nameEmpty) ImGui::EndDisabled();
     }
 
@@ -775,11 +1133,21 @@ void RenderThemeEditor(AppState& state) {
             if (LoadEditorThemeFile(filePath, imported, "ThemeEditorImport", startTheme, g_ed.livePreview)) {
                 PushUndo();
                 g_ed.draft = imported;
+                g_ed.relationState.ResetToValues(g_ed.draft);
                 g_ed.lastImportPath = filePath;
                 g_ed.lastExportPath = filePath;
                 SetThemeNameFromPathUtf8(filePath);
                 if (g_ed.livePreview) ApplyDraftToLive(state);
                 { char m[1024]; std::snprintf(m, sizeof(m), L(TE_ImportAppliedFmt), filePath.c_str()); g_ed.importMsg = m; }
+                std::string libraryError;
+                if (!harken::theme_library::SaveThemeCopy(ThemeLibraryDir(),
+                                                          ThemeNameFromPathUtf8(filePath),
+                                                          ThemeColors::exportToJSON(imported),
+                                                          libraryError)) {
+                    g_ed.importMsg = std::string(L(TE_LibrarySaveFail)) + " (" + libraryError + ")";
+                } else {
+                    RefreshSavedThemes();
+                }
             } else {
                 g_ed.importMsg = L(TE_ImportFail);
             }
@@ -803,6 +1171,7 @@ void RenderThemeEditor(AppState& state) {
             if (LoadEditorThemeFile(filePath, imported, "ThemeEditorImportCreate", startTheme, true)) {
                 PushUndo();
                 g_ed.draft = imported;
+                g_ed.relationState.ResetToValues(g_ed.draft);
                 g_ed.lastImportPath = filePath;
                 g_ed.lastExportPath = filePath;
                 SetThemeNameFromPathUtf8(filePath);
@@ -910,7 +1279,8 @@ void RenderThemeEditor(AppState& state) {
         out << "    ThemeColorScheme s;\n";
         for (size_t i = 0; i < fieldCount; ++i) {
             const auto& f = fields[i];
-            ImVec4 val = g_ed.draft.*(f.member);
+            if (f.colorOverride && !(g_ed.draft.*(f.colorOverride->member))) continue;
+            const ImVec4 val = f.Color(g_ed.draft);
             // Pad field name for alignment
             std::string padded = std::string("s.") + f.key;
             while (padded.size() < 28) padded += ' ';

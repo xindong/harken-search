@@ -1,5 +1,9 @@
 #pragma once
 #include "AppState.h"
+#include "ExternalAiClientLink.h"
+#include "ExternalAiPlaylistBridge.h"
+#include "ExternalAiPlaylistService.h"
+#include "ExternalAiAuthorizationStore.h"
 #include "Localization.h"
 #include "imgui_internal.h"
 #include "PreferenceDraft.h"
@@ -12,6 +16,25 @@
 
 namespace harken::settings {
 inline unsigned avatarImageRevision=0;
+
+// External AI page: the authorization document is saved on its own, not through
+// the preferences draft, so the page keeps the loaded library and its edited
+// grants here between frames.
+struct ExternalAiPageState {
+    std::string databasePath;
+    std::string libraryId;
+    std::string documentPath;
+    HarkenSearch::ExternalAiSettings settings;
+    bool loaded = false;
+    bool dirty = false;
+    std::string status;
+    std::string error;
+    bool detailsOpen = false;
+    std::string linkStatus;
+    double linkStatusUntil = 0.0;
+    double statusUntil = 0.0;
+};
+inline ExternalAiPageState& ExternalAiPage() { static ExternalAiPageState state; return state; }
 inline const char* PageLabel(Page page) {
     switch (page) {
     case Page::Common: return L(SetUX_Common);
@@ -23,6 +46,7 @@ inline const char* PageLabel(Page page) {
     case Page::Interaction: return L(SetUX_ControlsShortcuts);
     case Page::Personal: return L(SetUX_ProfileExport);
     case Page::Backup: return L(SetUX_BackupRestore);
+    case Page::ExternalAi: return L(SetUX_ExternalAiMcp);
     case Page::Diagnostics: return L(SetUX_DiagnosticsLogs);
     }
     return "";
@@ -59,7 +83,7 @@ inline PreferencePreview<AppSettings>& AppearancePreview() {
     static PreferencePreview<AppSettings> preview{
         {[](const AppSettings& a,const AppSettings& b){return a.theme==b.theme && a.useCustomColors==b.useCustomColors;},
          [](AppSettings& a,const AppSettings& b){a.theme=b.theme;a.useCustomColors=b.useCustomColors;}},
-        Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),
+        Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),Field(&AppSettings::uiScalePercent),
         {[](const AppSettings& a,const AppSettings& b){return a.rowHeight==b.rowHeight && a.listDensity==b.listDensity;},
          [](AppSettings& a,const AppSettings& b){a.rowHeight=b.rowHeight;a.listDensity=b.listDensity;}}
     };
@@ -79,11 +103,11 @@ struct Editor {
         PREF(defaultVolume),PREF(loudnessNormEnabled),PREF(loudnessNormTargetLUFS),PREF(fadeInOutEnabled),PREF(fadeInOutMs),
         PREF(skipLeadingSilence),PREF(silenceThresholdDb),PREF(defaultPitch),PREF(pitchRange),
         PREF(monitorLayout),PREF(downmixMode),PREF(downmixCenterDb),PREF(downmixSurroundDb),PREF(binauralMonitor),
-        PREF(theme),PREF(themeScheduleMode),PREF(useCustomColors),PREF(language),PREF(readingFontSize),PREF(listFontSize),PREF(rowHeight),PREF(listDensity),
+        PREF(theme),PREF(themeScheduleMode),PREF(useCustomColors),PREF(language),PREF(readingFontSize),PREF(listFontSize),PREF(uiScalePercent),PREF(rowHeight),PREF(listDensity),
         PREF(showFileExtension),PREF(waveformDisplayMode),PREF(waveformStyle),PREF(miniWaveformRmsBodyStyle),PREF(meterChannelLayout),
         PREF(showLoudnessMeter),PREF(showRMSMeter),PREF(showTruePeakMeter),PREF(showClickRipple),
         PREF(showMilliseconds),PREF(showFrameNumber),PREF(defaultFrameRate),PREF(searchRealtime),PREF(suggestSourceMode),PREF(autoRenameTabBySearch),
-        PREF(memoryProfile),PREF(fpsLimit),PREF(thumbnailMaxResolution),PREF(threadLimit),PREF(autoReconcileOnStartup),
+        PREF(memoryProfile),PREF(fpsLimit),PREF(thumbnailMaxResolution),PREF(threadLimit),PREF(similarityAnalysisConcurrency),PREF(autoReconcileOnStartup),
         PREF(idleAssetBackfillEnabled),PREF(idleAssetBackfillDelayMinutes),PREF(rememberLastFolder),PREF(closeButtonAction),
         PREF(showGuidedMode),PREF(suppressConfirmDialogs),PREF(enableShowManagerHotkey),
         Field(&AppSettings::showManagerHotkey,[](const KeyBinding& a,const KeyBinding& b){return a.key==b.key && a.ctrl==b.ctrl && a.alt==b.alt && a.shift==b.shift;}),
@@ -106,6 +130,7 @@ struct Editor {
     bool previousSearching=false, hadChildPopup=false, scrollToTop=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
+    std::string themeImportResult;
     std::string clearSimilarTarget;
     bool clearSimilarConfirm=false;
     int64_t clearSimilarResult=-2;

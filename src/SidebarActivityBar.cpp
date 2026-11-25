@@ -1,9 +1,11 @@
 #include "SidebarActivityBar.h"
+#include "ui/UiScale.h"
 
 #include "AppState.h"
 #include "Localization.h"
 #include "ProductEdition.h"
 #include "Theme.h"
+#include "ThemeModuleColors.h"
 #include "TransientScrollbarHost.h"
 
 #include "imgui.h"
@@ -115,7 +117,7 @@ static float SidebarSizeFactor(AppSettings::SidebarSize sz) {
 }
 
 float SidebarRailWidth(const AppState& state) {
-    return 52.0f * SidebarSizeFactor(state.settings.sidebarSize);
+    return aura::ui::dpi::Px(52.0f * SidebarSizeFactor(state.settings.sidebarSize));
 }
 
 // Draws the VS Code-style vertical activity bar.
@@ -129,49 +131,60 @@ void DrawSidebarActivityBar(AppState& state) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return;
 
-    const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize);
-    const float bar_width = 52.0f * sizeFactor;
+    const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize) * aura::ui::dpi::UiScale();
+    const float bar_width = std::min(52.0f * sizeFactor, ImGui::GetContentRegionAvail().x);
     const float item_h    = 52.0f * sizeFactor;
     const float icon_size = 20.0f * sizeFactor;
 
     const ImVec2 pos = window->DC.CursorPos;
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    const float availY = ImGui::GetContentRegionAvail().y;
 
     // Rail is chrome-less by design: no background fill, no right-edge divider.
     // The icons float directly on the outer LeftDockColumn gradient so the rail
     // reads as "icon column" rather than a separate bolted-on UI bar. Color comes
     // exclusively from icon tint / active strip / hover animation below.
     //
-    // (sidebarRailBG / sidebarRailDivider tokens are still set per-theme but used
-    // only by the content header / optional future chrome, not here.)
-    const ThemeColorScheme& _sbth = ThemeColors::current();
+    // Only the rail divider token is drawn here; the rail has no background fill.
+    const ThemeModuleColors modules = ResolveThemeModuleColors(ThemeColors::current());
 
     auto& ord = state.settings.sidebarSectionOrder;
     const int n = AppSettings::kSidebarSectionCount;
+    const auto visibleSectionFlag = [&](int sectionId) -> bool* {
+        if (sectionId < 0 || sectionId >= n) return nullptr;
+        bool* visible = GetSidebarSectionVisibleFlag(state, sectionId);
+        if (!visible || !*visible) return nullptr;
+        if (sectionId == 2 && !ProductEdition::hasFeature("metadata_filter")) return nullptr;
+        if (sectionId == 4 && !ProductEdition::hasFeature("tag_cloud")) return nullptr;
+        return visible;
+    };
+    int visibleSections = 0;
+    for (int index = 0; index < n; ++index)
+        if (visibleSectionFlag(ord[index])) ++visibleSections;
+    const float groupGap = 12.0f * sizeFactor;
+    const float sectionHeight = visibleSections * item_h + (visibleSections > 3 ? groupGap : 0.0f);
+    const float menuY = std::max(pos.y + sectionHeight,
+        window->InnerRect.Max.y - window->WindowPadding.y - item_h);
+    const float footerBottomY = menuY + item_h;
+    const float menuHeight = item_h;
 
     float cursorY = pos.y;
     int visibleCount = 0;  // Counts icons actually rendered, drives the 3+3 group divider.
+    ImGui::PushClipRect(window->ClipRect.Min,
+        ImVec2(window->ClipRect.Max.x, std::max(window->ClipRect.Min.y, menuY)), true);
     for (int pos_idx = 0; pos_idx < n; ++pos_idx) {
         int sectionId = ord[pos_idx];
-        if (sectionId < 0 || sectionId >= n) continue;
-        bool* visiblePtr = GetSidebarSectionVisibleFlag(state, sectionId);
-        if (!visiblePtr || !*visiblePtr) continue; // hidden by user
-
-        // Feature-gated sections: hide icon when edition lacks feature.
-        if (sectionId == 2 && !ProductEdition::hasFeature("metadata_filter")) continue;
-        if (sectionId == 4 && !ProductEdition::hasFeature("tag_cloud")) continue;
+        bool* visiblePtr = visibleSectionFlag(sectionId);
+        if (!visiblePtr) continue;
 
         // Separate the navigation and data groups after the third visible icon.
         // A small divider preserves the rail hierarchy.
         if (visibleCount == 3) {
-            const float gap = 12.0f * sizeFactor;
-            const float lineY = cursorY + gap * 0.5f;
+            const float lineY = cursorY + groupGap * 0.5f;
             draw_list->AddLine(
                 ImVec2(pos.x + 14.0f * sizeFactor, lineY),
                 ImVec2(pos.x + bar_width - 14.0f * sizeFactor, lineY),
-                ImGui::GetColorU32(_sbth.sidebarRailDivider), 1.0f);
-            cursorY += gap;
+                ImGui::GetColorU32(modules.sidebar.railDivider), 1.0f);
+            cursorY += groupGap;
         }
         ++visibleCount;
 
@@ -182,6 +195,7 @@ void DrawSidebarActivityBar(AppState& state) {
         ImRect bb(item_min, item_max);
         char idbuf[32]; snprintf(idbuf, sizeof(idbuf), "##SidebarIcon_%d", sectionId);
         ImGuiID id = window->GetID(idbuf);
+        ImGui::SetCursorScreenPos(item_min);
         ImGui::ItemSize(bb);
         if (!ImGui::ItemAdd(bb, id)) continue;
 
@@ -212,8 +226,8 @@ void DrawSidebarActivityBar(AppState& state) {
                 LerpSidebarValue(a.z, b.z, t),
                 LerpSidebarValue(a.w, b.w, t));
         };
-        ImVec4 iconV4 = mixV4(_sbth.sidebarIconInactive, _sbth.sidebarIconHover, hover_anim);
-        iconV4        = mixV4(iconV4,                    _sbth.sidebarIconActive, active_anim);
+        ImVec4 iconV4 = mixV4(modules.sidebar.inactive, modules.sidebar.hover, hover_anim);
+        iconV4        = mixV4(iconV4,                   modules.sidebar.active, active_anim);
         const ImU32 icon_color = ImGui::GetColorU32(iconV4);
 
         // F-042 /clarify: in Regular/Large sizes, shift the icon up and
@@ -242,7 +256,7 @@ void DrawSidebarActivityBar(AppState& state) {
             const float strip_h = 36.0f * sizeFactor * active_anim;
             const ImVec2 s_min(item_min.x, center.y - strip_h * 0.5f);
             const ImVec2 s_max(item_min.x + 2.0f, center.y + strip_h * 0.5f);
-            const ImVec4 stripV4 = _sbth.sidebarActiveStrip;
+            const ImVec4 stripV4 = modules.sidebar.activeStrip;
             draw_list->AddRectFilled(s_min, s_max, ImGui::GetColorU32(stripV4));
             // Glow halo: same hue, reduced alpha modulated by active_anim.
             const ImVec4 glowV4(stripV4.x, stripV4.y, stripV4.z, stripV4.w * 0.157f * active_anim);
@@ -311,15 +325,19 @@ void DrawSidebarActivityBar(AppState& state) {
         }
     }
 
+    ImGui::PopClipRect();
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, cursorY));
+    ImGui::Dummy(ImVec2(bar_width, menuHeight));
+
 // Bottom-docked panel menu (≡) — replaces the old top-strip hamburger
     // Renders a hamburger icon at the bottom of the rail that opens Float / Hide /
-    // module visibility toggles. Anchored to availY so it stays bottom-aligned.
+    // module visibility toggles.
     {
-        const float bottomY = pos.y + availY - item_h;
-        const ImVec2 b_min(pos.x, bottomY);
-        const ImVec2 b_max(pos.x + bar_width, bottomY + item_h);
+        const ImVec2 b_min(pos.x, menuY);
+        const ImVec2 b_max(pos.x + bar_width, footerBottomY);
         ImRect bb(b_min, b_max);
         ImGuiID bid = window->GetID("##SidebarPanelMenuBtn");
+        ImGui::SetCursorScreenPos(b_min);
         ImGui::ItemSize(bb);
         if (ImGui::ItemAdd(bb, bid)) {
             bool bhovered = false, bheld = false;
@@ -333,12 +351,12 @@ void DrawSidebarActivityBar(AppState& state) {
             storage->SetFloat(bid + 1, bhover);
 
             ImVec4 bIconV4(
-                LerpSidebarValue(_sbth.sidebarIconInactive.x, _sbth.sidebarIconHover.x, bhover),
-                LerpSidebarValue(_sbth.sidebarIconInactive.y, _sbth.sidebarIconHover.y, bhover),
-                LerpSidebarValue(_sbth.sidebarIconInactive.z, _sbth.sidebarIconHover.z, bhover),
-                LerpSidebarValue(_sbth.sidebarIconInactive.w, _sbth.sidebarIconHover.w, bhover));
+                LerpSidebarValue(modules.sidebar.inactive.x, modules.sidebar.hover.x, bhover),
+                LerpSidebarValue(modules.sidebar.inactive.y, modules.sidebar.hover.y, bhover),
+                LerpSidebarValue(modules.sidebar.inactive.z, modules.sidebar.hover.z, bhover),
+                LerpSidebarValue(modules.sidebar.inactive.w, modules.sidebar.hover.w, bhover));
             const ImU32 bcol = ImGui::GetColorU32(bIconV4);
-            const ImVec2 bcen(b_min.x + bar_width * 0.5f, b_min.y + item_h * 0.5f);
+            const ImVec2 bcen(b_min.x + bar_width * 0.5f, b_min.y + menuHeight * 0.5f);
             const float s = icon_size * 0.5f;
             // 3 horizontal lines (hamburger)
             draw_list->AddLine(ImVec2(bcen.x - s, bcen.y - s*0.5f), ImVec2(bcen.x + s, bcen.y - s*0.5f), bcol, 1.5f);

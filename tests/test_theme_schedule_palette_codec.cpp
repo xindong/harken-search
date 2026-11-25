@@ -22,10 +22,12 @@ int main() {
     size_t count = 0;
     const auto* fields = GetThemeEditorItems(count);
     for (size_t i = 0; i < count; ++i) {
-        const auto a = night.*(fields[i].member), b = decoded.*(fields[i].member);
-        Check(a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w, fields[i].key);
+        const auto original = fields[i].Color(night);
+        auto color = fields[i].Color(decoded);
+        Check(original.x == color.x && original.y == color.y && original.z == color.z && original.w == color.w, fields[i].key);
         auto edited = decoded;
-        (edited.*(fields[i].member)).w = b.w == 1.f ? .5f : 1.f;
+        color.w = color.w == 1.f ? .5f : 1.f;
+        fields[i].SetColor(edited, color);
         Check(!PalettesEqual(night, edited), "edited field must not keep the stock preset name");
     }
     Check(decoded.sidebarIconActive.w == .6f && decoded.wwiseDiffNew.z == .7f, "non-editor colors survive");
@@ -34,6 +36,38 @@ int main() {
     Check(!PalettesEqual(night, hiddenEdit), "non-editor field must affect preset identity");
     Check(DecodePalette(encoded, Period::Day, decoded, error), "dark palette accepted for day");
     Check(PalettesEqual(night, decoded), "day slot preserves the chosen dark palette");
+    auto wwise = nlohmann::json::parse(encoded);
+    Check(!wwise["colors"].contains("wwiseLabelText") && !wwise["colors"].contains("wwiseBodyText"),
+          "following Wwise colors do not change the legacy palette document");
+    wwise["colors"]["wwiseLabelText"] = {0.25f, 0.5f, 0.75f, 0.f};
+    wwise["colors"]["wwiseBodyText"] = {1.f, 0.5f, 0.f, 1.f};
+    for (const auto period : {Period::Day, Period::Night}) {
+        Check(DecodePalette(wwise.dump(), period, decoded, error), "Wwise text overrides load in both palette slots");
+        Check(!PalettesEqual(night, decoded), "explicit Wwise override differentiates a palette from its preset");
+        Check(nlohmann::json::parse(EncodePalette(decoded))["colors"] == wwise["colors"],
+              "Wwise text overrides round trip without changing the other palette colors");
+    }
+    wwise["colors"]["wwiseLabelText"][3] = -0.1f;
+    Check(!DecodePalette(wwise.dump(), Period::Night, decoded, error), "invalid Wwise override is rejected");
+    Check(DecodePalette(encoded, Period::Night, decoded, error) && PalettesEqual(night, decoded),
+          "loading a legacy slot restores follow mode");
+    auto welcome = nlohmann::json::parse(encoded);
+    Check(!welcome["colors"].contains("welcomeBackground") &&
+          !welcome["colors"].contains("welcomeText") &&
+          !welcome["colors"].contains("welcomeAccent"),
+          "legacy slots do not acquire explicit welcome colors");
+    welcome["colors"]["welcomeBackground"] = {0.1f, 0.2f, 0.3f, 1.f};
+    welcome["colors"]["welcomeAccent"] = {0.5f, 0.75f, 0.25f, 1.f};
+    for (const auto period : {Period::Day, Period::Night}) {
+        Check(DecodePalette(welcome.dump(), period, decoded, error), "partial welcome palette loads");
+        Check(!PalettesEqual(night, decoded), "welcome overrides affect palette identity");
+        Check(nlohmann::json::parse(EncodePalette(decoded))["colors"] == welcome["colors"],
+              "partial welcome overrides round trip in either slot");
+    }
+    welcome["colors"]["welcomeText"] = {0.1f, 2.f, 0.3f, 1.f};
+    Check(!DecodePalette(welcome.dump(), Period::Night, decoded, error), "invalid welcome text rejected");
+    Check(DecodePalette(encoded, Period::Night, decoded, error) && PalettesEqual(night, decoded),
+          "loading a legacy slot clears all welcome overrides");
     const auto before = decoded.toolbarAccent.x;
     for (const char* bad : {"{}", "{broken", "[]", "null"}) {
         Check(!DecodePalette(bad, Period::Night, decoded, error), "bad JSON rejected");

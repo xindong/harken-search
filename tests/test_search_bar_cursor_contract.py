@@ -23,7 +23,7 @@ def test_search_bar_uses_native_caret_without_redundant_custom_overlay():
 
 def test_search_and_history_keep_the_existing_workflow():
     main = MAIN.read_text(encoding="utf-8")
-    start = main.index("constexpr float kHistoryButtonWidth")
+    start = main.index("const float kHistoryButtonWidth")
     end = main.index("const float searchAndHistoryRightX", start)
     toolbar = main[start:end]
     assert 'RegisterLastItem("toolbar.back"' in toolbar
@@ -58,13 +58,13 @@ def test_explicit_clear_forces_apply_even_when_realtime_is_turned_off():
 
 def test_history_always_uses_the_reference_compact_icon_layout():
     main = MAIN.read_text(encoding="utf-8")
-    start = main.index("constexpr float kHistoryButtonWidth")
+    start = main.index("const float kHistoryButtonWidth")
     history = main[start : main.index('DrawSearchField("##SearchBar"', start)]
-    assert "constexpr float kHistoryButtonWidth = 46.0f;" in history
-    assert "constexpr float kHistoryInnerPad = 3.0f;" in history
-    assert "constexpr float kHistoryDividerGap = 2.0f;" in history
-    assert "2.0f * (kHistoryButtonWidth + kHistoryInnerPad + kHistoryDividerGap) + 1.0f" in history
-    assert "const float kCapsuleH = 34.0f;" in main
+    assert "const float kHistoryButtonWidth = workspacePx(46.0f);" in history
+    assert "const float kHistoryInnerPad = workspacePx(3.0f);" in history
+    assert "const float kHistoryDividerGap = workspacePx(2.0f);" in history
+    assert "2.0f * (kHistoryButtonWidth + kHistoryInnerPad + kHistoryDividerGap) + workspacePx(1.0f)" in history
+    assert "const float kCapsuleH = workspacePx(34.0f);" in main
     assert "ImGui::Dummy(ImVec2(kHistoryCapsuleWidth, capsuleH))" in history
     assert 'InvisibleButton("##NavBack", ImVec2(kHistoryButtonWidth, innerH))' in history
     assert 'InvisibleButton("##NavFwd", ImVec2(kHistoryButtonWidth, innerH))' in history

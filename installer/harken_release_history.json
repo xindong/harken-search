@@ -2,6 +2,268 @@
   "schema_version": 2,
   "releases": [
     {
+      "version": "1.0.47",
+      "release_date": "2026-11-25",
+      "headline": "工作区与停靠、相似音效与主题改进",
+      "source": "Harken Search",
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ],
+      "sections": [
+        {
+          "title": "外观与主题",
+          "items": [
+            {
+              "name": "",
+              "list": [
+                "「设置 → 外观」可导入主题 JSON，导入后立即应用。",
+                "无效的主题文件不会改变当前主题。",
+                "日夜主题开启时，手动导入立即生效；到下一时段仍按原计划切换。",
+                "欢迎页和加载页默认跟随主题，文字颜色按背景调整。",
+                "日夜主题可分别预览、调整或恢复欢迎页的背景、文字和强调色。",
+                "导入主题时保留文件里的欢迎页配色，也兼容未包含这些配色的旧主题文件。",
+                "修复工具窗浮动后浅字贴着浅底看不清的问题。"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "搜索与素材库",
+          "items": [
+            {
+              "name": "",
+              "list": [
+                "文件夹索引缺项或不可读时，文件夹搜索仍能找到已经入库的子目录。",
+                "完整扫描或暂停保留后，后台补齐封面时自动刷新一次结果列表和封面墙，保留筛选、滚动位置和多选。",
+                "打开未标记为 v2 格式的旧自适应库时，保留已缓存的缩略波形，只补缺失项。"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "相似音效",
+          "items": [
+            {
+              "name": "",
+              "list": [
+                "批量核对素材和构建相似音效索引可并行分析；没有模型时，声学分析也按设定并发数运行。",
+                "「设置 → 素材库」可设置相似分析并发数，范围 1–16，默认 4；修改后从下一轮分析生效。",
+                "等待首个分析结果超过 100 毫秒时，不再误报任务已取消。",
+                "相似音效面板在停靠和浮动时使用同一套留白、分析区与表格布局，保留各主题配色。"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "工作区与停靠",
+          "items": [
+            {
+              "name": "",
+              "list": [
+                "去掉停靠的波形播放条下方多余的空白。",
+                "统一筛选器、标签、结果列表、Info 和波形之间的分缝。",
+                "鼠标移开后，竖向分隔线的三点手柄仍会显示。",
+                "分隔条的拖动区域贴合分缝，不再覆盖上层浮窗。",
+                "拼接面板拖到最小可用宽高时停止，不再把控件挤出去。",
+                "主窗口变窄时保留拼接的 Info 和筛选器，放不下的内容可在面板内滚动。",
+                "停靠预览按松手后的实际位置和尺寸显示。",
+                "插入新停靠面板时，不改变其他已停靠列的宽度。",
+                "筛选器和传输窗上下拼接时同宽，不留多余空白。",
+                "去掉上下拼接时叠在一起的三点，只在实际分隔线上保留手柄。",
+                "左右拖动 Info 左边的三点，上下两个窗口会一起变宽或变窄。",
+                "拖动上下两窗之间的横向分隔线，只改变两窗高度。",
+                "拖动 Info 右侧的分隔线，只调整 Info 和结果列表的宽度。",
+                "已有底部横栏时，仍可在横栏内做左右分栏。",
+                "修复已有顶部或底部横栏时，侧栏明明放得下却不能在同一列上下拼接的问题。"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "建库与升级",
+          "items": [
+            {
+              "name": "",
+              "list": [
+                "高缩放下，首次建库的三个按钮不再裁切文字。",
+                "首次建库弹窗宽度不足时，按钮按原顺序分行。",
+                "首次建库弹窗和按钮的圆角随界面缩放调整。",
+                "Windows 覆盖升级后刷新任务栏已固定的默认图标，不替换用户自选图标。"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "1.0.46",
+      "release_date": "2026-11-23",
+      "headline": "任务进度看得见，界面缩放与后台执行",
+      "source": "Harken Search",
+      "sections": [
+        {
+          "title": "新增内容",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {
+                  "title": "DAW 设置与发送",
+                  "description": "设置中新增 DAW 模块，四款 DAW 同一张卡片；REAPER 可一键安装 Harken 组件并把音效发送到工程。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "本机 AI 查找",
+                  "description": "外部 AI 通过本机连接器查找音效、目录和同类替代，只读取已授权的库与路径。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "性能监视器",
+                  "description": "原 F10 诊断浮窗改为性能与日志两个页签，可缩放查看帧率、单帧时间和进程占用，并一键导出日志。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "WavPack 格式",
+                  "description": "支持 WavPack 无损音效的扫描与播放。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "任务进度浮层",
+                  "description": "扫描、相似分析、移除路径、波形与封面重建、导出、Wwise 导入和更新下载的进度统一到主窗口右下角小浮层：最多 3 条，运行中带进度条与百分比，完成后自动收起；失败的会给出原因。原窗口进度可见时不重复显示。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "应用内界面缩放",
+                  "description": "设置里可把应用界面缩放到 80%–200%，独立于 Windows 系统缩放，窄屏与高分屏不必再改系统设置。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "体验优化",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {
+                  "title": "拖出音效",
+                  "description": "从结果里拖出音效时主波形缩成跟手小卡，落点轻轻下沉后迅速淡出。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "顶栏与菜单",
+                  "description": "顶部导航改为紧凑布局，菜单字号跟随系统字体，页面菜单与结果右键菜单外观统一。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "文件夹树与侧栏",
+                  "description": "侧栏按新的规格局重排，刷新、定位和收起都有明确反馈。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "开屏与设置",
+                  "description": "欢迎页与开屏共用同一套机器人头像动效，设置过头像的用户直接看到自己的头像；设置项数值居中，主题色块对齐，AI 语音识别面板的模型区与页签更简洁。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "后台执行",
+                  "description": "移除路径、扫描与路径查新、单通道导出、Wwise 传输都改到后台执行：主界面不再卡顿，Wwise 传输显示「传输中 N / M」并禁止中途切换工程。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "主题保存位置",
+                  "description": "导入的主题改存到用户数据目录，重启与升级后仍然保留；外观页新增主题下载入口。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "字体与缩放统一",
+                  "description": "顶部菜单与列表字体上限提高到 36 px，界面 DPI 缩放统一处理，缩放后布局与列宽保持。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "性能优化",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {
+                  "title": "大库首屏",
+                  "description": "封面墙首屏改读文件序物化索引，波形回写移出界面线程，消除百万级音效库进入主界面后的秒级停顿。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "大目录浏览",
+                  "description": "文件浏览器按输入缓存排序结果，大目录改为分帧建索引，扫描期间不再反复全量排序。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "旧库打开",
+                  "description": "旧波形数据迁移按库只执行一次，减少旧库首次打开等待。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "播放列表",
+                  "description": "计数与排序改用集合索引，打开与更新流程分段可诊断。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "问题修复",
+          "items": [
+            {
+              "name": "Cindy",
+              "list": [
+                {
+                  "title": "盘符库根",
+                  "description": "以盘符根作为库目录时不再被判成库外，取消扫描保留已汇总的结果。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "面板与对齐",
+                  "description": "修复停靠面板被压扁、结果中栏错位和名称第三行被裁切。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "诊断与切换",
+                  "description": "修复页签切换卡顿与分段计时不准，F10 导出不再丢字段。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "扫描不再整目录中断",
+                  "description": "单个文件名编码异常（常见于 macOS 残留文件）以前会让整个目录扫描中断，现在只跳过该条并记录具体路径与原因。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "移除路径容错",
+                  "description": "库索引与主表不一致时先重建索引再重试，不再报 database disk image is malformed；同一库里普通 UNC 与 \\\\?\\UNC\\ 两种写法能一次清干净。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "细节修正",
+                  "description": "音量条按整条宽度分配；正式版菜单隐藏开发自测入口；紧凑顶栏恢复搜索提示。",
+                  "source": "Harken Search"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
+    },
+    {
       "version": "1.0.45",
       "release_date": "2026-11-09",
       "headline": "同类替代模型就绪，升级确认与分析入口更稳",
@@ -13,15 +275,30 @@
             {
               "name": "Cindy",
               "list": [
-                {"title": "同类替代模型", "description": "补齐声音模型与推理运行库，修复正式包中同类替代无法分析的问题。", "source": "Harken Search"},
-                {"title": "更新完成确认", "description": "修复旧版更新器启动新版时诊断输出干扰健康确认的问题。", "source": "Harken Search"},
-                {"title": "相似分析入口", "description": "首次统计时显示等待状态，统计失败可重试，切库期间不会误启动分析。", "source": "Harken Search"}
+                {
+                  "title": "同类替代模型",
+                  "description": "补齐声音模型与推理运行库，修复正式包中同类替代无法分析的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "更新完成确认",
+                  "description": "修复旧版更新器启动新版时诊断输出干扰健康确认的问题。",
+                  "source": "Harken Search"
+                },
+                {
+                  "title": "相似分析入口",
+                  "description": "首次统计时显示等待状态，统计失败可重试，切库期间不会误启动分析。",
+                  "source": "Harken Search"
+                }
               ]
             }
           ]
         }
       ],
-      "contributors": ["HarkenDeveloper-zhongziyu", "Cindy"]
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
     },
     {
       "version": "1.0.44",
@@ -360,7 +637,10 @@
           ]
         }
       ],
-      "contributors": ["HarkenDeveloper-zhongziyu", "Cindy"]
+      "contributors": [
+        "HarkenDeveloper-zhongziyu",
+        "Cindy"
+      ]
     },
     {
       "version": "1.0.40",

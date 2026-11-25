@@ -5,6 +5,9 @@
 
 #include "imgui.h"
 #include "LocalizationGenerated.h"
+#include <algorithm>
+#include <cmath>
+#include <optional>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -154,16 +157,31 @@ struct ThemeColorScheme {
     ImVec4 presetDialCardInactiveText= ImVec4(0.620f, 0.690f, 0.780f, 1.0f);  // 未选中文字
     ImVec4 presetDialAccent          = ImVec4(0.518f, 1.000f, 0.667f, 1.0f);  // 中间指示线
 
+// 派生锚点：参与默认色计算，可被主题 JSON 覆盖。
+// 同类锚点合并为一处，改一处即统一改变所有由它派生的颜色。
+    ImVec4 themeHighlight            = ImVec4(1.000f, 1.000f, 1.000f, 1.0f);  // 高光/提亮（胶囊激活底、播放列表高光）
+    ImVec4 meterWarnAnchor           = ImVec4(0.960f, 0.880f, 0.720f, 1.0f);  // 电平预警暖白
+    ImVec4 meterClipAnchor           = ImVec4(0.840f, 0.670f, 0.640f, 1.0f);  // 削波珊瑚
+    ImVec4 meterNeutralAnchor        = ImVec4(0.620f, 0.620f, 0.620f, 1.0f);  // 中性去饱和灰（两个电平公式共用）
+    ImVec4 wwiseOkAnchor             = ImVec4(0.420f, 0.880f, 0.480f, 1.0f);  // Wwise 成功绿轴
+    ImVec4 wwiseNewAnchor            = ImVec4(0.380f, 0.760f, 0.900f, 1.0f);  // Wwise 新节点青轴
+
+// 颜色混合效果：true = 允许派生公式与绘制期混色；false = 只用显式颜色（渐变仍按两端插值）。
+    bool colorMixing                 = true;
+    // 结果列表横向渐变开关：false = 整片纯色（用渐变起点色）。
+    bool resultsGradient             = true;
+    // 搜索框描边：alpha 为 0 时不描边（默认，旧主题外观不变）。
+    ImVec4 searchFieldOutline        = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    // 播放栏文字：alpha 为 0 时跟随 interfaceText（默认，旧主题不变）。
+    ImVec4 transportText             = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+
 // Sidebar Activity Bar (VS Code-style)
     // Rail = the 52px icon column; content header/body/status bar stack to its right.
-    ImVec4 sidebarRailBG          = ImVec4(0.110f, 0.110f, 0.110f, 1.0f);  // 图标栏背景 (Classic Dark 默认)
     ImVec4 sidebarRailDivider     = ImVec4(1.000f, 1.000f, 1.000f, 0.052f);// 图标栏右侧 1px 分割线
     ImVec4 sidebarIconInactive    = ImVec4(0.502f, 0.502f, 0.502f, 1.0f);  // 未激活图标色
     ImVec4 sidebarIconHover       = ImVec4(0.702f, 0.702f, 0.702f, 1.0f);  // 悬停图标色
     ImVec4 sidebarIconActive      = ImVec4(0.298f, 0.702f, 0.298f, 1.0f);  // 激活图标色
     ImVec4 sidebarActiveStrip     = ImVec4(0.298f, 0.702f, 0.298f, 1.0f);  // 激活左侧 2px 高亮条
-    ImVec4 sidebarHeaderBG        = ImVec4(0.110f, 0.110f, 0.110f, 1.0f);  // 内容区 header 背景 (= sidebarRailBG 同色)
-    ImVec4 sidebarStatusBarBG     = ImVec4(0.142f, 0.142f, 0.233f, 1.0f);  // 底部状态栏背景 (filterBrowserBG × 0.925)
     ImVec4 sidebarSubpaneBG       = ImVec4(0.180f, 0.220f, 0.290f, 1.0f);  // related-paths / folder-tree middle subpane background
     ImVec4 sidebarSubpaneDivider  = ImVec4(0.280f, 0.320f, 0.390f, 1.0f);  // middle subpane divider / drag hint
     ImVec4 sidebarSubHeaderLine   = ImVec4(1.000f, 1.000f, 1.000f, 0.15f); // 子标题旁延伸横线
@@ -179,7 +197,52 @@ struct ThemeColorScheme {
     ImVec4 wwiseDiffUnresolved   = ImVec4(1.000f, 0.482f, 0.431f, 1.0f);  // Unresolved 节点
     ImVec4 wwiseLeafBadge        = ImVec4(0.404f, 0.745f, 0.478f, 1.0f);  // 叶子层（接收音频）
     ImVec4 wwiseParentBadge      = ImVec4(0.471f, 0.596f, 0.753f, 1.0f);  // 父层
+    std::optional<ImVec4> wwiseLabelText;
+    std::optional<ImVec4> wwiseBodyText;
+    std::optional<ImVec4> welcomeBackground;
+    std::optional<ImVec4> welcomeText;
+    std::optional<ImVec4> welcomeAccent;
 };
+
+inline float WelcomeRelativeLuminance(const ImVec4& color) {
+    const auto linear = [](float channel) {
+        const float srgb = std::round(std::clamp(channel, 0.0f, 1.0f) * 255.0f) / 255.0f;
+        return srgb <= 0.04045f ? srgb / 12.92f : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * linear(color.x) + 0.7152f * linear(color.y) + 0.0722f * linear(color.z);
+}
+
+inline ImVec4 DeriveWelcomeText(const ThemeColorScheme& scheme) {
+    const float base = WelcomeRelativeLuminance(scheme.welcomeBackground.value_or(scheme.mainWindowBG)) + 0.05f;
+    const float choice = base / 0.05f >= 1.05f / base ? 0.0f : 1.0f;
+    return ImVec4(choice, choice, choice, 1.0f);
+}
+
+struct ThemeColorOverride {
+    const char* key;
+    std::optional<ImVec4> ThemeColorScheme::* member;
+    ImVec4 ThemeColorScheme::* source;
+    ImVec4 (*derive)(const ThemeColorScheme&) = nullptr;
+
+    ImVec4 Resolve(const ThemeColorScheme& scheme) const {
+        if (const auto& value = scheme.*member) return *value;
+        return derive ? derive(scheme) : scheme.*source;
+    }
+};
+
+inline constexpr ThemeColorOverride kWwiseLabelTextColor{
+    "wwiseLabelText", &ThemeColorScheme::wwiseLabelText, &ThemeColorScheme::menuText};
+inline constexpr ThemeColorOverride kWwiseBodyTextColor{
+    "wwiseBodyText", &ThemeColorScheme::wwiseBodyText, &ThemeColorScheme::interfaceText};
+inline constexpr ThemeColorOverride kWelcomeBackgroundColor{
+    "welcomeBackground", &ThemeColorScheme::welcomeBackground, &ThemeColorScheme::mainWindowBG};
+inline constexpr ThemeColorOverride kWelcomeTextColor{
+    "welcomeText", &ThemeColorScheme::welcomeText, nullptr, DeriveWelcomeText};
+inline constexpr ThemeColorOverride kWelcomeAccentColor{
+    "welcomeAccent", &ThemeColorScheme::welcomeAccent, &ThemeColorScheme::controlAccent};
+inline constexpr const ThemeColorOverride* kOptionalThemeColors[]{
+    &kWwiseLabelTextColor, &kWwiseBodyTextColor,
+    &kWelcomeBackgroundColor, &kWelcomeTextColor, &kWelcomeAccentColor};
 
 // Theme Color Scheme Manager
 
@@ -188,6 +251,8 @@ class ThemeColors {
 public:
     // 标记方案是否被用户自定义过（编辑器修改过）
     static bool& customized();
+    static bool colorMixingEnabled();
+    static void resolveDerivedColors(ThemeColorScheme& scheme);
 
     // 获取当前活动的颜色方案
     static ThemeColorScheme& current();
@@ -277,6 +342,9 @@ public:
     // 导入/导出为 JSON 格式字符串
     static std::string exportToJSON(const ThemeColorScheme& scheme);
     static bool importFromJSON(const std::string& json, ThemeColorScheme& outScheme);
+    /// 按完整支持列表过滤主题文件里的颜色：可选覆盖项未配置时不在导出里，也要允许导入。
+    /// 成功时 outFlatJson 只含通过校验的字段，供 importFromJSON 读取。
+    static bool filterImportColors(const std::string& jsonText, std::string& outFlatJson);
     
 // 文件导入/导出 (F-016)
     /// 导出主题到 JSON 文件（用于分享）

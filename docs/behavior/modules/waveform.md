@@ -8,7 +8,7 @@
 **Priority:** P0
 **Owner:** Engineering
 **Created:** 2026-06-03
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-11-24
 
 ## Product Behavior
 
@@ -27,6 +27,7 @@
 - New database selectable cache mode is MiniOnly only; the UI no longer offers MiniAndMain for newly created libraries.
 - Legacy `WaveformCachePolicy::Mode::MiniAndMain` remains supported for existing databases and compatibility tests; do not remove the enum or read paths as part of mini-only UI cleanup.
 - Mini waveform cache storage is a signed max/min envelope using the existing parallel `float` blob pair: `waveform_data` stores max peaks and `mini_min_data` stores min peaks. It is not the WPK2/int16 packed detail format.
+- Opening an adaptive library without the `mini_waveform_format_v2` stamp preserves existing mini waveforms. The automatic upgrade uses the existing count of missing waveform caches to decide whether to rebuild; manual rebuild is unchanged.
 - New/adaptive mini density is `ComputeAdaptiveMiniPeakCount(totalFrames)`: 1 peak per 1024 source frames, floor 512, cap 1024.
 - Scan precompute, BackfillWorkerPool, and AsyncWorker visible decode paths should all prefer `saveMiniWaveformEnvelopeByPath(...)` when `minPeaks.size() == peaks.size()`, falling back to `saveWaveformByPath(...)` only for legacy max-only data.
 - Main waveform detail remains real-time/on-demand or WPK2 detail depending on the existing policy; this mini-cache contract does not solve the independent BWF/FACT detail decode issue.

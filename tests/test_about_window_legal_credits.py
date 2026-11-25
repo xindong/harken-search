@@ -69,15 +69,16 @@ def test_about_opens_each_url_through_platform_openurl():
 def test_about_shows_brand_and_cindy_artwork():
     block = _about_block()
     assert "aura::ui::LoadPackagedAsset" in block
-    assert "assets/icons/brand/harken@2x.png" in block
+    assert "assets/icons/brand/harken-bot@2x.png" in block
     assert "harken-search-menu-wordmark" in block
     assert "assets/icons/brand/cindy.png" in block
 
 
 def test_about_uses_confirmed_brand_and_two_reading_pages():
     block = _about_block()
-    assert "harken-search-menu-wordmark-white.png" in block
-    assert "harken-search-menu-wordmark-black.png" in block
+    assert "harken-search-menu-wordmark-orange.png" in block
+    assert "harken-search-menu-wordmark-white.png" not in block
+    assert "harken-search-menu-wordmark-black.png" not in block
     assert "Main_AboutLegalTab" in block
     assert "Main_AboutBack" in block
     assert "ImGui::SetNextWindowSize" in _main()

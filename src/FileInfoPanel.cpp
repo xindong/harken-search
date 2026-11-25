@@ -8,6 +8,7 @@
 #include "TransientScrollbarHost.h"
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/TransportContrast.h"
+#include "ui/UiScale.h"
 
 #include "imgui.h"
 
@@ -158,6 +159,27 @@ constexpr bool kDiagnostics = AURA_BUILD_DIAGNOSTICS != 0;
 constexpr float kPageButtonWidth = 24.0f;
 constexpr int kVisibilityAction = 4;
 constexpr int kSimilarSoundsAction = 5;
+
+struct PageActionLayout {
+    float scale;
+    float buttonWidth;
+    float width;
+    bool compact;
+    bool similarInMenu;
+};
+
+PageActionLayout MeasurePageActions(AppState& state, float availableWidth, bool grouped) {
+    auto& pages = state.settings.infoPages;
+    pages.Normalize(kDiagnostics);
+    const float scale = aura::ui::dpi::UiScale();
+    const bool compact = availableWidth < 172.0f * scale;
+    const bool similarInMenu = compact && grouped;
+    const bool showSimilar = pages.similarSoundsVisible && !similarInMenu;
+    const int count = (compact ? 1 : pages.VisibleCount(kDiagnostics)) + 1 + (showSimilar ? 1 : 0);
+    const float buttonWidth = kPageButtonWidth * scale;
+    return {scale, buttonWidth, count * buttonWidth + 6.0f * scale, compact, similarInMenu};
+}
+
 const char* PageLabel(int page) {
     switch (page) {
     case 0: return L(Info_MetaSummaryTab);
@@ -170,52 +192,55 @@ const char* PageId(int page) {
     static const char* ids[] = {"info.metadataSummary", "info.artwork", "info.transferHistory", "info.playHistory"};
     return ids[page];
 }
-void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color) {
-    auto p = [&](float x, float y) { return ImVec2(origin.x + x * .75f, origin.y + y * .75f); };
-    auto line = [&](float x, float y, float x2, float y2) { dl->AddLine(p(x,y),p(x2,y2),color,1.3f); };
+void DrawPageIcon(ImDrawList* dl, ImVec2 origin, int page, ImU32 color, float scale) {
+    const float unit = .75f * scale;
+    const float stroke = 1.3f * scale;
+    auto point = [&](float offsetX, float offsetY) {
+        return ImVec2(origin.x + offsetX * unit, origin.y + offsetY * unit);
+    };
+    auto line = [&](float fromX, float fromY, float toX, float toY) {
+        dl->AddLine(point(fromX, fromY), point(toX, toY), color, stroke);
+    };
     if (page == 0) {
         line(14,3,5,3); line(5,3,5,21); line(5,21,19,21); line(19,21,19,8);
         line(19,8,14,3); line(14,3,14,8); line(14,8,19,8);
         line(8,12,16,12); line(8,16,14,16);
     } else if (page == 1) {
-        dl->AddRect(p(3,3),p(21,21),color,1.5f,0,1.3f);
-        dl->AddCircle(p(8.5f,8.5f),1.1f,color,8,1.1f);
+        dl->AddRect(point(3, 3), point(21, 21), color, 1.5f * scale, 0, stroke);
+        dl->AddCircle(point(8.5f, 8.5f), 1.1f * scale, color, 8, 1.1f * scale);
         line(4,17,10,12); line(10,12,14,16); line(14,16,17,13); line(17,13,21,17);
     } else if (page == 2) {
         line(4,6,20,6); line(20,6,16,2); line(20,6,16,10);
         line(8,14,20,14); line(8,19,17,19);
-        dl->AddCircleFilled(p(4,14),.8f,color); dl->AddCircleFilled(p(4,19),.8f,color);
+        dl->AddCircleFilled(point(4, 14), .8f * scale, color);
+        dl->AddCircleFilled(point(4, 19), .8f * scale, color);
     } else if (page == 3) {
-        dl->PathArcTo(p(12,12),6.75f,3.66519f,8.90118f,22);
-        dl->PathStroke(color,0,1.3f);
+        dl->PathArcTo(point(12, 12), 6.75f * scale, 3.66519f, 8.90118f, 22);
+        dl->PathStroke(color, 0, stroke);
         line(4,2,4,8); line(4,8,10,8);
         line(10,8,16,12); line(16,12,10,16); line(10,16,10,8);
     } else if (page == kSimilarSoundsAction) {
-        // The existing waveform mark, centered in the same 18px icon box.
         const ImVec2 points[] = {
-            p(4.32f,12), p(7.68f,6.72f), p(11.28f,18.72f),
-            p(14.88f,4.32f), p(18.72f,13.92f)
+            point(4.32f, 12), point(7.68f, 6.72f), point(11.28f, 18.72f),
+            point(14.88f, 4.32f), point(18.72f, 13.92f)
         };
-        dl->AddPolyline(points, IM_ARRAYSIZE(points), color, ImDrawFlags_None, 1.3f);
+        dl->AddPolyline(points, IM_ARRAYSIZE(points), color, ImDrawFlags_None, stroke);
     } else {
-        for (float x : {5.0f,12.0f,19.0f}) dl->AddCircleFilled(p(x,12),1.0f,color);
+        for (float offsetX : {5.0f, 12.0f, 19.0f}) dl->AddCircleFilled(point(offsetX, 12), scale, color);
     }
 }
 }
 
 float FileInfoPageActionsWidth(AppState& state, float availableWidth, bool grouped) {
-    state.settings.infoPages.Normalize(kDiagnostics);
-    const bool compact = availableWidth < 172.0f;
-    const int count = compact ? 1 : state.settings.infoPages.VisibleCount(kDiagnostics);
-    const bool showSimilar = state.settings.infoPages.similarSoundsVisible && !(compact && grouped);
-    return (count + 1 + (showSimilar ? 1 : 0)) * kPageButtonWidth + 6.0f;
+    return MeasurePageActions(state, availableWidth, grouped).width;
 }
 
 bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, float availableWidth, bool grouped) {
     auto& pages = state.settings.infoPages;
-    pages.Normalize(kDiagnostics);
-    const bool compact = availableWidth < 172.0f;
-    const bool similarInMenu = compact && grouped;
+    const auto layout = MeasurePageActions(state, availableWidth, grouped);
+    const float scale = layout.scale;
+    const bool compact = layout.compact;
+    const bool similarInMenu = layout.similarInMenu;
     const ImVec2 saved = ImGui::GetCursorPos();
     const auto& theme = ThemeColors::current();
     const ImVec4 base = theme.metadataPanelText;
@@ -226,19 +251,24 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
     auto button = [&](int page, bool selected) {
         ImGui::SetCursorPos(ImVec2(x, position.y));
         ImGui::PushID(page);
-        const bool clicked = ImGui::InvisibleButton("page", ImVec2(kPageButtonWidth, height));
+        const bool clicked = ImGui::InvisibleButton("page", ImVec2(layout.buttonWidth, height));
         const bool hovered = ImGui::IsItemHovered();
-        const ImVec2 a = ImGui::GetItemRectMin();
+        const ImVec2 topLeft = ImGui::GetItemRectMin();
         const ImVec4 color = selected || hovered ? base : ImVec4(base.x,base.y,base.z,base.w*.72f);
-        DrawPageIcon(dl, ImVec2(a.x+3.0f, a.y+(height-18.0f)*.5f), page, ImGui::GetColorU32(color));
-        if (selected) dl->AddLine(ImVec2(a.x+4,a.y+height-2),ImVec2(a.x+20,a.y+height-2),ImGui::GetColorU32(accent),2.0f);
+        DrawPageIcon(dl, ImVec2(topLeft.x + 3.0f * scale, topLeft.y + (height - 18.0f * scale) * .5f),
+                     page, ImGui::GetColorU32(color), scale);
+        if (selected) {
+            const float underlineY = topLeft.y + height - 2.0f * scale;
+            dl->AddLine(ImVec2(topLeft.x + 4.0f * scale, underlineY),
+                        ImVec2(topLeft.x + 20.0f * scale, underlineY), ImGui::GetColorU32(accent), 2.0f * scale);
+        }
         const bool similar = page == kSimilarSoundsAction;
         const char* label = similar ? L(Similar_OpenTooltip) : (page < 4 ? PageLabel(page) : L(Info_VisiblePages));
         const char* id = similar ? "info.similarSounds" : (page < 4 ? PageId(page) : "info.pageVisibility");
         ThemeInspector::RegisterLastItem(id, label, "src/FileInfoPanel.cpp");
         if (hovered) ImGui::SetTooltip("%s", label);
         ImGui::PopID();
-        x += kPageButtonWidth;
+        x += layout.buttonWidth;
         return clicked;
     };
     bool similarClicked = pages.similarSoundsVisible && !similarInMenu && button(kSimilarSoundsAction, false);

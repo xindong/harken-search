@@ -68,10 +68,12 @@ class MagicEqUiContractTests(unittest.TestCase):
                      "magicEQSetLowEdgePercent", "magicEQSetHighEdgePercent"):
             require_text(self, body, text)
 
-    def test_outer_grips_resize_widget_only_and_preserve_32px_height(self):
+    def test_outer_grips_resize_widget_only_and_preserve_logical_height(self):
         body = self.draw_body()
         for text in ("DragPart::ResizeLeft", "DragPart::ResizeRight", "settings.widgetWidth",
-                     "ImVec2 size(width, 32.0f)"):
+                     "ImVec2 size(width, eqPx(32.0f))",
+                     "drag.startWidth = width / eqScale",
+                     "drag.startWidth + deltaX / eqScale * direction"):
             require_text(self, body, text)
         resize = re.search(r"if \(drag.part == DragPart::ResizeLeft.*?\n\s*\}\s*else", body, re.DOTALL)
         self.assertIsNotNone(resize, "最外侧抓手需要独立的宽度拖动分支")
@@ -119,7 +121,7 @@ class MagicEqUiContractTests(unittest.TestCase):
         gate = body.index("const auto currentAvailability = availabilityFor(settings.steepness)")
         self.assertLess(drag, gate)
         self.assertIn("settings = originalSettings", body[gate:gate + 1200])
-        self.assertIn("slopeAvailableWidth >= shortSlopeSize.x + 2.0f", body)
+        self.assertIn("slopeAvailableWidth >= shortSlopeSize.x + eqPx(2.0f)", body)
         self.assertIn("steepnessLabel.shortValue", body)
 
     def test_narrow_control_keeps_a_visible_and_clickable_slope_entry(self):
@@ -147,17 +149,20 @@ class MagicEqUiContractTests(unittest.TestCase):
     def test_technical_block_matches_approved_geometry_and_hitbox(self):
         body = self.draw_body()
         for fragment in (
-            "const ImVec2 markMin(pos.x + 5.0f, pos.y + 4.0f)",
-            "const ImVec2 markMax(markMin.x + 46.0f, markMin.y + 24.0f)",
+            "const ImVec2 markMin(pos.x + aura::ui::dpi::ScalePx(5.0f, eqScale)",
+            "const ImVec2 markMax(markMin.x + aura::ui::dpi::ScalePx(46.0f, eqScale)",
+            "markMin.y + aura::ui::dpi::ScalePx(24.0f, eqScale)",
             "mouse.x >= markMin.x && mouse.x < markMax.x",
             "mouse.y >= markMin.y && mouse.y < markMax.y",
             "point < 8", "3.14159265f / 4.0f",
             "PathFillConcave(markColor)",
-            "markMin.x + 9.5f", "markMin.x + 18.0f",
-            "markMin.x + 3.0f", "markMax.x - 3.0f",
+            "markMin.x + aura::ui::dpi::ScalePx(9.5f, eqScale)",
+            "markMin.x + aura::ui::dpi::ScalePx(18.0f, eqScale)",
+            "markMin.x + aura::ui::dpi::ScalePx(3.0f, eqScale)",
+            "markMax.x - aura::ui::dpi::ScalePx(3.0f, eqScale)",
             "const bool markHover = toggleHit", "const bool markPressed = markHover && held",
             "theme.controlAccent", "transportSurface",
-            "steepnessLeft = markMax.x + 3.0f",
+            "steepnessLeft = markMax.x + aura::ui::dpi::ScalePx(3.0f, eqScale)",
             "steepnessRight = pos.x + width - statusWidth",
             "mouse.x >= steepnessLeft && mouse.x < steepnessVisibleRight",
             "markPressed ? 0.06f : (markHover ? 0.17f : 0.11f)",
@@ -177,17 +182,18 @@ class MagicEqUiContractTests(unittest.TestCase):
             require_text(self, body, label)
         require_text(self, body, "CenterSenseDsp::magicEQFrequencyToPercent(tick.frequencyHz)")
         require_text(self, body, "ImGui::CalcTextSize(tick.label)")
-        require_text(self, body, "labelLeft >= lastLabelRight + 4.0f")
-        require_text(self, body, "railWidth >= 220.0f")
-        require_text(self, body, "detailedRuler = width >= 440.0f")
-        require_text(self, body, "std::clamp((width - 180.0f) * (88.0f / 260.0f), 0.0f, 88.0f)")
-        require_text(self, body, "std::clamp((width - 180.0f) * (80.0f / 140.0f), 0.0f, 80.0f)")
+        require_text(self, body, "labelSize.x + eqPx(4.0f) <= railWidth")
+        require_text(self, body, "(x - lastLabelCenter) >= labelStride")
+        require_text(self, body, "detailedRuler = width >= eqPx(440.0f)")
+        require_text(self, body, "tick.frequencyHz == 20.0f || tick.frequencyHz == 1000.0f")
+        require_text(self, body, "tick.frequencyHz == 20000.0f")
+        require_text(self, body, "ReserveEqualizerSlope(")
 
     def test_vertical_handles_bubble_and_range_use_same_edges(self):
         body = self.draw_body()
         for fragment in (
-            "leftDistance <= 7.0f && mouse.y >= gripTop && mouse.y <= gripBottom",
-            "rightDistance <= 7.0f && mouse.y >= gripTop && mouse.y <= gripBottom",
+            "leftDistance <= eqPx(7.0f) && mouse.y >= gripTop && mouse.y <= gripBottom",
+            "rightDistance <= eqPx(7.0f) && mouse.y >= gripTop && mouse.y <= gripBottom",
             'drawVerticalGrip(leftX, leftEndpointHit || drag.part == DragPart::LeftEndpoint, "eq.grip")',
             'drawVerticalGrip(rightX, rightEndpointHit || drag.part == DragPart::RightEndpoint, "eq.grip.right")',
             "drag.part == DragPart::LeftEndpoint ? lowHz :",
@@ -195,8 +201,8 @@ class MagicEqUiContractTests(unittest.TestCase):
             "ImGui::IsMouseDown(ImGuiMouseButton_Left) &&",
             "ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)",
             "GetMagicEQFrequencyLabel(lowHz, highHz)",
-            "rangeSize.x + 16.0f <= rightX - leftX",
-            "centerLabelSize.x + 12.0f <= rightX - leftX",
+            "rangeSize.x + eqPx(16.0f) <= rightX - leftX",
+            "centerLabelSize.x + eqPx(12.0f) <= rightX - leftX",
             "ImGui::GetForegroundDrawList()",
             "bubbleDraw->AddTriangleFilled",
             "mouse.y < gripTop",
@@ -257,7 +263,7 @@ class MagicEqUiContractTests(unittest.TestCase):
             self.assertEqual(value, entry[language])
         self.assertIn('if (sampleRate <= 0) ImGui::SetTooltip("%s", L(MagicEQ_UnloadedGradeHint))', body)
         self.assertIn('steepnessVisibleRight > steepnessLeft', body)
-        self.assertIn('steepnessMinimumHitWidth = 10.0f', body)
+        self.assertIn('steepnessMinimumHitWidth = eqPx(10.0f)', body)
 
     def test_isolated_qa_zone_collection_starts_only_after_identity_binding(self):
         windows = (ROOT / "src" / "WindowsMain.cpp").read_text(encoding="utf-8")
@@ -306,15 +312,15 @@ class MagicEqUiContractTests(unittest.TestCase):
         for fragment in (
             "const float steepnessVisibleRight =",
             "mouse.x < steepnessVisibleRight",
-            "ImVec2(steepnessVisibleRight, pos.y + 13.0f)",
+            "ImVec2(steepnessVisibleRight, pos.y + eqPx(13.0f))",
             "ImGui::CalcTextSize(steepnessLabel.compact)",
             "ImGui::CalcTextSize(steepnessLabel.shortValue)",
             "draw->AddTriangleFilled",
             "ImGui::CalcTextSize(rangeText)",
             "ImGui::CalcTextSize(centerLabel)",
             "ImGui::CalcTextSize(compactFrequencyFallback)",
-            "rangeSize.x + 8.0f <= frequencyInfoWidth",
-            "centerLabelSize.x + 8.0f <= frequencyInfoWidth",
+            "rangeSize.x + eqPx(8.0f) <= frequencyInfoWidth",
+            "centerLabelSize.x + eqPx(8.0f) <= frequencyInfoWidth",
             "draw->AddText(ImVec2(frequencyInfoX",
             "const float modeTextWidth = ImGui::CalcTextSize(modeLabel).x",
             "L(MagicEQ_ModeBypassCompact)",
@@ -407,7 +413,7 @@ class MagicEqUiContractTests(unittest.TestCase):
     def test_center_drag_wheel_and_ctrl_cmd_adjustment_remain_available(self):
         body = self.draw_body()
         for text in ("DragPart::Center", "io.KeyCtrl || io.KeySuper",
-                     "nextHalf - deltaY * 0.25f",
+                     "nextHalf - deltaY / eqScale * 0.25f",
                      "settings.halfWidthPercent + io.MouseWheel * 1.5f"):
             require_text(self, body, text)
 

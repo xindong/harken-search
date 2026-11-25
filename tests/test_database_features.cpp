@@ -1525,7 +1525,7 @@ int testLargeCoverBrowseHotPathsUseBoundedRegistryHeuristic() {
 
     const std::string facetBody = extractFunctionBody(
         source,
-        "std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilter& filter, int limit)");
+        "std::vector<Database::CoverFacetEntry> Database::getCoverFacets(");
     const bool facetUsesBoundedHelper =
         !facetBody.empty() &&
         facetBody.find("AssessGlobalCoverAggregationReadiness") != std::string::npos &&
@@ -5605,6 +5605,74 @@ int testLegacyDescriptionDisplay() {
     return ok ? 0 : 1;
 }
 
+static int testSearchWorkerRecountsAfterWatcherRevision() {
+    const fs::path root = makeTempRoot("search_worker_watcher_revision");
+    const std::string dbPath = PathToUtf8(root / "watcher_revision.db");
+    Database db;
+    int failures = 0;
+    auto expect = [&](bool ok, const char* label) {
+        std::cout << (ok ? "PASS: " : "FAIL: ") << label << "\n";
+        if (!ok) ++failures;
+        return ok;
+    };
+
+    if (expect(db.open(dbPath), "open watcher revision fixture")) {
+        AudioRecord seed;
+        seed.fileName = "seed.wav";
+        seed.filePath = PathToUtf8(root / seed.fileName);
+        seed.extension = ".wav";
+        AudioRecord hybrid;
+        hybrid.fileName = "hybrid.wv";
+        hybrid.filePath = PathToUtf8(root / hybrid.fileName);
+        hybrid.extension = ".wv";
+        hybrid.wavPackLossless = false;
+
+        if (expect(db.addFile(seed) && db.addFile(hybrid) && db.rebuildFolderIndex(),
+                   "store lossless seed and lossy hybrid in indexed library")) {
+            SearchWorker worker;
+            worker.start(dbPath);
+            AsyncSearchRequest request;
+            request.viewMode = 1;
+            request.limit = 16;
+            request.hasFileTypeFilter = true;
+            request.filter.losslessWavPackOnly = true;
+            const auto verify = [&](int total, const char* label) {
+                request.requestedAtDbRevision = db.dataRevision();
+                const auto requestId = worker.submitSearch(request);
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                AsyncSearchResult result;
+                while (std::chrono::steady_clock::now() < deadline) {
+                    if (worker.pollResult(result, requestId)) {
+                        if (!expect(result.success && result.loadedCount == total &&
+                                    result.totalCount == total, label)) {
+                            std::cerr << "  expected " << total << " rows and total; received "
+                                      << result.loadedCount << " rows, total " << result.totalCount << "\n";
+                        }
+                        return;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                expect(false, label);
+            };
+
+            verify(1, "lossless search primes the read-only worker count");
+            hybrid.wavPackLossless = true;
+            expect(db.updateFile(hybrid) && db.invalidateFacetQueryCache(),
+                   "watcher writer updates hybrid losslessness and invalidates persisted count");
+            verify(2, "matching correction refreshes rows and the worker's total");
+            hybrid.wavPackLossless = false;
+            expect(db.updateFile(hybrid) && db.invalidateFacetQueryCache(),
+                   "watcher writer removes hybrid lossless classification");
+            verify(1, "removing correction drops the row and total");
+            worker.stop();
+        }
+    }
+    db.close();
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
 // BUG-20261119-LEGACY-WAVEFORM-MIGRATION: old builds kept waveform BLOBs in
 // audio_files. Moving them into the waveforms sidecar is a one-time library
 // operation recorded in app_meta, so background connections and reopens do not
@@ -5937,6 +6005,8 @@ int testLegacyWaveformMigrationFillsPartialSidecarRow() {
 int testConcurrentFtsTriggerRefresh();
 
 int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string(argv[1]) == "--watcher-search-count")
+        return testSearchWorkerRecountsAfterWatcherRevision() == 0 ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--fts-trigger-concurrency")
         return testConcurrentFtsTriggerRefresh();
     char* descriptionOnlyRaw = nullptr;
@@ -6156,13 +6226,15 @@ int main(int argc, char* argv[]) {
     int waveformCompressionFailures = testWaveformCompressionRoundTripAndLegacyRawCompatibility();
     int tagFacetIndexFailures = testTagFacetIndexPrestoreAndFallback();
     int readOnlyPinyinFailures = testReadOnlyPinyinRecomputeStops();
+    int watcherSearchCountFailures = testSearchWorkerRecountsAfterWatcherRevision();
     int legacyWaveformBlobMigrationFailures =
         testLegacyWaveformBlobMigrationRunsOncePerLibrary() +
         testLegacyWaveformMigrationRetriesWhenCopyIsSkipped() +
         testLegacyWaveformMigrationFillsPartialSidecarRow();
 
     printSeparator("测试完成");
-    if (channelFailures == 0 && audioBoundaryFailures == 0 && coverDedupFailures == 0 &&
+    if (watcherSearchCountFailures == 0 &&
+        channelFailures == 0 && audioBoundaryFailures == 0 && coverDedupFailures == 0 &&
         coverDeferredFailures == 0 && largeCoverWallFailures == 0 &&
         coverWallPageFailures == 0 && coverWallSparsePageFailures == 0 &&
         smallCoverWallPageFailures == 0 &&

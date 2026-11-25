@@ -2610,7 +2610,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         )
         self.assertEqual(1, main.count(qualified_call))
         button = main.index("aura::ui::ActionButton(L(Set_ImportSettings)")
-        next_action = main.index('} else if(editor.action=="custom-colors")', button)
+        next_action = main.index('    if(!editor.error.empty())', button)
         body = main[button:next_action]
         self.assertNotIn("OPENFILENAMEW", body)
         self.assertNotIn("GetOpenFileNameW", body)
@@ -3274,7 +3274,8 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
 
         self.assertIn("struct LengthInFrames", header)
         self.assertIn("LengthInFrames QueryLength(BorrowedSource source) noexcept;", header)
-        self.assertEqual(13, source.count("Platform::AudioDataSource::QueryLength("))
+        # 14：单通道导出需要源文件总帧数来上报写样本进度（2026-11-23 REQ-20261123-TASK-PROGRESS-TOAST-B2）
+        self.assertEqual(14, source.count("Platform::AudioDataSource::QueryLength("))
         self.assertNotIn("ma_decoder_get_length_in_pcm_frames(", source)
         self.assertIn("ma_data_source_get_length_in_pcm_frames", backend)
 
@@ -7289,16 +7290,15 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
         self.assertEqual(main.count("PrepareAdaptiveMiniWaveformFormat("), 1)
         for removed in (
             "state.database.usesAdaptiveMiniWaveform()",
-            "state.database.purgeAllMiniWaveform()",
             "state.database.countFilesNeedingWaveformCache()",
         ):
             self.assertNotIn(removed, start)
+        for body in (start, header, source):
+            self.assertNotIn("purgeAllMiniWaveform", body)
         for owned in (
             "source.usesAdaptiveMiniWaveform()",
-            "source.purgeAllMiniWaveform()",
             "source.countFilesNeedingWaveformCache()",
             "database_.usesAdaptiveMiniWaveform()",
-            "database_.purgeAllMiniWaveform()",
             "database_.countFilesNeedingWaveformCache()",
         ):
             self.assertIn(owned, source)
@@ -9312,7 +9312,7 @@ class Stage6PlatformBoundaryContract(unittest.TestCase):
             '} else if(editor.action=="import")', 1
         )[0]
         import_body = source.split('} else if(editor.action=="import")', 1)[1].split(
-            '} else if(editor.action=="custom-colors")', 1
+            '    if(!editor.error.empty())', 1
         )[0]
 
         self.assertIn("bool CopyFile(", header)

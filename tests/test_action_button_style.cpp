@@ -195,6 +195,7 @@ int main() {
             Check(!Same(normal.fill, selected.fill) && !Same(normal.hover, selected.hover) &&
                   !Same(normal.active, selected.active), "editing selection remains distinct in every state");
             for (auto role : {ButtonVariant::PrimarySearch, ButtonVariant::PrimaryTransfer,
+                              ButtonVariant::DisabledSearch,
                               ButtonVariant::Secondary, ButtonVariant::Quiet, ButtonVariant::Danger,
                               ButtonVariant::Selected}) {
                 const auto p = Style::Make(t, surface, role);

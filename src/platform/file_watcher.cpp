@@ -168,16 +168,7 @@ bool FileSystemWatcher::start() {
             if (!watch) continue;
             watch->removed.store(false);
 
-            if (watch->hDir == INVALID_HANDLE_VALUE) {
-                if (!setupWatch(*watch)) {
-                    // 回滚本次 start 过程中已打开的句柄
-                    for (auto& w : m_watches) {
-                        if (w) cleanupWatch(*w);
-                    }
-                    m_running.store(false);
-                    return false;
-                }
-            }
+            if (watch->hDir == INVALID_HANDLE_VALUE) setupWatch(*watch);
         }
     }
 
@@ -361,6 +352,28 @@ void FileSystemWatcher::cleanupWatch(WatchInfo& watch) {
     ZeroMemory(&watch.overlapped, sizeof(watch.overlapped));
 }
 
+void FileSystemWatcher::rearmWatch(WatchInfo& watch) {
+    std::lock_guard<std::mutex> lock(m_watchesMutex);
+    if (m_running.load() && !watch.removed.load() && !issueRead(watch)) cleanupWatch(watch);
+}
+
+void FileSystemWatcher::retryUnavailableWatches() {
+    std::vector<std::shared_ptr<WatchInfo>> recovered;
+    {
+        std::lock_guard<std::mutex> lock(m_watchesMutex);
+        if (!m_running.load()) return;
+        for (const auto& watch : m_watches) {
+            if (watch && !watch->removed.load() && watch->hDir == INVALID_HANDLE_VALUE &&
+                setupWatch(*watch))
+                recovered.push_back(watch);
+        }
+    }
+    for (const auto& watch : recovered) {
+        if (m_running.load() && !watch->removed.load())
+            emitNeedRescan(*watch, "watch-reconnected");
+    }
+}
+
 void FileSystemWatcher::emitNeedRescan(const WatchInfo& watch, const char* reason) {
     EventCallback callbackCopy;
     {
@@ -382,7 +395,14 @@ void FileSystemWatcher::emitNeedRescan(const WatchInfo& watch, const char* reaso
 }
 
 void FileSystemWatcher::watchThreadProc() {
+    constexpr auto retryInterval = std::chrono::seconds(1);
+    auto retryAfter = std::chrono::steady_clock::now() + retryInterval;
     while (m_running.load()) {
+        flushCoalescedEvents();
+        if (std::chrono::steady_clock::now() >= retryAfter) {
+            retryUnavailableWatches();
+            retryAfter = std::chrono::steady_clock::now() + retryInterval;
+        }
         DWORD bytesTransferred = 0;
         ULONG_PTR completionKey = 0;
         OVERLAPPED* overlapped = nullptr;
@@ -392,8 +412,11 @@ void FileSystemWatcher::watchThreadProc() {
             &bytesTransferred,
             &completionKey,
             &overlapped,
-            1000
+            m_coalesceWindowMs > 0 ? static_cast<DWORD>(m_coalesceWindowMs) : 1000
         );
+
+        const DWORD error = success ? ERROR_SUCCESS : GetLastError();
+        if (!success && error == WAIT_TIMEOUT) continue;
 
         // 显式退出信号
         if (completionKey == 0 && overlapped == nullptr) {
@@ -403,28 +426,17 @@ void FileSystemWatcher::watchThreadProc() {
         WatchInfo* watch = reinterpret_cast<WatchInfo*>(completionKey);
 
         if (!success) {
-            DWORD error = GetLastError();
-
-            if (error == WAIT_TIMEOUT) {
-                continue;
-            }
-
             if (watch != nullptr) {
                 watch->ioPending.store(false);
 
-                // stop/remove 导致的取消，不当错误处理
-                if (error == ERROR_OPERATION_ABORTED) {
-                    continue;
-                }
-
                 // 关键：明确拦截缓冲区溢出，不能静默跳过
-                if (error == ERROR_NOTIFY_ENUM_DIR) {
+                if (!watch->removed.load() && error == ERROR_NOTIFY_ENUM_DIR) {
                     DIAG_ACTION_FMT(
                         "Watcher",
                         "CRITICAL: Buffer overflow on %s. Rescan required.",
                         watch->path.c_str());
                     emitNeedRescan(*watch, "ERROR_NOTIFY_ENUM_DIR");
-                } else {
+                } else if (error != ERROR_OPERATION_ABORTED) {
                     DIAG_ACTION_FMT(
                         "Watcher",
                         "GetQueuedCompletionStatus failed. path=%s err=%lu",
@@ -432,11 +444,7 @@ void FileSystemWatcher::watchThreadProc() {
                         static_cast<unsigned long>(error));
                 }
 
-                if (!watch->removed.load() && m_running.load()) {
-                    if (!issueRead(*watch)) {
-                        DIAG_ACTION_FMT("Watcher", "Re-arm after failure failed: %s", watch->path.c_str());
-                    }
-                }
+                rearmWatch(*watch);
             }
 
             continue;
@@ -464,23 +472,11 @@ void FileSystemWatcher::watchThreadProc() {
             processWindowsEvents(*watch);
         }
 
-        if (!watch->removed.load() && m_running.load()) {
-            if (!issueRead(*watch)) {
-                DIAG_ACTION_FMT("Watcher", "Re-arm failed: %s", watch->path.c_str());
-            }
-        }
+        rearmWatch(*watch);
     }
 }
 
 void FileSystemWatcher::processWindowsEvents(WatchInfo& watch) {
-    EventCallback callbackCopy;
-    {
-        std::lock_guard<std::mutex> callbackLock(m_callbackMutex);
-        callbackCopy = m_callback;
-    }
-
-    if (!callbackCopy) return;
-
     FILE_NOTIFY_INFORMATION* pNotify =
         reinterpret_cast<FILE_NOTIFY_INFORMATION*>(watch.buffer.data());
 
@@ -587,7 +583,11 @@ void FileSystemWatcher::processWindowsEvents(WatchInfo& watch) {
 
     // 解锁后批量回调
     for (const auto& ev : events) {
-        callbackCopy(ev);
+        if (ev.type == EventType::FileDeleted || ev.type == EventType::FileRenamed) {
+            std::lock_guard<std::mutex> lock(m_coalesceMutex);
+            m_pendingModified.erase(ev.type == EventType::FileDeleted ? ev.path : ev.oldPath);
+        }
+        coalesceAndEmit(ev);
     }
 }
 

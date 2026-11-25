@@ -3,6 +3,7 @@
 #include "system.h"
 #include "platform/harken_user_data_layout.h"
 #include "explorer_shell_path.h"
+#include "pinned_taskbar_icon_refresh.h"
 #include "text_encoding.h"
 #include "text_encoding.inl"
 
@@ -34,6 +35,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cwchar>
 #include <filesystem>
 #include <vector>
 
@@ -952,6 +954,142 @@ bool DeleteRegistryValue(
 
 void NotifyShellAssociationsChanged() {
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+}
+
+namespace {
+
+constexpr std::uint32_t kShellItemPathBuffer = 32768;
+constexpr const wchar_t* kPinnedTaskbarShortcutLeaf =
+    L"\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar";
+
+// Reads a shortcut without ever rewriting it. GetPath uses SLGP_RAWPATH so an
+// environment-variable target stays recognizable before expansion.
+bool ReadShortcutTarget(const std::wstring& shortcutPath,
+                        std::wstring& targetPath,
+                        std::wstring& iconLocation,
+                        int& iconIndex) {
+    IShellLinkW* link = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&link))) || link == nullptr) {
+        return false;
+    }
+    bool read = false;
+    IPersistFile* persist = nullptr;
+    if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&persist))) && persist != nullptr) {
+        if (SUCCEEDED(persist->Load(shortcutPath.c_str(), STGM_READ))) {
+            std::wstring target(kShellItemPathBuffer, L'\0');
+            if (SUCCEEDED(link->GetPath(target.data(), static_cast<int>(target.size()),
+                                        nullptr, SLGP_RAWPATH))) {
+                target.resize(::wcslen(target.c_str()));
+                std::wstring icon(kShellItemPathBuffer, L'\0');
+                int index = 0;
+                // An unreadable icon location must not pass as "no chosen icon":
+                // the caller treats an empty location as the app's default icon,
+                // so a failed read would refresh a pin whose icon is unknown.
+                const bool iconLocationRead = SUCCEEDED(link->GetIconLocation(
+                    icon.data(), static_cast<int>(icon.size()), &index));
+                if (iconLocationRead) {
+                    icon.resize(::wcslen(icon.c_str()));
+                    iconLocation.assign(icon);
+                    iconIndex = index;
+                    targetPath.assign(target);
+                    read = !targetPath.empty();
+                }
+            }
+        }
+        persist->Release();
+    }
+    link->Release();
+    return read;
+}
+
+// Stays inside this translation unit: several small test targets link this
+// file alone and cannot pull in the executable-path module.
+std::wstring CurrentExecutablePath() {
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD written =
+            GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (written == 0) return std::wstring();
+        if (written < buffer.size()) {
+            buffer.resize(written);
+            return buffer;
+        }
+        if (buffer.size() >= kShellItemPathBuffer) return std::wstring();
+        buffer.resize(buffer.size() * 2);
+    }
+}
+
+std::wstring ExpandShortcutEnvironment(const std::wstring& value) {
+    if (value.find(L'%') == std::wstring::npos) return value;
+    const DWORD required = ExpandEnvironmentStringsW(value.c_str(), nullptr, 0);
+    if (required == 0) return value;
+    std::wstring expanded(required, L'\0');
+    const DWORD written =
+        ExpandEnvironmentStringsW(value.c_str(), expanded.data(), required);
+    if (written == 0 || written > required) return value;
+    expanded.resize(written - 1);
+    return expanded;
+}
+
+} // namespace
+
+std::uint32_t RefreshPinnedTaskbarIcons() {
+    const std::wstring exePath = CurrentExecutablePath();
+    if (exePath.empty()) return 0;
+
+    PWSTR roamingAppData = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr,
+                                    &roamingAppData)) ||
+        roamingAppData == nullptr) {
+        return 0;
+    }
+    std::wstring pinnedDirectory(roamingAppData);
+    CoTaskMemFree(roamingAppData);
+    pinnedDirectory += kPinnedTaskbarShortcutLeaf;
+
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool ownsComInitialization = SUCCEEDED(comResult);
+    // RPC_E_CHANGED_MODE means this thread already joined COM; its existing
+    // apartment still serves the shell interfaces, so keep going without
+    // uninitializing it.
+    if (!ownsComInitialization && comResult != RPC_E_CHANGED_MODE) return 0;
+
+    std::uint32_t refreshed = 0;
+    bool executableNotified = false;
+    const std::wstring pattern = pinnedDirectory + L"\\*.lnk";
+    WIN32_FIND_DATAW entry{};
+    HANDLE search = FindFirstFileW(pattern.c_str(), &entry);
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) continue;
+            const std::wstring shortcutPath = pinnedDirectory + L"\\" + entry.cFileName;
+            std::wstring targetPath;
+            std::wstring iconLocation;
+            int iconIndex = 0;
+            if (!ReadShortcutTarget(shortcutPath, targetPath, iconLocation, iconIndex)) {
+                continue;
+            }
+            const std::wstring expandedTarget = ExpandShortcutEnvironment(targetPath);
+            const bool matches =
+                Detail::PinnedShortcutUsesDefaultAppIcon(expandedTarget, iconLocation,
+                                                         iconIndex, exePath) ||
+                Detail::PinnedShortcutUsesDefaultAppIcon(targetPath, iconLocation,
+                                                         iconIndex, exePath);
+            if (!matches) continue;
+            // Only this pin is invalidated; Explorer re-reads its icon and the
+            // pin keeps the position and identity the user chose.
+            SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, shortcutPath.c_str(), nullptr);
+            executableNotified = true;
+            ++refreshed;
+        } while (FindNextFileW(search, &entry));
+        FindClose(search);
+    }
+    if (executableNotified) {
+        SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, exePath.c_str(), nullptr);
+    }
+    if (ownsComInitialization) CoUninitialize();
+    return refreshed;
 }
 
 RegistryStringResult QueryEffectiveFileAssociation(const std::string& extensionUtf8) {

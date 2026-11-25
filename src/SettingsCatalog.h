@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 namespace harken::settings {
-enum class Page { Common, Appearance, Audio, Search, Library, Interaction, Personal, Backup, Diagnostics, DawIntegration };
+enum class Page { Common, Appearance, Audio, DawIntegration, Search, Library, Interaction, Personal, Backup, Diagnostics, ExternalAi };
 struct Entry {
     std::string id; Page page; int group;
     std::string zh, en, ja, keywords;
@@ -25,6 +25,7 @@ inline const std::vector<Entry>& Catalog() {
         {u8"night",Page::Appearance,0,LStr::SetUX_Night,u8"黑夜 主题 night"},
         {u8"themeEditor",Page::Appearance,0,LStr::Set_EditTheme,u8"编辑 颜色 配色 自定义 custom"},
         {u8"language",Page::Appearance,0,LStr::Set_UILanguage,u8"中文 英文 日语 language"},
+        {u8"uiScale",Page::Appearance,0,LStr::Set_InterfaceScale,u8"界面 缩放 放大 缩小 scale zoom"},
         {u8"systemFont",Page::Appearance,0,LStr::Set_SystemFontSize,u8"界面 字体 大小 font"},
         {u8"listFont",Page::Appearance,0,LStr::Set_ListFontSize,u8"列表 字体 大小 font"},
         {u8"rowHeight",Page::Appearance,0,LStr::Set_RowHeight,u8"密度 紧凑 行高"},
@@ -79,6 +80,7 @@ inline const std::vector<Entry>& Catalog() {
         {u8"dictionary",Page::Search,0,LStr::Set_ThesaurusTitle,u8"词库 同义词 触发 扩展 thesaurus"},
         {u8"perf",Page::Library,0,LStr::Set_PerfMode,u8"性能 内存 卡顿 慢 performance"},
         {u8"threads",Page::Library,0,LStr::Set_ScanThreads,u8"扫描 线程 并发"},
+        {u8"similarConcurrency",Page::Library,0,LStr::Set_SimilarityConcurrency,u8"相似 分析 并发 线程 similarity concurrency threads"},
         {u8"startupScan",Page::Library,0,LStr::Main_AutoRescanCheck,u8"启动 自动 扫描 变化"},
         {u8"backfill",Page::Library,0,LStr::Main_IdleBackfillCheck,u8"空闲 波形 封面 缓存 补齐"},
         {u8"idleMinutes",Page::Library,0,LStr::SetUX_IdleMinutes,u8"空闲 等待 多久 分钟"},
@@ -109,6 +111,7 @@ inline const std::vector<Entry>& Catalog() {
         {u8"logging",Page::Diagnostics,0,LStr::Set_EnableDiag,u8"诊断 日志 logging debug"},
         {u8"overlay",Page::Diagnostics,0,LStr::Set_DiagShowOverlay,u8"诊断 浮层"},
         {u8"diagnosticTools",Page::Diagnostics,0,LStr::Set_DiagnosticsLogging,u8"诊断 日志 导出 清理 开发"},
+        {u8"externalAi",Page::ExternalAi,0,LStr::SetUX_ExternalAiMcp,u8"外部 AI MCP 授权 访问 library external ai"},
     };
     return entries;
 }

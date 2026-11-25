@@ -43,8 +43,8 @@ float GetSmoothedPlaybackPosition(AppState& state);
 void RenderUI(AppState& state);
 
 // Similar Sounds index controls; UI-thread only, reuses the app-owned batch task.
-void DrawSimilarityIndexPanel(AppState& state);
-void StartBatchFeatureExtraction(AppState& state, bool recheckAll = false);
+void DrawSimilarityIndexPanel(AppState& state, bool independentLayout);
+void StartBatchFeatureExtraction(AppState& state, bool recheckAll = false, bool manual = true);
 
 // Drag one explicit result path using the main list's processing-aware transfer.
 // UI-thread only; does not change the main selection or Similar Sounds reference.

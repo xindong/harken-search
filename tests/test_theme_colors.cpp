@@ -2,20 +2,27 @@
 #define NOMINMAX
 #endif
 #include "AppState.h"
+#include "BuiltinThemeScheme.h"
 #include "HarkenSearchDesignTokens.generated.h"
 #include "HarkenSearchThemeManager.h"
 #include "DiagnosticsLogger.h"
 #include "Theme.h"
+#include "BuiltinThemeScheme.h"
 #include "ThemeEditorSchema.h"
+#include "ThemeEditorRelationState.h"
+#include "ThemeModuleColors.h"
 #include "platform/system.h"
 #include "imgui.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
+#include <vector>
 
 ImU32 g_waveformColor = 0;
 ImU32 g_waveformBgColor = 0;
@@ -203,7 +210,434 @@ static std::string extractAuroraBuiltinBlock() {
     return source.substr(start, end - start);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        const auto folder = std::filesystem::path(argv[1]);
+        if (!std::filesystem::is_directory(folder)) return 2;
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::LapisBlue,
+                                 AppTheme::JadeMist, AppTheme::RoseCedar}) {
+            const auto path = folder / (std::to_string(static_cast<int>(theme)) + ".json");
+            std::ofstream output(path, std::ios::binary);
+            output << ThemeColors::exportToJSON(MakeBuiltinScheme(theme));
+            if (!output) return 4;
+        }
+        return 0;
+    }
+
+    {
+        size_t relationCount = 0;
+        const ThemeEditorRelation* relations = GetThemeEditorRelations(relationCount);
+        std::set<std::string> relationKeys;
+        for (size_t i = 0; i < relationCount; ++i) {
+            relationKeys.insert(relations[i].key);
+        }
+        CHECK(relationCount == 115, "theme editor relation metadata covers every ThemeColorScheme field");
+        CHECK(relationKeys.size() == relationCount, "theme editor relation metadata has no duplicate field keys");
+
+        const ThemeEditorRelation* canvas = FindThemeEditorRelation("mainWindowBG");
+        CHECK(canvas && canvas->layer == ThemeEditorLayer::Base &&
+              canvas->kind == ThemeEditorRelationKind::Base,
+              "mainWindowBG is a base-layer field");
+
+        const ThemeEditorRelation* coverWall = FindThemeEditorRelation("coverWallBG");
+        CHECK(coverWall && coverWall->kind == ThemeEditorRelationKind::Shared &&
+              std::string(coverWall->sourceKey) == "metadataPanelBG",
+              "coverWallBG records its shared metadata-panel source");
+
+        const ThemeEditorRelation* dialog = FindThemeEditorRelation("dialogBG");
+        CHECK(dialog && dialog->layer == ThemeEditorLayer::Advanced &&
+              dialog->kind == ThemeEditorRelationKind::Derived,
+              "dialogBG is an advanced derived field");
+
+        const ThemeEditorRelation* tab = FindThemeEditorRelation("tabBG");
+        CHECK(tab && tab->kind == ThemeEditorRelationKind::Legacy,
+              "tabBG is marked as a legacy compatibility field");
+
+        const ThemeEditorRelation* locate = FindThemeEditorRelation("filterBrowserLocateTint");
+        CHECK(locate && locate->kind == ThemeEditorRelationKind::Independent &&
+              (!locate->sourceKey || !locate->sourceKey[0]),
+              "filterBrowserLocateTint is its own status axis, not a transfer-button alias");
+
+        const ThemeEditorRelation* searchButton = FindThemeEditorRelation("searchButtonBG");
+        CHECK(searchButton && searchButton->kind == ThemeEditorRelationKind::Independent &&
+              (!searchButton->sourceKey || !searchButton->sourceKey[0]),
+              "searchButtonBG is its own action color, not a control-accent alias");
+
+        for (const char* key : {"toolbarAccent", "controlAccent", "chromeBorder",
+                                "wwiseDiffReplaced"}) {
+            const ThemeEditorRelation* relation = FindThemeEditorRelation(key);
+            CHECK(relation && relation->kind == ThemeEditorRelationKind::Independent &&
+                  !ThemeEditorRelationCanFollow(relation),
+                  "split color axes are declared independent and cannot be silently re-linked");
+        }
+
+        const ThemeEditorRelation* meterWarning = FindThemeEditorRelation("meterWarning");
+        CHECK(meterWarning && meterWarning->kind == ThemeEditorRelationKind::Derived &&
+              std::string(meterWarning->sourceKey) == "meterBase",
+              "meterWarning derives from the meter base instead of the playhead color");
+
+        struct Merged { const char* key; const char* source; };
+        for (const Merged& merged : {
+                 Merged{"resultsText", "menuText"},
+                 Merged{"metadataPanelText", "menuText"},
+                 Merged{"spottingText", "menuText"},
+                 Merged{"filterBrowserTreeText", "filterBrowserText"},
+                 Merged{"presetDialCardInactiveText", "resultsSecondaryText"},
+                 Merged{"spottingBG", "transferHistoryBG"}}) {
+            const ThemeEditorRelation* relation = FindThemeEditorRelation(merged.key);
+            CHECK(ThemeEditorRelationCanFollow(relation) &&
+                  std::string(relation->sourceKey) == merged.source,
+                  std::string("same-class color shares one axis: ") + merged.key);
+        }
+        for (const Merged& merged : {Merged{"metadataPanelScrollbar", "resultsScrollbar"},
+                                     Merged{"filterBrowserScrollbar", "resultsScrollbar"},
+                                     Merged{"filterBrowserOutline", "resultsOutline"},
+                                     Merged{"resultsTabBG", "tabBG"}}) {
+            const ThemeEditorRelation* relation = FindThemeEditorRelation(merged.key);
+            CHECK(ThemeEditorRelationCanFollow(relation) &&
+                  std::string(relation->sourceKey) == merged.source,
+                  std::string("scrollbar/border/tab relation shares one axis: ") + merged.key);
+            // The axis is declared, but each built-in theme keeps its own value:
+            // linking must never rewrite a theme color on load.
+            for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                     AppTheme::LapisBlue, AppTheme::JadeMist}) {
+                const ThemeColorScheme before = MakeBuiltinScheme(theme);
+                ThemeColorScheme after = before;
+                ThemeEditorRelationState state;
+                state.ResetToValues(after);
+                state.Propagate(after);
+                CHECK(ThemeColors::exportToJSON(after) == ThemeColors::exportToJSON(before),
+                      std::string("declaring the axis never rewrites ") + merged.key +
+                          " in a built-in theme");
+            }
+        }
+
+        // A merged axis must move together, and stay identical on load.
+        {
+            ThemeColorScheme scheme = MakeBuiltinScheme(AppTheme::Dark);
+            ThemeEditorRelationState relations;
+            relations.ResetToValues(scheme);
+            CHECK(relations.IsLinked(FindThemeEditorRelation("resultsText")) &&
+                  relations.IsLinked(FindThemeEditorRelation("metadataPanelText")) &&
+                  relations.IsLinked(FindThemeEditorRelation("spottingText")) &&
+                  relations.IsLinked(FindThemeEditorRelation("spottingBG")) &&
+                  relations.IsLinked(FindThemeEditorRelation("presetDialCardInactiveText")),
+                  "identical same-class colors load as linked axes");
+            const ImVec4 body(0.11f, 0.22f, 0.33f, 1.0f);
+            scheme.menuText = body;
+            relations.Propagate(scheme);
+            CHECK(approxEqual(scheme.resultsText, body) && approxEqual(scheme.metadataPanelText, body) &&
+                  approxEqual(scheme.spottingText, body),
+                  "editing body text moves every region that shares the axis");
+            relations.Detach(scheme, "metadataPanelText");
+            scheme.menuText = ImVec4(0.7f, 0.8f, 0.9f, 1.0f);
+            relations.Propagate(scheme);
+            CHECK(approxEqual(scheme.metadataPanelText, body) && approxEqual(scheme.resultsText, scheme.menuText),
+                  "detached region keeps its own body text");
+        }
+
+        const ThemeEditorRelation* presetActiveText = FindThemeEditorRelation("presetDialCardActiveText");
+        CHECK(ThemeEditorRelationCanFollow(presetActiveText) &&
+              std::string(presetActiveText->sourceKey) == "interfaceText",
+              "preset dial active text is managed as one primary-text axis");
+
+        CHECK(ThemeEditorRelationCanFollow(coverWall),
+              "shared relation with a source can be managed as follow/independent");
+        CHECK(!ThemeEditorRelationCanFollow(dialog) && !ThemeEditorRelationCanFollow(searchButton),
+              "derived and independent relations stay outside direct follow management");
+    }
+    {
+        ThemeColorScheme scheme = ThemeColors::getClassicDark();
+        const ImVec4 selection(0.18f, 0.42f, 0.78f, 1.0f);
+        const ImVec4 independentAccent(0.78f, 0.30f, 0.22f, 1.0f);
+        const ImVec4 replacementSelection(0.24f, 0.70f, 0.48f, 1.0f);
+        scheme.resultsSelection = selection;
+        scheme.toolbarAccent = independentAccent;
+        scheme.controlAccent = independentAccent;
+
+        const ThemeColorScheme beforeReset = scheme;
+        ThemeEditorRelationState relationState;
+        relationState.ResetToValues(scheme);
+        CHECK(approxEqual(scheme.resultsSelection, beforeReset.resultsSelection) &&
+              approxEqual(scheme.toolbarAccent, beforeReset.toolbarAccent) &&
+              approxEqual(scheme.controlAccent, beforeReset.controlAccent),
+              "relation state initialization does not rewrite existing colors");
+        CHECK(!relationState.IsLinked(FindThemeEditorRelation("toolbarAccent")) &&
+              !relationState.IsLinked(FindThemeEditorRelation("controlAccent")),
+              "selection, toolbar accent and control accent are three independent axes");
+
+        scheme.resultsSelection = replacementSelection;
+        relationState.Propagate(scheme);
+        CHECK(approxEqual(scheme.toolbarAccent, independentAccent) &&
+              approxEqual(scheme.controlAccent, independentAccent),
+              "editing the selection color no longer drags the toolbar or control accent");
+
+        scheme.toolbarAccent = selection;
+        relationState.Propagate(scheme);
+        CHECK(approxEqual(scheme.controlAccent, independentAccent),
+              "editing the toolbar accent no longer drags the control accent");
+
+        relationState.Relink(scheme, "toolbarAccent");
+        relationState.Detach(scheme, "toolbarAccent");
+        relationState.Propagate(scheme);
+        CHECK(approxEqual(scheme.toolbarAccent, selection),
+              "relink and detach are no-ops for a color that is meant to stay independent");
+    }
+    {
+        // Editor relations must never repaint an already loaded theme.
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue, AppTheme::JadeMist}) {
+            ThemeColorScheme scheme = MakeBuiltinScheme(theme);
+            const ThemeColorScheme before = scheme;
+            ThemeEditorRelationState relationState;
+            relationState.ResetToValues(scheme);
+            relationState.Propagate(scheme);
+
+            CHECK(ThemeColors::exportToJSON(scheme) == ThemeColors::exportToJSON(before),
+                  "loading a theme into the relation layer leaves every serialized color untouched");
+
+            size_t relationCount = 0;
+            const ThemeEditorRelation* relations = GetThemeEditorRelations(relationCount);
+            bool itemsUnchanged = true;
+            for (size_t i = 0; i < relationCount; ++i) {
+                const ThemeEditorItem* item = FindThemeEditorItem(relations[i].key);
+                if (!item) continue;
+                if (!approxEqual(item->Color(scheme), item->Color(before))) {
+                    itemsUnchanged = false;
+                    break;
+                }
+            }
+            CHECK(itemsUnchanged, "every editable color keeps its resolved value after propagation");
+        }
+    }
+    {
+        const auto* label = FindThemeEditorRelation("wwiseLabelText");
+        const auto* body = FindThemeEditorRelation("wwiseBodyText");
+        CHECK(ThemeEditorRelationCanFollow(label) && std::string(label->sourceKey) == "menuText" &&
+              ThemeEditorRelationCanFollow(body) && std::string(body->sourceKey) == "interfaceText",
+              "Wwise labels and body expose separate follow controls with their original sources");
+        const auto* labelItem = FindThemeEditorItem("wwiseLabelText");
+        const auto* bodyItem = FindThemeEditorItem("wwiseBodyText");
+        CHECK(labelItem && labelItem->group == ThemeEditorGroup::Wwise &&
+              bodyItem && bodyItem->group == ThemeEditorGroup::Wwise,
+              "both independent text colors appear in the Wwise editor group");
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue, AppTheme::JadeMist}) {
+            const auto stock = MakeBuiltinScheme(theme);
+            const auto wwise = ResolveThemeModuleColors(stock).wwise;
+            CHECK(!stock.wwiseLabelText && !stock.wwiseBodyText &&
+                  approxEqual(wwise.labelText, stock.menuText) &&
+                  approxEqual(wwise.bodyText, stock.interfaceText),
+                  "built-in Wwise text uses the original menu and interface colors");
+        }
+
+        const std::string legacy = R"({"menuText":"ff345678","interfaceText":"ffd0d1d2"})";
+        ThemeColorScheme scheme = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::importFromJSON(legacy, scheme), "legacy theme without Wwise text overrides loads");
+        const std::string legacyExport = ThemeColors::exportToJSON(scheme);
+        CHECK(legacyExport.find("wwiseLabelText") == std::string::npos &&
+              legacyExport.find("wwiseBodyText") == std::string::npos,
+              "following Wwise colors add no keys to legacy JSON");
+
+        if (labelItem && bodyItem) {
+            ThemeEditorRelationState relations;
+            relations.ResetToValues(scheme);
+            CHECK(relations.IsLinked(label) && relations.IsLinked(body),
+                  "legacy Wwise text follows without adding any override");
+            const auto initial = ResolveThemeModuleColors(scheme).wwise;
+            relations.Detach(scheme, "wwiseLabelText");
+            const auto detached = ResolveThemeModuleColors(scheme).wwise;
+            CHECK(!relations.IsLinked(label) && relations.IsLinked(body) &&
+                  approxEqual(detached.labelText, initial.labelText),
+                  "detaching Wwise label preserves its visible color and leaves body linked");
+            scheme.menuText = ThemeColors::fromARGBHex("ffcc5500");
+            scheme.interfaceText = ThemeColors::fromARGBHex("ff0088ff");
+            relations.Propagate(scheme);
+            const auto afterSourceEdit = ResolveThemeModuleColors(scheme).wwise;
+            CHECK(approxEqual(afterSourceEdit.labelText, initial.labelText) &&
+                  approxEqual(afterSourceEdit.bodyText, scheme.interfaceText) &&
+                  !scheme.wwiseBodyText,
+                  "only the still-linked Wwise text responds to source edits");
+            relations.Detach(scheme, "wwiseBodyText");
+            const auto originalMenu = scheme.menuText;
+            const auto originalInterface = scheme.interfaceText;
+            const auto editedBody = ThemeColors::fromARGBHex("ff558844");
+            bodyItem->SetColor(scheme, editedBody);
+            relations.Propagate(scheme);
+            CHECK(approxEqual(ResolveThemeModuleColors(scheme).wwise.bodyText, editedBody) &&
+                  approxEqual(scheme.menuText, originalMenu) &&
+                  approxEqual(scheme.interfaceText, originalInterface),
+                  "editing independent Wwise body cannot write through to global text");
+            relations.Relink(scheme, "wwiseLabelText");
+            relations.Propagate(scheme);
+            CHECK(!scheme.wwiseLabelText && relations.IsLinked(label) &&
+                  approxEqual(ResolveThemeModuleColors(scheme).wwise.labelText, scheme.menuText) &&
+                  approxEqual(ResolveThemeModuleColors(scheme).wwise.bodyText, editedBody),
+                  "restoring Wwise label follows the current menu without modifying Wwise body");
+        }
+
+        const std::string independent = R"({"menuText":"ff345678","interfaceText":"ffd0d1d2","wwiseLabelText":"ff345678","wwiseBodyText":"00112233"})";
+        CHECK(ThemeColors::importFromJSON(independent, scheme), "theme with Wwise text overrides loads");
+        const std::string independentExport = ThemeColors::exportToJSON(scheme);
+        CHECK(independentExport.find("wwiseLabelText") != std::string::npos &&
+              independentExport.find("wwiseBodyText") != std::string::npos,
+              "explicit Wwise overrides export even if equal to the source or transparent");
+        ThemeColorScheme reloaded;
+        CHECK(ThemeColors::importFromJSON(independentExport, reloaded), "Wwise text overrides reopen from custom-theme JSON");
+        ThemeEditorRelationState reopened;
+        reopened.ResetToValues(reloaded);
+        CHECK(!reopened.IsLinked(label) && !reopened.IsLinked(body) &&
+              approxEqual(ResolveThemeModuleColors(reloaded).wwise.labelText, reloaded.menuText) &&
+              approxEqual(ResolveThemeModuleColors(reloaded).wwise.bodyText,
+                          ThemeColors::fromARGBHex("00112233")),
+              "reopening preserves explicit detach even if the override equals the source");
+
+        CHECK(ThemeColors::importFromJSON(legacy, scheme) &&
+              ThemeColors::exportToJSON(scheme) == legacyExport,
+              "loading a legacy theme clears earlier Wwise overrides without changing legacy colors");
+        const std::string malformed = R"({"menuText":"ff345678","interfaceText":"ffd0d1d2","wwiseLabelText":"zzzzzzzz"})";
+        CHECK(ThemeColors::importFromJSON(malformed, scheme) &&
+              ThemeColors::exportToJSON(scheme) == legacyExport,
+              "malformed optional text overrides fall back to the original color");
+    }
+    {
+        const auto* background = FindThemeEditorItem("welcomeBackground");
+        const auto* text = FindThemeEditorItem("welcomeText");
+        const auto* accent = FindThemeEditorItem("welcomeAccent");
+        CHECK(background && background->group == ThemeEditorGroup::Welcome &&
+              text && text->group == ThemeEditorGroup::Welcome &&
+              accent && accent->group == ThemeEditorGroup::Welcome,
+              "welcome colors share an editable group");
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue, AppTheme::JadeMist}) {
+            auto stock = MakeBuiltinScheme(theme);
+            CHECK(!stock.welcomeBackground && !stock.welcomeText && !stock.welcomeAccent &&
+                  approxEqual(kWelcomeBackgroundColor.Resolve(stock), stock.mainWindowBG) &&
+                  approxEqual(kWelcomeAccentColor.Resolve(stock), stock.controlAccent),
+                  "all stock themes derive their welcome colors");
+        }
+        ThemeColorScheme scheme;
+        for (int shade = 0; shade < 256; ++shade) {
+            const auto gray = static_cast<float>(shade) / 255.0f;
+            scheme.mainWindowBG = ImVec4(gray, gray, gray, 1.0f);
+            const auto foreground = WelcomeRelativeLuminance(kWelcomeTextColor.Resolve(scheme));
+            const auto backdrop = WelcomeRelativeLuminance(scheme.mainWindowBG);
+            const auto contrast = (std::max(foreground, backdrop) + 0.05f) /
+                                  (std::min(foreground, backdrop) + 0.05f);
+            CHECK(contrast >= 4.5f, "derived welcome text clears 4.5:1 across neutral backdrops");
+        }
+        const std::string legacy = R"({"mainWindowBG":"ff101010"})";
+        const std::string custom = R"({"mainWindowBG":"ff101010","welcomeBackground":"ffeeeee0","welcomeAccent":"ff00ff55"})";
+        CHECK(ThemeColors::importFromJSON(custom, scheme) &&
+              scheme.welcomeBackground && !scheme.welcomeText && scheme.welcomeAccent &&
+              approxEqual(kWelcomeTextColor.Resolve(scheme), ImVec4(0.f, 0.f, 0.f, 1.f)),
+              "partial override derives text against the custom background");
+        ThemeEditorRelationState relations;
+        relations.ResetToValues(scheme);
+        relations.Detach(scheme, "welcomeText");
+        if (text) text->SetColor(scheme, ThemeColors::fromARGBHex("ff0f2244"));
+        ThemeColorScheme reloaded;
+        CHECK(ThemeColors::importFromJSON(ThemeColors::exportToJSON(scheme), reloaded) &&
+              reloaded.welcomeText &&
+              approxEqual(kWelcomeTextColor.Resolve(reloaded), ThemeColors::fromARGBHex("ff0f2244")) &&
+              approxEqual(kWelcomeBackgroundColor.Resolve(reloaded), ThemeColors::fromARGBHex("ffeeeee0")) &&
+              approxEqual(kWelcomeAccentColor.Resolve(reloaded), ThemeColors::fromARGBHex("ff00ff55")),
+              "export and reimport preserve all explicit welcome colors");
+        relations.Relink(scheme, "welcomeText");
+        CHECK(!scheme.welcomeText, "linking welcome text restores contrast-based derivation");
+        CHECK(ThemeColors::importFromJSON(legacy, reloaded) &&
+              !reloaded.welcomeBackground && !reloaded.welcomeText && !reloaded.welcomeAccent &&
+              approxEqual(kWelcomeTextColor.Resolve(reloaded), ImVec4(1.f, 1.f, 1.f, 1.f)),
+              "legacy import clears all welcome overrides and derives from the dark base");
+    }
+    {
+        // 文件导入走 filterImportColors 白名单：可选覆盖项未配置时不在导出里，
+        // 也必须允许导入，否则导出的欢迎页配色会被过滤掉。
+        ThemeColorScheme exported;
+        exported.mainWindowBG = ImVec4(0.06f, 0.07f, 0.08f, 1.0f);
+        exported.welcomeBackground = ThemeColors::fromARGBHex("ffeeeee0");
+        exported.welcomeText = ThemeColors::fromARGBHex("ff102030");
+        exported.welcomeAccent = ThemeColors::fromARGBHex("ff00ff55");
+        std::string filtered;
+        CHECK(ThemeColors::filterImportColors(ThemeColors::exportToJSON(exported), filtered),
+              "exported theme passes the import key filter");
+        ThemeColorScheme fromFile;
+        CHECK(ThemeColors::importFromJSON(filtered, fromFile) &&
+              approxEqual(kWelcomeBackgroundColor.Resolve(fromFile), ThemeColors::fromARGBHex("ffeeeee0")) &&
+              approxEqual(kWelcomeTextColor.Resolve(fromFile), ThemeColors::fromARGBHex("ff102030")) &&
+              approxEqual(kWelcomeAccentColor.Resolve(fromFile), ThemeColors::fromARGBHex("ff00ff55")) &&
+              approxEqual(kWelcomeBackgroundColor.Resolve(fromFile), fromFile.welcomeBackground.value()),
+              "file import keeps every explicit welcome color");
+        std::string legacyFiltered;
+        CHECK(ThemeColors::filterImportColors(
+                  R"({"mainWindowBG":"ff101010","interfaceText":"ffe8e8e8","meta":{"welcomeText":"ffffffff"}})",
+                  legacyFiltered),
+              "legacy theme files still import through the filter");
+        ThemeColorScheme legacyFromFile;
+        CHECK(ThemeColors::importFromJSON(legacyFiltered, legacyFromFile) &&
+              !legacyFromFile.welcomeBackground && !legacyFromFile.welcomeText && !legacyFromFile.welcomeAccent,
+              "legacy file leaves welcome colors to derivation and ignores nested metadata");
+        std::string rejected;
+        CHECK(!ThemeColors::filterImportColors(R"({"welcomeBackground":"zzzzzz"})", rejected),
+              "an invalid welcome color rejects the import file");
+    }
+    {
+        ThemeColorScheme scheme = ThemeColors::getClassicDark();
+        scheme.resultsSelection = ImVec4(0.11f, 0.22f, 0.33f, 1.0f);
+        scheme.toolbarAccent = ImVec4(0.44f, 0.55f, 0.66f, 1.0f);
+        scheme.controlAccent = ImVec4(0.77f, 0.66f, 0.55f, 1.0f);
+        scheme.transferButtonBG = ImVec4(0.10f, 0.70f, 0.20f, 1.0f);
+        scheme.filterBrowserLocateTint = ImVec4(0.20f, 0.30f, 0.80f, 1.0f);
+        scheme.wwiseConnectOk = ImVec4(0.30f, 0.80f, 0.40f, 1.0f);
+
+        const ThemeModuleColors modules = ResolveThemeModuleColors(scheme);
+        CHECK(approxEqual(modules.results.selection, scheme.resultsSelection) &&
+              approxEqual(modules.topBar.accent, scheme.toolbarAccent) &&
+              approxEqual(modules.controls.accent, scheme.controlAccent),
+              "module color roles preserve independent result, toolbar, and control accents");
+        CHECK(approxEqual(modules.transfer.action, scheme.transferButtonBG) &&
+              approxEqual(modules.filterBrowser.locate, scheme.filterBrowserLocateTint) &&
+              approxEqual(modules.wwise.connected, scheme.wwiseConnectOk),
+              "module color roles preserve independent transfer, locate, and Wwise status colors");
+        CHECK(approxEqual(modules.waveform.background, scheme.waveformBG) &&
+              approxEqual(modules.waveform.primary, scheme.waveformColor) &&
+              approxEqual(modules.sidebar.active, scheme.sidebarIconActive),
+              "module color roles expose waveform and sidebar colors without legacy aliases");
+        CHECK(approxEqual(modules.filterBrowser.background, scheme.filterBrowserBG) &&
+              approxEqual(modules.filterBrowser.section, scheme.filterBrowserSectionBG) &&
+              approxEqual(modules.filterBrowser.button, scheme.filterBrowserButtonBG) &&
+              approxEqual(modules.filterBrowser.treeText, scheme.filterBrowserTreeText),
+              "module color roles preserve filter browser surfaces and tree text");
+        CHECK(approxEqual(modules.sidebar.railDivider, scheme.sidebarRailDivider) &&
+              approxEqual(modules.diagnostic.accent, scheme.diagnosticOverlayAccent) &&
+              approxEqual(modules.meter.warning, scheme.meterWarning) &&
+              approxEqual(modules.overlay.panel, scheme.dialogPanelBG),
+              "module color roles preserve sidebar, diagnostic, meter, and overlay colors");
+        CHECK(approxEqual(modules.results.frameOutline, scheme.waveformColor) &&
+              approxEqual(modules.results.scrollbar, scheme.resultsScrollbar) &&
+              approxEqual(modules.results.tabBackground, scheme.resultsTabBG) &&
+              approxEqual(modules.results.tabHover, scheme.resultsTabHover) &&
+              approxEqual(modules.results.tabActive, scheme.resultsTabActive) &&
+              approxEqual(modules.results.gradientStart, scheme.resultsGradientStart) &&
+              approxEqual(modules.results.gradientEnd, scheme.resultsGradientEnd) &&
+              approxEqual(modules.results.playedText, scheme.resultsPlayedText),
+              "results module exposes inline list, tab, gradient, and frame roles without changing source fields");
+        CHECK(approxEqual(modules.transport.background, scheme.transportBarBG) &&
+              approxEqual(modules.transport.accent, scheme.controlAccent) &&
+              approxEqual(modules.transport.text, scheme.interfaceText) &&
+              approxEqual(modules.transport.timecodeText, scheme.timecodeText) &&
+              approxEqual(modules.transport.timecodeHover, scheme.timecodeTextHover) &&
+              approxEqual(modules.transport.level, scheme.volumeColor) &&
+              approxEqual(modules.transport.waveform, scheme.waveformColor) &&
+              approxEqual(modules.transport.meterWarning, scheme.meterWarning) &&
+              approxEqual(modules.transport.border, scheme.chromeBorder),
+              "transport module exposes playback controls through semantic roles without changing source fields");
+        CHECK(approxEqual(modules.navigation.historyBackground, scheme.historyCapsuleBG) &&
+              approxEqual(modules.navigation.historyActive, scheme.historyCapsuleActiveBG) &&
+              approxEqual(modules.navigation.modeBackground, scheme.modeCapsuleBG) &&
+              approxEqual(modules.navigation.modeActive, scheme.modeCapsuleActiveBG),
+              "navigation module exposes history and mode capsule roles without changing source fields");
+    }
     {
         const ThemeColorScheme scheme = ThemeColors::getHarkenSearchProductDark();
 
@@ -1248,18 +1682,234 @@ int main() {
         size_t schemaCount = 0;
         const ThemeEditorItem* schema = GetThemeEditorItems(schemaCount);
         const auto props = ThemeColors::getEditableProperties();
-        CHECK(schemaCount == 96, "10-D: schema keeps all 96 color rows");
+        const auto legacyCount = std::count_if(schema, schema + schemaCount,
+            [](const ThemeEditorItem& item) { return item.member != nullptr; });
+        CHECK(legacyCount == 96, "10-D: schema keeps all 96 legacy color rows");
         CHECK(props.size() == 88, "10-D: projection keeps the historic 88-row surface");
         bool matches = props.size() == 88;
         for (const auto& p : props) {
             const ThemeEditorItem* item = findEditorItem(p.name);
-            if (!item || item->labelId != p.labelId ||
+            if (!item || !item->member || item->labelId != p.labelId ||
                 &(cur.*(item->member)) != p.colorPtr) {
                 matches = false;
                 break;
             }
         }
         CHECK(matches, "10-D: projection rows match schema (key/labelId/live member ptr)");
+    }
+
+    {
+        // Sidebar and preset-dial colors must survive a JSON round trip so an
+        // imported theme can replace them instead of being stuck on the defaults.
+        ThemeColorScheme scheme = ThemeColors::getClassicDark();
+        // Channels are exact n/255 values so the JSON hex round trip is lossless.
+        const ImVec4 probe(79.0f / 255.0f, 120.0f / 255.0f, 160.0f / 255.0f, 204.0f / 255.0f);
+        scheme.sidebarRailDivider = probe;
+        scheme.sidebarIconInactive = probe;      scheme.sidebarIconHover = probe;
+        scheme.sidebarIconActive = probe;        scheme.sidebarActiveStrip = probe;
+        scheme.sidebarSubHeaderLine = probe;
+        scheme.presetDialBg = probe;             scheme.presetDialCardActiveBg = probe;
+        scheme.presetDialCardActiveText = probe; scheme.presetDialCardInactiveText = probe;
+        scheme.presetDialAccent = probe;
+
+        const std::string dialJson = ThemeColors::exportToJSON(scheme);
+        for (const char* key : {"sidebarRailDivider", "sidebarIconInactive",
+                                "sidebarIconHover", "sidebarIconActive", "sidebarActiveStrip",
+                                "sidebarSubHeaderLine",
+                                "presetDialBg", "presetDialCardActiveBg",
+                                "presetDialCardActiveText", "presetDialCardInactiveText",
+                                "presetDialAccent"}) {
+            CHECK(dialJson.find(std::string("\"") + key + "\"") != std::string::npos,
+                  std::string("custom theme JSON exports ") + key);
+        }
+
+        ThemeColorScheme reopened = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::importFromJSON(dialJson, reopened), "custom theme JSON reopens");
+        CHECK(approxEqual(reopened.sidebarRailDivider, probe) &&
+              approxEqual(reopened.sidebarIconInactive, probe) && approxEqual(reopened.sidebarIconHover, probe) &&
+              approxEqual(reopened.sidebarIconActive, probe) && approxEqual(reopened.sidebarActiveStrip, probe) &&
+              approxEqual(reopened.sidebarSubHeaderLine, probe),
+              "imported theme replaces every sidebar color");
+        CHECK(approxEqual(reopened.presetDialBg, probe) && approxEqual(reopened.presetDialCardActiveBg, probe) &&
+              approxEqual(reopened.presetDialCardActiveText, probe) &&
+              approxEqual(reopened.presetDialCardInactiveText, probe) &&
+              approxEqual(reopened.presetDialAccent, probe),
+              "imported theme replaces every preset-dial color");
+
+        ThemeColorScheme legacyScheme = MakeBuiltinScheme(AppTheme::Dark);
+        const ThemeColorScheme legacyBefore = legacyScheme;
+        CHECK(ThemeColors::importFromJSON("{\"menuText\":\"ff345678\"}", legacyScheme),
+              "legacy JSON without sidebar or dial keys still loads");
+        CHECK(approxEqual(legacyScheme.sidebarRailDivider, legacyBefore.sidebarRailDivider) &&
+              approxEqual(legacyScheme.presetDialCardActiveBg, legacyBefore.presetDialCardActiveBg),
+              "legacy JSON without sidebar or dial keys keeps the original colors");
+    }
+
+    {
+    {
+        // colorMixing=false must stop every derivation from inventing a color.
+        ThemeColorScheme mixed = ThemeColors::getClassicDark();
+        mixed.colorMixing = true;
+        ThemeColors::resolveDerivedColors(mixed);
+        ThemeColorScheme plain = ThemeColors::getClassicDark();
+        plain.colorMixing = false;
+        ThemeColors::resolveDerivedColors(plain);
+        // 用与派生结果不同的显式端点，确认关闭混合后不会被重算覆盖。
+        ThemeColorScheme declared = ThemeColors::getClassicDark();
+        declared.colorMixing = false;
+        declared.resultsGradientStart = ImVec4(0.11f, 0.22f, 0.33f, 1.0f);
+        declared.resultsGradientEnd = ImVec4(0.44f, 0.33f, 0.22f, 1.0f);
+        ThemeColors::resolveDerivedColors(declared);
+        CHECK(approxEqual(declared.resultsGradientStart, ImVec4(0.11f, 0.22f, 0.33f, 1.0f)) &&
+              approxEqual(declared.resultsGradientEnd, ImVec4(0.44f, 0.33f, 0.22f, 1.0f)),
+              "mixing off keeps the declared gradient endpoints so the gradient still works");
+        CHECK(approxEqual(plain.historyCapsuleActiveBG, plain.frameBgBase) &&
+              approxEqual(plain.modeCapsuleActiveBG, plain.frameBgBase),
+              "mixing off stops lifting capsule backgrounds toward the highlight");
+        CHECK(approxEqual(plain.meterBase, plain.volumeColor),
+              "mixing off keeps the meter base on the level color");
+        CHECK(approxEqual(plain.dialogBG, plain.popupBG) &&
+              approxEqual(plain.dialogPanelBG, plain.dialogBG),
+              "mixing off stops the dialog chain from blending the canvas");
+        CHECK(approxEqual(plain.wwiseConnectOk, plain.volumeColor) &&
+              approxEqual(plain.wwiseDiffNew, plain.wwiseNewAnchor),
+              "mixing off leaves wwise status colors on their own axes");
+        CHECK(!approxEqual(mixed.resultsGradientEnd, mixed.resultsBG),
+              "mixing on still derives a gradient end from the selection color");
+        ThemeColorScheme flat = ThemeColors::getClassicDark();
+        flat.colorMixing = false;
+        flat.resultsGradientStart = flat.resultsBG;
+        flat.resultsGradientEnd = flat.resultsBG;
+        ThemeColors::resolveDerivedColors(flat);
+        CHECK(approxEqual(flat.resultsGradientEnd, flat.resultsBG),
+              "mixing off honours a theme that declares a flat gradient");
+
+        const std::string plainJson = ThemeColors::exportToJSON(plain);
+        CHECK(plainJson.find("\"colorMixing\": \"0\"") != std::string::npos,
+              "custom theme JSON records the mixing switch");
+        ThemeColorScheme reloadedPlain = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::importFromJSON(plainJson, reloadedPlain) && !reloadedPlain.colorMixing,
+              "the mixing switch survives import");
+        ThemeColorScheme defaultScheme = ThemeColors::getClassicDark();
+        CHECK(defaultScheme.colorMixing, "mixing stays on by default for existing themes");
+    }
+
+    {
+        // The results-list gradient is a theme-owned switch: off means one flat color.
+        ThemeColorScheme on = ThemeColors::getClassicDark();
+        CHECK(on.resultsGradient, "list gradient stays on for existing themes");
+        ThemeColorScheme off = ThemeColors::getClassicDark();
+        off.resultsGradient = false;
+        const std::string offJson = ThemeColors::exportToJSON(off);
+        CHECK(offJson.find("\"resultsGradient\": \"0\"") != std::string::npos,
+              "custom theme JSON records the list-gradient switch");
+        ThemeColorScheme reloaded = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::importFromJSON(offJson, reloaded) && !reloaded.resultsGradient,
+              "the list-gradient switch survives import");
+    }
+
+    {
+        // The search-field outline is opt-in: alpha 0 keeps every existing theme borderless.
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue}) {
+            CHECK(MakeBuiltinScheme(theme).searchFieldOutline.w == 0.0f,
+                  "built-in themes keep the search field borderless unless they opt in");
+        }
+        const float jadeOutline = MakeBuiltinScheme(AppTheme::JadeMist).searchFieldOutline.w;
+        CHECK(jadeOutline > 0.0f && jadeOutline < 0.45f,
+              "JadeMist uses a light search-field outline, not a heavy one");
+        ThemeColorScheme custom = ThemeColors::getClassicDark();
+        custom.searchFieldOutline = ImVec4(0.91f, 0.93f, 0.95f, 1.0f);
+        const std::string json = ThemeColors::exportToJSON(custom);
+        CHECK(json.find("searchFieldOutline") != std::string::npos,
+              "custom theme JSON records the search outline");
+        ThemeColorScheme reloaded = ThemeColors::getClassicDark();
+        CHECK(ThemeColors::importFromJSON(json, reloaded) &&
+              reloaded.searchFieldOutline.w > 0.9f,
+              "search outline survives import");
+    }
+
+    {
+        // Transport text is opt-in; unset means "follow interfaceText".
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue, AppTheme::JadeMist}) {
+            const ThemeColorScheme builtin = MakeBuiltinScheme(theme);
+            CHECK(builtin.transportText.w == 0.0f, "built-in themes keep transport text on interface text");
+            CHECK(approxEqual(ResolveThemeModuleColors(builtin).transport.text, builtin.interfaceText),
+                  "unset transport text resolves to interface text");
+        }
+        ThemeColorScheme jade = MakeBuiltinScheme(AppTheme::JadeMist);
+        jade.transportText = ImVec4(0.92f, 0.96f, 0.96f, 1.0f);
+        CHECK(approxEqual(ResolveThemeModuleColors(jade).transport.text, jade.transportText),
+              "an explicit transport text overrides the interface text");
+        const std::string json = ThemeColors::exportToJSON(jade);
+        CHECK(json.find("transportText") != std::string::npos, "theme JSON records transport text");
+    }
+
+        // Every exported key must be read back on import: export -> import -> export
+        // has to be byte identical, otherwise a custom JSON would silently lose colors.
+        std::vector<std::pair<std::string, ThemeColorScheme>> sources;
+        for (const auto theme : {AppTheme::Dark, AppTheme::Ocean, AppTheme::RoseCedar,
+                                 AppTheme::LapisBlue, AppTheme::JadeMist}) {
+            sources.emplace_back("builtin-" + std::to_string(static_cast<int>(theme)),
+                                 MakeBuiltinScheme(theme));
+        }
+        for (int preset = 0; preset < 8; ++preset) {
+            sources.emplace_back("preset-" + std::to_string(preset),
+                                 ThemeColors::getPresetByIndex(preset));
+        }
+        for (const auto& entry : sources) {
+            const std::string exported = ThemeColors::exportToJSON(entry.second);
+            ThemeColorScheme target = ThemeColors::getClassicDark();
+            CHECK(ThemeColors::importFromJSON(exported, target),
+                  entry.first + " JSON imports");
+            CHECK(ThemeColors::exportToJSON(target) == exported,
+                  entry.first + " JSON keeps every color through import and re-export");
+        }
+    }
+
+    {
+        // Golden fingerprints: the five built-in themes must keep exporting the
+        // same colors while color relations and derivation anchors are reorganised.
+        // Anchor keys are stripped because they were added after the baseline.
+        struct Golden { AppTheme theme; const char* digest; };
+        const Golden goldens[] = {
+            {AppTheme::Dark,      "10610678951372238089"},
+            {AppTheme::Ocean,      "17444617343897474163"},
+            {AppTheme::RoseCedar,      "13274010116725215894"},
+            {AppTheme::LapisBlue,      "95415268845711116"},
+            {AppTheme::JadeMist,  "9645989396240942326"},
+        };
+        for (const Golden& golden : goldens) {
+            std::string json = ThemeColors::exportToJSON(MakeBuiltinScheme(golden.theme));
+            std::string filtered;
+            size_t start = 0;
+            while (start < json.size()) {
+                const size_t end = json.find('\n', start);
+                const std::string line = json.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                const bool anchor = line.find("\"themeHighlight\"") != std::string::npos
+                    || line.find("\"meterWarnAnchor\"") != std::string::npos
+                    || line.find("\"meterClipAnchor\"") != std::string::npos
+                    || line.find("\"meterNeutralAnchor\"") != std::string::npos
+                    || line.find("\"wwiseOkAnchor\"") != std::string::npos
+                    || line.find("\"wwiseNewAnchor\"") != std::string::npos;
+                const bool nonColor = line.find("\"colorMixing\"") != std::string::npos
+                    || line.find("\"resultsGradient\"") != std::string::npos
+                    || line.find("\"searchFieldOutline\"") != std::string::npos
+                    || line.find("\"transportText\"") != std::string::npos;
+                if (!anchor && !nonColor) {
+                    filtered += line;
+                    if (end != std::string::npos) filtered += "\n";
+                }
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+            uint64_t hash = 1469598103934665603ull;
+            for (unsigned char ch : filtered) { hash ^= ch; hash *= 1099511628211ull; }
+            CHECK(std::to_string(hash) == golden.digest,
+                  "built-in theme " + std::to_string(static_cast<int>(golden.theme)) +
+                      " matches the agreed color baseline");
+        }
     }
 
     std::cout << "\nPassed: " << g_passed << "\n";
