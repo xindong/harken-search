@@ -62,6 +62,20 @@ class LocalizationLedgerContractTests(unittest.TestCase):
         self.assertTrue(GENERATOR_PATH.is_file(), "tools/generate_localization.py is required")
         self.assertTrue(LEDGER_PATH.is_file(), "locale/harken.ui.strings.json is the only copy ledger")
 
+    def test_transfer_and_export_use_the_same_localized_choices(self) -> None:
+        ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        entries = [entry for entry in ledger["entries"] if entry["id"].startswith("TransferOption_")]
+        self.assertEqual(len(entries), 26)
+        for entry in entries:
+            for language in ("zh", "en", "ja"):
+                with self.subTest(key=entry["id"], language=language):
+                    self.assertTrue(entry[language].strip())
+        for source_name in ("ModuleUI.cpp", "main.cpp"):
+            with self.subTest(source=source_name):
+                source = (ROOT / "src" / source_name).read_text(encoding="utf-8")
+                self.assertEqual(source.count("TransferOptionPreview("), 3)
+                self.assertEqual(source.count("TransferOptionLabel("), 3)
+
     def test_missing_key_fails(self) -> None:
         import generate_localization
 
