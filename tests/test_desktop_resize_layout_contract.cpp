@@ -72,6 +72,19 @@ bool requireNotContains(const std::string& haystack, const std::string& needle, 
 
 
 
+bool requireFollowingLine(const std::string& source, const std::string& first,
+                          const std::string& next, const char* message) {
+    const size_t firstStart = source.find(first + '\n');
+    if (firstStart != std::string::npos) {
+        const size_t nextStart = source.find_first_not_of(" \t", firstStart + first.size() + 1);
+        if (nextStart != std::string::npos && source.compare(nextStart, next.size(), next) == 0) {
+            return true;
+        }
+    }
+    std::cerr << "FAIL: " << message << "\nexpected next line: " << next << "\n";
+    return false;
+}
+
 bool requireOrder(const std::string& haystack, const std::string& first, const std::string& second, const char* message) {
 
     const size_t a = haystack.find(first);
@@ -264,13 +277,9 @@ int main() {
 
                        "database breadcrumb reserves the gap before the original arrow");
 
-    ok &= requireContains(mainCpp,
-
-                          "ImGui::TextColored(kInfoMuted, \">\");\n"
-
-                          "                                ImGui::SameLine(0, breadcrumbSeparatorPadX);",
-
-                          "database breadcrumb reserves the same gap after the original arrow");
+    ok &= requireFollowingLine(mainCpp, "ImGui::TextColored(kInfoMuted, \">\");",
+                               "ImGui::SameLine(0, breadcrumbSeparatorPadX);",
+                               "database breadcrumb reserves the same gap after the original arrow");
 
     ok &= requireContains(mainCpp, "BeginTransientScrollbarChild(\"##DatabaseBreadcrumbPath\", ImVec2(breadcrumbViewportW, breadcrumbRowH)",
 

@@ -156,6 +156,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/DatabaseBreadcrumbScroll.h"
 #include "ui/ResultsPanelLayout.h"
 #include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
@@ -41963,12 +41964,8 @@ void RenderUI(AppState& state) {
                 const std::string breadcrumbLabel =
                     HarkenSearch::ResolveFolderBreadcrumbDisplayLabel(fullPath, L(Misc_AllFiles));
 
-                static std::string breadcrumbScrollPath;
-                static float breadcrumbScrollX = 0.0f;
-                if (breadcrumbScrollPath != fullPath) {
-                    breadcrumbScrollPath = fullPath;
-                    breadcrumbScrollX = 0.0f;
-                }
+                static harken::breadcrumb::ScrollState breadcrumbScroll;
+                breadcrumbScroll.setPath(fullPath);
 
                 if (!fullPath.empty()) {
                     std::vector<std::pair<std::string, std::string>> pathSegments;
@@ -42004,7 +42001,6 @@ void RenderUI(AppState& state) {
                     constexpr float breadcrumbChipPadX = 2.0f;
                     constexpr float breadcrumbSeparatorPadX = 4.0f;
                     constexpr float breadcrumbMaxChipW = 320.0f;
-                    constexpr float breadcrumbScrollSpeed = 120.0f;
                     const float separatorW = ImGui::CalcTextSize(">").x + breadcrumbSeparatorPadX * 2.0f;
                     std::vector<float> segmentWidths;
                     segmentWidths.reserve(pathSegments.size());
@@ -42022,18 +42018,13 @@ void RenderUI(AppState& state) {
                     const ImVec2 breadcrumbViewportMin = ImGui::GetCursorScreenPos();
                     const ImVec2 breadcrumbViewportMax(breadcrumbViewportMin.x + breadcrumbViewportW,
                                                        breadcrumbViewportMin.y + breadcrumbRowH);
-                    const float breadcrumbScrollMax = std::max(0.0f, breadcrumbContentW - breadcrumbViewportW);
-                    if (breadcrumbScrollMax > 0.0f &&
-                        !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                    const bool breadcrumbHovered =
                         ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
-                        ImGui::IsMouseHoveringRect(breadcrumbViewportMin, breadcrumbViewportMax)) {
-                        const float edgeW = std::min(20.0f, breadcrumbViewportW * 0.25f);
-                        const float mouseX = ImGui::GetMousePos().x;
-                        const float step = breadcrumbScrollSpeed * std::min(ImGui::GetIO().DeltaTime, 0.1f);
-                        if (mouseX < breadcrumbViewportMin.x + edgeW) breadcrumbScrollX -= step;
-                        if (mouseX >= breadcrumbViewportMax.x - edgeW) breadcrumbScrollX += step;
-                    }
-                    breadcrumbScrollX = std::clamp(breadcrumbScrollX, 0.0f, breadcrumbScrollMax);
+                        ImGui::IsMouseHoveringRect(breadcrumbViewportMin, breadcrumbViewportMax);
+                    const float breadcrumbScrollX = breadcrumbScroll.update(
+                        breadcrumbContentW, breadcrumbViewportMin.x, breadcrumbViewportW,
+                        ImGui::GetMousePos().x, ImGui::GetIO().DeltaTime, breadcrumbHovered,
+                        ImGui::IsMouseDown(ImGuiMouseButton_Left));
 
                     auto drawBreadcrumbPathChip = [&](const char* id,
                                                       const std::string& label,
