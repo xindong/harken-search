@@ -30970,7 +30970,11 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         const bool updateDownloading = update.phase == aris::update::HarkenSearchUpdateUiPhase::Downloading;
         const bool updateVisible = state.showUpdateCenter;
         if (update.phase != aris::update::HarkenSearchUpdateUiPhase::Error) state.updateTaskDismissed = false;
-        if (updateDownloading) {
+        if (update.SuppressesDownloadNotice()) {
+            state.updateTaskWasActive = false;
+            state.updateTaskDoneAt = 0.0;
+            state.updateTaskDismissed = false;
+        } else if (updateDownloading) {
             state.updateTaskWasActive = true;
             state.updateTaskDoneAt = 0.0;
             std::string detail;

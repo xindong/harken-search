@@ -158,6 +158,44 @@ def test_manual_check_cannot_replace_an_update_waiting_for_restart() -> None:
     assert "g_updateUiState.phase == HarkenSearchUpdateUiPhase::Ready" in source
 
 
+def test_check_failure_clears_download_task_without_losing_retry_feedback() -> None:
+    source = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+    start = source.index("const bool updateDownloading")
+    task = source[start:source.index("if (rows.size() > 3)", start)]
+    assert re.search(
+        r"if \(update\.SuppressesDownloadNotice\(\)\) \{\s*"
+        r"state\.updateTaskWasActive = false;\s*"
+        r"state\.updateTaskDoneAt = 0\.0;[^}]*\} else if \(updateDownloading\)",
+        task,
+    ), "checking must bypass the download row and retire any cached completion"
+
+    ui = (ROOT / "src/update/HarkenSearchUpdateNoticeUi.cpp").read_text(encoding="utf-8")
+    assert (
+        "case HarkenSearchUpdateUiPhase::Error:\n"
+        "            return HarkenSearchUpdateNoticeVisibleState::Error;"
+    ) in ui
+    assert "actions.requestCheck()" in ui
+
+
+def test_update_owner_preserves_check_failure_origin() -> None:
+    source = (ROOT / "src/update/HarkenSearchUpdateComposition.cpp").read_text(
+        encoding="utf-8"
+    )
+    assert "runImmediateCheck(CheckOrigin::Automatic);" in source
+    assert "runImmediateCheck(CheckOrigin::Manual);" in source
+    assert re.search(
+        r"runOperation\(&intent, intent\.kind\(\) == UpdateApplicationScheduleKind::Check\s*"
+        r"\? CheckOrigin::Automatic : CheckOrigin::None\);",
+        source,
+    )
+    assert re.search(
+        r"MergeSnapshot\(result\.snapshot,\s*"
+        r"result\.disposition == UpdateApplicationDisposition::Failed\s*"
+        r"\? checkOrigin : CheckOrigin::None\);",
+        source,
+    ), "only an actual check failure owns check feedback, not a package failure"
+
+
 def test_bootstrap_product_failure_prompts_reinstall_without_touching_user_data() -> None:
     source = (ROOT / "src/bootstrap/WindowsBootstrapRuntimeWin32.cpp").read_text(
         encoding="utf-8"

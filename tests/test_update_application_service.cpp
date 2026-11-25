@@ -1,4 +1,5 @@
 #include "update/UpdateApplicationService.h"
+#include "update/HarkenSearchUpdateComposition.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -551,6 +552,127 @@ void test_manual_supersedes_startup_and_periodic_rearms_without_stale_work() {
           "owned periodic schedule executes once and rearms the next interval");
 }
 
+void test_https_check_failures_only_use_update_center_and_allow_manual_recovery() {
+    using CheckOrigin = HarkenSearchUpdateCheckOrigin;
+    using UiPhase = HarkenSearchUpdateUiPhase;
+    auto trusted = config();
+    trusted.check.policy.currentVersion = "1.2.0";
+    UpdateCheckFetchResult offline;
+    offline.error = UpdateCheckFetchError::Network;
+    offline.detail = "update check HTTPS request failed";
+    ScriptedCheckTransport checkTransport;
+    checkTransport.responses = {offline, offline, fetched(kManifest), fetched(kSignature)};
+    FakeDownloadTransport downloadTransport;
+    FakePersistence persistence;
+    FakeClock clock;
+    RecordingBootstrapPort bootstrap;
+    UpdateApplicationService service(
+        checkTransport, downloadTransport, persistence, capacity(), clock,
+        bootstrap, std::move(trusted));
+    NeverCheckCancelled checkCancellation;
+    NeverDownloadCancelled downloadCancellation;
+
+    const auto started = service.Start();
+    check(started.schedules.size() == 1, "startup has one scheduled check");
+    if (started.schedules.empty()) return;
+    clock.now = started.schedules.front().dueAtMonotonicMs();
+    const auto automatic =
+        service.ExecuteScheduled(started.schedules.front(), checkCancellation, downloadCancellation);
+    check(automatic.disposition == UpdateApplicationDisposition::Failed &&
+              automatic.fetchError == UpdateCheckFetchError::Network &&
+              checkTransport.requests.size() == 1,
+          "one startup manifest request returns an HTTPS failure");
+
+    HarkenSearchUpdateUiState ui;
+    const auto verifyFailure = [&](const UpdateApplicationResult& failed, CheckOrigin origin) {
+        ui.phase = UiPhase::Checking;
+        ui.checkInFlight = true;
+        ui.candidateVersion = "1.1.0";
+        ui.downloadedBytes = 12;
+        ui.totalBytes = 34;
+        ApplyHarkenSearchUpdateSnapshot(ui, failed.snapshot, origin);
+        check(ui.phase == UiPhase::Error && ui.failedCheckOrigin == origin &&
+                  ui.lastError == offline.detail && !ui.checkInFlight,
+              "check failure retains the attempt origin and error for the update center");
+        check(ui.SuppressesDownloadNotice(),
+              "polling a check failure cannot show a download notification");
+        check(ui.downloadedBytes == 0 && ui.totalBytes == 0 && ui.candidateVersion.empty(),
+              "check failure retires cached download progress");
+        const auto requestCount = checkTransport.requests.size();
+        const auto replayed = service.ExecuteScheduled(
+            started.schedules.front(), checkCancellation, downloadCancellation);
+        check(replayed.disposition == UpdateApplicationDisposition::NoOp &&
+                  replayed.snapshot.lastError == failed.snapshot.lastError &&
+                  checkTransport.requests.size() == requestCount,
+              "a stale startup schedule republishes the same failure without another HTTPS request");
+        ApplyHarkenSearchUpdateSnapshot(ui, replayed.snapshot);
+        check(ui.SuppressesDownloadNotice() && ui.failedCheckOrigin == origin &&
+                  ui.downloadedBytes == 0 && ui.totalBytes == 0,
+              "republishing the same failed snapshot cannot resurrect the download notification");
+    };
+    verifyFailure(automatic, CheckOrigin::Automatic);
+
+    const auto manual = service.CheckNow(checkCancellation, downloadCancellation);
+    check(manual.disposition == UpdateApplicationDisposition::Failed &&
+              manual.fetchError == UpdateCheckFetchError::Network &&
+              checkTransport.requests.size() == 2,
+          "manual check is accepted after startup failure and reports its own request failure");
+    verifyFailure(manual, CheckOrigin::Manual);
+
+    ui.BeginCheckPresentation();
+    ui.checkInFlight = true;
+    check(ui.phase == UiPhase::Checking && ui.SuppressesDownloadNotice() &&
+              ui.failedCheckOrigin == CheckOrigin::None && ui.lastError.empty(),
+          "manual retry clears the previous failure without showing download progress");
+    const auto recovered = service.CheckNow(checkCancellation, downloadCancellation);
+    ApplyHarkenSearchUpdateSnapshot(ui, recovered.snapshot);
+    check(recovered.disposition == UpdateApplicationDisposition::NoUpdate &&
+              ui.phase == UiPhase::Idle && ui.failedCheckOrigin == CheckOrigin::None &&
+              ui.lastError.empty() && !ui.checkInFlight && checkTransport.requests.size() == 4,
+          "manual retry after network recovery uses the signed manifest and clears failure");
+    check(downloadTransport.executions == 0 && persistence.activations == 0 &&
+              bootstrap.authorizations == 0,
+          "check failures and recovery with no newer release never start a download or install");
+}
+
+void test_a_new_download_failure_is_visible_even_with_the_previous_check_error_text() {
+    using CheckOrigin = HarkenSearchUpdateCheckOrigin;
+    auto trusted = config();
+    trusted.runtime.retryPolicy.maxAttempts = 1;
+    UpdateCheckFetchResult offline;
+    offline.error = UpdateCheckFetchError::Network;
+    offline.detail = "download network transport failed (WinInet/system error 0)";
+    ScriptedCheckTransport checkTransport;
+    checkTransport.responses = {offline, fetched(kManifest), fetched(kSignature)};
+    FakeDownloadTransport downloadTransport;
+    downloadTransport.errors = {HttpTransportExecutionError::Network};
+    FakePersistence persistence;
+    FakeClock clock;
+    RecordingBootstrapPort bootstrap;
+    UpdateApplicationService service(
+        checkTransport, downloadTransport, persistence, capacity(), clock,
+        bootstrap, std::move(trusted));
+    NeverCheckCancelled checkCancellation;
+    NeverDownloadCancelled downloadCancellation;
+
+    HarkenSearchUpdateUiState ui;
+    const auto failedCheck = service.CheckNow(checkCancellation, downloadCancellation);
+    ApplyHarkenSearchUpdateSnapshot(ui, failedCheck.snapshot, CheckOrigin::Manual);
+    check(failedCheck.disposition == UpdateApplicationDisposition::Failed &&
+              ui.SuppressesDownloadNotice(),
+          "a check failure is not a download failure regardless of the detail text");
+
+    const auto failedDownload = service.CheckNow(checkCancellation, downloadCancellation);
+    check(failedDownload.disposition == UpdateApplicationDisposition::TerminalError &&
+              failedDownload.snapshot.lastError == ui.lastError &&
+              downloadTransport.executions == 1 && bootstrap.authorizations == 0,
+          "a later check finds an update and the download really fails with the same detail");
+    ApplyHarkenSearchUpdateSnapshot(ui, failedDownload.snapshot, CheckOrigin::None);
+    check(ui.phase == HarkenSearchUpdateUiPhase::Error &&
+              ui.failedCheckOrigin == CheckOrigin::None && !ui.SuppressesDownloadNotice(),
+          "a new download failure is not suppressed as a replay of the check failure");
+}
+
 void test_signature_schema_caps_disk_and_check_cancel_fail_closed() {
     NeverCheckCancelled checkCancellation;
     NeverDownloadCancelled downloadCancellation;
@@ -676,6 +798,11 @@ void test_download_retry_stale_and_cross_service_intents_are_capability_bound() 
               retry.has_value() && checkTransport.requests.size() == 2 &&
               downloadTransport.executions == 1,
           "download network failure emits deterministic owned retry alongside periodic check");
+    HarkenSearchUpdateUiState ui;
+    ApplyHarkenSearchUpdateSnapshot(ui, retrying.snapshot);
+    check(ui.phase == HarkenSearchUpdateUiPhase::Downloading &&
+              !ui.SuppressesDownloadNotice(),
+          "a real download retry still presents download progress");
 
     ScriptedCheckTransport foreignCheck;
     FakeDownloadTransport foreignDownload;
@@ -980,6 +1107,8 @@ int main(int argc, char** argv) {
     test_pre_download_cancel_retains_verified_candidate_without_refetch();
     test_no_update_and_check_failures_never_start_downloads();
     test_manual_supersedes_startup_and_periodic_rearms_without_stale_work();
+    test_https_check_failures_only_use_update_center_and_allow_manual_recovery();
+    test_a_new_download_failure_is_visible_even_with_the_previous_check_error_text();
     test_signature_schema_caps_disk_and_check_cancel_fail_closed();
     test_download_retry_stale_and_cross_service_intents_are_capability_bound();
     test_superseding_preserves_ready_fallback_and_bootstrap_retry_is_exact();
