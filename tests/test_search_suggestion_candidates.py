@@ -1,6 +1,8 @@
 import re
 import sqlite3
+import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 
@@ -23,6 +25,9 @@ class SearchSuggestionCandidateTests(unittest.TestCase):
     def create_database(self, encoding):
         self.database = sqlite3.connect(":memory:")
         self.addCleanup(self.database.close)
+        self.database.create_function(
+            "aura_utf8_bytes", 1, lambda term: len(term.encode("utf-8")), deterministic=True
+        )
         self.database.execute(f"PRAGMA encoding = '{encoding}'")
         self.database.executescript(
             """
@@ -105,6 +110,34 @@ class SearchSuggestionCandidateTests(unittest.TestCase):
         term = "音" * 32
         self.add_terms(term, term + "响")
         self.assertEqual(self.candidates("音", max_bytes=249), [term])
+
+    def test_uncompletable_utf8_terms_are_filtered_before_the_limit(self):
+        for encoding in ("UTF-8", "UTF-16le"):
+            with self.subTest(encoding=encoding):
+                self.create_database(encoding)
+                self.add_terms(*([f"音效{suffix}" for suffix in "甲乙丙丁戊己庚辛"] * 2), "音效")
+                self.assertEqual(self.candidates("音", max_bytes=8), ["音效"])
+
+    def test_read_only_connection_builds_vocabulary_before_disabling_writes(self):
+        read_only_source = SOURCE.split("bool Database::openReadOnly(", 1)[1].split(
+            "void Database::setQueryProgressHandler(", 1
+        )[0]
+        self.assertLess(
+            read_only_source.index("ensureSearchSuggestionVocabulary("),
+            read_only_source.index("attachSidecarDatabases("),
+        )
+        self.add_terms("water_splash")
+        self.database.commit()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audio.db"
+            with closing(sqlite3.connect(path)) as writable:
+                self.database.backup(writable)
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as read_only:
+                read_only.create_function("aura_utf8_bytes", 1, lambda term: len(term.encode("utf-8")))
+                read_only.execute(SUGGESTION_SCHEMA)
+                read_only.execute("PRAGMA query_only = ON")
+                args = ("water", "wates", 8, 254, "|wav|")
+                self.assertEqual(read_only.execute(SUGGESTION_SQL, args).fetchall(), [("water",)])
 
 
 if __name__ == "__main__":
