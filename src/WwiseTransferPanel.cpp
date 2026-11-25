@@ -2296,6 +2296,8 @@ WwiseTransferProgress GetWwiseTransferProgress() {
     return snap;
 }
 
+void ShutdownWwiseTransferPanel();
+
 // QA 隔离构建专用：action = configure / connect / transfer / status。
 // configure 直接改内存中的传输配置（端口/工程/结构），避免依赖配置文件读取时序。
 std::string QaWwiseCommand(const std::string& action, int port, const std::string& projectPath) {
@@ -2324,6 +2326,8 @@ std::string QaWwiseCommand(const std::string& action, int port, const std::strin
         handleConnect();
     } else if (action == "transfer") {
         handleTransfer();
+    } else if (action == "close") {
+        ShutdownWwiseTransferPanel();
     }
 
     auto sanitize = [](std::string value) {

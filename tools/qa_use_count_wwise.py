@@ -165,6 +165,10 @@ def main(args: argparse.Namespace) -> int:
                                  'imported': status.get('imported'),
                                  'failed_items': status.get('failed_items'),
                                  'aggregate_error': status.get('aggregate_error')})
+        command(cmd='wwise_qa', action='close')
+        time.sleep(1.5)
+        closed = [row(i)['use_count'] for i in range(WAV_COUNT)]
+        report['checks'].append({'case': 'after panel close', 'rows': closed})
         shot = output / '01-after-wwise-transfer.png'
         capture(driver, shot)
         report['screenshots'].append(str(shot))
