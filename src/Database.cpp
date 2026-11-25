@@ -1947,6 +1947,29 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     return true;
 }
 
+bool Database::openForCoverKeyCachePersistence(const std::string& dbPath) {
+    if (m_db || dbPath.empty() ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(dbPath)) {
+        m_lastError = "Cover key cache writer rejected the database path";
+        return false;
+    }
+
+    sqlite3* opened = nullptr;
+    const int result = sqlite3_open_v2(
+        dbPath.c_str(), &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(opened, sqlite3_close);
+    if (result != SQLITE_OK || sqlite3_db_readonly(opened, "main") != 0) {
+        m_lastError = result == SQLITE_OK ? "Cover key cache database is read-only" :
+            (opened ? sqlite3_errmsg(opened) : "Could not open the cover key cache database");
+        return false;
+    }
+    RegisterHarkenSearchSqliteFunctions(opened);
+    sqlite3_busy_timeout(opened, 250);
+    m_mainDbPath = dbPath;
+    m_db = connection.release();
+    return true;
+}
+
 WaveformCachePolicy::Mode Database::getWaveformCacheMode() {
     if (!m_db) return WaveformCachePolicy::Mode::MiniAndMain;
     return WaveformCachePolicy::ModeFromStorageValue(

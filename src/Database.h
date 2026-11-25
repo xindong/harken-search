@@ -561,6 +561,7 @@ public:
     // Initialize database.  Pass isPrimary=true for the single app-owned connection;
     // worker-thread local connections leave it false to skip one-time migrations.
     bool open(const std::string& dbPath, bool isPrimary = false);
+    bool openForCoverKeyCachePersistence(const std::string& dbPath);
     // 打开只读连接（WAL 模式下不阻塞写操作，用于 SearchWorker 等纯读场景）
     bool openReadOnly(const std::string& dbPath);
     void close();
@@ -1208,6 +1209,7 @@ public:
     bool rebuildFolderIndex();
     /** 删除/移动文件后调用，使 facet 总数与文件夹树数量下次从数据库重算 */
     bool invalidateFacetQueryCache();
+    void clearSearchCountMemoryCache() { m_countMemCache.clear(); }
     bool rebuildTagFacetIndex();
     bool invalidateTagFacetIndex();
     bool isTagFacetIndexValid() const;
