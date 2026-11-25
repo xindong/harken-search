@@ -42083,9 +42083,9 @@ void RenderUI(AppState& state) {
                     ImGui::SetNextWindowContentSize(ImVec2(breadcrumbContentW, 0.0f));
                     ImGui::SetNextWindowScroll(ImVec2(breadcrumbScrollX, 0.0f));
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-                    if (ImGui::BeginChild("##DatabaseBreadcrumbPath", ImVec2(breadcrumbViewportW, breadcrumbRowH),
-                                          ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground |
-                                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                    if (BeginTransientScrollbarChild("##DatabaseBreadcrumbPath", ImVec2(breadcrumbViewportW, breadcrumbRowH),
+                                                     ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground |
+                                                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
                         for (size_t segmentIndex = 0; segmentIndex < pathSegments.size(); ++segmentIndex) {
                             const auto& segment = pathSegments[segmentIndex];
                             if (segmentIndex > 0) {

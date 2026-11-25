@@ -272,7 +272,7 @@ int main() {
 
                           "database breadcrumb reserves the same gap after the original arrow");
 
-    ok &= requireContains(mainCpp, "ImGui::BeginChild(\"##DatabaseBreadcrumbPath\", ImVec2(breadcrumbViewportW, breadcrumbRowH)",
+    ok &= requireContains(mainCpp, "BeginTransientScrollbarChild(\"##DatabaseBreadcrumbPath\", ImVec2(breadcrumbViewportW, breadcrumbRowH)",
 
                           "database breadcrumb clips overflow in a single-row viewport");
 
