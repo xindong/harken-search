@@ -328,6 +328,7 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "MemoryBudget.h"
 #include "TagSystem.h"
 #include "TransferEngine.h"
+#include "TransferOptionLabels.h"
 #include "ResultActionMenu.h"
 #include "ExternalAiAuthorizationStore.h"
 #include "ExternalAiBridgeServer.h"
@@ -32035,9 +32036,10 @@ void RenderUI(AppState& state) {
         if (!state.transferUseSourceFormat) {
             static auto fileTypes = TransferEngine::getFileTypeChoices();
             ImGui::SetNextItemWidth(150);
-            if (BeginTransientScrollbarCombo(L(Export_OutputFormat), state.transferFileType < (int)fileTypes.size() ? fileTypes[state.transferFileType].first.c_str() : "WAV")) {
+            if (BeginTransientScrollbarCombo(L(Export_OutputFormat),
+                    aura::ui::TransferOptionPreview(fileTypes, state.transferFileType, "WAV"))) {
                 for (int i = 0; i < (int)fileTypes.size(); i++) {
-                    if (ImGui::Selectable(fileTypes[i].first.c_str(), state.transferFileType == i)) {
+                    if (ImGui::Selectable(aura::ui::TransferOptionLabel(fileTypes[i]), state.transferFileType == i)) {
                         state.transferFileType = i;
                         CaptureDialogTransferSettings(state);
                         MarkSettingsDirty(state);
@@ -32050,9 +32052,10 @@ void RenderUI(AppState& state) {
         // Folder organization strategy
         static auto strategies = TransferEngine::getFolderStrategyList();
         ImGui::SetNextItemWidth(250);
-        if (BeginTransientScrollbarCombo(L(Export_DirStrategy), state.transferFolderStrategy < (int)strategies.size() ? strategies[state.transferFolderStrategy].second.c_str() : "SingleFolder")) {
+        if (BeginTransientScrollbarCombo(L(Export_DirStrategy),
+                aura::ui::TransferOptionPreview(strategies, state.transferFolderStrategy, "SingleFolder"))) {
             for (int i = 0; i < (int)strategies.size(); i++) {
-                if (ImGui::Selectable(strategies[i].second.c_str(), state.transferFolderStrategy == i)) {
+                if (ImGui::Selectable(aura::ui::TransferOptionLabel(strategies[i]), state.transferFolderStrategy == i)) {
                     state.transferFolderStrategy = i;
                     CaptureDialogTransferSettings(state);
                     MarkSettingsDirty(state);
@@ -32064,9 +32067,10 @@ void RenderUI(AppState& state) {
         // Existing file behavior
         static auto behaviors = TransferEngine::getExistingBehaviorChoices();
         ImGui::SetNextItemWidth(200);
-        if (BeginTransientScrollbarCombo(L(Export_ExistingFile), state.transferExistingBehavior < (int)behaviors.size() ? behaviors[state.transferExistingBehavior].first.c_str() : "Skip")) {
+        if (BeginTransientScrollbarCombo(L(Export_ExistingFile),
+                aura::ui::TransferOptionPreview(behaviors, state.transferExistingBehavior, "Skip"))) {
             for (int i = 0; i < (int)behaviors.size(); i++) {
-                if (ImGui::Selectable(behaviors[i].first.c_str(), state.transferExistingBehavior == i)) {
+                if (ImGui::Selectable(aura::ui::TransferOptionLabel(behaviors[i]), state.transferExistingBehavior == i)) {
                     state.transferExistingBehavior = i;
                     CaptureDialogTransferSettings(state);
                     MarkSettingsDirty(state);
