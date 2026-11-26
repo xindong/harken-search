@@ -94,3 +94,34 @@ jobs:
           name: windows-tests-${{ github.sha }}
           path: build/public/test-results.xml
           if-no-files-found: warn
+
+  macos-build:
+    name: Harken Search / macOS ARM64 build and test
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Verify Apple Silicon runner
+        run: |
+          arch="$(uname -m)"
+          if [[ "$arch" != arm64 ]]; then
+            echo "::error::Expected an arm64 macOS runner, got $arch"
+            exit 1
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Configure a clean macOS build
+        run: cmake -S . -B build/public-macos -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_OSX_ARCHITECTURES=arm64
+      - name: Build and run core tests
+        run: |
+          core_tests=(TestSettingsMigration TestPlatformFilesystem TestSearchQueryTrigram)
+          cmake --build build/public-macos --parallel 3 --target "${core_tests[@]}"
+          for test_name in "${core_tests[@]}"; do
+            ctest --test-dir build/public-macos --no-tests=error --output-on-failure -R "^${test_name}$"
+          done
+      - name: Build the macOS app
+        run: cmake --build build/public-macos --parallel 3 --target HarkenSearch
