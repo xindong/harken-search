@@ -3,26 +3,32 @@
 namespace aura::record_rescan {
 namespace {
 
+bool IsMp3(const std::string& path) {
+    if (path.size() < 4) return false;
+    const auto offset = path.size() - 4;
+    return path[offset] == '.' &&
+           (path[offset + 1] == 'm' || path[offset + 1] == 'M') &&
+           (path[offset + 2] == 'p' || path[offset + 2] == 'P') &&
+           path[offset + 3] == '3';
+}
+
 void ApplyMetadata(
     SelectedRecordRescanUpdate& update,
-    const SelectedRecordRescanMetadata& metadata) {
-    if (!metadata.title.empty()) update.title = metadata.title;
-    if (!metadata.artist.empty()) update.artist = metadata.artist;
-    if (!metadata.album.empty()) update.album = metadata.album;
-    if (!metadata.description.empty()) update.description = metadata.description;
-    if (!metadata.category.empty()) {
-        update.category = metadata.category;
-    } else if (!metadata.genre.empty()) {
-        update.category = metadata.genre;
-    }
-    if (!metadata.keywords.empty()) {
-        update.keywords = metadata.keywords;
-    } else if (!metadata.comment.empty()) {
-        update.keywords = metadata.comment;
-    }
+    const SelectedRecordRescanMetadata& metadata,
+    bool preserveExisting) {
+    const auto apply = [preserveExisting](std::string& stored, const std::string& embedded) {
+        if ((!preserveExisting || stored.empty()) && !embedded.empty()) stored = embedded;
+    };
+    apply(update.title, metadata.title);
+    apply(update.artist, metadata.artist);
+    apply(update.album, metadata.album);
+    apply(update.description, metadata.description);
+    apply(update.category, metadata.category.empty() ? metadata.genre : metadata.category);
+    apply(update.keywords, metadata.keywords.empty() ? metadata.comment : metadata.keywords);
     for (const auto& [key, value] : metadata.extendedMetadata) {
-        if (!value.empty()) update.extendedMetadata[key] = value;
+        if (!value.empty()) apply(update.extendedMetadata[key], value);
     }
+    if (preserveExisting) update.rereadId3TextTags = metadata.id3TextTags;
 }
 
 }  // namespace
@@ -50,7 +56,7 @@ SelectedRecordRescanItemResult RescanSelectedRecord(
 
     SelectedRecordRescanMetadata metadata;
     if (port.readMetadata(item.filePath, metadata)) {
-        ApplyMetadata(update, metadata);
+        ApplyMetadata(update, metadata, IsMp3(item.filePath));
     }
 
     const bool oldAudioInfoMissing =

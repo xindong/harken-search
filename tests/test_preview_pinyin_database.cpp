@@ -209,7 +209,7 @@ bool InstallFtsRebuildFailTrigger(Database& db, std::string* used) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     bool ok = true;
     const std::string isolationRoot = Platform::HarkenUserData::PreviewIsolationRootUtf8();
     std::cout << "ISOLATION_ROOT=" << isolationRoot << std::endl;
@@ -221,6 +221,54 @@ int main() {
         ("bug07-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directories(root);
     const fs::path audioDir = root / "audio";
+
+    if (argc == 2 && std::string(argv[1]) == "--mp3-search") {
+        Database database;
+        if (!Expect(database.open((root / "mp3.db").u8string(), false), "open an isolated MP3 library")) return 1;
+        database.stopCoverPhashBackfillWorker();
+        AudioRecord record;
+        record.filePath = (audioDir / "Tone.mp3").u8string();
+        record.fileName = "Tone.mp3";
+        record.extension = ".mp3";
+        record.title = "Library title";
+        record.meta = {{"composer", "Azurescore"}, {"bpm", "187"},
+                       {"musical_key", "Dorian"}, {"track_year", "2034"}};
+        record.id3TextTags = {{"Original 名称", "UniqueValue"}, {"Other 英文", "SecondValue"}};
+        ok &= Expect(database.addFile(record), "add the MP3 record");
+        SearchFilter filter;
+        for (const char* value : {"Azurescore", "187", "Dorian", "2034", "UniqueValue"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            ok &= Expect(results.size() == 1 && results.front().matchSource == SearchMatchSource::Metadata, value);
+        }
+        const auto custom = Database::findOptionalMetadataMatches(database.getFileByPath(record.filePath), "UniqueValue");
+        ok &= Expect(custom.size() == 1 && custom.front().custom &&
+            custom.front().field == "Original 名称" && custom.front().value == "UniqueValue",
+            "custom tag stores the original field and explains the actual matching value");
+        filter.keyword = "UniqueValue";
+        filter.exactMode = true;
+        ok &= Expect(database.searchFiles(filter, 10).empty(), "precise filename search does not gain custom-only results");
+        filter.keyword = "Tone";
+        filter.exactMode = true;
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "precise filename still matches");
+        record.title = "Embedded title";
+        record.meta["composer"] = "Embedded composer";
+        record.keywords = "newly indexed";
+        ok &= Expect(database.addFile(record), "reread existing MP3");
+        const auto reread = database.getFileByPath(record.filePath);
+        ok &= Expect(reread.title == "Library title" &&
+            reread.getMeta("composer") == "Azurescore" && reread.keywords == "newly indexed",
+            "reread adds missing metadata without replacing library edits");
+        MetadataEditPatch edit;
+        edit.fields["composer"] = "Borealscore";
+        ok &= Expect(database.applyMetadataPatch(reread.id, edit), "update a library music tag");
+        filter.exactMode = false;
+        filter.keyword = "Borealscore";
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "edited composer immediately searchable");
+        filter.keyword = "Azurescore";
+        ok &= Expect(database.searchFiles(filter, 10).empty(), "edited composer no longer matches old tags");
+        return ok ? 0 : 1;
+    }
 
     {
         const fs::path dbPath = root / "product-small.db";

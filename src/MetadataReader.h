@@ -28,6 +28,10 @@ struct AudioMetadata {
     int track = 0;
     std::string albumArtist;  // TPE2 / ALBUMARTIST / album artist atom
     int disc = 1;             // TPOS / DISCNUMBER / disc atom (1-based)
+    std::string composer;
+    std::string bpm;
+    std::string musicalKey;
+    std::unordered_map<std::string, std::string> customTextTags;
 
     // BWF/Broadcast specific (from bext chunk)
     std::string bwDescription;    // BWF Description (256 chars from bext)
@@ -90,6 +94,9 @@ inline void PopulateExtendedMeta(std::unordered_map<std::string, std::string>& m
     s("url", am.url);                 s("copyright", am.copyright);
     s("software", am.software);       s("genre", am.genre);
     s("comment", am.comment);         s("library", am.library);
+    if (am.year > 0) meta["track_year"] = std::to_string(am.year);
+    s("composer", am.composer);       s("bpm", am.bpm);
+    s("musical_key", am.musicalKey);
     s("manufacturer", am.manufacturer); s("designer", am.designer);
     s("bw_description", am.bwDescription);
     s("bw_originator", am.originator); s("bw_originator_ref", am.originatorRef);
@@ -115,7 +122,8 @@ public:
 
     // Format-specific readers
     static bool readID3v1(const std::string& filePath, AudioMetadata& metadata);
-    static bool readID3v2(const std::string& filePath, AudioMetadata& metadata);
+    static bool readID3v2(const std::string& filePath, AudioMetadata& metadata,
+                          bool useV1Fallback = false);
     static bool readBWF(const std::string& filePath, AudioMetadata& metadata);
     static bool readVorbisComment(const std::string& filePath, AudioMetadata& metadata);
     static bool readM4A(const std::string& filePath, AudioMetadata& metadata);

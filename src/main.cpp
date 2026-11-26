@@ -7475,6 +7475,104 @@ void FlushSettingsDirty(AppState& state) {
     }
 }
 
+static constexpr int kResultsCoverColumnIndex = 17;
+static constexpr int kResultsLegacyColumnCount = kResultsCoverColumnIndex + 4;
+static constexpr int kResultsNewMetadataColumnCount = 2;
+
+static void MigrateResultsColumnSettings(ImGuiID tableId, int totalColumns, int coverColumnCount) {
+    ImGuiTableSettings* saved = ImGui::TableSettingsFindByID(tableId);
+    if (!saved || saved->ColumnsCount == totalColumns) return;
+    const int savedCount = saved->ColumnsCount;
+    const int savedExtraColumns = savedCount - kResultsLegacyColumnCount;
+    if (savedExtraColumns < 0 || savedExtraColumns > kResultsNewMetadataColumnCount + 1) return;
+
+    const int savedCoverCount = savedExtraColumns < kResultsNewMetadataColumnCount
+        ? savedExtraColumns : savedExtraColumns - kResultsNewMetadataColumnCount;
+    auto& settings = GImGui->SettingsTables;
+    const int savedOffset = settings.offset_from_ptr(saved);
+    ImGuiTableSettings* migrated = ImGui::TableSettingsCreate(tableId, totalColumns);
+    saved = settings.ptr_from_offset(savedOffset);
+    migrated->SaveFlags = saved->SaveFlags;
+    migrated->RefScale = saved->RefScale;
+    auto* columns = migrated->GetColumnSettings();
+    if (savedExtraColumns < kResultsNewMetadataColumnCount) {
+        for (int index = totalColumns - kResultsNewMetadataColumnCount; index < totalColumns; ++index) {
+            columns[index].Index = static_cast<ImGuiTableColumnIdx>(index);
+            columns[index].DisplayOrder = static_cast<ImGuiTableColumnIdx>(index + savedCoverCount);
+            columns[index].WidthOrWeight = -1.0f;
+            columns[index].IsEnabled = 0;
+        }
+    }
+    for (int index = 0; index < savedCount; ++index) {
+        const auto& column = saved->GetColumnSettings()[index];
+        if (column.Index < 0 || (savedCoverCount && !coverColumnCount && index == kResultsCoverColumnIndex)) continue;
+        const int target = index < kResultsCoverColumnIndex + savedCoverCount
+            ? index : index + coverColumnCount - savedCoverCount;
+        columns[target] = column;
+        columns[target].Index = static_cast<ImGuiTableColumnIdx>(target);
+    }
+    saved->ID = 0;
+}
+
+static void DrawResultsColumnSelector(ImGuiTable* table, int legacyColumnCount) {
+    if (!ImGui::TableBeginContextMenuPopup(table)) return;
+    ImGui::TableDrawDefaultContextMenu(table, table->Flags & ~ImGuiTableFlags_Hideable);
+    ImGui::Separator();
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+
+    const auto drawColumn = [table](int index) {
+        auto& column = table->Columns[index];
+        if (column.Flags & ImGuiTableColumnFlags_Disabled) return;
+        const bool canToggle = !(column.Flags & ImGuiTableColumnFlags_NoHide) &&
+            (!column.IsUserEnabled || table->ColumnsEnabledCount > 1);
+        ImGui::PushID(index);
+        if (ImGui::MenuItem(ImGui::TableGetColumnName(table, index), nullptr, column.IsUserEnabled, canToggle))
+            column.IsUserEnabledNextFrame = !column.IsUserEnabled;
+        ImGui::PopID();
+    };
+    constexpr SortColumn commonMetadata[] = {
+        SortColumn::Description, SortColumn::Keywords, SortColumn::Artist, SortColumn::Album,
+        SortColumn::Category, SortColumn::BPM, SortColumn::MusicalKey,
+    };
+    const auto isAdvanced = [](SortColumn field) {
+        switch (field) {
+        case SortColumn::Mood:
+        case SortColumn::DateAdded:
+        case SortColumn::FilePath:
+        case SortColumn::Loudness:
+        case SortColumn::RMS:
+        case SortColumn::TruePeak:
+        case SortColumn::Rating:
+            return true;
+        default:
+            return false;
+        }
+    };
+    for (const auto field : commonMetadata) {
+        for (int index = 0; index < legacyColumnCount; ++index) {
+            if (table->Columns[index].UserID == static_cast<ImGuiID>(field)) {
+                drawColumn(index);
+                break;
+            }
+        }
+    }
+    ImGui::Separator();
+    for (int index = 0; index < legacyColumnCount; ++index) {
+        const auto field = static_cast<SortColumn>(table->Columns[index].UserID);
+        if (!isAdvanced(field) && std::find(std::begin(commonMetadata), std::end(commonMetadata), field) == std::end(commonMetadata))
+            drawColumn(index);
+    }
+    if (ImGui::BeginMenu(L(Col_Advanced))) {
+        for (int index = legacyColumnCount; index < table->ColumnsCount; ++index) drawColumn(index);
+        for (int index = 0; index < legacyColumnCount; ++index) {
+            if (isAdvanced(static_cast<SortColumn>(table->Columns[index].UserID))) drawColumn(index);
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::PopItemFlag();
+    ImGui::EndPopup();
+}
+
 // Sort search results
 void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool ascending) {
     std::sort(results.begin(), results.end(), [column, ascending](const AudioRecord& a, const AudioRecord& b) {
@@ -9632,14 +9730,31 @@ static void DrawResultRowFilename(const std::string& displayName,
 
 static const char* GetSearchMatchSourceLabel(SearchMatchSource source) {
     switch (source) {
-    case SearchMatchSource::Name: return "Matched in: Name";
-    case SearchMatchSource::Path: return "Matched in: Path";
-    case SearchMatchSource::Description: return "Matched in: Description";
-    case SearchMatchSource::Keywords: return "Matched in: Keywords";
-    case SearchMatchSource::Metadata: return "Matched in: Metadata";
-    case SearchMatchSource::FuzzyName: return "Matched by: Fuzzy name match";
+    case SearchMatchSource::Name: return L(Main_SearchMatchName);
+    case SearchMatchSource::Path: return L(Main_SearchMatchPath);
+    case SearchMatchSource::Description: return L(Main_SearchMatchDescription);
+    case SearchMatchSource::Keywords: return L(Main_SearchMatchKeywords);
+    case SearchMatchSource::Metadata: return L(Main_SearchMatchMetadata);
+    case SearchMatchSource::FuzzyName: return L(Main_SearchMatchFuzzyName);
     default: return nullptr;
     }
+}
+
+static std::vector<SearchMetadataFieldMatch> FindOptionalSearchTooltipMatches(
+    const AppState& state, const AudioRecord& record) {
+    if (state.viewMode != ViewMode::Database || state.searchExactMode || state.lastAppliedSearchText.empty())
+        return {};
+    return Database::findOptionalMetadataMatches(record, state.lastAppliedSearchText);
+}
+
+static const char* GetSearchMetadataFieldLabel(const SearchMetadataFieldMatch& match) {
+    if (match.custom) return match.field.c_str();
+    if (match.field == "composer") return L(Col_Composer);
+    if (match.field == "track_year") return L(Col_Year);
+    if (match.field == "bpm") return L(Col_BPM);
+    if (match.field == "musical_key") return L(Col_MusicalKey);
+    if (match.field == "mood") return L(Col_Mood);
+    return match.field.c_str();
 }
 
 static const std::string* PickFallbackSearchField(const AudioRecord& record) {
@@ -9802,18 +9917,27 @@ static void LogSearchExplainabilityTooltipDiag(const AudioRecord& record,
 
 static void RenderSearchExplainability(const AudioRecord& record,
                                        const std::string& query,
-                                       const ImVec4& highlightColor) {
+                                       const ImVec4& highlightColor,
+                                       const std::vector<SearchMetadataFieldMatch>& metadataMatches) {
     const char* sourceLabel = GetSearchMatchSourceLabel(record.matchSource);
+    const bool hasMetadataDetails = !metadataMatches.empty();
+    const bool hasMetadataSource = record.matchSource == SearchMatchSource::Metadata;
     const std::string snippet = !record.matchSnippet.empty()
         ? record.matchSnippet
-        : BuildFallbackSearchSnippet(record, query);
+        : (hasMetadataSource && hasMetadataDetails ? std::string() : BuildFallbackSearchSnippet(record, query));
     if (sourceLabel) {
         ImGui::TextDisabled("%s", sourceLabel);
     }
     if (!snippet.empty()) {
         RenderInlineHighlightedText(snippet, highlightColor);
-    } else if (sourceLabel) {
-        ImGui::TextDisabled(L(Main_NoSnippetText));
+    } else if (sourceLabel && !(hasMetadataSource && hasMetadataDetails)) {
+        ImGui::TextDisabled("%s", L(Main_NoSnippetText));
+    }
+    if (hasMetadataDetails && !hasMetadataSource) {
+        ImGui::TextDisabled("%s", L(Main_SearchMatchMetadata));
+    }
+    for (const auto& match : metadataMatches) {
+        ImGui::Text("%s: %s", GetSearchMetadataFieldLabel(match), match.value.c_str());
     }
 }
 
@@ -13376,6 +13500,7 @@ public:
         out.keywords = metadata.keywords;
         out.comment = metadata.comment;
         PopulateExtendedMeta(out.extendedMetadata, metadata);
+        out.id3TextTags = metadata.customTextTags;
         return true;
     }
 
@@ -13418,6 +13543,10 @@ public:
         record.category = update.category;
         record.keywords = update.keywords;
         record.meta = update.extendedMetadata;
+        if (update.rereadId3TextTags) {
+            record.id3TextTags = *update.rereadId3TextTags;
+            record.id3TextTagsRead = true;
+        }
         record.sampleRate = update.sampleRate;
         record.channels = update.channels;
         record.totalFrames = update.totalFrames;
@@ -42782,10 +42911,9 @@ void RenderUI(AppState& state) {
                                       ImGuiTableFlags_SizingStretchProp |
                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti;
 
-        // Calculate dynamic column count based on settings
-        int meterColumnCount = 3;  // LUFS + RMS + TruePeak 始终注册（DefaultHide，右键可开关）
-        int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
-        int totalColumns = 18 + meterColumnCount + coverColumnCount;  // Filename..FilePath + Rating + meters + optional cover
+        const int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
+        const int legacyColumnCount = kResultsLegacyColumnCount + coverColumnCount;
+        const int totalColumns = legacyColumnCount + (browserFileTable ? 0 : kResultsNewMetadataColumnCount);
 
         // Table ID V5 - 移除历史列 (已播放文件用文字颜色高亮)
         // inner_width 动态计算：取可用宽度和最小宽度的较大值
@@ -42839,6 +42967,11 @@ void RenderUI(AppState& state) {
         const char* const resultsTableName = harken::results::TableName(browserFileTable);
         const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);
         const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId);
+        if (!browserFileTable && !needsDbSetup &&
+            (!previousResultsTable || previousResultsTable->ColumnsCount != totalColumns ||
+             previousResultsTable->IsSettingsRequestLoad)) {
+            MigrateResultsColumnSettings(resultsTableId, totalColumns, coverColumnCount);
+        }
         const bool filePathVisible = previousResultsTable &&
             previousResultsTable->ColumnsCount > kResultsFilePathColumnIndex &&
             previousResultsTable->Columns[kResultsFilePathColumnIndex].IsUserEnabled;
@@ -43016,11 +43149,13 @@ void RenderUI(AppState& state) {
                 musicColumnFlags |= ImGuiTableColumnFlags_DefaultHide;
             }
             ImGui::TableSetupColumn(L(Col_Album), musicColumnFlags, workspacePx(120.0f), (ImGuiID)SortColumn::Album);
-            // BPM/Key/Mood: always register (data rows always emit them).
-            // Hidden via TableSetColumnEnabled below when music_analysis is off.
-            ImGui::TableSetupColumn(L(Col_BPM), musicColumnFlags, numericDefaultWidth(64.0f, "128.00"), (ImGuiID)SortColumn::BPM);
-            ImGui::TableSetupColumn(L(Col_MusicalKey), musicColumnFlags, workspacePx(72.0f), (ImGuiID)SortColumn::MusicalKey);
-            ImGui::TableSetupColumn(L(Col_Mood), musicColumnFlags | ImGuiTableColumnFlags_DefaultHide, workspacePx(96.0f), (ImGuiID)SortColumn::Mood);
+            const bool musicColumnsAvailable =
+                state.settings.productMode == ProductMode::Music || ProductEdition::hasFeature("music_analysis");
+            const ImGuiTableColumnFlags musicAnalysisColumnFlags = musicColumnFlags |
+                (!browserFileTable && !musicColumnsAvailable ? ImGuiTableColumnFlags_Disabled : ImGuiTableColumnFlags_None);
+            ImGui::TableSetupColumn(L(Col_BPM), musicAnalysisColumnFlags, numericDefaultWidth(64.0f, "128.00"), (ImGuiID)SortColumn::BPM);
+            ImGui::TableSetupColumn(L(Col_MusicalKey), musicAnalysisColumnFlags, workspacePx(72.0f), (ImGuiID)SortColumn::MusicalKey);
+            ImGui::TableSetupColumn(L(Col_Mood), musicAnalysisColumnFlags | ImGuiTableColumnFlags_DefaultHide, workspacePx(96.0f), (ImGuiID)SortColumn::Mood);
             ImGui::TableSetupColumn(L(Col_DateAdded), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(108.0f, "2026-11-23"), (ImGuiID)SortColumn::DateAdded);
             // UX-112: Folder path column — shows parent_path of file_path, tooltip shows full path
             // The path column is the natural trailing field: when enabled it
@@ -43036,6 +43171,13 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(u8"RMS", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(64.0f), (ImGuiID)SortColumn::RMS);
             ImGui::TableSetupColumn(u8"TruePeak", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(82.0f), (ImGuiID)SortColumn::TruePeak);
             ImGui::TableSetupColumn(L(Col_Rating), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(72.0f), (ImGuiID)SortColumn::Rating);
+            if (!browserFileTable) {
+                const auto metadataColumnFlags = ImGuiTableColumnFlags_WidthFixed |
+                    ImGuiTableColumnFlags_DefaultHide | ImGuiTableColumnFlags_NoSort;
+                ImGui::TableSetupColumn(L(Col_Composer), metadataColumnFlags, workspacePx(120.0f));
+                ImGui::TableSetupColumn(L(Col_Year), metadataColumnFlags, numericDefaultWidth(64.0f, "2000"));
+                ImGui::GetCurrentTable()->DisableDefaultContextMenu = true;
+            }
 
             // Older FileTableV6 settings could leave a meter/rating column holding the
             // trailing stretch width. Repair only that unmistakable outlier; all saved
@@ -43067,9 +43209,7 @@ void RenderUI(AppState& state) {
                 }
             }
 
-            // SFX mode: completely hide music-specific columns from dropdown
-            if (state.settings.productMode != ProductMode::Music &&
-                !ProductEdition::hasFeature("music_analysis")) {
+            if (browserFileTable && !musicColumnsAvailable) {
                 ImGui::TableSetColumnEnabled(12, false);  // BPM
                 ImGui::TableSetColumnEnabled(13, false);  // MusicalKey
                 ImGui::TableSetColumnEnabled(14, false);  // Mood
@@ -43161,6 +43301,7 @@ void RenderUI(AppState& state) {
             ImGui::PopStyleColor();
             ImGui::PopFont();
             }
+            if (!browserFileTable) DrawResultsColumnSelector(ImGui::GetCurrentTable(), legacyColumnCount);
             const float librarySwitchBodyTop = ImGui::GetCurrentTable()->RowPosY2;
 
             const bool isResultsWaveColumnVisible =
@@ -45316,22 +45457,26 @@ void RenderUI(AppState& state) {
                         !HasBlockingSearchExplainabilityPopup() &&
                         ImGui::IsMouseHoveringRect(snippetHoverRectMin, snippetHoverRectMax, true);
                     if (canShowSearchTooltip) {
-                        if (HasSearchExplainability(record, state.lastAppliedSearchText) && BeginSearchExplainabilityTooltip()) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
-                        ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
-                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 54.0f);
-                        RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
-                        LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
-                        ImGui::Separator();
-                        ImGui::TextDisabled("%s", L(Meta_FullPath));
-                        ImGui::TextUnformatted(record.filePath.c_str());
-                        if (!record.description.empty()) {
-                            ImGui::TextDisabled("%s", L(Meta_FullDesc));
-                            ImGui::TextUnformatted(record.description.c_str());
+                        const auto metadataMatches = FindOptionalSearchTooltipMatches(state, record);
+                        if ((!metadataMatches.empty() || HasSearchExplainability(record, state.lastAppliedSearchText)) &&
+                            BeginSearchExplainabilityTooltip()) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
+                            ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
+                            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 54.0f);
+                            RenderSearchExplainability(record, state.lastAppliedSearchText,
+                                                       state.settings.customAccentColor, metadataMatches);
+                            LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
+                            ImGui::Separator();
+                            ImGui::TextDisabled("%s", L(Meta_FullPath));
+                            ImGui::TextUnformatted(record.filePath.c_str());
+                            if (!record.description.empty()) {
+                                ImGui::TextDisabled("%s", L(Meta_FullDesc));
+                                ImGui::TextUnformatted(record.description.c_str());
+                            }
+                            ImGui::PopTextWrapPos();
+                            ImGui::PopStyleColor(2);
+                            ImGui::EndTooltip();
                         }
-                        ImGui::PopTextWrapPos();
-                        ImGui::PopStyleColor(2);
-                        ImGui::EndTooltip(); }
                     }
 
                     // Track drag start on mouse down
@@ -45670,21 +45815,22 @@ void RenderUI(AppState& state) {
                     const bool canShowDescriptionTooltip =
                         !HasBlockingSearchExplainabilityPopup() &&
                         ImGui::IsMouseHoveringRect(descriptionHoverRectMin, descriptionHoverRectMax, true);
-                    if (canShowDescriptionTooltip) {
-                        if (BeginSearchExplainabilityTooltip()) {
+                    if (canShowDescriptionTooltip && BeginSearchExplainabilityTooltip()) {
                         ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
                         ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 56.0f);
                         ImGui::TextDisabled("%s", L(Info_Description));
                         ImGui::TextUnformatted(listDescription.empty() ? L(Info_NoDescription) : listDescription.c_str());
-                    if (HasSearchExplainability(record, state.lastAppliedSearchText)) {
+                        const auto metadataMatches = FindOptionalSearchTooltipMatches(state, record);
+                        if (!metadataMatches.empty() || HasSearchExplainability(record, state.lastAppliedSearchText)) {
                             ImGui::Separator();
-                            RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
+                            RenderSearchExplainability(record, state.lastAppliedSearchText,
+                                                       state.settings.customAccentColor, metadataMatches);
                             LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
                         }
                         ImGui::PopTextWrapPos();
                         ImGui::PopStyleColor(2);
-                        ImGui::EndTooltip(); }
+                        ImGui::EndTooltip();
                     }
 
                     // Keywords (L2 gray)
@@ -45979,6 +46125,21 @@ void RenderUI(AppState& state) {
                             ImGui::TextUnformatted(kStarStrings[r]);
                             ImGui::PopStyleColor();
                         }
+                    }
+
+                    if (ImGui::TableNextColumn()) {
+                        const auto& composer = record.getMeta("composer");
+                        ImGui::PushStyleColor(ImGuiCol_Text, composer.empty() ? kL3 : kL2);
+                        ImGui::TextUnformatted(composer.empty() ? "-" : composer.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    if (ImGui::TableNextColumn()) {
+                        const auto& year = record.getMeta("track_year");
+                        ImGui::PushFont(GetUIListMono());
+                        ImGui::PushStyleColor(ImGuiCol_Text, year.empty() ? kL3 : kL2);
+                        ImGui::TextUnformatted(year.empty() ? "-" : year.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::PopFont();
                     }
 
                     // Pop text colors if pushed
