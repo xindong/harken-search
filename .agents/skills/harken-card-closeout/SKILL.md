@@ -40,7 +40,9 @@ description: Harken Search 仓库专用的卡片收尾细则：合入 qa/current
 
 结卡前先看本次改动要不要 Mac 跟着做。动了用户看得见的功能或行为（界面、交互、搜索、播放、导入导出、设置项）就要开一张 Mac 对应卡。
 
-**Mac 卡开在独立项目 `Harken Search macOS`（`project-5f21fc53-1ef4-48f5-9a09-ed34f72d9fbf`，看板 `board-702be56d-e9fb-4628-a755-27c582134568`），不是 Harken Search 项目本身**——那边没有接本仓库，Mac 是独立开发线。
+**Mac 卡要落在 Cuevi 的 mac 版本工作区，也就是独立的 `Harken Search macOS` 项目（`project-5f21fc53-1ef4-48f5-9a09-ed34f72d9fbf`，看板 `board-702be56d-e9fb-4628-a755-27c582134568`），不是 Harken Search 项目。** Mac 是独立开发线，那边没有绑本仓库。
+
+建卡落点很容易搞错：在本仓库会话里直接建卡，项目会默认成 Harken Search。要放到 mac 工作区，就得按那个 projectId 建，或在 mac 工作区里建；建完回读卡片的归属，发现落到 Harken Search 就停下，别顺手当完成。
 
 - 标题写清来源：`[Mac] <本卡功能>`；正文写来源卡号、这次改了哪些行为、验收要看什么、参考的本卡候选 SHA。
 - 纯 Windows 侧的（安装器、文件关联、Windows 凭据、系统集成、只在本机复现的性能问题）不开卡，在本卡备注里写一句「Mac 无需跟进」及原因。
