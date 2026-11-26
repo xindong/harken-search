@@ -15,6 +15,7 @@
 #include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
+#include "BatchMetadataRuleEditUi.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/UiScale.h"
 #include "ui/EmptyStateVisualAudit.h"
@@ -5121,7 +5122,7 @@ static void PollQaCommandFile(AppState& state) {
             } else if (action == "open") {
                 if (module == "settings") state.showSettingsDialog = true;
                 else if (module == "library") state.showDbManagerDialog = true;
-                else if (module == "batch-rename") state.showBatchRenameDialog = true;
+                else if (module == "batch-rename") state.openBatchEdit();
                 else if (module == "naming") state.showNamingDialog = true;
                 else if (module == "theme-editor") state.showThemeEditor = true;
                 else if (module == "wwise") aura::wwise::OpenWwiseTransferPanel({}, {});
@@ -5154,6 +5155,9 @@ static void PollQaCommandFile(AppState& state) {
             } else if (module == "transfer") {
                 panel = &state.panelTransfer;
                 show = &state.showTransferDialog;
+            } else if (module == "batch-edit") {
+                panel = &state.panelBatchEdit;
+                show = &state.panelBatchEdit.visible;
             }
             const std::string action = getStr(raw, "action");
             if (!panel || !show) {
@@ -5417,6 +5421,90 @@ static void PollQaCommandFile(AppState& state) {
         }
 #else
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+#endif
+
+    } else if (cmd == "batch_rule_edit") {
+#if ARIS_PREVIEW_ISOLATION
+        const nlohmann::json payload = nlohmann::json::parse(raw, nullptr, false);
+        if (!payload.is_object()) {
+            result = R"({"ok":false,"cmd":"batch_rule_edit","error":"invalid_payload"})";
+        } else {
+            const std::string action = payload.value("action", std::string());
+            auto previewJson = [&](const char* verb, bool applied) {
+                const auto& preview = state.batchRuleEditPreview;
+                nlohmann::json rows = nlohmann::json::array();
+                for (const auto& row : preview.rows) {
+                    rows.push_back({{"id", row.id}, {"file", row.fileName}, {"old", row.oldValue},
+                                    {"new", row.newValue}, {"changed", row.changed},
+                                    {"blocked", row.blockedEmpty}, {"error", row.error}});
+                }
+                return nlohmann::json({{"ok", true}, {"cmd", "batch_rule_edit"}, {"action", verb},
+                    {"applied", applied},
+                    {"column", aura::metadata::RuleEditColumnName(preview.column)},
+                    {"rows", rows}, {"change_count", preview.changeCount},
+                    {"unchanged_count", preview.unchangedCount},
+                    {"blocked_count", preview.blockedCount}, {"error_count", preview.errorCount},
+                    {"can_apply", preview.CanApply()}, {"stale", state.batchRuleEditStale},
+                    {"failed", state.batchRuleEditFailed},
+                    {"message", state.batchRuleEditMessage}}).dump();
+            };
+            if (action == "open") {
+                state.batchEditTarget = payload.value("target", 1);
+                state.batchRuleEditRules.clear();
+                if (payload.contains("rules") && payload["rules"].is_array()) {
+                    for (const auto& item : payload["rules"]) {
+                        aura::metadata::RuleEditRule rule;
+                        rule.mode = static_cast<aura::metadata::RuleEditMode>(item.value("mode", 0));
+                        rule.value = item.value("value", std::string());
+                        rule.replacement = item.value("replacement", std::string());
+                        rule.separator = item.value("separator", std::string());
+                        rule.enabled = item.value("enabled", true);
+                        state.batchRuleEditRules.push_back(rule);
+                    }
+                }
+                state.batchRuleEditPreview = {};
+                state.batchRuleEditStale = false;
+                state.batchRuleEditMessage.clear();
+                state.batchRuleEditFailed = false;
+                state.openBatchEdit();
+                result = previewJson("open", false);
+            } else if (action == "preview") {
+                aura::ui::RefreshBatchRuleEditPreview(state);
+                result = previewJson("preview", false);
+            } else if (action == "apply") {
+                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                result = previewJson("apply", applied);
+            } else if (action == "race") {
+                // Preview, then let another writer change the same column, then
+                // apply: proves the guarded write refuses the stale batch.
+                aura::ui::RefreshBatchRuleEditPreview(state);
+                bool changedOutside = false;
+                if (!state.batchRuleEditPreview.rows.empty()) {
+                    const std::string column =
+                        aura::metadata::RuleEditColumnName(state.batchRuleEditPreview.column);
+                    std::vector<int64_t> ids;
+                    for (const auto& row : state.batchRuleEditPreview.rows) ids.push_back(row.id);
+                    MetadataEditPatch outsidePatch;
+                    outsidePatch.set(column, std::string("outside race"));
+                    changedOutside = state.database.applyMetadataPatchBatch(ids, outsidePatch).success > 0;
+                }
+                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                nlohmann::json reply = nlohmann::json::parse(previewJson("race", applied), nullptr, false);
+                reply["changed_outside"] = changedOutside;
+                result = reply.dump();
+            } else if (action == "clear") {
+                state.batchRuleEditRules.clear();
+                state.batchRuleEditPreview = {};
+                state.batchRuleEditStale = false;
+                state.batchRuleEditMessage.clear();
+                state.batchRuleEditFailed = false;
+                result = previewJson("clear", false);
+            } else {
+                result = previewJson("state", false);
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
 
     } else if (cmd == "capture_preview_frame") {

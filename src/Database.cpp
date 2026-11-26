@@ -4925,6 +4925,125 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
     return result;
 }
 
+// Single-column guarded batch write (REQ-20261126-UNIFIED-BATCH-EDIT).
+// Verification and update run in one IMMEDIATE transaction, so a row edited by
+// someone else after the preview aborts the whole batch instead of overwriting.
+BatchMetadataApplyResult Database::applyMetadataPatchManyGuarded(
+    const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+    const std::string& expectedColumn,
+    const std::unordered_map<int64_t, std::string>& expectedValues) {
+    BatchMetadataApplyResult result;
+    result.total = static_cast<int>(items.size());
+    auto rejectAll = [&result](const std::string& reason) {
+        result.success = 0;
+        result.failed = result.total;
+        result.errors.push_back(reason);
+        const std::string diag = "GuardedPatchManyRejected: " + reason;
+        LogMetadataPatchDiag(diag.c_str());
+        return result;
+    };
+    if (!m_db) return rejectAll("database not open");
+    if (items.empty()) return rejectAll("empty batch");
+    if (EditableTextColumns().count(expectedColumn) == 0)
+        return rejectAll("invalid guard column");
+    if (expectedValues.empty() || expectedValues.size() != items.size())
+        return rejectAll("guard batch mismatch");
+
+    {
+        std::unordered_set<int64_t> seen;
+        seen.reserve(items.size());
+        for (const auto& entry : items) {
+            if (entry.first <= 0 || !seen.insert(entry.first).second ||
+                expectedValues.count(entry.first) != 1 ||
+                entry.second.fields.size() != 1 ||
+                entry.second.fields.count(expectedColumn) != 1 ||
+                !entry.second.intFields.empty()) {
+                return rejectAll("invalid guarded batch");
+            }
+        }
+    }
+    if (sqlite3_get_autocommit(m_db) == 0)
+        return rejectAll("guarded batch requires its own transaction");
+    if (!executeSQL("BEGIN IMMEDIATE TRANSACTION")) {
+        m_lastError = sqlite3_errmsg(m_db);
+        return rejectAll("failed to begin transaction: " +
+                         (m_lastError.empty() ? std::string("unknown") : m_lastError));
+    }
+
+    std::vector<int64_t> staleIds;
+    {
+        const std::string sql =
+            "SELECT file_path FROM audio_files WHERE id = ?1 AND COALESCE(" +
+            expectedColumn + ", '') = ?2 COLLATE BINARY";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            rollbackTransaction();
+            return rejectAll("failed to prepare guard verification");
+        }
+        for (const auto& entry : items) {
+            const std::string& expected = expectedValues.at(entry.first);
+            sqlite3_bind_int64(stmt, 1, entry.first);
+            sqlite3_bind_text(stmt, 2, expected.data(), static_cast<int>(expected.size()),
+                              SQLITE_TRANSIENT);
+            const int step = sqlite3_step(stmt);
+            const char* path = step == SQLITE_ROW
+                ? reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0))
+                : nullptr;
+            if (!path) {
+                staleIds.push_back(entry.first);
+                result.errors.push_back("preview no longer matches fileId=" +
+                                        std::to_string(entry.first));
+            } else if (Platform::FileSystem::IsNetworkPath(path)) {
+                staleIds.push_back(entry.first);
+                result.errors.push_back(L(Write_BlockedNetworkLibrary));
+            }
+            sqlite3_reset(stmt);
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (!staleIds.empty()) {
+        rollbackTransaction();
+        result.success = 0;
+        result.failed = result.total;
+        result.failedFileIds = staleIds;
+        DIAG_ACTION_FMT("Metadata",
+                        "GuardedPatchManyRejected: reason=preview_mismatch count=%zu",
+                        staleIds.size());
+        return result;
+    }
+
+    BatchMetadataApplyResult applied = applyMetadataPatchMany(items);
+    if (applied.failed != 0) {
+        rollbackTransaction();
+        result.success = 0;
+        result.failed = result.total;
+        result.failedFileIds = applied.failedFileIds;
+        result.errors = applied.errors;
+        result.errors.push_back("Transaction rolled back due to failures.");
+        return result;
+    }
+    if (!commitTransaction()) {
+        m_lastError = sqlite3_errmsg(m_db);
+        rollbackTransaction();
+        result.success = 0;
+        result.failed = result.total;
+        result.errors.push_back("failed to commit transaction: " +
+                                (m_lastError.empty() ? std::string() : m_lastError));
+        return result;
+    }
+
+    invalidateFacetQueryCache();
+    result.success = applied.success;
+    result.failed = applied.failed;
+    result.errors = applied.errors;
+    DIAG_ACTION_FMT("Metadata",
+                    "GuardedPatchManyComplete: total=%d success=%d",
+                    result.total,
+                    result.success);
+    return result;
+}
+
 bool Database::applyMetadataPatch(int64_t fileId, const MetadataEditPatch& patch) {
     BatchMetadataApplyResult res = applyMetadataPatchBatch({fileId}, patch);
     return res.success == 1;
