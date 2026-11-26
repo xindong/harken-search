@@ -13,9 +13,19 @@
       "sections": [
         {
           "title": "外观与主题",
+          "title_en": "Appearance and themes",
           "items": [
             {
               "name": "",
+              "list_en": {
+                "「设置 → 外观」可导入主题 JSON，导入后立即应用。": "Theme JSON files can be imported from Settings → Appearance and are applied immediately.",
+                "无效的主题文件不会改变当前主题。": "An invalid theme file leaves the current theme unchanged.",
+                "日夜主题开启时，手动导入立即生效；到下一时段仍按原计划切换。": "With day and night themes on, a manual import takes effect at once; the next period still switches as scheduled.",
+                "欢迎页和加载页默认跟随主题，文字颜色按背景调整。": "The welcome and loading pages follow the theme by default, with text colour adjusted to the background.",
+                "日夜主题可分别预览、调整或恢复欢迎页的背景、文字和强调色。": "The welcome page background, text and accent colours can be previewed, adjusted or reset separately for the day and night themes.",
+                "导入主题时保留文件里的欢迎页配色，也兼容未包含这些配色的旧主题文件。": "Importing a theme keeps the welcome page colours in the file, and older theme files without them still import.",
+                "修复工具窗浮动后浅字贴着浅底看不清的问题。": "Fixed light text on a light background in floating tool windows."
+              },
               "list": [
                 "「设置 → 外观」可导入主题 JSON，导入后立即应用。",
                 "无效的主题文件不会改变当前主题。",
@@ -30,9 +40,15 @@
         },
         {
           "title": "搜索与素材库",
+          "title_en": "Search and library",
           "items": [
             {
               "name": "",
+              "list_en": {
+                "文件夹索引缺项或不可读时，文件夹搜索仍能找到已经入库的子目录。": "Folder search still finds subfolders already in the library when the folder index is incomplete or unreadable.",
+                "完整扫描或暂停保留后，后台补齐封面时自动刷新一次结果列表和封面墙，保留筛选、滚动位置和多选。": "After a full scan, or a paused scan that was kept, the results list and cover wall refresh once when background cover filling finishes, keeping filters, scroll position and multi-selection.",
+                "打开未标记为 v2 格式的旧自适应库时，保留已缓存的缩略波形，只补缺失项。": "Opening an older adaptive library not marked as v2 keeps its cached mini waveforms and only fills in the missing ones."
+              },
               "list": [
                 "文件夹索引缺项或不可读时，文件夹搜索仍能找到已经入库的子目录。",
                 "完整扫描或暂停保留后，后台补齐封面时自动刷新一次结果列表和封面墙，保留筛选、滚动位置和多选。",
@@ -43,9 +59,16 @@
         },
         {
           "title": "相似音效",
+          "title_en": "Similar sounds",
           "items": [
             {
               "name": "",
+              "list_en": {
+                "批量核对素材和构建相似音效索引可并行分析；没有模型时，声学分析也按设定并发数运行。": "Batch file checks and similar-sound indexing can analyse in parallel; without a model, acoustic analysis also runs at the set concurrency.",
+                "「设置 → 素材库」可设置相似分析并发数，范围 1–16，默认 4；修改后从下一轮分析生效。": "Settings → Library sets the similar-sound analysis concurrency from 1 to 16, 4 by default; a change applies from the next analysis run.",
+                "等待首个分析结果超过 100 毫秒时，不再误报任务已取消。": "Waiting more than 100 ms for the first analysis result no longer reports the task as cancelled.",
+                "相似音效面板在停靠和浮动时使用同一套留白、分析区与表格布局，保留各主题配色。": "The Similar Sounds panel uses the same spacing, analysis area and table layout when docked or floating, keeping each theme’s colours."
+              },
               "list": [
                 "批量核对素材和构建相似音效索引可并行分析；没有模型时，声学分析也按设定并发数运行。",
                 "「设置 → 素材库」可设置相似分析并发数，范围 1–16，默认 4；修改后从下一轮分析生效。",
@@ -57,9 +80,27 @@
         },
         {
           "title": "工作区与停靠",
+          "title_en": "Workspace and docking",
           "items": [
             {
               "name": "",
+              "list_en": {
+                "去掉停靠的波形播放条下方多余的空白。": "Removed the extra space under the docked waveform player bar.",
+                "统一筛选器、标签、结果列表、Info 和波形之间的分缝。": "Unified the gaps between the filter, tags, results list, Info and waveform.",
+                "鼠标移开后，竖向分隔线的三点手柄仍会显示。": "The three-dot handle on vertical dividers stays visible after the pointer moves away.",
+                "分隔条的拖动区域贴合分缝，不再覆盖上层浮窗。": "Divider drag areas fit the gaps and no longer cover floating windows above them.",
+                "拼接面板拖到最小可用宽高时停止，不再把控件挤出去。": "Joined panels stop at their minimum usable size instead of pushing controls out.",
+                "主窗口变窄时保留拼接的 Info 和筛选器，放不下的内容可在面板内滚动。": "When the main window narrows, joined Info and filter panels stay in place, and content that does not fit scrolls within the panel.",
+                "停靠预览按松手后的实际位置和尺寸显示。": "The docking preview shows the actual position and size after release.",
+                "插入新停靠面板时，不改变其他已停靠列的宽度。": "Inserting a new docked panel leaves the widths of other docked columns unchanged.",
+                "筛选器和传输窗上下拼接时同宽，不留多余空白。": "The filter and transport windows share the same width when stacked, without extra space.",
+                "去掉上下拼接时叠在一起的三点，只在实际分隔线上保留手柄。": "Removed overlapping three-dot handles in stacked panels; handles remain only on real dividers.",
+                "左右拖动 Info 左边的三点，上下两个窗口会一起变宽或变窄。": "Dragging the three dots to the left of Info sideways widens or narrows the two windows above and below together.",
+                "拖动上下两窗之间的横向分隔线，只改变两窗高度。": "Dragging the horizontal divider between two stacked windows changes only their heights.",
+                "拖动 Info 右侧的分隔线，只调整 Info 和结果列表的宽度。": "Dragging the divider to the right of Info resizes only Info and the results list.",
+                "已有底部横栏时，仍可在横栏内做左右分栏。": "A bottom bar can still be split into left and right columns.",
+                "修复已有顶部或底部横栏时，侧栏明明放得下却不能在同一列上下拼接的问题。": "Fixed side panels that could not stack in the same column when a top or bottom bar was present, even with enough room."
+              },
               "list": [
                 "去掉停靠的波形播放条下方多余的空白。",
                 "统一筛选器、标签、结果列表、Info 和波形之间的分缝。",
@@ -82,9 +123,16 @@
         },
         {
           "title": "建库与升级",
+          "title_en": "Library setup and upgrades",
           "items": [
             {
               "name": "",
+              "list_en": {
+                "高缩放下，首次建库的三个按钮不再裁切文字。": "At high zoom the three buttons in first-time library setup no longer cut off their text.",
+                "首次建库弹窗宽度不足时，按钮按原顺序分行。": "When the first-time library setup dialog is too narrow, its buttons wrap in their original order.",
+                "首次建库弹窗和按钮的圆角随界面缩放调整。": "Corner radii of the first-time library setup dialog and its buttons follow the interface zoom.",
+                "Windows 覆盖升级后刷新任务栏已固定的默认图标，不替换用户自选图标。": "After an in-place upgrade on Windows, pinned taskbar shortcuts using the default icon are refreshed; icons chosen by the user are not replaced."
+              },
               "list": [
                 "高缩放下，首次建库的三个按钮不再裁切文字。",
                 "首次建库弹窗宽度不足时，按钮按原顺序分行。",
@@ -104,6 +152,7 @@
       "sections": [
         {
           "title": "新增内容",
+          "title_en": "Added",
           "items": [
             {
               "name": "Cindy",
@@ -111,31 +160,43 @@
                 {
                   "title": "DAW 设置与发送",
                   "description": "设置中新增 DAW 模块，四款 DAW 同一张卡片；REAPER 可一键安装 Harken 组件并把音效发送到工程。",
+                  "title_en": "DAW settings and sending",
+                  "description_en": "Settings gain a DAW section with all four DAWs on one card; REAPER can install the Harken components in one click and receive sounds into the project.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "本机 AI 查找",
                   "description": "外部 AI 通过本机连接器查找音效、目录和同类替代，只读取已授权的库与路径。",
+                  "title_en": "Local AI search",
+                  "description_en": "External AI tools can find sounds, folders and similar alternatives through the local connector, reading only authorised libraries and paths.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "性能监视器",
                   "description": "原 F10 诊断浮窗改为性能与日志两个页签，可缩放查看帧率、单帧时间和进程占用，并一键导出日志。",
+                  "title_en": "Performance monitor",
+                  "description_en": "The former F10 diagnostics window now has Performance and Log tabs, with zoomable views of frame rate, frame time and process usage, plus one-click log export.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "WavPack 格式",
                   "description": "支持 WavPack 无损音效的扫描与播放。",
+                  "title_en": "WavPack format",
+                  "description_en": "Lossless WavPack sounds can be scanned and played.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "任务进度浮层",
                   "description": "扫描、相似分析、移除路径、波形与封面重建、导出、Wwise 导入和更新下载的进度统一到主窗口右下角小浮层：最多 3 条，运行中带进度条与百分比，完成后自动收起；失败的会给出原因。原窗口进度可见时不重复显示。",
+                  "title_en": "Task progress overlay",
+                  "description_en": "Progress for scans, similarity analysis, path removal, waveform and cover rebuilds, exports, Wwise imports and update downloads is gathered in a small overlay at the bottom right of the main window: up to 3 tasks, running tasks show a bar and percentage, finished ones close on their own, and failures show the reason. Progress already visible in its own window is not repeated.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "应用内界面缩放",
                   "description": "设置里可把应用界面缩放到 80%–200%，独立于 Windows 系统缩放，窄屏与高分屏不必再改系统设置。",
+                  "title_en": "In-app interface zoom",
+                  "description_en": "Settings can scale the interface from 80% to 200%, independent of Windows display scaling, so narrow and high-DPI screens no longer need system changes.",
                   "source": "Harken Search"
                 }
               ]
@@ -144,6 +205,7 @@
         },
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "Cindy",
@@ -151,36 +213,50 @@
                 {
                   "title": "拖出音效",
                   "description": "从结果里拖出音效时主波形缩成跟手小卡，落点轻轻下沉后迅速淡出。",
+                  "title_en": "Dragging sounds out",
+                  "description_en": "When a sound is dragged out of the results, the main waveform shrinks into a small card that follows the pointer, settles gently at the drop point and fades quickly.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "顶栏与菜单",
                   "description": "顶部导航改为紧凑布局，菜单字号跟随系统字体，页面菜单与结果右键菜单外观统一。",
+                  "title_en": "Top bar and menus",
+                  "description_en": "The top navigation uses a compact layout, menu text follows the system font size, and page menus match the results context menu.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "文件夹树与侧栏",
                   "description": "侧栏按新的规格局重排，刷新、定位和收起都有明确反馈。",
+                  "title_en": "Folder tree and sidebar",
+                  "description_en": "The sidebar is rearranged to the new layout, with clear feedback for refresh, locate and collapse.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "开屏与设置",
                   "description": "欢迎页与开屏共用同一套机器人头像动效，设置过头像的用户直接看到自己的头像；设置项数值居中，主题色块对齐，AI 语音识别面板的模型区与页签更简洁。",
+                  "title_en": "Splash screen and settings",
+                  "description_en": "The welcome page and splash screen share the same robot avatar animation, and users with a custom avatar see their own; setting values are centred, theme swatches aligned, and the model area and tabs of the AI speech recognition panel are simpler.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "后台执行",
                   "description": "移除路径、扫描与路径查新、单通道导出、Wwise 传输都改到后台执行：主界面不再卡顿，Wwise 传输显示「传输中 N / M」并禁止中途切换工程。",
+                  "title_en": "Background tasks",
+                  "description_en": "Path removal, scanning and path checks, single-channel export and Wwise transfer now run in the background: the main window no longer stalls, and Wwise transfer shows “Transferring N / M” and blocks switching projects midway.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "主题保存位置",
                   "description": "导入的主题改存到用户数据目录，重启与升级后仍然保留；外观页新增主题下载入口。",
+                  "title_en": "Theme storage",
+                  "description_en": "Imported themes are stored in the user data folder and survive restarts and upgrades; the Appearance page adds a link to download themes.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "字体与缩放统一",
                   "description": "顶部菜单与列表字体上限提高到 36 px，界面 DPI 缩放统一处理，缩放后布局与列宽保持。",
+                  "title_en": "Fonts and scaling",
+                  "description_en": "The top menu and list fonts go up to 36 px, interface DPI scaling is handled in one place, and layout and column widths are kept after scaling.",
                   "source": "Harken Search"
                 }
               ]
@@ -189,6 +265,7 @@
         },
         {
           "title": "性能优化",
+          "title_en": "Performance",
           "items": [
             {
               "name": "Cindy",
@@ -196,21 +273,29 @@
                 {
                   "title": "大库首屏",
                   "description": "封面墙首屏改读文件序物化索引，波形回写移出界面线程，消除百万级音效库进入主界面后的秒级停顿。",
+                  "title_en": "First screen of large libraries",
+                  "description_en": "The cover wall’s first screen reads a file-ordered materialised index and waveform write-back leaves the UI thread, removing second-long pauses when entering the main window with a library of a million sounds.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "大目录浏览",
                   "description": "文件浏览器按输入缓存排序结果，大目录改为分帧建索引，扫描期间不再反复全量排序。",
+                  "title_en": "Large folder browsing",
+                  "description_en": "The file browser caches sorted results per input, and large folders are indexed across frames, so scans no longer trigger repeated full sorts.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "旧库打开",
                   "description": "旧波形数据迁移按库只执行一次，减少旧库首次打开等待。",
+                  "title_en": "Opening older libraries",
+                  "description_en": "Old waveform data is migrated only once per library, shortening the first open of older libraries.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "播放列表",
                   "description": "计数与排序改用集合索引，打开与更新流程分段可诊断。",
+                  "title_en": "Playlists",
+                  "description_en": "Counting and sorting use set indexes, and opening and updating are split into stages that can be diagnosed.",
                   "source": "Harken Search"
                 }
               ]
@@ -219,6 +304,7 @@
         },
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "Cindy",
@@ -226,31 +312,43 @@
                 {
                   "title": "盘符库根",
                   "description": "以盘符根作为库目录时不再被判成库外，取消扫描保留已汇总的结果。",
+                  "title_en": "Drive root libraries",
+                  "description_en": "A drive root used as the library folder is no longer treated as outside the library, and cancelling a scan keeps the results already gathered.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "面板与对齐",
                   "description": "修复停靠面板被压扁、结果中栏错位和名称第三行被裁切。",
+                  "title_en": "Panels and alignment",
+                  "description_en": "Fixed squashed docked panels, misaligned middle columns in results, and cut-off third lines of names.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "诊断与切换",
                   "description": "修复页签切换卡顿与分段计时不准，F10 导出不再丢字段。",
+                  "title_en": "Diagnostics and switching",
+                  "description_en": "Fixed sluggish tab switching and inaccurate stage timing; F10 export no longer drops fields.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "扫描不再整目录中断",
                   "description": "单个文件名编码异常（常见于 macOS 残留文件）以前会让整个目录扫描中断，现在只跳过该条并记录具体路径与原因。",
+                  "title_en": "Scans no longer stop on a whole folder",
+                  "description_en": "A single file name with a bad encoding (common in leftover macOS files) used to stop the scan of the whole folder; now only that file is skipped, with its path and the reason logged.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "移除路径容错",
                   "description": "库索引与主表不一致时先重建索引再重试，不再报 database disk image is malformed；同一库里普通 UNC 与 \\\\?\\UNC\\ 两种写法能一次清干净。",
+                  "title_en": "More tolerant path removal",
+                  "description_en": "When the library index and main table disagree, the index is rebuilt and the removal retried, instead of reporting “database disk image is malformed”; plain UNC and \\\\?\\UNC\\ forms in the same library are both cleared in one pass.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "细节修正",
                   "description": "音量条按整条宽度分配；正式版菜单隐藏开发自测入口；紧凑顶栏恢复搜索提示。",
+                  "title_en": "Small fixes",
+                  "description_en": "The volume bar uses its full width; release builds hide the developer self-test menu; the compact top bar shows the search hint again.",
                   "source": "Harken Search"
                 }
               ]
@@ -271,6 +369,7 @@
       "sections": [
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "Cindy",
@@ -278,16 +377,22 @@
                 {
                   "title": "同类替代模型",
                   "description": "补齐声音模型与推理运行库，修复正式包中同类替代无法分析的问题。",
+                  "title_en": "Similar-sound model",
+                  "description_en": "Added the missing sound model and inference runtime, fixing similar-sound analysis in the release package.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新完成确认",
                   "description": "修复旧版更新器启动新版时诊断输出干扰健康确认的问题。",
+                  "title_en": "Update confirmation",
+                  "description_en": "Fixed diagnostic output from an older updater interfering with the health check when it starts the new version.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "相似分析入口",
                   "description": "首次统计时显示等待状态，统计失败可重试，切库期间不会误启动分析。",
+                  "title_en": "Similarity analysis entry",
+                  "description_en": "The first count shows a waiting state, a failed count can be retried, and switching libraries no longer starts analysis by mistake.",
                   "source": "Harken Search"
                 }
               ]
@@ -308,6 +413,7 @@
       "sections": [
         {
           "title": "新增内容",
+          "title_en": "Added",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -315,16 +421,22 @@
                 {
                   "title": "播放效果显隐",
                   "description": "可在设置中逐项隐藏播放栏的五组内置效果；隐藏时自动旁通，重新显示后恢复原有开关和参数。",
+                  "title_en": "Show or hide playback effects",
+                  "description_en": "Each of the five built-in effect groups on the playback bar can be hidden in Settings; hidden effects are bypassed, and showing them again restores their previous switches and parameters.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "相关路径显隐",
                   "description": "筛选器增加相关路径的显示控制，可按需要收起或恢复。",
+                  "title_en": "Show or hide related paths",
+                  "description_en": "The filter adds a display control for related paths, so they can be collapsed or restored as needed.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "相似音效查找",
                   "description": "试听后直接寻找同类型替代音效，候选结果可拖出到其他软件；补充分析只处理未完成文件，取消重扫保留已有结果，批次进度和失败原因更清楚。",
+                  "title_en": "Similar sound search",
+                  "description_en": "After auditioning, look for similar alternative sounds directly and drag candidates into other software; additional analysis only processes unfinished files, cancelling a rescan keeps existing results, and batch progress and failure reasons are clearer.",
                   "source": "Harken Search"
                 }
               ]
@@ -333,6 +445,7 @@
         },
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -340,21 +453,29 @@
                 {
                   "title": "连续扫描收尾",
                   "description": "修复极速扫描后接着完整扫描时，待处理的波形、封面或元数据任务可能让扫描一直等待的问题。",
+                  "title_en": "Back-to-back scans",
+                  "description_en": "Fixed pending waveform, cover or metadata tasks that could keep a full scan waiting when it followed a quick scan.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "刷新与筛选",
                   "description": "主动刷新后清空全部筛选并恢复完整文件视图；修复锁定结果页刷新后的状态和待加载结果。",
+                  "title_en": "Refresh and filters",
+                  "description_en": "A manual refresh clears all filters and restores the full file view; fixed the state and pending results of a locked results page after refresh.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新与安装",
                   "description": "改善旧安装目录缺少资源时的升级兼容和中断恢复，修正中文安装协议页的字体显示。",
+                  "title_en": "Updates and installation",
+                  "description_en": "Improved upgrade compatibility and recovery from interruptions when an older install folder lacks resources, and fixed the font on the Chinese licence page of the installer.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "音效库与结果区",
                   "description": "修复 Pilot 嵌套音效库目录显示；结果面板拖出、排序、关闭和返回主工作区更顺畅，切换音效库时有轻量状态提示。",
+                  "title_en": "Libraries and results",
+                  "description_en": "Fixed how nested Pilot library folders are shown; dragging out, sorting, closing and returning to the main workspace from the results panel are smoother, with a light status hint when switching libraries.",
                   "source": "Harken Search"
                 }
               ]
@@ -363,6 +484,7 @@
         },
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -370,21 +492,29 @@
                 {
                   "title": "设置与外观",
                   "description": "设置按类别集中查找和修改，新设置默认高性能，保存失败保留原设置；日夜主题可分别编辑五套配色，外观选择即时预览，字体、行高、扩展名和波形显示按所选设置生效。",
+                  "title_en": "Settings and appearance",
+                  "description_en": "Settings are grouped by category for finding and changing them, new settings default to high performance, and a failed save keeps the previous settings; day and night themes can each edit five palettes, appearance choices preview instantly, and font, line height, extensions and waveform display follow the chosen settings.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "扫描信息",
                   "description": "扫描窗口更简洁，保留真实进度、速度和总用时；失败原因按类型呈现，结果与过程分开查看。",
+                  "title_en": "Scan information",
+                  "description_en": "The scan window is simpler while keeping real progress, speed and total time; failure reasons are shown by type, and results are viewed separately from the process.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "文本与选择器",
                   "description": "长文件夹名、筛选条件和元数据更易查看与输入，多个侧栏或浮动窗口中的选择器互不干扰。",
+                  "title_en": "Text and pickers",
+                  "description_en": "Long folder names, filter conditions and metadata are easier to read and enter, and pickers in multiple sidebars or floating windows no longer interfere with each other.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "头像、主题与播放栏",
                   "description": "头像选择和裁剪更清晰，读取或保存失败时保留原头像；优化海军蓝等主题的文字对比度、EQ 窄窗口布局，并在关于页补充社区入口。",
+                  "title_en": "Avatar, themes and playback bar",
+                  "description_en": "Choosing and cropping an avatar is clearer, and a failed read or save keeps the current avatar; improved text contrast in themes such as Navy, the EQ layout in narrow windows, and added community links to the About page.",
                   "source": "Harken Search"
                 }
               ]
@@ -405,6 +535,7 @@
       "sections": [
         {
           "title": "新增内容",
+          "title_en": "Added",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -412,16 +543,22 @@
                 {
                   "title": "日夜主题",
                   "description": "支持按时间切换白天与黑夜主题，两边均可选择全部五个主题并分别编辑；手动选择和定时设置会在重启后保留。",
+                  "title_en": "Day and night themes",
+                  "description_en": "Themes can switch between day and night by time; both sides can use any of the five themes and be edited separately, and manual choices and schedules are kept after a restart.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新过程提示",
                   "description": "更新执行期间显示官方 Logo、实际步骤与进度；完成后自动关闭，失败时保留原因。",
+                  "title_en": "Update progress",
+                  "description_en": "While an update runs, the official logo, the actual steps and progress are shown; the window closes on success and keeps the reason on failure.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "关于与法律文档",
                   "description": "关于页补充 Cindy 致谢、仓库和下载地址，并提供随包法律文档。",
+                  "title_en": "About and legal documents",
+                  "description_en": "The About page adds thanks to Cindy, the repository and download addresses, and the legal documents shipped with the app.",
                   "source": "Harken Search"
                 }
               ]
@@ -430,6 +567,7 @@
         },
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -437,36 +575,50 @@
                 {
                   "title": "独立筛选",
                   "description": "搜索关键词保留文件夹范围；文件夹、封面、标签和元数据等筛选独立叠加，刷新或清除单项时保留其他条件。",
+                  "title_en": "Independent filters",
+                  "description_en": "Search keywords keep the folder scope; folder, cover, tag and metadata filters stack independently, and refreshing or clearing one keeps the others.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "扫描收尾与再次扫描",
                   "description": "修复右键快速扫描不能正常收尾，以及暂停保留后重启再次扫描的问题。",
+                  "title_en": "Scan completion and rescans",
+                  "description_en": "Fixed quick scans from the context menu that did not finish properly, and rescans after restarting from a paused scan that was kept.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "中文描述与封面",
                   "description": "修复数据库列表中可识别的旧中文描述乱码，并补齐播放列表封面墙中的真实封面。",
+                  "title_en": "Chinese descriptions and covers",
+                  "description_en": "Fixed garbled older Chinese descriptions that can be recognised in the database list, and filled in real covers on the playlist cover wall.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "丢失文件重新关联",
                   "description": "完善单个与批量重新关联的确认、结果和冲突提示，改善窄窗口下的操作。",
+                  "title_en": "Relinking missing files",
+                  "description_en": "Improved confirmation, results and conflict messages for single and batch relinking, and the controls in narrow windows.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "关闭按钮与控件裁切",
                   "description": "应用内关闭 X 去掉底框并居中，修复部分普通按钮裁切；Windows 原生标题栏保持原样。",
+                  "title_en": "Close buttons and cut-off controls",
+                  "description_en": "The in-app close X loses its frame and is centred, and some regular buttons are no longer cut off; the native Windows title bar is unchanged.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "停靠分隔条与封面闪烁",
                   "description": "修复左右面板互换后分隔条消失，以及部分窗口尺寸下封面墙反复缩放、闪烁的问题。",
+                  "title_en": "Docking dividers and cover flicker",
+                  "description_en": "Fixed dividers disappearing after swapping the left and right panels, and the cover wall repeatedly resizing and flickering at some window sizes.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新说明显示",
                   "description": "随包提供完整版本说明与贡献者；本机版本没有精确匹配时显示已有最新记录。",
+                  "title_en": "Release notes display",
+                  "description_en": "Full release notes and contributors ship with the app; when the installed version has no exact match, the latest available notes are shown.",
                   "source": "Harken Search"
                 }
               ]
@@ -475,6 +627,7 @@
         },
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -482,31 +635,43 @@
                 {
                   "title": "首次建库",
                   "description": "首次使用时合为一个压暗背景的建库窗口，名称、位置和完整路径直接可见。",
+                  "title_en": "First-time library setup",
+                  "description_en": "First use is combined into one library setup window over a dimmed background, with the name, location and full path visible at once.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "五主题控件",
                   "description": "统一普通按钮、相似音效按钮与预设下拉的外观，日夜设置按勾选状态显示。",
+                  "title_en": "Controls across five themes",
+                  "description_en": "Regular buttons, similar-sound buttons and preset drop-downs look the same, and day and night settings appear according to their checkboxes.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "大库响应",
                   "description": "相似音效与后台补全减少同步统计造成的界面停顿。",
+                  "title_en": "Large library response",
+                  "description_en": "Similar sounds and background filling cause fewer UI pauses from synchronous counting.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "诊断日志",
                   "description": "诊断界面和相关导出保留最近一分钟的日志，满容量时保留新记录。",
+                  "title_en": "Diagnostic log",
+                  "description_en": "The diagnostics view and its exports keep the last minute of logs, keeping new entries when full.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新缓存",
                   "description": "成功升级并确认新版启动后，更新器下载区保留当前版本和上一版本，清理更早的旧缓存。",
+                  "title_en": "Update cache",
+                  "description_en": "After a successful upgrade and confirmed launch, the updater download folder keeps the current and previous versions and clears older caches.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "竖屏与封面浏览",
                   "description": "扩大 Info 上下停靠的高度调整范围；封面墙支持更小封面和更多列；Info 相似音效入口可隐藏并记住选择。",
+                  "title_en": "Portrait screens and cover browsing",
+                  "description_en": "Info docked above or below has a wider height range; the cover wall supports smaller covers and more columns; the similar-sound entry in Info can be hidden and the choice is remembered.",
                   "source": "Harken Search"
                 }
               ]
@@ -527,6 +692,7 @@
       "sections": [
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -534,16 +700,22 @@
                 {
                   "title": "竖屏停靠",
                   "description": "Info 在文件列表上方或下方停靠时，可以在更大范围内调整高度，并记住调整后的布局。",
+                  "title_en": "Portrait docking",
+                  "description_en": "When Info is docked above or below the file list, its height can be adjusted over a wider range and the layout is remembered.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "小封面浏览",
                   "description": "封面尺寸调到最小时可显示更小封面和更多列，宽面板中不再被自动铺满放大。",
+                  "title_en": "Small cover browsing",
+                  "description_en": "At the smallest cover size, smaller covers and more columns are shown, and wide panels no longer stretch them to fill.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "相似音效入口",
                   "description": "相似音效图标移到 Info 图标组最左，与其他图标对齐；可在省略号菜单中隐藏或恢复，重启会记住选择。",
+                  "title_en": "Similar-sound entry",
+                  "description_en": "The similar-sound icon moves to the far left of the Info icon group, aligned with the others; it can be hidden or restored from the ellipsis menu, and the choice is kept after a restart.",
                   "source": "Harken Search"
                 }
               ]
@@ -552,6 +724,7 @@
         },
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -559,11 +732,15 @@
                 {
                   "title": "停靠分隔条",
                   "description": "修复筛选器与 Info 互换左右位置后，三点拖拽区域消失的问题。",
+                  "title_en": "Docking dividers",
+                  "description_en": "Fixed the three-dot drag area disappearing after the filter and Info swap sides.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "封面墙闪烁",
                   "description": "修复部分窗口尺寸下封面墙反复缩放、闪烁的问题。",
+                  "title_en": "Cover wall flicker",
+                  "description_en": "Fixed the cover wall repeatedly resizing and flickering at some window sizes.",
                   "source": "Harken Search"
                 }
               ]
@@ -583,6 +760,7 @@
       "sections": [
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -590,21 +768,29 @@
                 {
                   "title": "窗口停靠",
                   "description": "靠近边缘才显示停靠预览；文件列表上下支持停靠、调整高度和恢复布局，方便竖屏使用。",
+                  "title_en": "Window docking",
+                  "description_en": "The docking preview appears only near an edge; the file list supports docking above and below, height adjustment and layout restore, for easier use on portrait screens.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "Info 面板",
                   "description": "标题栏图标切换详情页，支持选择显示的页面；双击编辑元数据，离开前可保存或放弃，保存失败保留编辑内容。",
+                  "title_en": "Info panel",
+                  "description_en": "Title bar icons switch detail pages, and the shown pages can be chosen; double-click to edit metadata, save or discard before leaving, and a failed save keeps the edits.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "五主题显示",
                   "description": "统一 Info 与相似音效面板的边框和留白，改善播放栏、EQ 状态和空库文字的可读性。",
+                  "title_en": "Display across five themes",
+                  "description_en": "Info and Similar Sounds panels share the same borders and spacing, and text in the playback bar, EQ status and empty libraries is easier to read.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "搜索与更新入口",
                   "description": "点击搜索框即隐藏提示文字，更新历史统一放入更新中心。",
+                  "title_en": "Search and update entry",
+                  "description_en": "Clicking the search box hides the hint text, and update history is gathered in the Update Center.",
                   "source": "Harken Search"
                 }
               ]
@@ -613,6 +799,7 @@
         },
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -620,16 +807,22 @@
                 {
                   "title": "界面操作",
                   "description": "修复 Info 内容越过右边框、浮窗跨屏后点击失灵、任务栏恢复丢失最大化状态，以及小波形闪烁的问题。",
+                  "title_en": "Interface actions",
+                  "description_en": "Fixed Info content crossing the right border, floating windows that stopped responding after moving across screens, restore from the taskbar losing the maximised state, and flickering mini waveforms.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "素材库浏览",
                   "description": "修复全局封面墙刷新、重复封面及合并封面成员不完整的问题；文件夹快捷入口保留原来的浏览模式。",
+                  "title_en": "Library browsing",
+                  "description_en": "Fixed global cover wall refresh, duplicate covers and incomplete members of merged covers; folder shortcuts keep the previous browsing mode.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "扫描诊断与安装",
                   "description": "记录扫描时数据库打开失败的原因，长中文路径提示保持完整；安装包不再生成多余的 Auro 程序副本。",
+                  "title_en": "Scan diagnostics and installation",
+                  "description_en": "Scans record why a database failed to open, long Chinese path messages stay complete, and the installer no longer creates an extra copy of the Auro program.",
                   "source": "Harken Search"
                 }
               ]
@@ -650,6 +843,7 @@
       "sections": [
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -657,11 +851,15 @@
                 {
                   "title": "开源仓库",
                   "description": "源码与后续版本迁入 Harken Search 公开仓库，开发改动通过 PR 审查合入。",
+                  "title_en": "Open-source repository",
+                  "description_en": "The source code and future releases move to the public Harken Search repository, with changes merged through PR review.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新下载",
                   "description": "新版使用新仓库更新入口，旧版继续通过原有入口升级，保留原有安装位置和用户数据。",
+                  "title_en": "Update downloads",
+                  "description_en": "New versions use the new repository’s update entry, while older versions keep upgrading through the original one, keeping the install location and user data.",
                   "source": "Harken Search"
                 }
               ]
@@ -681,6 +879,7 @@
       "sections": [
         {
           "title": "体验优化",
+          "title_en": "Refinements",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -688,21 +887,29 @@
                 {
                   "title": "透明底应用图标",
                   "description": "Windows 应用、安装器和工具栏统一使用新版透明底 Search 图标。",
+                  "title_en": "Transparent app icon",
+                  "description_en": "The Windows app, installer and toolbar now share the new Search icon with a transparent background.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "频谱分析说明",
                   "description": "统一高级频谱分析、频谱开关和 FFT 提示的中英日文说明。",
+                  "title_en": "Spectrum analysis text",
+                  "description_en": "Unified the Chinese, English and Japanese text for advanced spectrum analysis, the spectrum switch and FFT hints.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "窗口停靠",
                   "description": "完善功能窗口的浮动、吸附和分屏操作，恢复 Info 面板的相关操作。",
+                  "title_en": "Window docking",
+                  "description_en": "Refined floating, snapping and split-screen behaviour for tool windows, and restored the related Info panel actions.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "双语安装向导",
                   "description": "安装向导和协议按系统显示语言使用中文或英文，并随软件提供完整协议文件。",
+                  "title_en": "Bilingual installer",
+                  "description_en": "The installer and licence agreements follow the system display language in Chinese or English, and the full agreement files ship with the app.",
                   "source": "Harken Search"
                 }
               ]
@@ -711,6 +918,7 @@
         },
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -718,16 +926,22 @@
                 {
                   "title": "封面浏览",
                   "description": "全局封面墙继续读取列表首页以外的封面，保持完整文件库的浏览顺序。",
+                  "title_en": "Cover browsing",
+                  "description_en": "The global cover wall keeps loading covers beyond the first page of the list, preserving the browsing order of the whole library.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "升级兼容",
                   "description": "保留旧版自定义快捷键和输出文件名后缀设置，并保持更新包读取与已运行窗口唤醒的兼容性。",
+                  "title_en": "Upgrade compatibility",
+                  "description_en": "Custom shortcuts and output filename suffixes from earlier versions are kept, and reading update packages plus waking a running window stay compatible.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "扫描错误提示",
                   "description": "修复显示扫描错误时可能导致程序异常退出的问题。",
+                  "title_en": "Scan error message",
+                  "description_en": "Fixed a crash that could occur while a scan error was being shown.",
                   "source": "Harken Search"
                 }
               ]
@@ -749,6 +963,7 @@
       "sections": [
         {
           "title": "问题修复",
+          "title_en": "Bug fixes",
           "items": [
             {
               "name": "HarkenDeveloper-zhongziyu",
@@ -756,16 +971,22 @@
                 {
                   "title": "自动更新",
                   "description": "修复部分 Windows 文件属性导致更新中断、新版启动后清理失败，以及启动失败仍显示更新成功的问题。",
+                  "title_en": "Automatic updates",
+                  "description_en": "Fixed Windows file attributes that interrupted updates, failed cleanup after the new version started, and a failed launch that still reported a successful update.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "更新后启动",
                   "description": "移除旧登录页对启动的阻塞，让更新后的程序正常完成启动确认。",
+                  "title_en": "Launch after update",
+                  "description_en": "Removed the old sign-in page that blocked startup, so an updated app can finish its launch confirmation.",
                   "source": "Harken Search"
                 },
                 {
                   "title": "安装版启动与旧库",
                   "description": "恢复安装版欢迎页和网页加载页，修复旧库读取、搜索及多声道发送中的异常。",
+                  "title_en": "Installed build startup and older libraries",
+                  "description_en": "Restored the welcome and web loading pages for the installed build, and fixed errors when reading older libraries, searching, and sending multichannel audio.",
                   "source": "Harken Search"
                 }
               ]
