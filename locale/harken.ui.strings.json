@@ -2335,6 +2335,27 @@
       "ja": "アルバム"
     },
     {
+      "id": "Col_Composer",
+      "type": "ui",
+      "zh": "作曲者",
+      "en": "Composer",
+      "ja": "作曲者"
+    },
+    {
+      "id": "Col_Year",
+      "type": "ui",
+      "zh": "年份",
+      "en": "Year",
+      "ja": "年"
+    },
+    {
+      "id": "Col_Advanced",
+      "type": "ui",
+      "zh": "高级",
+      "en": "Advanced",
+      "ja": "詳細"
+    },
+    {
       "id": "Col_Rating",
       "type": "ui",
       "zh": "评级",
@@ -9161,9 +9182,51 @@
     {
       "id": "Main_NoSnippetText",
       "type": "ui",
-      "zh": "No preview snippet available for this match.",
+      "zh": "此命中无预览片段。",
       "en": "No preview snippet available for this match.",
       "ja": "このヒット箇所のプレビューはありません。"
+    },
+    {
+      "id": "Main_SearchMatchName",
+      "type": "ui",
+      "zh": "命中：文件名",
+      "en": "Matched in: Name",
+      "ja": "一致箇所：ファイル名"
+    },
+    {
+      "id": "Main_SearchMatchPath",
+      "type": "ui",
+      "zh": "命中：路径",
+      "en": "Matched in: Path",
+      "ja": "一致箇所：パス"
+    },
+    {
+      "id": "Main_SearchMatchDescription",
+      "type": "ui",
+      "zh": "命中：描述",
+      "en": "Matched in: Description",
+      "ja": "一致箇所：説明"
+    },
+    {
+      "id": "Main_SearchMatchKeywords",
+      "type": "ui",
+      "zh": "命中：关键词",
+      "en": "Matched in: Keywords",
+      "ja": "一致箇所：キーワード"
+    },
+    {
+      "id": "Main_SearchMatchMetadata",
+      "type": "ui",
+      "zh": "命中：元数据",
+      "en": "Matched in: Metadata",
+      "ja": "一致箇所：メタデータ"
+    },
+    {
+      "id": "Main_SearchMatchFuzzyName",
+      "type": "ui",
+      "zh": "命中：文件名模糊匹配",
+      "en": "Matched by: Fuzzy name match",
+      "ja": "ファイル名のあいまい一致"
     },
     {
       "id": "Main_FileCountsFmt",

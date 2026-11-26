@@ -29,6 +29,7 @@
 #include "Utils.h"     // Unicode search-data helpers.
 #include "PathUtils.h" // Canonical folder-path migration.
 #include "../thirdparty/sqlite/sqlite3.h"
+#include "../thirdparty/nlohmann_json.hpp"
 #define XXH_INLINE_ALL
 #include "../thirdparty/xxhash.h"
 
@@ -118,6 +119,31 @@ static std::string FormatDbError(const char* fmt, const char* detail) {
 #endif
 
 // Register the C++ text helpers used by SQLite search expressions.
+static std::unordered_map<std::string, std::string> DecodeId3TextTags(const char* encoded) {
+    std::unordered_map<std::string, std::string> tags;
+    if (!encoded || !encoded[0]) return tags;
+    const auto decoded = nlohmann::json::parse(encoded, nullptr, false);
+    if (!decoded.is_object()) return tags;
+    for (const auto& [name, value] : decoded.items()) {
+        if (value.is_string()) tags.emplace(name, value.get<std::string>());
+    }
+    return tags;
+}
+
+static void AppendId3TextValues(std::string& text,
+                                const std::unordered_map<std::string, std::string>& tags) {
+    std::vector<std::string_view> ordered;
+    ordered.reserve(tags.size());
+    for (const auto& [name, value] : tags) {
+        if (!value.empty()) ordered.push_back(value);
+    }
+    std::sort(ordered.begin(), ordered.end());
+    for (const auto value : ordered) {
+        text.push_back(' ');
+        text.append(value);
+    }
+}
+
 static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
     if (!db) return;
     sqlite3_create_function(db, "aura_search_data", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
@@ -134,6 +160,21 @@ static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
             std::string input(text);
             std::string res = HarkenSearch::Search::BuildSearchDataForFts(input);
             sqlite3_result_text(ctx, res.c_str(), -1, SQLITE_TRANSIENT);
+        }, nullptr, nullptr);
+    sqlite3_create_function(db, "aura_id3_text_values", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+        [](sqlite3_context* context, int, sqlite3_value** values) {
+            if (sqlite3_value_type(values[0]) == SQLITE_NULL) {
+                sqlite3_result_text(context, "", 0, SQLITE_STATIC);
+                return;
+            }
+            try {
+                std::string text;
+                AppendId3TextValues(text, DecodeId3TextTags(
+                    reinterpret_cast<const char*>(sqlite3_value_text(values[0]))));
+                sqlite3_result_text(context, text.c_str(), -1, SQLITE_TRANSIENT);
+            } catch (...) {
+                sqlite3_result_error_nomem(context);
+            }
         }, nullptr, nullptr);
     sqlite3_create_function(db, "aura_utf8_bytes", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
         [](sqlite3_context* context, int, sqlite3_value** values) {
@@ -631,6 +672,7 @@ static bool WriteAppMetaString(sqlite3* db, const char* key, const std::string& 
 namespace fs = std::filesystem;
 
 namespace {
+constexpr int kSearchDataMigrationVersion = 3;
 constexpr const char* kLibraryRootsMetaKey = "library_roots_v1";
 constexpr const char* kWaveformCacheModeMetaKey = "waveform_cache_mode_v1";
 constexpr const char* kMiniWaveformFormatV2MetaKey = "mini_waveform_format_v2";
@@ -856,15 +898,15 @@ static const ExtMetaCol kExtMetaCols[] = {
     {"conductor",          true,  false},
     {"performer",          true,  false},
     {"publisher",          true,  false},
-    {"bpm",                true,  false},
-    {"musical_key",        true,  false},
+    {"bpm",                true,  true },
+    {"musical_key",        true,  true },
     {"tempo",              true,  false},
     {"mood",               false, true },
     {"usage",              false, false},
     {"featured_instrument",true,  false},
     {"version_tag",        true,  false},
     {"era",                true,  false},
-    {"track_year",         true,  false},
+    {"track_year",         true,  true },
     {"isrc",               true,  false},
     {"iswc",               true,  false},
     {"lyrics",             true,  false},
@@ -903,6 +945,25 @@ static const ExtMetaCol kExtMetaCols[] = {
     {"track_colour",       false, false},
 };
 static constexpr size_t kExtMetaCount = sizeof(kExtMetaCols) / sizeof(kExtMetaCols[0]);
+
+static constexpr const char* kOptionalMetadataSearchColumns[] = {
+    "composer", "track_year", "bpm", "musical_key", "mood"
+};
+
+static std::string PreserveExistingMp3Metadata(const std::string& column, const std::string& otherFormat) {
+    return "CASE WHEN lower(excluded.extension) IN ('mp3','.mp3') THEN "
+           "COALESCE(NULLIF(audio_files." + column + ",''), excluded." + column +
+           ") ELSE " + otherFormat + " END";
+}
+
+static std::string SearchableMetadataSql(bool includeId3) {
+    std::string suffix;
+    for (const auto& metadata : kExtMetaCols) {
+        if (metadata.searchable) suffix += " || ' ' || IFNULL(" + std::string(metadata.col) + ",'')";
+    }
+    if (includeId3) suffix += " || ' ' || aura_id3_text_values(id3_text_tags)";
+    return suffix;
+}
 
 // Columns that MetadataEditPatch may update after whitelist validation.
 static const std::unordered_set<std::string>& EditableTextColumns() {
@@ -1577,6 +1638,10 @@ static void ApplyAudioMetadataToRecord(AudioRecord& record, const AudioMetadata&
         record.keywords = metadata.comment;
     }
     PopulateExtendedMeta(record.meta, metadata);
+    if (toLowerAsciiCopy(record.extension) == ".mp3" || toLowerAsciiCopy(record.extension) == "mp3") {
+        record.id3TextTags = metadata.customTextTags;
+        record.id3TextTagsRead = true;
+    }
 }
 
 bool Database::probeAudioFileInfo(const std::string& filePath,
@@ -1950,6 +2015,10 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     m_waveformFailureWritesAllowed = sidecarAttached &&
         sqlite3_db_readonly(m_db, "main") == 0 &&
         sqlite3_db_readonly(m_db, "waveforms_db") == 0;
+    if (m_isPrimaryConnection && sqlite3_db_readonly(m_db, "main") == 0 &&
+        ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
+        startCoverPhashBackfillWorker();
+    }
     return true;
 }
 
@@ -2571,13 +2640,10 @@ void Database::preheat() {
                 needsAutomaticLegacyRegistryRepair = exactMaintenancePending;
             }
         }
-        const bool searchDataStillPending =
-            primaryWritableConnection &&
-            ReadAppMetaInt(m_db, "search_data_migrated") != 2;
         const auto decision =
             ResolveAutomaticCoverMaintenanceDecision(
                 maintenanceCtx,
-                explicitCoverMaintenance || needsAutomaticLegacyRegistryRepair || searchDataStillPending);
+                explicitCoverMaintenance || needsAutomaticLegacyRegistryRepair);
         if (decision.allowed) {
             startCoverPhashBackfillWorker();
         } else {
@@ -2677,6 +2743,8 @@ bool Database::openReadOnly(const std::string& dbPath) {
     }
     sqlite3_finalize(mainSchema);
 
+    const auto audioColumns = getTableColumns(m_db, "audio_files");
+    m_hasId3TextTags = std::find(audioColumns.begin(), audioColumns.end(), "id3_text_tags") != audioColumns.end();
     ensureSearchSuggestionVocabulary(m_db, nullptr);
 
     // Read-only connections must not create missing sidecars beside the source DB.
@@ -2983,6 +3051,8 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "version_tag", "TEXT");
     ensureColumn(m_db, "audio_files", "era", "TEXT");
     ensureColumn(m_db, "audio_files", "track_year", "TEXT");
+    if (!ensureColumn(m_db, "audio_files", "id3_text_tags", "TEXT")) return false;
+    m_hasId3TextTags = true;
     ensureColumn(m_db, "audio_files", "isrc", "TEXT");
     ensureColumn(m_db, "audio_files", "iswc", "TEXT");
     ensureColumn(m_db, "audio_files", "lyrics", "TEXT");
@@ -3056,9 +3126,6 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "vocal_type",         "TEXT DEFAULT ''");
     ensureColumn(m_db, "audio_files", "snoozed_until",      "INTEGER DEFAULT 0");
 
-    // Version 2 recomputes every existing row. Version 1 only filled NULLs, so
-    // bumping the marker alone left old pinyin tokens in place.
-    const int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
         DIAG_ACTION("Database", "SearchDataBackfillDeferred: remaining rows continue in the background");
     }
@@ -4192,10 +4259,11 @@ static const std::string& GetAddFileSql() {
             cols += ", ";
             cols += kExtMetaCols[i].col;
         }
+        cols += ", id3_text_tags";
 
         // VALUES placeholders
         std::string vals;
-        int totalParams = baseCount + (int)kExtMetaCount;
+        int totalParams = baseCount + (int)kExtMetaCount + 1;
         for (int i = 1; i <= totalParams; ++i) {
             if (i > 1) vals += ", ";
             vals += "?";
@@ -4214,9 +4282,6 @@ static const std::string& GetAddFileSql() {
             "duration = excluded.duration, "
             "format = excluded.format, "
             "wavpack_lossless = excluded.wavpack_lossless, "
-            "title = excluded.title, "
-            "artist = excluded.artist, "
-            "album = excluded.album, "
             "folder_path = excluded.folder_path, "
             "file_mtime = excluded.file_mtime, "
             "last_indexed = excluded.last_indexed, "
@@ -4242,12 +4307,24 @@ static const std::string& GetAddFileSql() {
             "norm_mood_tags = excluded.norm_mood_tags, "
             "vocal_type = excluded.vocal_type";
 
-        // Extended: rescanOverwrite columns get overwritten, others stay as-is
+        for (const char* field : {"title", "artist", "album"}) {
+            upsert += ", " + std::string(field) + " = " +
+                PreserveExistingMp3Metadata(field, "excluded." + std::string(field));
+        }
+        for (const char* field : {"description", "category", "keywords"}) {
+            upsert += ", " + std::string(field) + " = " +
+                PreserveExistingMp3Metadata(field, "audio_files." + std::string(field));
+        }
+        upsert += ", id3_text_tags = COALESCE(excluded.id3_text_tags, audio_files.id3_text_tags)";
         for (size_t i = 0; i < kExtMetaCount; ++i) {
             if (kExtMetaCols[i].rescanOverwrite) {
                 const char* col = kExtMetaCols[i].col;
-                if (strcmp(col, "bpm") == 0) {
-                    upsert += std::string(", bpm = COALESCE(excluded.bpm, audio_files.bpm)");
+                if (strcmp(col, "composer") == 0 || strcmp(col, "track_year") == 0 ||
+                    strcmp(col, "musical_key") == 0 || strcmp(col, "bpm") == 0) {
+                    const std::string field(col);
+                    const std::string existingPolicy = field == "bpm"
+                        ? "COALESCE(excluded.bpm, audio_files.bpm)" : "excluded." + field;
+                    upsert += ", " + field + " = " + PreserveExistingMp3Metadata(field, existingPolicy);
                 } else {
                     upsert += std::string(", ") + col + " = excluded." + col;
                 }
@@ -4255,18 +4332,24 @@ static const std::string& GetAddFileSql() {
         }
 
         // search_data on upsert: use new file_name/title + preserved desc/cat/kw + searchable extended
-        std::string searchExpr =
-            "excluded.file_name || ' ' || IFNULL(excluded.title,'') || ' ' || "
-            "IFNULL(audio_files.description,'') || ' ' || "
-            "IFNULL(audio_files.category,'') || ' ' || "
-            "IFNULL(audio_files.keywords,'')";
+        std::string searchExpr = "excluded.file_name";
+        for (const char* field : {"title", "description", "category", "keywords"}) {
+            const std::string column(field);
+            searchExpr += " || ' ' || IFNULL(" + PreserveExistingMp3Metadata(
+                column, (column == "title" ? "excluded." : "audio_files.") + column) + ",'')";
+        }
         for (size_t i = 0; i < kExtMetaCount; ++i) {
             if (kExtMetaCols[i].searchable) {
-                searchExpr += std::string(" || ' ' || IFNULL(") +
-                    (kExtMetaCols[i].rescanOverwrite ? "excluded." : "audio_files.") +
-                    kExtMetaCols[i].col + ",'')";
+                const std::string field = kExtMetaCols[i].col;
+                std::string value = (kExtMetaCols[i].rescanOverwrite ? "excluded." : "audio_files.") + field;
+                if (field == "composer" || field == "track_year" || field == "musical_key" || field == "bpm") {
+                    if (field == "bpm") value = "COALESCE(excluded.bpm, audio_files.bpm)";
+                    value = PreserveExistingMp3Metadata(field, value);
+                }
+                searchExpr += " || ' ' || IFNULL(" + value + ",'')";
             }
         }
+        searchExpr += " || ' ' || aura_id3_text_values(COALESCE(excluded.id3_text_tags, audio_files.id3_text_tags))";
         upsert += ", search_data = aura_search_data(" + searchExpr + ")";
 
         return "INSERT INTO audio_files (" + cols + ") VALUES (" + vals +
@@ -4395,6 +4478,7 @@ bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
             searchDataText += " " + it->second;
         }
     }
+    AppendId3TextValues(searchDataText, record.id3TextTags);
     std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(searchDataText);
     sqlite3_bind_text(stmt, 30, searchData.c_str(), -1, SQLITE_TRANSIENT);
 
@@ -4424,6 +4508,11 @@ bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
         } else {
             sqlite3_bind_null(stmt, paramIdx);
         }
+    }
+    if (record.id3TextTagsRead || !record.id3TextTags.empty()) {
+        const auto encoded = nlohmann::json(record.id3TextTags).dump(
+            -1, ' ', false, nlohmann::json::error_handler_t::replace);
+        sqlite3_bind_text(stmt, 46 + static_cast<int>(kExtMetaCount), encoded.c_str(), -1, SQLITE_TRANSIENT);
     }
 
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
@@ -4467,9 +4556,7 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     std::string setClauses;
 
     // Rebuild search_data from the replacement values when any source field changes.
-    std::string searchDescExpr = "IFNULL(description,'')";
-    std::string searchKwExpr   = "IFNULL(keywords,'')";
-    std::string searchCatExpr  = "IFNULL(category,'')";
+    std::unordered_map<std::string, int> searchParams;
 
     int paramIdx = 1;
 
@@ -4485,10 +4572,7 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
         if (!setClauses.empty()) setClauses += ", ";
         setClauses += col + " = ?" + std::to_string(paramIdx);
         plan.bindOrder.push_back({col, false});
-        // Update search_data expressions for the big 3
-        if (col == "description") searchDescExpr = "?" + std::to_string(paramIdx);
-        else if (col == "keywords") searchKwExpr = "?" + std::to_string(paramIdx);
-        else if (col == "category") searchCatExpr = "?" + std::to_string(paramIdx);
+        searchParams.emplace(col, paramIdx);
         paramIdx++;
     }
 
@@ -4509,17 +4593,21 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
 
     if (setClauses.empty()) return false;
 
-    // Build search_data expression including searchable extended fields
-    std::string searchExtra;
-    for (size_t i = 0; i < kExtMetaCount; ++i) {
-        if (!kExtMetaCols[i].searchable) continue;
-        searchExtra += " || ' ' || IFNULL(" + std::string(kExtMetaCols[i].col) + ",'')";
+    const auto expression = [&searchParams](const char* column) {
+        const auto bound = searchParams.find(column);
+        const std::string value = bound == searchParams.end()
+            ? column : "?" + std::to_string(bound->second);
+        return " || ' ' || IFNULL(" + value + ",'')";
+    };
+    std::string searchData = "file_name";
+    for (const char* column : {"title", "description", "category", "keywords"}) searchData += expression(column);
+    for (const auto& metadata : kExtMetaCols) {
+        if (metadata.searchable) searchData += expression(metadata.col);
     }
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
-        ", search_data = aura_search_data(file_name || ' ' || IFNULL(title,'') || ' ' || " +
-        searchDescExpr + " || ' ' || " + searchCatExpr + " || ' ' || " + searchKwExpr +
-        searchExtra + ")";
+        ", search_data = aura_search_data(" + searchData +
+        " || ' ' || aura_id3_text_values(id3_text_tags))";
 
     plan.idIdx = paramIdx;
     plan.sql += " WHERE id = ?" + std::to_string(paramIdx);
@@ -5224,6 +5312,7 @@ enum class ColId : uint8_t {
     PlayCount, DateAdded, LastPlayed, HasCover,
     EmbeddedCoverKey, EmbeddedCoverKeyMtime, FolderCoverKey, FolderCoverSrcPath, FolderCoverSrcMtime, CoverSuppressed,
     MatchSnippet,
+    Id3TextTags,
     // F-033 music-analysis fields live directly on AudioRecord rather than ExtMeta.
     MusicalKey, MusicalKeyCamelot, KeyConfidence, KeySource,
     Bpm, BpmConfidence, BpmSource,
@@ -5255,6 +5344,7 @@ static std::vector<ColMapEntry> buildColumnMap(sqlite3_stmt* stmt, int colCount)
         {"folder_cover_key", ColId::FolderCoverKey}, {"folder_cover_src_path", ColId::FolderCoverSrcPath},
         {"folder_cover_src_mtime", ColId::FolderCoverSrcMtime}, {"cover_suppressed", ColId::CoverSuppressed},
         {"match_snippet", ColId::MatchSnippet},
+        {"id3_text_tags", ColId::Id3TextTags},
 // Music analysis direct fields (F-033).
         {"musical_key",         ColId::MusicalKey},
         {"musical_key_camelot", ColId::MusicalKeyCamelot},
@@ -5444,6 +5534,11 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
             r.normMoodTags = safeGetText(stmt, i); break;
         case ColId::VocalType:
             r.vocalType = safeGetText(stmt, i); break;
+        case ColId::Id3TextTags: {
+            r.id3TextTagsRead = sqlite3_column_type(stmt, i) != SQLITE_NULL;
+            r.id3TextTags = DecodeId3TextTags(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)));
+            break;
+        }
         case ColId::ExtMeta: {
             const char* v = (const char*)sqlite3_column_text(stmt, i);
             if (v && v[0]) r.meta[s_colMap[(size_t)i].name] = v;
@@ -5493,6 +5588,28 @@ static bool ContainsAnyFieldTerm(const std::string& field, const std::vector<std
         if (ContainsFieldTerm(field, term)) return true;
     }
     return false;
+}
+
+std::vector<SearchMetadataFieldMatch> Database::findOptionalMetadataMatches(
+    const AudioRecord& record, const std::string& query) {
+    std::vector<std::string> terms;
+    for (const auto& chip : BuildSearchQueryChips(query)) {
+        if (chip.kind != SearchQueryChipKind::Keyword || chip.label.empty()) continue;
+        const auto lower = toLowerAsciiCopy(chip.label);
+        if (lower != "and" && lower != "or" && lower != "not") terms.push_back(chip.label);
+    }
+    if (terms.empty()) return {};
+    std::vector<SearchMetadataFieldMatch> matches;
+    const auto add = [&](const std::string& field, const std::string& value, bool custom) {
+        if (value.empty()) return;
+        if (ContainsAnyFieldTerm(value, terms) ||
+            ContainsAnyFieldTerm(HarkenSearch::Search::BuildSearchDataForFts(value), terms)) {
+            matches.push_back({field, value, custom});
+        }
+    };
+    for (const char* field : kOptionalMetadataSearchColumns) add(field, record.getMeta(field), false);
+    for (const auto& [field, value] : record.id3TextTags) add(field, value, true);
+    return matches;
 }
 
 static std::vector<std::string> CollectSnippetHighlightTerms(const std::string& snippet) {
@@ -5575,6 +5692,9 @@ static SearchMatchSource DeriveSearchMatchSource(const AudioRecord& record,
         }
         if (ContainsFieldTerm(record.filePath, normalizedKeyword) || ContainsFieldTerm(record.folderPath, normalizedKeyword)) {
             return SearchMatchSource::Path;
+        }
+        if (!filter.exactMode && !Database::findOptionalMetadataMatches(record, filter.keyword).empty()) {
+            return SearchMatchSource::Metadata;
         }
     }
 
@@ -5851,7 +5971,8 @@ AudioRecord Database::getFileByPath(const std::string& filePath) {
     AudioRecord r;
     if (!m_db) return r;
 
-    std::string sql = std::string("SELECT ") + kRecordColumns + " FROM audio_files WHERE file_path = ?";
+    std::string sql = std::string("SELECT ") + kRecordColumns +
+        (m_hasId3TextTags ? ", id3_text_tags" : "") + " FROM audio_files WHERE file_path = ?";
 
     // High-frequency single-row reads use the prepared-statement pool.
     sqlite3_stmt* stmt = checkoutStmt(sql);
@@ -5871,7 +5992,8 @@ AudioRecord Database::getFileById(int64_t id) {
     AudioRecord r;
     if (!m_db) return r;
 
-    std::string sql = std::string("SELECT ") + kRecordColumns + " FROM audio_files WHERE id = ?";
+    std::string sql = std::string("SELECT ") + kRecordColumns +
+        (m_hasId3TextTags ? ", id3_text_tags" : "") + " FROM audio_files WHERE id = ?";
     sqlite3_stmt* stmt = checkoutStmt(sql);
     if (!stmt) return r;
 
@@ -6363,6 +6485,13 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
             "file_name", "file_path", "folder_path",
             "title", "artist", "album", "category", "description", "keywords"
         };
+        std::string optionalMetaSearch;
+        if (!filter.exactMode) {
+            for (const char* field : kOptionalMetadataSearchColumns) {
+                optionalMetaSearch += " || ' ' || IFNULL(" + col(field) + ",'')";
+            }
+            if (m_hasId3TextTags) optionalMetaSearch += " || ' ' || aura_id3_text_values(af.id3_text_tags)";
+        }
         for (const auto& term : explainableTerms) {
             bq.whereClause += " AND (";
             const std::string pattern = "%" + EscapeLikePatternLiteral(term) + "%";
@@ -6382,7 +6511,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                 "IFNULL(af.folder_path,'') || ' ' || IFNULL(af.title,'') || ' ' || "
                 "IFNULL(af.artist,'') || ' ' || IFNULL(af.album,'') || ' ' || "
                 "IFNULL(af.category,'') || ' ' || IFNULL(af.description,'') || ' ' || "
-                "IFNULL(af.keywords,'')) LIKE ? ESCAPE '\\'";
+                "IFNULL(af.keywords,'')" + optionalMetaSearch + ") LIKE ? ESCAPE '\\'";
             bq.bindValues.push_back(pattern);
             bq.whereClause += ")";
         }
@@ -7112,9 +7241,11 @@ std::vector<AudioRecord> Database::searchFiles(const SearchFilter& filter, int l
         // and sorting a million candidates in a temp B-tree.
         fromClauseForSearch = "FROM audio_files af INDEXED BY idx_files_name_natural";
     }
+    const std::string searchColumns = std::string(kRecordColumnsAf) +
+        (m_hasId3TextTags ? ", af.id3_text_tags" : "");
     if (bq.canUseFtsSnippet) {
         sql =
-            "SELECT " + std::string(kRecordColumnsAf) + ", temp.match_snippet "
+            "SELECT " + searchColumns + ", temp.match_snippet "
             "FROM audio_files af "
             "JOIN ("
             "  SELECT af.id AS id, "
@@ -7131,7 +7262,7 @@ std::vector<AudioRecord> Database::searchFiles(const SearchFilter& filter, int l
         // which matches both FTS and trigram) silently dropped the cover-key
         // filter from the SQL, returning all keyword hits regardless of the
         // user's clicked cover.
-        sql = "SELECT " + std::string(kRecordColumnsAf) + " FROM audio_files af "
+        sql = "SELECT " + searchColumns + " FROM audio_files af "
               "JOIN ("
               "  SELECT af.id AS id " + fromClauseForSearch + " " + bq.whereClause + coverInClause +
               "  ORDER BY " + orderClause + direction +
@@ -10178,7 +10309,7 @@ static HarkenSearch::Search::SearchDataRecomputeStep PublishSearchDataRecompute(
         ok = execSqlite(db, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
     }
     if (ok) {
-        ok = WriteAppMetaInt(db, "search_data_migrated", 2);
+        ok = WriteAppMetaInt(db, "search_data_migrated", kSearchDataMigrationVersion);
     }
     if (ok) {
         ok = execSqlite(db, "DELETE FROM app_meta WHERE key = 'search_data_recompute_cursor';", &err);
@@ -10224,7 +10355,6 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     if (batchSize <= 0 || !ensureSearchRecomputeConnection()) return SearchDataRecomputeStep::Failed;
     sqlite3* db = m_searchRecomputeDb;
     if (sqlite3_get_autocommit(db) == 0) return SearchDataRecomputeStep::Failed;
-    constexpr int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(db, "search_data_migrated") == kSearchDataMigrationVersion) {
         return SearchDataRecomputeStep::Finished;
     }
@@ -10267,13 +10397,13 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     }
 
     sqlite3_stmt* stmt = nullptr;
-    const char* sql =
+    const std::string sql =
         "INSERT INTO temp.search_data_recompute_work (id, old_search_data, new_search_data) "
         "SELECT id, search_data, aura_search_data("
         "file_name || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || "
-        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')) "
+        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')" + SearchableMetadataSql(true) + ") "
         "FROM audio_files WHERE id > ? ORDER BY id LIMIT ?;";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         DiscardSearchDataRecomputeScratch(db);
         return SearchDataRecomputeStep::Failed;
     }
@@ -10329,7 +10459,7 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
             if (progress) progress->store(-1.0f);
             return false;
         }
-        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2) {
+        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion) {
             std::string err;
             const bool success = !(cancel && cancel->load()) &&
                 execSqlite(m_searchRecomputeDb, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
@@ -10368,7 +10498,8 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
         bool migrated = false;
         {
             std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
-            migrated = m_searchRecomputeDb && ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2;
+            migrated = m_searchRecomputeDb &&
+                ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion;
         }
         if (step != HarkenSearch::Search::SearchDataRecomputeStep::Finished || !migrated) {
             DIAG_ACTION("Database", "SearchDataRecompute stopped before replacing the FTS index");
@@ -12529,11 +12660,12 @@ bool Database::updateFilePath(
         HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(newPath));
 
     // Update path fields and clear folder artwork in one statement to keep list and detail views aligned.
-    const char* sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
+    const std::string sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
                       "folder_path = ?, folder_cover_key = NULL, folder_cover_src_path = NULL, folder_cover_src_mtime = 0, "
-                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')) WHERE file_path = ?;";
+                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')" +
+                      SearchableMetadataSql(true) + ") WHERE file_path = ?;";
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         m_lastError = sqlite3_errmsg(m_db);
         return false;
     }
@@ -14771,7 +14903,7 @@ bool Database::prepareScanRollbackJournal() {
 
     const auto createAudioSnapshotSql =
         std::string("CREATE TEMP TABLE temp.scan_cancel_audio AS SELECT ") +
-        kRecordColumns +
+        kRecordColumns + ", id3_text_tags, search_data" +
         " FROM audio_files WHERE 0;";
 
     std::vector<std::string> ddl = {
@@ -14895,7 +15027,7 @@ bool Database::snapshotPathForScanRollback(const std::string& filePath) {
 
     const std::string snapshotAudioSql =
         std::string("INSERT OR IGNORE INTO temp.scan_cancel_audio SELECT ") +
-        kRecordColumns +
+        kRecordColumns + ", id3_text_tags, search_data" +
         " FROM audio_files WHERE file_path = ?;";
     const std::vector<std::string> snapshotSql = {
         snapshotAudioSql,
@@ -14993,8 +15125,8 @@ bool Database::rollbackScanRollbackJournal(const std::string& scopePath,
         "WHERE file_id IN (SELECT file_id FROM temp.scan_cancel_current_ids);",
         "DELETE FROM audio_files "
         "WHERE file_path IN (SELECT file_path FROM temp.scan_cancel_touched);",
-        std::string("INSERT INTO audio_files(") + kRecordColumns + ") "
-            "SELECT " + kRecordColumns + " FROM temp.scan_cancel_audio;",
+        std::string("INSERT INTO audio_files(") + kRecordColumns + ", id3_text_tags, search_data) "
+            "SELECT " + kRecordColumns + ", id3_text_tags, search_data FROM temp.scan_cancel_audio;",
         "INSERT OR REPLACE INTO playlist_items(playlist_id, file_id, position) "
         "SELECT playlist_id, file_id, position FROM temp.scan_cancel_playlist_items;",
         "INSERT OR REPLACE INTO file_tags(file_id, tag_id) "

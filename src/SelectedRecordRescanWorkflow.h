@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +38,7 @@ struct SelectedRecordRescanMetadata {
     std::string keywords;
     std::string comment;
     std::unordered_map<std::string, std::string> extendedMetadata;
+    std::optional<std::unordered_map<std::string, std::string>> id3TextTags;
 };
 
 struct SelectedRecordRescanFileFacts {
@@ -67,6 +69,7 @@ struct SelectedRecordRescanUpdate {
     std::uint64_t fileSize = 0;
     std::int64_t fileMtime = 0;
     std::int64_t lastIndexed = 0;
+    std::optional<std::unordered_map<std::string, std::string>> rereadId3TextTags;
 };
 
 enum class SelectedRecordRescanItemResult {
