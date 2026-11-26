@@ -3241,6 +3241,66 @@ static void SuppressDefaultDragImage(IDataObject* dataObject) {
 }
 
 // Start drag operation for files
+// 拖出成功后判断落点是不是「已配置的 DAW」：OLE 的 S_DROP + 非零 effect 说明目标真的收了，
+// 再看落点窗口的进程名是否命中 DAW 集成里配的进程，避免拖到资源管理器/桌面也被计数。
+static std::string LowerAsciiCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+static std::string ProcessNameForWindow(HWND hwnd) {
+    if (!hwnd) return {};
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return {};
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return {};
+    wchar_t buffer[1024] = {};
+    DWORD size = static_cast<DWORD>(std::size(buffer));
+    std::string name;
+    if (QueryFullProcessImageNameW(process, 0, buffer, &size)) {
+        const std::wstring full(buffer, size);
+        const size_t slash = full.find_last_of(L"\/");
+        const std::wstring file = slash == std::wstring::npos ? full : full.substr(slash + 1);
+        name = LowerAsciiCopy(WideToUtf8(file));
+    }
+    CloseHandle(process);
+    return name;
+}
+
+static void CountDragOutUse(AppState& state,
+                            const std::vector<std::string>& files,
+                            HWND dropTargetWnd) {
+    const std::string targetProcess = ProcessNameForWindow(dropTargetWnd);
+    if (targetProcess.empty()) return;
+    bool isConfiguredDaw = false;
+    for (const auto& target : state.settings.dawTargets) {
+        if (!target.processName.empty() &&
+            LowerAsciiCopy(target.processName) == targetProcess) {
+            isConfiguredDaw = true;
+            break;
+        }
+    }
+    if (!isConfiguredDaw) return;
+
+    size_t counted = 0;
+    for (const auto& path : files) {
+        for (const auto& record : state.searchResults) {
+            if (record.id > 0 && record.filePath == path) {
+                state.queueUseCount(record.id);
+                ++counted;
+                break;
+            }
+        }
+    }
+    if (counted == 0) {
+        for (const auto& record : state.getSelectedRecords()) {
+            if (record.id > 0) state.queueUseCount(record.id);
+        }
+    }
+}
+
 void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* origin = nullptr) {
     if (files.empty()) return;
     if (g_isDragging) return;  // Prevent re-entry
@@ -3353,7 +3413,9 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
                 HWND parent = GetAncestor(dropTargetWnd, GA_ROOT);
                 if (parent) dropTargetWnd = parent;
             }
-            AppendDiagLogF(L"StartFileDrag: 拖放目标窗口=%p", (void*)dropTargetWnd);
+            AppendDiagLogF(L"StartFileDrag: 拖放目标窗口=%p", (void*)dropTargetWnd);
+            // 只有真正被 DAW 接收的拖放才计入使用次数。
+            if (g_appState) CountDragOutUse(*g_appState, files, dropTargetWnd);
         }
 
         if (shouldHideWindow && g_hwnd) {
