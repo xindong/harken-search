@@ -3070,6 +3070,10 @@ struct AppState {
     std::vector<aura::metadata::RuleEditRule> batchRuleEditRules;
     aura::metadata::RuleEditPreview batchRuleEditPreview;
     std::string batchRuleEditPreviewDbPath;
+    std::set<int> batchRuleEditPreviewSelection;
+    uint64_t batchRuleEditPreviewResultsGeneration = 0;
+    uint64_t batchRuleEditPreviewDataRevision = 0;
+    bool batchRuleEditPreviewAllSelected = false;
     std::string batchRuleEditMessage;
     bool batchRuleEditFailed = false;
     bool batchRuleEditStale = false;

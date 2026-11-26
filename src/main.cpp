@@ -13918,6 +13918,35 @@ static std::vector<aura::metadata::RuleEditRecord> CollectRuleEditRecords(
     return records;
 }
 
+static void InvalidateBatchMetadataPreview(AppState& state, bool stale);
+
+static bool ValidateBatchMetadataPreview(AppState& state) {
+    const auto& preview = state.batchRuleEditPreview;
+    if (preview.rows.empty()) return false;
+    const auto column = BatchRuleEditColumnOf(state);
+    if (preview.column != column ||
+        state.batchRuleEditPreviewDbPath != state.currentDbPathUtf8 ||
+        state.batchRuleEditPreviewAllSelected != state.allSelected ||
+        (!state.allSelected && state.batchRuleEditPreviewSelection != state.selectedIndicesSet)) {
+        InvalidateBatchMetadataPreview(state, true);
+        return false;
+    }
+    const auto resultsGeneration = state.searchResultsGen_;
+    const auto dataRevision = state.database.dataRevision();
+    if (state.batchRuleEditPreviewResultsGeneration == resultsGeneration &&
+        state.batchRuleEditPreviewDataRevision == dataRevision) {
+        return true;
+    }
+    const auto records = CollectRuleEditRecords(state.getSelectedRecords());
+    if (preview.signature != aura::metadata::BuildRuleEditSignature(column, records, state.batchRuleEditRules)) {
+        InvalidateBatchMetadataPreview(state, true);
+        return false;
+    }
+    state.batchRuleEditPreviewResultsGeneration = resultsGeneration;
+    state.batchRuleEditPreviewDataRevision = dataRevision;
+    return true;
+}
+
 namespace aura::ui {
 
 void RefreshBatchRuleEditPreview(AppState& state) {
@@ -13925,6 +13954,11 @@ void RefreshBatchRuleEditPreview(AppState& state) {
         BatchRuleEditColumnOf(state), CollectRuleEditRecords(state.getSelectedRecords()),
         state.batchRuleEditRules);
     state.batchRuleEditPreviewDbPath = state.currentDbPathUtf8;
+    state.batchRuleEditPreviewAllSelected = state.allSelected;
+    state.batchRuleEditPreviewSelection.clear();
+    if (!state.allSelected) state.batchRuleEditPreviewSelection = state.selectedIndicesSet;
+    state.batchRuleEditPreviewResultsGeneration = state.searchResultsGen_;
+    state.batchRuleEditPreviewDataRevision = state.database.dataRevision();
     state.batchRuleEditStale = false;
     state.batchRuleEditMessage.clear();
     state.batchRuleEditFailed = false;
@@ -13932,24 +13966,22 @@ void RefreshBatchRuleEditPreview(AppState& state) {
 
 bool ApplyBatchRuleEdit(AppState& state) {
     auto& preview = state.batchRuleEditPreview;
-    if (!preview.CanApply()) return false;
-    if (preview.column != BatchRuleEditColumnOf(state) ||
-        state.batchRuleEditPreviewDbPath != state.currentDbPathUtf8) {
-        preview = {};
-        state.batchRuleEditStale = true;
-        return false;
-    }
+    if (!ValidateBatchMetadataPreview(state) || !preview.CanApply()) return false;
 
     const std::string column = aura::metadata::RuleEditColumnName(preview.column);
     std::vector<std::pair<int64_t, MetadataEditPatch>> items;
     std::unordered_map<int64_t, std::string> expected;
+    auto undoOp = std::make_unique<MetadataPatchOp>();
+    undoOp->operationName = "Batch edit metadata";
     items.reserve(preview.rows.size());
+    undoOp->entries.reserve(preview.rows.size());
     for (const auto& row : preview.rows) {
         if (!row.error.empty() || row.blockedEmpty || !row.changed) continue;
         MetadataEditPatch patch;
         patch.set(column, row.newValue);
         items.push_back({row.id, std::move(patch)});
         expected[row.id] = row.oldValue;
+        undoOp->entries.push_back({row.id, {{column, row.oldValue}}, {{column, row.newValue}}});
     }
     if (items.empty()) {
         state.batchRuleEditMessage = L(Batch_RuleEditNoChanges);
@@ -13961,6 +13993,7 @@ bool ApplyBatchRuleEdit(AppState& state) {
     BatchMetadataApplyResult result =
         state.database.applyMetadataPatchManyGuarded(items, column, expected);
     if (result.failed == 0 && result.success > 0) {
+        state.undoStack.push(std::move(undoOp));
         char buffer[256];
         std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditAppliedFmt), result.success);
         state.batchRuleEditMessage = buffer;
@@ -14368,32 +14401,29 @@ static void DrawBatchRenameForm(AppState& state) {
     }
 }
 
-static void ValidateBatchEditPreview(AppState& state, const std::vector<AudioRecord>& selectedRecords) {
+static void ValidateBatchEditPreview(AppState& state) {
     if (state.batchEditTarget == 0) {
-        if (!state.renamePreviewList.empty() &&
-            (state.renamePreviewDbPath != state.currentDbPathUtf8 ||
+        if (state.renamePreviewList.empty()) return;
+        const auto selectedRecords = state.getSelectedRecords();
+        if (state.renamePreviewDbPath != state.currentDbPathUtf8 ||
              state.renamePreviewList.size() != selectedRecords.size() ||
              !std::equal(state.renamePreviewList.begin(), state.renamePreviewList.end(),
                          selectedRecords.begin(), [](const RenamePreview& preview, const AudioRecord& record) {
                              return preview.recordId == record.id && preview.filePath == record.filePath &&
                                     preview.oldName == record.fileName;
-                         }))) {
+                         })) {
             state.renamePreviewList.clear();
         }
-    } else if (!state.batchRuleEditPreview.rows.empty()) {
-        const auto column = BatchRuleEditColumnOf(state);
-        const auto records = CollectRuleEditRecords(selectedRecords);
-        if (state.batchRuleEditPreviewDbPath != state.currentDbPathUtf8 ||
-            state.batchRuleEditPreview.signature !=
-                aura::metadata::BuildRuleEditSignature(column, records, state.batchRuleEditRules)) {
-            InvalidateBatchMetadataPreview(state, true);
-        }
+    } else {
+        ValidateBatchMetadataPreview(state);
     }
 }
 
 static void DrawBatchEditPanel(AppState& state) {
     ReadingTextScope readingBatchEdit;
-    const auto selectedRecords = state.getSelectedRecords();
+    const auto selectedCount = state.allSelected ? state.searchResults.size() :
+        static_cast<size_t>(std::count_if(state.selectedIndicesSet.begin(), state.selectedIndicesSet.end(),
+            [&](int index) { return index >= 0 && static_cast<size_t>(index) < state.searchResults.size(); }));
     const char* targets[] = {
         L(Batch_EditTargetFileName), L(Batch_EditTargetTitle), L(Batch_EditTargetDescription),
         L(Batch_EditTargetKeywords), L(Batch_EditTargetCategory),
@@ -14408,10 +14438,10 @@ static void DrawBatchEditPanel(AppState& state) {
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::Text(L(Dlg_SelectedNFiles), static_cast<int>(selectedRecords.size()));
+    ImGui::Text(L(Dlg_SelectedNFiles), static_cast<int>(selectedCount));
     ImGui::Separator();
 
-    ValidateBatchEditPreview(state, selectedRecords);
+    ValidateBatchEditPreview(state);
     const bool fileNameTarget = state.batchEditTarget == 0;
     const auto layout = ResolveBatchEditPaneLayout();
     BeginTransientScrollbarChild("##BatchEditRules", ImVec2(layout.rulesWidth, layout.rulesHeight), true);
@@ -14441,9 +14471,9 @@ static void DrawBatchEditPanel(AppState& state) {
 
     if (!layout.stacked) ImGui::SameLine();
     BeginTransientScrollbarChild("##BatchEditPreviewPane", ImVec2(0.0f, layout.previewHeight), true);
-    ImGui::BeginDisabled(selectedRecords.empty());
+    ImGui::BeginDisabled(selectedCount == 0);
     if (aura::ui::ActionButton(L(Batch_GenPreview))) {
-        if (fileNameTarget) GenerateBatchRenamePreview(state, selectedRecords);
+        if (fileNameTarget) GenerateBatchRenamePreview(state, state.getSelectedRecords());
         else aura::ui::RefreshBatchRuleEditPreview(state);
     }
     ImGui::EndDisabled();

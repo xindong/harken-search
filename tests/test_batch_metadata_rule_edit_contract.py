@@ -103,6 +103,24 @@ class EditorContract(unittest.TestCase):
         self.assertIn("BuildRuleEditSignature(column, records, state.batchRuleEditRules)", self.main)
         self.assertIn("state.batchRuleEditStale = true", self.main)
 
+    def test_metadata_apply_registers_one_undo_after_the_transaction(self) -> None:
+        start = self.main.index("bool ApplyBatchRuleEdit(AppState& state)")
+        end = self.main.index("struct BatchEditPaneLayout", start)
+        body = self.main[start:end]
+        self.assertIn("std::make_unique<MetadataPatchOp>()", body)
+        self.assertIn("row.id, {{column, row.oldValue}}, {{column, row.newValue}}", body)
+        success = body.index("if (result.failed == 0 && result.success > 0)")
+        self.assertGreater(body.index("state.undoStack.push(std::move(undoOp));"), success)
+        self.assertEqual(body.count("undoStack.push"), 1)
+
+    def test_idle_metadata_preview_reuses_the_existing_result_revision(self) -> None:
+        start = self.main.index("static bool ValidateBatchMetadataPreview(")
+        end = self.main.index("namespace aura::ui", start)
+        body = self.main[start:end]
+        self.assertLess(body.index("state.searchResultsGen_"), body.index("CollectRuleEditRecords("))
+        self.assertLess(body.index("state.database.dataRevision()"), body.index("CollectRuleEditRecords("))
+        self.assertIn("state.selectedIndicesSet", body)
+
 
 class LocaleContract(unittest.TestCase):
     def test_new_keys_exist_in_three_languages(self) -> None:

@@ -163,6 +163,51 @@ int main() {
     check(metadataManyDiag.find("PatchManyComplete: total=2 success=0 failed=2") != std::string::npos,
           "failed patch-many emits diagnostics summary");
 
+    const auto originalFirst = db.getFileById(fileId);
+    const auto originalSecond = db.getFileById(secondFileId);
+    MetadataEditPatch firstGuardedPatch;
+    firstGuardedPatch.setDescription("first batch value");
+    MetadataEditPatch secondGuardedPatch;
+    secondGuardedPatch.setDescription("second batch value");
+    const std::vector<std::pair<int64_t, MetadataEditPatch>> guardedItems = {
+        {fileId, firstGuardedPatch}, {secondFileId, secondGuardedPatch}
+    };
+    const std::unordered_map<int64_t, std::string> expectedValues = {
+        {fileId, originalFirst.description}, {secondFileId, originalSecond.description}
+    };
+    auto staleValues = expectedValues;
+    staleValues[secondFileId] += "-stale";
+    const auto staleResult = db.applyMetadataPatchManyGuarded(guardedItems, "description", staleValues);
+    check(staleResult.success == 0 && staleResult.failed == 2,
+          "stale expected value rejects the entire guarded batch");
+    check(db.getFileById(fileId).description == originalFirst.description &&
+              db.getFileById(secondFileId).description == originalSecond.description,
+          "stale guarded batch leaves all rows unchanged");
+
+    check(db.executeRawQuery(
+        "CREATE TRIGGER fail_guarded_second BEFORE UPDATE OF description ON audio_files WHEN OLD.id = " +
+        std::to_string(secondFileId) + " BEGIN SELECT RAISE(ABORT, 'forced guarded failure'); END;").success,
+          "install a trigger that aborts only the second guarded update");
+    const auto failedGuarded = db.applyMetadataPatchManyGuarded(guardedItems, "description", expectedValues);
+    check(failedGuarded.success == 0 && failedGuarded.failed == 2,
+          "SQL failure on the second row rejects the entire guarded batch");
+    check(db.getFileById(fileId).description == originalFirst.description &&
+              db.getFileById(secondFileId).description == originalSecond.description,
+          "SQL failure rolls back the first guarded update");
+    check(db.executeRawQuery("DROP TRIGGER fail_guarded_second;").success,
+          "remove the guarded update failure trigger");
+
+    const auto appliedGuarded = db.applyMetadataPatchManyGuarded(guardedItems, "description", expectedValues);
+    const auto changedFirst = db.getFileById(fileId);
+    const auto changedSecond = db.getFileById(secondFileId);
+    check(appliedGuarded.success == 2 && appliedGuarded.failed == 0 &&
+              changedFirst.description == "first batch value" && changedSecond.description == "second batch value",
+          "guarded batch writes both requested descriptions");
+    check(changedFirst.title == originalFirst.title && changedSecond.title == originalSecond.title &&
+              changedFirst.keywords == originalFirst.keywords && changedSecond.keywords == originalSecond.keywords &&
+              changedFirst.category == originalFirst.category && changedSecond.category == originalSecond.category,
+          "guarded batch preserves the other metadata columns");
+
     // ----- Test 1c: project-list carts preserve insertion order and refresh
     // other tabs when membership changes.
     uint64_t beforeCreatePlaylistRev = db.dataRevision();
