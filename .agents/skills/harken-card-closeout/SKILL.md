@@ -17,7 +17,7 @@ description: Harken Search 仓库专用的卡片收尾细则：合入 qa/current
 
 只有已验收补丁还未提交时，按 Cuevi 收尾技能先核对送验包和补丁身份，在本卡分支原样提交并回读；已有对应提交就复用。收尾授权包含本卡必要的原样提交、推任务分支和向 `qa/current` 建并合入 PR，不另问是否继续，也不直接推 `qa/current`。
 
-只有确认能唯一对应当前卡、当前 QA 轮次和已交给用户试用的当前候选，才记录人工验收。用户主动提交统一入口的命令就是确认原话；无通过记录时先登记，不再要求口头确认。单说「收尾」「done」不证明已验收；「通过了，合并」也须能唯一定位本轮候选。把真实原话、Cindy 会话和设备记入当前部署提供的正式人工验收入口（`method=human`，必须带 `confirmationQuote`/`confirmationRef`；`packageSha256` 用小写十六进制；候选、会话、`confirmedAt` 与证据附件逐字段一致）。用户是委托 AI 代验，则由 `cuevi-ai-acceptance` 先登记，不替用户通过，也不提前上报 `passed:true`。每次写卡前重读 revision。
+只有确认能唯一对应当前卡、当前 QA 轮次和已交给用户试用的当前候选，才记录人工验收。用户主动提交统一入口的命令就是确认原话；无通过记录时先登记，不再要求口头确认。单说「收尾」「done」不证明已验收；「通过了，合并」也须能唯一定位本轮候选。把真实原话、Cindy 会话和设备记入当前部署提供的正式人工验收入口（`method=human`，必须带 `confirmationQuote`/`confirmationRef`；`packageSha256` 用小写十六进制；候选、会话、`confirmedAt` 与证据附件逐字段一致）。用户是委托 AI 代验，则由 Cuevi 验收技能里的 AI 验评分册先登记，不替用户通过，也不提前上报 `passed:true`。每次写卡前重读 revision。
 
 ## 3. 合入 qa/current
 
