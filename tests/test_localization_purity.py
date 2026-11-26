@@ -92,6 +92,14 @@ class LocalizationPurityBaselineTests(unittest.TestCase):
     def test_parenthetical_english_in_chinese_is_a_mix(self) -> None:
         self.assertTrue(localization_purity.is_language_mix("描述 (Description):"))
 
+    def test_source_han_sans_region_tag_is_protected_only_for_its_family_name(self) -> None:
+        family = {"id": "Set_BuiltinSourceHanSans", "zh": "思源黑体 SC"}
+        self.assertEqual(localization_purity.find_ledger_mixes({"entries": [family]}), [])
+        added_prose = dict(family, zh="思源黑体 SC sample")
+        other_row = dict(family, id="ZZ_UnrelatedRow")
+        findings = localization_purity.find_ledger_mixes({"entries": [added_prose, other_row]})
+        self.assertEqual({item["id"] for item in findings}, {family["id"], other_row["id"]})
+
     def test_imgui_id_suffix_is_not_a_fake_mix(self) -> None:
         # Knife-5 precondition: ##/### id suffix is never visible; pure-CJK
         # labels must not be flagged mixed by the suffix ASCII...

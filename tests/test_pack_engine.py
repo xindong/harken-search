@@ -184,6 +184,18 @@ class PackEngineTests(unittest.TestCase):
             assets_dir = release_dir / "assets" / "icons" / "brand"
             assets_dir.mkdir(parents=True)
             (assets_dir / "auro.png").write_bytes(b"png")
+            fonts = (
+                "assets/fonts/SourceHanSansSC-Regular.otf",
+                "assets/fonts/Inter.ttf",
+                "assets/fonts/JetBrainsMono-Regular.ttf",
+                "LICENSES/SourceHanSans-OFL-1.1.txt",
+                "LICENSES/Inter-OFL-1.1.txt",
+                "LICENSES/JetBrainsMono-OFL-1.1.txt",
+            )
+            for relative in fonts:
+                payload = release_dir / relative
+                payload.parent.mkdir(parents=True, exist_ok=True)
+                payload.write_bytes(relative.encode("ascii"))
             # Reusing an older build must not reintroduce the obsolete asset
             # parents that the original 42 updater cannot create.
             for relative in ("contributors/cindy.png","community/feishu-qr.png","community/wecom-qr.png"):
@@ -249,6 +261,8 @@ class PackEngineTests(unittest.TestCase):
                 self.assertTrue({"lucide.ttf", "splash_beta.png", "harken_thesaurus.json"}.issubset(names))
                 self.assertTrue({"Auro.exe", "Auro.exe.sig", "auro_features.json", "auro_features.sig", "auro_thesaurus.json"}.isdisjoint(names))
                 self.assertIn("assets/icons/brand/auro.png", names)
+                for relative in fonts:
+                    self.assertEqual(zf.read(relative), relative.encode("ascii"))
                 self.assertFalse(any(name.startswith(("assets/icons/contributors/","assets/icons/community/")) for name in names))
                 self.assertTrue((release_dir/"assets/icons/contributors/cindy.png").is_file())
                 self.assertTrue({"shared.dll", "codec.dll", "meter.dll", "ai.dll"}.issubset(names))
