@@ -218,7 +218,9 @@ uint32_t MetadataReader::readSyncSafeInt(const uint8_t* data) {
            ((data[2] & 0x7F) << 7) | (data[3] & 0x7F);
 }
 
-bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& metadata) {
+bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& metadata,
+                                  bool* mp3CustomTagsRead) {
+    if (mp3CustomTagsRead) *mp3CustomTagsRead = false;
     try {
     // Determine format from extension
     std::string ext;
@@ -234,7 +236,7 @@ bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& me
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     if (ext == ".mp3") {
-        if (readID3v2(filePath, metadata, true)) return true;
+        if (readID3v2(filePath, metadata, true, mp3CustomTagsRead)) return true;
         return readID3v1(filePath, metadata);
     } else if (ext == ".wav" || ext == ".wave") {
         return readBWF(filePath, metadata);
@@ -346,7 +348,8 @@ static void StripId3TextTerminators(std::string& text) {
 }
 
 bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metadata,
-                               bool useV1Fallback) {
+                               bool useV1Fallback, bool* customTagsRead) {
+    if (customTagsRead) *customTagsRead = false;
     MetadataFileReader file = openFile(filePath);
     if (!file.is_open()) return false;
 
@@ -357,6 +360,7 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
 
     // Check for ID3 header
     if (header[0] != 'I' || header[1] != 'D' || header[2] != '3') {
+        if (customTagsRead) *customTagsRead = true;
         return false;
     }
 
@@ -365,7 +369,13 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
     // uint8_t flags = header[5];
     uint32_t tagSize = readSyncSafeInt(header + 6);
 
-    if (majorVersion < 2 || majorVersion > 4 || tagSize == 0) {
+    if (majorVersion < 2 || majorVersion > 4) {
+        return false;
+    }
+    bool customTagsComplete = (header[5] & 0xC0) == 0 &&
+        ((header[6] | header[7] | header[8] | header[9]) & 0x80) == 0;
+    if (tagSize == 0) {
+        if (customTagsRead) *customTagsRead = customTagsComplete;
         return false;
     }
 
@@ -397,7 +407,10 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
             frameSize = (sizeBytes[0] << 16) | (sizeBytes[1] << 8) | sizeBytes[2];
         }
         pos += headerLength;
-        if (frameSize == 0 || frameSize > tagSize - pos) break;
+        if (frameSize == 0 || frameSize > tagSize - pos) {
+            customTagsComplete = false;
+            break;
+        }
 
         const uint8_t encoding = tagData[pos];
         const std::string_view body(
@@ -410,10 +423,16 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
 
         auto order = encoding == 2 ? Utf16ByteOrder::BigEndian : Utf16ByteOrder::LittleEndian;
         if (id == "TXXX" || id == "TXX") {
-            if (encoding > 3) continue;
+            if (encoding > 3) {
+                customTagsComplete = false;
+                continue;
+            }
             const size_t width = encoding == 1 || encoding == 2 ? 2 : 1;
             const size_t separator = FindId3TextSeparator(body, width);
-            if (separator == std::string_view::npos) continue;
+            if (separator == std::string_view::npos) {
+                customTagsComplete = false;
+                continue;
+            }
 
             auto description = DecodeId3Text(encoding, body.substr(0, separator), order);
             auto value = DecodeId3Text(encoding, body.substr(separator + width), order);
@@ -471,6 +490,10 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
         }
     }
 
+    if (customTagsRead) {
+        *customTagsRead = customTagsComplete &&
+            std::all_of(tagData.begin() + pos, tagData.end(), [](uint8_t byte) { return byte == 0; });
+    }
     if (metadata.hasData()) return true;
     if (!useV1Fallback) return false;
     const bool foundExtended = metadata.year > 0 || !metadata.composer.empty() ||

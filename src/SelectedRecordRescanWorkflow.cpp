@@ -28,7 +28,7 @@ void ApplyMetadata(
     for (const auto& [key, value] : metadata.extendedMetadata) {
         if (!value.empty()) apply(update.extendedMetadata[key], value);
     }
-    if (preserveExisting) update.rereadId3TextTags = metadata.id3TextTags;
+    if (preserveExisting && metadata.id3TextTags) update.rereadId3TextTags = metadata.id3TextTags;
 }
 
 }  // namespace

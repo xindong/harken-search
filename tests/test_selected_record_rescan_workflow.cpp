@@ -190,6 +190,22 @@ void TestMp3RereadFillsMissingTagsWithoutOverwritingLibraryEdits() {
           "MP3 rescan fills missing music fields without replacing user values");
 }
 
+void TestMp3RereadDistinguishesEmptyFromUnavailableTags() {
+    auto item = Item();
+    item.filePath = "C:/sounds/tagless.mp3";
+    FakeOperationPort readable;
+    readable.metadata.id3TextTags.emplace();
+    Check(RescanSelectedRecord(item, readable) == SelectedRecordRescanItemResult::Updated &&
+              readable.update.rereadId3TextTags && readable.update.rereadId3TextTags->empty(),
+          "MP3 reread publishes an empty tag set when tags were removed");
+
+    FakeOperationPort unreadable;
+    unreadable.metadataResult = false;
+    Check(RescanSelectedRecord(item, unreadable) == SelectedRecordRescanItemResult::Updated &&
+              !unreadable.update.rereadId3TextTags,
+          "MP3 reread keeps saved tags when the tag read fails");
+}
+
 struct FakeBatchPort final : SelectedRecordRescanBatchPort {
     std::vector<SelectedRecordRescanItemResult> results;
     std::vector<std::string> trace;
@@ -266,6 +282,7 @@ int main() {
     TestMetadataPrecedenceAndUpdateOrder();
     TestWaveformRecoveryConditions();
     TestMp3RereadFillsMissingTagsWithoutOverwritingLibraryEdits();
+    TestMp3RereadDistinguishesEmptyFromUnavailableTags();
     TestBatchLifecycleAndCounts();
     if (g_failed != 0) {
         std::cerr << "FAIL: " << g_failed

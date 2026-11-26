@@ -248,6 +248,36 @@ void CheckStandaloneTags(const Fixture& fixture) {
           "sparse ID3v2 keeps existing fallback fields without losing the v2 year");
 }
 
+void CheckCustomTagReadOutcome(const Fixture& fixture) {
+    const auto writeFixture = [&fixture](std::string_view bytes) {
+        std::ofstream file(fixture.path, std::ios::binary | std::ios::trunc);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!file) throw std::runtime_error("could not write MP3 tag-status fixture");
+    };
+    const auto expectEmpty = [&fixture](bool trusted, const char* message) {
+        AudioMetadata metadata;
+        bool customTagsRead = !trusted;
+        const bool foundMetadata = MetadataReader::readMetadata(fixture.path.u8string(), metadata, &customTagsRead);
+        Check(!foundMetadata && customTagsRead == trusted && metadata.customTextTags.empty(), message);
+    };
+    std::string audio("\xff\xfb\x90\x64", 4);
+    audio.resize(417);
+    writeFixture(audio);
+    expectEmpty(true, "readable MP3 without an ID3 header permits clearing deleted tags");
+
+    const std::string emptyTag("ID3\x03\0\0\0\0\0\0", 10);
+    writeFixture(emptyTag + audio);
+    expectEmpty(true, "valid empty ID3 tag permits clearing deleted tags");
+
+    auto truncatedTag = emptyTag;
+    truncatedTag.back() = 32;
+    writeFixture(truncatedTag);
+    expectEmpty(false, "truncated ID3 tag must not erase saved tags");
+
+    fs::remove(fixture.path);
+    expectEmpty(false, "unreadable MP3 must not erase saved tags");
+}
+
 }
 
 int main() {
@@ -256,6 +286,7 @@ int main() {
     CheckId3v24(fixture);
     CheckId3v22(fixture);
     CheckStandaloneTags(fixture);
+    CheckCustomTagReadOutcome(fixture);
     std::cout << checks - failures << '/' << checks << " MP3 ID3 checks passed\n";
     return failures == 0 ? 0 : 1;
 }

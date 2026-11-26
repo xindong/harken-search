@@ -672,6 +672,7 @@ static bool WriteAppMetaString(sqlite3* db, const char* key, const std::string& 
 namespace fs = std::filesystem;
 
 namespace {
+constexpr int kSearchDataMigrationVersion = 3;
 constexpr const char* kLibraryRootsMetaKey = "library_roots_v1";
 constexpr const char* kWaveformCacheModeMetaKey = "waveform_cache_mode_v1";
 constexpr const char* kMiniWaveformFormatV2MetaKey = "mini_waveform_format_v2";
@@ -2014,6 +2015,10 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     m_waveformFailureWritesAllowed = sidecarAttached &&
         sqlite3_db_readonly(m_db, "main") == 0 &&
         sqlite3_db_readonly(m_db, "waveforms_db") == 0;
+    if (m_isPrimaryConnection && sqlite3_db_readonly(m_db, "main") == 0 &&
+        ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
+        startCoverPhashBackfillWorker();
+    }
     return true;
 }
 
@@ -2635,13 +2640,10 @@ void Database::preheat() {
                 needsAutomaticLegacyRegistryRepair = exactMaintenancePending;
             }
         }
-        const bool searchDataStillPending =
-            primaryWritableConnection &&
-            ReadAppMetaInt(m_db, "search_data_migrated") != 2;
         const auto decision =
             ResolveAutomaticCoverMaintenanceDecision(
                 maintenanceCtx,
-                explicitCoverMaintenance || needsAutomaticLegacyRegistryRepair || searchDataStillPending);
+                explicitCoverMaintenance || needsAutomaticLegacyRegistryRepair);
         if (decision.allowed) {
             startCoverPhashBackfillWorker();
         } else {
@@ -3124,9 +3126,6 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "vocal_type",         "TEXT DEFAULT ''");
     ensureColumn(m_db, "audio_files", "snoozed_until",      "INTEGER DEFAULT 0");
 
-    // Version 2 recomputes every existing row. Version 1 only filled NULLs, so
-    // bumping the marker alone left old pinyin tokens in place.
-    const int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
         DIAG_ACTION("Database", "SearchDataBackfillDeferred: remaining rows continue in the background");
     }
@@ -10310,7 +10309,7 @@ static HarkenSearch::Search::SearchDataRecomputeStep PublishSearchDataRecompute(
         ok = execSqlite(db, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
     }
     if (ok) {
-        ok = WriteAppMetaInt(db, "search_data_migrated", 2);
+        ok = WriteAppMetaInt(db, "search_data_migrated", kSearchDataMigrationVersion);
     }
     if (ok) {
         ok = execSqlite(db, "DELETE FROM app_meta WHERE key = 'search_data_recompute_cursor';", &err);
@@ -10356,7 +10355,6 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     if (batchSize <= 0 || !ensureSearchRecomputeConnection()) return SearchDataRecomputeStep::Failed;
     sqlite3* db = m_searchRecomputeDb;
     if (sqlite3_get_autocommit(db) == 0) return SearchDataRecomputeStep::Failed;
-    constexpr int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(db, "search_data_migrated") == kSearchDataMigrationVersion) {
         return SearchDataRecomputeStep::Finished;
     }
@@ -10461,7 +10459,7 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
             if (progress) progress->store(-1.0f);
             return false;
         }
-        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2) {
+        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion) {
             std::string err;
             const bool success = !(cancel && cancel->load()) &&
                 execSqlite(m_searchRecomputeDb, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
@@ -10500,7 +10498,8 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
         bool migrated = false;
         {
             std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
-            migrated = m_searchRecomputeDb && ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2;
+            migrated = m_searchRecomputeDb &&
+                ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion;
         }
         if (step != HarkenSearch::Search::SearchDataRecomputeStep::Finished || !migrated) {
             DIAG_ACTION("Database", "SearchDataRecompute stopped before replacing the FTS index");

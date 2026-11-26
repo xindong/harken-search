@@ -115,7 +115,8 @@ inline void PopulateExtendedMeta(std::unordered_map<std::string, std::string>& m
 class MetadataReader {
 public:
     // Read metadata from audio file (auto-detects format)
-    static bool readMetadata(const std::string& filePath, AudioMetadata& metadata);
+    static bool readMetadata(const std::string& filePath, AudioMetadata& metadata,
+                             bool* mp3CustomTagsRead = nullptr);
 
     // Read album art only (for display)
     static bool readAlbumArt(const std::string& filePath, AlbumArt& art);
@@ -123,7 +124,7 @@ public:
     // Format-specific readers
     static bool readID3v1(const std::string& filePath, AudioMetadata& metadata);
     static bool readID3v2(const std::string& filePath, AudioMetadata& metadata,
-                          bool useV1Fallback = false);
+                          bool useV1Fallback = false, bool* customTagsRead = nullptr);
     static bool readBWF(const std::string& filePath, AudioMetadata& metadata);
     static bool readVorbisComment(const std::string& filePath, AudioMetadata& metadata);
     static bool readM4A(const std::string& filePath, AudioMetadata& metadata);

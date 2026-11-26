@@ -38,7 +38,7 @@ struct SelectedRecordRescanMetadata {
     std::string keywords;
     std::string comment;
     std::unordered_map<std::string, std::string> extendedMetadata;
-    std::unordered_map<std::string, std::string> id3TextTags;
+    std::optional<std::unordered_map<std::string, std::string>> id3TextTags;
 };
 
 struct SelectedRecordRescanFileFacts {
