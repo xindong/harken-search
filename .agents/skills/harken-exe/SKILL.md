@@ -32,7 +32,5 @@ metadata:
 
 ## 边界
 
-本技能只交 Windows 包（`build_debug/Debug/`）。Mac 版本不在这里出包，它走 Cuevi 的 mac 版本工作区（`Harken Search macOS`）那条线。
-
 
 AI 自验通过不等于「前端验收通过」：必须等用户看过截图或包后明确确认，才在卡上记录确认原话、时间、包和代码身份。用户明确说当前包通过后，不再为这次验收额外索要截图，直接走 Cuevi 的验收收尾技能（由 cuevi-workflow 插件提供，改名 cuevi-acceptance-closeout）。
