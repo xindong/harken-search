@@ -14271,7 +14271,7 @@ static bool DrawBatchEditQueue(std::vector<Rule>& rules, int& selection, DrawLab
         ImGui::PushID(index);
         const auto description = drawLabel(rules[index], changed);
         if (ImGui::Selectable(description.c_str(), index == selection)) selection = index;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", description.c_str());
+        if (ImGui::IsItemHovered()) HarkenSearch::SetTooltip("%s", description.c_str());
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -14340,7 +14340,7 @@ static BatchEditDisplayRow PresentBatchEditRow(const aura::metadata::RuleEditRow
 
 static void DrawBatchEditPreviewCell(const char* text, const char* fileName = nullptr) {
     ImGui::TextUnformatted(text);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && ImGui::BeginTooltip()) {
+    if (ImGui::IsItemHovered() && HarkenSearch::BeginTooltip()) {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
         if (fileName) {
             ImGui::TextUnformatted(fileName);
