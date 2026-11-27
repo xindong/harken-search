@@ -57,6 +57,7 @@ EXCLUDED_GLOBS = (
     "tests/test_cuevi_*",
     "tests/test_daily_self_review*",
     "tests/test_qa_provenance_manifest.py",
+    "tests/test_release_receipt_contract.py",
     "tests/test_start_cuevi_airs_bat.py",
     "tests/test_aris_intake.py",
     "tests/test_aris_merge_closer.py",
