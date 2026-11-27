@@ -32571,7 +32571,7 @@ void RenderUI(AppState& state) {
         if (aura::ui::BeginStandaloneWindow(L(Dlg_FolderAutoRename), "##FolderAutoRenameWindow",
                                            &state.folderAutoRenameWindow, renameWindowOptions)) {
             { ReadingTextScope _readingPopup;  // window body is a reading surface
-            ImGui::BeginChild("##FolderRenameBody",
+            BeginTransientScrollbarChild("##FolderRenameBody",
                               ImVec2(0.0f, aura::ui::StandaloneWindowBodyHeight()), false);
             ImGui::Text("%s", L(FolderRename_Rule));
             ImGui::Spacing();
