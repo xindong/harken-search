@@ -20,10 +20,16 @@ int main(int argc, char** argv) {
         if (!ok) ++failed;
     };
     const std::string expected = "{\"test\":\"only notes, never extract executables\"}";
-    const auto writeZip = [&](const char* name, const std::string& data) {
+    const auto writeZip = [&](const char* name, const std::string& data,
+                              const char* alternateName = nullptr,
+                              const std::string& alternateData = {}) {
         mz_zip_archive zip{};
         if (!mz_zip_writer_init_heap(&zip, 0, 0)) return false;
         bool ok = mz_zip_writer_add_mem(&zip, name, data.data(), data.size(), MZ_BEST_SPEED) != 0;
+        if (ok && alternateName) {
+            ok = mz_zip_writer_add_mem(&zip, alternateName, alternateData.data(),
+                                       alternateData.size(), MZ_BEST_SPEED) != 0;
+        }
         void* bytes = nullptr;
         size_t size = 0;
         ok = ok && mz_zip_writer_finalize_heap_archive(&zip, &bytes, &size);
@@ -45,6 +51,16 @@ int main(int argc, char** argv) {
           std::string(64, '0'), result), "hash mismatch rejected");
     check(!created.port->ReadReadyReleaseNotes("../test.zip", observed.identity.size,
           observed.identity.sha256, result), "outside-root read rejected");
+    const std::string v2Notes = "{\"test\":\"notes from the new product\"}";
+    check(writeZip("harkensearch_release_notes.json", v2Notes), "v2-only fixture created");
+    observed = created.port->ObserveStagedPatch("staging/test.zip");
+    check(created.port->ReadReadyReleaseNotes("staging/test.zip", observed.identity.size,
+          observed.identity.sha256, result) && result == v2Notes, "v2 filename is readable");
+    check(writeZip("aris_release_notes.json", expected, "harkensearch_release_notes.json",
+                   v2Notes), "dual-filename fixture created");
+    observed = created.port->ObserveStagedPatch("staging/test.zip");
+    check(created.port->ReadReadyReleaseNotes("staging/test.zip", observed.identity.size,
+          observed.identity.sha256, result) && result == v2Notes, "v2 filename wins regardless of ZIP order");
     check(writeZip("../aris_release_notes.json", expected), "wrong-entry fixture created");
     observed = created.port->ObserveStagedPatch("staging/test.zip");
     check(!created.port->ReadReadyReleaseNotes("staging/test.zip", observed.identity.size,

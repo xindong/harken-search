@@ -1,4 +1,5 @@
 #include "UpdateManifest.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 #include "UpdateReleaseConfig.h"
 
 #include "ed25519/tweetnacl.h"
@@ -168,8 +169,8 @@ ManifestResult VerifyAndParseManifest(std::string_view manifestBytes,
                            "manifest contains a missing or mistyped string field");
         }
     }
-    if (root["product"].get<std::string>() != "aris") {
-        return Failure(ManifestError::ProductMismatch, "manifest product is not aris");
+    if (!IsSupportedUpdateProduct(root["product"].get<std::string>())) {
+        return Failure(ManifestError::ProductMismatch, "manifest product is not supported");
     }
     if (root["channel"].get<std::string>() != ChannelName(policy.selectedChannel)) {
         return Failure(ManifestError::ChannelMismatch,

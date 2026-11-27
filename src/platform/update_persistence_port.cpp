@@ -1,5 +1,6 @@
 #include "platform/update_persistence_port.h"
 #include "platform/update_bootstrap_authority_port.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 #include "update/UpdateReleaseConfig.h"
 
 #ifdef ARIS_UPDATE_PERSISTENCE_TESTING
@@ -626,10 +627,13 @@ public:
         };
         if (!mz_zip_reader_init(&zip, expectedSize, 0)) return false;
         constexpr mz_uint caseSensitive = 0x0100;
-        const int index = mz_zip_reader_locate_file(&zip, "aris_release_notes.json", nullptr, caseSensitive);
+        const char* notesFilename = aris::update::kUpdateReleaseNotesFilename;
+        if (mz_zip_reader_locate_file(&zip, notesFilename, nullptr, caseSensitive) < 0) {
+            notesFilename = aris::update::kLegacyUpdateReleaseNotesFilename;
+        }
         bool ok = false;
-        if (index >= 0 && zip.m_total_files <= 8192U) {
-            ok = mz_zip_reader_extract_file_to_callback(&zip, "aris_release_notes.json",
+        if (zip.m_total_files <= 8192U) {
+            ok = mz_zip_reader_extract_file_to_callback(&zip, notesFilename,
                 [](void* opaque, mz_uint64 offset, const void* bytes, size_t count) -> size_t {
                     auto& output = *static_cast<Context*>(opaque);
                     constexpr size_t limit = 8U * 1024U * 1024U;

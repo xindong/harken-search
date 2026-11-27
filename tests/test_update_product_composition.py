@@ -394,6 +394,20 @@ def test_public_release_rejects_qa_cli_at_configure_time() -> None:
     assert "ARIS_PUBLIC_RELEASE rejects ARIS_UPDATE_QA_CLI" in cmake
 
 
+def test_v2_stable_manifest_is_opt_in_and_legacy_remains_available() -> None:
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    composition = (ROOT / "src/update/HarkenSearchUpdateComposition.cpp").read_text(
+        encoding="utf-8"
+    )
+    production_check = composition.split(
+        "config.runtime.channel = UpdateChannel::Testing;", 1
+    )[1].split("config.runtime.channel = UpdateChannel::Stable;", 1)[0]
+
+    assert 'set(ARIS_UPDATE_V2_STABLE_MANIFEST_URL "" CACHE STRING' in cmake
+    assert "PreferredStableManifestUrl()" in production_check
+    assert "config.check.fallbackManifestUrl = config.check.manifestUrl;" in production_check
+
+
 def test_update_mirror_is_transport_only_and_cannot_replace_signed_identity() -> None:
     config = (ROOT / "src/update/UpdateReleaseConfig.h").read_text(encoding="utf-8")
     manifest = (ROOT / "src/update/UpdateManifest.cpp").read_text(encoding="utf-8")

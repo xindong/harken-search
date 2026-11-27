@@ -133,6 +133,14 @@ bool isStrictRelative(const std::string& path) {
 void test_strict_signed_plan_and_install_identity_validation() {
     const auto valid = ValidateSignedInstallPlan(validPlan(), SignatureStatus::Verified);
     check(valid.ok(), "valid authenticated plan is accepted");
+    auto v2Plan = validPlan();
+    v2Plan.product = "harken-search";
+    check(ValidateSignedInstallPlan(v2Plan, SignatureStatus::Verified).ok(),
+          "authenticated harken-search install plan is accepted");
+    v2Plan.product = "other-product";
+    check(ValidateSignedInstallPlan(v2Plan, SignatureStatus::Verified).error ==
+              PlanError::InvalidProduct,
+          "unrelated product is rejected by install planning");
     check(valid.plan.has_value(), "validated plan is an owned value");
     if (valid.plan) {
         check(valid.plan->identity.targetRoot == "D:/Tools/Aris",

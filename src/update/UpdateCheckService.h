@@ -22,6 +22,7 @@ struct UpdateCheckServiceConfig {
     std::uint64_t signatureTimeoutMs = 0;
     std::size_t manifestBodyLimit = 0;
     std::size_t signatureBodyLimit = 0;
+    std::string fallbackManifestUrl;
 };
 
 enum class UpdateCheckScheduleKind {
@@ -69,7 +70,8 @@ struct UpdateCheckServiceResult {
 
 // Serialized application service only: no thread, sleep, clock, platform,
 // filesystem/root/path, process, main/UI, database, audio, or web work.
-// Each execution performs at most two blocking, caller-owned fetches.
+// At most three caller-owned fetches: a preferred manifest probe and one
+// signed pair, with the legacy pair allowed only after a preferred HTTP 404.
 class UpdateCheckService {
 public:
     UpdateCheckService(UpdateCheckTransportPort& transport,

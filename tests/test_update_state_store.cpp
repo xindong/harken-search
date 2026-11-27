@@ -116,9 +116,18 @@ void test_invalid_json_schema_product_and_channel_fail_closed() {
     check(!UpdateStateStore::Deserialize(unsupported).ok(),
           "unsupported schema is rejected");
 
+    const std::string legacyProduct = "\"product\":\"aris\"";
+    const auto productAt = valid.find(legacyProduct);
+    check(productAt != std::string::npos,
+          "state serialization still writes the legacy product identity");
+    if (productAt == std::string::npos) return;
+    auto v2State = valid;
+    v2State.replace(productAt, legacyProduct.size(), "\"product\":\"harken-search\"");
+    check(UpdateStateStore::Deserialize(v2State).ok(),
+          "persisted state with the harken-search product is readable");
+
     auto foreign = valid;
-    foreign.replace(foreign.find("\"product\":\"aris\""), 16,
-                    "\"product\":\"other\"");
+    foreign.replace(productAt, legacyProduct.size(), "\"product\":\"other\"");
     check(!UpdateStateStore::Deserialize(foreign).ok(),
           "foreign product is rejected");
 

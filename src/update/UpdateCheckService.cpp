@@ -307,12 +307,26 @@ UpdateCheckServiceResult UpdateCheckService::ExecuteActive(
     }
     activeCheckToken_ = begun.checkToken;
 
+    const bool allowRedirects = config_.fallbackManifestUrl.empty();
+    bool useFallback = false;
     UpdateCheckFetchResult manifestFetch;
     try {
         manifestFetch = transport_.Fetch(
             {config_.manifestUrl, config_.manifestTimeoutMs,
-             config_.manifestBodyLimit},
+             config_.manifestBodyLimit, allowRedirects},
             cancellation);
+        if (!allowRedirects &&
+            manifestFetch.error == UpdateCheckFetchError::Http4xx &&
+            manifestFetch.httpStatus == 404) {
+            if (cancellation.IsCancellationRequested()) {
+                return PublishCancellation("update check cancelled");
+            }
+            useFallback = true;
+            manifestFetch = transport_.Fetch(
+                {config_.fallbackManifestUrl, config_.manifestTimeoutMs,
+                 config_.manifestBodyLimit, allowRedirects},
+                cancellation);
+        }
     } catch (...) {
         manifestFetch.error = UpdateCheckFetchError::Network;
         manifestFetch.detail = "manifest fetch failed unexpectedly";
@@ -338,10 +352,12 @@ UpdateCheckServiceResult UpdateCheckService::ExecuteActive(
 
     UpdateCheckFetchResult signatureFetch;
     try {
-        signatureFetch = transport_.Fetch(
-            {config_.signatureUrl, config_.signatureTimeoutMs,
-             config_.signatureBodyLimit},
-            cancellation);
+        UpdateCheckFetchRequest signatureRequest{config_.signatureUrl,
+            config_.signatureTimeoutMs, config_.signatureBodyLimit, allowRedirects};
+        if (useFallback) {
+            signatureRequest.url = config_.fallbackManifestUrl + ".sig";
+        }
+        signatureFetch = transport_.Fetch(signatureRequest, cancellation);
     } catch (...) {
         signatureFetch.error = UpdateCheckFetchError::Network;
         signatureFetch.detail = "signature fetch failed unexpectedly";

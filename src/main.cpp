@@ -279,6 +279,7 @@
 #include "SingleChannelExportCompletionWorkflow.h"
 #include "CueviFeedbackBuildConfig.h"
 #include "Version.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 #include "update/HarkenSearchUpdateComposition.h"
 #include "update/HarkenSearchUpdateNoticeUi.h"
 
@@ -485,8 +486,7 @@ static void LoadThesaurusJson();
 using ReleaseNotesItem = aris::update::ReleaseNotesItem;
 using ReleaseNotesEntry = aris::update::ReleaseNotesEntry;
 static aris::update::ReleaseNotesUiState g_releaseNotesUiState;
-static constexpr const char* kReleaseNotesFilename = "aris_release_notes.json";
-static constexpr const char* kLegacyReleaseNotesFilename = "auro_release_notes.json";
+static constexpr const char* kPreArisReleaseNotesFilename = "auro_release_notes.json";
 static constexpr const char* kUpdateCenterWindowId = u8"更新中心##HarkenSearchUpdateCenter";
 static aris::update::HarkenSearchUpdateUiState g_lastHarkenSearchUpdateUiState{};
 static void LoadReleaseNotesFromExeDir(bool forceReload = false);
@@ -675,21 +675,16 @@ static void LoadReleaseNotesFromExeDir(bool forceReload) {
     g_releaseNotesUiState.message.clear();
     g_releaseNotesUiState.releases.clear();
 
-    std::string notesPath = GetExeDirUtf8() + "\\" + kReleaseNotesFilename;
+    const std::string notesDir = GetExeDirUtf8() + "\\";
     std::string jsonText;
-    if (!Platform::FileSystem::ReadFileText(notesPath, jsonText)) {
-        // Silent compatibility read for release notes shipped before Aris was
-        // established as the formal product identity.
-        notesPath = GetExeDirUtf8() + "\\" + kLegacyReleaseNotesFilename;
-        if (!Platform::FileSystem::ReadFileText(notesPath, jsonText)) {
-            g_releaseNotesUiState.message.clear();
-            return;
-        }
-    }
-    if (jsonText.empty()) {
-        g_releaseNotesUiState.message.clear();
-        return;
-    }
+    const auto readNotes = [&](const char* filename) {
+        const std::string notesPath = notesDir + filename;
+        return Platform::FileSystem::ReadFileText(notesPath, jsonText);
+    };
+    if ((!readNotes(aris::update::kUpdateReleaseNotesFilename) &&
+         !readNotes(aris::update::kLegacyUpdateReleaseNotesFilename) &&
+         !readNotes(kPreArisReleaseNotesFilename)) ||
+        jsonText.empty()) return;
 
     g_releaseNotesUiState.hasData = aris::update::ParseHarkenSearchReleaseNotes(
         jsonText, g_releaseNotesUiState.releases);
