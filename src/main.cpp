@@ -31,6 +31,9 @@
 #include "imgui_impl_win32.h"
 #elif defined(__APPLE__)
 #include "imgui_impl_osx.h"
+// The shared UI keeps MSVC CRT spellings and Win32 message-box flags; the
+// compatibility header supplies them without a Windows SDK.
+#include "platform/win32_compat.h"
 #endif
 #include "imgui_impl_opengl3.h"
 
