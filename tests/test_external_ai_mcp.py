@@ -861,7 +861,10 @@ class ExternalAiMcpTest(unittest.TestCase):
             self.assertEqual(current["metadata"]["harken"]["function"], "Impact")
             self.assertEqual(current["metadata"]["harken"]["source"], "ai")
 
-        with sqlite3.connect(self.database) as connection:
+        # closing() is required: the context manager only commits, so a bare
+        # "with sqlite3.connect(...)" keeps the catalog open and the Windows
+        # fixture cleanup then fails with WinError 32.
+        with closing(sqlite3.connect(self.database)) as connection:
             connection.execute(
                 "UPDATE audio_files SET harken_meta=? WHERE id=1",
                 (json.dumps({"category": "Manual", "function": "Keep", "source": "manual"}),))
