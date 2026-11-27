@@ -194,7 +194,10 @@ class NetworkPathContract(unittest.TestCase):
         prompt = MAIN.split("void RenderInfoMetadataLeavePrompt(", 1)[1].split(
             "void RenderFileInfoPanelTabContents(", 1
         )[0]
-        self.assertIn("else if (state.infoEditError.empty())", prompt)
+        # 写入已改为后台会话：失败时的兜底文案仍在这里报，保存中不允许重复点。
+        self.assertIn("if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);", prompt)
+        self.assertIn("const bool saving = state.metadataBatch.Active();", prompt)
+        self.assertIn("if (!saving && (yes || no))", prompt)
 
     def test_scan_directory_checks_cancel_around_network_root_probe(self) -> None:
         scan = DATABASE.split("ScanStats Database::scanDirectoryEx(", 1)[1].split(

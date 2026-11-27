@@ -11750,6 +11750,8 @@ static bool SwitchDatabase(AppState& state,
     if (state.isScanning.load()) return failNow(L(Db_SwitchBusyScan));
     if (state.dbSwitchInProgress) return failNow(L(Db_SwitchBusy));
     if (state.folderRemoval.Active()) return failNow(L(Task_RemoveBusy));
+    // 批量改元数据在后台写库：切库会关掉同一个连接，必须先等它结束。
+    if (state.metadataBatch.Active()) return failNow(L(Task_MetadataBusy));
     const auto libraryState = ClassifyDatabaseLibraryPath(effectiveDbPathUtf8);
     if (!allowCreate && !IsDatabaseLibrarySelectable(libraryState)) {
         return failNow(std::string("database path is not available: ") +
@@ -14152,7 +14154,7 @@ bool ApplyBatchRuleEdit(AppState& state) {
     const std::string column = aura::metadata::RuleEditColumnName(preview.column);
     std::vector<std::pair<int64_t, MetadataEditPatch>> items;
     std::unordered_map<int64_t, std::string> expected;
-    auto undoOp = std::make_unique<MetadataPatchOp>();
+    auto undoOp = std::make_shared<MetadataPatchOp>();
     undoOp->editKind = MetadataUndoKind::BatchEdit;
     undoOp->targetColumn = column;
     items.reserve(preview.rows.size());
@@ -14172,27 +14174,55 @@ bool ApplyBatchRuleEdit(AppState& state) {
         return false;
     }
 
-    BatchMetadataApplyResult result =
-        state.database.applyMetadataPatchManyGuarded(items, column, expected);
-    if (result.failed == 0 && result.success > 0) {
-        state.undoStack.push(std::move(undoOp));
-        char buffer[256];
-        std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditAppliedFmt), result.success);
-        state.batchRuleEditMessage = buffer;
-        state.batchRuleEditFailed = false;
-        state.batchRuleEditPreview = {};
-        state.batchRuleEditStale = false;
-        RefreshSearchResults(state, false);
+    BatchMetadataApplyResult result;
+    auto* appState = &state;
+    auto undoHold = undoOp;
+    const auto finish = [appState, undoHold](const BatchMetadataApplyResult& res) {
+        if (res.failed == 0 && res.success > 0) {
+            appState->undoStack.push(
+                std::unique_ptr<UndoOperation>(new MetadataPatchOp(std::move(*undoHold))));
+            char buffer[256];
+            std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditAppliedFmt), res.success);
+            appState->batchRuleEditMessage = buffer;
+            appState->batchRuleEditFailed = false;
+            appState->batchRuleEditPreview = {};
+            appState->batchRuleEditStale = false;
+            RefreshSearchResults(*appState, false);
+            return;
+        }
+        const std::string reason =
+            res.errors.empty() ? std::string(L(Batch_RuleEditStale)) : res.errors.front();
+        char buffer[512];
+        std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditFailedFmt), reason.c_str());
+        appState->batchRuleEditMessage = buffer;
+        appState->batchRuleEditFailed = true;
+        appState->batchRuleEditPreview = {};
+        appState->batchRuleEditStale = true;
+    };
+    // 按规则批量改也是批量改元数据：写入走同一套后台会话，浮层因此能看到进度。
+    if (state.StartMetadataBatch(
+            [appState, items = std::move(items), column, expected = std::move(expected)]
+            (AppState::MetadataBatchSink& sink, std::atomic<bool>* cancelFlag) {
+                return appState->database.applyMetadataPatchManyGuarded(
+                    items, column, expected,
+                    [&sink](const MetadataPatchProgress& progress) {
+                        sink(progress.done, progress.total, progress.verifying);
+                    },
+                    cancelFlag);
+            },
+            [finish](const BatchMetadataApplyResult& res, bool crashed) {
+                if (crashed) {
+                    BatchMetadataApplyResult failed = res;
+                    failed.errors.push_back("cancelled by failure");
+                    finish(failed);
+                    return;
+                }
+                finish(res);
+            })) {
         return true;
     }
-    const std::string reason =
-        result.errors.empty() ? std::string(L(Batch_RuleEditStale)) : result.errors.front();
-    char buffer[512];
-    std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditFailedFmt), reason.c_str());
-    state.batchRuleEditMessage = buffer;
+    state.batchRuleEditMessage = L(Task_MetadataBusy);
     state.batchRuleEditFailed = true;
-    state.batchRuleEditPreview = {};
-    state.batchRuleEditStale = true;
     return false;
 }
 
@@ -19443,6 +19473,15 @@ static void BeginInfoMetadataEdit(AppState& state, const AudioRecord& record) {
     state.metadataEditMode=true;
 }
 
+// 离开 Info 编辑时的收尾：保存成功和「不保存」走同一段。
+static void FinishInfoMetadataLeave(AppState& state) {
+    state.metadataEditMode=false; state.metadataBatchMode=false; state.metadataBatchIds.clear();
+    state.infoEditRecords.clear(); state.infoEditError.clear();
+    auto after=std::move(state.infoEditAfterLeave); state.infoEditAfterLeave={};
+    if(after) after();
+}
+
+// 返回 true 表示已经把写入交给后台会话；false 表示同步校验没过。
 static bool SaveInfoMetadataDraft(AppState& state) {
     state.infoEditError.clear();
     if (state.database.getMainDbPath()!=state.infoEditDatabasePath || state.infoEditRecords.empty()) return false;
@@ -19455,7 +19494,7 @@ static bool SaveInfoMetadataDraft(AppState& state) {
     if(desc) basePatch.setDescription(values.description);
     if(keys) basePatch.setKeywords(values.keywords);
     if(cat) basePatch.setCategory(values.category);
-    auto undo=std::make_unique<MetadataPatchOp>();
+    auto undo=std::make_shared<MetadataPatchOp>();
     undo->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
     if (basePatch.fields.size() == 1) undo->targetColumn = basePatch.fields.begin()->first;
     else if (basePatch.fields.empty() && harkenChanged) undo->targetColumn = "harken_meta";
@@ -19494,44 +19533,81 @@ static bool SaveInfoMetadataDraft(AppState& state) {
         undo->entries.push_back(std::move(entry)); ids.push_back(original.id);
         perFile.emplace_back(original.id, std::move(filePatch));
     }
-    const BatchMetadataApplyResult result = harkenChanged
-        ? state.database.applyMetadataPatchMany(perFile)
-        : state.database.applyMetadataPatchBatch(ids,basePatch);
-    if(result.failed || result.success!=(int)ids.size()) return false;
-    state.undoStack.push(std::move(undo));
-    state.database.invalidateFacetQueryCache();
-    g_forceMetaCacheInvalidate=true;
-    RefreshSearchResults(state,false);
+    if (ids.empty()) return false;
+    auto* appState = &state;
+    // 多选时这条就是批量改元数据；写库搬到后台，提示框等完成回调再解。
+    // perFile 与 ids/basePatch 二选一，与上面的 harkenChanged 分支一致。
+    const bool perFilePatch = harkenChanged;
+    if (!state.StartMetadataBatch(
+            [appState, idsToApply = std::move(ids), appliedPatch = basePatch,
+             perFileItems = std::move(perFile), perFilePatch]
+            (AppState::MetadataBatchSink& sink, std::atomic<bool>* cancelFlag) {
+                const auto report = [&sink](const MetadataPatchProgress& progress) {
+                    sink(progress.done, progress.total, progress.verifying);
+                };
+                if (perFilePatch) {
+                    return appState->database.applyMetadataPatchMany(
+                        perFileItems, report, cancelFlag);
+                }
+                return appState->database.applyMetadataPatchBatch(
+                    idsToApply, appliedPatch, report, cancelFlag);
+            },
+            [appState, undo](const BatchMetadataApplyResult& res, bool crashed) {
+                if (crashed || res.cancelled || res.failed != 0 || res.success != res.total) {
+                    appState->infoEditError = res.errors.empty()
+                        ? std::string(L(Info_SaveFailedKeepEditing)) : res.errors.front();
+                    return;
+                }
+                appState->undoStack.push(std::unique_ptr<UndoOperation>(
+                    new MetadataPatchOp(std::move(*undo))));
+                appState->database.invalidateFacetQueryCache();
+                g_forceMetaCacheInvalidate=true;
+                RefreshSearchResults(*appState,false);
+                if (appState->infoEditSession.Resolve(true, true)) FinishInfoMetadataLeave(*appState);
+            })) {
+        state.infoEditError = L(Task_MetadataBusy);
+        return false;
+    }
     return true;
 }
 
 void RenderInfoMetadataLeavePrompt(AppState& state) {
-    if (!state.infoEditSession.awaitingChoice) return;
     const char* title=L(Info_SaveBeforeLeaving);
-    if (!ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
+    // 后台保存完成时状态已经解了，这一帧只负责把弹窗收掉。
+    if (!state.infoEditSession.awaitingChoice && !ImGui::IsPopupOpen(title)) return;
+    if (state.infoEditSession.awaitingChoice && !ImGui::IsPopupOpen(title)) ImGui::OpenPopup(title);
     bool resolved=false;
     if (aura::ui::BeginAlertDialog(title,title,ImGuiWindowFlags_AlwaysAutoResize,false)) {
+        if (!state.infoEditSession.awaitingChoice) {
+            ImGui::CloseCurrentPopup();
+        } else {
         ImGui::TextUnformatted(L(Info_SaveBeforeLeavingBody));
         if (!state.infoEditError.empty()) ImGui::TextWrapped("%s",state.infoEditError.c_str());
+        const bool saving = state.metadataBatch.Active();
+        if (saving) {
+            const auto live = state.metadataBatch.Snapshot();
+            ImGui::TextDisabled("%s  %d / %d", L(Task_MetadataBatch), live.done, live.total);
+        }
+        if (saving) ImGui::BeginDisabled();
         const bool yes=aura::ui::ActionButton(L(Info_SaveYes),ImVec2(140,0), aura::ui::ButtonVariant::PrimarySearch);
         ThemeInspector::RegisterLastItem("info.saveYes",L(Info_SaveYes),"src/main.cpp");
         ImGui::SameLine();
         const bool no=aura::ui::ActionButton(L(Info_SaveNo),ImVec2(140,0), aura::ui::ButtonVariant::Quiet);
         ThemeInspector::RegisterLastItem("info.saveNo",L(Info_SaveNo),"src/main.cpp");
-        if (yes || no) {
-            const bool saved=yes && SaveInfoMetadataDraft(state);
-            resolved=state.infoEditSession.Resolve(yes,saved);
-            if(resolved) ImGui::CloseCurrentPopup();
-            else if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);
+        if (saving) ImGui::EndDisabled();
+        if (!saving && (yes || no)) {
+            if (!yes) {
+                resolved=state.infoEditSession.Resolve(false,true);
+                if(resolved) ImGui::CloseCurrentPopup();
+            } else if (!SaveInfoMetadataDraft(state)) {
+                if (state.infoEditError.empty()) state.infoEditError=L(Info_SaveFailedKeepEditing);
+            }
+            // 保存已交给后台会话：结果回来时由完成回调 Resolve，这里不先解。
+        }
         }
         aura::ui::EndAlertDialog();
     }
-    if (resolved) {
-        state.metadataEditMode=false; state.metadataBatchMode=false; state.metadataBatchIds.clear();
-        state.infoEditRecords.clear(); state.infoEditError.clear();
-        auto after=std::move(state.infoEditAfterLeave); state.infoEditAfterLeave={};
-        if(after) after();
-    }
+    if (resolved) FinishInfoMetadataLeave(state);
 }
 
 void RenderFileInfoPanelTabContents(
@@ -31633,7 +31709,7 @@ static void DrawScanSimilarityDialogs(AppState& state) {
     ImGui::PopStyleVar(2); ImGui::PopStyleColor(3);
 }
 
-enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update, Export, Wwise };
+enum class LibraryTaskKind { Removal, Scan, Similarity, Waveform, Cover, Backfill, Update, Export, Wwise, Metadata };
 
 struct LibraryTaskRow {
     LibraryTaskKind kind;
@@ -31838,6 +31914,52 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         }
     }
 
+    // 批量改元数据：后台会话执行，这里只读进度快照。
+    // 起止边界由 StartMetadataBatch / PumpMetadataBatch 记，不靠这里是否恰好看到运行中。
+    {
+        const auto batch = state.metadataBatch.Snapshot();
+        if (batch.active) {
+            std::string detail;
+            float fraction = -1.0f;
+            if (batch.verifying) {
+                // 预检阶段没有可信百分比：走等待条，只说清在核对哪一条。
+                char verifying[96];
+                std::snprintf(verifying, sizeof(verifying), L(Task_MetadataPreparingFmt),
+                              batch.done, std::max(batch.total, batch.done));
+                detail = verifying;
+            } else if (batch.total > 0) {
+                detail = std::to_string(batch.done) + " / " + std::to_string(batch.total);
+                fraction = std::clamp(static_cast<float>(batch.done) /
+                                      static_cast<float>(batch.total), 0.0f, 1.0f);
+            } else {
+                detail = std::to_string(batch.done);
+            }
+            if (batch.cancelRequested) detail = std::string(L(Task_MetadataCancelRequested)) + "  " + detail;
+            rows.push_back({LibraryTaskKind::Metadata, Phase::Running, L(Task_MetadataBatch),
+                            std::move(detail), fraction});
+        } else {
+            // 失败一直留着等人读；成功和取消 3 秒淡出。
+            const bool keptFailure = state.metadataTaskLastPhase == Phase::Failed;
+            if (!state.metadataTaskDismissed && state.metadataTaskDoneAt > 0.0 &&
+                (keptFailure || now - state.metadataTaskDoneAt < 3.0)) {
+                std::string detail;
+                const Phase last = state.metadataTaskLastPhase;
+                if (last == Phase::Succeeded) {
+                    char applied[96];
+                    std::snprintf(applied, sizeof(applied), L(Task_MetadataAppliedFmt),
+                                  state.metadataTaskAppliedCount);
+                    detail = applied;
+                } else if (last == Phase::Stopped) {
+                    detail = L(Task_MetadataCancelled);
+                } else {
+                    detail = L(Task_Failed);
+                }
+                rows.push_back({LibraryTaskKind::Metadata, last, L(Task_MetadataBatch),
+                                std::move(detail), -1.0f});
+            }
+        }
+    }
+
     // 单通道导出：聚合进行中作业的写样本进度。
     {
         uint64_t exportDone = 0;
@@ -31991,12 +32113,15 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
             ImGui::PushID(static_cast<int>(row.kind));
             const bool running = row.phase == Phase::Running;
             const bool failed = row.phase == Phase::Failed;
+            // 批量改元数据跑着时，× 就是这个任务的停止按钮；其他行保持原样。
+            const bool stoppable = running && row.kind == LibraryTaskKind::Metadata;
+            const bool closable = failed || stoppable;
             const ImVec2 origin = ImGui::GetCursorScreenPos();
             const float rowWidth = ImGui::GetContentRegionAvail().x;
             auto* draw = ImGui::GetWindowDrawList();
 
-            // 标题行：标题 + 右侧状态（失败时可点 ×）
-            const float textWidth = rowWidth - (failed ? 18.0f : 0.0f);
+            // 标题行：标题 + 右侧状态（失败可收起，元数据运行中可停止）
+            const float textWidth = rowWidth - (closable ? 18.0f : 0.0f);
             draw->PushClipRect(ImVec2(origin.x, origin.y),
                                ImVec2(std::max(origin.x, origin.x + textWidth), origin.y + 20.0f), true);
             draw->AddText(origin, ImGui::GetColorU32(ImGuiCol_Text), row.title);
@@ -32010,16 +32135,19 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
             // 失败行的 × 与整行按钮不能叠在一起：ImGui 里同一块矩形只能有一个 item
             // 拿到 hover，谁先谁后都会让提示文案互相覆盖，点击也会跟着飘。
             // 所以 × 先提交，整行按钮在失败行缩短 18px，两边矩形不重叠。
-            if (failed) {
+            if (closable) {
                 ImGui::SetCursorScreenPos(ImVec2(origin.x + rowWidth - 16.0f, origin.y + 2.0f));
                 if (ImGui::InvisibleButton("##close", ImVec2(16.0f, 16.0f))) {
-                    if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
+                    if (stoppable) state.RequestMetadataBatchCancel();
+                    else if (row.kind == LibraryTaskKind::Scan) state.scanTaskNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Similarity) state.manualSimilarityNotice.Dismiss();
                     else if (row.kind == LibraryTaskKind::Update) state.updateTaskDismissed = true;
                     else if (row.kind == LibraryTaskKind::Wwise) state.wwiseTaskDismissed = true;
+                    else if (row.kind == LibraryTaskKind::Metadata) state.metadataTaskDismissed = true;
                     else state.folderRemovalNotice.Dismiss();
                 }
-                if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", L(Task_Dismiss));
+                if (ImGui::IsItemHovered())
+                    HarkenSearch::SetTooltipUngated("%s", stoppable ? L(Task_MetadataStop) : L(Task_Dismiss));
                 const ImVec2 closeMin = ImGui::GetItemRectMin();
                 const ImVec2 closeMax = ImGui::GetItemRectMax();
                 const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -32030,9 +32158,9 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
             }
 
             ImGui::SetCursorScreenPos(origin);
-            ImGui::InvisibleButton("##row", ImVec2(failed ? rowWidth - 18.0f : rowWidth, 20.0f));
+            ImGui::InvisibleButton("##row", ImVec2(closable ? rowWidth - 18.0f : rowWidth, 20.0f));
             if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s  ·  %s", row.title, row.detail.c_str());
-            if (ImGui::IsItemClicked() && !failed) {
+            if (ImGui::IsItemClicked() && !closable) {
                 if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
                 else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
             }
@@ -32066,7 +32194,8 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                 row.kind == LibraryTaskKind::Cover ? "task.toast.cover" :
                 row.kind == LibraryTaskKind::Update ? "task.toast.update" :
                 row.kind == LibraryTaskKind::Export ? "task.toast.export" :
-                row.kind == LibraryTaskKind::Wwise ? "task.toast.wwise" : "task.toast.backfill");
+                row.kind == LibraryTaskKind::Wwise ? "task.toast.wwise" :
+                row.kind == LibraryTaskKind::Metadata ? "task.toast.metadata" : "task.toast.backfill");
             ImGui::PopID();
         }
     }
@@ -32158,8 +32287,44 @@ static std::string ExternalAiSettingsDirectory() {
 
 // External AI write bridge: keep one local pipe per authorized library and run
 // queued Playlist writes here, on the thread that owns the database.
-static void PumpExternalAiWriteBridge(AppState& state) {
-    static int frameSkip = 0;
+bool AppState::StartMetadataBatch(MetadataBatchWork work, std::function<void(const BatchMetadataApplyResult&, bool)> done) {
+    if (metadataBatch.Active()) return false;
+    if (!metadataBatch.Start(std::move(work))) return false;
+    metadataBatchDone = std::move(done);
+    metadataBatchMessage.clear();
+    metadataBatchMessageFailed = false;
+    metadataTaskDismissed = false;
+    // 起点在这里记：停靠面板在浮层行构建之后才提交任务，靠绘制时恰好看运行中会漏报。
+    metadataTaskDoneAt = 0.0;
+    return true;
+}
+
+void AppState::PumpMetadataBatch() {
+    if (!metadataBatch.Active()) return;
+    auto result = metadataBatch.Poll();
+    if (!result) return;
+    using Phase = HarkenSearch::LibraryTaskPhase;
+    const bool crashed = metadataBatch.Failed();
+    if (crashed || result->failed != 0 || (!result->cancelled && result->success == 0)) {
+        metadataTaskLastPhase = Phase::Failed;
+    } else if (result->cancelled) {
+        metadataTaskLastPhase = Phase::Stopped;
+    } else {
+        metadataTaskLastPhase = Phase::Succeeded;
+        metadataTaskAppliedCount = result->success;
+    }
+    // 终点也在这里记：即使整批在一帧内跑完，终态行仍然会出现。
+    metadataTaskDoneAt = ImGui::GetTime();
+    auto done = std::move(metadataBatchDone);
+    metadataBatchDone = {};
+    if (done) done(*result, crashed);
+}
+
+void AppState::RequestMetadataBatchCancel() {
+    if (metadataBatch.Active()) metadataBatch.RequestCancel();
+}
+
+static void PumpExternalAiWriteBridge(AppState& state) {    static int frameSkip = 0;
     if (++frameSkip % 60 == 0) {
         const std::string library = state.currentDbPathUtf8;
         if (library.empty()) {
@@ -32202,6 +32367,8 @@ static std::string RenderUndoMenuLabel(LStr emptyLabel, LStr actionFormat, std::
 
 void RenderUI(AppState& state) {
     PumpExternalAiWriteBridge(state);
+    // 批量改元数据是后台会话：每帧开头取一次结果，回填必须发生在界面线程。
+    state.PumpMetadataBatch();
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
         state.audioEngine.isLoaded()) {
         state.pendingReverseRestore = false;
@@ -36596,6 +36763,9 @@ void RenderUI(AppState& state) {
                 sMeRating = 0;
                 sMeNav = 0;
                 sMeSaveMsg.clear();
+                // 上一次关了弹窗才完成的后台写入不能把重新打开的弹窗直接关掉。
+                state.metadataEditDialogCloseRequested = false;
+                ++state.metadataEditDialogGeneration;
 
                 if (!state.metadataBatchMode && state.metadataEditFileId > 0) {
                     for (const auto& r : state.searchResults) {
@@ -36628,6 +36798,14 @@ void RenderUI(AppState& state) {
                         break;
                     }
                 }
+            }
+
+            if (state.metadataEditDialogCloseRequested) {
+                state.metadataEditDialogCloseRequested = false;
+                state.metadataEditMode = false;
+                state.metadataBatchMode = false;
+                state.metadataBatchIds.clear();
+                ImGui::CloseCurrentPopup();
             }
 
             // Caption bar carries the title; the body only adds the batch count.
@@ -36700,13 +36878,20 @@ void RenderUI(AppState& state) {
             ImGui::EndChild();
 
             // Bottom bar: save result + buttons
-            if (!sMeSaveMsg.empty()) {
+            if (state.metadataBatch.Active()) {
+                const auto live = state.metadataBatch.Snapshot();
+                ImGui::TextDisabled("%s  %d / %d", L(Task_MetadataBatch), live.done, live.total);
+                ImGui::SameLine();
+            } else if (!sMeSaveMsg.empty()) {
                 ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.0f), "%s", sMeSaveMsg.c_str());
                 ImGui::SameLine();
             }
 
             const float meBtnW = 100.0f;
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - meBtnW * 2 - 24);
+            // 写入在后台跑：同一时刻只允许一批，按钮置灰避免重入。
+            const bool meBusy = state.metadataBatch.Active();
+            if (meBusy) ImGui::BeginDisabled();
             if (aura::ui::ActionButton(L(Main_SaveMeBtn), ImVec2(meBtnW, 0), aura::ui::ButtonVariant::PrimarySearch)) {
                 // Collect all field defs
                 const MetaEditField* allGroups[] = { kBasicFields, kLibraryFields, kMusicFields, kBWFFields };
@@ -36721,9 +36906,9 @@ void RenderUI(AppState& state) {
                 if (!state.metadataBatchMode || sMeRating > 0)
                     patch.setRating(sMeRating);
 
-                int svOk = 0, svSkip = 0, svFail = 0;
+                int svSkip = 0, svFail = 0;
                 if (!patch.isEmpty()) {
-                    auto undoOp = std::make_unique<MetadataPatchOp>();
+                    auto undoOp = std::make_shared<MetadataPatchOp>();
                     undoOp->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
                     if (patch.fields.size() == 1) undoOp->targetColumn = patch.fields.begin()->first;
 
@@ -36756,33 +36941,69 @@ void RenderUI(AppState& state) {
 
                             applyIds.push_back(fid);
                         }
-                    if (!applyIds.empty()) {
-                        BatchMetadataApplyResult res = state.database.applyMetadataPatchBatch(applyIds, patch);
-                        if (res.failed == 0) {
-                            svOk = res.success;
-                        } else {
-                            svOk = 0;
-                            svFail += (int)applyIds.size();
-                            undoOp->entries.clear();
-                        }
-                    }
-                    if (svOk > 0) {
-                        state.undoStack.push(std::move(undoOp));
-                        state.database.invalidateFacetQueryCache();
-                        RefreshSearchResults(state, false);
+                    // 写入本人就在后台跑：逐条走数据库不变，只是不再堵界面。
+                    auto* appState = &state;
+                    auto* saveMsg = &sMeSaveMsg;
+                    const int dialogGeneration = state.metadataEditDialogGeneration;
+                    const int skipped = svFail;
+                    if (!applyIds.empty() &&
+                        appState->StartMetadataBatch(
+                            [appState, idsToApply = std::move(applyIds), appliedPatch = patch]
+                            (AppState::MetadataBatchSink& sink, std::atomic<bool>* cancelFlag) {
+                                return appState->database.applyMetadataPatchBatch(
+                                    idsToApply, appliedPatch,
+                                    [&sink](const MetadataPatchProgress& progress) {
+                                        sink(progress.done, progress.total, progress.verifying);
+                                    },
+                                    cancelFlag);
+                            },
+                            [appState, undoOp, skipped, saveMsg, dialogGeneration]
+                            (const BatchMetadataApplyResult& res, bool crashed) {
+                                char resultMsg[160];
+                                if (crashed) {
+                                    *saveMsg = L(Task_Failed);
+                                    return;
+                                }
+                                if (res.cancelled) {
+                                    *saveMsg = L(Task_MetadataCancelled);
+                                    return;
+                                }
+                                const bool wholeBatchOk = res.failed == 0;
+                                if (wholeBatchOk && res.success > 0) {
+                                    appState->undoStack.push(std::unique_ptr<UndoOperation>(
+                                        new MetadataPatchOp(std::move(*undoOp))));
+                                    appState->database.invalidateFacetQueryCache();
+                                    RefreshSearchResults(*appState, false);
+                                }
+                                // 一批不落一半：有失败就是整批回滚，失败数按整批算。
+                                const int ok = wholeBatchOk ? res.success : 0;
+                                const int fail = wholeBatchOk ? skipped : skipped + res.total;
+                                std::snprintf(resultMsg, sizeof(resultMsg), L(MetaEdit_SaveResult), ok, 0, fail);
+                                *saveMsg = resultMsg;
+                                // 只关发起保存的那一次弹窗：期间用户可能又开了一条新草稿。
+                                if (fail == 0 &&
+                                    appState->metadataEditDialogGeneration == dialogGeneration)
+                                    appState->metadataEditDialogCloseRequested = true;
+                            })) {
+                        sMeSaveMsg.clear();
+                    } else if (!applyIds.empty()) {
+                        sMeSaveMsg = L(Task_MetadataBusy);
+                        svFail = skipped;
                     }
                 }
-                char resultMsg[128];
-                snprintf(resultMsg, sizeof(resultMsg), L(MetaEdit_SaveResult), svOk, svSkip, svFail);
-                sMeSaveMsg = resultMsg;
-
-                if (svFail == 0) {
+                if (patch.isEmpty()) {
+                    char resultMsg[160];
+                    std::snprintf(resultMsg, sizeof(resultMsg), L(MetaEdit_SaveResult), 0, svSkip, 0);
+                    sMeSaveMsg = resultMsg;
+                }
+                if (svFail == 0 && !state.metadataBatch.Active() && !sMeSaveMsg.empty()) {
                     state.metadataEditMode = false;
                     state.metadataBatchMode = false;
                     state.metadataBatchIds.clear();
                     ImGui::CloseCurrentPopup();
                 }
             }
+            if (meBusy) ImGui::EndDisabled();
             ImGui::SameLine();
             if (aura::ui::ActionButton(L(Main_MeCancelBtn), ImVec2(meBtnW, 0), aura::ui::ButtonVariant::Quiet)) {
                 state.metadataEditMode = false;

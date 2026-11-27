@@ -178,10 +178,21 @@ struct MetadataEditPatch {
     bool isEmpty() const { return fields.empty() && intFields.empty(); }
 };
 
+// 批量改元数据的增量进度：先对所有条目做网络库/路径预检（verifying），再逐条写入。
+// done/total 各自在自己的阶段内计数，调用方据此区分「准备」与「写入」。
+struct MetadataPatchProgress {
+    int done = 0;
+    int total = 0;
+    bool verifying = false;
+};
+using MetadataPatchProgressCallback = std::function<void(const MetadataPatchProgress&)>;
+
 struct BatchMetadataApplyResult {
     int total = 0;
     int success = 0;
     int failed = 0;
+    // 用户取消：整批回滚，success/failed 都保持 0，错误列表只留一条取消原因。
+    bool cancelled = false;
     std::vector<int64_t> failedFileIds;
     std::vector<std::string> errors;
 };
@@ -664,18 +675,26 @@ public:
 
     /// 仅更新 patch 中标记的字段（覆盖 / 清空 / 不修改）；会刷新 search_data
     bool applyMetadataPatch(int64_t fileId, const MetadataEditPatch& patch);
+    /// progress 每隔若干条回调一次；cancelFlag 置位后整批回滚并返回 cancelled=true。
+    /// 两个可选参数都可省略，同步调用点的行为不变。
     BatchMetadataApplyResult applyMetadataPatchBatch(const std::vector<int64_t>& fileIds,
-                                                     const MetadataEditPatch& patch);
+                                                     const MetadataEditPatch& patch,
+                                                     MetadataPatchProgressCallback progress = nullptr,
+                                                     std::atomic<bool>* cancelFlag = nullptr);
     /// 每条记录可使用不同 patch；按「更新字段掩码」分组，每组仅 prepare 一次再 bind/step
     BatchMetadataApplyResult applyMetadataPatchMany(
-        const std::vector<std::pair<int64_t, MetadataEditPatch>>& items);
+        const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+        MetadataPatchProgressCallback progress = nullptr,
+        std::atomic<bool>* cancelFlag = nullptr);
     /// 单列原值复核后整批写入：每条 patch 只能含 expectedColumn 一个字段，
     /// 且该记录当前值必须仍等于 expectedValues；任一不符则整批不写（独立事务）。
     /// expectedColumn 必须是 EditableTextColumns() 中的列。
     BatchMetadataApplyResult applyMetadataPatchManyGuarded(
         const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
         const std::string& expectedColumn,
-        const std::unordered_map<int64_t, std::string>& expectedValues);
+        const std::unordered_map<int64_t, std::string>& expectedValues,
+        MetadataPatchProgressCallback progress = nullptr,
+        std::atomic<bool>* cancelFlag = nullptr);
 
     bool removeFile(int64_t id);
     bool removeFileByPath(const std::string& filePath);

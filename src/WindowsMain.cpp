@@ -5803,7 +5803,13 @@ static void PollQaCommandFile(AppState& state) {
                 aura::ui::RefreshBatchRuleEditPreview(state);
                 result = previewJson("preview", false);
             } else if (action == "apply") {
-                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                // 批量改元数据已改成后台会话；QA 脚本要同步回执，这里等它落完再读。
+                if (state.metadataBatch.Active()) {
+                    state.metadataBatch.Join();
+                    state.PumpMetadataBatch();
+                    if (state.batchRuleEditFailed) applied = false;
+                }
                 result = previewJson("apply", applied);
             } else if (action == "race") {
                 // Preview, then let another writer change the same column, then
@@ -5819,7 +5825,12 @@ static void PollQaCommandFile(AppState& state) {
                     outsidePatch.set(column, std::string("outside race"));
                     changedOutside = state.database.applyMetadataPatchBatch(ids, outsidePatch).success > 0;
                 }
-                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                const bool appliedBefore = aura::ui::ApplyBatchRuleEdit(state);
+                if (state.metadataBatch.Active()) {
+                    state.metadataBatch.Join();
+                    state.PumpMetadataBatch();
+                }
+                const bool applied = appliedBefore && !state.batchRuleEditFailed;
                 nlohmann::json reply = nlohmann::json::parse(previewJson("race", applied), nullptr, false);
                 reply["changed_outside"] = changedOutside;
                 result = reply.dump();
@@ -8158,6 +8169,110 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"duration_ms\":" + std::to_string(elapsedMs) + ",";
         result += "\"error\":\"" + jsonEscape(error) + "\"";
         result += "}";
+
+    } else if (cmd == "metadata_batch_probe") {
+        // QA-only: 真实跑一次批量改元数据，把进度序列和终态记下来。
+        // 起停走产品路径（AppState::StartMetadataBatch），不另建一套。
+#if ARIS_PREVIEW_ISOLATION
+        static std::mutex s_probeMu;
+        static std::vector<std::string> s_probeTrace;
+        static std::string s_probeOutcome = "none";
+        static int s_probePolls = 0;
+        static double s_probeStartedAt = 0.0;
+        static double s_probeFinishedAt = 0.0;
+        const std::string action = getStr(raw, "action");
+        if (action == "start") {
+            {
+                std::lock_guard<std::mutex> lock(s_probeMu);
+                s_probeTrace.clear();
+                s_probeOutcome = "running";
+                s_probePolls = 0;
+                s_probeStartedAt = ImGui::GetTime();
+                s_probeFinishedAt = 0.0;
+            }
+            std::string column = getStr(raw, "column");
+            if (column.empty()) column = "user_comments";
+            const std::string marker = getStr(raw, "value");
+            int limit = getInt(raw, "count", 2000);
+            if (limit < 1) limit = 1;
+            std::vector<int64_t> ids;
+            ids.reserve((size_t)std::min(limit, (int)state.searchResults.size()));
+            for (const auto& rec : state.searchResults) {
+                if ((int)ids.size() >= limit) break;
+                ids.push_back(rec.id);
+            }
+            // 页面只有一页时，用同一套查库 API 把整库 id 补齐，才能验证长任务的进度与取消。
+            if ((int)ids.size() < limit && state.database.isOpen()) {
+                SearchFilter probeFilter;
+                while ((int)ids.size() < limit) {
+                    const auto page = state.database.searchFiles(
+                        probeFilter, std::min(500, limit - (int)ids.size()), (int)ids.size());
+                    if (page.empty()) break;
+                    for (const auto& rec : page) ids.push_back(rec.id);
+                }
+            }
+            MetadataEditPatch patch;
+            patch.set(column, marker.empty() ? std::string("metadata batch probe") : marker);
+            auto* appState = &state;
+            const bool started = !ids.empty() && appState->StartMetadataBatch(
+                [appState, idsToApply = ids, appliedPatch = patch]
+                (AppState::MetadataBatchSink& sink, std::atomic<bool>* cancelFlag) {
+                    return appState->database.applyMetadataPatchBatch(
+                        idsToApply, appliedPatch,
+                        [&sink](const MetadataPatchProgress& progress) {
+                            std::lock_guard<std::mutex> lock(s_probeMu);
+                            if (s_probeTrace.size() < 4096) {
+                                s_probeTrace.push_back(std::to_string(progress.done) + "/" +
+                                    std::to_string(progress.total) +
+                                    (progress.verifying ? "/verify" : "/write"));
+                            }
+                            sink(progress.done, progress.total, progress.verifying);
+                        },
+                        cancelFlag);
+                },
+                [](const BatchMetadataApplyResult& res, bool crashed) {
+                    std::lock_guard<std::mutex> lock(s_probeMu);
+                    s_probeFinishedAt = ImGui::GetTime();
+                    s_probeOutcome = crashed ? "crashed" :
+                        res.cancelled ? "cancelled" :
+                        res.failed != 0 ? "failed" : "succeeded";
+                    s_probeTrace.push_back(std::string("final:") + s_probeOutcome +
+                        ":total=" + std::to_string(res.total) +
+                        ":success=" + std::to_string(res.success) +
+                        ":failed=" + std::to_string(res.failed));
+                });
+            result = std::string("{\"ok\":") + (started ? "true" : "false") +
+                ",\"cmd\":\"metadata_batch_probe\",\"action\":\"start\",\"items\":" +
+                std::to_string(ids.size()) + "}";
+        } else if (action == "cancel") {
+            state.RequestMetadataBatchCancel();
+            result = "{\"ok\":true,\"cmd\":\"metadata_batch_probe\",\"action\":\"cancel\"}";
+        } else {
+            ++s_probePolls;
+            const auto live = state.metadataBatch.Snapshot();
+            std::string trace;
+            {
+                std::lock_guard<std::mutex> lock(s_probeMu);
+                for (size_t i = 0; i < s_probeTrace.size(); ++i) {
+                    if (i) trace += ",";
+                    trace += "\"" + jsonEscape(s_probeTrace[i]) + "\"";
+                }
+                result = std::string("{\"ok\":true,\"cmd\":\"metadata_batch_probe\",") +
+                    "\"active\":" + (live.active ? "true" : "false") +
+                    ",\"verifying\":" + (live.verifying ? "true" : "false") +
+                    ",\"cancel_requested\":" + (live.cancelRequested ? "true" : "false") +
+                    ",\"done\":" + std::to_string(live.done) +
+                    ",\"total\":" + std::to_string(live.total) +
+                    ",\"outcome\":\"" + s_probeOutcome + "\"" +
+                    ",\"polls_during_batch\":" + std::to_string(s_probePolls) +
+                    ",\"started_at\":" + std::to_string(s_probeStartedAt) +
+                    ",\"finished_at\":" + std::to_string(s_probeFinishedAt) +
+                    ",\"trace\":[" + trace + "]}";
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
 
     } else if (cmd == "wwise_import_selected") {
         std::vector<int> rows;
@@ -15939,6 +16054,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     logShutdownStage("BackfillQueueClosingEnd");
     logShutdownStage("DatabaseCloseBegin");
     state.folderRemoval.Wait();
+    // 批量改元数据的后台线程同样拿着这个连接：先叫停再等它退出，然后才关库。
+    state.metadataBatch.RequestCancel();
+    state.metadataBatch.Join();
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");
     aura::cover_cache::FlushPersistence();

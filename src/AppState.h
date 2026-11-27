@@ -16,6 +16,7 @@
 
 #include <string>
 #include <cstdio>  // H2b: getScanFile snprintf
+#include <functional>
 #include <vector>
 #include <set>
 #include <map>
@@ -1622,6 +1623,20 @@ struct AppState {
     FileBrowser fileBrowser;
     Database database;
     HarkenSearch::FolderRemovalTask<FolderSubtreeRemovalResult> folderRemoval;
+    // 批量改元数据的后台会话：一次只跑一批，完成后由界面线程取走结果回填。
+    HarkenSearch::BatchBackgroundTask<BatchMetadataApplyResult> metadataBatch;
+    std::function<void(const BatchMetadataApplyResult&, bool)> metadataBatchDone;
+    std::string metadataBatchMessage;
+    bool metadataBatchMessageFailed = false;
+    using MetadataBatchSink =
+        HarkenSearch::BatchBackgroundTask<BatchMetadataApplyResult>::ProgressSink;
+    using MetadataBatchWork =
+        std::function<BatchMetadataApplyResult(MetadataBatchSink&, std::atomic<bool>*)>;
+    // 把一批元数据写入挪到后台；已有一批在跑时不排队也不合并，直接返回 false。
+    bool StartMetadataBatch(MetadataBatchWork work, std::function<void(const BatchMetadataApplyResult&, bool)> done);
+    // 每帧开头调用：完成后在界面线程取一次结果并交给提交点自己的收尾。
+    void PumpMetadataBatch();
+    void RequestMetadataBatchCancel();
     HarkenSearch::LibraryTaskNotice folderRemovalNotice;
     HarkenSearch::LibraryTaskNotice scanTaskNotice;
     HarkenSearch::LibraryTaskNotice manualSimilarityNotice;
@@ -2783,6 +2798,16 @@ struct AppState {
     bool wwiseTaskWasActive = false;
     double wwiseTaskDoneAt = 0.0;
     bool wwiseTaskDismissed = false;
+    bool metadataTaskWasActive = false;
+    double metadataTaskDoneAt = 0.0;
+    bool metadataTaskDismissed = false;
+    // 批量编辑弹窗的会话号：提交保存时记下来，完成时只关“同一次弹窗”，不关后来新开的草稿。
+    int metadataEditDialogGeneration = 0;
+    // 批量编辑弹窗：写入完成后由它下一帧自己关掉。
+    bool metadataEditDialogCloseRequested = false;
+    HarkenSearch::LibraryTaskPhase metadataTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
+    // 完成时的读法：写入成功／取消／失败各记一次，供浮层说明这次到底改没改库。
+    int metadataTaskAppliedCount = 0;
     int waveformMenuVisibleFrame = -1;
 
     bool coverRebuildActive = false;

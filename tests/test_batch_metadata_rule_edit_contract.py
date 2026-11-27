@@ -97,21 +97,25 @@ class EditorContract(unittest.TestCase):
         self.assertIn("if (!row.error.empty() || row.blockedEmpty || !row.changed) continue;", body)
         self.assertIn("patch.set(column, row.newValue)", body)
         self.assertIn("expected[row.id] = row.oldValue", body)
-        self.assertIn("applyMetadataPatchManyGuarded(items, column, expected)", body)
+        # 写入走同一套后台批量会话，守护参数原样传下去。
+        self.assertIn("applyMetadataPatchManyGuarded(", body)
+        self.assertIn("items, column, expected,", body)
+        self.assertIn("cancelFlag", body)
 
     def test_preview_is_dropped_when_conditions_change(self) -> None:
         self.assertIn("BuildRuleEditSignature(column, records, state.batchRuleEditRules)", self.main)
-        self.assertIn("state.batchRuleEditStale = true", self.main)
+        self.assertIn("batchRuleEditStale = true", self.main)
 
     def test_metadata_apply_registers_one_undo_after_the_transaction(self) -> None:
         start = self.main.index("bool ApplyBatchRuleEdit(AppState& state)")
         end = self.main.index("struct BatchEditPaneLayout", start)
         body = self.main[start:end]
-        self.assertIn("std::make_unique<MetadataPatchOp>()", body)
+        self.assertIn("std::make_shared<MetadataPatchOp>()", body)
         self.assertIn("row.id, {{column, row.oldValue}}, {{column, row.newValue}}", body)
-        success = body.index("if (result.failed == 0 && result.success > 0)")
-        self.assertGreater(body.index("state.undoStack.push(std::move(undoOp));"), success)
-        self.assertEqual(body.count("undoStack.push"), 1)
+        # 后台写完再回填：撤销只在一整批成功时入栈一次。
+        success = body.index("if (res.failed == 0 && res.success > 0)")
+        self.assertGreater(body.index("undoStack.push("), success)
+        self.assertEqual(body.count("undoStack.push("), 1)
 
     def test_idle_metadata_preview_reuses_the_existing_result_revision(self) -> None:
         start = self.main.index("static bool ValidateBatchMetadataPreview(")
