@@ -772,50 +772,6 @@ bool MetadataReader::parseIXML(const std::string& xmlData, AudioMetadata& metada
     return metadata.hasData();
 }
 
-bool MetadataReader::readIXMLChunk(const std::string& filePath, std::string& xmlData,
-                                   std::string& errorMessage, bool* chunkMissing) {
-    xmlData.clear();
-    errorMessage.clear();
-    if (chunkMissing) *chunkMissing = false;
-    std::ifstream file(fs::u8path(filePath), std::ios::binary);
-    if (!file) { errorMessage = "Cannot open WAV file"; return false; }
-    char header[12] = {};
-    file.read(header, 12);
-    if (file.gcount() != 12 || std::memcmp(header, "RIFF", 4) != 0 ||
-        std::memcmp(header + 8, "WAVE", 4) != 0) {
-        errorMessage = "Not a valid WAV file";
-        return false;
-    }
-    int iterations = 0;
-    while (file && iterations++ < kMaxChunkIter) {
-        char chunkHeader[8] = {};
-        file.read(chunkHeader, 8);
-        if (file.gcount() != 8) break;
-        const uint32_t chunkSize = readLE32(reinterpret_cast<const uint8_t*>(chunkHeader) + 4);
-        if (std::memcmp(chunkHeader, "iXML", 4) == 0 || std::memcmp(chunkHeader, "IXML", 4) == 0) {
-            if (chunkSize > kMaxTagDataBytes) {
-                errorMessage = "iXML chunk too large";
-                return false;
-            }
-            xmlData.assign(chunkSize, '\0');
-            if (chunkSize > 0) file.read(xmlData.data(), static_cast<std::streamsize>(chunkSize));
-            if (static_cast<uint32_t>(file.gcount()) != chunkSize) {
-                xmlData.clear();
-                errorMessage = "Truncated iXML chunk";
-                return false;
-            }
-            return true;
-        }
-        file.seekg(static_cast<std::streamoff>(chunkSize + (chunkSize & 1)), std::ios::cur);
-    }
-    errorMessage = "No iXML chunk";
-    if (chunkMissing) *chunkMissing = true;
-    return false;
-}
-
-bool MetadataReader::readVorbisComment(const std::string& filePath, AudioMetadata& metadata) {
-    // Basic Vorbis comment reading for OGG/FLAC
-    // This is a simplified implementation
 namespace {
 
 using VorbisCommentEntries = std::vector<std::pair<std::string, std::string>>;
@@ -1100,6 +1056,47 @@ bool ReadOggVorbisComment(const std::string& filePath, AudioMetadata& metadata, 
 }
 
 }  // namespace
+
+bool MetadataReader::readIXMLChunk(const std::string& filePath, std::string& xmlData,
+                                   std::string& errorMessage, bool* chunkMissing) {
+    xmlData.clear();
+    errorMessage.clear();
+    if (chunkMissing) *chunkMissing = false;
+    std::ifstream file(fs::u8path(filePath), std::ios::binary);
+    if (!file) { errorMessage = "Cannot open WAV file"; return false; }
+    char header[12] = {};
+    file.read(header, 12);
+    if (file.gcount() != 12 || std::memcmp(header, "RIFF", 4) != 0 ||
+        std::memcmp(header + 8, "WAVE", 4) != 0) {
+        errorMessage = "Not a valid WAV file";
+        return false;
+    }
+    int iterations = 0;
+    while (file && iterations++ < kMaxChunkIter) {
+        char chunkHeader[8] = {};
+        file.read(chunkHeader, 8);
+        if (file.gcount() != 8) break;
+        const uint32_t chunkSize = readLE32(reinterpret_cast<const uint8_t*>(chunkHeader) + 4);
+        if (std::memcmp(chunkHeader, "iXML", 4) == 0 || std::memcmp(chunkHeader, "IXML", 4) == 0) {
+            if (chunkSize > kMaxTagDataBytes) {
+                errorMessage = "iXML chunk too large";
+                return false;
+            }
+            xmlData.assign(chunkSize, '\0');
+            if (chunkSize > 0) file.read(xmlData.data(), static_cast<std::streamsize>(chunkSize));
+            if (static_cast<uint32_t>(file.gcount()) != chunkSize) {
+                xmlData.clear();
+                errorMessage = "Truncated iXML chunk";
+                return false;
+            }
+            return true;
+        }
+        file.seekg(static_cast<std::streamoff>(chunkSize + (chunkSize & 1)), std::ios::cur);
+    }
+    errorMessage = "No iXML chunk";
+    if (chunkMissing) *chunkMissing = true;
+    return false;
+}
 
 bool MetadataReader::readVorbisComment(const std::string& filePath, AudioMetadata& metadata,
                                        bool* customTagsRead) {
