@@ -410,8 +410,7 @@ static void DrawSimilarSoundsResultsTable(
                 std::clamp(row.similarity, 0.0f, 1.0f) * 100.0f + 0.5f);
             ImGui::Text("%d", score);
             if (!sharedPanelStyle) ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered() && row.breakdown.valid) {
-                ImGui::BeginTooltip();
+            if (ImGui::IsItemHovered() && row.breakdown.valid && HarkenSearch::BeginTooltip()) {
                 ImGui::TextUnformatted(L(Similar_ScoreTooltip));
                 const char* dimensions[] = {L(Similar_DimCategory),L(Similar_DimTimbre),L(Similar_DimEnvelope),L(Similar_DimRhythm),L(Similar_DimPitch),L(Similar_DimDuration)};
                 for (size_t dimension = 0; dimension < 6; ++dimension) {

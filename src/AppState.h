@@ -43,6 +43,7 @@ typedef unsigned int GLuint;
 #include <cctype>
 
 #include "imgui.h"
+#include "TooltipHoverDelay.h"
 #include "Localization.h"
 #include "AudioEngine.h"
 #include "BackfillQueue.h"
@@ -197,25 +198,7 @@ inline bool HoveredForLabel() {
     return g_showGuidedTooltips && ImGui::IsItemHovered();
 }
 
-// Gated wrappers for ImGui tooltip entry points.
-// Callers use these wrappers so the setting is applied consistently.
-
-namespace HarkenSearch {
-    inline void SetTooltip(const char* fmt, ...) IM_FMTARGS(1);
-    inline void SetTooltip(const char* fmt, ...) {
-        if (!g_showGuidedTooltips) return;
-        va_list args;
-        va_start(args, fmt);
-        ImGui::SetTooltipV(fmt, args);
-        va_end(args);
-    }
-    inline bool BeginTooltip() {
-        if (!g_showGuidedTooltips) return false;
-        ImGui::BeginTooltip();
-        return true;
-    }
-    inline void EndTooltip() { ImGui::EndTooltip(); }
-}
+// Gated tooltip wrappers live in TooltipHoverDelay.h so every TU can use them.
 #include "FileBrowser.h"
 #include "Database.h"
 #include "PlaylistCollectionIndex.h"

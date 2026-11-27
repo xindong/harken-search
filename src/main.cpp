@@ -9894,7 +9894,8 @@ static bool BeginSearchExplainabilityTooltip() {
     const int frame = ImGui::GetFrameCount();
     if (s_lastSearchExplainabilityTooltipFrame == frame)
         return false;
-    ImGui::BeginTooltip();
+    if (!HarkenSearch::BeginTooltipUngated())
+        return false;
     s_lastSearchExplainabilityTooltipFrame = frame;
     return true;
 }
@@ -14279,7 +14280,7 @@ static bool DrawBatchEditQueue(std::vector<Rule>& rules, int& selection, DrawLab
         ImGui::PushID(index);
         const auto description = drawLabel(rules[index], changed);
         if (ImGui::Selectable(description.c_str(), index == selection)) selection = index;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", description.c_str());
+        if (ImGui::IsItemHovered()) HarkenSearch::SetTooltip("%s", description.c_str());
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -14348,7 +14349,7 @@ static BatchEditDisplayRow PresentBatchEditRow(const aura::metadata::RuleEditRow
 
 static void DrawBatchEditPreviewCell(const char* text, const char* fileName = nullptr) {
     ImGui::TextUnformatted(text);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && ImGui::BeginTooltip()) {
+    if (ImGui::IsItemHovered() && HarkenSearch::BeginTooltip()) {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
         if (fileName) {
             ImGui::TextUnformatted(fileName);
@@ -21784,7 +21785,7 @@ void RenderFileInfoPanelTabContents(
 
                                 // Hover preview and cover metadata.
                                 if (HoveredForHelp()) {
-                                    if (HarkenSearch::BeginTooltip()) {
+                                    if (HarkenSearch::BeginTooltipImmediate()) {
                                     if (hasTex && tex.textureId != 0) {
                                         float previewSize = 200.0f;
                                         float srcW = std::max(1.0f, (float)tex.width);
@@ -27145,7 +27146,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     if (BeginTransientScrollbarPopup("MagicEQSteepnessPopup")) {
         ImGui::TextUnformatted(L(MagicEQ_NominalEdgeSlope));
         if (settings.mode == MagicEQMode::Notch && ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", L(MagicEQ_NotchNominalExplanation));
+            HarkenSearch::SetTooltipUngated("%s", L(MagicEQ_NotchNominalExplanation));
         const bool soft = settings.steepness == CenterSenseDsp::MagicEQSteepness::Soft;
         const bool steep = settings.steepness == CenterSenseDsp::MagicEQSteepness::Steep;
         const bool verySteep = settings.steepness == CenterSenseDsp::MagicEQSteepness::VerySteep;
@@ -27174,8 +27175,8 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
             }
 #endif
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                if (sampleRate <= 0) ImGui::SetTooltip("%s", L(MagicEQ_UnloadedGradeHint));
-                else if (!availability.available) ImGui::SetTooltip("%s", availabilityReason(availability.reason));
+                if (sampleRate <= 0) HarkenSearch::SetTooltipUngated("%s", L(MagicEQ_UnloadedGradeHint));
+                else if (!availability.available) HarkenSearch::SetTooltipUngated("%s", availabilityReason(availability.reason));
                 else {
                     const SlopeDisplay detail = slopeDisplay(grade, true);
                     float edgeLow = 0.0f, edgeHigh = 0.0f;
@@ -27186,11 +27187,11 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                                   settings.centerFreq, edgeLow, edgeHigh,
                                   settings.centerFreq / std::max(1.0f, edgeHigh - edgeLow));
                     if (settings.mode == MagicEQMode::Notch)
-                        ImGui::SetTooltip("%s: %s\n%s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
+                        HarkenSearch::SetTooltipUngated("%s: %s\n%s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
                                           display.menu, bandDetail, detail.detail,
                                           L(MagicEQ_NotchNominalExplanation));
                     else
-                        ImGui::SetTooltip("%s: %s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
+                        HarkenSearch::SetTooltipUngated("%s: %s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
                                           display.menu, bandDetail, detail.detail);
                 }
             }
@@ -27639,19 +27640,19 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                   ImVec2(pos.x + width - 1.5f, pos.y + 23.0f), status, 1.5f);
 
     if (hovered && settings.invalidInput) {
-        ImGui::SetTooltip("%s", L(MagicEQ_InvalidParameters));
+        HarkenSearch::SetTooltipUngated("%s", L(MagicEQ_InvalidParameters));
     } else if (hovered && rejectionReason != CenterSenseDsp::MagicEQTailReason::None) {
-        ImGui::SetTooltip("%s", availabilityReason(rejectionReason));
+        HarkenSearch::SetTooltipUngated("%s", availabilityReason(rejectionReason));
     } else if (hovered && !settings.enabled &&
                !availabilityFor(settings.steepness).available) {
-        ImGui::SetTooltip("%s", availabilityReason(availabilityFor(settings.steepness).reason));
+        HarkenSearch::SetTooltipUngated("%s", availabilityReason(availabilityFor(settings.steepness).reason));
     } else if (steepnessHit) {
         const SlopeDisplay detail = slopeDisplay(settings.steepness, true);
-        ImGui::SetTooltip("%s", detail.detail);
+        HarkenSearch::SetTooltipUngated("%s", detail.detail);
     } else if (modeHit) {
-        ImGui::SetTooltip("%s", GetMagicEQModeLabel(settings.enabled, static_cast<int>(settings.mode)));
+        HarkenSearch::SetTooltipUngated("%s", GetMagicEQModeLabel(settings.enabled, static_cast<int>(settings.mode)));
     } else if (hovered) {
-        ImGui::SetTooltip("%s", GetMagicEQFrequencyLabel(lowHz, highHz));
+        HarkenSearch::SetTooltipUngated("%s", GetMagicEQFrequencyLabel(lowHz, highHz));
     }
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
     g_magicEqQaLastRejectReason = static_cast<int>(rejectionReason);
@@ -31929,7 +31930,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                     else if (row.kind == LibraryTaskKind::Wwise) state.wwiseTaskDismissed = true;
                     else state.folderRemovalNotice.Dismiss();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
+                if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", L(Task_Dismiss));
                 const ImVec2 closeMin = ImGui::GetItemRectMin();
                 const ImVec2 closeMax = ImGui::GetItemRectMax();
                 const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -31941,7 +31942,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
 
             ImGui::SetCursorScreenPos(origin);
             ImGui::InvisibleButton("##row", ImVec2(failed ? rowWidth - 18.0f : rowWidth, 20.0f));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
+            if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s  ·  %s", row.title, row.detail.c_str());
             if (ImGui::IsItemClicked() && !failed) {
                 if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
                 else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
@@ -37949,7 +37950,7 @@ void RenderUI(AppState& state) {
                         if (itemDisabled) ImGui::EndDisabled();
 
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                            ImGui::SetTooltip("%s", installer.displayName.c_str());
+                            HarkenSearch::SetTooltipUngated("%s", installer.displayName.c_str());
                         }
 
                         if (clicked && !alreadyInstalling) {
@@ -40265,7 +40266,7 @@ void RenderUI(AppState& state) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         if (now - g_dockTitleHoverSince >= .55) {
             const char* hint = !floating ? L(Dock_UxHoldHint) : zone == 1 ? L(Dock_UxLabelHint) : L(Dock_UxMoveHint);
-            ImGui::SetTooltip("%s", hint);
+            HarkenSearch::SetTooltipUngated("%s", hint);
         }
     };
 
@@ -42029,7 +42030,7 @@ void RenderUI(AppState& state) {
                             ImGui::GetColorU32(mutedCol), metaStr.c_str());
                     }
                     if (rowHovered && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                        if (HarkenSearch::BeginTooltip()) {
+                        if (HarkenSearch::BeginTooltipImmediate()) {
                         PopupSectionLabel(L(Preview));
                         const int preview = std::min((int)p.tabs.size(), 5);
                         for (int ti = 0; ti < preview; ++ti) {
@@ -48158,7 +48159,7 @@ void RenderUI(AppState& state) {
                 }
                 ThemeInspector::RegisterLastItem(
                     "transport.pan", "Pan", "src/main.cpp:51212");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Player_TooltipPan));
+                if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", L(Player_TooltipPan));
                 curX += panW + workspacePx(10.0f);
             }
             ImGui::EndDisabled();
@@ -51893,7 +51894,7 @@ void RenderUI(AppState& state) {
     auto drawDockPreview = [&](bool titleBarDragging) {
         if (!g_dockDrag.Active()) return;
         if (titleBarDragging && g_dockDropPlan.tooSmall) {
-            ImGui::SetTooltip("%s", L(Dock_UxTooSmall));
+            HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan, "%s", L(Dock_UxTooSmall));
             return;
         }
         const aura::ui::dock::DockHit& hit = g_dockDrag.Preview();
@@ -52010,7 +52011,7 @@ void RenderUI(AppState& state) {
                 if (hovered) {
                     tabTargetId = target;
                     g_dockDropPlan.tooSmall = true;
-                    if (titleBarDrag) ImGui::SetTooltip("%s", L(Dock_UxTooSmall));
+                    if (titleBarDrag) HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan, "%s", L(Dock_UxTooSmall));
                 }
                 return;
             }
