@@ -19439,7 +19439,8 @@ static bool SaveInfoMetadataDraft(AppState& state) {
     if(cat) basePatch.setCategory(values.category);
     auto undo=std::make_unique<MetadataPatchOp>();
     undo->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
-    if (patch.fields.size() == 1) undo->targetColumn = patch.fields.begin()->first;
+    if (basePatch.fields.size() == 1) undo->targetColumn = basePatch.fields.begin()->first;
+    else if (basePatch.fields.empty() && harkenChanged) undo->targetColumn = "harken_meta";
     std::vector<int64_t> ids;
     std::vector<std::pair<int64_t, MetadataEditPatch>> perFile;
     for(const auto& original:state.infoEditRecords) {
