@@ -85,6 +85,35 @@ enum : DWORD {
 // there. Only the flags that main.cpp ORs into it are needed here, and they are
 // guarded so a future WindowsMain.h addition cannot collide.
 
+// Window functions the shared UI calls by their Win32 names.
+//
+// These are declared here and implemented against Cocoa in
+// shim_window_macos.mm; nothing in this header is a silent no-op. Two of them
+// have no macOS equivalent and say so in their implementation instead of
+// pretending to succeed: mouse capture is a Win32 concept, and hit-testing a
+// foreign window is only used to find a DAW drop target, which macOS does not
+// implement yet.
+struct WINDOWPLACEMENT;
+struct HarkenPlatformWindow;
+
+HarkenPlatformWindow* GetForegroundWindow();
+int GetWindowPlacement(HarkenPlatformWindow* window, WINDOWPLACEMENT* placement);
+int SetWindowPlacement(HarkenPlatformWindow* window, const WINDOWPLACEMENT* placement);
+int IsZoomed(HarkenPlatformWindow* window);
+HarkenPlatformWindow* WindowFromPoint(POINT point);
+int ClientToScreen(HarkenPlatformWindow* window, POINT* point);
+void ReleaseCapture();
+void PostQuitMessage(int exitCode);
+
+// Reads file attributes the way the shared code expects them.
+int GetFileAttributesExW(const wchar_t* path, int infoLevel, WIN32_FILE_ATTRIBUTE_DATA* info);
+
+namespace Platform::Shim {
+// The macOS front end registers its main window once the Cocoa window exists,
+// so the functions above have something to act on.
+void RegisterMainWindow(void* nsWindow);
+}  // namespace Platform::Shim
+
 // Show-window commands used by the tray/drag-hide path.
 enum : int {
     SW_HIDE = 0,

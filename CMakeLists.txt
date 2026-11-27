@@ -871,6 +871,7 @@ elseif(APPLE)
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
         src/platform/durable_file_ops_macos.cpp
+        src/platform/shim_window_macos.mm
         src/platform/app_entry_macos.mm
         src/platform/main_stubs_macos.cpp
     )
