@@ -5,6 +5,7 @@
 #include "platform/system.h"
 #include "platform/text_encoding.h"
 
+#include <filesystem>
 #include <sstream>
 #include <chrono>
 #include <ctime>
@@ -57,11 +58,11 @@ std::string consentRecordPath(const std::string& settingsPath) {
 bool LoadLegalDocuments(const std::string& legalDocumentRootUtf8,
                         LegalDocuments& documents) {
     documents = {};
-    const std::string separator = legalDocumentRootUtf8.empty() ? "" : "\\";
+    const auto root = std::filesystem::u8path(legalDocumentRootUtf8);
     if (!Platform::FileSystem::ReadFileText(
-            legalDocumentRootUtf8 + separator + "EULA.md", documents.eulaText) ||
+            (root / "EULA.md").u8string(), documents.eulaText) ||
         !Platform::FileSystem::ReadFileText(
-            legalDocumentRootUtf8 + separator + "PRIVACY_POLICY.md", documents.privacyText)) {
+            (root / "PRIVACY_POLICY.md").u8string(), documents.privacyText)) {
         documents = {};
         return false;
     }
