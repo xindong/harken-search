@@ -67,6 +67,10 @@ find_package(Threads REQUIRED)
 if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python3 is required to generate localization tables from locale/harken.ui.strings.json")
 endif()
+# Python3 was found without a version constraint, so the interpreter that ends
+# up running the localization generator is not obvious. Print it, otherwise a
+# platform default (macOS ships 3.9) silently produces the next failure.
+message(STATUS "Localization generator interpreter: ${Python3_EXECUTABLE} (${Python3_VERSION})")
 set(ARIS_LOCALE_LEDGER "${CMAKE_CURRENT_SOURCE_DIR}/locale/harken.ui.strings.json")
 set(ARIS_LOCALE_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_localization.py")
 set(ARIS_LOCALE_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
