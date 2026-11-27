@@ -31,6 +31,9 @@
 #include "imgui_impl_win32.h"
 #elif defined(__APPLE__)
 #include "imgui_impl_osx.h"
+// The shared UI keeps MSVC CRT spellings and Win32 type names; the macOS shim
+// supplies them without a Windows SDK. Windows uses the real headers.
+#include "platform/harken_macos_win32_shim.h"
 #endif
 #include "imgui_impl_opengl3.h"
 

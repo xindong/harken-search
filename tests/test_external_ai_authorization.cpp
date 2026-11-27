@@ -1,5 +1,6 @@
 #include "ExternalAiAuthorization.h"
 #include "ExternalAiAuthorizationStore.h"
+#include "platform/filesystem.h"
 
 #include <chrono>
 #include <filesystem>
@@ -10,6 +11,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <unistd.h>
 #endif
 
 namespace {
@@ -72,6 +75,73 @@ std::string Document(const std::string& root, const std::string& capabilities, b
         ",\"sampleLibrary\":" + (sample ? "true" : "false") + ",\"roots\":" + roots +
         ",\"capabilities\":" + capabilities + "}";
 }
+
+#ifdef __APPLE__
+void CheckAuthorizationPaths(const fs::path& directory, const fs::path& regular,
+    const HarkenSearch::ExternalAiSettings& stored)
+{
+    namespace fileSystem = Platform::FileSystem;
+    using fileSystem::FilePathKind;
+    using fileSystem::PathLinkMode;
+    const auto missing = directory / "missing.json";
+    const auto live = directory / "live.json";
+    const auto dangling = directory / "dangling.json";
+    const auto loop = directory / "loop.json";
+    const auto malformed = directory / "malformed.json";
+    const auto unreadable = directory / "unreadable.json";
+    const auto badParent = regular / "child.json";
+    fs::create_symlink(regular.filename(), live);
+    fs::create_symlink(missing.filename(), dangling);
+    fs::create_symlink(loop.filename(), loop);
+    std::ofstream(malformed) << "{";
+    fs::copy_file(regular, unreadable);
+
+    const auto hasKinds = [](const fs::path& source, FilePathKind entry, FilePathKind target) {
+        return fileSystem::QueryFilePathKind(source.u8string(), PathLinkMode::NoFollow) == entry &&
+            fileSystem::QueryFilePathKind(source.u8string(), PathLinkMode::Follow) == target;
+    };
+    Check(hasKinds(missing, FilePathKind::Missing, FilePathKind::Missing), "path: absent on both axes");
+    Check(hasKinds(live, FilePathKind::Symlink, FilePathKind::RegularFile), "path: live link and regular target");
+    Check(hasKinds(dangling, FilePathKind::Symlink, FilePathKind::Missing), "path: dangling link and missing target");
+    Check(hasKinds(loop, FilePathKind::Symlink, FilePathKind::Error), "path: link loop and failed target lookup");
+    Check(hasKinds(directory, FilePathKind::Other, FilePathKind::Other), "path: existing directory");
+    Check(hasKinds(badParent, FilePathKind::Error, FilePathKind::Error), "path: invalid parent is not absence");
+
+    const auto load = [&](const fs::path& source, bool ok, bool entry, bool enabled, const char* expectedError) {
+        auto settings = stored;
+        std::string error;
+        bool existed = !entry;
+        return HarkenSearch::LoadExternalAiSettings(source.u8string(), stored.libraryId, settings, error, &existed) == ok &&
+            existed == entry && settings.enabled == enabled && (expectedError ? error == expectedError : !error.empty());
+    };
+    constexpr auto notReadable = "authorization document is not a readable file";
+    Check(load(missing, true, false, false, ""), "store: only absent entries get optional defaults");
+    Check(load(live, true, true, true, ""), "store: reads a valid linked permission document");
+    Check(load(dangling, false, true, false, notReadable), "store: rejects a dangling link without masking its entry");
+    Check(load(loop, false, true, false, notReadable), "store: rejects a link loop without masking its entry");
+    Check(load(directory, false, true, false, notReadable), "store: rejects a directory");
+    Check(load(badParent, false, false, false, notReadable), "store: rejects a lookup error despite existed=false");
+    Check(load(malformed, false, true, false, nullptr), "store: readable data can still fail parsing");
+
+    if (geteuid() != 0) {
+        fs::permissions(unreadable, fs::perms::none, fs::perm_options::replace);
+        Check(hasKinds(unreadable, FilePathKind::RegularFile, FilePathKind::RegularFile) &&
+                load(unreadable, false, true, false, "authorization document could not be read"),
+            "store: a regular file can still be unreadable");
+        fs::permissions(unreadable, fs::perms::owner_read, fs::perm_options::replace);
+    }
+
+    const auto publishTarget = directory / "publish-target";
+    const auto sentinel = publishTarget / "keep";
+    fs::create_directory(publishTarget);
+    std::ofstream(sentinel) << "keep";
+    std::string error;
+    Check(!HarkenSearch::SaveExternalAiSettings(publishTarget.u8string(), stored, error) &&
+            error == "authorization document could not be replaced atomically" && ReadText(sentinel) == "keep" &&
+            !fs::exists(directory / "publish-target.pending"),
+        "store: failed publish preserves the destination and removes the staged file");
+}
+#endif
 
 }  // namespace
 
@@ -364,6 +434,9 @@ int main(int argc, char** argv)
     }
 #endif
 
+#ifdef __APPLE__
+    CheckAuthorizationPaths(failureDirectory, fixtureDocument, stored);
+#endif
     const auto pendingDocument = failureDirectory / "authorization.json.pending";
     fs::create_directory(pendingDocument);
     draft = stored;

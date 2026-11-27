@@ -789,6 +789,14 @@ static bool TryExtractTemporaryFolderIdentityPath(const std::string& coverKey,
 static bool TryExtractCanonicalFolderCoverSourcePath(const std::string& coverKey,
                                                      std::string* outCanonicalSourcePath);
 
+static std::string TemporaryCoverFolderSql(const std::string& column) {
+#ifdef _WIN32
+    return "lower(replace(" + column + ", '/', '\\'))";
+#else
+    return "replace(" + column + ", '\\', '/')";
+#endif
+}
+
 struct ExactCoverWallSelectionMembers {
     std::vector<std::string> keys;
     std::vector<std::string> temporaryFolders;
@@ -1996,13 +2004,20 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             const bool wallOrderReady =
                 ReadAppMetaInt(m_db, kCoverWallOrderIndexVersionKey) == kCoverWallOrderIndexVersion &&
                 ReadAppMetaString(m_db, kCoverWallOrderIndexStateKey) == "ready";
-            char* disableWallOrderBuild = nullptr;
-            size_t disableWallOrderBuildLen = 0;
-            _dupenv_s(&disableWallOrderBuild, &disableWallOrderBuildLen,
-                      "HARKEN_DISABLE_COVER_WALL_ORDER_BACKGROUND_BUILD");
-            const bool wallOrderBuildDisabled =
-                disableWallOrderBuild && disableWallOrderBuild[0] == '1';
-            std::free(disableWallOrderBuild);
+            const bool wallOrderBuildDisabled = [] {
+                const char* name = "HARKEN_DISABLE_COVER_WALL_ORDER_BACKGROUND_BUILD";
+#ifdef _WIN32
+                char* value = nullptr;
+                size_t length = 0;
+                _dupenv_s(&value, &length, name);
+                const bool disabled = value && value[0] == '1';
+                std::free(value);
+                return disabled;
+#else
+                const char* value = std::getenv(name);
+                return value && value[0] == '1';
+#endif
+            }();
             if (!wallOrderReady && !wallOrderBuildDisabled) {
                 DIAG_ACTION("Database", "Cover wall file-order index building in background.");
                 StartCoverWallOrderIndexBuild(dbPath);
@@ -6859,8 +6874,8 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                     "WHERE has_cover = 1 "
                     "AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
                     "AND (folder_cover_key IS NULL OR folder_cover_key = '') "
-                    "AND lower(replace(folder_path, '/', '\\')) "
-                    "IN (SELECT value FROM json_each(?))";
+                    "AND " + TemporaryCoverFolderSql("folder_path") +
+                    " IN (SELECT value FROM json_each(?))";
                 bq.coverKeyBindValues.push_back(CoverWallSelectionJsonArray(exactMembers.temporaryFolders));
             }
             bq.coverKeyClauseKind = 3;
@@ -6911,7 +6926,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                     "AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
                     "AND (folder_cover_key IS NULL OR folder_cover_key = '') "
                     "AND folder_path IS NOT NULL AND folder_path <> '' "
-                    "AND lower(replace(folder_path, '/', '\\')) = ?";
+                    "AND " + TemporaryCoverFolderSql("folder_path") + " = ?";
                 bq.coverKeyBindValues.push_back(temporaryFolderPath);
                 bq.coverKeyClauseKind = 3;
             } else {
@@ -6928,7 +6943,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                     " AND (" + col("folder_cover_key") + " IS NULL OR " + col("folder_cover_key") + " = '')"
                     " AND " + col("folder_path") + " IS NOT NULL"
                     " AND " + col("folder_path") + " <> ''"
-                    " AND lower(replace(" + col("folder_path") + ", '/', '\\')) = ?";
+                    " AND " + TemporaryCoverFolderSql(col("folder_path")) + " = ?";
                 bq.bindValues.push_back(temporaryFolderPath);
                 bq.coverKeyClauseKind = 3;
             } else {
@@ -20649,14 +20664,14 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
             EnsureCoverTileMembershipForKeys(m_db, exactMembers.keys, &out);
         }
         if (!exactMembers.temporaryFolders.empty()) {
-            const char* sql =
+            const std::string sql =
                 "SELECT id FROM audio_files WHERE has_cover = 1 "
                 "AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
                 "AND (folder_cover_key IS NULL OR folder_cover_key = '') "
-                "AND lower(replace(folder_path, '/', '\\')) "
-                "IN (SELECT value FROM json_each(?))";
+                "AND " + TemporaryCoverFolderSql("folder_path") +
+                " IN (SELECT value FROM json_each(?))";
             sqlite3_stmt* stmt = nullptr;
-            if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
                 const std::string paths = CoverWallSelectionJsonArray(exactMembers.temporaryFolders);
                 sqlite3_bind_text(stmt, 1, paths.c_str(), (int)paths.size(), SQLITE_TRANSIENT);
                 while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(sqlite3_column_int64(stmt, 0));
@@ -20670,17 +20685,17 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
     const std::string lookupKey = CanonicalizeCoverLookupKey(tileIdentityKey);
     std::string temporaryFolderPath;
     if (TryExtractTemporaryFolderIdentityPath(lookupKey, &temporaryFolderPath)) {
-        const char* sqlTemporary =
+        const std::string sqlTemporary =
             "SELECT id FROM audio_files "
             "WHERE has_cover = 1 "
             "  AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
             "  AND (folder_cover_key IS NULL OR folder_cover_key = '') "
             "  AND folder_path IS NOT NULL "
             "  AND folder_path <> '' "
-            "  AND lower(replace(folder_path, '/', '\\')) = ? "
+            "  AND " + TemporaryCoverFolderSql("folder_path") + " = ? "
             "ORDER BY id";
         sqlite3_stmt* tempStmt = nullptr;
-        if (sqlite3_prepare_v2(m_db, sqlTemporary, -1, &tempStmt, nullptr) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(m_db, sqlTemporary.c_str(), -1, &tempStmt, nullptr) != SQLITE_OK) {
             m_lastError = sqlite3_errmsg(m_db);
             return out;
         }

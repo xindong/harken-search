@@ -36,8 +36,16 @@ class ReaperBridgeDoctorDurableFileOpsReplaceDeleteContract(unittest.TestCase):
         for token in ("DeleteFileW", "ERROR_FILE_NOT_FOUND", "ERROR_PATH_NOT_FOUND", "DeleteFailed"):
             self.assertIn(token, WIN32)
 
-    def test_macos_is_unsupported_without_side_effects(self):
-        self.assertGreaterEqual(MACOS.count("DurableFileOpStatus::Unsupported"), 3)
+    def test_macos_replaces_and_deletes_with_directory_sync(self):
+        for token in (
+            "renamex_np",
+            "RENAME_EXCL",
+            "DurableFileOpStatus::ReplaceFailed",
+            "DurableFileOpStatus::DeleteFailed",
+            "FlushDirectoryOf",
+        ):
+            self.assertIn(token, MACOS)
+        self.assertNotIn("DurableFileOpStatus::Unsupported", MACOS)
         self.assertNotIn("MoveFileExW", MACOS)
         self.assertNotIn("DeleteFileW", MACOS)
 

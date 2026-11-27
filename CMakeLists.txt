@@ -67,6 +67,10 @@ find_package(Threads REQUIRED)
 if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python3 is required to generate localization tables from locale/harken.ui.strings.json")
 endif()
+# Python3 was found without a version constraint, so the interpreter that ends
+# up running the localization generator is not obvious. Print it, otherwise a
+# platform default (macOS ships 3.9) silently produces the next failure.
+message(STATUS "Localization generator interpreter: ${Python3_EXECUTABLE} (${Python3_VERSION})")
 set(ARIS_LOCALE_LEDGER "${CMAKE_CURRENT_SOURCE_DIR}/locale/harken.ui.strings.json")
 set(ARIS_LOCALE_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_localization.py")
 set(ARIS_LOCALE_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -862,6 +866,7 @@ elseif(APPLE)
         src/platform/executable_path_macos.mm
         src/platform/pe_inspection_macos.mm
         src/platform/file_hash_macos.cpp
+        src/platform/harken_user_data_layout_macos.cpp
         src/platform/hmac_sha256_unsupported.cpp
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
@@ -1273,6 +1278,9 @@ aura_set_test_labels(DiagnosticLogBundle core)
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
 # External AI authorization document: the settings page reads and writes it.
 list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp src/ExternalAiClientLink.cpp src/ExternalAiPlaylistBridge.cpp src/ExternalAiPlaylistService.cpp src/ExternalAiBridgeServer.cpp)
+if(NOT WIN32)
+    list(APPEND APP_SOURCES src/platform/protected_config_file_posix.cpp)
+endif()
 if(AURA_BUILD_DIAGNOSTICS)
     list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
     list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)
@@ -1728,6 +1736,7 @@ if(WIN32)
         ixwebsocket
     )
 elseif(APPLE)
+    target_link_options(HarkenSearch PRIVATE "LINKER:-dead_strip")
     target_link_libraries(HarkenSearch PRIVATE
         Threads::Threads
         "-framework Cocoa"
@@ -1738,6 +1747,7 @@ elseif(APPLE)
         "-framework CoreFoundation"
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
+        ixwebsocket
         # macOS builds omit Whisper/aubio until compatible libraries are supplied.
     )
 else()

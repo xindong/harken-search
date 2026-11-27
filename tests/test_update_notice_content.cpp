@@ -28,6 +28,27 @@ int main(int argc, char** argv) {
               "module groups preserve bullet order and display contributors once per release");
     }
     check(!FindHarkenSearchReleaseNotes(notes.releases, "1.0.38"), "missing target never selects newest record");
+    {
+        const std::string bilingual = R"({"schema_version":2,"releases":[{"version":"1.0.47","release_date":"2026-11-25","headline":"版本标题","headline_en":"Release title","contributors":["Dev","Cindy"],"sections":[{"title":"外观","title_en":"Appearance","items":[{"name":"","list":["新插入","第一条","第二条"],"list_en":{"新插入":false,"第一条":"First note","第二条":"Second note"}}]},{"title":"搜索","items":[{"name":"Dev","list":[{"title":"定位","description":"原始正文","title_en":"Locate","description_en":"Translated description"}]}]}],"items":[{"category":"fix","text":"修复说明","title_en":"Fix","text_en":"Fixed behaviour"}]}]})";
+        std::vector<ReleaseNotesEntry> bilingualReleases;
+        check(ParseHarkenSearchReleaseNotes(bilingual, bilingualReleases), "additive bilingual fields parse");
+        const auto* release = FindHarkenSearchReleaseNotes(bilingualReleases, "1.0.47");
+        check(release && release->headline == u8"版本标题" && release->headlineEn == "Release title",
+              "retain the original headline and its optional English text");
+        check(release && HarkenSearchReleaseNoteText(release->headline, release->headlineEn, false) == u8"版本标题" &&
+                  HarkenSearchReleaseNoteText(release->headline, release->headlineEn, true) == "Release title" &&
+                  HarkenSearchReleaseNoteText("legacy", "", true) == "legacy",
+              "render the current locale and keep legacy history readable");
+        check(release && release->items.size() == 3 && release->items[0].title == u8"外观" &&
+                  release->items[0].titleEn == "Appearance" &&
+                  release->items[0].text == u8"• 新插入\n• 第一条\n• 第二条" &&
+                  release->items[0].textEn == u8"• 新插入\n• First note\n• Second note",
+              "keep existing grouping and bind each translation to its source text after insertion");
+        check(release && release->items.size() == 3 && release->items[1].titleEn == "Locate" &&
+                  release->items[1].textEn == "Translated description" && release->items[1].author == "Dev" &&
+                  release->items[2].titleEn == "Fix" && release->items[2].textEn == "Fixed behaviour",
+              "inline English fields keep the existing structured and flat note formats");
+    }
     SyncHarkenSearchCandidateReleaseNotes(notes, "1.0.37", document, false);
     check(SelectHarkenSearchReleaseNotes(notes, "1.0.37", true) != nullptr, "matching downloaded target can be previewed");
     SyncHarkenSearchCandidateReleaseNotes(notes, "1.0.38", document, false);
