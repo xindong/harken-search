@@ -32,21 +32,27 @@ bool ParseHarkenSearchReleaseNotes(std::string_view bytes, std::vector<ReleaseNo
             entry.version = record.version;
             entry.releaseDate = record.releaseDate;
             entry.headline = record.headline;
+            entry.headlineEn = record.headlineEn;
             entry.contributors = record.contributors;
             entry.notes = record.notes;
             for (const auto& item : record.entries) {
                 if (item.group.empty()) {
                     entry.items.push_back({{}, item.title, item.description,
-                                           JoinContributors(item.contributors)});
+                                           JoinContributors(item.contributors), item.titleEn, item.descriptionEn});
                     continue;
                 }
                 if (entry.items.empty() || entry.items.back().category != item.group) {
-                    entry.items.push_back({item.group, item.group, {}, {}});
+                    entry.items.push_back({item.group, item.group, {}, {}, item.titleEn, {}});
                 }
-                auto& bullets = entry.items.back().text;
-                if (!bullets.empty()) bullets += '\n';
-                bullets += u8"• ";
-                bullets += item.description;
+                auto& section = entry.items.back();
+                if (!section.text.empty()) {
+                    section.text += '\n';
+                    section.textEn += '\n';
+                }
+                section.text += u8"• ";
+                section.text += item.description;
+                section.textEn += u8"• ";
+                section.textEn += HarkenSearchReleaseNoteText(item.description, item.descriptionEn, true);
             }
             out.push_back(std::move(entry));
         }
@@ -55,6 +61,11 @@ bool ParseHarkenSearchReleaseNotes(std::string_view bytes, std::vector<ReleaseNo
         out.clear();
         return false;
     }
+}
+
+std::string_view HarkenSearchReleaseNoteText(std::string_view original, std::string_view english,
+    bool useEnglish) {
+    return useEnglish && !english.empty() ? english : original;
 }
 
 const ReleaseNotesEntry* FindHarkenSearchReleaseNotes(
