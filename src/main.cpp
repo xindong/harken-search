@@ -32557,84 +32557,96 @@ void RenderUI(AppState& state) {
     }
     ImGui::PopStyleColor(2);
 
-    // Folder auto-rename dialog
+    // Folder auto-rename window
     if (state.showFolderAutoRenameDialog) {
-        ImGui::OpenPopup(L(Dlg_FolderAutoRename));
+        aura::ui::OpenStandaloneWindow(&state.folderAutoRenameWindow);
         state.showFolderAutoRenameDialog = false;
     }
-    if (aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename), L(Dlg_FolderAutoRename))) {
-        { ReadingTextScope _readingPopup;  // dialog body is a reading surface
-        EscClosePopup();
-        ImGui::Text("%s", L(FolderRename_Rule));
-        ImGui::Spacing();
+    {
+        aura::ui::StandaloneWindowOptions renameWindowOptions;
+        renameWindowOptions.defaultSize = ImVec2(860.0f, 620.0f);
+        renameWindowOptions.minimumSize = ImVec2(680.0f, 420.0f);
+        renameWindowOptions.centerOnFirstUse = true;
+        renameWindowOptions.closeOnEscape = true;
+        if (aura::ui::BeginStandaloneWindow(L(Dlg_FolderAutoRename), "##FolderAutoRenameWindow",
+                                           &state.folderAutoRenameWindow, renameWindowOptions)) {
+            { ReadingTextScope _readingPopup;  // window body is a reading surface
+            ImGui::BeginChild("##FolderRenameBody",
+                              ImVec2(0.0f, aura::ui::StandaloneWindowBodyHeight()), false);
+            ImGui::Text("%s", L(FolderRename_Rule));
+            ImGui::Spacing();
 
-        ImGui::Text("%s", L(FolderRename_RootDir));
-        ImGui::SetNextItemWidth(520);
-        ImGui::InputText("##RenameRoot", state.folderRenameRoot, sizeof(state.folderRenameRoot));
-        ImGui::SameLine();
-        if (aura::ui::ActionButton(L(Browse))) {
-            std::string folder = OpenFolderDialog(g_hwnd);
-            if (!folder.empty()) {
-                snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s", folder.c_str());
-            }
-        }
-
-        ImGui::Checkbox(L(FolderRename_RecursiveFolder), &state.folderRenameRecursiveFolders);
-        ImGui::Checkbox(L(FolderRename_RecursiveScan), &state.folderRenameScanRecursive);
-
-        ImGui::Text("%s", L(FolderRename_Strategy));
-        ImGui::RadioButton(L(FolderRename_MostCommon), &state.folderRenameRule, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
-
-        ImGui::Spacing();
-        if (aura::ui::ActionButton(L(Batch_GenPreview), ImVec2(120, 0))) {
-            BuildFolderRenamePreview(state);
-        }
-        ImGui::SameLine();
-        bool hasPreview = !state.folderRenamePreview.empty();
-        ImGui::BeginDisabled(!hasPreview);
-        if (aura::ui::ActionButton(L(Batch_ExecRename), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-            ExecuteFolderRename(state);
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (aura::ui::ActionButton(L(Close), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (!state.folderRenameLog.empty()) {
-            ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("%s", L(FolderRename_PreviewList));
-        BeginTransientScrollbarChild("##RenamePreview", ImVec2(760, 320), true);
-        if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
-            ImGui::TableSetupColumn(L(FolderTable_Status), ImGuiTableColumnFlags_WidthFixed, 140);
-            ImGui::TableSetupColumn(L(FolderTable_OldName), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn(L(FolderTable_NewName), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn(L(FolderTable_OldPath), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableHeadersRow();
-
-            for (const auto& op : state.folderRenamePreview) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", op.status.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", op.oldName.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", op.newName.empty() ? "-" : op.newName.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", op.oldPathUtf8.c_str());
+            ImGui::Text("%s", L(FolderRename_RootDir));
+            ImGui::SetNextItemWidth(-120.0f);
+            ImGui::InputText("##RenameRoot", state.folderRenameRoot, sizeof(state.folderRenameRoot));
+            ImGui::SameLine();
+            if (aura::ui::ActionButton(L(Browse))) {
+                std::string folder = OpenFolderDialog(g_hwnd);
+                if (!folder.empty()) {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s", folder.c_str());
+                }
             }
 
-            ImGui::EndTable();
-        }
-        ImGui::EndChild();
+            ImGui::Checkbox(L(FolderRename_RecursiveFolder), &state.folderRenameRecursiveFolders);
+            ImGui::Checkbox(L(FolderRename_RecursiveScan), &state.folderRenameScanRecursive);
 
+            ImGui::Text("%s", L(FolderRename_Strategy));
+            ImGui::RadioButton(L(FolderRename_MostCommon), &state.folderRenameRule, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
+
+            if (!state.folderRenameLog.empty()) {
+                ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("%s", L(FolderRename_PreviewList));
+            const float previewHeight = (std::max)(80.0f, ImGui::GetContentRegionAvail().y);
+            BeginTransientScrollbarChild("##RenamePreview", ImVec2(0.0f, previewHeight), true);
+            if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn(L(FolderTable_Status), ImGuiTableColumnFlags_WidthFixed, 140);
+                ImGui::TableSetupColumn(L(FolderTable_OldName), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(L(FolderTable_NewName), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(L(FolderTable_OldPath), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                for (const auto& op : state.folderRenamePreview) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", op.status.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", op.oldName.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", op.newName.empty() ? "-" : op.newName.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", op.oldPathUtf8.c_str());
+                }
+
+                ImGui::EndTable();
+            }
+            ImGui::EndChild();
+            ImGui::EndChild();
+            }
+
+            aura::ui::BeginStandaloneWindowFooter();
+            if (aura::ui::StandaloneWindowFooterButton(L(Close), ImVec2(120.0f, 0.0f),
+                    aura::ui::ButtonVariant::Quiet, aura::ui::StandaloneWindowFooterAlign::Left)) {
+                aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
+            }
+            const bool hasPreview = !state.folderRenamePreview.empty();
+            ImGui::BeginDisabled(!hasPreview);
+            if (aura::ui::StandaloneWindowFooterButton(L(Batch_ExecRename), ImVec2(140.0f, 0.0f),
+                    aura::ui::ButtonVariant::PrimarySearch, aura::ui::StandaloneWindowFooterAlign::Right)) {
+                ExecuteFolderRename(state);
+            }
+            ImGui::EndDisabled();
+            if (aura::ui::StandaloneWindowFooterButton(L(Batch_GenPreview), ImVec2(140.0f, 0.0f),
+                    aura::ui::ButtonVariant::Secondary, aura::ui::StandaloneWindowFooterAlign::Right)) {
+                BuildFolderRenamePreview(state);
+            }
+            aura::ui::EndStandaloneWindowFooter();
+            aura::ui::EndStandaloneWindow();
         }
-        aura::ui::EndAlertDialog();
     }
 
     // Edit Filename Dialog

@@ -1142,6 +1142,15 @@ void OpenStandaloneWindow(StandaloneWindowState* state) {
     state->open = true;
     state->minimized = false;
     state->requestFocus = true;
+    state->requestRestoreSize = true;
+}
+
+void CloseStandaloneWindow(StandaloneWindowState* state) {
+    if (!state) return;
+    state->open = false;
+    state->minimized = false;
+    state->maximized = false;
+    state->requestMove = false;
 }
 
 bool BeginStandaloneWindow(const char* title, const char* stableId,
@@ -1159,7 +1168,19 @@ bool BeginStandaloneWindow(const char* title, const char* stableId,
 
     const ThemeColorScheme& th = ThemeColors::current();
     ImGui::SetNextWindowSize(options.defaultSize, ImGuiCond_FirstUseEver);
+    if (options.rememberSize && state->requestRestoreSize &&
+        state->hasRememberedSize && !state->maximized) {
+        // Reopen at the size the user left the window with. This is applied
+        // once per open, not every frame, so an interactive edge drag is never
+        // overwritten by the size recorded on the previous frame.
+        ImGui::SetNextWindowSize(state->rememberedSize, ImGuiCond_Always);
+    }
+    state->requestRestoreSize = false;
     ImGui::SetNextWindowSizeConstraints(options.minimumSize, ImVec2(FLT_MAX, FLT_MAX));
+    if (options.centerOnFirstUse) {
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+                               ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    }
     if (state->requestFocus) {
         ImGui::SetNextWindowFocus();
     }
@@ -1198,11 +1219,24 @@ bool BeginStandaloneWindow(const char* title, const char* stableId,
     state->requestFocus = false;
     if (!visible || !state->open) {
         if (!state->open) {
-            state->minimized = false;
-            state->maximized = false;
+            CloseStandaloneWindow(state);
         }
         EndStandaloneWindow();
         return false;
+    }
+
+    if (options.closeOnEscape && !ImGui::GetIO().WantTextInput &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId) &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        CloseStandaloneWindow(state);
+        EndStandaloneWindow();
+        return false;
+    }
+
+    if (!state->maximized) {
+        state->rememberedSize = ImGui::GetWindowSize();
+        state->hasRememberedSize = true;
     }
 
     const ImVec2 windowPos = ImGui::GetWindowPos();
@@ -1286,10 +1320,7 @@ bool BeginStandaloneWindow(const char* title, const char* stableId,
             state->requestFocus = true;
             break;
         case StandaloneWindowAction::Close:
-            state->open = false;
-            state->minimized = false;
-            state->maximized = false;
-            state->requestMove = false;
+            CloseStandaloneWindow(state);
             EndStandaloneWindow();
             return false;
         case StandaloneWindowAction::None:
@@ -1305,6 +1336,87 @@ void EndStandaloneWindow() {
     ImGui::End();
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(3);
+}
+
+namespace {
+
+struct StandaloneFooterLayout {
+    ImGuiWindow* window = nullptr;
+    bool active = false;
+    float rowY = 0.0f;
+    float leftX = 0.0f;
+    float rightX = 0.0f;
+};
+
+StandaloneFooterLayout g_standaloneFooter;
+
+} // namespace
+
+float StandaloneWindowFooterHeight() {
+    return aura::ui::metrics::kHeightLg;
+}
+
+float StandaloneWindowBodyHeight() {
+    using namespace aura::ui::metrics;
+    return (std::max)(0.0f, ImGui::GetContentRegionAvail().y -
+        StandaloneWindowFooterHeight() - kGap12);
+}
+
+void BeginStandaloneWindowFooter() {
+    using namespace aura::ui::metrics;
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+    const float innerHeight = StandaloneWindowFooterHeight();
+
+    g_standaloneFooter = StandaloneFooterLayout{};
+    g_standaloneFooter.active = true;
+    g_standaloneFooter.window = window;
+    g_standaloneFooter.rowY = window->Size.y - padding.y - innerHeight;
+    g_standaloneFooter.leftX = padding.x;
+    g_standaloneFooter.rightX = window->Size.x - padding.x;
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 windowPos = window->Pos;
+    const float dividerY = windowPos.y + g_standaloneFooter.rowY - kGap12 * 0.5f;
+    drawList->AddLine(
+        ImVec2(windowPos.x + padding.x, dividerY),
+        ImVec2(windowPos.x + window->Size.x - padding.x, dividerY),
+        ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
+
+    ImGui::SetCursorPosY(g_standaloneFooter.rowY);
+}
+
+bool StandaloneWindowFooterButton(const char* label, const ImVec2& size,
+                                  ButtonVariant variant,
+                                  StandaloneWindowFooterAlign align) {
+    using namespace aura::ui::metrics;
+    if (!g_standaloneFooter.active ||
+        g_standaloneFooter.window != ImGui::GetCurrentWindow()) return false;
+
+    const float height = size.y > 0.0f ? size.y : kHeightLg;
+    const float width = size.x > 0.0f ? size.x
+        : ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    float x = 0.0f;
+    if (align == StandaloneWindowFooterAlign::Right) {
+        g_standaloneFooter.rightX -= width;
+        x = g_standaloneFooter.rightX;
+    } else {
+        x = g_standaloneFooter.leftX;
+        g_standaloneFooter.leftX += width + kGap12;
+    }
+
+    ImGui::SetCursorPos(ImVec2(x, g_standaloneFooter.rowY));
+    ImGui::PushID(label);
+    const bool clicked = ActionButton(label, ImVec2(width, height), variant);
+    ImGui::PopID();
+    if (align == StandaloneWindowFooterAlign::Right) {
+        g_standaloneFooter.rightX -= kGap12;
+    }
+    return clicked;
+}
+
+void EndStandaloneWindowFooter() {
+    g_standaloneFooter = StandaloneFooterLayout{};
 }
 
 // Modal dialog helpers.

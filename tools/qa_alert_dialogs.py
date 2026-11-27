@@ -37,7 +37,6 @@ DIALOGS = [
     ('new-playlist', 'Dlg_NewPlaylist', '\u65b0\u5efa\u64ad\u653e\u5217\u8868\uff1a\u540d\u79f0\u8f93\u5165'),
     ('new-folder', 'Dlg_NewFolder', '\u65b0\u5efa\u6587\u4ef6\u5939\uff1a\u540d\u79f0\u8f93\u5165'),
     ('daw-settings', 'DAW_SettingsTitle', 'DAW \u53d1\u9001\u8bbe\u7f6e\uff1a\u53ef\u7f29\u653e\u7684\u8bbe\u7f6e\u5f39\u7a97'),
-    ('folder-auto-rename', 'Dlg_FolderAutoRename', '\u6587\u4ef6\u5939\u81ea\u52a8\u91cd\u547d\u540d\uff1a\u89c4\u5219\u4e0e\u76ee\u5f55'),
     ('playlist-rename', 'PL_RenameTitle', '\u91cd\u547d\u540d\u64ad\u653e\u5217\u8868\uff1a\u540d\u79f0\u8f93\u5165'),
 ]
 THEMES = [(0, 'Dark', '\u7384\u591c'), (1, 'Ocean', '\u6781\u5149'),

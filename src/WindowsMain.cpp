@@ -5047,6 +5047,7 @@ static void PollQaCommandFile(AppState& state) {
                 state.showCreateFolderDialog = false;
                 state.showDawTargetSettings = false;
                 state.showFolderAutoRenameDialog = false;
+                aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
                 state.showPlaylistRenameDialog = false;
                 state.showSimilarAnalysisReport = false;
             }
@@ -5630,6 +5631,97 @@ static void PollQaCommandFile(AppState& state) {
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
 #endif
 
+    } else if (cmd == "standalone_window") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string action = getStr(raw, "action");
+            const std::string windowId = getStr(raw, "window");
+            if (windowId != "folder-auto-rename") {
+                result = R"({"ok":false,"error":"unknown_standalone_window"})";
+            } else {
+                std::string label = L(Dlg_FolderAutoRename);
+                label += "###FolderAutoRenameWindow";
+                ImGuiWindow* window = ImGui::FindWindowByName(label.c_str());
+                if (action == "open") {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",
+                             "QA:/preview-samples");
+                    state.folderRenamePreview.clear();
+                    state.folderRenameLog.clear();
+                    aura::ui::OpenStandaloneWindow(&state.folderAutoRenameWindow);
+                    result = R"({"ok":true,"window":"folder-auto-rename","action":"open"})";
+                } else if (action == "close") {
+                    aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
+                    result = R"({"ok":true,"window":"folder-auto-rename","action":"close"})";
+                } else if (action == "resize") {
+                    if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        const float width = static_cast<float>(getDouble(raw, "w", window->Size.x));
+                        const float height = static_cast<float>(getDouble(raw, "h", window->Size.y));
+                        ImGui::SetWindowSize(window, ImVec2(width, height));
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"resize"})";
+                    }
+                } else if (action == "resize_drag") {
+                    if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        s_qaDialogResizeDrag.fromX = window->Pos.x + window->Size.x - 6.0f;
+                        s_qaDialogResizeDrag.fromY = window->Pos.y + window->Size.y - 6.0f;
+                        s_qaDialogResizeDrag.toX = s_qaDialogResizeDrag.fromX +
+                            static_cast<float>(getDouble(raw, "dx", 0.0));
+                        s_qaDialogResizeDrag.toY = s_qaDialogResizeDrag.fromY +
+                            static_cast<float>(getDouble(raw, "dy", 0.0));
+                        s_qaDialogResizeDrag.moveSteps = static_cast<int>(getInt(raw, "steps", 8));
+                        if (s_qaDialogResizeDrag.moveSteps < 1) s_qaDialogResizeDrag.moveSteps = 1;
+                        s_qaDialogResizeDrag.moveStep = 0;
+                        s_qaDialogResizeDrag.phase = 0;
+                        s_qaDialogResizeDrag.active = true;
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"resize_drag"})";
+                    }
+                } else if (action == "drag") {
+                    if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        s_qaDialogResizeDrag.fromX = window->Pos.x + 80.0f;
+                        s_qaDialogResizeDrag.fromY = window->Pos.y + 16.0f;
+                        s_qaDialogResizeDrag.toX = s_qaDialogResizeDrag.fromX +
+                            static_cast<float>(getDouble(raw, "dx", 0.0));
+                        s_qaDialogResizeDrag.toY = s_qaDialogResizeDrag.fromY +
+                            static_cast<float>(getDouble(raw, "dy", 0.0));
+                        s_qaDialogResizeDrag.moveSteps = static_cast<int>(getInt(raw, "steps", 8));
+                        if (s_qaDialogResizeDrag.moveSteps < 1) s_qaDialogResizeDrag.moveSteps = 1;
+                        s_qaDialogResizeDrag.moveStep = 0;
+                        s_qaDialogResizeDrag.phase = 0;
+                        s_qaDialogResizeDrag.active = true;
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"drag"})";
+                    }
+                } else if (action == "state" || action.empty()) {
+                    const ImVec2 pos = window ? window->Pos : ImVec2(0.0f, 0.0f);
+                    const ImVec2 size = window ? window->Size : ImVec2(0.0f, 0.0f);
+                    char buffer[512];
+                    snprintf(buffer, sizeof(buffer),
+                        "{\"ok\":true,\"window\":\"folder-auto-rename\",\"open\":%s,"
+                        "\"minimized\":%s,\"maximized\":%s,"
+                        "\"rect\":[%.1f,%.1f,%.1f,%.1f],"
+                        "\"remembered\":[%.1f,%.1f],\"has_remembered\":%s}",
+                        state.folderAutoRenameWindow.open ? "true" : "false",
+                        state.folderAutoRenameWindow.minimized ? "true" : "false",
+                        state.folderAutoRenameWindow.maximized ? "true" : "false",
+                        pos.x, pos.y, size.x, size.y,
+                        state.folderAutoRenameWindow.rememberedSize.x,
+                        state.folderAutoRenameWindow.rememberedSize.y,
+                        state.folderAutoRenameWindow.hasRememberedSize ? "true" : "false");
+                    result = buffer;
+                } else {
+                    result = R"({"ok":false,"error":"unknown_standalone_window_action"})";
+                }
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "batch_rule_edit") {
 #if ARIS_PREVIEW_ISOLATION
         const nlohmann::json payload = nlohmann::json::parse(raw, nullptr, false);

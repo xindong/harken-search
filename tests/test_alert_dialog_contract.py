@@ -185,7 +185,6 @@ def test_every_dialog_kind_uses_the_shared_surface():
             "L(PL_RenameTitle)",
             "L(AssetLib_Title)",
             "L(Menu_SendFeedback)",
-            "L(Dlg_FolderAutoRename)",
             '"##MetaEditDlg"',
             '"##ConfirmLoadPreset"',
             "kPopupTitle",
@@ -225,7 +224,6 @@ def test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body():
         "src/main.cpp": (
             "aura::ui::BeginAlertDialog((std::string(L(Set_ShellSetDefault))",
             "aura::ui::BeginAlertDialog(L(DAW_SettingsTitle)",
-            "aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename)",
             "aura::ui::BeginAlertDialog(playlistRenamePopupLabel.c_str()",
         ),
         "src/ModuleUI.cpp": ("aura::ui::BeginAlertDialog(L(ModuleUI_WorkflowPreviewTitle)",),
@@ -240,6 +238,41 @@ def test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body():
                 f"{rel}: {marker} still draws a rule under the title")
 
 
+def test_folder_auto_rename_uses_the_standalone_window_shell():
+    main = read(ROOT / "src" / "main.cpp")
+    header = read(ROOT / "src" / "HarkenSearchWidgets.h")
+    widgets = read(ROOT / "src" / "HarkenSearchWidgets.cpp")
+    app_state = read(ROOT / "src" / "AppState.h")
+
+    assert "aura::ui::StandaloneWindowState folderAutoRenameWindow;" in app_state
+    assert "aura::ui::OpenStandaloneWindow(&state.folderAutoRenameWindow);" in main
+    assert "aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);" in main
+    assert "aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename)" not in main
+
+    marker = 'aura::ui::BeginStandaloneWindow(L(Dlg_FolderAutoRename), "##FolderAutoRenameWindow"'
+    assert marker in main, "folder auto-rename must open on the shared standalone shell"
+    block = main[main.index(marker):main.index("// Edit Filename Dialog", main.index(marker))]
+    assert "aura::ui::StandaloneWindowBodyHeight()" in block
+    assert "aura::ui::BeginStandaloneWindowFooter();" in block
+    assert "aura::ui::StandaloneWindowFooterButton(" in block
+    assert "aura::ui::EndStandaloneWindowFooter();" in block
+    assert "ImGui::CloseCurrentPopup();" not in block
+
+    # The size memory and footer belong to the one shell, not to this window.
+    assert "bool requestRestoreSize = false;" in header
+    assert "ImVec2 rememberedSize" in header
+    assert "bool hasRememberedSize = false;" in header
+    assert "float StandaloneWindowBodyHeight();" in header
+    assert "bool StandaloneWindowFooterButton(" in header
+    shell = widgets[widgets.index("bool BeginStandaloneWindow"):widgets.index("void EndStandaloneWindow")]
+    assert "state->requestRestoreSize" in shell
+    assert "state->rememberedSize = ImGui::GetWindowSize();" in shell
+    assert "ImGui::SetNextWindowSize(state->rememberedSize, ImGuiCond_Always);" in shell
+    assert "g_standaloneFooter.active" in widgets[
+        widgets.index("void BeginStandaloneWindowFooter()"):
+        widgets.index("void EndStandaloneWindowFooter()")]
+
+
 if __name__ == "__main__":
     test_alert_helper_draws_title_inside_a_rounded_surface()
     test_dialogs_that_must_be_answered_hide_the_close_button()
@@ -251,4 +284,5 @@ if __name__ == "__main__":
     test_no_modal_dialog_keeps_the_default_title_bar()
     test_every_dialog_kind_uses_the_shared_surface()
     test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body()
+    test_folder_auto_rename_uses_the_standalone_window_shell()
     print("alert dialog contract ok")
