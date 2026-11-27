@@ -19,15 +19,35 @@ DurableFileOpResult Result(DurableFileOpStatus status, int error = 0) {
     return result;
 }
 
+std::string ParentDirectoryOf(const std::string& path) {
+    std::string directory = path;
+    const std::string::size_type slash = directory.find_last_of('/');
+    if (slash == std::string::npos) return ".";
+    if (slash == 0) return "/";
+    directory.erase(slash);
+    return directory;
+}
+
+// Only a filesystem that refuses the command may fall back to plain fsync.
+// Every other failure (EIO, ENOSPC, ...) is a real write error: masking it
+// would report Success without the durability the contract promises.
+bool FullsyncUnsupported(int error) {
+    return error == EINVAL || error == ENOTSUP || error == ENOSYS;
+}
+
 // POSIX fsync only hands the bytes to the drive; macOS needs F_FULLFSYNC for the
-// "on the platter" promise the Win32 implementation makes with FlushFileBuffers.
+// "on the platter" promise the Win32 write-through path makes.
 // Filesystems that reject the command still get the portable fsync fallback.
 bool FlushDescriptor(int fd, int& error) {
     if (::fcntl(fd, F_FULLFSYNC) == 0) {
         error = 0;
         return true;
     }
-    error = errno;
+    const int fullsyncError = errno;
+    if (!FullsyncUnsupported(fullsyncError)) {
+        error = fullsyncError;
+        return false;
+    }
     if (::fsync(fd) == 0) {
         error = 0;
         return true;
@@ -48,21 +68,26 @@ bool FlushPath(const std::string& path, int& openError, int& flushError) {
     return flushed;
 }
 
-// Durability of a rename needs the directory entry synced, not just the file.
-void FlushParentDirectory(const std::string& path) {
-    std::string directory = path;
-    const std::string::size_type slash = directory.find_last_of('/');
-    if (slash == std::string::npos) {
-        directory = ".";
-    } else if (slash == 0) {
-        directory = "/";
-    } else {
-        directory.erase(slash);
-    }
+// Durability of a rename/copy/unlink needs the directory entry synced, not just
+// the file contents: without it the entry can be lost on power failure even
+// though the operation returned Success.
+bool FlushDirectoryOf(const std::string& path, int& openError, int& flushError) {
+    openError = 0;
+    flushError = 0;
+    const std::string directory = ParentDirectoryOf(path);
     const int fd = ::open(directory.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return;
-    (void)::fsync(fd);
+    if (fd < 0) {
+        openError = errno;
+        return false;
+    }
+    const bool flushed = FlushDescriptor(fd, flushError);
     ::close(fd);
+    return flushed;
+}
+
+DurableFileOpResult DirectoryFlushResult(int openError, int flushError) {
+    if (openError != 0) return Result(DurableFileOpStatus::OpenFailed, openError);
+    return Result(DurableFileOpStatus::FlushFailed, flushError);
 }
 
 bool CopyBytes(int source, int target, int& error) {
@@ -135,6 +160,13 @@ DurableFileOpResult CopyFileExclusiveAndFlush(const std::string& sourcePathUtf8,
         ::unlink(targetPathUtf8.c_str());
         return Result(DurableFileOpStatus::FlushFailed, flushError);
     }
+
+    // The new directory entry is only durable once the parent is synced too.
+    int directoryOpenError = 0;
+    int directoryFlushError = 0;
+    if (!FlushDirectoryOf(targetPathUtf8, directoryOpenError, directoryFlushError)) {
+        return DirectoryFlushResult(directoryOpenError, directoryFlushError);
+    }
     return Result(DurableFileOpStatus::Success);
 }
 
@@ -158,21 +190,37 @@ DurableFileOpResult ReplaceFileWriteThrough(const std::string& sourcePathUtf8,
         if (openError != 0) return Result(DurableFileOpStatus::ReplaceFailed, openError);
         return Result(DurableFileOpStatus::FlushFailed, flushError);
     }
-    FlushParentDirectory(targetPathUtf8);
+
+    // A rename moves a directory entry: the target's directory (and, for a
+    // cross-directory move, the source's) must be synced before Success.
+    int directoryOpenError = 0;
+    int directoryFlushError = 0;
+    if (!FlushDirectoryOf(targetPathUtf8, directoryOpenError, directoryFlushError)) {
+        return DirectoryFlushResult(directoryOpenError, directoryFlushError);
+    }
+    if (ParentDirectoryOf(sourcePathUtf8) != ParentDirectoryOf(targetPathUtf8)) {
+        if (!FlushDirectoryOf(sourcePathUtf8, directoryOpenError, directoryFlushError)) {
+            return DirectoryFlushResult(directoryOpenError, directoryFlushError);
+        }
+    }
     return Result(DurableFileOpStatus::Success);
 }
 
 DurableFileOpResult DeleteFileIfPresent(const std::string& pathUtf8) {
     if (pathUtf8.empty()) return Result(DurableFileOpStatus::InvalidArgument);
-    if (::unlink(pathUtf8.c_str()) == 0) return Result(DurableFileOpStatus::Success);
+    if (::unlink(pathUtf8.c_str()) == 0) {
+        // Without the parent sync a power failure can bring the entry back.
+        int directoryOpenError = 0;
+        int directoryFlushError = 0;
+        if (!FlushDirectoryOf(pathUtf8, directoryOpenError, directoryFlushError)) {
+            return DirectoryFlushResult(directoryOpenError, directoryFlushError);
+        }
+        return Result(DurableFileOpStatus::Success);
+    }
     const int error = errno;
     // Win32 separates "file not found" (success) from "path not found" (failure);
     // POSIX reports ENOENT for both, so check the parent to keep the same contract.
-    std::string directory = pathUtf8;
-    const std::string::size_type slash = directory.find_last_of('/');
-    if (slash == std::string::npos) directory = ".";
-    else if (slash == 0) directory = "/";
-    else directory.erase(slash);
+    const std::string directory = ParentDirectoryOf(pathUtf8);
     struct stat info {};
     if (error == ENOENT && ::stat(directory.c_str(), &info) == 0 && S_ISDIR(info.st_mode)) {
         return Result(DurableFileOpStatus::Success);

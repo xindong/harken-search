@@ -4870,6 +4870,25 @@ endif()
 add_test(NAME TestPlatformFileHash COMMAND TestPlatformFileHash)
 aura_set_test_labels(TestPlatformFileHash core)
 
+# Contract for the strncpy_s shim used by the shared UI code. The shim header is
+# a no-op on Windows, so the same assertions exercise the real CRT there.
+add_executable(TestPlatformWin32CompatStrncpyS EXCLUDE_FROM_ALL
+    tests/test_platform_win32_compat_strncpy_s.cpp
+)
+target_include_directories(TestPlatformWin32CompatStrncpyS PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestPlatformWin32CompatStrncpyS PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestPlatformWin32CompatStrncpyS PRIVATE /W3 /utf-8)
+    set_target_properties(TestPlatformWin32CompatStrncpyS PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestPlatformWin32CompatStrncpyS COMMAND TestPlatformWin32CompatStrncpyS)
+aura_set_test_labels(TestPlatformWin32CompatStrncpyS core)
+
 add_executable(TestPlatformDurableFileOpsCopy EXCLUDE_FROM_ALL
     tests/test_platform_durable_file_ops_copy.cpp
 )
