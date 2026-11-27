@@ -1246,21 +1246,26 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
         error = "metadata schema unavailable";
         return false;
     }
-    if (fields.contains("harken") && !HasColumn(raw, "harken_meta").value_or(false)) {
+    // A library the desktop app has not upgraded yet has no harken_meta column;
+    // everything that does not touch Harken must keep working there.
+    const bool hasHarkenColumn = HasColumn(raw, "harken_meta").value_or(false);
+    if (fields.contains("harken") && !hasHarkenColumn) {
         // Writing Harken values needs the column the desktop app adds on open.
         error = "harken_meta_missing";
         return false;
     }
 
     auto existing = Prepare(raw,
-        "SELECT file_name,title,description,category,keywords,harken_meta FROM main.audio_files WHERE id=?1");
+        hasHarkenColumn
+            ? "SELECT file_name,title,description,category,keywords,harken_meta FROM main.audio_files WHERE id=?1"
+            : "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
     if (!existing || sqlite3_bind_int64(existing.get(), 1, fileId) != SQLITE_OK ||
         sqlite3_step(existing.get()) != SQLITE_ROW) {
         error = "metadata target not found";
         return false;
     }
     const std::string fileName = std::string(SqlText(existing.get(), 0));
-    const std::string oldHarken = std::string(SqlText(existing.get(), 5));
+    const std::string oldHarken = hasHarkenColumn ? std::string(SqlText(existing.get(), 5)) : std::string();
 
     std::string newHarken = oldHarken;
     if (fields.contains("harken")) {
@@ -1293,18 +1298,32 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
         error = "database is busy";
         return false;
     }
-    const std::string sql = *hasSearchData
-        ? "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4,harken_meta=?5,search_data=?6 WHERE id=?7"
-        : "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4,harken_meta=?5 WHERE id=?6";
+    const std::string standardColumns = "title=?1,description=?2,category=?3,keywords=?4";
+    std::string sql;
+    int idParameter = 0;
+    int searchParameter = 0;
+    if (!hasHarkenColumn) {
+        sql = *hasSearchData
+            ? "UPDATE audio_files SET " + standardColumns + ",search_data=?5 WHERE id=?6"
+            : "UPDATE audio_files SET " + standardColumns + " WHERE id=?5";
+        searchParameter = 5;
+        idParameter = *hasSearchData ? 6 : 5;
+    } else {
+        sql = *hasSearchData
+            ? "UPDATE audio_files SET " + standardColumns +
+                  ",harken_meta=?5,search_data=?6 WHERE id=?7"
+            : "UPDATE audio_files SET " + standardColumns + ",harken_meta=?5 WHERE id=?6";
+        searchParameter = 6;
+        idParameter = *hasSearchData ? 7 : 6;
+    }
     auto update = Prepare(raw, sql);
-    const int idParameter = *hasSearchData ? 7 : 6;
     const bool bound = update &&
         BindText(update.get(), 1, title) &&
         BindText(update.get(), 2, description) &&
         BindText(update.get(), 3, category) &&
         BindText(update.get(), 4, keywords) &&
-        BindText(update.get(), 5, newHarken) &&
-        (!*hasSearchData || BindText(update.get(), 6, searchData)) &&
+        (!hasHarkenColumn || BindText(update.get(), 5, newHarken)) &&
+        (!*hasSearchData || BindText(update.get(), searchParameter, searchData)) &&
         sqlite3_bind_int64(update.get(), idParameter, fileId) == SQLITE_OK;
     if (!bound || sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(raw) != 1) {
         sqlite3_exec(raw, "ROLLBACK", nullptr, nullptr, nullptr);

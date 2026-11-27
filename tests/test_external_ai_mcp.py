@@ -912,6 +912,17 @@ class ExternalAiMcpTest(unittest.TestCase):
             applied = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
                 "proposal_id": preview["proposal_id"]}, 3)))
             self.assertEqual(applied["status"], "library_needs_upgrade")
+            # Editing a standard field must keep working on the same library.
+            standard = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
+                "file_id": 1,
+                "fields": {"title": "Legacy title"},
+            }, 4)))
+            self.assertEqual(standard["status"], "ok")
+            standardApplied = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
+                "proposal_id": standard["proposal_id"]}, 5)))
+            self.assertEqual(standardApplied["status"], "applied")
+            after = self.raw_tool_payload(exchange(call(METADATA, {"file_id": 1}, 6)))
+            self.assertEqual(after["metadata"]["title"], "Legacy title")
 
     def test_metadata_apply_requires_edit_grants(self):
         scratch = Path(tempfile.mkdtemp(dir=self.fixture))
