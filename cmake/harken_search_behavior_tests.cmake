@@ -6126,44 +6126,46 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
-add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
-    tests/test_reaper_bridge_contract.cpp
-    tests/test_daw_integration_settings.cpp
-    src/ReaperBridgeClient.cpp
-    src/ReaperBridgeDoctor.cpp
-    src/platform/filesystem_std.cpp
-    src/platform/named_pipe_win32.cpp
-    src/platform/system_win32.cpp
-    src/platform/text_encoding_win32.cpp
-    src/platform/text_encoding_ascii.cpp
-    src/platform/executable_path_win32.cpp
-    src/platform/pe_inspection_win32.cpp
-    src/platform/file_hash_win32.cpp
-    src/platform/durable_file_ops_win32.cpp
-    src/platform/harken_user_data_layout.cpp
-    src/platform/harken_legacy_data_migrator.cpp
-)
-target_include_directories(TestReaperBridgeContract PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-target_compile_definitions(TestReaperBridgeContract PRIVATE
-    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
-    ARIS_REAPER_TEST_DLL_PATH="$<TARGET_FILE:reaper_harken>"
-)
-target_link_libraries(TestReaperBridgeContract PRIVATE
-    version shell32 advapi32 bcrypt ole32 comdlg32
-)
-add_dependencies(TestReaperBridgeContract reaper_harken)
-if(MSVC)
-    target_compile_options(TestReaperBridgeContract PRIVATE /W3 /utf-8)
-    set_target_properties(TestReaperBridgeContract PROPERTIES
-        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
-        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+if(WIN32)
+    add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
+        tests/test_reaper_bridge_contract.cpp
+        tests/test_daw_integration_settings.cpp
+        src/ReaperBridgeClient.cpp
+        src/ReaperBridgeDoctor.cpp
+        src/platform/filesystem_std.cpp
+        src/platform/named_pipe_win32.cpp
+        src/platform/system_win32.cpp
+        src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp
+        src/platform/executable_path_win32.cpp
+        src/platform/pe_inspection_win32.cpp
+        src/platform/file_hash_win32.cpp
+        src/platform/durable_file_ops_win32.cpp
+        src/platform/harken_user_data_layout.cpp
+        src/platform/harken_legacy_data_migrator.cpp
     )
+    target_include_directories(TestReaperBridgeContract PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_definitions(TestReaperBridgeContract PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+        ARIS_REAPER_TEST_DLL_PATH="$<TARGET_FILE:reaper_harken>"
+    )
+    target_link_libraries(TestReaperBridgeContract PRIVATE
+        version shell32 advapi32 bcrypt ole32 comdlg32
+    )
+    add_dependencies(TestReaperBridgeContract reaper_harken)
+    if(MSVC)
+        target_compile_options(TestReaperBridgeContract PRIVATE /W3 /utf-8)
+        set_target_properties(TestReaperBridgeContract PROPERTIES
+            LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+    add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
+    aura_set_test_labels(TestReaperBridgeContract daw)
 endif()
-add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
-aura_set_test_labels(TestReaperBridgeContract daw)
 
 add_test(NAME TestDawIntegrationSettingsContract
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
