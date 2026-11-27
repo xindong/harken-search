@@ -161,6 +161,7 @@ const
   LegacyUninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A8B3C9D1-E4F5-4A6B-8C9D-0E1F2A3B4C5D}_is1';
   LegacyUninstallKeyWow = 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{A8B3C9D1-E4F5-4A6B-8C9D-0E1F2A3B4C5D}_is1';
   InstallerConsentKey = 'SOFTWARE\HarkenSearch\InstallerConsent';
+  WebView2RuntimeKey = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
   ConsentLifetimeSeconds = 30 * 60;
 
 var
@@ -958,9 +959,23 @@ end;
 
 function HasSetupParam(const ParamName: String): Boolean; forward;
 
+function HasWebView2RuntimeAt(RegistryRoot: Integer): Boolean;
+var
+  Version: String;
+  PackedVersion: Int64;
+begin
+  Result := RegQueryStringValue(RegistryRoot, WebView2RuntimeKey, 'pv', Version) and
+    StrToVersion(Version, PackedVersion) and (PackedVersion > 0);
+end;
+
+function HasWebView2Runtime: Boolean;
+begin
+  Result := HasWebView2RuntimeAt(HKLM32) or HasWebView2RuntimeAt(HKCU);
+end;
+
 function InitializeSetup: Boolean;
 var
-  ConsentUserSid, Receipt, Version, LegacyCommand, LegacyLocation: String;
+  ConsentUserSid, Receipt, LegacyCommand, LegacyLocation: String;
 begin
   Result := False;
   ConsentOnly := HasSetupParam('/RECORDCONSENT');
@@ -987,7 +1002,7 @@ begin
     Exit;
   end;
   Result := True;
-  if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+  if not HasWebView2Runtime then
   begin
     if WizardSilent then
     begin

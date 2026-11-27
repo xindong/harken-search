@@ -44,10 +44,21 @@ def test_interactive_agreements_require_consent_but_not_scrolling():
 def test_silent_setup_refuses_to_install_without_consent_before_any_prompt():
     text = installer()
     initialize = text.split('function InitializeSetup', 1)[1].split('\nend;', 1)[0]
-    consent_check, webview_check = initialize.split('if not RegQueryStringValue', 1)
+    consent_check, webview_check = initialize.split('if not HasWebView2Runtime', 1)
     assert 'not ReadInstallerConsent' in consent_check
     assert 'Exit;' in consent_check
     assert "CustomMessage('WebViewMissing')" in webview_check
+
+def test_windows_installer_checks_webview2_at_both_registration_scopes():
+    text = installer()
+    initialize = text.split('function InitializeSetup', 1)[1].split('\nend;', 1)[0]
+    assert 'if not HasWebView2Runtime then' in initialize
+    detection = text.split('function HasWebView2Runtime:', 1)[1].split('\nend;', 1)[0]
+    assert 'HasWebView2RuntimeAt(HKLM32) or HasWebView2RuntimeAt(HKCU)' in detection
+    version_check = text.split('function HasWebView2RuntimeAt(', 1)[1].split('\nend;', 1)[0]
+    assert "RegQueryStringValue(RegistryRoot, WebView2RuntimeKey, 'pv', Version)" in version_check
+    assert 'StrToVersion(Version, PackedVersion)' in version_check
+    assert 'PackedVersion > 0' in version_check
 
 def test_consent_only_cannot_install_or_record_consent_silently():
     text = installer()
