@@ -161,6 +161,7 @@
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/DatabaseBreadcrumbScroll.h"
 #include "ui/ResultsPanelLayout.h"
+#include "ui/AuditionHeat.h"
 #include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
@@ -6485,10 +6486,14 @@ void LoadAppSettings(AppState& state) {
                 if (it != kv.end()) state.columnPresets[i].name = it->second;
                 state.columnPresets[i].showMeter = ParseBool(kv[p + "meter"],   false);
                 state.columnPresets[i].builtIn   = ParseBool(kv[p + "builtIn"], false);
+                const bool hasTrialUseColumn = kv.find(p + "col15") != kv.end();
                 const bool hasKeywordsSlot = kv.find(p + "col14") != kv.end();
                 if (hasKeywordsSlot) {
-                    for (int c = 0; c < kColumnViewPresetFieldCount; ++c)
-                        state.columnPresets[i].col[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
+                    for (int column = 0; column < kColumnViewPresetFieldCount; ++column) {
+                        const int savedColumn = column + (hasTrialUseColumn && column > 0 ? 1 : 0);
+                        state.columnPresets[i].col[column] =
+                            ParseBool(kv[p + "col" + std::to_string(savedColumn)], false);
+                    }
                 } else {
                     for (int c = 0; c < 5; ++c)
                         state.columnPresets[i].col[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
@@ -43218,6 +43223,15 @@ void RenderUI(AppState& state) {
         const int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
         const int legacyColumnCount = kResultsLegacyColumnCount + coverColumnCount;
         const int totalColumns = legacyColumnCount + (browserFileTable ? 0 : kResultsNewMetadataColumnCount);
+        const bool showAuditionHeat = !browserFileTable;
+        const char* auditionHeatLabel = showAuditionHeat ? L(Col_AuditionHeat) : nullptr;
+        float auditionHeatWidth = 0.0f;
+        if (showAuditionHeat) {
+            ImGui::PushFont(GetUIListEmphasis());
+            auditionHeatWidth = (std::max)(workspacePx(72.0f),
+                ImGui::CalcTextSize(auditionHeatLabel).x + workspacePx(16.0f));
+            ImGui::PopFont();
+        }
 
         // Table ID V5 - 移除历史列 (已播放文件用文字颜色高亮)
         // inner_width 动态计算：取可用宽度和最小宽度的较大值
@@ -43228,8 +43242,11 @@ void RenderUI(AppState& state) {
         if (state.settings.showTruePeakMeter) fixedColsWidth += 70.0f;
         float minInnerWidth = fixedColsWidth + 600.0f;  // 至少600px给文件名+波形
         float availWidth = ImGui::GetContentRegionAvail().x;
-        float innerWidth = (std::max)(minInnerWidth, availWidth);
-        float flexibleColsWidth = (std::max)(600.0f, innerWidth - fixedColsWidth);
+        const auto auditionHeatRail = harken::results::LayoutAuditionHeatRail(
+            ImGui::GetCursorScreenPos().x, availWidth, auditionHeatWidth);
+        const float resultsTableOuterWidth = showAuditionHeat ? auditionHeatRail.tableWidth : 0.0f;
+        float innerWidth = (std::max)(minInnerWidth, auditionHeatRail.tableWidth);
+        float flexibleColsWidth = (std::max)(600.0f, availWidth - fixedColsWidth);
         float fileNameColW = flexibleColsWidth * (5.2f / (5.2f + 3.2f));
         float waveformColW = flexibleColsWidth - fileNameColW;
         // mini 波形峰值分辨率有限，列过宽会严重拉伸失真；超出上限的宽度划给文件名列
@@ -43270,6 +43287,26 @@ void RenderUI(AppState& state) {
         constexpr int kResultsFilePathColumnIndex = 16;
         const char* const resultsTableName = harken::results::TableName(browserFileTable);
         const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);
+        if (ImGuiTableSettings* savedTable = ImGui::TableSettingsFindByID(resultsTableId);
+            savedTable && savedTable->ColumnsCount > kResultsFilePathColumnIndex + 1) {
+            auto* savedColumns = savedTable->GetColumnSettings();
+            if (!savedColumns[kResultsFilePathColumnIndex].IsStretch &&
+                savedColumns[kResultsFilePathColumnIndex + 1].IsStretch) {
+                constexpr int trialColumnIndex = 3;
+                const int removedOrder = savedColumns[trialColumnIndex].DisplayOrder;
+                const int removedSort = savedColumns[trialColumnIndex].SortOrder;
+                --savedTable->ColumnsCount;
+                for (int index = 0; index < savedTable->ColumnsCount; ++index) {
+                    auto& column = savedColumns[index];
+                    if (index >= trialColumnIndex) {
+                        column = savedColumns[index + 1];
+                        if (column.Index >= 0) column.Index = static_cast<ImGuiTableColumnIdx>(index);
+                    }
+                    if (removedOrder >= 0 && column.DisplayOrder > removedOrder) --column.DisplayOrder;
+                    if (removedSort >= 0 && column.SortOrder > removedSort) --column.SortOrder;
+                }
+            }
+        }
         const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId);
         if (!browserFileTable && !needsDbSetup &&
             (!previousResultsTable || previousResultsTable->ColumnsCount != totalColumns ||
@@ -43369,7 +43406,13 @@ void RenderUI(AppState& state) {
         // UX #109 follow-up (TASK-20261028-NO-EMPTY-SURFACE): the standalone
         // empty-results surface was removed at the user's request, so the
         // results table keeps its full height even with zero rows.
-        if (BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth)) {
+        ImDrawList* const auditionHeatDrawList = showAuditionHeat ? ImGui::GetWindowDrawList() : nullptr;
+        if (BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(resultsTableOuterWidth, 0.0f), resultsTableInnerWidth)) {
+            const ImGuiTable* const resultsTable = ImGui::GetCurrentTable();
+            const float heatLeftX = resultsTable->OuterRect.Max.x;
+            const float heatRightX = auditionHeatRail.rightX;
+            const float heatBottomY = resultsTable->InnerClipRect.Max.y;
+            float heatHeaderBottomY = resultsTable->OuterRect.Min.y;
             // The scrollable table owns a later regular draw list than the
             // surrounding CenterFileList child. Anchor the frame there so it
             // sits above headers/scrollbars but remains below popup windows.
@@ -43387,7 +43430,7 @@ void RenderUI(AppState& state) {
                 state.isSmoothScrolling = false;
             }
 
-            auto drawRowChrome = [&](const ImVec2& rowTopLeft, float rowHeight, bool isSelected, bool isHovered) {
+            auto drawRowChrome = [&](const ImVec2& rowTopLeft, float rowHeight, bool isSelected, bool isHovered, int playCount = 0) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 rowMin = rowTopLeft;
                 rowMin.x = ImGui::GetWindowPos().x + 1.0f;
@@ -43422,6 +43465,35 @@ void RenderUI(AppState& state) {
                 }
                 dl->AddLine(ImVec2(rowMin.x, rowMax.y - 0.5f), ImVec2(rowMax.x, rowMax.y - 0.5f),
                             rowSep, 1.0f);
+                if (!auditionHeatDrawList || heatRightX <= heatLeftX ||
+                    heatBottomY <= heatHeaderBottomY ||
+                    rowMax.y <= heatHeaderBottomY || rowMin.y >= heatBottomY) {
+                    return;
+                }
+                auditionHeatDrawList->PushClipRect(
+                    ImVec2(heatLeftX, heatHeaderBottomY), ImVec2(heatRightX, heatBottomY), true);
+                const ImVec2 heatRowMin(heatLeftX, rowMin.y);
+                const ImVec2 heatRowMax(heatRightX, rowMax.y);
+                if (isSelected) {
+                    auditionHeatDrawList->AddRectFilled(heatRowMin, heatRowMax, rowSelFill);
+                    auditionHeatDrawList->AddRect(
+                        ImVec2(heatRowMin.x - 1.0f, heatRowMin.y + 0.5f),
+                        ImVec2(heatRowMax.x - 0.5f, heatRowMax.y - 0.5f), rowSelOutline);
+                } else if (isHovered) {
+                    auditionHeatDrawList->AddRectFilled(heatRowMin, heatRowMax, rowHoverFill);
+                }
+                auditionHeatDrawList->AddLine(ImVec2(heatLeftX, rowMax.y - 0.5f),
+                                              ImVec2(heatRightX, rowMax.y - 0.5f), rowSep);
+                const auto rgb = harken::results::AuditionHeatRgb(playCount, kUseLightResultsChrome);
+                if (rgb != 0) {
+                    const float radius = (std::min)(listFontPx * 0.25f, (heatRightX - heatLeftX) * 0.5f);
+                    if (radius > 0.0f) {
+                        auditionHeatDrawList->AddCircleFilled(
+                            ImVec2((heatLeftX + heatRightX) * 0.5f, rowTopLeft.y + rowHeight * 0.5f),
+                            radius, IM_COL32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255));
+                    }
+                }
+                auditionHeatDrawList->PopClipRect();
             };
 
             // 1. 设置表头
@@ -43573,6 +43645,22 @@ void RenderUI(AppState& state) {
             const ImVec4 kListHeaderText = uiWithAlpha(uiMix(results.text, results.secondaryText, 0.66f), 0.95f);
             ImGui::PushFont(GetUIListEmphasis());
             ImGui::PushStyleColor(ImGuiCol_Text, kListHeaderText);
+            if (auditionHeatDrawList && heatRightX > heatLeftX) {
+                const float headerTopY = resultsTable->RowPosY1;
+                const float headerTextY = headerTopY + resultsTable->RowCellPaddingY;
+                heatHeaderBottomY = (std::min)(
+                    heatBottomY, headerTextY + ImGui::CalcTextSize(auditionHeatLabel).y + resultsTable->RowCellPaddingY);
+                if (heatHeaderBottomY > headerTopY) {
+                    const ImVec2 headerMin(heatLeftX, headerTopY);
+                    const ImVec2 headerMax(heatRightX, heatHeaderBottomY);
+                    auditionHeatDrawList->PushClipRect(headerMin, headerMax, true);
+                    auditionHeatDrawList->AddRectFilled(headerMin, headerMax, ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
+                    auditionHeatDrawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                        ImVec2(heatLeftX + fileTableStyle.CellPadding.x, headerTextY),
+                        ImGui::GetColorU32(ImGuiCol_Text), auditionHeatLabel);
+                    auditionHeatDrawList->PopClipRect();
+                }
+            }
             for (int col = 0; col < totalColumns; col++) {
                 ImGui::TableSetColumnIndex(col);
                 const char* colName = ImGui::TableGetColumnName(col);
@@ -44836,7 +44924,7 @@ void RenderUI(AppState& state) {
                     bool rowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
                                       m.x >= rowMinX && m.x <= rowMaxX &&
                                       m.y >= rowVisualTopLeft.y && m.y <= (rowVisualTopLeft.y + rowVisualHeight);
-                    drawRowChrome(rowVisualTopLeft, rowVisualHeight, isSelected, rowHovered);
+                    drawRowChrome(rowVisualTopLeft, rowVisualHeight, isSelected, rowHovered, record.playCount);
 
                     // F-007: track_colour left-edge strip — drawn via foreground DL so it renders above cover art
                     {

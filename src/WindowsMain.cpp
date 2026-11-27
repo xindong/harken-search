@@ -187,6 +187,7 @@ static void AcknowledgeBootstrapHealthAfterUiPresented() {
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <limits>
 #include <filesystem>
 #include <thread>
 #include <mutex>
@@ -4157,6 +4158,9 @@ static void PollQaCommandFile(AppState& state) {
         item += ",\"embedded_cover_key\":\"" + jsonEscape(r.embeddedCoverKey) + "\"";
         item += ",\"folder_cover_key\":\"" + jsonEscape(r.folderCoverKey) + "\"";
         item += ",\"cover_key\":\"" + jsonEscape(!r.embeddedCoverKey.empty() ? r.embeddedCoverKey : r.folderCoverKey) + "\"";
+#if ARIS_PREVIEW_ISOLATION
+        item += ",\"play_count\":" + std::to_string(r.playCount);
+#endif
         item += ",\"selected\":" + std::string(state.selectedIndicesSet.count(rowIndex) ? "true" : "false");
         item += "}";
         return item;
@@ -14897,14 +14901,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             state.audioEngine.playIfLoadReady();
             static aura::playback::PlayStatsGate s_playStatsGate;
             static std::uint64_t s_playStatsLoadToken = 0;
-            aura::playback::RecordSuccessfulPlayStats(
+            const auto playedFileId = state.currentFileId;
+            if (aura::playback::RecordSuccessfulPlayStats(
                 state.database,
                 s_playStatsGate,
                 aura::playback::PlayStatsEvent{
                     true,
                     state.audioEngine.isPlaying(),
-                    state.currentFileId,
-                    ++s_playStatsLoadToken});
+                    playedFileId,
+                    ++s_playStatsLoadToken})) {
+                const auto updateCachedCount = [playedFileId](std::vector<AudioRecord>& rows) {
+                    for (auto& record : rows) {
+                        if (record.id == playedFileId && record.playCount < (std::numeric_limits<int>::max)()) {
+                            ++record.playCount;
+                        }
+                    }
+                };
+                updateCachedCount(state.searchResults);
+                updateCachedCount(state.albumGrid.expandedTracks);
+                for (auto& tab : state.listTabs) {
+                    if (tab.searchResultsSnapshotValid) updateCachedCount(tab.searchResults);
+                }
+            }
         } else {
             std::string loadErr = state.audioEngine.getLastLoadError();
             if (!loadErr.empty()) {

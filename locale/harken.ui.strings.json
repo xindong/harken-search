@@ -2314,6 +2314,13 @@
       "ja": "評価"
     },
     {
+      "id": "Col_AuditionHeat",
+      "type": "ui",
+      "zh": "试听热度",
+      "en": "Audition Heat",
+      "ja": "試聴頻度"
+    },
+    {
       "id": "Col_FilePath",
       "type": "ui",
       "zh": "文件夹路径",
