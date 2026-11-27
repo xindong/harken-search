@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 from queue import Queue
@@ -104,11 +105,13 @@ class ExternalAiMcpTest(unittest.TestCase):
                 CREATE TABLE audio_files (
                     id INTEGER PRIMARY KEY, file_path TEXT NOT NULL, file_name TEXT NOT NULL,
                     extension TEXT, duration REAL, title TEXT, description TEXT,
-                    category TEXT, keywords TEXT
+                    category TEXT, keywords TEXT, search_data TEXT,
+                    harken_meta TEXT NOT NULL DEFAULT ''
                 )
             """)
             connection.executemany(
-                "INSERT INTO audio_files VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
+                "INSERT INTO audio_files (id, file_path, file_name, extension, duration, title, description, category, keywords) "
+                "VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
                 [(file_id, str(path), path.name, file_id * 0.75) for file_id, path in tracks],
             )
             connection.execute(
@@ -349,7 +352,7 @@ class ExternalAiMcpTest(unittest.TestCase):
                 catalog.write_bytes(self.database.read_bytes())
                 with closing(sqlite3.connect(catalog)) as writer:
                     writer.execute(
-                        "INSERT INTO audio_files VALUES (95, ?, 'unshared.wav', 'wav', 1, '', '', '', '')",
+                        "INSERT INTO audio_files (id, file_path, file_name, extension, duration, title, description, category, keywords) VALUES (95, ?, 'unshared.wav', 'wav', 1, '', '', '', '')",
                         (str(link / real_audio.name),),
                     )
                     writer.commit()
@@ -383,7 +386,7 @@ class ExternalAiMcpTest(unittest.TestCase):
                 writer.execute("PRAGMA wal_autocheckpoint=0")
                 sound = self.root / "wind" / "wal-only.wav"
                 writer.execute(
-                    "INSERT INTO audio_files VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
+                    "INSERT INTO audio_files (id, file_path, file_name, extension, duration, title, description, category, keywords) VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
                     (55, str(sound), sound.name, 1.25),
                 )
                 writer.commit()
@@ -835,6 +838,92 @@ class ExternalAiMcpTest(unittest.TestCase):
             self.assertEqual(connection.execute(
                 "SELECT title FROM audio_files WHERE id = 1").fetchone()[0], "")
 
+    def test_harken_metadata_preview_apply_and_manual_skip(self):
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        document = write_authorization(
+            scratch / "editable.json", self.root,
+            capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+        flags = ["--library-db", str(self.database), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with self.live_session(flags) as exchange:
+            preview = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
+                "file_id": 1,
+                "fields": {"harken": {"category": "Weapons", "function": "Impact"}},
+            }, 1)))
+            self.assertEqual(preview["status"], "ok")
+            self.assertEqual(preview["after"]["harken"]["category"], "Weapons")
+            self.assertEqual(preview["after"]["harken"]["function"], "Impact")
+            self.assertEqual(preview["after"]["harken"]["source"], "ai")
+            applied = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
+                "proposal_id": preview["proposal_id"]}, 2)))
+            self.assertEqual(applied["status"], "applied")
+            current = self.raw_tool_payload(exchange(call(METADATA, {"file_id": 1}, 3)))
+            self.assertEqual(current["metadata"]["harken"]["category"], "Weapons")
+            self.assertEqual(current["metadata"]["harken"]["function"], "Impact")
+            self.assertEqual(current["metadata"]["harken"]["source"], "ai")
+
+        # closing() is required: the context manager only commits, so a bare
+        # "with sqlite3.connect(...)" keeps the catalog open and the Windows
+        # fixture cleanup then fails with WinError 32.
+        with closing(sqlite3.connect(self.database)) as connection:
+            connection.execute(
+                "UPDATE audio_files SET harken_meta=? WHERE id=1",
+                (json.dumps({"category": "Manual", "function": "Keep", "source": "manual"}),))
+            connection.commit()
+
+        with self.live_session(flags) as exchange:
+            preview = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
+                "file_id": 1,
+                "fields": {"harken": {"category": "AI Override"}},
+            }, 1)))
+            self.assertEqual(preview["status"], "ok")
+            skipped = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
+                "proposal_id": preview["proposal_id"]}, 2)))
+            self.assertEqual(skipped["status"], "skipped_manual")
+            current = self.raw_tool_payload(exchange(call(METADATA, {"file_id": 1}, 3)))
+            self.assertEqual(current["metadata"]["harken"]["category"], "Manual")
+            self.assertEqual(current["metadata"]["harken"]["function"], "Keep")
+            self.assertEqual(current["metadata"]["harken"]["source"], "manual")
+
+    def test_legacy_library_without_harken_column_still_reads_metadata(self):
+        """A library the desktop app has not upgraded yet must stay readable,
+        and a Harken write must say that an upgrade is needed."""
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        legacy = scratch / "legacy catalog.db"
+        shutil.copyfile(self.database, legacy)
+        with closing(sqlite3.connect(legacy)) as connection:
+            connection.execute("ALTER TABLE audio_files DROP COLUMN harken_meta")
+            connection.commit()
+        document = write_authorization(
+            scratch / "editable.json", self.root,
+            capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+        flags = ["--library-db", str(legacy), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with self.live_session(flags) as exchange:
+            metadata = self.raw_tool_payload(exchange(call(METADATA, {"file_id": 1}, 1)))
+            self.assertEqual(metadata["status"], "ok")
+            self.assertEqual(metadata["metadata"]["category"], "")
+            self.assertEqual(metadata["metadata"]["harken"]["category"], "")
+            preview = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
+                "file_id": 1,
+                "fields": {"harken": {"category": "Weapons"}},
+            }, 2)))
+            self.assertEqual(preview["status"], "ok")
+            applied = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
+                "proposal_id": preview["proposal_id"]}, 3)))
+            self.assertEqual(applied["status"], "library_needs_upgrade")
+            # Editing a standard field must keep working on the same library.
+            standard = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
+                "file_id": 1,
+                "fields": {"title": "Legacy title"},
+            }, 4)))
+            self.assertEqual(standard["status"], "ok")
+            standardApplied = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
+                "proposal_id": standard["proposal_id"]}, 5)))
+            self.assertEqual(standardApplied["status"], "applied")
+            after = self.raw_tool_payload(exchange(call(METADATA, {"file_id": 1}, 6)))
+            self.assertEqual(after["metadata"]["title"], "Legacy title")
+
     def test_metadata_apply_requires_edit_grants(self):
         scratch = Path(tempfile.mkdtemp(dir=self.fixture))
         document = write_authorization(
@@ -973,7 +1062,7 @@ class ExternalAiMcpTest(unittest.TestCase):
         sound.write_bytes(RAW_AUDIO)
         with closing(sqlite3.connect(self.database)) as connection:
             connection.execute(
-                "INSERT INTO audio_files VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
+                "INSERT INTO audio_files (id, file_path, file_name, extension, duration, title, description, category, keywords) VALUES (?, ?, ?, 'wav', ?, '', '', '', '')",
                 (100, str(sound), sound.name, 1.0),
             )
             connection.commit()
