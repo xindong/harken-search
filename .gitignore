@@ -131,5 +131,6 @@ MEMORY.local.md
 
 # Generic local build trees
 /build_*/
+/qa-build/
 /.vs/
 

@@ -1059,6 +1059,9 @@ struct AppSettings {
     int thumbnailMaxResolution = 512; // 封面缩略图精度：128, 256, 512
     int threadLimit = -1;             // 后台线程策略：0=自动, 1=单线程, -1=满载
     int similarityAnalysisConcurrency = 4; // 相似分析/索引构建并发数 1-16，下次运行生效
+    // 相似分析「分析结果」弹窗尺寸：用户拖过边缘后沿用上次结果
+    float similarAnalysisReportWidth = 1180.0f;
+    float similarAnalysisReportHeight = 780.0f;
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位
