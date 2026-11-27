@@ -2985,6 +2985,8 @@ struct AppState {
     char metadataDescBuffer[1024] = "";
     char metadataKeywordsBuffer[512] = "";
     char metadataCategoryBuffer[256] = "";
+    char metadataHarkenCategoryBuffer[256] = "";
+    char metadataHarkenFunctionBuffer[256] = "";
     
     // Delete confirmation
     bool showDeleteConfirmDialog = false;

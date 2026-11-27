@@ -1,0 +1,95 @@
+{
+  "build_id": "d0f6103ef09842d6fd0e41be4379accdc1d6b09a",
+  "channel": "stable",
+  "files": [
+    {
+      "name": "Aris-1.0.47-win-x64-update.zip",
+      "sha256": "db0345e6e063b26115cf9dee18d11e30c5a14913fc3af9393a84890b136b6087",
+      "size": 135423840
+    },
+    {
+      "name": "ArisBootstrap.package.stable.json",
+      "sha256": "8bf3f7526449b96ede12fc43d7a2bccde643d1d4d63426e4a4b808ca61a4ef8b",
+      "size": 22800
+    },
+    {
+      "name": "ArisBootstrap.package.stable.json.sig",
+      "sha256": "47edac4ea24c37af87ed19bcdaa650ed91ef1e446dea4e98c467a6869593b6d0",
+      "size": 128
+    },
+    {
+      "name": "HarkenSearch-1.0.47-win-x64-setup.exe",
+      "sha256": "0b2f5f2429ca3927e1b0ac86afde3f7a46a204464f78b79ad8ef5240feb839b0",
+      "size": 131166232
+    },
+    {
+      "name": "HarkenSearchBootstrap.exe",
+      "sha256": "b66f1b2be2ac3a9c439f31001a8dd0c7560030236727602373a80a5290516c51",
+      "size": 1553336
+    },
+    {
+      "name": "manifest-harken-search-win-x64-stable.json",
+      "sha256": "5dd04de212ce9c8b6f27719c242b40bfb45e4d0c5a7d3d697bfb720dd40d2fdb",
+      "size": 530
+    },
+    {
+      "name": "manifest-harken-search-win-x64-stable.json.sig",
+      "sha256": "3682093b2a8afe2c71f5b392395c11f9904e765dcd9cb7fe621d22a4953483e9",
+      "size": 128
+    },
+    {
+      "name": "manifest-win-x64-stable.json",
+      "sha256": "5dd04de212ce9c8b6f27719c242b40bfb45e4d0c5a7d3d697bfb720dd40d2fdb",
+      "size": 530
+    },
+    {
+      "name": "manifest-win-x64-stable.json.sig",
+      "sha256": "3682093b2a8afe2c71f5b392395c11f9904e765dcd9cb7fe621d22a4953483e9",
+      "size": 128
+    }
+  ],
+  "github": {
+    "repository": "xindong/harken-search",
+    "tag": "v1.0.47"
+  },
+  "installer": {
+    "name": "HarkenSearch-1.0.47-win-x64-setup.exe",
+    "sha256": "0b2f5f2429ca3927e1b0ac86afde3f7a46a204464f78b79ad8ef5240feb839b0",
+    "size": 131166232
+  },
+  "manifests": {
+    "canonical": {
+      "name": "manifest-harken-search-win-x64-stable.json",
+      "sha256": "5dd04de212ce9c8b6f27719c242b40bfb45e4d0c5a7d3d697bfb720dd40d2fdb",
+      "signature_sha256": "3682093b2a8afe2c71f5b392395c11f9904e765dcd9cb7fe621d22a4953483e9"
+    },
+    "legacy": {
+      "name": "manifest-win-x64-stable.json",
+      "sha256": "5dd04de212ce9c8b6f27719c242b40bfb45e4d0c5a7d3d697bfb720dd40d2fdb",
+      "signature_sha256": "3682093b2a8afe2c71f5b392395c11f9904e765dcd9cb7fe621d22a4953483e9"
+    }
+  },
+  "notes": {
+    "key": "aris/releases/notes.json",
+    "sha256": "a192aa8f44bd3d7c64279f78d443ab35179008c3d8833c432710a97767cd889f"
+  },
+  "prepared_at": "2026-11-25T04:57:25Z",
+  "product": "aris",
+  "published_from": {
+    "machine": "A-AAA-202511-23"
+  },
+  "released_at": "2026-11-25T05:16:41Z",
+  "run_id": 45544001766,
+  "schema_version": 1,
+  "signer": {
+    "subject": "X.D. Network Inc.",
+    "thumbprint": "BA77DEFE4143D6943407C08CAF2C75D5C9164239"
+  },
+  "source_commit": "d0f6103ef09842d6fd0e41be4379accdc1d6b09a",
+  "update": {
+    "name": "Aris-1.0.47-win-x64-update.zip",
+    "sha256": "db0345e6e063b26115cf9dee18d11e30c5a14913fc3af9393a84890b136b6087",
+    "size": 135423840
+  },
+  "version": "1.0.47"
+}

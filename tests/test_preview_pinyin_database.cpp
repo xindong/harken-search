@@ -304,6 +304,29 @@ int main(int argc, char** argv) {
         filter.keyword = "Azurescore";
         ok &= Expect(database.searchFiles(filter, 10).empty(), "edited composer no longer matches old tags");
 
+        // A harken_meta written by the metadata patch must be searchable in the
+        // same statement's search_data rebuild even though SQL SET expressions
+        // read the pre-update row.
+        MetadataEditPatch harkenPatch;
+        harkenPatch.set("harken_meta",
+                        R"({"category":"Weapons","function":"Impact","source":"manual"})");
+        ok &= Expect(database.applyMetadataPatch(reread.id, harkenPatch), "update a Harken classification");
+        for (const char* value : {"Weapons", "Impact"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            const std::string caseName = std::string("Harken value immediately searchable: ") + value;
+            ok &= Expect(results.size() == 1 && results.front().fileName == "Tone.mp3", caseName.c_str());
+        }
+        // A legacy library gets the column as '' (TEXT DEFAULT ''); reading it
+        // must not fail the search on malformed JSON.
+        database.executeRawQuery("UPDATE audio_files SET harken_meta = '';");
+        filter.keyword = "Tone";
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "empty harken_meta still searches");
+        database.executeRawQuery("UPDATE audio_files SET harken_meta = 'not json';");
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "damaged harken_meta still searches");
+        database.executeRawQuery(
+            "UPDATE audio_files SET harken_meta = '{\"category\":\"Weapons\",\"function\":\"Impact\",\"source\":\"manual\"}';");
+
         database.executeRawQuery("UPDATE audio_files SET search_data = 'Tone';");
         database.executeRawQuery(
             "INSERT INTO app_meta(key, value) VALUES('search_data_migrated', '2') "

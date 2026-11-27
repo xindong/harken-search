@@ -129,11 +129,17 @@ std::string EmbedEngine::serializeIXML(const IXMLData& ix) {
     }
     xml += "  </TRACK_LIST>\n";
 
-    if (!ix.userFields.empty()) {
+    if (!ix.userFields.empty() || ix.HasHarkenSection()) {
         xml += "  <USER>\n";
         for (const auto& kv : ix.userFields) {
             if (kv.first.empty() || kv.second.empty()) continue;
             xml += "    <" + kv.first + ">" + xmlEscape(kv.second) + "</" + kv.first + ">\n";
+        }
+        if (ix.HasHarkenSection()) {
+            xml += "    <HARKEN>\n";
+            xml += tag("CATEGORY", ix.harkenCategory, "      ");
+            xml += tag("FUNCTION", ix.harkenFunction, "      ");
+            xml += "    </HARKEN>\n";
         }
         xml += "  </USER>\n";
     }
@@ -189,6 +195,8 @@ void EmbedEngine::buildEmbedData(
             }
             outIXML.userFields["Embedder"] = "Harken Search";
         }
+        outIXML.harkenCategory = getField(metadata, "HarkenCategory");
+        outIXML.harkenFunction = getField(metadata, "HarkenFunction");
     }
 
 // Steinberg MediaBay

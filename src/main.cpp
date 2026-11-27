@@ -225,6 +225,7 @@
 #include "PlaylistQuickBar.h"
 #include "SidebarActivityBar.h"
 #include "FileInfoPanel.h"
+#include "HarkenMeta.h"
 #include "BuiltinThemeScheme.h"
 #include "TransientScrollbarHost.h"
 #include "DragPauseOnStartPolicy.h"
@@ -3488,7 +3489,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
                                            std::string& outError,
                                            float regionFadeInNorm,
                                            float regionFadeOutNorm,
-                                           bool keepHarkenSearchProcessingSuffix = true);
+                                           bool keepHarkenSearchProcessingSuffix = true,
+                                           const std::string& harkenMetaJson = std::string());
 
 // 主波形区域在屏幕上的位置（用于起拖时把卡片从波形缩成小卡）
 static RECT WaveformScreenRect(float x, float y, float width, float height) {
@@ -3521,7 +3523,8 @@ static DragCardOrigin MakeRegionDragOrigin(AudioEngine& engine, bool withSourceR
 // Uses unified PrepareCurrentAudioForTransfer — same rules as Send-to-DAW
 void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFadeOutNorm,
                      bool keepHarkenSearchProcessingSuffix = true,
-                     const DragCardOrigin* origin = nullptr) {
+                     const DragCardOrigin* origin = nullptr,
+                     const std::string& harkenMetaJson = std::string()) {
     if (!engine.isLoaded()) return;
     if (g_isDragging) return;
 
@@ -3529,7 +3532,8 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
 
     std::vector<std::string> files;
     std::string error;
-    if (PrepareCurrentAudioForTransfer(engine, files, error, regionFadeInNorm, regionFadeOutNorm, keepHarkenSearchProcessingSuffix)) {
+    if (PrepareCurrentAudioForTransfer(engine, files, error, regionFadeInNorm, regionFadeOutNorm,
+                                       keepHarkenSearchProcessingSuffix, harkenMetaJson)) {
         ImGui::ClearActiveID();
         DragCardOrigin regionOrigin = origin ? *origin : MakeRegionDragOrigin(engine, false, RECT{ 0, 0, 0, 0 });
         if (regionOrigin.displayName.empty()) {
@@ -3576,11 +3580,19 @@ static std::wstring QuoteWindowsArg(const std::wstring& s) {
 // Shared by: StartRegionDrag() and SendToDAW()
 // Rule: "what you hear is what you send/drag"
 
+static std::string TransferHarkenMetaForPath(AppState& state, const std::string& path) {
+    if (path.empty() || !state.database.isOpen()) return std::string();
+    const AudioRecord record = state.database.getFileByPath(path);
+    if (record.id <= 0) return std::string();
+    return record.getMeta("harken_meta");
+}
+
 static bool EmbedTransferMetadata(const std::string& tempWavPath,
                                   const std::string& sourcePath,
                                   uint64_t regionStartFrame,
                                   const EmbedExtraParams& stem,
-                                  uint64_t* outSpotInTime = nullptr) {
+                                  uint64_t* outSpotInTime = nullptr,
+                                  const std::string& harkenMetaJson = std::string()) {
     AudioMetadata metadata;
     MetadataReader::readMetadata(sourcePath, metadata);
     const uint64_t sourceTimeReference = metadata.bwTimeStamp;
@@ -3612,6 +3624,9 @@ static bool EmbedTransferMetadata(const std::string& tempWavPath,
     put("Scene", metadata.scene);
     put("Take", metadata.take);
     put("Tape", metadata.tape);
+    const HarkenMeta::Values harkenValues = HarkenMeta::Parse(harkenMetaJson);
+    put("HarkenCategory", harkenValues.category);
+    put("HarkenFunction", harkenValues.function);
 
     EmbedConfig config = EmbedEngine::getDefaultConfig();
     BEXTData bext;
@@ -3693,7 +3708,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
                                            std::string& outError,
                                            float regionFadeInNorm,
                                            float regionFadeOutNorm,
-                                           bool keepHarkenSearchProcessingSuffix) {
+                                           bool keepHarkenSearchProcessingSuffix,
+                                           const std::string& harkenMetaJson) {
     if (!engine.isLoaded()) { outError = "No audio loaded"; return false; }
 
     const AudioEngine::TransferProcessingSnapshot processingSnapshot =
@@ -3743,7 +3759,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
         }
         uint64_t spotInTime = info.regionStartFrame;
         EmbedExtraParams embedStem;
-        EmbedTransferMetadata(tempFile, engine.getFileInfo().filePath, info.regionStartFrame, embedStem, &spotInTime);
+        EmbedTransferMetadata(tempFile, engine.getFileInfo().filePath, info.regionStartFrame, embedStem,
+                              &spotInTime, harkenMetaJson);
         SpotRequest spot;
         spot.daw = "drag";
         spot.spotAsRegion = true;
@@ -3804,6 +3821,7 @@ static bool ExportFileWithCurrentTransferProcessing(AudioEngine& currentEngine,
                                                     float regionFadeOutNorm,
                                                     bool keepHarkenSearchProcessingSuffix,
                                                     const AudioEngine::TransferProcessingSnapshot& processingSnapshot,
+                                                    const std::string& harkenMetaJson,
                                                     std::string& outFile,
                                                     std::string& outError) {
     outFile.clear();
@@ -3853,7 +3871,7 @@ static bool ExportFileWithCurrentTransferProcessing(AudioEngine& currentEngine,
     }
     uint64_t spotInTime = regionStartFrame;
     EmbedExtraParams embedStem;
-    EmbedTransferMetadata(tempFile, sourcePath, regionStartFrame, embedStem, &spotInTime);
+    EmbedTransferMetadata(tempFile, sourcePath, regionStartFrame, embedStem, &spotInTime, harkenMetaJson);
     SpotRequest spot;
     spot.daw = "drag";
     spot.spotAsRegion = includeRegion;
@@ -3879,7 +3897,8 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
                                          float regionFadeOutNorm,
                                          bool keepHarkenSearchProcessingSuffix,
                                          std::vector<std::string>& outFiles,
-                                         std::string& outError) {
+                                         std::string& outError,
+                                         Database* database = nullptr) {
     if (sourcePaths.empty()) {
         outError = "No files selected";
         return false;
@@ -3912,6 +3931,11 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
         }
 
         std::string processedFile;
+        std::string harkenMeta;
+        if (database) {
+            const AudioRecord record = database->getFileByPath(sourcePaths[i]);
+            if (record.id > 0) harkenMeta = record.getMeta("harken_meta");
+        }
         if (!ExportFileWithCurrentTransferProcessing(
                 engine,
                 normalizedPath,
@@ -3920,6 +3944,7 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
                 regionFadeOutNorm,
                 keepHarkenSearchProcessingSuffix,
                 processingSnapshot,
+                harkenMeta,
                 processedFile,
                 outError)) {
             return false;
@@ -3942,7 +3967,7 @@ void StartAudioFileDrag(AppState& state, const std::string& filePath) {
             state.audioEngine, {filePath}, true,
             state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
             state.settings.keepHarkenSearchOutputProcessingSuffix,
-            files, error) && !files.empty()) {
+            files, error, &state.database) && !files.empty()) {
         ImGui::ClearActiveID();
         DragCardOrigin dragOrigin;
         dragOrigin.displayName = DisplayNameForDragPath(filePath);
@@ -4023,7 +4048,8 @@ static bool BuildTransferPayload(AppState& state,
                 outError,
                 state.uiState.regionFadeInNorm,
                 state.uiState.regionFadeOutNorm,
-                state.settings.keepHarkenSearchOutputProcessingSuffix);
+                state.settings.keepHarkenSearchOutputProcessingSuffix,
+                TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
         }
         outError = "No files selected";
         return false;
@@ -4036,7 +4062,8 @@ static bool BuildTransferPayload(AppState& state,
         state.uiState.regionFadeOutNorm,
         state.settings.keepHarkenSearchOutputProcessingSuffix,
         outFiles,
-        outError);
+        outError,
+        &state.database);
 }
 
 // Legacy wrapper (kept for existing keyboard shortcut callers)
@@ -4055,7 +4082,8 @@ static bool BuildTransferPayloadForSourcePaths(AppState& state,
         state.uiState.regionFadeOutNorm,
         state.settings.keepHarkenSearchOutputProcessingSuffix,
         outFiles,
-        outError);
+        outError,
+        &state.database);
 }
 
 static std::vector<std::string> BuildExternalSendFiles(AppState& state) {
@@ -11650,7 +11678,8 @@ void PumpDatabaseSwitchIfPending(AppState& state) {
 // 全部可能阻塞的 teardown（scanner/searchWorker/waveformWorker/database.close）和
 // database.open 一起放到后台线程，避免大库切换时主线程被 join 卡数十秒。
 static InfoEditValues CurrentInfoEditValues(const AppState& state) {
-    return {state.metadataDescBuffer,state.metadataKeywordsBuffer,state.metadataCategoryBuffer};
+    return {state.metadataDescBuffer,state.metadataKeywordsBuffer,state.metadataCategoryBuffer,
+            state.metadataHarkenCategoryBuffer,state.metadataHarkenFunctionBuffer};
 }
 
 bool RequestInfoMetadataLeave(AppState& state, std::function<void()> afterLeave) {
@@ -19398,6 +19427,12 @@ static void BeginInfoMetadataEdit(AppState& state, const AudioRecord& record) {
     strncpy_s(state.metadataDescBuffer,sizeof(state.metadataDescBuffer),state.metadataBatchMode?"":record.description.c_str(),_TRUNCATE);
     strncpy_s(state.metadataKeywordsBuffer,sizeof(state.metadataKeywordsBuffer),state.metadataBatchMode?"":record.keywords.c_str(),_TRUNCATE);
     strncpy_s(state.metadataCategoryBuffer,sizeof(state.metadataCategoryBuffer),state.metadataBatchMode?"":record.category.c_str(),_TRUNCATE);
+    const HarkenMeta::Values harkenValues =
+        HarkenMeta::Parse(state.metadataBatchMode ? std::string() : record.getMeta("harken_meta"));
+    strncpy_s(state.metadataHarkenCategoryBuffer,sizeof(state.metadataHarkenCategoryBuffer),
+              harkenValues.category.c_str(),_TRUNCATE);
+    strncpy_s(state.metadataHarkenFunctionBuffer,sizeof(state.metadataHarkenFunctionBuffer),
+              harkenValues.function.c_str(),_TRUNCATE);
     state.infoEditSession.Begin(CurrentInfoEditValues(state));
     state.infoEditError.clear();
     state.infoEditAfterLeave={};
@@ -19410,14 +19445,18 @@ static bool SaveInfoMetadataDraft(AppState& state) {
     const auto values=CurrentInfoEditValues(state);
     const auto& old=state.infoEditSession.original;
     const bool desc=values.description!=old.description, keys=values.keywords!=old.keywords, cat=values.category!=old.category;
-    MetadataEditPatch patch;
-    if(desc) patch.setDescription(values.description);
-    if(keys) patch.setKeywords(values.keywords);
-    if(cat) patch.setCategory(values.category);
+    const bool harkenChanged = values.harkenCategory!=old.harkenCategory ||
+        values.harkenFunction!=old.harkenFunction;
+    MetadataEditPatch basePatch;
+    if(desc) basePatch.setDescription(values.description);
+    if(keys) basePatch.setKeywords(values.keywords);
+    if(cat) basePatch.setCategory(values.category);
     auto undo=std::make_unique<MetadataPatchOp>();
     undo->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
-    if (patch.fields.size() == 1) undo->targetColumn = patch.fields.begin()->first;
+    if (basePatch.fields.size() == 1) undo->targetColumn = basePatch.fields.begin()->first;
+    else if (basePatch.fields.empty() && harkenChanged) undo->targetColumn = "harken_meta";
     std::vector<int64_t> ids;
+    std::vector<std::pair<int64_t, MetadataEditPatch>> perFile;
     for(const auto& original:state.infoEditRecords) {
         // Resolve by the captured identity, never by the new selection.
         const auto current=state.database.getFileById(original.id);
@@ -19431,9 +19470,29 @@ static bool SaveInfoMetadataDraft(AppState& state) {
         if(desc) { entry.oldValues["description"]=current.description; entry.newValues["description"]=values.description; }
         if(keys) { entry.oldValues["keywords"]=current.keywords; entry.newValues["keywords"]=values.keywords; }
         if(cat) { entry.oldValues["category"]=current.category; entry.newValues["category"]=values.category; }
+        MetadataEditPatch filePatch = basePatch;
+        if(harkenChanged) {
+            // Batch edits start from empty buffers, so only the field the user
+            // touched may be written; the untouched one must keep its value.
+            HarkenMeta::Update update;
+            update.setCategory = values.harkenCategory != old.harkenCategory;
+            update.category = values.harkenCategory;
+            update.setFunction = values.harkenFunction != old.harkenFunction;
+            update.function = values.harkenFunction;
+            update.setSource = true;
+            update.source = "manual";
+            const std::string oldHarken = current.getMeta("harken_meta");
+            const std::string newHarken = HarkenMeta::Merge(oldHarken, update);
+            filePatch.set("harken_meta", newHarken);
+            entry.oldValues["harken_meta"]=oldHarken;
+            entry.newValues["harken_meta"]=newHarken;
+        }
         undo->entries.push_back(std::move(entry)); ids.push_back(original.id);
+        perFile.emplace_back(original.id, std::move(filePatch));
     }
-    const auto result=state.database.applyMetadataPatchBatch(ids,patch);
+    const BatchMetadataApplyResult result = harkenChanged
+        ? state.database.applyMetadataPatchMany(perFile)
+        : state.database.applyMetadataPatchBatch(ids,basePatch);
     if(result.failed || result.success!=(int)ids.size()) return false;
     state.undoStack.push(std::move(undo));
     state.database.invalidateFacetQueryCache();
@@ -20046,11 +20105,30 @@ void RenderFileInfoPanelTabContents(
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputText("##EditCategory", state.metadataCategoryBuffer, sizeof(state.metadataCategoryBuffer));
                     ThemeInspector::RegisterLastItem("info.edit.category",L(Info_Category),"src/main.cpp");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(chrome.kInfoLabelText, "%s", L(Info_HarkenCategory));
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputText("##EditHarkenCategory", state.metadataHarkenCategoryBuffer, sizeof(state.metadataHarkenCategoryBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.harkenCategory",L(Info_HarkenCategory),"src/main.cpp");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(chrome.kInfoLabelText, "%s", L(Info_HarkenFunction));
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputText("##EditHarkenFunction", state.metadataHarkenFunctionBuffer, sizeof(state.metadataHarkenFunctionBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.harkenFunction",L(Info_HarkenFunction),"src/main.cpp");
                 } else {
                     // Display mode
                     row(L(Info_Description), desc.empty() ? "-" : desc);
                     row(L(Info_Keywords), keywords.empty() ? "-" : keywords);
                     row(L(Info_Category), category.empty() ? "-" : category);
+                    const HarkenMeta::Values harkenValues = HarkenMeta::Parse(hasDb ? record.getMeta("harken_meta") : std::string());
+                    if (!harkenValues.category.empty()) row(L(Info_HarkenCategory), harkenValues.category);
+                    if (!harkenValues.function.empty()) row(L(Info_HarkenFunction), harkenValues.function);
                 }
 
                 // Classic-library BWF fields
@@ -30446,7 +30524,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                 if (state.audioEngine.isLoaded()) {
                     const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
                     DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                    state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin,
+                                    TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
@@ -32962,7 +33042,16 @@ void RenderUI(AppState& state) {
                                 state.setTransferStatusFmt(LStr::TR_CopyErrFmt, AppState::TransferStatusKind::Error,
                                                          rec.fileName, copyError);
                             } else {
-                                completed++;
+                                const std::string harkenMeta = rec.getMeta("harken_meta");
+                                std::string harkenError;
+                                if (!harkenMeta.empty() &&
+                                    !MetadataWriter::writeHarkenMetadata(destFile, harkenMeta, harkenError)) {
+                                    errors++;
+                                    state.setTransferStatusFmt(LStr::TR_CopyErrFmt, AppState::TransferStatusKind::Error,
+                                                             rec.fileName, harkenError);
+                                } else {
+                                    completed++;
+                                }
                             }
                         } catch (const std::exception& ex) {
                             errors++;
@@ -43987,7 +44076,9 @@ void RenderUI(AppState& state) {
                                                       state.browserSelectedIndicesSet.count(entryIndex) > 0);
                                 if (!isMultiSelect && isCurrentFile && (audioAdjusted || hasRegion)) {
                                     // 单文件 + 有调整/选区：生成临时渲染文件，保证"所听即所得"
-                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                                    state.settings.keepHarkenSearchOutputProcessingSuffix, nullptr,
+                                                    TransferHarkenMetaForPath(state, entry.fullPath));
                                 } else {
 // 多选或无调整：通过 BatchExportForTransfer 处理.
                                     std::vector<std::string> rawPaths;
@@ -44010,7 +44101,8 @@ void RenderUI(AppState& state) {
                                                 state.uiState.regionFadeOutNorm,
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
-                                                dragErr) && !files.empty())
+                                                dragErr,
+                                                &state.database) && !files.empty())
                                         {
                                             DragCardOrigin dragOrigin;
                                             dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
@@ -45796,7 +45888,9 @@ void RenderUI(AppState& state) {
                                                       state.selectedIndicesSet.count(i) > 0);
                                 if (!isMultiSelect && isCurrentFile && (audioAdjusted || hasRegion)) {
                                     // 单文件 + 有调整/选区：生成临时渲染文件，保证"所听即所得"
-                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                                    state.settings.keepHarkenSearchOutputProcessingSuffix, nullptr,
+                                                    TransferHarkenMetaForPath(state, record.filePath));
                                 } else {
 
                                     // （有 DSP 调整时导出 temp WAV；无调整时直接传原始路径）
@@ -45820,7 +45914,8 @@ void RenderUI(AppState& state) {
                                                 state.uiState.regionFadeOutNorm,
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
-                                                dragErr) && !files.empty())
+                                                dragErr,
+                                                &state.database) && !files.empty())
                                         {
                                             DragCardOrigin dragOrigin;
                                             dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
@@ -51340,7 +51435,9 @@ void RenderUI(AppState& state) {
                 if (state.audioEngine.isLoaded()) {
                     const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
                     DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                    state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin,
+                                    TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;

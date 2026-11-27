@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../src/EmbedScript.h"
+#include "../src/HarkenMeta.h"
 #include "../src/MetadataReader.h"
 #include "../src/MetadataWriter.h"
 
@@ -79,6 +80,16 @@ static void WriteWavWithId3(const std::string& path) {
                  static_cast<std::streamsize>(wav.size()));
 }
 
+static void WriteMinimalFlac(const std::string& path) {
+    std::ofstream out(path, std::ios::binary);
+    const char header[] = {'f', 'L', 'a', 'C'};
+    out.write(header, 4);
+    out.put(static_cast<char>(0x80));  // last metadata block, type 0 (STREAMINFO)
+    out.put(0); out.put(0); out.put(34);
+    std::string streamInfo(34, '\0');
+    out.write(streamInfo.data(), static_cast<std::streamsize>(streamInfo.size()));
+}
+
 int main() {
     std::printf("=== TransferEmbed Tests ===\n");
     const std::string wav = "test_transfer_embed_tmp.wav";
@@ -116,6 +127,65 @@ int main() {
         CHECK(blob.find("<PROJECT>DragProj</PROJECT>") != std::string::npos, "iXML payload embedded");
     }
 
+    std::printf("\n--- HARKEN section ---\n");
+    WriteBareWav(wav, 48000, 96000);
+    {
+        IXMLData ix;
+        ix.project = "KeepMe";
+        MetadataFieldPatch patch;
+        patch.ixmlChunk = EmbedEngine::serializeIXML(ix);
+        std::string error;
+        CHECK(MetadataWriter::writeMetadataFields(wav, patch, error), "seed iXML ok");
+
+        const std::string json =
+            R"json({"category":"Weapons","function":"Impact","source":"ai"})json";
+        CHECK(MetadataWriter::writeHarkenMetadata(wav, json, error),
+              ("writeHarkenMetadata ok: " + error).c_str());
+
+        std::string xml;
+        CHECK(MetadataReader::readIXMLChunk(wav, xml, error), "read iXML chunk ok");
+        CHECK(xml.find("<PROJECT>KeepMe</PROJECT>") != std::string::npos,
+              "existing iXML PROJECT preserved");
+        CHECK(xml.find("<HARKEN>") != std::string::npos, "HARKEN section inserted");
+        CHECK(xml.find("<CATEGORY>Weapons</CATEGORY>") != std::string::npos, "HARKEN category written");
+        CHECK(xml.find("<FUNCTION>Impact</FUNCTION>") != std::string::npos, "HARKEN function written");
+
+        std::ifstream in(wav, std::ios::binary);
+        std::string blob((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        size_t chunkCount = 0;
+        for (size_t pos = blob.find("iXML"); pos != std::string::npos;
+             pos = blob.find("iXML", pos + 4)) {
+            ++chunkCount;
+        }
+        CHECK(chunkCount == 1, "exactly one iXML chunk after HARKEN merge");
+    }
+
+    std::printf("\n--- HARKEN empty write ---\n");
+    WriteBareWav(wav, 48000, 96000);
+    {
+        std::string error;
+        CHECK(MetadataWriter::writeHarkenMetadata(wav, "", error), "empty HARKEN is a no-op");
+        std::ifstream in(wav, std::ios::binary);
+        std::string blob((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(blob.find("iXML") == std::string::npos, "no iXML chunk created for empty values");
+    }
+
+    std::printf("\n--- FLAC HARKEN block ---\n");
+    const std::string flac = "test_transfer_embed_tmp.flac";
+    WriteMinimalFlac(flac);
+    {
+        std::string error;
+        CHECK(MetadataWriter::writeHarkenMetadata(
+                  flac, R"json({"category":"Ambience","function":"Rain"})json", error),
+              ("writeHarkenMetadata(FLAC) ok: " + error).c_str());
+        std::ifstream in(flac, std::ios::binary);
+        std::string blob((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(blob.find("HARK") != std::string::npos, "FLAC HARK application block written");
+        CHECK(blob.find("<CATEGORY>Ambience</CATEGORY>") != std::string::npos,
+              "FLAC HARKEN payload written");
+        CHECK(blob.find("fLaC") == 0, "FLAC marker preserved");
+    }
+
     std::printf("\n--- Cover removal result semantics ---\n");
     const std::string coveredWav = "test_transfer_embed_cover.wav";
     WriteWavWithId3(coveredWav);
@@ -150,6 +220,7 @@ int main() {
     std::remove(bareWav.c_str());
     std::remove(bareMp3.c_str());
     std::remove(unsupportedOgg.c_str());
+    std::remove(flac.c_str());
     std::printf("\n=== TransferEmbed: %d passed, %d failed ===\n", passed, failed);
     return failed ? 1 : 0;
 }

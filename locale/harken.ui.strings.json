@@ -1810,6 +1810,20 @@
       "ja": "分類"
     },
     {
+      "id": "Info_HarkenCategory",
+      "type": "ui",
+      "zh": "Harken 分类",
+      "en": "Harken Category",
+      "ja": "Harken 分類"
+    },
+    {
+      "id": "Info_HarkenFunction",
+      "type": "ui",
+      "zh": "Harken 功能",
+      "en": "Harken Function",
+      "ja": "Harken 機能"
+    },
+    {
       "id": "Info_BWFields",
       "type": "ui",
       "zh": "BWF 字段",

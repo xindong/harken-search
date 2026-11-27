@@ -5013,6 +5013,23 @@ endif()
 add_test(NAME TestMetadataFields COMMAND TestMetadataFields)
 aura_set_test_labels(TestMetadataFields core)
 
+add_executable(TestHarkenMeta EXCLUDE_FROM_ALL
+    tests/test_harken_meta.cpp
+)
+target_include_directories(TestHarkenMeta PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestHarkenMeta PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestHarkenMeta PRIVATE /W3 /utf-8)
+    set_target_properties(TestHarkenMeta PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestHarkenMeta COMMAND TestHarkenMeta)
+aura_set_test_labels(TestHarkenMeta core)
+
 # F-013: EmbedScript unit tests
 
 add_executable(TestTagSystem EXCLUDE_FROM_ALL

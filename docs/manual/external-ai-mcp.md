@@ -83,14 +83,19 @@ To revoke access immediately for manual or legacy links, turn off the library's
   responses. Match scores rank a bounded set of cached substitutes; they are not
   classification confidence or an exhaustive match across an entire large library.
 - `harken_get_metadata` reads the current title, description, category and keywords
-  for one authorized `file_id`.
+  plus the Harken-owned `harken` block (`category`, `function`, `source`) for one
+  authorized `file_id`.
 - `harken_preview_metadata_update` accepts one file and a proposed set of those
-  four metadata fields. It returns `before`, `after` and a session-scoped
-  `proposal_id`; it never writes.
+  four metadata fields and/or a `harken` object with `category` and `function`.
+  It returns `before`, `after` and a session-scoped `proposal_id`; it never writes.
+  Harken values land only in `audio_files.harken_meta` and never overwrite the
+  standard title/description/category/keywords tags.
 - `harken_apply_metadata_update` accepts only that `proposal_id`. Before writing,
   it re-reads the authorization document, checks the current database and path,
   verifies the original values are unchanged, and requires an explicit client
-  confirmation step.
+  confirmation step. If the file's `harken_meta` was edited manually
+  (`source: "manual"`), the apply returns `skipped_manual` and keeps the manual
+  values.
 
 ### Game SFX Playlist preview
 
