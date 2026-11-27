@@ -102,6 +102,8 @@ Name: "chinesesimp"; MessagesFile: "Languages\ChineseSimplified.isl"
 [CustomMessages]
 english.CurrentInstallBusy=Harken Search or its updater is still running, or files in this installation cannot be replaced. Please fully exit Harken Search (including its tray icon), wait for any update to finish, then retry. No installation files have been changed.
 chinesesimp.CurrentInstallBusy=Harken Search 或更新程序尚未退出，或当前安装文件无法替换。请完全退出 Harken Search（包括托盘图标），等待正在进行的更新结束后重试。本次尚未替换安装文件。
+english.PostInstallLaunchFailed=Harken Search is installed. Please run it manually as administrator.
+chinesesimp.PostInstallLaunchFailed=Harken Search 已安装。请手动以管理员身份运行。
 english.EulaTitle=Installation and Use License Agreement
 chinesesimp.EulaTitle=软件安装及使用许可协议
 english.EulaDescription=Read the agreement below, then select the checkbox to agree.
@@ -114,12 +116,18 @@ english.PrivacyDescription=Read the privacy policy below, then select the checkb
 chinesesimp.PrivacyDescription=请阅读以下隐私政策正文，然后勾选同意。
 english.PrivacyConsent=I agree to the Privacy Policy
 chinesesimp.PrivacyConsent=我同意隐私政策
-english.LegalReadRequired=Please read the full %1 and scroll to the bottom.
-chinesesimp.LegalReadRequired=请完整阅读%1并滚动到底部。
 english.LegalLoadFailed=The %1 could not be loaded. Setup cannot continue.
 chinesesimp.LegalLoadFailed=无法读取%1正文，无法继续安装。
 english.LegalConsentRequired=You must agree to the %1 before continuing.
 chinesesimp.LegalConsentRequired=必须同意%1后才能继续安装。
+english.ConsentOnlyDescription=Agree to both documents to authorize one silent installation on this PC, with this Windows account, within 30 minutes.
+chinesesimp.ConsentOnlyDescription=同意两份文件后，可用此 Windows 账号在本机静默安装一次，30 分钟内有效。
+english.ConsentOnlySave=Save consent
+chinesesimp.ConsentOnlySave=保存同意
+english.ConsentOnlySaved=Consent saved. No software was installed.
+chinesesimp.ConsentOnlySaved=同意记录已保存，未安装软件。
+english.ConsentOnlyUnavailable=Consent could not be saved. Run Setup interactively, or sign in to Windows with the administrator account you are using to run Setup and try again.
+chinesesimp.ConsentOnlyUnavailable=无法保存同意记录。请直接交互安装，或登录运行安装器的管理员账号后重试。
 english.LegacyRunning=Harken Search or an older version is running. Please close it before installing. Setup will not forcibly close programs or silently uninstall them.
 chinesesimp.LegacyRunning=检测到 Harken Search 或旧版程序正在运行。请先退出后再安装。本次不会强行关闭正在运行的程序，也不会静默卸载。
 english.LegacyStillRegistered=The old version could not be uninstalled: its uninstall entry still exists. Setup has stopped to avoid an incomplete installation.
@@ -139,23 +147,22 @@ chinesesimp.DeleteUserData=是否删除 Harken Search 的用户配置文件和�
 
 [Code]
 type
-  TScrollInfo = record
-    cbSize: UINT;
-    fMask: UINT;
-    nMin: Integer;
-    nMax: Integer;
-    nPage: UINT;
-    nPos: Integer;
-    nTrackPos: Integer;
+  TInstallerTokenUser = record
+    Sid: LongWord;
+    Attributes: LongWord;
+    SidStorage: array [0..67] of Byte;
+  end;
+  TInstallerFileTime = record
+    LowPart: LongWord;
+    HighPart: LongWord;
   end;
 
 const
-  SB_VERT = 1;
-  SIF_RANGE = $0001;
-  SIF_PAGE = $0002;
-  SIF_POS = $0004;
   LegacyUninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A8B3C9D1-E4F5-4A6B-8C9D-0E1F2A3B4C5D}_is1';
   LegacyUninstallKeyWow = 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{A8B3C9D1-E4F5-4A6B-8C9D-0E1F2A3B4C5D}_is1';
+  InstallerConsentKey = 'SOFTWARE\HarkenSearch\InstallerConsent';
+  WebView2RuntimeKey = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  ConsentLifetimeSeconds = 30 * 60;
 
 var
   TrustedLegacyStagedExe: String;
@@ -168,52 +175,103 @@ var
   LegalText: String;
   EulaLoaded: Boolean;
   PrivacyLoaded: Boolean;
+  SetupCompleted: Boolean;
+  FinishedLaunchIndex: Integer;
+  ConsentOnly: Boolean;
+  ConsentOnlySaved: Boolean;
+  ConsentFingerprint: String;
 
-function GetScrollInfo(hWnd: HWND; nBar: Integer;
-  var ScrollInfo: TScrollInfo): BOOL;
-  external 'GetScrollInfo@user32.dll stdcall';
+function CloseHandle(hObject: LongInt): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+function GetCurrentProcess: LongInt;
+  external 'GetCurrentProcess@kernel32.dll stdcall';
+function OpenProcess(DesiredAccess: Cardinal; InheritHandle: BOOL; ProcessId: Cardinal): LongInt;
+  external 'OpenProcess@kernel32.dll stdcall';
+function OpenProcessToken(ProcessHandle: LongInt; DesiredAccess: Cardinal; var TokenHandle: LongInt): BOOL;
+  external 'OpenProcessToken@advapi32.dll stdcall';
+function GetTokenInformation(TokenHandle: LongInt; TokenInformationClass: Integer;
+  var Information: TInstallerTokenUser; InformationLength: Cardinal; var ReturnLength: Cardinal): BOOL;
+  external 'GetTokenInformation@advapi32.dll stdcall';
+function ConvertSidToStringSidW(Sid: LongWord; var StringSid: LongWord): BOOL;
+  external 'ConvertSidToStringSidW@advapi32.dll stdcall';
+function LocalFree(Memory: LongWord): LongWord;
+  external 'LocalFree@kernel32.dll stdcall';
+function lstrlenW(Text: LongWord): Integer;
+  external 'lstrlenW@kernel32.dll stdcall';
+function lstrcpynW(Buffer: String; Text: LongWord; MaxChars: Integer): LongWord;
+  external 'lstrcpynW@kernel32.dll stdcall';
+function GetShellWindow: HWND;
+  external 'GetShellWindow@user32.dll stdcall';
+function GetWindowThreadProcessId(Window: HWND; var ProcessId: Cardinal): Cardinal;
+  external 'GetWindowThreadProcessId@user32.dll stdcall';
+procedure GetSystemTimeAsFileTime(var Time: TInstallerFileTime);
+  external 'GetSystemTimeAsFileTime@kernel32.dll stdcall';
 
-function IsLegalMemoAtBottom(MemoControl: TNewMemo): Boolean;
+function ProcessUserSid(ProcessHandle: LongInt): String;
 var
-  ScrollInfo: TScrollInfo;
-  LastPagePosition: Integer;
+  Token: LongInt;
+  UserInfo: TInstallerTokenUser;
+  Bytes: Cardinal;
+  SidText: LongWord;
+  CharCount: Integer;
 begin
-  Result := False;
-  ScrollInfo.cbSize := SizeOf(ScrollInfo);
-  ScrollInfo.fMask := SIF_RANGE or SIF_PAGE or SIF_POS;
-  if not GetScrollInfo(MemoControl.Handle, SB_VERT, ScrollInfo) then
-    exit;
-
-  LastPagePosition := ScrollInfo.nMax;
-  if ScrollInfo.nPage > 0 then
-    LastPagePosition := ScrollInfo.nMax - Integer(ScrollInfo.nPage - 1);
-  Result := ScrollInfo.nPos >= LastPagePosition;
+  Result := '';
+  if not OpenProcessToken(ProcessHandle, $0008, Token) then
+    Exit;
+  try
+    if not GetTokenInformation(Token, 1, UserInfo, SizeOf(UserInfo), Bytes) then
+      Exit;
+    if not ConvertSidToStringSidW(UserInfo.Sid, SidText) then
+      Exit;
+    try
+      CharCount := lstrlenW(SidText);
+      if CharCount <= 0 then
+        Exit;
+      SetLength(Result, CharCount);
+      lstrcpynW(Result, SidText, CharCount + 1);
+    finally
+      LocalFree(SidText);
+    end;
+  finally
+    CloseHandle(Token);
+  end;
 end;
 
-procedure LegalCheckClick(Sender: TObject);
-var
-  CheckControl: TNewCheckBox;
-  MemoControl: TNewMemo;
-  DocumentName: String;
+function InstallerConsentUser: String;
 begin
-  if Sender = EulaCheck then
-  begin
-    CheckControl := EulaCheck;
-    MemoControl := EulaMemo;
-    DocumentName := CustomMessage('EulaTitle');
-  end
-  else
-  begin
-    CheckControl := PrivacyCheck;
-    MemoControl := PrivacyMemo;
-    DocumentName := CustomMessage('PrivacyTitle');
-  end;
+  Result := '';
+  if IsWin64 and IsAdminInstallMode and IsAdmin then
+    Result := ProcessUserSid(GetCurrentProcess);
+end;
 
-  if CheckControl.Checked and (not IsLegalMemoAtBottom(MemoControl)) then
-  begin
-    CheckControl.Checked := False;
-    MsgBox(FmtMessage(CustomMessage('LegalReadRequired'), [DocumentName]), mbError, MB_OK);
+function IsDesktopUser(const UserSid: String): Boolean;
+var
+  DesktopWindow: HWND;
+  DesktopProcess: LongInt;
+  DesktopProcessId: Cardinal;
+begin
+  Result := False;
+  DesktopWindow := GetShellWindow;
+  if (UserSid = '') or (DesktopWindow = 0) then
+    Exit;
+  if GetWindowThreadProcessId(DesktopWindow, DesktopProcessId) = 0 then
+    Exit;
+  DesktopProcess := OpenProcess($1000, False, DesktopProcessId);
+  if DesktopProcess = 0 then
+    Exit;
+  try
+    Result := ProcessUserSid(DesktopProcess) = UserSid;
+  finally
+    CloseHandle(DesktopProcess);
   end;
+end;
+
+function InstallerConsentTime: Int64;
+var
+  Time: TInstallerFileTime;
+begin
+  GetSystemTimeAsFileTime(Time);
+  Result := ((Int64(Time.HighPart) * 4294967296 + Time.LowPart) div 10000000) - 11644473600;
 end;
 
 function LoadUtf8LegalText(const FileName: String; var Text: String): Boolean;
@@ -231,6 +289,7 @@ begin
       Text := Text + #13#10;
     Text := Text + Lines[I];
   end;
+  Result := Trim(Text) <> '';
 end;
 
 procedure AddLegalPageControls(Page: TWizardPage; const CheckCaption: String;
@@ -256,7 +315,6 @@ begin
   CheckControl.Caption := CheckCaption;
   CheckControl.Checked := False;
   CheckControl.TabOrder := 1;
-  CheckControl.OnClick := @LegalCheckClick;
 end;
 
 function LegalDocumentFileName(const BaseName: String): String;
@@ -267,47 +325,168 @@ begin
     Result := BaseName + '.en.md';
 end;
 
+function LegalPath(const BaseName: String): String;
+var
+  FileName: String;
+begin
+  FileName := LegalDocumentFileName(BaseName);
+  Result := AddBackslash(ExpandConstant('{tmp}')) + FileName;
+  if not FileExists(Result) then
+    ExtractTemporaryFile(FileName);
+end;
+
+function InstallerConsentFingerprint: String;
+var
+  EulaHash, PrivacyHash, SetupHash: String;
+begin
+  if ConsentFingerprint = '' then
+  begin
+    EulaHash := GetSHA256OfFile(LegalPath('EULA'));
+    PrivacyHash := GetSHA256OfFile(LegalPath('PRIVACY_POLICY'));
+    SetupHash := GetSHA256OfFile(ExpandConstant('{srcexe}'));
+    if (Length(EulaHash) <> 64) or (Length(PrivacyHash) <> 64) or
+      (Length(SetupHash) <> 64) then
+      RaiseException('Installer consent could not identify both documents and the package.');
+    ConsentFingerprint := 'v1|machine|{#MyAppVersion}|' + ActiveLanguage + '|' +
+      EulaHash + '|' + PrivacyHash + '|' + SetupHash + '|';
+  end;
+  Result := ConsentFingerprint;
+end;
+
+function ReadInstallerConsent(var ConsentUserSid, Receipt: String): Boolean;
+var
+  Fingerprint: String;
+  AcceptedAt, CurrentTime: Int64;
+begin
+  Result := False;
+  ConsentUserSid := InstallerConsentUser;
+  if not IsDesktopUser(ConsentUserSid) then
+    Exit;
+  if not RegQueryStringValue(HKLM64, InstallerConsentKey, ConsentUserSid, Receipt) then
+    Exit;
+  try
+    Fingerprint := InstallerConsentFingerprint;
+    if Copy(Receipt, 1, Length(Fingerprint)) <> Fingerprint then
+      Exit;
+    AcceptedAt := StrToInt64Def(Copy(Receipt, Length(Fingerprint) + 1, MaxInt), 0);
+    CurrentTime := InstallerConsentTime;
+    Result := (AcceptedAt > 0) and (AcceptedAt <= CurrentTime) and
+      (CurrentTime - AcceptedAt < ConsentLifetimeSeconds);
+  except
+    Log('Installer consent could not be verified: ' + GetExceptionMessage);
+  end;
+end;
+
+function RecordInstallerConsent: Boolean;
+var
+  ConsentUserSid, Receipt: String;
+begin
+  Result := False;
+  if not ConsentOnly or WizardSilent then
+    Exit;
+  ConsentUserSid := InstallerConsentUser;
+  if not IsDesktopUser(ConsentUserSid) then
+    Exit;
+  try
+    Receipt := InstallerConsentFingerprint + IntToStr(InstallerConsentTime);
+    Result := RegWriteStringValue(HKLM64, InstallerConsentKey, ConsentUserSid, Receipt);
+    if Result then
+      Log('Installer consent saved by the signed-in user: ' + Receipt);
+  except
+    Log('Installer consent could not be saved: ' + GetExceptionMessage);
+  end;
+end;
+
+function ConsumeInstallerConsent: Boolean;
+var
+  ConsentUserSid, Receipt: String;
+begin
+  Result := False;
+  if not ReadInstallerConsent(ConsentUserSid, Receipt) then
+    Exit;
+  Result := RegDeleteValue(HKLM64, InstallerConsentKey, ConsentUserSid);
+  if Result then
+    Log('Installer consent consumed: ' + Receipt);
+end;
+
 procedure InitializeWizard;
 var
-  EulaFileName, PrivacyFileName: String;
+  PrivacyDescription: String;
 begin
-  EulaFileName := LegalDocumentFileName('EULA');
-  PrivacyFileName := LegalDocumentFileName('PRIVACY_POLICY');
-  ExtractTemporaryFile(EulaFileName);
-  ExtractTemporaryFile(PrivacyFileName);
+  FinishedLaunchIndex := -1;
+  if WizardSilent then
+    Exit;
 
   EulaPage := CreateCustomPage(wpWelcome,
     CustomMessage('EulaTitle'), CustomMessage('EulaDescription'));
   AddLegalPageControls(EulaPage, CustomMessage('EulaConsent'), EulaMemo, EulaCheck);
-  EulaLoaded := LoadUtf8LegalText(AddBackslash(ExpandConstant('{tmp}')) + EulaFileName, LegalText);
+  EulaLoaded := LoadUtf8LegalText(LegalPath('EULA'), LegalText);
   if EulaLoaded then
     EulaMemo.Text := LegalText
   else
     EulaMemo.Text := FmtMessage(CustomMessage('LegalLoadFailed'), [CustomMessage('EulaTitle')]);
 
+  PrivacyDescription := CustomMessage('PrivacyDescription');
+  if ConsentOnly then
+    PrivacyDescription := CustomMessage('ConsentOnlyDescription');
   PrivacyPage := CreateCustomPage(EulaPage.ID,
-    CustomMessage('PrivacyTitle'), CustomMessage('PrivacyDescription'));
+    CustomMessage('PrivacyTitle'), PrivacyDescription);
   AddLegalPageControls(PrivacyPage, CustomMessage('PrivacyConsent'), PrivacyMemo, PrivacyCheck);
-  PrivacyLoaded := LoadUtf8LegalText(AddBackslash(ExpandConstant('{tmp}')) + PrivacyFileName, LegalText);
+  PrivacyLoaded := LoadUtf8LegalText(LegalPath('PRIVACY_POLICY'), LegalText);
   if PrivacyLoaded then
     PrivacyMemo.Text := LegalText
   else
     PrivacyMemo.Text := FmtMessage(CustomMessage('LegalLoadFailed'), [CustomMessage('PrivacyTitle')]);
 end;
 
+procedure LaunchInstalledHarken;
+var
+  ErrorCode: Integer;
+begin
+  try
+    if ShellExecAsOriginalUser('runas', ExpandConstant('{app}\{#MyAppExeName}'),
+      '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ErrorCode) then
+      Exit;
+    Log('Post-install launch did not start: ' + IntToStr(ErrorCode));
+  except
+    Log('Post-install launch did not start: ' + GetExceptionMessage);
+  end;
+  MsgBox(CustomMessage('PostInstallLaunchFailed'), mbInformation, MB_OK);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if ConsentOnly and (PrivacyPage <> nil) and (CurPageID = PrivacyPage.ID) then
+    WizardForm.NextButton.Caption := CustomMessage('ConsentOnlySave');
+  if (CurPageID = wpFinished) and SetupCompleted and not WizardSilent and
+    not WizardForm.YesRadio.Visible and (FinishedLaunchIndex < 0) then
+  begin
+    FinishedLaunchIndex := WizardForm.RunList.AddCheckBox(
+      FmtMessage(CustomMessage('LaunchProgram'), ['{#MyAppName}']), '',
+      0, True, True, False, False, nil);
+    WizardForm.RunList.Visible := True;
+  end;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  LaunchRequested: Boolean;
 begin
   Result := True;
+  if (CurPageID = wpFinished) and (FinishedLaunchIndex >= 0) and not WizardSilent then
+  begin
+    LaunchRequested := WizardForm.RunList.Checked[FinishedLaunchIndex];
+    WizardForm.RunList.Items.Delete(FinishedLaunchIndex);
+    FinishedLaunchIndex := -1;
+    if LaunchRequested then
+      LaunchInstalledHarken;
+    Exit;
+  end;
   if (EulaPage <> nil) and (CurPageID = EulaPage.ID) then
   begin
     if not EulaLoaded then
     begin
       MsgBox(FmtMessage(CustomMessage('LegalLoadFailed'), [CustomMessage('EulaTitle')]), mbError, MB_OK);
-      Result := False;
-    end
-    else if not IsLegalMemoAtBottom(EulaMemo) then
-    begin
-      MsgBox(FmtMessage(CustomMessage('LegalReadRequired'), [CustomMessage('EulaTitle')]), mbError, MB_OK);
       Result := False;
     end
     else if not EulaCheck.Checked then
@@ -323,25 +502,36 @@ begin
       MsgBox(FmtMessage(CustomMessage('LegalLoadFailed'), [CustomMessage('PrivacyTitle')]), mbError, MB_OK);
       Result := False;
     end
-    else if not IsLegalMemoAtBottom(PrivacyMemo) then
-    begin
-      MsgBox(FmtMessage(CustomMessage('LegalReadRequired'), [CustomMessage('PrivacyTitle')]), mbError, MB_OK);
-      Result := False;
-    end
     else if not PrivacyCheck.Checked then
     begin
       MsgBox(FmtMessage(CustomMessage('LegalConsentRequired'), [CustomMessage('PrivacyTitle')]), mbError, MB_OK);
       Result := False;
+    end
+    else if ConsentOnly then
+    begin
+      Result := False;
+      if not (EulaLoaded and EulaCheck.Checked) or not RecordInstallerConsent then
+      begin
+        MsgBox(CustomMessage('ConsentOnlyUnavailable'), mbError, MB_OK);
+        Exit;
+      end;
+      ConsentOnlySaved := True;
+      MsgBox(CustomMessage('ConsentOnlySaved'), mbInformation, MB_OK);
+      WizardForm.Close;
     end;
   end;
+end;
+
+procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
+begin
+  if ConsentOnlySaved then
+    Confirm := False;
 end;
 
 function CreateFileW(lpFileName: String; dwDesiredAccess: Cardinal;
   dwShareMode: Cardinal; lpSecurityAttributes: Cardinal; dwCreationDisposition: Cardinal;
   dwFlagsAndAttributes: Cardinal; hTemplateFile: Cardinal): LongInt;
   external 'CreateFileW@kernel32.dll stdcall';
-function CloseHandle(hObject: LongInt): BOOL;
-  external 'CloseHandle@kernel32.dll stdcall';
 
 type
   TInstallFileIdInfo = record
@@ -738,6 +928,11 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  if ConsentOnly then
+  begin
+    Result := CustomMessage('ConsentOnlyUnavailable');
+    Exit;
+  end;
   if not AcquireInstallMutationMutex(ExpandConstant('{app}')) then
   begin
     Result := CustomMessage('CurrentInstallBusy');
@@ -747,6 +942,13 @@ begin
   begin
     ReleaseInstallMutationMutex;
     Result := CustomMessage('CurrentInstallBusy');
+    Exit;
+  end;
+  if WizardSilent and not ConsumeInstallerConsent then
+  begin
+    ReleaseInstallMutationMutex;
+    Log('Silent installation stopped: no matching installer consent remains.');
+    Result := CustomMessage('ConsentOnlyUnavailable');
   end;
 end;
 
@@ -755,17 +957,79 @@ begin
   ReleaseInstallMutationMutex;
 end;
 
-function InitializeSetup: Boolean;
+function HasSetupParam(const ParamName: String): Boolean; forward;
+
+function HasWebView2RuntimeAt(RegistryRoot: Integer): Boolean;
 var
   Version: String;
+  PackedVersion: Int64;
 begin
-  Result := True;
-  if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) then
+  Result := RegQueryStringValue(RegistryRoot, WebView2RuntimeKey, 'pv', Version) and
+    StrToVersion(Version, PackedVersion) and (PackedVersion > 0);
+end;
+
+function HasWebView2Runtime: Boolean;
+begin
+  Result := HasWebView2RuntimeAt(HKLM32) or HasWebView2RuntimeAt(HKCU);
+end;
+
+function InitializeSetup: Boolean;
+var
+  ConsentUserSid, Receipt, LegacyCommand, LegacyLocation: String;
+begin
+  Result := False;
+  ConsentOnly := HasSetupParam('/RECORDCONSENT');
+  if ConsentOnly and WizardSilent then
   begin
+    Log('Consent must be recorded interactively.');
+    Exit;
+  end;
+  if ConsentOnly then
+  begin
+    Result := IsDesktopUser(InstallerConsentUser);
+    if not Result then
+      MsgBox(CustomMessage('ConsentOnlyUnavailable'), mbError, MB_OK);
+    Exit;
+  end;
+  if WizardSilent and not ReadInstallerConsent(ConsentUserSid, Receipt) then
+  begin
+    Log('Silent installation stopped: consent to both documents for this package, account and PC is required. Run Setup /RECORDCONSENT interactively.');
+    Exit;
+  end;
+  if WizardSilent and FindLegacyUninstall(LegacyCommand, LegacyLocation) then
+  begin
+    Log('Silent installation stopped: legacy migration requires interactive Setup.');
+    Exit;
+  end;
+  Result := True;
+  if not HasWebView2Runtime then
+  begin
+    if WizardSilent then
+    begin
+      Log('Silent installation stopped: WebView2 Runtime is not installed.');
+      Result := False;
+      Exit;
+    end;
     if MsgBox(CustomMessage('WebViewMissing'), mbConfirmation, MB_YESNO) = IDNO then
     begin
       Result := False;
     end;
+  end;
+end;
+
+procedure RefreshPinnedIconsAfterInstall;
+var
+  ExitCode: Integer;
+begin
+  try
+    if not ExecAsOriginalUser(ExpandConstant('{app}\{#MyAppExeName}'),
+      '--refresh-pinned-taskbar-icons', ExpandConstant('{app}'), SW_HIDE,
+      ewWaitUntilTerminated, ExitCode) then
+      Log('Pinned icon refresh deferred until Harken Search starts: ' + IntToStr(ExitCode))
+    else if ExitCode <> 0 then
+      Log('Pinned icon refresh returned: ' + IntToStr(ExitCode));
+  except
+    Log('Pinned icon refresh deferred until Harken Search starts: ' + GetExceptionMessage);
   end;
 end;
 
@@ -775,6 +1039,11 @@ begin
   begin
     if not UninstallLegacyArisIfPresent then
       Abort;
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    SetupCompleted := True;
+    RefreshPinnedIconsAfterInstall;
   end;
 end;
 
@@ -874,18 +1143,9 @@ Root: HKCR; Subkey: "Directory\shell\ArisScan\command"; ValueType: string; Value
 ; Root: HKCR; Subkey: "ArisAudioFile\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
 ; Root: HKCR; Subkey: "ArisAudioFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
-[Run]
-; Explorer 会缓存任务栏固定项的图标位图，覆盖升级后需要请它重读。
-; 以安装前的当前用户（非提权）身份执行：提权进程发出的 Shell 通知可能被 UIPI 挡住。
-; 故意不加 skipifsilent：应用内静默升级同样需要在首次启动前刷新。
-; 等它跑完再继续：结束页可以立刻启动程序，刷新没做完就点启动会看到旧图标。
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--refresh-pinned-taskbar-icons"; WorkingDir: "{app}"; Flags: runasoriginaluser waituntilterminated
-; 安装完成后运行程序（可选）
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Verb: runas; Flags: shellexec nowait postinstall skipifsilent
-
 [Code]
 
-function HasUninstallParam(const ParamName: String): Boolean;
+function HasSetupParam(const ParamName: String): Boolean;
 var
   I: Integer;
 begin
@@ -902,7 +1162,7 @@ end;
 
 function ShouldDeleteUserDataOnUninstall(): Boolean;
 begin
-  if HasUninstallParam('/DELETEUSERDATA') then
+  if HasSetupParam('/DELETEUSERDATA') then
   begin
     Result := True;
     Exit;
