@@ -542,6 +542,7 @@ set(APP_SOURCES
     src/RecordRemovalWorkflow.cpp
     src/RecordRenameWorkflow.cpp
     src/BatchRenamePolicy.cpp
+    src/BatchMetadataRuleEdit.cpp
     src/BatchRenameExecutionWorkflow.cpp
     src/BrowserSystemFolderSearchPolicy.cpp
     src/BrowserSystemFolderSearchRuntime.cpp

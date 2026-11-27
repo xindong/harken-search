@@ -4504,6 +4504,46 @@ endif()
 add_test(NAME TestBatchRenamePolicy COMMAND TestBatchRenamePolicy)
 aura_set_test_labels(TestBatchRenamePolicy core stage4)
 
+add_executable(TestBatchMetadataRuleEdit EXCLUDE_FROM_ALL
+    tests/test_batch_metadata_rule_edit.cpp
+    src/BatchMetadataRuleEdit.cpp
+    src/BatchRenamePolicy.cpp
+    src/Utils.cpp
+    src/platform/filesystem_std.cpp
+    src/platform/harken_user_data_layout.cpp
+    src/platform/harken_legacy_data_migrator.cpp
+    src/platform/system_win32.cpp
+    ${AURO_AUDIO_TEXT_SOURCE}
+)
+if(WIN32)
+    target_sources(TestBatchMetadataRuleEdit PRIVATE
+        src/platform/filesystem_win32.cpp
+    )
+endif()
+target_include_directories(TestBatchMetadataRuleEdit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(TestBatchMetadataRuleEdit PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestBatchMetadataRuleEdit PRIVATE /W3 /utf-8)
+    set_target_properties(TestBatchMetadataRuleEdit PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestBatchMetadataRuleEdit COMMAND TestBatchMetadataRuleEdit)
+aura_set_test_labels(TestBatchMetadataRuleEdit core stage4)
+
+add_test(
+    NAME TestBatchMetadataRuleEditContract
+    COMMAND ${Python3_EXECUTABLE} -m unittest tests.test_batch_metadata_rule_edit_contract
+)
+set_tests_properties(TestBatchMetadataRuleEditContract PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+aura_set_test_labels(TestBatchMetadataRuleEditContract core)
+
 add_executable(TestBatchRenameExecutionWorkflow EXCLUDE_FROM_ALL
     tests/test_batch_rename_execution_workflow.cpp
     src/BatchRenameExecutionWorkflow.cpp

@@ -361,7 +361,7 @@ void RenderUCSBrowserContent(AppState& state) {
                 // all empty — apply directly with undo
                 s_ucsApplyCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = "UCS category assign";
+                undoOp->editKind = MetadataUndoKind::WriteUcsCategory;
                 if (state.database.beginTransaction()) {
                     bool abort = false;
                     for (const auto& rec : selectedRecords) {
@@ -413,7 +413,7 @@ void RenderUCSBrowserContent(AppState& state) {
                 auto recs = state.getSelectedRecords();
                 s_ucsApplyCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = "UCS category assign";
+                undoOp->editKind = MetadataUndoKind::WriteUcsCategory;
                 if (state.database.beginTransaction()) {
                     bool abort = false;
                     for (const auto& rec : recs) {
