@@ -1,4 +1,5 @@
 #include "bootstrap/HarkenSearchBootstrapAdmission.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 
 #include "bootstrap/HarkenSearchBootstrapRuntime.h"
 #include "bootstrap/WindowsBootstrapFilesystem.h"
@@ -596,7 +597,7 @@ PackagePlanAdmission VerifyPackagePlan(
     plan.assetSha256 = root["asset_sha256"].get<std::string>();
     plan.assetSize = root["asset_size"].get<std::uint64_t>();
     plan.entrypoint = root["entrypoint"].get<std::string>();
-    if (plan.product != "aris" ||
+    if (!update::IsSupportedUpdateProduct(plan.product) ||
         (plan.channel != "stable" && plan.channel != "testing") ||
         !safeSemver(plan.version) || !safeIdentifier(plan.buildId, 1U, 128U) ||
         plan.keyId != trust.keyId || !isLowerHex(plan.assetSha256, 64U) ||
@@ -1009,7 +1010,8 @@ namespace {
 
 bool packageMatchesValidatedPlan(const PackagePlan& package,
                                  const ValidatedInstallPlan& expected) {
-    if (package.schemaVersion != 1U || package.product != "aris" ||
+    if (package.schemaVersion != 1U ||
+        !update::IsSupportedUpdateProduct(package.product) ||
         package.channel != expected.packageChannel ||
         package.version != expected.version ||
         package.buildId != expected.buildId ||

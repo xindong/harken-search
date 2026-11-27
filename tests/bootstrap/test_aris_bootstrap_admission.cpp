@@ -156,6 +156,21 @@ void test_package_signature_and_closed_schema() {
               accepted.packageSignatureHex == std::string(128, 'b'),
           "accepted admission retains exact signed bytes for durable recovery");
 
+    const std::string legacyProduct = "\"product\":\"aris\"";
+    auto v2Package = validPackage();
+    v2Package.replace(v2Package.find(legacyProduct), legacyProduct.size(),
+                      "\"product\":\"harken-search\"");
+    check(aris::bootstrap::VerifyPackagePlan(
+              v2Package, std::string(128, 'b'), trust, AcceptFixtureSignature).ok(),
+          "verified harken-search package plan is admitted");
+    auto foreignPackage = validPackage();
+    foreignPackage.replace(foreignPackage.find(legacyProduct), legacyProduct.size(),
+                           "\"product\":\"other-product\"");
+    check(aris::bootstrap::VerifyPackagePlan(
+              foreignPackage, std::string(128, 'b'), trust, AcceptFixtureSignature).status ==
+              aris::bootstrap::PackagePlanAdmissionStatus::InvalidField,
+          "unrelated package identity is not admitted");
+
     auto extra = validPackage();
     extra.insert(extra.size() - 1, ",\"unexpected\":true");
     const auto rejected = aris::bootstrap::VerifyPackagePlan(

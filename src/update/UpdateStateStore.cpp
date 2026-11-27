@@ -1,4 +1,5 @@
 #include "update/UpdateStateStore.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 #include "update/UpdateReleaseConfig.h"
 #include "nlohmann_json.hpp"
 
@@ -334,7 +335,7 @@ StoreSerializeResult UpdateStateStore::Serialize(const UpdateStoreRecord& record
 
         Json root = Json::object();
         root["schema_version"] = kSchemaVersion;
-        root["product"] = "aris";
+        root["product"] = kLegacyUpdateProduct;
         root["channel"] = ChannelName(record.channel);
         root["snapshot"] = std::move(snapshot);
         root["failure_count"] = record.failureCount;
@@ -375,7 +376,7 @@ StoreDeserializeResult UpdateStateStore::Deserialize(std::string_view bytes) {
         return result;
     }
     if (!root["product"].is_string() ||
-        root["product"].get<std::string>() != "aris") {
+        !IsSupportedUpdateProduct(root["product"].get<std::string>())) {
         result.error = StoreError::ProductMismatch;
         return result;
     }

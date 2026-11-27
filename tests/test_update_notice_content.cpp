@@ -16,6 +16,16 @@ int main(int argc, char** argv) {
     auto* entry = FindHarkenSearchReleaseNotes(notes.releases, "v1.0.37");
     check(entry && entry->items[0].title == "A title" && entry->items[0].text == "Complete details" && entry->items[0].author == "Dev", "title, full text and author survive normalization");
     {
+        const std::string v2Identity = "{\"product\":\"harken-search\"," + document.substr(1);
+        std::vector<ReleaseNotesEntry> releases;
+        check(ParseHarkenSearchReleaseNotes(v2Identity, releases) &&
+                  FindHarkenSearchReleaseNotes(releases, "1.0.37"),
+              "release notes with the harken-search identity remain visible");
+        const std::string foreignIdentity = "{\"product\":\"other-product\"," + document.substr(1);
+        check(!ParseHarkenSearchReleaseNotes(foreignIdentity, releases),
+              "release notes with an unrelated identity are rejected");
+    }
+    {
         const std::string groupedDocument = R"({"schema_version":2,"releases":[{"version":"1.0.47","release_date":"2026-11-25","contributors":["Dev","Cindy"],"sections":[{"title":"Appearance","items":[{"name":"","list":["Import themes","Keep the current theme on failure"]}]},{"title":"Search","items":[{"name":"","list":["Find more folders"]}]}]}]})";
         std::vector<ReleaseNotesEntry> groupedReleases;
         check(ParseHarkenSearchReleaseNotes(groupedDocument, groupedReleases), "version-credited sections parse");

@@ -196,11 +196,13 @@ std::string Utf8(const std::wstring& value) {
 }
 
 UpdateCheckFetchResult Failure(UpdateCheckFetchError error,
-                               std::string detail) {
+                               std::string detail,
+                               std::uint32_t httpStatus = 0) {
     UpdateCheckFetchResult result;
 
     result.error = error;
     result.detail = std::move(detail);
+    result.httpStatus = httpStatus;
     return result;
 }
 
@@ -357,6 +359,11 @@ public:
                                    "update check response status is missing");
                 }
                 if (status >= 300 && status < 400) {
+                    if (!request.allowRedirects) {
+                        return Failure(UpdateCheckFetchError::InvalidResponse,
+                                       "signed update pair cannot redirect",
+                                       status);
+                    }
                     if (redirect == kMaximumRedirects) {
                         return Failure(UpdateCheckFetchError::InvalidResponse,
                                        "update check redirect limit exceeded");
@@ -410,7 +417,8 @@ public:
                     return Failure(
                         classified,
                         "update check HTTP status " + std::to_string(status) +
-                            " rejected");
+                            " rejected",
+                        status);
                 }
 
                 WinInetResponseReadPort reader(state);

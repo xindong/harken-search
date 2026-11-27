@@ -43,6 +43,14 @@
 
 namespace aris::update {
 
+#ifndef ARIS_UPDATE_V2_STABLE_MANIFEST_URL
+#define ARIS_UPDATE_V2_STABLE_MANIFEST_URL ""
+#endif
+
+inline std::string_view PreferredStableManifestUrl() {
+    return ARIS_UPDATE_V2_STABLE_MANIFEST_URL;
+}
+
 inline std::string CompanyCloudStableManifestUrl() {
     constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
     constexpr std::string_view file =

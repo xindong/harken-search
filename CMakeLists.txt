@@ -138,6 +138,15 @@ endif()
 
 option(ARIS_UPDATE_LOCAL_DEMO
     "Build the QA-only loopback local update demonstration" OFF)
+set(ARIS_UPDATE_V2_STABLE_MANIFEST_URL "" CACHE STRING
+    "Optional HTTPS v2 stable manifest URL; its detached signature must be at URL.sig")
+if(ARIS_UPDATE_V2_STABLE_MANIFEST_URL AND
+   (NOT ARIS_UPDATE_V2_STABLE_MANIFEST_URL MATCHES "^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._-]+)*/[A-Za-z0-9._-]+\\.json$" OR
+    ARIS_UPDATE_V2_STABLE_MANIFEST_URL MATCHES "\\.\\." OR
+    NOT ARIS_UPDATE_MIRROR_BASE_URL MATCHES "^https://"))
+    message(FATAL_ERROR
+        "ARIS_UPDATE_V2_STABLE_MANIFEST_URL requires an exact HTTPS JSON URL and an HTTPS legacy mirror")
+endif()
 option(ARIS_UPDATE_QA_CLI
     "Build the CLI-only real-release update QA entry" OFF)
 option(ARIS_UPDATE_NOTICE_QA
@@ -1562,6 +1571,10 @@ target_compile_definitions(HarkenSearch PRIVATE
     ARIS_UPDATE_MIRROR_BASE_URL=\"${ARIS_UPDATE_MIRROR_BASE_URL}\"
     ARIS_UPDATE_LOCAL_DEMO=$<IF:$<BOOL:${ARIS_UPDATE_LOCAL_DEMO}>,1,0>
 )
+if(ARIS_UPDATE_V2_STABLE_MANIFEST_URL AND NOT ARIS_UPDATE_LOCAL_DEMO)
+    target_compile_definitions(HarkenSearch PRIVATE
+        ARIS_UPDATE_V2_STABLE_MANIFEST_URL=\"${ARIS_UPDATE_V2_STABLE_MANIFEST_URL}\")
+endif()
 if(ARIS_UPDATE_QA_CLI)
     target_compile_definitions(HarkenSearch PRIVATE ARIS_UPDATE_QA_CLI=1)
 endif()

@@ -203,6 +203,11 @@ void StartHarkenSearchAutomaticUpdate() {
             // Stable discovery uses manifest-win-x64-stable.json from the
             // company-cloud mirror; the signed asset identity remains GitHub.
             config.check.manifestUrl = CompanyCloudStableManifestUrl();
+            const std::string_view preferred = PreferredStableManifestUrl();
+            if (!preferred.empty() && preferred != config.check.manifestUrl) {
+                config.check.fallbackManifestUrl = config.check.manifestUrl;
+                config.check.manifestUrl = preferred;
+            }
             config.check.policy.currentVersion = SOUNDMANAGER_VERSION_STRING;
             config.check.policy.selectedChannel = UpdateChannel::Stable;
             config.runtime.channel = UpdateChannel::Stable;

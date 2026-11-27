@@ -1,4 +1,5 @@
 #include "bootstrap/HarkenSearchBootstrapPlan.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 
 #include <algorithm>
 #include <cctype>
@@ -568,7 +569,7 @@ InstallPlanValidation ValidateSignedInstallPlan(
         result.error = PlanError::InvalidSchema;
         return result;
     }
-    if (raw.product != "aris") {
+    if (!update::IsSupportedUpdateProduct(raw.product)) {
         result.error = PlanError::InvalidProduct;
         return result;
     }

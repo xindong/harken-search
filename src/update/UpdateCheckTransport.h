@@ -30,12 +30,14 @@ struct UpdateCheckFetchRequest {
     std::string url;
     std::uint64_t timeoutMs = 0;
     std::size_t maxBodyBytes = 0;
+    bool allowRedirects = true;
 };
 
 struct UpdateCheckFetchResult {
     UpdateCheckFetchError error = UpdateCheckFetchError::None;
     std::vector<std::uint8_t> body;
     std::string detail;
+    std::uint32_t httpStatus = 0;
 
     bool ok() const { return error == UpdateCheckFetchError::None; }
 };

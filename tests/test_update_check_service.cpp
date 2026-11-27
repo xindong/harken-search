@@ -304,13 +304,21 @@ void test_start_emits_one_delayed_intent_without_io() {
           "start is idempotent and emits exactly one startup intent");
 }
 
-void test_scheduled_valid_newer_manifest_returns_owned_handoff_and_periodic_intent() {
+void test_scheduled_valid_newer_manifest_returns_owned_handoff_and_periodic_intent(
+    bool preferredMissing = false) {
     NullDownloadTransport downloadTransport;
     FakePersistence persistence;
     UpdateRuntime runtime(downloadTransport, persistence, {});
     ScriptedCheckTransport checkTransport;
+    auto trusted = config();
+    if (preferredMissing) {
+        trusted.fallbackManifestUrl = trusted.manifestUrl + ".legacy.json";
+        UpdateCheckFetchResult missing;
+        missing.error = UpdateCheckFetchError::Http4xx;
+        missing.httpStatus = 404;
+        checkTransport.responses.push_back(missing);
+    }
     scriptValidManifest(checkTransport);
-    const auto trusted = config();
     UpdateCheckService service(checkTransport, runtime, trusted);
     MutableCancellation cancellation;
 
@@ -334,16 +342,29 @@ void test_scheduled_valid_newer_manifest_returns_owned_handoff_and_periodic_inte
               completed.schedule->delayMs == 30 * 60 * 1000 &&
               completed.schedule->generation > started.schedule->generation,
           "valid scheduled check returns one owned handoff and 30-minute intent");
-    check(checkTransport.requests.size() == 2 &&
-              checkTransport.requests[0].url == trusted.manifestUrl &&
-              checkTransport.requests[0].timeoutMs ==
+    const std::size_t manifestIndex = preferredMissing ? 1 : 0;
+    const auto manifestUrl = preferredMissing ? trusted.fallbackManifestUrl
+                                              : trusted.manifestUrl;
+    const auto signatureUrl = preferredMissing ? manifestUrl + ".sig"
+                                               : trusted.signatureUrl;
+    if (preferredMissing) {
+        check(!checkTransport.requests.empty() &&
+                  checkTransport.requests.front().url == trusted.manifestUrl &&
+                  !checkTransport.requests.front().allowRedirects,
+              "preferred mirror is attempted without redirects before legacy");
+    }
+    check(checkTransport.requests.size() == manifestIndex + 2 &&
+              checkTransport.requests[manifestIndex].url == manifestUrl &&
+              checkTransport.requests[manifestIndex].allowRedirects == !preferredMissing &&
+              checkTransport.requests[manifestIndex].timeoutMs ==
                   trusted.manifestTimeoutMs &&
-              checkTransport.requests[0].maxBodyBytes ==
+              checkTransport.requests[manifestIndex].maxBodyBytes ==
                   trusted.manifestBodyLimit &&
-              checkTransport.requests[1].url == trusted.signatureUrl &&
-              checkTransport.requests[1].timeoutMs ==
+              checkTransport.requests[manifestIndex + 1].url == signatureUrl &&
+              checkTransport.requests[manifestIndex + 1].allowRedirects == !preferredMissing &&
+              checkTransport.requests[manifestIndex + 1].timeoutMs ==
                   trusted.signatureTimeoutMs &&
-              checkTransport.requests[1].maxBodyBytes ==
+              checkTransport.requests[manifestIndex + 1].maxBodyBytes ==
                   trusted.signatureBodyLimit &&
               persistence.storePlans == 2 &&
               downloadTransport.executions == 0,
@@ -552,8 +573,12 @@ void test_transport_and_manifest_failures_are_classified_and_rearmed() {
         UpdateCheckFetchResult response;
         response.error = failure.fetchError;
         response.detail = "manifest transport failed";
+        response.httpStatus =
+            failure.fetchError == UpdateCheckFetchError::Http4xx ? 403 : 0;
         checkTransport.responses.push_back(response);
-        UpdateCheckService service(checkTransport, runtime, config());
+        auto trusted = config();
+        trusted.fallbackManifestUrl = trusted.manifestUrl + ".legacy.json";
+        UpdateCheckService service(checkTransport, runtime, trusted);
         MutableCancellation cancellation;
 
         const auto result = service.CheckNow(cancellation);
@@ -579,7 +604,10 @@ void test_transport_and_manifest_failures_are_classified_and_rearmed() {
         tampered.replace(tampered.find("1.2.0"), 5, "9.9.9");
         checkTransport.responses.push_back(fetched(tampered));
         checkTransport.responses.push_back(fetched(kSignature));
-        UpdateCheckService service(checkTransport, runtime, config());
+        scriptValidManifest(checkTransport);
+        auto trusted = config();
+        trusted.fallbackManifestUrl = trusted.manifestUrl + ".legacy.json";
+        UpdateCheckService service(checkTransport, runtime, trusted);
         MutableCancellation cancellation;
 
         const auto result = service.CheckNow(cancellation);
@@ -589,6 +617,30 @@ void test_transport_and_manifest_failures_are_classified_and_rearmed() {
                   result.snapshot.phase == UpdatePhase::Error &&
                   result.schedule.has_value(),
               "tampered raw manifest fails signature before semantic parsing");
+        check(checkTransport.requests.size() == 2,
+              "invalid primary signature does not fetch the legacy pair");
+    }
+    {
+        NullDownloadTransport downloadTransport;
+        FakePersistence persistence;
+        UpdateRuntime runtime(downloadTransport, persistence, {});
+        ScriptedCheckTransport checkTransport;
+        checkTransport.responses.push_back(fetched(kManifest));
+        UpdateCheckFetchResult missingSignature;
+        missingSignature.error = UpdateCheckFetchError::Http4xx;
+        missingSignature.httpStatus = 404;
+        checkTransport.responses.push_back(missingSignature);
+        scriptValidManifest(checkTransport);
+        auto trusted = config();
+        trusted.fallbackManifestUrl = trusted.manifestUrl + ".legacy.json";
+        UpdateCheckService service(checkTransport, runtime, trusted);
+        MutableCancellation cancellation;
+
+        const auto result = service.CheckNow(cancellation);
+        check(result.disposition == UpdateCheckServiceDisposition::Failed &&
+                  result.fetchError == UpdateCheckFetchError::Http4xx &&
+                  checkTransport.requests.size() == 2,
+              "missing primary signature does not fetch the legacy pair");
     }
     {
         NullDownloadTransport downloadTransport;
@@ -1383,6 +1435,7 @@ void test_active_schedule_checks_capability_before_numeric_generation() {
 int main() {
     test_start_emits_one_delayed_intent_without_io();
     test_scheduled_valid_newer_manifest_returns_owned_handoff_and_periodic_intent();
+    test_scheduled_valid_newer_manifest_returns_owned_handoff_and_periodic_intent(true);
     test_manual_no_update_runs_immediately_and_supersedes_startup_intent();
     test_runtime_owns_check_through_fetch_and_final_cancellation();
     test_response_body_caps_and_lowercase_signature_are_enforced();

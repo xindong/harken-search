@@ -103,15 +103,18 @@ bool IsCompanyCloudBootstrapPackageUrl(const std::string& url) {
 
 
 bool IsCompanyCloudStableManifestUrl(const std::string& url) {
-    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
-    if (mirror.empty() ||
-        url.find('\\') != std::string::npos ||
+    if (url.find('\\') != std::string::npos ||
         url.find("..") != std::string::npos ||
         url.find('?') != std::string::npos ||
-        url.find('#') != std::string::npos ||
-        url.rfind(mirror, 0) != 0) {
+        url.find('#') != std::string::npos) {
         return false;
     }
+    const std::string preferred(PreferredStableManifestUrl());
+    if (!preferred.empty() && (url == preferred || url == preferred + ".sig")) {
+        return true;
+    }
+    constexpr std::string_view mirror = ARIS_UPDATE_MIRROR_BASE_URL;
+    if (mirror.empty() || url.rfind(mirror, 0) != 0) return false;
     const std::string manifest = CompanyCloudStableManifestUrl();
     return url == manifest || url == manifest + ".sig";
 }

@@ -1,4 +1,5 @@
 #include "release_notes/ReleaseNotes.h"
+#include "HarkenSearchUpdateProductIdentity.h"
 
 #include "nlohmann_json.hpp"
 
@@ -338,8 +339,9 @@ ParseResult ParseDocument(std::string_view jsonBytes) {
     ReleaseNotesDocument document;
     document.schemaVersion = schemaVersion;
     if (const auto product = root.find("product"); product != root.end() &&
-        (!product->is_string() || product->get<std::string>() != "aris")) {
-        return Failure(ParseError::ProductMismatch, "release notes product is not aris");
+        (!product->is_string() ||
+         !update::IsSupportedUpdateProduct(product->get<std::string>()))) {
+        return Failure(ParseError::ProductMismatch, "release notes product is not supported");
     }
     if (const auto channel = root.find("channel"); channel != root.end()) {
         if (!channel->is_string() || !ParseChannel(channel->get<std::string>(), document.channel)) {
