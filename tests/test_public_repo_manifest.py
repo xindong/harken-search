@@ -407,6 +407,7 @@ EXPLICIT_SAME_FAMILY_EXCLUSION_GLOBS: tuple[tuple[str, str], ...] = (
     ("tools/verify_cuevi_feedback_e2e.py", "Cuevi 反馈 e2e 属内部流程，不进公开仓"),
     ("tests/test_daily_self_review*", "每日自审测试同族"),
     ("tests/test_qa_provenance_manifest.py", "QA provenance 清单测试同族"),
+    ("tests/test_release_receipt_contract.py", "正式发布回执只留在私有仓库，公开副本没有 docs/process/release-receipts，契约测试随之排除"),
     ("tests/test_start_cuevi_airs_bat.py", "Cuevi 启动脚本测试同族"),
     ("tests/test_aris_intake.py", "内部 intake 测试同族"),
     ("tests/test_aris_merge_closer.py", "合并闭环内部工具测试同族"),

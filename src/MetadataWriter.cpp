@@ -1,5 +1,7 @@
 #include "MetadataWriter.h"
 #include "Localization.h"
+#include "HarkenMeta.h"
+#include "MetadataReader.h"
 #include "platform/filesystem.h"
 #include "platform/text_encoding.h"
 #include <algorithm>
@@ -1386,6 +1388,98 @@ bool MetadataWriter::writeMetadataFields(const std::string& audioFilePath,
     }
 }
 
+static bool WriteHarkenFlacBlock(const std::string& filePath, const std::string& xml,
+                                 std::string& errorMessage) {
+    std::vector<uint8_t> fileData;
+    if (!ReadBinaryFile(filePath, fileData)) { errorMessage = "Cannot open FLAC file"; return false; }
+    if (fileData.size() < 42 || std::memcmp(fileData.data(), "fLaC", 4) != 0) {
+        errorMessage = "Not a valid FLAC file";
+        return false;
+    }
+
+    struct Block { uint8_t type; std::vector<uint8_t> data; };
+    std::vector<Block> blocks;
+    size_t pos = 4;
+    bool sawLast = false;
+    while (pos + 4 <= fileData.size()) {
+        const uint8_t header = fileData[pos];
+        const uint8_t type = header & 0x7F;
+        const uint32_t length = (static_cast<uint32_t>(fileData[pos + 1]) << 16) |
+                                (static_cast<uint32_t>(fileData[pos + 2]) << 8) |
+                                static_cast<uint32_t>(fileData[pos + 3]);
+        if (pos + 4 + length > fileData.size()) { errorMessage = "Truncated FLAC metadata"; return false; }
+        const bool isLast = (header & 0x80) != 0;
+        const uint8_t* body = fileData.data() + pos + 4;
+        const bool isHarkenApp = type == 2 && length >= 4 && std::memcmp(body, "HARK", 4) == 0;
+        if (!isHarkenApp) {
+            blocks.push_back(Block{type, std::vector<uint8_t>(body, body + length)});
+        }
+        pos += 4 + length;
+        if (isLast) { sawLast = true; break; }
+    }
+    if (!sawLast) { errorMessage = "FLAC metadata is missing its final block"; return false; }
+
+    std::vector<uint8_t> payload = {'H', 'A', 'R', 'K'};
+    payload.insert(payload.end(), xml.begin(), xml.end());
+    blocks.push_back(Block{2, std::move(payload)});
+
+    std::vector<uint8_t> out;
+    out.reserve(fileData.size() + xml.size() + 16);
+    out.insert(out.end(), {'f', 'L', 'a', 'C'});
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        const bool last = i + 1 == blocks.size();
+        const uint32_t length = static_cast<uint32_t>(blocks[i].data.size());
+        out.push_back(static_cast<uint8_t>((last ? 0x80 : 0x00) | (blocks[i].type & 0x7F)));
+        out.push_back(static_cast<uint8_t>((length >> 16) & 0xFF));
+        out.push_back(static_cast<uint8_t>((length >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>(length & 0xFF));
+        out.insert(out.end(), blocks[i].data.begin(), blocks[i].data.end());
+    }
+    out.insert(out.end(), fileData.begin() + static_cast<std::ptrdiff_t>(pos), fileData.end());
+
+    const std::string tempPath = filePath + ".tmp";
+    if (!WriteBinaryFile(tempPath, out)) { errorMessage = "Cannot create temp file"; return false; }
+    if (!Platform::FileSystem::AtomicFileReplace(filePath, tempPath)) {
+        errorMessage = "Failed to replace original file";
+        return false;
+    }
+    return true;
+}
+
+bool MetadataWriter::writeHarkenMetadata(const std::string& audioFilePath,
+                                         const std::string& harkenMetaJson,
+                                         std::string& errorMessage) {
+    errorMessage.clear();
+    const HarkenMeta::Values values = HarkenMeta::Parse(harkenMetaJson);
+    const std::string ext = getExtension(audioFilePath);
+    if (ext == ".wav") {
+        std::string existing;
+        std::string readError;
+        bool chunkMissing = false;
+        const bool hasIxml = MetadataReader::readIXMLChunk(audioFilePath, existing, readError, &chunkMissing);
+        if (!hasIxml && !chunkMissing) {
+            // Never replace an iXML we failed to read: the write would drop the
+            // source project/note sections.
+            errorMessage = readError.empty() ? std::string("Cannot read the existing iXML") : readError;
+            return false;
+        }
+        const bool existingHasHarken =
+            HarkenMeta::FindElementStart(existing, "HARKEN") != std::string::npos;
+        if (values.empty() && !existingHasHarken) return true;
+        const std::string merged = HarkenMeta::MergeIntoIXML(hasIxml ? existing : std::string(), values);
+        if (merged.empty()) return true;
+        MetadataFieldPatch patch;
+        patch.ixmlChunk = merged;
+        return writeMetadataFields(audioFilePath, patch, errorMessage);
+    }
+    if (ext == ".flac") {
+        if (values.empty()) return true;
+        return WriteHarkenFlacBlock(audioFilePath, HarkenMeta::BuildIXML(values), errorMessage);
+    }
+    // MP3/AIFF/OGG and other formats do not carry Harken-owned metadata.
+    return true;
+}
+
 int MetadataWriter::writeMetadataFieldsBatch(const std::vector<std::string>& audioPaths,
                                               const MetadataFieldPatch& patch,
                                               std::string& errorSummary) {
@@ -1661,6 +1755,11 @@ bool MetadataWriter::writeWAVFields(const std::string& filePath,
             if (chunkSize > 0 && pos + 8 + chunkSize <= fileSize) {
                 existingBextData.assign(fileData.begin() + pos + 8, fileData.begin() + pos + 8 + chunkSize);
             }
+            skipChunk = true;
+        }
+        // Replace an existing iXML chunk instead of leaving it in place and
+        // appending a second one below.
+        if ((memcmp(chunkId, "iXML", 4) == 0 || memcmp(chunkId, "IXML", 4) == 0) && patch.hasIXMLChunk()) {
             skipChunk = true;
         }
 

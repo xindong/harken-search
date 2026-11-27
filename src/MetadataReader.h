@@ -139,6 +139,13 @@ public:
     // Parse iXML chunk data (embedded in WAV files)
     static bool parseIXML(const std::string& xmlData, AudioMetadata& metadata);
 
+    // Read the raw iXML chunk payload from a WAV file. Returns false when the
+    // file is not RIFF/WAVE, has no iXML chunk, or the chunk cannot be read.
+    // chunkMissing tells the "valid WAV without iXML" case apart from a read
+    // failure, so a caller can refuse to rewrite a file it could not read.
+    static bool readIXMLChunk(const std::string& filePath, std::string& xmlData,
+                              std::string& errorMessage, bool* chunkMissing = nullptr);
+
 private:
     // Helper functions
     static std::string trimString(const std::string& str);

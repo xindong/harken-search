@@ -1,4 +1,5 @@
 #include "Database.h"
+#include "HarkenMeta.h"
 
 #include <functional>
 // i18n-anchor (F1, RQ-20260911-04): m_lastError/outError/heartbeatMsg feeders.
@@ -674,6 +675,9 @@ static bool WriteAppMetaString(sqlite3* db, const char* key, const std::string& 
 namespace fs = std::filesystem;
 
 namespace {
+// Bump when the aggregated search_data text changes. Version 3 adds the
+// previously omitted searchable extended fields, the id3 text values and the
+// harken_meta values to the background recompute.
 constexpr int kSearchDataMigrationVersion = 3;
 // One-time pass that fills the music columns for FLAC/OGG rows indexed before
 // the Vorbis comment reader understood composer/BPM/key. Only empty columns are
@@ -959,8 +963,27 @@ static const ExtMetaCol kExtMetaCols[] = {
     {"shoot_date",         true,  false},
     // System / User
     {"track_colour",       false, false},
+    // Harken-owned AI classification. Stored as a flat JSON object; its values
+    // are aggregated into search_data through json_extract, so the raw JSON
+    // keys never become searchable text.
+    {"harken_meta",        false, false},
 };
 static constexpr size_t kExtMetaCount = sizeof(kExtMetaCols) / sizeof(kExtMetaCols[0]);
+
+// harken_meta is JSON, but a legacy library gets the column as TEXT DEFAULT ''
+// and a damaged write can leave anything behind. Guard every extraction so a
+// malformed document cannot fail the statement that touches the row.
+static std::string HarkenJsonText(const std::string& columnExpression, const char* key) {
+    return "IFNULL(json_extract(CASE WHEN json_valid(" + columnExpression + ") THEN " +
+           columnExpression + " ELSE NULL END,'$." + std::string(key) + "'),'')";
+}
+
+// Values inside harken_meta that participate in search. Keep this list in sync
+// with HarkenMeta::SearchText.
+static std::string HarkenMetaSearchSql(const std::string& columnExpression) {
+    return " || ' ' || " + HarkenJsonText(columnExpression, "category") +
+           " || ' ' || " + HarkenJsonText(columnExpression, "function");
+}
 
 static constexpr const char* kOptionalMetadataSearchColumns[] = {
     "composer", "track_year", "bpm", "musical_key", "mood"
@@ -977,6 +1000,7 @@ static std::string SearchableMetadataSql(bool includeId3) {
     for (const auto& metadata : kExtMetaCols) {
         if (metadata.searchable) suffix += " || ' ' || IFNULL(" + std::string(metadata.col) + ",'')";
     }
+    suffix += HarkenMetaSearchSql("harken_meta");
     if (includeId3) suffix += " || ' ' || aura_id3_text_values(id3_text_tags)";
     return suffix;
 }
@@ -1014,7 +1038,7 @@ static const char* kRecordColumns =
     "scene, take_num, tape, "
     "bw_description, bw_originator, bw_originator_ref, bw_date, bw_time, bw_umid, bw_coding_history, "
     "ixml_project, ixml_note, ixml_file_uid, ixml_track_layout, "
-    "shoot_date, track_colour, "
+    "shoot_date, track_colour, harken_meta, "
     // F-033 Music Mode extended fields
     "album_artist, track_number, disc_number, "
     "energy_tension, energy_drive, "
@@ -1041,7 +1065,7 @@ static const char* kRecordColumnsAf =
     "af.scene, af.take_num, af.tape, "
     "af.bw_description, af.bw_originator, af.bw_originator_ref, af.bw_date, af.bw_time, af.bw_umid, af.bw_coding_history, "
     "af.ixml_project, af.ixml_note, af.ixml_file_uid, af.ixml_track_layout, "
-    "af.shoot_date, af.track_colour, "
+    "af.shoot_date, af.track_colour, af.harken_meta, "
     // F-033 Music Mode extended fields
     "af.album_artist, af.track_number, af.disc_number, "
     "af.energy_tension, af.energy_drive, "
@@ -3113,6 +3137,8 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "shoot_date", "TEXT");
     // System / User
     ensureColumn(m_db, "audio_files", "track_colour", "TEXT");
+    // Harken-owned AI classification JSON; preserved across rescans.
+    ensureColumn(m_db, "audio_files", "harken_meta", "TEXT DEFAULT ''");
 
     // Audio similarity features (F-028)
     ensureColumn(m_db, "audio_files", "audio_features", "BLOB");
@@ -3150,6 +3176,8 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "vocal_type",         "TEXT DEFAULT ''");
     ensureColumn(m_db, "audio_files", "snoozed_until",      "INTEGER DEFAULT 0");
 
+    // Each version recomputes every existing row. Version 1 only filled NULLs,
+    // so bumping the marker alone left old pinyin tokens in place.
     if (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
         DIAG_ACTION("Database", "SearchDataBackfillDeferred: remaining rows continue in the background");
     }
@@ -4373,6 +4401,7 @@ static const std::string& GetAddFileSql() {
                 searchExpr += " || ' ' || IFNULL(" + value + ",'')";
             }
         }
+        searchExpr += HarkenMetaSearchSql("audio_files.harken_meta");
         searchExpr += " || ' ' || aura_id3_text_values(COALESCE(excluded.id3_text_tags, audio_files.id3_text_tags))";
         upsert += ", search_data = aura_search_data(" + searchExpr + ")";
 
@@ -4502,6 +4531,13 @@ bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
             searchDataText += " " + it->second;
         }
     }
+    {
+        auto it = record.meta.find("harken_meta");
+        if (it != record.meta.end() && !it->second.empty()) {
+            const std::string harkenText = HarkenMeta::SearchText(it->second);
+            if (!harkenText.empty()) searchDataText += " " + harkenText;
+        }
+    }
     AppendId3TextValues(searchDataText, record.id3TextTags);
     std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(searchDataText);
     sqlite3_bind_text(stmt, 30, searchData.c_str(), -1, SQLITE_TRANSIENT);
@@ -4628,6 +4664,15 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     for (const auto& metadata : kExtMetaCols) {
         if (metadata.searchable) searchData += expression(metadata.col);
     }
+    // harken_meta is JSON: aggregate its values, from the bound parameter when
+    // this patch carries it (SET expressions read the pre-update row).
+    const std::string harkenSource = [&searchParams]() {
+        const auto bound = searchParams.find("harken_meta");
+        return bound == searchParams.end()
+            ? std::string("harken_meta") : "?" + std::to_string(bound->second);
+    }();
+    searchData += " || ' ' || " + HarkenJsonText(harkenSource, "category") +
+                  " || ' ' || " + HarkenJsonText(harkenSource, "function");
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
         ", search_data = aura_search_data(" + searchData +
@@ -6785,7 +6830,8 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                 "IFNULL(af.folder_path,'') || ' ' || IFNULL(af.title,'') || ' ' || "
                 "IFNULL(af.artist,'') || ' ' || IFNULL(af.album,'') || ' ' || "
                 "IFNULL(af.category,'') || ' ' || IFNULL(af.description,'') || ' ' || "
-                "IFNULL(af.keywords,'')" + optionalMetaSearch + ") LIKE ? ESCAPE '\\'";
+                "IFNULL(af.keywords,'')" + optionalMetaSearch +
+                HarkenMetaSearchSql("af.harken_meta") + ") LIKE ? ESCAPE '\\'";
             bq.bindValues.push_back(pattern);
             bq.whereClause += ")";
         }
