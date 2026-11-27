@@ -13493,9 +13493,8 @@ public:
         const std::string& filePath,
         aura::record_rescan::SelectedRecordRescanMetadata& out) override {
         AudioMetadata metadata;
-        bool mp3CustomTagsRead = false;
-        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata, &mp3CustomTagsRead);
-        if (!foundMetadata && !mp3CustomTagsRead) return false;
+        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata);
+        if (!foundMetadata && !metadata.customTextTagsRead) return false;
         out.title = metadata.title;
         out.artist = metadata.artist;
         out.album = metadata.album;
@@ -13505,7 +13504,7 @@ public:
         out.keywords = metadata.keywords;
         out.comment = metadata.comment;
         PopulateExtendedMeta(out.extendedMetadata, metadata);
-        if (mp3CustomTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
+        if (metadata.customTextTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
         return true;
     }
 
