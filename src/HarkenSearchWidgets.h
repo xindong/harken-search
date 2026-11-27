@@ -181,21 +181,64 @@ struct StandaloneWindowState {
     bool maximized = false;
     bool requestFocus = false;
     bool requestMove = false;
+    // Set by OpenStandaloneWindow so the first frame of an open can restore
+    // the size recorded at the end of the previous open.
+    bool requestRestoreSize = false;
     ImVec2 restorePos{0.0f, 0.0f};
     ImVec2 restoreSize{0.0f, 0.0f};
+    ImVec2 rememberedSize{0.0f, 0.0f};
+    bool hasRememberedSize = false;
 };
 
 struct StandaloneWindowOptions {
     ImVec2 defaultSize{1040.0f, 514.0f};
     ImVec2 minimumSize{720.0f, 360.0f};
     ImVec4 windowBackground{-1.0f, -1.0f, -1.0f, -1.0f};
+    bool centerOnFirstUse = false;
+    // Restore the size remembered in StandaloneWindowState when the window is
+    // reopened. The first open of a process still follows defaultSize and the
+    // ImGui ini entry.
+    bool rememberSize = true;
+    bool closeOnEscape = false;
 };
 
 void OpenStandaloneWindow(StandaloneWindowState* state);
+void CloseStandaloneWindow(StandaloneWindowState* state);
 bool BeginStandaloneWindow(const char* title, const char* stableId,
                            StandaloneWindowState* state,
                            const StandaloneWindowOptions& options = {});
 void EndStandaloneWindow();
+
+// Bottom action bar of a standalone window.
+//
+// The bar is pinned to the window bottom, separated from the body by one
+// divider, and is laid out from both ends: left-aligned secondary actions
+// (Cancel/Close) start at the left padding, right-aligned actions
+// (Apply/Execute) stack towards the left from the right padding. A window that
+// uses the bar sizes its body with StandaloneWindowBodyHeight(), then calls
+// BeginStandaloneWindowFooter(), adds buttons, and ends with
+// EndStandaloneWindowFooter() before EndStandaloneWindow():
+//
+//   BeginStandaloneWindow(...);
+//   BeginChild("body", ImVec2(0, StandaloneWindowBodyHeight()));
+//   ...
+//   EndChild();
+//   BeginStandaloneWindowFooter();
+//   if (StandaloneWindowFooterButton(L(Cancel), ImVec2(120, 0),
+//           ButtonVariant::Quiet, StandaloneWindowFooterAlign::Left)) ...;
+//   if (StandaloneWindowFooterButton(L(Apply), ImVec2(140, 0),
+//           ButtonVariant::PrimarySearch, StandaloneWindowFooterAlign::Right)) ...;
+//   EndStandaloneWindowFooter();
+//   EndStandaloneWindow();
+enum class StandaloneWindowFooterAlign { Left, Right };
+
+float StandaloneWindowFooterHeight();
+float StandaloneWindowBodyHeight();
+void BeginStandaloneWindowFooter();
+bool StandaloneWindowFooterButton(const char* label, const ImVec2& size,
+                                  ButtonVariant variant,
+                                  StandaloneWindowFooterAlign align);
+void EndStandaloneWindowFooter();
 
 // Modal dialog API.
 
